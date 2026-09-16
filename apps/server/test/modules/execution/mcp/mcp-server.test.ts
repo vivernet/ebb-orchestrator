@@ -193,6 +193,46 @@ describe('MCP Server', () => {
       expect(result.success).toBe(false);
       expect(result.error).toContain('schema');
     });
+
+    it('should block write-capable tools after submit_result', async () => {
+      const mcpModule = await import('../../../../src/modules/execution/mcp/mcp-server.js');
+      const capabilityModule = await import('../../../../src/modules/execution/run-capability.js');
+
+      const McpServer = mcpModule.McpServer;
+      const RunCapability = capabilityModule.RunCapability;
+
+      const capability = new RunCapability({
+        id: 'test-capability',
+        role: 'developer',
+        workspace: workspaceDir,
+        allowedTools: [
+          'workspace.read',
+          'workspace.patch',
+          'submit_result',
+        ],
+      });
+
+      const mcpServer = new McpServer(capability);
+      
+      // First submit_result should succeed
+      const submitResult = await mcpServer.callTool('submit_result', {
+        payload: {
+          version: '1.0',
+          outcome: 'PASS',
+        },
+      });
+
+      expect(submitResult.success).toBe(true);
+
+      // write-capable tool should be blocked after submit_result
+      const patchResult = await mcpServer.callTool('workspace.patch', {
+        path: 'test.txt',
+        patches: [],
+      });
+
+      expect(patchResult.success).toBe(false);
+      expect(patchResult.error).toContain('RUN_ALREADY_COMPLETING');
+    });
   });
 
   describe('security', () => {

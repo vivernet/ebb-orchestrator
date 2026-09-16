@@ -55,11 +55,11 @@ export class McpServer {
       return { success: false, error: `tool not found: ${name}` };
     }
 
-    // Check if submit_result has already been called
-    if (name === 'submit_result' && this.hasSubmittedResult) {
+    // Check if submit_result has already been called - blocks all write-capable tools
+    if (this.hasSubmittedResult) {
       return {
         success: false,
-        error: 'RUN_ALREADY_COMPLETING: submit_result can only be called once per run',
+        error: 'RUN_ALREADY_COMPLETING: no further tool calls allowed after submit_result',
       };
     }
 
