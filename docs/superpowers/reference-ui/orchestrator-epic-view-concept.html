@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Agent Orchestrator — Epic View Concept</title>
+<style>
+:root{
+  --bg:#0b0d10; --panel:#12161b; --panel2:#171c22; --line:#252c34;
+  --text:#eef2f6; --muted:#8e9aa7; --accent:#8ab4ff; --good:#77d19a;
+  --warn:#e8c66a; --bad:#ef8e8e; --chip:#202731; --violet:#b79cff;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto}
+.app{display:grid;grid-template-columns:230px 1fr;min-height:100vh}
+.sidebar{border-right:1px solid var(--line);padding:20px 16px;display:flex;flex-direction:column;gap:22px}
+.brand{font-size:18px;font-weight:700}.brand small{display:block;color:var(--muted);font-size:11px;font-weight:500;margin-top:3px}
+.nav{display:grid;gap:6px}.nav a{padding:10px 12px;border-radius:8px;color:var(--muted);text-decoration:none}.nav a.active{background:var(--panel2);color:var(--text)}
+.bottom{margin-top:auto;color:var(--muted);font-size:12px}
+.main{padding:24px 28px 36px}
+.topbar{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;margin-bottom:18px}
+.title h1{margin:0;font-size:24px}.title p{margin:5px 0 0;color:var(--muted)}
+.actions{display:flex;gap:10px}.btn{border:1px solid var(--line);background:var(--panel);color:var(--text);padding:9px 12px;border-radius:8px}.btn.primary{background:#eaf1ff;color:#111;border-color:#eaf1ff;font-weight:650}
+.tabs{display:flex;gap:8px;border-bottom:1px solid var(--line);margin-bottom:18px}.tab{padding:9px 11px;color:var(--muted)}.tab.active{color:var(--text);border-bottom:2px solid var(--accent)}
+.metrics{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:16px}
+.metric{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}.metric b{display:block;font-size:21px;margin-top:5px}
+.grid{display:grid;grid-template-columns:1.8fr 1fr;gap:16px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+.card h3{margin:0 0 12px;font-size:14px}.muted{color:var(--muted)}.good{color:var(--good)}.warn{color:var(--warn)}.bad{color:var(--bad)}.violet{color:var(--violet)}
+.row{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.chip{display:inline-flex;padding:4px 7px;border-radius:999px;background:var(--chip);color:var(--muted);font-size:11px}
+.progress{height:8px;background:#222a32;border-radius:999px;overflow:hidden;margin:10px 0 6px}.progress span{display:block;height:100%;background:var(--accent);width:72%}
+.pipeline{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-top:14px}
+.stage{padding:10px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);text-align:center;font-size:11px}
+.stage.done{border-color:#315c43}.stage.active{border-color:#5577b8}.stage.blocked{border-color:#6b5b2b}
+.graph{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;align-items:start}
+.col{display:grid;gap:10px}.coltitle{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.node{border:1px solid var(--line);background:var(--panel2);border-radius:10px;padding:11px}
+.node strong{display:block}.node small{display:block;color:var(--muted);margin-top:4px}.node.running{border-color:#5577b8}.node.good{border-color:#315c43}.node.blocked{border-color:#6b5b2b}
+.node .meta{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.agent{display:grid;grid-template-columns:1fr auto;gap:8px;padding:10px 0;border-top:1px solid var(--line)}.agent:first-of-type{border-top:0}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block;background:var(--good);margin-right:6px}.idle{background:#65717d}.busy{background:var(--accent)}
+.approval{border-left:3px solid var(--warn);padding-left:12px;margin:12px 0}
+.timeline{display:grid;gap:10px}.event{padding-left:14px;border-left:2px solid var(--line)}.event b{font-size:12px}.event div{font-size:11px;color:var(--muted);margin-top:2px}
+.kv{display:grid;grid-template-columns:130px 1fr;gap:8px 12px;font-size:12px}.kv div:nth-child(odd){color:var(--muted)}
+.branch{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;background:#0f1318;border:1px solid var(--line);padding:8px 10px;border-radius:8px;margin-top:8px}
+.footer-note{margin-top:16px;color:var(--muted);font-size:11px}
+@media(max-width:1000px){.app{grid-template-columns:1fr}.sidebar{display:none}.grid{grid-template-columns:1fr}.metrics{grid-template-columns:1fr 1fr}.graph{grid-template-columns:1fr 1fr}.pipeline{grid-template-columns:1fr 1fr}}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">Agent Orchestrator<small>Local workspace</small></div>
+    <nav class="nav">
+      <a href="#">Dashboard</a>
+      <a href="#">Projects</a>
+      <a class="active" href="#">Epics & Tasks</a>
+      <a href="#">Execution Queue</a>
+      <a href="#">Approvals <span class="warn">3</span></a>
+      <a href="#">Agents</a>
+      <a href="#">Usage & Budget</a>
+      <a href="#">Settings</a>
+    </nav>
+    <div class="bottom">Hermes runtime · Local mode<br/>4 parallel slots</div>
+  </aside>
+
+  <main class="main">
+    <div class="topbar">
+      <div class="title">
+        <h1>EPIC-42 · Anthropic Provider</h1>
+        <p>Ebb AI Hub · branch: <b>epic/42-anthropic-provider</b> · target: <b>master</b></p>
+      </div>
+      <div class="actions">
+        <button class="btn">Pause epic</button>
+        <button class="btn">Replan</button>
+        <button class="btn primary">Open Coordinator</button>
+      </div>
+    </div>
+
+    <div class="tabs">
+      <div class="tab active">Overview</div>
+      <div class="tab">Tasks</div>
+      <div class="tab">Dependency Graph</div>
+      <div class="tab">Architecture</div>
+      <div class="tab">Runs</div>
+      <div class="tab">Git</div>
+      <div class="tab">Usage</div>
+    </div>
+
+    <section class="metrics">
+      <div class="metric"><span class="muted">Required tasks</span><b>7 / 9</b></div>
+      <div class="metric"><span class="muted">Running agents</span><b>3</b></div>
+      <div class="metric"><span class="muted">Blocked</span><b class="warn">1</b></div>
+      <div class="metric"><span class="muted">Epic spend</span><b>$8.41</b></div>
+      <div class="metric"><span class="muted">Ready for master</span><b class="bad">No</b></div>
+    </section>
+
+    <div class="grid">
+      <div>
+        <section class="card">
+          <div class="row">
+            <div>
+              <h3 style="margin-bottom:4px">Epic lifecycle</h3>
+              <div class="muted">Большая фича проходит отдельную финальную проверку после интеграции всех задач.</div>
+            </div>
+            <span class="chip">Architecture review required</span>
+          </div>
+
+          <div class="pipeline">
+            <div class="stage done">Plan ✓</div>
+            <div class="stage done">Architecture ✓</div>
+            <div class="stage active">Task execution ●</div>
+            <div class="stage">Epic review</div>
+            <div class="stage">Epic QA</div>
+            <div class="stage">Merge → master</div>
+          </div>
+
+          <div class="progress"><span></span></div>
+          <div class="row"><span class="muted">7 of 9 required tasks integrated into epic branch</span><span>72%</span></div>
+        </section>
+
+        <section class="card" style="margin-top:16px">
+          <div class="row"><h3>Parallel work graph</h3><span class="muted">scheduler view</span></div>
+          <div class="graph">
+            <div class="col">
+              <div class="coltitle">Foundation</div>
+              <div class="node good">
+                <strong>TASK-421</strong>
+                Provider abstraction
+                <small>Senior Developer · integrated</small>
+                <div class="meta"><span class="chip">Review ✓</span><span class="chip">QA ✓</span></div>
+              </div>
+              <div class="node good">
+                <strong>TASK-422</strong>
+                Anthropic client
+                <small>Senior Developer · integrated</small>
+                <div class="meta"><span class="chip">depends 421</span></div>
+              </div>
+            </div>
+
+            <div class="col">
+              <div class="coltitle">Parallel implementation</div>
+              <div class="node good">
+                <strong>TASK-423</strong>
+                Request mapping
+                <small>Middle Developer · integrated</small>
+              </div>
+              <div class="node good">
+                <strong>TASK-424</strong>
+                Response mapping
+                <small>Middle Developer · integrated</small>
+              </div>
+              <div class="node running">
+                <strong>TASK-425</strong>
+                Streaming
+                <small>QA running · Hermes</small>
+                <div class="meta"><span class="chip">Review ✓</span><span class="chip">QA ●</span></div>
+              </div>
+              <div class="node running">
+                <strong>TASK-426</strong>
+                Tool calling
+                <small>Reviewer running · Hermes</small>
+                <div class="meta"><span class="chip">Review ●</span></div>
+              </div>
+            </div>
+
+            <div class="col">
+              <div class="coltitle">Validation</div>
+              <div class="node good">
+                <strong>TASK-427</strong>
+                Error normalization
+                <small>Middle Developer · integrated</small>
+              </div>
+              <div class="node blocked">
+                <strong>TASK-428</strong>
+                Integration tests
+                <small>Blocked by 425 + 426</small>
+                <div class="meta"><span class="chip">dependency</span></div>
+              </div>
+            </div>
+
+            <div class="col">
+              <div class="coltitle">Finish</div>
+              <div class="node">
+                <strong>TASK-429</strong>
+                Documentation
+                <small>Queued · low priority</small>
+              </div>
+              <div class="node">
+                <strong>Epic Review</strong>
+                Final code review
+                <small>waiting for all required tasks</small>
+              </div>
+              <div class="node">
+                <strong>Epic QA</strong>
+                End-to-end validation
+                <small>waiting</small>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="card" style="margin-top:16px">
+          <div class="row"><h3>Epic contract</h3><span class="chip">Approved</span></div>
+          <div class="kv">
+            <div>Goal</div><div>Полная поддержка Anthropic через общий Provider API.</div>
+            <div>Required</div><div>Text, streaming, tool calling, normalized errors, tests.</div>
+            <div>Non-goals</div><div>Batch API, fine-tuning.</div>
+            <div>Architecture</div><div>Provider-specific objects must not leak into core.</div>
+          </div>
+        </section>
+      </div>
+
+      <div>
+        <section class="card">
+          <h3>Epic branch</h3>
+          <div class="branch">epic/42-anthropic-provider → master</div>
+          <div class="kv" style="margin-top:12px">
+            <div>Git state</div><div class="good">In sync</div>
+            <div>Latest commit</div><div>7c8f2a1</div>
+            <div>Task PRs merged</div><div>7</div>
+            <div>Final PR</div><div class="muted">Not created yet</div>
+          </div>
+        </section>
+
+        <section class="card" style="margin-top:16px">
+          <div class="row"><h3>Active agents</h3><span>3 / 4 slots</span></div>
+          <div class="agent"><div><span class="dot busy"></span><b>QA</b><div class="muted">TASK-425 Streaming</div></div><span>8m</span></div>
+          <div class="agent"><div><span class="dot busy"></span><b>Reviewer</b><div class="muted">TASK-426 Tool calling</div></div><span>4m</span></div>
+          <div class="agent"><div><span class="dot busy"></span><b>Middle Developer</b><div class="muted">TASK-429 Documentation</div></div><span>2m</span></div>
+          <div class="agent"><div><span class="dot idle"></span><b>Integration Agent</b><div class="muted">waiting</div></div><span>—</span></div>
+        </section>
+
+        <section class="card" style="margin-top:16px">
+          <div class="row"><h3>Approvals & blockers</h3><span class="warn">1 attention</span></div>
+          <div class="approval">
+            <b>Dependency proposal</b>
+            <div class="muted">TASK-428 may require additional fixture setup.</div>
+            <div style="margin-top:8px"><button class="btn">Review proposal</button></div>
+          </div>
+          <div class="muted">Final merge approval will appear only after Epic Review, Architecture Review, Epic QA and final integration pass.</div>
+        </section>
+
+        <section class="card" style="margin-top:16px">
+          <div class="row"><h3>Budget</h3><span>$8.41 / $15 soft</span></div>
+          <div class="progress"><span style="width:56%"></span></div>
+          <div class="muted">Recovery spend: $1.12 · Review/rework: $1.84</div>
+        </section>
+
+        <section class="card" style="margin-top:16px">
+          <div class="row"><h3>Recent events</h3><span class="muted">live</span></div>
+          <div class="timeline">
+            <div class="event"><b>TASK-425 review passed</b><div>2m ago</div></div>
+            <div class="event"><b>TASK-426 review started</b><div>4m ago</div></div>
+            <div class="event"><b>TASK-424 integrated into epic</b><div>18m ago</div></div>
+            <div class="event"><b>TASK-428 blocked</b><div>21m ago · dependencies</div></div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <div class="footer-note">Epic View concept v0.1 · Parallel tasks merge into epic branch first · final Epic validation precedes master</div>
+  </main>
+</div>
+</body>
+</html>

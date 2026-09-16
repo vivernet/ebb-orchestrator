@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Agent Orchestrator — Settings Concept</title>
+<style>
+:root{
+  --bg:#0b0d10; --panel:#12161b; --panel2:#171c22; --line:#252c34;
+  --text:#eef2f6; --muted:#8e9aa7; --accent:#8ab4ff; --good:#77d19a;
+  --warn:#e8c66a; --bad:#ef8e8e; --chip:#202731;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto}
+.app{display:grid;grid-template-columns:230px 1fr;min-height:100vh}
+.sidebar{border-right:1px solid var(--line);padding:20px 16px;display:flex;flex-direction:column;gap:22px}
+.brand{font-size:18px;font-weight:700}.brand small{display:block;color:var(--muted);font-size:11px;font-weight:500;margin-top:3px}
+.nav{display:grid;gap:6px}.nav a{padding:10px 12px;border-radius:8px;color:var(--muted);text-decoration:none}.nav a.active{background:var(--panel2);color:var(--text)}
+.bottom{margin-top:auto;color:var(--muted);font-size:12px}
+.main{padding:24px 28px 36px}
+.topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:20px;margin-bottom:18px}
+.title h1{margin:0;font-size:24px}.title p{margin:5px 0 0;color:var(--muted)}
+.actions{display:flex;gap:10px}.btn{border:1px solid var(--line);background:var(--panel);color:var(--text);padding:9px 12px;border-radius:8px}.btn.primary{background:#eaf1ff;color:#111;border-color:#eaf1ff;font-weight:650}
+.layout{display:grid;grid-template-columns:210px 1fr;gap:16px}
+.settingsnav{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px}
+.settingsnav div{padding:10px 11px;border-radius:8px;color:var(--muted);margin:2px 0}.settingsnav .active{background:var(--panel2);color:var(--text)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:16px}
+.card h3{margin:0 0 4px;font-size:14px}.subtitle{color:var(--muted);font-size:12px;margin-bottom:14px}
+.row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:11px 0;border-top:1px solid var(--line)}
+.row:first-of-type{border-top:0}.row .desc{color:var(--muted);font-size:11px;margin-top:3px}
+.control{min-width:200px;text-align:right}.select,.input{display:inline-block;background:#0f1318;border:1px solid var(--line);padding:8px 10px;border-radius:8px;color:var(--text);min-width:190px;text-align:left}
+.chip{display:inline-flex;padding:4px 7px;border-radius:999px;background:var(--chip);color:var(--muted);font-size:11px}
+.good{color:var(--good)}.warn{color:var(--warn)}.bad{color:var(--bad)}
+.switch{display:inline-flex;width:38px;height:22px;border-radius:999px;background:#2a3138;align-items:center;padding:3px;justify-content:flex-start}.switch.on{background:#315c43;justify-content:flex-end}.switch span{width:16px;height:16px;background:#fff;border-radius:50%}
+.table{width:100%;border-collapse:collapse}.table th,.table td{text-align:left;padding:10px 8px;border-top:1px solid var(--line);font-size:12px}.table th{color:var(--muted);font-weight:500;border-top:0}
+.code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:#0f1318;border:1px solid var(--line);border-radius:9px;padding:12px;font-size:12px;white-space:pre-wrap}
+.note{padding:10px 12px;border-left:3px solid var(--accent);background:var(--panel2);border-radius:6px;margin-top:10px}
+.warnbox{padding:10px 12px;border-left:3px solid var(--warn);background:var(--panel2);border-radius:6px;margin-top:10px}
+.footer-note{margin-top:16px;color:var(--muted);font-size:11px}
+@media(max-width:1000px){.app{grid-template-columns:1fr}.sidebar{display:none}.layout{grid-template-columns:1fr}.settingsnav{display:flex;overflow:auto}.settingsnav div{white-space:nowrap}}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">Agent Orchestrator<small>Local workspace</small></div>
+    <nav class="nav">
+      <a href="#">Dashboard</a>
+      <a href="#">Projects</a>
+      <a href="#">Epics & Tasks</a>
+      <a href="#">Execution Queue</a>
+      <a href="#">Approvals</a>
+      <a href="#">Agents</a>
+      <a href="#">Usage & Budget</a>
+      <a class="active" href="#">Settings</a>
+    </nav>
+    <div class="bottom">Hermes runtime · Local mode<br/>4 global slots</div>
+  </aside>
+
+  <main class="main">
+    <div class="topbar">
+      <div class="title">
+        <h1>Project Settings · Ebb AI Hub</h1>
+        <p>Versioned project rules are separated from local secrets, paths and runtime state.</p>
+      </div>
+      <div class="actions">
+        <button class="btn">View config diff</button>
+        <button class="btn primary">Save changes</button>
+      </div>
+    </div>
+
+    <div class="layout">
+      <aside class="settingsnav">
+        <div class="active">General</div>
+        <div>Roles & Models</div>
+        <div>Workflows</div>
+        <div>Runtime</div>
+        <div>Scheduler</div>
+        <div>Recovery</div>
+        <div>Permissions</div>
+        <div>Git & GitHub</div>
+        <div>Budgets</div>
+        <div>Guidelines</div>
+        <div>Secrets</div>
+      </aside>
+
+      <div>
+        <section class="card">
+          <h3>General</h3>
+          <div class="subtitle">Project identity and repository-level defaults.</div>
+
+          <div class="row">
+            <div><b>Project name</b><div class="desc">Human-readable name inside Orchestrator.</div></div>
+            <div class="control"><span class="input">Ebb AI Hub</span></div>
+          </div>
+
+          <div class="row">
+            <div><b>Repository</b><div class="desc">Local Git repository managed by this project.</div></div>
+            <div class="control"><span class="input">C:\Repos\ebb-ai-hub</span></div>
+          </div>
+
+          <div class="row">
+            <div><b>Default branch</b><div class="desc">Target branch for standalone Tasks and Epics.</div></div>
+            <div class="control"><span class="select">master ▾</span></div>
+          </div>
+
+          <div class="row">
+            <div><b>Execution mode</b><div class="desc">Local in v1; Container becomes available later.</div></div>
+            <div class="control"><span class="select">Local ▾</span></div>
+          </div>
+        </section>
+
+        <section class="card">
+          <h3>Roles & Models</h3>
+          <div class="subtitle">Role decides the job. Model decides the reasoning capability. Runtime executes the role.</div>
+
+          <table class="table">
+            <thead><tr><th>Role</th><th>Runtime</th><th>Model</th><th>Override</th></tr></thead>
+            <tbody>
+              <tr><td>Coordinator</td><td>Hermes</td><td>gpt-5.6-terra</td><td><span class="chip">Project</span></td></tr>
+              <tr><td>Product Manager</td><td>Hermes</td><td>gpt-5.6-luna</td><td><span class="chip">Global</span></td></tr>
+              <tr><td>Architect</td><td>Hermes</td><td>gpt-5.6-terra</td><td><span class="chip">Project</span></td></tr>
+              <tr><td>Middle Developer</td><td>Hermes</td><td>gpt-5.6-luna</td><td><span class="chip">Project</span></td></tr>
+              <tr><td>Senior Developer</td><td>Hermes</td><td>gpt-5.6-terra</td><td><span class="chip">Project</span></td></tr>
+              <tr><td>Reviewer</td><td>Hermes</td><td>gpt-5.6-terra</td><td><span class="chip">Project</span></td></tr>
+              <tr><td>QA</td><td>Hermes</td><td>gpt-5.6-luna</td><td><span class="chip">Global</span></td></tr>
+              <tr><td>Integration</td><td>Hermes</td><td>gpt-5.6-terra</td><td><span class="chip">Project</span></td></tr>
+              <tr><td>DevOps</td><td>Hermes</td><td>gpt-5.6-terra</td><td><span class="chip">Project</span></td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section class="card">
+          <h3>Scheduler</h3>
+          <div class="subtitle">Deterministic limits; no LLM is called to decide ordinary queue admission.</div>
+
+          <div class="row">
+            <div><b>Project parallel agents</b><div class="desc">Maximum simultaneous runs for this repository.</div></div>
+            <div class="control"><span class="input">3</span></div>
+          </div>
+          <div class="row">
+            <div><b>Priority aging</b><div class="desc">Prevent low-priority work from starving forever.</div></div>
+            <div class="control"><span class="switch on"><span></span></span></div>
+          </div>
+          <div class="row">
+            <div><b>Critical path boost</b><div class="desc">Boost tasks that unblock the largest downstream chain.</div></div>
+            <div class="control"><span class="switch on"><span></span></span></div>
+          </div>
+        </section>
+
+        <section class="card">
+          <h3>Recovery</h3>
+          <div class="subtitle">Retry is treated as a limited resource, not the default response to every failure.</div>
+
+          <div class="row">
+            <div><b>Resume Hermes session first</b></div>
+            <div class="control"><span class="switch on"><span></span></span></div>
+          </div>
+          <div class="row">
+            <div><b>Middle attempts before escalation</b></div>
+            <div class="control"><span class="input">2</span></div>
+          </div>
+          <div class="row">
+            <div><b>Senior attempts</b></div>
+            <div class="control"><span class="input">2</span></div>
+          </div>
+          <div class="row">
+            <div><b>Loop detection</b></div>
+            <div class="control"><span class="switch on"><span></span></span></div>
+          </div>
+          <div class="row">
+            <div><b>No-progress threshold</b></div>
+            <div class="control"><span class="input">2 consecutive runs</span></div>
+          </div>
+        </section>
+
+        <section class="card">
+          <h3>Git & GitHub</h3>
+          <div class="subtitle">Git is local-first. GitHub is optional synchronization and collaboration.</div>
+
+          <div class="row">
+            <div><b>Integration strategy</b><div class="desc">How target changes are incorporated before integration.</div></div>
+            <div class="control"><span class="select">Merge ▾</span></div>
+          </div>
+          <div class="row">
+            <div><b>GitHub integration</b></div>
+            <div class="control"><span class="good">Connected</span></div>
+          </div>
+          <div class="row">
+            <div><b>Create Issues for Tasks</b></div>
+            <div class="control"><span class="switch on"><span></span></span></div>
+          </div>
+          <div class="row">
+            <div><b>Merge via GitHub PR</b></div>
+            <div class="control"><span class="switch on"><span></span></span></div>
+          </div>
+          <div class="row">
+            <div><b>GitHub sync</b></div>
+            <div class="control"><span class="select">Polling + manual sync ▾</span></div>
+          </div>
+        </section>
+
+        <section class="card">
+          <h3>Config ownership</h3>
+          <div class="subtitle">Clear boundary between versioned project configuration and local machine state.</div>
+
+          <div class="code">Repository (.orchestrator/)
+├── project.yaml
+├── workflows.yaml
+└── guidelines/
+    ├── architecture.md
+    ├── database.md
+    └── git.md
+
+Local SQLite / secure storage
+├── absolute paths
+├── Hermes sessions
+├── task runtime state
+├── approvals
+├── usage
+├── GitHub credentials
+├── secrets
+└── recovery state</div>
+
+          <div class="note">
+            Repository config answers: <b>“How should this project be developed?”</b><br/>
+            Local state answers: <b>“What is happening on this machine right now?”</b>
+          </div>
+
+          <div class="warnbox">
+            Semantic changes to approved Guidelines or workflows can require an Approval before becoming active.
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <div class="footer-note">Settings concept v0.1 · global defaults → project overrides → role overrides → task/epic override</div>
+  </main>
+</div>
+</body>
+</html>

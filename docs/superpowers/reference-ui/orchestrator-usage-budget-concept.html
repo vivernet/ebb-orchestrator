@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Agent Orchestrator — Usage & Budget Concept</title>
+<style>
+:root{
+  --bg:#0b0d10; --panel:#12161b; --panel2:#171c22; --line:#252c34;
+  --text:#eef2f6; --muted:#8e9aa7; --accent:#8ab4ff; --good:#77d19a;
+  --warn:#e8c66a; --bad:#ef8e8e; --chip:#202731; --violet:#b79cff;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto}
+.app{display:grid;grid-template-columns:230px 1fr;min-height:100vh}
+.sidebar{border-right:1px solid var(--line);padding:20px 16px;display:flex;flex-direction:column;gap:22px}
+.brand{font-size:18px;font-weight:700}.brand small{display:block;color:var(--muted);font-size:11px;font-weight:500;margin-top:3px}
+.nav{display:grid;gap:6px}.nav a{padding:10px 12px;border-radius:8px;color:var(--muted);text-decoration:none}.nav a.active{background:var(--panel2);color:var(--text)}
+.bottom{margin-top:auto;color:var(--muted);font-size:12px}
+.main{padding:24px 28px 36px}
+.topbar{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;margin-bottom:18px}
+.title h1{margin:0;font-size:24px}.title p{margin:5px 0 0;color:var(--muted)}
+.actions{display:flex;gap:10px}.btn{border:1px solid var(--line);background:var(--panel);color:var(--text);padding:9px 12px;border-radius:8px}.btn.primary{background:#eaf1ff;color:#111;border-color:#eaf1ff;font-weight:650}
+.tabs{display:flex;gap:8px;border-bottom:1px solid var(--line);margin-bottom:18px}.tab{padding:9px 11px;color:var(--muted)}.tab.active{color:var(--text);border-bottom:2px solid var(--accent)}
+.metrics{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:16px}
+.metric{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}.metric b{display:block;font-size:21px;margin-top:5px}
+.grid{display:grid;grid-template-columns:1.5fr 1fr;gap:16px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+.card h3{margin:0 0 12px;font-size:14px}.muted{color:var(--muted)}.good{color:var(--good)}.warn{color:var(--warn)}.bad{color:var(--bad)}
+.row{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.chip{display:inline-flex;padding:4px 7px;border-radius:999px;background:var(--chip);color:var(--muted);font-size:11px}
+.bar{height:8px;background:#222a32;border-radius:999px;overflow:hidden}.bar span{height:100%;display:block;background:var(--accent)}
+.budget{padding:12px 0;border-top:1px solid var(--line)}.budget:first-of-type{border-top:0}
+.budget .head{display:flex;justify-content:space-between;gap:10px;margin-bottom:7px}
+.table{width:100%;border-collapse:collapse}.table th,.table td{text-align:left;padding:10px 8px;border-top:1px solid var(--line);font-size:12px}.table th{color:var(--muted);font-weight:500;border-top:0}.table td:last-child,.table th:last-child{text-align:right}
+.split{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.stat{padding:12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2)}.stat b{display:block;font-size:18px;margin-top:5px}
+.alert{padding:11px 12px;border:1px solid var(--line);border-left:3px solid var(--warn);border-radius:9px;background:var(--panel2);margin-top:9px}
+.alert.bad{border-left-color:var(--bad)}
+.kv{display:grid;grid-template-columns:130px 1fr;gap:8px 12px;font-size:12px}.kv div:nth-child(odd){color:var(--muted)}
+.footer-note{margin-top:16px;color:var(--muted);font-size:11px}
+@media(max-width:1000px){.app{grid-template-columns:1fr}.sidebar{display:none}.grid{grid-template-columns:1fr}.metrics{grid-template-columns:1fr 1fr}.split{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">Agent Orchestrator<small>Local workspace</small></div>
+    <nav class="nav">
+      <a href="#">Dashboard</a>
+      <a href="#">Projects</a>
+      <a href="#">Epics & Tasks</a>
+      <a href="#">Execution Queue</a>
+      <a href="#">Approvals <span class="warn">3</span></a>
+      <a href="#">Agents</a>
+      <a class="active" href="#">Usage & Budget</a>
+      <a href="#">Settings</a>
+    </nav>
+    <div class="bottom">Hermes runtime · Local mode<br/>4 global slots</div>
+  </aside>
+
+  <main class="main">
+    <div class="topbar">
+      <div class="title">
+        <h1>Usage & Budget</h1>
+        <p>Куда уходят токены и деньги, какие роли создают rework и где система тратит больше нормы.</p>
+      </div>
+      <div class="actions">
+        <button class="btn">Last 30 days</button>
+        <button class="btn primary">Budget policies</button>
+      </div>
+    </div>
+
+    <div class="tabs">
+      <div class="tab active">Overview</div>
+      <div class="tab">Projects</div>
+      <div class="tab">Roles</div>
+      <div class="tab">Models</div>
+      <div class="tab">Runs</div>
+      <div class="tab">Budgets</div>
+    </div>
+
+    <section class="metrics">
+      <div class="metric"><span class="muted">Spend today</span><b>$6.42</b></div>
+      <div class="metric"><span class="muted">30 day spend</span><b>$128.73</b></div>
+      <div class="metric"><span class="muted">Tokens today</span><b>1.84M</b></div>
+      <div class="metric"><span class="muted">Cache hit ratio</span><b>64%</b></div>
+      <div class="metric"><span class="muted">Recovery share</span><b class="warn">18%</b></div>
+    </section>
+
+    <div class="grid">
+      <div>
+        <section class="card">
+          <div class="row"><h3>Project budgets</h3><span class="muted">effective spend vs configured limits</span></div>
+
+          <div class="budget">
+            <div class="head"><div><b>Ebb AI Hub</b><div class="muted">Active EPIC-42</div></div><div>$18.72 / $30 soft</div></div>
+            <div class="bar"><span style="width:62%"></span></div>
+          </div>
+
+          <div class="budget">
+            <div class="head"><div><b>xRocket SDK</b><div class="muted">2 active tasks</div></div><div>$7.91 / $20 soft</div></div>
+            <div class="bar"><span style="width:40%"></span></div>
+          </div>
+
+          <div class="budget">
+            <div class="head"><div><b>Ebb Censor Bot</b><div class="muted">TASK-508 recovery</div></div><div class="warn">$3.00 / $3 soft</div></div>
+            <div class="bar"><span style="width:100%"></span></div>
+          </div>
+        </section>
+
+        <section class="card" style="margin-top:16px">
+          <div class="row"><h3>Spend by role</h3><span class="muted">30 days</span></div>
+          <table class="table">
+            <thead><tr><th>Role</th><th>Spend</th><th>Share</th><th>Runs</th><th>Avg/run</th></tr></thead>
+            <tbody>
+              <tr><td>Senior Developer</td><td>$41.18</td><td>32%</td><td>39</td><td>$1.06</td></tr>
+              <tr><td>Middle Developer</td><td>$24.61</td><td>19%</td><td>71</td><td>$0.35</td></tr>
+              <tr><td>Reviewer</td><td>$18.42</td><td>14%</td><td>63</td><td>$0.29</td></tr>
+              <tr><td>QA</td><td>$13.20</td><td>10%</td><td>58</td><td>$0.23</td></tr>
+              <tr><td>Coordinator</td><td>$9.84</td><td>8%</td><td>22</td><td>$0.45</td></tr>
+              <tr><td>Architect</td><td>$8.19</td><td>6%</td><td>11</td><td>$0.74</td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section class="card" style="margin-top:16px">
+          <div class="row"><h3>Spend by reason</h3><span class="muted">where money actually goes</span></div>
+          <div class="split">
+            <div class="stat"><span class="muted">Initial development</span><b>43%</b></div>
+            <div class="stat"><span class="muted">Review + QA</span><b>21%</b></div>
+            <div class="stat"><span class="muted">Rework</span><b class="warn">12%</b></div>
+            <div class="stat"><span class="muted">Recovery</span><b class="warn">18%</b></div>
+          </div>
+        </section>
+      </div>
+
+      <div>
+        <section class="card">
+          <div class="row"><h3>Efficiency</h3><span class="good">Healthy</span></div>
+          <div class="kv">
+            <div>Cached input</div><div>64%</div>
+            <div>Avg initial context</div><div>28.4k tokens</div>
+            <div>Avg output</div><div>6.2k tokens</div>
+            <div>AI runs/task</div><div>3.7</div>
+            <div>Rework cycles/task</div><div>0.8</div>
+            <div>Deterministic checks</div><div>41,812 · $0</div>
+          </div>
+        </section>
+
+        <section class="card" style="margin-top:16px">
+          <div class="row"><h3>Cost anomalies</h3><span class="warn">2</span></div>
+          <div class="alert bad">
+            <b>RUN-1931 · Senior Developer</b>
+            <div class="muted">$5.42 · 6.7× above role median</div>
+          </div>
+          <div class="alert">
+            <b>TASK-508 · Recovery</b>
+            <div class="muted">Recovery now represents 71% of total task cost.</div>
+          </div>
+        </section>
+
+        <section class="card" style="margin-top:16px">
+          <div class="row"><h3>Model comparison</h3><span class="muted">effective cost</span></div>
+          <table class="table">
+            <thead><tr><th>Role/model</th><th>Avg cost</th><th>Rework</th></tr></thead>
+            <tbody>
+              <tr><td>Middle / luna</td><td>$0.31</td><td>22%</td></tr>
+              <tr><td>Senior / terra</td><td>$0.94</td><td>8%</td></tr>
+              <tr><td>Reviewer / terra</td><td>$0.28</td><td>—</td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section class="card" style="margin-top:16px">
+          <div class="row"><h3>Budget policy</h3><span class="chip">Global</span></div>
+          <div class="kv">
+            <div>Daily soft</div><div>$30</div>
+            <div>Daily hard</div><div>$100</div>
+            <div>Hard limit action</div><div>DENY new AI runs</div>
+            <div>Soft limit action</div><div>ASK</div>
+            <div>Reservation mode</div><div>historical p90</div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <div class="footer-note">Usage & Budget concept v0.1 · every AI invocation is attributable to project, epic, task, role, model and trigger reason</div>
+  </main>
+</div>
+</body>
+</html>

@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Agent Orchestrator — Task View Concept</title>
+<style>
+:root{
+  --bg:#0b0d10; --panel:#12161b; --panel2:#171c22; --line:#252c34;
+  --text:#eef2f6; --muted:#8e9aa7; --accent:#8ab4ff; --good:#77d19a;
+  --warn:#e8c66a; --bad:#ef8e8e; --chip:#202731; --violet:#b79cff;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto}
+.app{display:grid;grid-template-columns:230px 1fr;min-height:100vh}
+.sidebar{border-right:1px solid var(--line);padding:20px 16px;display:flex;flex-direction:column;gap:22px}
+.brand{font-size:18px;font-weight:700}.brand small{display:block;color:var(--muted);font-size:11px;font-weight:500;margin-top:3px}
+.nav{display:grid;gap:6px}.nav a{padding:10px 12px;border-radius:8px;color:var(--muted);text-decoration:none}.nav a.active{background:var(--panel2);color:var(--text)}
+.bottom{margin-top:auto;color:var(--muted);font-size:12px}
+.main{padding:24px 28px 36px}
+.topbar{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;margin-bottom:18px}
+.title h1{margin:0;font-size:24px}.title p{margin:5px 0 0;color:var(--muted)}
+.actions{display:flex;gap:10px}.btn{border:1px solid var(--line);background:var(--panel);color:var(--text);padding:9px 12px;border-radius:8px}.btn.primary{background:#eaf1ff;color:#111;border-color:#eaf1ff;font-weight:650}
+.tabs{display:flex;gap:8px;border-bottom:1px solid var(--line);margin-bottom:18px}.tab{padding:9px 11px;color:var(--muted)}.tab.active{color:var(--text);border-bottom:2px solid var(--accent)}
+.metrics{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:16px}
+.metric{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}.metric b{display:block;font-size:21px;margin-top:5px}
+.grid{display:grid;grid-template-columns:1.7fr 1fr;gap:16px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+.card h3{margin:0 0 12px;font-size:14px}.muted{color:var(--muted)}.good{color:var(--good)}.warn{color:var(--warn)}.bad{color:var(--bad)}.violet{color:var(--violet)}
+.row{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.chip{display:inline-flex;padding:4px 7px;border-radius:999px;background:var(--chip);color:var(--muted);font-size:11px}
+.progress{height:8px;background:#222a32;border-radius:999px;overflow:hidden;margin:10px 0 6px}.progress span{display:block;height:100%;background:var(--accent);width:62%}
+.pipeline{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
+.stage{padding:10px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);text-align:center;font-size:11px}
+.stage.done{border-color:#315c43}.stage.active{border-color:#5577b8}.stage.wait{opacity:.7}
+.contract{display:grid;gap:12px}.block{padding:12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2)}
+.block strong{display:block;margin-bottom:5px}.block ul{margin:6px 0 0 18px;padding:0}.block li{margin:4px 0}
+.run{display:grid;grid-template-columns:125px 1fr auto;gap:12px;align-items:start;padding:12px 0;border-top:1px solid var(--line)}
+.run:first-of-type{border-top:0}.run .kind{font-size:11px;color:var(--muted)}.run b{display:block}.run small{color:var(--muted)}
+.finding{padding:10px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);margin-top:8px}
+.finding.major{border-left:3px solid var(--bad)}.finding.minor{border-left:3px solid var(--warn)}
+.kv{display:grid;grid-template-columns:125px 1fr;gap:8px 12px;font-size:12px}.kv div:nth-child(odd){color:var(--muted)}
+.branch{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;background:#0f1318;border:1px solid var(--line);padding:8px 10px;border-radius:8px}
+.timeline{display:grid;gap:10px}.event{padding-left:14px;border-left:2px solid var(--line)}.event b{font-size:12px}.event div{font-size:11px;color:var(--muted);margin-top:2px}
+.approval{border-left:3px solid var(--warn);padding-left:12px;margin:12px 0}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block;background:var(--good);margin-right:6px}.busy{background:var(--accent)}.idle{background:#65717d}
+.footer-note{margin-top:16px;color:var(--muted);font-size:11px}
+@media(max-width:1000px){.app{grid-template-columns:1fr}.sidebar{display:none}.grid{grid-template-columns:1fr}.metrics{grid-template-columns:1fr 1fr}.pipeline{grid-template-columns:1fr 1fr}.run{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">Agent Orchestrator<small>Local workspace</small></div>
+    <nav class="nav">
+      <a href="#">Dashboard</a>
+      <a href="#">Projects</a>
+      <a class="active" href="#">Epics & Tasks</a>
+      <a href="#">Execution Queue</a>
+      <a href="#">Approvals <span class="warn">3</span></a>
+      <a href="#">Agents</a>
+      <a href="#">Usage & Budget</a>
+      <a href="#">Settings</a>
+    </nav>
+    <div class="bottom">Hermes runtime · Local mode<br/>4 parallel slots</div>
+  </aside>
+
+  <main class="main">
+    <div class="topbar">
+      <div class="title">
+        <h1>TASK-425 · Anthropic Streaming</h1>
+        <p>Ebb AI Hub · EPIC-42 · assigned: <b>Senior Developer</b> · target: <b>epic/42-anthropic-provider</b></p>
+      </div>
+      <div class="actions">
+        <button class="btn">Pause task</button>
+        <button class="btn">Change priority</button>
+        <button class="btn primary">Open in worktree</button>
+      </div>
+    </div>
+
+    <div class="tabs">
+      <div class="tab active">Overview</div>
+      <div class="tab">Contract</div>
+      <div class="tab">Runs</div>
+      <div class="tab">Review</div>
+      <div class="tab">QA</div>
+      <div class="tab">Git</div>
+      <div class="tab">Usage</div>
+    </div>
+
+    <section class="metrics">
+      <div class="metric"><span class="muted">Status</span><b>QA</b></div>
+      <div class="metric"><span class="muted">Priority</span><b>High</b></div>
+      <div class="metric"><span class="muted">Attempts</span><b>2</b></div>
+      <div class="metric"><span class="muted">AI spend</span><b>$1.94</b></div>
+      <div class="metric"><span class="muted">Blocked</span><b class="good">No</b></div>
+    </section>
+
+    <div class="grid">
+      <div>
+        <section class="card">
+          <div class="row"><h3>Task workflow</h3><span class="chip">standard workflow</span></div>
+          <div class="pipeline">
+            <div class="stage done">Development ✓</div>
+            <div class="stage done">Review ✓</div>
+            <div class="stage active">QA ●</div>
+            <div class="stage wait">Integration</div>
+            <div class="stage wait">Epic branch</div>
+          </div>
+        </section>
+
+        <section class="card" style="margin-top:16px">
+          <div class="row"><h3>Task contract</h3><span class="chip">Approved</span></div>
+          <div class="contract">
+            <div class="block">
+              <strong>Goal</strong>
+              Реализовать streaming-ответы Anthropic через общий streaming API проекта.
+            </div>
+            <div class="block">
+              <strong>Requirements</strong>
+              <ul>
+                <li>Нормализовать provider-specific streaming events.</li>
+                <li>Поддерживать корректное завершение stream.</li>
+                <li>Не пропускать Anthropic-specific типы в core API.</li>
+              </ul>
+            </div>
+            <div class="block">
+              <strong>Acceptance Criteria</strong>
+              <ul>
+                <li class="good">✓ Обычный streaming response работает.</li>
+                <li class="good">✓ Provider errors нормализуются.</li>
+                <li class="warn">● QA проверяет disconnect/reconnect edge cases.</li>
+                <li>○ Integration with tool calling — pending.</li>
+              </ul>
+            </div>
+            <div class="block">
+              <strong>Non-goals</strong>
+              Batch API и fine-tuning не входят в эту задачу.
+            </div>
+          </div>
+        </section>
+
+        <section class="card" style="margin-top:16px">
+          <div class="row"><h3>Agent runs</h3><span class="muted">4 runs</span></div>
+
+          <div class="run">
+            <div class="kind">RUN-821<br/>Developer</div>
+            <div><b>Senior Developer</b><small>Initial implementation · Hermes session dev-425</small></div>
+            <span class="chip good">completed</span>
+          </div>
+
+          <div class="run">
+            <div class="kind">RUN-829<br/>Reviewer</div>
+            <div><b>Reviewer</b><small>2 findings · changes requested</small></div>
+            <span class="chip warn">rework</span>
+          </div>
+
+          <div class="run">
+            <div class="kind">RUN-834<br/>Developer</div>
+            <div><b>Senior Developer</b><small>Resumed dev-425 · fixed timeout handling and missing test</small></div>
+            <span class="chip good">completed</span>
+          </div>
+
+          <div class="run">
+            <div class="kind">RUN-841<br/>QA</div>
+            <div><b><span class="dot busy"></span>QA Agent</b><small>Running disconnect/reconnect scenarios</small></div>
+            <span class="chip">8m</span>
+          </div>
+        </section>
+
+        <section class="card" style="margin-top:16px">
+          <div class="row"><h3>Review findings</h3><span class="good">Resolved</span></div>
+          <div class="finding major">
+            <b>Major · Correctness</b>
+            <div>Stream timeout was not propagated through normalized error handling.</div>
+            <small class="good">Resolved in commit 81e2f7a</small>
+          </div>
+          <div class="finding minor">
+            <b>Minor · Tests</b>
+            <div>Missing test for empty terminal event.</div>
+            <small class="good">Resolved in commit 81e2f7a</small>
+          </div>
+        </section>
+      </div>
+
+      <div>
+        <section class="card">
+          <h3>Git</h3>
+          <div class="branch">task/425-anthropic-streaming</div>
+          <div class="kv" style="margin-top:12px">
+            <div>Base</div><div>epic/42-anthropic-provider</div>
+            <div>HEAD</div><div>81e2f7a</div>
+            <div>Worktree</div><div class="good">Clean</div>
+            <div>PR</div><div>#120 → epic/42</div>
+            <div>Integration</div><div class="muted">Waiting for QA</div>
+          </div>
+        </section>
+
+        <section class="card" style="margin-top:16px">
+          <div class="row"><h3>Current agent</h3><span class="chip">RUN-841</span></div>
+          <div><span class="dot busy"></span><b>QA Agent</b></div>
+          <div class="muted" style="margin-top:6px">Hermes · scoped QA session · Local execution</div>
+          <div class="progress"><span style="width:68%"></span></div>
+          <div class="row"><span class="muted">Acceptance criteria verified</span><span>3 / 4</span></div>
+        </section>
+
+        <section class="card" style="margin-top:16px">
+          <div class="row"><h3>Recovery</h3><span class="good">Healthy</span></div>
+          <div class="timeline">
+            <div class="event"><b>Attempt #1 completed</b><div>Reviewer returned 2 findings</div></div>
+            <div class="event"><b>Same Developer session resumed</b><div>Context reused · no escalation</div></div>
+            <div class="event"><b>Attempt #2 passed Review</b><div>No repeated failure detected</div></div>
+          </div>
+        </section>
+
+        <section class="card" style="margin-top:16px">
+          <div class="row"><h3>Usage</h3><span>$1.94</span></div>
+          <div class="kv">
+            <div>Development</div><div>$1.21</div>
+            <div>Review</div><div>$0.31</div>
+            <div>Rework</div><div>$0.28</div>
+            <div>QA</div><div>$0.14</div>
+            <div>Tokens</div><div>186k</div>
+            <div>Cached input</div><div>61%</div>
+          </div>
+        </section>
+
+        <section class="card" style="margin-top:16px">
+          <div class="row"><h3>Dependencies</h3><span class="good">Satisfied</span></div>
+          <div class="kv">
+            <div>Requires</div><div>TASK-422 ✓</div>
+            <div>Blocks</div><div>TASK-428</div>
+            <div>Resource locks</div><div>none</div>
+          </div>
+        </section>
+
+        <section class="card" style="margin-top:16px">
+          <div class="row"><h3>Recent events</h3><span class="muted">live</span></div>
+          <div class="timeline">
+            <div class="event"><b>QA started</b><div>8m ago</div></div>
+            <div class="event"><b>Review passed</b><div>10m ago</div></div>
+            <div class="event"><b>Developer rework completed</b><div>18m ago</div></div>
+            <div class="event"><b>Review changes requested</b><div>27m ago</div></div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <div class="footer-note">Task View concept v0.1 · Contract + Runs + Review + QA + Git + Recovery + Usage in one place</div>
+  </main>
+</div>
+</body>
+</html>

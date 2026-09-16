@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Agent Orchestrator — Dashboard Concept</title>
+<style>
+:root{
+  --bg:#0b0d10; --panel:#12161b; --panel2:#171c22; --line:#252c34;
+  --text:#eef2f6; --muted:#8e9aa7; --accent:#8ab4ff; --good:#77d19a;
+  --warn:#e8c66a; --bad:#ef8e8e; --chip:#202731;
+}
+*{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto}
+.app{display:grid;grid-template-columns:230px 1fr;min-height:100vh}
+.sidebar{border-right:1px solid var(--line);padding:20px 16px;display:flex;flex-direction:column;gap:22px}
+.brand{font-size:18px;font-weight:700;letter-spacing:.2px}.brand small{display:block;color:var(--muted);font-size:11px;font-weight:500;margin-top:3px}
+.nav{display:grid;gap:6px}.nav a{padding:10px 12px;border-radius:8px;color:var(--muted);text-decoration:none}.nav a.active{background:var(--panel2);color:var(--text)}
+.bottom{margin-top:auto;color:var(--muted);font-size:12px}
+.main{padding:24px 28px 36px}
+.topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:22px}
+.title h1{margin:0;font-size:24px}.title p{margin:5px 0 0;color:var(--muted)}
+.actions{display:flex;gap:10px}.btn{border:1px solid var(--line);background:var(--panel);color:var(--text);padding:9px 12px;border-radius:8px}.btn.primary{background:#eaf1ff;color:#111;border-color:#eaf1ff;font-weight:650}
+.grid{display:grid;grid-template-columns:2fr 1fr;gap:16px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+.card h3{margin:0 0 12px;font-size:14px}.muted{color:var(--muted)}
+.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px}
+.metric{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+.metric b{display:block;font-size:24px;margin-top:6px}
+.row{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.progress{height:8px;background:#222a32;border-radius:999px;overflow:hidden;margin:10px 0 6px}.progress span{display:block;height:100%;background:var(--accent);width:72%}
+.project{padding:12px 0;border-top:1px solid var(--line)}.project:first-of-type{border-top:0}
+.chip{display:inline-flex;padding:4px 7px;border-radius:999px;background:var(--chip);color:var(--muted);font-size:11px}
+.good{color:var(--good)}.warn{color:var(--warn)}.bad{color:var(--bad)}
+.queue{display:grid;gap:9px}.qitem{padding:11px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2)}
+.qitem .meta{display:flex;gap:8px;margin-top:6px;color:var(--muted);font-size:11px}
+.approval{border-left:3px solid var(--warn);padding-left:12px;margin:12px 0}
+.chat{margin-top:16px}.chatbox{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px}
+.chatinput{margin-top:10px;border:1px solid var(--line);background:#0f1318;color:var(--muted);padding:11px;border-radius:9px}
+.agentgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.agent{padding:10px;border-radius:8px;background:var(--panel2);border:1px solid var(--line)}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block;background:var(--good);margin-right:6px}.idle{background:#65717d}
+.footer-note{margin-top:16px;color:var(--muted);font-size:11px}
+@media(max-width:900px){.app{grid-template-columns:1fr}.sidebar{display:none}.grid{grid-template-columns:1fr}.metrics{grid-template-columns:1fr 1fr}}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">Agent Orchestrator<small>Local workspace</small></div>
+    <nav class="nav">
+      <a class="active" href="#">Dashboard</a>
+      <a href="#">Projects</a>
+      <a href="#">Epics & Tasks</a>
+      <a href="#">Execution Queue</a>
+      <a href="#">Approvals <span class="warn">3</span></a>
+      <a href="#">Agents</a>
+      <a href="#">Usage & Budget</a>
+      <a href="#">Settings</a>
+    </nav>
+    <div class="bottom">Hermes runtime · Local mode<br/>4 parallel slots</div>
+  </aside>
+
+  <main class="main">
+    <div class="topbar">
+      <div class="title"><h1>Dashboard</h1><p>Что происходит прямо сейчас — без лишнего шума.</p></div>
+      <div class="actions"><button class="btn">Pause all</button><button class="btn primary">New request</button></div>
+    </div>
+
+    <section class="metrics">
+      <div class="metric"><span class="muted">Running agents</span><b>3 / 4</b></div>
+      <div class="metric"><span class="muted">Active work</span><b>12</b></div>
+      <div class="metric"><span class="muted">Need approval</span><b class="warn">3</b></div>
+      <div class="metric"><span class="muted">AI spend today</span><b>$6.42</b></div>
+    </section>
+
+    <div class="grid">
+      <div>
+        <section class="card">
+          <div class="row"><h3>Active projects</h3><span class="muted">3 projects</span></div>
+
+          <div class="project">
+            <div class="row"><div><b>Ebb AI Hub</b><div class="muted">EPIC-42 · Anthropic Provider</div></div><span class="chip">High</span></div>
+            <div class="progress"><span></span></div>
+            <div class="row"><span class="muted">7 / 9 required tasks</span><span>72%</span></div>
+          </div>
+
+          <div class="project">
+            <div class="row"><div><b>xRocket SDK</b><div class="muted">TASK-116 · Improve retries</div></div><span class="chip">Normal</span></div>
+            <div class="progress"><span style="width:46%"></span></div>
+            <div class="row"><span class="muted">Review</span><span>46%</span></div>
+          </div>
+
+          <div class="project">
+            <div class="row"><div><b>Ebb Censor Bot</b><div class="muted">No active development</div></div><span class="chip">Idle</span></div>
+          </div>
+        </section>
+
+        <section class="card chat">
+          <h3>Coordinator</h3>
+          <div class="chatbox">
+            <div><span class="dot"></span><b>Coordinator</b></div>
+            <div style="margin-top:7px">EPIC-42 идёт по плану. TASK-425 находится в QA, TASK-426 — в Review. Один новый dependency proposal требует анализа, но от вас пока действий не требуется.</div>
+          </div>
+          <div class="chatinput">Напишите, что нужно сделать…</div>
+        </section>
+      </div>
+
+      <div>
+        <section class="card">
+          <div class="row"><h3>Approval Inbox</h3><span class="warn">3 pending</span></div>
+          <div class="approval"><b>Epic plan change</b><div class="muted">EPIC-42 · новая prerequisite task</div></div>
+          <div class="approval"><b>Permission request</b><div class="muted">DevOps хочет выполнить docker push</div></div>
+          <div class="approval"><b>Final merge</b><div class="muted">TASK-116 → master</div></div>
+          <button class="btn" style="width:100%;margin-top:6px">Open approvals</button>
+        </section>
+
+        <section class="card" style="margin-top:16px">
+          <div class="row"><h3>Execution Queue</h3><span class="muted">3 running</span></div>
+          <div class="queue">
+            <div class="qitem"><div><span class="dot"></span><b>Senior Developer</b></div><div class="meta"><span>TASK-425</span><span>12m</span><span>Hermes</span></div></div>
+            <div class="qitem"><div><span class="dot"></span><b>Reviewer</b></div><div class="meta"><span>TASK-426</span><span>4m</span><span>Hermes</span></div></div>
+            <div class="qitem"><div><span class="dot"></span><b>QA</b></div><div class="meta"><span>TASK-419</span><span>2m</span><span>Hermes</span></div></div>
+            <div class="qitem"><div><span class="dot idle"></span><b>Integration Agent</b></div><div class="meta"><span>waiting for slot</span></div></div>
+          </div>
+        </section>
+
+        <section class="card" style="margin-top:16px">
+          <h3>Agent pool</h3>
+          <div class="agentgrid">
+            <div class="agent"><span class="dot"></span>Coordinator</div>
+            <div class="agent"><span class="dot"></span>Senior</div>
+            <div class="agent"><span class="dot idle"></span>Architect</div>
+            <div class="agent"><span class="dot idle"></span>DevOps</div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <div class="footer-note">Concept v0.1 · Local-first · Orchestrator is source of truth · Hermes as first Agent Runtime</div>
+  </main>
+</div>
+</body>
+</html>

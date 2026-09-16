@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Agent Orchestrator — Approval Inbox Concept</title>
+<style>
+:root{
+  --bg:#0b0d10; --panel:#12161b; --panel2:#171c22; --line:#252c34;
+  --text:#eef2f6; --muted:#8e9aa7; --accent:#8ab4ff; --good:#77d19a;
+  --warn:#e8c66a; --bad:#ef8e8e; --chip:#202731; --violet:#b79cff;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto}
+.app{display:grid;grid-template-columns:230px 1fr;min-height:100vh}
+.sidebar{border-right:1px solid var(--line);padding:20px 16px;display:flex;flex-direction:column;gap:22px}
+.brand{font-size:18px;font-weight:700}.brand small{display:block;color:var(--muted);font-size:11px;font-weight:500;margin-top:3px}
+.nav{display:grid;gap:6px}.nav a{padding:10px 12px;border-radius:8px;color:var(--muted);text-decoration:none}.nav a.active{background:var(--panel2);color:var(--text)}
+.bottom{margin-top:auto;color:var(--muted);font-size:12px}
+.main{padding:24px 28px 36px}
+.topbar{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;margin-bottom:18px}
+.title h1{margin:0;font-size:24px}.title p{margin:5px 0 0;color:var(--muted)}
+.actions{display:flex;gap:10px}.btn{border:1px solid var(--line);background:var(--panel);color:var(--text);padding:9px 12px;border-radius:8px}.btn.primary{background:#eaf1ff;color:#111;border-color:#eaf1ff;font-weight:650}
+.tabs{display:flex;gap:8px;border-bottom:1px solid var(--line);margin-bottom:18px}.tab{padding:9px 11px;color:var(--muted)}.tab.active{color:var(--text);border-bottom:2px solid var(--accent)}
+.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px}
+.metric{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}.metric b{display:block;font-size:21px;margin-top:5px}
+.grid{display:grid;grid-template-columns:1.25fr 1fr;gap:16px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+.card h3{margin:0 0 12px;font-size:14px}.muted{color:var(--muted)}.good{color:var(--good)}.warn{color:var(--warn)}.bad{color:var(--bad)}.violet{color:var(--violet)}
+.row{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.chip{display:inline-flex;padding:4px 7px;border-radius:999px;background:var(--chip);color:var(--muted);font-size:11px}
+.filter{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.filter .chip.active{background:#eaf1ff;color:#111}
+.item{padding:14px 0;border-top:1px solid var(--line);display:grid;grid-template-columns:1fr auto;gap:14px}
+.item:first-of-type{border-top:0}.item h4{margin:0 0 4px;font-size:14px}
+.meta{display:flex;gap:7px;flex-wrap:wrap;margin-top:8px}
+.priority{font-size:11px;padding:4px 7px;border-radius:999px;background:#2a2416;color:var(--warn)}
+.detail{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;position:sticky;top:18px}
+.detail h2{font-size:18px;margin:0 0 6px}.section{border-top:1px solid var(--line);padding-top:13px;margin-top:13px}
+.kv{display:grid;grid-template-columns:130px 1fr;gap:8px 12px;font-size:12px}.kv div:nth-child(odd){color:var(--muted)}
+.diff{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;background:#0f1318;border:1px solid var(--line);padding:10px;border-radius:8px;white-space:pre-wrap}
+.cta{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px}
+.btn.goodbtn{border-color:#315c43;background:#173021;color:#b9efca}.btn.badbtn{border-color:#653535;background:#2f1818;color:#ffc2c2}
+.btn.full{grid-column:1/-1}
+.note{padding:10px 12px;border-left:3px solid var(--accent);background:var(--panel2);border-radius:6px;margin-top:10px}
+.warnbox{padding:10px 12px;border-left:3px solid var(--warn);background:var(--panel2);border-radius:6px;margin-top:10px}
+.timeline{display:grid;gap:9px}.event{padding-left:12px;border-left:2px solid var(--line)}.event b{font-size:12px}.event div{font-size:11px;color:var(--muted)}
+.footer-note{margin-top:16px;color:var(--muted);font-size:11px}
+@media(max-width:980px){.app{grid-template-columns:1fr}.sidebar{display:none}.grid{grid-template-columns:1fr}.metrics{grid-template-columns:1fr 1fr}.detail{position:static}}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">Agent Orchestrator<small>Local workspace</small></div>
+    <nav class="nav">
+      <a href="#">Dashboard</a>
+      <a href="#">Projects</a>
+      <a href="#">Epics & Tasks</a>
+      <a href="#">Execution Queue</a>
+      <a class="active" href="#">Approvals <span class="warn">5</span></a>
+      <a href="#">Agents</a>
+      <a href="#">Usage & Budget</a>
+      <a href="#">Settings</a>
+    </nav>
+    <div class="bottom">Hermes runtime · Local mode<br/>4 parallel slots</div>
+  </aside>
+
+  <main class="main">
+    <div class="topbar">
+      <div class="title">
+        <h1>Approval Inbox</h1>
+        <p>Только решения, которые требуют человека. Всё остальное Orchestrator обрабатывает автоматически по policy.</p>
+      </div>
+      <div class="actions">
+        <button class="btn">History</button>
+        <button class="btn">Approval policies</button>
+      </div>
+    </div>
+
+    <section class="metrics">
+      <div class="metric"><span class="muted">Pending</span><b class="warn">5</b></div>
+      <div class="metric"><span class="muted">High priority</span><b>2</b></div>
+      <div class="metric"><span class="muted">Merge approvals</span><b>1</b></div>
+      <div class="metric"><span class="muted">Oldest request</span><b>18m</b></div>
+    </section>
+
+    <div class="grid">
+      <section class="card">
+        <div class="filter">
+          <span class="chip active">All 5</span>
+          <span class="chip">Plans 1</span>
+          <span class="chip">Architecture 1</span>
+          <span class="chip">Permissions 1</span>
+          <span class="chip">Budget 1</span>
+          <span class="chip">Merge 1</span>
+        </div>
+
+        <div class="item">
+          <div>
+            <h4>EPIC-42 · Plan change</h4>
+            <div class="muted">Coordinator предлагает добавить prerequisite TASK-430 для shared streaming fixtures.</div>
+            <div class="meta">
+              <span class="chip">Ebb AI Hub</span><span class="chip">PLAN_CHANGE</span><span class="priority">High</span>
+            </div>
+          </div>
+          <div class="warn">18m</div>
+        </div>
+
+        <div class="item">
+          <div>
+            <h4>Architecture decision · Provider interface</h4>
+            <div class="muted">Architect обнаружил два допустимых варианта normalization contract.</div>
+            <div class="meta">
+              <span class="chip">Ebb AI Hub</span><span class="chip">ARCHITECTURE</span>
+            </div>
+          </div>
+          <div class="muted">11m</div>
+        </div>
+
+        <div class="item">
+          <div>
+            <h4>DevOps permission request</h4>
+            <div class="muted">TASK-116 просит выполнить docker push в тестовый registry.</div>
+            <div class="meta">
+              <span class="chip">xRocket SDK</span><span class="chip">PERMISSION</span>
+            </div>
+          </div>
+          <div class="muted">7m</div>
+        </div>
+
+        <div class="item">
+          <div>
+            <h4>Task budget override</h4>
+            <div class="muted">TASK-508 достигла soft limit $3.00 и запрашивает Senior recovery run.</div>
+            <div class="meta">
+              <span class="chip">Ebb Censor Bot</span><span class="chip">BUDGET</span>
+            </div>
+          </div>
+          <div class="muted">5m</div>
+        </div>
+
+        <div class="item">
+          <div>
+            <h4>Final merge · TASK-116 → master</h4>
+            <div class="muted">Review, QA и Integration прошли успешно. Изменения готовы к финальному merge.</div>
+            <div class="meta">
+              <span class="chip">xRocket SDK</span><span class="chip">FINAL_MERGE</span><span class="priority">High</span>
+            </div>
+          </div>
+          <div class="muted">2m</div>
+        </div>
+      </section>
+
+      <aside class="detail">
+        <div class="row">
+          <div>
+            <h2>EPIC-42 · Plan change</h2>
+            <div class="muted">Requested by Coordinator · 18 minutes ago</div>
+          </div>
+          <span class="priority">High</span>
+        </div>
+
+        <div class="section">
+          <h3>Что предлагается</h3>
+          <div class="note">
+            Добавить новую обязательную TASK-430 — <b>Shared streaming fixtures</b> — и сделать TASK-428 Integration tests зависимой от неё.
+          </div>
+        </div>
+
+        <div class="section">
+          <h3>Почему</h3>
+          <div class="muted">
+            QA и Developer обнаружили, что текущие integration fixtures дублируют provider-specific события и не позволяют корректно тестировать streaming + tool calling вместе.
+          </div>
+        </div>
+
+        <div class="section">
+          <h3>Изменение плана</h3>
+          <div class="diff">BEFORE
+TASK-425 ─┐
+TASK-426 ─┼─→ TASK-428
+TASK-427 ─┘
+
+AFTER
+TASK-425 ─┐
+TASK-426 ─┼─→ TASK-430 ─→ TASK-428
+TASK-427 ─┘</div>
+        </div>
+
+        <div class="section">
+          <h3>Impact</h3>
+          <div class="kv">
+            <div>Scope</div><div>+1 required task</div>
+            <div>Assigned role</div><div>Middle Developer</div>
+            <div>Architecture</div><div class="good">No public API change</div>
+            <div>Estimated delay</div><div>Not calculated by AI</div>
+            <div>Budget impact</div><div>Expected +$0.35–$0.80 based on role history</div>
+          </div>
+          <div class="warnbox">
+            Это изменение approved Epic plan, поэтому текущая policy требует твоего подтверждения.
+          </div>
+        </div>
+
+        <div class="section">
+          <h3>Evidence</h3>
+          <div class="timeline">
+            <div class="event"><b>Developer proposal</b><div>TASK-428 · shared fixtures missing</div></div>
+            <div class="event"><b>QA confirmation</b><div>Combined streaming scenario cannot be expressed cleanly</div></div>
+            <div class="event"><b>Coordinator analysis</b><div>Proposal accepted as plan change candidate</div></div>
+          </div>
+        </div>
+
+        <div class="cta">
+          <button class="btn goodbtn">Approve</button>
+          <button class="btn badbtn">Reject</button>
+          <button class="btn full">Request changes</button>
+        </div>
+      </aside>
+    </div>
+
+    <div class="footer-note">Approval Inbox concept v0.1 · approvals are typed, auditable and never generated just for routine state transitions</div>
+  </main>
+</div>
+</body>
+</html>

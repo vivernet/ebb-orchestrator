@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Agent Orchestrator — Agent Run Detail Concept</title>
+<style>
+:root{
+  --bg:#0b0d10; --panel:#12161b; --panel2:#171c22; --line:#252c34;
+  --text:#eef2f6; --muted:#8e9aa7; --accent:#8ab4ff; --good:#77d19a;
+  --warn:#e8c66a; --bad:#ef8e8e; --chip:#202731; --violet:#b79cff;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto}
+.app{display:grid;grid-template-columns:230px 1fr;min-height:100vh}
+.sidebar{border-right:1px solid var(--line);padding:20px 16px;display:flex;flex-direction:column;gap:22px}
+.brand{font-size:18px;font-weight:700}.brand small{display:block;color:var(--muted);font-size:11px;font-weight:500;margin-top:3px}
+.nav{display:grid;gap:6px}.nav a{padding:10px 12px;border-radius:8px;color:var(--muted);text-decoration:none}.nav a.active{background:var(--panel2);color:var(--text)}
+.bottom{margin-top:auto;color:var(--muted);font-size:12px}
+.main{padding:24px 28px 36px}
+.topbar{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;margin-bottom:18px}
+.title h1{margin:0;font-size:24px}.title p{margin:5px 0 0;color:var(--muted)}
+.actions{display:flex;gap:10px}.btn{border:1px solid var(--line);background:var(--panel);color:var(--text);padding:9px 12px;border-radius:8px}.btn.danger{border-color:#653535;background:#2f1818;color:#ffc2c2}.btn.primary{background:#eaf1ff;color:#111;border-color:#eaf1ff;font-weight:650}
+.tabs{display:flex;gap:8px;border-bottom:1px solid var(--line);margin-bottom:18px}.tab{padding:9px 11px;color:var(--muted)}.tab.active{color:var(--text);border-bottom:2px solid var(--accent)}
+.metrics{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:16px}
+.metric{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}.metric b{display:block;font-size:20px;margin-top:5px}
+.grid{display:grid;grid-template-columns:1.75fr 1fr;gap:16px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+.card h3{margin:0 0 12px;font-size:14px}.muted{color:var(--muted)}.good{color:var(--good)}.warn{color:var(--warn)}.bad{color:var(--bad)}
+.row{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.chip{display:inline-flex;padding:4px 7px;border-radius:999px;background:var(--chip);color:var(--muted);font-size:11px}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:6px}.busy{background:var(--accent)}.ok{background:var(--good)}.wait{background:var(--warn)}.fail{background:var(--bad)}
+.timeline{display:grid;gap:10px}
+.event{display:grid;grid-template-columns:92px 1fr;gap:12px;padding:11px 0;border-top:1px solid var(--line)}
+.event:first-of-type{border-top:0}.time{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;color:var(--muted)}
+.evbody{border-left:2px solid var(--line);padding-left:12px}.evbody b{display:block}.evbody small{display:block;color:var(--muted);margin-top:3px}
+.toolcall{margin-top:8px;background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:10px 12px}
+.toolcall code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;white-space:pre-wrap}
+.output{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;background:#0f1318;border:1px solid var(--line);padding:12px;border-radius:9px;white-space:pre-wrap;max-height:220px;overflow:auto}
+.permission{display:grid;grid-template-columns:1fr auto;gap:12px;padding:10px 0;border-top:1px solid var(--line)}.permission:first-of-type{border-top:0}
+.kv{display:grid;grid-template-columns:130px 1fr;gap:8px 12px;font-size:12px}.kv div:nth-child(odd){color:var(--muted)}
+.progress{height:7px;background:#222a32;border-radius:999px;overflow:hidden;margin-top:8px}.progress span{display:block;height:100%;background:var(--accent)}
+.footer-note{margin-top:16px;color:var(--muted);font-size:11px}
+@media(max-width:1100px){.app{grid-template-columns:1fr}.sidebar{display:none}.grid{grid-template-columns:1fr}.metrics{grid-template-columns:1fr 1fr}.event{grid-template-columns:70px 1fr}}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">Agent Orchestrator<small>Local workspace</small></div>
+    <nav class="nav">
+      <a href="#">Dashboard</a>
+      <a href="#">Projects</a>
+      <a href="#">Epics & Tasks</a>
+      <a class="active" href="#">Execution Queue</a>
+      <a href="#">Approvals <span class="warn">3</span></a>
+      <a href="#">Agents</a>
+      <a href="#">Usage & Budget</a>
+      <a href="#">Settings</a>
+    </nav>
+    <div class="bottom">Hermes runtime · Local mode<br/>4 global slots</div>
+  </aside>
+
+  <main class="main">
+    <div class="topbar">
+      <div class="title">
+        <h1>RUN-841 · Senior Developer</h1>
+        <p>TASK-425 · Anthropic Streaming · Hermes session: <b>dev-425</b></p>
+      </div>
+      <div class="actions">
+        <button class="btn">Create checkpoint</button>
+        <button class="btn">Pause</button>
+        <button class="btn danger">Cancel run</button>
+      </div>
+    </div>
+
+    <div class="tabs">
+      <div class="tab active">Live</div>
+      <div class="tab">Tool Calls</div>
+      <div class="tab">Terminal</div>
+      <div class="tab">Permissions</div>
+      <div class="tab">Context</div>
+      <div class="tab">Usage</div>
+      <div class="tab">Recovery</div>
+    </div>
+
+    <section class="metrics">
+      <div class="metric"><span class="muted">Status</span><b><span class="dot busy"></span>Running</b></div>
+      <div class="metric"><span class="muted">Elapsed</span><b>18m 42s</b></div>
+      <div class="metric"><span class="muted">Tool calls</span><b>37</b></div>
+      <div class="metric"><span class="muted">Tokens</span><b>74.2k</b></div>
+      <div class="metric"><span class="muted">Cost</span><b>$0.78</b></div>
+      <div class="metric"><span class="muted">Progress</span><b>68%</b></div>
+    </section>
+
+    <div class="grid">
+      <div>
+        <section class="card">
+          <div class="row"><h3>Live event stream</h3><span class="chip">auto-scroll</span></div>
+          <div class="timeline">
+            <div class="event">
+              <div class="time">06:18:43</div>
+              <div class="evbody">
+                <b><span class="dot busy"></span>Tool call started</b>
+                <small>project.test</small>
+                <div class="toolcall"><code>project.test("streaming disconnect")</code></div>
+              </div>
+            </div>
+
+            <div class="event">
+              <div class="time">06:18:12</div>
+              <div class="evbody">
+                <b><span class="dot ok"></span>File patched</b>
+                <small>Permission Engine: ALLOW</small>
+                <div class="toolcall"><code>workspace.patch(
+  "src/providers/anthropic/stream.ts"
+)</code></div>
+              </div>
+            </div>
+
+            <div class="event">
+              <div class="time">06:17:54</div>
+              <div class="evbody">
+                <b><span class="dot ok"></span>Test completed</b>
+                <small>1 failing → 0 failing in selected test file</small>
+                <div class="output">PASS src/providers/anthropic/stream.test.ts
+Tests: 14 passed, 14 total
+Duration: 2.84s</div>
+              </div>
+            </div>
+
+            <div class="event">
+              <div class="time">06:16:31</div>
+              <div class="evbody">
+                <b><span class="dot wait"></span>Permission requested</b>
+                <small>Generic command required explicit approval</small>
+                <div class="toolcall"><code>command.run("pnpm vitest --runInBand stream.disconnect.test.ts")</code></div>
+                <div style="margin-top:7px"><span class="chip good">Allowed once by user</span></div>
+              </div>
+            </div>
+
+            <div class="event">
+              <div class="time">06:15:08</div>
+              <div class="evbody">
+                <b><span class="dot ok"></span>Context checkpoint</b>
+                <small>Meaningful progress detected · same session continues</small>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="card" style="margin-top:16px">
+          <div class="row"><h3>Terminal output</h3><span class="muted">sanitized live stream</span></div>
+          <div class="output">$ pnpm test streaming disconnect
+
+> ebb-ai-hub@0.4.0 test
+> vitest run ...
+
+✓ stream handles normal completion
+✓ stream maps provider errors
+✓ disconnect aborts reader
+✓ timeout propagates normalized error
+
+Test Files  1 passed
+Tests       14 passed
+Duration    2.84s</div>
+        </section>
+
+        <section class="card" style="margin-top:16px">
+          <div class="row"><h3>Run objective</h3><span class="chip">Task Contract</span></div>
+          <div class="kv">
+            <div>Goal</div><div>Fix disconnect/reconnect edge cases before QA handoff.</div>
+            <div>Trigger</div><div>REVIEW_REWORK</div>
+            <div>Expected output</div><div>Code changes + passing targeted tests + concise completion report.</div>
+            <div>Workspace</div><div>task/425-anthropic-streaming</div>
+          </div>
+        </section>
+      </div>
+
+      <div>
+        <section class="card">
+          <div class="row"><h3>Runtime</h3><span class="good">Healthy</span></div>
+          <div class="kv">
+            <div>Runtime</div><div>Hermes</div>
+            <div>Session</div><div>dev-425</div>
+            <div>Execution</div><div>Local</div>
+            <div>Role</div><div>Senior Developer</div>
+            <div>Attempt</div><div>2</div>
+            <div>Resume</div><div class="good">Yes · previous session</div>
+          </div>
+        </section>
+
+        <section class="card" style="margin-top:16px">
+          <div class="row"><h3>Permission decisions</h3><span class="muted">this run</span></div>
+          <div class="permission"><div><b>workspace.patch</b><div class="muted">inside task worktree</div></div><span class="chip good">ALLOW</span></div>
+          <div class="permission"><div><b>project.test</b><div class="muted">configured project action</div></div><span class="chip good">ALLOW</span></div>
+          <div class="permission"><div><b>command.run</b><div class="muted">generic vitest command</div></div><span class="chip warn">ALLOW ONCE</span></div>
+          <div class="permission"><div><b>git.push</b><div class="muted">developer role</div></div><span class="chip bad">DENY</span></div>
+        </section>
+
+        <section class="card" style="margin-top:16px">
+          <div class="row"><h3>Usage</h3><span>$0.78</span></div>
+          <div class="kv">
+            <div>Input</div><div>63.4k</div>
+            <div>Cached input</div><div>42.1k</div>
+            <div>Output</div><div>10.8k</div>
+            <div>Cache ratio</div><div>66%</div>
+          </div>
+          <div class="progress"><span style="width:39%"></span></div>
+          <div class="muted" style="margin-top:6px">Task soft budget: $2.00 · current task spend: $0.78</div>
+        </section>
+
+        <section class="card" style="margin-top:16px">
+          <div class="row"><h3>Recovery signals</h3><span class="good">No loop</span></div>
+          <div class="kv">
+            <div>Progress</div><div class="good">Meaningful</div>
+            <div>Repeated failure</div><div>No</div>
+            <div>Same command loop</div><div>No</div>
+            <div>Escalation</div><div>Not needed</div>
+            <div>Checkpoint</div><div>06:15:08</div>
+          </div>
+        </section>
+
+        <section class="card" style="margin-top:16px">
+          <div class="row"><h3>Context package</h3><span class="chip">31.8k tokens</span></div>
+          <div class="kv">
+            <div>Task contract</div><div>included</div>
+            <div>Review findings</div><div>2 unresolved → now resolved</div>
+            <div>Epic summary</div><div>included</div>
+            <div>Guidelines</div><div>architecture + git</div>
+            <div>Repository dump</div><div class="good">not included</div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <div class="footer-note">Agent Run Detail concept v0.1 · technical observability without exposing secrets or granting extra control to Hermes</div>
+  </main>
+</div>
+</body>
+</html>
