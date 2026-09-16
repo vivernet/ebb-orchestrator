@@ -11,8 +11,7 @@ export class GitCli {
    * Runs a git command safely without shell interpretation.
    * All arguments are passed as separate array elements to prevent shell injection.
    */
-  async run(repoPath: string, args: string[]): Promise<
-ProcessExecutor["exec"]> {
+  async run(repoPath: string, args: string[]): Promise<Awaited<ReturnType<ProcessExecutor["exec"]>>> {
     return this.executor.exec("git", args, {
       cwd: repoPath,
       timeout: 60000, // 1 minute for git operations
