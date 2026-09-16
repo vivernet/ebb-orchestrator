@@ -236,6 +236,30 @@ describe('MCP Server', () => {
   });
 
   describe('security', () => {
+    it('accepts only the issued run reference and atomically rejects duplicates', async () => {
+      const { McpServer } = await import('../../../../src/modules/execution/mcp/mcp-server.js');
+      const { RunCapability } = await import('../../../../src/modules/execution/run-capability.js');
+      const accepted: string[] = [];
+      const completion = {
+        accept: async (reference: string, value: { runId: string; role: string; output: unknown }) => {
+          if (reference !== 'issued-ref' || value.runId !== 'run-1' || value.role !== 'reviewer' || accepted.length) return false;
+          accepted.push(reference);
+          return true;
+        },
+      };
+      const server = new McpServer(new RunCapability({ id: 'issued-ref', capabilityRef: 'issued-ref', runId: 'run-1', role: 'reviewer', workspace: workspaceDir, allowedTools: ['submit_result'] }), { completion });
+      expect((await server.callTool('submit_result', { payload: { version: '1.0', outcome: 'PASS' } })).success).toBe(true);
+      expect((await server.callTool('submit_result', { payload: { version: '1.0', outcome: 'PASS' } })).error).toContain('RUN_ALREADY_COMPLETING');
+      expect(accepted).toHaveLength(1);
+    });
+
+    it('rejects a capability bound to a different run or role', async () => {
+      const { McpServer } = await import('../../../../src/modules/execution/mcp/mcp-server.js');
+      const { RunCapability } = await import('../../../../src/modules/execution/run-capability.js');
+      const completion = { accept: async () => false };
+      expect(() => new McpServer(new RunCapability({ id: 'wrong', runId: 'run-2', role: 'developer', workspace: workspaceDir, allowedTools: ['submit_result'] }), { completion, expectedRunId: 'run-1', expectedRole: 'reviewer' })).toThrow('unauthorized');
+    });
+
     it('should never trust task/workspace IDs from model payload', async () => {
       const mcpModule = await import('../../../../src/modules/execution/mcp/mcp-server.js');
       const capabilityModule = await import('../../../../src/modules/execution/run-capability.js');

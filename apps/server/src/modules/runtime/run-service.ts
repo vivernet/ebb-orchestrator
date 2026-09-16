@@ -7,6 +7,7 @@ import type { AgentRuntime } from "./agent-runtime.js";
 import type { AgentRun, RunStatus, RunTrigger } from "@orchestrator/contracts";
 import type { StartRunOptions, ResumeRunOptions, RunOutcome } from "./run-types.js";
 import { validateRoleOutput } from "./output-validator.js";
+import type { CompletionStore } from "../execution/mcp/submit-result-tool.js";
 
 export class RunService {
   constructor(
@@ -14,12 +15,32 @@ export class RunService {
     private readonly runtime: AgentRuntime
   ) {}
 
+  /** Adapter used by MCP. The UPDATE predicate makes acceptance atomic and one-shot. */
+  completionStore(): CompletionStore {
+    return { accept: async (reference, value) => this.db.transaction((tx) => {
+      const changed = tx.get<{ id: string }>(
+        `UPDATE agent_runs SET status = 'COMPLETING', output = $output
+         WHERE id = $run_id AND lower(role) = lower($role) AND capability_ref = $reference
+           AND status IN ('STARTED','IN_PROGRESS') RETURNING id`,
+        { run_id: value.runId, role: value.role, reference, output: JSON.stringify(value.output) });
+      return Boolean(changed);
+    }) };
+  }
+
+  getCapabilityReference(runId: string): string {
+    const row = this.db.get<{ capability_ref: string | null }>(
+      "SELECT capability_ref FROM agent_runs WHERE id = $id", { id: runId });
+    if (!row?.capability_ref) throw new Error(`Run ${runId} has no active capability`);
+    return row.capability_ref;
+  }
+
   /**
    * Start a new agent run.
    */
   async startRun(options: StartRunOptions): Promise<AgentRun> {
     return this.db.transaction((tx) => {
       const id = crypto.randomUUID();
+      const capabilityRef = crypto.randomUUID();
       const now = new Date().toISOString();
       const record: AgentRun = {
         id,
@@ -47,12 +68,12 @@ export class RunService {
         `INSERT INTO agent_runs (
           id, role, runtime, model, task_id, epic_id, status,
           session_id, attempt, trigger_reason, context_version,
-          output_schema_version, started_at, ended_at, exit_code,
-          input_tokens, cached_input_tokens, output_tokens, cost
+           output_schema_version, started_at, ended_at, exit_code,
+           input_tokens, cached_input_tokens, output_tokens, cost, capability_ref
         ) VALUES ($id, $role, $runtime, $model, $task_id, $epic_id, $status,
           $session_id, $attempt, $trigger_reason, $context_version,
-          $output_schema_version, $started_at, $ended_at, $exit_code,
-          $input_tokens, $cached_input_tokens, $output_tokens, $cost)`,
+           $output_schema_version, $started_at, $ended_at, $exit_code,
+           $input_tokens, $cached_input_tokens, $output_tokens, $cost, $capability_ref)`,
         {
           id: record.id,
           role: record.role,
@@ -73,6 +94,7 @@ export class RunService {
           cached_input_tokens: record.cachedInputTokens,
           output_tokens: record.outputTokens,
           cost: record.cost,
+          capability_ref: capabilityRef,
         }
       );
 

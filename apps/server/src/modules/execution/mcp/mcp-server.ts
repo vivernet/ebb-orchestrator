@@ -1,5 +1,6 @@
 import { RunCapability } from '../run-capability.js';
 import { ToolRegistry } from './tool-registry.js';
+import type { CompletionStore } from './submit-result-tool.js';
 
 /**
  * Result of a tool call.
@@ -19,11 +20,14 @@ export class McpServer {
   private capability: RunCapability;
   private runId: string;
   private hasSubmittedResult: boolean = false;
+  private submittingResult = false;
 
-  constructor(capability: RunCapability) {
+  constructor(capability: RunCapability, options: { completion?: CompletionStore; expectedRunId?: string; expectedRole?: string } = {}) {
+    if (options.expectedRunId && options.expectedRunId !== capability.runId) throw new Error('unauthorized capability run');
+    if (options.expectedRole && options.expectedRole.toLowerCase() !== capability.capability.role.toLowerCase()) throw new Error('unauthorized capability role');
     this.capability = capability;
-    this.registry = new ToolRegistry(capability);
-    this.runId = `run-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    this.registry = new ToolRegistry(capability, options.completion);
+    this.runId = capability.runId;
   }
 
   /**
@@ -55,7 +59,7 @@ export class McpServer {
     }
 
     // Check if submit_result has already been called - blocks all write-capable tools
-    if (this.hasSubmittedResult) {
+    if (this.hasSubmittedResult || this.submittingResult) {
       return {
         success: false,
         error: 'RUN_ALREADY_COMPLETING: no further tool calls allowed after submit_result',
@@ -63,12 +67,14 @@ export class McpServer {
     }
 
     // Call the tool handler
+    if (name === 'submit_result') this.submittingResult = true;
     const result = await tool.handler(args);
 
     // Track successful submit_result call
     if (name === 'submit_result' && result.success) {
       this.hasSubmittedResult = true;
     }
+    if (name === 'submit_result' && !result.success) this.submittingResult = false;
 
     return result;
   }

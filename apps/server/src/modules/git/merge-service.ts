@@ -9,6 +9,7 @@ export interface MergeResult {
   targetBranch: string;
   mergeCommitSha: string;
   resultingTargetSha: string;
+  verifiedCompletion: true;
 }
 
 export interface Approval {
@@ -24,6 +25,9 @@ export interface MergeServiceOptions {
   repoPath?: string;
   sourceBranch?: string;
   targetBranch?: string;
+  /** SHA captured when integration was prepared; target movement requires restart. */
+  expectedTargetSha?: string;
+  onVerifiedCompletion?: (result: MergeResult) => void;
 }
 
 /**
@@ -40,6 +44,8 @@ export class MergeService {
   private readonly repoPath: string;
   private readonly sourceBranch: string | null;
   private readonly targetBranch: string | null;
+  private readonly expectedTargetSha: string | null;
+  private readonly onVerifiedCompletion: ((result: MergeResult) => void) | undefined;
 
   constructor(options: MergeServiceOptions = {}) {
     this.git = options.git ?? new GitCli();
@@ -47,6 +53,8 @@ export class MergeService {
     this.repoPath = options.repoPath ?? process.cwd();
     this.sourceBranch = options.sourceBranch ?? null;
     this.targetBranch = options.targetBranch ?? null;
+    this.expectedTargetSha = options.expectedTargetSha ?? null;
+    this.onVerifiedCompletion = options.onVerifiedCompletion;
   }
 
   /**
@@ -100,6 +108,7 @@ export class MergeService {
 
     // Perform the merge
     const mergeResult = await this.performMerge(subjectId);
+    this.onVerifiedCompletion?.(mergeResult);
 
     return mergeResult;
   }
@@ -111,8 +120,14 @@ export class MergeService {
    * In production, this would merge a specific feature branch into the target.
    */
   private async performMerge(subjectId: string): Promise<MergeResult> {
-    // Get current branch name
-    const branchResult = await this.git.run(this.repoPath, ["branch", "--show-current"]);
+      // Re-read the target immediately before changing it. An old integration
+      // result is never allowed to merge onto a moving target.
+      const target = this.targetBranch ?? "master";
+      const targetBefore = (await this.git.run(this.repoPath, ["rev-parse", target])).stdout.trim();
+      if (this.expectedTargetSha && targetBefore !== this.expectedTargetSha) {
+        throw new Error(`TARGET_MOVED: expected ${this.expectedTargetSha}, found ${targetBefore}; restart integration`);
+      }
+      const branchResult = await this.git.run(this.repoPath, ["branch", "--show-current"]);
     const currentBranch = branchResult.stdout.trim() || "master";
 
      // Get current HEAD SHA before merge
@@ -131,24 +146,32 @@ export class MergeService {
           "--no-edit",
           this.sourceBranch ?? "HEAD",
         ];
-        if (this.targetBranch && currentBranch !== this.targetBranch) {
-          await this.git.run(this.repoPath, ["checkout", this.targetBranch]);
-        }
-        await this.git.run(this.repoPath, mergeArgs);
+         if (currentBranch !== target) {
+           await this.git.run(this.repoPath, ["checkout", target]);
+         }
+      const targetImmediatelyBeforeMerge = (await this.git.run(this.repoPath, ["rev-parse", target])).stdout.trim();
+         if (targetImmediatelyBeforeMerge !== targetBefore) {
+           throw new Error(`TARGET_MOVED: target changed from ${targetBefore} to ${targetImmediatelyBeforeMerge}; restart integration`);
+         }
+         if (this.expectedTargetSha && targetImmediatelyBeforeMerge !== this.expectedTargetSha) {
+           throw new Error(`TARGET_MOVED: expected ${this.expectedTargetSha}, found ${targetImmediatelyBeforeMerge}; restart integration`);
+         }
+         await this.git.run(this.repoPath, mergeArgs);
      } finally {
        rmSync(emptyHooksDir, { recursive: true, force: true });
      }
 
     // Get resulting SHA after merge
-     const afterHeadResult = await this.git.run(this.repoPath, ["rev-parse", "HEAD"]);
+      const afterHeadResult = await this.git.run(this.repoPath, ["rev-parse", target]);
     const afterSha = afterHeadResult.stdout.trim();
 
     return {
       success: true,
       subjectId,
-      targetBranch: this.targetBranch ?? currentBranch,
+       targetBranch: target,
       mergeCommitSha: afterSha,
-      resultingTargetSha: afterSha,
+       resultingTargetSha: afterSha,
+       verifiedCompletion: true,
     };
   }
 

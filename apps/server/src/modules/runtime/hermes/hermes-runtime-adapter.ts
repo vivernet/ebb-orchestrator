@@ -344,20 +344,17 @@ export class HermesRuntimeAdapter implements AgentRuntime {
    * Build environment variables for hermes process.
    */
   private buildEnvironment(_run: AgentRun): Record<string, string> {
+    const allowed = new Set(["PATH", "HOME", "HOMEDRIVE", "HOMEPATH", "SYSTEMROOT", "TEMP", "TMP", "NODE_PATH", "NODE_ENV", "HERMES_HOME", "HERMES_CONFIG", "HERMES_MODEL"]);
     const env: Record<string, string> = {};
-    // Copy non-undefined environment variables
-    for (const [key, value] of Object.entries(process.env)) {
-      if (value !== undefined) {
-        env[key] = value;
-      }
+    for (const key of allowed) {
+      const value = this.environment?.[key] ?? process.env[key];
+      if (value !== undefined) env[key] = value;
     }
-    if (this.environment?.GITHUB_TOKEN !== undefined || this.environment?.SSH_AUTH_SOCK !== undefined) {
-      throw new Error("Forbidden credential in supplied runtime environment");
+    for (const [key, value] of Object.entries(this.environment ?? {})) {
+      if (key === "GITHUB_TOKEN" || key === "SSH_AUTH_SOCK" || key.endsWith("TOKEN") || key.endsWith("SECRET")) throw new Error("Forbidden credential in supplied runtime environment");
+      if (!allowed.has(key)) throw new Error(`Forbidden or unknown Hermes environment variable: ${key}`);
+      env[key] = value;
     }
-    Object.assign(env, this.environment);
-    // Sanitize after every overlay, including caller-supplied runtime values.
-    delete env.GITHUB_TOKEN;
-    delete env.SSH_AUTH_SOCK;
     return env;
   }
 

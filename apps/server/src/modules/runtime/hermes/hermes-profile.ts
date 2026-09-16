@@ -27,23 +27,19 @@ export function prepareHermesProfile(run: HermesRunBuildConfig): HermesLaunchPro
   const hermesHome = path.join(orchestratorHome, "runtime", "hermes");
   const hermesHomePath = path.join(hermesHome, "home");
 
-  // Start with base environment but strip sensitive vars
+  // Start with an explicit runtime/Hermes allowlist; never clone process.env.
   const baseEnv: Record<string, string> = {};
-  
-  // Copy non-sensitive environment variables
-  for (const [key, value] of Object.entries(process.env)) {
-    if (value === undefined) continue;
-    // Skip sensitive credentials
-    if (key === "GITHUB_TOKEN" || key === "SSH_AUTH_SOCK" || key === "HERMES_PROFILE") {
-      continue;
-    }
-    baseEnv[key] = value;
-  }
+  const allowed = ["PATH", "HOME", "HOMEDRIVE", "HOMEPATH", "SYSTEMROOT", "TEMP", "TMP", "NODE_PATH", "NODE_ENV"];
+  for (const key of allowed) if (process.env[key] !== undefined) baseEnv[key] = process.env[key]!;
 
   if (run.environment?.GITHUB_TOKEN !== undefined || run.environment?.SSH_AUTH_SOCK !== undefined) {
     throw new Error("Forbidden credential in supplied runtime environment");
   }
-  Object.assign(baseEnv, run.environment);
+  const injectedAllowed = new Set(["PATH", "NODE_PATH", "NODE_ENV", "HERMES_MODEL"]);
+  for (const [key, value] of Object.entries(run.environment ?? {})) {
+    if (!injectedAllowed.has(key)) throw new Error(`Forbidden or unknown Hermes environment variable: ${key}`);
+    baseEnv[key] = value;
+  }
 
   // Override critical environment variables for isolation
   baseEnv.HERMES_HOME = hermesHome;
@@ -82,6 +78,7 @@ export function getMcpSocketPath(hermesHome: string): string {
  */
 export interface GenerateConfigOptions {
   capability: { role: string; workspace: string };
+  capabilityRef?: string;
   toolsetPath: string;
   resultFile?: string;
   mcpCommand?: string;
@@ -96,8 +93,9 @@ export interface GenerateConfigOptions {
  * - Terminal configuration with home_mode: profile
  */
 export function generateConfigYaml(options: GenerateConfigOptions): string {
-  const { capability, toolsetPath, resultFile, mcpCommand = "orchestrator-mcp", mcpArgs = [] } = options;
-  const executableArgs = [...mcpArgs, "--capability", capability.role, "--workspace", capability.workspace, "--toolset", toolsetPath, ...(resultFile ? ["--result-file", resultFile] : [])];
+  const { toolsetPath, resultFile, mcpCommand = "orchestrator-mcp", mcpArgs = [] } = options;
+  const capabilityRef = options.capabilityRef ?? "orchestrator-issued-reference";
+  const executableArgs = [...mcpArgs, "--capability-ref", capabilityRef, "--toolset", toolsetPath, ...(resultFile ? ["--result-file", resultFile] : [])];
 
   const yaml = `mcp_servers:
   - name: orchestrator-mcp

@@ -19,6 +19,8 @@ export interface IntegrationServiceOptions {
   worktreeDir?: string;
 }
 
+export type IntegrationRunner<T> = (worktreePath: string, attempt: IntegrationAttempt) => Promise<T>;
+
 /**
  * IntegrationService manages the preparation of integration workspaces.
  * 
@@ -105,6 +107,20 @@ export class IntegrationService {
       } catch {
         // Ignore cleanup errors
       }
+    }
+  }
+
+  /** Run the real Integration role only after the isolated worktree is prepared. */
+  async runInIntegrationWorktree<T>(attempt: IntegrationAttempt, runner: IntegrationRunner<T>): Promise<T> {
+    if (attempt.status !== "PREPARED") throw new Error("integration attempt is not prepared");
+    attempt.status = "MERGING";
+    try {
+      const result = await runner(attempt.worktreePath, attempt);
+      attempt.status = "MERGED";
+      return result;
+    } catch (error) {
+      attempt.status = "FAILED";
+      throw error;
     }
   }
 

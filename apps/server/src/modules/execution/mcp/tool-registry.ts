@@ -1,6 +1,6 @@
 import { RunCapability } from '../run-capability.js';
 import type { ToolId } from '../run-capability.js';
-import { SubmitResultTool } from './submit-result-tool.js';
+import { SubmitResultTool, type CompletionStore } from './submit-result-tool.js';
 
 /**
  * Tool definition for MCP.
@@ -18,7 +18,7 @@ export class ToolRegistry {
   private toolDefinitions: Map<ToolId, ToolDefinition> = new Map();
   private capability: RunCapability;
 
-  constructor(capability: RunCapability) {
+  constructor(capability: RunCapability, completion?: CompletionStore) {
     this.capability = capability;
     // Register workspace.read
     this.toolDefinitions.set('workspace.read', {
@@ -110,7 +110,7 @@ export class ToolRegistry {
     });
 
     // Register submit_result
-    const submitTool = new SubmitResultTool(capability);
+    const submitTool = new SubmitResultTool(capability, completion);
     this.toolDefinitions.set('submit_result' as ToolId, {
       name: 'submit_result',
       description: 'Submit agent result and finalize run',

@@ -20,6 +20,9 @@ export type ToolId =
 
 export interface RunCapabilityDef {
   id: string;
+  /** Opaque reference issued by the orchestrator for exactly one run. */
+  capabilityRef?: string;
+  runId?: string;
   role: RoleName;
   workspace: string;
   allowedTools: ToolId[];
@@ -37,6 +40,16 @@ export class RunCapability {
     this.workspaceTools = new WorkspaceTools(this.resolver, capability.workspace);
     this.gitTools = capability.workspace ? new GitTools(capability.workspace) : null;
   }
+
+  /** Create a reference; the caller supplies the already-authorized binding. */
+  static issue(def: Omit<RunCapabilityDef, 'id' | 'capabilityRef'> & { runId: string }): RunCapability {
+    const ref = crypto.randomUUID();
+    return new RunCapability({ ...def, id: ref, capabilityRef: ref });
+  }
+
+  get runId(): string { return this.capability.runId ?? this.capability.id; }
+
+  get reference(): string { return this.capability.capabilityRef ?? this.capability.id; }
 
   /** Check if a tool is allowed for this capability */
   isToolAllowed(toolId: ToolId): boolean {
