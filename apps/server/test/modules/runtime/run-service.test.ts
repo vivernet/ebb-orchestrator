@@ -133,6 +133,10 @@ describe("RunService with FakeAgentRuntime", () => {
     expect(resumedRun.status).toBe("IN_PROGRESS");
     expect(resumedRun.sessionId).toBe("session-123");
     expect(resumedRun.attempt).toBe(1);
+    expect(fakeRuntime.resumeCalls).toEqual([{ runId: startedRun.id, options: { sessionId: "session-123", attempt: 1 } }]);
+    expect(db!.get<{ status: string; session_id: string; attempt: number }>(
+      "SELECT status, session_id, attempt FROM agent_runs WHERE id = $id", { id: startedRun.id },
+    )).toEqual({ status: "IN_PROGRESS", session_id: "session-123", attempt: 1 });
   });
 
   it("collects result and marks run as completed", async () => {

@@ -143,8 +143,8 @@ describe("Hermes profile isolation", () => {
       });
 
       expect(config).toContain("mcp_servers:");
-      expect(config).toContain("name: orchestrator-mcp");
-      expect(config).toContain("command: orchestrator-mcp");
+      expect(config).toContain("orchestrator-mcp:");
+      expect(config).toContain('command: "orchestrator-mcp"');
     });
 
     it("sets terminal.home_mode to profile", () => {

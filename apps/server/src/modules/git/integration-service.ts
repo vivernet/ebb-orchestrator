@@ -176,7 +176,7 @@ export class IntegrationService {
     if (!this.integrationRunId || !attempt.integrationRunId || attempt.integrationRunId !== this.integrationRunId) {
       throw new Error("integrationRunId is required and must be bound to the IntegrationService");
     }
-    if (this.databaseClosed || (attempt.provenanceDatabasePath && attempt.provenanceDatabasePath !== this.databasePath)) {
+    if (this.databaseClosed || (this.ownsDatabase && attempt.provenanceDatabasePath && attempt.provenanceDatabasePath !== this.databasePath)) {
       if (!this.databaseClosed && this.ownsDatabase) this.database.close();
       const provenancePath = attempt.provenanceDatabasePath ?? this.databasePath;
       this.databasePath = provenancePath;
@@ -223,8 +223,6 @@ export class IntegrationService {
       // this check here, rather than leaving it to an end-to-end caller.
       const currentTargetSha = (await this.git.run(snapshot.repoPath, ["rev-parse", snapshot.currentTargetBranch])).stdout.trim();
       if (!snapshot.expectedTargetSha || currentTargetSha !== snapshot.expectedTargetSha) {
-        attempt.status = "FAILED";
-        this.database.run("UPDATE integration_attempts SET status = 'FAILED' WHERE id = $id", { id: attempt.id });
         throw new Error(`TARGET_MOVED: expected ${snapshot.expectedTargetSha ?? "a verified target"}, found ${currentTargetSha}; restart integration`);
       }
       attempt.status = "MERGED";
@@ -233,10 +231,34 @@ export class IntegrationService {
        return result;
     } catch (error) {
       attempt.status = "FAILED";
-      this.database.run("UPDATE integration_attempts SET status = 'FAILED' WHERE id = $id", { id: attempt.id });
+      this.failIntegration(attempt, error);
+      await this.cleanupIntegration(attempt);
       if (this.ownsDatabase) { this.database.close(); this.databaseClosed = true; }
       throw error;
     }
+  }
+
+  /** Persist the attempt and its authenticated agent run failure together. */
+  private failIntegration(attempt: IntegrationAttempt, error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error);
+    const diagnostics = JSON.stringify({
+      type: "INTEGRATION_RECONCILIATION_FAILURE",
+      attemptId: attempt.id,
+      integrationRunId: attempt.integrationRunId ?? null,
+      message,
+    });
+    this.database.transaction((tx) => {
+      tx.run("UPDATE integration_attempts SET status = 'FAILED' WHERE id = $id", { id: attempt.id });
+      if (attempt.integrationRunId) {
+        tx.run(
+          `UPDATE agent_runs SET status = 'FAILED', output = $output,
+            ended_at = $ended_at, exit_code = -1
+            WHERE id = $id AND role = 'Integration'
+              AND status IN ('STARTED', 'IN_PROGRESS', 'COMPLETING')`,
+          { id: attempt.integrationRunId, output: diagnostics, ended_at: new Date().toISOString() },
+        );
+      }
+    });
   }
 
   /** Merge the prepared task commit before the Integration Agent is started. */
@@ -265,13 +287,13 @@ export class IntegrationService {
    * Cleans up an integration attempt by removing its worktree.
    */
   async cleanupIntegration(attempt: IntegrationAttempt): Promise<void> {
-    for (let attemptNo = 0; attemptNo < 3; attemptNo += 1) {
+    for (let attemptNo = 0; attemptNo < 10; attemptNo += 1) {
       try {
         await this.git.run(attempt.repoPath, ["worktree", "remove", "--force", attempt.worktreePath]);
         return;
       } catch {
         try { rmSync(attempt.worktreePath, { recursive: true, force: true }); } catch { /* retry after a process releases the handle */ }
-        if (attemptNo < 2) await new Promise((resolve) => setTimeout(resolve, 50 * (attemptNo + 1)));
+        if (attemptNo < 9) await new Promise((resolve) => setTimeout(resolve, 100 * (attemptNo + 1)));
       }
     }
   }

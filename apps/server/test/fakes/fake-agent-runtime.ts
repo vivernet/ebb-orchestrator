@@ -18,6 +18,7 @@ interface ScriptedOutcome {
 export class FakeAgentRuntime implements AgentRuntime {
   private readonly scripts: Map<string, ScriptedOutcome[]> = new Map();
   private readonly pendingRuns: Set<string> = new Set();
+  readonly resumeCalls: Array<{ runId: string; options: { sessionId: string; attempt: number } }> = [];
 
   /**
    * Script an outcome for a specific role.
@@ -41,10 +42,10 @@ export class FakeAgentRuntime implements AgentRuntime {
    * Resume a run.
    */
   async resumeRun(
-    _runId: string,
-    _options: { sessionId: string; attempt: number },
+    runId: string,
+    options: { sessionId: string; attempt: number },
   ): Promise<void> {
-    // Record resumed
+    this.resumeCalls.push({ runId, options });
   }
 
   /**

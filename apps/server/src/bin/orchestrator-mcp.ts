@@ -11,6 +11,7 @@ import { writeFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { createSqliteDatabase } from '../platform/database/sqlite-database.js';
 import { DatabaseCompletionStore } from '../modules/execution/mcp/submit-result-tool.js';
+import { createInterface } from 'node:readline';
 
 function parseArgs(): { capabilityRef: string | undefined; resultFile: string | undefined; database: string | undefined } {
   const args = process.argv.slice(2);
@@ -55,7 +56,8 @@ async function main() {
   const server = new McpServer(capability, { completion: new DatabaseCompletionStore(db) });
 
   // Process stdio requests
-  for await (const line of process.stdin) {
+  const input = createInterface({ input: process.stdin });
+  for await (const line of input) {
     try {
       const request = JSON.parse(line.toString());
       const response = await server.processRequest(request);

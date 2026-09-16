@@ -25,11 +25,11 @@ async function initGitRepo(path: string, commitMessage: string = "initial"): Pro
   return git;
 }
 
-function boundService(git: GitCli): IntegrationService {
+function boundService(git: GitCli): { service: IntegrationService; database: ReturnType<typeof createSqliteDatabase> } {
   const database = createSqliteDatabase(join(createTempDir(), "provenance.sqlite"));
-  database.exec("CREATE TABLE agent_runs (id TEXT PRIMARY KEY, role TEXT NOT NULL, status TEXT NOT NULL)");
+    database.exec("CREATE TABLE agent_runs (id TEXT PRIMARY KEY, role TEXT NOT NULL, status TEXT NOT NULL, output TEXT, ended_at TEXT, exit_code INTEGER)");
   database.run("INSERT INTO agent_runs (id, role, status) VALUES ('integration-run', 'Integration', 'STARTED')");
-  return new IntegrationService({ git, database, integrationRunId: "integration-run" });
+  return { service: new IntegrationService({ git, database, integrationRunId: "integration-run" }), database };
 }
 
 describe("IntegrationService", () => {
@@ -135,7 +135,7 @@ describe("IntegrationService", () => {
       await git.run(repoPath, ["add", "source.txt"]);
       await git.run(repoPath, ["commit", "-m", "source commit"]);
       await git.run(repoPath, ["checkout", "master"]);
-      const service = boundService(git);
+      const { service } = boundService(git);
       const attempt = await service.prepareIntegration("source-branch", "master", repoPath);
 
       await service.mergePreparedSource(attempt);
@@ -170,7 +170,7 @@ describe("IntegrationService", () => {
     it("rejects a target that moved before marking integration merged", async () => {
       const repoPath = createTempDir();
       const git = await initGitRepo(repoPath);
-       const service = boundService(git);
+       const { service, database } = boundService(git);
       const attempt = await service.prepareIntegration("master", "master", repoPath);
 
       writeFileSync(join(repoPath, "moved.txt"), "target moved");
@@ -180,12 +180,16 @@ describe("IntegrationService", () => {
       await expect(service.runInIntegrationWorktree(attempt, async () => undefined))
         .rejects.toThrow(/TARGET_MOVED/);
       expect(attempt.status).toBe("FAILED");
+       expect(database.get<{ status: string; output: string; ended_at: string; exit_code: number }>(
+         "SELECT status, output, ended_at, exit_code FROM agent_runs WHERE id = 'integration-run'",
+       )).toMatchObject({ status: "FAILED", output: expect.stringContaining("TARGET_MOVED"), ended_at: expect.any(String), exit_code: -1 });
+       await expect(git.run(attempt.worktreePath, ["rev-parse", "HEAD"])).rejects.toThrow();
     });
 
     it("rejects a runner that mutates integration provenance", async () => {
       const repoPath = createTempDir();
       const git = await initGitRepo(repoPath);
-       const service = boundService(git);
+       const { service } = boundService(git);
       const attempt = await service.prepareIntegration("master", "master", repoPath);
 
       await expect(service.runInIntegrationWorktree(attempt, async (_path, runnerAttempt) => {

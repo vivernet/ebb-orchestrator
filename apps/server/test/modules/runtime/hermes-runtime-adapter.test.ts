@@ -100,7 +100,7 @@ describe("HermesRuntimeAdapter", () => {
       };
       await adapter.startRun(run);
       const config = await fs.readFile(path.join(resultDirectory, "profiles", run.id, "config.yaml"), "utf8");
-      expect(config).toContain(`- "${path.join(resultDirectory, `${run.id}.json`)}"`);
+      expect(config).toContain(`- ${JSON.stringify(path.join(resultDirectory, `${run.id}.json`))}`);
       await fs.rm(resultDirectory, { recursive: true, force: true });
     });
 

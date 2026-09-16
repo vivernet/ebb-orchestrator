@@ -11,6 +11,8 @@ import { cp, mkdtemp, rm } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { execFile, spawn } from "node:child_process";
 import { createSqliteDatabase } from "../../src/platform/database/sqlite-database.js";
@@ -38,6 +40,8 @@ import { PromptBuilder } from "../../src/modules/runtime/prompt-builder.js";
 import type { TaskContract as PromptTaskContract } from "../../src/modules/context/context-types.js";
 
 const execFileAsync = promisify(execFile);
+const resolve = createRequire(import.meta.url).resolve;
+const tsxLoader = pathToFileURL(resolve("tsx")).href;
 const migrationFiles = ["001_system.sql", "002_work_domain.sql", "003_work_control.sql", "004_agent_runs.sql", "005_scheduler.sql", "006_recovery.sql"];
 const migrations: Migration[] = migrationFiles.map((name, index) => ({
   version: index + 1,
@@ -193,7 +197,7 @@ describe("Autonomous Task End-to-End Workflow", () => {
     (globalThis as { acceptance?: AcceptanceWorkflow }).acceptance = new AcceptanceWorkflow(db, workflow, new RunService(db, new DeterministicRuntime()), worktreeManager, git, masterRepoPath, taskId);
   });
 
-   afterEach(async () => { db?.close(); db = undefined; if (masterRepoPath) await rm(masterRepoPath, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); if (tmpDir) await rm(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); });
+    afterEach(async () => { db?.close(); db = undefined; if (masterRepoPath) await rm(masterRepoPath, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }); if (tmpDir) await rm(tmpDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }); });
 
   it("covers the workflow with the deterministic infrastructure fallback", async () => {
     const driver = (globalThis as unknown as { acceptance: AcceptanceWorkflow }).acceptance;
@@ -277,7 +281,7 @@ describe("Autonomous Task End-to-End Workflow", () => {
       timeoutMs: 180000,
       databasePath,
       mcpCommand: process.execPath,
-      mcpArgs: ["--import", "tsx", mcpCli],
+       mcpArgs: ["--import", tsxLoader, mcpCli],
     });
     const runs = new RunService(db!, runtime);
     driverReady(workflow, taskId);
@@ -289,8 +293,8 @@ describe("Autonomous Task End-to-End Workflow", () => {
         const resultPath = join(resultDirectory, `${run.id}.json`);
         const config = readFileSync(join(resultDirectory, "profiles", run.id, "config.yaml"), "utf8");
         expect(config).toContain(`- "${capabilityRef}"`);
-        expect(config).toContain(`- "${databasePath}"`);
-        expect(config).toContain(`- "${resultPath}"`);
+        expect(config).toContain(`- ${JSON.stringify(databasePath)}`);
+        expect(config).toContain(`- ${JSON.stringify(resultPath)}`);
         const handshake = await runMcpHandshake(mcpCli, roleWorkspace, databasePath, capabilityRef);
        expect(handshake).toContain('"name":"orchestrator-mcp"');
        expect(handshake).toContain('"submit_result"');
@@ -302,7 +306,7 @@ describe("Autonomous Task End-to-End Workflow", () => {
       expect(inspected, `${role} run did not finish`).toBeDefined();
        if (role === "Integration") return;
        const outcome = await runtime.collectResult(run.id);
-      expect(outcome.success, `${role} did not submit a successful result`).toBe(true);
+       expect(outcome.success, `${role} did not submit a successful result: ${JSON.stringify(outcome)}`).toBe(true);
        const submitted = JSON.parse(outcome.output) as { outcome?: string; version?: string; commitSha?: string; independent?: boolean; findings?: unknown[]; evidence?: string[]; baseSha?: string; sourceSha?: string; provenance?: string[] };
       expect(submitted.outcome, `${role} submitted an invalid result`).toBeTruthy();
        expect(submitted.version).toBe("1");
@@ -429,7 +433,7 @@ describe("Autonomous Task End-to-End Workflow", () => {
 function driverReady(engine: WorkflowEngine, id: string): void { engine.transition(id, "READY"); }
 
 async function runMcpHandshake(cli: string, workspace: string, database: string, capabilityRef: string): Promise<string> {
-  const child = spawn(process.execPath, ["--import", "tsx", cli, "--database", database, "--capability-ref", capabilityRef], { cwd: workspace, stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn(process.execPath, ["--import", tsxLoader, cli, "--database", database, "--capability-ref", capabilityRef], { cwd: workspace, stdio: ["pipe", "pipe", "pipe"] });
   const output = new Promise<string>((resolve, reject) => {
     let stdout = "";
     let stderr = "";

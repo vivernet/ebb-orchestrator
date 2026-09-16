@@ -118,7 +118,7 @@ export class RunService {
    * Resume a run with session info.
    */
   async resumeRun(runId: string, options: ResumeRunOptions): Promise<AgentRun> {
-    return this.db.transaction((tx) => {
+    this.db.transaction((tx) => {
       tx.run(
         `UPDATE agent_runs SET session_id = $session_id, attempt = $attempt,
           status = 'IN_PROGRESS' WHERE id = $id`,
@@ -128,7 +128,7 @@ export class RunService {
           attempt: options.attempt,
         }
       );
-      return this.getRun(tx, runId);
+      this.getRun(tx, runId);
     });
     await this.runtime.resumeRun(runId, options);
     return this.getRun(this.db, runId);

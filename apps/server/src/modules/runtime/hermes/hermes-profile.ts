@@ -96,15 +96,18 @@ export function generateConfigYaml(options: GenerateConfigOptions): string {
   const { toolsetPath, resultFile, mcpCommand = "orchestrator-mcp", mcpArgs = [] } = options;
   const capabilityRef = options.capabilityRef ?? "orchestrator-issued-reference";
   const executableArgs = [...mcpArgs, "--capability-ref", capabilityRef, "--toolset", toolsetPath, ...(resultFile ? ["--result-file", resultFile] : [])];
+  const yamlString = (value: string): string => JSON.stringify(value);
 
-  const yaml = `mcp_servers:
-  - name: orchestrator-mcp
-    command: ${mcpCommand}
-    args:
-${executableArgs.map((arg) => `      - "${arg}"`).join("\n")}
-terminal:
-  home_mode: profile
-`;
+  const yaml = [
+    "mcp_servers:",
+    "  orchestrator-mcp:",
+    `    command: ${yamlString(mcpCommand)}`,
+    "    args:",
+    ...executableArgs.map((arg) => `      - ${yamlString(arg)}`),
+    "terminal:",
+    "  home_mode: profile",
+    "",
+  ].join("\n");
 
   return yaml;
 }
