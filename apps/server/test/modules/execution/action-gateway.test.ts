@@ -3,8 +3,8 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { tmpdir } from 'node:os';
 import crypto from 'node:crypto';
-import { ActionGateway } from '../../../src/modules/execution/action-gateway';
-import { PathResolver } from '../../../src/platform/security/path-resolver';
+import { ActionGateway } from '../../../src/modules/execution/action-gateway.js';
+import { PathResolver } from '../../../src/platform/security/path-resolver.js';
 
 describe('ActionGateway', () => {
   let testDir: string;
@@ -20,11 +20,13 @@ describe('ActionGateway', () => {
     gateway = new ActionGateway(resolver, workspaceDir);
   });
 
-  afterEach(() => {
-    try {
-      fs.rmSync(testDir, { recursive: true, force: true });
-    } catch {}
-  });
+   afterEach(() => {
+     try {
+       fs.rmSync(testDir, { recursive: true, force: true });
+     } catch {
+       // Ignore cleanup errors
+     }
+   });
 
   describe('workspace.read', () => {
     it('should read files within workspace', async () => {
@@ -99,9 +101,11 @@ describe('ActionGateway', () => {
       const link = path.join(workspaceDir, 'escape');
       const outside = path.join(testDir, 'outside.txt');
       fs.writeFileSync(outside, 'external');
-      try {
-        fs.symlinkSync(outside, link);
-      } catch {}
+       try {
+         fs.symlinkSync(outside, link);
+       } catch {
+         // Symlinks may not be supported on all platforms
+       }
       
       const result = await gateway.readFile('escape');
       expect(result.success).toBe(false);

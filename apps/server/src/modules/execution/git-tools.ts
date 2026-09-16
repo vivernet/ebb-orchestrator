@@ -2,11 +2,10 @@
  * GitTools provides git operations scoped to the capability-assigned worktree.
  * Git operations always resolve from RunCapability's workspace, not from model input.
  */
-import * as cp from 'node:child_process';
-import * as path from 'node:path';
+import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 
-const exec = promisify(require('node:child_process').exec);
+const execAsync = promisify(exec);
 
 export class GitTools {
   constructor(private workspace: string) {}
@@ -14,7 +13,7 @@ export class GitTools {
   /** Initialize a git repository in the workspace */
   async initRepo(): Promise<string> {
     try {
-      const { stdout } = await exec('git init', { cwd: this.workspace });
+       const { stdout } = await execAsync('git init', { cwd: this.workspace });
       return stdout;
     } catch (err: unknown) {
       return (err as Error).message;
@@ -27,11 +26,11 @@ export class GitTools {
    */
   async status(): Promise<string> {
     try {
-      const { stdout } = await exec('git status --porcelain', { cwd: this.workspace });
+       const { stdout } = await execAsync('git status --porcelain', { cwd: this.workspace });
       return stdout;
-    } catch (err: unknown) {
-      return '';
-    }
+     } catch {
+       return '';
+     }
   }
 
   /**
@@ -40,11 +39,11 @@ export class GitTools {
    */
   async diff(): Promise<string> {
     try {
-      const { stdout } = await exec('git diff', { cwd: this.workspace });
+       const { stdout } = await execAsync('git diff', { cwd: this.workspace });
       return stdout;
-    } catch (err: unknown) {
-      return '';
-    }
+     } catch {
+       return '';
+     }
   }
 
   /**
@@ -53,11 +52,11 @@ export class GitTools {
    */
   async diffStaged(): Promise<string> {
     try {
-      const { stdout } = await exec('git diff --cached', { cwd: this.workspace });
+       const { stdout } = await execAsync('git diff --cached', { cwd: this.workspace });
       return stdout;
-    } catch (err: unknown) {
-      return '';
-    }
+     } catch {
+       return '';
+     }
   }
 
   /**
@@ -67,7 +66,7 @@ export class GitTools {
   async add(patterns: string[]): Promise<string> {
     try {
       const args = patterns.map(p => `"${p}"`).join(' ');
-      const { stdout } = await exec(`git add ${args}`, { cwd: this.workspace });
+       const { stdout } = await execAsync(`git add ${args}`, { cwd: this.workspace });
       return stdout;
     } catch (err: unknown) {
       return (err as Error).message;
@@ -80,7 +79,7 @@ export class GitTools {
    */
   async commit(message: string): Promise<string> {
     try {
-      const { stdout } = await exec(`git commit -m "${message}"`, { cwd: this.workspace });
+       const { stdout } = await execAsync(`git commit -m "${message}"`, { cwd: this.workspace });
       return stdout;
     } catch (err: unknown) {
       return (err as Error).message;
@@ -93,10 +92,10 @@ export class GitTools {
    */
   async branch(): Promise<string> {
     try {
-      const { stdout } = await exec('git branch --show-current', { cwd: this.workspace });
+       const { stdout } = await execAsync('git branch --show-current', { cwd: this.workspace });
       return stdout.trim();
-    } catch (err: unknown) {
-      return '';
-    }
+     } catch {
+       return '';
+     }
   }
 }

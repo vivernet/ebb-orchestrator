@@ -1,23 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
-import { tmpdir } from 'node:os';
-import crypto from 'node:crypto';
-import { EnvironmentBuilder } from '../../../src/platform/security/environment-builder';
+import { describe, it, expect } from 'vitest';
+import { EnvironmentBuilder } from '../../../src/platform/security/environment-builder.js';
 
 describe('EnvironmentBuilder', () => {
-  let testDir: string;
-
-  beforeEach(() => {
-    testDir = path.join(tmpdir(), `env-builder-test-${crypto.randomBytes(4).toString('hex')}`);
-    fs.mkdirSync(testDir, { recursive: true });
-  });
-
-  afterEach(() => {
-    try {
-      fs.rmSync(testDir, { recursive: true, force: true });
-    } catch {}
-  });
 
   describe('environment leakage prevention', () => {
     it('should not clone process.env by default', () => {
@@ -81,8 +65,8 @@ describe('EnvironmentBuilder', () => {
 
       // Should have platform-appropriate PATH
       expect(env.PATH).toBeDefined();
-      expect(typeof env.PATH).toBe('string');
-      expect(env.PATH.length).toBeGreaterThan(0);
+      expect(typeof env.PATH!).toBe('string');
+      expect(env.PATH!.length).toBeGreaterThan(0);
     });
   });
 

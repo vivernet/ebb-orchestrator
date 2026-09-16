@@ -1,7 +1,7 @@
-import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { describe, expect, it } from "vitest";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync } from "fs";
+import { mkdtempSync, writeFileSync, mkdirSync } from "fs";
 import { execSync } from "child_process";
 
 import { RepositoryDiscovery } from "../../../src/modules/projects/repository-discovery.js";

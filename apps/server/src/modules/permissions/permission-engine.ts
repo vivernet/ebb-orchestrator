@@ -1,13 +1,14 @@
 import {
   PermissionDecision,
   ActionId,
-  PolicyRule,
   PolicyScope,
   PolicyRuleType,
+} from './permission-types.js';
+import type {
   EvaluationInput,
   EvaluationResult,
-} from './permission-types';
-import { composeDecisions, actionMatchesRule, getMatchingRules } from './permission-policy';
+} from './permission-types.js';
+import { composeDecisions, getMatchingRules } from './permission-policy.js';
 
 /**
  * Permission Engine - evaluates actions against composed policies from multiple scopes.
@@ -59,12 +60,17 @@ export class PermissionEngine {
     }
 
     // Convert matching rules to decisions with scope info
-    const decisions = allMatchingRules.map((rule) => ({
-      decision: this.policyTypeToDecision(rule.type),
-      scope: rule.scope,
-      scopeRef: rule.scopeRef,
-      type: rule.type,
-    }));
+    const decisions = allMatchingRules.map((rule: { scope: PolicyScope; scopeRef?: string; type: PolicyRuleType; actions: string[] }) => {
+      const res: { decision: PermissionDecision; scope: PolicyScope; scopeRef?: string; type: PolicyRuleType } = {
+        decision: this.policyTypeToDecision(rule.type),
+        scope: rule.scope,
+        type: rule.type,
+      };
+      if (rule.scopeRef !== undefined) {
+        res.scopeRef = rule.scopeRef;
+      }
+      return res;
+    });
 
     // Compose decisions using most-restrictive-wins
     const { decision, matchedRefs } = composeDecisions(decisions);
@@ -75,11 +81,13 @@ export class PermissionEngine {
     return {
       decision,
       reason,
-      matchedPolicyRefs: matchedRefs.map((ref) => ({
-        scope: ref.scope,
-        scopeRef: ref.scopeRef,
-        type: ref.type,
-      })),
+      matchedPolicyRefs: matchedRefs.map((ref: { scope: PolicyScope; scopeRef?: string; type: PolicyRuleType }) => {
+        const res: { scope: PolicyScope; scopeRef?: string; type: PolicyRuleType } = { scope: ref.scope, type: ref.type };
+        if (ref.scopeRef !== undefined) {
+          res.scopeRef = ref.scopeRef;
+        }
+        return res;
+      }),
     };
   }
 
@@ -105,11 +113,11 @@ export class PermissionEngine {
     }
   }
 
-  private generateReason(
-    decision: PermissionDecision,
-    matchedRefs: { scope: PolicyScope; scopeRef?: string; type: PolicyRuleType }[],
-    action: ActionId
-  ): string {
+   private generateReason(
+     decision: PermissionDecision,
+     matchedRefs: { scope: PolicyScope; scopeRef?: string; type: PolicyRuleType }[],
+     _action: ActionId
+   ): string {
     if (matchedRefs.length === 0) {
       switch (decision) {
         case PermissionDecision.ABSOLUTE_DENY:

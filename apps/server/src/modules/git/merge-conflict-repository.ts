@@ -58,15 +58,28 @@ export class MergeConflictRepository {
    * Finds a merge conflict by ID.
    */
   findById(id: string): MergeConflictRecord | undefined {
-    const result = this.db.get<MergeConflictRecord>(
+    const result = this.db.get<{
+      id: string;
+      source_branch: string;
+      target_branch: string;
+      files: string;
+      classification: string;
+      status: string;
+      created_at: string;
+      resolved_at: string | null;
+    }>(
       `SELECT * FROM merge_conflicts WHERE id = ?`,
       { id }
     );
     if (result) {
       return {
-        ...result,
+        id: result.id,
         sourceBranch: result.source_branch,
         targetBranch: result.target_branch,
+        files: result.files,
+        classification: result.classification as "TRIVIAL" | "RESOLVABLE" | "ARCHITECTURAL",
+        status: result.status as "OPEN" | "RESOLVED",
+        createdAt: result.created_at,
         resolvedAt: result.resolved_at,
       };
     }
@@ -77,16 +90,29 @@ export class MergeConflictRepository {
    * Finds all open merge conflicts for a given source branch.
    */
   findBySourceBranch(sourceBranch: string): MergeConflictRecord[] {
-    const results = this.db.all<MergeConflictRecord>(
+    const results = this.db.all<{
+      id: string;
+      source_branch: string;
+      target_branch: string;
+      files: string;
+      classification: string;
+      status: string;
+      created_at: string;
+      resolved_at: string | null;
+    }>(
       `SELECT * FROM merge_conflicts 
        WHERE source_branch = ? AND status = ? 
        ORDER BY created_at DESC`,
       { source_branch: sourceBranch, status: "OPEN" }
     );
     return results.map((r) => ({
-      ...r,
+      id: r.id,
       sourceBranch: r.source_branch,
       targetBranch: r.target_branch,
+      files: r.files,
+      classification: r.classification as "TRIVIAL" | "RESOLVABLE" | "ARCHITECTURAL",
+      status: r.status as "OPEN" | "RESOLVED",
+      createdAt: r.created_at,
       resolvedAt: r.resolved_at,
     }));
   }
@@ -105,16 +131,29 @@ export class MergeConflictRepository {
    * Gets all merge conflicts for a source/target branch pair.
    */
   findByBranchPair(sourceBranch: string, targetBranch: string): MergeConflictRecord[] {
-    const results = this.db.all<MergeConflictRecord>(
+    const results = this.db.all<{
+      id: string;
+      source_branch: string;
+      target_branch: string;
+      files: string;
+      classification: string;
+      status: string;
+      created_at: string;
+      resolved_at: string | null;
+    }>(
       `SELECT * FROM merge_conflicts 
        WHERE source_branch = ? AND target_branch = ?
        ORDER BY created_at DESC`,
       { source_branch: sourceBranch, target_branch: targetBranch }
     );
     return results.map((r) => ({
-      ...r,
+      id: r.id,
       sourceBranch: r.source_branch,
       targetBranch: r.target_branch,
+      files: r.files,
+      classification: r.classification as "TRIVIAL" | "RESOLVABLE" | "ARCHITECTURAL",
+      status: r.status as "OPEN" | "RESOLVED",
+      createdAt: r.created_at,
       resolvedAt: r.resolved_at,
     }));
   }

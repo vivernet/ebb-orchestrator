@@ -2,7 +2,8 @@
  * ProjectActions provides typed mappings for project operations (test, lint, typecheck, build)
  * based on approved project configuration.
  */
-import { CommandTools, ExecOptions, ExecResult } from './command-tools';
+import { CommandTools } from './command-tools.js';
+import type { ExecOptions } from './command-tools.js';
 
 export type ProjectAction = 'test' | 'lint' | 'typecheck' | 'build';
 
@@ -27,7 +28,7 @@ export type ActionResult = {
 export class ProjectActions {
   private commandTools: CommandTools;
 
-  constructor(projectConfig: ProjectConfig) {
+  constructor(_projectConfig: ProjectConfig) {
     this.commandTools = new CommandTools();
     // In a real implementation, we would validate and store projectConfig here
     // ensuring only approved project configurations are used

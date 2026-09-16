@@ -1,5 +1,5 @@
 import { rmSync, mkdirSync } from "fs";
-import { join, sep } from "path";
+import { join } from "path";
 import { tmpdir } from "os";
 import { GitCli } from "./git-cli.js";
 import type { Database } from "../../platform/database/database.js";

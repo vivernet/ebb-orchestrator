@@ -2,7 +2,7 @@
  * ActionGateway enforces path confinement for workspace operations.
  * All file operations must be scoped to the capability-assigned workspace.
  */
-import { PathResolver } from '../../platform/security/path-resolver';
+import { PathResolver } from '../../platform/security/path-resolver.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -24,7 +24,7 @@ export class ActionGateway {
     const result = await this.resolver.resolveSafePath(this.workspace, fullPath);
 
     if (!result.success) {
-      return { success: false, error: result.error };
+      return { success: false, ...(result.error && { error: result.error }) };
     }
 
     try {
@@ -59,7 +59,9 @@ export class ActionGateway {
             }
           }
         }
-      } catch {}
+        } catch {
+          // Ignore errors during directory traversal
+        }
     };
 
     searchDir(this.workspace);
@@ -75,7 +77,7 @@ export class ActionGateway {
     const result = await this.resolver.resolveSafePath(this.workspace, fullPath);
 
     if (!result.success) {
-      return { success: false, error: result.error };
+      return { success: false, ...(result.error && { error: result.error }) };
     }
 
     try {

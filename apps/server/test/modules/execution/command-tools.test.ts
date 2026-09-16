@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { tmpdir } from 'node:os';
 import crypto from 'node:crypto';
-import { CommandTools, ShellType } from '../../../src/modules/execution/command-tools';
+import { CommandTools } from '../../../src/modules/execution/command-tools.js';
 
 describe('CommandTools', () => {
   let testDir: string;
@@ -20,7 +20,9 @@ describe('CommandTools', () => {
   afterEach(() => {
     try {
       fs.rmSync(testDir, { recursive: true, force: true });
-    } catch {}
+     } catch {
+       // Ignore cleanup errors
+     }
   });
 
   describe('command.exec - executable and args', () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { PathResolver } from '../../../src/platform/security/path-resolver';
+import { PathResolver } from '../../../src/platform/security/path-resolver.js';
 
 describe('PathResolver', () => {
   const resolver = new PathResolver();

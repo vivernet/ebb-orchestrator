@@ -1,4 +1,5 @@
-import { PermissionDecision, PolicyRule, PolicyScope } from './permission-types';
+import { PermissionDecision, PolicyScope, PolicyRuleType } from './permission-types.js';
+import type { PolicyRule, ActionId } from './permission-types.js';
 
 // Most-restrictive ordering: ALLOW < ASK < DENY < ABSOLUTE_DENY
 function decisionToRank(decision: PermissionDecision): number {
@@ -17,7 +18,7 @@ function decisionToRank(decision: PermissionDecision): number {
 }
 
 // Convert policy rule type to decision
-function ruleTypeToDecision(type: PolicyRuleType): PermissionDecision {
+export function ruleTypeToDecision(type: PolicyRuleType): PermissionDecision {
   switch (type) {
     case PolicyRuleType.Allow:
       return PermissionDecision.ALLOW;
@@ -58,7 +59,13 @@ export function composeDecisions(
   // Collect all refs that match the most restrictive decision
   const matchedRefs = decisions
     .filter(({ decision }) => decision === maxDecision)
-    .map(({ scope, scopeRef, type }) => ({ scope, scopeRef, type }));
+    .map(({ scope, scopeRef, type }) => {
+      const result: { scope: PolicyScope; scopeRef?: string; type: PolicyRuleType } = { scope, type };
+      if (scopeRef !== undefined) {
+        result.scopeRef = scopeRef;
+      }
+      return result;
+    });
 
   return { decision: maxDecision, matchedRefs };
 }
@@ -85,7 +92,7 @@ export function getMatchingRules(
   if (globalPolicy) {
     for (const rule of globalPolicy) {
       if (actionMatchesRule(action, rule)) {
-        result.push({ scope: PolicyScope.Global, type: rule.type, actions: rule.actions.map(a => a as string) });
+        result.push({ scope: PolicyScope.Global, type: rule.type, actions: rule.actions.map((a: ActionId) => a as string) });
       }
     }
   }
@@ -93,7 +100,11 @@ export function getMatchingRules(
   if (projectPolicy) {
     for (const rule of projectPolicy) {
       if (actionMatchesRule(action, rule)) {
-        result.push({ scope: PolicyScope.Project, scopeRef: rule.scopeRef, type: rule.type, actions: rule.actions.map(a => a as string) });
+        const res: { scope: PolicyScope; scopeRef?: string; type: PolicyRuleType; actions: string[] } = { scope: PolicyScope.Project, type: rule.type, actions: rule.actions.map((a: ActionId) => a as string) };
+        if (rule.scopeRef !== undefined) {
+          res.scopeRef = rule.scopeRef;
+        }
+        result.push(res);
       }
     }
   }
@@ -101,7 +112,11 @@ export function getMatchingRules(
   if (rolePolicy) {
     for (const rule of rolePolicy) {
       if (actionMatchesRule(action, rule)) {
-        result.push({ scope: PolicyScope.Role, scopeRef: rule.scopeRef, type: rule.type, actions: rule.actions.map(a => a as string) });
+        const res: { scope: PolicyScope; scopeRef?: string; type: PolicyRuleType; actions: string[] } = { scope: PolicyScope.Role, type: rule.type, actions: rule.actions.map((a: ActionId) => a as string) };
+        if (rule.scopeRef !== undefined) {
+          res.scopeRef = rule.scopeRef;
+        }
+        result.push(res);
       }
     }
   }
@@ -109,7 +124,11 @@ export function getMatchingRules(
   if (taskPolicy) {
     for (const rule of taskPolicy) {
       if (actionMatchesRule(action, rule)) {
-        result.push({ scope: PolicyScope.Task, scopeRef: rule.scopeRef, type: rule.type, actions: rule.actions.map(a => a as string) });
+        const res: { scope: PolicyScope; scopeRef?: string; type: PolicyRuleType; actions: string[] } = { scope: PolicyScope.Task, type: rule.type, actions: rule.actions.map((a: ActionId) => a as string) };
+        if (rule.scopeRef !== undefined) {
+          res.scopeRef = rule.scopeRef;
+        }
+        result.push(res);
       }
     }
   }

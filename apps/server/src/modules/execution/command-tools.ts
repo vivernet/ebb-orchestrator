@@ -2,8 +2,8 @@
  * CommandTools provides controlled command execution with environment isolation.
  * It executes commands without shell syntax, preferring explicit executable + args.
  */
-import { EnvironmentBuilder } from '../../platform/security/environment-builder';
-import * as childProcess from 'node:child_process';
+import { EnvironmentBuilder } from '../../platform/security/environment-builder.js';
+import * as _childProcess from 'node:child_process';
 import * as path from 'node:path';
 
 export type ExecOptions = {
@@ -49,7 +49,7 @@ export class CommandTools {
     const normalized = executable.toLowerCase();
     // Also check just the executable name without path
     const baseName = path.basename(normalized);
-    return SHELL_EXECUTABLES.has(baseName);
+    return SHELL_EXECUTABLES.has(baseName as ShellType);
   }
 
   /**
@@ -75,7 +75,7 @@ export class CommandTools {
     });
 
     return new Promise((resolve) => {
-      const spawned = childProcess.spawn(
+       const spawned = _childProcess.spawn(
         options.executable,
         options.args,
         {

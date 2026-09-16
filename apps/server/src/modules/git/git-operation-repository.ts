@@ -1,5 +1,5 @@
-import type { Database, DatabaseTx } from "../../platform/database/database.js";
-import type { GitOperation, GitOperationStatus, GitOperationType } from "./git-types.js";
+import type { Database, StatementParams } from "../../platform/database/database.js";
+import type { GitOperation, GitOperationType } from "./git-types.js";
 
 export interface CreateGitOperationParams {
   id: string;
@@ -34,17 +34,17 @@ export class GitOperationRepository {
       `INSERT INTO git_operations (
         id, type, status, repo_path, branch_name, worktree_id, target_ref, created_at, verified_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        op.id,
-        op.type,
-        op.status,
-        op.repo_path,
-        op.branch_name,
-        op.worktree_id,
-        op.target_ref,
-        op.created_at,
-        op.verified_at,
-      ]
+      {
+        id: op.id,
+        type: op.type,
+        status: op.status,
+        repo_path: op.repo_path,
+        branch_name: op.branch_name,
+        worktree_id: op.worktree_id,
+        target_ref: op.target_ref,
+        created_at: op.created_at,
+        verified_at: op.verified_at,
+      } as StatementParams
     );
 
     return op;
@@ -59,7 +59,7 @@ export class GitOperationRepository {
       `UPDATE git_operations 
        SET status = 'VERIFIED', verified_at = ? 
        WHERE id = ? AND status = 'STARTED'`,
-      [new Date().toISOString(), operationId]
+      { verified_at: new Date().toISOString(), id: operationId } as StatementParams
     );
   }
 
@@ -69,7 +69,7 @@ export class GitOperationRepository {
   findById(id: string): GitOperation | undefined {
     return this.db.get(
       `SELECT * FROM git_operations WHERE id = ?`,
-      [id]
+      { id } as StatementParams
     ) as GitOperation | undefined;
   }
 
@@ -80,7 +80,7 @@ export class GitOperationRepository {
   findStartedOperations(repoPath: string): GitOperation[] {
     return this.db.all(
       `SELECT * FROM git_operations WHERE repo_path = ? AND status = 'STARTED'`,
-      [repoPath]
+      { repo_path: repoPath } as StatementParams
     ) as GitOperation[];
   }
 
@@ -88,6 +88,6 @@ export class GitOperationRepository {
    * Delete an operation after successful verification.
    */
   delete(operationId: string): void {
-    this.db.run(`DELETE FROM git_operations WHERE id = ?`, [operationId]);
+    this.db.run(`DELETE FROM git_operations WHERE id = ?`, { id: operationId } as StatementParams);
   }
 }

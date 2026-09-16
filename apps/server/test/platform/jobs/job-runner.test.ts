@@ -1,5 +1,4 @@
 import { describe, expect, it, afterEach, beforeEach } from "vitest";
-import { randomUUID } from "node:crypto";
 import { mkdtemp, rm, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +7,7 @@ import { runMigrations, type Migration } from "../../../src/platform/database/mi
 import type { Database } from "../../../src/platform/database/database.js";
 import { enqueueJob } from "../../../src/platform/jobs/job-repository.js";
 import { JobRunner } from "../../../src/platform/jobs/job-runner.js";
+import { randomUUID } from "node:crypto";
 
 const migration001 = await readFile(
   join(import.meta.dirname, "../../../src/platform/database/migrations/001_system.sql"),

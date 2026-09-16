@@ -1,7 +1,7 @@
-import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { describe, expect, it } from "vitest";
 import { tmpdir } from "os";
-import { join, resolve } from "path";
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { join } from "path";
+import { mkdtempSync, writeFileSync } from "fs";
 
 import { GitCli } from "../../../src/modules/git/git-cli.js";
 

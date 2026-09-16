@@ -1,15 +1,13 @@
-import { describe, it, expect, test } from 'vitest';
-import { PermissionEngine } from '../../../src/modules/permissions/permission-engine';
+import { describe, it, expect } from 'vitest';
+import { PermissionEngine } from '../../../src/modules/permissions/permission-engine.js';
 import {
   PermissionDecision,
   ActionId,
-  PolicyRule,
   PolicyScope,
   PolicyRuleType,
-  EvaluationInput,
-  EvaluationResult,
-} from '../../../src/modules/permissions/permission-types';
-import { composeDecisions } from '../../../src/modules/permissions/permission-policy';
+} from '../../../src/modules/permissions/permission-types.js';
+import type { EvaluationInput } from '../../../src/modules/permissions/permission-types.js';
+import { composeDecisions } from '../../../src/modules/permissions/permission-policy.js';
 
 const engine = new PermissionEngine();
 

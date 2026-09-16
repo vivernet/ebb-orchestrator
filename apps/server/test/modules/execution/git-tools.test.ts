@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { tmpdir } from 'node:os';
 import crypto from 'node:crypto';
-import { GitTools } from '../../../src/modules/execution/git-tools';
+import { GitTools } from '../../../src/modules/execution/git-tools.js';
 
 describe('GitTools', () => {
   let testDir: string;
@@ -18,7 +18,9 @@ describe('GitTools', () => {
   afterEach(() => {
     try {
       fs.rmSync(testDir, { recursive: true, force: true });
-    } catch {}
+     } catch {
+       // Ignore cleanup errors
+     }
   });
 
   describe('git.status', () => {

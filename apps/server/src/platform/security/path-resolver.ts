@@ -40,7 +40,7 @@ export class PathResolver {
       try {
         realWorkspace = fs.realpathSync(normalizedWorkspace);
         realTarget = fs.realpathSync(resolvedTarget);
-      } catch (err) {
+      } catch {
         // If realpath fails, fall back to resolved paths
         realWorkspace = normalizedWorkspace;
         realTarget = resolvedTarget;
@@ -77,7 +77,7 @@ export class PathResolver {
       try {
         realWorkspace = fs.realpathSync(normalizedWorkspace);
         realTarget = fs.realpathSync(normalizedTarget);
-      } catch (err) {
+      } catch {
         realWorkspace = normalizedWorkspace;
         realTarget = normalizedTarget;
       }

@@ -38,8 +38,8 @@ describe("WorktreeManager", () => {
       expect(worktree.repoPath).toBe(repoPath);
       expect(worktree.branch).toBe("task/task-123");
       
-      // Verify the worktree exists and has the correct branch
-      const git = new GitCli();
+       // Verify the worktree exists and has the correct branch
+       const git = new GitCli();
       const status = await git.run(worktree.path, ["branch", "--show-current"]);
       expect(status.stdout.trim()).toBe("task/task-123");
       
@@ -56,9 +56,9 @@ describe("WorktreeManager", () => {
       const manager = new WorktreeManager();
       const worktree = await manager.createTaskWorkspace("task-456", repoPath, "master");
 
-      // Verify worktree exists
-      const git = new GitCli();
-      const listBefore = await git.run(repoPath, ["worktree", "list"]);
+       // Verify worktree exists
+       const git = new GitCli();
+       const listBefore = await git.run(repoPath, ["worktree", "list"]);
       expect(listBefore.stdout).toContain("task/task-456");
 
       // Remove the worktree directly using git
@@ -71,9 +71,9 @@ describe("WorktreeManager", () => {
   });
 
   describe("hooks are disabled", () => {
-    it("does not execute repository hooks when creating worktrees", async () => {
-      const repoPath = createTempDir();
-      const git = await initGitRepo(repoPath);
+      it("does not execute repository hooks when creating worktrees", async () => {
+        const repoPath = createTempDir();
+        await initGitRepo(repoPath);
 
       // Create a pre-commit hook that would fail
       const hooksPath = join(repoPath, ".git", "hooks");
@@ -94,9 +94,9 @@ describe("WorktreeManager", () => {
 
 describe("BranchManager", () => {
   describe("createEpicBranch", () => {
-    it("creates an epic branch from base ref", async () => {
-      const repoPath = createTempDir();
-      const git = await initGitRepo(repoPath);
+      it("creates an epic branch from base ref", async () => {
+        const repoPath = createTempDir();
+        await initGitRepo(repoPath);
 
       const manager = new BranchManager();
       const branch = await manager.createEpicBranch("epic-123", repoPath, "master");
@@ -106,16 +106,17 @@ describe("BranchManager", () => {
       expect(branch.name).toBe("epic/epic-123");
       expect(branch.targetRef).toBe("master");
       
-      // Verify the branch exists
-      const branches = await git.run(repoPath, ["branch"]);
-      expect(branches.stdout).toContain("epic/epic-123");
-    });
-  });
+       // Verify the branch exists
+       const git = new GitCli();
+       const branches = await git.run(repoPath, ["branch"]);
+       expect(branches.stdout).toContain("epic/epic-123");
+     });
+   });
 
-  describe("hooks are disabled", () => {
-    it("does not execute repository hooks when creating branches", async () => {
-      const repoPath = createTempDir();
-      const git = await initGitRepo(repoPath);
+   describe("hooks are disabled", () => {
+      it("does not execute repository hooks when creating branches", async () => {
+        const repoPath = createTempDir();
+        await initGitRepo(repoPath);
 
       // Create a pre-commit hook that would fail
       const hooksPath = join(repoPath, ".git", "hooks");
@@ -128,9 +129,10 @@ describe("BranchManager", () => {
 
       expect(branch.id).toBe("epic-epic-456");
       
-      // Verify the branch exists
-      const branches = await git.run(repoPath, ["branch"]);
-      expect(branches.stdout).toContain("epic/epic-456");
-    });
-  });
-});
+       // Verify the branch exists
+       const git = new GitCli();
+       const branches = await git.run(repoPath, ["branch"]);
+       expect(branches.stdout).toContain("epic/epic-456");
+     });
+   });
+ });

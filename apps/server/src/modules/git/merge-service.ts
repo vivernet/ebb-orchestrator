@@ -106,25 +106,25 @@ export class MergeService {
     const branchResult = await this.git.run(process.cwd(), ["branch", "--show-current"]);
     const currentBranch = branchResult.stdout.trim() || "master";
 
-    // Get current HEAD SHA before merge
-    const headResult = await this.git.run(process.cwd(), ["rev-parse", "HEAD"]);
-    const beforeSha = headResult.stdout.trim();
+     // Get current HEAD SHA before merge
+     const headResult = await this.git.run(process.cwd(), ["rev-parse", "HEAD"]);
+      const _beforeSha = headResult.stdout.trim();
 
-    // Perform merge with hooks disabled
-    // Note: In real implementation, this would merge the actual feature branch
-    const emptyHooksDir = this.createEmptyHooksDir();
-    try {
-      mkdirSync(emptyHooksDir, { recursive: true });
-      const mergeOutput = await this.git.run(process.cwd(), [
-        "-c",
-        `core.hooksPath=${emptyHooksDir.replace(/\\/g, "/")}`,
-        "merge",
-        "--no-edit",
-        "HEAD", // Placeholder - in real code would be the source branch
-      ]);
-    } finally {
-      rmSync(emptyHooksDir, { recursive: true, force: true });
-    }
+     // Perform merge with hooks disabled
+     // Note: In real implementation, this would merge the actual feature branch
+     const emptyHooksDir = this.createEmptyHooksDir();
+     try {
+       mkdirSync(emptyHooksDir, { recursive: true });
+       await this.git.run(process.cwd(), [
+         "-c",
+         `core.hooksPath=${emptyHooksDir.replace(/\\/g, "/")}`,
+         "merge",
+         "--no-edit",
+         "HEAD", // Placeholder - in real code would be the source branch
+       ]);
+     } finally {
+       rmSync(emptyHooksDir, { recursive: true, force: true });
+     }
 
     // Get resulting SHA after merge
     const afterHeadResult = await this.git.run(process.cwd(), ["rev-parse", "HEAD"]);

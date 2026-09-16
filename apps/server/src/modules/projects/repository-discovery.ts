@@ -1,6 +1,6 @@
 import { GitCli } from "../git/git-cli.js";
 import { existsSync, readFileSync } from "fs";
-import { join, resolve, extname, basename } from "path";
+import { join, resolve } from "path";
 
 export interface RepositoryFacts {
   readonly root: string;
@@ -90,8 +90,8 @@ export class RepositoryDiscovery {
       for (const line of lines) {
         const parts = line.trim().split(/\s+/);
         if (parts.length >= 2) {
-          const name = parts[0];
-          const url = parts[1];
+          const name = parts[0]!;
+          const url = parts[1]!;
           if (!seen.has(name)) {
             seen.add(name);
             remotes.push({ name, url });

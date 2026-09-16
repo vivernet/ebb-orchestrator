@@ -1,4 +1,5 @@
-import { RepositoryDiscovery, RepositoryFacts } from "./repository-discovery.js";
+import { RepositoryDiscovery } from "./repository-discovery.js";
+import type { RepositoryFacts } from "./repository-discovery.js";
 
 export interface Onboarding {
   readonly facts: RepositoryFacts;
