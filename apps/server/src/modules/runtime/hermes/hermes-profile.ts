@@ -5,6 +5,17 @@
 import type { HermesLaunchProfile, HermesRunBuildConfig } from "./hermes-config.js";
 import * as path from "path";
 import * as os from "os";
+import { createRequire } from "node:module";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+const require = createRequire(import.meta.url);
+
+/** The launcher is deliberately independent of pnpm bin shims and cwd. */
+function defaultMcpLauncher(): { command: string; args: string[] } {
+  const entrypoint = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../bin/orchestrator-mcp.ts");
+  const tsxLoader = pathToFileURL(require.resolve("tsx/esm")).href;
+  return { command: process.execPath, args: ["--import", tsxLoader, entrypoint] };
+}
 
 /**
  * Orchestrator home directory.
@@ -93,7 +104,14 @@ export interface GenerateConfigOptions {
  * - Terminal configuration with home_mode: profile
  */
 export function generateConfigYaml(options: GenerateConfigOptions): string {
-  const { toolsetPath, resultFile, mcpCommand = "orchestrator-mcp", mcpArgs = [] } = options;
+  const { toolsetPath, resultFile } = options;
+  const defaultLauncher = defaultMcpLauncher();
+  const mcpCommand = options.mcpCommand && options.mcpCommand !== "orchestrator-mcp"
+    ? options.mcpCommand
+    : defaultLauncher.command;
+  const mcpArgs = options.mcpCommand && options.mcpCommand !== "orchestrator-mcp"
+    ? (options.mcpArgs ?? [])
+    : [...defaultLauncher.args, ...(options.mcpArgs ?? [])];
   const capabilityRef = options.capabilityRef ?? "orchestrator-issued-reference";
   const executableArgs = [...mcpArgs, "--capability-ref", capabilityRef, "--toolset", toolsetPath, ...(resultFile ? ["--result-file", resultFile] : [])];
   const yamlString = (value: string): string => JSON.stringify(value);

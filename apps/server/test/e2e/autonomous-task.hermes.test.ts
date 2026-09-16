@@ -268,6 +268,9 @@ describe("Autonomous Task End-to-End Workflow", () => {
     } catch {
       skip("Hermes binary is unavailable; install/configure Hermes to run this acceptance");
     }
+    if (!process.env.HERMES_MODEL) {
+      skip("Hermes model is unavailable; set HERMES_MODEL to a configured local/model fixture");
+    }
 
     const worktree = await worktreeManager.createTaskWorkspace(taskId, masterRepoPath, "master");
     const mcpCli = join(import.meta.dirname, "../../src/bin/orchestrator-mcp.ts");

@@ -66,7 +66,22 @@ async function main() {
         await mkdir(dirname(resultFile), { recursive: true });
         await writeFile(resultFile, JSON.stringify(toolResult.result), { encoding: 'utf8', flag: 'wx' });
       }
-      console.log(JSON.stringify(response));
+      // Hermes speaks JSON-RPC over stdio. Keep the domain response above
+      // simple, but always emit an id-bearing protocol response here.
+      let result: unknown = response.result;
+      if (request.method === 'tools/list') result = { tools: response.result };
+      if (request.method === 'tools/call') {
+        const call = response.result as { success?: boolean; result?: unknown; error?: string };
+        result = {
+          content: [{ type: 'text', text: JSON.stringify(call.success ? call.result : { error: call.error }) }],
+          isError: call.success !== true,
+        };
+      }
+      // The local diagnostic handshake historically omits ids; answer those
+      // requests as well. Real JSON-RPC notifications remain silent.
+      if (request.id !== undefined || request.method === 'initialize' || request.method === 'tools/list') {
+        console.log(JSON.stringify({ jsonrpc: '2.0', id: request.id ?? null, result }));
+      }
     } catch (err) {
       console.error(JSON.stringify({ error: err instanceof Error ? err.message : 'unknown error' }));
     }

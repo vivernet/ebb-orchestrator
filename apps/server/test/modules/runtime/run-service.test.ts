@@ -231,4 +231,33 @@ describe("RunService with FakeAgentRuntime", () => {
 
     await expect(() => fakeRuntime.collectResult(run.id)).rejects.toThrow(/No scripted outcome available/);
   });
+
+  it("atomically fails and revokes capability when runtime launch fails on start", async () => {
+    await setup();
+    fakeRuntime.startRun = async () => { throw new Error("launcher unavailable"); };
+
+    await expect(runService.startRun({
+      role: "developer", model: "gpt-4", taskId, epicId, triggerReason: "task-assignment",
+      contextVersion: "1", outputSchemaVersion: "1",
+    })).rejects.toThrow("launcher unavailable");
+
+    expect(db!.get<{ status: string; ended_at: string | null; capability_ref: string | null; capability_json: string | null; output: string }>(
+      "SELECT status, ended_at, capability_ref, capability_json, output FROM agent_runs ORDER BY started_at DESC LIMIT 1",
+    )).toMatchObject({ status: "FAILED", capability_ref: null, capability_json: null, output: "Error: launcher unavailable" });
+  });
+
+  it("atomically fails and revokes capability when runtime launch fails on resume", async () => {
+    await setup();
+    const run = await runService.startRun({
+      role: "developer", model: "gpt-4", taskId, epicId, triggerReason: "task-assignment",
+      contextVersion: "1", outputSchemaVersion: "1",
+    });
+    fakeRuntime.resumeRun = async () => { throw new Error("resume launcher unavailable"); };
+
+    await expect(runService.resumeRun(run.id, { sessionId: "session", attempt: 1 }))
+      .rejects.toThrow("resume launcher unavailable");
+    expect(db!.get<{ status: string; ended_at: string | null; capability_ref: string | null; capability_json: string | null }>(
+      "SELECT status, ended_at, capability_ref, capability_json FROM agent_runs WHERE id = $id", { id: run.id },
+    )).toMatchObject({ status: "FAILED", capability_ref: null, capability_json: null });
+  });
 });

@@ -136,7 +136,7 @@ describe("Hermes profile isolation", () => {
   });
 
   describe("generateConfigYaml", () => {
-    it("generates config.yaml with MCP server referencing orchestrator-mcp", () => {
+    it("generates config.yaml with a Windows-safe absolute MCP launcher", () => {
       const config = generateConfigYaml({
         capability: { role: "Developer", workspace: "/test/workspace" },
         toolsetPath: "/test/toolset",
@@ -144,7 +144,9 @@ describe("Hermes profile isolation", () => {
 
       expect(config).toContain("mcp_servers:");
       expect(config).toContain("orchestrator-mcp:");
-      expect(config).toContain('command: "orchestrator-mcp"');
+       expect(config).toContain(`command: ${JSON.stringify(process.execPath)}`);
+       expect(config).toContain("orchestrator-mcp.ts");
+       expect(config).toMatch(/file:.*tsx[\\/]dist[\\/]esm[\\/]index\.mjs/);
     });
 
     it("sets terminal.home_mode to profile", () => {

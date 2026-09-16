@@ -13,6 +13,7 @@ import { validateRoleOutput } from "../output-validator.js";
 import * as path from "path";
 import * as fs from "fs/promises";
 import * as os from "os";
+import { createSqliteDatabase } from "../../../platform/database/sqlite-database.js";
 
 /**
  * In-memory run state tracking.
@@ -165,6 +166,10 @@ export class HermesRuntimeAdapter implements AgentRuntime {
       this.exitCodes.set(run.id, result.exitCode);
     } catch (error) {
       const processError = error instanceof ExitCodeError ? error : undefined;
+      // A process that started and returned non-zero is a run outcome. A
+      // spawn/launcher failure is different: let RunService atomically fail
+      // the persisted run and revoke its capability.
+      if (!processError) throw error;
       processOutput = { stdout: processError?.stdout ?? "", stderr: processError?.stderr ?? (error as Error).message, exitCode: processError?.exitCode ?? -1 };
       this.exitCodes.set(run.id, processOutput.exitCode);
     }
@@ -195,10 +200,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
    * Resume a run that was paused.
    */
   async resumeRun(runId: string, options: { sessionId: string; attempt: number }): Promise<void> {
-    const existingState = this.runs.get(runId);
-    if (!existingState) {
-      throw new Error(`Run ${runId} not found`);
-    }
+    const existingState = this.runs.get(runId) ?? await this.restoreRunState(runId, options);
 
     const abortController = new AbortController();
 
@@ -225,6 +227,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
       processOutput = { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode };
     } catch (error) {
       const processError = error instanceof ExitCodeError ? error : undefined;
+      if (!processError) throw error;
       processOutput = { stdout: processError?.stdout ?? "", stderr: processError?.stderr ?? (error as Error).message, exitCode: processError?.exitCode ?? -1 };
     }
 
@@ -241,6 +244,36 @@ export class HermesRuntimeAdapter implements AgentRuntime {
     existingState.usage = this.parseUsage(processOutput.stdout);
     existingState.startTime = new Date();
     existingState.abortController = abortController;
+    this.runs.set(runId, existingState);
+  }
+
+  private async restoreRunState(runId: string, options: { sessionId: string; attempt: number }): Promise<RunState> {
+    if (!this.databasePath) throw new Error(`Run ${runId} not found in persisted runtime state`);
+    const db = createSqliteDatabase(this.databasePath);
+    try {
+      const row = db.get<Record<string, unknown>>("SELECT * FROM agent_runs WHERE id = $id", { id: runId });
+      if (!row) throw new Error(`Run ${runId} not found`);
+      const capability = row.capability_json ? JSON.parse(String(row.capability_json)) as { workspace?: string } : undefined;
+      const run: AgentRun = {
+        id: String(row.id), role: String(row.role), runtime: String(row.runtime), model: String(row.model),
+        taskId: row.task_id as string | null, epicId: row.epic_id as string | null, status: "IN_PROGRESS" as RunStatus,
+        sessionId: options.sessionId, attempt: options.attempt, triggerReason: row.trigger_reason as AgentRun["triggerReason"],
+        contextVersion: row.context_version as string | null, outputSchemaVersion: row.output_schema_version as string | null,
+        startedAt: row.started_at ? new Date(String(row.started_at)) : null, endedAt: null,
+        exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
+        ...(row.capability_ref ? { capabilityRef: String(row.capability_ref) } : {}),
+      };
+      const workspace = capability?.workspace || this.getManagedWorktree(run);
+      // Keep the restored workspace available to the normal resolver without making
+      // resume dependent on the process that created the original map entry.
+      const restored = { run, pid: null, sessionId: options.sessionId, stdout: "", stderr: "", exitCode: null,
+        startTime: new Date(), abortController: null, checkpointPath: await this.getCheckpointPath(runId),
+        submittedResult: null, resultPath: path.join(this.resultDirectory, `${runId}.json`), usage: null } satisfies RunState;
+      if (!this.managedWorktree && !this.managedWorktreeForRun) {
+        (restored.run as AgentRun & { __workspace?: string }).__workspace = workspace;
+      }
+      return restored;
+    } finally { db.close(); }
   }
 
   /**
@@ -405,7 +438,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
    * Get the managed worktree path for a run.
    */
   private getManagedWorktree(run: AgentRun): string {
-    return this.managedWorktreeForRun?.(run) ?? this.managedWorktree ?? path.join(os.homedir(), "worktrees", run.id);
+    return this.managedWorktreeForRun?.(run) ?? this.managedWorktree ?? (run as AgentRun & { __workspace?: string }).__workspace ?? path.join(os.homedir(), "worktrees", run.id);
   }
 
   private async waitForWorkspace(run: AgentRun): Promise<string> {
@@ -442,7 +475,22 @@ export class HermesRuntimeAdapter implements AgentRuntime {
       const validated = validateRoleOutput(this.roleName(role), value);
       return validated.valid && validated.output ? JSON.stringify(validated.output) : null;
     } catch {
-      return null;
+      // The file is a transport artifact, not the source of truth. A valid
+      // MCP submit_result also atomically persists the exact JSON in SQLite;
+      // this fallback is essential after a Windows process exits before the
+      // result-file flush completes (and after an adapter restart).
+      if (!this.databasePath) return null;
+      const db = createSqliteDatabase(this.databasePath);
+      try {
+        const row = db.get<{ output: string | null }>(
+          "SELECT output FROM agent_runs WHERE id = $id AND status = 'COMPLETING'", { id: runId });
+        if (!row?.output) return null;
+        const value: unknown = JSON.parse(row.output);
+        const validated = validateRoleOutput(this.roleName(role), value);
+        return validated.valid && validated.output ? JSON.stringify(validated.output) : null;
+      } catch {
+        return null;
+      } finally { db.close(); }
     }
   }
 

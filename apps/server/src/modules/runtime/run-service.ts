@@ -110,7 +110,12 @@ export class RunService {
     // startRun is the runtime readiness barrier: adapters resolve only after
     // their profile/config and launch have been prepared. Never expose a run
     // to callers while that asynchronous work is still in flight.
-    await this.runtime.startRun(record);
+    try {
+      await this.runtime.startRun(record);
+    } catch (error) {
+      this.failRun(record.id, error);
+      throw error;
+    }
     return record;
   }
 
@@ -130,8 +135,22 @@ export class RunService {
       );
       this.getRun(tx, runId);
     });
-    await this.runtime.resumeRun(runId, options);
+    try {
+      await this.runtime.resumeRun(runId, options);
+    } catch (error) {
+      this.failRun(runId, error);
+      throw error;
+    }
     return this.getRun(this.db, runId);
+  }
+
+  private failRun(runId: string, error: unknown): void {
+    const diagnostics = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+    this.db.transaction((tx) => {
+      tx.run(`UPDATE agent_runs SET status = 'FAILED', ended_at = $ended_at,
+        exit_code = $exit_code, output = $output, capability_ref = NULL, capability_json = NULL
+        WHERE id = $id`, { id: runId, ended_at: new Date().toISOString(), exit_code: -1, output: diagnostics });
+    });
   }
 
   /**
