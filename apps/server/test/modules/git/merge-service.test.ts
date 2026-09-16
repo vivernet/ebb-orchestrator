@@ -5,6 +5,7 @@ import { mkdtempSync, writeFileSync, mkdirSync } from "fs";
 
 import { GitCli } from "../../../src/modules/git/git-cli.js";
 import { MergeService } from "../../../src/modules/git/merge-service.js";
+import { IntegrationService } from "../../../src/modules/git/integration-service.js";
 import type { IntegrationAttempt } from "../../../src/modules/git/integration-service.js";
 
 function createTempDir(): string {
@@ -26,17 +27,10 @@ async function initGitRepo(path: string, commitMessage: string = "initial"): Pro
 }
 
 async function successfulIntegration(repoPath: string, git: GitCli, sourceBranch = "HEAD"): Promise<IntegrationAttempt> {
-  return {
-    id: "integration-test",
-    sourceBranch,
-    currentTargetBranch: "master",
-    expectedTargetBranch: "master",
-    worktreePath: repoPath,
-    repoPath,
-    expectedTargetSha: (await git.run(repoPath, ["rev-parse", "master"])).stdout.trim(),
-    status: "MERGED",
-    createdAt: new Date().toISOString(),
-  };
+  const service = new IntegrationService({ git });
+  const attempt = await service.prepareIntegration(sourceBranch, "master", repoPath);
+  await service.runInIntegrationWorktree(attempt, async () => undefined);
+  return attempt;
 }
 
 describe("MergeService", () => {
@@ -219,6 +213,25 @@ describe("MergeService", () => {
 
       await expect(mergeService.mergeApproved("subject-123", "approval-456"))
         .rejects.toThrow(/TARGET_MOVED/);
+    });
+
+    it("rejects fabricated and cross-repository provenance", async () => {
+      const repoPath = createTempDir();
+      const otherRepoPath = createTempDir();
+      const git = await initGitRepo(repoPath);
+      await initGitRepo(otherRepoPath);
+      const issued = await successfulIntegration(repoPath, git);
+      const approvalStore = new Map();
+      approvalStore.set("approval-456", { id: "approval-456", subjectId: "subject-123", type: "FINAL_MERGE", status: "APPROVED" });
+
+      const fabricated = { ...issued };
+      await expect(new MergeService({ approvalStore, repoPath, integrationAttempt: fabricated })
+        .mergeApproved("subject-123", "approval-456"))
+        .rejects.toThrow(/Missing verified integration provenance/);
+
+      await expect(new MergeService({ approvalStore, repoPath: otherRepoPath, integrationAttempt: issued })
+        .mergeApproved("subject-123", "approval-456"))
+        .rejects.toThrow(/Missing verified integration provenance/);
     });
 
     it("merges without executing hooks", async () => {

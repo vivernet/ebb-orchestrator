@@ -2,6 +2,7 @@ import { GitCli } from "./git-cli.js";
 import { tmpdir } from "os";
 import { join } from "path";
 import { rmSync, mkdirSync } from "fs";
+import { getVerifiedIntegrationProvenance } from "./integration-service.js";
 import type { IntegrationAttempt } from "./integration-service.js";
 
 export interface MergeResult {
@@ -113,16 +114,24 @@ export class MergeService {
     }
 
     const integration = this.integrationAttempt;
-    if (!integration || integration.status !== "MERGED" || !integration.sourceBranch ||
-        !integration.currentTargetBranch || !integration.expectedTargetSha) {
+    const provenance = integration ? getVerifiedIntegrationProvenance(integration) : null;
+    if (!integration || !provenance || !provenance.snapshot.sourceBranch ||
+        !provenance.snapshot.currentTargetBranch || !provenance.snapshot.expectedTargetSha) {
       throw new Error("Missing verified integration provenance: successful integration, source branch, and expected target SHA are required");
     }
-    if (this.expectedTargetSha && this.expectedTargetSha !== integration.expectedTargetSha) {
+    const verified = provenance.snapshot;
+    if (verified.repoPath !== this.repoPath ||
+        (this.sourceBranch && this.sourceBranch !== verified.sourceBranch) ||
+        (this.targetBranch && this.targetBranch !== verified.currentTargetBranch) ||
+        verified.expectedTargetBranch !== verified.currentTargetBranch ||
+        (this.expectedTargetSha && this.expectedTargetSha !== verified.expectedTargetSha) ||
+        integration.id !== verified.id ||
+        `${verified.id}:${verified.repoPath}:${verified.currentTargetBranch}:${verified.sourceBranch}` !== provenance.identity) {
       throw new Error("Missing verified integration provenance: expected target SHA does not match integration record");
     }
 
     // Perform the merge
-    const mergeResult = await this.performMerge(subjectId);
+    const mergeResult = await this.performMerge(subjectId, verified);
     this.onVerifiedCompletion?.(mergeResult);
 
     return mergeResult;
@@ -132,21 +141,24 @@ export class MergeService {
    * Performs the actual merge operation.
     * The source and target come from the verified integration attempt.
    */
-  private async performMerge(subjectId: string): Promise<MergeResult> {
+  private async performMerge(subjectId: string, integration: Readonly<{
+    sourceBranch: string;
+    currentTargetBranch: string;
+    repoPath: string;
+    expectedTargetSha: string | null;
+  }>): Promise<MergeResult> {
     // Re-read the target immediately before changing it. An old integration
     // result is never allowed to merge onto a moving target.
-    const integration = this.integrationAttempt;
-    if (!integration) throw new Error("Missing verified integration provenance");
     const target = integration.currentTargetBranch;
-    const targetBefore = (await this.git.run(this.repoPath, ["rev-parse", target])).stdout.trim();
+    const targetBefore = (await this.git.run(integration.repoPath, ["rev-parse", target])).stdout.trim();
     if (targetBefore !== integration.expectedTargetSha) {
       throw new Error(`TARGET_MOVED: expected ${integration.expectedTargetSha}, found ${targetBefore}; restart integration`);
     }
-    const branchResult = await this.git.run(this.repoPath, ["branch", "--show-current"]);
+    const branchResult = await this.git.run(integration.repoPath, ["branch", "--show-current"]);
     const currentBranch = branchResult.stdout.trim() || "master";
 
     // Get current HEAD SHA before merge
-    const headResult = await this.git.run(this.repoPath, ["rev-parse", "HEAD"]);
+    const headResult = await this.git.run(integration.repoPath, ["rev-parse", "HEAD"]);
     const _beforeSha = headResult.stdout.trim();
 
     // Perform merge with hooks disabled
@@ -161,22 +173,22 @@ export class MergeService {
         integration.sourceBranch,
       ];
       if (currentBranch !== target) {
-        await this.git.run(this.repoPath, ["checkout", target]);
+        await this.git.run(integration.repoPath, ["checkout", target]);
       }
-      const targetImmediatelyBeforeMerge = (await this.git.run(this.repoPath, ["rev-parse", target])).stdout.trim();
+      const targetImmediatelyBeforeMerge = (await this.git.run(integration.repoPath, ["rev-parse", target])).stdout.trim();
       if (targetImmediatelyBeforeMerge !== targetBefore) {
         throw new Error(`TARGET_MOVED: target changed from ${targetBefore} to ${targetImmediatelyBeforeMerge}; restart integration`);
       }
       if (targetImmediatelyBeforeMerge !== integration.expectedTargetSha) {
         throw new Error(`TARGET_MOVED: expected ${integration.expectedTargetSha}, found ${targetImmediatelyBeforeMerge}; restart integration`);
       }
-      await this.git.run(this.repoPath, mergeArgs);
+      await this.git.run(integration.repoPath, mergeArgs);
     } finally {
       rmSync(emptyHooksDir, { recursive: true, force: true });
     }
 
     // Get resulting SHA after merge
-    const afterHeadResult = await this.git.run(this.repoPath, ["rev-parse", target]);
+    const afterHeadResult = await this.git.run(integration.repoPath, ["rev-parse", target]);
     const afterSha = afterHeadResult.stdout.trim();
 
     return {

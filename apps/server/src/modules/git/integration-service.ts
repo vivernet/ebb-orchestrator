@@ -15,12 +15,46 @@ export interface IntegrationAttempt {
   createdAt: string;
 }
 
+interface IntegrationSnapshot {
+  readonly id: string;
+  readonly sourceBranch: string;
+  readonly currentTargetBranch: string;
+  readonly expectedTargetBranch: string;
+  readonly worktreePath: string;
+  readonly repoPath: string;
+  readonly expectedTargetSha: string | null;
+  readonly createdAt: string;
+}
+
+interface IssuedIntegration {
+  readonly snapshot: IntegrationSnapshot;
+  readonly identity: string;
+  status: IntegrationAttempt["status"];
+}
+
+// A WeakMap makes the provenance capability unforgeable by callers that only
+// have the public attempt shape. The snapshot is what downstream checks use.
+const issuedIntegrations = new WeakMap<IntegrationAttempt, IssuedIntegration>();
+
+export interface VerifiedIntegrationProvenance {
+  readonly snapshot: Readonly<IntegrationSnapshot>;
+  readonly identity: string;
+}
+
+export function getVerifiedIntegrationProvenance(
+  attempt: IntegrationAttempt
+): VerifiedIntegrationProvenance | null {
+  const issued = issuedIntegrations.get(attempt);
+  if (!issued || issued.status !== "MERGED" || attempt.status !== "MERGED") return null;
+  return { snapshot: issued.snapshot, identity: issued.identity };
+}
+
 export interface IntegrationServiceOptions {
   git?: GitCli;
   worktreeDir?: string;
 }
 
-export type IntegrationRunner<T> = (worktreePath: string, attempt: IntegrationAttempt) => Promise<T>;
+export type IntegrationRunner<T> = (worktreePath: string, attempt: Readonly<IntegrationAttempt>) => Promise<T>;
 
 /**
  * IntegrationService manages the preparation of integration workspaces.
@@ -93,6 +127,22 @@ export class IntegrationService {
         createdAt: new Date().toISOString(),
       };
 
+      const snapshot: IntegrationSnapshot = Object.freeze({
+        id: attempt.id,
+        sourceBranch: attempt.sourceBranch,
+        currentTargetBranch: attempt.currentTargetBranch,
+        expectedTargetBranch: attempt.expectedTargetBranch,
+        worktreePath: attempt.worktreePath,
+        repoPath: attempt.repoPath,
+        expectedTargetSha: attempt.expectedTargetSha,
+        createdAt: attempt.createdAt,
+      });
+      issuedIntegrations.set(attempt, {
+        snapshot,
+        identity: `${snapshot.id}:${snapshot.repoPath}:${snapshot.currentTargetBranch}:${snapshot.sourceBranch}`,
+        status: attempt.status,
+      });
+
       return attempt;
     } catch (error) {
       // Clean up partial worktree on failure
@@ -114,24 +164,52 @@ export class IntegrationService {
 
   /** Run the real Integration role only after the isolated worktree is prepared. */
   async runInIntegrationWorktree<T>(attempt: IntegrationAttempt, runner: IntegrationRunner<T>): Promise<T> {
-    if (attempt.status !== "PREPARED") throw new Error("integration attempt is not prepared");
+    const issued = issuedIntegrations.get(attempt);
+    if (!issued || attempt.status !== "PREPARED") throw new Error("integration attempt is not prepared");
+    const { snapshot } = issued;
     attempt.status = "MERGING";
+    issued.status = "MERGING";
     try {
-      const result = await runner(attempt.worktreePath, attempt);
+      // Do not give the runner the live attempt record. In addition to the
+      // immutable check below, this prevents an in-process runner from
+      // changing the object used by the final verification.
+      const runnerAttempt = Object.freeze({ ...attempt });
+      let result: T;
+      try {
+        result = await runner(snapshot.worktreePath, runnerAttempt);
+      } catch (error) {
+        if (error instanceof TypeError && /read only|readonly|frozen/i.test(error.message)) {
+          throw new Error("INTEGRATION_PROVENANCE_MUTATED: runner changed the integration attempt", { cause: error });
+        }
+        throw error;
+      }
+      const provenanceChanged = [
+        [attempt.id, snapshot.id],
+        [attempt.sourceBranch, snapshot.sourceBranch],
+        [attempt.currentTargetBranch, snapshot.currentTargetBranch],
+        [attempt.expectedTargetBranch, snapshot.expectedTargetBranch],
+        [attempt.worktreePath, snapshot.worktreePath],
+        [attempt.repoPath, snapshot.repoPath],
+        [attempt.expectedTargetSha, snapshot.expectedTargetSha],
+        [attempt.createdAt, snapshot.createdAt],
+      ].some(([actual, expected]) => actual !== expected);
+      if (provenanceChanged) {
+        throw new Error("INTEGRATION_PROVENANCE_MUTATED: runner changed the integration attempt");
+      }
       // The target may have moved while the integration role was running.  Do
       // this check here, rather than leaving it to an end-to-end caller.
-      const currentTargetSha = (await this.git.run(attempt.repoPath, ["rev-parse", attempt.currentTargetBranch])).stdout.trim();
-      if (!attempt.expectedTargetSha || currentTargetSha !== attempt.expectedTargetSha) {
+      const currentTargetSha = (await this.git.run(snapshot.repoPath, ["rev-parse", snapshot.currentTargetBranch])).stdout.trim();
+      if (!snapshot.expectedTargetSha || currentTargetSha !== snapshot.expectedTargetSha) {
         attempt.status = "FAILED";
-        throw new Error(`TARGET_MOVED: expected ${attempt.expectedTargetSha ?? "a verified target"}, found ${currentTargetSha}; restart integration`);
+        issued.status = "FAILED";
+        throw new Error(`TARGET_MOVED: expected ${snapshot.expectedTargetSha ?? "a verified target"}, found ${currentTargetSha}; restart integration`);
       }
-      // Keep the verified base on the record consumed by the final merge
-      // guard.  Do not mark an attempt successful without this provenance.
-      attempt.expectedTargetSha = currentTargetSha;
       attempt.status = "MERGED";
+      issued.status = "MERGED";
       return result;
     } catch (error) {
       attempt.status = "FAILED";
+      issued.status = "FAILED";
       throw error;
     }
   }

@@ -154,5 +154,17 @@ describe("IntegrationService", () => {
         .rejects.toThrow(/TARGET_MOVED/);
       expect(attempt.status).toBe("FAILED");
     });
+
+    it("rejects a runner that mutates integration provenance", async () => {
+      const repoPath = createTempDir();
+      const git = await initGitRepo(repoPath);
+      const service = new IntegrationService({ git });
+      const attempt = await service.prepareIntegration("master", "master", repoPath);
+
+      await expect(service.runInIntegrationWorktree(attempt, async (_path, runnerAttempt) => {
+        (runnerAttempt as { expectedTargetSha: string }).expectedTargetSha = "forged-sha";
+      })).rejects.toThrow(/INTEGRATION_PROVENANCE_MUTATED/);
+      expect(attempt.status).toBe("FAILED");
+    });
   });
 });
