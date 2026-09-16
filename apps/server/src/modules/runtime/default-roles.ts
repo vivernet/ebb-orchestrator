@@ -378,6 +378,7 @@ export const IntegrationContract: RoleContract = {
     ActionId.WorkspaceSearch,
     ActionId.GitStatus,
     ActionId.GitDiff,
+    ActionId.ProjectTest,
     ActionId.ArtifactWrite,
     ActionId.SubmitResult,
   ],

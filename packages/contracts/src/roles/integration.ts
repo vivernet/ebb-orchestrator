@@ -10,6 +10,7 @@ export const IntegrationOutputSchema = BaseOutputSchema.extend({
   baseSha: z.string().min(1).optional(),
   sourceSha: z.string().min(1).optional(),
   provenance: z.array(z.string().min(1)).optional(),
+  evidence: z.array(z.string().min(1)).optional(),
 });
 
 export type IntegrationOutput = z.infer<typeof IntegrationOutputSchema>;

@@ -145,7 +145,7 @@ describe('RoleRegistry', () => {
     it('should have correct tools for qa', () => {
       const contract = getContract('qa');
       expect(contract).toBeDefined();
-      expect(contract?.allowedTools).toEqual([
+     expect(contract?.allowedTools).toEqual([
         'workspace.read',
         'workspace.search',
         'project.test',
@@ -160,11 +160,12 @@ describe('RoleRegistry', () => {
     it('should have correct tools for integration', () => {
       const contract = getContract('integration');
       expect(contract).toBeDefined();
-      expect(contract?.allowedTools).toEqual([
+     expect(contract?.allowedTools).toEqual([
         'workspace.read',
         'workspace.search',
         'git.status',
         'git.diff',
+        'project.test',
         'artifact.write',
         'submit_result',
       ]);

@@ -27,12 +27,34 @@ describe('MCP Server', () => {
       const { McpServer } = await import('../../../../src/modules/execution/mcp/mcp-server.js');
       const { RunCapability } = await import('../../../../src/modules/execution/run-capability.js');
       const server = new McpServer(new RunCapability({ id: 'handshake', role: 'reviewer', workspace: workspaceDir, allowedTools: ['workspace.read', 'submit_result'] }));
-      const initialize = await server.processRequest({ id: 7, method: 'initialize' });
-      const listed = await server.processRequest({ id: 8, method: 'tools/list' });
-      expect(initialize.result).toMatchObject({ protocolVersion: expect.any(String) });
-      const tools = (listed.result as { tools: Array<{ name: string; inputSchema: { type: string } }> }).tools;
+       const initialize = await server.processRequest({ jsonrpc: '2.0', id: 7, method: 'initialize' });
+       const listed = await server.processRequest({ jsonrpc: '2.0', id: 8, method: 'tools/list' });
+       expect(initialize).not.toBeNull();
+       expect(listed).not.toBeNull();
+       expect(initialize as object).toMatchObject({ jsonrpc: '2.0', id: 7 });
+       expect(listed as object).toMatchObject({ jsonrpc: '2.0', id: 8 });
+       const initializeResponse = initialize as { result: { protocolVersion: string } };
+       const listedResponse = listed as { result: { tools: Array<{ name: string; inputSchema: { type: string } }> } };
+       expect(initializeResponse.result).toMatchObject({ protocolVersion: expect.any(String) });
+       const tools = listedResponse.result.tools;
       expect(tools).toHaveLength(2);
       for (const tool of tools) expect(tool.inputSchema).toMatchObject({ type: 'object' });
+    });
+
+    it('implements JSON-RPC errors, params validation, and silent notifications', async () => {
+      const { McpServer } = await import('../../../../src/modules/execution/mcp/mcp-server.js');
+      const { RunCapability } = await import('../../../../src/modules/execution/run-capability.js');
+      const server = new McpServer(new RunCapability({ id: 'protocol', role: 'reviewer', workspace: workspaceDir, allowedTools: ['project.test'] }));
+      await expect(server.processRequest({ jsonrpc: '2.0', id: 1, method: 'missing' })).resolves.toMatchObject({
+        jsonrpc: '2.0', id: 1, error: { code: -32601 },
+      });
+      await expect(server.processRequest({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: {} })).resolves.toMatchObject({
+        jsonrpc: '2.0', id: 2, error: { code: -32602 },
+      });
+      await expect(server.processRequest({ jsonrpc: '2.0', method: 'tools/list' })).resolves.toBeNull();
+      await expect(server.processRequest({ jsonrpc: '1.0', id: 3, method: 'tools/list' })).resolves.toMatchObject({
+        jsonrpc: '2.0', id: 3, error: { code: -32600 },
+      });
     });
 
     it('runs project.test through the configured controlled executor', async () => {

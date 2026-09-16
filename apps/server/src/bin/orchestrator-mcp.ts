@@ -61,29 +61,16 @@ async function main() {
     try {
       const request = JSON.parse(line.toString());
       const response = await server.processRequest(request);
-      const toolResult = response.result as { success?: boolean; result?: unknown };
-      if (request.method === 'tools/call' && request.params?.name === 'submit_result' && toolResult.success && resultFile) {
+      if (request?.method === 'tools/call' && request?.params?.name === 'submit_result' && response && resultFile) {
+        const content = (response.result as { content?: Array<{ text?: string }> }).content?.[0]?.text;
+        const toolResult = content ? JSON.parse(content) as { outcome?: unknown } : undefined;
+        if (toolResult?.outcome === undefined) throw new Error('submit_result did not return a result');
         await mkdir(dirname(resultFile), { recursive: true });
-        await writeFile(resultFile, JSON.stringify(toolResult.result), { encoding: 'utf8', flag: 'wx' });
+        await writeFile(resultFile, JSON.stringify(toolResult), { encoding: 'utf8', flag: 'wx' });
       }
-      // Hermes speaks JSON-RPC over stdio. Keep the domain response above
-      // simple, but always emit an id-bearing protocol response here.
-      let result: unknown = response.result;
-       // processRequest already returns the MCP tools/list envelope.
-      if (request.method === 'tools/call') {
-        const call = response.result as { success?: boolean; result?: unknown; error?: string };
-        result = {
-          content: [{ type: 'text', text: JSON.stringify(call.success ? call.result : { error: call.error }) }],
-          isError: call.success !== true,
-        };
-      }
-      // The local diagnostic handshake historically omits ids; answer those
-      // requests as well. Real JSON-RPC notifications remain silent.
-      if (request.id !== undefined || request.method === 'initialize' || request.method === 'tools/list') {
-        console.log(JSON.stringify({ jsonrpc: '2.0', id: request.id ?? null, result }));
-      }
-    } catch (err) {
-      console.error(JSON.stringify({ error: err instanceof Error ? err.message : 'unknown error' }));
+      if (response) console.log(JSON.stringify(response));
+    } catch {
+      console.log(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }));
     }
   }
   db.close();

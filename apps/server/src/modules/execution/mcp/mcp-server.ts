@@ -11,6 +11,24 @@ export interface ToolCallResult {
   error?: string;
 }
 
+type JsonRpcId = string | number | null;
+export interface JsonRpcRequest {
+  jsonrpc: '2.0';
+  method: string;
+  params?: Record<string, unknown>;
+  id?: JsonRpcId;
+}
+export interface JsonRpcResponse {
+  jsonrpc: '2.0';
+  id: JsonRpcId;
+  result?: unknown;
+  error?: { code: number; message: string; data?: unknown };
+}
+
+const errorResponse = (id: JsonRpcId, code: number, message: string, data?: unknown): JsonRpcResponse => ({
+  jsonrpc: '2.0', id, error: data === undefined ? { code, message } : { code, message, data },
+});
+
 /**
  * McpServer provides an MCP stdio server implementation that routes tool calls
  * through ActionGateway using capability-bound tool access.
@@ -91,31 +109,46 @@ export class McpServer {
   /**
    * Process an MCP request.
    */
-  async processRequest(request: {
-    method: string;
-    params?: Record<string, unknown>;
-    id?: string | number | null;
-  }): Promise<{ result: unknown; error?: string }> {
-    switch (request.method) {
+  async processRequest(request: unknown): Promise<JsonRpcResponse | null> {
+    if (!request || typeof request !== 'object' || Array.isArray(request)) return errorResponse(null, -32600, 'Invalid Request');
+    const value = request as Record<string, unknown>;
+    const id = value.id;
+    const isNotification = id === undefined;
+    if (value.jsonrpc !== '2.0' || typeof value.method !== 'string' || value.method.length === 0 ||
+        (id !== undefined && id !== null && typeof id !== 'string' && typeof id !== 'number') ||
+        (typeof id === 'number' && !Number.isFinite(id)) ||
+        (value.params !== undefined && (!value.params || typeof value.params !== 'object' || Array.isArray(value.params)))) {
+      return errorResponse(id === null || typeof id === 'string' || typeof id === 'number' ? id : null, -32600, 'Invalid Request');
+    }
+    const requestValue = value as unknown as JsonRpcRequest;
+    const respond = (response: JsonRpcResponse): JsonRpcResponse | null => isNotification ? null : response;
+    switch (requestValue.method) {
       case 'tools/list':
-        return { result: { tools: this.getAvailableTools() } };
+        return respond({ jsonrpc: '2.0', id: id ?? null, result: { tools: this.getAvailableTools() } });
 
       case 'tools/call': {
-        const toolName = request.params?.name as string;
-        const toolArgs = (request.params?.arguments as Record<string, unknown>) || {};
+        if (!requestValue.params || typeof requestValue.params.name !== 'string' ||
+            (requestValue.params.arguments !== undefined && (!requestValue.params.arguments || typeof requestValue.params.arguments !== 'object' || Array.isArray(requestValue.params.arguments)))) {
+          return respond(errorResponse(id ?? null, -32602, 'Invalid params'));
+        }
+        const toolName = requestValue.params.name;
+        const toolArgs = (requestValue.params.arguments as Record<string, unknown> | undefined) ?? {};
         const result = await this.callTool(toolName, toolArgs);
-        return { result };
+        return respond({ jsonrpc: '2.0', id: id ?? null, result: {
+          content: [{ type: 'text', text: JSON.stringify(result.success ? result.result : { error: result.error }) }],
+          isError: result.success !== true,
+        } });
       }
 
       case 'initialize':
-        return { result: {
+        return respond({ jsonrpc: '2.0', id: id ?? null, result: {
           protocolVersion: '2024-11-05',
           capabilities: { tools: {} },
           serverInfo: { name: 'orchestrator-mcp', version: '1.0.0' },
-        }};
+        }});
 
       default:
-        return { result: {}, error: `unknown method: ${request.method}` };
+        return respond(errorResponse(id ?? null, -32601, `Method not found: ${requestValue.method}`));
     }
   }
 }

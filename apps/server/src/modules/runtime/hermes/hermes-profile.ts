@@ -41,7 +41,10 @@ export function prepareHermesProfile(run: HermesRunBuildConfig): HermesLaunchPro
   // Start with an explicit runtime/Hermes allowlist; never clone process.env.
   const baseEnv: Record<string, string> = {};
   const allowed = ["PATH", "HOME", "HOMEDRIVE", "HOMEPATH", "SYSTEMROOT", "TEMP", "TMP", "NODE_PATH", "NODE_ENV"];
-  for (const key of allowed) if (process.env[key] !== undefined) baseEnv[key] = process.env[key]!;
+  for (const key of allowed) {
+    const value = process.env[key];
+    if (value !== undefined) baseEnv[key] = value;
+  }
 
   if (run.environment?.GITHUB_TOKEN !== undefined || run.environment?.SSH_AUTH_SOCK !== undefined) {
     throw new Error("Forbidden credential in supplied runtime environment");

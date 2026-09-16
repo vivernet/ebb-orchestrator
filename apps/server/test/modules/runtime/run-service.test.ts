@@ -125,7 +125,7 @@ describe("RunService with FakeAgentRuntime", () => {
     });
     const integrationCapability = JSON.parse(db!.get<{ capability_json: string }>(
       "SELECT capability_json FROM agent_runs WHERE id = $id", { id: integration.id })!.capability_json);
-    expect(integrationCapability.allowedTools).toEqual(["git.diff", "submit_result"]);
+    expect(integrationCapability.allowedTools).toEqual(["git.diff", "project.test", "submit_result"]);
   });
 
   it("atomically accepts one authenticated completion for the exact run", async () => {

@@ -365,7 +365,7 @@ describe("Autonomous Task End-to-End Workflow", () => {
        const integrationService = new IntegrationService({ worktreeDir: integrationWorkspace, database: db! });
          const preparedIntegration = await integrationService.prepareIntegration(`task/${taskId}`, "master", masterRepoPath);
          await integrationService.mergePreparedSource(preparedIntegration);
-         const integrationPrompt = new PromptBuilder().buildIntegrationPrompt({ taskContract: contract, workspace: preparedIntegration.worktreePath, targetRef: "master", checks: ["run smoke test", "verify target and task provenance"], ...(preparedIntegration.expectedTargetSha ? { expectedTargetSha: preparedIntegration.expectedTargetSha } : {}), sourceSha: preparedIntegration.sourceSha, integrationAttemptId: preparedIntegration.id, ...(preparedIntegration.provenanceDatabasePath ? { provenanceDatabasePath: preparedIntegration.provenanceDatabasePath } : {}) });
+         const integrationPrompt = new PromptBuilder().buildIntegrationPrompt({ taskContract: contract, workspace: preparedIntegration.worktreePath, targetRef: "master", checks: ["call the project.test MCP tool and verify its returned result (do not run the smoke test directly as a substitute)", "verify target and task provenance"], ...(preparedIntegration.expectedTargetSha ? { expectedTargetSha: preparedIntegration.expectedTargetSha } : {}), sourceSha: preparedIntegration.sourceSha, integrationAttemptId: preparedIntegration.id, ...(preparedIntegration.provenanceDatabasePath ? { provenanceDatabasePath: preparedIntegration.provenanceDatabasePath } : {}) });
         nextWorkspace = preparedIntegration.worktreePath;
          const integrationRun = await runs.startRun({ role: "Integration", model: process.env.HERMES_MODEL ?? "default", taskId, epicId: null, triggerReason: "integration", contextVersion: "hermes-acceptance-v1", outputSchemaVersion: "1", prompt: integrationPrompt, capability: { workspace: preparedIntegration.worktreePath, allowedTools: ["workspace.read", "workspace.search", "git.diff", "project.test", "submit_result"] } });
         workspaceByRun.set(integrationRun.id, preparedIntegration.worktreePath);
@@ -376,12 +376,14 @@ describe("Autonomous Task End-to-End Workflow", () => {
         });
         const integrationOutcome = await runtime.collectResult(integrationRun.id);
         expect(integrationOutcome.success).toBe(true);
-        const submitted = JSON.parse(integrationOutcome.output) as { outcome?: string; version?: string; baseSha?: string; sourceSha?: string; provenance?: string[] };
+         const submitted = JSON.parse(integrationOutcome.output) as { outcome?: string; version?: string; baseSha?: string; sourceSha?: string; provenance?: string[]; evidence?: string[] };
         integrationSubmitted = submitted;
         expect(submitted.outcome).toBe("PASS");
         expect(submitted.version).toBe("1");
         expect(submitted.baseSha).toBe(realIntegration.expectedTargetSha);
-        expect(submitted.sourceSha).toBe(realIntegration.sourceSha);
+         expect(submitted.sourceSha).toBe(realIntegration.sourceSha);
+         expect(submitted.evidence).toEqual(expect.arrayContaining([expect.stringMatching(/project\.test/)]));
+         expect(submitted.evidence?.some((entry) => /project\.test/.test(entry) && /success|passed|exitCode.?0|status.?0/i.test(entry))).toBe(true);
         expect(submitted.provenance).toEqual(expect.arrayContaining([
           expect.stringContaining(realIntegration.id),
           expect.stringContaining(realIntegration.expectedTargetSha ?? ""),
