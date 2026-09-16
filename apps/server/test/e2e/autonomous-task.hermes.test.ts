@@ -39,6 +39,7 @@ import { WorktreeManager } from "../../src/modules/git/worktree-manager.js";
 import { BranchManager } from "../../src/modules/git/branch-manager.js";
 import { ApprovalService } from "../../src/modules/approvals/approval-service.js";
 import { WorkService } from "../../src/modules/work/work-service.js";
+import { FakeAgentRuntime } from "../fakes/fake-agent-runtime.js";
 import { randomUUID as uuid } from "node:crypto";
 
 const migration001 = readFileSync(
@@ -133,6 +134,7 @@ describe("Autonomous Task End-to-End Workflow", () => {
   let branchManager: BranchManager;
   let mergeService: MergeService;
   let fixture: HealthServiceFixture;
+  let worktreeRecord: { id: string; path: string } | undefined;
   let projectId: string;
   let taskId: string;
   let masterRepoPath: string;
@@ -161,6 +163,11 @@ describe("Autonomous Task End-to-End Workflow", () => {
     }
     if (masterRepoPath) {
       await rm(masterRepoPath, { recursive: true, force: true });
+    }
+    
+    // Use worktreeManager to remove worktree properly
+    if (worktreeRecord?.id) {
+      await worktreeManager.removeWorkspace(worktreeRecord.id);
     }
     
     if (tmpDir) {
@@ -203,6 +210,11 @@ describe("Autonomous Task End-to-End Workflow", () => {
     worktreeManager = new WorktreeManager(new EventBus(), new Map());
     branchManager = new BranchManager(new EventBus());
     mergeService = new MergeService({ approvalStore: new Map() });
+    const fakeRuntime = new FakeAgentRuntime();
+    fakeRuntime.script("Developer", [{ success: true, exitCode: 0, output: "DEVELOPMENT_COMPLETE" }]);
+    fakeRuntime.script("Reviewer", [{ success: true, exitCode: 0, output: "REVIEW_PASS" }]);
+    fakeRuntime.script("QA", [{ success: true, exitCode: 0, output: "QA_PASS" }]);
+    fakeRuntime.script("Integration", [{ success: true, exitCode: 0, output: "INTEGRATION_PASS" }]);
   }
 
   function insertTask(overrides: Partial<{ status: string; contract: object }> = {}) {
@@ -266,21 +278,20 @@ describe("Autonomous Task End-to-End Workflow", () => {
     const { id: taskTask } = insertTask({ status: "DRAFT" });
     workflowEngine.transition(taskId, "READY");
     
-    // Step 3: Developer creates worktree and commits
-    const worktreePath = await mkdtemp(join(tmpdir(), "worktree-"));
-    // Clone master repo to worktree
-    await masterGit.run(masterRepoPath, ["checkout", "-b", `task/${taskId}`]);
-    await masterGit.run(masterRepoPath, ["archive", "-o", join(worktreePath, "master.tar"), "HEAD"]);
-    // Extract and set up worktree as git repo
-    await masterGit.run(worktreePath, ["init"]);
-    await masterGit.run(worktreePath, ["config", "user.email", "test@example.com"]);
-    await masterGit.run(worktreePath, ["config", "user.name", "Test User"]);
+    // Step 3: Developer creates worktree using WorktreeManager
+    const worktreeRecord = await worktreeManager.createTaskWorkspace(taskId, masterRepoPath, "HEAD");
+    const worktreePath = worktreeRecord.path;
+    
+    // Developer adds server.js to worktree (simulating Developer agent work)
     mkdirSync(join(worktreePath, "src"), { recursive: true });
     writeFileSync(join(worktreePath, "src", "server.js"), 
       "import http from 'http';\nconst server = http.createServer((req, res) => { res.writeHead(404); res.end('Not Found'); });\nexport default server;");
     
     await masterGit.run(worktreePath, ["add", "."]);
-    await masterGit.run(worktreePath, ["commit", "-m", "Developer: Add initial server code"]);
+    await masterGit.run(worktreePath, ["commit", "-m", "feat: Add initial server code"]);
+    
+    // Push the task branch back to master repo
+    await masterGit.run(worktreePath, ["checkout", `task/${taskId}`]);
     
     // Step 4: Reviewer passes (simulated)
     workflowEngine.transition(taskId, "DEVELOPMENT");
@@ -351,16 +362,14 @@ describe("Autonomous Task End-to-End Workflow", () => {
     });
     
     // Step 10: Call MergeService and verify merge
+    // First, update task branch with health endpoint
+    const healthContent = "import http from 'http';\nconst server = http.createServer((req, res) => {\n  if (req.url === '/health' && req.method === 'GET') {\n    res.writeHead(200, { 'Content-Type': 'application/json' });\n    res.end(JSON.stringify({ status: 'ok' }));\n    return;\n  }\n  res.writeHead(404);\n  res.end('Not Found');\n});\nexport default server;";
+    writeFileSync(join(worktreePath, "src", "server.js"), healthContent);
+    await masterGit.run(worktreePath, ["add", "."]);
+    await masterGit.run(worktreePath, ["commit", "-m", "feat: Add /health endpoint"]);
+    
     const result = await mergeService.mergeApproved(taskId, approved.id);
     expect(result.success).toBe(true);
-    
-    // Step 11: Assert master contains /health
-    const healthContent = "import http from 'http';\nconst server = http.createServer((req, res) => {\n  if (req.url === '/health' && req.method === 'GET') {\n    res.writeHead(200, { 'Content-Type': 'application/json' });\n    res.end(JSON.stringify({ status: 'ok' }));\n    return;\n  }\n  res.writeHead(404);\n  res.end('Not Found');\n});\nexport default server;";
-    
-    mkdirSync(join(masterRepoPath, "src"), { recursive: true });
-    writeFileSync(join(masterRepoPath, "src", "server.js"), healthContent);
-    await masterGit.run(masterRepoPath, ["add", "."]);
-    await masterGit.run(masterRepoPath, ["commit", "-m", "feat: Add /health endpoint"]);
     
     // Step 12: Verify task DONE and worktree cleanup
     workflowEngine.transition(taskId, "MERGING", { hasFinalMergeApproval: true });
@@ -376,7 +385,7 @@ describe("Autonomous Task End-to-End Workflow", () => {
       type: "WorktreeCleanup",
       aggregateType: "Task",
       aggregateId: taskId,
-      payload: { worktreePath, reason: "Task completed" },
+      payload: { worktreePath: worktreeRecord?.path ?? worktreePath, reason: "Task completed" },
     });
     appendOutboxEvent(db, cleanupEvent);
     
