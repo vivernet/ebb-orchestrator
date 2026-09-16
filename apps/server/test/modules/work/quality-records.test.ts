@@ -7,8 +7,8 @@ import { join } from "node:path";
 import { createSqliteDatabase } from "../../../src/platform/database/sqlite-database.js";
 import { runMigrations, type Migration } from "../../../src/platform/database/migrator.js";
 import type { Database } from "../../../src/platform/database/database.js";
-import { FindingsService, type FindingStatus } from "../../../src/modules/work/findings-service.js";
-import { DefectsService, type DefectStatus } from "../../../src/modules/work/defects-service.js";
+import { FindingsService } from "../../../src/modules/work/findings-service.js";
+import { DefectsService } from "../../../src/modules/work/defects-service.js";
 
 const migration001 = readFileSync(
   join(import.meta.dirname, "../../../src/platform/database/migrations/001_system.sql"),
@@ -31,14 +31,12 @@ const migrations: Migration[] = [
   { version: 8, name: "008_quality", sql: migration008 },
 ];
 
-function createTestDb(): Promise<{ db: Database; tmpDir: string }> {
-  return new Promise(async (resolve) => {
-    const tmpDir = await mkdtemp(join(tmpdir(), "orch-quality-test-"));
-    const dbPath = join(tmpDir, `test-${randomUUID()}.db`);
-    const db = createSqliteDatabase(dbPath);
-    runMigrations(db, migrations);
-    resolve({ db, tmpDir });
-  });
+async function createTestDb(): Promise<{ db: Database; tmpDir: string }> {
+  const tmpDir = await mkdtemp(join(tmpdir(), "orch-quality-test-"));
+  const dbPath = join(tmpDir, `test-${randomUUID()}.db`);
+  const db = createSqliteDatabase(dbPath);
+  runMigrations(db, migrations);
+  return { db, tmpDir };
 }
 
 describe("FindingsService", () => {
@@ -173,7 +171,7 @@ describe("FindingsService", () => {
     expect(f2.evidenceSignature).toBe("updated-sig");
 
     // Count findings - still only one
-    const count = db.get<{ c: number }>("SELECT COUNT(*) as c FROM findings WHERE task_id = $taskId", { taskId: taskA.id });
+    const count = db!.get<{ c: number }>("SELECT COUNT(*) as c FROM findings WHERE task_id = $taskId", { taskId: taskA.id })!;
     expect(count.c).toBe(1);
   });
 
@@ -197,7 +195,7 @@ describe("FindingsService", () => {
       guidelineRef: null,
       evidenceSignature: "sig2",
     });
-    const all = findingsService.getFindingsByTaskId(db, taskA.id);
+    const all = findingsService.getFindingsByTaskId(db!, taskA.id);
     expect(all).toHaveLength(2);
     expect(all.map(f => f.displayId)).toEqual(["FINDING-1", "FINDING-2"]);
   });
@@ -224,9 +222,9 @@ describe("FindingsService", () => {
     });
     findingsService.updateFinding(f1.id, { status: "RESOLVED" });
 
-    const open = findingsService.getOpenFindingsByTaskId(db, taskB.id);
+    const open = findingsService.getOpenFindingsByTaskId(db!, taskB.id);
     expect(open).toHaveLength(1);
-    expect(open[0].displayId).toBe("FINDING-2");
+    expect(open[0]!.displayId).toBe("FINDING-2");
   });
 });
 
@@ -336,7 +334,7 @@ describe("DefectsService", () => {
     expect(d2.evidenceSignature).toBe("new-test-sig");
 
     // Count defects - still only one
-    const count = db.get<{ c: number }>("SELECT COUNT(*) as c FROM defects WHERE task_id = $taskId", { taskId: taskA.id });
+    const count = db!.get<{ c: number }>("SELECT COUNT(*) as c FROM defects WHERE task_id = $taskId", { taskId: taskA.id })!;
     expect(count.c).toBe(1);
   });
 
@@ -360,7 +358,7 @@ describe("DefectsService", () => {
       acceptanceCriterionRef: null,
       evidenceSignature: "sig2",
     });
-    const all = defectsService.getDefectsByTaskId(db, taskA.id);
+    const all = defectsService.getDefectsByTaskId(db!, taskA.id);
     expect(all).toHaveLength(2);
     expect(all.map(d => d.displayId)).toEqual(["DEFECT-1", "DEFECT-2"]);
   });
@@ -378,7 +376,7 @@ describe("DefectsService", () => {
     });
     defectsService.updateDefect(d1.id, { status: "RESOLVED" });
 
-    const open = defectsService.getOpenDefectsByTaskId(db, taskA.id);
+    const open = defectsService.getOpenDefectsByTaskId(db!, taskA.id);
     expect(open).toHaveLength(0);
   });
 });
