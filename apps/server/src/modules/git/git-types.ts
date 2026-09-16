@@ -1,4 +1,6 @@
-import type { GitOperationStatus, GitOperationType } from "./git-types.js";
+export type GitOperationStatus = "PENDING" | "IN_PROGRESS" | "COMPLETED" | "FAILED";
+
+export type GitOperationType = "CREATE_WORKTREE" | "REMOVE_WORKTREE" | "CREATE_BRANCH";
 
 export interface GitOperation {
   id: string;

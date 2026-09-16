@@ -84,8 +84,6 @@ export class BranchManager {
    */
   private createEmptyHooksDir(): string {
     const hooksDir = join(tmpdir(), `orchestrator-hooks-${Date.now()}`);
-    rmSync(hooksDir, { recursive: true, force: true });
-    rmSync(hooksDir, { recursive: true, force: true });
     return hooksDir;
   }
 }
