@@ -7,7 +7,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { cp, mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, rm } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -32,7 +32,6 @@ import type { AgentRuntime } from "../../src/modules/runtime/agent-runtime.js";
 import type { AgentRun } from "@orchestrator/contracts";
 import type { RunOutcome } from "../../src/modules/runtime/run-types.js";
 import { HermesRuntimeAdapter } from "../../src/modules/runtime/hermes/hermes-runtime-adapter.js";
-import { prepareHermesProfile, generateConfigYaml } from "../../src/modules/runtime/hermes/hermes-profile.js";
 import { ProcessExecutor } from "../../src/platform/process/process-executor.js";
 
 const execFileAsync = promisify(execFile);
@@ -260,37 +259,30 @@ describe("Autonomous Task End-to-End Workflow", () => {
 
     const worktree = await worktreeManager.createTaskWorkspace(taskId, masterRepoPath, "master");
     const mcpCli = join(import.meta.dirname, "../../src/bin/orchestrator-mcp.ts");
+    const databasePath = join(tmpDir, "acceptance.db");
+    const resultDirectory = join(tmpDir, "hermes-results");
+    const workspaceByRun = new Map<string, string>();
+    let nextWorkspace = worktree.path;
+    const runtime = new HermesRuntimeAdapter(new ProcessExecutor(), undefined, {
+      managedWorktreeForRun: (run) => workspaceByRun.get(run.id) ?? nextWorkspace,
+      resultDirectory,
+      timeoutMs: 180000,
+      databasePath,
+      mcpCommand: process.execPath,
+      mcpArgs: ["--import", "tsx", mcpCli],
+    });
+    const runs = new RunService(db!, runtime);
     driverReady(workflow, taskId);
       const roles = ["Developer", "Reviewer", "QA", "Integration"];
       const runHermesRole = async (role: string, roleWorkspace: string, run: AgentRun): Promise<void> => {
-        const resultDirectory = join(tmpDir, "hermes-results", role);
         const capabilityRef = run.capabilityRef;
         if (!capabilityRef) throw new Error(`${role} run did not receive a capability reference`);
-        const profile = prepareHermesProfile({
-          capability: { role: role.toLowerCase(), workspace: roleWorkspace },
-         orchestratorHome: join(tmpDir, role),
-        toolsetPath: "mcp-orchestrator",
-      });
-      const resultFile = join(resultDirectory, `${role}-${taskId}.json`);
-      await mkdir(profile.hermesHome, { recursive: true });
-       await writeFile(join(profile.hermesHome, "config.yaml"), generateConfigYaml({
-         capability: { role: role.toLowerCase(), workspace: roleWorkspace },
-         capabilityRef,
-        toolsetPath: "mcp-orchestrator",
-        resultFile,
-        mcpCommand: process.execPath,
-        mcpArgs: ["--import", "tsx", mcpCli],
-      }));
-      const runtime = new HermesRuntimeAdapter(new ProcessExecutor(), undefined, {
-         managedWorktree: roleWorkspace,
-        environment: profile.env,
-        resultDirectory,
-         timeoutMs: 180000,
-         databasePath: join(tmpDir, "acceptance.db"),
-         mcpCommand: process.execPath,
-         mcpArgs: ["--import", "tsx", mcpCli],
-       });
-        const handshake = await runMcpHandshake(mcpCli, roleWorkspace, join(tmpDir, "acceptance.db"), run.capabilityRef!);
+        const resultPath = join(resultDirectory, `${run.id}.json`);
+        const config = readFileSync(join(resultDirectory, "profiles", run.id, "config.yaml"), "utf8");
+        expect(config).toContain(`- "${capabilityRef}"`);
+        expect(config).toContain(`- "${databasePath}"`);
+        expect(config).toContain(`- "${resultPath}"`);
+        const handshake = await runMcpHandshake(mcpCli, roleWorkspace, databasePath, capabilityRef);
        expect(handshake).toContain('"name":"orchestrator-mcp"');
        expect(handshake).toContain('"submit_result"');
       let inspected: AgentRun | undefined;
@@ -309,17 +301,22 @@ describe("Autonomous Task End-to-End Workflow", () => {
       expect(usage.inputTokens + usage.outputTokens, `${role} emitted no genuine usage`).toBeGreaterThan(0);
        await runs.collectUsage(run.id, usage);
        };
-      const runs = new RunService(db!, new HermesRuntimeAdapter(new ProcessExecutor()));
       for (const role of ["Developer", "Reviewer", "QA"]) {
         const run = await runs.startRun({ role, model: process.env.HERMES_MODEL ?? "default", taskId, epicId: null, triggerReason: "task-assignment", contextVersion: "hermes-acceptance-v1", outputSchemaVersion: "1", capability: { workspace: worktree.path, allowedTools: ["workspace.read", "workspace.patch", "git.status", "git.diff", "git.commit", "submit_result"] } });
+        workspaceByRun.set(run.id, worktree.path);
         await runHermesRole(role, worktree.path, run);
         advanceRealStage(workflow, taskId, role);
       }
       // Reserve the authenticated Integration run before preparing its worktree.
-      const integrationRun = await runs.startRun({ role: "Integration", model: process.env.HERMES_MODEL ?? "default", taskId, epicId: null, triggerReason: "integration", contextVersion: "hermes-acceptance-v1", outputSchemaVersion: "1", capability: { workspace: join(tmpDir, "real-integration"), allowedTools: ["workspace.read", "workspace.search", "git.diff", "project.test", "submit_result"] } });
-      const integrationService = new IntegrationService({ worktreeDir: join(tmpDir, "real-integration"), database: db!, integrationRunId: integrationRun.id });
-      const realIntegration = await integrationService.prepareIntegration(`task/${taskId}`, "master", masterRepoPath);
-      expect(realIntegration.integrationRunId).toBe(integrationRun.id);
+       const integrationWorkspace = join(tmpDir, "real-integration");
+       nextWorkspace = "";
+       const integrationRun = await runs.startRun({ role: "Integration", model: process.env.HERMES_MODEL ?? "default", taskId, epicId: null, triggerReason: "integration", contextVersion: "hermes-acceptance-v1", outputSchemaVersion: "1", capability: { workspace: join(tmpDir, "real-integration"), allowedTools: ["workspace.read", "workspace.search", "git.diff", "project.test", "submit_result"] } });
+       workspaceByRun.set(integrationRun.id, "");
+       nextWorkspace = integrationWorkspace;
+      const integrationService = new IntegrationService({ worktreeDir: integrationWorkspace, database: db!, integrationRunId: integrationRun.id });
+       const realIntegration = await integrationService.prepareIntegration(`task/${taskId}`, "master", masterRepoPath);
+       expect(realIntegration.integrationRunId).toBe(integrationRun.id);
+       workspaceByRun.set(integrationRun.id, realIntegration.worktreePath);
       await integrationService.runInIntegrationWorktree(realIntegration, async () => {
         await runHermesRole("Integration", realIntegration.worktreePath, integrationRun);
       });

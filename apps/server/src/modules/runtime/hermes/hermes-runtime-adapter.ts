@@ -75,6 +75,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
   private readonly toolsets: string[];
   private readonly ignoreRules: boolean;
   private readonly managedWorktree: string | undefined;
+  private readonly managedWorktreeForRun: ((run: AgentRun) => string) | undefined;
   private readonly environment: Record<string, string> | undefined;
   private readonly resultDirectory: string;
   private readonly exitCodes = new Map<string, number>();
@@ -91,6 +92,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
       toolsets?: string[];
       ignoreRules?: boolean;
       managedWorktree?: string;
+      managedWorktreeForRun?: (run: AgentRun) => string;
       environment?: Record<string, string>;
       resultDirectory?: string;
       databasePath?: string;
@@ -105,6 +107,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
     this.toolsets = config?.toolsets ?? ["mcp-orchestrator"];
     this.ignoreRules = config?.ignoreRules ?? true;
     this.managedWorktree = config?.managedWorktree;
+    this.managedWorktreeForRun = config?.managedWorktreeForRun;
     this.environment = config?.environment;
     this.resultDirectory = config?.resultDirectory ?? path.join(os.tmpdir(), "orchestrator-hermes-results");
     this.databasePath = config?.databasePath;
@@ -119,11 +122,16 @@ export class HermesRuntimeAdapter implements AgentRuntime {
   async startRun(run: AgentRun): Promise<void> {
     const abortController = new AbortController();
     const promptFile = await this.writePromptFile(run);
+    let workspace = this.getManagedWorktree(run);
+    // An integration run can be authenticated before its worktree is created.
+    // Wait only for callers that explicitly provide per-run workspaces; the
+    // legacy/default path remains immediately observable for unit-test fakes.
+    if (this.managedWorktreeForRun) workspace = await this.waitForWorkspace(run);
     const profileHome = path.join(this.resultDirectory, "profiles", run.id);
     const resultPath = path.join(this.resultDirectory, `${run.id}.json`);
     await fs.mkdir(path.join(profileHome, "home"), { recursive: true });
     const configOptions = {
-      capability: { role: run.role, workspace: this.getManagedWorktree(run) },
+      capability: { role: run.role, workspace },
       toolsetPath: "mcp-orchestrator",
       mcpCommand: this.mcpCommand,
       mcpArgs: [...this.mcpArgs, ...(this.databasePath ? ["--database", this.databasePath] : [])],
@@ -136,14 +144,14 @@ export class HermesRuntimeAdapter implements AgentRuntime {
       queryFile: promptFile,
       model: run.model,
       toolsets: this.toolsets,
-      worktree: this.getManagedWorktree(run),
+      worktree: workspace,
       ignoreRules: this.ignoreRules,
       source: "tool",
       maxTurns: this.roleLimit,
     });
 
     const options: ProcessOptions = {
-      cwd: this.getManagedWorktree(run),
+      cwd: workspace,
       env: this.buildEnvironment(run, profileHome),
       timeout: this.timeoutMs,
       signal: abortController.signal,
@@ -390,7 +398,24 @@ export class HermesRuntimeAdapter implements AgentRuntime {
    * Get the managed worktree path for a run.
    */
   private getManagedWorktree(run: AgentRun): string {
-    return this.managedWorktree ?? path.join(os.homedir(), "worktrees", run.id);
+    return this.managedWorktreeForRun?.(run) ?? this.managedWorktree ?? path.join(os.homedir(), "worktrees", run.id);
+  }
+
+  private async waitForWorkspace(run: AgentRun): Promise<string> {
+    const deadline = Date.now() + this.timeoutMs;
+    while (Date.now() < deadline) {
+      const workspace = this.getManagedWorktree(run);
+      try {
+        if (workspace) {
+          await fs.access(workspace);
+          return workspace;
+        }
+      } catch {
+        // The per-run resolver may publish the worktree asynchronously.
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    throw new Error(`Hermes workspace is unavailable for run ${run.id}`);
   }
 
   /**
