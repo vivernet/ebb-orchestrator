@@ -67,3 +67,38 @@ export function getConfigPath(hermesHome: string): string {
 export function getMcpSocketPath(hermesHome: string): string {
   return path.join(hermesHome, "mcp.sock");
 }
+
+/**
+ * Configuration for generating hermes config.yaml.
+ */
+export interface GenerateConfigOptions {
+  capability: { role: string; workspace: string };
+  toolsetPath: string;
+}
+
+/**
+ * Generate config.yaml content for Hermes runtime.
+ *
+ * This creates a minimal config with only Orchestrator-managed settings:
+ * - MCP server definition referencing orchestrator-mcp
+ * - Terminal configuration with home_mode: profile
+ */
+export function generateConfigYaml(options: GenerateConfigOptions): string {
+  const { capability, toolsetPath } = options;
+
+  const yaml = `mcp_servers:
+  - name: orchestrator-mcp
+    command: orchestrator-mcp
+    args:
+      - "--capability"
+      - "${capability.role}"
+      - "--workspace"
+      - "${capability.workspace}"
+      - "--toolset"
+      - "${toolsetPath}"
+terminal:
+  home_mode: profile
+`;
+
+  return yaml;
+}

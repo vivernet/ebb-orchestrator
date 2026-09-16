@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { prepareHermesProfile, getOrchestratorHome, getConfigPath } from "../../../src/modules/runtime/hermes/hermes-profile.js";
+import { prepareHermesProfile, getOrchestratorHome, getConfigPath, generateConfigYaml } from "../../../src/modules/runtime/hermes/hermes-profile.js";
 import * as path from "path";
 
 const normalizePath = (p?: string) => (p ? p.replace(/\\/g, "/") : "");
@@ -131,6 +131,51 @@ describe("Hermes profile isolation", () => {
     it("returns correct config path within hermes home", () => {
       const configPath = getConfigPath("/test/orchestrator/runtime/hermes");
       expect(normalizePath(configPath)).toBe("/test/orchestrator/runtime/hermes/config.yaml");
+    });
+  });
+
+  describe("generateConfigYaml", () => {
+    it("generates config.yaml with MCP server referencing orchestrator-mcp", () => {
+      const config = generateConfigYaml({
+        capability: { role: "Developer", workspace: "/test/workspace" },
+        toolsetPath: "/test/toolset",
+      });
+
+      expect(config).toContain("mcp_servers:");
+      expect(config).toContain("name: orchestrator-mcp");
+      expect(config).toContain("command: orchestrator-mcp");
+    });
+
+    it("sets terminal.home_mode to profile", () => {
+      const config = generateConfigYaml({
+        capability: { role: "Developer", workspace: "/test/workspace" },
+        toolsetPath: "/test/toolset",
+      });
+
+      expect(config).toContain("terminal:");
+      expect(config).toContain("home_mode: profile");
+    });
+
+    it("includes capability ref in MCP args", () => {
+      const config = generateConfigYaml({
+        capability: { role: "Developer", workspace: "/test/workspace" },
+        toolsetPath: "/test/toolset",
+      });
+
+      expect(config).toContain("args:");
+    });
+
+    it("only includes orchestrator-managed settings", () => {
+      const config = generateConfigYaml({
+        capability: { role: "Developer", workspace: "/test/workspace" },
+        toolsetPath: "/test/toolset",
+      });
+
+      // Should contain mcp_servers and terminal
+      expect(config).toContain("mcp_servers:");
+      expect(config).toContain("terminal:");
+      // Should not contain arbitrary user settings
+      expect(config).not.toContain("user_");
     });
   });
 });
