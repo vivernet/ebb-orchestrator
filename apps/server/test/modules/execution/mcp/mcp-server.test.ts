@@ -218,7 +218,7 @@ describe('MCP Server', () => {
       const submitResult = await mcpServer.callTool('submit_result', {
         payload: {
           version: '1.0',
-          outcome: 'PASS',
+          outcome: 'COMPLETED',
         },
       });
 

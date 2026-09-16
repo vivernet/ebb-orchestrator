@@ -40,9 +40,18 @@ export function prepareHermesProfile(run: HermesRunBuildConfig): HermesLaunchPro
     baseEnv[key] = value;
   }
 
+  if (run.environment?.GITHUB_TOKEN !== undefined || run.environment?.SSH_AUTH_SOCK !== undefined) {
+    throw new Error("Forbidden credential in supplied runtime environment");
+  }
+  Object.assign(baseEnv, run.environment);
+
   // Override critical environment variables for isolation
   baseEnv.HERMES_HOME = hermesHome;
   baseEnv.HOME = hermesHomePath;
+  // Apply the boundary after all overlays so inherited or supplied credentials cannot win.
+  delete baseEnv.GITHUB_TOKEN;
+  delete baseEnv.SSH_AUTH_SOCK;
+  delete baseEnv.HERMES_PROFILE;
 
   // Build toolset reference
   const toolsetName = [run.toolsetPath];

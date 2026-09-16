@@ -19,7 +19,7 @@ export const BaseOutputSchema = z.object({
     )
     .optional()
     .describe("List of findings (optional)"),
-});
+}).strict();
 
 // Common outcome types for developers
 export const DeveloperOutcome = z.enum(["COMPLETED", "BLOCKED"]);
@@ -61,6 +61,8 @@ export interface RoleOutput {
 // Output validation result
 export interface ValidatedRoleOutput {
   valid: boolean;
+  /** The schema-parsed value. It is present only when valid is true. */
+  output?: RoleOutput;
   outcome?: string;
   findings?: Array<{
     type: "INFO" | "WARNING" | "MINOR" | "MAJOR" | "BLOCKING";

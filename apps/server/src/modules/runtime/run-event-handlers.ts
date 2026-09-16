@@ -76,6 +76,22 @@ export class RuntimeEventHandlers {
       throw new Error(`Task ${taskId} not found`);
     }
 
+    // A real run may advance only from a collector result that passed the
+    // role validator. Synthetic callers without an agent_runs row retain the
+    // existing workflow-only behavior used by the domain tests.
+    const agentRunsTable = this.db.get<{ name: string }>(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'agent_runs'",
+    );
+    const run = agentRunsTable
+      ? this.db.get<{ role: string }>(
+          "SELECT role FROM agent_runs WHERE task_id = $task_id ORDER BY started_at DESC LIMIT 1",
+          { task_id: taskId },
+        )
+      : undefined;
+    if (run && outcome.validatedSubmission !== true) {
+      throw new Error(`Run result for task ${taskId} was not validated before workflow transition`);
+    }
+
     // Only allow completion from DEVELOPMENT stage
     if (currentStage.status !== "DEVELOPMENT") {
       throw new Error(

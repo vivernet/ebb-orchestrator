@@ -6,6 +6,14 @@ export interface RunOutcome {
   success: boolean;
   exitCode: number;
   output: string;
+  validatedSubmission?: boolean;
+  diagnostics?: {
+    runId: string;
+    sessionId: string | null;
+    stderr: string;
+    exitCode: number;
+    artifactReferences: string[];
+  };
 }
 
 export interface ResumeRunOptions {

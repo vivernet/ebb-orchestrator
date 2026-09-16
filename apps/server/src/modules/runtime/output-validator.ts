@@ -86,9 +86,10 @@ export function validateRoleOutput(role: string, value: unknown): ValidatedRoleO
   }
 
   // All validations passed
-  return {
-    valid: true,
-    outcome,
+    return {
+      valid: true,
+      output: data,
+      outcome,
     findings,
     failedCriteria,
   };

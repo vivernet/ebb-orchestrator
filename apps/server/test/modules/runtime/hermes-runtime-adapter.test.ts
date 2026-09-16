@@ -3,6 +3,9 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
+import * as os from "node:os";
 import { HermesRuntimeAdapter } from "../../../src/modules/runtime/hermes/hermes-runtime-adapter.js";
 import { HermesCliBuilder } from "../../../src/modules/runtime/hermes/hermes-cli.js";
 import {
@@ -440,6 +443,43 @@ describe("HermesRuntimeAdapter", () => {
       const outcome = await adapter.collectResult(startRun.id);
       expect(outcome.success).toBe(false);
       expect(outcome.exitCode).toBe(1);
+    });
+
+    it("does not consume another run's exact result file and returns diagnostics", async () => {
+      const resultDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-results-"));
+      await fs.writeFile(path.join(resultDirectory, "other-run.json"), JSON.stringify({ version: "1.0", outcome: "COMPLETED" }));
+      const run = {
+        id: "exact-run", role: "Developer", runtime: "hermes", model: "claude-3", taskId: "task-exact",
+        epicId: null, status: "STARTED" as const, sessionId: null, attempt: null, triggerReason: null,
+        contextVersion: "v1", outputSchemaVersion: "v1", startedAt: new Date(), endedAt: null,
+        exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
+      };
+      mockExecutor.setNextResult({ exitCode: 7, stdout: "session: exact-session", stderr: "agent failed" });
+      const exactAdapter = new HermesRuntimeAdapter(mockExecutor, mockArtifactStore, { resultDirectory });
+      await exactAdapter.startRun(run);
+
+      const outcome = await exactAdapter.collectResult(run.id);
+      expect(outcome.output).toBe("AGENT_OUTPUT_MISSING");
+      expect(outcome.diagnostics).toEqual({
+        runId: run.id,
+        sessionId: "exact-session",
+        stderr: "agent failed",
+        exitCode: 7,
+        artifactReferences: [path.join(resultDirectory, "exact-run.json"), `run-artifacts://${run.id}`],
+      });
+      await fs.rm(resultDirectory, { recursive: true, force: true });
+    });
+
+    it("rejects forbidden credentials in supplied runtime overlays", async () => {
+      const restricted = new HermesRuntimeAdapter(mockExecutor, mockArtifactStore, {
+        environment: { GITHUB_TOKEN: "secret" },
+      });
+      await expect(restricted.startRun({
+        id: "credential-run", role: "Developer", runtime: "hermes", model: "claude-3", taskId: "task-credential",
+        epicId: null, status: "STARTED" as const, sessionId: null, attempt: null, triggerReason: null,
+        contextVersion: "v1", outputSchemaVersion: "v1", startedAt: new Date(), endedAt: null,
+        exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
+      })).rejects.toThrow("Forbidden credential");
     });
   });
 

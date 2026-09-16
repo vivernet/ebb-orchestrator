@@ -194,8 +194,25 @@ describe("Autonomous Task End-to-End Workflow", () => {
      expect(() => readFileSync(join(worktree.path, "src", "server.js"), "utf8")).toThrow();
      expect(db!.get<{ status: string }>("SELECT status FROM tasks WHERE id = $id", { id: taskId })?.status).toBe("DONE");
      expect(db!.get<{ removed_at: string | null }>("SELECT removed_at FROM worktrees WHERE id = $id", { id: taskId })?.removed_at).not.toBeNull();
-     expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM outbox_events WHERE aggregate_id = $id AND type IN ('TaskStateChanged','ApprovalRequested','ApprovalApproved')", { id: taskId })?.count).toBeGreaterThanOrEqual(6);
-     expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM agent_runs WHERE task_id = $id AND input_tokens IS NOT NULL AND output_tokens IS NOT NULL", { id: taskId })?.count).toBe(4);
+      const approvalEvents = db!.all<{ type: string; aggregate_id: string; payload_json: string }>(
+        "SELECT type, aggregate_id, payload_json FROM outbox_events WHERE aggregate_id = $id AND type IN ('ApprovalRequested', 'ApprovalApproved') ORDER BY created_at",
+        { id: taskId },
+      );
+      expect(approvalEvents.map((event) => event.type)).toEqual(["ApprovalRequested", "ApprovalApproved"]);
+      expect(approvalEvents.every((event) => event.aggregate_id === taskId)).toBe(true);
+      expect(approvalEvents.map((event) => JSON.parse(event.payload_json).approvalId)).toEqual([approved.id, approved.id]);
+      expect(db!.get<{ type: string; subject_id: string; status: string }>(
+        "SELECT type, subject_id, status FROM approvals WHERE id = $id",
+        { id: approved.id },
+      )).toEqual({ type: "FINAL_MERGE", subject_id: taskId, status: "APPROVED" });
+      expect(db!.all<{ role: string; input_tokens: number; output_tokens: number }>(
+        "SELECT role, input_tokens, output_tokens FROM agent_runs WHERE task_id = $id ORDER BY started_at",
+        { id: taskId },
+      ).map((run) => run.role)).toEqual(["Developer", "Reviewer", "QA", "Integration"]);
+      expect(db!.all<{ input_tokens: number; output_tokens: number }>(
+        "SELECT input_tokens, output_tokens FROM agent_runs WHERE task_id = $id",
+        { id: taskId },
+      ).every((run) => run.input_tokens !== null && run.output_tokens !== null)).toBe(true);
   });
 
   it("requires FINAL_MERGE approval for the exact task", async () => {

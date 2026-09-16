@@ -63,4 +63,6 @@ export interface HermesRunBuildConfig {
   capability: RunCapability;
   orchestratorHome: string;
   toolsetPath: string;
+  /** Explicit runtime variables; forbidden credentials are rejected. */
+  environment?: Record<string, string>;
 }

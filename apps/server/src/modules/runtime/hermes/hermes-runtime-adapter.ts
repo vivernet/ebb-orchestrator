@@ -8,6 +8,7 @@ import type { RunOutcome } from "../run-types.js";
 import { ProcessExecutor, ExitCodeError, type ProcessOptions } from "../../../platform/process/process-executor.js";
 import { HermesCliBuilder } from "./hermes-cli.js";
 import { parseSessionId } from "./hermes-session-parser.js";
+import { validateRoleOutput } from "../output-validator.js";
 import * as path from "path";
 import * as fs from "fs/promises";
 import * as os from "os";
@@ -26,6 +27,7 @@ interface RunState {
   abortController: AbortController | null;
   checkpointPath: string | null;
   submittedResult: string | null;
+  resultPath: string;
   usage: RunUsage | null;
 }
 
@@ -151,7 +153,8 @@ export class HermesRuntimeAdapter implements AgentRuntime {
       startTime: new Date(),
       abortController,
       checkpointPath: await this.getCheckpointPath(run.id),
-      submittedResult: await this.readSubmittedResult(run.id),
+      submittedResult: await this.readSubmittedResult(run.id, run.role),
+      resultPath: path.join(this.resultDirectory, `${run.id}.json`),
       usage: this.parseUsage(processOutput.stdout),
     };
 
@@ -204,7 +207,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
     existingState.stderr = processOutput.stderr;
     existingState.exitCode = processOutput.exitCode;
     this.artifactStore.saveArtifacts(runId, processOutput.stdout, processOutput.stderr, processOutput.exitCode);
-    existingState.submittedResult = await this.readSubmittedResult(runId);
+    existingState.submittedResult = await this.readSubmittedResult(runId, existingState.run.role);
     existingState.usage = this.parseUsage(processOutput.stdout);
     existingState.startTime = new Date();
     existingState.abortController = abortController;
@@ -275,6 +278,14 @@ export class HermesRuntimeAdapter implements AgentRuntime {
         success: false,
         exitCode: state.exitCode ?? -1,
         output: "AGENT_OUTPUT_MISSING",
+        validatedSubmission: false,
+        diagnostics: {
+          runId,
+          sessionId: state.sessionId,
+          stderr: state.stderr,
+          exitCode: state.exitCode ?? -1,
+          artifactReferences: [state.resultPath, `run-artifacts://${runId}`],
+        },
       };
     }
 
@@ -282,6 +293,14 @@ export class HermesRuntimeAdapter implements AgentRuntime {
       success: state.exitCode === 0,
       exitCode: state.exitCode ?? -1,
       output: state.submittedResult,
+      validatedSubmission: true,
+      diagnostics: {
+        runId,
+        sessionId: state.sessionId,
+        stderr: state.stderr,
+        exitCode: state.exitCode ?? -1,
+        artifactReferences: [state.resultPath, `run-artifacts://${runId}`],
+      },
     };
   }
 
@@ -329,10 +348,13 @@ export class HermesRuntimeAdapter implements AgentRuntime {
         env[key] = value;
       }
     }
-    // Remove sensitive variables
+    if (this.environment?.GITHUB_TOKEN !== undefined || this.environment?.SSH_AUTH_SOCK !== undefined) {
+      throw new Error("Forbidden credential in supplied runtime environment");
+    }
+    Object.assign(env, this.environment);
+    // Sanitize after every overlay, including caller-supplied runtime values.
     delete env.GITHUB_TOKEN;
     delete env.SSH_AUTH_SOCK;
-    Object.assign(env, this.environment);
     return env;
   }
 
@@ -352,19 +374,20 @@ export class HermesRuntimeAdapter implements AgentRuntime {
     return path.join(checkpointDir, `${runId}.checkpoint`);
   }
 
-  private async readSubmittedResult(runId: string): Promise<string | null> {
+  private async readSubmittedResult(runId: string, role: string): Promise<string | null> {
     try {
       const exactPath = path.join(this.resultDirectory, `${runId}.json`);
-      try {
-        return await fs.readFile(exactPath, "utf8");
-      } catch {
-        const files = (await fs.readdir(this.resultDirectory)).filter((file) => file.endsWith(".json"));
-        const first = files[0];
-        return first ? await fs.readFile(path.join(this.resultDirectory, first), "utf8") : null;
-      }
+      const raw = await fs.readFile(exactPath, "utf8");
+      const value: unknown = JSON.parse(raw);
+      const validated = validateRoleOutput(this.roleName(role), value);
+      return validated.valid && validated.output ? JSON.stringify(validated.output) : null;
     } catch {
       return null;
     }
+  }
+
+  private roleName(role: string): string {
+    return role.toLowerCase();
   }
 
   private parseUsage(stdout: string): RunUsage | null {
