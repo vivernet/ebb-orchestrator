@@ -1,0 +1,21 @@
+{
+  "name": "local-ai-development-orchestrator",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.27.0",
+  "engines": { "node": ">=24.15 <25" },
+  "scripts": {
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "pnpm -r --if-present test",
+    "lint": "eslint ."
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^24.13.4",
+    "eslint": "^10.10.0",
+    "typescript": "~5.8.3",
+    "tsx": "^4.23.13",
+    "typescript-eslint": "^8.70.0",
+    "vitest": "^5.0.0"
+  }
+}
