@@ -9,7 +9,7 @@ import { McpServer } from '../../../src/modules/execution/mcp/mcp-server.js';
 function fixture(status: string, json = JSON.stringify({ runId: 'run-1', capabilityRef: 'cap-1', role: 'reviewer', workspace: '/tmp/work', allowedTools: ['submit_result'] })) {
   const db = createSqliteDatabase(join(mkdtempSync(join(tmpdir(), 'capability-')), 'state.sqlite'));
   db.exec('CREATE TABLE agent_runs (id TEXT PRIMARY KEY, role TEXT, status TEXT, capability_ref TEXT UNIQUE, capability_json TEXT)');
-  db.run('INSERT INTO agent_runs VALUES ($id,$role,$status,$ref,$json)', { id: 'run-1', role: 'Reviewer', status, ref: 'cap-1', json });
+    db.run('INSERT INTO agent_runs VALUES ($id,$role,$status,$ref,$json)', { id: 'run-1', role: JSON.parse(json).role === 'integration' ? 'Integration' : 'Reviewer', status, ref: 'cap-1', json });
   return db;
 }
 
@@ -36,6 +36,17 @@ describe('issued capability validation', () => {
     const result = await server.callTool('submit_result', { payload: { version: '1.0', outcome: 'PASS' } });
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/inactive/);
+    db.close();
+  });
+
+  it('keeps Integration read/test-only and cannot merge or commit', () => {
+    const db = fixture('STARTED', JSON.stringify({ runId: 'run-1', capabilityRef: 'cap-1', role: 'integration', workspace: '/tmp/work', allowedTools: ['workspace.read', 'workspace.search', 'git.diff', 'project.test', 'submit_result'] }));
+    const server = new McpServer(loadValidatedCapability(db, 'cap-1'), { expectedRole: 'Integration' });
+    expect(server.getAvailableTools().map((tool) => tool.name)).toEqual([
+      'workspace.read', 'workspace.search', 'git.diff', 'project.test', 'submit_result',
+    ]);
+    expect(server.getAvailableTools().some((tool) => tool.name === 'git.commit')).toBe(false);
+    expect(server.getAvailableTools().some((tool) => tool.name === 'git.merge')).toBe(false);
     db.close();
   });
 });

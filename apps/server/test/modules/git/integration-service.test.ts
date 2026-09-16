@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { tmpdir } from "os";
 import { join } from "path";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 
 import { GitCli } from "../../../src/modules/git/git-cli.js";
 import { IntegrationService } from "../../../src/modules/git/integration-service.js";
@@ -127,6 +127,25 @@ describe("IntegrationService", () => {
   });
 
   describe("target SHA verification", () => {
+    it("service-merges the prepared source before the agent runs", async () => {
+      const repoPath = createTempDir();
+      const git = await initGitRepo(repoPath);
+      await git.run(repoPath, ["checkout", "-b", "source-branch"]);
+      writeFileSync(join(repoPath, "source.txt"), "source content");
+      await git.run(repoPath, ["add", "source.txt"]);
+      await git.run(repoPath, ["commit", "-m", "source commit"]);
+      await git.run(repoPath, ["checkout", "master"]);
+      const service = boundService(git);
+      const attempt = await service.prepareIntegration("source-branch", "master", repoPath);
+
+      await service.mergePreparedSource(attempt);
+
+      expect(readFileSync(join(attempt.worktreePath, "source.txt"), "utf8")).toBe("source content");
+      expect((await git.run(attempt.worktreePath, ["rev-parse", "HEAD"])).stdout.trim()).not.toBe(attempt.expectedTargetSha);
+      expect((await git.run(repoPath, ["rev-parse", "master"])).stdout.trim()).toBe(attempt.expectedTargetSha);
+      rmSync(attempt.worktreePath, { recursive: true, force: true });
+    });
+
     it("records and verifies resulting target SHA after merge", async () => {
       const repoPath = createTempDir();
       const git = await initGitRepo(repoPath);

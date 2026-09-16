@@ -39,12 +39,6 @@ export interface VerifiedIntegrationProvenance {
   readonly identity: string;
 }
 
-export function getVerifiedIntegrationProvenance(
-  _attempt: IntegrationAttempt
-): VerifiedIntegrationProvenance | null {
-  return null;
-}
-
 export interface IntegrationServiceOptions {
   git?: GitCli;
   worktreeDir?: string;
@@ -245,15 +239,40 @@ export class IntegrationService {
     }
   }
 
+  /** Merge the prepared task commit before the Integration Agent is started. */
+  async mergePreparedSource(attempt: IntegrationAttempt): Promise<void> {
+    if (this.databaseClosed) throw new Error("Integration database is closed");
+    const persisted = this.database.get<{ status: IntegrationAttempt["status"]; integration_run_id: string | null }>(
+      "SELECT status, integration_run_id FROM integration_attempts WHERE id = $id", { id: attempt.id });
+    if (!persisted || persisted.status !== "PREPARED" || attempt.status !== "PREPARED") {
+      throw new Error("integration attempt is not prepared");
+    }
+    if (persisted.integration_run_id !== (attempt.integrationRunId ?? null)) {
+      throw new Error("integrationRunId is not bound to the integration attempt");
+    }
+    const targetSha = (await this.git.run(attempt.repoPath, ["rev-parse", attempt.currentTargetBranch])).stdout.trim();
+    if (targetSha !== attempt.expectedTargetSha) {
+      throw new Error(`TARGET_MOVED: expected ${attempt.expectedTargetSha ?? "a verified target"}, found ${targetSha}; restart integration`);
+    }
+    await this.git.run(attempt.worktreePath, ["merge", "--no-edit", attempt.sourceBranch]);
+    const mergedSha = (await this.git.run(attempt.worktreePath, ["rev-parse", "HEAD"])).stdout.trim();
+    if (!mergedSha || mergedSha === attempt.expectedTargetSha) {
+      throw new Error("INTEGRATION_SOURCE_NOT_MERGED: prepared worktree does not contain the source commit");
+    }
+  }
+
   /**
    * Cleans up an integration attempt by removing its worktree.
    */
   async cleanupIntegration(attempt: IntegrationAttempt): Promise<void> {
-    try {
-      // Remove worktree directory
-      rmSync(attempt.worktreePath, { recursive: true, force: true });
-    } catch {
-      // Ignore cleanup errors
+    for (let attemptNo = 0; attemptNo < 3; attemptNo += 1) {
+      try {
+        await this.git.run(attempt.repoPath, ["worktree", "remove", "--force", attempt.worktreePath]);
+        return;
+      } catch {
+        try { rmSync(attempt.worktreePath, { recursive: true, force: true }); } catch { /* retry after a process releases the handle */ }
+        if (attemptNo < 2) await new Promise((resolve) => setTimeout(resolve, 50 * (attemptNo + 1)));
+      }
     }
   }
 }
