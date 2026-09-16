@@ -17,25 +17,22 @@
 
 import { describe, expect, it, afterEach, beforeEach } from "vitest";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, rm } from "node:fs/promises";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createSqliteDatabase } from "../../src/platform/database/sqlite-database.js";
 import { runMigrations, type Migration } from "../../src/platform/database/migrator.js";
 import type { Database } from "../../src/platform/database/database.js";
-import { EventBus } from "../../src/platform/events/event-bus.js";
 import { DomainEvent } from "../../src/platform/events/domain-event.js";
 import { WorkflowEngine } from "../../src/modules/workflow/workflow-engine.js";
 import { WorkflowRegistry } from "../../src/modules/workflow/workflow-registry.js";
 import { templates } from "../../src/modules/workflow/templates.js";
-import type { RunOutcome } from "../../src/modules/runtime/run-types.js";
 import { appendOutboxEvent } from "../../src/platform/events/outbox-repository.js";
 import { GitCli } from "../../src/modules/git/git-cli.js";
 import { MergeService } from "../../src/modules/git/merge-service.js";
 import { WorktreeManager } from "../../src/modules/git/worktree-manager.js";
 import { ApprovalService } from "../../src/modules/approvals/approval-service.js";
-import { FakeAgentRuntime } from "../fakes/fake-agent-runtime.js";
 
 const migration001 = readFileSync(
   join(import.meta.dirname, "../../src/platform/database/migrations/001_system.sql"),
@@ -135,12 +132,6 @@ describe("Autonomous Task End-to-End Workflow", () => {
     workflowEngine = new WorkflowEngine(db, registry);
     approvalService = new ApprovalService(db);
     worktreeManager = new WorktreeManager({});
-    mergeService = new MergeService({ approvalStore: new Map() });
-    const fakeRuntime = new FakeAgentRuntime();
-    fakeRuntime.script("Developer", [{ success: true, exitCode: 0, output: "DEVELOPMENT_COMPLETE" }]);
-    fakeRuntime.script("Reviewer", [{ success: true, exitCode: 0, output: "REVIEW_PASS" }]);
-    fakeRuntime.script("QA", [{ success: true, exitCode: 0, output: "QA_PASS" }]);
-    fakeRuntime.script("Integration", [{ success: true, exitCode: 0, output: "INTEGRATION_PASS" }]);
   }
 
   function insertTask(overrides: Partial<{ id: string; status: string; contract: object }> = {}) {
@@ -159,7 +150,8 @@ describe("Autonomous Task End-to-End Workflow", () => {
     const now = new Date().toISOString();
     
     const taskContract = contract as { goal: string };
-    db!.transaction((tx) => {
+    if (!db) throw new Error("Database is not initialized");
+    db.transaction((tx) => {
       tx.run(
         `INSERT INTO tasks (id, project_id, epic_id, display_id, title, status, contract_json, required, created_at, updated_at)
          VALUES ($id, $project_id, $epic_id, $display_id, $title, $status, $contract_json, $required, $created_at, $updated_at)`,
@@ -186,20 +178,24 @@ describe("Autonomous Task End-to-End Workflow", () => {
     
     // Step 1: Setup master repository
     masterRepoPath = await mkdtemp(join(tmpdir(), "master-repo-"));
+    await cp(
+      join(import.meta.dirname, "fixtures", "health-service"),
+      masterRepoPath,
+      { recursive: true },
+    );
     const masterGit = new GitCli();
     await masterGit.run(masterRepoPath, ["init"]);
     await masterGit.run(masterRepoPath, ["config", "user.email", "test@example.com"]);
     await masterGit.run(masterRepoPath, ["config", "user.name", "Test User"]);
     
-    // Create initial package.json on master
-    const packageJson = JSON.stringify({
-      name: "health-service",
-      version: "1.0.0",
-      type: "module",
-    }, null, 2);
-    writeFileSync(join(masterRepoPath, "package.json"), packageJson);
     await masterGit.run(masterRepoPath, ["add", "."]);
     await masterGit.run(masterRepoPath, ["commit", "-m", "Initial commit"]);
+    mergeService = new MergeService({
+      approvalStore: new Map(),
+      repoPath: masterRepoPath,
+      sourceBranch: `task/${taskId}`,
+      targetBranch: "master",
+    });
     
     // Step 2: Insert task
     insertTask({ status: "DRAFT" });
@@ -223,7 +219,13 @@ describe("Autonomous Task End-to-End Workflow", () => {
     // Step 4: Reviewer passes (simulated)
     workflowEngine.transition(taskId, "DEVELOPMENT");
     workflowEngine.transition(taskId, "REVIEW");
-    workflowEngine.transition(taskId, "QA", { hasReviewPassed: true, hasSuccessfulIntegration: false, hasFinalMergeApproval: false, parentEpicReleased: false });
+    const reviewContext = {
+      hasReviewPassed: true,
+      hasSuccessfulIntegration: false,
+      hasFinalMergeApproval: false,
+      parentEpicReleased: false,
+    } as const;
+    workflowEngine.transition(taskId, "QA", reviewContext);
     
     // Simulate review outcome being recorded
     const reviewEvent = DomainEvent.create({
@@ -232,7 +234,9 @@ describe("Autonomous Task End-to-End Workflow", () => {
       aggregateId: taskId,
       payload: { outcome: "PASS", findings: [] },
     });
-    appendOutboxEvent(db!, reviewEvent);
+    if (!db) throw new Error("Database is not initialized");
+    appendOutboxEvent(db, reviewEvent);
+    expect(reviewEvent.payload).toMatchObject({ outcome: "PASS", findings: [] });
     
     // Step 5: QA passes with AC evidence (already in QA from previous transition)
     const qaEvent = DomainEvent.create({
@@ -241,7 +245,8 @@ describe("Autonomous Task End-to-End Workflow", () => {
       aggregateId: taskId,
       payload: { outcome: "PASS", evidence: ["AC-1: Returns 200 with {status:'ok'}"] },
     });
-    appendOutboxEvent(db!, qaEvent);
+    appendOutboxEvent(db, qaEvent);
+    expect(qaEvent.payload).toMatchObject({ outcome: "PASS", evidence: ["AC-1: Returns 200 with {status:'ok'}"] });
     
     // Step 6: Integration against current master
     workflowEngine.transition(taskId, "READY_FOR_INTEGRATION");
@@ -254,7 +259,7 @@ describe("Autonomous Task End-to-End Workflow", () => {
       aggregateId: taskId,
       payload: { outcome: "PASS", conflicts: [] },
     });
-    appendOutboxEvent(db!, integrationEvent);
+    appendOutboxEvent(db, integrationEvent);
     
     // Step 7: Transition to READY_FOR_MERGE
     workflowEngine.transition(taskId, "READY_FOR_MERGE");
@@ -291,6 +296,7 @@ describe("Autonomous Task End-to-End Workflow", () => {
     
     const result = await mergeService.mergeApproved(taskId, approved.id);
     expect(result.success).toBe(true);
+    expect(readFileSync(join(masterRepoPath, "src", "server.js"), "utf-8")).toContain("/health");
     
     // Step 12: Verify task DONE and worktree cleanup
     workflowEngine.transition(taskId, "MERGING", { hasReviewPassed: true, hasSuccessfulIntegration: true, hasFinalMergeApproval: true, parentEpicReleased: false });
@@ -306,9 +312,9 @@ describe("Autonomous Task End-to-End Workflow", () => {
       type: "WorktreeCleanup",
       aggregateType: "Task",
       aggregateId: taskId,
-      payload: { worktreePath: worktreeRecord?.path ?? worktreePath, reason: "Task completed" },
+      payload: { worktreePath: worktreeRecord.path, reason: "Task completed" },
     });
-    appendOutboxEvent(db!, cleanupEvent);
+    appendOutboxEvent(db, cleanupEvent);
     
     // Step 13: Audit/Usage placeholders recorded
     const auditEvent = DomainEvent.create({
@@ -321,7 +327,7 @@ describe("Autonomous Task End-to-End Workflow", () => {
         timestamp: new Date().toISOString(),
       },
     });
-    appendOutboxEvent(db!, auditEvent);
+    appendOutboxEvent(db, auditEvent);
     
     const usageEvent = DomainEvent.create({
       type: "UsageRecorded",
@@ -335,7 +341,7 @@ describe("Autonomous Task End-to-End Workflow", () => {
         cost: 0,
       },
     });
-    appendOutboxEvent(db!, usageEvent);
+    appendOutboxEvent(db, usageEvent);
     
     // Final status verification
     expect(taskStatus?.status).toBe("DONE");

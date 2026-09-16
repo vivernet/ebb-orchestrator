@@ -1,4 +1,5 @@
 import http from 'http';
+import { pathToFileURL } from 'node:url';
 
 const port = parseInt(process.env.PORT, 10) || 3000;
 
@@ -7,8 +8,7 @@ const server = http.createServer((req, res) => {
   res.end('Not Found');
 });
 
-const main = require.main === module;
-if (main) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   server.listen(port, () => {
     console.log(`Server listening on port ${port}`);
   });

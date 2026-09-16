@@ -4,6 +4,7 @@
 
 import type { Database, DatabaseTx } from "../../platform/database/database.js";
 import type { FindingStatus } from "./findings-service.js";
+import { randomUUID } from "node:crypto";
 
 export type DefectStatus = FindingStatus;
 
@@ -47,7 +48,7 @@ export class DefectsService {
     return this.db.transaction((tx) => {
       const num = this.nextDefectNumber(tx, projectId);
       const now = new Date().toISOString();
-      const id = crypto.randomUUID();
+      const id = randomUUID();
 
       tx.run(
         `INSERT INTO defects 
@@ -71,7 +72,11 @@ export class DefectsService {
         },
       );
 
-      return this.getDefectById(tx, id)!;
+      const defect = this.getDefectById(tx, id);
+      if (!defect) {
+        throw new Error(`Defect ${id} was not persisted`);
+      }
+      return defect;
     });
   }
 
@@ -116,7 +121,11 @@ export class DefectsService {
         );
       }
 
-      return this.getDefectById(tx, defectId)!;
+      const defect = this.getDefectById(tx, defectId);
+      if (!defect) {
+        throw new Error(`Defect ${defectId} was not persisted`);
+      }
+      return defect;
     });
   }
 

@@ -21,6 +21,9 @@ export interface Approval {
 export interface MergeServiceOptions {
   git?: GitCli;
   approvalStore?: Map<string, Approval>;
+  repoPath?: string;
+  sourceBranch?: string;
+  targetBranch?: string;
 }
 
 /**
@@ -34,10 +37,16 @@ export interface MergeServiceOptions {
 export class MergeService {
   private readonly git: GitCli;
   private readonly approvalStore: Map<string, Approval>;
+  private readonly repoPath: string;
+  private readonly sourceBranch: string | null;
+  private readonly targetBranch: string | null;
 
   constructor(options: MergeServiceOptions = {}) {
     this.git = options.git ?? new GitCli();
     this.approvalStore = options.approvalStore ?? new Map();
+    this.repoPath = options.repoPath ?? process.cwd();
+    this.sourceBranch = options.sourceBranch ?? null;
+    this.targetBranch = options.targetBranch ?? null;
   }
 
   /**
@@ -103,11 +112,11 @@ export class MergeService {
    */
   private async performMerge(subjectId: string): Promise<MergeResult> {
     // Get current branch name
-    const branchResult = await this.git.run(process.cwd(), ["branch", "--show-current"]);
+    const branchResult = await this.git.run(this.repoPath, ["branch", "--show-current"]);
     const currentBranch = branchResult.stdout.trim() || "master";
 
      // Get current HEAD SHA before merge
-     const headResult = await this.git.run(process.cwd(), ["rev-parse", "HEAD"]);
+      const headResult = await this.git.run(this.repoPath, ["rev-parse", "HEAD"]);
       const _beforeSha = headResult.stdout.trim();
 
      // Perform merge with hooks disabled
@@ -115,25 +124,29 @@ export class MergeService {
      const emptyHooksDir = this.createEmptyHooksDir();
      try {
        mkdirSync(emptyHooksDir, { recursive: true });
-       await this.git.run(process.cwd(), [
-         "-c",
-         `core.hooksPath=${emptyHooksDir.replace(/\\/g, "/")}`,
-         "merge",
-         "--no-edit",
-         "HEAD", // Placeholder - in real code would be the source branch
-       ]);
+        const mergeArgs = [
+          "-c",
+          `core.hooksPath=${emptyHooksDir.replace(/\\/g, "/")}`,
+          "merge",
+          "--no-edit",
+          this.sourceBranch ?? "HEAD",
+        ];
+        if (this.targetBranch && currentBranch !== this.targetBranch) {
+          await this.git.run(this.repoPath, ["checkout", this.targetBranch]);
+        }
+        await this.git.run(this.repoPath, mergeArgs);
      } finally {
        rmSync(emptyHooksDir, { recursive: true, force: true });
      }
 
     // Get resulting SHA after merge
-    const afterHeadResult = await this.git.run(process.cwd(), ["rev-parse", "HEAD"]);
+     const afterHeadResult = await this.git.run(this.repoPath, ["rev-parse", "HEAD"]);
     const afterSha = afterHeadResult.stdout.trim();
 
     return {
       success: true,
       subjectId,
-      targetBranch: currentBranch,
+      targetBranch: this.targetBranch ?? currentBranch,
       mergeCommitSha: afterSha,
       resultingTargetSha: afterSha,
     };

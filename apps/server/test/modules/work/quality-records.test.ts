@@ -39,6 +39,13 @@ async function createTestDb(): Promise<{ db: Database; tmpDir: string }> {
   return { db, tmpDir };
 }
 
+function requireDatabase(database: Database | undefined): Database {
+  if (!database) {
+    throw new Error("Database is not initialized");
+  }
+  return database;
+}
+
 describe("FindingsService", () => {
   let db: Database | undefined;
   let tmpDir: string;
@@ -171,8 +178,8 @@ describe("FindingsService", () => {
     expect(f2.evidenceSignature).toBe("updated-sig");
 
     // Count findings - still only one
-    const count = db!.get<{ c: number }>("SELECT COUNT(*) as c FROM findings WHERE task_id = $taskId", { taskId: taskA.id })!;
-    expect(count.c).toBe(1);
+    const count = db?.get<{ c: number }>("SELECT COUNT(*) as c FROM findings WHERE task_id = $taskId", { taskId: taskA.id });
+    expect(count?.c).toBe(1);
   });
 
   it("retrieves findings by task", async () => {
@@ -195,7 +202,7 @@ describe("FindingsService", () => {
       guidelineRef: null,
       evidenceSignature: "sig2",
     });
-    const all = findingsService.getFindingsByTaskId(db!, taskA.id);
+    const all = findingsService.getFindingsByTaskId(requireDatabase(db), taskA.id);
     expect(all).toHaveLength(2);
     expect(all.map(f => f.displayId)).toEqual(["FINDING-1", "FINDING-2"]);
   });
@@ -222,9 +229,9 @@ describe("FindingsService", () => {
     });
     findingsService.updateFinding(f1.id, { status: "RESOLVED" });
 
-    const open = findingsService.getOpenFindingsByTaskId(db!, taskB.id);
+    const open = findingsService.getOpenFindingsByTaskId(requireDatabase(db), taskB.id);
     expect(open).toHaveLength(1);
-    expect(open[0]!.displayId).toBe("FINDING-2");
+    expect(open[0]?.displayId).toBe("FINDING-2");
   });
 });
 
@@ -334,8 +341,8 @@ describe("DefectsService", () => {
     expect(d2.evidenceSignature).toBe("new-test-sig");
 
     // Count defects - still only one
-    const count = db!.get<{ c: number }>("SELECT COUNT(*) as c FROM defects WHERE task_id = $taskId", { taskId: taskA.id })!;
-    expect(count.c).toBe(1);
+    const count = db?.get<{ c: number }>("SELECT COUNT(*) as c FROM defects WHERE task_id = $taskId", { taskId: taskA.id });
+    expect(count?.c).toBe(1);
   });
 
   it("retrieves defects by task", async () => {
@@ -358,7 +365,7 @@ describe("DefectsService", () => {
       acceptanceCriterionRef: null,
       evidenceSignature: "sig2",
     });
-    const all = defectsService.getDefectsByTaskId(db!, taskA.id);
+    const all = defectsService.getDefectsByTaskId(requireDatabase(db), taskA.id);
     expect(all).toHaveLength(2);
     expect(all.map(d => d.displayId)).toEqual(["DEFECT-1", "DEFECT-2"]);
   });
@@ -376,7 +383,7 @@ describe("DefectsService", () => {
     });
     defectsService.updateDefect(d1.id, { status: "RESOLVED" });
 
-    const open = defectsService.getOpenDefectsByTaskId(db!, taskA.id);
+    const open = defectsService.getOpenDefectsByTaskId(requireDatabase(db), taskA.id);
     expect(open).toHaveLength(0);
   });
 });

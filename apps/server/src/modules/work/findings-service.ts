@@ -3,6 +3,7 @@
  */
 
 import type { Database, DatabaseTx } from "../../platform/database/database.js";
+import { randomUUID } from "node:crypto";
 
 export type FindingStatus = "OPEN" | "RESOLVED" | "STILL_PRESENT";
 
@@ -46,7 +47,7 @@ export class FindingsService {
     return this.db.transaction((tx) => {
       const num = this.nextFindingNumber(tx, projectId);
       const now = new Date().toISOString();
-      const id = crypto.randomUUID();
+      const id = randomUUID();
 
       tx.run(
         `INSERT INTO findings 
@@ -70,7 +71,11 @@ export class FindingsService {
         },
       );
 
-      return this.getFindingById(tx, id)!;
+      const finding = this.getFindingById(tx, id);
+      if (!finding) {
+        throw new Error(`Finding ${id} was not persisted`);
+      }
+      return finding;
     });
   }
 
@@ -115,7 +120,11 @@ export class FindingsService {
         );
       }
 
-      return this.getFindingById(tx, findingId)!;
+      const finding = this.getFindingById(tx, findingId);
+      if (!finding) {
+        throw new Error(`Finding ${findingId} was not persisted`);
+      }
+      return finding;
     });
   }
 

@@ -5,7 +5,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { HermesRuntimeAdapter } from "../../../src/modules/runtime/hermes/hermes-runtime-adapter.js";
 import { HermesCliBuilder } from "../../../src/modules/runtime/hermes/hermes-cli.js";
-import type { AgentRun, RunStatus, RunTrigger } from "@orchestrator/contracts";
 import {
   ProcessExecutor,
   type ProcessOptions,
@@ -55,51 +54,6 @@ class MockProcessExecutor extends ProcessExecutor {
     this.nextResult = null;
     this.nextThrows = false;
   }
-}
-
-// Helper to create complete AgentRun objects
-function createAgentRun(options: {
-  id: string;
-  role: string;
-  model: string;
-  runtime?: string;
-  taskId?: string | null;
-  epicId?: string | null;
-  status?: RunStatus;
-  sessionId?: string | null;
-  attempt?: number | null;
-  triggerReason?: RunTrigger | null;
-  contextVersion?: string | null;
-  outputSchemaVersion?: string | null;
-  startedAt?: Date | null;
-  endedAt?: Date | null;
-  exitCode?: number | null;
-  inputTokens?: number | null;
-  cachedInputTokens?: number | null;
-  outputTokens?: number | null;
-  cost?: number | null;
-}): AgentRun {
-  return {
-    id: options.id,
-    role: options.role,
-    runtime: options.runtime ?? "hermes",
-    model: options.model,
-    taskId: options.taskId ?? null,
-    epicId: options.epicId ?? null,
-    status: options.status ?? "STARTED",
-    sessionId: options.sessionId ?? null,
-    attempt: options.attempt ?? null,
-    triggerReason: options.triggerReason ?? null,
-    contextVersion: options.contextVersion ?? null,
-    outputSchemaVersion: options.outputSchemaVersion ?? null,
-    startedAt: options.startedAt ?? null,
-    endedAt: options.endedAt ?? null,
-    exitCode: options.exitCode ?? null,
-    inputTokens: options.inputTokens ?? null,
-    cachedInputTokens: options.cachedInputTokens ?? null,
-    outputTokens: options.outputTokens ?? null,
-    cost: options.cost ?? null,
-  };
 }
 
 // Mock artifact store
@@ -478,10 +432,10 @@ describe("HermesRuntimeAdapter", () => {
       await adapter.startRun(startRun);
 
        // Manually update the run state to indicate failure
-       const state = (adapter as { runs: Map<string, unknown> }).runs.get(startRun.id);
-      if (state) {
-        state.exitCode = 1;
-      }
+       const state = (adapter as unknown as { runs: Map<string, { exitCode?: number }> }).runs.get(startRun.id);
+       if (state) {
+         state.exitCode = 1;
+       }
 
       const outcome = await adapter.collectResult(startRun.id);
       expect(outcome.success).toBe(false);

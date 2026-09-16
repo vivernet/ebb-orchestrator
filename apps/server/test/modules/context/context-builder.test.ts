@@ -46,6 +46,18 @@ describe('ContextBuilder - Role Separation', () => {
     commitHash: 'abc123',
   };
 
+  const mockTaskContract: TaskContract = {
+    id: 'TASK-001',
+    goal: 'Add /health endpoint',
+    context: 'Health check service',
+    requirements: ['RESTful API'],
+    acceptanceCriteria: ['Returns 200 with {"status":"ok"}'],
+    dependencies: [],
+    nonGoals: ['Add authentication'],
+    definitionOfDone: ['Health endpoint is operational'],
+    priority: 'p0',
+  };
+
   const contextBuilder = new ContextBuilder();
 
   describe('Developer Context Package', () => {
