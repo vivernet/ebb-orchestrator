@@ -43,6 +43,8 @@ export class SubmitResultTool {
 export interface CompletionStore {
   /** Must be implemented as one server-side conditional transaction. */
   accept(reference: string, value: { runId: string; role: string; output: unknown }): Promise<boolean>;
+  /** Return only the authenticated submission currently completing this run. */
+  getSubmission?(runId: string): { runId: string; role: string; output: string } | undefined;
 }
 
 /** Atomic completion store usable by both the server and the MCP subprocess. */
@@ -55,5 +57,14 @@ export class DatabaseCompletionStore implements CompletionStore {
          AND status IN ('STARTED','IN_PROGRESS') RETURNING id`,
       { run_id: value.runId, role: value.role, reference, output: JSON.stringify(value.output) },
     )));
+  }
+
+  getSubmission(runId: string): { runId: string; role: string; output: string } | undefined {
+    const row = this.db.get<{ id: string; role: string; output: string | null }>(
+      `SELECT id, role, output FROM agent_runs WHERE id = $run_id AND status = 'COMPLETING'`,
+      { run_id: runId },
+    );
+    if (!row?.output) return undefined;
+    return { runId: row.id, role: row.role, output: row.output };
   }
 }

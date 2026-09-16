@@ -89,6 +89,21 @@ describe("HermesRuntimeAdapter", () => {
   });
 
   describe("startRun", () => {
+    it("wires the exact run result path into the authenticated MCP config", async () => {
+      const resultDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-result-wiring-"));
+      adapter = new HermesRuntimeAdapter(mockExecutor, mockArtifactStore, { resultDirectory });
+      const run = {
+        id: "wired-run-id", role: "Developer", runtime: "hermes", model: "default",
+        taskId: null, epicId: null, status: "STARTED" as const, sessionId: null, attempt: null,
+        triggerReason: null, contextVersion: "v1", outputSchemaVersion: "v1", startedAt: new Date(),
+        endedAt: null, exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
+      };
+      await adapter.startRun(run);
+      const config = await fs.readFile(path.join(resultDirectory, "profiles", run.id, "config.yaml"), "utf8");
+      expect(config).toContain(`- "${path.join(resultDirectory, `${run.id}.json`)}"`);
+      await fs.rm(resultDirectory, { recursive: true, force: true });
+    });
+
     it("builds correct launch command for new run", async () => {
       const run = {
         id: "test-run-id",

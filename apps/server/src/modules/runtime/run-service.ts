@@ -149,11 +149,18 @@ export class RunService {
       const stored = tx.get<{ id: string; role: string; status: string }>(
         "SELECT id, role, status FROM agent_runs WHERE id = $id", { id: runId });
       if (!stored) throw new Error(`Run ${runId} not found`);
-      if (outcome.validatedSubmission !== true || outcome.diagnostics?.runId !== runId) {
-        throw new Error(`Run ${runId} requires a validated submitted result with matching diagnostics`);
+      if (stored.status !== "COMPLETING") {
+        throw new Error(`Run ${runId} requires persisted COMPLETING status from authenticated submit_result`);
+      }
+      const submission = this.completionStore().getSubmission?.(runId);
+      if (!submission || submission.role.toLowerCase() !== stored.role.toLowerCase()) {
+        throw new Error(`Run ${runId} has no authenticated completion submission`);
+      }
+      if (outcome.validatedSubmission !== true || outcome.diagnostics?.runId !== runId || outcome.output !== submission.output) {
+        throw new Error(`Run ${runId} requires a validated submitted result matching the authenticated submission`);
       }
       let value: unknown;
-      try { value = JSON.parse(outcome.output) as unknown; } catch {
+      try { value = JSON.parse(submission.output) as unknown; } catch {
         throw new Error(`Run ${runId} result is not valid JSON`);
       }
       const validation = validateRoleOutput(stored.role.toLowerCase(), value);
@@ -164,7 +171,7 @@ export class RunService {
         {
           id: runId,
           exit_code: outcome.exitCode,
-          output: outcome.output,
+          output: submission.output,
           ended_at: new Date().toISOString(),
         }
       );

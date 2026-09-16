@@ -125,6 +125,7 @@ class AcceptanceWorkflow {
         ...(raw.findings ? { findings: raw.findings } : {}),
         ...(raw.failedCriteria ? { failedCriteria: raw.failedCriteria } : {}),
       };
+      await this.runs.completionStore().accept(run.capabilityRef!, { runId: run.id, role: run.role, output: roleOutput });
       const completed = await this.runs.collectResult(run.id, {
         success: true, exitCode: 0, output: JSON.stringify(roleOutput), validatedSubmission: true,
         diagnostics: { runId: run.id, sessionId: null, stderr: "", exitCode: 0, artifactReferences: [`run-artifacts://${run.id}`] },
@@ -183,6 +184,7 @@ describe("Autonomous Task End-to-End Workflow", () => {
     await driver.reviewer(worktree);
     await driver.qa(worktree);
     const integration = await new IntegrationService({ worktreeDir: join(tmpDir, "integration") }).prepareIntegration(`task/${taskId}`, "master", masterRepoPath);
+    mergeService = new MergeService({ approvalStore: new Map(), repoPath: masterRepoPath, sourceBranch: `task/${taskId}`, targetBranch: "master", expectedTargetSha: integration.expectedTargetSha! });
     await driver.integration(integration);
     const outcomes = db!.all<{ role: string; output: string }>("SELECT role, output FROM agent_runs WHERE task_id = $task_id ORDER BY started_at", { task_id: taskId });
     expect(outcomes.map((row) => row.role)).toEqual(["Developer", "Reviewer", "QA", "Integration"]);
@@ -299,6 +301,7 @@ describe("Autonomous Task End-to-End Workflow", () => {
      expect(db!.all<{ role: string; task_id: string; status: string }>("SELECT role, task_id, status FROM agent_runs WHERE task_id = $id ORDER BY started_at", { id: taskId })).toEqual(roles.map((role) => ({ role, task_id: taskId, status: "COMPLETED" })));
     expect(workflow.currentStage(taskId)).toBe("READY_FOR_MERGE");
       const integration = realIntegration!;
+      mergeService = new MergeService({ approvalStore: new Map(), repoPath: masterRepoPath, sourceBranch: `task/${taskId}`, targetBranch: "master", expectedTargetSha: integration.expectedTargetSha! });
      const masterSha = (await new GitCli().run(masterRepoPath, ["rev-parse", "master"])).stdout.trim();
      expect(integration.expectedTargetSha).toBe(masterSha);
      expect((await new GitCli().run(integration.worktreePath, ["rev-parse", "HEAD"])).stdout.trim()).toBe(masterSha);

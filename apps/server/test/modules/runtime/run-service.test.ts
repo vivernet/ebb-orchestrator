@@ -147,10 +147,14 @@ describe("RunService with FakeAgentRuntime", () => {
       outputSchemaVersion: "1.0.0",
     });
 
+    const output = JSON.stringify({ version: "1.0.0", outcome: "COMPLETED" });
+    await runService.completionStore().accept(startedRun.capabilityRef!, {
+      runId: startedRun.id, role: startedRun.role, output: JSON.parse(output),
+    });
     const outcome: RunOutcome = {
       success: true,
       exitCode: 0,
-       output: JSON.stringify({ version: "1.0.0", outcome: "COMPLETED" }),
+       output,
        validatedSubmission: true,
        diagnostics: { runId: startedRun.id, sessionId: null, stderr: "", exitCode: 0, artifactReferences: [] },
     };
@@ -158,6 +162,34 @@ describe("RunService with FakeAgentRuntime", () => {
     const collected = await runService.collectResult(startedRun.id, outcome);
     expect(collected.status).toBe("COMPLETED");
     expect(collected.outputSchemaVersion).toBe("1.0.0");
+  });
+
+  it("rejects an artifact or adapter outcome that is not the authenticated submission", async () => {
+    await setup();
+    const run = await runService.startRun({
+      role: "developer", model: "gpt-4", taskId, epicId, triggerReason: "task-assignment",
+      contextVersion: "1", outputSchemaVersion: "1",
+    });
+    const accepted = { version: "1.0.0", outcome: "COMPLETED" };
+    await runService.completionStore().accept(run.capabilityRef!, { runId: run.id, role: run.role, output: accepted });
+    await expect(runService.collectResult(run.id, {
+      success: true, exitCode: 0, output: JSON.stringify({ version: "1.0.0", outcome: "FAILED" }),
+      validatedSubmission: true,
+      diagnostics: { runId: run.id, sessionId: null, stderr: "forged", exitCode: 0, artifactReferences: [] },
+    })).rejects.toThrow(/matching the authenticated submission/);
+  });
+
+  it("requires COMPLETING status even when an outcome claims validation", async () => {
+    await setup();
+    const run = await runService.startRun({
+      role: "developer", model: "gpt-4", taskId, epicId, triggerReason: "task-assignment",
+      contextVersion: "1", outputSchemaVersion: "1",
+    });
+    const output = JSON.stringify({ version: "1.0.0", outcome: "COMPLETED" });
+    await expect(runService.collectResult(run.id, {
+      success: true, exitCode: 0, output, validatedSubmission: true,
+      diagnostics: { runId: run.id, sessionId: null, stderr: "", exitCode: 0, artifactReferences: [] },
+    })).rejects.toThrow(/COMPLETING/);
   });
 
   it("uses scripted outcomes from FakeAgentRuntime", async () => {

@@ -120,12 +120,14 @@ export class HermesRuntimeAdapter implements AgentRuntime {
     const abortController = new AbortController();
     const promptFile = await this.writePromptFile(run);
     const profileHome = path.join(this.resultDirectory, "profiles", run.id);
+    const resultPath = path.join(this.resultDirectory, `${run.id}.json`);
     await fs.mkdir(path.join(profileHome, "home"), { recursive: true });
     const configOptions = {
       capability: { role: run.role, workspace: this.getManagedWorktree(run) },
       toolsetPath: "mcp-orchestrator",
       mcpCommand: this.mcpCommand,
       mcpArgs: [...this.mcpArgs, ...(this.databasePath ? ["--database", this.databasePath] : [])],
+      resultFile: resultPath,
       ...(run.capabilityRef ? { capabilityRef: run.capabilityRef } : {}),
     };
     await fs.writeFile(path.join(profileHome, "config.yaml"), generateConfigYaml(configOptions));
@@ -174,7 +176,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
       abortController,
       checkpointPath: await this.getCheckpointPath(run.id),
       submittedResult: await this.readSubmittedResult(run.id, run.role),
-      resultPath: path.join(this.resultDirectory, `${run.id}.json`),
+      resultPath,
       usage: this.parseUsage(processOutput.stdout),
     };
 

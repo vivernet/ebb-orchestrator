@@ -178,6 +178,22 @@ describe("MergeService", () => {
       }
     });
 
+    it("rejects a target that moved after integration was captured", async () => {
+      const repoPath = createTempDir();
+      const git = await initGitRepo(repoPath);
+      const expectedTargetSha = (await git.run(repoPath, ["rev-parse", "master"])).stdout.trim();
+      const approvalStore = new Map();
+      approvalStore.set("approval-456", { id: "approval-456", subjectId: "subject-123", type: "FINAL_MERGE", status: "APPROVED" });
+      const mergeService = new MergeService({ approvalStore, git, repoPath, targetBranch: "master", expectedTargetSha });
+
+      writeFileSync(join(repoPath, "moved.txt"), "target moved");
+      await git.run(repoPath, ["add", "moved.txt"]);
+      await git.run(repoPath, ["commit", "-m", "move target"]);
+
+      await expect(mergeService.mergeApproved("subject-123", "approval-456"))
+        .rejects.toThrow(/TARGET_MOVED/);
+    });
+
     it("merges without executing hooks", async () => {
       const repoPath = createTempDir();
       const git = await initGitRepo(repoPath);
