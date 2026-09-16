@@ -5,7 +5,7 @@
 import type { AgentRuntime } from "../agent-runtime.js";
 import type { AgentRun, RunStatus } from "@orchestrator/contracts";
 import type { RunOutcome } from "../run-types.js";
-import { ProcessExecutor, type ProcessOptions } from "../../../platform/process/process-executor.js";
+import { ProcessExecutor, ExitCodeError, type ProcessOptions } from "../../../platform/process/process-executor.js";
 import { HermesCliBuilder } from "./hermes-cli.js";
 import { parseSessionId } from "./hermes-session-parser.js";
 import * as path from "path";
@@ -25,6 +25,15 @@ interface RunState {
   startTime: Date;
   abortController: AbortController | null;
   checkpointPath: string | null;
+  submittedResult: string | null;
+  usage: RunUsage | null;
+}
+
+interface RunUsage {
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  cost: number;
 }
 
 /**
@@ -64,6 +73,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
   private readonly ignoreRules: boolean;
   private readonly managedWorktree: string | undefined;
   private readonly environment: Record<string, string> | undefined;
+  private readonly resultDirectory: string;
   private readonly exitCodes = new Map<string, number>();
 
   constructor(
@@ -76,6 +86,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
       ignoreRules?: boolean;
       managedWorktree?: string;
       environment?: Record<string, string>;
+      resultDirectory?: string;
     }
   ) {
     this.executor = executor;
@@ -86,6 +97,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
     this.ignoreRules = config?.ignoreRules ?? true;
     this.managedWorktree = config?.managedWorktree;
     this.environment = config?.environment;
+    this.resultDirectory = config?.resultDirectory ?? path.join(os.tmpdir(), "orchestrator-hermes-results");
     this.cliBuilder = new HermesCliBuilder();
   }
 
@@ -113,30 +125,34 @@ export class HermesRuntimeAdapter implements AgentRuntime {
       signal: abortController.signal,
     };
 
-    let processOutput: { stdout: string; stderr: string } | null;
+    let processOutput: { stdout: string; stderr: string; exitCode: number };
 
     try {
       const result = await this.executor.exec("hermes", args, options);
-      processOutput = { stdout: result.stdout, stderr: result.stderr };
+      processOutput = { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode };
       this.exitCodes.set(run.id, result.exitCode);
     } catch (error) {
-      // Process may have exited, capture what we have
-      processOutput = { stdout: "", stderr: (error as Error).message };
+      const processError = error instanceof ExitCodeError ? error : undefined;
+      processOutput = { stdout: processError?.stdout ?? "", stderr: processError?.stderr ?? (error as Error).message, exitCode: processError?.exitCode ?? -1 };
+      this.exitCodes.set(run.id, processOutput.exitCode);
     }
 
     const sessionId = parseSessionId(processOutput?.stdout ?? "");
     const pid = this.extractPid(processOutput?.stdout ?? "");
+    this.artifactStore.saveArtifacts(run.id, processOutput.stdout, processOutput.stderr, processOutput.exitCode);
 
     const state: RunState = {
       run: { ...run, status: "IN_PROGRESS" as RunStatus, sessionId },
       pid: pid || null,
       sessionId: sessionId || null,
-      stdout: processOutput?.stdout ?? "",
-      stderr: processOutput?.stderr ?? "",
-      exitCode: this.exitCodes.get(run.id) ?? null,
+      stdout: processOutput.stdout,
+      stderr: processOutput.stderr,
+      exitCode: processOutput.exitCode,
       startTime: new Date(),
       abortController,
       checkpointPath: await this.getCheckpointPath(run.id),
+      submittedResult: await this.readSubmittedResult(run.id),
+      usage: this.parseUsage(processOutput.stdout),
     };
 
     this.runs.set(run.id, state);
@@ -169,13 +185,14 @@ export class HermesRuntimeAdapter implements AgentRuntime {
       signal: abortController.signal,
     };
 
-    let processOutput: { stdout: string; stderr: string } | null;
+    let processOutput: { stdout: string; stderr: string; exitCode: number };
 
     try {
       const result = await this.executor.exec("hermes", args, execOptions);
-      processOutput = { stdout: result.stdout, stderr: result.stderr };
+      processOutput = { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode };
     } catch (error) {
-      processOutput = { stdout: "", stderr: (error as Error).message };
+      const processError = error instanceof ExitCodeError ? error : undefined;
+      processOutput = { stdout: processError?.stdout ?? "", stderr: processError?.stderr ?? (error as Error).message, exitCode: processError?.exitCode ?? -1 };
     }
 
     // Update existing state in place
@@ -183,9 +200,12 @@ export class HermesRuntimeAdapter implements AgentRuntime {
     existingState.run.attempt = options.attempt;
     existingState.run.status = "IN_PROGRESS" as RunStatus;
     existingState.pid = null;
-    existingState.stdout = processOutput?.stdout ?? "";
-    existingState.stderr = processOutput?.stderr ?? "";
-    existingState.exitCode = null;
+    existingState.stdout = processOutput.stdout;
+    existingState.stderr = processOutput.stderr;
+    existingState.exitCode = processOutput.exitCode;
+    this.artifactStore.saveArtifacts(runId, processOutput.stdout, processOutput.stderr, processOutput.exitCode);
+    existingState.submittedResult = await this.readSubmittedResult(runId);
+    existingState.usage = this.parseUsage(processOutput.stdout);
     existingState.startTime = new Date();
     existingState.abortController = abortController;
   }
@@ -250,10 +270,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
       throw new Error(`Run ${runId} not found`);
     }
 
-    // Check if the process exited without a valid submitted result
-    const artifacts = this.artifactStore.getArtifacts(runId);
-    if (!artifacts && state.exitCode !== 0) {
-      // Process exited without valid submitted result
+    if (!state.submittedResult) {
       return {
         success: false,
         exitCode: state.exitCode ?? -1,
@@ -263,27 +280,25 @@ export class HermesRuntimeAdapter implements AgentRuntime {
 
     return {
       success: state.exitCode === 0,
-      exitCode: state.exitCode ?? 0,
-      output: state.stdout,
+      exitCode: state.exitCode ?? -1,
+      output: state.submittedResult,
     };
   }
 
   /**
    * Collect token usage from a run.
    */
-  async collectUsage(_runId: string): Promise<{
+  async collectUsage(runId: string): Promise<{
     inputTokens: number;
     cachedInputTokens: number;
     outputTokens: number;
     cost: number;
   }> {
-    // TODO: Parse usage from hermes output
-    return {
-      inputTokens: 0,
-      cachedInputTokens: 0,
-      outputTokens: 0,
-      cost: 0,
-    };
+    const state = this.runs.get(runId);
+    if (!state?.usage || (state.usage.inputTokens === 0 && state.usage.outputTokens === 0)) {
+      throw new Error(`HERMES_USAGE_MISSING: no usage values were emitted for run ${runId}`);
+    }
+    return state.usage;
   }
 
   /**
@@ -335,6 +350,41 @@ export class HermesRuntimeAdapter implements AgentRuntime {
     const checkpointDir = path.join(os.homedir(), ".orchestrator", "checkpoints");
     await fs.mkdir(checkpointDir, { recursive: true });
     return path.join(checkpointDir, `${runId}.checkpoint`);
+  }
+
+  private async readSubmittedResult(runId: string): Promise<string | null> {
+    try {
+      const exactPath = path.join(this.resultDirectory, `${runId}.json`);
+      try {
+        return await fs.readFile(exactPath, "utf8");
+      } catch {
+        const files = (await fs.readdir(this.resultDirectory)).filter((file) => file.endsWith(".json"));
+        const first = files[0];
+        return first ? await fs.readFile(path.join(this.resultDirectory, first), "utf8") : null;
+      }
+    } catch {
+      return null;
+    }
+  }
+
+  private parseUsage(stdout: string): RunUsage | null {
+    const match = stdout.match(/"usage"\s*:\s*(\{[^\n]*\})/);
+    if (!match?.[1]) return null;
+    try {
+      const value: unknown = JSON.parse(match[1]);
+      if (!value || typeof value !== "object") return null;
+      const record = value as Record<string, unknown>;
+      const inputTokens = this.usageNumber(record.inputTokens ?? record.input_tokens);
+      const cachedInputTokens = this.usageNumber(record.cachedInputTokens ?? record.cached_input_tokens);
+      const outputTokens = this.usageNumber(record.outputTokens ?? record.output_tokens);
+      const cost = this.usageNumber(record.cost);
+      if (inputTokens === null || cachedInputTokens === null || outputTokens === null || cost === null) return null;
+      return { inputTokens, cachedInputTokens, outputTokens, cost };
+    } catch { return null; }
+  }
+
+  private usageNumber(value: unknown): number | null {
+    return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
   }
 
   /**

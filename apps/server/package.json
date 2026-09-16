@@ -1,6 +1,9 @@
 {
   "name": "@orchestrator/server",
   "private": true,
+  "bin": {
+    "orchestrator-mcp": "src/bin/orchestrator-mcp.ts"
+  },
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/main.ts",

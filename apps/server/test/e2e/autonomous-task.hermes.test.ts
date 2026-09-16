@@ -1,5 +1,5 @@
 /**
- * Plan 4 acceptance scenario.
+ * Plan 4 infrastructure coverage and opt-in real Hermes acceptance.
  *
  * The deterministic fallback is always runnable. The real Hermes subprocess
  * scenario is opt-in because Hermes is not a CI dependency.
@@ -12,7 +12,7 @@ import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createSqliteDatabase } from "../../src/platform/database/sqlite-database.js";
 import { runMigrations, type Migration } from "../../src/platform/database/migrator.js";
 import type { Database } from "../../src/platform/database/database.js";
@@ -166,7 +166,7 @@ describe("Autonomous Task End-to-End Workflow", () => {
 
   afterEach(async () => { db?.close(); db = undefined; if (masterRepoPath) await rm(masterRepoPath, { recursive: true, force: true }); if (tmpDir) await rm(tmpDir, { recursive: true, force: true }); });
 
-  it("completes Developer → Reviewer → QA → Integration before FINAL_MERGE", async () => {
+  it("covers the workflow with the deterministic infrastructure fallback", async () => {
     const driver = (globalThis as unknown as { acceptance: AcceptanceWorkflow }).acceptance;
     driver.ready();
     const worktree = await driver.developer();
@@ -213,16 +213,10 @@ describe("Autonomous Task End-to-End Workflow", () => {
     }
 
     const worktree = await worktreeManager.createTaskWorkspace(taskId, masterRepoPath, "master");
-    const profile = prepareHermesProfile({
-      capability: { role: "developer", workspace: worktree.path },
-      orchestratorHome: tmpDir,
-      toolsetPath: "mcp-orchestrator",
-    });
-    await mkdir(profile.hermesHome, { recursive: true });
-    await writeFile(join(profile.hermesHome, "config.yaml"), generateConfigYaml({
-      capability: { role: "developer", workspace: worktree.path },
-      toolsetPath: "mcp-orchestrator",
-    }));
+    const mcpCli = join(import.meta.dirname, "../../src/bin/orchestrator-mcp.ts");
+    const handshake = await runMcpHandshake(mcpCli, worktree.path);
+    expect(handshake).toContain('"name":"orchestrator-mcp"');
+    expect(handshake).toContain('"submit_result"');
     const mcp = new McpServer(new RunCapability({
       id: `cap-${taskId}`,
       role: "developer",
@@ -232,14 +226,30 @@ describe("Autonomous Task End-to-End Workflow", () => {
     expect((await mcp.processRequest({ method: "tools/list" })).result).toEqual(expect.arrayContaining([{ name: "submit_result", description: expect.any(String) }]));
 
     driverReady(workflow, taskId);
-    const runtime = new HermesRuntimeAdapter(new ProcessExecutor(), undefined, {
-      managedWorktree: worktree.path,
-      environment: profile.env,
-      timeoutMs: 180000,
-    });
-    const runs = new RunService(db!, runtime);
     const roles = ["Developer", "Reviewer", "QA", "Integration"];
     for (const role of roles) {
+      const resultDirectory = join(tmpDir, "hermes-results", role);
+      const profile = prepareHermesProfile({
+        capability: { role: role.toLowerCase(), workspace: worktree.path },
+        orchestratorHome: join(tmpDir, role),
+        toolsetPath: "mcp-orchestrator",
+      });
+      const resultFile = join(resultDirectory, `${role}-${taskId}.json`);
+      await mkdir(profile.hermesHome, { recursive: true });
+      await writeFile(join(profile.hermesHome, "config.yaml"), generateConfigYaml({
+        capability: { role: role.toLowerCase(), workspace: worktree.path },
+        toolsetPath: "mcp-orchestrator",
+        resultFile,
+        mcpCommand: process.execPath,
+        mcpArgs: ["--import", "tsx", mcpCli],
+      }));
+      const runtime = new HermesRuntimeAdapter(new ProcessExecutor(), undefined, {
+        managedWorktree: worktree.path,
+        environment: profile.env,
+        resultDirectory,
+        timeoutMs: 180000,
+      });
+      const runs = new RunService(db!, runtime);
       const run = await runs.startRun({ role, model: process.env.HERMES_MODEL ?? "default", taskId, epicId: null, triggerReason: "task-assignment", contextVersion: "hermes-acceptance-v1", outputSchemaVersion: "1" });
       let inspected: AgentRun | undefined;
       for (let attempt = 0; attempt < 120 && !inspected; attempt += 1) {
@@ -249,8 +259,12 @@ describe("Autonomous Task End-to-End Workflow", () => {
       expect(inspected, `${role} run did not finish`).toBeDefined();
       const outcome = await runtime.collectResult(run.id);
       expect(outcome.success, `${role} did not submit a successful result`).toBe(true);
+      const submitted = JSON.parse(outcome.output) as { outcome?: string };
+      expect(submitted.outcome, `${role} submitted an invalid result`).toBeTruthy();
       await runs.collectResult(run.id, outcome);
-      await runs.collectUsage(run.id, await runtime.collectUsage(run.id));
+      const usage = await runtime.collectUsage(run.id);
+      expect(usage.inputTokens + usage.outputTokens, `${role} emitted no genuine usage`).toBeGreaterThan(0);
+      await runs.collectUsage(run.id, usage);
       advanceRealStage(workflow, taskId, role);
     }
     expect(db!.all<{ role: string }>("SELECT role FROM agent_runs WHERE task_id = $id ORDER BY started_at", { id: taskId }).map((row) => row.role)).toEqual(roles);
@@ -261,15 +275,33 @@ describe("Autonomous Task End-to-End Workflow", () => {
     mergeService.registerApproval({ id: approved.id, subjectId: approved.subjectId, type: approved.type, status: approved.status });
     workflow.transition(taskId, "MERGING", { hasReviewPassed: true, hasSuccessfulIntegration: true, hasFinalMergeApproval: true, parentEpicReleased: false });
     expect((await mergeService.mergeApproved(taskId, approved.id)).success).toBe(true);
+    expect(readFileSync(join(masterRepoPath, "src", "server.js"), "utf8")).toContain("/health");
     workflow.transition(taskId, "DONE");
     await worktreeManager.removeWorkspace(worktree.id);
     expect(workflow.currentStage(taskId)).toBe("DONE");
     expect(db!.get<{ removed_at: string | null }>("SELECT removed_at FROM worktrees WHERE id = $id", { id: taskId })?.removed_at).not.toBeNull();
     expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM agent_runs WHERE task_id = $id AND input_tokens IS NOT NULL", { id: taskId })?.count).toBe(4);
+    expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM outbox_events WHERE aggregate_id = $id", { id: taskId })?.count).toBeGreaterThan(0);
+    expect(db!.get<{ total: number }>("SELECT COALESCE(SUM(input_tokens + output_tokens), 0) AS total FROM agent_runs WHERE task_id = $id", { id: taskId })?.total).toBeGreaterThan(0);
   });
 });
 
 function driverReady(engine: WorkflowEngine, id: string): void { engine.transition(id, "READY"); }
+
+async function runMcpHandshake(cli: string, workspace: string): Promise<string> {
+  const child = spawn(process.execPath, ["--import", "tsx", cli, "--capability", "developer", "--workspace", workspace], { stdio: ["pipe", "pipe", "pipe"] });
+  const output = new Promise<string>((resolve, reject) => {
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
+    child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+    child.on("error", reject);
+    child.on("close", (code) => code === 0 ? resolve(stdout) : reject(new Error(`MCP exited ${code}: ${stderr}`)));
+  });
+  child.stdin.write(`${JSON.stringify({ method: "initialize" })}\n${JSON.stringify({ method: "tools/list" })}\n`);
+  child.stdin.end();
+  return output;
+}
 
 function advanceRealStage(engine: WorkflowEngine, id: string, role: string): void {
   if (role === "Developer") engine.transition(id, "DEVELOPMENT");

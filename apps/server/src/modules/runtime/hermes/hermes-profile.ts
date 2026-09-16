@@ -74,6 +74,9 @@ export function getMcpSocketPath(hermesHome: string): string {
 export interface GenerateConfigOptions {
   capability: { role: string; workspace: string };
   toolsetPath: string;
+  resultFile?: string;
+  mcpCommand?: string;
+  mcpArgs?: string[];
 }
 
 /**
@@ -84,18 +87,14 @@ export interface GenerateConfigOptions {
  * - Terminal configuration with home_mode: profile
  */
 export function generateConfigYaml(options: GenerateConfigOptions): string {
-  const { capability, toolsetPath } = options;
+  const { capability, toolsetPath, resultFile, mcpCommand = "orchestrator-mcp", mcpArgs = [] } = options;
+  const executableArgs = [...mcpArgs, "--capability", capability.role, "--workspace", capability.workspace, "--toolset", toolsetPath, ...(resultFile ? ["--result-file", resultFile] : [])];
 
   const yaml = `mcp_servers:
   - name: orchestrator-mcp
-    command: orchestrator-mcp
+    command: ${mcpCommand}
     args:
-      - "--capability"
-      - "${capability.role}"
-      - "--workspace"
-      - "${capability.workspace}"
-      - "--toolset"
-      - "${toolsetPath}"
+${executableArgs.map((arg) => `      - "${arg}"`).join("\n")}
 terminal:
   home_mode: profile
 `;

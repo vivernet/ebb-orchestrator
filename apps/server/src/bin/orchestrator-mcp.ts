@@ -7,12 +7,15 @@
  */
 import { McpServer } from '../modules/execution/mcp/mcp-server.js';
 import { RunCapability } from '../modules/execution/run-capability.js';
+import { writeFile, mkdir } from 'node:fs/promises';
+import { dirname } from 'node:path';
 
-function parseArgs(): { capability: string | undefined; workspace: string | undefined } {
+function parseArgs(): { capability: string | undefined; workspace: string | undefined; resultFile: string | undefined } {
   const args = process.argv.slice(2);
-  const result: { capability: string | undefined; workspace: string | undefined } = {
+  const result: { capability: string | undefined; workspace: string | undefined; resultFile: string | undefined } = {
     capability: undefined,
     workspace: undefined,
+    resultFile: undefined,
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -20,6 +23,8 @@ function parseArgs(): { capability: string | undefined; workspace: string | unde
       result.capability = args[++i];
     } else if (args[i] === '--workspace' && i + 1 < args.length) {
       result.workspace = args[++i];
+    } else if (args[i] === '--result-file' && i + 1 < args.length) {
+      result.resultFile = args[++i];
     } else if (args[i] === '--help' || args[i] === '-h') {
       console.log('Usage: orchestrator-mcp --capability <capability-id> [--workspace <path>]');
       process.exit(0);
@@ -35,6 +40,7 @@ async function main() {
   // Get capability from environment or args
   const capabilityId = args.capability || process.env.CAPABILITY_ID;
   const workspace = args.workspace || process.env.WORKSPACE_PATH;
+  const resultFile = args.resultFile || process.env.ORCHESTRATOR_RESULT_FILE;
 
   if (!capabilityId) {
     console.error('Error: capability ID required via --capability or CAPABILITY_ID env var');
@@ -88,6 +94,11 @@ async function main() {
     try {
       const request = JSON.parse(line.toString());
       const response = await server.processRequest(request);
+      const toolResult = response.result as { success?: boolean; result?: unknown };
+      if (request.method === 'tools/call' && request.params?.name === 'submit_result' && toolResult.success && resultFile) {
+        await mkdir(dirname(resultFile), { recursive: true });
+        await writeFile(resultFile, JSON.stringify(toolResult.result), { encoding: 'utf8', flag: 'wx' });
+      }
       console.log(JSON.stringify(response));
     } catch (err) {
       console.error(JSON.stringify({ error: err instanceof Error ? err.message : 'unknown error' }));
