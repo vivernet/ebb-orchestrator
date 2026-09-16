@@ -8,7 +8,15 @@ import { GitTools } from './git-tools.js';
 import { WorkspaceTools } from './workspace-tools.js';
 
 export type RoleName = 'developer' | 'reviewer' | 'qa' | 'integration' | 'coordinator' | 'architect';
-export type ToolId = 'workspace.read' | 'workspace.search' | 'workspace.patch' | 'git.status' | 'git.diff' | 'git.commit';
+export type ToolId =
+  | 'workspace.read'
+  | 'workspace.search'
+  | 'workspace.patch'
+  | 'git.status'
+  | 'git.diff'
+  | 'git.commit'
+  | 'project.test'
+  | 'submit_result';
 
 export interface RunCapabilityDef {
   id: string;
