@@ -1,0 +1,12 @@
+{
+  "name": "health-service",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node test/server.test.js"
+  },
+  "dependencies": {
+    "http": "^0.0.1-security"
+  }
+}
