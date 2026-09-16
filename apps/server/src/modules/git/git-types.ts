@@ -1,4 +1,4 @@
-export type GitOperationStatus = "PENDING" | "IN_PROGRESS" | "COMPLETED" | "FAILED";
+export type GitOperationStatus = "STARTED" | "VERIFIED";
 
 export type GitOperationType = "CREATE_WORKTREE" | "REMOVE_WORKTREE" | "CREATE_BRANCH";
 
