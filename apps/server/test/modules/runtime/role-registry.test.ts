@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { RoleRegistry, globalRegistry } from '../../../src/modules/runtime/role-registry.js';
+import { globalRegistry } from '../../../src/modules/runtime/role-registry.js';
 import { getContract } from '../../../src/modules/runtime/default-roles.js';
 
 describe('RoleRegistry', () => {

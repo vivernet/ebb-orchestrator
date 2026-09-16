@@ -13,4 +13,15 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    files: ["apps/server/test/e2e/fixtures/health-service/src/server.js"],
+    languageOptions: {
+      globals: {
+        process: "readonly",
+        require: "readonly",
+        module: "readonly",
+        console: "readonly",
+      },
+    },
+  },
 );

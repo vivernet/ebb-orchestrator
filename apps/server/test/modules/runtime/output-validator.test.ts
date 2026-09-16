@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { validateRoleOutput, type ValidatedRoleOutput } from "../../../src/modules/runtime/output-validator.js";
+import { validateRoleOutput } from "../../../src/modules/runtime/output-validator.js";
 import type { RoleOutput } from "../../../src/modules/runtime/output-validator.js";
 
 describe("validateRoleOutput", () => {
@@ -30,7 +30,7 @@ describe("validateRoleOutput", () => {
     it("rejects invalid outcome", () => {
       const value: RoleOutput = {
         version: "1.0.0",
-        outcome: "PASS" as any,
+         outcome: "PASS" as RoleOutput["outcome"],
         summary: "Should not pass",
       };
       const result = validateRoleOutput("developer", value);
@@ -166,7 +166,7 @@ describe("validateRoleOutput", () => {
     it("rejects invalid outcome", () => {
       const value: RoleOutput = {
         version: "1.0.0",
-        outcome: "FAIL" as any,
+         outcome: "FAIL" as RoleOutput["outcome"],
         summary: "Should not fail",
       };
       const result = validateRoleOutput("integration", value);

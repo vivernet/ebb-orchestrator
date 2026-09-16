@@ -1,22 +1,10 @@
-import { describe, expect, it, beforeEach } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { ContextBuilder } from '../../../src/modules/context/context-builder.js';
 import { ManifestBuilder } from '../../../src/modules/context/context-manifest.js';
 import { PromptBuilder } from '../../../src/modules/runtime/prompt-builder.js';
 import type { TaskContract, Finding, Defect, Guideline, Decision } from '../../../src/modules/context/context-types.js';
 
 describe('ContextBuilder - Role Separation', () => {
-  const mockTaskContract: TaskContract = {
-    id: 'TASK-001',
-    goal: 'Add health endpoint',
-    context: 'Testing context',
-    requirements: ['Must return status ok'],
-    acceptanceCriteria: ['Status must be ok'],
-    dependencies: [],
-    nonGoals: [],
-    definitionOfDone: ['Tests pass'],
-    priority: 'p0' as const,
-  };
-
   const mockDeveloperSession: Array<{ role: 'user' | 'assistant'; content: string }> = [
     { role: 'user', content: 'Implement health endpoint' },
     { role: 'assistant', content: 'Here is the implementation' },
@@ -146,7 +134,7 @@ describe('ContextBuilder - Role Separation', () => {
       });
       // Reviewer package doesn't include findings/defects by default
       expect(pkg.findings).toEqual([]);
-      // @ts-ignore - check that defects field doesn't exist on ReviewerContextPackage
+      // @ts-expect-error - check that defects field doesn't exist on ReviewerContextPackage
       expect(pkg.defects).toBeUndefined();
     });
   });
@@ -235,18 +223,6 @@ describe('ContextBuilder - Budget Pruning', () => {
 });
 
 describe('ManifestBuilder', () => {
-  const mockTaskContract = {
-    id: 'TASK-001',
-    goal: 'Test',
-    context: 'Test',
-    requirements: [],
-    acceptanceCriteria: [],
-    dependencies: [],
-    nonGoals: [],
-    definitionOfDone: [],
-    priority: 'p0' as const,
-  };
-
   const manifestBuilder = new ManifestBuilder();
 
   it('should persist manifest IDs and versions', () => {
@@ -269,9 +245,9 @@ describe('ManifestBuilder', () => {
       taskContractVersion: '1.0.0',
     });
 
-    // Secret fields should not exist
-    expect((manifest as any).secrets).toBeUndefined();
-    expect((manifest as any).apiKey).toBeUndefined();
+     // Secret fields should not exist
+     expect((manifest as { secrets?: unknown, apiKey?: unknown }).secrets).toBeUndefined();
+     expect((manifest as { secrets?: unknown, apiKey?: unknown }).apiKey).toBeUndefined();
   });
 
   it('should include initial token size', () => {

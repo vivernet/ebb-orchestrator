@@ -5,6 +5,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { prepareHermesProfile, getOrchestratorHome, getConfigPath, generateConfigYaml } from "../../../src/modules/runtime/hermes/hermes-profile.js";
 import * as path from "path";
+import * as os from "os";
 
 const normalizePath = (p?: string) => (p ? p.replace(/\\/g, "/") : "");
 
@@ -37,7 +38,7 @@ describe("Hermes profile isolation", () => {
     it("falls back to ~/.orchestrator when not set", () => {
       delete process.env.ORCHESTRATOR_HOME;
       const home = getOrchestratorHome();
-      expect(home).toBe(path.join(require("os").homedir(), ".orchestrator"));
+      expect(home).toBe(path.join(os.homedir(), ".orchestrator"));
     });
   });
 

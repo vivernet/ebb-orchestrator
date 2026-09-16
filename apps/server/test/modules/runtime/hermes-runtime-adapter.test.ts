@@ -10,7 +10,6 @@ import {
   type ProcessOptions,
   type ProcessResult,
 } from "../../../src/platform/process/process-executor.js";
-import * as path from "path";
 
 // Mock process executor for testing
 class MockProcessExecutor extends ProcessExecutor {
@@ -432,8 +431,8 @@ describe("HermesRuntimeAdapter", () => {
       mockExecutor.setNextResult({ exitCode: 0, stdout: "session: test", stderr: "" });
       await adapter.startRun(startRun);
 
-      // Manually update the run state to indicate failure
-      const state = (adapter as any).runs.get(startRun.id);
+       // Manually update the run state to indicate failure
+       const state = (adapter as { runs: Map<string, unknown> }).runs.get(startRun.id);
       if (state) {
         state.exitCode = 1;
       }
