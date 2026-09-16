@@ -35,6 +35,9 @@ importers:
       '@orchestrator/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@orchestrator/testing':
+        specifier: workspace:*
+        version: link:../../packages/testing
       fastify:
         specifier: ^5.12.4
         version: 5.12.4

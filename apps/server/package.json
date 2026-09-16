@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@orchestrator/contracts": "workspace:*",
+    "@orchestrator/testing": "workspace:*",
     "fastify": "^5.12.4",
     "zod": "^4.6.0"
   }
