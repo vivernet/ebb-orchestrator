@@ -1,15 +1,16 @@
 import { describe, expect, it, afterEach, beforeEach } from "vitest";
-import { randomUUID } from "node:crypto";
 import { mkdtemp, rm, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createSqliteDatabase } from "../../../src/platform/database/sqlite-database.js";
 import { runMigrations, type Migration } from "../../../src/platform/database/migrator.js";
 import type { Database } from "../../../src/platform/database/database.js";
-import { appendOutboxEvent } from "../../../src/platform/events/outbox-repository.js";
-import { DomainEvent, type DomainEventInput } from "../../../src/platform/events/domain-event.js";
 import { EventBus } from "../../../src/platform/events/event-bus.js";
 import { EventDispatcher } from "../../../src/platform/events/event-dispatcher.js";
+import { appendOutboxEvent } from "../../../src/platform/events/outbox-repository.js";
+import { DomainEvent } from "../../../src/platform/events/domain-event.js";
+import type { DomainEventInput } from "../../../src/platform/events/domain-event.js";
+import { randomUUID } from "node:crypto";
 
 const migration001 = await readFile(
   join(import.meta.dirname, "../../../src/platform/database/migrations/001_system.sql"),
