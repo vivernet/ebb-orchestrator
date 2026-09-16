@@ -62,6 +62,9 @@ export class HermesRuntimeAdapter implements AgentRuntime {
   private readonly roleLimit: number;
   private readonly toolsets: string[];
   private readonly ignoreRules: boolean;
+  private readonly managedWorktree: string | undefined;
+  private readonly environment: Record<string, string> | undefined;
+  private readonly exitCodes = new Map<string, number>();
 
   constructor(
     executor: ProcessExecutor,
@@ -71,6 +74,8 @@ export class HermesRuntimeAdapter implements AgentRuntime {
       roleLimit?: number;
       toolsets?: string[];
       ignoreRules?: boolean;
+      managedWorktree?: string;
+      environment?: Record<string, string>;
     }
   ) {
     this.executor = executor;
@@ -79,6 +84,8 @@ export class HermesRuntimeAdapter implements AgentRuntime {
     this.roleLimit = config?.roleLimit ?? 20;
     this.toolsets = config?.toolsets ?? ["mcp-orchestrator"];
     this.ignoreRules = config?.ignoreRules ?? true;
+    this.managedWorktree = config?.managedWorktree;
+    this.environment = config?.environment;
     this.cliBuilder = new HermesCliBuilder();
   }
 
@@ -111,6 +118,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
     try {
       const result = await this.executor.exec("hermes", args, options);
       processOutput = { stdout: result.stdout, stderr: result.stderr };
+      this.exitCodes.set(run.id, result.exitCode);
     } catch (error) {
       // Process may have exited, capture what we have
       processOutput = { stdout: "", stderr: (error as Error).message };
@@ -125,7 +133,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
       sessionId: sessionId || null,
       stdout: processOutput?.stdout ?? "",
       stderr: processOutput?.stderr ?? "",
-      exitCode: null,
+      exitCode: this.exitCodes.get(run.id) ?? null,
       startTime: new Date(),
       abortController,
       checkpointPath: await this.getCheckpointPath(run.id),
@@ -309,6 +317,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
     // Remove sensitive variables
     delete env.GITHUB_TOKEN;
     delete env.SSH_AUTH_SOCK;
+    Object.assign(env, this.environment);
     return env;
   }
 
@@ -316,7 +325,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
    * Get the managed worktree path for a run.
    */
   private getManagedWorktree(run: AgentRun): string {
-    return path.join(os.homedir(), "worktrees", run.id);
+    return this.managedWorktree ?? path.join(os.homedir(), "worktrees", run.id);
   }
 
   /**

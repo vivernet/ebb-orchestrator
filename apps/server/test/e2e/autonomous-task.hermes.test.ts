@@ -1,16 +1,13 @@
 /**
  * Plan 4 acceptance scenario.
  *
- * The role driver below is deliberately a deterministic runtime double for the
- * local test suite.  It uses the same managed worktree, git, workflow, run,
- * integration and approval services as the production path.  The repository
- * does not provide a configured Hermes binary/profile for an opt-in subprocess
- * run, so this deterministic acceptance is the executable Plan 4 E2E here.
+ * The deterministic fallback is always runnable. The real Hermes subprocess
+ * scenario is opt-in because Hermes is not a CI dependency.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { cp, mkdtemp, rm } from "node:fs/promises";
+import { cp, mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -34,6 +31,11 @@ import { RunService } from "../../src/modules/runtime/run-service.js";
 import type { AgentRuntime } from "../../src/modules/runtime/agent-runtime.js";
 import type { AgentRun } from "@orchestrator/contracts";
 import type { RunOutcome } from "../../src/modules/runtime/run-types.js";
+import { HermesRuntimeAdapter } from "../../src/modules/runtime/hermes/hermes-runtime-adapter.js";
+import { prepareHermesProfile, generateConfigYaml } from "../../src/modules/runtime/hermes/hermes-profile.js";
+import { McpServer } from "../../src/modules/execution/mcp/mcp-server.js";
+import { RunCapability } from "../../src/modules/execution/run-capability.js";
+import { ProcessExecutor } from "../../src/platform/process/process-executor.js";
 
 const execFileAsync = promisify(execFile);
 const migrationFiles = ["001_system.sql", "002_work_domain.sql", "003_work_control.sql", "004_agent_runs.sql", "005_scheduler.sql", "006_recovery.sql"];
@@ -116,7 +118,9 @@ class AcceptanceWorkflow {
 
   async record(role: string, output: object, triggerReason = "task-assignment"): Promise<AgentRun> {
     const run = await this.runs.startRun({ role, model: "deterministic-test-runtime", taskId: this.taskId, epicId: null, triggerReason, contextVersion: "acceptance-v1", outputSchemaVersion: "1" });
-    return this.runs.collectResult(run.id, { success: true, exitCode: 0, output: JSON.stringify(output) });
+     const completed = await this.runs.collectResult(run.id, { success: true, exitCode: 0, output: JSON.stringify(output) });
+     await this.runs.collectUsage(run.id, { inputTokens: 1, cachedInputTokens: 0, outputTokens: 1, cost: 0 });
+     return completed;
   }
 }
 
@@ -127,8 +131,9 @@ describe("Autonomous Task End-to-End Workflow", () => {
   let taskId = "";
   let projectId = "";
   let approvalService: ApprovalService;
-  let mergeService: MergeService;
-  let worktreeManager: WorktreeManager;
+   let mergeService: MergeService;
+   let worktreeManager: WorktreeManager;
+   let workflow: WorkflowEngine;
 
   beforeEach(async () => {
     tmpDir = await mkdtemp(join(tmpdir(), "orch-e2e-"));
@@ -152,9 +157,9 @@ describe("Autonomous Task End-to-End Workflow", () => {
     await git.run(masterRepoPath, ["config", "user.email", "test@example.com"]); await git.run(masterRepoPath, ["config", "user.name", "Test User"]);
     await git.run(masterRepoPath, ["add", "."]); await git.run(masterRepoPath, ["commit", "-m", "Initial commit"]);
     const registry = new WorkflowRegistry(); for (const template of Object.values(templates)) registry.register(template);
-    const workflow = new WorkflowEngine(db, registry);
+     workflow = new WorkflowEngine(db, registry);
     approvalService = new ApprovalService(db);
-    worktreeManager = new WorktreeManager();
+     worktreeManager = new WorktreeManager({ db, worktreeDir: join(tmpDir, "worktrees") });
     mergeService = new MergeService({ approvalStore: new Map(), repoPath: masterRepoPath, sourceBranch: `task/${taskId}`, targetBranch: "master" });
     (globalThis as { acceptance?: AcceptanceWorkflow }).acceptance = new AcceptanceWorkflow(db, workflow, new RunService(db, new DeterministicRuntime()), worktreeManager, git, masterRepoPath, taskId);
   });
@@ -182,10 +187,15 @@ describe("Autonomous Task End-to-End Workflow", () => {
     const merged = await mergeService.mergeApproved(taskId, approved.id);
     expect(merged.success).toBe(true);
     expect(readFileSync(join(masterRepoPath, "src", "server.js"), "utf8")).toContain("/health");
-    const cleanup = new IntegrationService(); await cleanup.cleanupIntegration(integration);
-    const cleanupGit = new GitCli();
-    await cleanupGit.run(masterRepoPath, ["worktree", "remove", "--force", worktree.path]);
-    expect(() => readFileSync(join(worktree.path, "src", "server.js"), "utf8")).toThrow();
+     workflow.transition(taskId, "MERGING", { hasReviewPassed: true, hasSuccessfulIntegration: true, hasFinalMergeApproval: true, parentEpicReleased: false });
+     workflow.transition(taskId, "DONE");
+     const cleanup = new IntegrationService(); await cleanup.cleanupIntegration(integration);
+     await worktreeManager.removeWorkspace(worktree.id);
+     expect(() => readFileSync(join(worktree.path, "src", "server.js"), "utf8")).toThrow();
+     expect(db!.get<{ status: string }>("SELECT status FROM tasks WHERE id = $id", { id: taskId })?.status).toBe("DONE");
+     expect(db!.get<{ removed_at: string | null }>("SELECT removed_at FROM worktrees WHERE id = $id", { id: taskId })?.removed_at).not.toBeNull();
+     expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM outbox_events WHERE aggregate_id = $id AND type IN ('TaskStateChanged','ApprovalRequested','ApprovalApproved')", { id: taskId })?.count).toBeGreaterThanOrEqual(6);
+     expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM agent_runs WHERE task_id = $id AND input_tokens IS NOT NULL AND output_tokens IS NOT NULL", { id: taskId })?.count).toBe(4);
   });
 
   it("requires FINAL_MERGE approval for the exact task", async () => {
@@ -193,4 +203,81 @@ describe("Autonomous Task End-to-End Workflow", () => {
     expect(approval.status).toBe("PENDING");
     await expect(mergeService.mergeApproved(taskId, approval.id)).rejects.toThrow("Approval not found");
   });
+
+  it("runs the real Hermes managed-worktree acceptance when opted in", async ({ skip }) => {
+    if (process.env.RUN_HERMES_E2E !== "1") skip("opt in with RUN_HERMES_E2E=1");
+    try {
+      await execFileAsync("hermes", ["--version"]);
+    } catch {
+      skip("Hermes binary is unavailable; install/configure Hermes to run this acceptance");
+    }
+
+    const worktree = await worktreeManager.createTaskWorkspace(taskId, masterRepoPath, "master");
+    const profile = prepareHermesProfile({
+      capability: { role: "developer", workspace: worktree.path },
+      orchestratorHome: tmpDir,
+      toolsetPath: "mcp-orchestrator",
+    });
+    await mkdir(profile.hermesHome, { recursive: true });
+    await writeFile(join(profile.hermesHome, "config.yaml"), generateConfigYaml({
+      capability: { role: "developer", workspace: worktree.path },
+      toolsetPath: "mcp-orchestrator",
+    }));
+    const mcp = new McpServer(new RunCapability({
+      id: `cap-${taskId}`,
+      role: "developer",
+      workspace: worktree.path,
+      allowedTools: ["workspace.read", "workspace.patch", "git.status", "git.diff", "git.commit", "submit_result"],
+    }));
+    expect((await mcp.processRequest({ method: "tools/list" })).result).toEqual(expect.arrayContaining([{ name: "submit_result", description: expect.any(String) }]));
+
+    driverReady(workflow, taskId);
+    const runtime = new HermesRuntimeAdapter(new ProcessExecutor(), undefined, {
+      managedWorktree: worktree.path,
+      environment: profile.env,
+      timeoutMs: 180000,
+    });
+    const runs = new RunService(db!, runtime);
+    const roles = ["Developer", "Reviewer", "QA", "Integration"];
+    for (const role of roles) {
+      const run = await runs.startRun({ role, model: process.env.HERMES_MODEL ?? "default", taskId, epicId: null, triggerReason: "task-assignment", contextVersion: "hermes-acceptance-v1", outputSchemaVersion: "1" });
+      let inspected: AgentRun | undefined;
+      for (let attempt = 0; attempt < 120 && !inspected; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        try { inspected = await runtime.inspectRun(run.id); } catch { /* process still running */ }
+      }
+      expect(inspected, `${role} run did not finish`).toBeDefined();
+      const outcome = await runtime.collectResult(run.id);
+      expect(outcome.success, `${role} did not submit a successful result`).toBe(true);
+      await runs.collectResult(run.id, outcome);
+      await runs.collectUsage(run.id, await runtime.collectUsage(run.id));
+      advanceRealStage(workflow, taskId, role);
+    }
+    expect(db!.all<{ role: string }>("SELECT role FROM agent_runs WHERE task_id = $id ORDER BY started_at", { id: taskId }).map((row) => row.role)).toEqual(roles);
+    expect(workflow.currentStage(taskId)).toBe("READY_FOR_MERGE");
+    const approval = approvalService.request({ type: "FINAL_MERGE", subjectId: taskId, subjectType: "TASK", requestedBy: "orchestrator" });
+    expect(approval.status).toBe("PENDING");
+    const approved = approvalService.approve(approval.id, "test-human", "real Hermes acceptance approval");
+    mergeService.registerApproval({ id: approved.id, subjectId: approved.subjectId, type: approved.type, status: approved.status });
+    workflow.transition(taskId, "MERGING", { hasReviewPassed: true, hasSuccessfulIntegration: true, hasFinalMergeApproval: true, parentEpicReleased: false });
+    expect((await mergeService.mergeApproved(taskId, approved.id)).success).toBe(true);
+    workflow.transition(taskId, "DONE");
+    await worktreeManager.removeWorkspace(worktree.id);
+    expect(workflow.currentStage(taskId)).toBe("DONE");
+    expect(db!.get<{ removed_at: string | null }>("SELECT removed_at FROM worktrees WHERE id = $id", { id: taskId })?.removed_at).not.toBeNull();
+    expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM agent_runs WHERE task_id = $id AND input_tokens IS NOT NULL", { id: taskId })?.count).toBe(4);
+  });
 });
+
+function driverReady(engine: WorkflowEngine, id: string): void { engine.transition(id, "READY"); }
+
+function advanceRealStage(engine: WorkflowEngine, id: string, role: string): void {
+  if (role === "Developer") engine.transition(id, "DEVELOPMENT");
+  if (role === "Reviewer") engine.transition(id, "REVIEW");
+  if (role === "QA") engine.transition(id, "QA", { hasReviewPassed: true, hasSuccessfulIntegration: false, hasFinalMergeApproval: false, parentEpicReleased: false });
+  if (role === "Integration") {
+    engine.transition(id, "READY_FOR_INTEGRATION");
+    engine.transition(id, "INTEGRATION");
+    engine.transition(id, "READY_FOR_MERGE");
+  }
+}
