@@ -138,41 +138,39 @@ describe("background job runner", () => {
   it("expired lease allows another runner to claim the job", async () => {
     db = await setupDb();
 
-    let callCount = 0;
     const jobRunner = new JobRunner(db, {
       testTask: async () => {
-        callCount++;
-        if (callCount === 1) {
-          // Simulate long-running work that causes a transient error
-          throw new Error("lease expired during work");
-        }
-        // Second attempt succeeds
+        // success
       },
     });
 
     const job1Id = enqueueJob(db, {
       type: "testTask",
       payload: {},
-      maxAttempts: 3,
     });
 
-    const now = new Date();
+    // Simulate a crash: put the job directly into RUNNING with an expired lease
+    // (as if a worker claimed it and then died before completing).
+    const pastLeaseExpiry = new Date(Date.now() - 60_000).toISOString();
+    db.run(
+      `UPDATE background_jobs
+       SET status = 'RUNNING', lease_owner = $owner, lease_expires_at = $lease_expires_at
+       WHERE id = $id`,
+      { owner: "dead-worker", lease_expires_at: pastLeaseExpiry, id: job1Id },
+    );
 
-    // First run – transient failure → RETRY_WAIT
-    const result1 = await jobRunner.runOnce(now);
-    expect(result1.claimed).toBe(1);
-
-    const afterFirst = db.get<{ status: string; run_after: string }>(
-      "SELECT status, run_after FROM background_jobs WHERE id = $id",
+    const stuck = db.get<{ status: string; lease_owner: string }>(
+      "SELECT status, lease_owner FROM background_jobs WHERE id = $id",
       { id: job1Id },
     );
-    expect(afterFirst!.status).toBe("RETRY_WAIT");
+    expect(stuck!.status).toBe("RUNNING");
+    expect(stuck!.lease_owner).toBe("dead-worker");
 
-    // Second run with time advanced past retry → should succeed
-    const futureNow = new Date(Date.now() + 70_000);
-    const result2 = await jobRunner.runOnce(futureNow);
-    expect(result2.claimed).toBe(1);
-    expect(result2.succeeded).toBe(1);
+    // A subsequent runOnce should recover the expired-lease job and re-execute it
+    const futureNow = new Date(Date.now() + 1_000);
+    const result = await jobRunner.runOnce(futureNow);
+    expect(result.claimed).toBe(1);
+    expect(result.succeeded).toBe(1);
 
     const afterSecond = db.get<{ status: string }>(
       "SELECT status FROM background_jobs WHERE id = $id",

@@ -122,6 +122,15 @@ export class JobRunner {
     const nowIso = now.toISOString();
 
     return this.db.transaction<BackgroundJobRow | undefined>((tx) => {
+      // Recover jobs whose lease has expired (worker crashed/hung).
+      // Promote them back to QUEUED so the SELECT below can pick them up.
+      tx.run(
+        `UPDATE background_jobs
+         SET status = 'QUEUED', lease_owner = NULL, lease_expires_at = NULL
+         WHERE status = 'RUNNING' AND lease_expires_at < $now`,
+        { now: nowIso },
+      );
+
       // Find the highest-priority runnable job that hasn't been claimed
       const row = tx.get<BackgroundJobRow>(
         `SELECT * FROM background_jobs
