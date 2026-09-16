@@ -1,5 +1,5 @@
 import { RunCapability } from '../run-capability.js';
-import { ToolRegistry } from './tool-registry.js';
+import { ToolRegistry, type ToolDefinition } from './tool-registry.js';
 import type { CompletionStore } from './submit-result-tool.js';
 
 /**
@@ -33,10 +33,11 @@ export class McpServer {
   /**
    * Get available tools for this capability.
    */
-  getAvailableTools(): Array<{ name: string; description: string }> {
+  getAvailableTools(): Array<Pick<ToolDefinition, 'name' | 'description' | 'inputSchema'>> {
     return this.registry.getAvailableTools().map(tool => ({
       name: tool.name,
       description: tool.description,
+      inputSchema: tool.inputSchema,
     }));
   }
 
@@ -93,10 +94,11 @@ export class McpServer {
   async processRequest(request: {
     method: string;
     params?: Record<string, unknown>;
+    id?: string | number | null;
   }): Promise<{ result: unknown; error?: string }> {
     switch (request.method) {
       case 'tools/list':
-        return { result: this.getAvailableTools() };
+        return { result: { tools: this.getAvailableTools() } };
 
       case 'tools/call': {
         const toolName = request.params?.name as string;

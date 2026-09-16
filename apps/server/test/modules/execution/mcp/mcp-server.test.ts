@@ -23,6 +23,31 @@ describe('MCP Server', () => {
   });
 
   describe('tool filtering', () => {
+    it('returns MCP descriptors with input schemas through the JSON-RPC handshake', async () => {
+      const { McpServer } = await import('../../../../src/modules/execution/mcp/mcp-server.js');
+      const { RunCapability } = await import('../../../../src/modules/execution/run-capability.js');
+      const server = new McpServer(new RunCapability({ id: 'handshake', role: 'reviewer', workspace: workspaceDir, allowedTools: ['workspace.read', 'submit_result'] }));
+      const initialize = await server.processRequest({ id: 7, method: 'initialize' });
+      const listed = await server.processRequest({ id: 8, method: 'tools/list' });
+      expect(initialize.result).toMatchObject({ protocolVersion: expect.any(String) });
+      const tools = (listed.result as { tools: Array<{ name: string; inputSchema: { type: string } }> }).tools;
+      expect(tools).toHaveLength(2);
+      for (const tool of tools) expect(tool.inputSchema).toMatchObject({ type: 'object' });
+    });
+
+    it('runs project.test through the configured controlled executor', async () => {
+      const { McpServer } = await import('../../../../src/modules/execution/mcp/mcp-server.js');
+      const { RunCapability } = await import('../../../../src/modules/execution/run-capability.js');
+      const server = new McpServer(new RunCapability({
+        id: 'project-test', role: 'reviewer', workspace: workspaceDir,
+        allowedTools: ['project.test'],
+        projectConfig: { commands: { test: { executable: process.execPath, args: ['-e', 'process.stdout.write("real test")'] } } },
+      }));
+      const result = await server.callTool('project.test', {});
+      expect(result.success).toBe(true);
+      expect(result.result).toMatchObject({ action: 'test', stdout: 'real test', exitCode: 0 });
+    });
+
     it('should instantiate MCP server for Reviewer capability and filter tools correctly', async () => {
       // Import modules
       const mcpModule = await import('../../../../src/modules/execution/mcp/mcp-server.js');

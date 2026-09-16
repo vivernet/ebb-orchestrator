@@ -299,8 +299,11 @@ describe("Autonomous Task End-to-End Workflow", () => {
         expect(config).toContain(`- ${JSON.stringify(databasePath)}`);
         expect(config).toContain(`- ${JSON.stringify(resultPath)}`);
         const handshake = await runMcpHandshake(mcpCli, roleWorkspace, databasePath, capabilityRef);
-       expect(handshake).toContain('"name":"orchestrator-mcp"');
-       expect(handshake).toContain('"submit_result"');
+        expect(handshake).toContain('"name":"orchestrator-mcp"');
+        expect(handshake).toContain('"submit_result"');
+        expect(handshake).toContain('"id":1');
+        expect(handshake).toContain('"id":2');
+        expect(handshake).toMatch(/"inputSchema":\{"type":"object"/);
       let inspected: AgentRun | undefined;
       for (let attempt = 0; attempt < 120 && !inspected; attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -445,7 +448,7 @@ async function runMcpHandshake(cli: string, workspace: string, database: string,
     child.on("error", reject);
     child.on("close", (code) => code === 0 ? resolve(stdout) : reject(new Error(`MCP exited ${code}: ${stderr}`)));
   });
-  child.stdin.write(`${JSON.stringify({ method: "initialize" })}\n${JSON.stringify({ method: "tools/list" })}\n`);
+  child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize" })}\n${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list" })}\n`);
   child.stdin.end();
   return output;
 }

@@ -6,6 +6,7 @@ import { PathResolver } from '../../platform/security/path-resolver.js';
 import { ActionGateway } from './action-gateway.js';
 import { GitTools } from './git-tools.js';
 import { WorkspaceTools } from './workspace-tools.js';
+import type { ProjectConfig } from './project-actions.js';
 
 export type RoleName = 'developer' | 'reviewer' | 'qa' | 'integration' | 'coordinator' | 'architect';
 export type ToolId =
@@ -26,6 +27,7 @@ export interface RunCapabilityDef {
   role: RoleName;
   workspace: string;
   allowedTools: ToolId[];
+  projectConfig?: ProjectConfig;
 }
 
 export class RunCapability {
@@ -36,7 +38,7 @@ export class RunCapability {
 
   constructor(public capability: RunCapabilityDef, private readonly revalidate?: () => void) {
     this.resolver = new PathResolver();
-    this.gateway = new ActionGateway(this.resolver, capability.workspace);
+    this.gateway = new ActionGateway(this.resolver, capability.workspace, capability.projectConfig);
     this.workspaceTools = new WorkspaceTools(this.resolver, capability.workspace);
     this.gitTools = capability.workspace ? new GitTools(capability.workspace) : null;
   }

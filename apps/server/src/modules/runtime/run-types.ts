@@ -3,6 +3,7 @@
  */
 
 import type { ToolId } from "../execution/run-capability.js";
+import type { ProjectConfig } from "../execution/project-actions.js";
 
 export interface RunOutcome {
   success: boolean;
@@ -31,6 +32,6 @@ export interface StartRunOptions {
   triggerReason: string;
   contextVersion: string;
   outputSchemaVersion: string;
-  capability?: { workspace: string; allowedTools: ToolId[] };
+  capability?: { workspace: string; allowedTools?: ToolId[]; projectConfig?: ProjectConfig };
   prompt?: string;
 }

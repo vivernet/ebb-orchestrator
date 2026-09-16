@@ -28,10 +28,8 @@ export type ActionResult = {
 export class ProjectActions {
   private commandTools: CommandTools;
 
-  constructor(_projectConfig: ProjectConfig) {
+  constructor(private readonly projectConfig: ProjectConfig) {
     this.commandTools = new CommandTools();
-    // In a real implementation, we would validate and store projectConfig here
-    // ensuring only approved project configurations are used
   }
 
   /**
@@ -99,14 +97,10 @@ export class ProjectActions {
    * Falls back to default commands if not configured.
    */
   private getConfiguredOptions(action: ProjectAction): ExecOptions {
-    // Default commands based on common project setups
-    const defaults: Record<ProjectAction, ExecOptions> = {
-      test: { executable: 'node', args: [] },
-      lint: { executable: 'node', args: [] },
-      typecheck: { executable: 'node', args: [] },
-      build: { executable: 'node', args: [] }
-    };
-
-    return defaults[action];
+    const configured = this.projectConfig.commands[action];
+    if (!configured) {
+      throw new Error(`project action is not configured: ${action}`);
+    }
+    return configured;
   }
 }

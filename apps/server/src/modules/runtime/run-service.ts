@@ -9,8 +9,11 @@ import type { StartRunOptions, ResumeRunOptions, RunOutcome } from "./run-types.
 import { validateRoleOutput } from "./output-validator.js";
 import { DatabaseCompletionStore, type CompletionStore } from "../execution/mcp/submit-result-tool.js";
 import type { RoleName, ToolId } from "../execution/run-capability.js";
+import { RoleRegistry } from './role-registry.js';
 
 export class RunService {
+  private readonly roles = new RoleRegistry();
+
   constructor(
     private readonly db: Database,
     private readonly runtime: AgentRuntime
@@ -42,9 +45,19 @@ export class RunService {
     const record = this.db.transaction((tx) => {
       const id = crypto.randomUUID();
       const capabilityRef = crypto.randomUUID();
+      const role = options.role.toLowerCase();
+      const contract = this.roles.get(role);
+      // Legacy/internal runtime fixtures may use a role without a public contract.
+      // Such runs receive the smallest safe capability rather than caller tools.
+      const requested = options.capability?.allowedTools;
+      const roleTools = new Set<string>(contract?.allowedTools as string[] ?? ['submit_result']);
+      const allowedTools = (requested
+        ? requested.filter((tool) => roleTools.has(tool))
+        : Array.from(roleTools)) as ToolId[];
+      if (requested && allowedTools.length === 0) throw new Error(`requested tools are not allowed for role: ${options.role}`);
       const capability = { id: capabilityRef, capabilityRef, runId: id,
-        role: options.role.toLowerCase() as RoleName, workspace: options.capability?.workspace ?? "",
-        allowedTools: (options.capability?.allowedTools ?? ["submit_result"]) as ToolId[] };
+        role: role as RoleName, workspace: options.capability?.workspace ?? "",
+        allowedTools, ...(options.capability?.projectConfig ? { projectConfig: options.capability.projectConfig } : {}) };
       const now = new Date().toISOString();
       const record: AgentRun = {
         id,

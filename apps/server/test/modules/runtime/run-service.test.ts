@@ -99,6 +99,35 @@ describe("RunService with FakeAgentRuntime", () => {
     expect(JSON.parse(stored!.capability_json)).toMatchObject({ runId: run.id, capabilityRef: run.capabilityRef });
   });
 
+  it("derives capability tools from the role contract", async () => {
+    await setup();
+    const run = await runService.startRun({
+      role: "reviewer", model: "gpt-4", taskId, epicId, triggerReason: "review-request",
+      contextVersion: "1", outputSchemaVersion: "1",
+      capability: {
+        workspace: tmpDir,
+        allowedTools: ["workspace.patch", "git.commit", "git.diff", "submit_result"],
+      },
+    });
+    const capability = JSON.parse(db!.get<{ capability_json: string }>(
+      "SELECT capability_json FROM agent_runs WHERE id = $id", { id: run.id })!.capability_json);
+    expect(capability.allowedTools).toEqual(["git.diff", "submit_result"]);
+    expect(capability.allowedTools).not.toContain("workspace.patch");
+    expect(capability.allowedTools).not.toContain("git.commit");
+
+    const integration = await runService.startRun({
+      role: "integration", model: "gpt-4", taskId, epicId, triggerReason: "integration",
+      contextVersion: "1", outputSchemaVersion: "1",
+      capability: {
+        workspace: tmpDir,
+        allowedTools: ["workspace.patch", "git.commit", "git.diff", "project.test", "submit_result"],
+      },
+    });
+    const integrationCapability = JSON.parse(db!.get<{ capability_json: string }>(
+      "SELECT capability_json FROM agent_runs WHERE id = $id", { id: integration.id })!.capability_json);
+    expect(integrationCapability.allowedTools).toEqual(["git.diff", "submit_result"]);
+  });
+
   it("atomically accepts one authenticated completion for the exact run", async () => {
     await setup();
     const run = await runService.startRun({

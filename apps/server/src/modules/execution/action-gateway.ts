@@ -5,6 +5,7 @@
 import { PathResolver } from '../../platform/security/path-resolver.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { ProjectActions, type ProjectConfig, type ActionResult } from './project-actions.js';
 
 export type FilePatch = { start: number; end: number; content: string };
 export type FilePatchResult = { success: boolean; error?: string };
@@ -12,8 +13,24 @@ export type FilePatchResult = { success: boolean; error?: string };
 export class ActionGateway {
   constructor(
     private resolver: PathResolver,
-    private workspace: string
-  ) {}
+    private workspace: string,
+    projectConfig?: ProjectConfig
+  ) {
+    this.projectActions = projectConfig ? new ProjectActions(projectConfig) : null;
+  }
+
+  private readonly projectActions: ProjectActions | null;
+
+  async test(): Promise<ActionResult> {
+    if (!this.projectActions) {
+      return { action: 'test', success: false, stdout: '', stderr: 'project test is not configured', exitCode: null };
+    }
+    try {
+      return await this.projectActions.test(this.workspace);
+    } catch (error) {
+      return { action: 'test', success: false, stdout: '', stderr: error instanceof Error ? error.message : String(error), exitCode: null };
+    }
+  }
 
   /**
    * Read a file from the workspace.

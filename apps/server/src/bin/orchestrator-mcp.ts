@@ -69,7 +69,7 @@ async function main() {
       // Hermes speaks JSON-RPC over stdio. Keep the domain response above
       // simple, but always emit an id-bearing protocol response here.
       let result: unknown = response.result;
-      if (request.method === 'tools/list') result = { tools: response.result };
+       // processRequest already returns the MCP tools/list envelope.
       if (request.method === 'tools/call') {
         const call = response.result as { success?: boolean; result?: unknown; error?: string };
         result = {

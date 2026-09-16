@@ -8,6 +8,7 @@ import { SubmitResultTool, type CompletionStore } from './submit-result-tool.js'
 export interface ToolDefinition {
   name: string;
   description: string;
+  inputSchema: { type: 'object'; properties: Record<string, unknown>; required?: string[]; additionalProperties?: boolean };
   handler: (args: Record<string, unknown>) => Promise<{ success: boolean; result?: unknown; error?: string }>;
 }
 
@@ -24,6 +25,7 @@ export class ToolRegistry {
     this.toolDefinitions.set('workspace.read', {
       name: 'workspace.read',
       description: 'Read a file from the workspace',
+      inputSchema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'], additionalProperties: false },
       handler: async (args) => {
         const result = await capability.getActionGateway().readFile(args.path as string);
         return result;
@@ -34,6 +36,7 @@ export class ToolRegistry {
     this.toolDefinitions.set('workspace.search', {
       name: 'workspace.search',
       description: 'Search for patterns in the workspace',
+      inputSchema: { type: 'object', properties: { pattern: { type: 'string' }, ext: { type: 'string' } }, required: ['pattern'], additionalProperties: false },
       handler: async (args) => {
         const results = await capability.getActionGateway().search(
           args.pattern as string,
@@ -47,6 +50,7 @@ export class ToolRegistry {
     this.toolDefinitions.set('workspace.patch', {
       name: 'workspace.patch',
       description: 'Patch a file in the workspace',
+      inputSchema: { type: 'object', properties: { path: { type: 'string' }, patches: { type: 'array' } }, required: ['path', 'patches'], additionalProperties: false },
       handler: async (args) => {
         const result = await capability.getActionGateway().patch(
           args.path as string,
@@ -60,6 +64,7 @@ export class ToolRegistry {
     this.toolDefinitions.set('git.diff', {
       name: 'git.diff',
       description: 'Get git diff',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       handler: async (_args) => {
         const gitTools = this.capability.getGitTools();
         if (!gitTools) {
@@ -74,6 +79,7 @@ export class ToolRegistry {
     this.toolDefinitions.set('git.status', {
       name: 'git.status',
       description: 'Get git status',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       handler: async (_args) => {
         const gitTools = this.capability.getGitTools();
         if (!gitTools) {
@@ -88,6 +94,7 @@ export class ToolRegistry {
     this.toolDefinitions.set('git.commit', {
       name: 'git.commit',
       description: 'Commit changes',
+      inputSchema: { type: 'object', properties: { message: { type: 'string' } }, required: ['message'], additionalProperties: false },
       handler: async (args) => {
         const gitTools = this.capability.getGitTools();
         if (!gitTools) {
@@ -103,9 +110,13 @@ export class ToolRegistry {
     this.toolDefinitions.set('project.test', {
       name: 'project.test',
       description: 'Run project tests',
-      handler: async (_args) => {
-        // TODO: Implement actual test runner integration
-        return { success: true, result: 'tests completed' };
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      handler: async (args) => {
+        if (Object.keys(args).length !== 0) {
+          return { success: false, error: 'invalid project.test arguments' };
+        }
+        const result = await capability.getActionGateway().test();
+        return { success: result.success, result, ...(result.success ? {} : { error: result.stderr }) };
       },
     });
 
@@ -114,6 +125,7 @@ export class ToolRegistry {
     this.toolDefinitions.set('submit_result' as ToolId, {
       name: 'submit_result',
       description: 'Submit agent result and finalize run',
+      inputSchema: { type: 'object', properties: { payload: { type: 'object' } }, required: ['payload'], additionalProperties: false },
       handler: async (args) => {
         const result = await submitTool.validateAndSubmit(args.payload);
         return result;
