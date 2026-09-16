@@ -5,8 +5,6 @@
 
 import type { Database } from "../../platform/database/database.js";
 import { WorkflowEngine } from "../workflow/workflow-engine.js";
-import { FindingsService } from "../work/findings-service.js";
-import { DefectsService } from "../work/defects-service.js";
 import type { RunOutcome } from "./run-types.js";
 
 /**
@@ -16,8 +14,6 @@ export class RuntimeEventHandlers {
   constructor(
     private readonly db: Database,
     private readonly workflowEngine: WorkflowEngine,
-    private readonly findingsService: FindingsService,
-    private readonly defectsService: DefectsService,
   ) {}
 
   /**
@@ -69,97 +65,15 @@ export class RuntimeEventHandlers {
   handleRuntimeCompletion(
     taskId: string,
     outcome: RunOutcome,
-    role: string = "Developer",
-    model: string = "test-model",
-    findings?: Array<{
-      title: string;
-      description: string;
-      severity: "BLOCKING" | "HIGH" | "NORMAL" | "LOW";
-      blocking: boolean;
-      guidelineRef?: string | null;
-      evidenceSignature: string;
-    }>,
-    defects?: Array<{
-      title: string;
-      description: string;
-      severity: "BLOCKING" | "HIGH" | "NORMAL" | "LOW";
-      blocking: boolean;
-      acceptanceCriterionRef?: string | null;
-      evidenceSignature: string;
-    }>,
   ): void {
     // Validate current workflow stage
-    const currentStage = this.db.get<{ status: string; project_id: string }>(
-      "SELECT status, project_id FROM tasks WHERE id = $id",
+    const currentStage = this.db.get<{ status: string }>(
+      "SELECT status FROM tasks WHERE id = $id",
       { id: taskId },
     );
 
     if (!currentStage) {
       throw new Error(`Task ${taskId} not found`);
-    }
-
-    // Handle findings for Reviewer/QA roles
-    if ((role === "Reviewer" || role === "QA") && findings && findings.length > 0) {
-      const projectId = currentStage.project_id;
-      const existingOpenFindings = this.findingsService.getOpenFindingsByTaskId(this.db, taskId);
-
-      for (const f of findings) {
-        // Check if finding already exists by matching evidence signature
-        const existing = existingOpenFindings.find(
-          (ef) => ef.evidenceSignature === f.evidenceSignature,
-        );
-
-        if (existing) {
-          // Update existing finding (re-review)
-          this.findingsService.updateFinding(existing.id, {
-            status: f.blocking ? "STILL_PRESENT" : "RESOLVED",
-            evidenceSignature: f.evidenceSignature,
-          });
-        } else {
-          // Create new finding
-          this.findingsService.createFinding(projectId, taskId, {
-            sourceRunId: taskId, // placeholder - actual run id would come from runtime
-            severity: f.severity,
-            blocking: f.blocking,
-            title: f.title,
-            description: f.description,
-            guidelineRef: f.guidelineRef ?? null,
-            evidenceSignature: f.evidenceSignature,
-          });
-        }
-      }
-    }
-
-    // Handle defects for QA role
-    if (role === "QA" && defects && defects.length > 0) {
-      const projectId = currentStage.project_id;
-      const existingOpenDefects = this.defectsService.getOpenDefectsByTaskId(this.db, taskId);
-
-      for (const d of defects) {
-        // Check if defect already exists by matching evidence signature
-        const existing = existingOpenDefects.find(
-          (ed) => ed.evidenceSignature === d.evidenceSignature,
-        );
-
-        if (existing) {
-          // Update existing defect (re-test)
-          this.defectsService.updateDefect(existing.id, {
-            status: d.blocking ? "STILL_PRESENT" : "RESOLVED",
-            evidenceSignature: d.evidenceSignature,
-          });
-        } else {
-          // Create new defect
-          this.defectsService.createDefect(projectId, taskId, {
-            sourceRunId: taskId, // placeholder - actual run id would come from runtime
-            severity: d.severity,
-            blocking: d.blocking,
-            title: d.title,
-            description: d.description,
-            acceptanceCriterionRef: d.acceptanceCriterionRef ?? null,
-            evidenceSignature: d.evidenceSignature,
-          });
-        }
-      }
     }
 
     // Only allow completion from DEVELOPMENT stage

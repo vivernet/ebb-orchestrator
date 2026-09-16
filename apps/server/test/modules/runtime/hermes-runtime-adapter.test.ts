@@ -37,7 +37,7 @@ class MockProcessExecutor extends ProcessExecutor {
     args: string[],
     options?: ProcessOptions
   ): Promise<ProcessResult> {
-    this.execCalls.push({ file, args, options });
+    this.execCalls.push({ file, args, options: options ?? {} });
 
     if (this.nextThrows && this.nextResult instanceof Error) {
       throw this.nextResult;
@@ -117,7 +117,9 @@ describe("HermesRuntimeAdapter", () => {
       const calls = mockExecutor.getCalls();
       expect(calls).toHaveLength(1);
 
-      const { args } = calls[0];
+       const call = calls[0];
+       if (!call) throw new Error("Expected at least one call");
+       const { args } = call;
       expect(args).toContain("chat");
       expect(args).toContain("--query-file");
       expect(args).toContain("--model");
@@ -159,9 +161,11 @@ describe("HermesRuntimeAdapter", () => {
       await adapter.startRun(run);
 
       const calls = mockExecutor.getCalls();
-      const queryFileArg = calls[0].args.find((a, i) => a === "--query-file" && i + 1 < calls[0].args.length);
+       const call = calls[0];
+       if (!call) throw new Error("Expected at least one call");
+       const queryFileArg = call.args.find((a, i) => a === "--query-file" && i + 1 < call.args.length);
       expect(queryFileArg).toBeDefined();
-      expect(calls[0].args[calls[0].args.indexOf("--query-file") + 1]).toMatch(/\.txt$/);
+      expect(call.args[call.args.indexOf("--query-file") + 1]).toMatch(/\.txt$/);
     });
 
     it("never adds --worktree flag", async () => {
@@ -191,8 +195,8 @@ describe("HermesRuntimeAdapter", () => {
 
       await adapter.startRun(run);
 
-      const calls = mockExecutor.getCalls();
-      expect(calls[0].args).not.toContain("--worktree");
+       const calls = mockExecutor.getCalls();
+       expect(calls[0]?.args).not.toContain("--worktree");
     });
 
     it("never adds --yolo flag", async () => {
@@ -222,8 +226,8 @@ describe("HermesRuntimeAdapter", () => {
 
       await adapter.startRun(run);
 
-      const calls = mockExecutor.getCalls();
-      expect(calls[0].args).not.toContain("--yolo");
+       const calls = mockExecutor.getCalls();
+       expect(calls[0]?.args).not.toContain("--yolo");
     });
 
     it("captures session ID from stdout", async () => {
@@ -257,7 +261,7 @@ describe("HermesRuntimeAdapter", () => {
 
       await adapter.startRun(run);
 
-      const runState = adapter.inspectRun(run.id);
+       const runState = await adapter.inspectRun(run.id);
       expect(runState.sessionId).toBe("captured-session-123");
     });
 
@@ -288,7 +292,7 @@ describe("HermesRuntimeAdapter", () => {
 
       await adapter.startRun(run);
 
-      const runState = adapter.inspectRun(run.id);
+       const runState = await adapter.inspectRun(run.id);
       expect(runState).toBeDefined();
     });
   });
@@ -325,7 +329,7 @@ describe("HermesRuntimeAdapter", () => {
       mockExecutor.setNextResult({ exitCode: 0, stdout: "resumed", stderr: "" });
       await adapter.resumeRun(startRun.id, { sessionId: "existing-session-456", attempt: 1 });
 
-      const state = adapter.inspectRun(startRun.id);
+       const state = await adapter.inspectRun(startRun.id);
       expect(state.sessionId).toBe("existing-session-456");
       expect(state.attempt).toBe(1);
       expect(state.status).toBe("IN_PROGRESS");
@@ -360,7 +364,7 @@ describe("HermesRuntimeAdapter", () => {
       mockExecutor.setNextResult({ exitCode: 0, stdout: "resumed", stderr: "" });
       await adapter.resumeRun(startRun.id, { sessionId: "existing-session-789", attempt: 2 });
 
-      const state = adapter.inspectRun(startRun.id);
+       const state = await adapter.inspectRun(startRun.id);
       expect(state.status).toBe("IN_PROGRESS");
     });
   });
@@ -395,7 +399,7 @@ describe("HermesRuntimeAdapter", () => {
 
       await adapter.cancelRun(startRun.id);
 
-      const runState = adapter.inspectRun(startRun.id);
+       const runState = await adapter.inspectRun(startRun.id);
       expect(runState.status).toBe("CANCELLED");
     });
   });
@@ -468,7 +472,7 @@ describe("HermesRuntimeAdapter", () => {
 
       await adapter.startRun(run);
 
-      const state = adapter.inspectRun(run.id);
+       const state = await adapter.inspectRun(run.id);
       expect(state.id).toBe(run.id);
       expect(state.role).toBe("Developer");
     });

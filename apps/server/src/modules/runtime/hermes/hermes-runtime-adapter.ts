@@ -225,7 +225,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
   /**
    * Inspect the current state of a run.
    */
-  inspectRun(runId: string): AgentRun {
+  async inspectRun(runId: string): Promise<AgentRun> {
     const state = this.runs.get(runId);
     if (!state) {
       throw new Error(`Run ${runId} not found`);
@@ -299,7 +299,13 @@ export class HermesRuntimeAdapter implements AgentRuntime {
    * Build environment variables for hermes process.
    */
   private buildEnvironment(run: AgentRun): Record<string, string> {
-    const env: Record<string, string> = { ...process.env };
+    const env: Record<string, string> = {};
+    // Copy non-undefined environment variables
+    for (const [key, value] of Object.entries(process.env)) {
+      if (value !== undefined) {
+        env[key] = value;
+      }
+    }
     // Remove sensitive variables
     delete env.GITHUB_TOKEN;
     delete env.SSH_AUTH_SOCK;

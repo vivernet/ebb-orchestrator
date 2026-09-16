@@ -157,10 +157,7 @@ describe("Autonomous Task End-to-End Workflow", () => {
     db?.close();
     db = undefined;
     
-    // Cleanup fixture and worktrees
-    if (fixture?.path) {
-      await rm(fixture.path, { recursive: true, force: true });
-    }
+    // Cleanup masterRepoPath and worktrees
     if (masterRepoPath) {
       await rm(masterRepoPath, { recursive: true, force: true });
     }
@@ -206,9 +203,9 @@ describe("Autonomous Task End-to-End Workflow", () => {
     workflowEngine = new WorkflowEngine(db, registry);
     handlers = new RuntimeEventHandlers(db, workflowEngine);
     approvalService = new ApprovalService(db);
-    workService = new WorkService(db, new EventBus());
-    worktreeManager = new WorktreeManager(new EventBus(), new Map());
-    branchManager = new BranchManager(new EventBus());
+    workService = new WorkService(db);
+    worktreeManager = new WorktreeManager({});
+    branchManager = new BranchManager();
     mergeService = new MergeService({ approvalStore: new Map() });
     const fakeRuntime = new FakeAgentRuntime();
     fakeRuntime.script("Developer", [{ success: true, exitCode: 0, output: "DEVELOPMENT_COMPLETE" }]);
