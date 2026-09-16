@@ -357,5 +357,32 @@ describe('PromptBuilder', () => {
       expect(integration).toContain('baseSha');
       expect(integration).toContain('provenance');
     });
+
+    it('gives every role the complete contract, stage, and structured result contract', () => {
+      const contract = {
+        id: 'TASK-ROLES', goal: 'Ship feature', context: 'service context',
+        requirements: ['must compile'], acceptanceCriteria: ['works end to end'], dependencies: ['database'],
+        nonGoals: ['no redesign'], definitionOfDone: ['verified'], priority: 'p1' as const,
+      };
+      const prompts = [
+        [promptBuilder.buildDeveloperPrompt({ taskContract: contract }), 'DEVELOPMENT', 'Developer'],
+        [promptBuilder.buildReviewerPrompt({ taskContract: contract }), 'REVIEW', 'Reviewer'],
+        [promptBuilder.buildQAPrompt({ taskContract: contract }), 'QA', 'QA'],
+        [promptBuilder.buildIntegrationPrompt({ taskContract: contract }), 'INTEGRATION', 'Integration'],
+      ] as const;
+      for (const [prompt, stage, role] of prompts) {
+        expect(prompt).toContain('=== TASK CONTRACT ===');
+        expect(prompt).toContain('=== ACCEPTANCE CRITERIA ===');
+        expect(prompt).toContain('=== NON-GOALS ===');
+        expect(prompt).toContain('=== STAGE ===');
+        expect(prompt).toContain(stage);
+        expect(prompt).toContain('=== STRUCTURED RESULT / submit_result ===');
+        expect(prompt).toContain(`validated ${role} schema`);
+        expect(prompt).toContain('Ship feature');
+        expect(prompt).toContain('must compile');
+        expect(prompt).toContain('works end to end');
+        expect(prompt).toContain('no redesign');
+      }
+    });
   });
 });

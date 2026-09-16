@@ -60,6 +60,7 @@ export interface RoleOutput {
   independent?: boolean;
   evidence?: string[];
   baseSha?: string;
+  sourceSha?: string;
   provenance?: string[];
 }
 

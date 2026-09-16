@@ -282,6 +282,7 @@ describe("Autonomous Task End-to-End Workflow", () => {
     const runs = new RunService(db!, runtime);
     driverReady(workflow, taskId);
       const roles = ["Developer", "Reviewer", "QA", "Integration"];
+      let integrationSubmitted: { baseSha?: string; sourceSha?: string; provenance?: string[] } | undefined;
       const runHermesRole = async (role: string, roleWorkspace: string, run: AgentRun): Promise<void> => {
         const capabilityRef = run.capabilityRef;
         if (!capabilityRef) throw new Error(`${role} run did not receive a capability reference`);
@@ -301,19 +302,35 @@ describe("Autonomous Task End-to-End Workflow", () => {
       expect(inspected, `${role} run did not finish`).toBeDefined();
       const outcome = await runtime.collectResult(run.id);
       expect(outcome.success, `${role} did not submit a successful result`).toBe(true);
-       const submitted = JSON.parse(outcome.output) as { outcome?: string; version?: string; commitSha?: string; independent?: boolean; findings?: unknown[]; evidence?: string[]; baseSha?: string; provenance?: string[] };
+       const submitted = JSON.parse(outcome.output) as { outcome?: string; version?: string; commitSha?: string; independent?: boolean; findings?: unknown[]; evidence?: string[]; baseSha?: string; sourceSha?: string; provenance?: string[] };
       expect(submitted.outcome, `${role} submitted an invalid result`).toBeTruthy();
        expect(submitted.version).toBe("1");
-       if (role === "Developer") expect(submitted.commitSha).toMatch(/^[0-9a-f]{7,40}$/);
+        if (role === "Developer") {
+          const actualHead = (await new GitCli().run(roleWorkspace, ["rev-parse", "HEAD"])).stdout.trim();
+          expect(submitted.commitSha).toBe(actualHead);
+        }
        if (role === "Reviewer") {
          expect(submitted.independent).toBe(true);
          expect(submitted.findings).toEqual(expect.any(Array));
        }
-       if (role === "QA") expect(submitted.evidence?.length).toBeGreaterThan(0);
-       if (role === "Integration") {
-         expect(submitted.baseSha).toMatch(/^[0-9a-f]{7,40}$/);
-         expect(submitted.provenance?.length).toBeGreaterThan(0);
-       }
+        if (role === "QA") {
+          const criteria = ["returns 200 and JSON {\"status\":\"ok\"}"];
+          expect(submitted.evidence).toEqual(expect.arrayContaining(criteria.map((criterion) => expect.stringContaining(criterion))));
+          expect(submitted.evidence?.every((evidence) => /AC-\d+/.test(evidence) && evidence.length > 0)).toBe(true);
+        }
+        if (role === "Integration") {
+          integrationSubmitted = submitted;
+          expect(submitted.baseSha).toBe(realIntegration.expectedTargetSha);
+          expect(submitted.sourceSha).toBe(realIntegration.sourceSha);
+          const persisted = db!.get<{ id: string; repository_path: string; source_branch: string; target_branch: string; expected_target_sha: string; source_sha: string; worktree_path: string; integration_run_id: string; status: string }>("SELECT id, repository_path, source_branch, target_branch, expected_target_sha, source_sha, worktree_path, integration_run_id, status FROM integration_attempts WHERE id = $id", { id: realIntegration.id });
+          expect(persisted).toEqual({ id: realIntegration.id, repository_path: realIntegration.repoPath, source_branch: realIntegration.sourceBranch, target_branch: realIntegration.currentTargetBranch, expected_target_sha: realIntegration.expectedTargetSha, source_sha: realIntegration.sourceSha, worktree_path: realIntegration.worktreePath, integration_run_id: integrationRun.id, status: "MERGING" });
+          expect(submitted.provenance).toEqual(expect.arrayContaining([
+            expect.stringContaining(realIntegration.id),
+            expect.stringContaining(realIntegration.expectedTargetSha ?? ""),
+            expect.stringContaining(realIntegration.sourceSha),
+            expect.stringContaining(integrationRun.id),
+          ]));
+        }
       await runs.collectResult(run.id, outcome);
       const usage = await runtime.collectUsage(run.id);
       expect(usage.inputTokens + usage.outputTokens, `${role} emitted no genuine usage`).toBeGreaterThan(0);
@@ -336,15 +353,19 @@ describe("Autonomous Task End-to-End Workflow", () => {
        const integrationWorkspace = join(tmpDir, "real-integration");
        const integrationService = new IntegrationService({ worktreeDir: integrationWorkspace, database: db! });
         const preparedIntegration = await integrationService.prepareIntegration(`task/${taskId}`, "master", masterRepoPath);
-        const integrationPrompt = new PromptBuilder().buildIntegrationPrompt({ taskContract: contract, workspace: preparedIntegration.worktreePath, targetRef: "master", checks: ["run smoke test", "verify target and task provenance"] });
+         const integrationPrompt = new PromptBuilder().buildIntegrationPrompt({ taskContract: contract, workspace: preparedIntegration.worktreePath, targetRef: "master", checks: ["run smoke test", "verify target and task provenance"], ...(preparedIntegration.expectedTargetSha ? { expectedTargetSha: preparedIntegration.expectedTargetSha } : {}), sourceSha: preparedIntegration.sourceSha, integrationAttemptId: preparedIntegration.id, ...(preparedIntegration.provenanceDatabasePath ? { provenanceDatabasePath: preparedIntegration.provenanceDatabasePath } : {}) });
         nextWorkspace = preparedIntegration.worktreePath;
         const integrationRun = await runs.startRun({ role: "Integration", model: process.env.HERMES_MODEL ?? "default", taskId, epicId: null, triggerReason: "integration", contextVersion: "hermes-acceptance-v1", outputSchemaVersion: "1", prompt: integrationPrompt, capability: { workspace: preparedIntegration.worktreePath, allowedTools: ["workspace.read", "workspace.search", "git.diff", "project.test", "submit_result"] } });
         workspaceByRun.set(integrationRun.id, preparedIntegration.worktreePath);
         const realIntegration = integrationService.bindIntegrationRun(preparedIntegration, integrationRun.id);
         expect(realIntegration.integrationRunId).toBe(integrationRun.id);
       await integrationService.runInIntegrationWorktree(realIntegration, async () => {
-        await runHermesRole("Integration", realIntegration.worktreePath, integrationRun);
-      });
+         await runHermesRole("Integration", realIntegration.worktreePath, integrationRun);
+       });
+       expect(integrationSubmitted).toBeDefined();
+       expect(db!.get<{ status: string }>("SELECT status FROM integration_attempts WHERE id = $id", { id: realIntegration.id })).toEqual({ status: "MERGED" });
+       expect(integrationSubmitted?.baseSha).toBe(realIntegration.expectedTargetSha);
+       expect(integrationSubmitted?.sourceSha).toBe(realIntegration.sourceSha);
       advanceRealStage(workflow, taskId, "Integration");
      expect(db!.all<{ role: string; task_id: string; status: string }>("SELECT role, task_id, status FROM agent_runs WHERE task_id = $id ORDER BY started_at", { id: taskId })).toEqual(roles.map((role) => ({ role, task_id: taskId, status: "COMPLETED" })));
     expect(workflow.currentStage(taskId)).toBe("READY_FOR_MERGE");
