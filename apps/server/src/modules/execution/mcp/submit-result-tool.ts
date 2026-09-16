@@ -1,5 +1,6 @@
 import type { RunCapability } from '../run-capability.js';
 import { validateRoleOutput } from '../../runtime/output-validator.js';
+import type { Database } from '../../../platform/database/database.js';
 
 /**
  * SubmitResultTool validates role output schema and atomically sets run to COMPLETING.
@@ -42,4 +43,17 @@ export class SubmitResultTool {
 export interface CompletionStore {
   /** Must be implemented as one server-side conditional transaction. */
   accept(reference: string, value: { runId: string; role: string; output: unknown }): Promise<boolean>;
+}
+
+/** Atomic completion store usable by both the server and the MCP subprocess. */
+export class DatabaseCompletionStore implements CompletionStore {
+  constructor(private readonly db: Database) {}
+  async accept(reference: string, value: { runId: string; role: string; output: unknown }): Promise<boolean> {
+    return this.db.transaction((tx) => Boolean(tx.get<{ id: string }>(
+      `UPDATE agent_runs SET status = 'COMPLETING', output = $output
+       WHERE id = $run_id AND lower(role) = lower($role) AND capability_ref = $reference
+         AND status IN ('STARTED','IN_PROGRESS') RETURNING id`,
+      { run_id: value.runId, role: value.role, reference, output: JSON.stringify(value.output) },
+    )));
+  }
 }

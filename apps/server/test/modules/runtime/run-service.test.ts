@@ -92,6 +92,25 @@ describe("RunService with FakeAgentRuntime", () => {
     expect(run.taskId).toBe(taskId);
     expect(run.epicId).toBe(epicId);
     expect(run.startedAt).toBeDefined();
+    expect(run.capabilityRef).toEqual(expect.any(String));
+    const stored = db!.get<{ capability_json: string; capability_ref: string }>(
+      "SELECT capability_json, capability_ref FROM agent_runs WHERE id = $id", { id: run.id });
+    expect(stored?.capability_ref).toBe(run.capabilityRef);
+    expect(JSON.parse(stored!.capability_json)).toMatchObject({ runId: run.id, capabilityRef: run.capabilityRef });
+  });
+
+  it("atomically accepts one authenticated completion for the exact run", async () => {
+    await setup();
+    const run = await runService.startRun({
+      role: "developer", model: "gpt-4", taskId, epicId, triggerReason: "task-assignment",
+      contextVersion: "1", outputSchemaVersion: "1", capability: { workspace: tmpDir, allowedTools: ["submit_result"] },
+    });
+    const store = runService.completionStore();
+    const output = { version: "1.0.0", outcome: "COMPLETED" };
+    await expect(store.accept(run.capabilityRef!, { runId: run.id, role: run.role, output })).resolves.toBe(true);
+    await expect(store.accept(run.capabilityRef!, { runId: run.id, role: run.role, output })).resolves.toBe(false);
+    expect(db!.get<{ status: string; output: string }>("SELECT status, output FROM agent_runs WHERE id = $id", { id: run.id }))
+      .toEqual({ status: "COMPLETING", output: JSON.stringify(output) });
   });
 
   it("resumes an in-progress run", async () => {

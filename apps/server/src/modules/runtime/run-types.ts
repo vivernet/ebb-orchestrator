@@ -2,6 +2,8 @@
  * Agent runtime types for the runtime service.
  */
 
+import type { ToolId } from "../execution/run-capability.js";
+
 export interface RunOutcome {
   success: boolean;
   exitCode: number;
@@ -29,4 +31,5 @@ export interface StartRunOptions {
   triggerReason: string;
   contextVersion: string;
   outputSchemaVersion: string;
+  capability?: { workspace: string; allowedTools: ToolId[] };
 }

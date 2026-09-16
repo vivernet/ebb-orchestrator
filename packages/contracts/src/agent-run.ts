@@ -36,4 +36,5 @@ export interface AgentRun {
   cachedInputTokens: number | null;
   outputTokens: number | null;
   cost: number | null;
+  capabilityRef?: string;
 }

@@ -7,14 +7,16 @@
  */
 import { McpServer } from '../modules/execution/mcp/mcp-server.js';
 import { RunCapability } from '../modules/execution/run-capability.js';
-import { writeFile, mkdir, readFile } from 'node:fs/promises';
+import { writeFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { createSqliteDatabase } from '../platform/database/sqlite-database.js';
+import { DatabaseCompletionStore } from '../modules/execution/mcp/submit-result-tool.js';
 
-function parseArgs(): { capabilityRef: string | undefined; resultFile: string | undefined } {
+function parseArgs(): { capabilityRef: string | undefined; resultFile: string | undefined; database: string | undefined } {
   const args = process.argv.slice(2);
-  const result: { capabilityRef: string | undefined; resultFile: string | undefined } = {
+  const result: { capabilityRef: string | undefined; resultFile: string | undefined; database: string | undefined } = {
     capabilityRef: undefined,
-    resultFile: undefined,
+    resultFile: undefined, database: undefined,
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -22,6 +24,8 @@ function parseArgs(): { capabilityRef: string | undefined; resultFile: string | 
       result.capabilityRef = args[++i];
     } else if (args[i] === '--result-file' && i + 1 < args.length) {
       result.resultFile = args[++i];
+    } else if (args[i] === '--database' && i + 1 < args.length) {
+      result.database = args[++i];
     } else if (args[i] === '--help' || args[i] === '-h') {
       console.log('Usage: orchestrator-mcp --capability-ref <orchestrator-issued-reference>');
       process.exit(0);
@@ -42,16 +46,17 @@ async function main() {
     console.error('Error: orchestrator-issued capability reference required');
     process.exit(1);
   }
-  const storePath = process.env.ORCHESTRATOR_CAPABILITY_STORE;
-  if (!storePath) throw new Error('orchestrator capability store is required');
-  const store = JSON.parse(await readFile(storePath, 'utf8')) as Record<string, { runId: string; role: 'developer' | 'reviewer' | 'qa' | 'integration'; workspace: string; allowedTools: Array<'workspace.read' | 'workspace.search' | 'workspace.patch' | 'git.diff' | 'git.commit' | 'project.test' | 'submit_result'> }>;
-  const issued = store[capabilityRef];
-  if (!issued) throw new Error('unknown or expired capability reference');
+  const databasePath = args.database ?? process.env.ORCHESTRATOR_DATABASE;
+  if (!databasePath) throw new Error('orchestrator database is required');
+  const db = createSqliteDatabase(databasePath);
+  const row = db.get<{ capability_json: string | null }>('SELECT capability_json FROM agent_runs WHERE capability_ref = $ref', { ref: capabilityRef });
+  if (!row?.capability_json) throw new Error('unknown or expired capability reference');
+  const issued = JSON.parse(row.capability_json) as { runId: string; role: 'developer' | 'reviewer' | 'qa' | 'integration'; workspace: string; allowedTools: Array<'workspace.read' | 'workspace.search' | 'workspace.patch' | 'git.diff' | 'git.commit' | 'project.test' | 'submit_result'> };
 
   const capability = new RunCapability({ id: capabilityRef, capabilityRef, runId: issued.runId, role: issued.role, workspace: issued.workspace, allowedTools: issued.allowedTools });
 
   // Create MCP server
-  const server = new McpServer(capability);
+  const server = new McpServer(capability, { completion: new DatabaseCompletionStore(db) });
 
   // Process stdio requests
   for await (const line of process.stdin) {
@@ -68,6 +73,7 @@ async function main() {
       console.error(JSON.stringify({ error: err instanceof Error ? err.message : 'unknown error' }));
     }
   }
+  db.close();
 }
 
 main().catch(err => {

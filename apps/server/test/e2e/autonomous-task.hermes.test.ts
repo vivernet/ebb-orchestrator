@@ -33,8 +33,6 @@ import type { AgentRun } from "@orchestrator/contracts";
 import type { RunOutcome } from "../../src/modules/runtime/run-types.js";
 import { HermesRuntimeAdapter } from "../../src/modules/runtime/hermes/hermes-runtime-adapter.js";
 import { prepareHermesProfile, generateConfigYaml } from "../../src/modules/runtime/hermes/hermes-profile.js";
-import { McpServer } from "../../src/modules/execution/mcp/mcp-server.js";
-import { RunCapability } from "../../src/modules/execution/run-capability.js";
 import { ProcessExecutor } from "../../src/platform/process/process-executor.js";
 
 const execFileAsync = promisify(execFile);
@@ -243,23 +241,18 @@ describe("Autonomous Task End-to-End Workflow", () => {
 
     const worktree = await worktreeManager.createTaskWorkspace(taskId, masterRepoPath, "master");
     const mcpCli = join(import.meta.dirname, "../../src/bin/orchestrator-mcp.ts");
-    const handshake = await runMcpHandshake(mcpCli, worktree.path);
-    expect(handshake).toContain('"name":"orchestrator-mcp"');
-    expect(handshake).toContain('"submit_result"');
-    const mcp = new McpServer(new RunCapability({
-      id: `cap-${taskId}`,
-      role: "developer",
-      workspace: worktree.path,
-      allowedTools: ["workspace.read", "workspace.patch", "git.status", "git.diff", "git.commit", "submit_result"],
-    }));
-    expect((await mcp.processRequest({ method: "tools/list" })).result).toEqual(expect.arrayContaining([{ name: "submit_result", description: expect.any(String) }]));
-
     driverReady(workflow, taskId);
-    const roles = ["Developer", "Reviewer", "QA", "Integration"];
-    for (const role of roles) {
-      const resultDirectory = join(tmpDir, "hermes-results", role);
-      const profile = prepareHermesProfile({
-        capability: { role: role.toLowerCase(), workspace: worktree.path },
+     const roles = ["Developer", "Reviewer", "QA", "Integration"];
+     let realIntegration: IntegrationAttempt | undefined;
+     for (const role of roles) {
+       if (role === "Integration") {
+         // Integration gets its own managed worktree, created only after QA.
+         realIntegration = await new IntegrationService({ worktreeDir: join(tmpDir, "real-integration") }).prepareIntegration(`task/${taskId}`, "master", masterRepoPath);
+       }
+       const roleWorkspace = realIntegration?.worktreePath ?? worktree.path;
+       const resultDirectory = join(tmpDir, "hermes-results", role);
+       const profile = prepareHermesProfile({
+         capability: { role: role.toLowerCase(), workspace: roleWorkspace },
         orchestratorHome: join(tmpDir, role),
         toolsetPath: "mcp-orchestrator",
       });
@@ -273,13 +266,19 @@ describe("Autonomous Task End-to-End Workflow", () => {
         mcpArgs: ["--import", "tsx", mcpCli],
       }));
       const runtime = new HermesRuntimeAdapter(new ProcessExecutor(), undefined, {
-        managedWorktree: worktree.path,
+         managedWorktree: roleWorkspace,
         environment: profile.env,
         resultDirectory,
-        timeoutMs: 180000,
-      });
+         timeoutMs: 180000,
+         databasePath: join(tmpDir, "acceptance.db"),
+         mcpCommand: process.execPath,
+         mcpArgs: ["--import", "tsx", mcpCli],
+       });
       const runs = new RunService(db!, runtime);
-      const run = await runs.startRun({ role, model: process.env.HERMES_MODEL ?? "default", taskId, epicId: null, triggerReason: "task-assignment", contextVersion: "hermes-acceptance-v1", outputSchemaVersion: "1" });
+       const run = await runs.startRun({ role, model: process.env.HERMES_MODEL ?? "default", taskId, epicId: null, triggerReason: "task-assignment", contextVersion: "hermes-acceptance-v1", outputSchemaVersion: "1", capability: { workspace: roleWorkspace, allowedTools: ["workspace.read", "workspace.patch", "git.status", "git.diff", "git.commit", "submit_result"] } });
+       const handshake = await runMcpHandshake(mcpCli, roleWorkspace, join(tmpDir, "acceptance.db"), run.capabilityRef!);
+       expect(handshake).toContain('"name":"orchestrator-mcp"');
+       expect(handshake).toContain('"submit_result"');
       let inspected: AgentRun | undefined;
       for (let attempt = 0; attempt < 120 && !inspected; attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -299,7 +298,7 @@ describe("Autonomous Task End-to-End Workflow", () => {
     }
      expect(db!.all<{ role: string; task_id: string; status: string }>("SELECT role, task_id, status FROM agent_runs WHERE task_id = $id ORDER BY started_at", { id: taskId })).toEqual(roles.map((role) => ({ role, task_id: taskId, status: "COMPLETED" })));
     expect(workflow.currentStage(taskId)).toBe("READY_FOR_MERGE");
-     const integration = await new IntegrationService({ worktreeDir: join(tmpDir, "real-integration") }).prepareIntegration(`task/${taskId}`, "master", masterRepoPath);
+      const integration = realIntegration!;
      const masterSha = (await new GitCli().run(masterRepoPath, ["rev-parse", "master"])).stdout.trim();
      expect(integration.expectedTargetSha).toBe(masterSha);
      expect((await new GitCli().run(integration.worktreePath, ["rev-parse", "HEAD"])).stdout.trim()).toBe(masterSha);
@@ -340,8 +339,8 @@ describe("Autonomous Task End-to-End Workflow", () => {
 
 function driverReady(engine: WorkflowEngine, id: string): void { engine.transition(id, "READY"); }
 
-async function runMcpHandshake(cli: string, workspace: string): Promise<string> {
-  const child = spawn(process.execPath, ["--import", "tsx", cli, "--capability", "developer", "--workspace", workspace], { stdio: ["pipe", "pipe", "pipe"] });
+async function runMcpHandshake(cli: string, workspace: string, database: string, capabilityRef: string): Promise<string> {
+  const child = spawn(process.execPath, ["--import", "tsx", cli, "--database", database, "--capability-ref", capabilityRef], { cwd: workspace, stdio: ["pipe", "pipe", "pipe"] });
   const output = new Promise<string>((resolve, reject) => {
     let stdout = "";
     let stderr = "";

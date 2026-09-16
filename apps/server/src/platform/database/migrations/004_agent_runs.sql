@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS agent_runs (
   epic_id TEXT,
   status TEXT NOT NULL DEFAULT 'STARTED' CHECK (status IN ('STARTED','IN_PROGRESS','COMPLETING','COMPLETED','FAILED','CANCELLED')),
   capability_ref TEXT UNIQUE,
+  capability_json TEXT,
   session_id TEXT,
   attempt INTEGER,
   trigger_reason TEXT,

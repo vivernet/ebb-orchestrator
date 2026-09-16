@@ -7,6 +7,7 @@ import type { AgentRun, RunStatus } from "@orchestrator/contracts";
 import type { RunOutcome } from "../run-types.js";
 import { ProcessExecutor, ExitCodeError, type ProcessOptions } from "../../../platform/process/process-executor.js";
 import { HermesCliBuilder } from "./hermes-cli.js";
+import { generateConfigYaml } from "./hermes-profile.js";
 import { parseSessionId } from "./hermes-session-parser.js";
 import { validateRoleOutput } from "../output-validator.js";
 import * as path from "path";
@@ -77,6 +78,9 @@ export class HermesRuntimeAdapter implements AgentRuntime {
   private readonly environment: Record<string, string> | undefined;
   private readonly resultDirectory: string;
   private readonly exitCodes = new Map<string, number>();
+  private readonly databasePath: string | undefined;
+  private readonly mcpCommand: string;
+  private readonly mcpArgs: string[];
 
   constructor(
     executor: ProcessExecutor,
@@ -89,6 +93,9 @@ export class HermesRuntimeAdapter implements AgentRuntime {
       managedWorktree?: string;
       environment?: Record<string, string>;
       resultDirectory?: string;
+      databasePath?: string;
+      mcpCommand?: string;
+      mcpArgs?: string[];
     }
   ) {
     this.executor = executor;
@@ -100,6 +107,9 @@ export class HermesRuntimeAdapter implements AgentRuntime {
     this.managedWorktree = config?.managedWorktree;
     this.environment = config?.environment;
     this.resultDirectory = config?.resultDirectory ?? path.join(os.tmpdir(), "orchestrator-hermes-results");
+    this.databasePath = config?.databasePath;
+    this.mcpCommand = config?.mcpCommand ?? "orchestrator-mcp";
+    this.mcpArgs = config?.mcpArgs ?? [];
     this.cliBuilder = new HermesCliBuilder();
   }
 
@@ -109,6 +119,16 @@ export class HermesRuntimeAdapter implements AgentRuntime {
   async startRun(run: AgentRun): Promise<void> {
     const abortController = new AbortController();
     const promptFile = await this.writePromptFile(run);
+    const profileHome = path.join(this.resultDirectory, "profiles", run.id);
+    await fs.mkdir(path.join(profileHome, "home"), { recursive: true });
+    const configOptions = {
+      capability: { role: run.role, workspace: this.getManagedWorktree(run) },
+      toolsetPath: "mcp-orchestrator",
+      mcpCommand: this.mcpCommand,
+      mcpArgs: [...this.mcpArgs, ...(this.databasePath ? ["--database", this.databasePath] : [])],
+      ...(run.capabilityRef ? { capabilityRef: run.capabilityRef } : {}),
+    };
+    await fs.writeFile(path.join(profileHome, "config.yaml"), generateConfigYaml(configOptions));
 
     const args = this.cliBuilder.buildLaunchArgs({
       queryFile: promptFile,
@@ -121,8 +141,8 @@ export class HermesRuntimeAdapter implements AgentRuntime {
     });
 
     const options: ProcessOptions = {
-      cwd: run.taskId ? path.join(os.homedir(), "projects") : os.homedir(),
-      env: this.buildEnvironment(run),
+      cwd: this.getManagedWorktree(run),
+      env: this.buildEnvironment(run, profileHome),
       timeout: this.timeoutMs,
       signal: abortController.signal,
     };
@@ -182,8 +202,8 @@ export class HermesRuntimeAdapter implements AgentRuntime {
     });
 
     const execOptions: ProcessOptions = {
-      cwd: existingState.run.taskId ? path.join(os.homedir(), "projects") : os.homedir(),
-      env: this.buildEnvironment(existingState.run),
+      cwd: this.getManagedWorktree(existingState.run),
+      env: this.buildEnvironment(existingState.run, path.join(this.resultDirectory, "profiles", runId)),
       timeout: this.timeoutMs,
       signal: abortController.signal,
     };
@@ -343,11 +363,11 @@ export class HermesRuntimeAdapter implements AgentRuntime {
   /**
    * Build environment variables for hermes process.
    */
-  private buildEnvironment(_run: AgentRun): Record<string, string> {
-    const allowed = new Set(["PATH", "HOME", "HOMEDRIVE", "HOMEPATH", "SYSTEMROOT", "TEMP", "TMP", "NODE_PATH", "NODE_ENV", "HERMES_HOME", "HERMES_CONFIG", "HERMES_MODEL"]);
+  private buildEnvironment(_run: AgentRun, profileHome?: string): Record<string, string> {
+    const allowed = new Set(["HOMEDRIVE", "HOMEPATH", "SYSTEMROOT", "TEMP", "TMP", "PATH", "NODE_PATH", "NODE_ENV", "HERMES_HOME", "HERMES_CONFIG", "HERMES_MODEL"]);
     const env: Record<string, string> = {};
     for (const key of allowed) {
-      const value = this.environment?.[key] ?? process.env[key];
+      const value = this.environment?.[key] ?? (key === "HERMES_HOME" && profileHome ? profileHome : undefined);
       if (value !== undefined) env[key] = value;
     }
     for (const [key, value] of Object.entries(this.environment ?? {})) {
@@ -355,6 +375,12 @@ export class HermesRuntimeAdapter implements AgentRuntime {
       if (!allowed.has(key)) throw new Error(`Forbidden or unknown Hermes environment variable: ${key}`);
       env[key] = value;
     }
+    const home = profileHome ?? env.HERMES_HOME;
+    if (!home) throw new Error("Hermes isolated profile is required");
+    env.HERMES_HOME = home;
+    env.HOME = path.join(home, "home");
+    env.HERMES_CONFIG = path.join(home, "config.yaml");
+    delete env.HERMES_PROFILE;
     return env;
   }
 

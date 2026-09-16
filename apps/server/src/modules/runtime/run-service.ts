@@ -7,24 +7,25 @@ import type { AgentRuntime } from "./agent-runtime.js";
 import type { AgentRun, RunStatus, RunTrigger } from "@orchestrator/contracts";
 import type { StartRunOptions, ResumeRunOptions, RunOutcome } from "./run-types.js";
 import { validateRoleOutput } from "./output-validator.js";
-import type { CompletionStore } from "../execution/mcp/submit-result-tool.js";
+import { DatabaseCompletionStore, type CompletionStore } from "../execution/mcp/submit-result-tool.js";
+import type { RoleName, ToolId } from "../execution/run-capability.js";
 
 export class RunService {
   constructor(
     private readonly db: Database,
     private readonly runtime: AgentRuntime
-  ) {}
+  ) {
+    // Keep databases created before capability_json usable while the migration
+    // set is upgraded by the host process.
+    const columns = this.db.all<{ name: string }>("PRAGMA table_info(agent_runs)");
+    if (!columns.some((column) => column.name === "capability_json")) {
+      this.db.exec("ALTER TABLE agent_runs ADD COLUMN capability_json TEXT");
+    }
+  }
 
   /** Adapter used by MCP. The UPDATE predicate makes acceptance atomic and one-shot. */
   completionStore(): CompletionStore {
-    return { accept: async (reference, value) => this.db.transaction((tx) => {
-      const changed = tx.get<{ id: string }>(
-        `UPDATE agent_runs SET status = 'COMPLETING', output = $output
-         WHERE id = $run_id AND lower(role) = lower($role) AND capability_ref = $reference
-           AND status IN ('STARTED','IN_PROGRESS') RETURNING id`,
-        { run_id: value.runId, role: value.role, reference, output: JSON.stringify(value.output) });
-      return Boolean(changed);
-    }) };
+    return new DatabaseCompletionStore(this.db);
   }
 
   getCapabilityReference(runId: string): string {
@@ -41,6 +42,9 @@ export class RunService {
     return this.db.transaction((tx) => {
       const id = crypto.randomUUID();
       const capabilityRef = crypto.randomUUID();
+      const capability = { id: capabilityRef, capabilityRef, runId: id,
+        role: options.role.toLowerCase() as RoleName, workspace: options.capability?.workspace ?? "",
+        allowedTools: (options.capability?.allowedTools ?? ["submit_result"]) as ToolId[] };
       const now = new Date().toISOString();
       const record: AgentRun = {
         id,
@@ -62,6 +66,7 @@ export class RunService {
         cachedInputTokens: null,
         outputTokens: null,
         cost: null,
+        capabilityRef,
       };
 
       tx.run(
@@ -69,11 +74,11 @@ export class RunService {
           id, role, runtime, model, task_id, epic_id, status,
           session_id, attempt, trigger_reason, context_version,
            output_schema_version, started_at, ended_at, exit_code,
-           input_tokens, cached_input_tokens, output_tokens, cost, capability_ref
+            input_tokens, cached_input_tokens, output_tokens, cost, capability_ref, capability_json
         ) VALUES ($id, $role, $runtime, $model, $task_id, $epic_id, $status,
           $session_id, $attempt, $trigger_reason, $context_version,
            $output_schema_version, $started_at, $ended_at, $exit_code,
-           $input_tokens, $cached_input_tokens, $output_tokens, $cost, $capability_ref)`,
+           $input_tokens, $cached_input_tokens, $output_tokens, $cost, $capability_ref, $capability_json)`,
         {
           id: record.id,
           role: record.role,
@@ -95,6 +100,7 @@ export class RunService {
           output_tokens: record.outputTokens,
           cost: record.cost,
           capability_ref: capabilityRef,
+          capability_json: JSON.stringify(capability),
         }
       );
 
@@ -201,7 +207,7 @@ export class RunService {
     if (!row) {
       throw new Error(`Run ${runId} not found`);
     }
-    return {
+     return {
       id: row.id as string,
       role: row.role as string,
       runtime: row.runtime as string,
@@ -220,7 +226,8 @@ export class RunService {
       inputTokens: row.input_tokens as number | null,
       cachedInputTokens: row.cached_input_tokens as number | null,
       outputTokens: row.output_tokens as number | null,
-      cost: row.cost as number | null,
+       cost: row.cost as number | null,
+       ...(row.capability_ref ? { capabilityRef: row.capability_ref as string } : {}),
     };
   }
 }
