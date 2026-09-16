@@ -21,10 +21,19 @@ export type ExecResult = {
 export type ProjectAction = 'test' | 'lint' | 'typecheck' | 'build';
 
 /**
- * Shell executables that require separate permission (SHELL_EXECUTION capability).
+ * Shell types that require separate permission (SHELL_EXECUTION capability).
  * These are treated differently from regular executables due to security risks.
  */
-const SHELL_EXECUTABLES = new Set(['bash', 'sh', 'zsh', 'cmd', 'powershell', 'pwsh']);
+export enum ShellType {
+  bash = 'bash',
+  sh = 'sh',
+  zsh = 'zsh',
+  cmd = 'cmd',
+  powershell = 'powershell',
+  pwsh = 'pwsh',
+}
+
+const SHELL_EXECUTABLES = new Set(Object.values(ShellType));
 
 export class CommandTools {
   private envBuilder: EnvironmentBuilder;
