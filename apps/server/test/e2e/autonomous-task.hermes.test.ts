@@ -195,15 +195,19 @@ describe("Autonomous Task End-to-End Workflow", () => {
     const worktree = await driver.developer();
     await driver.reviewer(worktree);
     await driver.qa(worktree);
-    const integrationService = new IntegrationService({ worktreeDir: join(tmpDir, "integration"), database: db!, integrationRunId: await driver.reserveIntegrationRun() });
-    const integration = await integrationService.prepareIntegration(`task/${taskId}`, "master", masterRepoPath);
-     mergeService = new MergeService({ approvalStore: new Map(), repoPath: masterRepoPath, integrationAttempt: integration, database: db! });
-     await integrationService.runInIntegrationWorktree(integration, async () => driver.integration(integration));
+     const integrationService = new IntegrationService({ worktreeDir: join(tmpDir, "integration"), database: db!, integrationRunId: await driver.reserveIntegrationRun() });
+     const integration = await integrationService.prepareIntegration(`task/${taskId}`, "master", masterRepoPath);
+     const integrationRunId = integration.integrationRunId;
+     expect(integrationRunId).toBeDefined();
+     if (!integrationRunId) throw new Error("Integration attempt did not receive its reserved run ID");
+      mergeService = new MergeService({ approvalStore: new Map(), repoPath: masterRepoPath, integrationAttempt: integration, database: db! });
+      await integrationService.runInIntegrationWorktree(integration, async () => driver.integration(integration));
     const outcomes = db!.all<{ role: string; output: string }>("SELECT role, output FROM agent_runs WHERE task_id = $task_id ORDER BY started_at", { task_id: taskId });
     expect(outcomes.map((row) => row.role)).toEqual(["Developer", "Reviewer", "QA", "Integration"]);
     expect(JSON.parse(outcomes[1]!.output)).toMatchObject({ outcome: "PASS", findings: [] });
-     expect(JSON.parse(outcomes[2]!.output)).toMatchObject({ outcome: "PASS" });
-     expect(JSON.parse(outcomes[3]!.output)).toMatchObject({ outcome: "PASS" });
+      expect(JSON.parse(outcomes[2]!.output)).toMatchObject({ outcome: "PASS" });
+      expect(JSON.parse(outcomes[3]!.output)).toMatchObject({ outcome: "PASS" });
+      expect(db!.get<{ id: string; role: string; status: string; output: string }>("SELECT id, role, status, output FROM agent_runs WHERE id = $id", { id: integrationRunId })).toMatchObject({ id: integrationRunId, role: "Integration", status: "COMPLETED", output: expect.stringContaining('"outcome":"PASS"') });
     expect(readFileSync(join(masterRepoPath, "src", "server.js"), "utf8")).not.toContain("/health");
     const approval = approvalService.request({ type: "FINAL_MERGE", subjectId: taskId, subjectType: "TASK", requestedBy: "orchestrator" });
     expect(approval.status).toBe("PENDING");
@@ -257,24 +261,21 @@ describe("Autonomous Task End-to-End Workflow", () => {
     const worktree = await worktreeManager.createTaskWorkspace(taskId, masterRepoPath, "master");
     const mcpCli = join(import.meta.dirname, "../../src/bin/orchestrator-mcp.ts");
     driverReady(workflow, taskId);
-     const roles = ["Developer", "Reviewer", "QA", "Integration"];
-     let realIntegration: IntegrationAttempt | undefined;
-     for (const role of roles) {
-       if (role === "Integration") {
-         // Integration gets its own managed worktree, created only after QA.
-         realIntegration = await new IntegrationService({ worktreeDir: join(tmpDir, "real-integration") }).prepareIntegration(`task/${taskId}`, "master", masterRepoPath);
-       }
-       const roleWorkspace = realIntegration?.worktreePath ?? worktree.path;
-       const resultDirectory = join(tmpDir, "hermes-results", role);
-       const profile = prepareHermesProfile({
-         capability: { role: role.toLowerCase(), workspace: roleWorkspace },
-        orchestratorHome: join(tmpDir, role),
+      const roles = ["Developer", "Reviewer", "QA", "Integration"];
+      const runHermesRole = async (role: string, roleWorkspace: string, run: AgentRun): Promise<void> => {
+        const resultDirectory = join(tmpDir, "hermes-results", role);
+        const capabilityRef = run.capabilityRef;
+        if (!capabilityRef) throw new Error(`${role} run did not receive a capability reference`);
+        const profile = prepareHermesProfile({
+          capability: { role: role.toLowerCase(), workspace: roleWorkspace },
+         orchestratorHome: join(tmpDir, role),
         toolsetPath: "mcp-orchestrator",
       });
       const resultFile = join(resultDirectory, `${role}-${taskId}.json`);
       await mkdir(profile.hermesHome, { recursive: true });
-      await writeFile(join(profile.hermesHome, "config.yaml"), generateConfigYaml({
-        capability: { role: role.toLowerCase(), workspace: worktree.path },
+       await writeFile(join(profile.hermesHome, "config.yaml"), generateConfigYaml({
+         capability: { role: role.toLowerCase(), workspace: roleWorkspace },
+         capabilityRef,
         toolsetPath: "mcp-orchestrator",
         resultFile,
         mcpCommand: process.execPath,
@@ -289,9 +290,7 @@ describe("Autonomous Task End-to-End Workflow", () => {
          mcpCommand: process.execPath,
          mcpArgs: ["--import", "tsx", mcpCli],
        });
-      const runs = new RunService(db!, runtime);
-       const run = await runs.startRun({ role, model: process.env.HERMES_MODEL ?? "default", taskId, epicId: null, triggerReason: "task-assignment", contextVersion: "hermes-acceptance-v1", outputSchemaVersion: "1", capability: { workspace: roleWorkspace, allowedTools: ["workspace.read", "workspace.patch", "git.status", "git.diff", "git.commit", "submit_result"] } });
-       const handshake = await runMcpHandshake(mcpCli, roleWorkspace, join(tmpDir, "acceptance.db"), run.capabilityRef!);
+        const handshake = await runMcpHandshake(mcpCli, roleWorkspace, join(tmpDir, "acceptance.db"), run.capabilityRef!);
        expect(handshake).toContain('"name":"orchestrator-mcp"');
        expect(handshake).toContain('"submit_result"');
       let inspected: AgentRun | undefined;
@@ -308,20 +307,31 @@ describe("Autonomous Task End-to-End Workflow", () => {
       await runs.collectResult(run.id, outcome);
       const usage = await runtime.collectUsage(run.id);
       expect(usage.inputTokens + usage.outputTokens, `${role} emitted no genuine usage`).toBeGreaterThan(0);
-      await runs.collectUsage(run.id, usage);
-      advanceRealStage(workflow, taskId, role);
-    }
+       await runs.collectUsage(run.id, usage);
+       };
+      const runs = new RunService(db!, new HermesRuntimeAdapter(new ProcessExecutor()));
+      for (const role of ["Developer", "Reviewer", "QA"]) {
+        const run = await runs.startRun({ role, model: process.env.HERMES_MODEL ?? "default", taskId, epicId: null, triggerReason: "task-assignment", contextVersion: "hermes-acceptance-v1", outputSchemaVersion: "1", capability: { workspace: worktree.path, allowedTools: ["workspace.read", "workspace.patch", "git.status", "git.diff", "git.commit", "submit_result"] } });
+        await runHermesRole(role, worktree.path, run);
+        advanceRealStage(workflow, taskId, role);
+      }
+      // Reserve the authenticated Integration run before preparing its worktree.
+      const integrationRun = await runs.startRun({ role: "Integration", model: process.env.HERMES_MODEL ?? "default", taskId, epicId: null, triggerReason: "integration", contextVersion: "hermes-acceptance-v1", outputSchemaVersion: "1", capability: { workspace: join(tmpDir, "real-integration"), allowedTools: ["workspace.read", "workspace.search", "git.diff", "project.test", "submit_result"] } });
+      const integrationService = new IntegrationService({ worktreeDir: join(tmpDir, "real-integration"), database: db!, integrationRunId: integrationRun.id });
+      const realIntegration = await integrationService.prepareIntegration(`task/${taskId}`, "master", masterRepoPath);
+      expect(realIntegration.integrationRunId).toBe(integrationRun.id);
+      await integrationService.runInIntegrationWorktree(realIntegration, async () => {
+        await runHermesRole("Integration", realIntegration.worktreePath, integrationRun);
+      });
+      advanceRealStage(workflow, taskId, "Integration");
      expect(db!.all<{ role: string; task_id: string; status: string }>("SELECT role, task_id, status FROM agent_runs WHERE task_id = $id ORDER BY started_at", { id: taskId })).toEqual(roles.map((role) => ({ role, task_id: taskId, status: "COMPLETED" })));
     expect(workflow.currentStage(taskId)).toBe("READY_FOR_MERGE");
-      const integration = realIntegration!;
-       mergeService = new MergeService({ approvalStore: new Map(), repoPath: masterRepoPath, integrationAttempt: integration });
+       const integration = realIntegration;
+        mergeService = new MergeService({ approvalStore: new Map(), repoPath: masterRepoPath, integrationAttempt: integration, database: db! });
      const masterSha = (await new GitCli().run(masterRepoPath, ["rev-parse", "master"])).stdout.trim();
-     expect(integration.expectedTargetSha).toBe(masterSha);
-     expect((await new GitCli().run(integration.worktreePath, ["rev-parse", "HEAD"])).stdout.trim()).toBe(masterSha);
-     expect(readFileSync(join(integration.worktreePath, "src", "server.js"), "utf8")).not.toContain("/health");
-     await new GitCli().run(integration.worktreePath, ["merge", "--no-edit", `task/${taskId}`]);
-      await execFileAsync(process.execPath, ["test/smoke.js"], { cwd: integration.worktreePath });
-      await new IntegrationService().runInIntegrationWorktree(integration, async () => undefined);
+      expect(integration.expectedTargetSha).toBe(masterSha);
+      expect((await new GitCli().run(integration.worktreePath, ["rev-parse", "HEAD"])).stdout.trim()).toBe(masterSha);
+      expect(db!.get<{ id: string; role: string; status: string; output: string }>("SELECT id, role, status, output FROM agent_runs WHERE id = $id", { id: integrationRun.id })).toMatchObject({ id: integrationRun.id, role: "Integration", status: "COMPLETED", output: expect.stringContaining('"outcome":"PASS"') });
      expect(readFileSync(join(integration.worktreePath, "src", "server.js"), "utf8")).toContain("/health");
      await new IntegrationService().cleanupIntegration(integration);
      const approval = approvalService.request({ type: "FINAL_MERGE", subjectId: taskId, subjectType: "TASK", requestedBy: "orchestrator" });

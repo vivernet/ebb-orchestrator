@@ -171,6 +171,9 @@ export class IntegrationService {
 
   /** Run the real Integration role only after the isolated worktree is prepared. */
   async runInIntegrationWorktree<T>(attempt: IntegrationAttempt, runner: IntegrationRunner<T>): Promise<T> {
+    if (!this.integrationRunId || !attempt.integrationRunId || attempt.integrationRunId !== this.integrationRunId) {
+      throw new Error("integrationRunId is required and must be bound to the IntegrationService");
+    }
     if (this.databaseClosed || (attempt.provenanceDatabasePath && attempt.provenanceDatabasePath !== this.databasePath)) {
       if (!this.databaseClosed && this.ownsDatabase) this.database.close();
       const provenancePath = attempt.provenanceDatabasePath ?? this.databasePath;
@@ -180,11 +183,9 @@ export class IntegrationService {
     }
     const persisted = this.database.get<{ status: IntegrationAttempt["status"]; integration_run_id: string }>("SELECT status, integration_run_id FROM integration_attempts WHERE id = $id", { id: attempt.id });
     if (!persisted || persisted.status !== "PREPARED" || attempt.status !== "PREPARED") throw new Error("integration attempt is not prepared");
-    if (attempt.integrationRunId) {
-      if (persisted.integration_run_id !== attempt.integrationRunId) throw new Error("integrationRunId is required for integration provenance");
-      const run = this.database.get<{ role: string; status: string }>("SELECT role, status FROM agent_runs WHERE id = $id", { id: attempt.integrationRunId });
-      if (!run || run.role.toLowerCase() !== "integration" || !["STARTED", "IN_PROGRESS", "COMPLETING"].includes(run.status)) throw new Error("integration run is missing or inactive");
-    }
+    if (persisted.integration_run_id !== attempt.integrationRunId) throw new Error("integrationRunId is not bound to the integration attempt");
+    const run = this.database.get<{ role: string; status: string }>("SELECT role, status FROM agent_runs WHERE id = $id", { id: attempt.integrationRunId });
+    if (!run || run.role.toLowerCase() !== "integration" || !["STARTED", "IN_PROGRESS", "COMPLETING"].includes(run.status)) throw new Error("integration run is missing or inactive");
     attempt.status = "MERGING";
     this.database.run("UPDATE integration_attempts SET status = 'MERGING' WHERE id = $id AND status = 'PREPARED'", { id: attempt.id });
     const snapshot = Object.freeze({ ...attempt });

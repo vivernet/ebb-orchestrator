@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 
 import { GitCli } from "../../../src/modules/git/git-cli.js";
 import { IntegrationService } from "../../../src/modules/git/integration-service.js";
+import { createSqliteDatabase } from "../../../src/platform/database/sqlite-database.js";
 
 function createTempDir(): string {
   return mkdtempSync(join(tmpdir(), "git-integration-"));
@@ -22,6 +23,13 @@ async function initGitRepo(path: string, commitMessage: string = "initial"): Pro
   await git.run(path, ["commit", "-m", commitMessage]);
 
   return git;
+}
+
+function boundService(git: GitCli): IntegrationService {
+  const database = createSqliteDatabase(join(createTempDir(), "provenance.sqlite"));
+  database.exec("CREATE TABLE agent_runs (id TEXT PRIMARY KEY, role TEXT NOT NULL, status TEXT NOT NULL)");
+  database.run("INSERT INTO agent_runs (id, role, status) VALUES ('integration-run', 'Integration', 'STARTED')");
+  return new IntegrationService({ git, database, integrationRunId: "integration-run" });
 }
 
 describe("IntegrationService", () => {
@@ -143,7 +151,7 @@ describe("IntegrationService", () => {
     it("rejects a target that moved before marking integration merged", async () => {
       const repoPath = createTempDir();
       const git = await initGitRepo(repoPath);
-      const service = new IntegrationService();
+       const service = boundService(git);
       const attempt = await service.prepareIntegration("master", "master", repoPath);
 
       writeFileSync(join(repoPath, "moved.txt"), "target moved");
@@ -158,13 +166,23 @@ describe("IntegrationService", () => {
     it("rejects a runner that mutates integration provenance", async () => {
       const repoPath = createTempDir();
       const git = await initGitRepo(repoPath);
-      const service = new IntegrationService({ git });
+       const service = boundService(git);
       const attempt = await service.prepareIntegration("master", "master", repoPath);
 
       await expect(service.runInIntegrationWorktree(attempt, async (_path, runnerAttempt) => {
         (runnerAttempt as { expectedTargetSha: string }).expectedTargetSha = "forged-sha";
       })).rejects.toThrow(/INTEGRATION_PROVENANCE_MUTATED/);
-      expect(attempt.status).toBe("FAILED");
+       expect(attempt.status).toBe("FAILED");
+     });
+
+    it("rejects an attempt without a bound integration run", async () => {
+      const repoPath = createTempDir();
+      const git = await initGitRepo(repoPath);
+      const service = new IntegrationService({ git });
+      const attempt = await service.prepareIntegration("master", "master", repoPath);
+
+      await expect(service.runInIntegrationWorktree(attempt, async () => undefined))
+        .rejects.toThrow("integrationRunId is required");
     });
   });
 });
