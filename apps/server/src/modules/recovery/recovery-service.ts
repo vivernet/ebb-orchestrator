@@ -1,0 +1,225 @@
+/**
+ * Recovery service - manages recovery decisions and creates scheduler requests.
+ * Never calls runtime directly; always creates new scheduler requests.
+ */
+
+import { createHash } from "node:crypto";
+import type { Database } from "../../platform/database/database.js";
+import type {
+  RecoveryContext,
+  RecoveryDecision,
+  RecoveryResult,
+  RoleLevel,
+  RecoveryPolicy,
+  RecoveryAttempt,
+  ProgressFingerprint,
+} from "./recovery-types.js";
+import { evaluateRecovery, getRemainingAttempts } from "./recovery-policy.js";
+import { createFingerprint, createNoProgressFingerprint } from "./progress-fingerprint.js";
+
+/**
+ * Scheduler request for recovery work.
+ */
+export interface RecoverySchedulerRequest {
+  taskId: string;
+  roleLevel: RoleLevel;
+  failureType: string;
+  attemptCount: number;
+}
+
+/**
+ * Recovery service for managing task recovery decisions.
+ */
+export class RecoveryService {
+  constructor(
+    private db: Database,
+    private policy: RecoveryPolicy,
+  ) {}
+
+  /**
+   * Evaluates recovery decision for a task.
+   */
+  evaluate(context: RecoveryContext): RecoveryResult {
+    return evaluateRecovery(context, this.policy);
+  }
+
+  /**
+   * Records a recovery attempt.
+   */
+  recordAttempt(context: RecoveryContext, fingerprint?: ProgressFingerprint): RecoveryAttempt {
+    const failureType = context.failureType;
+    const roleLevel = context.currentRoleLevel;
+
+    // Count existing attempts for this role/failure combo
+    const existingAttempts = context.attempts.filter(
+      (a) => a.roleLevel === roleLevel && a.failureType === failureType,
+    ).length;
+
+    const attempt: RecoveryAttempt = {
+      taskId: context.taskId,
+      roleLevel,
+      failureType,
+      attemptCount: existingAttempts + 1,
+      timestamp: new Date().toISOString(),
+      fingerprint,
+    };
+
+    // Persist to database
+    this.db.transaction((tx) => {
+      tx.run(
+        `INSERT INTO recovery_attempts (id, task_id, role_level, failure_type, attempt_count, recorded_at, fingerprint)
+         VALUES ($id, $task_id, $role_level, $failure_type, $attempt_count, $recorded_at, $fingerprint)`,
+        {
+          id: this.generateId(),
+          task_id: context.taskId,
+          role_level: roleLevel,
+          failure_type: failureType,
+          attempt_count: attempt.attemptCount,
+          recorded_at: attempt.timestamp,
+          fingerprint: fingerprint ? JSON.stringify(fingerprint) : null,
+        },
+      );
+    });
+
+    return attempt;
+  }
+
+  /**
+   * Creates a scheduler request for recovery.
+   * Never calls runtime directly.
+   */
+  createSchedulerRequest(
+    taskId: string,
+    roleLevel: RoleLevel,
+    failureType: string,
+  ): RecoverySchedulerRequest {
+    // Count existing recovery requests for this task
+    const existingCount = this.db.get(
+      `SELECT COUNT(*) as count FROM recovery_scheduler_requests 
+       WHERE task_id = $task_id AND resolved_at IS NULL`,
+      { task_id: taskId },
+    ) as { count: number } | undefined;
+
+    const request: RecoverySchedulerRequest = {
+      taskId,
+      roleLevel,
+      failureType,
+      attemptCount: (existingCount?.count ?? 0) + 1,
+    };
+
+    // Persist to database
+    this.db.transaction((tx) => {
+      tx.run(
+        `INSERT INTO recovery_scheduler_requests (id, task_id, role_level, failure_type, attempt_count, created_at)
+         VALUES ($id, $task_id, $role_level, $failure_type, $attempt_count, $created_at)`,
+        {
+          id: this.generateId(),
+          task_id: taskId,
+          role_level: roleLevel,
+          failure_type: failureType,
+          attempt_count: request.attemptCount,
+          created_at: new Date().toISOString(),
+        },
+      );
+    });
+
+    return request;
+  }
+
+  /**
+   * Gets recovery history for a task.
+   */
+  getHistory(taskId: string): RecoveryAttempt[] {
+    const rows = this.db.all(
+      `SELECT * FROM recovery_attempts WHERE task_id = $task_id ORDER BY recorded_at DESC`,
+      { task_id: taskId },
+    ) as Array<{
+      id: string;
+      task_id: string;
+      role_level: RoleLevel;
+      failure_type: string;
+      attempt_count: number;
+      recorded_at: string;
+      fingerprint: string | null;
+    }>;
+
+    return rows.map((row) => ({
+      taskId: row.task_id,
+      roleLevel: row.role_level,
+      failureType: row.failure_type as FailureType,
+      attemptCount: row.attempt_count,
+      timestamp: row.recorded_at,
+      fingerprint: row.fingerprint ? (JSON.parse(row.fingerprint) as ProgressFingerprint) : undefined,
+    }));
+  }
+
+  /**
+   * Gets remaining attempts for a task at a given role level.
+   */
+  getRemainingAttempts(
+    taskId: string,
+    roleLevel: RoleLevel,
+    failureType: string,
+  ): number {
+    const attempts = this.getHistory(taskId);
+    return getRemainingAttempts(attempts, roleLevel, failureType as FailureType, this.policy);
+  }
+
+  /**
+   * Checks if a task is blocked from recovery.
+   */
+  isBlocked(taskId: string): boolean {
+    const row = this.db.get(
+      `SELECT status FROM recovery_state WHERE task_id = $task_id`,
+      { task_id: taskId },
+    ) as { status: string } | undefined;
+
+    return row?.status === "BLOCKED";
+  }
+
+  /**
+   * Blocks a task from further recovery attempts.
+   */
+  blockTask(taskId: string, reason: string): void {
+    this.db.transaction((tx) => {
+      const existing = this.db.get(
+        `SELECT * FROM recovery_state WHERE task_id = $task_id`,
+        { task_id: taskId },
+      );
+
+      if (existing) {
+        tx.run(
+          `UPDATE recovery_state SET status = 'BLOCKED', reason = $reason, updated_at = $updated_at WHERE task_id = $task_id`,
+          {
+            reason,
+            updated_at: new Date().toISOString(),
+            task_id: taskId,
+          },
+        );
+      } else {
+        tx.run(
+          `INSERT INTO recovery_state (id, task_id, status, reason, created_at, updated_at)
+           VALUES ($id, $task_id, $status, $reason, $created_at, $updated_at)`,
+          {
+            id: this.generateId(),
+            task_id: taskId,
+            status: "BLOCKED",
+            reason,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        );
+      }
+    });
+  }
+
+  /**
+   * Generates a unique ID.
+   */
+  private generateId(): string {
+    return createHash("sha256")
+      .update(`${Date.now()}-${Math.random()}`)
+      .digest("hex")
+      .slice(0, 32);
+  }
+}
