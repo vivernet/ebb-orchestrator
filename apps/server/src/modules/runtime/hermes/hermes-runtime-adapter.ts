@@ -154,13 +154,29 @@ export class HermesRuntimeAdapter implements AgentRuntime {
       maxTurns: this.roleLimit,
     });
 
+    const execOptions: ProcessOptions = {
+      cwd: existingState.run.taskId ? path.join(os.homedir(), "projects") : os.homedir(),
+      env: this.buildEnvironment(existingState.run),
+      timeout: this.timeoutMs,
+      signal: abortController.signal,
+    };
+
+    let processOutput: { stdout: string; stderr: string } | null = null;
+
+    try {
+      const result = await this.executor.exec("hermes", args, execOptions);
+      processOutput = { stdout: result.stdout, stderr: result.stderr };
+    } catch (error) {
+      processOutput = { stdout: "", stderr: (error as Error).message };
+    }
+
     // Update existing state in place
     existingState.run.sessionId = options.sessionId;
     existingState.run.attempt = options.attempt;
     existingState.run.status = "IN_PROGRESS" as RunStatus;
     existingState.pid = null;
-    existingState.stdout = "";
-    existingState.stderr = "";
+    existingState.stdout = processOutput?.stdout ?? "";
+    existingState.stderr = processOutput?.stderr ?? "";
     existingState.exitCode = null;
     existingState.startTime = new Date();
     existingState.abortController = abortController;
@@ -180,10 +196,30 @@ export class HermesRuntimeAdapter implements AgentRuntime {
       state.abortController.abort();
     }
 
+    // Hard kill after timeout (10 seconds)
+    const hardKillTimeout = setTimeout(() => {
+      // Hard kill by terminating the process directly
+      if (state.pid) {
+        try {
+          process.kill(state.pid, "SIGKILL");
+        } catch {
+          // Process may have already exited
+        }
+      }
+    }, 10000);
+
+    // Clear timeout when run completes normally
+    const cleanup = () => {
+      clearTimeout(hardKillTimeout);
+    };
+
     // Update run status
     const updatedRun = { ...state.run, status: "CANCELLED" as RunStatus };
     state.run = updatedRun;
     state.exitCode = -1;
+
+    // Clean up on state changes (exit, collect, etc.)
+    state.abortController?.signal.addEventListener("abort", cleanup);
   }
 
   /**
