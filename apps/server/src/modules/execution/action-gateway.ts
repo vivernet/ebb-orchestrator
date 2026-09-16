@@ -19,19 +19,16 @@ export class ActionGateway {
    * Read a file from the workspace.
    */
   async readFile(relPath: string): Promise<{ success: boolean; content?: string; error?: string }> {
-    // Normalize workspace to forward slashes
-    const ws = this.workspace.replace(/\\/g, '/');
-    const fullPath = `${ws}/${relPath}`;
-    const result = await this.resolver.resolveSafePath(ws, fullPath);
+    // Use path.join for proper path construction
+    const fullPath = path.join(this.workspace, relPath);
+    const result = await this.resolver.resolveSafePath(this.workspace, fullPath);
 
     if (!result.success) {
       return { success: false, error: result.error };
     }
 
-      try {
-      // Convert forward-slash path to platform path
-      const platformPath = result.path!.replace(/\//g, path.sep);
-      const content = fs.readFileSync(platformPath, 'utf8');
+    try {
+      const content = fs.readFileSync(path.join(this.workspace, relPath), 'utf8');
       return { success: true, content };
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : 'Read failed' };
@@ -73,19 +70,16 @@ export class ActionGateway {
    * Patch a file in the workspace.
    */
   async patch(relPath: string, patches: FilePatch[]): Promise<FilePatchResult> {
-    // Normalize workspace to forward slashes
-    const ws = this.workspace.replace(/\\/g, '/');
-    const fullPath = `${ws}/${relPath}`;
-    const result = await this.resolver.resolveSafePath(ws, fullPath);
+    // Use path.join for proper path construction
+    const fullPath = path.join(this.workspace, relPath);
+    const result = await this.resolver.resolveSafePath(this.workspace, fullPath);
 
     if (!result.success) {
       return { success: false, error: result.error };
     }
 
     try {
-      // Convert forward-slash path to platform path
-      const platformPath = result.path!.replace(/\//g, path.sep);
-      const content = fs.readFileSync(platformPath, 'utf8');
+      const content = fs.readFileSync(fullPath, 'utf8');
       let patched = content;
       let offset = 0;
 
@@ -96,7 +90,7 @@ export class ActionGateway {
         offset += patch.content.length - (patch.end - patch.start);
       }
 
-      fs.writeFileSync(platformPath, patched, 'utf8');
+      fs.writeFileSync(fullPath, patched, 'utf8');
       return { success: true };
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : 'Patch failed' };
