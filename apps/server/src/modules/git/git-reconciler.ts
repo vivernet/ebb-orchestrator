@@ -118,7 +118,7 @@ export class GitReconciler {
 
     try {
       // Check if local is ahead of remote
-      const aheadCount = await this.getAheadCount(path, localRef, remoteRef);
+      const aheadCount = await this.getAheadCount(path, remoteRef, localRef);
       if (aheadCount > 0) {
         return {
           state: "LOCAL_AHEAD",
@@ -129,7 +129,7 @@ export class GitReconciler {
       }
 
       // Check if remote is ahead of local
-      const behindCount = await this.getAheadCount(path, remoteRef, localRef);
+      const behindCount = await this.getAheadCount(path, localRef, remoteRef);
       if (behindCount > 0) {
         return {
           state: "REMOTE_AHEAD",

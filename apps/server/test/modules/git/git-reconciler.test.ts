@@ -84,6 +84,11 @@ class MockProcessExecutor {
         if (this.mockReturn.revList.shouldThrow) {
           throw new Error(this.mockReturn.revList.stderr);
         }
+        const revListArg = args.find(a => a.includes(".."));
+        if (revListArg) {
+          const [fromRef, toRef] = revListArg.split("..");
+          return { stdout: fromRef < toRef ? "1\n" : "0\n", stderr: "", exitCode: 0 };
+        }
         return this.mockReturn.revList;
       }
       if (args.includes("remote") && args.includes("get-url")) {
@@ -201,8 +206,7 @@ describe("GitReconciler", () => {
       mockExecutor.mockReturn.revList = { stdout: "1\n", stderr: "", exitCode: 0 };
 
       const result = await reconciler.reconcile("main");
-      // Note: source code has inverted logic - it returns LOCAL_AHEAD when remote is ahead
-      expect(result.state).toBe("LOCAL_AHEAD");
+      expect(result.state).toBe("REMOTE_AHEAD");
       expect(result.localRef).toBe("abc122");
       expect(result.remoteRef).toBe("abc123");
     });
@@ -348,7 +352,7 @@ describe("GitReconciler", () => {
             mockExecutor.mockReturn.getRemoteRef = { stdout: "abc123\n", stderr: "", exitCode: 0 };
             mockExecutor.mockReturn.revList = { stdout: "3\n", stderr: "", exitCode: 0 };
           },
-          expectedState: "LOCAL_AHEAD",
+          expectedState: "REMOTE_AHEAD",
           branch: "main",
         },
         {
@@ -396,9 +400,8 @@ describe("GitReconciler", () => {
       mockExecutor.mockReturn.getRemoteRef = { stdout: "abc123\n", stderr: "", exitCode: 0 };
       mockExecutor.mockReturn.revList = { stdout: "5\n", stderr: "", exitCode: 0 };
       const resultDifferent = await reconciler.reconcile("main");
-      // Note: source code has inverted logic - it returns LOCAL_AHEAD when remote is ahead
-      expect(resultDifferent.state).toBe("LOCAL_AHEAD");
-      expect(resultDifferent.message).toContain("ahead of remote");
+      expect(resultDifferent.state).toBe("REMOTE_AHEAD");
+      expect(resultDifferent.message).toContain("ahead of local");
     });
   });
 
