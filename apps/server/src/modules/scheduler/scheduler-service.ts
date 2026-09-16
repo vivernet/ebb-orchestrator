@@ -3,7 +3,8 @@
  */
 
 import type { Database } from "../../platform/database/database.js";
-import {
+import type { WorkflowEngine } from "../workflow/workflow-engine.js";
+import type {
   SchedulableTask,
   Eligibility,
   WaitReason,
@@ -204,6 +205,51 @@ export class SchedulerService {
       projectMax: projectId ? CAPACITY.projectMax : CAPACITY.globalMax,
       available: CAPACITY.globalMax - running,
     };
+  }
+
+  /**
+   * Start workflow runs for eligible tasks.
+   * Returns the list of tasks that were started.
+   */
+  startWorkflowRuns(
+    workflowEngine: WorkflowEngine,
+    onWorkflowRunStarted: (taskId: string, triggerReason: string) => void,
+  ): { startedTaskIds: string[]; skipped: { taskId: string; reason: string }[] } {
+    const recalculateResult = this.recalculate();
+    const startedTaskIds: string[] = [];
+    const skipped: { taskId: string; reason: string }[] = [];
+
+    for (const task of recalculateResult.runnables) {
+      try {
+        // Validate task is in READY state
+        const dbTask = this.db.get<{ status: string }>(
+          "SELECT status FROM tasks WHERE id = $id",
+          { id: task.id },
+        );
+
+        if (!dbTask || dbTask.status !== "READY") {
+          skipped.push({
+            taskId: task.id,
+            reason: `Not in READY state. Current: ${dbTask?.status}`,
+          });
+          continue;
+        }
+
+        // Transition to DEVELOPMENT
+        workflowEngine.transition(task.id, "DEVELOPMENT");
+        startedTaskIds.push(task.id);
+
+        // Notify the orchestrator
+        onWorkflowRunStarted(task.id, "task-assignment");
+      } catch (error) {
+        skipped.push({
+          taskId: task.id,
+          reason: (error as Error).message,
+        });
+      }
+    }
+
+    return { startedTaskIds, skipped };
   }
 }
 
