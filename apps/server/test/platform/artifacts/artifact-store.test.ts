@@ -1,6 +1,6 @@
 import { describe, expect, it, afterEach, beforeEach } from "vitest";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm, readFile, access } from "node:fs/promises";
+import { mkdtemp, rm, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";

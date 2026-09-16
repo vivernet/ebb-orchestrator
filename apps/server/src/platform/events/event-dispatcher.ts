@@ -4,7 +4,7 @@
 
 import type { Database } from "../database/database.js";
 import type { DomainEvent } from "./domain-event.js";
-import { EventBus, type Subscription } from "./event-bus.js";
+import { EventBus } from "./event-bus.js";
 
 interface PendingEventRow {
   id: string;

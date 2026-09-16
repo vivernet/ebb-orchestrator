@@ -2,7 +2,7 @@ import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
+
 import {
   startSystem,
   type SystemLifecycleDeps,
@@ -142,7 +142,7 @@ describe("startup lifecycle", () => {
       await lock2.acquire();
       secondAcquired = true;
     } catch {
-      secondAcquired = false;
+      // secondAcquired remains false
     }
 
     expect(secondAcquired).toBe(false);

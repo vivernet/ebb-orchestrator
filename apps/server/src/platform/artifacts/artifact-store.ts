@@ -171,7 +171,7 @@ export class ArtifactStore {
         await access(absoluteFinalPath);
         fileExists = true;
       } catch {
-        fileExists = false;
+        // fileExists remains false
       }
 
       if (!fileExists) {

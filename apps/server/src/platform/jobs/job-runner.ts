@@ -8,7 +8,6 @@ import type {
   BackgroundJobRow,
   JobHandler,
   JobRunSummary,
-  JobStatus,
 } from "./job-types.js";
 import { BACKOFF_SCHEDULE } from "./job-types.js";
 

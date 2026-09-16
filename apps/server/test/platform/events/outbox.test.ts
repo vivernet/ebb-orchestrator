@@ -98,7 +98,7 @@ describe("transactional outbox", () => {
     const bus = new EventBus();
     let handlerCallCount = 0;
 
-    bus.subscribe("test.entity.created", "audit", async (event) => {
+    bus.subscribe("test.entity.created", "audit", async () => {
       handlerCallCount++;
     });
 
