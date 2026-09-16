@@ -18,6 +18,9 @@
 - Final merge исполняется только Merge Service после approval.
 - Git hooks отключены для managed Git operations по умолчанию.
 - Local Mode — policy isolation, не OS sandbox; это должно быть отражено в API/UI metadata.
+- Plan 2 must already be merged into the current base and the starting tree must pass `pnpm lint`, `pnpm typecheck`, and `pnpm test`.
+- Agent-facing Git/filesystem/command actions pass through Action Gateway; deterministic Orchestrator core services may use internal Git services directly.
+- Reconciliation must not perform implicit network access (`git fetch`, push, remote auth). Remote state means currently known remote-tracking refs until an explicit hosting/sync operation updates them.
 
 ---
 
@@ -32,9 +35,11 @@
 - Produces: `ProcessExecutor.exec(file, args, options)`.
 - Produces: `GitCli.run(repoPath, args)` with `shell:false`, timeout, stdout/stderr capture.
 
-- [ ] **Step 1: Write argument-safety test**
+- [ ] **Step 1: Write executor safety tests**
 
-Pass a branch name containing shell metacharacters and assert it is treated as a literal argument; no side-effect file is created.
+Test `ProcessExecutor` directly with a harmless fixture process and a literal argument containing shell metacharacters; assert the argument reaches the child unchanged and no side-effect command/file is executed.
+
+Also cover timeout, `AbortSignal` cancellation, non-zero exit capture, and bounded stdout/stderr behavior. `GitCli` tests must prove it delegates via `shell:false`.
 
 - [ ] **Step 2: Verify failure**
 
@@ -114,6 +119,7 @@ git commit -m "feat: add deterministic repository discovery"
 **Interfaces:**
 - Produces: `createTaskWorkspace(task, targetRef)`, `createEpicBranch(epic, baseRef)`, `removeWorkspace(worktreeId)`.
 - Persists GitOperation `STARTED → VERIFIED`.
+- Migration `007_git.sql` also creates the persistence needed for first-class `MergeConflict` records used by Task 4.
 
 - [ ] **Step 1: Write real temp-repo tests**
 
@@ -134,7 +140,11 @@ pnpm --filter @orchestrator/server test -- worktree-manager.test.ts
 
 - [ ] **Step 3: Implement journalled operations**
 
-Before Git mutation insert operation row; after command inspect actual Git state and only then mark `VERIFIED`. Set hooks path to a managed empty hooks directory for Orchestrator Git commands.
+Before Git mutation insert operation row; after command inspect actual Git state and only then mark `VERIFIED`.
+
+Disable repository hooks per managed Git invocation (for example with `git -c core.hooksPath=<managed-empty-hooks-dir> ...`) rather than permanently rewriting the user's repository config. Add a fixture hook that would create a marker file and prove managed commit/worktree operations do not execute it.
+
+Retries after a crash must reconcile an existing STARTED operation instead of blindly creating duplicate branches/worktrees.
 
 - [ ] **Step 4: Run tests**
 
@@ -156,7 +166,9 @@ git commit -m "feat: add managed branches and worktrees"
 **Files:**
 - Create: `apps/server/src/modules/git/integration-service.ts`
 - Create: `apps/server/src/modules/git/merge-service.ts`
+- Create: `apps/server/src/modules/git/merge-conflict-repository.ts`
 - Test: `apps/server/test/modules/git/integration-service.test.ts`
+- Test: `apps/server/test/modules/git/merge-service.test.ts`
 
 **Interfaces:**
 - Produces: `prepareIntegration(sourceBranch, currentTargetBranch): IntegrationAttempt`.
@@ -166,28 +178,32 @@ git commit -m "feat: add managed branches and worktrees"
 
 Create Task-2 from Epic SHA A, integrate Task-1 so Epic becomes B, then prepare Task-2 integration. Assert integration base is B, not A.
 
-Also assert MergeService refuses without approved `FINAL_MERGE`.
+Also assert MergeService refuses when the approval is absent, rejected, the wrong approval type, or belongs to a different Task/Epic. An approved `FINAL_MERGE` is valid only for the exact subject being merged.
 
 - [ ] **Step 2: Verify failure**
 
 ```bash
-pnpm --filter @orchestrator/server test -- integration-service.test.ts
+pnpm --filter @orchestrator/server test -- integration-service.test.ts merge-service.test.ts
 ```
 
 - [ ] **Step 3: Implement integration branch/worktree**
 
-Use temporary `integration/task-<n>` or `integration/epic-<n>` branch. Never experiment in task worktree or `master`. Conflict result records file list and deterministic class candidate; semantic classification comes later via Integration role.
+Use a temporary integration branch/worktree owned by the integration attempt. Never experiment in the Task worktree or `master`.
+
+Persist each merge conflict as a first-class record with source, target, files, status, and nullable/pending classification. Deterministic classification may resolve only cases it can prove; semantic classification remains for the later Integration role.
+
+`MergeService.mergeApproved(subjectId, approvalId)` must load the approval itself and verify: `type=FINAL_MERGE`, `status=APPROVED`, and `subjectId` matches exactly. After merge it verifies the resulting target SHA before recording completion.
 
 - [ ] **Step 4: Run tests**
 
 ```bash
-pnpm --filter @orchestrator/server test -- integration-service.test.ts
+pnpm --filter @orchestrator/server test -- integration-service.test.ts merge-service.test.ts
 ```
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add apps/server/src/modules/git apps/server/test/modules/git/integration-service.test.ts
+git add apps/server/src/modules/git apps/server/test/modules/git
 git commit -m "feat: add isolated integration and merge service"
 ```
 
@@ -203,6 +219,7 @@ git commit -m "feat: add isolated integration and merge service"
 
 **Interfaces:**
 - Produces: `PermissionDecision = ALLOW | ASK | DENY | ABSOLUTE_DENY`.
+- Produces a typed/canonical `ActionId` set shared by Permission Engine and Action Gateway (including workspace, Git, command, merge, permission/config mutation actions).
 - Produces: `evaluate({ capability, action, globalPolicy, projectPolicy, rolePolicy, taskPolicy })`.
 
 - [ ] **Step 1: Write table-driven tests**
@@ -214,6 +231,8 @@ Developer workspace.read ALLOW
 Developer git.commit ALLOW
 Developer git.push DENY
 Developer merge.default ABSOLUTE_DENY
+Developer permission.modify ABSOLUTE_DENY
+Developer config.security.modify ABSOLUTE_DENY
 Reviewer workspace.write DENY
 DevOps publish ASK
 Global DENY + Task ALLOW => DENY
@@ -234,7 +253,7 @@ Encode ordering:
 const rank = { ALLOW: 0, ASK: 1, DENY: 2, ABSOLUTE_DENY: 3 } as const;
 ```
 
-Return reason + matched policy refs for UI/Audit.
+Return reason + matched policy refs for UI/Audit. Unknown/unregistered Action IDs must fail closed rather than silently defaulting to ALLOW.
 
 - [ ] **Step 4: Run tests**
 
@@ -257,33 +276,43 @@ git commit -m "feat: add composable permission engine"
 - Create: `apps/server/src/modules/execution/run-capability.ts`
 - Create: `apps/server/src/modules/execution/action-gateway.ts`
 - Create: `apps/server/src/modules/execution/workspace-tools.ts`
+- Create: `apps/server/src/modules/execution/git-tools.ts`
 - Create: `apps/server/src/platform/security/path-resolver.ts`
 - Test: `apps/server/test/modules/execution/action-gateway.test.ts`
+- Test: `apps/server/test/modules/execution/git-tools.test.ts`
 - Test: `apps/server/test/platform/security/path-resolver.test.ts`
 
 **Interfaces:**
 - Produces: capability-bound `workspace.read/search/patch`.
+- Produces agent-facing `git.status`, `git.diff`, and `git.commit`, always scoped to the capability-assigned worktree.
+- `git.push`, final merge, permission mutation, and security/config mutation are denied/not exposed for Developer capability.
 - Agent-facing request never accepts arbitrary workspace root.
 
 - [ ] **Step 1: Write traversal and symlink/junction tests**
 
-Assert `../`, absolute external path and symlink/junction resolving outside workspace are denied before file access.
+Assert `../`, absolute external path and a platform-appropriate link escape are denied before file access: directory junction on Windows, symlink on Unix. Tests must not require Windows Developer Mode merely to create a symlink.
+
+Also assert agent-facing Git requests cannot supply a different repository/worktree path and that Developer cannot execute push/final merge/policy mutation through Action Gateway.
 
 - [ ] **Step 2: Verify failure**
 
 ```bash
-pnpm --filter @orchestrator/server test -- action-gateway.test.ts path-resolver.test.ts
+pnpm --filter @orchestrator/server test -- action-gateway.test.ts git-tools.test.ts path-resolver.test.ts
 ```
 
 - [ ] **Step 3: Implement canonical containment check**
 
 Resolve existing ancestor realpaths and target path; compare path segments, not string prefix. Audit every DENY/ASK without storing file contents.
 
-- [ ] **Step 4: Run tests on Windows and one Unix CI runner before merge**
+`git.status/diff/commit` resolve the repository from `RunCapability`, not from model input, and use the internal Git adapter with managed hooks disabled.
+
+- [ ] **Step 4: Run the portable security tests on the current platform**
 
 ```bash
-pnpm test
+pnpm --filter @orchestrator/server test -- action-gateway.test.ts git-tools.test.ts path-resolver.test.ts
 ```
+
+The suite must contain both Windows-junction and Unix-symlink branches so the same tests exercise the appropriate implementation when CI for the other OS is added later. Lack of Unix CI in Plan 3 must not block local completion; Plan 6 CI must run this suite on at least Windows and one Unix runner before v1 release.
 
 - [ ] **Step 5: Commit**
 
@@ -317,7 +346,9 @@ Set parent process env with `TEST_SECRET_SUPER_UNIQUE_123`, `GITHUB_TOKEN`, `SSH
 pnpm --filter @orchestrator/server test -- command-tools.test.ts environment-builder.test.ts
 ```
 
-- [ ] **Step 3: Implement minimal env and shell classification**
+- [ ] **Step 3: Implement allowlisted minimal env and shell classification**
+
+Build child environments from a small platform baseline/allowlist plus explicitly scoped injected variables; do not clone `process.env` and then blacklist a few known names. Preserve only variables required to locate/launch approved executables on the current platform (for example PATH and required Windows runtime variables), plus explicit scoped additions.
 
 Treat executables `bash`, `sh`, `zsh`, `cmd`, `powershell`, `pwsh` as `SHELL_EXECUTION` requiring separate permission. Known project actions are policy-known, not automatically security-safe.
 
@@ -360,12 +391,17 @@ pnpm --filter @orchestrator/server test -- git-reconciler.test.ts
 
 Recovery may complete an operation only when actual Git state proves the intended effect occurred. Ambiguous state produces `GIT_STATE_DRIFT` and blocks relevant work.
 
-- [ ] **Step 4: Run full Plan 3 suite**
+Reconciliation is local-only: it may inspect existing remote-tracking refs but must not implicitly `fetch`, push, authenticate, or contact a remote. External refresh belongs to the later GitHosting/Sync subsystem.
+
+- [ ] **Step 4: Run the pre-commit quality checks**
 
 ```bash
+pnpm lint
 pnpm typecheck
 pnpm test
 ```
+
+All three commands must pass before committing Task 8.
 
 - [ ] **Step 5: Commit**
 
@@ -374,13 +410,42 @@ git add apps/server/src/modules/git apps/server/src/platform/process/startup-rec
 git commit -m "feat: reconcile git state after interruptions"
 ```
 
+- [ ] **Step 6: Run the final clean-tree gate**
+
+```bash
+pnpm lint
+pnpm typecheck
+pnpm test
+git status --short
+```
+
+All quality commands must pass and `git status --short` must be empty. Generated `.js`/`.tsbuildinfo` artifacts are not acceptable.
+
 ## Plan 3 acceptance gate
+
+Before declaring Plan 3 complete:
+
+```bash
+pnpm lint
+pnpm typecheck
+pnpm test
+git status --short
+```
+
+All quality commands must pass and the working tree must be clean.
 
 Using a temporary repository with `master`:
 
 - create Epic/Task branches and worktrees from correct current targets;
-- execute safe filesystem and Git actions only through Action Gateway;
-- deny path escapes, raw final merge, push and policy modification for Developer capability;
-- final Merge Service refuses without approval;
-- crash between Git mutation and DB verification is recoverable;
+- prove managed Git operations do not execute repository hooks by default;
+- execute **agent-facing** filesystem, Git (`status/diff/commit`) and command actions only through Action Gateway;
+- deny path escapes and alternate-worktree injection;
+- deny raw final merge, push, permission modification and security/config policy modification for Developer capability;
+- persist merge conflicts as first-class records;
+- final Merge Service refuses absent/rejected/wrong-subject/wrong-type approvals and succeeds only with matching approved `FINAL_MERGE`;
+- crash between Git mutation and DB verification is recoverable without duplicate branches/worktrees;
+- reconciliation never performs implicit network access;
+- environment construction is allowlist-based and does not leak parent secrets/SSH-agent capabilities;
 - malicious repo text/scripts do not grant authority; Local Mode warning remains true because arbitrary approved project processes still have OS user privileges.
+
+Before starting Plan 4, its expected `git.diff` tool must already be implemented by this plan through Action Gateway.
