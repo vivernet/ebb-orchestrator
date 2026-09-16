@@ -184,8 +184,8 @@ describe("Autonomous Task End-to-End Workflow", () => {
     await driver.reviewer(worktree);
     await driver.qa(worktree);
     const integration = await new IntegrationService({ worktreeDir: join(tmpDir, "integration") }).prepareIntegration(`task/${taskId}`, "master", masterRepoPath);
-    mergeService = new MergeService({ approvalStore: new Map(), repoPath: masterRepoPath, sourceBranch: `task/${taskId}`, targetBranch: "master", expectedTargetSha: integration.expectedTargetSha! });
-    await driver.integration(integration);
+     mergeService = new MergeService({ approvalStore: new Map(), repoPath: masterRepoPath, integrationAttempt: integration });
+     await new IntegrationService().runInIntegrationWorktree(integration, async () => driver.integration(integration));
     const outcomes = db!.all<{ role: string; output: string }>("SELECT role, output FROM agent_runs WHERE task_id = $task_id ORDER BY started_at", { task_id: taskId });
     expect(outcomes.map((row) => row.role)).toEqual(["Developer", "Reviewer", "QA", "Integration"]);
     expect(JSON.parse(outcomes[1]!.output)).toMatchObject({ outcome: "PASS", findings: [] });
@@ -301,13 +301,14 @@ describe("Autonomous Task End-to-End Workflow", () => {
      expect(db!.all<{ role: string; task_id: string; status: string }>("SELECT role, task_id, status FROM agent_runs WHERE task_id = $id ORDER BY started_at", { id: taskId })).toEqual(roles.map((role) => ({ role, task_id: taskId, status: "COMPLETED" })));
     expect(workflow.currentStage(taskId)).toBe("READY_FOR_MERGE");
       const integration = realIntegration!;
-      mergeService = new MergeService({ approvalStore: new Map(), repoPath: masterRepoPath, sourceBranch: `task/${taskId}`, targetBranch: "master", expectedTargetSha: integration.expectedTargetSha! });
+       mergeService = new MergeService({ approvalStore: new Map(), repoPath: masterRepoPath, integrationAttempt: integration });
      const masterSha = (await new GitCli().run(masterRepoPath, ["rev-parse", "master"])).stdout.trim();
      expect(integration.expectedTargetSha).toBe(masterSha);
      expect((await new GitCli().run(integration.worktreePath, ["rev-parse", "HEAD"])).stdout.trim()).toBe(masterSha);
      expect(readFileSync(join(integration.worktreePath, "src", "server.js"), "utf8")).not.toContain("/health");
      await new GitCli().run(integration.worktreePath, ["merge", "--no-edit", `task/${taskId}`]);
-     await execFileAsync(process.execPath, ["test/smoke.js"], { cwd: integration.worktreePath });
+      await execFileAsync(process.execPath, ["test/smoke.js"], { cwd: integration.worktreePath });
+      await new IntegrationService().runInIntegrationWorktree(integration, async () => undefined);
      expect(readFileSync(join(integration.worktreePath, "src", "server.js"), "utf8")).toContain("/health");
      await new IntegrationService().cleanupIntegration(integration);
      const approval = approvalService.request({ type: "FINAL_MERGE", subjectId: taskId, subjectType: "TASK", requestedBy: "orchestrator" });

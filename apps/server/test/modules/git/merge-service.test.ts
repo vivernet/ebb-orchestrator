@@ -5,6 +5,7 @@ import { mkdtempSync, writeFileSync, mkdirSync } from "fs";
 
 import { GitCli } from "../../../src/modules/git/git-cli.js";
 import { MergeService } from "../../../src/modules/git/merge-service.js";
+import type { IntegrationAttempt } from "../../../src/modules/git/integration-service.js";
 
 function createTempDir(): string {
   return mkdtempSync(join(tmpdir(), "git-merge-"));
@@ -24,8 +25,32 @@ async function initGitRepo(path: string, commitMessage: string = "initial"): Pro
   return git;
 }
 
+async function successfulIntegration(repoPath: string, git: GitCli, sourceBranch = "HEAD"): Promise<IntegrationAttempt> {
+  return {
+    id: "integration-test",
+    sourceBranch,
+    currentTargetBranch: "master",
+    expectedTargetBranch: "master",
+    worktreePath: repoPath,
+    repoPath,
+    expectedTargetSha: (await git.run(repoPath, ["rev-parse", "master"])).stdout.trim(),
+    status: "MERGED",
+    createdAt: new Date().toISOString(),
+  };
+}
+
 describe("MergeService", () => {
   describe("mergeApproved", () => {
+    it("rejects approval-only merges without verified integration provenance", async () => {
+      const repoPath = createTempDir();
+      await initGitRepo(repoPath);
+      const approvalStore = new Map<string, { id: string; subjectId: string; type: string; status: string }>();
+      approvalStore.set("approval-456", { id: "approval-456", subjectId: "subject-123", type: "FINAL_MERGE", status: "APPROVED" });
+
+      await expect(new MergeService({ approvalStore, repoPath }).mergeApproved("subject-123", "approval-456"))
+        .rejects.toThrow(/Missing verified integration provenance/);
+    });
+
     it("rejects merge when approval type is not FINAL_MERGE", async () => {
       const repoPath = createTempDir();
       await initGitRepo(repoPath);
@@ -42,7 +67,7 @@ describe("MergeService", () => {
           status: "APPROVED",
         });
         
-        const mergeService = new MergeService({ approvalStore });
+         const mergeService = new MergeService({ approvalStore });
         
         await expect(
           mergeService.mergeApproved("subject-123", "approval-456")
@@ -68,7 +93,7 @@ describe("MergeService", () => {
           status: "PENDING",
         });
         
-        const mergeService = new MergeService({ approvalStore });
+         const mergeService = new MergeService({ approvalStore });
         
         await expect(
           mergeService.mergeApproved("subject-123", "approval-456")
@@ -94,7 +119,7 @@ describe("MergeService", () => {
           status: "APPROVED",
         });
         
-        const mergeService = new MergeService({ approvalStore });
+         const mergeService = new MergeService({ approvalStore });
         
         await expect(
           mergeService.mergeApproved("subject-123", "approval-456")
@@ -125,7 +150,7 @@ describe("MergeService", () => {
           status: "APPROVED",
         });
         
-        const mergeService = new MergeService({ approvalStore });
+         const mergeService = new MergeService({ approvalStore, repoPath, integrationAttempt: await successfulIntegration(repoPath, git) });
         
         // Should succeed with valid approval
         const result = await mergeService.mergeApproved("subject-123", "approval-456");
@@ -163,7 +188,7 @@ describe("MergeService", () => {
           status: "APPROVED",
         });
         
-        const mergeService = new MergeService({ approvalStore });
+         const mergeService = new MergeService({ approvalStore, repoPath, integrationAttempt: await successfulIntegration(repoPath, git) });
         const result = await mergeService.mergeApproved("subject-123", "approval-456");
         
         // Verify resulting SHA is recorded
@@ -184,7 +209,9 @@ describe("MergeService", () => {
       const expectedTargetSha = (await git.run(repoPath, ["rev-parse", "master"])).stdout.trim();
       const approvalStore = new Map();
       approvalStore.set("approval-456", { id: "approval-456", subjectId: "subject-123", type: "FINAL_MERGE", status: "APPROVED" });
-      const mergeService = new MergeService({ approvalStore, git, repoPath, targetBranch: "master", expectedTargetSha });
+      const integrationAttempt = await successfulIntegration(repoPath, git);
+      integrationAttempt.expectedTargetSha = expectedTargetSha;
+      const mergeService = new MergeService({ approvalStore, git, repoPath, integrationAttempt });
 
       writeFileSync(join(repoPath, "moved.txt"), "target moved");
       await git.run(repoPath, ["add", "moved.txt"]);
@@ -220,7 +247,7 @@ describe("MergeService", () => {
           status: "APPROVED",
         });
         
-        const mergeService = new MergeService({ approvalStore });
+         const mergeService = new MergeService({ approvalStore, repoPath, integrationAttempt: await successfulIntegration(repoPath, await new GitCli()) });
         
         // Should succeed despite failing hook (hooks are disabled)
         const result = await mergeService.mergeApproved("subject-123", "approval-456");

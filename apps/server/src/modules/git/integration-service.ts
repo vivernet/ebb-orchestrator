@@ -9,6 +9,7 @@ export interface IntegrationAttempt {
   currentTargetBranch: string;
   expectedTargetBranch: string;
   worktreePath: string;
+  repoPath: string;
   expectedTargetSha: string | null;
   status: "PREPARED" | "MERGING" | "MERGED" | "FAILED";
   createdAt: string;
@@ -86,6 +87,7 @@ export class IntegrationService {
         currentTargetBranch,
         expectedTargetBranch: currentTargetBranch,
         worktreePath,
+        repoPath,
         expectedTargetSha,
         status: "PREPARED",
         createdAt: new Date().toISOString(),
@@ -116,6 +118,16 @@ export class IntegrationService {
     attempt.status = "MERGING";
     try {
       const result = await runner(attempt.worktreePath, attempt);
+      // The target may have moved while the integration role was running.  Do
+      // this check here, rather than leaving it to an end-to-end caller.
+      const currentTargetSha = (await this.git.run(attempt.repoPath, ["rev-parse", attempt.currentTargetBranch])).stdout.trim();
+      if (!attempt.expectedTargetSha || currentTargetSha !== attempt.expectedTargetSha) {
+        attempt.status = "FAILED";
+        throw new Error(`TARGET_MOVED: expected ${attempt.expectedTargetSha ?? "a verified target"}, found ${currentTargetSha}; restart integration`);
+      }
+      // Keep the verified base on the record consumed by the final merge
+      // guard.  Do not mark an attempt successful without this provenance.
+      attempt.expectedTargetSha = currentTargetSha;
       attempt.status = "MERGED";
       return result;
     } catch (error) {

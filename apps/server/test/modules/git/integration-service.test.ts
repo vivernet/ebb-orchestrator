@@ -139,5 +139,20 @@ describe("IntegrationService", () => {
       // Cleanup
       rmSync(attempt.worktreePath, { recursive: true, force: true });
     });
+
+    it("rejects a target that moved before marking integration merged", async () => {
+      const repoPath = createTempDir();
+      const git = await initGitRepo(repoPath);
+      const service = new IntegrationService();
+      const attempt = await service.prepareIntegration("master", "master", repoPath);
+
+      writeFileSync(join(repoPath, "moved.txt"), "target moved");
+      await git.run(repoPath, ["add", "moved.txt"]);
+      await git.run(repoPath, ["commit", "-m", "move target"]);
+
+      await expect(service.runInIntegrationWorktree(attempt, async () => undefined))
+        .rejects.toThrow(/TARGET_MOVED/);
+      expect(attempt.status).toBe("FAILED");
+    });
   });
 });
