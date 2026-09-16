@@ -33,6 +33,9 @@ import type { AgentRun } from "@orchestrator/contracts";
 import type { RunOutcome } from "../../src/modules/runtime/run-types.js";
 import { HermesRuntimeAdapter } from "../../src/modules/runtime/hermes/hermes-runtime-adapter.js";
 import { ProcessExecutor } from "../../src/platform/process/process-executor.js";
+import { ContextBuilder } from "../../src/modules/context/context-builder.js";
+import { PromptBuilder } from "../../src/modules/runtime/prompt-builder.js";
+import type { TaskContract as PromptTaskContract } from "../../src/modules/context/context-types.js";
 
 const execFileAsync = promisify(execFile);
 const migrationFiles = ["001_system.sql", "002_work_domain.sql", "003_work_control.sql", "004_agent_runs.sql", "005_scheduler.sql", "006_recovery.sql"];
@@ -135,6 +138,11 @@ class AcceptanceWorkflow {
         outcome: raw.outcome,
         ...(raw.findings ? { findings: raw.findings } : {}),
         ...(raw.failedCriteria ? { failedCriteria: raw.failedCriteria } : {}),
+        ...("commitSha" in raw ? { commitSha: (raw as { commitSha: string }).commitSha } : {}),
+        ...("independent" in raw ? { independent: true } : {}),
+        ...("evidence" in raw ? { evidence: (raw as { evidence: string[] }).evidence } : {}),
+        ...("baseSha" in raw ? { baseSha: (raw as { baseSha: string }).baseSha } : {}),
+        ...("provenance" in raw ? { provenance: (raw as { provenance: string[] }).provenance } : {}),
       };
       await this.runs.completionStore().accept(run.capabilityRef!, { runId: run.id, role: run.role, output: roleOutput });
       const completed = await this.runs.collectResult(run.id, {
@@ -293,30 +301,47 @@ describe("Autonomous Task End-to-End Workflow", () => {
       expect(inspected, `${role} run did not finish`).toBeDefined();
       const outcome = await runtime.collectResult(run.id);
       expect(outcome.success, `${role} did not submit a successful result`).toBe(true);
-      const submitted = JSON.parse(outcome.output) as { outcome?: string; version?: string };
+       const submitted = JSON.parse(outcome.output) as { outcome?: string; version?: string; commitSha?: string; independent?: boolean; findings?: unknown[]; evidence?: string[]; baseSha?: string; provenance?: string[] };
       expect(submitted.outcome, `${role} submitted an invalid result`).toBeTruthy();
-      expect(submitted.version).toBe("1");
+       expect(submitted.version).toBe("1");
+       if (role === "Developer") expect(submitted.commitSha).toMatch(/^[0-9a-f]{7,40}$/);
+       if (role === "Reviewer") {
+         expect(submitted.independent).toBe(true);
+         expect(submitted.findings).toEqual(expect.any(Array));
+       }
+       if (role === "QA") expect(submitted.evidence?.length).toBeGreaterThan(0);
+       if (role === "Integration") {
+         expect(submitted.baseSha).toMatch(/^[0-9a-f]{7,40}$/);
+         expect(submitted.provenance?.length).toBeGreaterThan(0);
+       }
       await runs.collectResult(run.id, outcome);
       const usage = await runtime.collectUsage(run.id);
       expect(usage.inputTokens + usage.outputTokens, `${role} emitted no genuine usage`).toBeGreaterThan(0);
        await runs.collectUsage(run.id, usage);
        };
-      for (const role of ["Developer", "Reviewer", "QA"]) {
-        const run = await runs.startRun({ role, model: process.env.HERMES_MODEL ?? "default", taskId, epicId: null, triggerReason: "task-assignment", contextVersion: "hermes-acceptance-v1", outputSchemaVersion: "1", capability: { workspace: worktree.path, allowedTools: ["workspace.read", "workspace.patch", "git.status", "git.diff", "git.commit", "submit_result"] } });
+       const contract: PromptTaskContract = { id: taskId, priority: "p0", goal: "Add GET /health", context: "health check service", requirements: ["GET /health returns 200"], acceptanceCriteria: ['returns 200 and JSON {"status":"ok"}'], dependencies: [], nonGoals: ["no auth changes"], definitionOfDone: ["tests pass"] };
+       const context = new ContextBuilder();
+       const prompts = new PromptBuilder();
+       for (const role of ["Developer", "Reviewer", "QA"]) {
+         const prompt = role === "Developer"
+           ? prompts.buildDeveloperPrompt({ taskContract: context.buildDeveloperPackage({ taskContract: contract, workspaceMeta: { repoPath: worktree.path, branch: `task/${taskId}`, commitHash: "managed" } }).taskContract, workspaceMeta: { repoPath: worktree.path, branch: `task/${taskId}` }, outputInstructions: "Commit the implementation and submit commitSha." })
+           : role === "Reviewer"
+             ? prompts.buildReviewerPrompt({ taskContract: context.buildReviewerPackage({ taskContract: contract, gitDiff: "Read the current worktree diff", checks: ["inspect committed implementation"] }).taskContract, gitDiff: "Read the current worktree diff", checks: ["inspect committed implementation"] })
+             : prompts.buildQAPrompt({ taskContract: context.buildQAPackage({ taskContract: contract, environment: `workspace=${worktree.path}` }).taskContract, environment: `workspace=${worktree.path}` });
+         const run = await runs.startRun({ role, model: process.env.HERMES_MODEL ?? "default", taskId, epicId: null, triggerReason: "task-assignment", contextVersion: "hermes-acceptance-v1", outputSchemaVersion: "1", prompt, capability: { workspace: worktree.path, allowedTools: ["workspace.read", "workspace.patch", "git.status", "git.diff", "git.commit", "submit_result"] } });
         workspaceByRun.set(run.id, worktree.path);
         await runHermesRole(role, worktree.path, run);
         advanceRealStage(workflow, taskId, role);
       }
-      // Reserve the authenticated Integration run before preparing its worktree.
        const integrationWorkspace = join(tmpDir, "real-integration");
-       nextWorkspace = "";
-       const integrationRun = await runs.startRun({ role: "Integration", model: process.env.HERMES_MODEL ?? "default", taskId, epicId: null, triggerReason: "integration", contextVersion: "hermes-acceptance-v1", outputSchemaVersion: "1", capability: { workspace: join(tmpDir, "real-integration"), allowedTools: ["workspace.read", "workspace.search", "git.diff", "project.test", "submit_result"] } });
-       workspaceByRun.set(integrationRun.id, "");
-       nextWorkspace = integrationWorkspace;
-      const integrationService = new IntegrationService({ worktreeDir: integrationWorkspace, database: db!, integrationRunId: integrationRun.id });
-       const realIntegration = await integrationService.prepareIntegration(`task/${taskId}`, "master", masterRepoPath);
-       expect(realIntegration.integrationRunId).toBe(integrationRun.id);
-       workspaceByRun.set(integrationRun.id, realIntegration.worktreePath);
+       const integrationService = new IntegrationService({ worktreeDir: integrationWorkspace, database: db! });
+        const preparedIntegration = await integrationService.prepareIntegration(`task/${taskId}`, "master", masterRepoPath);
+        const integrationPrompt = new PromptBuilder().buildIntegrationPrompt({ taskContract: contract, workspace: preparedIntegration.worktreePath, targetRef: "master", checks: ["run smoke test", "verify target and task provenance"] });
+        nextWorkspace = preparedIntegration.worktreePath;
+        const integrationRun = await runs.startRun({ role: "Integration", model: process.env.HERMES_MODEL ?? "default", taskId, epicId: null, triggerReason: "integration", contextVersion: "hermes-acceptance-v1", outputSchemaVersion: "1", prompt: integrationPrompt, capability: { workspace: preparedIntegration.worktreePath, allowedTools: ["workspace.read", "workspace.search", "git.diff", "project.test", "submit_result"] } });
+        workspaceByRun.set(integrationRun.id, preparedIntegration.worktreePath);
+        const realIntegration = integrationService.bindIntegrationRun(preparedIntegration, integrationRun.id);
+        expect(realIntegration.integrationRunId).toBe(integrationRun.id);
       await integrationService.runInIntegrationWorktree(realIntegration, async () => {
         await runHermesRole("Integration", realIntegration.worktreePath, integrationRun);
       });

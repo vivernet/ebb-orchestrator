@@ -39,7 +39,7 @@ export class RunService {
    * Start a new agent run.
    */
   async startRun(options: StartRunOptions): Promise<AgentRun> {
-    return this.db.transaction((tx) => {
+    const record = this.db.transaction((tx) => {
       const id = crypto.randomUUID();
       const capabilityRef = crypto.randomUUID();
       const capability = { id: capabilityRef, capabilityRef, runId: id,
@@ -67,6 +67,7 @@ export class RunService {
         outputTokens: null,
         cost: null,
         capabilityRef,
+        ...(options.prompt ? { prompt: options.prompt } : {}),
       };
 
       tx.run(
@@ -104,9 +105,13 @@ export class RunService {
         }
       );
 
-      this.runtime.startRun(record);
       return record;
     });
+    // startRun is the runtime readiness barrier: adapters resolve only after
+    // their profile/config and launch have been prepared. Never expose a run
+    // to callers while that asynchronous work is still in flight.
+    await this.runtime.startRun(record);
+    return record;
   }
 
   /**
@@ -123,9 +128,10 @@ export class RunService {
           attempt: options.attempt,
         }
       );
-      this.runtime.resumeRun(runId, options);
       return this.getRun(tx, runId);
     });
+    await this.runtime.resumeRun(runId, options);
+    return this.getRun(this.db, runId);
   }
 
   /**

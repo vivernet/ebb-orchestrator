@@ -339,5 +339,23 @@ describe('PromptBuilder', () => {
       expect(prompt).not.toContain('Developer said');
       expect(prompt).not.toContain('Developer implementation');
     });
+
+    it('includes role-separated submission requirements and task boundaries', () => {
+      const contract = {
+        id: 'TASK-001', goal: 'Add health endpoint', context: 'service',
+        requirements: ['GET /health returns 200'],
+        acceptanceCriteria: ['returns JSON status ok'], dependencies: [],
+        nonGoals: ['no auth changes'], definitionOfDone: ['tests pass'], priority: 'p0' as const,
+      };
+      const reviewer = promptBuilder.buildReviewerPrompt({ taskContract: contract });
+      const qa = promptBuilder.buildQAPrompt({ taskContract: contract, environment: 'managed workspace' });
+      const integration = promptBuilder.buildIntegrationPrompt({ taskContract: contract, workspace: 'integration', targetRef: 'master' });
+      expect(reviewer).toContain('independent=true');
+      expect(reviewer).toContain('submit_result');
+      expect(qa).toContain('no auth changes');
+      expect(qa).toContain('evidence');
+      expect(integration).toContain('baseSha');
+      expect(integration).toContain('provenance');
+    });
   });
 });

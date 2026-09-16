@@ -94,6 +94,10 @@ export class PromptBuilder {
       }
       lines.push('');
     }
+    lines.push('=== EXECUTION / SUBMISSION ===');
+    lines.push('Work only in the assigned workspace. Make the requested change, run the relevant checks, commit it, and include the resulting commitSha in your result.');
+    lines.push('Finish by calling submit_result exactly once with the validated Developer schema.');
+    lines.push('');
 
     // Findings (relevant active ones)
     if (input.findings && input.findings.length > 0) {
@@ -185,6 +189,9 @@ export class PromptBuilder {
       lines.push(`- ${dod}`);
     });
     lines.push('');
+    lines.push('Non-Goals:');
+    input.taskContract.nonGoals.forEach((ng) => lines.push(`- ${ng}`));
+    lines.push('');
 
     // Git Diff
     if (input.gitDiff) {
@@ -235,7 +242,8 @@ export class PromptBuilder {
     lines.push('2. Review the changes in the diff');
     lines.push('3. Check against requirements and acceptance criteria');
     lines.push('4. Verify against guidelines and decisions');
-    lines.push('5. Report PASS or list findings with severity');
+    lines.push('5. Report PASS only with findings (possibly an empty array), set independent=true, and include concrete file/test evidence');
+    lines.push('6. Finish by calling submit_result exactly once with the validated Reviewer schema');
     lines.push('');
 
     lines.push('Begin your review.');
@@ -255,6 +263,7 @@ export class PromptBuilder {
 
     lines.push('You are a QA Agent.');
     lines.push('Verify the implementation against acceptance criteria.');
+    lines.push('Do not make implementation changes. Use the assigned workspace and report executable evidence.');
     lines.push('');
 
     // Task Contract - focus on acceptance criteria
@@ -262,6 +271,13 @@ export class PromptBuilder {
     input.taskContract.acceptanceCriteria.forEach((ac) => {
       lines.push(`- ${ac}`);
     });
+    lines.push('');
+
+    lines.push('=== TASK BOUNDARIES ===');
+    lines.push(`Goal: ${input.taskContract.goal}`);
+    lines.push(`Non-goals: ${input.taskContract.nonGoals.join('; ') || 'none'}`);
+    lines.push('A PASS requires evidence for every required acceptance criterion; include evidence as strings in the result.');
+    lines.push('Finish by calling submit_result exactly once with the validated QA schema.');
     lines.push('');
 
     // Environment
@@ -290,6 +306,33 @@ export class PromptBuilder {
 
     lines.push('Begin your QA verification.');
 
+    return lines.join('\n');
+  }
+
+  /** Build the independent Integration prompt. */
+  buildIntegrationPrompt(input: {
+    taskContract: TaskContract;
+    workspace?: string;
+    targetRef?: string;
+    checks?: string[];
+  }): string {
+    const lines = [
+      'You are an Integration Agent in an independent workspace.',
+      'Do not implement new features. Verify provenance from the target base, merge/test the task branch, and report the exact base SHA.',
+      '=== TASK CONTRACT ===',
+      `Goal: ${input.taskContract.goal}`,
+      `Requirements: ${input.taskContract.requirements.join('; ')}`,
+      `Acceptance criteria: ${input.taskContract.acceptanceCriteria.join('; ')}`,
+      `Non-goals: ${input.taskContract.nonGoals.join('; ') || 'none'}`,
+      '=== WORKSPACE / STAGE ===',
+      `Workspace: ${input.workspace ?? 'assigned workspace'}`,
+      `Target ref: ${input.targetRef ?? 'master'}`,
+      `Checks: ${(input.checks ?? []).join('; ') || 'run the project tests'}`,
+      'A PASS must include baseSha and provenance entries describing the target and task refs, plus test evidence.',
+      'Finish by calling submit_result exactly once with the validated Integration schema.',
+      '',
+      'Begin integration verification.',
+    ];
     return lines.join('\n');
   }
 }

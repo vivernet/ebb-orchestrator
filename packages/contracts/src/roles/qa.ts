@@ -7,6 +7,7 @@ import { BaseOutputSchema, QaOutcome } from "./common.js";
 
 export const QaOutputSchema = BaseOutputSchema.extend({
   outcome: QaOutcome,
+  evidence: z.array(z.string().min(1)).optional(),
   failedCriteria: z
     .array(
       z.object({

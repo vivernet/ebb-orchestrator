@@ -37,4 +37,6 @@ export interface AgentRun {
   outputTokens: number | null;
   cost: number | null;
   capabilityRef?: string;
+  /** Fully rendered, role-specific prompt supplied by the orchestrator. */
+  prompt?: string;
 }

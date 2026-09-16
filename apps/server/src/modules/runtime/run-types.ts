@@ -32,4 +32,5 @@ export interface StartRunOptions {
   contextVersion: string;
   outputSchemaVersion: string;
   capability?: { workspace: string; allowedTools: ToolId[] };
+  prompt?: string;
 }

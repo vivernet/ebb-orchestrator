@@ -56,6 +56,11 @@ export interface RoleOutput {
     required: boolean;
     description: string;
   }>;
+  commitSha?: string;
+  independent?: boolean;
+  evidence?: string[];
+  baseSha?: string;
+  provenance?: string[];
 }
 
 // Output validation result

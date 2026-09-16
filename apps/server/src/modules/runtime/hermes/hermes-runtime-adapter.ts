@@ -366,7 +366,14 @@ export class HermesRuntimeAdapter implements AgentRuntime {
   private async writePromptFile(run: AgentRun): Promise<string> {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-prompt-"));
     const promptFile = path.join(tempDir, `prompt-${run.id}.txt`);
-    await fs.writeFile(promptFile, `Task: ${run.taskId ?? "N/A"}\nRole: ${run.role}\nContext: ${run.contextVersion ?? ""}`);
+    const body = run.prompt ?? [
+      `Task: ${run.taskId ?? "N/A"}`,
+      `Role: ${run.role}`,
+      `Context version: ${run.contextVersion ?? ""}`,
+      "Use the Orchestrator tools only.",
+      "Submit exactly one valid result with submit_result before ending.",
+    ].join("\n");
+    await fs.writeFile(promptFile, body);
     return promptFile;
   }
 

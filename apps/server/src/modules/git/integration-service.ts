@@ -75,7 +75,7 @@ export class IntegrationService {
   private databasePath: string;
   private databaseClosed = false;
   private readonly ownsDatabase: boolean;
-  private readonly integrationRunId: string | undefined;
+  private integrationRunId: string | undefined;
 
   constructor(options: IntegrationServiceOptions = {}) {
     this.git = options.git ?? new GitCli();
@@ -167,6 +167,14 @@ export class IntegrationService {
         // Ignore cleanup errors
       }
     }
+  }
+
+  /** Bind an already-created integration workspace to its authenticated run. */
+  bindIntegrationRun(attempt: IntegrationAttempt, integrationRunId: string): IntegrationAttempt {
+    if (this.databaseClosed) throw new Error("Integration database is closed");
+    this.integrationRunId = integrationRunId;
+    this.database.run("UPDATE integration_attempts SET integration_run_id = $run WHERE id = $id", { id: attempt.id, run: integrationRunId });
+    return { ...attempt, integrationRunId };
   }
 
   /** Run the real Integration role only after the isolated worktree is prepared. */
