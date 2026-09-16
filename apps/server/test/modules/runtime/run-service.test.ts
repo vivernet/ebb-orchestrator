@@ -8,8 +8,8 @@ import { createSqliteDatabase } from "../../../src/platform/database/sqlite-data
 import { runMigrations, type Migration } from "../../../src/platform/database/migrator.js";
 import type { Database } from "../../../src/platform/database/database.js";
 import { RunService } from "../../../src/modules/runtime/run-service.js";
-import { FakeAgentRuntime } from "@orchestrator/testing";
-import type { AgentRun, RunOutcome } from "../../../src/modules/runtime/run-types.js";
+import { FakeAgentRuntime } from "../../fakes/fake-agent-runtime.js";
+import type { RunOutcome } from "../../../src/modules/runtime/run-types.js";
 
 const migration001 = readFileSync(
   join(import.meta.dirname, "../../../src/platform/database/migrations/001_system.sql"),

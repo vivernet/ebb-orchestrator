@@ -3,9 +3,9 @@
  * Never sleeps or uses the network.
  */
 
-import type { AgentRuntime } from "./agent-runtime.js";
 import type { AgentRun } from "@orchestrator/contracts";
-import type { RunOutcome } from "./run-types.js";
+import type { AgentRuntime } from "../../src/modules/runtime/agent-runtime.js";
+import type { RunOutcome } from "../../src/modules/runtime/run-types.js";
 
 interface ScriptedOutcome {
   outcome: RunOutcome;
@@ -40,7 +40,10 @@ export class FakeAgentRuntime implements AgentRuntime {
   /**
    * Resume a run.
    */
-  async resumeRun(_runId: string, _options: { sessionId: string; attempt: number }): Promise<void> {
+  async resumeRun(
+    _runId: string,
+    _options: { sessionId: string; attempt: number },
+  ): Promise<void> {
     // Record resumed
   }
 
@@ -66,7 +69,7 @@ export class FakeAgentRuntime implements AgentRuntime {
     if (roles.length === 0) {
       throw new Error("No scripted outcome available");
     }
-    const role = roles[0];
+    const role = roles[0]!;
     const scripted = this.scripts.get(role)!;
     const available = scripted.find((s) => !s.consumed);
     if (!available) {
