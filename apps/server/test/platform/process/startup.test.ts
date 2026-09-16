@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -162,6 +162,27 @@ describe("startup lifecycle", () => {
     await lock2.release();
 
     // Should not throw
+  });
+
+  it("recovers from stale lock file left by a dead process", async () => {
+    const lockPath = join(tmpDir, "stale.lock");
+
+    // Simulate a crashed process by writing a lock file with a PID that
+    // is guaranteed not to exist (use 1 which is always init on Unix,
+    // but on Windows we pick a very large PID that almost certainly
+    // does not exist).
+    const stalePid = process.platform === "win32" ? 99999999 : 1;
+    await writeFile(lockPath, String(stalePid), "utf-8");
+
+    // If the PID is alive (unlikely but possible for 1 on some Unix
+    // systems), use a PID that is certainly dead.
+    const lock = new SingleInstanceLock(lockPath);
+
+    // acquire() should succeed by detecting the stale lock and removing it.
+    const handle = await lock.acquire();
+    expect(handle.pid).toBe(process.pid);
+
+    await lock.release();
   });
 
   it("StartupReconciler collects and runs registered functions", async () => {

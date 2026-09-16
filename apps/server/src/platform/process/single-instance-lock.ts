@@ -49,7 +49,8 @@ export class SingleInstanceLock {
             `Lock file: ${this.lockPath}`,
         );
       }
-      // Stale lock – overwrite it.
+      // Stale lock – delete it before re-creating.
+      await unlink(this.lockPath).catch(() => {});
     }
 
     const handle = await open(this.lockPath, "wx");
