@@ -12,7 +12,7 @@
  */
 
 import { randomUUID, createHash } from "node:crypto";
-import { open, rename, unlink, access, mkdir, readFile } from "node:fs/promises";
+import { open, rename, unlink, access, mkdir, readFile, readdir, rmdir } from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import { Readable } from "node:stream";
 import { join } from "node:path";
@@ -177,6 +177,21 @@ export class ArtifactStore {
       if (!fileExists) {
         // File missing → delete stale DB row.
         this.repository.deleteById(row.id);
+
+        // Clean up orphaned temp files: <id>/artifact.<uuid>.tmp
+        const parentDir = join(this.artifactsDir, row.id);
+        try {
+          const files = await readdir(parentDir);
+          for (const f of files) {
+            if (f.endsWith(".tmp")) {
+              await unlink(join(parentDir, f)).catch(() => {});
+            }
+          }
+          await rmdir(parentDir).catch(() => {});
+        } catch {
+          // Directory may not exist; ignore.
+        }
+
         cleaned++;
         continue;
       }
