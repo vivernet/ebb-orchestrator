@@ -52,6 +52,7 @@ export class McpServer {
    * Never trusts task/workspace IDs from model payload - resolves server-side.
    */
   async callTool(name: string, args: Record<string, unknown>): Promise<ToolCallResult> {
+    try { this.capability.revalidateAccess(); } catch (error) { return { success: false, error: error instanceof Error ? error.message : 'capability revoked' }; }
     // Get the tool definition
     const tool = this.registry.getTool(name);
     if (!tool) {

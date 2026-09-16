@@ -34,7 +34,7 @@ export class RunCapability {
   private workspaceTools: WorkspaceTools;
   private gitTools: GitTools | null;
 
-  constructor(public capability: RunCapabilityDef) {
+  constructor(public capability: RunCapabilityDef, private readonly revalidate?: () => void) {
     this.resolver = new PathResolver();
     this.gateway = new ActionGateway(this.resolver, capability.workspace);
     this.workspaceTools = new WorkspaceTools(this.resolver, capability.workspace);
@@ -55,6 +55,8 @@ export class RunCapability {
   isToolAllowed(toolId: ToolId): boolean {
     return this.capability.allowedTools.includes(toolId);
   }
+
+  revalidateAccess(): void { this.revalidate?.(); }
 
   /** Get workspace read utility */
   getReadTool() {

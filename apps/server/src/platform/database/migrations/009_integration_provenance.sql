@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS integration_attempts (
   expected_target_sha TEXT NOT NULL,
   worktree_path TEXT NOT NULL,
   integration_run_id TEXT,
+  source_sha TEXT NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('PREPARED','MERGING','MERGED','FAILED')),
   created_at TEXT NOT NULL
 );
@@ -15,6 +16,7 @@ CREATE INDEX IF NOT EXISTS idx_integration_attempts_run ON integration_attempts(
 CREATE TRIGGER IF NOT EXISTS integration_attempts_immutable_provenance
 BEFORE UPDATE OF id, repository_path, source_branch, target_branch,
   expected_target_sha, worktree_path, integration_run_id, created_at
+  , source_sha
 ON integration_attempts
 BEGIN
   SELECT RAISE(ABORT, 'integration provenance is immutable');

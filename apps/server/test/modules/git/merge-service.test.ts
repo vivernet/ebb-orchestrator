@@ -7,6 +7,7 @@ import { GitCli } from "../../../src/modules/git/git-cli.js";
 import { MergeService } from "../../../src/modules/git/merge-service.js";
 import { IntegrationService } from "../../../src/modules/git/integration-service.js";
 import type { IntegrationAttempt } from "../../../src/modules/git/integration-service.js";
+import { createSqliteDatabase } from "../../../src/platform/database/sqlite-database.js";
 
 function createTempDir(): string {
   return mkdtempSync(join(tmpdir(), "git-merge-"));
@@ -27,9 +28,19 @@ async function initGitRepo(path: string, commitMessage: string = "initial"): Pro
 }
 
 async function successfulIntegration(repoPath: string, git: GitCli, sourceBranch = "HEAD"): Promise<IntegrationAttempt> {
-  const service = new IntegrationService({ git });
+  const integrationRunId = `integration-run-${Date.now()}-${Math.random()}`;
+  const worktreeDir = createTempDir();
+  const provenancePath = join(worktreeDir, "integration-provenance.sqlite");
+  const db = createSqliteDatabase(provenancePath);
+  db.exec("CREATE TABLE agent_runs (id TEXT PRIMARY KEY, role TEXT, status TEXT, output TEXT)");
+  db.run("INSERT INTO agent_runs (id, role, status, output) VALUES ($id, 'Integration', 'IN_PROGRESS', NULL)", { id: integrationRunId });
+  const service = new IntegrationService({ git, database: db, worktreeDir, integrationRunId });
   const attempt = await service.prepareIntegration(sourceBranch, "master", repoPath);
-  await service.runInIntegrationWorktree(attempt, async () => undefined);
+  await service.runInIntegrationWorktree(attempt, async () => {
+    const completedDb = createSqliteDatabase(provenancePath);
+    completedDb.run("UPDATE agent_runs SET status = 'COMPLETED', output = $output WHERE id = $id", { id: integrationRunId, output: JSON.stringify({ version: "1", outcome: "PASS" }) });
+    completedDb.close();
+  });
   return attempt;
 }
 

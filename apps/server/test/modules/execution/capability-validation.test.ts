@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createSqliteDatabase } from '../../../src/platform/database/sqlite-database.js';
 import { loadValidatedCapability } from '../../../src/modules/execution/capability-validation.js';
+import { McpServer } from '../../../src/modules/execution/mcp/mcp-server.js';
 
 function fixture(status: string, json = JSON.stringify({ runId: 'run-1', capabilityRef: 'cap-1', role: 'reviewer', workspace: '/tmp/work', allowedTools: ['submit_result'] })) {
   const db = createSqliteDatabase(join(mkdtempSync(join(tmpdir(), 'capability-')), 'state.sqlite'));
@@ -26,6 +27,15 @@ describe('issued capability validation', () => {
   it('accepts only an active authoritative binding', () => {
     const db = fixture('STARTED');
     expect(loadValidatedCapability(db, 'cap-1').runId).toBe('run-1');
+    db.close();
+  });
+  it('revokes an already-started MCP server when the persisted run is cancelled', async () => {
+    const db = fixture('IN_PROGRESS');
+    const server = new McpServer(loadValidatedCapability(db, 'cap-1'));
+    db.run("UPDATE agent_runs SET status = 'CANCELLED' WHERE id = 'run-1'");
+    const result = await server.callTool('submit_result', { payload: { version: '1.0', outcome: 'PASS' } });
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/inactive/);
     db.close();
   });
 });

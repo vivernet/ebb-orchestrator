@@ -128,17 +128,21 @@ export class MergeService {
     const provenanceDb = optionsDatabase(this.integrationAttempt, this.database);
     const provenance = integration && provenanceDb ? getIntegrationProvenance(provenanceDb, integration) : null;
     const hasAgentRuns = Boolean(provenanceDb?.get<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'agent_runs'"));
-    if (provenance && hasAgentRuns && !integration?.integrationRunId) {
+    if (!integration?.integrationRunId) {
       throw new Error("Missing verified integration provenance: associated Integration run is required");
     }
-    if (provenance && integration?.integrationRunId) {
-      const run = provenanceDb?.get<{ id: string; role: string; status: string }>(
-        "SELECT id, role, status FROM agent_runs WHERE id = $id", { id: integration.integrationRunId });
-      if (!run || run.role.toLowerCase() !== "integration" || run.status !== "COMPLETED") {
+    if (!provenanceDb || !hasAgentRuns) throw new Error("Missing verified integration provenance: authoritative agent run database is required");
+    if (provenance) {
+      const run = provenanceDb.get<{ id: string; role: string; status: string; output: string | null }>(
+        "SELECT id, role, status, output FROM agent_runs WHERE id = $id", { id: integration.integrationRunId });
+      if (!run || run.role.toLowerCase() !== "integration" || run.status !== "COMPLETED" || !run.output) {
         throw new Error("Missing verified integration provenance: associated Integration run is not completed");
       }
+      let output: unknown;
+      try { output = JSON.parse(run.output); } catch { output = undefined; }
+      if (!output || (output as { outcome?: string }).outcome !== "PASS") throw new Error("Missing verified integration provenance: stored Integration result is not PASS");
     }
-    if (!integration || !provenance || !provenance.snapshot.sourceBranch ||
+    if (!integration || !provenance || !provenance.snapshot.sourceBranch || !provenance.snapshot.sourceSha ||
         !provenance.snapshot.currentTargetBranch || !provenance.snapshot.expectedTargetSha) {
       throw new Error("Missing verified integration provenance: successful integration, source branch, and expected target SHA are required");
     }
@@ -172,10 +176,15 @@ export class MergeService {
     currentTargetBranch: string;
     repoPath: string;
     expectedTargetSha: string | null;
+    sourceSha: string;
   }>): Promise<MergeResult> {
     // Re-read the target immediately before changing it. An old integration
     // result is never allowed to merge onto a moving target.
     const target = integration.currentTargetBranch;
+    if (integration.sourceBranch !== "HEAD") {
+      const sourceBefore = (await this.git.run(integration.repoPath, ["rev-parse", integration.sourceBranch])).stdout.trim();
+      if (sourceBefore !== integration.sourceSha) throw new Error(`SOURCE_MOVED: expected ${integration.sourceSha}, found ${sourceBefore}; restart integration`);
+    }
     const targetBefore = (await this.git.run(integration.repoPath, ["rev-parse", target])).stdout.trim();
     if (targetBefore !== integration.expectedTargetSha) {
       throw new Error(`TARGET_MOVED: expected ${integration.expectedTargetSha}, found ${targetBefore}; restart integration`);
@@ -196,7 +205,7 @@ export class MergeService {
         `core.hooksPath=${emptyHooksDir.replace(/\\/g, "/")}`,
         "merge",
         "--no-edit",
-        integration.sourceBranch,
+        integration.sourceSha,
       ];
       if (currentBranch !== target) {
         await this.git.run(integration.repoPath, ["checkout", target]);

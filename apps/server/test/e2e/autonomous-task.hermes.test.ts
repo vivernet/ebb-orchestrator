@@ -56,6 +56,7 @@ class DeterministicRuntime implements AgentRuntime {
 }
 
 class AcceptanceWorkflow {
+  private integrationRunId: string | undefined;
   constructor(
     private readonly db: Database,
     private readonly workflow: WorkflowEngine,
@@ -67,6 +68,12 @@ class AcceptanceWorkflow {
   ) {}
 
   ready(): void { this.workflow.transition(this.taskId, "READY"); }
+
+  async reserveIntegrationRun(): Promise<string> {
+    const run = await this.runs.startRun({ role: "Integration", model: "deterministic-test-runtime", taskId: this.taskId, epicId: null, triggerReason: "integration", contextVersion: "acceptance-v1", outputSchemaVersion: "1" });
+    this.integrationRunId = run.id;
+    return run.id;
+  }
 
   async developer(): Promise<WorktreeRecord> {
     this.workflow.transition(this.taskId, "DEVELOPMENT");
@@ -112,7 +119,12 @@ class AcceptanceWorkflow {
     expect(readFileSync(join(attempt.worktreePath, "src", "server.js"), "utf8")).not.toContain("/health");
     await this.git.run(attempt.worktreePath, ["merge", "--no-edit", `task/${this.taskId}`]);
     await execFileAsync(process.execPath, ["test/smoke.js"], { cwd: attempt.worktreePath });
-    await this.record("Integration", { outcome: "PASS", baseSha: targetSha, conflicts: [] }, "integration");
+    if (this.integrationRunId) {
+      const output = { version: "1", outcome: "PASS" };
+      await this.runs.completionStore().accept(this.runs.getCapabilityReference(this.integrationRunId), { runId: this.integrationRunId, role: "Integration", output });
+      await this.runs.collectResult(this.integrationRunId, { success: true, exitCode: 0, output: JSON.stringify(output), validatedSubmission: true, diagnostics: { runId: this.integrationRunId, sessionId: null, stderr: "", exitCode: 0, artifactReferences: [] } });
+      await this.runs.collectUsage(this.integrationRunId, { inputTokens: 1, cachedInputTokens: 0, outputTokens: 1, cost: 0 });
+    } else await this.record("Integration", { outcome: "PASS", baseSha: targetSha, conflicts: [] }, "integration");
     this.workflow.transition(this.taskId, "READY_FOR_MERGE");
   }
 
@@ -183,9 +195,10 @@ describe("Autonomous Task End-to-End Workflow", () => {
     const worktree = await driver.developer();
     await driver.reviewer(worktree);
     await driver.qa(worktree);
-    const integration = await new IntegrationService({ worktreeDir: join(tmpDir, "integration") }).prepareIntegration(`task/${taskId}`, "master", masterRepoPath);
-     mergeService = new MergeService({ approvalStore: new Map(), repoPath: masterRepoPath, integrationAttempt: integration });
-     await new IntegrationService().runInIntegrationWorktree(integration, async () => driver.integration(integration));
+    const integrationService = new IntegrationService({ worktreeDir: join(tmpDir, "integration"), database: db!, integrationRunId: await driver.reserveIntegrationRun() });
+    const integration = await integrationService.prepareIntegration(`task/${taskId}`, "master", masterRepoPath);
+     mergeService = new MergeService({ approvalStore: new Map(), repoPath: masterRepoPath, integrationAttempt: integration, database: db! });
+     await integrationService.runInIntegrationWorktree(integration, async () => driver.integration(integration));
     const outcomes = db!.all<{ role: string; output: string }>("SELECT role, output FROM agent_runs WHERE task_id = $task_id ORDER BY started_at", { task_id: taskId });
     expect(outcomes.map((row) => row.role)).toEqual(["Developer", "Reviewer", "QA", "Integration"]);
     expect(JSON.parse(outcomes[1]!.output)).toMatchObject({ outcome: "PASS", findings: [] });

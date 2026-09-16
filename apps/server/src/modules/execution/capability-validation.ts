@@ -6,6 +6,11 @@ const tools = new Set<ToolId>(['workspace.read', 'workspace.search', 'workspace.
 
 /** Load a capability only after checking its authoritative, active run row. */
 export function loadValidatedCapability(db: Database, capabilityRef: string): RunCapability {
+  const validate = (): void => {
+    const active = db.get<{ status: string; capability_ref: string | null; capability_json: string | null }>(
+      'SELECT status, capability_ref, capability_json FROM agent_runs WHERE capability_ref = $ref', { ref: capabilityRef });
+    if (!active || !['STARTED', 'IN_PROGRESS'].includes(active.status) || active.capability_ref !== capabilityRef || !active.capability_json) throw new Error('unknown or inactive capability reference');
+  };
   const row = db.get<{ id: string; role: string; status: string; capability_ref: string | null; capability_json: string | null }>(
     'SELECT id, role, status, capability_ref, capability_json FROM agent_runs WHERE capability_ref = $ref', { ref: capabilityRef });
   if (!row || !['STARTED', 'IN_PROGRESS'].includes(row.status)) throw new Error('unknown or inactive capability reference');
@@ -25,5 +30,5 @@ export function loadValidatedCapability(db: Database, capabilityRef: string): Ru
       new Set(allowedTools).size !== allowedTools.length || !roles.has(role.toLowerCase() as RoleName)) {
     throw new Error('capability does not match authoritative agent run');
   }
-  return new RunCapability({ id: capabilityRef, capabilityRef, runId, role: role.toLowerCase() as RoleName, workspace, allowedTools: allowedTools as ToolId[] });
+  return new RunCapability({ id: capabilityRef, capabilityRef, runId, role: role.toLowerCase() as RoleName, workspace, allowedTools: allowedTools as ToolId[] }, validate);
 }
