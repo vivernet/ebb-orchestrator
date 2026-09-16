@@ -58,10 +58,20 @@ async function main() {
   // Process stdio requests
   const input = createInterface({ input: process.stdin });
   for await (const line of input) {
+    let request: unknown;
     try {
-      const request = JSON.parse(line.toString());
+      request = JSON.parse(line.toString());
+    } catch {
+      console.log(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }));
+      continue;
+    }
+    try {
       const response = await server.processRequest(request);
-      if (request?.method === 'tools/call' && request?.params?.name === 'submit_result' && response && resultFile) {
+      const requestRecord = request && typeof request === 'object' && !Array.isArray(request)
+        ? request as Record<string, unknown> : undefined;
+      const requestParams = requestRecord?.params && typeof requestRecord.params === 'object' && !Array.isArray(requestRecord.params)
+        ? requestRecord.params as Record<string, unknown> : undefined;
+      if (requestRecord?.method === 'tools/call' && requestParams?.name === 'submit_result' && response && resultFile) {
         const content = (response.result as { content?: Array<{ text?: string }> }).content?.[0]?.text;
         const toolResult = content ? JSON.parse(content) as { outcome?: unknown } : undefined;
         if (toolResult?.outcome === undefined) throw new Error('submit_result did not return a result');
@@ -70,7 +80,10 @@ async function main() {
       }
       if (response) console.log(JSON.stringify(response));
     } catch {
-      console.log(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }));
+      const id = request && typeof request === 'object' && !Array.isArray(request) &&
+        ('id' in request) && (typeof request.id === 'string' || typeof request.id === 'number' || request.id === null)
+        ? request.id : undefined;
+      if (id !== undefined) console.log(JSON.stringify({ jsonrpc: '2.0', id, error: { code: -32603, message: 'Internal error' } }));
     }
   }
   db.close();

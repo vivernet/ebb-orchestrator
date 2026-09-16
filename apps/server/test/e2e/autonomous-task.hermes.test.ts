@@ -27,6 +27,8 @@ import { IntegrationService, type IntegrationAttempt } from "../../src/modules/g
 import { MergeService } from "../../src/modules/git/merge-service.js";
 import { ApprovalService } from "../../src/modules/approvals/approval-service.js";
 import { ActionGateway } from "../../src/modules/execution/action-gateway.js";
+import { McpServer } from "../../src/modules/execution/mcp/mcp-server.js";
+import { RunCapability } from "../../src/modules/execution/run-capability.js";
 import { GitTools } from "../../src/modules/execution/git-tools.js";
 import { PathResolver } from "../../src/platform/security/path-resolver.js";
 import { RunService } from "../../src/modules/runtime/run-service.js";
@@ -123,7 +125,19 @@ class AcceptanceWorkflow {
     expect(attempt.expectedTargetSha).toBe(targetSha);
     expect((await this.git.run(attempt.worktreePath, ["rev-parse", "HEAD"])).stdout.trim()).not.toBe(targetSha);
     expect(readFileSync(join(attempt.worktreePath, "src", "server.js"), "utf8")).toContain("/health");
-    await execFileAsync(process.execPath, ["test/smoke.js"], { cwd: attempt.worktreePath });
+     const mcp = new McpServer(new RunCapability({
+       id: "integration-acceptance",
+       role: "integration",
+       workspace: attempt.worktreePath,
+       allowedTools: ["project.test"],
+       projectConfig: { commands: { test: { executable: process.execPath, args: ["test/smoke.js"] } } },
+     }));
+     expect(mcp.getAvailableTools().map((tool) => tool.name)).toContain("project.test");
+     const testResponse = await mcp.processRequest({ jsonrpc: "2.0", id: "integration-test", method: "tools/call", params: { name: "project.test" } });
+     expect(testResponse).toMatchObject({ jsonrpc: "2.0", id: "integration-test", result: { isError: false } });
+     const testText = (testResponse as { result: { content: Array<{ text: string }> } }).result.content[0]?.text;
+     if (!testText) throw new Error("project.test MCP response did not include result text");
+     expect(JSON.parse(testText)).toMatchObject({ action: "test", success: true, exitCode: 0 });
     if (this.integrationRunId) {
       const output = { version: "1", outcome: "PASS" };
       await this.runs.completionStore().accept(this.runs.getCapabilityReference(this.integrationRunId), { runId: this.integrationRunId, role: "Integration", output });

@@ -15,7 +15,7 @@ type JsonRpcId = string | number | null;
 export interface JsonRpcRequest {
   jsonrpc: '2.0';
   method: string;
-  params?: Record<string, unknown>;
+  params?: unknown;
   id?: JsonRpcId;
 }
 export interface JsonRpcResponse {
@@ -110,45 +110,59 @@ export class McpServer {
    * Process an MCP request.
    */
   async processRequest(request: unknown): Promise<JsonRpcResponse | null> {
-    if (!request || typeof request !== 'object' || Array.isArray(request)) return errorResponse(null, -32600, 'Invalid Request');
+    if (!request || typeof request !== 'object' || Array.isArray(request)) return null;
     const value = request as Record<string, unknown>;
     const id = value.id;
     const isNotification = id === undefined;
     if (value.jsonrpc !== '2.0' || typeof value.method !== 'string' || value.method.length === 0 ||
         (id !== undefined && id !== null && typeof id !== 'string' && typeof id !== 'number') ||
-        (typeof id === 'number' && !Number.isFinite(id)) ||
-        (value.params !== undefined && (!value.params || typeof value.params !== 'object' || Array.isArray(value.params)))) {
-      return errorResponse(id === null || typeof id === 'string' || typeof id === 'number' ? id : null, -32600, 'Invalid Request');
+        (typeof id === 'number' && !Number.isFinite(id))) {
+      return isNotification
+        ? null
+        : errorResponse(id === null || typeof id === 'string' || typeof id === 'number' ? id : null, -32600, 'Invalid Request');
     }
     const requestValue = value as unknown as JsonRpcRequest;
     const respond = (response: JsonRpcResponse): JsonRpcResponse | null => isNotification ? null : response;
-    switch (requestValue.method) {
-      case 'tools/list':
-        return respond({ jsonrpc: '2.0', id: id ?? null, result: { tools: this.getAvailableTools() } });
+    if (requestValue.params !== undefined &&
+        (!requestValue.params || typeof requestValue.params !== 'object' || Array.isArray(requestValue.params))) {
+      return respond(errorResponse(id ?? null, -32602, 'Invalid params'));
+    }
+    try {
+      switch (requestValue.method) {
+        case 'tools/list':
+          return respond({ jsonrpc: '2.0', id: id ?? null, result: { tools: this.getAvailableTools() } });
 
-      case 'tools/call': {
-        if (!requestValue.params || typeof requestValue.params.name !== 'string' ||
-            (requestValue.params.arguments !== undefined && (!requestValue.params.arguments || typeof requestValue.params.arguments !== 'object' || Array.isArray(requestValue.params.arguments)))) {
-          return respond(errorResponse(id ?? null, -32602, 'Invalid params'));
+        case 'tools/call': {
+          if (!requestValue.params || typeof requestValue.params !== 'object' || Array.isArray(requestValue.params) ||
+              typeof (requestValue.params as Record<string, unknown>).name !== 'string' ||
+              ((requestValue.params as Record<string, unknown>).arguments !== undefined &&
+                (!(requestValue.params as Record<string, unknown>).arguments ||
+                  typeof (requestValue.params as Record<string, unknown>).arguments !== 'object' ||
+                  Array.isArray((requestValue.params as Record<string, unknown>).arguments)))) {
+            return respond(errorResponse(id ?? null, -32602, 'Invalid params'));
+          }
+          const params = requestValue.params as Record<string, unknown>;
+          const toolName = params.name as string;
+          const toolArgs = (params.arguments as Record<string, unknown> | undefined) ?? {};
+          const result = await this.callTool(toolName, toolArgs);
+          return respond({ jsonrpc: '2.0', id: id ?? null, result: {
+            content: [{ type: 'text', text: JSON.stringify(result.success ? result.result : { error: result.error }) }],
+            isError: result.success !== true,
+          } });
         }
-        const toolName = requestValue.params.name;
-        const toolArgs = (requestValue.params.arguments as Record<string, unknown> | undefined) ?? {};
-        const result = await this.callTool(toolName, toolArgs);
-        return respond({ jsonrpc: '2.0', id: id ?? null, result: {
-          content: [{ type: 'text', text: JSON.stringify(result.success ? result.result : { error: result.error }) }],
-          isError: result.success !== true,
-        } });
+
+        case 'initialize':
+          return respond({ jsonrpc: '2.0', id: id ?? null, result: {
+            protocolVersion: '2024-11-05',
+            capabilities: { tools: {} },
+            serverInfo: { name: 'orchestrator-mcp', version: '1.0.0' },
+          }});
+
+        default:
+          return respond(errorResponse(id ?? null, -32601, `Method not found: ${requestValue.method}`));
       }
-
-      case 'initialize':
-        return respond({ jsonrpc: '2.0', id: id ?? null, result: {
-          protocolVersion: '2024-11-05',
-          capabilities: { tools: {} },
-          serverInfo: { name: 'orchestrator-mcp', version: '1.0.0' },
-        }});
-
-      default:
-        return respond(errorResponse(id ?? null, -32601, `Method not found: ${requestValue.method}`));
+    } catch (error) {
+      return respond(errorResponse(id ?? null, -32603, 'Internal error', error instanceof Error ? error.message : undefined));
     }
   }
 }

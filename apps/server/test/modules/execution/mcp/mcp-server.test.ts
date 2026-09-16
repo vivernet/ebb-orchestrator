@@ -55,6 +55,30 @@ describe('MCP Server', () => {
       await expect(server.processRequest({ jsonrpc: '1.0', id: 3, method: 'tools/list' })).resolves.toMatchObject({
         jsonrpc: '2.0', id: 3, error: { code: -32600 },
       });
+      await expect(server.processRequest({ jsonrpc: '2.0', method: 'tools/call', params: {} })).resolves.toBeNull();
+      await expect(server.processRequest({ jsonrpc: '2.0', method: 'tools/list', params: [] })).resolves.toBeNull();
+      await expect(server.processRequest({ jsonrpc: '2.0', id: 5, method: 'tools/list', params: [] })).resolves.toMatchObject({
+        jsonrpc: '2.0', id: 5, error: { code: -32602 },
+      });
+      await expect(server.processRequest({ jsonrpc: '2.0', id: 'request-id', method: 'tools/call', params: [] })).resolves.toMatchObject({
+        jsonrpc: '2.0', id: 'request-id', error: { code: -32602 },
+      });
+      await expect(server.processRequest({ jsonrpc: '2.0', id: null, method: 'tools/list' })).resolves.toMatchObject({
+        jsonrpc: '2.0', id: null, result: expect.any(Object),
+      });
+    });
+
+    it('returns an internal error for runtime failures without mislabeling them as parse errors', async () => {
+      const { McpServer } = await import('../../../../src/modules/execution/mcp/mcp-server.js');
+      const { RunCapability } = await import('../../../../src/modules/execution/run-capability.js');
+      const server = new McpServer(new RunCapability(
+        { id: 'runtime-error', role: 'reviewer', workspace: workspaceDir, allowedTools: ['project.test'] },
+      ));
+      server.getRegistry().getTool = () => { throw new Error('runtime failure'); };
+      await expect(server.processRequest({ jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'project.test' } })).resolves.toMatchObject({
+        jsonrpc: '2.0', id: 4, error: { code: -32603, message: 'Internal error' },
+      });
+      await expect(server.processRequest({ jsonrpc: '2.0', method: 'tools/call', params: { name: 'project.test' } })).resolves.toBeNull();
     });
 
     it('runs project.test through the configured controlled executor', async () => {
