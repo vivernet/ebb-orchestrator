@@ -60,7 +60,7 @@ export class ToolRegistry {
     this.toolDefinitions.set('git.diff', {
       name: 'git.diff',
       description: 'Get git diff',
-      handler: async () => {
+      handler: async (_args) => {
         const gitTools = this.capability.getGitTools();
         if (!gitTools) {
           return { success: false, error: 'git not available' };
@@ -74,7 +74,7 @@ export class ToolRegistry {
     this.toolDefinitions.set('git.status', {
       name: 'git.status',
       description: 'Get git status',
-      handler: async () => {
+      handler: async (_args) => {
         const gitTools = this.capability.getGitTools();
         if (!gitTools) {
           return { success: false, error: 'git not available' };
@@ -103,7 +103,7 @@ export class ToolRegistry {
     this.toolDefinitions.set('project.test', {
       name: 'project.test',
       description: 'Run project tests',
-      handler: async (args) => {
+      handler: async (_args) => {
         // TODO: Implement actual test runner integration
         return { success: true, result: 'tests completed' };
       },

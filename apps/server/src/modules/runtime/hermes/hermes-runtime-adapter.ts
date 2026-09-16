@@ -106,7 +106,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
       signal: abortController.signal,
     };
 
-    let processOutput: { stdout: string; stderr: string } | null = null;
+    let processOutput: { stdout: string; stderr: string } | null;
 
     try {
       const result = await this.executor.exec("hermes", args, options);
@@ -161,7 +161,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
       signal: abortController.signal,
     };
 
-    let processOutput: { stdout: string; stderr: string } | null = null;
+    let processOutput: { stdout: string; stderr: string } | null;
 
     try {
       const result = await this.executor.exec("hermes", args, execOptions);
@@ -263,7 +263,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
   /**
    * Collect token usage from a run.
    */
-  async collectUsage(runId: string): Promise<{
+  async collectUsage(_runId: string): Promise<{
     inputTokens: number;
     cachedInputTokens: number;
     outputTokens: number;
@@ -298,7 +298,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
   /**
    * Build environment variables for hermes process.
    */
-  private buildEnvironment(run: AgentRun): Record<string, string> {
+  private buildEnvironment(_run: AgentRun): Record<string, string> {
     const env: Record<string, string> = {};
     // Copy non-undefined environment variables
     for (const [key, value] of Object.entries(process.env)) {

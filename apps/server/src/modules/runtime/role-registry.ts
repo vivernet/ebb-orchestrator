@@ -4,8 +4,8 @@
  * Provides runtime access to all role contracts with validation and filtering.
  */
 
-import type { RoleContract, RoleName } from './role-contract.js';
-import { AllContracts, getContract } from './default-roles.js';
+import type { RoleContract } from './role-contract.js';
+import { AllContracts } from './default-roles.js';
 
 /**
  * Registry for accessing and managing role contracts.

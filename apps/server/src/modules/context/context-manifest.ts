@@ -3,7 +3,7 @@
  * Persists manifest IDs and versions, NOT secrets.
  */
 
-import type { ContextManifest, Priority } from './context-types.js';
+import type { ContextManifest } from './context-types.js';
 
 /**
  * Builds ContextManifest for tracking what went into a context package.

@@ -1,5 +1,4 @@
 import { RunCapability } from '../run-capability.js';
-import type { ToolDefinition } from './tool-registry.js';
 import { ToolRegistry } from './tool-registry.js';
 
 /**
