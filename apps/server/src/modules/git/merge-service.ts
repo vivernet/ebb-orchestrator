@@ -2,8 +2,10 @@ import { GitCli } from "./git-cli.js";
 import { tmpdir } from "os";
 import { join } from "path";
 import { rmSync, mkdirSync } from "fs";
-import { getVerifiedIntegrationProvenance } from "./integration-service.js";
+import { getIntegrationProvenance } from "./integration-service.js";
 import type { IntegrationAttempt } from "./integration-service.js";
+import type { Database } from "../../platform/database/database.js";
+import { createSqliteDatabase } from "../../platform/database/sqlite-database.js";
 
 export interface MergeResult {
   success: boolean;
@@ -31,7 +33,14 @@ export interface MergeServiceOptions {
   expectedTargetSha?: string;
   /** Successful integration provenance required for every final merge. */
   integrationAttempt?: IntegrationAttempt;
+  database?: Database;
   onVerifiedCompletion?: (result: MergeResult) => void;
+}
+
+function optionsDatabase(attempt: IntegrationAttempt | null, database?: Database): Database | null {
+  if (database) return database;
+  if (!attempt?.provenanceDatabasePath) return null;
+  return createSqliteDatabase(attempt.provenanceDatabasePath);
 }
 
 /**
@@ -52,6 +61,7 @@ export class MergeService {
   private readonly expectedTargetSha: string | null;
   private readonly integrationAttempt: IntegrationAttempt | null;
   private readonly onVerifiedCompletion: ((result: MergeResult) => void) | undefined;
+  private readonly database: Database | undefined;
 
   constructor(options: MergeServiceOptions = {}) {
     this.git = options.git ?? new GitCli();
@@ -61,6 +71,7 @@ export class MergeService {
     this.targetBranch = options.targetBranch ?? null;
     this.expectedTargetSha = options.expectedTargetSha ?? null;
     this.integrationAttempt = options.integrationAttempt ?? null;
+    this.database = options.database;
     this.onVerifiedCompletion = options.onVerifiedCompletion;
   }
 
@@ -114,7 +125,19 @@ export class MergeService {
     }
 
     const integration = this.integrationAttempt;
-    const provenance = integration ? getVerifiedIntegrationProvenance(integration) : null;
+    const provenanceDb = optionsDatabase(this.integrationAttempt, this.database);
+    const provenance = integration && provenanceDb ? getIntegrationProvenance(provenanceDb, integration) : null;
+    const hasAgentRuns = Boolean(provenanceDb?.get<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'agent_runs'"));
+    if (provenance && hasAgentRuns && !integration?.integrationRunId) {
+      throw new Error("Missing verified integration provenance: associated Integration run is required");
+    }
+    if (provenance && integration?.integrationRunId) {
+      const run = provenanceDb?.get<{ id: string; role: string; status: string }>(
+        "SELECT id, role, status FROM agent_runs WHERE id = $id", { id: integration.integrationRunId });
+      if (!run || run.role.toLowerCase() !== "integration" || run.status !== "COMPLETED") {
+        throw new Error("Missing verified integration provenance: associated Integration run is not completed");
+      }
+    }
     if (!integration || !provenance || !provenance.snapshot.sourceBranch ||
         !provenance.snapshot.currentTargetBranch || !provenance.snapshot.expectedTargetSha) {
       throw new Error("Missing verified integration provenance: successful integration, source branch, and expected target SHA are required");
@@ -131,10 +154,13 @@ export class MergeService {
     }
 
     // Perform the merge
-    const mergeResult = await this.performMerge(subjectId, verified);
-    this.onVerifiedCompletion?.(mergeResult);
-
-    return mergeResult;
+    try {
+      const mergeResult = await this.performMerge(subjectId, verified);
+      this.onVerifiedCompletion?.(mergeResult);
+      return mergeResult;
+    } finally {
+      if (!this.database && provenanceDb) provenanceDb.close();
+    }
   }
 
   /**

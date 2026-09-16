@@ -6,7 +6,7 @@
  * The capability ID determines the role and tool access for this MCP server instance.
  */
 import { McpServer } from '../modules/execution/mcp/mcp-server.js';
-import { RunCapability } from '../modules/execution/run-capability.js';
+import { loadValidatedCapability } from '../modules/execution/capability-validation.js';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { createSqliteDatabase } from '../platform/database/sqlite-database.js';
@@ -49,11 +49,7 @@ async function main() {
   const databasePath = args.database ?? process.env.ORCHESTRATOR_DATABASE;
   if (!databasePath) throw new Error('orchestrator database is required');
   const db = createSqliteDatabase(databasePath);
-  const row = db.get<{ capability_json: string | null }>('SELECT capability_json FROM agent_runs WHERE capability_ref = $ref', { ref: capabilityRef });
-  if (!row?.capability_json) throw new Error('unknown or expired capability reference');
-  const issued = JSON.parse(row.capability_json) as { runId: string; role: 'developer' | 'reviewer' | 'qa' | 'integration'; workspace: string; allowedTools: Array<'workspace.read' | 'workspace.search' | 'workspace.patch' | 'git.diff' | 'git.commit' | 'project.test' | 'submit_result'> };
-
-  const capability = new RunCapability({ id: capabilityRef, capabilityRef, runId: issued.runId, role: issued.role, workspace: issued.workspace, allowedTools: issued.allowedTools });
+  const capability = loadValidatedCapability(db, capabilityRef);
 
   // Create MCP server
   const server = new McpServer(capability, { completion: new DatabaseCompletionStore(db) });

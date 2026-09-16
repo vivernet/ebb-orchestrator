@@ -2,6 +2,9 @@ import { GitCli } from "./git-cli.js";
 import { tmpdir } from "os";
 import { join } from "path";
 import { rmSync, mkdirSync } from "fs";
+import type { Database } from "../../platform/database/database.js";
+import { createSqliteDatabase } from "../../platform/database/sqlite-database.js";
+import { readFileSync } from "node:fs";
 
 export interface IntegrationAttempt {
   id: string;
@@ -13,6 +16,8 @@ export interface IntegrationAttempt {
   expectedTargetSha: string | null;
   status: "PREPARED" | "MERGING" | "MERGED" | "FAILED";
   createdAt: string;
+  integrationRunId?: string;
+  provenanceDatabasePath?: string;
 }
 
 interface IntegrationSnapshot {
@@ -24,17 +29,8 @@ interface IntegrationSnapshot {
   readonly repoPath: string;
   readonly expectedTargetSha: string | null;
   readonly createdAt: string;
+  readonly integrationRunId?: string;
 }
-
-interface IssuedIntegration {
-  readonly snapshot: IntegrationSnapshot;
-  readonly identity: string;
-  status: IntegrationAttempt["status"];
-}
-
-// A WeakMap makes the provenance capability unforgeable by callers that only
-// have the public attempt shape. The snapshot is what downstream checks use.
-const issuedIntegrations = new WeakMap<IntegrationAttempt, IssuedIntegration>();
 
 export interface VerifiedIntegrationProvenance {
   readonly snapshot: Readonly<IntegrationSnapshot>;
@@ -42,16 +38,22 @@ export interface VerifiedIntegrationProvenance {
 }
 
 export function getVerifiedIntegrationProvenance(
-  attempt: IntegrationAttempt
+  _attempt: IntegrationAttempt
 ): VerifiedIntegrationProvenance | null {
-  const issued = issuedIntegrations.get(attempt);
-  if (!issued || issued.status !== "MERGED" || attempt.status !== "MERGED") return null;
-  return { snapshot: issued.snapshot, identity: issued.identity };
+  return null;
 }
 
 export interface IntegrationServiceOptions {
   git?: GitCli;
   worktreeDir?: string;
+  database?: Database;
+  integrationRunId?: string;
+}
+
+export function getIntegrationProvenance(db: Database, attempt: IntegrationAttempt): VerifiedIntegrationProvenance | null {
+  const row = db.get<{ id: string; source_branch: string; target_branch: string; repository_path: string; expected_target_sha: string; worktree_path: string; status: IntegrationAttempt["status"]; created_at: string; integration_run_id: string | null }>("SELECT * FROM integration_attempts WHERE id = $id", { id: attempt.id });
+  if (!row || row.status !== "MERGED" || attempt.status !== "MERGED" || row.source_branch !== attempt.sourceBranch || row.target_branch !== attempt.currentTargetBranch || row.repository_path !== attempt.repoPath || row.expected_target_sha !== attempt.expectedTargetSha || row.worktree_path !== attempt.worktreePath || row.created_at !== attempt.createdAt || (row.integration_run_id ?? undefined) !== attempt.integrationRunId) return null;
+  return { snapshot: Object.freeze({ ...attempt }), identity: `${row.id}:${row.repository_path}:${row.target_branch}:${row.source_branch}` };
 }
 
 export type IntegrationRunner<T> = (worktreePath: string, attempt: Readonly<IntegrationAttempt>) => Promise<T>;
@@ -67,10 +69,19 @@ export type IntegrationRunner<T> = (worktreePath: string, attempt: Readonly<Inte
 export class IntegrationService {
   private readonly git: GitCli;
   private readonly worktreeDir: string;
+  private database: Database;
+  private databasePath: string;
+  private databaseClosed = false;
+  private readonly integrationRunId: string | undefined;
 
   constructor(options: IntegrationServiceOptions = {}) {
     this.git = options.git ?? new GitCli();
     this.worktreeDir = options.worktreeDir ?? join(tmpdir(), "orchestrator-integration");
+    mkdirSync(this.worktreeDir, { recursive: true });
+    this.databasePath = join(this.worktreeDir, "integration-provenance.sqlite");
+    this.database = options.database ?? createSqliteDatabase(this.databasePath);
+    this.integrationRunId = options.integrationRunId;
+    this.database.exec(readFileSync(new URL("../../platform/database/migrations/009_integration_provenance.sql", import.meta.url), "utf8"));
   }
 
   /**
@@ -124,24 +135,13 @@ export class IntegrationService {
         repoPath,
         expectedTargetSha,
         status: "PREPARED",
-        createdAt: new Date().toISOString(),
-      };
-
-      const snapshot: IntegrationSnapshot = Object.freeze({
-        id: attempt.id,
-        sourceBranch: attempt.sourceBranch,
-        currentTargetBranch: attempt.currentTargetBranch,
-        expectedTargetBranch: attempt.expectedTargetBranch,
-        worktreePath: attempt.worktreePath,
-        repoPath: attempt.repoPath,
-        expectedTargetSha: attempt.expectedTargetSha,
-        createdAt: attempt.createdAt,
-      });
-      issuedIntegrations.set(attempt, {
-        snapshot,
-        identity: `${snapshot.id}:${snapshot.repoPath}:${snapshot.currentTargetBranch}:${snapshot.sourceBranch}`,
-        status: attempt.status,
-      });
+          createdAt: new Date().toISOString(),
+          ...(this.integrationRunId ? { integrationRunId: this.integrationRunId } : {}),
+        };
+      Object.defineProperty(attempt, "provenanceDatabasePath", { value: join(this.worktreeDir, "integration-provenance.sqlite"), enumerable: false, writable: false });
+      this.database.run(`INSERT INTO integration_attempts (id, repository_path, source_branch, target_branch, expected_target_sha, worktree_path, integration_run_id, status, created_at) VALUES ($id,$repo,$source,$target,$sha,$worktree,$run,$status,$created)`, { id: attempt.id, repo: attempt.repoPath, source: attempt.sourceBranch, target: attempt.currentTargetBranch, sha: attempt.expectedTargetSha, worktree: attempt.worktreePath, run: attempt.integrationRunId ?? null, status: attempt.status, created: attempt.createdAt });
+      this.database.close();
+      this.databaseClosed = true;
 
       return attempt;
     } catch (error) {
@@ -164,11 +164,18 @@ export class IntegrationService {
 
   /** Run the real Integration role only after the isolated worktree is prepared. */
   async runInIntegrationWorktree<T>(attempt: IntegrationAttempt, runner: IntegrationRunner<T>): Promise<T> {
-    const issued = issuedIntegrations.get(attempt);
-    if (!issued || attempt.status !== "PREPARED") throw new Error("integration attempt is not prepared");
-    const { snapshot } = issued;
+    if (this.databaseClosed || (attempt.provenanceDatabasePath && attempt.provenanceDatabasePath !== this.databasePath)) {
+      if (!this.databaseClosed) this.database.close();
+      const provenancePath = attempt.provenanceDatabasePath ?? this.databasePath;
+      this.databasePath = provenancePath;
+      this.database = createSqliteDatabase(this.databasePath);
+      this.databaseClosed = false;
+    }
+    const persisted = this.database.get<{ status: IntegrationAttempt["status"] }>("SELECT status FROM integration_attempts WHERE id = $id", { id: attempt.id });
+    if (!persisted || persisted.status !== "PREPARED" || attempt.status !== "PREPARED") throw new Error("integration attempt is not prepared");
     attempt.status = "MERGING";
-    issued.status = "MERGING";
+    this.database.run("UPDATE integration_attempts SET status = 'MERGING' WHERE id = $id AND status = 'PREPARED'", { id: attempt.id });
+    const snapshot = Object.freeze({ ...attempt });
     try {
       // Do not give the runner the live attempt record. In addition to the
       // immutable check below, this prevents an in-process runner from
@@ -201,15 +208,19 @@ export class IntegrationService {
       const currentTargetSha = (await this.git.run(snapshot.repoPath, ["rev-parse", snapshot.currentTargetBranch])).stdout.trim();
       if (!snapshot.expectedTargetSha || currentTargetSha !== snapshot.expectedTargetSha) {
         attempt.status = "FAILED";
-        issued.status = "FAILED";
+        this.database.run("UPDATE integration_attempts SET status = 'FAILED' WHERE id = $id", { id: attempt.id });
         throw new Error(`TARGET_MOVED: expected ${snapshot.expectedTargetSha ?? "a verified target"}, found ${currentTargetSha}; restart integration`);
       }
       attempt.status = "MERGED";
-      issued.status = "MERGED";
-      return result;
+       this.database.run("UPDATE integration_attempts SET status = 'MERGED' WHERE id = $id", { id: attempt.id });
+       this.database.close();
+       this.databaseClosed = true;
+       return result;
     } catch (error) {
       attempt.status = "FAILED";
-      issued.status = "FAILED";
+      this.database.run("UPDATE integration_attempts SET status = 'FAILED' WHERE id = $id", { id: attempt.id });
+      this.database.close();
+      this.databaseClosed = true;
       throw error;
     }
   }
