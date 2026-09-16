@@ -145,7 +145,7 @@ export class GitReconciler {
         remoteRef,
         message: "Local and remote are in sync",
       };
-    } catch (error) {
+    } catch {
       // If comparison fails, they may have diverged
       return {
         state: "DIVERGED",

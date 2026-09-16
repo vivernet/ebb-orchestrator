@@ -1,12 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as os from "os";
 import * as path from "path";
 import * as fs from "fs";
 import * as GitCli from "../../../src/modules/git/git-cli.js";
-import * as WorktreeManagerModule from "../../../src/modules/git/worktree-manager.js";
 
 const GitCliClass = GitCli.GitCli;
-const WorktreeManager = WorktreeManagerModule.WorktreeManager;
 
 // Mock ProcessExecutor with configurable responses
 class MockProcessExecutor {
@@ -86,8 +84,11 @@ class MockProcessExecutor {
         }
         const revListArg = args.find(a => a.includes(".."));
         if (revListArg) {
-          const [fromRef, toRef] = revListArg.split("..");
-          return { stdout: fromRef < toRef ? "1\n" : "0\n", stderr: "", exitCode: 0 };
+          const parts = revListArg.split("..");
+          if (parts.length === 2) {
+            const [fromRef, toRef] = parts as [string, string];
+            return { stdout: fromRef < toRef ? "1\n" : "0\n", stderr: "", exitCode: 0 };
+          }
         }
         return this.mockReturn.revList;
       }
@@ -125,7 +126,7 @@ class MockProcessExecutor {
 }
 
 // Import types
-import type { GitDriftState, GitDriftResult } from "../../../src/modules/git/git-reconciler.js";
+import type { GitDriftState } from "../../../src/modules/git/git-reconciler.js";
 
 describe("GitReconciler", () => {
   let tempDir: string;
