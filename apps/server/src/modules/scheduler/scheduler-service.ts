@@ -12,8 +12,8 @@ import type {
   Priority,
   Category,
   RecalculateResult,
-  CAPACITY,
 } from "./scheduler-types.js";
+import { CAPACITY } from "./scheduler-types.js";
 import { determineEligibility, compareTasks } from "./scheduler-policy.js";
 import { ResourceLockService } from "./resource-lock-service.js";
 

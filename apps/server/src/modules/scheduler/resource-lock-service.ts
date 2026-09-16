@@ -2,7 +2,7 @@
  * Resource lock service - manages resource locks for tasks.
  */
 
-import type { Database, DatabaseTx } from "../../platform/database/database.js";
+import type { Database } from "../../platform/database/database.js";
 
 interface ResourceLockRow {
   id: string;

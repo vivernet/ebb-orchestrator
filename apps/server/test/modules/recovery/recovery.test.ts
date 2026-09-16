@@ -9,7 +9,7 @@ import { runMigrations, type Migration } from "../../../src/platform/database/mi
 import type { Database } from "../../../src/platform/database/database.js";
 import { RecoveryService } from "../../../src/modules/recovery/recovery-service.js";
 import { evaluateRecovery, countAttempts, getRemainingAttempts } from "../../../src/modules/recovery/recovery-policy.js";
-import { createNoProgressFingerprint, createReviewFingerprint } from "../../../src/modules/recovery/progress-fingerprint.js";
+import { createNoProgressFingerprint } from "../../../src/modules/recovery/progress-fingerprint.js";
 import type { RecoveryContext } from "../../../src/modules/recovery/recovery-types.js";
 import { DEFAULT_POLICY } from "../../../src/modules/recovery/recovery-types.js";
 
@@ -56,8 +56,8 @@ function createContext(
     currentRoleLevel: roleLevel,
     failureType,
     attempts,
-    stage,
-    evidenceHash,
+    ...(stage !== undefined && { stage }),
+    ...(evidenceHash !== undefined && { evidenceHash }),
   };
 }
 
@@ -386,7 +386,7 @@ describe("RecoveryService", () => {
       // Verify it was persisted
       const history = service.getHistory(taskId);
       expect(history.length).toBe(1);
-      expect(history[0].taskId).toBe(taskId);
+      expect(history[0]!.taskId).toBe(taskId);
     });
   });
 
@@ -440,3 +440,4 @@ describe("RecoveryService", () => {
     });
   });
 });
+

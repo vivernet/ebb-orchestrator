@@ -44,7 +44,7 @@ describe("RunService with FakeAgentRuntime", () => {
   let runService: RunService;
   let fakeRuntime: FakeAgentRuntime;
 
-  const projectId = randomUUID();
+  const _projectId = randomUUID();
   const epicId = randomUUID();
   const taskId = randomUUID();
 

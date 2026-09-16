@@ -98,7 +98,7 @@ function getWaitReason(
 /**
  * Check if task's resource lock is available.
  */
-function resourceLockAvailable(task: SchedulableTask): boolean {
+function resourceLockAvailable(_task: SchedulableTask): boolean {
   // In a real implementation, this would check if the lock is currently held
   // For now, we assume the task can proceed if it holds the lock
   return true;
@@ -115,7 +115,7 @@ function budgetAvailable(): boolean {
 /**
  * Placeholder for approval check.
  */
-function approvalGranted(task: SchedulableTask): boolean {
+function approvalGranted(_task: SchedulableTask): boolean {
   // In a real implementation, this would check approval status
   return true;
 }

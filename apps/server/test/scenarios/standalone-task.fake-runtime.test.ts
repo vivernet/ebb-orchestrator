@@ -113,7 +113,7 @@ class Orchestrator {
     }
 
     // Emit AgentRunRequested event
-    const event = DomainEvent.create({
+    const _event = DomainEvent.create({
       type: "AgentRunRequested",
       aggregateType: "Task",
       aggregateId: taskId,
@@ -125,7 +125,7 @@ class Orchestrator {
         model: "test-model",
       },
     });
-    appendOutboxEvent(this.db, event);
+    appendOutboxEvent(this.db, _event);
   }
 
   /**
@@ -423,7 +423,7 @@ describe("Standalone task fake runtime scenario", () => {
 
     const { id: taskId } = insertTask(db!, projectId, { status: "DEVELOPMENT" });
 
-    const event = DomainEvent.create({
+    const _event = DomainEvent.create({
       type: "AgentRunRequested",
       aggregateType: "Task",
       aggregateId: taskId,
@@ -436,17 +436,7 @@ describe("Standalone task fake runtime scenario", () => {
       },
     });
 
-    expect(() => orchestrator.handleAgentRunRequested({
-      type: "AgentRunRequested",
-      aggregateId: taskId,
-      payload: {
-        taskId,
-        status: "DEVELOPMENT",
-        triggerReason: "task-assignment",
-        role: "Developer",
-        model: "test-model",
-      },
-    })).toThrow(
+    expect(() => orchestrator.handleAgentRunRequested(_event)).toThrow(
       /not in READY state/i
     );
   });

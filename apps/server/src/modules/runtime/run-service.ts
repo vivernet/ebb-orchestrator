@@ -2,9 +2,9 @@
  * Run service for managing agent run lifecycle.
  */
 
-import type { Database } from "../../platform/database/database.js";
+import type { Database, DatabaseTx } from "../../platform/database/database.js";
 import type { AgentRuntime } from "./agent-runtime.js";
-import type { AgentRun, RunStatus } from "@orchestrator/contracts";
+import type { AgentRun, RunStatus, RunTrigger } from "@orchestrator/contracts";
 import type { StartRunOptions, ResumeRunOptions, RunOutcome } from "./run-types.js";
 
 export class RunService {
@@ -30,7 +30,7 @@ export class RunService {
         status: "STARTED" as RunStatus,
         sessionId: null,
         attempt: null,
-        triggerReason: options.triggerReason as RunStatus,
+        triggerReason: options.triggerReason as RunTrigger,
         contextVersion: options.contextVersion,
         outputSchemaVersion: options.outputSchemaVersion,
         startedAt: new Date(now),
@@ -158,7 +158,7 @@ export class RunService {
   /**
    * Get a run by ID.
    */
-  private getRun(tx: Database, runId: string): AgentRun {
+   private getRun(tx: DatabaseTx, runId: string): AgentRun {
     const row = tx.get(
       `SELECT * FROM agent_runs WHERE id = $id`,
       { id: runId }
@@ -176,7 +176,7 @@ export class RunService {
       status: row.status as RunStatus,
       sessionId: row.session_id as string | null,
       attempt: row.attempt as number | null,
-      triggerReason: row.trigger_reason as RunStatus | null,
+       triggerReason: row.trigger_reason as RunTrigger | null,
       contextVersion: row.context_version as string | null,
       outputSchemaVersion: row.output_schema_version as string | null,
       startedAt: row.started_at ? new Date(row.started_at as string) : null,

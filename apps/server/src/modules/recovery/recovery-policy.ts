@@ -3,7 +3,6 @@
  */
 
 import { DEFAULT_POLICY, type RecoveryPolicy, type RecoveryContext, type RecoveryResult, type RoleLevel, type FailureType } from "./recovery-types.js";
-import { createNoProgressFingerprint } from "./progress-fingerprint.js";
 
 /**
  * Counts attempts for a specific role and failure type.

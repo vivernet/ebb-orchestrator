@@ -7,15 +7,14 @@ import { createHash } from "node:crypto";
 import type { Database } from "../../platform/database/database.js";
 import type {
   RecoveryContext,
-  RecoveryDecision,
   RecoveryResult,
   RoleLevel,
   RecoveryPolicy,
   RecoveryAttempt,
   ProgressFingerprint,
+  FailureType,
 } from "./recovery-types.js";
 import { evaluateRecovery, getRemainingAttempts } from "./recovery-policy.js";
-import { createFingerprint, createNoProgressFingerprint } from "./progress-fingerprint.js";
 
 /**
  * Scheduler request for recovery work.
@@ -61,7 +60,7 @@ export class RecoveryService {
       failureType,
       attemptCount: existingAttempts + 1,
       timestamp: new Date().toISOString(),
-      fingerprint,
+      ...(fingerprint !== undefined && { fingerprint }),
     };
 
     // Persist to database
@@ -149,7 +148,9 @@ export class RecoveryService {
       failureType: row.failure_type as FailureType,
       attemptCount: row.attempt_count,
       timestamp: row.recorded_at,
-      fingerprint: row.fingerprint ? (JSON.parse(row.fingerprint) as ProgressFingerprint) : undefined,
+      ...(row.fingerprint !== null && {
+        fingerprint: JSON.parse(row.fingerprint) as ProgressFingerprint,
+      }),
     }));
   }
 

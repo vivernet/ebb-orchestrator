@@ -211,53 +211,53 @@ describe("SchedulerService", () => {
 
   it("orders by category first (integration before new-development)", async () => {
     await setup();
-    const integrationTask = insertTask(db!, projectId, {
+    const _integrationTask = insertTask(db!, projectId, {
       id: "integration",
       status: "READY",
       priority: "Low",
       category: "integration",
     });
-    const newDevTask = insertTask(db!, projectId, {
+    const _newDevTask = insertTask(db!, projectId, {
       id: "newdev",
       status: "READY",
       priority: "Critical",
       category: "new-development",
     });
     const result = scheduler.recalculate();
-    expect(result.runnables[0].id).toBe("integration");
-    expect(result.runnables[1].id).toBe("newdev");
+    expect(result.runnables[0]!.id).toBe("integration");
+    expect(result.runnables[1]!.id).toBe("newdev");
   });
 
   it("orders by priority when category is same", async () => {
     await setup();
-    const lowTask = insertTask(db!, projectId, {
+    const _lowTask = insertTask(db!, projectId, {
       id: "low",
       status: "READY",
       priority: "Low",
     });
-    const highTask = insertTask(db!, projectId, {
+    const _highTask = insertTask(db!, projectId, {
       id: "high",
       status: "READY",
       priority: "High",
     });
     const result = scheduler.recalculate();
-    expect(result.runnables[0].id).toBe("high");
-    expect(result.runnables[1].id).toBe("low");
+    expect(result.runnables[0]!.id).toBe("high");
+    expect(result.runnables[1]!.id).toBe("low");
   });
 
   it("orders by creation time when category and priority match", async () => {
     await setup();
-    const olderTask = insertTask(db!, projectId, {
+    const _olderTask = insertTask(db!, projectId, {
       id: "older",
       status: "READY",
     });
-    const newerTask = insertTask(db!, projectId, {
+    const _newerTask = insertTask(db!, projectId, {
       id: "newer",
       status: "READY",
     });
     const result = scheduler.recalculate();
-    expect(result.runnables[0].id).toBe("older");
-    expect(result.runnables[1].id).toBe("newer");
+    expect(result.runnables[0]!.id).toBe("older");
+    expect(result.runnables[1]!.id).toBe("newer");
   });
 
   it("produces deterministic ordering across multiple calls", async () => {
@@ -292,7 +292,7 @@ describe("SchedulerService", () => {
     await setup();
     const projectB = randomUUID();
     // Seed projectB for FK constraint
-    db.transaction((tx) => {
+    db!.transaction((tx) => {
       const now = new Date().toISOString();
       tx.run(
         "INSERT INTO projects (id, name, display_name, status, created_at, updated_at) VALUES ($id, $name, $display_name, $status, $created_at, $updated_at)",
