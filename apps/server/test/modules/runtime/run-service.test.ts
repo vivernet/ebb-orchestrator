@@ -119,7 +119,7 @@ describe("RunService with FakeAgentRuntime", () => {
   it("collects result and marks run as completed", async () => {
     await setup();
     const startedRun = await runService.startRun({
-      role: "planner",
+       role: "developer",
       model: "claude-3",
       taskId,
       epicId,
@@ -131,7 +131,9 @@ describe("RunService with FakeAgentRuntime", () => {
     const outcome: RunOutcome = {
       success: true,
       exitCode: 0,
-      output: "Plan generated successfully",
+       output: JSON.stringify({ version: "1.0.0", outcome: "COMPLETED" }),
+       validatedSubmission: true,
+       diagnostics: { runId: startedRun.id, sessionId: null, stderr: "", exitCode: 0, artifactReferences: [] },
     };
 
     const collected = await runService.collectResult(startedRun.id, outcome);

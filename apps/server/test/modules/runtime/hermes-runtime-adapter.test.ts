@@ -470,6 +470,26 @@ describe("HermesRuntimeAdapter", () => {
       await fs.rm(resultDirectory, { recursive: true, force: true });
     });
 
+    it("re-reads and validates the exact run result at collection time", async () => {
+      const resultDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-results-recheck-"));
+      const run = {
+        id: "recheck-run", role: "Developer", runtime: "hermes", model: "claude-3", taskId: "task-recheck",
+        epicId: null, status: "STARTED" as const, sessionId: null, attempt: null, triggerReason: null,
+        contextVersion: "v1", outputSchemaVersion: "v1", startedAt: new Date(), endedAt: null,
+        exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
+      };
+      mockExecutor.setNextResult({ exitCode: 0, stdout: "session: recheck", stderr: "" });
+      const exactAdapter = new HermesRuntimeAdapter(mockExecutor, mockArtifactStore, { resultDirectory });
+      await exactAdapter.startRun(run);
+      await fs.writeFile(path.join(resultDirectory, `${run.id}.json`), JSON.stringify({ version: "1", outcome: "COMPLETED" }));
+      expect((await exactAdapter.collectResult(run.id)).validatedSubmission).toBe(true);
+      await fs.writeFile(path.join(resultDirectory, `${run.id}.json`), JSON.stringify({ version: "1", outcome: "INVALID" }));
+      const invalid = await exactAdapter.collectResult(run.id);
+      expect(invalid.validatedSubmission).toBe(false);
+      expect(invalid.output).toBe("AGENT_OUTPUT_MISSING");
+      await fs.rm(resultDirectory, { recursive: true, force: true });
+    });
+
     it("rejects forbidden credentials in supplied runtime overlays", async () => {
       const restricted = new HermesRuntimeAdapter(mockExecutor, mockArtifactStore, {
         environment: { GITHUB_TOKEN: "secret" },

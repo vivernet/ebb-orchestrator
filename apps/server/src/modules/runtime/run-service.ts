@@ -6,6 +6,7 @@ import type { Database, DatabaseTx } from "../../platform/database/database.js";
 import type { AgentRuntime } from "./agent-runtime.js";
 import type { AgentRun, RunStatus, RunTrigger } from "@orchestrator/contracts";
 import type { StartRunOptions, ResumeRunOptions, RunOutcome } from "./run-types.js";
+import { validateRoleOutput } from "./output-validator.js";
 
 export class RunService {
   constructor(
@@ -117,6 +118,18 @@ export class RunService {
    */
   async collectResult(runId: string, outcome: RunOutcome): Promise<AgentRun> {
     return this.db.transaction((tx) => {
+      const stored = tx.get<{ id: string; role: string; status: string }>(
+        "SELECT id, role, status FROM agent_runs WHERE id = $id", { id: runId });
+      if (!stored) throw new Error(`Run ${runId} not found`);
+      if (outcome.validatedSubmission !== true || outcome.diagnostics?.runId !== runId) {
+        throw new Error(`Run ${runId} requires a validated submitted result with matching diagnostics`);
+      }
+      let value: unknown;
+      try { value = JSON.parse(outcome.output) as unknown; } catch {
+        throw new Error(`Run ${runId} result is not valid JSON`);
+      }
+      const validation = validateRoleOutput(stored.role.toLowerCase(), value);
+      if (!validation.valid) throw new Error(`Run ${runId} result rejected: ${validation.error}`);
       tx.run(
         `UPDATE agent_runs SET status = 'COMPLETED', exit_code = $exit_code,
           output = $output, ended_at = $ended_at WHERE id = $id`,

@@ -73,10 +73,10 @@ export class RuntimeOrchestrator {
    * Handle runtime completion from external sources.
    */
   handleRuntimeCompletion(
-    taskId: string,
-    outcome: { success: boolean; exitCode: number; output: string },
+    runId: string,
+    outcome: import("./run-types.js").RunOutcome,
   ): void {
-    this.eventHandlers.handleRuntimeCompletion(taskId, outcome);
+    this.eventHandlers.handleRuntimeCompletion(runId, outcome);
   }
 
   /**

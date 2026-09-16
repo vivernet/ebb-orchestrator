@@ -6,6 +6,7 @@
 import type { Database } from "../../platform/database/database.js";
 import { WorkflowEngine } from "../workflow/workflow-engine.js";
 import type { RunOutcome } from "./run-types.js";
+import { validateRoleOutput } from "./output-validator.js";
 
 /**
  * Orchestrates runtime events and workflow transitions.
@@ -63,9 +64,31 @@ export class RuntimeEventHandlers {
    * Validates current workflow stage before applying outcome.
    */
   handleRuntimeCompletion(
-    taskId: string,
+    runId: string,
     outcome: RunOutcome,
   ): void {
+    // The run is the authorization boundary. Never select a latest run for a
+    // task: that permits a stale/foreign completion to advance the workflow.
+    const run = this.db.get<{ id: string; task_id: string | null; role: string; status: string; output: string | null }>(
+      "SELECT id, task_id, role, status, output FROM agent_runs WHERE id = $id",
+      { id: runId },
+    );
+    if (!run) throw new Error(`Run ${runId} not found`);
+    if (!run.task_id) throw new Error(`Run ${runId} is not bound to a task`);
+    if (run.status !== "COMPLETED" || !run.output) {
+      throw new Error(`Run ${runId} has no persisted submitted result`);
+    }
+    if (outcome.diagnostics?.runId !== runId) {
+      throw new Error(`Run completion diagnostics do not match run ${runId}`);
+    }
+    let submitted: unknown;
+    try { submitted = JSON.parse(run.output) as unknown; } catch {
+      throw new Error(`Run ${runId} result is not valid JSON`);
+    }
+    const validation = validateRoleOutput(run.role.toLowerCase(), submitted);
+    if (!validation.valid) throw new Error(`Run ${runId} result rejected: ${validation.error}`);
+
+    const taskId = run.task_id;
     // Validate current workflow stage
     const currentStage = this.db.get<{ status: string }>(
       "SELECT status FROM tasks WHERE id = $id",
@@ -76,22 +99,6 @@ export class RuntimeEventHandlers {
       throw new Error(`Task ${taskId} not found`);
     }
 
-    // A real run may advance only from a collector result that passed the
-    // role validator. Synthetic callers without an agent_runs row retain the
-    // existing workflow-only behavior used by the domain tests.
-    const agentRunsTable = this.db.get<{ name: string }>(
-      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'agent_runs'",
-    );
-    const run = agentRunsTable
-      ? this.db.get<{ role: string }>(
-          "SELECT role FROM agent_runs WHERE task_id = $task_id ORDER BY started_at DESC LIMIT 1",
-          { task_id: taskId },
-        )
-      : undefined;
-    if (run && outcome.validatedSubmission !== true) {
-      throw new Error(`Run result for task ${taskId} was not validated before workflow transition`);
-    }
-
     // Only allow completion from DEVELOPMENT stage
     if (currentStage.status !== "DEVELOPMENT") {
       throw new Error(
@@ -100,11 +107,12 @@ export class RuntimeEventHandlers {
     }
 
     // Apply outcome based on success/failure
-    const targetStatus = outcome.success ? "REVIEW" : "FAILED";
+    const successfulOutcome = !["BLOCKED", "FAIL", "CHANGES_REQUESTED"].includes(validation.outcome ?? "");
+    const targetStatus = successfulOutcome ? "REVIEW" : "FAILED";
     this.workflowEngine.transition(taskId, targetStatus);
 
     // Emit appropriate event
-    if (outcome.success) {
+    if (successfulOutcome) {
       this.emitAgentRunCompleted(taskId, outcome);
     } else {
       this.emitAgentRunFailed(taskId, outcome);

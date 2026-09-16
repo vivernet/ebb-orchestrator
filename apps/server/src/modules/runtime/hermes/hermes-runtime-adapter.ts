@@ -273,7 +273,10 @@ export class HermesRuntimeAdapter implements AgentRuntime {
       throw new Error(`Run ${runId} not found`);
     }
 
-    if (!state.submittedResult) {
+    // Re-read the run-bound artifact on every collection. The cached value is
+    // only an optimization for process bookkeeping and is never authoritative.
+    const submittedResult = await this.readSubmittedResult(runId, state.run.role);
+    if (!submittedResult) {
       return {
         success: false,
         exitCode: state.exitCode ?? -1,
@@ -292,7 +295,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
     return {
       success: state.exitCode === 0,
       exitCode: state.exitCode ?? -1,
-      output: state.submittedResult,
+      output: submittedResult,
       validatedSubmission: true,
       diagnostics: {
         runId,

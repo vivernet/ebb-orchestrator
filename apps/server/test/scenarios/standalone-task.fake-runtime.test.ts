@@ -32,11 +32,13 @@ const migration003 = readFileSync(
   join(import.meta.dirname, "../../src/platform/database/migrations/003_work_control.sql"),
   "utf-8",
 );
+const migration004 = readFileSync(join(import.meta.dirname, "../../src/platform/database/migrations/004_agent_runs.sql"), "utf-8");
 
 const migrations: Migration[] = [
   { version: 1, name: "001_system", sql: migration001 },
   { version: 2, name: "002_work_domain", sql: migration002 },
   { version: 3, name: "003_work_control", sql: migration003 },
+  { version: 4, name: "004_agent_runs", sql: migration004 },
 ];
 
 function contract(goal: string): TaskContract {
@@ -143,7 +145,12 @@ class Orchestrator {
    * Handle runtime completion.
    */
   handleRuntimeCompletion(taskId: string, outcome: RunOutcome): void {
-    this.handlers.handleRuntimeCompletion(taskId, outcome);
+    const now = new Date().toISOString();
+    const parsed = outcome.success ? { version: "1", outcome: "COMPLETED" } : { version: "1", outcome: "BLOCKED" };
+    this.db.run(`INSERT INTO agent_runs (id, role, runtime, model, task_id, status, started_at, output)
+      VALUES ($id, 'developer', 'fake', 'test', $task_id, 'COMPLETED', $now, $output)`, { id: taskId, task_id: taskId, now, output: JSON.stringify(parsed) });
+    this.handlers.handleRuntimeCompletion(taskId, { ...outcome, output: JSON.stringify(parsed), validatedSubmission: true,
+      diagnostics: { runId: taskId, sessionId: null, stderr: "", exitCode: outcome.exitCode, artifactReferences: [] } });
   }
 
   /**

@@ -110,6 +110,8 @@ class AcceptanceWorkflow {
     this.workflow.transition(this.taskId, "INTEGRATION");
     const targetSha = (await this.git.run(this.repoPath, ["rev-parse", "master"])).stdout.trim();
     expect(attempt.expectedTargetSha).toBe(targetSha);
+    expect((await this.git.run(attempt.worktreePath, ["rev-parse", "HEAD"])).stdout.trim()).toBe(targetSha);
+    expect(readFileSync(join(attempt.worktreePath, "src", "server.js"), "utf8")).not.toContain("/health");
     await this.git.run(attempt.worktreePath, ["merge", "--no-edit", `task/${this.taskId}`]);
     await execFileAsync(process.execPath, ["test/smoke.js"], { cwd: attempt.worktreePath });
     await this.record("Integration", { outcome: "PASS", baseSha: targetSha, conflicts: [] }, "integration");
@@ -118,7 +120,17 @@ class AcceptanceWorkflow {
 
   async record(role: string, output: object, triggerReason = "task-assignment"): Promise<AgentRun> {
     const run = await this.runs.startRun({ role, model: "deterministic-test-runtime", taskId: this.taskId, epicId: null, triggerReason, contextVersion: "acceptance-v1", outputSchemaVersion: "1" });
-     const completed = await this.runs.collectResult(run.id, { success: true, exitCode: 0, output: JSON.stringify(output) });
+      const raw = output as { outcome?: string; findings?: unknown[]; failedCriteria?: unknown[] };
+      const roleOutput = {
+        version: "1",
+        outcome: raw.outcome,
+        ...(raw.findings ? { findings: raw.findings } : {}),
+        ...(raw.failedCriteria ? { failedCriteria: raw.failedCriteria } : {}),
+      };
+      const completed = await this.runs.collectResult(run.id, {
+        success: true, exitCode: 0, output: JSON.stringify(roleOutput), validatedSubmission: true,
+        diagnostics: { runId: run.id, sessionId: null, stderr: "", exitCode: 0, artifactReferences: [`run-artifacts://${run.id}`] },
+      });
      await this.runs.collectUsage(run.id, { inputTokens: 1, cachedInputTokens: 0, outputTokens: 1, cost: 0 });
      return completed;
   }
@@ -177,8 +189,8 @@ describe("Autonomous Task End-to-End Workflow", () => {
     const outcomes = db!.all<{ role: string; output: string }>("SELECT role, output FROM agent_runs WHERE task_id = $task_id ORDER BY started_at", { task_id: taskId });
     expect(outcomes.map((row) => row.role)).toEqual(["Developer", "Reviewer", "QA", "Integration"]);
     expect(JSON.parse(outcomes[1]!.output)).toMatchObject({ outcome: "PASS", findings: [] });
-    expect(JSON.parse(outcomes[2]!.output)).toMatchObject({ outcome: "PASS", evidence: ["AC-1: GET /health returns 200 and JSON status ok"] });
-    expect(JSON.parse(outcomes[3]!.output)).toMatchObject({ outcome: "PASS", conflicts: [] });
+     expect(JSON.parse(outcomes[2]!.output)).toMatchObject({ outcome: "PASS" });
+     expect(JSON.parse(outcomes[3]!.output)).toMatchObject({ outcome: "PASS" });
     expect(readFileSync(join(masterRepoPath, "src", "server.js"), "utf8")).not.toContain("/health");
     const approval = approvalService.request({ type: "FINAL_MERGE", subjectId: taskId, subjectType: "TASK", requestedBy: "orchestrator" });
     expect(approval.status).toBe("PENDING");
@@ -276,30 +288,53 @@ describe("Autonomous Task End-to-End Workflow", () => {
       expect(inspected, `${role} run did not finish`).toBeDefined();
       const outcome = await runtime.collectResult(run.id);
       expect(outcome.success, `${role} did not submit a successful result`).toBe(true);
-      const submitted = JSON.parse(outcome.output) as { outcome?: string };
+      const submitted = JSON.parse(outcome.output) as { outcome?: string; version?: string };
       expect(submitted.outcome, `${role} submitted an invalid result`).toBeTruthy();
+      expect(submitted.version).toBe("1");
       await runs.collectResult(run.id, outcome);
       const usage = await runtime.collectUsage(run.id);
       expect(usage.inputTokens + usage.outputTokens, `${role} emitted no genuine usage`).toBeGreaterThan(0);
       await runs.collectUsage(run.id, usage);
       advanceRealStage(workflow, taskId, role);
     }
-    expect(db!.all<{ role: string }>("SELECT role FROM agent_runs WHERE task_id = $id ORDER BY started_at", { id: taskId }).map((row) => row.role)).toEqual(roles);
+     expect(db!.all<{ role: string; task_id: string; status: string }>("SELECT role, task_id, status FROM agent_runs WHERE task_id = $id ORDER BY started_at", { id: taskId })).toEqual(roles.map((role) => ({ role, task_id: taskId, status: "COMPLETED" })));
     expect(workflow.currentStage(taskId)).toBe("READY_FOR_MERGE");
-    const approval = approvalService.request({ type: "FINAL_MERGE", subjectId: taskId, subjectType: "TASK", requestedBy: "orchestrator" });
+     const integration = await new IntegrationService({ worktreeDir: join(tmpDir, "real-integration") }).prepareIntegration(`task/${taskId}`, "master", masterRepoPath);
+     const masterSha = (await new GitCli().run(masterRepoPath, ["rev-parse", "master"])).stdout.trim();
+     expect(integration.expectedTargetSha).toBe(masterSha);
+     expect((await new GitCli().run(integration.worktreePath, ["rev-parse", "HEAD"])).stdout.trim()).toBe(masterSha);
+     expect(readFileSync(join(integration.worktreePath, "src", "server.js"), "utf8")).not.toContain("/health");
+     await new GitCli().run(integration.worktreePath, ["merge", "--no-edit", `task/${taskId}`]);
+     await execFileAsync(process.execPath, ["test/smoke.js"], { cwd: integration.worktreePath });
+     expect(readFileSync(join(integration.worktreePath, "src", "server.js"), "utf8")).toContain("/health");
+     await new IntegrationService().cleanupIntegration(integration);
+     const approval = approvalService.request({ type: "FINAL_MERGE", subjectId: taskId, subjectType: "TASK", requestedBy: "orchestrator" });
+     expect(approval).toMatchObject({ id: expect.any(String), type: "FINAL_MERGE", subjectId: taskId, subjectType: "TASK", status: "PENDING" });
     expect(approval.status).toBe("PENDING");
     const approved = approvalService.approve(approval.id, "test-human", "real Hermes acceptance approval");
     mergeService.registerApproval({ id: approved.id, subjectId: approved.subjectId, type: approved.type, status: approved.status });
     workflow.transition(taskId, "MERGING", { hasReviewPassed: true, hasSuccessfulIntegration: true, hasFinalMergeApproval: true, parentEpicReleased: false });
-    expect((await mergeService.mergeApproved(taskId, approved.id)).success).toBe(true);
+     expect(approved).toMatchObject({ id: approval.id, type: "FINAL_MERGE", subjectId: taskId, subjectType: "TASK", status: "APPROVED", resolvedBy: "test-human" });
+     expect(db!.get<{ id: string; type: string; subject_id: string; subject_type: string; status: string }>("SELECT id, type, subject_id, subject_type, status FROM approvals WHERE id = $id", { id: approval.id })).toEqual({ id: approval.id, type: "FINAL_MERGE", subject_id: taskId, subject_type: "TASK", status: "APPROVED" });
+     expect((await mergeService.mergeApproved(taskId, approved.id)).success).toBe(true);
     expect(readFileSync(join(masterRepoPath, "src", "server.js"), "utf8")).toContain("/health");
     workflow.transition(taskId, "DONE");
     await worktreeManager.removeWorkspace(worktree.id);
     expect(workflow.currentStage(taskId)).toBe("DONE");
     expect(db!.get<{ removed_at: string | null }>("SELECT removed_at FROM worktrees WHERE id = $id", { id: taskId })?.removed_at).not.toBeNull();
-    expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM agent_runs WHERE task_id = $id AND input_tokens IS NOT NULL", { id: taskId })?.count).toBe(4);
-    expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM outbox_events WHERE aggregate_id = $id", { id: taskId })?.count).toBeGreaterThan(0);
-    expect(db!.get<{ total: number }>("SELECT COALESCE(SUM(input_tokens + output_tokens), 0) AS total FROM agent_runs WHERE task_id = $id", { id: taskId })?.total).toBeGreaterThan(0);
+     expect(db!.all<{ role: string; task_id: string; input_tokens: number; cached_input_tokens: number; output_tokens: number; cost: number }>("SELECT role, task_id, input_tokens, cached_input_tokens, output_tokens, cost FROM agent_runs WHERE task_id = $id ORDER BY started_at", { id: taskId })).toEqual(roles.map((role) => ({ role, task_id: taskId, input_tokens: expect.any(Number), cached_input_tokens: expect.any(Number), output_tokens: expect.any(Number), cost: expect.any(Number) })));
+     const events = db!.all<{ type: string; aggregate_id: string; payload_json: string }>("SELECT type, aggregate_id, payload_json FROM outbox_events WHERE aggregate_id = $id ORDER BY created_at", { id: taskId });
+      expect(events).toEqual(expect.arrayContaining([
+        expect.objectContaining({ type: "ApprovalRequested", aggregate_id: taskId, payload_json: expect.stringContaining(`"approvalId":"${approval.id}"`) }),
+        expect.objectContaining({ type: "ApprovalApproved", aggregate_id: taskId, payload_json: expect.stringContaining(`"approvalId":"${approval.id}"`) }),
+      ]));
+      for (const event of events.filter((item) => item.type === "ApprovalRequested" || item.type === "ApprovalApproved")) {
+        const payload = JSON.parse(event.payload_json) as Record<string, unknown>;
+        expect(payload.approvalId).toBe(approval.id);
+        expect(payload.approvalType).toBe("FINAL_MERGE");
+        expect(payload.subjectId).toBe(taskId);
+        expect(payload.subjectType).toBe("TASK");
+      }
   });
 });
 
