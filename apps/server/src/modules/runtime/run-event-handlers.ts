@@ -7,6 +7,7 @@ import type { Database } from "../../platform/database/database.js";
 import { WorkflowEngine } from "../workflow/workflow-engine.js";
 import type { RunOutcome } from "./run-types.js";
 import { validateRoleOutput } from "./output-validator.js";
+import { SchedulerService } from "../scheduler/scheduler-service.js";
 
 /**
  * Orchestrates runtime events and workflow transitions.
@@ -16,12 +17,14 @@ export class RuntimeEventHandlers {
     private readonly db: Database,
     private readonly workflowEngine: WorkflowEngine,
   ) {
+    this.scheduler = new SchedulerService(db);
     // Final merge provenance is authoritative even for databases created
     // before the provenance migration was installed.
     for (const column of ["approval_id TEXT", "source_sha TEXT", "expected_target_sha TEXT", "resulting_target_sha TEXT"]) {
       try { this.db.exec(`ALTER TABLE git_operations ADD COLUMN ${column}`); } catch { /* already present */ }
     }
   }
+  private readonly scheduler: SchedulerService;
 
   /**
    * Handle AgentRunRequested event.
@@ -123,6 +126,7 @@ export class RuntimeEventHandlers {
     } else {
       this.emitAgentRunFailed(taskId, outcome);
     }
+    this.scheduler.releaseTask(taskId);
   }
 
   /**
@@ -148,6 +152,7 @@ export class RuntimeEventHandlers {
 
     // Transition to CANCELLED
     this.workflowEngine.transition(taskId, "CANCELLED");
+    this.scheduler.releaseTask(taskId);
     this.emitAgentRunInterrupted(taskId);
   }
 

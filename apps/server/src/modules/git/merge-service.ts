@@ -106,7 +106,13 @@ export class MergeService {
     subjectId: string,
     approvalId: string
   ): Promise<MergeResult> {
-    const approval = this.approvalStore.get(approvalId);
+    if (this.approvalId && this.approvalId !== approvalId) {
+      throw new Error(`Approval argument ${approvalId} does not match configured approval ${this.approvalId}`);
+    }
+    const approval = this.approvalStore.get(approvalId) ?? this.database?.get<Approval>(
+      "SELECT id,subject_id AS subjectId,type,status FROM approvals WHERE id=$approvalId",
+      { approvalId },
+    );
 
     if (!approval) {
       throw new Error(`Approval not found: ${approvalId}`);

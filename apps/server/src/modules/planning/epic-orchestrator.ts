@@ -5,6 +5,7 @@ import { WorkflowEngine } from "../workflow/workflow-engine.js";
 import { RuntimeEventHandlers } from "../runtime/run-event-handlers.js";
 import { ApprovalService } from "../approvals/approval-service.js";
 import { SchedulerService } from "../scheduler/scheduler-service.js";
+import type { MergeService } from "../git/merge-service.js";
 
 export interface EpicAgentRequest { phase: string; role: string; epicId?: string; taskId?: string; targetBranch?: string }
 export interface EpicAgentResult { accepted: boolean; architectureChangingProposalAccepted?: boolean }
@@ -20,15 +21,20 @@ export class EpicOrchestrator {
   private readonly approvals: ApprovalService;
   private readonly scheduler: SchedulerService;
 
-  constructor(private readonly db: Database, private readonly workflow: WorkflowEngine, private readonly planning: PlanningService, private readonly runtime: EpicAgentRuntime) {
+  constructor(private readonly db: Database, private readonly workflow: WorkflowEngine, private readonly planning: PlanningService, private readonly runtime: EpicAgentRuntime, private readonly mergeService?: Pick<MergeService, "mergeApproved">) {
     this.handlers = new RuntimeEventHandlers(db, workflow);
     this.approvals = new ApprovalService(db);
     this.scheduler = new SchedulerService(db);
+    this.scheduler.reconcile();
     this.db.exec(`CREATE TABLE IF NOT EXISTS epic_orchestrations (epic_id TEXT PRIMARY KEY, plan_id TEXT NOT NULL, input_json TEXT NOT NULL, stage TEXT NOT NULL, sequence_json TEXT NOT NULL DEFAULT '[]', architecture_review_authorized INTEGER NOT NULL DEFAULT 0, final_approval_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`);
-    this.db.exec(`CREATE TABLE IF NOT EXISTS orchestration_phase_runs (id TEXT PRIMARY KEY, epic_id TEXT, task_id TEXT, phase TEXT NOT NULL, role TEXT NOT NULL, agent_run_id TEXT NOT NULL UNIQUE, result_json TEXT NOT NULL, evidence_json TEXT NOT NULL, validated INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, UNIQUE (epic_id, task_id, phase))`);
+    this.db.exec(`CREATE TABLE IF NOT EXISTS orchestration_phase_runs (id TEXT PRIMARY KEY, epic_id TEXT, task_id TEXT, phase TEXT NOT NULL, role TEXT NOT NULL, agent_run_id TEXT NOT NULL UNIQUE, result_json TEXT NOT NULL DEFAULT '{}', evidence_json TEXT NOT NULL DEFAULT '{}', validated INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'INTENT', request_json TEXT, started_at TEXT, ended_at TEXT, created_at TEXT NOT NULL, UNIQUE (epic_id, task_id, phase))`);
     this.db.exec(`CREATE TABLE IF NOT EXISTS agent_runs (id TEXT PRIMARY KEY, role TEXT NOT NULL, runtime TEXT NOT NULL, model TEXT NOT NULL, task_id TEXT, epic_id TEXT, status TEXT NOT NULL, started_at TEXT, ended_at TEXT, exit_code INTEGER, output TEXT)`);
     this.db.exec(`CREATE TABLE IF NOT EXISTS scheduler_capacity_reservations (task_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, owner_id TEXT NOT NULL, reserved_at TEXT NOT NULL)`);
     try { this.db.exec("ALTER TABLE planning_plans ADD COLUMN epic_id TEXT"); } catch { /* already present */ }
+    for (const column of ["status TEXT NOT NULL DEFAULT 'INTENT'", "request_json TEXT", "started_at TEXT", "ended_at TEXT"]) {
+      try { this.db.exec(`ALTER TABLE orchestration_phase_runs ADD COLUMN ${column}`); } catch { /* current schema */ }
+    }
+    this.reconcileStaleRuns();
   }
 
   async start(input: EpicStartInput): Promise<PlanningPlan> {
@@ -58,6 +64,21 @@ export class EpicOrchestrator {
 
   approveFinalMerge(epicId: string, approvalId?: string): EpicRunResult {
     if (!approvalId) throw new Error(`A persisted final approval id is required for Epic ${epicId}`);
+    const persisted = this.db.get<{ final_approval_id: string | null }>("SELECT final_approval_id FROM epic_orchestrations WHERE epic_id=$epicId", { epicId });
+    if (!persisted || persisted.final_approval_id !== approvalId) throw new Error(`Approval ${approvalId} is not the persisted final approval for Epic ${epicId}`);
+    if (this.mergeService) {
+      throw new Error("Final merge is asynchronous; call approveFinalMergeAsync");
+    }
+    this.handlers.handleEpicMergeCompleted(epicId, approvalId);
+    return this.result(epicId);
+  }
+
+  /** Execute the real MergeService and only then atomically release children. */
+  async approveFinalMergeAsync(epicId: string, approvalId: string): Promise<EpicRunResult> {
+    if (!this.mergeService) throw new Error("MergeService is required for final Epic merge");
+    const persisted = this.db.get<{ final_approval_id: string | null }>("SELECT final_approval_id FROM epic_orchestrations WHERE epic_id=$epicId", { epicId });
+    if (!persisted || persisted.final_approval_id !== approvalId) throw new Error(`Approval ${approvalId} is not the persisted final approval for Epic ${epicId}`);
+    await this.mergeService.mergeApproved(epicId, approvalId);
     this.handlers.handleEpicMergeCompleted(epicId, approvalId);
     return this.result(epicId);
   }
@@ -132,10 +153,22 @@ export class EpicOrchestrator {
     this.requirePersistedEvidence(epicId, task.id, "child_task", result);
     const stage = this.workflow.currentStage(task.id);
     if (stage === "DEVELOPMENT") this.workflow.transition(task.id, "REVIEW");
-    if (this.workflow.currentStage(task.id) === "REVIEW") this.workflow.transition(task.id, "QA", { hasReviewPassed: true, hasSuccessfulIntegration: false, hasFinalMergeApproval: false, parentEpicReleased: false });
-    if (this.workflow.currentStage(task.id) === "QA") this.workflow.transition(task.id, "READY_FOR_INTEGRATION");
+    if (this.workflow.currentStage(task.id) === "REVIEW") {
+      const review = await this.runPhase(epicId, task.id, "review", "reviewer", { phase: "review", role: "reviewer", taskId: task.id, epicId, targetBranch: branch });
+      this.requirePersistedEvidence(epicId, task.id, "review", review);
+      this.workflow.transition(task.id, "QA", { hasReviewPassed: true, hasSuccessfulIntegration: false, hasFinalMergeApproval: false, parentEpicReleased: false });
+    }
+    if (this.workflow.currentStage(task.id) === "QA") {
+      const qa = await this.runPhase(epicId, task.id, "qa", "qa", { phase: "qa", role: "qa", taskId: task.id, epicId, targetBranch: branch });
+      this.requirePersistedEvidence(epicId, task.id, "qa", qa);
+      this.workflow.transition(task.id, "READY_FOR_INTEGRATION");
+    }
     if (this.workflow.currentStage(task.id) === "READY_FOR_INTEGRATION") this.workflow.transition(task.id, "INTEGRATION");
-    if (this.workflow.currentStage(task.id) === "INTEGRATION") this.workflow.transition(task.id, "INTEGRATED_INTO_EPIC", { hasReviewPassed: true, hasSuccessfulIntegration: true, hasFinalMergeApproval: false, parentEpicReleased: false });
+    if (this.workflow.currentStage(task.id) === "INTEGRATION") {
+      const integration = await this.runPhase(epicId, task.id, "integration", "integration", { phase: "integration", role: "integration", taskId: task.id, epicId, targetBranch: branch });
+      this.requirePersistedEvidence(epicId, task.id, "integration", integration);
+      this.workflow.transition(task.id, "INTEGRATED_INTO_EPIC", { hasReviewPassed: true, hasSuccessfulIntegration: true, hasFinalMergeApproval: false, parentEpicReleased: false });
+    }
     this.scheduler.releaseTask(task.id);
   }
   private result(epicId: string): EpicRunResult {
@@ -146,25 +179,51 @@ export class EpicOrchestrator {
     return result;
   }
   private async runPhase(epicId: string, taskId: string | undefined, phase: string, role: string, request: EpicAgentRequest): Promise<EpicAgentResult> {
-    const existing = this.db.get<{ result_json: string; validated: number }>("SELECT result_json,validated FROM orchestration_phase_runs WHERE epic_id=$epicId AND task_id IS $taskId AND phase=$phase", { epicId, taskId: taskId ?? null, phase });
+    const existing = this.db.get<{ result_json: string; validated: number; status: string }>("SELECT result_json,validated,status FROM orchestration_phase_runs WHERE epic_id=$epicId AND task_id IS $taskId AND phase=$phase", { epicId, taskId: taskId ?? null, phase });
     if (existing) {
       if (existing.validated !== 1) throw new Error(`Persisted ${phase} evidence is not validated`);
       return JSON.parse(existing.result_json) as EpicAgentResult;
     }
-    return this.persistedPhase(epicId, taskId, phase, role, await this.runtime.run(request));
-  }
-
-  private persistedPhase(epicId: string, taskId: string | undefined, phase: string, role: string, result: EpicAgentResult): EpicAgentResult {
-    const now = new Date().toISOString();
+    // Intent is the idempotency boundary.  A runtime is never started before
+    // this row and its AgentRun exist durably.
     const agentRunId = crypto.randomUUID();
     const phaseId = crypto.randomUUID();
+    const now = new Date().toISOString();
+    this.db.transaction((tx) => {
+      tx.run("INSERT INTO agent_runs (id,role,runtime,model,task_id,epic_id,status,started_at) VALUES($id,$role,'orchestrator','persisted',$taskId,$epicId,'STARTED',$at)", { id: agentRunId, role, taskId: taskId ?? null, epicId, at: now });
+      tx.run("INSERT INTO orchestration_phase_runs(id,epic_id,task_id,phase,role,agent_run_id,result_json,evidence_json,validated,status,request_json,started_at,created_at) VALUES($id,$epicId,$taskId,$phase,$role,$run,'{}','{}',0,'RUNNING',$request,$at,$at)", { id: phaseId, epicId, taskId: taskId ?? null, phase, role, run: agentRunId, request: JSON.stringify(request), at: now });
+    });
+    try {
+      const result = await this.runtime.run(request);
+      return this.persistedPhase(epicId, taskId, phase, role, result, agentRunId, phaseId);
+    } catch (error) {
+      this.db.transaction((tx) => {
+        tx.run("UPDATE agent_runs SET status='FAILED',ended_at=$at,exit_code=-1,output=$output WHERE id=$id", { id: agentRunId, at: new Date().toISOString(), output: String(error) });
+        tx.run("UPDATE orchestration_phase_runs SET status='FAILED',ended_at=$at WHERE id=$id AND status='RUNNING'", { id: phaseId, at: new Date().toISOString() });
+      });
+      throw error;
+    }
+  }
+
+  private persistedPhase(epicId: string, taskId: string | undefined, phase: string, role: string, result: EpicAgentResult, agentRunId: string, phaseId: string): EpicAgentResult {
+    const now = new Date().toISOString();
     const evidence = { kind: "validated-orchestration-result", phase, role, accepted: result.accepted === true, recordedAt: now };
     if (!result.accepted) throw new Error(`Epic role result was not accepted`);
     this.db.transaction((tx) => {
-      tx.run(`INSERT INTO agent_runs (id,role,runtime,model,task_id,epic_id,status,started_at,ended_at,exit_code,output) VALUES($id,$role,'orchestrator','persisted',$taskId,$epicId,'COMPLETED',$at,$at,0,$output)`, { id: agentRunId, role, taskId: taskId ?? null, epicId, at: now, output: JSON.stringify(result) });
-      tx.run(`INSERT INTO orchestration_phase_runs(id,epic_id,task_id,phase,role,agent_run_id,result_json,evidence_json,validated,created_at) VALUES($id,$epicId,$taskId,$phase,$role,$run,$result,$evidence,1,$at)`, { id: phaseId, epicId, taskId: taskId ?? null, phase, role, run: agentRunId, result: JSON.stringify(result), evidence: JSON.stringify(evidence), at: now });
+      tx.run("UPDATE agent_runs SET status='COMPLETED',ended_at=$at,exit_code=0,output=$output WHERE id=$id AND status='STARTED'", { id: agentRunId, at: now, output: JSON.stringify(result) });
+      tx.run("UPDATE orchestration_phase_runs SET result_json=$result,evidence_json=$evidence,validated=1,status='COMPLETED',ended_at=$at WHERE id=$id AND status='RUNNING'", { id: phaseId, result: JSON.stringify(result), evidence: JSON.stringify(evidence), at: now });
     });
     return result;
+  }
+
+  private reconcileStaleRuns(): void {
+    this.db.transaction((tx) => {
+      const stale = tx.all<{ id: string; agent_run_id: string }>("SELECT id,agent_run_id FROM orchestration_phase_runs WHERE status='RUNNING'");
+      for (const row of stale) {
+        tx.run("UPDATE orchestration_phase_runs SET status='FAILED',ended_at=$at WHERE id=$id AND status='RUNNING'", { id: row.id, at: new Date().toISOString() });
+        tx.run("UPDATE agent_runs SET status='FAILED',ended_at=$at,exit_code=-1,output='STALE_ORCHESTRATION_RUN' WHERE id=$id AND status IN ('STARTED','IN_PROGRESS','COMPLETING')", { id: row.agent_run_id, at: new Date().toISOString() });
+      }
+    });
   }
 
   private loadPhaseResult(epicId: string, taskId: string, phase: string): EpicAgentResult {

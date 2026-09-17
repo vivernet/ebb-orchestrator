@@ -8,9 +8,13 @@ CREATE TABLE IF NOT EXISTS orchestration_phase_runs (
   phase TEXT NOT NULL,
   role TEXT NOT NULL,
   agent_run_id TEXT NOT NULL UNIQUE,
-  result_json TEXT NOT NULL,
-  evidence_json TEXT NOT NULL,
+  result_json TEXT NOT NULL DEFAULT '{}',
+  evidence_json TEXT NOT NULL DEFAULT '{}',
   validated INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'INTENT',
+  request_json TEXT,
+  started_at TEXT,
+  ended_at TEXT,
   created_at TEXT NOT NULL,
   UNIQUE (epic_id, task_id, phase)
 );
@@ -22,6 +26,11 @@ CREATE TABLE IF NOT EXISTS scheduler_capacity_reservations (
   project_id TEXT NOT NULL,
   owner_id TEXT NOT NULL,
   reserved_at TEXT NOT NULL,
+  estimate_cost REAL NOT NULL DEFAULT 0,
+  run_id TEXT,
+  status TEXT NOT NULL DEFAULT 'RESERVED',
+  actual_cost REAL,
+  approval_id TEXT,
   FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_capacity_reservations_project ON scheduler_capacity_reservations(project_id);
