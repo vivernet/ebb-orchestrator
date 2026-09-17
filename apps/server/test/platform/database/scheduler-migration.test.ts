@@ -246,6 +246,96 @@ describe("scheduler lock compatibility migration", () => {
     expect(db.get("SELECT version FROM schema_migrations WHERE version=14")).toBeUndefined();
   });
 
+  it("rejects unsafe no-capacity collision without partial synthetic state", async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "orch-scheduler-migration-no-capacity-collision-"));
+    db = createSqliteDatabase(join(tmpDir, `${randomUUID()}.db`));
+    runMigrations(db, baseMigrations);
+    createV12Prerequisites(db);
+    runMigrations(db, [legacyMigration012]);
+
+    const projectId = randomUUID();
+    const taskId = randomUUID();
+    const at = "2026-09-17T12:00:00.000Z";
+
+    db.run(
+      "INSERT INTO projects(id,name,display_name,created_at,updated_at) VALUES($id,'p','p',$at,$at)",
+      { id: projectId, at },
+    );
+    db.run(
+      "INSERT INTO tasks(id,project_id,display_id,title,contract_json,created_at,updated_at) VALUES($id,$project,'TASK-1','task','{}',$at,$at)",
+      { id: taskId, project: projectId, at },
+    );
+
+    // Legacy resource lock: global → task-1, owner-A
+    db.run(
+      "INSERT INTO resource_locks(id,task_id,locked_at,owner_id) VALUES('global',$task,$at,'owner-A')",
+      { task: taskId, at },
+    );
+
+    // Apply migration 013 (creates empty destination tables)
+    runMigrations(db, [forwardMigrations[0]!]);
+
+    // Insert an UNRELATED pre-existing reservation where subject_id = task_id.
+    // This is NOT the expected legacy lock reservation (id = 'legacy-lock:<task_id>',
+    // subject_id = 'lock:<task_id>').  The migration must reject, not reuse it.
+    db.run(
+      "INSERT INTO scheduler_reservations(id,kind,subject_id,project_id,owner_id,reserved_at,role,model)" +
+        " VALUES('unrelated','TASK',$task,$project,'other-owner',$at,'developer','default')",
+      { task: taskId, project: projectId, at },
+    );
+
+    // Migration 014 must abort — CHECK constraint violation from completeness guard
+    expect(() => runMigrations(db!, [forwardMigrations[1]!])).toThrow(/CHECK constraint failed/);
+
+    // 1. source resource_locks table still exists
+    expect(
+      db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='resource_locks'"),
+    ).toBeDefined();
+
+    // 2. legacy lock row 'global' still exists in resource_locks
+    expect(db.get<{ id: string }>("SELECT id FROM resource_locks WHERE id='global'")).toEqual({
+      id: "global",
+    });
+
+    // 3. NO scheduler_resource_lock was attached to the unrelated reservation
+    expect(
+      db.get("SELECT resource_key FROM scheduler_resource_locks WHERE resource_key='global'"),
+    ).toBeUndefined();
+
+    // 4. NO partial synthetic reservation was created (no 'legacy-lock:' row)
+    expect(
+      db.get("SELECT id FROM scheduler_reservations WHERE id LIKE 'legacy-lock:%'"),
+    ).toBeUndefined();
+
+    // 5. the unrelated reservation is untouched
+    expect(
+      db.get<{ id: string }>(
+        "SELECT id FROM scheduler_reservations WHERE id='unrelated' AND subject_id=$task",
+        { task: taskId },
+      ),
+    ).toEqual({ id: "unrelated" });
+
+    // 6. source tables were NOT dropped
+    expect(
+      db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='resource_locks'"),
+    ).toBeDefined();
+    expect(
+      db.get(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='scheduler_capacity_reservations'",
+      ),
+    ).toBeDefined();
+
+    // 7. migration was not recorded
+    expect(db.get("SELECT version FROM schema_migrations WHERE version=14")).toBeUndefined();
+
+    // 8. completeness guard table was cleaned up (rolled back)
+    expect(
+      db.get(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='scheduler_014_completeness_guard'",
+      ),
+    ).toBeUndefined();
+  });
+
   it("aborts without dropping orphaned legacy locks", async () => {
     tmpDir = await mkdtemp(join(tmpdir(), "orch-scheduler-migration-orphan-"));
     db = createSqliteDatabase(join(tmpDir, `${randomUUID()}.db`));
