@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS usage_records (
   output_tokens INTEGER NOT NULL DEFAULT 0,
   total_tokens INTEGER NOT NULL DEFAULT 0,
   estimated_cost REAL NOT NULL DEFAULT 0,
+  runtime TEXT NOT NULL DEFAULT '',
   actual_cost REAL NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE

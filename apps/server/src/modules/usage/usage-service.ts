@@ -27,6 +27,7 @@ export class UsageService {
     inputTokens?: number;
     cachedTokens?: number;
     outputTokens?: number;
+    runtime?: string;
     estimatedCost?: number;
     actualCost?: number;
   }): UsageRecord {
@@ -41,12 +42,12 @@ export class UsageService {
         id, run_id, reservation_id, project_id, epic_id, task_id,
         role, model, trigger_reason, rework_category,
         input_tokens, cached_tokens, output_tokens, total_tokens,
-        estimated_cost, actual_cost, created_at
+        runtime, estimated_cost, actual_cost, created_at
       ) VALUES (
         $id, $runId, $reservationId, $projectId, $epicId, $taskId,
         $role, $model, $triggerReason, $reworkCategory,
         $inputTokens, $cachedTokens, $outputTokens, $totalTokens,
-        $estimatedCost, $actualCost, $createdAt
+        $runtime, $estimatedCost, $actualCost, $createdAt
       )`,
       {
         id,
@@ -63,6 +64,7 @@ export class UsageService {
         cachedTokens,
         outputTokens,
         totalTokens: inputTokens + cachedTokens + outputTokens,
+        runtime: record.runtime ?? "",
         estimatedCost: record.estimatedCost ?? 0,
         actualCost: record.actualCost ?? 0,
         createdAt: now,
@@ -144,6 +146,7 @@ export class UsageService {
       cachedTokens: row.cached_tokens as number,
       outputTokens: row.output_tokens as number,
       totalTokens: row.total_tokens as number,
+      runtime: row.runtime as string,
       estimatedCost: row.estimated_cost as number,
       actualCost: row.actual_cost as number,
       createdAt: row.created_at as string,

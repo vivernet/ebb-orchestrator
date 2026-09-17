@@ -96,6 +96,8 @@ export class BudgetService {
       const reservation = tx.get<{
         id: string;
         project_id: string;
+        epic_id: string | null;
+        task_id: string | null;
         estimate_cost: number;
         role: string;
         model: string;
@@ -103,7 +105,7 @@ export class BudgetService {
         rework_category: string | null;
         status: string;
       }>(
-        "SELECT id, project_id, estimate_cost, role, model, trigger_reason, rework_category, status FROM budget_reservations WHERE id = $id",
+        "SELECT id, project_id, epic_id, task_id, estimate_cost, role, model, trigger_reason, rework_category, status FROM budget_reservations WHERE id = $id",
         { id: reservationId },
       );
 
@@ -120,7 +122,8 @@ export class BudgetService {
       );
 
       // Update budget config: subtract reserved, add spent.
-      const configs = this.getApplicableConfigs(tx, reservation.project_id);
+      // Include epic/task configs when those IDs are available.
+      const configs = this.getApplicableConfigs(tx, reservation.project_id, reservation.epic_id, reservation.task_id);
       for (const config of configs) {
         tx.run(
           "UPDATE budget_configs SET reserved_cost = MAX(0, reserved_cost - $estimate), spent_cost = spent_cost + $actual, updated_at = $at WHERE id = $configId",
@@ -134,15 +137,16 @@ export class BudgetService {
         const inputTokens = tokens.inputTokens ?? 0;
         const cachedTokens = tokens.cachedTokens ?? 0;
         const outputTokens = tokens.outputTokens ?? 0;
+        const runtime = tokens.runtime ?? "";
         tx.run(
           `INSERT INTO usage_records (
             id, reservation_id, project_id, role, model, trigger_reason, rework_category,
             input_tokens, cached_tokens, output_tokens, total_tokens,
-            estimated_cost, actual_cost, created_at
+            runtime, estimated_cost, actual_cost, created_at
           ) VALUES (
             $id, $reservationId, $projectId, $role, $model, $triggerReason, $reworkCategory,
             $inputTokens, $cachedTokens, $outputTokens, $totalTokens,
-            $estimatedCost, $actualCost, $createdAt
+            $runtime, $estimatedCost, $actualCost, $createdAt
           )`,
           {
             id: usageId,
@@ -156,6 +160,7 @@ export class BudgetService {
             cachedTokens,
             outputTokens,
             totalTokens: inputTokens + cachedTokens + outputTokens,
+            runtime,
             estimatedCost: reservation.estimate_cost,
             actualCost: actual,
             createdAt: new Date().toISOString(),
@@ -164,6 +169,49 @@ export class BudgetService {
       }
 
       return { status: "RECONCILED" as const, actualCost: actual, reservationId };
+    });
+  }
+
+  /**
+   * Release stale RESERVED reservations that are not in the set of active reservation IDs.
+   * For each stale reservation, decrements reserved_cost on all applicable budget configs.
+   */
+  cleanupStaleReservations(activeReservationIds: string[]): { released: number } {
+    return this.db.transaction((tx) => {
+      // Find all RESERVED reservations not in the active set.
+      let staleRows: { id: string; project_id: string; epic_id: string | null; task_id: string | null; estimate_cost: number }[];
+      if (activeReservationIds.length > 0) {
+        const placeholders = activeReservationIds.map((_, i) => `$active${i}`).join(", ");
+        const params: Record<string, string> = {};
+        activeReservationIds.forEach((id, i) => { params[`active${i}`] = id; });
+        staleRows = tx.all<{ id: string; project_id: string; epic_id: string | null; task_id: string | null; estimate_cost: number }>(
+          `SELECT id, project_id, epic_id, task_id, estimate_cost FROM budget_reservations WHERE status = 'RESERVED' AND id NOT IN (${placeholders})`,
+          params,
+        );
+      } else {
+        staleRows = tx.all<{ id: string; project_id: string; epic_id: string | null; task_id: string | null; estimate_cost: number }>(
+          "SELECT id, project_id, epic_id, task_id, estimate_cost FROM budget_reservations WHERE status = 'RESERVED'",
+        );
+      }
+
+      for (const row of staleRows) {
+        // Release the reservation.
+        tx.run(
+          "UPDATE budget_reservations SET status = 'RELEASED' WHERE id = $id AND status = 'RESERVED'",
+          { id: row.id },
+        );
+
+        // Decrement reserved_cost on all applicable configs.
+        const configs = this.getApplicableConfigs(tx, row.project_id, row.epic_id, row.task_id);
+        for (const config of configs) {
+          tx.run(
+            "UPDATE budget_configs SET reserved_cost = MAX(0, reserved_cost - $estimate), updated_at = $at WHERE id = $configId",
+            { configId: config.id, estimate: row.estimate_cost, at: new Date().toISOString() },
+          );
+        }
+      }
+
+      return { released: staleRows.length };
     });
   }
 
@@ -223,8 +271,14 @@ export class BudgetService {
 
   /**
    * Get all applicable configs for reconciliation.
+   * Includes epic/task configs when those IDs are available.
    */
-  private getApplicableConfigs(tx: DatabaseTx, projectId: string): BudgetConfig[] {
+  private getApplicableConfigs(
+    tx: DatabaseTx,
+    projectId: string,
+    epicId?: string | null,
+    taskId?: string | null,
+  ): BudgetConfig[] {
     const configs: BudgetConfig[] = [];
     const global = tx.get<Record<string, unknown>>(
       "SELECT * FROM budget_configs WHERE scope = 'global' AND scope_id = 'global'",
@@ -235,6 +289,20 @@ export class BudgetService {
       { scopeId: projectId },
     );
     if (project) configs.push(this.mapConfig(project));
+    if (epicId) {
+      const epic = tx.get<Record<string, unknown>>(
+        "SELECT * FROM budget_configs WHERE scope = 'epic' AND scope_id = $scopeId",
+        { scopeId: epicId },
+      );
+      if (epic) configs.push(this.mapConfig(epic));
+    }
+    if (taskId) {
+      const task = tx.get<Record<string, unknown>>(
+        "SELECT * FROM budget_configs WHERE scope = 'task' AND scope_id = $scopeId",
+        { scopeId: taskId },
+      );
+      if (task) configs.push(this.mapConfig(task));
+    }
     return configs;
   }
 

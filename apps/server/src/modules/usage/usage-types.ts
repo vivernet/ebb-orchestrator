@@ -58,6 +58,7 @@ export interface UsageRecord {
   cachedTokens: number;
   outputTokens: number;
   totalTokens: number;
+  runtime: string;
   estimatedCost: number;
   actualCost: number;
   createdAt: string;
@@ -95,4 +96,5 @@ export interface ReconcileTokenDetails {
   inputTokens?: number;
   cachedTokens?: number;
   outputTokens?: number;
+  runtime?: string;
 }

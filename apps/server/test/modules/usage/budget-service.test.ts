@@ -284,6 +284,65 @@ describe("BudgetService", () => {
     expect(recResult.actualCost).toBe(0);
   });
 
+  it("reconciles across epic and task scope budget configs", async () => {
+    await setup(100);
+    const epicId = randomUUID();
+    const taskId = randomUUID();
+    const now3 = new Date().toISOString();
+
+    db!.run(
+      "INSERT INTO budget_configs (id, scope, scope_id, limit_cost, soft_limit_cost, policy, created_at, updated_at) VALUES ($id, 'epic', $scopeId, $limit, $soft, 'hard', $now, $now)",
+      { id: randomUUID(), scopeId: epicId, limit: 50, soft: 40, now: now3 },
+    );
+    db!.run(
+      "INSERT INTO budget_configs (id, scope, scope_id, limit_cost, soft_limit_cost, policy, created_at, updated_at) VALUES ($id, 'task', $scopeId, $limit, $soft, 'hard', $now, $now)",
+      { id: randomUUID(), scopeId: taskId, limit: 10, soft: 8, now: now3 },
+    );
+
+    budgetService = new BudgetService(db!);
+
+    const d1 = budgetService.reserve({
+      projectId,
+      epicId,
+      taskId,
+      estimateCost: 3,
+      role: "developer",
+      model: "default",
+      triggerReason: "DEVELOPMENT",
+    });
+    expect(d1.decision).toBe("ALLOW");
+
+    // Verify reserved_cost was incremented on all scopes
+    const epicConfig = db!.get<{ reserved_cost: number }>(
+      "SELECT reserved_cost FROM budget_configs WHERE scope = 'epic' AND scope_id = $scopeId",
+      { scopeId: epicId },
+    );
+    expect(epicConfig?.reserved_cost).toBe(3);
+    const taskConfig = db!.get<{ reserved_cost: number }>(
+      "SELECT reserved_cost FROM budget_configs WHERE scope = 'task' AND scope_id = $scopeId",
+      { scopeId: taskId },
+    );
+    expect(taskConfig?.reserved_cost).toBe(3);
+
+    // Reconcile with actual cost
+    const recResult = budgetService.reconcile(d1.reservationId!, 2.5);
+    expect(recResult.status).toBe("RECONCILED");
+
+    // Verify reserved_cost decremented and spent_cost incremented on all scopes
+    const epicAfter = db!.get<{ reserved_cost: number; spent_cost: number }>(
+      "SELECT reserved_cost, spent_cost FROM budget_configs WHERE scope = 'epic' AND scope_id = $scopeId",
+      { scopeId: epicId },
+    );
+    expect(epicAfter?.reserved_cost).toBe(0);
+    expect(epicAfter?.spent_cost).toBe(2.5);
+    const taskAfter = db!.get<{ reserved_cost: number; spent_cost: number }>(
+      "SELECT reserved_cost, spent_cost FROM budget_configs WHERE scope = 'task' AND scope_id = $scopeId",
+      { scopeId: taskId },
+    );
+    expect(taskAfter?.reserved_cost).toBe(0);
+    expect(taskAfter?.spent_cost).toBe(2.5);
+  });
+
   it("returns ALREADY_RECONCILED for unknown reservation", async () => {
     await setup(10);
     const recResult = budgetService.reconcile("non-existent-id", 1);
@@ -461,21 +520,56 @@ describe("BudgetService", () => {
     expect(d1.decision).toBe("ALLOW");
     expect(d2.decision).toBe("ALLOW");
 
-    // Reconcile d1 with actual cost, d2 remains stale
-    budgetService.reconcile(d1.reservationId!, 4);
+    // d1 is active, d2 is stale (dead run)
+    const result = budgetService.cleanupStaleReservations([d1.reservationId!]);
+    expect(result.released).toBe(1);
 
-    // Verify d1 is reconciled
+    // d1 should still be RESERVED
     const r1 = db!.get<{ status: string }>(
       "SELECT status FROM budget_reservations WHERE id = $id",
       { id: d1.reservationId! },
     );
-    expect(r1?.status).toBe("RECONCILED");
+    expect(r1?.status).toBe("RESERVED");
 
-    // d2 should still be RESERVED
+    // d2 should be RELEASED
     const r2 = db!.get<{ status: string }>(
       "SELECT status FROM budget_reservations WHERE id = $id",
       { id: d2.reservationId! },
     );
-    expect(r2?.status).toBe("RESERVED");
+    expect(r2?.status).toBe("RELEASED");
+
+    // d2's estimate cost should be decremented from reserved_cost
+    const config = db!.get<{ reserved_cost: number }>(
+      "SELECT reserved_cost FROM budget_configs WHERE scope = 'project' AND scope_id = $scopeId",
+      { scopeId: projectId },
+    );
+    expect(config?.reserved_cost).toBe(5); // only d1's 5 remains
+  });
+
+  it("releases all reservations when active set is empty", async () => {
+    await setup(20);
+    const d1 = budgetService.reserve({
+      projectId,
+      estimateCost: 3,
+      role: "developer",
+      model: "default",
+      triggerReason: "DEVELOPMENT",
+    });
+    expect(d1.decision).toBe("ALLOW");
+
+    const result = budgetService.cleanupStaleReservations([]);
+    expect(result.released).toBe(1);
+
+    const r1 = db!.get<{ status: string }>(
+      "SELECT status FROM budget_reservations WHERE id = $id",
+      { id: d1.reservationId! },
+    );
+    expect(r1?.status).toBe("RELEASED");
+
+    const config = db!.get<{ reserved_cost: number }>(
+      "SELECT reserved_cost FROM budget_configs WHERE scope = 'project' AND scope_id = $scopeId",
+      { scopeId: projectId },
+    );
+    expect(config?.reserved_cost).toBe(0);
   });
 });
