@@ -14,6 +14,9 @@ import {
 } from "../platform/security/local-session.js";
 import { healthRoutes } from "./routes/health.js";
 import { eventRoutes } from "./routes/events.js";
+import { onboardingRoutes } from "./routes/onboarding.js";
+import { settingsRoutes } from "./routes/settings.js";
+import { usageRoutes } from "./routes/usage.js";
 import type { Database } from "../platform/database/database.js";
 import { DashboardProjection } from "./read-models/dashboard-projection.js";
 import { projectRoutes } from "./routes/projects.js";
@@ -131,6 +134,9 @@ export function createApp(deps: AppDeps): OrchestratorApp {
     await workRoutes(instance, { db: deps.db, workService, scheduler });
     await approvalRoutes(instance, { db: deps.db, approvalService });
     await runRoutes(instance, { db: deps.db, runService, scheduler });
+    await onboardingRoutes(instance, { db: deps.db });
+    await settingsRoutes(instance, { db: deps.db });
+    await usageRoutes(instance, { db: deps.db });
   });
 
   // Protected test route (used by security tests)
