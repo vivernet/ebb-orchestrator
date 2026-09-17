@@ -188,6 +188,29 @@ export class RuntimeEventHandlers {
     this.emitTaskTransitioned(taskId, "READY_FOR_MERGE", "MERGING");
   }
 
+  /** Complete the Epic merge and only then release its integrated children. */
+  handleEpicMergeCompleted(epicId: string, finalApproval: boolean): void {
+    if (!finalApproval) throw new Error(`Final merge approval is required for Epic ${epicId}`);
+    const epic = this.db.get<{ status: string }>("SELECT status FROM epics WHERE id=$epicId", { epicId });
+    if (!epic) throw new Error(`Epic ${epicId} not found`);
+    if (epic.status !== "IN_PROGRESS") throw new Error(`Epic ${epicId} is not ready for final merge`);
+    const remaining = this.db.get<{ count: number }>(
+      "SELECT COUNT(*) AS count FROM tasks WHERE epic_id=$epicId AND required=1 AND status <> 'INTEGRATED_INTO_EPIC'",
+      { epicId },
+    );
+    if ((remaining?.count ?? 1) !== 0) throw new Error(`Epic ${epicId} has required children that are not integrated`);
+    this.db.run("UPDATE epics SET status='DONE', updated_at=$updatedAt WHERE id=$epicId", { epicId, updatedAt: new Date().toISOString() });
+    const children = this.db.all<{ id: string }>("SELECT id FROM tasks WHERE epic_id=$epicId ORDER BY display_id", { epicId });
+    for (const child of children) {
+      this.workflowEngine.transition(child.id, "RELEASED", {
+        hasReviewPassed: true,
+        hasSuccessfulIntegration: true,
+        hasFinalMergeApproval: true,
+        parentEpicReleased: true,
+      });
+    }
+  }
+
   /**
    * Private helper methods for emitting events.
    */
