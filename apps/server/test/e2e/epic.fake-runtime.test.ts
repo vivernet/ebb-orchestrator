@@ -105,7 +105,7 @@ describe("full epic orchestration with FakeAgentRuntime", () => {
     db.exec("CREATE TABLE agent_runs (id TEXT PRIMARY KEY, role TEXT NOT NULL, runtime TEXT NOT NULL, model TEXT NOT NULL, task_id TEXT, epic_id TEXT, status TEXT NOT NULL, started_at TEXT, ended_at TEXT, exit_code INTEGER, output TEXT, cost REAL)");
     db.exec("CREATE TABLE orchestration_phase_runs (id TEXT PRIMARY KEY, epic_id TEXT, task_id TEXT, phase TEXT NOT NULL, role TEXT NOT NULL, agent_run_id TEXT NOT NULL UNIQUE, result_json TEXT NOT NULL DEFAULT '{}', evidence_json TEXT NOT NULL DEFAULT '{}', validated INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'INTENT', request_json TEXT, started_at TEXT, ended_at TEXT, created_at TEXT NOT NULL, UNIQUE (epic_id, task_id, phase))");
     db.run("INSERT INTO agent_runs (id,role,runtime,model,epic_id,status,started_at) VALUES ($id,'reviewer','test','test',$epicId,'STARTED',$now)", { id: runId, epicId, now });
-    db.run("INSERT INTO orchestration_phase_runs (id,epic_id,phase,role,agent_run_id,status,started_at,created_at) VALUES ($id,$epicId,'epic_review','reviewer',$runId,'RUNNING',$now,$now)", { id: randomUUID(), epicId, runId, now });
+    db.run("INSERT INTO orchestration_phase_runs (id,epic_id,phase,role,agent_run_id,status,started_at,created_at) VALUES ($id,$epicId,'epic_review','reviewer',$runId,'INTENT',$now,$now)", { id: randomUUID(), epicId, runId, now });
     db.exec("CREATE TABLE scheduler_budgets (project_id TEXT PRIMARY KEY, limit_cost REAL NOT NULL, spent_cost REAL NOT NULL DEFAULT 0, reserved_cost REAL NOT NULL DEFAULT 0)");
     db.exec("CREATE TABLE scheduler_reservations (id TEXT PRIMARY KEY, kind TEXT NOT NULL, subject_id TEXT NOT NULL UNIQUE, project_id TEXT NOT NULL, owner_id TEXT NOT NULL, reserved_at TEXT NOT NULL, estimate_cost REAL NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'RESERVED', actual_cost REAL, role TEXT NOT NULL, model TEXT NOT NULL, approval_id TEXT, run_id TEXT)");
     db.exec("CREATE TABLE scheduler_resource_locks (resource_key TEXT PRIMARY KEY, reservation_id TEXT NOT NULL, project_id TEXT NOT NULL, owner_id TEXT NOT NULL, locked_at TEXT NOT NULL)");
@@ -119,6 +119,7 @@ describe("full epic orchestration with FakeAgentRuntime", () => {
     new EpicOrchestrator(db, new WorkflowEngine(db, registry), new PlanningService(db), new RunService(db, new FakeAgentRuntime()), {} as never);
 
     expect(db.get<{ status: string }>("SELECT status FROM agent_runs WHERE id=$id", { id: runId })?.status).toBe("FAILED");
+    expect(db.get<{ status: string }>("SELECT status FROM orchestration_phase_runs WHERE agent_run_id=$runId", { runId })?.status).toBe("FAILED");
     expect(db.get<{ status: string }>("SELECT status FROM scheduler_reservations WHERE id=$id", { id: reservationId })?.status).toBe("RELEASED");
     expect(db.get<{ reserved_cost: number }>("SELECT reserved_cost FROM scheduler_budgets WHERE project_id=$projectId", { projectId })?.reserved_cost).toBe(0);
     expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_resource_locks WHERE reservation_id=$id", { id: reservationId })?.count).toBe(0);

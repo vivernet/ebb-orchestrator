@@ -305,4 +305,19 @@ describe("RunService with FakeAgentRuntime", () => {
       "SELECT COUNT(*) AS count, MAX(id) AS id, MAX(status) AS status FROM agent_runs WHERE id = $id", { id: runId },
     )).toEqual({ count: 1, id: runId, status: "FAILED" });
   });
+
+  it("executes a prepared run without creating a second AgentRun", async () => {
+    await setup();
+    const output = JSON.stringify({ version: "1.0.0", outcome: "COMPLETED" });
+    fakeRuntime.script("developer", [{ success: true, exitCode: 0, output }]);
+    const run = runService.prepareRun({
+      runId: randomUUID(), role: "developer", model: "gpt-4", taskId, epicId,
+      triggerReason: "epic-plan", contextVersion: "1", outputSchemaVersion: "1",
+      prompt: "prepared prompt",
+    });
+    await expect(runService.executePreparedRun(run.id)).rejects.toThrow(/COMPLETING/);
+    expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM agent_runs WHERE id=$id", { id: run.id })?.count).toBe(1);
+    expect(db!.get<{ status: string; prompt: string }>("SELECT status,prompt FROM agent_runs WHERE id=$id", { id: run.id }))
+      .toEqual({ status: "FAILED", prompt: "prepared prompt" });
+  });
 });

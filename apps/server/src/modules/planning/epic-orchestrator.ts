@@ -204,29 +204,31 @@ export class EpicOrchestrator {
     const activePhaseId = existing?.id ?? phaseId;
     const now = new Date().toISOString();
     this.db.transaction((tx) => {
-      if (existing) tx.run("UPDATE orchestration_phase_runs SET agent_run_id=$run,result_json='{}',evidence_json='{}',validated=0,status='RUNNING',request_json=$request,started_at=$at,ended_at=NULL WHERE id=$id", { id: existing.id, run: agentRunId, request: JSON.stringify(request), at: now });
-      else tx.run("INSERT INTO orchestration_phase_runs(id,epic_id,task_id,phase,role,agent_run_id,result_json,evidence_json,validated,status,request_json,created_at) VALUES($id,$epicId,$taskId,$phase,$role,$run,'{}','{}',0,'INTENT',$request,$at)", { id: phaseId, epicId, taskId: taskId ?? null, phase, role, run: agentRunId, request: JSON.stringify(request), at: now });
-    });
+       if (existing) tx.run("UPDATE orchestration_phase_runs SET agent_run_id=$run,result_json='{}',evidence_json='{}',validated=0,status='RUNNING',request_json=$request,started_at=$at,ended_at=NULL WHERE id=$id", { id: existing.id, run: agentRunId, request: JSON.stringify(request), at: now });
+       else tx.run("INSERT INTO orchestration_phase_runs(id,epic_id,task_id,phase,role,agent_run_id,result_json,evidence_json,validated,status,request_json,created_at) VALUES($id,$epicId,$taskId,$phase,$role,$run,'{}','{}',0,'INTENT',$request,$at)", { id: phaseId, epicId, taskId: taskId ?? null, phase, role, run: agentRunId, request: JSON.stringify(request), at: now });
+     });
     try {
+      this.runs.prepareRun({
+        runId: agentRunId, role, model: "persisted", taskId: taskId ?? "", epicId,
+        triggerReason: `epic-${phase}`, contextVersion: "1", outputSchemaVersion: "1",
+        prompt: JSON.stringify(request),
+      });
+      this.db.run("UPDATE orchestration_phase_runs SET status='RUNNING',started_at=$at WHERE id=$id AND status='INTENT'", { id: activePhaseId, at: now });
       if (taskId && this.workflow.currentStage(taskId) === "READY") this.scheduler.dispatchTask(taskId, this.workflow, () => undefined, { triggerReason: `epic-${phase}`, role, model: "persisted", runId: agentRunId });
       else {
         const projectId = this.db.get<{ project_id: string }>("SELECT project_id FROM epics WHERE id=$epicId", { epicId })?.project_id;
         if (!projectId) throw new Error(`Epic ${epicId} project not found`);
         this.scheduler.dispatchAgentRun(agentRunId, projectId, role, "persisted");
       }
-      const execution = await this.runs.execute({
-        runId: agentRunId, role, model: "persisted", taskId: taskId ?? "", epicId,
-        triggerReason: `epic-${phase}`, contextVersion: "1", outputSchemaVersion: "1",
-        prompt: JSON.stringify(request),
-      });
+      const execution = await this.runs.executePreparedRun(agentRunId);
       const result: EpicAgentResult = {
         accepted: true,
         output: JSON.parse(execution.outcome.output),
         usage: { cost: execution.run.cost ?? 0 },
       };
-      this.db.run("UPDATE orchestration_phase_runs SET status='RUNNING',started_at=$at WHERE id=$id AND status='INTENT'", { id: activePhaseId, at: now });
-      return this.persistedPhase(epicId, taskId, phase, role, result, agentRunId, activePhaseId);
-    } catch (error) {
+       return this.persistedPhase(epicId, taskId, phase, role, result, agentRunId, activePhaseId);
+      } catch (error) {
+      this.runs.failPreparedRun(agentRunId, error);
       this.db.transaction((tx) => {
         tx.run("UPDATE orchestration_phase_runs SET status='FAILED',ended_at=$at WHERE id=$id AND status IN ('INTENT','RUNNING')", { id: activePhaseId, at: new Date().toISOString() });
       });
@@ -263,9 +265,9 @@ export class EpicOrchestrator {
 
   private reconcileStaleRuns(): void {
     this.db.transaction((tx) => {
-      const stale = tx.all<{ id: string; agent_run_id: string }>("SELECT id,agent_run_id FROM orchestration_phase_runs WHERE status='RUNNING'");
-      for (const row of stale) {
-        tx.run("UPDATE orchestration_phase_runs SET status='FAILED',ended_at=$at WHERE id=$id AND status='RUNNING'", { id: row.id, at: new Date().toISOString() });
+       const stale = tx.all<{ id: string; agent_run_id: string }>("SELECT id,agent_run_id FROM orchestration_phase_runs WHERE status IN ('INTENT','RUNNING')");
+       for (const row of stale) {
+         tx.run("UPDATE orchestration_phase_runs SET status='FAILED',ended_at=$at WHERE id=$id AND status IN ('INTENT','RUNNING')", { id: row.id, at: new Date().toISOString() });
         tx.run("UPDATE agent_runs SET status='FAILED',ended_at=$at,exit_code=-1,output='STALE_ORCHESTRATION_RUN' WHERE id=$id AND status IN ('STARTED','IN_PROGRESS','COMPLETING')", { id: row.agent_run_id, at: new Date().toISOString() });
       }
     });

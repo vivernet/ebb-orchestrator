@@ -20,7 +20,7 @@ export class RunService {
   ) {
     this.db.exec(`CREATE TABLE IF NOT EXISTS agent_runs (
       id TEXT PRIMARY KEY, role TEXT NOT NULL, runtime TEXT NOT NULL, model TEXT NOT NULL,
-      task_id TEXT, epic_id TEXT, status TEXT NOT NULL, started_at TEXT, ended_at TEXT,
+      task_id TEXT, epic_id TEXT, status TEXT NOT NULL, prompt TEXT, started_at TEXT, ended_at TEXT,
       exit_code INTEGER, input_tokens INTEGER, output_tokens INTEGER, cost REAL, output TEXT
     )`);
     // Keep databases created before capability_json usable while the migration
@@ -28,7 +28,7 @@ export class RunService {
     const columns = this.db.all<{ name: string }>("PRAGMA table_info(agent_runs)");
     for (const column of [
       "capability_ref TEXT", "capability_json TEXT", "session_id TEXT", "attempt INTEGER",
-      "trigger_reason TEXT", "context_version TEXT", "output_schema_version TEXT",
+      "trigger_reason TEXT", "context_version TEXT", "output_schema_version TEXT", "prompt TEXT",
       "cached_input_tokens INTEGER", "output TEXT",
     ]) {
       const name = column.split(" ", 1)[0];
@@ -49,10 +49,13 @@ export class RunService {
   }
 
   /**
-   * Start a new agent run.
+   * Persist a new agent run without invoking the runtime.
+   *
+   * Callers that must reserve scheduler capacity before launch use this as
+   * the durable identity boundary, followed by executePreparedRun().
    */
-  async startRun(options: StartRunOptions): Promise<AgentRun> {
-    const record = this.db.transaction((tx) => {
+  prepareRun(options: StartRunOptions): AgentRun {
+    return this.db.transaction((tx) => {
       const id = options.runId ?? crypto.randomUUID();
       const capabilityRef = crypto.randomUUID();
       const role = options.role.toLowerCase();
@@ -96,11 +99,11 @@ export class RunService {
       tx.run(
         `INSERT INTO agent_runs (
           id, role, runtime, model, task_id, epic_id, status,
-          session_id, attempt, trigger_reason, context_version,
+           session_id, attempt, trigger_reason, context_version, prompt,
            output_schema_version, started_at, ended_at, exit_code,
             input_tokens, cached_input_tokens, output_tokens, cost, capability_ref, capability_json
         ) VALUES ($id, $role, $runtime, $model, $task_id, $epic_id, $status,
-          $session_id, $attempt, $trigger_reason, $context_version,
+           $session_id, $attempt, $trigger_reason, $context_version, $prompt,
            $output_schema_version, $started_at, $ended_at, $exit_code,
            $input_tokens, $cached_input_tokens, $output_tokens, $cost, $capability_ref, $capability_json)`,
         {
@@ -113,8 +116,9 @@ export class RunService {
           status: record.status,
           session_id: record.sessionId,
           attempt: record.attempt,
-          trigger_reason: record.triggerReason,
-          context_version: record.contextVersion,
+           trigger_reason: record.triggerReason,
+           context_version: record.contextVersion,
+           prompt: options.prompt ?? null,
           output_schema_version: record.outputSchemaVersion,
           started_at: record.startedAt?.toISOString() ?? null,
           ended_at: record.endedAt?.toISOString() ?? null,
@@ -130,6 +134,11 @@ export class RunService {
 
       return record;
     });
+  }
+
+  /** Start a new run and make it runtime-ready. */
+  async startRun(options: StartRunOptions): Promise<AgentRun> {
+    const record = this.prepareRun(options);
     // startRun is the runtime readiness barrier: adapters resolve only after
     // their profile/config and launch have been prepared. Never expose a run
     // to callers while that asynchronous work is still in flight.
@@ -142,10 +151,16 @@ export class RunService {
     return record;
   }
 
-  /** Start, collect, and durably accept one runtime result. */
-  async execute(options: StartRunOptions): Promise<{ run: AgentRun; outcome: RunOutcome }> {
-    const run = await this.startRun(options);
+  /**
+   * Execute an already persisted run. This never creates another AgentRun.
+   */
+  async executePreparedRun(runId: string): Promise<{ run: AgentRun; outcome: RunOutcome }> {
+    const run = this.getRun(this.db, runId);
+    if (run.status !== "STARTED") {
+      throw new Error(`Run ${runId} is not prepared for execution: ${run.status}`);
+    }
     try {
+      await this.runtime.startRun(run);
       const outcome = await this.runtime.collectResult(run.id);
       await this.collectResult(run.id, outcome);
       try {
@@ -158,6 +173,17 @@ export class RunService {
       this.failRun(run.id, error);
       throw error;
     }
+  }
+
+  /** Start, collect, and durably accept one runtime result. */
+  async execute(options: StartRunOptions): Promise<{ run: AgentRun; outcome: RunOutcome }> {
+    const run = this.prepareRun(options);
+    return this.executePreparedRun(run.id);
+  }
+
+  /** Mark a prepared run failed when dispatch itself cannot be completed. */
+  failPreparedRun(runId: string, error: unknown): void {
+    this.failRun(runId, error);
   }
 
   /**
@@ -300,7 +326,8 @@ export class RunService {
       cachedInputTokens: row.cached_input_tokens as number | null,
       outputTokens: row.output_tokens as number | null,
        cost: row.cost as number | null,
-       ...(row.capability_ref ? { capabilityRef: row.capability_ref as string } : {}),
+       ...(row.prompt ? { prompt: row.prompt as string } : {}),
+        ...(row.capability_ref ? { capabilityRef: row.capability_ref as string } : {}),
     };
   }
 }
