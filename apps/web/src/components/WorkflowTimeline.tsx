@@ -3,6 +3,13 @@ interface WorkflowTimelineProps {
   currentStage?: string;
 }
 
+export const TASK_LIFECYCLE_STAGES = [
+  'DRAFT', 'READY', 'DEVELOPMENT', 'REVIEW', 'QA',
+  'READY_FOR_INTEGRATION', 'INTEGRATION', 'INTEGRATED_INTO_EPIC',
+  'READY_FOR_MERGE', 'MERGING', 'DONE', 'RELEASED',
+  'WAITING_FOR_DEPENDENCY', 'WAITING_FOR_APPROVAL', 'BLOCKED', 'PAUSED', 'FAILED', 'CANCELLED',
+];
+
 export const displayStageForLifecycle = (lifecycle: string): string | null => {
   const state = lifecycle.toUpperCase();
   if (state === 'DRAFT') return null;
@@ -16,7 +23,11 @@ export const displayStageForLifecycle = (lifecycle: string): string | null => {
 };
 
 export default function WorkflowTimeline({ stages, currentStage }: WorkflowTimelineProps) {
-  const normalizedStage = currentStage ? displayStageForLifecycle(currentStage) ?? currentStage.toUpperCase() : undefined;
+  const rawStage = currentStage?.toUpperCase();
+  const normalizedStage = rawStage && stages.includes(rawStage)
+    ? rawStage
+    : currentStage ? displayStageForLifecycle(currentStage) ?? rawStage : undefined;
+  const statusOnly = normalizedStage && !stages.includes(normalizedStage);
   return (
     <div className="workflow-timeline" aria-label="Workflow timeline">
       <ol>
@@ -31,6 +42,7 @@ export default function WorkflowTimeline({ stages, currentStage }: WorkflowTimel
             </li>
           );
         })}
+        {statusOnly && <li style={{ color: '#fff', fontWeight: '600' }}>{currentStage!.toUpperCase()}</li>}
       </ol>
     </div>
   );

@@ -85,6 +85,37 @@ describe('Dashboard', () => {
 });
 
 describe('Task', () => {
+  test('renders the persisted current and completed lifecycle states', async () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue({
+      task: { title: 'Released task', status: 'DONE' }, contract: {},
+      lifecycle: { status: 'DONE', stage: 'DONE', updatedAt: '2026-09-16T00:00:00Z' },
+      git: { repositoryPath: '/repo', branch: 'task/1', defaultBranch: 'master', github: null, worktreePath: null },
+      runs: [], findings: [], defects: [], dependencies: [], approvals: [], events: [],
+      usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 }, waitReason: null,
+    });
+    render(<TaskPage id="task-1" />);
+    await waitFor(() => expect(screen.getByText('Status: DONE')).toBeInTheDocument());
+    expect(screen.getByText('DEVELOPMENT')).toBeInTheDocument();
+    expect(screen.getByText('DONE')).toBeInTheDocument();
+    expect(screen.getByText('RELEASED')).toBeInTheDocument();
+    vi.restoreAllMocks();
+  });
+
+  test('renders waiting and failure/cancellation statuses as timeline states', async () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue({
+      task: { title: 'Blocked task', status: 'FAILED' }, contract: {},
+      lifecycle: { status: 'FAILED', stage: 'FAILED', updatedAt: null },
+      git: { repositoryPath: null, branch: null, defaultBranch: null, github: null, worktreePath: null },
+      runs: [], findings: [], defects: [], dependencies: [], approvals: [], events: [],
+      usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 }, waitReason: null,
+    });
+    render(<TaskPage id="task-2" />);
+    await waitFor(() => expect(screen.getByText('Status: FAILED')).toBeInTheDocument());
+    expect(screen.getByText('WAITING_FOR_DEPENDENCY')).toBeInTheDocument();
+    expect(screen.getByText('CANCELLED')).toBeInTheDocument();
+    vi.restoreAllMocks();
+  });
+
   test('exposes contract section', () => {
     render(<TaskPage />);
     expect(screen.getByText('Contract')).toBeInTheDocument();
@@ -136,5 +167,24 @@ describe('Epic', () => {
     expect(screen.getByText(/Epic:/)).toBeInTheDocument();
     expect(screen.getByText(/Lifecycle \/ parallel work graph/)).toBeInTheDocument();
     expect(screen.getByText('Epic Contract')).toBeInTheDocument();
+  });
+
+  test('renders actual epic review, architecture review, QA and merge stages', async () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue({
+      epic: { title: 'Release epic', status: 'IN_PROGRESS' }, contract: {},
+      lifecycle: { status: 'IN_PROGRESS', stage: 'EPIC_QA', updatedAt: null, stages: [
+        { id: 'EPIC_REVIEW', label: 'Epic Review', status: 'COMPLETED', updatedAt: null },
+        { id: 'ARCHITECTURE_REVIEW', label: 'Architecture Review', status: 'COMPLETED', updatedAt: null },
+        { id: 'EPIC_QA', label: 'Epic QA', status: 'CURRENT', updatedAt: null },
+        { id: 'INTEGRATION', label: 'Merge', status: 'PENDING', updatedAt: null },
+      ] }, git: { repositoryPath: '/repo', branch: 'epic/1', defaultBranch: 'master', github: null, worktreePath: null },
+      tasks: [], approvals: [], blockers: [], events: [], usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 },
+    });
+    render(<EpicPage id="epic-1" />);
+    await waitFor(() => expect(screen.getByText('Epic Review: COMPLETED')).toBeInTheDocument());
+    expect(screen.getByText('Architecture Review: COMPLETED')).toBeInTheDocument();
+    expect(screen.getByText('Epic QA: CURRENT')).toBeInTheDocument();
+    expect(screen.getByText('Merge: PENDING')).toBeInTheDocument();
+    vi.restoreAllMocks();
   });
 });

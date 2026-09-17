@@ -29,7 +29,8 @@ export interface GitProjection {
 export interface ApprovalProjection { id: string; type: string; status: string; createdAt: string; }
 export interface EventProjection { id: string; type: string; createdAt: string; payload: unknown; }
 export interface DependencyProjection { id: string; taskId: string; dependsOnTaskId: string; type: string; status: string | null; }
-export interface LifecycleProjection { status: string; stage: string | null; updatedAt: string | null; }
+export interface LifecycleStageProjection { id: string; label: string; status: "COMPLETED" | "CURRENT" | "PENDING"; updatedAt: string | null; }
+export interface LifecycleProjection { status: string; stage: string | null; updatedAt: string | null; stages?: LifecycleStageProjection[]; }
 export interface ProjectOverviewProjection {
   project: { id: string; name: string; displayName: string; status: string } | null;
   git: GitProjection;

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { TaskOverviewProjection } from '@ebb-orchestrator/contracts';
 import { apiClient } from '../../api/client.js';
-import WorkflowTimeline from '../../components/WorkflowTimeline.js';
+import WorkflowTimeline, { TASK_LIFECYCLE_STAGES } from '../../components/WorkflowTimeline.js';
 
 interface TaskPageProps { id?: string; }
 export default function TaskPage({ id = '' }: TaskPageProps) {
@@ -18,8 +18,8 @@ export default function TaskPage({ id = '' }: TaskPageProps) {
       </section>
       <section aria-label="Workflow">
         <h2>Workflow</h2>
-        <p>{task?.status ?? 'Loading task projection…'}</p>
-        {task?.status && <WorkflowTimeline stages={['DEV', 'REVIEW', 'QA', 'INTEGRATION', 'MERGE']} currentStage={task.status} />}
+        <p>Status: {projection?.lifecycle.status ?? task?.status ?? 'Loading task projection…'}</p>
+        {projection?.lifecycle.status && <WorkflowTimeline stages={TASK_LIFECYCLE_STAGES} currentStage={projection.lifecycle.stage ?? projection.lifecycle.status} />}
       </section>
       <section aria-label="Agent Runs">
         <h2>Agent Runs</h2>
