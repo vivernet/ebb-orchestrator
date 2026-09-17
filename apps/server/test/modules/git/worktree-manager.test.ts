@@ -94,6 +94,13 @@ describe("WorktreeManager", () => {
 
 describe("BranchManager", () => {
   describe("createEpicBranch", () => {
+      it("rejects malformed generated branch refs before git", async () => {
+        const repoPath = createTempDir();
+        await initGitRepo(repoPath);
+        await expect(new BranchManager().createEpicBranch("bad/.id", repoPath, "master"))
+          .rejects.toThrow("Invalid Git ref");
+      });
+
       it("creates an epic branch from base ref", async () => {
         const repoPath = createTempDir();
         await initGitRepo(repoPath);

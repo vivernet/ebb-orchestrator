@@ -27,7 +27,7 @@ describe('security Git remediation', () => {
     } finally { fs.rmSync(repo, { recursive: true, force: true }); }
   });
 
-  it.each(['-bad', 'bad name', 'bad..name', 'bad~name', 'bad;echo'])('rejects unsafe ref %s', (ref) => {
+  it.each(['-bad', 'bad name', 'bad..name', 'bad~name', 'bad;echo', 'foo/.bar', 'foo/bar.lock', '@'])('rejects unsafe ref %s', (ref) => {
     expect(() => assertSafeGitRef(ref)).toThrow('Invalid Git ref');
   });
 });

@@ -24,3 +24,24 @@ Remediated SEC-001, SEC-002, SEC-004, EXEC-005, and GIT-007 only. SEC-003, GIT-0
 - Hook suppression intentionally uses Git's `--no-verify` policy for managed commits; hooks remain enabled for ordinary user Git operations.
 - Windows junction-specific regression remains guarded by the existing platform test; Unix symlink coverage executes on Unix only.
 - Existing compatibility behavior retains lexical resolution for entirely virtual/nonexistent workspace roots; existing real workspace roots use fail-closed ancestor realpath containment.
+
+## Follow-up security task review closure
+
+### Changed files
+- `apps/server/src/platform/security/path-resolver.ts`: uses `lstat` so dangling symlink ancestors are not treated as missing; `realpath` failure is fail-closed while valid new in-workspace suffixes remain allowed.
+- `apps/server/src/platform/process/process-executor.ts`: truncates each stdout/stderr chunk to the remaining per-stream limit before rejecting and killing the child.
+- `apps/server/src/modules/execution/command-tools.ts`: adds compatible `AbortSignal` to `ExecOptions` and forwards it to `ProcessExecutor`.
+- `apps/server/src/modules/git/git-cli.ts`: rejects Git ref violations including dot components, `.lock` components, and the lone `@` ref.
+- `apps/server/src/modules/git/branch-manager.ts`: validates generated `epic/${epicId}` refs before Git execution.
+- Regression tests cover dangling symlinks, cancellation forwarding, bounded output behavior, malformed refs, generated branch refs, shell-metacharacter commit messages, hook suppression, and `git add --` path separation.
+
+### Verification commands and output
+- `pnpm exec vitest run apps/server/test/modules/execution/security-execution-path.test.ts apps/server/test/modules/execution/security-remediation.test.ts apps/server/test/modules/git/worktree-manager.test.ts` — `Test Files 3 passed; Tests 20 passed`.
+- `pnpm test` — `apps/server: Test Files 60 passed; Tests 608 passed | 2 skipped`; `apps/web: Test Files 6 passed; Tests 65 passed`; workspace completed successfully.
+- `pnpm typecheck` — packages and server completed successfully.
+- `pnpm lint` — `eslint .` completed successfully.
+
+### Remaining concerns
+- SEC-003, GIT-006, and GIT-008 remain intentionally out of scope.
+- Windows junction coverage remains guarded by existing platform tests; dangling-symlink regression executes on Unix only.
+- The pre-existing untracked plan file `docs/superpowers/plans/2026-09-16-orchestrator-final-v1-hardening.md` was not modified.

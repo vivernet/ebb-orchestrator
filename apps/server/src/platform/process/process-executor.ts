@@ -80,8 +80,9 @@ export class ProcessExecutor {
       const timeoutId = setTimeout(onTimeout, timeout);
 
       child.stdout?.on("data", (chunk: Buffer) => {
-        stdout += chunk.toString();
-        if (stdout.length > maxBuffer) {
+        const remaining = maxBuffer - stdout.length;
+        stdout += chunk.toString().slice(0, Math.max(0, remaining));
+        if (chunk.length > Math.max(0, remaining)) {
           outputExceeded = true;
           cleanup();
           return;
@@ -89,8 +90,9 @@ export class ProcessExecutor {
       });
 
       child.stderr?.on("data", (chunk: Buffer) => {
-        stderr += chunk.toString();
-        if (stderr.length > maxBuffer) {
+        const remaining = maxBuffer - stderr.length;
+        stderr += chunk.toString().slice(0, Math.max(0, remaining));
+        if (chunk.length > Math.max(0, remaining)) {
           outputExceeded = true;
           cleanup();
           return;

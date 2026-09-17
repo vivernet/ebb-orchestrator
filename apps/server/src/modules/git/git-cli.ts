@@ -3,9 +3,11 @@ import { ProcessExecutor } from "../../platform/process/process-executor.js";
 /** Git's refname rules relevant to untrusted branch/ref inputs. */
 export function assertSafeGitRef(ref: string): void {
   const hasControl = [...ref].some((character) => character.charCodeAt(0) < 0x20 || character.charCodeAt(0) === 0x7f);
-  if (!ref || hasControl || ref.startsWith("-") || ref.startsWith("/") || ref.endsWith("/") ||
-      ref.startsWith(".") || ref.endsWith(".") || ref.includes("..") || ref.includes("@{") ||
-      /[ ~^:?*[\\;]/.test(ref) || ref.includes("//")) {
+  const components = ref.split('/');
+  if (!ref || ref === '@' || hasControl || ref.startsWith("-") || ref.startsWith("/") || ref.endsWith("/") ||
+      ref.endsWith(".") || ref.includes("..") || ref.includes("@{") || /[ ~^:?*[\\;]/.test(ref) ||
+      components.some((component) => component === '' || component === '.' || component === '..' ||
+        component.startsWith('.') || component.endsWith('.lock'))) {
     throw new Error("Invalid Git ref");
   }
 }

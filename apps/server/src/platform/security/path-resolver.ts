@@ -39,13 +39,28 @@ export class PathResolver {
   private resolveExistingAncestor(target: string): string {
     const suffix: string[] = [];
     let current = target;
-    while (!fs.existsSync(current)) {
-      const parent = path.dirname(current);
-      if (parent === current) throw new Error('No existing ancestor');
-      suffix.unshift(path.basename(current));
-      current = parent;
+    while (true) {
+      let stat: fs.Stats;
+      try {
+        stat = fs.lstatSync(current);
+      } catch (err: unknown) {
+        if (!(err instanceof Error) || !('code' in err) || err.code !== 'ENOENT') {
+          throw new Error('Unable to inspect path', { cause: err });
+        }
+        const parent = path.dirname(current);
+        if (parent === current) throw new Error('No existing ancestor', { cause: err });
+        suffix.unshift(path.basename(current));
+        current = parent;
+        continue;
+      }
+      // lstat deliberately sees dangling symlinks as existing. realpath must
+      // succeed before any suffix is appended, otherwise fail closed.
+      if (stat.isSymbolicLink()) return path.resolve(fs.realpathSync(current), ...suffix);
+      if (!stat.isDirectory() && suffix.length > 0) {
+        throw new Error('Existing ancestor is not a directory', { cause: stat });
+      }
+      return path.resolve(fs.realpathSync(current), ...suffix);
     }
-    return path.resolve(fs.realpathSync(current), ...suffix);
   }
 
   private isWithinWorkspace(workspace: string, target: string): boolean {

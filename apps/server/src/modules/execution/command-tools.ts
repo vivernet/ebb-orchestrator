@@ -11,6 +11,7 @@ export type ExecOptions = {
   args: string[];
   timeout?: number;
   maxOutput?: number;
+  signal?: AbortSignal;
 };
 
 export type ExecResult = {
@@ -46,6 +47,7 @@ export class CommandTools {
         env,
         timeout: options.timeout ?? DEFAULT_TIMEOUT,
         maxBuffer: options.maxOutput ?? DEFAULT_MAX_OUTPUT,
+        ...(options.signal ? { signal: options.signal } : {}),
       });
       return { success: true, stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode };
     } catch (error: unknown) {

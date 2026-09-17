@@ -40,6 +40,7 @@ export class BranchManager {
   ): Promise<BranchRecord> {
     assertSafeGitRef(baseRef);
     const branchName = `epic/${epicId}`;
+    assertSafeGitRef(branchName);
     
     // Create empty hooks directory to disable hooks
     const emptyHooksDir = this.createEmptyHooksDir();
