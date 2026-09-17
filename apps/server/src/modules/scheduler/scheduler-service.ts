@@ -16,7 +16,6 @@ import type {
   SchedulerReconciliationResult,
   SchedulerLimits,
 } from "./scheduler-types.js";
-import { DEFAULT_SCHEDULER_LIMITS } from "./scheduler-types.js";
 import { compareTasks } from "./scheduler-policy.js";
 import { ResourceLockService } from "./resource-lock-service.js";
 
@@ -57,6 +56,24 @@ export class SchedulerService {
       resource_key TEXT PRIMARY KEY, reservation_id TEXT NOT NULL,
       project_id TEXT NOT NULL, owner_id TEXT NOT NULL, locked_at TEXT NOT NULL
     )`);
+    this.db.exec(`CREATE TABLE IF NOT EXISTS scheduler_config (id INTEGER PRIMARY KEY CHECK (id=1), schema_version INTEGER NOT NULL, config_json TEXT NOT NULL, updated_at TEXT NOT NULL)`);
+    this.db.run("INSERT OR IGNORE INTO scheduler_config(id,schema_version,config_json,updated_at) VALUES(1,1,$config,$at)", { config: JSON.stringify({ globalMax: 4, projectMax: 3, roleCapacity: { reviewer: 4, developer: 4 } }), at: new Date().toISOString() });
+    const legacy = this.db.get<{ value_json: string }>("SELECT value_json FROM system_state WHERE key IN ('scheduler_limits','scheduler.limits') ORDER BY CASE key WHEN 'scheduler_limits' THEN 0 ELSE 1 END LIMIT 1");
+    if (legacy) {
+      try {
+        const value = JSON.parse(legacy.value_json) as { globalMax?: unknown; projectMax?: unknown; reviewerMax?: unknown };
+        this.db.run("UPDATE scheduler_config SET config_json=$config,updated_at=$at WHERE id=1", { config: JSON.stringify({ globalMax: value.globalMax, projectMax: value.projectMax, roleCapacity: { reviewer: value.reviewerMax, developer: value.globalMax } }), at: new Date().toISOString() });
+      } catch { /* getLimits fails closed on the malformed persisted value */ }
+    }
+    const roleCapacity = this.db.get<{ config_json: string }>("SELECT config_json FROM scheduler_config WHERE id=1");
+    if (roleCapacity) {
+      try {
+        const config = JSON.parse(roleCapacity.config_json) as { roleCapacity?: Record<string, unknown> };
+        const roles = ["coordinator", "product-manager", "product_manager", "architect", "developer", "middle-developer", "middle_developer", "senior-developer", "senior_developer", "reviewer", "qa", "qa-agent", "qa_agent", "integration", "devops"];
+        const missing = roles.filter((role) => config.roleCapacity?.[role] === undefined);
+        if (missing.length) this.db.run("UPDATE scheduler_config SET config_json=$config,updated_at=$at WHERE id=1", { config: JSON.stringify({ ...config, roleCapacity: { ...(config.roleCapacity ?? {}), ...Object.fromEntries(missing.map((role) => [role, 4])) } }), at: new Date().toISOString() });
+      } catch { /* malformed configuration is rejected by getRoleCapacity */ }
+    }
   }
 
   /**
@@ -185,26 +202,69 @@ export class SchedulerService {
 
   /** Read the durable scheduler configuration used by both projections and dispatch. */
   getLimits(projectId?: string): SchedulerLimits {
-    const row = this.db.get<{ value_json: string }>(
-      "SELECT value_json FROM system_state WHERE key IN ('scheduler_limits','scheduler.limits') ORDER BY CASE key WHEN 'scheduler_limits' THEN 0 ELSE 1 END LIMIT 1",
-    );
-    if (!row) return { ...DEFAULT_SCHEDULER_LIMITS };
-    try {
-      const value = JSON.parse(row.value_json) as {
-        globalMax?: unknown; projectMax?: unknown; reviewerMax?: unknown;
-        projects?: Record<string, { projectMax?: unknown }>;
-      };
-      const positive = (candidate: unknown, fallback: number): number =>
-        typeof candidate === "number" && Number.isInteger(candidate) && candidate > 0 ? candidate : fallback;
-      const projectOverride = projectId ? value.projects?.[projectId]?.projectMax : undefined;
-      return {
-        globalMax: positive(value.globalMax, DEFAULT_SCHEDULER_LIMITS.globalMax),
-        projectMax: positive(projectOverride ?? value.projectMax, DEFAULT_SCHEDULER_LIMITS.projectMax),
-        reviewerMax: positive(value.reviewerMax, DEFAULT_SCHEDULER_LIMITS.reviewerMax),
-      };
-    } catch {
-      return { ...DEFAULT_SCHEDULER_LIMITS };
+    const row = this.db.get<{ config_json: string; schema_version: number }>("SELECT config_json,schema_version FROM scheduler_config WHERE id=1");
+    if (!row || row.schema_version !== 1) throw new Error("invalid persisted scheduler configuration");
+    let value: { globalMax: unknown; projectMax: unknown; roleCapacity: unknown; projects?: Record<string, { projectMax?: unknown }> };
+    try { value = JSON.parse(row.config_json) as typeof value; } catch { throw new Error("malformed persisted scheduler configuration"); }
+    const legacy = this.db.get<{ value_json: string }>("SELECT value_json FROM system_state WHERE key IN ('scheduler_limits','scheduler.limits') ORDER BY CASE key WHEN 'scheduler_limits' THEN 0 ELSE 1 END LIMIT 1");
+    if (legacy) {
+      try {
+        const old = JSON.parse(legacy.value_json) as { globalMax?: unknown; projectMax?: unknown; reviewerMax?: unknown };
+        value = { ...value, globalMax: old.globalMax, projectMax: old.projectMax, roleCapacity: { ...(value.roleCapacity as Record<string, unknown>), reviewer: old.reviewerMax, developer: old.globalMax } };
+      } catch { throw new Error("malformed persisted scheduler configuration"); }
     }
+    const positive = (candidate: unknown, name: string): number => {
+      if (typeof candidate !== "number" || !Number.isInteger(candidate) || candidate < 1 || candidate > 1000) throw new Error(`invalid scheduler limit: ${name}`);
+      return candidate;
+    };
+    const projectOverride = projectId ? value.projects?.[projectId]?.projectMax : undefined;
+    return {
+      globalMax: positive(value.globalMax, "globalMax"),
+      projectMax: positive(projectOverride ?? value.projectMax, "projectMax"),
+      reviewerMax: this.getRoleCapacity("reviewer"),
+    };
+  }
+
+  getRoleCapacity(role: string): number {
+    const row = this.db.get<{ config_json: string; schema_version: number }>("SELECT config_json,schema_version FROM scheduler_config WHERE id=1");
+    if (!row || row.schema_version !== 1) throw new Error("invalid persisted scheduler configuration");
+    let value: { roleCapacity?: Record<string, unknown> };
+    try { value = JSON.parse(row.config_json) as typeof value; } catch { throw new Error("malformed persisted scheduler configuration"); }
+    const legacy = this.db.get<{ value_json: string }>("SELECT value_json FROM system_state WHERE key IN ('scheduler_limits','scheduler.limits') ORDER BY CASE key WHEN 'scheduler_limits' THEN 0 ELSE 1 END LIMIT 1");
+    if (legacy) {
+      try {
+        const old = JSON.parse(legacy.value_json) as { globalMax?: unknown; reviewerMax?: unknown };
+        value = { ...value, roleCapacity: { ...(value.roleCapacity ?? {}), reviewer: old.reviewerMax, developer: old.globalMax } };
+      } catch { throw new Error("malformed persisted scheduler configuration"); }
+    }
+    const candidate = value.roleCapacity?.[role.toLowerCase()];
+    if (typeof candidate !== "number" || !Number.isInteger(candidate) || candidate < 1 || candidate > 1000) throw new Error(`invalid scheduler role capacity: ${role}`);
+    return candidate;
+  }
+
+  getConfig(): { schemaVersion: number; globalMax: number; projectMax: number; roleCapacity: Record<string, number> } {
+    const row = this.db.get<{ schema_version: number; config_json: string }>("SELECT schema_version,config_json FROM scheduler_config WHERE id=1");
+    if (!row || row.schema_version !== 1) throw new Error("invalid persisted scheduler configuration");
+    let value: { globalMax: unknown; projectMax: unknown; roleCapacity?: Record<string, unknown> };
+    try { value = JSON.parse(row.config_json) as typeof value; } catch { throw new Error("malformed persisted scheduler configuration"); }
+    const globalMax = this.getLimits().globalMax;
+    const projectMax = this.getLimits().projectMax;
+    const roleCapacity: Record<string, number> = {};
+    for (const role of Object.keys(value.roleCapacity ?? {})) roleCapacity[role] = this.getRoleCapacity(role);
+    return { schemaVersion: 1, globalMax, projectMax, roleCapacity };
+  }
+
+  updateConfig(input: unknown): { schemaVersion: number; globalMax: number; projectMax: number; roleCapacity: Record<string, number> } {
+    if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("scheduler configuration must be an object");
+    const value = input as Record<string, unknown>;
+    if (Object.keys(value).some((key) => !["schemaVersion", "globalMax", "projectMax", "roleCapacity"].includes(key))) throw new Error("unknown scheduler configuration field");
+    if (value.schemaVersion !== 1 || typeof value.globalMax !== "number" || typeof value.projectMax !== "number" || !value.roleCapacity || typeof value.roleCapacity !== "object" || Array.isArray(value.roleCapacity)) throw new Error("invalid scheduler configuration schema");
+    const valid = (n: unknown): n is number => typeof n === "number" && Number.isInteger(n) && n >= 1 && n <= 1000;
+    if (!valid(value.globalMax) || !valid(value.projectMax)) throw new Error("scheduler limits must be integers from 1 to 1000");
+    const capacities = value.roleCapacity as Record<string, unknown>;
+    if (Object.keys(capacities).length === 0 || Object.entries(capacities).some(([role, n]) => !role || !valid(n))) throw new Error("role capacities must be integers from 1 to 1000");
+    this.db.run("UPDATE scheduler_config SET schema_version=1,config_json=$config,updated_at=$at WHERE id=1", { config: JSON.stringify({ globalMax: value.globalMax, projectMax: value.projectMax, roleCapacity: capacities }), at: new Date().toISOString() });
+    return this.getConfig();
   }
 
   /**
@@ -337,7 +397,7 @@ export class SchedulerService {
         "SELECT COUNT(*) AS count FROM scheduler_reservations WHERE status='RESERVED' AND kind <> 'LOCK' AND lower(role)=$role",
         { role },
       )?.count ?? 0;
-       if (role === "reviewer" && roleCount >= limits.reviewerMax) {
+       if (roleCount >= this.getRoleCapacity(role)) {
         throw new Error(`Task ${taskId} is not schedulable: WAITING_FOR_ROLE_CAPACITY`);
       }
       const existing = tx.get<{ id: string; run_id: string | null; status: string }>("SELECT id,run_id,status FROM scheduler_reservations WHERE subject_id=$taskId", { taskId });
@@ -373,7 +433,7 @@ export class SchedulerService {
   }
 
   /** Reserve a non-task AI phase through the same budget/capacity authority. */
-  dispatchAgentRun(runId: string, projectId: string, role: string, model: string, resourceKey = `run:${runId}`): void {
+  dispatchAgentRun(runId: string, projectId: string, role: string, model: string, resourceKey = `run:${runId}`, options: { approvalId?: string } = {}): void {
     this.db.transaction((tx) => {
       const existing = tx.get<{ status: string; run_id: string | null }>("SELECT status,run_id FROM scheduler_reservations WHERE subject_id=$runId", { runId });
       if (existing?.status === "RESERVED") {
@@ -382,11 +442,19 @@ export class SchedulerService {
         }
         return;
       }
+       const projectState = tx.get<{ status: string }>("SELECT status FROM projects WHERE id=$projectId", { projectId });
+       if (projectState && projectState.status !== "ACTIVE") throw new Error(`Run ${runId} is not schedulable: BLOCKED_BY_PROJECT_STATE`);
        const global = tx.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_reservations WHERE status='RESERVED' AND kind <> 'LOCK'")?.count ?? 0;
        const project = tx.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_reservations WHERE project_id=$projectId AND status='RESERVED' AND kind <> 'LOCK'", { projectId })?.count ?? 0;
        const limits = this.getLimits(projectId);
        if (global >= limits.globalMax || project >= limits.projectMax) throw new Error(`Run ${runId} is not schedulable: WAITING_FOR_CAPACITY`);
-      if (tx.get("SELECT resource_key FROM scheduler_resource_locks WHERE resource_key=$resourceKey", { resourceKey })) throw new Error(`Run ${runId} is not schedulable: WAITING_FOR_RESOURCE_LOCK`);
+       if (tx.get("SELECT resource_key FROM scheduler_resource_locks WHERE resource_key IN ('global',$resourceKey)", { resourceKey })) throw new Error(`Run ${runId} is not schedulable: WAITING_FOR_RESOURCE_LOCK`);
+       const roleCount = tx.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_reservations WHERE status='RESERVED' AND kind <> 'LOCK' AND lower(role)=lower($role)", { role })?.count ?? 0;
+       if (roleCount >= this.getRoleCapacity(role)) throw new Error(`Run ${runId} is not schedulable: WAITING_FOR_ROLE_CAPACITY`);
+       if (options.approvalId) {
+         const approval = tx.get<{ status: string; subject_id: string }>("SELECT status,subject_id FROM approvals WHERE id=$approvalId", { approvalId: options.approvalId });
+         if (!approval || approval.status !== "APPROVED" || ![runId, projectId].includes(approval.subject_id)) throw new Error(`Invalid dispatch approval for run ${runId}`);
+       }
        const estimate = this.estimateCost(projectId, role, model);
       const budget = tx.get<{ limit_cost: number; spent_cost: number; reserved_cost: number }>("SELECT limit_cost,spent_cost,reserved_cost FROM scheduler_budgets WHERE project_id=$projectId", { projectId });
       if (budget && budget.spent_cost + budget.reserved_cost + estimate > budget.limit_cost) throw new Error(`Run ${runId} is not schedulable: WAITING_FOR_BUDGET`);
@@ -541,7 +609,7 @@ export class SchedulerService {
     const global = this.countTx(tx, "status='RESERVED' AND kind <> 'LOCK'");
     const projectCount = this.countTx(tx, "status='RESERVED' AND kind <> 'LOCK' AND project_id=$projectId", { projectId: task.projectId });
     if (global >= limits.globalMax || projectCount >= limits.projectMax) return { status: "WAIT", reason: "WAITING_FOR_CAPACITY" };
-    if (role === "reviewer" && this.countTx(tx, "status='RESERVED' AND kind <> 'LOCK' AND lower(role)='reviewer'") >= limits.reviewerMax) return { status: "WAIT", reason: "WAITING_FOR_ROLE_CAPACITY" };
+     if (this.countTx(tx, "status='RESERVED' AND kind <> 'LOCK' AND lower(role)=lower($role)", { role }) >= this.getRoleCapacity(role)) return { status: "WAIT", reason: "WAITING_FOR_ROLE_CAPACITY" };
 
     const budget = tx.get<{ limit_cost: number; spent_cost: number; reserved_cost: number }>("SELECT limit_cost,spent_cost,reserved_cost FROM scheduler_budgets WHERE project_id=$projectId", { projectId: task.projectId });
     if (budget && budget.spent_cost + budget.reserved_cost + this.estimateCostTx(tx, task.projectId, role, "default") > budget.limit_cost) return { status: "WAIT", reason: "WAITING_FOR_BUDGET" };
@@ -560,7 +628,7 @@ export class SchedulerService {
     for (const candidate of candidates) {
       const role = candidate.category === "reviewer" ? "reviewer" : "developer";
       if (global >= limits.globalMax || (projectCounts.get(candidate.projectId) ?? 0) >= this.getLimits(candidate.projectId).projectMax) continue;
-      if (role === "reviewer" && reviewers >= limits.reviewerMax) continue;
+       if (reviewers >= this.getRoleCapacity(role)) continue;
       global++;
       projectCounts.set(candidate.projectId, (projectCounts.get(candidate.projectId) ?? 0) + 1);
       if (role === "reviewer") reviewers++;

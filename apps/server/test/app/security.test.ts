@@ -2,6 +2,15 @@ import { describe, expect, it } from "vitest";
 import { createApp } from "../../src/app/create-app.js";
 
 describe("local-session security", () => {
+  it("bootstraps a distinct CSRF token without persisting it", async () => {
+    const app = createApp();
+    const response = await app.inject({ method: "GET", url: "/api/v1/session/bootstrap" });
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body)).toMatchObject({ sessionToken: app.sessionToken, csrfToken: app.csrfToken });
+    expect(app.csrfToken).not.toBe(app.sessionToken);
+    await app.close();
+  });
+
   it("rejects unauthenticated requests to protected routes with 401", async () => {
     const app = createApp();
     const res = await app.inject({
@@ -18,7 +27,7 @@ describe("local-session security", () => {
     const res = await app.inject({
       method: "POST",
       url: "/api/v1/protected-test",
-       headers: { authorization: `Bearer ${token}`, origin: "http://127.0.0.1:3000" },
+        headers: { authorization: `Bearer ${token}`, origin: "http://127.0.0.1:3000", "x-csrf-token": app.csrfToken },
     });
     expect(res.statusCode).toBe(200);
     await app.close();
@@ -35,6 +44,13 @@ describe("local-session security", () => {
         authorization: `Bearer ${token}`,
       },
     });
+    expect(res.statusCode).toBe(403);
+    await app.close();
+  });
+
+  it("rejects same-origin mutations without the CSRF token", async () => {
+    const app = createApp();
+    const res = await app.inject({ method: "POST", url: "/api/v1/protected-test", headers: { authorization: `Bearer ${app.sessionToken}`, origin: "http://127.0.0.1:3000" } });
     expect(res.statusCode).toBe(403);
     await app.close();
   });
@@ -61,6 +77,7 @@ describe("local-session security", () => {
       headers: {
         origin: "http://127.0.0.1:3000",
         authorization: `Bearer ${token}`,
+        "x-csrf-token": app.csrfToken,
       },
     });
     expect(res.statusCode).toBe(200);

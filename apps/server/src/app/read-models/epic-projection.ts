@@ -1,10 +1,11 @@
 import type { Database } from "../../platform/database/database.js";
 import type { EpicOverviewProjection } from "@ebb-orchestrator/contracts";
+import type { SchedulerService } from "../../modules/scheduler/scheduler-service.js";
 interface EpicRow { [key: string]: unknown; id: string; }
 interface TaskRow { id: string; display_id: string; title: string; status: string; required: number; contract_json: string; }
 interface UsageRow { inputTokens: number; cachedTokens: number; outputTokens: number; totalTokens: number; cost: number; }
 export class EpicProjection {
-  constructor(private readonly db?: Database) {}
+  constructor(private readonly db?: Database, private readonly scheduler?: SchedulerService) {}
   get(id: string): EpicOverviewProjection | undefined {
     if (!this.db) return undefined;
     const epic = this.db.get<EpicRow>("SELECT * FROM epics WHERE id=$id", { id });

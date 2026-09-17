@@ -1,11 +1,12 @@
 import type { Database } from "../../platform/database/database.js";
 import type { ProjectOverviewProjection } from "@ebb-orchestrator/contracts";
 import { DashboardProjection } from "./dashboard-projection.js";
+import type { SchedulerService } from "../../modules/scheduler/scheduler-service.js";
 interface ProjectRow { id: string; name: string; display_name: string; status: string; }
 interface WorkRow { id: string; epic_id?: string | null; display_id: string; title: string; status: string; required: number; contract_json: string; }
 interface UsageRow { inputTokens: number; cachedTokens: number; outputTokens: number; totalTokens: number; cost: number; }
 export class ProjectProjection {
-  constructor(private readonly db?: Database) {}
+  constructor(private readonly db?: Database, private readonly scheduler?: SchedulerService) {}
   get(id: string): ProjectOverviewProjection | undefined {
     if (!this.db) return undefined;
     const p = this.db.get<ProjectRow>("SELECT id,name,display_name,status FROM projects WHERE id=$id", { id });
@@ -15,5 +16,5 @@ export class ProjectProjection {
     const usage = this.db.get<UsageRow>("SELECT COALESCE(SUM(input_tokens),0) inputTokens,COALESCE(SUM(cached_tokens),0) cachedTokens,COALESCE(SUM(output_tokens),0) outputTokens,COALESCE(SUM(total_tokens),0) totalTokens,COALESCE(SUM(actual_cost),0) cost FROM usage_records WHERE project_id=$id", { id }) ?? { inputTokens: 0, cachedTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 };
     return { project: { id: p.id, name: p.name, displayName: p.display_name, status: p.status }, epics, tasks, usage };
   }
-  list(): unknown[] { return this.db ? new DashboardProjection(this.db).get().projects : []; }
+  list(): unknown[] { return this.db ? new DashboardProjection(this.db, this.scheduler).get().projects : []; }
 }

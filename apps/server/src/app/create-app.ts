@@ -28,14 +28,7 @@ import { SchedulerService } from "../modules/scheduler/scheduler-service.js";
 import { WorkflowEngine } from "../modules/workflow/workflow-engine.js";
 import { WorkflowRegistry } from "../modules/workflow/workflow-registry.js";
 import { templates } from "../modules/workflow/templates.js";
-
-const localRuntime: AgentRuntime = {
-  async startRun() {}, async resumeRun() {}, async cancelRun() {},
-  async inspectRun() { throw new Error("runtime inspection is unavailable"); },
-  async collectResult() { throw new Error("runtime result collection is unavailable"); },
-  async collectUsage() { return { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, cost: 0 }; },
-  async healthCheck() { return true; },
-};
+import { schedulerRoutes } from "./routes/scheduler.js";
 
 export interface AppDeps {
   /** Loopback host (default "127.0.0.1"). */
@@ -47,11 +40,14 @@ export interface AppDeps {
   approvalService?: ApprovalCommandService;
   runService?: RunCommandService;
   scheduler?: SchedulerService;
+  /** Production must provide the real runtime. Test doubles belong in test deps. */
+  runtime?: AgentRuntime;
 }
 
 export interface OrchestratorApp extends FastifyInstance {
   /** The bearer token required for protected routes. */
   sessionToken: string;
+  csrfToken: string;
 }
 
 /**
@@ -73,12 +69,14 @@ export function createApp(deps: AppDeps = {}): OrchestratorApp {
   const scheduler = deps.scheduler ?? (deps.db ? new SchedulerService(deps.db) : undefined);
   const workService = deps.workService ?? (deps.db ? new WorkService(deps.db, workflow) : undefined);
   const approvalService = deps.approvalService ?? (deps.db ? new ApprovalService(deps.db) : undefined);
-  const runService = deps.runService ?? (deps.db ? new RunService(deps.db, localRuntime) : undefined);
+  if (deps.db && !deps.runtime && !deps.runService) throw new Error("production runtime is required");
+  const runService = deps.runService ?? (deps.db && deps.runtime ? new RunService(deps.db, deps.runtime) : undefined);
 
   const app = Fastify({ logger: false }) as unknown as OrchestratorApp;
 
   // Expose the token on the instance so callers (tests, main) can read it.
   app.sessionToken = session.token;
+  app.csrfToken = session.csrfToken;
 
   // ── Global security hook ───────────────────────────────────────────
   // Skip authentication for the health endpoint; everything else requires
@@ -88,7 +86,7 @@ export function createApp(deps: AppDeps = {}): OrchestratorApp {
     const url: string = request.url;
 
     // Health is public – no auth, no origin check.
-    if (url === "/api/v1/health") return;
+    if (url === "/api/v1/health" || url === "/api/v1/session/bootstrap") return;
 
     // ── 1. Authentication ────────────────────────────────────────────
     const auth = request.headers.authorization;
@@ -107,21 +105,31 @@ export function createApp(deps: AppDeps = {}): OrchestratorApp {
         reply.code(403).send({ error: "forbidden" });
         return reply;
       }
+      if (request.headers["x-csrf-token"] !== session.csrfToken) {
+        reply.code(403).send({ error: "invalid csrf token" });
+        return reply;
+      }
     }
   });
 
   // ── Routes ─────────────────────────────────────────────────────────
   // Public
   app.register(healthRoutes);
+  app.get("/api/v1/session/bootstrap", async () => ({
+    sessionToken: session.token,
+    csrfToken: session.csrfToken,
+    origin: session.allowedOrigin,
+  }));
 
   // Authenticated
   app.register(eventRoutes);
+  app.register(async (instance) => schedulerRoutes(instance, scheduler));
   app.register(async (instance) => {
     instance.get("/api/v1/dashboard", async () => new DashboardProjection(deps.db, scheduler).get());
-    await projectRoutes(instance, { db: deps.db });
-    await workRoutes(instance, { db: deps.db, workService });
+     await projectRoutes(instance, { db: deps.db, scheduler });
+     await workRoutes(instance, { db: deps.db, workService, scheduler });
     await approvalRoutes(instance, { db: deps.db, approvalService });
-    await runRoutes(instance, { db: deps.db, runService });
+     await runRoutes(instance, { db: deps.db, runService, scheduler });
   });
 
   // Protected test route (used by security tests)

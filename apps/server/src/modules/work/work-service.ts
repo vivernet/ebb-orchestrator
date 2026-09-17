@@ -13,6 +13,7 @@ export class WorkService {
   private readonly workflow: WorkflowEngine;
 
   constructor(private readonly db: Database, workflow?: WorkflowEngine) {
+    this.db.exec("CREATE TABLE IF NOT EXISTS audit_log (id TEXT PRIMARY KEY, action TEXT NOT NULL, actor TEXT NOT NULL, aggregate_type TEXT NOT NULL, aggregate_id TEXT NOT NULL, details_json TEXT NOT NULL, created_at TEXT NOT NULL)");
     if (workflow) {
       this.workflow = workflow;
     } else {
@@ -24,8 +25,15 @@ export class WorkService {
 
   /** Pause a task through the work aggregate's state transition boundary. */
   pauseTask(taskId: string): Task {
-    this.workflow.transition(taskId, "PAUSED");
-    return this.db.transaction((tx) => WorkRepository.getTaskById(tx, taskId)!);
+    return this.db.transaction((tx) => {
+      this.workflow.transitionInTransaction(tx, taskId, "PAUSED");
+      const now = new Date().toISOString();
+      tx.run("INSERT INTO audit_log(id,action,actor,aggregate_type,aggregate_id,details_json,created_at) VALUES($id,$action,$actor,$aggregate_type,$aggregate_id,$details,$created_at)", {
+        id: crypto.randomUUID(), action: "TASK_PAUSED", actor: "local-user", aggregate_type: "Task", aggregate_id: taskId,
+        details: JSON.stringify({ taskId, status: "PAUSED" }), created_at: now,
+      });
+      return WorkRepository.getTaskById(tx, taskId)!;
+    });
   }
 
   /**

@@ -14,9 +14,7 @@ function hasTable(db: Database, name: string): boolean { return Boolean(db.get<{
 export class DashboardProjection {
   private readonly scheduler: SchedulerService | undefined;
 
-  constructor(private readonly db?: Database, scheduler?: SchedulerService) {
-    this.scheduler = scheduler ?? (db ? new SchedulerService(db) : undefined);
-  }
+  constructor(private readonly db?: Database, scheduler?: SchedulerService) { this.scheduler = scheduler; }
   get(): Dashboard {
     if (!this.db) return { activeAgents: [], activeWork: [], approvals: 0, usage: emptyUsage(), projects: [] };
     const db = this.db;
@@ -38,23 +36,11 @@ export function waitReason(status: string): { code: string; message: string } | 
 
 /** Read the scheduler's durable evidence, rather than inferring from status. */
 export function schedulerWaitReason(db: Database, task: SchedulerTaskRow, scheduler?: SchedulerService): WaitReason | null {
-  const authoritativeScheduler = scheduler ?? new SchedulerService(db);
+   const authoritativeScheduler = scheduler;
+   if (!authoritativeScheduler) return waitReason(task.status);
   const eligibility = authoritativeScheduler.getEligibility(task.id, { projectId: task.project_id });
   const schedulerReason = eligibility.status === "WAIT" ? eligibility.reason : authoritativeScheduler.getWaitReason(task.id);
   if (schedulerReason) return schedulerReasonToProjection(schedulerReason, task);
-  if (task.wait_reason) {
-    try { return JSON.parse(task.wait_reason) as WaitReason; } catch { return { code: task.wait_reason, message: task.wait_reason }; }
-  }
-  if (hasTable(db, "dependencies")) {
-    const dependency = db.get<{ id: string; title: string }>("SELECT t.id,t.title FROM dependencies d JOIN tasks t ON t.id=d.depends_on_task_id WHERE d.task_id=$id AND t.status NOT IN ('DONE','RELEASED','CANCELLED','INTEGRATED_INTO_EPIC') ORDER BY t.id LIMIT 1", { id: task.id });
-    if (dependency) return { code: "DEPENDENCY", message: "Waiting for a blocking dependency", details: { dependencyId: dependency.id, dependencyTitle: dependency.title } };
-  }
-  if (hasTable(db, "approvals") && db.get("SELECT id FROM approvals WHERE subject_id=$id AND status='PENDING' LIMIT 1", { id: task.id })) return { code: "APPROVAL", message: "Waiting for approval", details: { subjectId: task.id } };
-  if (hasTable(db, "scheduler_resource_locks") && db.get<{ owner_id: string }>("SELECT owner_id FROM scheduler_resource_locks WHERE resource_key IN ('global',$key) AND owner_id<>$owner LIMIT 1", { key: `task:${task.id}`, owner: `task:${task.id}` })) return { code: "RESOURCE_LOCK", message: "Waiting for a resource lock", details: { resourceKey: `task:${task.id}` } };
-  if (hasTable(db, "scheduler_budgets")) {
-    const budget = db.get<{ limit_cost: number; spent_cost: number; reserved_cost: number }>("SELECT limit_cost,spent_cost,reserved_cost FROM scheduler_budgets WHERE project_id=$project_id", { project_id: task.project_id });
-    if (budget && budget.spent_cost + budget.reserved_cost >= budget.limit_cost) return { code: "BUDGET", message: "Waiting for project budget", details: { projectId: task.project_id, limit: budget.limit_cost } };
-  }
   return waitReason(task.status);
 }
 

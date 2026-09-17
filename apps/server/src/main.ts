@@ -21,6 +21,8 @@ import { runMigrations, type Migration } from "./platform/database/migrator.js";
 import { resolveOrchestratorHome } from "./platform/home/orchestrator-home.js";
 import { SingleInstanceLock } from "./platform/process/single-instance-lock.js";
 import { SchedulerSafetyWorker, SchedulerService } from "./modules/scheduler/scheduler-service.js";
+import { HermesRuntimeAdapter } from "./modules/runtime/hermes/hermes-runtime-adapter.js";
+import { ProcessExecutor } from "./platform/process/process-executor.js";
 import {
   StatusTracker,
   shutdownSystem,
@@ -52,7 +54,8 @@ try {
 }
 
 const scheduler = new SchedulerService(database);
-const app = createApp({ host, port, db: database, scheduler });
+const runtime = new HermesRuntimeAdapter(new ProcessExecutor(), undefined, { databasePath: home.database });
+const app = createApp({ host, port, db: database, scheduler, runtime });
 
 // Use the production scheduler instance for restart recovery and the periodic
 // safety pass. Ambiguous ownership is intentionally preserved by reconcile().
