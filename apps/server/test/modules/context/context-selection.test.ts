@@ -363,7 +363,9 @@ describe("ContextBudget - Over-budget Pruning", () => {
       const ids = result.map((g) => g.id);
       expect(ids).toContain("GL-P0");
       expect(ids).toContain("GL-P1");
-      // P2 items may be removed/compacted under severe pressure
+      // P2 items are removed/compacted under severe pressure
+      expect(ids).not.toContain("GL-P2-1");
+      expect(ids).not.toContain("GL-P2-2");
       expect(ids).not.toContain("GL-P3");
     });
 
@@ -391,6 +393,8 @@ describe("ContextBudget - Over-budget Pruning", () => {
       const ids = result.map((g) => g.id);
       expect(ids).toContain("GL-P0");
       expect(ids).toContain("GL-P1");
+      expect(ids).not.toContain("GL-P2");
+      expect(ids).not.toContain("GL-P3");
     });
   });
 
