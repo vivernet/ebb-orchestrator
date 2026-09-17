@@ -1,9 +1,7 @@
 import { describe, expect, it, afterEach } from "vitest";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { KnowledgeAnalyzer, type ProposalClassification } from "../../../src/modules/knowledge/knowledge-analyzer.js";
+import { rm } from "node:fs/promises";
+import { KnowledgeAnalyzer } from "../../../src/modules/knowledge/knowledge-analyzer.js";
 import type { GuidelineRecord } from "../../../src/modules/knowledge/knowledge-types.js";
 
 // ── Helper to build a GuidelineRecord ──────────────────────────────
@@ -136,24 +134,6 @@ superseded_by:
 # Secrets encryption
 
 All secrets must be encrypted at rest.
-`;
-
-const GUIDELINE_DIFFERENT_SCOPE = `---
-id: GL-ARCH-020
-category: ARCH
-version: 1
-priority: RECOMMENDED
-status: ACTIVE
-scope: area
-applicable_roles: developer
-rationale: Area-specific caching strategy.
-provenance: team-decision
-content_hash: area001
-superseded_by:
----
-# Caching
-
-Use Redis for caching in the billing area.
 `;
 
 // ── Tests ──────────────────────────────────────────────────────────

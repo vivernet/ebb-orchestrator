@@ -152,7 +152,6 @@ function hasContradiction(candidateContent: string, proposalContent: string): bo
   ];
 
   const proposalLower = proposalContent.toLowerCase();
-  const candidateLower = candidateContent.toLowerCase();
 
   // Check if proposal contains negation patterns
   const hasNegation = negationPatterns.some((p) => p.test(proposalLower));

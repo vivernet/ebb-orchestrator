@@ -47,24 +47,6 @@ superseded_by:
 All API endpoints must use versioned paths. Patch format: /v1/resource/:id.
 `;
 
-const GUIDELINE_SUPERSEDED_BY_V2 = `---
-id: GL-ARCH-014
-category: ARCH
-version: 1
-priority: REQUIRED
-status: SUPERSEDED
-scope: project
-applicable_roles: developer,architect
-rationale: All API endpoints must use versioned paths.
-provenance: team-decision
-content_hash: abc123
-superseded_by: GL-ARCH-015
----
-# API versioning
-
-All API endpoints must use versioned paths (e.g. /v1/...).
-`;
-
 const DECISION_MARKDOWN = `---
 id: DEC-0001
 status: ACCEPTED

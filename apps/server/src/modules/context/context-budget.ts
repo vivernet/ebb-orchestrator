@@ -37,9 +37,6 @@ export class ContextBudget {
     // P2 items — compact/remove under severe pressure
     const p2 = items.filter((item) => item.priority === "p2");
 
-    // P3 items — pruned first under any budget pressure
-    const p3 = items.filter((item) => item.priority === "p3");
-
     // Budget pressure levels:
     // < 10000: remove P3
     // < 500: remove P3 + P2 (severe)
