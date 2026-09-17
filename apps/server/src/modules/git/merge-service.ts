@@ -302,7 +302,17 @@ export class MergeService {
       id: string; source_branch: string; target_branch: string; repository_path: string;
       expected_target_sha: string; source_sha: string; worktree_path: string;
       integration_run_id: string; status: IntegrationAttempt["status"]; created_at: string;
-    }>("SELECT * FROM integration_attempts WHERE integration_run_id=$runId AND status='MERGED'", { runId: integrationRunId });
+    }>(`SELECT ia.*
+        FROM integration_attempts ia
+        JOIN agent_runs ar ON ar.id = ia.integration_run_id
+          AND lower(ar.role) = 'integration'
+          AND ar.epic_id = $subjectId
+        JOIN orchestration_phase_runs pr ON pr.agent_run_id = ar.id
+          AND pr.epic_id = $subjectId
+          AND lower(pr.phase) = 'integration'
+          AND pr.validated = 1
+        JOIN epic_orchestrations eo ON eo.epic_id = $subjectId
+        WHERE ia.integration_run_id = $runId AND ia.status = 'MERGED'`, { runId: integrationRunId, subjectId });
     if (!row || row.integration_run_id !== integrationRunId) throw new Error("Missing exact Integration provenance");
     this.integrationAttempt = {
       id: row.id, sourceBranch: row.source_branch, currentTargetBranch: row.target_branch,

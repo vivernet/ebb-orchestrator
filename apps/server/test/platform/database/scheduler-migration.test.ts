@@ -260,6 +260,47 @@ describe("scheduler lock compatibility migration", () => {
     expect(db.get("SELECT version FROM schema_migrations WHERE version=14")).toBeUndefined();
   });
 
+  it("aborts instead of discarding conflicting destination capacity data", async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "orch-scheduler-migration-capacity-conflict-"));
+    db = createSqliteDatabase(join(tmpDir, `${randomUUID()}.db`));
+    runMigrations(db, baseMigrations);
+    createV12Prerequisites(db);
+    runMigrations(db, [legacyMigration012]);
+    const projectId = randomUUID();
+    const taskId = randomUUID();
+    const at = "2026-09-17T12:00:00.000Z";
+    db.run("INSERT INTO projects(id,name,display_name,created_at,updated_at) VALUES($id,'p','p',$at,$at)", { id: projectId, at });
+    db.run("INSERT INTO tasks(id,project_id,display_id,title,contract_json,created_at,updated_at) VALUES($id,$project,'TASK-1','task','{}',$at,$at)", { id: taskId, project: projectId, at });
+    db.run("INSERT INTO scheduler_capacity_reservations(task_id,project_id,owner_id,reserved_at,estimate_cost,run_id,status,actual_cost,approval_id) VALUES($task,$project,'legacy-owner',$at,7,'legacy-run','RESERVED',NULL,'legacy-approval')", { task: taskId, project: projectId, at });
+    runMigrations(db, [forwardMigrations[0]!]);
+    db.run("INSERT INTO scheduler_reservations(id,kind,subject_id,project_id,owner_id,reserved_at,estimate_cost,status,role,model,approval_id,run_id) VALUES('existing','TASK',$task,$project,'different-owner',$at,7,'RESERVED','developer','default','legacy-approval','legacy-run')", { task: taskId, project: projectId, at });
+
+    expect(() => runMigrations(db!, [forwardMigrations[1]!])).toThrow(/CHECK constraint failed/);
+    expect(db.get("SELECT task_id FROM scheduler_capacity_reservations WHERE task_id=$task", { task: taskId })).toBeDefined();
+    expect(db.get("SELECT version FROM schema_migrations WHERE version=14")).toBeUndefined();
+  });
+
+  it("aborts instead of discarding conflicting destination lock data", async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "orch-scheduler-migration-lock-conflict-"));
+    db = createSqliteDatabase(join(tmpDir, `${randomUUID()}.db`));
+    runMigrations(db, baseMigrations);
+    createV12Prerequisites(db);
+    runMigrations(db, [legacyMigration012]);
+    const projectId = randomUUID();
+    const taskId = randomUUID();
+    const at = "2026-09-17T12:00:00.000Z";
+    db.run("INSERT INTO projects(id,name,display_name,created_at,updated_at) VALUES($id,'p','p',$at,$at)", { id: projectId, at });
+    db.run("INSERT INTO tasks(id,project_id,display_id,title,contract_json,created_at,updated_at) VALUES($id,$project,'TASK-1','task','{}',$at,$at)", { id: taskId, project: projectId, at });
+    db.run("INSERT INTO resource_locks(id,task_id,locked_at,owner_id) VALUES('global',$task,$at,'legacy-owner')", { task: taskId, at });
+    runMigrations(db, [forwardMigrations[0]!]);
+    db.run("INSERT INTO scheduler_reservations(id,kind,subject_id,project_id,owner_id,reserved_at,estimate_cost,status,role,model) VALUES('existing','LOCK',$subject,$project,'legacy-owner',$at,0,'RESERVED','lock','legacy')", { subject: `lock:${taskId}`, project: projectId, at });
+    db.run("INSERT INTO scheduler_resource_locks(resource_key,reservation_id,project_id,owner_id,locked_at) VALUES('global','existing',$project,'different-owner',$at)", { project: projectId, at });
+
+    expect(() => runMigrations(db!, [forwardMigrations[1]!])).toThrow(/CHECK constraint failed/);
+    expect(db.get("SELECT id FROM resource_locks WHERE id='global'")).toBeDefined();
+    expect(db.get("SELECT version FROM schema_migrations WHERE version=14")).toBeUndefined();
+  });
+
   it("passes the fresh migration chain", async () => {
     tmpDir = await mkdtemp(join(tmpdir(), "orch-scheduler-fresh-"));
     db = createSqliteDatabase(join(tmpDir, `${randomUUID()}.db`));

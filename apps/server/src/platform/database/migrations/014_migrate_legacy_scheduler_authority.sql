@@ -32,6 +32,55 @@ WHERE EXISTS (
   LEFT JOIN tasks t ON t.id = l.task_id
   WHERE t.id IS NULL
 );
+
+-- A destination row is not evidence that a legacy row was migrated.  Refuse
+-- to discard a legacy reservation whose durable fields disagree with the
+-- existing destination row.  SQLite IS comparisons intentionally preserve
+-- NULL-vs-value conflicts for optional cost/approval/run fields.
+INSERT INTO scheduler_014_completeness_guard(valid)
+SELECT 0
+WHERE EXISTS (
+  SELECT 1
+  FROM scheduler_capacity_reservations c
+  JOIN scheduler_reservations r ON r.subject_id = c.task_id
+  WHERE r.kind <> 'TASK'
+     OR r.project_id IS NOT c.project_id
+     OR r.owner_id IS NOT c.owner_id
+     OR r.reserved_at IS NOT c.reserved_at
+     OR r.estimate_cost IS NOT c.estimate_cost
+     OR r.status IS NOT c.status
+     OR r.actual_cost IS NOT c.actual_cost
+     OR r.approval_id IS NOT c.approval_id
+     OR r.run_id IS NOT c.run_id
+);
+
+-- A lock without a corresponding legacy capacity row must never be attached
+-- to an unrelated pre-existing task reservation.  Such an attachment would
+-- make the final completeness check pass while losing lock authority data.
+INSERT INTO scheduler_014_completeness_guard(valid)
+SELECT 0
+WHERE EXISTS (
+  SELECT 1
+  FROM resource_locks l
+  JOIN scheduler_reservations r ON r.subject_id = l.task_id
+  WHERE NOT EXISTS (
+    SELECT 1 FROM scheduler_capacity_reservations c WHERE c.task_id = l.task_id
+  )
+);
+
+-- Existing lock mappings are acceptable only when they are byte-for-byte
+-- equivalent in the fields owned by the legacy source row.
+INSERT INTO scheduler_014_completeness_guard(valid)
+SELECT 0
+WHERE EXISTS (
+  SELECT 1
+  FROM resource_locks l
+  JOIN scheduler_resource_locks sl ON sl.resource_key = l.id
+  WHERE sl.project_id IS NOT (SELECT t.project_id FROM tasks t WHERE t.id = l.task_id)
+     OR sl.owner_id IS NOT l.owner_id
+     OR sl.locked_at IS NOT l.locked_at
+     OR NOT EXISTS (SELECT 1 FROM scheduler_reservations r WHERE r.id = sl.reservation_id)
+);
 INSERT INTO scheduler_014_completeness_guard(valid)
 SELECT 0
 WHERE EXISTS (
