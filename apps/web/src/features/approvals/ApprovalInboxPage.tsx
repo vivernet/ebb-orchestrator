@@ -104,7 +104,7 @@ export default function ApprovalInboxPage({ projectId }: ApprovalInboxProps) {
   return (
     <div className="approval-inbox-page">
       <h1>Approval Inbox</h1>
-      {mutationError && <p role="alert">Unable to update approval: {mutationError}</p>}
+      {mutationError && <p role="alert">Unable to update approval: {mutationError} <button type="button" onClick={() => { setMutationError(null); void fetchApprovals(); }}>Retry</button></p>}
       {pendingApprovals.length === 0 ? <p>No pending approvals.</p> : (
         <ul className="approval-list">
           {pendingApprovals.map((approval) => (

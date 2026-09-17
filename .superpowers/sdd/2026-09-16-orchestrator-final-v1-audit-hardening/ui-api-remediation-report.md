@@ -35,3 +35,27 @@ Remediated only confirmed findings F-002, F-003, and F-007. Architectural findin
 
 - Reject and request-changes remain intentionally unavailable because no corresponding authorized server endpoints exist in the v1 API.
 - The pre-existing unrelated untracked file `docs/superpowers/plans/2026-09-16-orchestrator-final-v1-audit-hardening.md` was not modified or included.
+
+## Important finding review fix
+
+### Changed files
+
+- `apps/web/src/features/approvals/ApprovalInboxPage.tsx`
+  - Adds an accessible `Retry` button to the approval mutation error state.
+  - Clears the stale mutation error and reloads approval data through the existing `fetchApprovals` path.
+- `apps/web/test/ui-api-remediation.test.tsx`
+  - Verifies the mutation failure exposes `Retry` and that activating it reloads approval data.
+
+### Verification
+
+- RED check: focused test failed as expected because the mutation error state had no `Retry` button.
+- Focused UI/API test: `pnpm --filter @ebb-orchestrator/web test -- ui-api-remediation.test.tsx` — 6 test files passed, 65 tests passed.
+- Full web tests: `pnpm --filter @ebb-orchestrator/web test` — 6 test files passed, 65 tests passed.
+- Web build: `pnpm --filter @ebb-orchestrator/web build` — TypeScript build and Vite production build passed; 39 modules transformed.
+- Root typecheck: `pnpm typecheck` — contracts, testing, and server typechecks passed.
+- Root lint: `pnpm lint` — blocked by pre-existing errors in `apps/server/src/modules/git/git-cli.ts:7` (`no-control-regex`) and `apps/server/src/modules/git/git-reconciler.ts:1` (`no-unused-vars`); no lint error was reported for the changed web files.
+
+### Remaining concerns
+
+- Root lint remains red due to unrelated pre-existing server findings; those files were not modified.
+- Existing unrelated modifications in `apps/server/src/modules/execution/command-tools.ts`, `apps/server/src/modules/execution/git-tools.ts`, `apps/server/src/modules/git/git-cli.ts`, and `apps/server/src/modules/git/git-reconciler.ts`, plus untracked `docs/superpowers/plans/2026-09-16-orchestrator-final-v1-audit-hardening.md`, were not included.

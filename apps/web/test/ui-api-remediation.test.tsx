@@ -44,8 +44,8 @@ describe('approval UI/API remediation', () => {
     expect(screen.getByText('No pending approvals.')).toBeInTheDocument();
   });
 
-  test('renders approval mutation failures to the user', async () => {
-    vi.spyOn(apiClient, 'get').mockResolvedValue({ approvals: [{
+  test('renders approval mutation failures with a reload affordance', async () => {
+    const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ approvals: [{
       id: 'approval-1', type: 'FINAL_MERGE', subject_id: 'task-1', subject_type: 'TASK',
       status: 'PENDING', requested_by: 'orchestrator', resolved_by: null,
       resolution_note: null, created_at: '2026-09-17T00:00:00Z', resolved_at: null,
@@ -54,6 +54,8 @@ describe('approval UI/API remediation', () => {
     render(<ApprovalInboxPage />);
     fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));
     expect(await screen.findByText('Unable to update approval: approval unavailable')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
   });
 });
 
