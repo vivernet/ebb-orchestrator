@@ -1,7 +1,7 @@
 import type { Database } from "../../platform/database/database.js";
 import type { DashboardProjection as Dashboard } from "@ebb-orchestrator/contracts";
 import type { WaitReason } from "@ebb-orchestrator/contracts";
-import type { SchedulerService } from "../../modules/scheduler/scheduler-service.js";
+import { SchedulerService } from "../../modules/scheduler/scheduler-service.js";
 
 const emptyUsage = () => ({ inputTokens: 0, cachedTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 });
 interface ProjectRow { id: string; name: string; display_name: string; status: string; }
@@ -12,7 +12,7 @@ interface CountRow { count: number; }
 function hasTable(db: Database, name: string): boolean { return Boolean(db.get<{ name: string }>("SELECT name FROM sqlite_master WHERE type='table' AND name=$name", { name })); }
 
 export class DashboardProjection {
-  private readonly scheduler?: SchedulerService;
+  private readonly scheduler: SchedulerService | undefined;
 
   constructor(private readonly db?: Database, scheduler?: SchedulerService) {
     this.scheduler = scheduler ?? (db ? new SchedulerService(db) : undefined);
