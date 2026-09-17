@@ -7,10 +7,12 @@ import { ApprovalService } from "../approvals/approval-service.js";
 import { SchedulerService } from "../scheduler/scheduler-service.js";
 import type { MergeService, MergeResult } from "../git/merge-service.js";
 import { validateRoleOutput } from "../runtime/output-validator.js";
+import type { AgentRuntime } from "../runtime/agent-runtime.js";
+import { RunService } from "../runtime/run-service.js";
 
 export interface EpicAgentRequest { phase: string; role: string; epicId?: string; taskId?: string; targetBranch?: string }
 export interface EpicAgentResult { accepted: boolean; output: unknown; architectureChangingProposalAccepted?: boolean; usage?: { cost: number } }
-export interface EpicAgentRuntime { run(request: EpicAgentRequest): Promise<EpicAgentResult> }
+export type EpicAgentRuntime = AgentRuntime;
 export interface EpicStartInput extends PlanningPlanInput { includeProductManager?: boolean; includeArchitect?: boolean; architectureReviewRequired?: boolean; architecture_review_required?: boolean }
 export interface EpicRunResult { epicId: string; sequence: string[]; childStatuses: string[]; finalApprovalRequired: boolean; pendingFinalApproval: boolean; finalApprovalId?: string }
 type Stage = "CHILDREN" | "EPIC_REVIEW" | "ARCHITECTURE_REVIEW" | "EPIC_QA" | "INTEGRATION" | "FINAL_APPROVAL" | "DONE";
@@ -23,6 +25,7 @@ export class EpicOrchestrator {
   private readonly handlers: RuntimeEventHandlers;
   private readonly approvals: ApprovalService;
   private readonly scheduler: SchedulerService;
+  private readonly runs: RunService;
 
   constructor(private readonly db: Database, private readonly workflow: WorkflowEngine, private readonly planning: PlanningService, private readonly runtime: EpicAgentRuntime, private readonly mergeService: EpicMergeAuthority) {
     this.handlers = new RuntimeEventHandlers(db, workflow);
@@ -37,6 +40,7 @@ export class EpicOrchestrator {
     for (const column of ["status TEXT NOT NULL DEFAULT 'INTENT'", "request_json TEXT", "started_at TEXT", "ended_at TEXT"]) {
       try { this.db.exec(`ALTER TABLE orchestration_phase_runs ADD COLUMN ${column}`); } catch { /* current schema */ }
     }
+    this.runs = new RunService(db, runtime);
     this.reconcileStaleRuns();
     // AgentRuns must be marked terminal before their scheduler reservations are
     // reconciled.  Otherwise a stale phase still looks live to the scheduler.
@@ -202,9 +206,8 @@ export class EpicOrchestrator {
     const activePhaseId = existing?.id ?? phaseId;
     const now = new Date().toISOString();
     this.db.transaction((tx) => {
-      tx.run("INSERT INTO agent_runs (id,role,runtime,model,task_id,epic_id,status,started_at) VALUES($id,$role,'orchestrator','persisted',$taskId,$epicId,'STARTED',$at)", { id: agentRunId, role, taskId: taskId ?? null, epicId, at: now });
       if (existing) tx.run("UPDATE orchestration_phase_runs SET agent_run_id=$run,result_json='{}',evidence_json='{}',validated=0,status='RUNNING',request_json=$request,started_at=$at,ended_at=NULL WHERE id=$id", { id: existing.id, run: agentRunId, request: JSON.stringify(request), at: now });
-      else tx.run("INSERT INTO orchestration_phase_runs(id,epic_id,task_id,phase,role,agent_run_id,result_json,evidence_json,validated,status,request_json,started_at,created_at) VALUES($id,$epicId,$taskId,$phase,$role,$run,'{}','{}',0,'RUNNING',$request,$at,$at)", { id: phaseId, epicId, taskId: taskId ?? null, phase, role, run: agentRunId, request: JSON.stringify(request), at: now });
+      else tx.run("INSERT INTO orchestration_phase_runs(id,epic_id,task_id,phase,role,agent_run_id,result_json,evidence_json,validated,status,request_json,created_at) VALUES($id,$epicId,$taskId,$phase,$role,$run,'{}','{}',0,'INTENT',$request,$at)", { id: phaseId, epicId, taskId: taskId ?? null, phase, role, run: agentRunId, request: JSON.stringify(request), at: now });
     });
     try {
       if (taskId && this.workflow.currentStage(taskId) === "READY") this.scheduler.dispatchTask(taskId, this.workflow, () => undefined, { triggerReason: `epic-${phase}`, role, model: "persisted", runId: agentRunId });
@@ -213,7 +216,17 @@ export class EpicOrchestrator {
         if (!projectId) throw new Error(`Epic ${epicId} project not found`);
         this.scheduler.dispatchAgentRun(agentRunId, projectId, role, "persisted");
       }
-      const result = await this.runtime.run(request);
+      const execution = await this.runs.execute({
+        runId: agentRunId, role, model: "persisted", taskId: taskId ?? "", epicId,
+        triggerReason: `epic-${phase}`, contextVersion: "1", outputSchemaVersion: "1",
+        prompt: JSON.stringify(request),
+      });
+      const result: EpicAgentResult = {
+        accepted: true,
+        output: JSON.parse(execution.outcome.output),
+        usage: { cost: execution.run.cost ?? 0 },
+      };
+      this.db.run("UPDATE orchestration_phase_runs SET status='RUNNING',started_at=$at WHERE id=$id AND status='INTENT'", { id: activePhaseId, at: now });
       return this.persistedPhase(epicId, taskId, phase, role, result, agentRunId, activePhaseId);
     } catch (error) {
       this.db.transaction((tx) => {

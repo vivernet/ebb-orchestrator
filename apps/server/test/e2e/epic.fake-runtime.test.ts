@@ -11,7 +11,11 @@ import { WorkflowEngine } from "../../src/modules/workflow/workflow-engine.js";
 import { WorkflowRegistry } from "../../src/modules/workflow/workflow-registry.js";
 import { templates } from "../../src/modules/workflow/templates.js";
 import { PlanningService } from "../../src/modules/planning/planning-service.js";
-import { EpicOrchestrator, type EpicAgentRuntime } from "../../src/modules/planning/epic-orchestrator.js";
+import { EpicOrchestrator } from "../../src/modules/planning/epic-orchestrator.js";
+import type { AgentRuntime } from "../../src/modules/runtime/agent-runtime.js";
+import type { AgentRun } from "@ebb-orchestrator/contracts";
+import type { RunOutcome } from "../../src/modules/runtime/run-types.js";
+import { DatabaseCompletionStore } from "../../src/modules/execution/mcp/submit-result-tool.js";
 import { SchedulerService } from "../../src/modules/scheduler/scheduler-service.js";
 import { ApprovalService } from "../../src/modules/approvals/approval-service.js";
 import { MergeService } from "../../src/modules/git/merge-service.js";
@@ -23,15 +27,26 @@ const migrationFiles = [
   "001_system", "002_work_domain", "003_work_control", "010_planning",
 ];
 
-class FakeAgentRuntime implements EpicAgentRuntime {
+class FakeAgentRuntime implements AgentRuntime {
   readonly calls: Array<{ phase: string; role: string; taskId?: string; targetBranch?: string }> = [];
   active = 0;
   maxActive = 0;
 
-  async run(request: { phase: string; role: string; taskId?: string; targetBranch?: string }): Promise<{ accepted: boolean; output: unknown; architectureChangingProposalAccepted?: boolean; usage: { cost: number } }> {
+  private readonly runs = new Map<string, { request: { phase: string; role: string; taskId?: string; targetBranch?: string }; run: AgentRun }>();
+  private readonly completion?: DatabaseCompletionStore;
+
+  constructor(db?: Database) { if (db) this.completion = new DatabaseCompletionStore(db); }
+
+  async startRun(run: AgentRun): Promise<void> {
+    const request = JSON.parse((run as AgentRun & { prompt?: string }).prompt ?? "{}") as { phase: string; role: string; taskId?: string; targetBranch?: string };
+    this.runs.set(run.id, { request, run });
     this.calls.push(request);
     this.active++;
     this.maxActive = Math.max(this.maxActive, this.active);
+  }
+  async runResult(runId: string): Promise<RunOutcome> {
+    const record = this.runs.get(runId)!;
+    const request = record.request;
     await Promise.resolve();
     this.active--;
     const common = { version: "1.0", summary: request.phase };
@@ -48,8 +63,17 @@ class FakeAgentRuntime implements EpicAgentRuntime {
               : request.role === "qa"
                 ? { ...common, outcome: "PASS", evidence: ["fake-qa"] }
                 : { ...common, outcome: "PASS", evidence: ["fake-integration"] };
-    return { accepted: true, output, architectureChangingProposalAccepted: request.phase === "architect", usage: { cost: 0.25 } };
+    if (!this.completion || !record.run.capabilityRef) throw new Error("fake runtime is not connected to a database");
+    const accepted = await this.completion.accept(record.run.capabilityRef, { runId, role: record.run.role, output });
+    if (!accepted) throw new Error("fake completion was rejected");
+    return { success: true, exitCode: 0, output: JSON.stringify(output), validatedSubmission: true, diagnostics: { runId, sessionId: null, stderr: "", exitCode: 0, artifactReferences: [] } };
   }
+  async resumeRun(): Promise<void> { }
+  async cancelRun(): Promise<void> { }
+  async inspectRun(): Promise<AgentRun> { throw new Error("Inspect not implemented"); }
+  async collectResult(runId: string): Promise<RunOutcome> { return this.runResult(runId); }
+  async collectUsage(): Promise<{ inputTokens: number; cachedInputTokens: number; outputTokens: number; cost: number }> { return { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, cost: 0.25 }; }
+  async healthCheck(): Promise<boolean> { return true; }
 }
 
 describe("full epic orchestration with FakeAgentRuntime", () => {
@@ -119,7 +143,7 @@ describe("full epic orchestration with FakeAgentRuntime", () => {
     db.run("INSERT INTO projects (id,name,display_name,status,created_at,updated_at) VALUES ($id,'demo','Demo','ACTIVE',$now,$now)", { id: projectId, now });
     const registry = new WorkflowRegistry();
     for (const template of Object.values(templates)) registry.register(template);
-    const runtime = new FakeAgentRuntime();
+    const runtime = new FakeAgentRuntime(db);
     // The E2E uses the production MergeService.  IntegrationService owns the
     // provenance schema; no synthetic VERIFIED journal row is inserted here.
     new IntegrationService({ database: db, worktreeDir: directory });
@@ -154,6 +178,8 @@ describe("full epic orchestration with FakeAgentRuntime", () => {
     expect(db.get<{ plan_id: string; stage: string }>("SELECT plan_id, stage FROM epic_orchestrations WHERE epic_id=$epicId", { epicId: pending.epicId })).toEqual({ plan_id: plan.id, stage: "FINAL_APPROVAL" });
     expect(db.get<{ subject_id: string; subject_type: string }>("SELECT subject_id, subject_type FROM approvals WHERE id=$id", { id: pending.finalApprovalId! })).toEqual({ subject_id: pending.epicId, subject_type: "EPIC" });
     expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM orchestration_phase_runs WHERE epic_id=$epicId AND validated=1", { epicId: pending.epicId })?.count).toBe(runtime.calls.length);
+    expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM agent_runs WHERE epic_id=$epicId", { epicId: pending.epicId })?.count).toBe(runtime.calls.length);
+    expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM agent_runs WHERE epic_id=$epicId AND status='COMPLETED' AND output IS NOT NULL", { epicId: pending.epicId })?.count).toBe(runtime.calls.length);
     expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_reservations WHERE status='RESERVED'")?.count).toBe(0);
     expect(db.get<{ spent_cost: number }>("SELECT spent_cost FROM scheduler_budgets WHERE project_id=$projectId", { projectId })?.spent_cost ?? 0).toBeCloseTo(runtime.calls.length * 0.25);
     const callsBeforeRestart = runtime.calls.length;
@@ -193,7 +219,7 @@ describe("full epic orchestration with FakeAgentRuntime", () => {
     db.run("INSERT INTO projects (id,name,display_name,status,created_at,updated_at) VALUES ($id,'merge','Merge','ACTIVE',$now,$now)", { id: projectId, now });
     const registry = new WorkflowRegistry();
     for (const template of Object.values(templates)) registry.register(template);
-    const runtime = new FakeAgentRuntime();
+    const runtime = new FakeAgentRuntime(db);
     const merge = new MergeService({ database: db, repoPath: directory, targetBranch: "master" });
     const orchestrator = new EpicOrchestrator(db, new WorkflowEngine(db, registry), new PlanningService(db), runtime, merge);
     db.run("INSERT INTO scheduler_budgets (project_id,limit_cost,spent_cost,reserved_cost) VALUES ($projectId,100,0,0)", { projectId });

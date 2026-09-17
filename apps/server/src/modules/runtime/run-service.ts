@@ -21,8 +21,13 @@ export class RunService {
     // Keep databases created before capability_json usable while the migration
     // set is upgraded by the host process.
     const columns = this.db.all<{ name: string }>("PRAGMA table_info(agent_runs)");
-    if (!columns.some((column) => column.name === "capability_json")) {
-      this.db.exec("ALTER TABLE agent_runs ADD COLUMN capability_json TEXT");
+    for (const column of [
+      "capability_ref TEXT", "capability_json TEXT", "session_id TEXT", "attempt INTEGER",
+      "trigger_reason TEXT", "context_version TEXT", "output_schema_version TEXT",
+      "cached_input_tokens INTEGER", "output TEXT",
+    ]) {
+      const name = column.split(" ", 1)[0];
+      if (!columns.some((existing) => existing.name === name)) this.db.exec(`ALTER TABLE agent_runs ADD COLUMN ${column}`);
     }
   }
 
@@ -43,7 +48,7 @@ export class RunService {
    */
   async startRun(options: StartRunOptions): Promise<AgentRun> {
     const record = this.db.transaction((tx) => {
-      const id = crypto.randomUUID();
+      const id = options.runId ?? crypto.randomUUID();
       const capabilityRef = crypto.randomUUID();
       const role = options.role.toLowerCase();
       const contract = this.roles.get(role);
@@ -130,6 +135,24 @@ export class RunService {
       throw error;
     }
     return record;
+  }
+
+  /** Start, collect, and durably accept one runtime result. */
+  async execute(options: StartRunOptions): Promise<{ run: AgentRun; outcome: RunOutcome }> {
+    const run = await this.startRun(options);
+    try {
+      const outcome = await this.runtime.collectResult(run.id);
+      await this.collectResult(run.id, outcome);
+      try {
+        await this.collectUsage(run.id, await this.runtime.collectUsage(run.id));
+      } catch {
+        // Usage is optional for runtimes that do not expose it.
+      }
+      return { run: this.getRun(this.db, run.id), outcome };
+    } catch (error) {
+      this.failRun(run.id, error);
+      throw error;
+    }
   }
 
   /**

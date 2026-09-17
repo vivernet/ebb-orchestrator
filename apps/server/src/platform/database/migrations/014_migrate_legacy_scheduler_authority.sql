@@ -97,32 +97,19 @@ WHERE EXISTS (
   WHERE t.id IS NULL
 );
 
--- When capacity is absent, locks get one synthetic reservation per task.  An
--- existing row for that subject is usable only if it is exactly that row;
--- matching visible fields alone is not sufficient because its ID is the
--- durable association used by every migrated lock mapping.
+-- When capacity is absent, locks get one synthetic reservation per task.  A
+-- task-subject reservation is always ambiguous here: it is not the legacy
+-- lock destination and must not be reused or allowed to shadow it.
 INSERT INTO scheduler_014_completeness_guard(valid)
 SELECT 0
 WHERE EXISTS (
   SELECT 1
   FROM resource_locks l
   JOIN tasks t ON t.id = l.task_id
-  JOIN scheduler_reservations r ON r.subject_id = 'lock:' || l.task_id
+  JOIN scheduler_reservations r ON r.subject_id = l.task_id
   WHERE NOT EXISTS (
           SELECT 1 FROM scheduler_capacity_reservations c WHERE c.task_id = l.task_id
         )
-    AND (r.id IS NOT ('legacy-lock:' || l.task_id)
-      OR r.kind IS NOT 'LOCK'
-      OR r.project_id IS NOT t.project_id
-      OR r.owner_id IS NOT (SELECT MIN(owner_id) FROM resource_locks WHERE task_id = l.task_id)
-      OR r.reserved_at IS NOT (SELECT MIN(locked_at) FROM resource_locks WHERE task_id = l.task_id)
-      OR r.estimate_cost IS NOT 0
-      OR r.status IS NOT 'RESERVED'
-      OR r.actual_cost IS NOT NULL
-      OR r.approval_id IS NOT NULL
-      OR r.run_id IS NOT NULL
-      OR r.role IS NOT 'lock'
-      OR r.model IS NOT 'legacy')
 );
 
 INSERT INTO scheduler_reservations (
@@ -165,7 +152,7 @@ SELECT
   'legacy'
 FROM resource_locks l
 JOIN tasks t ON t.id = l.task_id
-WHERE NOT EXISTS (SELECT 1 FROM scheduler_reservations r WHERE r.subject_id = l.task_id)
+WHERE NOT EXISTS (SELECT 1 FROM scheduler_capacity_reservations c WHERE c.task_id = l.task_id)
   AND NOT EXISTS (SELECT 1 FROM scheduler_reservations r WHERE r.subject_id = 'lock:' || l.task_id)
 GROUP BY l.task_id, t.project_id;
 
@@ -180,7 +167,9 @@ SELECT
   l.locked_at
 FROM resource_locks l
 JOIN tasks t ON t.id = l.task_id
-JOIN scheduler_reservations r ON r.subject_id IN (l.task_id, 'lock:' || l.task_id)
+JOIN scheduler_reservations r ON r.id = CASE WHEN EXISTS (
+  SELECT 1 FROM scheduler_capacity_reservations c WHERE c.task_id = l.task_id
+) THEN 'legacy-capacity:' || l.task_id ELSE 'legacy-lock:' || l.task_id END
 WHERE NOT EXISTS (
   SELECT 1 FROM scheduler_resource_locks existing WHERE existing.resource_key = l.id
 );
