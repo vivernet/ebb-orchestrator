@@ -1,0 +1,16 @@
+import type { FastifyInstance } from "fastify";
+import type { Database } from "../../platform/database/database.js";
+export interface ApprovalCommandService { approve(id: string, actor: string, note?: string): unknown | Promise<unknown>; }
+export interface ApprovalRouteDeps { db?: Database | undefined; approvalService?: ApprovalCommandService | undefined; }
+export async function approvalRoutes(app: FastifyInstance, deps: ApprovalRouteDeps = {}): Promise<void> {
+  app.get("/api/v1/approvals", async () => {
+    if (!deps.db) return { approvals: [] };
+    const rows = deps.db.all<any>("SELECT * FROM approvals WHERE status='PENDING' ORDER BY created_at");
+    return { approvals: rows };
+  });
+  app.post<{ Params: { id: string }; Body?: { note?: string } }>("/api/v1/approvals/:id/approve", async (request, reply) => {
+    if (!deps.approvalService) return reply.code(503).send({ error: "approval service unavailable" });
+    const body = request.body ?? {};
+    return deps.approvalService.approve(request.params.id, "local-user", body.note);
+  });
+}

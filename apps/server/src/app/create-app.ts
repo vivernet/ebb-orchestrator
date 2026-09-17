@@ -14,12 +14,22 @@ import {
 } from "../platform/security/local-session.js";
 import { healthRoutes } from "./routes/health.js";
 import { eventRoutes } from "./routes/events.js";
+import type { Database } from "../platform/database/database.js";
+import { DashboardProjection } from "./read-models/dashboard-projection.js";
+import { projectRoutes } from "./routes/projects.js";
+import { workRoutes, type WorkCommandService } from "./routes/work.js";
+import { approvalRoutes, type ApprovalCommandService } from "./routes/approvals.js";
+import { runRoutes, type RunCommandService } from "./routes/runs.js";
 
 export interface AppDeps {
   /** Loopback host (default "127.0.0.1"). */
   host?: string;
   /** Port the server will listen on (default 3000). */
   port?: number;
+  db?: Database;
+  workService?: WorkCommandService;
+  approvalService?: ApprovalCommandService;
+  runService?: RunCommandService;
 }
 
 export interface OrchestratorApp extends FastifyInstance {
@@ -81,6 +91,13 @@ export function createApp(deps: AppDeps = {}): OrchestratorApp {
 
   // Authenticated
   app.register(eventRoutes);
+  app.register(async (instance) => {
+    instance.get("/api/v1/dashboard", async () => new DashboardProjection(deps.db).get());
+    await projectRoutes(instance, { db: deps.db });
+    await workRoutes(instance, { db: deps.db, workService: deps.workService });
+    await approvalRoutes(instance, { db: deps.db, approvalService: deps.approvalService });
+    await runRoutes(instance, { db: deps.db, runService: deps.runService });
+  });
 
   // Protected test route (used by security tests)
   app.post("/api/v1/protected-test", async () => {
