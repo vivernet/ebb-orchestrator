@@ -270,6 +270,14 @@ export class EpicOrchestrator {
          tx.run("UPDATE orchestration_phase_runs SET status='FAILED',ended_at=$at WHERE id=$id AND status IN ('INTENT','RUNNING')", { id: row.id, at: new Date().toISOString() });
         tx.run("UPDATE agent_runs SET status='FAILED',ended_at=$at,exit_code=-1,output='STALE_ORCHESTRATION_RUN' WHERE id=$id AND status IN ('STARTED','IN_PROGRESS','COMPLETING')", { id: row.agent_run_id, at: new Date().toISOString() });
       }
+      // Delete unvalidated FAILED phases so restart can retry them.  Phases
+      // that completed successfully (validated=1) are preserved as the durable
+      // checkpoint.  The associated agent_run is left for the scheduler
+      // reconciler to release, which handles budget accounting and lock cleanup.
+      const failed = tx.all<{ id: string }>("SELECT id FROM orchestration_phase_runs WHERE status='FAILED' AND validated=0");
+      for (const row of failed) {
+        tx.run("DELETE FROM orchestration_phase_runs WHERE id=$id", { id: row.id });
+      }
     });
   }
 

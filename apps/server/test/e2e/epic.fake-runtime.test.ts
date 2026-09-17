@@ -119,7 +119,7 @@ describe("full epic orchestration with FakeAgentRuntime", () => {
     new EpicOrchestrator(db, new WorkflowEngine(db, registry), new PlanningService(db), new RunService(db, new FakeAgentRuntime()), {} as never);
 
     expect(db.get<{ status: string }>("SELECT status FROM agent_runs WHERE id=$id", { id: runId })?.status).toBe("FAILED");
-    expect(db.get<{ status: string }>("SELECT status FROM orchestration_phase_runs WHERE agent_run_id=$runId", { runId })?.status).toBe("FAILED");
+    expect(db.get<{ status: string }>("SELECT status FROM orchestration_phase_runs WHERE agent_run_id=$runId", { runId })?.status).toBeUndefined();
     expect(db.get<{ status: string }>("SELECT status FROM scheduler_reservations WHERE id=$id", { id: reservationId })?.status).toBe("RELEASED");
     expect(db.get<{ reserved_cost: number }>("SELECT reserved_cost FROM scheduler_budgets WHERE project_id=$projectId", { projectId })?.reserved_cost).toBe(0);
     expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_resource_locks WHERE reservation_id=$id", { id: reservationId })?.count).toBe(0);
