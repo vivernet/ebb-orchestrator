@@ -88,8 +88,8 @@ describe('Dashboard', () => {
     expect(screen.getByText('Approval Inbox summary')).toBeInTheDocument();
     expect(screen.getByText('Agent Pool')).toBeInTheDocument();
     expect(screen.getByText('Coordinator Chat')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Pause All' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'New Request' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Pause All' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'New Request' })).not.toBeInTheDocument();
   });
 });
 
