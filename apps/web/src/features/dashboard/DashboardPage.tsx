@@ -1,16 +1,33 @@
 import { useEffect, useState } from 'react';
 import type { DashboardProjection, ExecutionQueueProjection } from '@ebb-orchestrator/contracts';
 import { apiClient } from '../../api/client.js';
+import { useOnSSEReconnect } from '../../hooks/useEventClient.js';
 
 const empty: DashboardProjection = { activeAgents: [], activeWork: [], approvals: 0, usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 }, projects: [] };
 
 export default function DashboardPage() {
   const [projection, setProjection] = useState<DashboardProjection>(empty);
   const [queue, setQueue] = useState<ExecutionQueueProjection | null>(null);
-  useEffect(() => {
+
+  async function fetchProjection() {
     void apiClient.get<DashboardProjection>('/dashboard').then(setProjection).catch(() => undefined);
+  }
+
+  async function fetchQueue() {
     void apiClient.get<ExecutionQueueProjection>('/execution').then(setQueue).catch(() => undefined);
+  }
+
+  // Fetch data on initial mount
+  useEffect(() => {
+    fetchProjection();
+    fetchQueue();
   }, []);
+
+  // Refetch when SSE reconnects to get fresh data
+  useOnSSEReconnect(() => {
+    fetchProjection();
+    fetchQueue();
+  });
   return (
     <div className="dashboard-page">
       <h1>Dashboard</h1>
