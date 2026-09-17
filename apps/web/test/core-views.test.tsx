@@ -52,6 +52,15 @@ describe('Dashboard', () => {
     render(<DashboardPage />);
     expect(screen.getByText('Coordinator')).toBeInTheDocument();
   });
+
+  test('exposes the approved dashboard operations', () => {
+    render(<DashboardPage />);
+    expect(screen.getByText('Approval Inbox summary')).toBeInTheDocument();
+    expect(screen.getByText('Agent Pool')).toBeInTheDocument();
+    expect(screen.getByText('Coordinator Chat')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Pause All' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'New Request' })).toBeInTheDocument();
+  });
 });
 
 describe('Task', () => {
@@ -95,6 +104,8 @@ describe('Project', () => {
   test('renders project details', () => {
     render(<ProjectPage id="1" />);
     expect(screen.getByText(/Project:/)).toBeInTheDocument();
+    expect(screen.getByText(/Repository \/ path \/ branch \/ GitHub/)).toBeInTheDocument();
+    expect(screen.getByText(/Project tabs/)).toBeInTheDocument();
   });
 });
 
@@ -102,5 +113,7 @@ describe('Epic', () => {
   test('renders epic details', () => {
     render(<EpicPage id="1" />);
     expect(screen.getByText(/Epic:/)).toBeInTheDocument();
+    expect(screen.getByText(/Lifecycle \/ parallel work graph/)).toBeInTheDocument();
+    expect(screen.getByText('Epic Contract')).toBeInTheDocument();
   });
 });

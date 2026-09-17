@@ -16,18 +16,22 @@ export const router = createBrowserRouter([
     Component: AppShell,
     children: [
       {
+        id: 'dashboard',
         path: '',
         Component: DashboardPage,
       },
       {
+        id: 'project',
         path: 'projects/:id',
         Component: ProjectRoute,
       },
       {
+        id: 'epic',
         path: 'epics/:id',
         Component: EpicRoute,
       },
       {
+        id: 'task',
         path: 'tasks/:id',
         Component: TaskRoute,
       },

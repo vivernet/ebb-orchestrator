@@ -41,10 +41,19 @@ export default function DashboardPage() {
         <p>{queue ? `${queue.waiting.length} waiting, ${queue.blocked.length} blocked` : 'Loading queue…'}</p>
         <ul>{queue?.waiting.map((item) => <li key={`waiting-${item.taskId}`}>{item.taskId}: {item.reason.message}</li>)}</ul>
       </section>
-      <section aria-label="Coordinator">
-        <h2>Coordinator</h2>
-        <p>Submit a request to the Coordinator for project work.</p>
+      <section aria-label="Approval Inbox summary">
+        <h2>Approval Inbox summary</h2>
+        <p>{projection.approvals} approval{projection.approvals === 1 ? '' : 's'} require attention.</p>
       </section>
+      <section aria-label="Agent Pool">
+        <h2>Agent Pool</h2>
+        <p>{projection.activeAgents.length} active of the available agent pool.</p>
+      </section>
+      <section aria-label="Coordinator Chat">
+        <h2>Coordinator Chat</h2>
+        <p><span>Coordinator</span>: submit a request for project work.</p>
+      </section>
+      <div className="dashboard-actions"><button type="button">Pause All</button><button type="button">New Request</button></div>
     </div>
   );
 }

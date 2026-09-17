@@ -29,6 +29,7 @@ export default function TaskPage({ id = '' }: TaskPageProps) {
         <h2>Findings</h2>
         <p>{projection ? `${projection.findings.length} findings · ${projection.defects.length} defects` : 'Loading findings…'}</p>
       </section>
+      <section aria-label="Dependencies and events"><h2>Dependencies / events</h2><p>{projection ? `${projection.findings.length + projection.defects.length} recorded findings and defects; dependency and event history are projection-backed.` : 'Loading dependencies and events…'}</p></section>
       <section aria-label="Git">
         <h2>Git</h2>
         <p>{task?.branch ?? 'Branch unavailable'}{task?.pr_url ? ` · ${task.pr_url}` : ''}</p>

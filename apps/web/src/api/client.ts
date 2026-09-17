@@ -9,6 +9,7 @@ interface ApiClient {
   get<T>(path: string): Promise<T>;
   post<T>(path: string, body?: unknown): Promise<T>;
   sessionToken: string | null;
+  csrfToken: string | null;
 }
 
 function createApiClient(): ApiClient {
@@ -20,6 +21,7 @@ function createApiClient(): ApiClient {
       headers: {
         'Content-Type': 'application/json',
         ...(apiClient.sessionToken ? { Authorization: `Bearer ${apiClient.sessionToken}` } : {}),
+        ...(apiClient.csrfToken ? { 'X-CSRF-Token': apiClient.csrfToken } : {}),
         ...options.headers,
       },
       ...options,
@@ -34,6 +36,7 @@ function createApiClient(): ApiClient {
 
   return {
     sessionToken: null as string | null,
+    csrfToken: null as string | null,
 
     async get<T>(path: string): Promise<T> {
       return fetchJson<T>(`${API_BASE}${path}`);
@@ -51,7 +54,8 @@ function createApiClient(): ApiClient {
 export const apiClient = createApiClient();
 
 export function bootstrap(): Promise<void> {
-  return apiClient.get<{ sessionToken: string }>('/auth/session').then(({ sessionToken }) => {
+  return apiClient.get<{ sessionToken: string; csrfToken: string }>('/session/bootstrap').then(({ sessionToken, csrfToken }) => {
     apiClient.sessionToken = sessionToken;
+    apiClient.csrfToken = csrfToken;
   });
 }
