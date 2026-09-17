@@ -29,6 +29,40 @@ const errorResponse = (id: JsonRpcId, code: number, message: string, data?: unkn
   jsonrpc: '2.0', id, error: data === undefined ? { code, message } : { code, message, data },
 });
 
+const validateToolArguments = (
+  schema: ToolDefinition['inputSchema'],
+  value: unknown,
+): Record<string, unknown> | string => {
+  if (!isRecord(value)) return 'arguments must be an object';
+
+  for (const required of schema.required ?? []) {
+    if (!(required in value)) return `missing required property: ${required}`;
+  }
+
+  if (schema.additionalProperties === false) {
+    const properties = new Set(Object.keys(schema.properties));
+    for (const key of Object.keys(value)) {
+      if (!properties.has(key)) return `unexpected property: ${key}`;
+    }
+  }
+
+  for (const [key, propertySchema] of Object.entries(schema.properties)) {
+    if (!(key in value) || !isRecord(propertySchema) || typeof propertySchema.type !== 'string') continue;
+    const propertyValue = value[key];
+    const valid = propertySchema.type === 'object'
+      ? isRecord(propertyValue)
+      : propertySchema.type === 'array'
+        ? Array.isArray(propertyValue)
+        : typeof propertyValue === propertySchema.type;
+    if (!valid) return `${key} must be ${propertySchema.type === 'array' || propertySchema.type === 'object' ? 'an' : 'a'} ${propertySchema.type}`;
+  }
+
+  return value;
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
 /**
  * McpServer provides an MCP stdio server implementation that routes tool calls
  * through ActionGateway using capability-bound tool access.
@@ -70,13 +104,16 @@ export class McpServer {
    * Call a tool by name with arguments.
    * Never trusts task/workspace IDs from model payload - resolves server-side.
    */
-  async callTool(name: string, args: Record<string, unknown>): Promise<ToolCallResult> {
+  async callTool(name: string, args: unknown): Promise<ToolCallResult> {
     try { this.capability.revalidateAccess(); } catch (error) { return { success: false, error: error instanceof Error ? error.message : 'capability revoked' }; }
     // Get the tool definition
     const tool = this.registry.getTool(name);
     if (!tool) {
       return { success: false, error: `tool not found: ${name}` };
     }
+
+    const validatedArgs = validateToolArguments(tool.inputSchema, args);
+    if (typeof validatedArgs === 'string') return { success: false, error: `invalid tool arguments: ${validatedArgs}` };
 
     // Check if submit_result has already been called - blocks all write-capable tools
     if (this.hasSubmittedResult || this.submittingResult) {
@@ -88,7 +125,7 @@ export class McpServer {
 
     // Call the tool handler
     if (name === 'submit_result') this.submittingResult = true;
-    const result = await tool.handler(args);
+    const result = await tool.handler(validatedArgs);
 
     // Track successful submit_result call
     if (name === 'submit_result' && result.success) {
