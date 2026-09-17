@@ -19,6 +19,17 @@ const plan = (tasks: unknown[]) => ({
 });
 
 describe("planning output validation", () => {
+  it.each(["middle_dev", "senior_dev"])("accepts %s developer completion output", (role) => {
+    const result = validateRoleOutput(role, {
+      version: "1.0.0",
+      outcome: "COMPLETED",
+      summary: "Implemented the task",
+    });
+
+    expect(result.valid).toBe(true);
+    expect(result.output?.outcome).toBe("COMPLETED");
+  });
+
   it.each([
     ["duplicate task refs", [task("task_1"), task("task_1")], "duplicate"],
     ["unknown dependency ref", [task("task_1", { dependsOn: ["task_missing"] })], "unknown"],

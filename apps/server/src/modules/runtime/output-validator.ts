@@ -22,6 +22,8 @@ export type { RoleOutput, ValidatedRoleOutput };
 
 const schemas: Record<string, z.ZodSchema> = {
   developer: DeveloperOutputSchema,
+  middle_dev: DeveloperOutputSchema,
+  senior_dev: DeveloperOutputSchema,
   reviewer: ReviewerOutputSchema,
   qa: QaOutputSchema,
   integration: IntegrationOutputSchema,
