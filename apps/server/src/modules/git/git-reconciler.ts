@@ -1,4 +1,4 @@
-import { GitCli } from "./git-cli.js";
+import { GitCli, assertSafeGitRef } from "./git-cli.js";
 
 /**
  * Git drift states that describe the relationship between local and remote.
@@ -61,6 +61,12 @@ export class GitReconciler {
       throw new Error("GitReconciler not initialized. Call initialize() first.");
     }
 
+    try {
+      assertSafeGitRef(branch);
+    } catch {
+      return { state: "BRANCH_MISSING", message: "Invalid Git branch reference" };
+    }
+
     const path = worktreePath ?? this.repoPath;
 
     // Check if worktree exists
@@ -75,7 +81,7 @@ export class GitReconciler {
 
     // Check if branch exists locally
     try {
-      await this.git.run(path, ["rev-parse", "--verify", branch]);
+      await this.git.run(path, ["rev-parse", "--verify", "--end-of-options", branch]);
     } catch {
       return {
         state: "BRANCH_MISSING",

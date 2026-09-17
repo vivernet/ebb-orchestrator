@@ -1,4 +1,4 @@
-import { GitCli } from "./git-cli.js";
+import { GitCli, assertSafeGitRef } from "./git-cli.js";
 import type { Database } from "../../platform/database/database.js";
 import { BranchRepository } from "./branch-repository.js";
 
@@ -38,7 +38,9 @@ export class BranchManager {
     repoPath: string,
     baseRef: string
   ): Promise<BranchRecord> {
+    assertSafeGitRef(baseRef);
     const branchName = `epic/${epicId}`;
+    assertSafeGitRef(branchName);
     
     // Create empty hooks directory to disable hooks
     const emptyHooksDir = this.createEmptyHooksDir();

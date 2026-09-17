@@ -2,100 +2,50 @@
  * GitTools provides git operations scoped to the capability-assigned worktree.
  * Git operations always resolve from RunCapability's workspace, not from model input.
  */
-import { exec } from 'node:child_process';
-import { promisify } from 'node:util';
-
-const execAsync = promisify(exec);
+import { GitCli } from '../../modules/git/git-cli.js';
 
 export class GitTools {
-  constructor(private workspace: string) {}
+  private readonly git: GitCli;
 
-  /** Initialize a git repository in the workspace */
+  constructor(private workspace: string) {
+    this.git = new GitCli();
+  }
+
   async initRepo(): Promise<string> {
     try {
-       const { stdout } = await execAsync('git init', { cwd: this.workspace });
-      return stdout;
+      return (await this.git.run(this.workspace, ['init'])).stdout;
     } catch (err: unknown) {
-      return (err as Error).message;
+      return err instanceof Error ? err.message : String(err);
     }
   }
 
-  /**
-   * Get git status.
-   * Always scoped to capability-assigned worktree.
-   */
   async status(): Promise<string> {
-    try {
-       const { stdout } = await execAsync('git status --porcelain', { cwd: this.workspace });
-      return stdout;
-     } catch {
-       return '';
-     }
+    try { return (await this.git.run(this.workspace, ['status', '--porcelain'])).stdout; } catch { return ''; }
   }
 
-  /**
-   * Get git diff for unstaged changes.
-   * Always scoped to capability-assigned worktree.
-   */
   async diff(): Promise<string> {
-    try {
-       const { stdout } = await execAsync('git diff', { cwd: this.workspace });
-      return stdout;
-     } catch {
-       return '';
-     }
+    try { return (await this.git.run(this.workspace, ['diff'])).stdout; } catch { return ''; }
   }
 
-  /**
-   * Get git diff for staged changes.
-   * Always scoped to capability-assigned worktree.
-   */
   async diffStaged(): Promise<string> {
-    try {
-       const { stdout } = await execAsync('git diff --cached', { cwd: this.workspace });
-      return stdout;
-     } catch {
-       return '';
-     }
+    try { return (await this.git.run(this.workspace, ['diff', '--cached'])).stdout; } catch { return ''; }
   }
 
-  /**
-   * Stage files for commit.
-   * Always scoped to capability-assigned worktree.
-   */
   async add(patterns: string[]): Promise<string> {
-    try {
-      const args = patterns.map(p => `"${p}"`).join(' ');
-       const { stdout } = await execAsync(`git add ${args}`, { cwd: this.workspace });
-      return stdout;
-    } catch (err: unknown) {
-      return (err as Error).message;
-    }
+    try { return (await this.git.run(this.workspace, ['add', '--', ...patterns])).stdout; }
+    catch (err: unknown) { return err instanceof Error ? err.message : String(err); }
   }
 
-  /**
-   * Commit staged changes.
-   * Always scoped to capability-assigned worktree.
-   */
   async commit(message: string): Promise<string> {
     try {
-       const { stdout } = await execAsync(`git commit -m "${message}"`, { cwd: this.workspace });
-      return stdout;
+      // Managed commits must never run repository hooks, and the message is one argv item.
+      return (await this.git.run(this.workspace, ['commit', '--no-verify', '-m', message])).stdout;
     } catch (err: unknown) {
-      return (err as Error).message;
+      return err instanceof Error ? err.message : String(err);
     }
   }
 
-  /**
-   * Get current branch.
-   * Always scoped to capability-assigned worktree.
-   */
   async branch(): Promise<string> {
-    try {
-       const { stdout } = await execAsync('git branch --show-current', { cwd: this.workspace });
-      return stdout.trim();
-     } catch {
-       return '';
-     }
+    try { return (await this.git.run(this.workspace, ['branch', '--show-current'])).stdout.trim(); } catch { return ''; }
   }
 }

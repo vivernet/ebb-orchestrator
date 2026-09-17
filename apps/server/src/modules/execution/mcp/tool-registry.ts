@@ -5,12 +5,28 @@ import { SubmitResultTool, type CompletionStore } from './submit-result-tool.js'
 /**
  * Tool definition for MCP.
  */
+export interface SchemaDefinition {
+  type: 'object' | 'array' | 'string' | 'number' | 'boolean';
+  properties?: Record<string, SchemaDefinition>;
+  items?: SchemaDefinition;
+  required?: string[];
+  additionalProperties?: boolean;
+}
+
 export interface ToolDefinition {
   name: string;
   description: string;
-  inputSchema: { type: 'object'; properties: Record<string, unknown>; required?: string[]; additionalProperties?: boolean };
+  inputSchema: { type: 'object'; properties: Record<string, SchemaDefinition>; required?: string[]; additionalProperties?: boolean };
   handler: (args: Record<string, unknown>) => Promise<{ success: boolean; result?: unknown; error?: string }>;
 }
+
+interface FilePatch { start: number; end: number; content: string }
+const isFilePatch = (value: unknown): value is FilePatch => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const patch = value as Record<string, unknown>;
+  return typeof patch.start === 'number' && typeof patch.end === 'number' && typeof patch.content === 'string' &&
+    Object.keys(patch).every(key => key === 'start' || key === 'end' || key === 'content');
+};
 
 /**
  * ToolRegistry maps capability tools to MCP tool definitions and filters by allowed tools.
@@ -50,12 +66,28 @@ export class ToolRegistry {
     this.toolDefinitions.set('workspace.patch', {
       name: 'workspace.patch',
       description: 'Patch a file in the workspace',
-      inputSchema: { type: 'object', properties: { path: { type: 'string' }, patches: { type: 'array' } }, required: ['path', 'patches'], additionalProperties: false },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          path: { type: 'string' },
+          patches: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: { start: { type: 'number' }, end: { type: 'number' }, content: { type: 'string' } },
+              required: ['start', 'end', 'content'],
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ['path', 'patches'],
+        additionalProperties: false,
+      },
       handler: async (args) => {
-        const result = await capability.getActionGateway().patch(
-          args.path as string,
-          args.patches as Array<{ start: number; end: number; content: string }>
-        );
+        if (typeof args.path !== 'string' || !Array.isArray(args.patches) || !args.patches.every(isFilePatch)) {
+          return { success: false, error: 'invalid workspace.patch arguments' };
+        }
+        const result = await capability.getActionGateway().patch(args.path, args.patches);
         return result;
       },
     });

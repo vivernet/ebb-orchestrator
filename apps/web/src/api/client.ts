@@ -28,7 +28,16 @@ function createApiClient(): ApiClient {
     });
 
     if (!response.ok) {
-      throw new Error(`API error: ${response.status} ${response.statusText}`);
+      let serverMessage: string | null = null;
+      try {
+        const payload: unknown = await response.clone().json();
+        if (typeof payload === 'object' && payload !== null && 'error' in payload && typeof payload.error === 'string') {
+          serverMessage = payload.error;
+        }
+      } catch {
+        // Non-JSON error responses use the safe status fallback below.
+      }
+      throw new Error(serverMessage ?? `API error: ${response.status} ${response.statusText}`);
     }
 
     return response.json();

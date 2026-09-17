@@ -1,5 +1,5 @@
 import { RunCapability } from '../run-capability.js';
-import { ToolRegistry, type ToolDefinition } from './tool-registry.js';
+import { ToolRegistry, type SchemaDefinition, type ToolDefinition } from './tool-registry.js';
 import type { CompletionStore } from './submit-result-tool.js';
 
 /**
@@ -28,6 +28,65 @@ export interface JsonRpcResponse {
 const errorResponse = (id: JsonRpcId, code: number, message: string, data?: unknown): JsonRpcResponse => ({
   jsonrpc: '2.0', id, error: data === undefined ? { code, message } : { code, message, data },
 });
+
+const validateToolArguments = (
+  schema: ToolDefinition['inputSchema'],
+  value: unknown,
+): Record<string, unknown> | string => {
+  const validateValue = (definition: SchemaDefinition, candidate: unknown, path: string): string | undefined => {
+    const validType = definition.type === 'object'
+      ? isRecord(candidate)
+      : definition.type === 'array'
+        ? Array.isArray(candidate)
+        : typeof candidate === definition.type;
+    if (!validType) return `${path} must be ${definition.type === 'array' || definition.type === 'object' ? 'an' : 'a'} ${definition.type}`;
+
+    if (definition.type === 'array' && definition.items && Array.isArray(candidate)) {
+      for (const [index, item] of candidate.entries()) {
+        const error = validateValue(definition.items, item, `${path}[${index}]`);
+        if (error) return error;
+      }
+    }
+    if (definition.type === 'object' && definition.properties && isRecord(candidate)) {
+      for (const required of definition.required ?? []) {
+        if (!(required in candidate)) return `${path} missing required property: ${required}`;
+      }
+      if (definition.additionalProperties === false) {
+        for (const key of Object.keys(candidate)) {
+          if (!(key in definition.properties)) return `${path} unexpected property: ${key}`;
+        }
+      }
+      for (const [key, propertySchema] of Object.entries(definition.properties)) {
+        if (key in candidate) {
+          const error = validateValue(propertySchema, candidate[key], `${path}.${key}`);
+          if (error) return error;
+        }
+      }
+    }
+    return undefined;
+  };
+
+  if (!isRecord(value)) return 'arguments must be an object';
+  for (const required of schema.required ?? []) {
+    if (!(required in value)) return `missing required property: ${required}`;
+  }
+  if (schema.additionalProperties === false) {
+    const properties = new Set(Object.keys(schema.properties));
+    for (const key of Object.keys(value)) {
+      if (!properties.has(key)) return `unexpected property: ${key}`;
+    }
+  }
+  for (const [key, propertySchema] of Object.entries(schema.properties)) {
+    if (key in value) {
+      const error = validateValue(propertySchema, value[key], key);
+      if (error) return error;
+    }
+  }
+  return value;
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 /**
  * McpServer provides an MCP stdio server implementation that routes tool calls
@@ -70,13 +129,16 @@ export class McpServer {
    * Call a tool by name with arguments.
    * Never trusts task/workspace IDs from model payload - resolves server-side.
    */
-  async callTool(name: string, args: Record<string, unknown>): Promise<ToolCallResult> {
+  async callTool(name: string, args: unknown): Promise<ToolCallResult> {
     try { this.capability.revalidateAccess(); } catch (error) { return { success: false, error: error instanceof Error ? error.message : 'capability revoked' }; }
     // Get the tool definition
     const tool = this.registry.getTool(name);
     if (!tool) {
       return { success: false, error: `tool not found: ${name}` };
     }
+
+    const validatedArgs = validateToolArguments(tool.inputSchema, args);
+    if (typeof validatedArgs === 'string') return { success: false, error: `invalid tool arguments: ${validatedArgs}` };
 
     // Check if submit_result has already been called - blocks all write-capable tools
     if (this.hasSubmittedResult || this.submittingResult) {
@@ -88,7 +150,7 @@ export class McpServer {
 
     // Call the tool handler
     if (name === 'submit_result') this.submittingResult = true;
-    const result = await tool.handler(args);
+    const result = await tool.handler(validatedArgs);
 
     // Track successful submit_result call
     if (name === 'submit_result' && result.success) {

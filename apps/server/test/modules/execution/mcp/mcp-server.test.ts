@@ -68,6 +68,58 @@ describe('MCP Server', () => {
       });
     });
 
+    it('rejects tool arguments that violate the declared input schemas before dispatch', async () => {
+      const { McpServer } = await import('../../../../src/modules/execution/mcp/mcp-server.js');
+      const { RunCapability } = await import('../../../../src/modules/execution/run-capability.js');
+      const server = new McpServer(new RunCapability({
+        id: 'schema-validation', role: 'developer', workspace: workspaceDir,
+        allowedTools: ['workspace.read', 'workspace.patch', 'git.commit'],
+      }));
+      fs.writeFileSync(path.join(workspaceDir, 'file.txt'), 'hello');
+
+      await expect(server.callTool('workspace.read', {})).resolves.toMatchObject({
+        success: false, error: expect.stringContaining('missing required property: path'),
+      });
+      await expect(server.callTool('workspace.read', { path: 42 })).resolves.toMatchObject({
+        success: false, error: expect.stringContaining('path must be a string'),
+      });
+      await expect(server.callTool('workspace.read', { path: 'file.txt', extra: true })).resolves.toMatchObject({
+        success: false, error: expect.stringContaining('unexpected property: extra'),
+      });
+      await expect(server.callTool('git.commit', { message: ['not', 'a', 'message'] })).resolves.toMatchObject({
+        success: false, error: expect.stringContaining('message must be a string'),
+      });
+      await expect(server.callTool('workspace.patch', { path: 'file.txt', patches: {} })).resolves.toMatchObject({
+        success: false, error: expect.stringContaining('patches must be an array'),
+      });
+      await expect(server.callTool('workspace.patch', {
+        path: 'file.txt', patches: [{ start: 'bad', end: 0, content: 'X' }],
+      })).resolves.toMatchObject({
+        success: false, error: expect.stringContaining('patches[0].start must be a number'),
+      });
+      expect(fs.readFileSync(path.join(workspaceDir, 'file.txt'), 'utf8')).toBe('hello');
+      await expect(server.callTool('workspace.patch', { path: 'file.txt' })).resolves.toMatchObject({
+        success: false, error: expect.stringContaining('missing required property: patches'),
+      });
+    });
+
+    it('preserves valid schema-conforming path, patch, and message calls', async () => {
+      const { McpServer } = await import('../../../../src/modules/execution/mcp/mcp-server.js');
+      const { RunCapability } = await import('../../../../src/modules/execution/run-capability.js');
+      fs.writeFileSync(path.join(workspaceDir, 'file.txt'), 'hello');
+      const server = new McpServer(new RunCapability({
+        id: 'schema-valid', role: 'developer', workspace: workspaceDir,
+        allowedTools: ['workspace.read', 'workspace.patch', 'git.commit'],
+      }));
+
+      await expect(server.callTool('workspace.read', { path: 'file.txt' })).resolves.toMatchObject({ success: true });
+      await expect(server.callTool('workspace.patch', {
+        path: 'file.txt', patches: [{ start: 0, end: 5, content: 'world' }],
+      })).resolves.toMatchObject({ success: true });
+      expect(fs.readFileSync(path.join(workspaceDir, 'file.txt'), 'utf8')).toBe('world');
+      await expect(server.callTool('git.commit', { message: 'validation test' })).resolves.toMatchObject({ success: true });
+    });
+
     it('returns an internal error for runtime failures without mislabeling them as parse errors', async () => {
       const { McpServer } = await import('../../../../src/modules/execution/mcp/mcp-server.js');
       const { RunCapability } = await import('../../../../src/modules/execution/run-capability.js');

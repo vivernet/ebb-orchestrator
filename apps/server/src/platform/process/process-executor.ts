@@ -44,6 +44,10 @@ export class ProcessExecutor {
       maxBuffer = 10 * 1024 * 1024, // 10MB default
     } = options;
 
+    if (signal?.aborted) {
+      throw new Error('Process aborted before spawn');
+    }
+
     return new Promise<ProcessResult>((resolve, reject) => {
       const child = spawn(file, args, {
         shell: false,
@@ -55,6 +59,7 @@ export class ProcessExecutor {
       let stdout = "";
       let stderr = "";
       let timedOut = false;
+      let outputExceeded = false;
 
       const cleanup = () => {
         if (!child.killed) {
@@ -79,19 +84,21 @@ export class ProcessExecutor {
       const timeoutId = setTimeout(onTimeout, timeout);
 
       child.stdout?.on("data", (chunk: Buffer) => {
-        stdout += chunk.toString();
-        if (stdout.length > maxBuffer) {
+        const remaining = maxBuffer - stdout.length;
+        stdout += chunk.toString().slice(0, Math.max(0, remaining));
+        if (chunk.length > Math.max(0, remaining)) {
+          outputExceeded = true;
           cleanup();
-          reject(new Error("stdout buffer exceeded"));
           return;
         }
       });
 
       child.stderr?.on("data", (chunk: Buffer) => {
-        stderr += chunk.toString();
-        if (stderr.length > maxBuffer) {
+        const remaining = maxBuffer - stderr.length;
+        stderr += chunk.toString().slice(0, Math.max(0, remaining));
+        if (chunk.length > Math.max(0, remaining)) {
+          outputExceeded = true;
           cleanup();
-          reject(new Error("stderr buffer exceeded"));
           return;
         }
       });
@@ -112,6 +119,10 @@ export class ProcessExecutor {
 
         if (timedOut) {
           reject(new Error(`Process timed out after ${timeout}ms`));
+          return;
+        }
+        if (outputExceeded) {
+          reject(new Error("output buffer exceeded"));
           return;
         }
 
