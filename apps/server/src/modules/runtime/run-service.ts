@@ -10,6 +10,8 @@ import { validateRoleOutput } from "./output-validator.js";
 import { DatabaseCompletionStore, type CompletionStore } from "../execution/mcp/submit-result-tool.js";
 import type { RoleName, ToolId } from "../execution/run-capability.js";
 import { RoleRegistry } from './role-registry.js';
+import { appendOutboxEvent } from "../../platform/events/outbox-repository.js";
+import { DomainEvent } from "../../platform/events/domain-event.js";
 
 export class RunService {
   private readonly roles = new RoleRegistry();
@@ -221,15 +223,35 @@ export class RunService {
   }
 
   /**
-   * Cancel a run.
+   * Cancel a run atomically with state, outbox event, and audit log.
    */
   async cancelRun(runId: string): Promise<void> {
-    this.db.transaction((tx) => {
-      tx.run(
-        `UPDATE agent_runs SET status = 'CANCELLED', ended_at = $ended_at WHERE id = $id`,
-        { id: runId, ended_at: new Date().toISOString() }
+    return this.db.transaction((tx) => {
+      const stored = tx.get<{ id: string; status: string; task_id: string | null }>(
+        "SELECT id, status, task_id FROM agent_runs WHERE id = $id", { id: runId },
       );
-      this.runtime.cancelRun(runId);
+      if (!stored) throw new Error(`Run ${runId} not found`);
+      if (stored.status === "CANCELLED" || stored.status === "FAILED" || stored.status === "COMPLETED") {
+        return; // Idempotent: already terminal.
+      }
+      const now = new Date().toISOString();
+      tx.run(
+        `UPDATE agent_runs SET status = 'CANCELLED', ended_at = $ended_at WHERE id = $id AND status IN ('STARTED','IN_PROGRESS','COMPLETING')`,
+        { id: runId, ended_at: now },
+      );
+      // Append durable outbox event.
+      const event = DomainEvent.create({
+        type: "RunCancelled",
+        aggregateType: "AgentRun",
+        aggregateId: runId,
+        payload: { runId, previousStatus: stored.status, taskId: stored.task_id, cancelledAt: now },
+      });
+      appendOutboxEvent(tx, event);
+      // Append audit log entry.
+      tx.run(
+        `INSERT INTO audit_log(id,action,actor,aggregate_type,aggregate_id,details_json,created_at) VALUES($id,$action,$actor,$aggregate_type,$aggregate_id,$details,$created_at)`,
+        { id: crypto.randomUUID(), action: "RUN_CANCELLED", actor: "local-user", aggregate_type: "AgentRun", aggregate_id: runId, details: JSON.stringify({ runId, status: "CANCELLED", previousStatus: stored.status }), created_at: now },
+      );
     });
   }
 

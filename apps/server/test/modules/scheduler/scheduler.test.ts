@@ -1,4 +1,4 @@
-import { describe, expect, it, afterEach, beforeEach } from "vitest";
+import { describe, expect, it, afterEach, beforeEach, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { readFileSync } from "node:fs";
@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { createSqliteDatabase } from "../../../src/platform/database/sqlite-database.js";
 import { runMigrations, type Migration } from "../../../src/platform/database/migrator.js";
 import type { Database } from "../../../src/platform/database/database.js";
-import { SchedulerService } from "../../../src/modules/scheduler/scheduler-service.js";
+import { SchedulerSafetyWorker, SchedulerService } from "../../../src/modules/scheduler/scheduler-service.js";
 import type { TaskContract } from "../../../src/modules/work/work-types.js";
 
 const migration001 = readFileSync(
@@ -176,6 +176,14 @@ describe("SchedulerService", () => {
     expect(result.runnables.length).toBeLessThanOrEqual(3);
   });
 
+  it("reports a concrete capacity reason for READY tasks beyond capacity", async () => {
+    await setup();
+    for (let i = 0; i < 4; i++) insertTask(db!, projectId, { id: `capacity-${i}`, status: "READY" });
+
+    const result = scheduler.recalculate();
+    expect(result.waiting.find((entry) => entry.task.id === "capacity-3")?.reason).toBe("WAITING_FOR_CAPACITY");
+  });
+
   // �� Dependency tests ��
 
   it("waits for unresolved dependencies", async () => {
@@ -285,6 +293,53 @@ describe("SchedulerService", () => {
     expect(scheduler.resourceLockService.release(id)).toMatchObject({ status: "RELEASED" });
     expect(scheduler.resourceLockService.release(id)).toEqual({ status: "ALREADY_RELEASED" });
     expect(scheduler.resourceLockService.isLocked(id)).toBe(false);
+  });
+
+  it("uses the durable resource lock in both projection and dispatch", async () => {
+    await setup();
+    insertTask(db!, projectId, { id: "lock-owner", status: "READY" });
+    insertTask(db!, projectId, { id: "lock-waiter", status: "READY" });
+    expect(scheduler.resourceLockService.acquire("lock-owner", "owner")).toBe(true);
+    expect(scheduler.getEligibility("lock-waiter")).toEqual({ status: "WAIT", reason: "WAITING_FOR_RESOURCE_LOCK" });
+    const registry = { transitionInTransaction: () => undefined } as never;
+    expect(() => scheduler.dispatchTask("lock-waiter", registry, () => undefined)).toThrow(/WAITING_FOR_RESOURCE_LOCK/);
+  });
+
+  it("uses the durable budget in both projection and dispatch", async () => {
+    await setup();
+    insertTask(db!, projectId, { id: "budget-task", status: "READY" });
+    db!.run("INSERT INTO scheduler_budgets (project_id,limit_cost,spent_cost,reserved_cost) VALUES ($projectId,1,1,0)", { projectId });
+    expect(scheduler.getEligibility("budget-task")).toEqual({ status: "WAIT", reason: "WAITING_FOR_BUDGET" });
+    const registry = { transitionInTransaction: () => undefined } as never;
+    expect(() => scheduler.dispatchTask("budget-task", registry, () => undefined)).toThrow(/WAITING_FOR_BUDGET/);
+  });
+
+  it("reads configurable limits from persisted system state", async () => {
+    await setup();
+    db!.run("INSERT INTO system_state(key,value_json,updated_at) VALUES ('scheduler_limits',$value,$at)", { value: JSON.stringify({ globalMax: 2, projectMax: 1, reviewerMax: 2 }), at: new Date().toISOString() });
+    insertTask(db!, projectId, { id: "limit-a", status: "READY" });
+    insertTask(db!, projectId, { id: "limit-b", status: "READY" });
+    expect(scheduler.getLimits(projectId)).toEqual({ globalMax: 2, projectMax: 1, reviewerMax: 2 });
+    const result = scheduler.recalculate();
+    expect(result.runnables).toHaveLength(1);
+    expect(result.waiting[0]?.reason).toBe("WAITING_FOR_CAPACITY");
+    expect(scheduler.getEligibility("limit-b")).toEqual({ status: "WAIT", reason: "WAITING_FOR_CAPACITY" });
+  });
+
+  it("runs and stops the periodic reconciliation safety tick", () => {
+    vi.useFakeTimers();
+    try {
+      const reconcile = vi.fn();
+      const worker = new SchedulerSafetyWorker({ reconcile }, 10);
+      worker.start();
+      vi.advanceTimersByTime(25);
+      expect(reconcile).toHaveBeenCalledTimes(2);
+      worker.stop();
+      vi.advanceTimersByTime(25);
+      expect(reconcile).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("uses one capacity authority for task and phase reservations", async () => {

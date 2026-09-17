@@ -7,8 +7,21 @@ import type { RunOutcome } from "./run-types.js";
 
 export interface AgentRuntime {
   /**
-   * Start a new run with the given options.
-   */
+    * Number of currently active runs.
+    */
+  active: number;
+  /**
+    * Maximum number of concurrent active runs.
+    */
+  maxActive: number;
+  /**
+    * Record of runtime calls.
+    */
+  calls: Array<{ phase: string; role: string; taskId?: string; targetBranch?: string }>;
+
+  /**
+    * Start a new run with the given options.
+    */
   startRun(run: AgentRun): Promise<void>;
 
   /**
@@ -42,7 +55,12 @@ export interface AgentRuntime {
   }>;
 
   /**
-   * Check if the runtime is healthy.
-   */
+    * Get the result from a run.
+    */
+  runResult(runId: string): Promise<RunOutcome>;
+
+  /**
+    * Check if the runtime is healthy.
+    */
   healthCheck(): Promise<boolean>;
 }

@@ -44,7 +44,7 @@ import type { TaskContract as PromptTaskContract } from "../../src/modules/conte
 const execFileAsync = promisify(execFile);
 const resolve = createRequire(import.meta.url).resolve;
 const tsxLoader = pathToFileURL(resolve("tsx")).href;
-const migrationFiles = ["001_system.sql", "002_work_domain.sql", "003_work_control.sql", "004_agent_runs.sql", "005_scheduler.sql", "006_recovery.sql"];
+const migrationFiles = ["001_system.sql", "002_work_domain.sql", "003_work_control.sql", "004_agent_runs.sql", "005_scheduler.sql", "006_recovery.sql", "007_git.sql", "008_quality.sql", "009_integration_provenance.sql", "010_planning.sql", "011_epic_orchestration.sql", "012_epic_runtime_authority.sql", "013_remove_legacy_scheduler_locks.sql", "014_migrate_legacy_scheduler_authority.sql", "015_knowledge.sql", "016_context.sql", "017_usage.sql", "018_scheduler_config_audit.sql"];
 const migrations: Migration[] = migrationFiles.map((name, index) => ({
   version: index + 1,
   name: name.replace(".sql", ""),
@@ -52,7 +52,11 @@ const migrations: Migration[] = migrationFiles.map((name, index) => ({
 }));
 
 class DeterministicRuntime implements AgentRuntime {
+  active = 0;
+  maxActive = 0;
+  calls: Array<{ phase: string; role: string; taskId?: string; targetBranch?: string }> = [];
   async startRun(_run: AgentRun): Promise<void> {}
+  async runResult(_runId: string): Promise<RunOutcome> { throw new Error("runResult is not used by this acceptance driver"); }
   async resumeRun(): Promise<void> {}
   async cancelRun(): Promise<void> {}
   async inspectRun(): Promise<AgentRun> { throw new Error("inspectRun is not used by this acceptance driver"); }
@@ -189,7 +193,7 @@ describe("Autonomous Task End-to-End Workflow", () => {
     // The current sqlite adapter rejects the expression-based UNIQUE clauses
     // in migration 007.  The managed-worktree repository only needs this
     // concrete table for the acceptance's cleanup assertion.
-    db.exec(`CREATE TABLE worktrees (
+    db.exec(`CREATE TABLE IF NOT EXISTS worktrees (
       id TEXT PRIMARY KEY, repo_path TEXT NOT NULL, path TEXT NOT NULL,
       branch TEXT NOT NULL, created_at TEXT NOT NULL, removed_at TEXT
     )`);

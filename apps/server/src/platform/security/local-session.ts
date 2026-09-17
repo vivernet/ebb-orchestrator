@@ -25,6 +25,8 @@ export interface LocalSession {
   token: string;
   /** Fully-qualified origin used for validation, e.g. "http://127.0.0.1:3000". */
   allowedOrigin: string;
+  /** Separate synchronizer token required on every state-changing request. */
+  csrfToken: string;
 }
 
 /**
@@ -33,5 +35,6 @@ export interface LocalSession {
 export function createLocalSession(config: LocalSessionConfig): LocalSession {
   const token = crypto.randomBytes(32).toString("hex");
   const allowedOrigin = `http://${config.host}:${config.port}`;
-  return { token, allowedOrigin };
+  const csrfToken = crypto.randomBytes(32).toString("hex");
+  return { token, allowedOrigin, csrfToken };
 }

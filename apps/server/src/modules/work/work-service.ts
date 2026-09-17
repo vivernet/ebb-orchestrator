@@ -5,9 +5,36 @@
 import type { Database } from "../../platform/database/database.js";
 import { WorkRepository } from "./work-repository.js";
 import type { Task, Epic, TaskContract } from "./work-types.js";
+import { WorkflowEngine } from "../workflow/workflow-engine.js";
+import { WorkflowRegistry } from "../workflow/workflow-registry.js";
+import { templates } from "../workflow/templates.js";
 
 export class WorkService {
-  constructor(private readonly db: Database) {}
+  private readonly workflow: WorkflowEngine;
+
+  constructor(private readonly db: Database, workflow?: WorkflowEngine) {
+    this.db.exec("CREATE TABLE IF NOT EXISTS audit_log (id TEXT PRIMARY KEY, action TEXT NOT NULL, actor TEXT NOT NULL, aggregate_type TEXT NOT NULL, aggregate_id TEXT NOT NULL, details_json TEXT NOT NULL, created_at TEXT NOT NULL)");
+    if (workflow) {
+      this.workflow = workflow;
+    } else {
+      const registry = new WorkflowRegistry();
+      for (const template of Object.values(templates)) registry.register(template);
+      this.workflow = new WorkflowEngine(db, registry);
+    }
+  }
+
+  /** Pause a task through the work aggregate's state transition boundary. */
+  pauseTask(taskId: string): Task {
+    return this.db.transaction((tx) => {
+      this.workflow.transitionInTransaction(tx, taskId, "PAUSED");
+      const now = new Date().toISOString();
+      tx.run("INSERT INTO audit_log(id,action,actor,aggregate_type,aggregate_id,details_json,created_at) VALUES($id,$action,$actor,$aggregate_type,$aggregate_id,$details,$created_at)", {
+        id: crypto.randomUUID(), action: "TASK_PAUSED", actor: "local-user", aggregate_type: "Task", aggregate_id: taskId,
+        details: JSON.stringify({ taskId, status: "PAUSED" }), created_at: now,
+      });
+      return WorkRepository.getTaskById(tx, taskId)!;
+    });
+  }
 
   /**
    * Create a standalone task (not in an epic) with a project-local display ID.

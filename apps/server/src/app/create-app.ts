@@ -14,17 +14,51 @@ import {
 } from "../platform/security/local-session.js";
 import { healthRoutes } from "./routes/health.js";
 import { eventRoutes } from "./routes/events.js";
+import { onboardingRoutes } from "./routes/onboarding.js";
+import { settingsRoutes } from "./routes/settings.js";
+import { usageRoutes } from "./routes/usage.js";
+import type { Database } from "../platform/database/database.js";
+import { DashboardProjection } from "./read-models/dashboard-projection.js";
+import { projectRoutes } from "./routes/projects.js";
+import { workRoutes, type WorkCommandService } from "./routes/work.js";
+import { approvalRoutes, type ApprovalCommandService } from "./routes/approvals.js";
+import { runRoutes, type RunCommandService } from "./routes/runs.js";
+import { WorkService } from "../modules/work/work-service.js";
+import { ApprovalService } from "../modules/approvals/approval-service.js";
+import { RunService } from "../modules/runtime/run-service.js";
+import type { AgentRuntime } from "../modules/runtime/agent-runtime.js";
+import { SchedulerService } from "../modules/scheduler/scheduler-service.js";
+import { WorkflowEngine } from "../modules/workflow/workflow-engine.js";
+import { WorkflowRegistry } from "../modules/workflow/workflow-registry.js";
+import { templates } from "../modules/workflow/templates.js";
+import { schedulerRoutes } from "./routes/scheduler.js";
+import { githubRoutes } from "./routes/github.js";
+import { diagnosticsRoutes } from "./routes/diagnostics.js";
+import { secretsRoutes } from "./routes/secrets.js";
+import type { GitHubSyncWorker } from "../modules/github/github-sync-worker.js";
+import type { DiagnosticsService } from "../platform/diagnostics/diagnostics-service.js";
 
 export interface AppDeps {
   /** Loopback host (default "127.0.0.1"). */
   host?: string;
   /** Port the server will listen on (default 3000). */
   port?: number;
+  db?: Database;
+  workService?: WorkCommandService;
+  approvalService?: ApprovalCommandService;
+  runService?: RunCommandService;
+  /** Production must provide the single shared SchedulerService instance. */
+  scheduler: SchedulerService;
+  /** Production must provide the real runtime. Test doubles belong in test deps. */
+  runtime?: AgentRuntime;
+  github?: { worker: GitHubSyncWorker; repository: string };
+  diagnostics?: DiagnosticsService;
 }
 
 export interface OrchestratorApp extends FastifyInstance {
   /** The bearer token required for protected routes. */
   sessionToken: string;
+  csrfToken: string;
 }
 
 /**
@@ -35,16 +69,25 @@ export interface OrchestratorApp extends FastifyInstance {
  * - Attaches `sessionToken` on the returned instance for programmatic
  *   access (used by tests and by main.ts for startup logging).
  */
-export function createApp(deps: AppDeps = {}): OrchestratorApp {
+export function createApp(deps: AppDeps): OrchestratorApp {
   const host = deps.host ?? "127.0.0.1";
   const port = deps.port ?? 3000;
 
   const session: LocalSession = createLocalSession({ host, port });
+  const workflowRegistry = new WorkflowRegistry();
+  for (const template of Object.values(templates)) workflowRegistry.register(template);
+  const workflow = deps.db ? new WorkflowEngine(deps.db, workflowRegistry) : undefined;
+  const scheduler = deps.scheduler;
+  const workService = deps.workService ?? (deps.db ? new WorkService(deps.db, workflow) : undefined);
+  const approvalService = deps.approvalService ?? (deps.db ? new ApprovalService(deps.db) : undefined);
+  if (deps.db && !deps.runtime && !deps.runService) throw new Error("production runtime is required");
+  const runService = deps.runService ?? (deps.db && deps.runtime ? new RunService(deps.db, deps.runtime) : undefined);
 
   const app = Fastify({ logger: false }) as unknown as OrchestratorApp;
 
   // Expose the token on the instance so callers (tests, main) can read it.
   app.sessionToken = session.token;
+  app.csrfToken = session.csrfToken;
 
   // ── Global security hook ───────────────────────────────────────────
   // Skip authentication for the health endpoint; everything else requires
@@ -54,7 +97,7 @@ export function createApp(deps: AppDeps = {}): OrchestratorApp {
     const url: string = request.url;
 
     // Health is public – no auth, no origin check.
-    if (url === "/api/v1/health") return;
+    if (url === "/api/v1/health" || url === "/api/v1/session/bootstrap") return;
 
     // ── 1. Authentication ────────────────────────────────────────────
     const auth = request.headers.authorization;
@@ -67,9 +110,14 @@ export function createApp(deps: AppDeps = {}): OrchestratorApp {
     const mutating = request.method !== "GET" && request.method !== "HEAD";
     if (mutating) {
       const origin = request.headers.origin;
-      // Absent origin is allowed (same-origin / non-CORS).
-      if (origin !== undefined && origin !== session.allowedOrigin) {
+      // A bearer token is not a CSRF token by itself: browser requests must
+      // also prove they originated from this local application.
+      if (origin !== session.allowedOrigin) {
         reply.code(403).send({ error: "forbidden" });
+        return reply;
+      }
+      if (request.headers["x-csrf-token"] !== session.csrfToken) {
+        reply.code(403).send({ error: "invalid csrf token" });
         return reply;
       }
     }
@@ -78,9 +126,28 @@ export function createApp(deps: AppDeps = {}): OrchestratorApp {
   // ── Routes ─────────────────────────────────────────────────────────
   // Public
   app.register(healthRoutes);
+  app.get("/api/v1/session/bootstrap", async () => ({
+    sessionToken: session.token,
+    csrfToken: session.csrfToken,
+    origin: session.allowedOrigin,
+  }));
 
   // Authenticated
   app.register(eventRoutes);
+  app.register(async (instance) => schedulerRoutes(instance, scheduler));
+  app.register(async (instance) => {
+    instance.get("/api/v1/dashboard", async () => new DashboardProjection(deps.db, scheduler).get());
+    await projectRoutes(instance, { db: deps.db, scheduler });
+    await workRoutes(instance, { db: deps.db, workService, scheduler });
+    await approvalRoutes(instance, { db: deps.db, approvalService });
+    await runRoutes(instance, { db: deps.db, runService, scheduler });
+    await onboardingRoutes(instance, { db: deps.db });
+    await settingsRoutes(instance, { db: deps.db });
+    await usageRoutes(instance, { db: deps.db });
+    await secretsRoutes(instance, { db: deps.db });
+    if (deps.github) await githubRoutes(instance, deps.github);
+    if (deps.diagnostics) await diagnosticsRoutes(instance, deps.diagnostics);
+  });
 
   // Protected test route (used by security tests)
   app.post("/api/v1/protected-test", async () => {

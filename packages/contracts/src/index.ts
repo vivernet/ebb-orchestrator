@@ -10,3 +10,4 @@ export * from "./roles/coordinator.js";
 export * from "./roles/product-manager.js";
 export * from "./roles/architect.js";
 export * from "./roles/devops.js";
+export * from "./api.js";

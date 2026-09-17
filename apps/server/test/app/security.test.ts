@@ -1,9 +1,51 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createApp } from "../../src/app/create-app.js";
+import { createSqliteDatabase } from "../../src/platform/database/sqlite-database.js";
+import { SchedulerService } from "../../src/modules/scheduler/scheduler-service.js";
+import { runMigrations, type Migration } from "../../src/platform/database/migrator.js";
+import type { AgentRuntime } from "../../src/modules/runtime/agent-runtime.js";
+
+const migrationDir = fileURLToPath(new URL("../../src/platform/database/migrations/", import.meta.url));
+const migrations: Migration[] = readdirSync(migrationDir).filter((file) => file.endsWith(".sql")).map((file) => {
+  const match = /^(\d+)_([^.]*)\.sql$/.exec(file);
+  if (!match) throw new Error(`Invalid migration filename: ${file}`);
+  return { version: Number(match[1]), name: match[2]!, sql: readFileSync(join(migrationDir, file), "utf8") };
+});
+
+const mockRuntime: AgentRuntime = {
+  active: 0, maxActive: 0, calls: [],
+  async startRun() {},
+  async runResult(_runId: string) { return { version: "1.0", summary: "" } as never; },
+  async resumeRun() {},
+  async cancelRun() {},
+  async inspectRun() { throw new Error("not implemented"); },
+  async collectResult() { return { success: true, exitCode: 0, output: "", validatedSubmission: false, diagnostics: { runId: "", sessionId: null, stderr: "", exitCode: 0, artifactReferences: [] } } as never; },
+  async collectUsage() { return { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, cost: 0 }; },
+  async healthCheck() { return true; },
+};
+
+function makeApp() {
+  const db = createSqliteDatabase(":memory:");
+  runMigrations(db, migrations);
+  const scheduler = new SchedulerService(db);
+  return createApp({ db, scheduler, runtime: mockRuntime });
+}
 
 describe("local-session security", () => {
+  it("bootstraps a distinct CSRF token without persisting it", async () => {
+    const app = makeApp();
+    const response = await app.inject({ method: "GET", url: "/api/v1/session/bootstrap" });
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body)).toMatchObject({ sessionToken: app.sessionToken, csrfToken: app.csrfToken });
+    expect(app.csrfToken).not.toBe(app.sessionToken);
+    await app.close();
+  });
+
   it("rejects unauthenticated requests to protected routes with 401", async () => {
-    const app = createApp();
+    const app = makeApp();
     const res = await app.inject({
       method: "POST",
       url: "/api/v1/protected-test",
@@ -12,20 +54,20 @@ describe("local-session security", () => {
     await app.close();
   });
 
-  it("allows authenticated requests to protected routes", async () => {
-    const app = createApp();
+  it("requires same-origin validation for authenticated mutations", async () => {
+    const app = makeApp();
     const token = app.sessionToken;
     const res = await app.inject({
       method: "POST",
       url: "/api/v1/protected-test",
-      headers: { authorization: `Bearer ${token}` },
+        headers: { authorization: `Bearer ${token}`, origin: "http://127.0.0.1:3000", "x-csrf-token": app.csrfToken },
     });
     expect(res.statusCode).toBe(200);
     await app.close();
   });
 
   it("rejects requests with invalid origin on mutating routes with 403", async () => {
-    const app = createApp();
+    const app = makeApp();
     const token = app.sessionToken;
     const res = await app.inject({
       method: "POST",
@@ -39,8 +81,15 @@ describe("local-session security", () => {
     await app.close();
   });
 
-  it("allows requests without origin header (same-origin)", async () => {
-    const app = createApp();
+  it("rejects same-origin mutations without the CSRF token", async () => {
+    const app = makeApp();
+    const res = await app.inject({ method: "POST", url: "/api/v1/protected-test", headers: { authorization: `Bearer ${app.sessionToken}`, origin: "http://127.0.0.1:3000" } });
+    expect(res.statusCode).toBe(403);
+    await app.close();
+  });
+
+  it("rejects requests without origin header to prevent CSRF", async () => {
+    const app = makeApp();
     const token = app.sessionToken;
     const res = await app.inject({
       method: "POST",
@@ -48,12 +97,12 @@ describe("local-session security", () => {
       headers: { authorization: `Bearer ${token}` },
       // No origin header – should succeed (same-origin / non-CORS).
     });
-    expect(res.statusCode).toBe(200);
+    expect(res.statusCode).toBe(403);
     await app.close();
   });
 
   it("allows requests with matching origin", async () => {
-    const app = createApp();
+    const app = makeApp();
     const token = app.sessionToken;
     const res = await app.inject({
       method: "POST",
@@ -61,6 +110,7 @@ describe("local-session security", () => {
       headers: {
         origin: "http://127.0.0.1:3000",
         authorization: `Bearer ${token}`,
+        "x-csrf-token": app.csrfToken,
       },
     });
     expect(res.statusCode).toBe(200);

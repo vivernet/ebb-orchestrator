@@ -25,7 +25,12 @@ import { GitCli } from "../../src/modules/git/git-cli.js";
 import { writeFile } from "node:fs/promises";
 
 const migrationFiles = [
-  "001_system", "002_work_domain", "003_work_control", "010_planning",
+  "001_system", "002_work_domain", "003_work_control", "004_agent_runs",
+  "005_scheduler", "006_recovery", "007_git", "008_quality",
+  "009_integration_provenance", "010_planning", "011_epic_orchestration",
+  "012_epic_runtime_authority", "013_remove_legacy_scheduler_locks",
+  "014_migrate_legacy_scheduler_authority", "015_knowledge",
+  "016_context", "017_usage", "018_scheduler_config_audit",
 ];
 
 class FakeAgentRuntime implements AgentRuntime {
@@ -91,7 +96,7 @@ describe("full epic orchestration with FakeAgentRuntime", () => {
     directory = await mkdtemp(join(tmpdir(), "orchestrator-stale-reconcile-"));
     db = createSqliteDatabase(join(directory, "test.db"));
     const migrations: Migration[] = migrationFiles.map((name, index) => ({
-      version: index === 3 ? 10 : index + 1,
+      version: index + 1,
       name,
       sql: readFileSync(join(import.meta.dirname, `../../src/platform/database/migrations/${name}.sql`), "utf8"),
     }));
@@ -102,13 +107,13 @@ describe("full epic orchestration with FakeAgentRuntime", () => {
     const now = new Date().toISOString();
     db.run("INSERT INTO projects (id,name,display_name,status,created_at,updated_at) VALUES ($id,'stale','Stale','ACTIVE',$now,$now)", { id: projectId, now });
     db.run("INSERT INTO epics (id,project_id,display_id,title,status,contract_json,created_at,updated_at) VALUES ($id,$projectId,'EPIC-STALE','Stale','IN_PROGRESS','{}',$now,$now)", { id: epicId, projectId, now });
-    db.exec("CREATE TABLE agent_runs (id TEXT PRIMARY KEY, role TEXT NOT NULL, runtime TEXT NOT NULL, model TEXT NOT NULL, task_id TEXT, epic_id TEXT, status TEXT NOT NULL, started_at TEXT, ended_at TEXT, exit_code INTEGER, output TEXT, cost REAL)");
-    db.exec("CREATE TABLE orchestration_phase_runs (id TEXT PRIMARY KEY, epic_id TEXT, task_id TEXT, phase TEXT NOT NULL, role TEXT NOT NULL, agent_run_id TEXT NOT NULL UNIQUE, result_json TEXT NOT NULL DEFAULT '{}', evidence_json TEXT NOT NULL DEFAULT '{}', validated INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'INTENT', request_json TEXT, started_at TEXT, ended_at TEXT, created_at TEXT NOT NULL, UNIQUE (epic_id, task_id, phase))");
+    db.exec("CREATE TABLE IF NOT EXISTS agent_runs (id TEXT PRIMARY KEY, role TEXT NOT NULL, runtime TEXT NOT NULL, model TEXT NOT NULL, task_id TEXT, epic_id TEXT, status TEXT NOT NULL, started_at TEXT, ended_at TEXT, exit_code INTEGER, output TEXT, cost REAL)");
+    db.exec("CREATE TABLE IF NOT EXISTS orchestration_phase_runs (id TEXT PRIMARY KEY, epic_id TEXT, task_id TEXT, phase TEXT NOT NULL, role TEXT NOT NULL, agent_run_id TEXT NOT NULL UNIQUE, result_json TEXT NOT NULL DEFAULT '{}', evidence_json TEXT NOT NULL DEFAULT '{}', validated INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'INTENT', request_json TEXT, started_at TEXT, ended_at TEXT, created_at TEXT NOT NULL, UNIQUE (epic_id, task_id, phase))");
     db.run("INSERT INTO agent_runs (id,role,runtime,model,epic_id,status,started_at) VALUES ($id,'reviewer','test','test',$epicId,'STARTED',$now)", { id: runId, epicId, now });
     db.run("INSERT INTO orchestration_phase_runs (id,epic_id,phase,role,agent_run_id,status,started_at,created_at) VALUES ($id,$epicId,'epic_review','reviewer',$runId,'INTENT',$now,$now)", { id: randomUUID(), epicId, runId, now });
-    db.exec("CREATE TABLE scheduler_budgets (project_id TEXT PRIMARY KEY, limit_cost REAL NOT NULL, spent_cost REAL NOT NULL DEFAULT 0, reserved_cost REAL NOT NULL DEFAULT 0)");
-    db.exec("CREATE TABLE scheduler_reservations (id TEXT PRIMARY KEY, kind TEXT NOT NULL, subject_id TEXT NOT NULL UNIQUE, project_id TEXT NOT NULL, owner_id TEXT NOT NULL, reserved_at TEXT NOT NULL, estimate_cost REAL NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'RESERVED', actual_cost REAL, role TEXT NOT NULL, model TEXT NOT NULL, approval_id TEXT, run_id TEXT)");
-    db.exec("CREATE TABLE scheduler_resource_locks (resource_key TEXT PRIMARY KEY, reservation_id TEXT NOT NULL, project_id TEXT NOT NULL, owner_id TEXT NOT NULL, locked_at TEXT NOT NULL)");
+    ;
+    ;
+    ;
     db.run("INSERT INTO scheduler_budgets (project_id,limit_cost,spent_cost,reserved_cost) VALUES ($projectId,10,0,1)", { projectId });
     const reservationId = randomUUID();
     db.run("INSERT INTO scheduler_reservations (id,kind,subject_id,project_id,owner_id,reserved_at,estimate_cost,status,role,model,run_id) VALUES ($id,'PHASE',$runId,$projectId,$owner,$now,1,'RESERVED','reviewer','test',$runId)", { id: reservationId, runId, projectId, owner: `run:${runId}`, now });
@@ -116,7 +121,7 @@ describe("full epic orchestration with FakeAgentRuntime", () => {
 
     const registry = new WorkflowRegistry();
     for (const template of Object.values(templates)) registry.register(template);
-    new EpicOrchestrator(db, new WorkflowEngine(db, registry), new PlanningService(db), new RunService(db, new FakeAgentRuntime()), {} as never);
+    new EpicOrchestrator(db, new WorkflowEngine(db, registry), new PlanningService(db), new RunService(db, new FakeAgentRuntime()), {} as never, new SchedulerService(db));
 
     expect(db.get<{ status: string }>("SELECT status FROM agent_runs WHERE id=$id", { id: runId })?.status).toBe("FAILED");
     expect(db.get<{ status: string }>("SELECT status FROM orchestration_phase_runs WHERE agent_run_id=$runId", { runId })?.status).toBeUndefined();
@@ -134,24 +139,24 @@ describe("full epic orchestration with FakeAgentRuntime", () => {
     directory = await mkdtemp(join(tmpdir(), "orchestrator-epic-e2e-"));
     db = createSqliteDatabase(join(directory, "test.db"));
     const migrations: Migration[] = migrationFiles.map((name, index) => ({
-      version: index === 3 ? 10 : index + 1,
+      version: index + 1,
       name,
       sql: readFileSync(join(import.meta.dirname, `../../src/platform/database/migrations/${name}.sql`), "utf8"),
     }));
     runMigrations(db, migrations);
-    db.exec("CREATE TABLE resource_locks (id TEXT PRIMARY KEY, task_id TEXT NOT NULL, owner_id TEXT NOT NULL, acquired_at TEXT NOT NULL, expires_at TEXT)");
+    ;
     const projectId = randomUUID();
     const now = new Date().toISOString();
     db.run("INSERT INTO projects (id,name,display_name,status,created_at,updated_at) VALUES ($id,'demo','Demo','ACTIVE',$now,$now)", { id: projectId, now });
     const registry = new WorkflowRegistry();
     for (const template of Object.values(templates)) registry.register(template);
-    const runtime = new FakeAgentRuntime(db);
-    // The E2E uses the production MergeService.  IntegrationService owns the
-    // provenance schema; no synthetic VERIFIED journal row is inserted here.
-    new IntegrationService({ database: db, worktreeDir: directory });
-    const merge = new MergeService({ database: db, repoPath: directory, targetBranch: "master" });
-    const orchestrator = new EpicOrchestrator(db, new WorkflowEngine(db, registry), new PlanningService(db), new RunService(db, runtime), merge);
-    db.run("INSERT INTO scheduler_budgets (project_id,limit_cost,spent_cost,reserved_cost) VALUES ($projectId,100,0,0)", { projectId });
+const runtime = new FakeAgentRuntime(db);
+     // The E2E uses the production MergeService.  IntegrationService owns the
+     // provenance schema; no synthetic VERIFIED journal row is inserted here.
+     new IntegrationService({ database: db, worktreeDir: directory });
+     const merge = new MergeService({ database: db, repoPath: directory, targetBranch: "master" });
+     const orchestrator = new EpicOrchestrator(db, new WorkflowEngine(db, registry), new PlanningService(db), new RunService(db, runtime), merge, new SchedulerService(db));
+     db.run("INSERT INTO scheduler_budgets (project_id,limit_cost,spent_cost,reserved_cost) VALUES ($projectId,100,0,0)", { projectId });
     const plan = await orchestrator.start({
       projectId,
       requestedBy: "user",
@@ -199,7 +204,7 @@ describe("full epic orchestration with FakeAgentRuntime", () => {
     directory = await mkdtemp(join(tmpdir(), "orchestrator-epic-merge-e2e-"));
     db = createSqliteDatabase(join(directory, "test.db"));
     const migrations: Migration[] = migrationFiles.map((name, index) => ({
-      version: index === 3 ? 10 : index + 1, name,
+      version: index + 1, name,
       sql: readFileSync(join(import.meta.dirname, `../../src/platform/database/migrations/${name}.sql`), "utf8"),
     }));
     runMigrations(db, migrations);
@@ -223,11 +228,11 @@ describe("full epic orchestration with FakeAgentRuntime", () => {
     db.run("INSERT INTO projects (id,name,display_name,status,created_at,updated_at) VALUES ($id,'merge','Merge','ACTIVE',$now,$now)", { id: projectId, now });
     const registry = new WorkflowRegistry();
     for (const template of Object.values(templates)) registry.register(template);
-    const runtime = new FakeAgentRuntime(db);
-    const merge = new MergeService({ database: db, repoPath: directory, targetBranch: "master" });
-    const orchestrator = new EpicOrchestrator(db, new WorkflowEngine(db, registry), new PlanningService(db), new RunService(db, runtime), merge);
-    db.run("INSERT INTO scheduler_budgets (project_id,limit_cost,spent_cost,reserved_cost) VALUES ($projectId,100,0,0)", { projectId });
-    const plan = await orchestrator.start({ projectId, requestedBy: "user", tasks: [{ ref: "task_1", title: "Foundation", acceptanceCriteria: ["works"], role: "developer", workflow: "standard" }], epic: { title: "Merge epic", goal: "Merge" } });
+const runtime = new FakeAgentRuntime(db);
+     const merge = new MergeService({ database: db, repoPath: directory, targetBranch: "master" });
+     const orchestrator = new EpicOrchestrator(db, new WorkflowEngine(db, registry), new PlanningService(db), new RunService(db, runtime), merge, new SchedulerService(db));
+     db.run("INSERT INTO scheduler_budgets (project_id,limit_cost,spent_cost,reserved_cost) VALUES ($projectId,100,0,0)", { projectId });
+     const plan = await orchestrator.start({ projectId, requestedBy: "user", tasks: [{ ref: "task_1", title: "Foundation", acceptanceCriteria: ["works"], role: "developer", workflow: "standard" }], epic: { title: "Merge epic", goal: "Merge" } });
     const pending = await orchestrator.approveAndRun(plan.id, "user");
     const approval = new ApprovalService(db).approve(pending.finalApprovalId!, "user");
     const integrationRun = db.get<{ agent_run_id: string }>("SELECT agent_run_id FROM orchestration_phase_runs WHERE epic_id=$epicId AND phase='integration'", { epicId: pending.epicId })!;

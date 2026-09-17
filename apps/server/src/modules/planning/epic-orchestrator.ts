@@ -25,12 +25,18 @@ export class EpicOrchestrator {
   private readonly scheduler: SchedulerService;
   private readonly runs: RunService;
 
-  constructor(private readonly db: Database, private readonly workflow: WorkflowEngine, private readonly planning: PlanningService, runs: RunService, private readonly mergeService: EpicMergeAuthority) {
-    this.handlers = new RuntimeEventHandlers(db, workflow);
+  constructor(
+    private readonly db: Database,
+    private readonly workflow: WorkflowEngine,
+    private readonly planning: PlanningService,
+    runs: RunService,
+    private readonly mergeService: EpicMergeAuthority,
+    scheduler: SchedulerService,
+  ) {
+    this.handlers = new RuntimeEventHandlers(db, workflow, scheduler);
     this.approvals = new ApprovalService(db);
-    this.db.exec(`CREATE TABLE IF NOT EXISTS epic_orchestrations (epic_id TEXT PRIMARY KEY, plan_id TEXT NOT NULL, input_json TEXT NOT NULL, stage TEXT NOT NULL, sequence_json TEXT NOT NULL DEFAULT '[]', architecture_review_authorized INTEGER NOT NULL DEFAULT 0, final_approval_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`);
-    this.db.exec(`CREATE TABLE IF NOT EXISTS orchestration_phase_runs (id TEXT PRIMARY KEY, epic_id TEXT, task_id TEXT, phase TEXT NOT NULL, role TEXT NOT NULL, agent_run_id TEXT NOT NULL UNIQUE, result_json TEXT NOT NULL DEFAULT '{}', evidence_json TEXT NOT NULL DEFAULT '{}', validated INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'INTENT', request_json TEXT, started_at TEXT, ended_at TEXT, created_at TEXT NOT NULL, UNIQUE (epic_id, task_id, phase))`);
-    this.db.exec(`CREATE TABLE IF NOT EXISTS agent_runs (id TEXT PRIMARY KEY, role TEXT NOT NULL, runtime TEXT NOT NULL, model TEXT NOT NULL, task_id TEXT, epic_id TEXT, status TEXT NOT NULL, started_at TEXT, ended_at TEXT, exit_code INTEGER, output TEXT)`);
+    this.scheduler = scheduler;
+    this.runs = runs;
     for (const column of ["cost REAL", "input_tokens INTEGER", "output_tokens INTEGER"]) {
       try { this.db.exec(`ALTER TABLE agent_runs ADD COLUMN ${column}`); } catch { /* migration already installed */ }
     }
@@ -38,11 +44,9 @@ export class EpicOrchestrator {
     for (const column of ["status TEXT NOT NULL DEFAULT 'INTENT'", "request_json TEXT", "started_at TEXT", "ended_at TEXT"]) {
       try { this.db.exec(`ALTER TABLE orchestration_phase_runs ADD COLUMN ${column}`); } catch { /* current schema */ }
     }
-    this.runs = runs;
     this.reconcileStaleRuns();
     // AgentRuns must be marked terminal before their scheduler reservations are
     // reconciled.  Otherwise a stale phase still looks live to the scheduler.
-    this.scheduler = new SchedulerService(db);
     this.scheduler.reconcile();
   }
 

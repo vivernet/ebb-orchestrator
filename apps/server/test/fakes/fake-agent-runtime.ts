@@ -16,6 +16,9 @@ interface ScriptedOutcome {
  * A fake runtime that supports scripted outcomes for testing.
  */
 export class FakeAgentRuntime implements AgentRuntime {
+  active = 0;
+  maxActive = 0;
+  readonly calls: Array<{ phase: string; role: string; taskId?: string; targetBranch?: string }> = [];
   private readonly scripts: Map<string, ScriptedOutcome[]> = new Map();
   private readonly pendingRuns: Set<string> = new Set();
   readonly resumeCalls: Array<{ runId: string; options: { sessionId: string; attempt: number } }> = [];
@@ -93,8 +96,15 @@ export class FakeAgentRuntime implements AgentRuntime {
   }
 
   /**
-   * Health check.
-   */
+    * Get the result from a run.
+    */
+  async runResult(_runId: string): Promise<RunOutcome> {
+    throw new Error("runResult not implemented");
+  }
+
+  /**
+    * Health check.
+    */
   async healthCheck(): Promise<boolean> {
     return true;
   }

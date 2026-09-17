@@ -27,18 +27,24 @@ import type { AgentRuntime } from "../../src/modules/runtime/agent-runtime.js";
 import type { AgentRun } from "@ebb-orchestrator/contracts";
 import type { RunOutcome } from "../../src/modules/runtime/run-types.js";
 import { RunService } from "../../src/modules/runtime/run-service.js";
+import { SchedulerService } from "../../src/modules/scheduler/scheduler-service.js";
 import { DatabaseCompletionStore } from "../../src/modules/execution/mcp/submit-result-tool.js";
 import { MergeService } from "../../src/modules/git/merge-service.js";
 
 // ── Migration setup ──
 
 const migrationFiles = [
-  "001_system", "002_work_domain", "003_work_control", "010_planning",
+  "001_system", "002_work_domain", "003_work_control", "004_agent_runs",
+  "005_scheduler", "006_recovery", "007_git", "008_quality",
+  "009_integration_provenance", "010_planning", "011_epic_orchestration",
+  "012_epic_runtime_authority", "013_remove_legacy_scheduler_locks",
+  "014_migrate_legacy_scheduler_authority", "015_knowledge",
+  "016_context", "017_usage", "018_scheduler_config_audit",
 ];
 
 function loadMigrations(): Migration[] {
   return migrationFiles.map((name, index) => ({
-    version: index === 3 ? 10 : index + 1,
+    version: index + 1,
     name,
     sql: readFileSync(join(import.meta.dirname, `../../src/platform/database/migrations/${name}.sql`), "utf8"),
   }));
@@ -170,7 +176,7 @@ describe("Request to Epic acceptance", () => {
 
   it("validates plan structure before approval", async () => {
     const { registry, runtime, merge } = await setupDatabase();
-    const orchestrator = new EpicOrchestrator(db!, new WorkflowEngine(db!, registry), new PlanningService(db!), new RunService(db!, runtime), merge);
+    const orchestrator = new EpicOrchestrator(db!, new WorkflowEngine(db!, registry), new PlanningService(db!), new RunService(db!, runtime), merge, new SchedulerService(db!));
     db!.run("INSERT INTO scheduler_budgets (project_id,limit_cost,spent_cost,reserved_cost) VALUES ($projectId,100,0,0)", { projectId });
 
     // Coordinator classifies the request as EPIC
@@ -225,7 +231,7 @@ describe("Request to Epic acceptance", () => {
 
   it("executes epic lifecycle after approval", async () => {
     const { registry, runtime, merge } = await setupDatabase();
-    const orchestrator = new EpicOrchestrator(db!, new WorkflowEngine(db!, registry), new PlanningService(db!), new RunService(db!, runtime), merge);
+    const orchestrator = new EpicOrchestrator(db!, new WorkflowEngine(db!, registry), new PlanningService(db!), new RunService(db!, runtime), merge, new SchedulerService(db!));
     db!.run("INSERT INTO scheduler_budgets (project_id,limit_cost,spent_cost,reserved_cost) VALUES ($projectId,100,0,0)", { projectId });
 
     const plan = await orchestrator.start({
@@ -326,7 +332,7 @@ describe("Request to Epic acceptance", () => {
     // task_1 qa(4), task_1 integration(5) — then task_2/task_3 start.
     // Pausing after 5 calls lets task_1 finish but crashes before task_2/task_3.
     const runtime = new PausableFakeAgentRuntime(db!, 5);
-    const orchestrator = new EpicOrchestrator(db!, new WorkflowEngine(db!, registry), new PlanningService(db!), new RunService(db!, runtime), merge);
+    const orchestrator = new EpicOrchestrator(db!, new WorkflowEngine(db!, registry), new PlanningService(db!), new RunService(db!, runtime), merge, new SchedulerService(db!));
     db!.run("INSERT INTO scheduler_budgets (project_id,limit_cost,spent_cost,reserved_cost) VALUES ($projectId,100,0,0)", { projectId });
 
     const plan = await orchestrator.start({
@@ -390,7 +396,7 @@ describe("Request to Epic acceptance", () => {
     // The constructor runs reconcileStaleRuns which cleans up the crashed phase,
     // then approveAndRun picks up the persisted orchestration and resumes.
     const runtime2 = new FakeAgentRuntime(db!);
-    const orchestrator2 = new EpicOrchestrator(db!, new WorkflowEngine(db!, registry), new PlanningService(db!), new RunService(db!, runtime2), merge);
+    const orchestrator2 = new EpicOrchestrator(db!, new WorkflowEngine(db!, registry), new PlanningService(db!), new RunService(db!, runtime2), merge, new SchedulerService(db!));
 
     const secondResult = await orchestrator2.approveAndRun(plan.id, "user");
 
@@ -458,7 +464,7 @@ describe("Request to Epic acceptance", () => {
 
     const { registry, merge } = await setupDatabase();
     const runtime = new FakeAgentRuntime(db!);
-    const orchestrator = new EpicOrchestrator(db!, new WorkflowEngine(db!, registry), new PlanningService(db!), new RunService(db!, runtime), merge);
+    const orchestrator = new EpicOrchestrator(db!, new WorkflowEngine(db!, registry), new PlanningService(db!), new RunService(db!, runtime), merge, new SchedulerService(db!));
     db!.run("INSERT INTO scheduler_budgets (project_id,limit_cost,spent_cost,reserved_cost) VALUES ($projectId,100,0,0)", { projectId });
 
     const plan = await orchestrator.start({

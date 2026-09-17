@@ -2,12 +2,18 @@
  * Scheduler types - eligibility, capacity constraints, and resource locks.
  */
 
-/** Capacity constraints for scheduling. */
-export const CAPACITY = {
+/** Safe defaults used only when no persisted scheduler configuration exists. */
+export const DEFAULT_SCHEDULER_LIMITS = {
   globalMax: 4,
   projectMax: 3,
   reviewerMax: 1,
 } as const;
+
+export interface SchedulerLimits {
+  globalMax: number;
+  projectMax: number;
+  reviewerMax: number;
+}
 
 /**
  * Priority levels - higher priority tasks run first.
@@ -21,7 +27,9 @@ export type WaitReason =
   | "WAITING_FOR_DEPENDENCY"
   | "WAITING_FOR_RESOURCE_LOCK"
   | "WAITING_FOR_BUDGET"
-  | "WAITING_FOR_APPROVAL";
+  | "WAITING_FOR_APPROVAL"
+  | "WAITING_FOR_CAPACITY"
+  | "WAITING_FOR_ROLE_CAPACITY";
 
 /**
  * Reasons a task may be blocked (hard constraints).

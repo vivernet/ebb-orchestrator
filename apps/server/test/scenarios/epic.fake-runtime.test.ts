@@ -14,6 +14,7 @@ import { WorkflowEngine } from "../../src/modules/workflow/workflow-engine.js";
 import { WorkflowRegistry } from "../../src/modules/workflow/workflow-registry.js";
 import { templates } from "../../src/modules/workflow/templates.js";
 import { RuntimeEventHandlers } from "../../src/modules/runtime/run-event-handlers.js";
+import { SchedulerService } from "../../src/modules/scheduler/scheduler-service.js";
 import type { RunOutcome } from "../../src/modules/runtime/run-types.js";
 import type { TaskContract, EpicStatus } from "../../src/modules/work/work-types.js";
 import { appendOutboxEvent } from "../../src/platform/events/outbox-repository.js";
@@ -265,7 +266,7 @@ describe("Epic child lifecycle fake runtime scenario", () => {
     });
 
     workflowEngine = new WorkflowEngine(db, registry);
-    handlers = new RuntimeEventHandlers(db, workflowEngine);
+    handlers = new RuntimeEventHandlers(db, workflowEngine, new SchedulerService(db));
     orchestrator = new Orchestrator(db, bus, workflowEngine, handlers);
   }
 
