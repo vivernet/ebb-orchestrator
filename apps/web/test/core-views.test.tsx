@@ -5,7 +5,7 @@ import ProjectPage from '../src/features/projects/ProjectPage.js';
 import EpicPage from '../src/features/epics/EpicPage.js';
 import TaskPage from '../src/features/tasks/TaskPage.js';
 import { apiClient } from '../src/api/client.js';
-import { displayStageForLifecycle } from '../src/components/WorkflowTimeline.js';
+import WorkflowTimeline, { displayStageForLifecycle } from '../src/components/WorkflowTimeline.js';
 
 describe('Workflow lifecycle display mapping', () => {
   test.each([
@@ -24,6 +24,15 @@ describe('Workflow lifecycle display mapping', () => {
     ['BLOCKED', null],
   ])('maps %s to %s', (lifecycle, stage) => {
     expect(displayStageForLifecycle(lifecycle)).toBe(stage);
+  });
+
+  test.each(['WAITING_FOR_DEPENDENCY', 'FAILED', 'CANCELLED'])('%s does not complete normal stages by position', (status) => {
+    render(<WorkflowTimeline stages={['DEV', 'REVIEW', 'QA', 'FAILED', 'CANCELLED']} currentStage={status} />);
+
+    expect(screen.getByText(status)).toHaveStyle({ color: '#fff', fontWeight: '600' });
+    expect(screen.getByText('DEV')).not.toHaveStyle({ color: '#888' });
+    expect(screen.getByText('REVIEW')).not.toHaveStyle({ color: '#888' });
+    expect(screen.getByText('QA')).not.toHaveStyle({ color: '#888' });
   });
 });
 

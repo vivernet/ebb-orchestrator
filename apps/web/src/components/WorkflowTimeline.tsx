@@ -10,6 +10,10 @@ export const TASK_LIFECYCLE_STAGES = [
   'WAITING_FOR_DEPENDENCY', 'WAITING_FOR_APPROVAL', 'BLOCKED', 'PAUSED', 'FAILED', 'CANCELLED',
 ];
 
+const EXCEPTIONAL_LIFECYCLE_STAGES = new Set([
+  'WAITING_FOR_DEPENDENCY', 'WAITING_FOR_APPROVAL', 'BLOCKED', 'PAUSED', 'FAILED', 'CANCELLED',
+]);
+
 export const displayStageForLifecycle = (lifecycle: string): string | null => {
   const state = lifecycle.toUpperCase();
   if (state === 'DRAFT') return null;
@@ -28,12 +32,14 @@ export default function WorkflowTimeline({ stages, currentStage }: WorkflowTimel
     ? rawStage
     : currentStage ? displayStageForLifecycle(currentStage) ?? rawStage : undefined;
   const statusOnly = normalizedStage && !stages.includes(normalizedStage);
+  const currentIndex = normalizedStage && !EXCEPTIONAL_LIFECYCLE_STAGES.has(normalizedStage)
+    ? stages.indexOf(normalizedStage)
+    : -1;
   return (
     <div className="workflow-timeline" aria-label="Workflow timeline">
       <ol>
         {stages.map((stage, index) => {
           const isCurrent = stage === normalizedStage;
-          const currentIndex = normalizedStage ? stages.indexOf(normalizedStage) : -1;
           const isPast = currentIndex >= 0 && index < currentIndex;
 
           return (
