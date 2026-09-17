@@ -243,6 +243,23 @@ describe("scheduler lock compatibility migration", () => {
     expect(db.get("SELECT version FROM schema_migrations WHERE version=14")).toBeUndefined();
   });
 
+  it("aborts without dropping orphaned legacy capacity reservations", async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "orch-scheduler-migration-capacity-orphan-"));
+    db = createSqliteDatabase(join(tmpDir, `${randomUUID()}.db`));
+
+    runMigrations(db, baseMigrations);
+    createV12Prerequisites(db);
+    runMigrations(db, [legacyMigration012]);
+    db.exec("PRAGMA foreign_keys=OFF");
+    db.run(
+      "INSERT INTO scheduler_capacity_reservations(task_id,project_id,owner_id,reserved_at) VALUES('missing-task','missing-project','owner','2026-09-17T12:00:00.000Z')",
+    );
+
+    expect(() => runMigrations(db!, forwardMigrations)).toThrow(/CHECK constraint failed/);
+    expect(db.get("SELECT task_id FROM scheduler_capacity_reservations WHERE task_id='missing-task'")).toBeDefined();
+    expect(db.get("SELECT version FROM schema_migrations WHERE version=14")).toBeUndefined();
+  });
+
   it("passes the fresh migration chain", async () => {
     tmpDir = await mkdtemp(join(tmpdir(), "orch-scheduler-fresh-"));
     db = createSqliteDatabase(join(tmpDir, `${randomUUID()}.db`));

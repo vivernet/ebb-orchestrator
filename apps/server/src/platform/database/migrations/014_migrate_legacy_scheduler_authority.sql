@@ -32,6 +32,13 @@ WHERE EXISTS (
   LEFT JOIN tasks t ON t.id = l.task_id
   WHERE t.id IS NULL
 );
+INSERT INTO scheduler_014_completeness_guard(valid)
+SELECT 0
+WHERE EXISTS (
+  SELECT 1 FROM scheduler_capacity_reservations c
+  LEFT JOIN tasks t ON t.id = c.task_id
+  WHERE t.id IS NULL
+);
 
 INSERT INTO scheduler_reservations (
   id, kind, subject_id, project_id, owner_id, reserved_at,

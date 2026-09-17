@@ -80,11 +80,11 @@ export class MergeService {
         id TEXT PRIMARY KEY, type TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'STARTED',
         repo_path TEXT NOT NULL, branch_name TEXT, target_ref TEXT, created_at TEXT NOT NULL,
         verified_at TEXT, approval_id TEXT, source_sha TEXT, expected_target_sha TEXT,
-        resulting_target_sha TEXT
+        resulting_target_sha TEXT, failure_reason TEXT
       )`);
     }
     if (this.database) {
-      for (const column of ["approval_id TEXT", "source_sha TEXT", "expected_target_sha TEXT", "resulting_target_sha TEXT"]) {
+      for (const column of ["approval_id TEXT", "source_sha TEXT", "expected_target_sha TEXT", "resulting_target_sha TEXT", "failure_reason TEXT"]) {
         try { this.database.exec(`ALTER TABLE git_operations ADD COLUMN ${column}`); } catch { /* already present */ }
       }
     }
@@ -185,6 +185,21 @@ export class MergeService {
         return { success: true, subjectId, targetBranch: prior.target_ref, mergeCommitSha: prior.resulting_target_sha, resultingTargetSha: prior.resulting_target_sha, verifiedCompletion: true };
       }
 
+      const reconciliationFailure = this.database.get<{ id: string }>(
+        "SELECT id FROM git_operations WHERE type='MERGE' AND status='FAILED' AND failure_reason='RECONCILIATION_FAILED' AND approval_id=$approvalId AND repo_path=$repo AND branch_name=$branch AND target_ref=$target AND source_sha=$source AND expected_target_sha=$expected ORDER BY created_at DESC LIMIT 1",
+        {
+          approvalId,
+          repo: verified.repoPath,
+          branch: verified.sourceBranch,
+          target: verified.currentTargetBranch,
+          source: verified.sourceSha,
+          expected: verified.expectedTargetSha,
+        },
+      );
+      if (reconciliationFailure) {
+        throw new Error("MERGE_RECOVERY_FAILED: a matching terminal reconciliation failure already exists; manual reconciliation required");
+      }
+
       const started = this.database.get<{
         id: string;
         target_ref: string;
@@ -256,9 +271,9 @@ export class MergeService {
         throw new Error("observed target does not prove completion of the recorded merge");
       }
     } catch (error) {
-      this.database!.run("UPDATE git_operations SET status='FAILED' WHERE id=$id AND status='STARTED'", { id: operation.id });
+      this.database!.run("UPDATE git_operations SET status='FAILED',failure_reason='RECONCILIATION_FAILED' WHERE id=$id AND status='STARTED'", { id: operation.id });
       const reason = error instanceof Error ? error.message : "unknown reconciliation error";
-      throw new Error(`MERGE_RECOVERY_FAILED: ${reason}; manual reconciliation required`);
+      throw new Error(`MERGE_RECOVERY_FAILED: ${reason}; manual reconciliation required`, { cause: error });
     }
 
     this.database!.run(

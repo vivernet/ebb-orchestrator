@@ -122,6 +122,45 @@ describe("MergeService", () => {
       expect((await git.run(repoPath, ["show", "master:feature.txt"])).stdout.trim()).toBe("feature");
       db.close();
     });
+
+    it("rejects retry after a STARTED reconciliation detects target drift", async () => {
+      const repoPath = createTempDir();
+      const git = await initGitRepo(repoPath);
+      await git.run(repoPath, ["checkout", "-b", "feature"]);
+      writeFileSync(join(repoPath, "feature.txt"), "feature");
+      await git.run(repoPath, ["add", "feature.txt"]);
+      await git.run(repoPath, ["commit", "-m", "feature"]);
+      await git.run(repoPath, ["checkout", "master"]);
+
+      const db = createSqliteDatabase(join(repoPath, "orchestrator.sqlite"));
+      db.exec("CREATE TABLE agent_runs (id TEXT PRIMARY KEY, role TEXT, status TEXT, output TEXT)");
+      db.exec("CREATE TABLE git_operations (id TEXT PRIMARY KEY, type TEXT, status TEXT, repo_path TEXT, branch_name TEXT, target_ref TEXT, created_at TEXT, verified_at TEXT, approval_id TEXT, source_sha TEXT, expected_target_sha TEXT, resulting_target_sha TEXT)");
+      const runId = "integration-drift-run";
+      db.run("INSERT INTO agent_runs (id,role,status,output) VALUES ($id,'Integration','STARTED',NULL)", { id: runId });
+      const integration = new IntegrationService({ git, database: db, worktreeDir: createTempDir(), integrationRunId: runId });
+      const attempt = await integration.prepareIntegration("feature", "master", repoPath);
+      await integration.runInIntegrationWorktree(attempt, async () => {
+        db.run("UPDATE agent_runs SET status='COMPLETED',output=$output WHERE id=$id", { id: runId, output: JSON.stringify({ outcome: "PASS" }) });
+      });
+      db.run("INSERT INTO git_operations (id,type,status,repo_path,branch_name,target_ref,created_at,approval_id,source_sha,expected_target_sha) VALUES ('drift-op','MERGE','STARTED',$repo,'feature','master',$at,'approval-drift',$source,$expected)", {
+        repo: repoPath,
+        at: new Date().toISOString(),
+        source: attempt.sourceSha,
+        expected: attempt.expectedTargetSha,
+      });
+      writeFileSync(join(repoPath, "target.txt"), "target moved");
+      await git.run(repoPath, ["add", "target.txt"]);
+      await git.run(repoPath, ["commit", "-m", "move target"]);
+      const approvalStore = new Map([["approval-drift", { id: "approval-drift", subjectId: "epic-drift", type: "FINAL_MERGE", status: "APPROVED" }]]);
+      const service = new MergeService({ database: db, git, repoPath, approvalStore });
+
+      await expect(service.mergeApprovedForIntegration("epic-drift", "approval-drift", runId)).rejects.toThrow(/MERGE_RECOVERY_FAILED/);
+      expect(db.get<{ status: string; failure_reason: string }>("SELECT status,failure_reason FROM git_operations WHERE id='drift-op'")).toEqual({ status: "FAILED", failure_reason: "RECONCILIATION_FAILED" });
+      await expect(service.mergeApprovedForIntegration("epic-drift", "approval-drift", runId)).rejects.toThrow(/terminal reconciliation failure/);
+      expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM git_operations")).toEqual({ count: 1 });
+      db.close();
+    });
+
     it("rejects approval-only merges without verified integration provenance", async () => {
       const repoPath = createTempDir();
       await initGitRepo(repoPath);
