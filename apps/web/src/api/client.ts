@@ -8,11 +8,10 @@ const API_BASE = '/api/v1';
 interface ApiClient {
   get<T>(path: string): Promise<T>;
   post<T>(path: string, body?: unknown): Promise<T>;
+  sessionToken: string | null;
 }
 
 function createApiClient(): ApiClient {
-  let sessionToken: string | null = null;
-
   async function fetchJson<T>(
     path: string,
     options: RequestInit = {}
@@ -20,7 +19,7 @@ function createApiClient(): ApiClient {
     const response = await fetch(path, {
       headers: {
         'Content-Type': 'application/json',
-        ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}),
+        ...(apiClient.sessionToken ? { Authorization: `Bearer ${apiClient.sessionToken}` } : {}),
         ...options.headers,
       },
       ...options,
@@ -34,6 +33,8 @@ function createApiClient(): ApiClient {
   }
 
   return {
+    sessionToken: null as string | null,
+
     async get<T>(path: string): Promise<T> {
       return fetchJson<T>(`${API_BASE}${path}`);
     },
@@ -48,3 +49,9 @@ function createApiClient(): ApiClient {
 }
 
 export const apiClient = createApiClient();
+
+export function bootstrap(): Promise<void> {
+  return apiClient.get<{ sessionToken: string }>('/auth/session').then(({ sessionToken }) => {
+    apiClient.sessionToken = sessionToken;
+  });
+}

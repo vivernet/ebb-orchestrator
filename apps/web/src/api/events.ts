@@ -8,15 +8,20 @@ export interface EventClient {
   on(event: string, handler: EventHandler): void;
   connect(): void;
   disconnect(): void;
+  setRefetchCallback(callback: () => void): void;
 }
 
 function createEventClient(): EventClient {
   const handlers = new Map<string, Set<EventHandler>>();
   let eventSource: EventSource | null = null;
+  let onRefetch: (() => void) | null = null;
 
   function reconnect() {
     disconnect();
     connect();
+    if (onRefetch) {
+      onRefetch();
+    }
   }
 
   function connect() {
@@ -50,6 +55,10 @@ function createEventClient(): EventClient {
         handlers.set(event, new Set());
       }
       handlers.get(event)!.add(handler);
+    },
+
+    setRefetchCallback(callback: () => void) {
+      onRefetch = callback;
     },
 
     connect,
