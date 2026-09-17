@@ -12,6 +12,7 @@ import { WorkflowRegistry } from "../../src/modules/workflow/workflow-registry.j
 import { templates } from "../../src/modules/workflow/templates.js";
 import { PlanningService } from "../../src/modules/planning/planning-service.js";
 import { EpicOrchestrator, type EpicAgentRuntime } from "../../src/modules/planning/epic-orchestrator.js";
+import { ApprovalService } from "../../src/modules/approvals/approval-service.js";
 
 const migrationFiles = [
   "001_system", "002_work_domain", "003_work_control", "010_planning",
@@ -83,7 +84,8 @@ describe("full epic orchestration with FakeAgentRuntime", () => {
     expect(pending.finalApprovalRequired).toBe(true);
     expect(pending.childStatuses.every((status) => status === "INTEGRATED_INTO_EPIC")).toBe(true);
     expect(db.get<{ status: string }>("SELECT status FROM epics LIMIT 1")?.status).toBe("IN_PROGRESS");
-    const result = orchestrator.approveFinalMerge(pending.epicId);
+    const approval = new ApprovalService(db).approve(pending.finalApprovalId!, "user");
+    const result = orchestrator.approveFinalMerge(pending.epicId, approval.id);
     expect(result.childStatuses.every((status) => status === "RELEASED")).toBe(true);
     expect(db.get<{ status: string }>("SELECT status FROM epics LIMIT 1")?.status).toBe("DONE");
   });

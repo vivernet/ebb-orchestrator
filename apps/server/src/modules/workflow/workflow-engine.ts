@@ -73,7 +73,16 @@ export class WorkflowEngine {
     toStatus: TaskStatus,
     context?: TransitionContext,
   ): { id: string; status: TaskStatus; updatedAt: string } {
-    return this.db.transaction((tx) => {
+    return this.db.transaction((tx) => this.transitionInTransaction(tx, taskId, toStatus, context));
+  }
+
+  /** Apply a transition while the caller owns a larger domain transaction. */
+  transitionInTransaction(
+    tx: DatabaseTx,
+    taskId: string,
+    toStatus: TaskStatus,
+    context?: TransitionContext,
+  ): { id: string; status: TaskStatus; updatedAt: string } {
       const row = tx.get<TaskRow>(
         "SELECT id, status, epic_id FROM tasks WHERE id = $id",
         { id: taskId },
@@ -120,7 +129,6 @@ export class WorkflowEngine {
       appendOutboxEvent(tx, event);
 
       return { id: taskId, status: toStatus, updatedAt: now };
-    });
   }
 
   /**
