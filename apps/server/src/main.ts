@@ -54,19 +54,17 @@ const migrations: Migration[] = readdirSync(migrationDir).filter((file) => file.
   if (!match) throw new Error(`Invalid migration filename: ${file}`);
   return { version: Number(match[1]), name: match[2]!, sql: readFileSync(resolve(migrationDir, file), "utf8") };
 });
-runMigrations(database, migrations);
-
 try {
-  await lock.acquire();
-} catch (err) {
-  console.error(
-    `[orchestrator] ${err instanceof Error ? err.message : String(err)}`,
-  );
-  process.exit(1);
-}
+   await lock.acquire();
+ } catch (err) {
+   console.error(
+     `[orchestrator] ${err instanceof Error ? err.message : String(err)}`,
+   );
+   process.exit(1);
+ }
 
-// Create the single production SchedulerService instance, shared everywhere.
-const scheduler = new SchedulerService(database);
+ // Create the single production SchedulerService instance, shared everywhere.
+ const scheduler = new SchedulerService(database);
 const runtime = new HermesRuntimeAdapter(new ProcessExecutor(), undefined, { databasePath: home.database });
 const workflowRegistry = new WorkflowRegistry();
 for (const template of Object.values(templates)) workflowRegistry.register(template);
@@ -85,9 +83,8 @@ reconciler.registerGitReconciler(gitReconciler);
 
 // Reconcile runs, Git/worktrees, budgets, outbox/jobs, etc.
 const projectIdsQuery = database.all<{ id: string }>("SELECT id FROM projects WHERE status='ACTIVE'");
-reconciler.register(async () => { scheduler.reconcile(); });
 reconciler.register(async () => {
-  for (const _p of projectIdsQuery) {
+   for (const _p of projectIdsQuery) {
     try { await gitReconciler.reconcile("master"); } catch { /* per-project reconciliation is best-effort */ }
   }
 });
@@ -95,11 +92,11 @@ reconciler.register(async () => {
   // Reconcile budgets: ensure budget rows exist for active projects.
   const budgets = database.all<{ project_id: string }>("SELECT project_id FROM scheduler_budgets");
   const budgetProjectIds = new Set(budgets.map((b) => b.project_id));
-  for (const _p of projectIdsQuery) {
-    if (!budgetProjectIds.has(p.id)) {
-      database.run("INSERT OR IGNORE INTO scheduler_budgets(project_id,limit_cost,spent_cost,reserved_cost) VALUES($projectId,1000000,0,0)", { projectId: p.id });
-    }
-  }
+for (const p of projectIdsQuery) {
+     if (!budgetProjectIds.has(p.id)) {
+       database.run("INSERT OR IGNORE INTO scheduler_budgets(project_id,limit_cost,spent_cost,reserved_cost) VALUES($projectId,1000000,0,0)", { projectId: p.id });
+     }
+   }
 });
 reconciler.register(async () => {
   // Flush outbox events from previous runs.
@@ -115,9 +112,8 @@ const schedulerWorker: BackgroundWorker = {
 const workers = [schedulerWorker];
 
 async function gracefulShutdown(signal: string): Promise<void> {
-  console.log(`\n[orchestrator] received ${signal}, shutting down…`);
-  schedulerSafetyWorker.stop();
-  await shutdownSystem({
+   console.log(`\n[orchestrator] received ${signal}, shutting down…`);
+   await shutdownSystem({
     status,
     workers,
     database: { open: async () => {}, close: () => database.close() },

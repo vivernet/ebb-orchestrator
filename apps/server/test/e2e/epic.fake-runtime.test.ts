@@ -121,7 +121,7 @@ describe("full epic orchestration with FakeAgentRuntime", () => {
 
     const registry = new WorkflowRegistry();
     for (const template of Object.values(templates)) registry.register(template);
-    new EpicOrchestrator(db, new WorkflowEngine(db, registry), new PlanningService(db), new RunService(db, new FakeAgentRuntime()), {} as never);
+    new EpicOrchestrator(db, new WorkflowEngine(db, registry), new PlanningService(db), new RunService(db, new FakeAgentRuntime()), {} as never, new SchedulerService(db));
 
     expect(db.get<{ status: string }>("SELECT status FROM agent_runs WHERE id=$id", { id: runId })?.status).toBe("FAILED");
     expect(db.get<{ status: string }>("SELECT status FROM orchestration_phase_runs WHERE agent_run_id=$runId", { runId })?.status).toBeUndefined();
@@ -150,13 +150,13 @@ describe("full epic orchestration with FakeAgentRuntime", () => {
     db.run("INSERT INTO projects (id,name,display_name,status,created_at,updated_at) VALUES ($id,'demo','Demo','ACTIVE',$now,$now)", { id: projectId, now });
     const registry = new WorkflowRegistry();
     for (const template of Object.values(templates)) registry.register(template);
-    const runtime = new FakeAgentRuntime(db);
-    // The E2E uses the production MergeService.  IntegrationService owns the
-    // provenance schema; no synthetic VERIFIED journal row is inserted here.
-    new IntegrationService({ database: db, worktreeDir: directory });
-    const merge = new MergeService({ database: db, repoPath: directory, targetBranch: "master" });
-    const orchestrator = new EpicOrchestrator(db, new WorkflowEngine(db, registry), new PlanningService(db), new RunService(db, runtime), merge);
-    db.run("INSERT INTO scheduler_budgets (project_id,limit_cost,spent_cost,reserved_cost) VALUES ($projectId,100,0,0)", { projectId });
+const runtime = new FakeAgentRuntime(db);
+     // The E2E uses the production MergeService.  IntegrationService owns the
+     // provenance schema; no synthetic VERIFIED journal row is inserted here.
+     new IntegrationService({ database: db, worktreeDir: directory });
+     const merge = new MergeService({ database: db, repoPath: directory, targetBranch: "master" });
+     const orchestrator = new EpicOrchestrator(db, new WorkflowEngine(db, registry), new PlanningService(db), new RunService(db, runtime), merge, new SchedulerService(db));
+     db.run("INSERT INTO scheduler_budgets (project_id,limit_cost,spent_cost,reserved_cost) VALUES ($projectId,100,0,0)", { projectId });
     const plan = await orchestrator.start({
       projectId,
       requestedBy: "user",
@@ -228,11 +228,11 @@ describe("full epic orchestration with FakeAgentRuntime", () => {
     db.run("INSERT INTO projects (id,name,display_name,status,created_at,updated_at) VALUES ($id,'merge','Merge','ACTIVE',$now,$now)", { id: projectId, now });
     const registry = new WorkflowRegistry();
     for (const template of Object.values(templates)) registry.register(template);
-    const runtime = new FakeAgentRuntime(db);
-    const merge = new MergeService({ database: db, repoPath: directory, targetBranch: "master" });
-    const orchestrator = new EpicOrchestrator(db, new WorkflowEngine(db, registry), new PlanningService(db), new RunService(db, runtime), merge);
-    db.run("INSERT INTO scheduler_budgets (project_id,limit_cost,spent_cost,reserved_cost) VALUES ($projectId,100,0,0)", { projectId });
-    const plan = await orchestrator.start({ projectId, requestedBy: "user", tasks: [{ ref: "task_1", title: "Foundation", acceptanceCriteria: ["works"], role: "developer", workflow: "standard" }], epic: { title: "Merge epic", goal: "Merge" } });
+const runtime = new FakeAgentRuntime(db);
+     const merge = new MergeService({ database: db, repoPath: directory, targetBranch: "master" });
+     const orchestrator = new EpicOrchestrator(db, new WorkflowEngine(db, registry), new PlanningService(db), new RunService(db, runtime), merge, new SchedulerService(db));
+     db.run("INSERT INTO scheduler_budgets (project_id,limit_cost,spent_cost,reserved_cost) VALUES ($projectId,100,0,0)", { projectId });
+     const plan = await orchestrator.start({ projectId, requestedBy: "user", tasks: [{ ref: "task_1", title: "Foundation", acceptanceCriteria: ["works"], role: "developer", workflow: "standard" }], epic: { title: "Merge epic", goal: "Merge" } });
     const pending = await orchestrator.approveAndRun(plan.id, "user");
     const approval = new ApprovalService(db).approve(pending.finalApprovalId!, "user");
     const integrationRun = db.get<{ agent_run_id: string }>("SELECT agent_run_id FROM orchestration_phase_runs WHERE epic_id=$epicId AND phase='integration'", { epicId: pending.epicId })!;
