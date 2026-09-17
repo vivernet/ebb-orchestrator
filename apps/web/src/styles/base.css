@@ -49,7 +49,23 @@ html, body {
   flex: 1;
   padding: 24px;
   background-color: #0b0d10;
+  min-width: 0;
 }
+
+.dashboard-page, .project-page, .epic-page, .task-page {
+  max-width: 1200px;
+}
+
+.dashboard-page {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.dashboard-page h1 { grid-column: 1 / -1; margin-bottom: 0; }
+.dashboard-page section { margin-bottom: 0; min-width: 0; }
+.dashboard-page ul, .project-page ul, .epic-page ul, .task-page ul { padding-left: 20px; color: #b4b8bd; }
+.dashboard-page li, .project-page li, .epic-page li, .task-page li { overflow-wrap: anywhere; }
 
 /* Section and title styles */
 .main-content h1 {
@@ -91,19 +107,19 @@ html, body {
 }
 
 @media (max-width: 768px) {
+  .app-shell { flex-direction: column; }
+
   .left-nav {
-    width: 60px;
+    width: 100%;
     padding: 12px;
+    flex-direction: row;
+    overflow-x: auto;
+    border-right: none;
+    border-bottom: 1px solid #1e2329;
+    flex-wrap: nowrap;
   }
 
-  .left-nav a {
-    padding: 8px;
-    text-align: center;
-  }
-
-  .left-nav a span {
-    display: none;
-  }
+  .left-nav a { padding: 8px 10px; flex: 0 0 auto; white-space: nowrap; }
 
   .main-content {
     padding: 16px;
@@ -120,6 +136,9 @@ html, body {
   .main-content section {
     padding: 12px;
   }
+
+  .dashboard-page { grid-template-columns: 1fr; }
+  .dashboard-page h1 { grid-column: auto; }
 }
 
 @media (max-width: 480px) {
@@ -129,7 +148,10 @@ html, body {
     overflow-x: auto;
     border-right: none;
     border-bottom: 1px solid #1e2329;
+    flex-wrap: nowrap;
   }
+
+  .left-nav a { flex: 0 0 auto; white-space: nowrap; }
 
   .main-content {
     padding: 12px;

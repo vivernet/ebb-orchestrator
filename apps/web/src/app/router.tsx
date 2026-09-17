@@ -1,5 +1,14 @@
 import { createBrowserRouter } from 'react-router';
 import AppShell from '../components/AppShell.js';
+import DashboardPage from '../features/dashboard/DashboardPage.js';
+import ProjectPage from '../features/projects/ProjectPage.js';
+import EpicPage from '../features/epics/EpicPage.js';
+import TaskPage from '../features/tasks/TaskPage.js';
+import { useParams } from 'react-router';
+
+const ProjectRoute = () => <ProjectPage id={useParams().id ?? ''} />;
+const EpicRoute = () => <EpicPage id={useParams().id ?? ''} />;
+const TaskRoute = () => <TaskPage id={useParams().id ?? ''} />;
 
 export const router = createBrowserRouter([
   {
@@ -8,19 +17,19 @@ export const router = createBrowserRouter([
     children: [
       {
         path: '',
-        Component: () => <div>Dashboard</div>,
+        Component: DashboardPage,
       },
       {
         path: 'projects/:id',
-        Component: () => <div>Project</div>,
+        Component: ProjectRoute,
       },
       {
         path: 'epics/:id',
-        Component: () => <div>Epic</div>,
+        Component: EpicRoute,
       },
       {
         path: 'tasks/:id',
-        Component: () => <div>Task</div>,
+        Component: TaskRoute,
       },
       {
         path: 'approvals',

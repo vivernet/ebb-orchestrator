@@ -1,34 +1,45 @@
-export default function TaskPage() {
+import { useEffect, useState } from 'react';
+import type { TaskOverviewProjection } from '@ebb-orchestrator/contracts';
+import { apiClient } from '../../api/client.js';
+import WorkflowTimeline from '../../components/WorkflowTimeline.js';
+
+interface TaskPageProps { id?: string; }
+export default function TaskPage({ id = '' }: TaskPageProps) {
+  const [projection, setProjection] = useState<TaskOverviewProjection | null>(null);
+  useEffect(() => { if (id) void apiClient.get<TaskOverviewProjection>(`/tasks/${encodeURIComponent(id)}`).then(setProjection).catch(() => undefined); }, [id]);
+  const task = projection?.task as { title?: string; display_id?: string; status?: string; contract_json?: string; branch?: string; worktree_path?: string; pr_url?: string } | undefined;
+  const contract = task?.contract_json ? (() => { try { return JSON.stringify(JSON.parse(task.contract_json)); } catch { return task.contract_json; } })() : 'No contract recorded.';
   return (
     <div className="task-page">
-      <h1>Task</h1>
+      <h1>Task: {(task?.title ?? task?.display_id ?? id) || 'Loading'}</h1>
       <section aria-label="Contract">
         <h2>Contract</h2>
-        <p>Task requirements and acceptance criteria.</p>
+        <p>{contract}</p>
       </section>
       <section aria-label="Workflow">
         <h2>Workflow</h2>
-        <p>Current workflow state and transitions.</p>
+        <p>{task?.status ?? 'Loading task projection…'}</p>
+        {task?.status && <WorkflowTimeline stages={['DEV', 'REVIEW', 'QA', 'INTEGRATION']} currentStage={task.status} />}
       </section>
       <section aria-label="Agent Runs">
         <h2>Agent Runs</h2>
-        <p>History of agent executions.</p>
+        <ul>{projection?.runs.map((run) => { const item = run as { id?: string; role?: string; status?: string }; return <li key={item.id}>{item.role} · {item.status}</li>; })}</ul>
       </section>
       <section aria-label="Findings">
         <h2>Findings</h2>
-        <p>Review findings and defects.</p>
+        <p>{projection ? `${projection.findings.length} findings · ${projection.defects.length} defects` : 'Loading findings…'}</p>
       </section>
       <section aria-label="Git">
         <h2>Git</h2>
-        <p>Branch and commit information.</p>
+        <p>{task?.branch ?? 'Branch unavailable'}{task?.pr_url ? ` · ${task.pr_url}` : ''}</p>
       </section>
       <section aria-label="Recovery">
         <h2>Recovery</h2>
-        <p>Recovery status and options.</p>
+        <p>{projection?.waitReason?.message ?? 'No recovery blocker reported.'}</p>
       </section>
       <section aria-label="Usage">
         <h2>Usage</h2>
-        <p>Token and cost tracking.</p>
+        <p>{projection ? `${projection.usage.totalTokens} tokens · $${projection.usage.cost.toFixed(2)}` : 'Loading usage…'}</p>
       </section>
     </div>
   );

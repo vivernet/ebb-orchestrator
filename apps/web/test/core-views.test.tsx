@@ -1,11 +1,23 @@
-import { describe, test, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, test, expect, vi } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/react';
 import DashboardPage from '../src/features/dashboard/DashboardPage.js';
 import ProjectPage from '../src/features/projects/ProjectPage.js';
 import EpicPage from '../src/features/epics/EpicPage.js';
 import TaskPage from '../src/features/tasks/TaskPage.js';
+import { apiClient } from '../src/api/client.js';
 
 describe('Dashboard', () => {
+  test('renders values from the dashboard projection', async () => {
+    vi.spyOn(apiClient, 'get').mockImplementation(async (path) => path === '/dashboard'
+      ? { activeAgents: [{ runId: 'run-1', role: 'Developer', taskId: 'task-1', status: 'IN_PROGRESS' }], activeWork: [{ id: 'task-1', title: 'Ship projection', status: 'DEV', waitReason: null }], approvals: 2, usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 2, totalTokens: 3, cost: 0.42 }, projects: [] }
+      : { running: [], waiting: [], blocked: [] });
+    render(<DashboardPage />);
+    await waitFor(() => expect(screen.getByText(/Ship projection/)).toBeInTheDocument());
+    expect(screen.getByText(/Developer · IN_PROGRESS/)).toBeInTheDocument();
+    expect(screen.getByText(/\$0.42/)).toBeInTheDocument();
+    vi.restoreAllMocks();
+  });
+
   test('exposes Running agents section', () => {
     render(<DashboardPage />);
     expect(screen.getByText(/Running agents/i)).toBeInTheDocument();
