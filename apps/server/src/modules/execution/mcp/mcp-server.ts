@@ -217,7 +217,7 @@ export class McpServer {
           return respond({ jsonrpc: '2.0', id: id ?? null, result: {
             protocolVersion: '2024-11-05',
             capabilities: { tools: {} },
-            serverInfo: { name: 'orchestrator-mcp', version: '1.0.0' },
+            serverInfo: { name: 'ebb-orchestrator-mcp', version: '1.0.0' },
           }});
 
         default:

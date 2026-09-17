@@ -1,7 +1,7 @@
 /**
  * Orchestrator MCP stdio server CLI entry point.
  * 
- * Usage: orchestrator-mcp --capability-ref <orchestrator-issued-reference>
+ * Usage: ebb-orchestrator-mcp --capability-ref <orchestrator-issued-reference>
  * 
  * The capability ID determines the role and tool access for this MCP server instance.
  */
@@ -28,7 +28,7 @@ function parseArgs(): { capabilityRef: string | undefined; resultFile: string | 
     } else if (args[i] === '--database' && i + 1 < args.length) {
       result.database = args[++i];
     } else if (args[i] === '--help' || args[i] === '-h') {
-      console.log('Usage: orchestrator-mcp --capability-ref <orchestrator-issued-reference>');
+      console.log('Usage: ebb-orchestrator-mcp --capability-ref <orchestrator-issued-reference>');
       process.exit(0);
     }
   }

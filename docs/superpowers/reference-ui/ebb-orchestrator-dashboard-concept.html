@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Agent Orchestrator — Dashboard Concept</title>
+<title>Agent Orchestrator — Концепция панели управления</title>
 <style>
 :root{
   --bg:#0b0d10; --panel:#12161b; --panel2:#171c22; --line:#252c34;
@@ -45,60 +45,60 @@
 <body>
 <div class="app">
   <aside class="sidebar">
-    <div class="brand">Agent Orchestrator<small>Local workspace</small></div>
+    <div class="brand">Agent Orchestrator<small>Локальное рабочее пространство</small></div>
     <nav class="nav">
-      <a class="active" href="#">Dashboard</a>
-      <a href="#">Projects</a>
-      <a href="#">Epics & Tasks</a>
-      <a href="#">Execution Queue</a>
-      <a href="#">Approvals <span class="warn">3</span></a>
-      <a href="#">Agents</a>
-      <a href="#">Usage & Budget</a>
-      <a href="#">Settings</a>
+      <a class="active" href="#">Панель управления</a>
+      <a href="#">Проекты</a>
+      <a href="#">Эпики и задачи</a>
+      <a href="#">Очередь выполнения</a>
+      <a href="#">Согласования <span class="warn">3</span></a>
+      <a href="#">Агенты</a>
+      <a href="#">Использование и бюджет</a>
+      <a href="#">Настройки</a>
     </nav>
-    <div class="bottom">Hermes runtime · Local mode<br/>4 parallel slots</div>
+    <div class="bottom">Hermes runtime · Локальный режим<br/>4 параллельных слота</div>
   </aside>
 
   <main class="main">
     <div class="topbar">
-      <div class="title"><h1>Dashboard</h1><p>Что происходит прямо сейчас — без лишнего шума.</p></div>
-      <div class="actions"><button class="btn">Pause all</button><button class="btn primary">New request</button></div>
+      <div class="title"><h1>Панель управления</h1><p>Что происходит прямо сейчас — без лишнего шума.</p></div>
+      <div class="actions"><button class="btn">Приостановить всё</button><button class="btn primary">Новый запрос</button></div>
     </div>
 
     <section class="metrics">
-      <div class="metric"><span class="muted">Running agents</span><b>3 / 4</b></div>
-      <div class="metric"><span class="muted">Active work</span><b>12</b></div>
-      <div class="metric"><span class="muted">Need approval</span><b class="warn">3</b></div>
-      <div class="metric"><span class="muted">AI spend today</span><b>$6.42</b></div>
+      <div class="metric"><span class="muted">Работающие агенты</span><b>3 / 4</b></div>
+      <div class="metric"><span class="muted">Активная работа</span><b>12</b></div>
+      <div class="metric"><span class="muted">Требуют согласования</span><b class="warn">3</b></div>
+      <div class="metric"><span class="muted">Расходы ИИ сегодня</span><b>$6.42</b></div>
     </section>
 
     <div class="grid">
       <div>
         <section class="card">
-          <div class="row"><h3>Active projects</h3><span class="muted">3 projects</span></div>
+          <div class="row"><h3>Активные проекты</h3><span class="muted">3 проекта</span></div>
 
           <div class="project">
-            <div class="row"><div><b>Ebb AI Hub</b><div class="muted">EPIC-42 · Anthropic Provider</div></div><span class="chip">High</span></div>
+            <div class="row"><div><b>Ebb AI Hub</b><div class="muted">EPIC-42 · Anthropic Provider</div></div><span class="chip">Высокий</span></div>
             <div class="progress"><span></span></div>
-            <div class="row"><span class="muted">7 / 9 required tasks</span><span>72%</span></div>
+            <div class="row"><span class="muted">7 / 9 обязательных задач</span><span>72%</span></div>
           </div>
 
           <div class="project">
-            <div class="row"><div><b>xRocket SDK</b><div class="muted">TASK-116 · Improve retries</div></div><span class="chip">Normal</span></div>
+            <div class="row"><div><b>xRocket SDK</b><div class="muted">TASK-116 · Улучшение повторных попыток</div></div><span class="chip">Обычный</span></div>
             <div class="progress"><span style="width:46%"></span></div>
             <div class="row"><span class="muted">Review</span><span>46%</span></div>
           </div>
 
           <div class="project">
-            <div class="row"><div><b>Ebb Censor Bot</b><div class="muted">No active development</div></div><span class="chip">Idle</span></div>
+            <div class="row"><div><b>Ebb Censor Bot</b><div class="muted">Нет активной разработки</div></div><span class="chip">Простой</span></div>
           </div>
         </section>
 
         <section class="card chat">
-          <h3>Coordinator</h3>
+          <h3>Координатор</h3>
           <div class="chatbox">
-            <div><span class="dot"></span><b>Coordinator</b></div>
-            <div style="margin-top:7px">EPIC-42 идёт по плану. TASK-425 находится в QA, TASK-426 — в Review. Один новый dependency proposal требует анализа, но от вас пока действий не требуется.</div>
+            <div><span class="dot"></span><b>Координатор</b></div>
+            <div style="margin-top:7px">EPIC-42 идёт по плану. TASK-425 находится в QA, TASK-426 — в Review. Один новый предложение зависимости требует анализа, но от вас пока действий не требуется.</div>
           </div>
           <div class="chatinput">Напишите, что нужно сделать…</div>
         </section>
@@ -106,27 +106,27 @@
 
       <div>
         <section class="card">
-          <div class="row"><h3>Approval Inbox</h3><span class="warn">3 pending</span></div>
-          <div class="approval"><b>Epic plan change</b><div class="muted">EPIC-42 · новая prerequisite task</div></div>
-          <div class="approval"><b>Permission request</b><div class="muted">DevOps хочет выполнить docker push</div></div>
-          <div class="approval"><b>Final merge</b><div class="muted">TASK-116 → master</div></div>
-          <button class="btn" style="width:100%;margin-top:6px">Open approvals</button>
+          <div class="row"><h3>Центр согласований</h3><span class="warn">3 ожидают</span></div>
+          <div class="approval"><b>Изменение плана эпика</b><div class="muted">EPIC-42 · новая обязательная задача</div></div>
+          <div class="approval"><b>Запрос разрешения</b><div class="muted">DevOps хочет выполнить docker push</div></div>
+          <div class="approval"><b>Финальное слияние</b><div class="muted">TASK-116 → master</div></div>
+          <button class="btn" style="width:100%;margin-top:6px">Открыть согласования</button>
         </section>
 
         <section class="card" style="margin-top:16px">
-          <div class="row"><h3>Execution Queue</h3><span class="muted">3 running</span></div>
+          <div class="row"><h3>Очередь выполнения</h3><span class="muted">3 выполняются</span></div>
           <div class="queue">
             <div class="qitem"><div><span class="dot"></span><b>Senior Developer</b></div><div class="meta"><span>TASK-425</span><span>12m</span><span>Hermes</span></div></div>
             <div class="qitem"><div><span class="dot"></span><b>Reviewer</b></div><div class="meta"><span>TASK-426</span><span>4m</span><span>Hermes</span></div></div>
             <div class="qitem"><div><span class="dot"></span><b>QA</b></div><div class="meta"><span>TASK-419</span><span>2m</span><span>Hermes</span></div></div>
-            <div class="qitem"><div><span class="dot idle"></span><b>Integration Agent</b></div><div class="meta"><span>waiting for slot</span></div></div>
+            <div class="qitem"><div><span class="dot idle"></span><b>Integration Agent</b></div><div class="meta"><span>ожидает слота</span></div></div>
           </div>
         </section>
 
         <section class="card" style="margin-top:16px">
-          <h3>Agent pool</h3>
+          <h3>Пул агентов</h3>
           <div class="agentgrid">
-            <div class="agent"><span class="dot"></span>Coordinator</div>
+            <div class="agent"><span class="dot"></span>Координатор</div>
             <div class="agent"><span class="dot"></span>Senior</div>
             <div class="agent"><span class="dot idle"></span>Architect</div>
             <div class="agent"><span class="dot idle"></span>DevOps</div>
@@ -135,7 +135,7 @@
       </div>
     </div>
 
-    <div class="footer-note">Concept v0.1 · Local-first · Orchestrator is source of truth · Hermes as first Agent Runtime</div>
+    <div class="footer-note">Концепция v0.1 · сначала локально · Orchestrator — источник истины · Hermes — первая среда выполнения агентов</div>
   </main>
 </div>
 </body>

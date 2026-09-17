@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Agent Orchestrator — Usage & Budget Concept</title>
+<title>Agent Orchestrator — Концепция использования и бюджета</title>
 <style>
 :root{
   --bg:#0b0d10; --panel:#12161b; --panel2:#171c22; --line:#252c34;
@@ -45,101 +45,101 @@ body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 Inter,ui-san
 <body>
 <div class="app">
   <aside class="sidebar">
-    <div class="brand">Agent Orchestrator<small>Local workspace</small></div>
+    <div class="brand">Agent Orchestrator<small>Локальное рабочее пространство</small></div>
     <nav class="nav">
-      <a href="#">Dashboard</a>
-      <a href="#">Projects</a>
-      <a href="#">Epics & Tasks</a>
-      <a href="#">Execution Queue</a>
-      <a href="#">Approvals <span class="warn">3</span></a>
-      <a href="#">Agents</a>
-      <a class="active" href="#">Usage & Budget</a>
-      <a href="#">Settings</a>
+      <a href="#">Панель управления</a>
+      <a href="#">Проекты</a>
+      <a href="#">Эпики и задачи</a>
+      <a href="#">Очередь выполнения</a>
+      <a href="#">Согласования <span class="warn">3</span></a>
+      <a href="#">Агенты</a>
+      <a class="active" href="#">Использование и бюджет</a>
+      <a href="#">Настройки</a>
     </nav>
-    <div class="bottom">Hermes runtime · Local mode<br/>4 global slots</div>
+    <div class="bottom">Hermes runtime · Локальный режим<br/>4 глобальных слота</div>
   </aside>
 
   <main class="main">
     <div class="topbar">
       <div class="title">
-        <h1>Usage & Budget</h1>
-        <p>Куда уходят токены и деньги, какие роли создают rework и где система тратит больше нормы.</p>
+        <h1>Использование и бюджет</h1>
+        <p>Куда уходят токены и деньги, какие роли создают доработка и где система тратит больше нормы.</p>
       </div>
       <div class="actions">
-        <button class="btn">Last 30 days</button>
-        <button class="btn primary">Budget policies</button>
+        <button class="btn">Последние 30 дней</button>
+        <button class="btn primary">Политики бюджета</button>
       </div>
     </div>
 
     <div class="tabs">
-      <div class="tab active">Overview</div>
-      <div class="tab">Projects</div>
-      <div class="tab">Roles</div>
-      <div class="tab">Models</div>
-      <div class="tab">Runs</div>
-      <div class="tab">Budgets</div>
+      <div class="tab active">Обзор</div>
+      <div class="tab">Проекты</div>
+      <div class="tab">Рольs</div>
+      <div class="tab">Модельs</div>
+      <div class="tab">Запуски</div>
+      <div class="tab">Бюджетs</div>
     </div>
 
     <section class="metrics">
-      <div class="metric"><span class="muted">Spend today</span><b>$6.42</b></div>
-      <div class="metric"><span class="muted">30 day spend</span><b>$128.73</b></div>
-      <div class="metric"><span class="muted">Tokens today</span><b>1.84M</b></div>
-      <div class="metric"><span class="muted">Cache hit ratio</span><b>64%</b></div>
-      <div class="metric"><span class="muted">Recovery share</span><b class="warn">18%</b></div>
+      <div class="metric"><span class="muted">Расходы сегодня</span><b>$6.42</b></div>
+      <div class="metric"><span class="muted">Расходы за 30 дней</span><b>$128.73</b></div>
+      <div class="metric"><span class="muted">Токены сегодня</span><b>1.84M</b></div>
+      <div class="metric"><span class="muted">Доля попаданий в кэш</span><b>64%</b></div>
+      <div class="metric"><span class="muted">Доля восстановления</span><b class="warn">18%</b></div>
     </section>
 
     <div class="grid">
       <div>
         <section class="card">
-          <div class="row"><h3>Project budgets</h3><span class="muted">effective spend vs configured limits</span></div>
+          <div class="row"><h3>Бюджеты проектов</h3><span class="muted">фактические расходы и настроенные лимиты</span></div>
 
           <div class="budget">
-            <div class="head"><div><b>Ebb AI Hub</b><div class="muted">Active EPIC-42</div></div><div>$18.72 / $30 soft</div></div>
+            <div class="head"><div><b>Ebb AI Hub</b><div class="muted">Активный EPIC-42</div></div><div>$18.72 / $30 soft</div></div>
             <div class="bar"><span style="width:62%"></span></div>
           </div>
 
           <div class="budget">
-            <div class="head"><div><b>xRocket SDK</b><div class="muted">2 active tasks</div></div><div>$7.91 / $20 soft</div></div>
+            <div class="head"><div><b>xRocket SDK</b><div class="muted">2 активные задачи</div></div><div>$7.91 / $20 soft</div></div>
             <div class="bar"><span style="width:40%"></span></div>
           </div>
 
           <div class="budget">
-            <div class="head"><div><b>Ebb Censor Bot</b><div class="muted">TASK-508 recovery</div></div><div class="warn">$3.00 / $3 soft</div></div>
+            <div class="head"><div><b>Ebb Censor Bot</b><div class="muted">Восстановление TASK-508</div></div><div class="warn">$3.00 / $3 soft</div></div>
             <div class="bar"><span style="width:100%"></span></div>
           </div>
         </section>
 
         <section class="card" style="margin-top:16px">
-          <div class="row"><h3>Spend by role</h3><span class="muted">30 days</span></div>
+          <div class="row"><h3>Расходы по ролям</h3><span class="muted">30 days</span></div>
           <table class="table">
-            <thead><tr><th>Role</th><th>Spend</th><th>Share</th><th>Runs</th><th>Avg/run</th></tr></thead>
+            <thead><tr><th>Роль</th><th>Spend</th><th>Доля</th><th>Запуски</th><th>В среднем за запуск</th></tr></thead>
             <tbody>
               <tr><td>Senior Developer</td><td>$41.18</td><td>32%</td><td>39</td><td>$1.06</td></tr>
               <tr><td>Middle Developer</td><td>$24.61</td><td>19%</td><td>71</td><td>$0.35</td></tr>
               <tr><td>Reviewer</td><td>$18.42</td><td>14%</td><td>63</td><td>$0.29</td></tr>
               <tr><td>QA</td><td>$13.20</td><td>10%</td><td>58</td><td>$0.23</td></tr>
-              <tr><td>Coordinator</td><td>$9.84</td><td>8%</td><td>22</td><td>$0.45</td></tr>
+              <tr><td>Координатор</td><td>$9.84</td><td>8%</td><td>22</td><td>$0.45</td></tr>
               <tr><td>Architect</td><td>$8.19</td><td>6%</td><td>11</td><td>$0.74</td></tr>
             </tbody>
           </table>
         </section>
 
         <section class="card" style="margin-top:16px">
-          <div class="row"><h3>Spend by reason</h3><span class="muted">where money actually goes</span></div>
+          <div class="row"><h3>Расходы по причине</h3><span class="muted">куда фактически уходят деньги</span></div>
           <div class="split">
-            <div class="stat"><span class="muted">Initial development</span><b>43%</b></div>
+            <div class="stat"><span class="muted">Первоначальная разработка</span><b>43%</b></div>
             <div class="stat"><span class="muted">Review + QA</span><b>21%</b></div>
             <div class="stat"><span class="muted">Rework</span><b class="warn">12%</b></div>
-            <div class="stat"><span class="muted">Recovery</span><b class="warn">18%</b></div>
+            <div class="stat"><span class="muted">Восстановление</span><b class="warn">18%</b></div>
           </div>
         </section>
       </div>
 
       <div>
         <section class="card">
-          <div class="row"><h3>Efficiency</h3><span class="good">Healthy</span></div>
+          <div class="row"><h3>Эффективность</h3><span class="good">В норме</span></div>
           <div class="kv">
-            <div>Cached input</div><div>64%</div>
+            <div>Кэшированный вход</div><div>64%</div>
             <div>Avg initial context</div><div>28.4k tokens</div>
             <div>Avg output</div><div>6.2k tokens</div>
             <div>AI runs/task</div><div>3.7</div>
@@ -149,21 +149,21 @@ body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 Inter,ui-san
         </section>
 
         <section class="card" style="margin-top:16px">
-          <div class="row"><h3>Cost anomalies</h3><span class="warn">2</span></div>
+          <div class="row"><h3>Аномалии стоимости</h3><span class="warn">2</span></div>
           <div class="alert bad">
             <b>RUN-1931 · Senior Developer</b>
-            <div class="muted">$5.42 · 6.7× above role median</div>
+            <div class="muted">$5.42 · в 6,7 раза выше медианы роли</div>
           </div>
           <div class="alert">
-            <b>TASK-508 · Recovery</b>
-            <div class="muted">Recovery now represents 71% of total task cost.</div>
+            <b>TASK-508 · Восстановление</b>
+            <div class="muted">Восстановление составляет 71% общей стоимости задачи.</div>
           </div>
         </section>
 
         <section class="card" style="margin-top:16px">
-          <div class="row"><h3>Model comparison</h3><span class="muted">effective cost</span></div>
+          <div class="row"><h3>Модель comparison</h3><span class="muted">фактическая стоимость</span></div>
           <table class="table">
-            <thead><tr><th>Role/model</th><th>Avg cost</th><th>Rework</th></tr></thead>
+            <thead><tr><th>Роль/модель</th><th>Средняя стоимость</th><th>Rework</th></tr></thead>
             <tbody>
               <tr><td>Middle / luna</td><td>$0.31</td><td>22%</td></tr>
               <tr><td>Senior / terra</td><td>$0.94</td><td>8%</td></tr>
@@ -173,19 +173,19 @@ body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 Inter,ui-san
         </section>
 
         <section class="card" style="margin-top:16px">
-          <div class="row"><h3>Budget policy</h3><span class="chip">Global</span></div>
+          <div class="row"><h3>Политика бюджета</h3><span class="chip">Глобальная</span></div>
           <div class="kv">
-            <div>Daily soft</div><div>$30</div>
-            <div>Daily hard</div><div>$100</div>
-            <div>Hard limit action</div><div>DENY new AI runs</div>
-            <div>Soft limit action</div><div>ASK</div>
-            <div>Reservation mode</div><div>historical p90</div>
+            <div>Дневной мягкий лимит</div><div>$30</div>
+            <div>Дневной жёсткий лимит</div><div>$100</div>
+            <div>Действие при жёстком лимите</div><div>ЗАПРЕТИТЬ новые запуски ИИ</div>
+            <div>Действие при мягком лимите</div><div>ASK</div>
+            <div>Режим резервирования</div><div>исторический p90</div>
           </div>
         </section>
       </div>
     </div>
 
-    <div class="footer-note">Usage & Budget concept v0.1 · every AI invocation is attributable to project, epic, task, role, model and trigger reason</div>
+    <div class="footer-note">Концепция использования и бюджета v0.1 · каждый вызов ИИ относится к проекту, эпику, задаче, роли, модели и причине запуска</div>
   </main>
 </div>
 </body>

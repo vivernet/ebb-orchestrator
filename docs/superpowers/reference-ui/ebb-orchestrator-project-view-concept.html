@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Agent Orchestrator — Project View Concept</title>
+<title>Agent Orchestrator — Концепция представления проекта</title>
 <style>
 :root{
   --bg:#0b0d10; --panel:#12161b; --panel2:#171c22; --line:#252c34;
@@ -46,49 +46,49 @@
 <body>
 <div class="app">
   <aside class="sidebar">
-    <div class="brand">Agent Orchestrator<small>Local workspace</small></div>
+    <div class="brand">Agent Orchestrator<small>Локальное рабочее пространство</small></div>
     <nav class="nav">
-      <a href="#">Dashboard</a>
-      <a class="active" href="#">Projects</a>
-      <a href="#">Epics & Tasks</a>
-      <a href="#">Execution Queue</a>
-      <a href="#">Approvals <span class="warn">3</span></a>
-      <a href="#">Agents</a>
-      <a href="#">Usage & Budget</a>
-      <a href="#">Settings</a>
+      <a href="#">Панель управления</a>
+      <a class="active" href="#">Проекты</a>
+      <a href="#">Эпики и задачи</a>
+      <a href="#">Очередь выполнения</a>
+      <a href="#">Согласования <span class="warn">3</span></a>
+      <a href="#">Агенты</a>
+      <a href="#">Использование и бюджет</a>
+      <a href="#">Настройки</a>
     </nav>
-    <div class="bottom">Hermes runtime · Local mode<br/>4 parallel slots</div>
+    <div class="bottom">Hermes runtime · Локальный режим<br/>4 параллельных слота</div>
   </aside>
 
   <main class="main">
     <div class="topbar">
       <div class="title">
         <h1>Ebb AI Hub</h1>
-        <p>C:\Repos\ebb-ai-hub · branch: <b>master</b> · GitHub connected</p>
+        <p>C:\Repos\ebb-ai-hub · ветка: <b>master</b> · GitHub подключён</p>
       </div>
       <div class="actions">
-        <button class="btn">Pause project</button>
-        <button class="btn">Sync GitHub</button>
-        <button class="btn primary">New request</button>
+        <button class="btn">Приостановить проект</button>
+        <button class="btn">Синхронизировать GitHub</button>
+        <button class="btn primary">Новый запрос</button>
       </div>
     </div>
 
     <div class="tabs">
-      <div class="tab active">Overview</div>
+      <div class="tab active">Обзор</div>
       <div class="tab">Epics</div>
-      <div class="tab">Tasks</div>
-      <div class="tab">Runs</div>
+      <div class="tab">Задачи</div>
+      <div class="tab">Запуски</div>
       <div class="tab">Git</div>
-      <div class="tab">Guidelines</div>
-      <div class="tab">Usage</div>
+      <div class="tab">Рекомендации</div>
+      <div class="tab">Использование</div>
     </div>
 
     <section class="metrics">
-      <div class="metric"><span class="muted">Active epic</span><b>1</b></div>
-      <div class="metric"><span class="muted">Active tasks</span><b>5</b></div>
+      <div class="metric"><span class="muted">Активный эпик</span><b>1</b></div>
+      <div class="metric"><span class="muted">Активные задачи</span><b>5</b></div>
       <div class="metric"><span class="muted">Blocked</span><b class="warn">1</b></div>
-      <div class="metric"><span class="muted">Running agents</span><b>3</b></div>
-      <div class="metric"><span class="muted">Project spend</span><b>$18.72</b></div>
+      <div class="metric"><span class="muted">Работающие агенты</span><b>3</b></div>
+      <div class="metric"><span class="muted">Расходы проекта</span><b>$18.72</b></div>
     </section>
 
     <div class="grid">
@@ -99,25 +99,25 @@
               <h3 style="margin-bottom:4px">EPIC-42 · Anthropic Provider</h3>
               <div class="muted">Полноценная поддержка Anthropic через общий Provider API.</div>
             </div>
-            <span class="chip">High priority</span>
+            <span class="chip">Высокий приоритет</span>
           </div>
           <div class="progress"><span></span></div>
-          <div class="row"><span class="muted">7 / 9 required tasks integrated</span><span>72%</span></div>
+          <div class="row"><span class="muted">7 / 9 обязательных задач integrated</span><span>72%</span></div>
 
           <div style="margin-top:14px">
             <div class="task">
               <span class="status good">INTEGRATED</span>
-              <div class="tasktitle"><b>TASK-421 Provider abstraction</b><span>Senior Developer</span></div>
+              <div class="tasktitle"><b>TASK-421 Абстракция провайдера</b><span>Senior Developer</span></div>
               <span class="chip">Review ✓</span><span class="chip">QA ✓</span>
             </div>
             <div class="task">
               <span class="status good">INTEGRATED</span>
-              <div class="tasktitle"><b>TASK-422 Anthropic client</b><span>Senior Developer</span></div>
+              <div class="tasktitle"><b>TASK-422 Клиент Anthropic</b><span>Senior Developer</span></div>
               <span class="chip">Review ✓</span><span class="chip">QA ✓</span>
             </div>
             <div class="task">
               <span class="status">QA</span>
-              <div class="tasktitle"><b>TASK-425 Streaming</b><span>Senior Developer · running</span></div>
+              <div class="tasktitle"><b>TASK-425 Streaming</b><span>Senior Developer · выполняется</span></div>
               <span class="chip">Review ✓</span><span class="chip">QA ●</span>
             </div>
             <div class="task">
@@ -127,64 +127,64 @@
             </div>
             <div class="task">
               <span class="status warn">BLOCKED</span>
-              <div class="tasktitle"><b>TASK-428 Integration tests</b><span>waiting for 425 + 426</span></div>
-              <span class="chip">Dependency</span><span class="chip">Queued</span>
+              <div class="tasktitle"><b>TASK-428 Integration tests</b><span>ожидание for 425 + 426</span></div>
+              <span class="chip">Dependency</span><span class="chip">В очереди</span>
             </div>
           </div>
         </section>
 
         <section class="card" style="margin-top:16px">
-          <div class="row"><h3>Dependency graph</h3><span class="muted">critical path highlighted by scheduler</span></div>
+          <div class="row"><h3>Граф зависимостей</h3><span class="muted">критический путь выделен планировщиком</span></div>
           <div class="graph">
-            <div class="node">TASK-421 · Provider abstraction <span class="good">✓</span></div>
-            <div class="node indent">TASK-422 · Anthropic client <span class="good">✓</span></div>
+            <div class="node">TASK-421 · Абстракция провайдера <span class="good">✓</span></div>
+            <div class="node indent">TASK-422 · Клиент Anthropic <span class="good">✓</span></div>
             <div class="node indent2">TASK-425 · Streaming <span class="warn">QA</span></div>
             <div class="node indent2">TASK-426 · Tool calling <span>Review</span></div>
             <div class="node indent2">TASK-427 · Error normalization <span class="good">✓</span></div>
-            <div class="node indent">TASK-428 · Integration tests <small>blocked by TASK-425, TASK-426</small></div>
+            <div class="node indent">TASK-428 · Integration tests <small>заблокировано задачами TASK-425 и TASK-426</small></div>
           </div>
         </section>
       </div>
 
       <div>
         <section class="card">
-          <h3>Project state</h3>
+          <h3>Состояние проекта</h3>
           <div class="kv">
             <div>Default branch</div><div>master</div>
-            <div>Git state</div><div class="good">In sync</div>
-            <div>GitHub</div><div class="good">Connected</div>
-            <div>Runtime</div><div>Hermes</div>
-            <div>Isolation</div><div>Local</div>
-            <div>Parallel limit</div><div>3 agents</div>
-            <div>Merge strategy</div><div>merge</div>
+            <div>Состояние Git</div><div class="good">Синхронизировано</div>
+            <div>GitHub</div><div class="good">Подключён</div>
+            <div>Среда выполнения</div><div>Hermes</div>
+            <div>Изоляция</div><div>Local</div>
+            <div>Лимит параллельности</div><div>3 агента</div>
+            <div>Стратегия слияния</div><div>merge</div>
           </div>
         </section>
 
         <section class="card" style="margin-top:16px">
-          <div class="row"><h3>Recent activity</h3><span class="muted">live</span></div>
+          <div class="row"><h3>Недавняя активность</h3><span class="muted">в реальном времени</span></div>
           <div class="timeline">
-            <div class="event"><b>TASK-425 → QA</b><div>2 minutes ago · Review passed</div></div>
-            <div class="event"><b>TASK-426 review started</b><div>4 minutes ago · Hermes Reviewer</div></div>
-            <div class="event"><b>Dependency proposal created</b><div>11 minutes ago · TASK-428</div></div>
-            <div class="event"><b>TASK-424 merged into epic</b><div>18 minutes ago · Integration Agent</div></div>
+            <div class="event"><b>TASK-425 → QA</b><div>2 минуты назад · Review пройдено</div></div>
+            <div class="event"><b>Начато ревью TASK-426</b><div>4 минуты назад · Reviewer Hermes</div></div>
+            <div class="event"><b>Создано предложение зависимости</b><div>11 минут назад · TASK-428</div></div>
+            <div class="event"><b>TASK-424 слита в эпик</b><div>18 минут назад · Integration Agent</div></div>
           </div>
         </section>
 
         <section class="card" style="margin-top:16px">
-          <div class="row"><h3>Budget</h3><span>$18.72 / $30 soft</span></div>
+          <div class="row"><h3>Бюджет</h3><span>$18.72 / $30 soft</span></div>
           <div class="progress"><span style="width:62%"></span></div>
-          <div class="muted">No hard limit · 62% of soft budget</div>
+          <div class="muted">Жёсткого лимита нет · 62% мягкого бюджета</div>
         </section>
 
         <section class="card" style="margin-top:16px">
-          <h3>Coordinator · Ebb AI Hub</h3>
+          <h3>Координатор · Ebb AI Hub</h3>
           <div class="chatbox">TASK-428 остаётся заблокирована до завершения Streaming и Tool Calling. Архитектурных отклонений не обнаружено.</div>
-          <div class="chatinput">Спросить Coordinator об этом проекте…</div>
+          <div class="chatinput">Спросить Координатор об этом проекте…</div>
         </section>
       </div>
     </div>
 
-    <div class="footer-note">Project View concept v0.1 · Project-specific Coordinator context · local-first</div>
+    <div class="footer-note">Концепция представления проекта v0.1 · контекст координатора проекта · сначала локально</div>
   </main>
 </div>
 </body>

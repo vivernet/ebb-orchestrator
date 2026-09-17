@@ -12,7 +12,7 @@ const require = createRequire(import.meta.url);
 
 /** The launcher is deliberately independent of pnpm bin shims and cwd. */
 function defaultMcpLauncher(): { command: string; args: string[] } {
-  const entrypoint = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../bin/orchestrator-mcp.ts");
+  const entrypoint = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../bin/ebb-orchestrator-mcp.ts");
   const tsxLoader = pathToFileURL(require.resolve("tsx/esm")).href;
   return { command: process.execPath, args: ["--import", tsxLoader, entrypoint] };
 }
@@ -103,16 +103,16 @@ export interface GenerateConfigOptions {
  * Generate config.yaml content for Hermes runtime.
  *
  * This creates a minimal config with only Orchestrator-managed settings:
- * - MCP server definition referencing orchestrator-mcp
+ * - MCP server definition referencing ebb-orchestrator-mcp
  * - Terminal configuration with home_mode: profile
  */
 export function generateConfigYaml(options: GenerateConfigOptions): string {
   const { toolsetPath, resultFile } = options;
   const defaultLauncher = defaultMcpLauncher();
-  const mcpCommand = options.mcpCommand && options.mcpCommand !== "orchestrator-mcp"
+  const mcpCommand = options.mcpCommand && options.mcpCommand !== "ebb-orchestrator-mcp"
     ? options.mcpCommand
     : defaultLauncher.command;
-  const mcpArgs = options.mcpCommand && options.mcpCommand !== "orchestrator-mcp"
+  const mcpArgs = options.mcpCommand && options.mcpCommand !== "ebb-orchestrator-mcp"
     ? (options.mcpArgs ?? [])
     : [...defaultLauncher.args, ...(options.mcpArgs ?? [])];
   const capabilityRef = options.capabilityRef ?? "orchestrator-issued-reference";
@@ -121,7 +121,7 @@ export function generateConfigYaml(options: GenerateConfigOptions): string {
 
   const yaml = [
     "mcp_servers:",
-    "  orchestrator-mcp:",
+    "  ebb-orchestrator-mcp:",
     `    command: ${yamlString(mcpCommand)}`,
     "    args:",
     ...executableArgs.map((arg) => `      - ${yamlString(arg)}`),

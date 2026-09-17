@@ -1,8 +1,8 @@
-# Local-First AI Software Development Orchestrator — Design Specification
+# Local-first оркестратор разработки ПО с помощью ИИ — спецификация дизайна
 
-**Статус:** архитектура утверждена по секциям; документ собран для финального ревью  
-**Дата:** 2026-09-16  
-**Область:** архитектура v1 + явно обозначенные точки будущего расширения  
+**Статус:** архитектура утверждена по секциям; документ собран для финального ревью
+**Дата:** 2026-09-16
+**Область:** архитектура v1 + явно обозначенные точки будущего расширения
 **Пример основной ветки по умолчанию:** `master` (настраивается для каждого проекта)
 
 ---
@@ -89,9 +89,9 @@ Orchestrator Backend
 
 ---
 
-# 2. Deterministic-first модель управления
+# 2. Модель управления с приоритетом детерминированности
 
-Orchestrator владеет workflow. Hermes не управляет workflow самостоятельно.
+Orchestrator управляет workflow. Hermes не управляет workflow самостоятельно.
 
 Обычным кодом выполняются:
 
@@ -136,9 +136,9 @@ Agent
 
 ---
 
-# 3. Agent Runtime и роли
+# 3. Среда выполнения агентов и роли
 
-## 3.1. Универсальный runtime
+## 3.1. Универсальная среда выполнения
 
 Все AI-запуски идут через `AgentRuntime`.
 
@@ -166,19 +166,19 @@ Worktree всегда создаёт и назначает Orchestrator. Hermes 
 
 ## 3.2. Девять ролей v1
 
-### Management / Design
+### Управление и проектирование
 
 - Coordinator
 - Product Manager
 - Architect
 
-### Implementation
+### Реализация
 
 - Middle Developer
 - Senior Developer
 - DevOps Agent
 
-### Quality / Integration
+### Качество и интеграция
 
 - Reviewer
 - QA Agent
@@ -223,7 +223,7 @@ escalation_policy
 
 ---
 
-# 4. Project onboarding и владение конфигурацией
+# 4. Подключение проекта и владение конфигурацией
 
 Onboarding:
 
@@ -272,7 +272,7 @@ Versioned project configuration:
 
 ---
 
-# 5. Work model: Project, Epic, Task, Proposal, Decision
+# 5. Модель работы: Project, Epic, Task, Proposal, Decision
 
 ## 5.1. Иерархия
 
@@ -281,7 +281,7 @@ Project
 ├── Epic
 │   ├── Task
 │   └── Task
-└── Standalone Task
+└── Автономная Task
 ```
 
 Nested Epic в v1 нет.
@@ -296,7 +296,7 @@ v1 поддерживает:
 
 Если агент сам обнаружил дополнительную работу, он не создаёт Task напрямую. Он создаёт `ProposalCandidate`, после чего Orchestrator применяет policy/approval.
 
-## 5.3. Task Contract
+## 5.3. Контракт Task
 
 Каждая Task имеет формальный контракт:
 
@@ -312,11 +312,11 @@ Epic имеет аналогичный контракт более высоко�
 
 Developer не может переписать Acceptance Criteria под свою реализацию. Изменение требований идёт через Proposal.
 
-## 5.4. Required / optional Task
+## 5.4. Обязательные и необязательные Task
 
 Плановые Task внутри Epic по умолчанию `required`. Optional Task указывается явно.
 
-## 5.5. Dependencies
+## 5.5. Зависимости
 
 Dependency — отдельная сущность. В v1 основной тип — `BLOCKING`.
 
@@ -326,9 +326,9 @@ Dependency — отдельная сущность. В v1 основной ти�
 
 ---
 
-# 6. Lifecycle Task и Epic
+# 6. Жизненный цикл Task и Epic
 
-## 6.1. Standalone Task
+## 6.1. Автономная Task
 
 ```text
 DRAFT
@@ -366,7 +366,7 @@ INTEGRATED_INTO_EPIC
 
 В `RELEASED` она переходит только после попадания Epic в `master`.
 
-## 6.3. Epic lifecycle
+## 6.3. Жизненный цикл Epic
 
 ```text
 User request
@@ -388,7 +388,7 @@ User request
 
 Финальная интеграция всегда выполняется против **текущего** `master`, а не состояния ветки на момент создания Epic.
 
-Default planning approval policy:
+Политика подтверждения планирования по умолчанию:
 
 ```yaml
 approvals:
@@ -403,7 +403,7 @@ approvals:
 
 ---
 
-# 7. Workflow Engine и domain events
+# 7. Workflow Engine и события домена
 
 Workflow Engine — единственный владелец state transitions.
 
@@ -418,7 +418,7 @@ Agent output
 
 Coordinator выбирает один из разрешённых workflow templates, но не конструирует произвольный state machine.
 
-v1 templates:
+Шаблоны v1:
 
 ```text
 standard
@@ -436,18 +436,18 @@ devops
 - QA results;
 - Integration results;
 - dependencies;
-- Epic lifecycle;
+- Жизненный цикл Epic;
 - Approval;
 - Proposal;
 - Recovery;
 - Budget;
 - Git.
 
-Используется обычное current state в таблицах + event/audit history. Это **не full Event Sourcing**.
+Используется текущее состояние в таблицах + event/audit history. Это **не full Event Sourcing**.
 
 ---
 
-# 8. Scheduler и параллельность
+# 8. Планировщик и параллельность
 
 Scheduler полностью детерминированный и не вызывает LLM.
 
@@ -498,7 +498,7 @@ Scheduler работает event-driven, но имеет периодическ�
 
 ---
 
-# 9. Structured Contracts AI-ролей
+# 9. Структурированные контракты AI-ролей
 
 Для каждой роли существует отдельная versioned input/output schema. Backend не определяет решение по свободному тексту.
 
@@ -522,7 +522,7 @@ task_2
 
 после validation/approval они маппятся на реальные domain IDs.
 
-Proposal types минимум:
+Минимальные типы Proposal:
 
 ```text
 NEW_TASK
@@ -556,7 +556,7 @@ Output Validator выполняет:
 
 Финальный результат подаётся через контролируемый `submit_result(...)`. Первый успешно принятый result переводит Run в `COMPLETING`; дальнейшая произвольная работа запрещается.
 
-## 9.1. Findings и defects
+## 9.1. Findings и дефекты
 
 После первого принятого Review/QA Orchestrator назначает стабильные ID:
 
@@ -577,11 +577,11 @@ STILL_REPRODUCIBLE
 
 ---
 
-# 10. Context Engine / Project Knowledge
+# 10. Context Engine / знания проекта
 
 ## 10.1. Три слоя памяти
 
-### Long-term project memory
+### Долговременная память проекта
 
 - Guidelines;
 - Decisions;
@@ -589,7 +589,7 @@ STILL_REPRODUCIBLE
 - approved project config;
 - approved contracts.
 
-### Work memory
+### Рабочая память
 
 - Task/Epic state;
 - open findings;
@@ -598,7 +598,7 @@ STILL_REPRODUCIBLE
 - recovery information;
 - current Git state.
 
-### Session memory
+### Память сессии
 
 - Hermes conversation;
 - tool results;
@@ -608,7 +608,7 @@ STILL_REPRODUCIBLE
 
 > **База и versioned project knowledge — долгосрочная память. Session — временная рабочая память агента.**
 
-## 10.2. Context Package
+## 10.2. Пакет контекста
 
 Каждый Run получает минимальный достаточный context:
 
@@ -652,7 +652,7 @@ LLM summarization используется только после обычно�
 - Context Builder version;
 - initial token size.
 
-## 10.3. Role-specific context
+## 10.3. Контекст для конкретной роли
 
 **Developer:** Task Contract, target/worktree, relevant Guidelines/Decisions, open findings/defects, dependency state.
 
@@ -664,7 +664,7 @@ LLM summarization используется только после обычно�
 
 **Coordinator:** компактный `Project/EpicStateSummary`, собираемый обычным кодом, а не вся история Runs.
 
-## 10.4. Sessions
+## 10.4. Сессии
 
 - Coordinator — на один planning/replan/recovery cycle;
 - Architect — на Epic;
@@ -707,7 +707,7 @@ Guideline — долговременное общее правило проек�
 - provenance;
 - rationale.
 
-Priority:
+Приоритет:
 
 ```text
 REQUIRED
@@ -715,7 +715,7 @@ RECOMMENDED
 PREFERENCE
 ```
 
-Lifecycle:
+Жизненный цикл:
 
 ```text
 PROPOSED
@@ -740,7 +740,7 @@ Editorial change может применяться автоматически п
 1. deterministic candidate narrowing по category/scope/path/tags/normalized text;
 2. AI semantic comparison только небольшого набора кандидатов.
 
-Classification:
+Классификация:
 
 ```text
 NEW
@@ -755,7 +755,7 @@ REPLACEMENT
 
 Decision — конкретный выбор и rationale, облегчённый ADR.
 
-Statuses:
+Статусы:
 
 ```text
 PROPOSED
@@ -784,7 +784,7 @@ Manual/Git изменения `.orchestrator/guidelines` и `.orchestrator/decis
 
 ---
 
-# 12. Permission Engine и Action Gateway
+# 12. Permission Engine и шлюз действий
 
 Техническая граница:
 
@@ -865,11 +865,11 @@ Hermes delegation/subagents в v1 отключены: иначе они обхо
 
 ---
 
-# 13. Security Model
+# 13. Модель безопасности
 
 Модель считается потенциально ошибающейся, repository content — потенциально враждебным, а Local Mode — **не OS sandbox**.
 
-Untrusted inputs:
+Ненадёжные входы:
 
 - source/comments;
 - README и repository instructions;
@@ -889,7 +889,7 @@ Prompt injection не создаёт authority. Authority находится т�
 
 Repository-specific instruction files и MCP/plugins не подключаются автоматически.
 
-## 13.1. Secrets
+## 13.1. Секреты
 
 Секреты не попадают в prompt.
 
@@ -903,7 +903,7 @@ Secret injection допускается только для строго scoped 
 
 Logs/Artifacts проходят redaction/sanitization, но основная защита — **не давать секрет процессу без необходимости**.
 
-## 13.2. Local API и Web UI
+## 13.2. Локальный API и Web UI
 
 Backend по умолчанию слушает только loopback.
 
@@ -918,7 +918,7 @@ Repository/agent text рендерится escaped/sanitized. Terminal escape/co
 
 Action Gateway по возможности использует private stdio/IPC, а не публичный localhost endpoint.
 
-## 13.3. Trust levels
+## 13.3. Уровни доверия
 
 ```text
 TRUSTED_LOCAL
@@ -934,11 +934,11 @@ Dependency installation, package scripts, tests/builds и любые lifecycle s
 
 ---
 
-# 14. Git, Worktrees и Integration
+# 14. Git, worktree и интеграция
 
 Git — source of truth для кода. SQLite — source of truth для orchestration state.
 
-Branch model:
+Модель веток:
 
 ```text
 master                              # configurable default
@@ -948,7 +948,7 @@ integration/task-421
 integration/epic-42
 ```
 
-Standalone Task основывается на `master`. Epic child Task — на Epic branch.
+Автономная Task основывается на `master`. Epic child Task — на Epic branch.
 
 Каждая активная Task получает отдельный managed worktree. Один worktree — один активный writer.
 
@@ -975,7 +975,7 @@ classification
 status
 ```
 
-Classification:
+Классификация:
 
 ```text
 TRIVIAL
@@ -1012,7 +1012,7 @@ Final merge выполняет deterministic Merge Service, а не Hermes.
 
 ---
 
-# 15. GitHub Integration
+# 15. Интеграция с GitHub
 
 GitHub — optional adapter, а не source of truth workflow.
 
@@ -1043,10 +1043,10 @@ Polling + Sync Now — основной v1 механизм, потому что
 - обязательные webhooks;
 - полная двусторонняя sync всех comments/reviews.
 
-PR model:
+Модель PR:
 
 ```text
-Standalone Task: task/* → master
+Автономная Task: task/* → master
 Epic child Task: task/* → epic/*
 Epic: epic/* → master
 ```
@@ -1063,11 +1063,11 @@ GitHub infrastructure errors обрабатываются кодом: timeout re
 
 ---
 
-# 16. Recovery Engine и anti-loop
+# 16. Recovery Engine и защита от циклов
 
 Recovery — отдельный deterministic module.
 
-Failure classes:
+Классы сбоев:
 
 ```text
 CRASH
@@ -1077,7 +1077,7 @@ TASK_FAILURE
 BLOCKER
 ```
 
-Recovery ladder:
+Лестница восстановления:
 
 ```text
 resume same session
@@ -1151,7 +1151,7 @@ Project → Epic → Task → Run
 - estimated/final cost;
 - timestamps.
 
-Trigger reasons:
+Причины запуска:
 
 ```text
 PLANNING
@@ -1170,7 +1170,7 @@ EPIC_REVIEW
 ARCHITECTURE_REVIEW
 ```
 
-Budget hierarchy:
+Иерархия бюджета:
 
 ```text
 Global
@@ -1196,7 +1196,7 @@ Dashboard должен показывать concrete metrics: tokens, cache, cos
 
 ---
 
-# 18. Backend modules, API и read models
+# 18. Модули backend, API и модели чтения
 
 Основные backend-модули:
 
@@ -1248,9 +1248,9 @@ SQLite физически одна, но ownership таблиц сохраняе
 
 ---
 
-# 19. Event Processing, Jobs и Workers
+# 19. Обработка событий, задания и workers
 
-## 19.1. Transactional Outbox
+## 19.1. Транзакционный Outbox
 
 Domain state и durable event записываются одной SQLite transaction:
 
@@ -1267,7 +1267,7 @@ Delivery semantics — **at-least-once**, не exactly-once. Поэтому dura
 
 Critical consumers могут хранить processed-event/inbox state.
 
-## 19.2. Durable vs ephemeral events
+## 19.2. Надёжные и эфемерные события
 
 Durable:
 
@@ -1286,7 +1286,7 @@ Ephemeral:
 
 Ephemeral UI события не обязаны жить в persistent event history.
 
-## 19.3. Event и Job
+## 19.3. Событие и задание
 
 ```text
 Event = что произошло
@@ -1295,7 +1295,7 @@ Job   = что нужно выполнить
 
 Например `TaskIntegrated` может создать background job `UPDATE_GITHUB_PR`. GitHub outage не должен удерживать domain event или локальный workflow.
 
-Background job states:
+Состояния фоновых заданий:
 
 ```text
 QUEUED
@@ -1328,7 +1328,7 @@ Transient external errors используют bounded exponential backoff. Auth
 
 Unprocessable durable operation уходит в dead-letter, а не блокирует всю систему.
 
-## 19.5. Startup reconciliation
+## 19.5. Согласование при запуске
 
 При startup Scheduler **не включается сразу**.
 
@@ -1346,7 +1346,7 @@ STARTING
 → READY
 ```
 
-System states:
+Состояния системы:
 
 ```text
 STARTING
@@ -1363,11 +1363,11 @@ Backend защищён single-instance lock. Worker leases дополнител�
 
 ---
 
-# 20. Persistence, Config и Migrations
+# 20. Хранение, конфигурация и миграции
 
 Хранение разделено на три слоя.
 
-## 20.1. Versioned repository state
+## 20.1. Версионируемое состояние репозитория
 
 ```text
 <repo>/.orchestrator/
@@ -1375,7 +1375,7 @@ Backend защищён single-instance lock. Worker leases дополнител�
 
 Здесь project config, workflows, Guidelines, Decisions.
 
-## 20.2. Local persistent/runtime state
+## 20.2. Локальное постоянное состояние и состояние среды выполнения
 
 ```text
 ~/.orchestrator/
@@ -1386,7 +1386,7 @@ Backend защищён single-instance lock. Worker leases дополнител�
 └── backups/
 ```
 
-## 20.3. Secure Storage
+## 20.3. Безопасное хранилище
 
 Credentials/secrets хранятся отдельно через platform-appropriate secure storage.
 
@@ -1401,7 +1401,7 @@ Project config migrations бывают:
 
 SQLite migration history хранится в `schema_migrations`.
 
-Startup order:
+Порядок запуска:
 
 ```text
 open DB
@@ -1432,7 +1432,7 @@ TASK-42
 EPIC-7
 ```
 
-Config precedence:
+Приоритет конфигурации:
 
 ```text
 Global defaults
@@ -1455,9 +1455,9 @@ Artifact paths по возможности хранятся относитель
 
 ---
 
-# 21. Testing, Reliability и v1 Scope
+# 21. Тестирование, надёжность и область v1
 
-## 21.1. Testing philosophy
+## 21.1. Принципы тестирования
 
 Критическая логика Orchestrator должна полностью тестироваться **без LLM**.
 
@@ -1643,7 +1643,7 @@ PM + Architect + Epic planning + parallel Task + Epic Review/QA/final integratio
 
 Укрепляются Guideline/Decision lifecycle, Context Budget/Delta, dashboards и базовый GitHubAdapter.
 
-## 21.5. v1 acceptance tests
+## 21.5. Приёмочные тесты v1
 
 ### Autonomous Task
 
@@ -1667,7 +1667,7 @@ PM + Architect + Epic planning + parallel Task + Epic Review/QA/final integratio
 
 Крупный запрос превращается в validated Epic с несколькими dependent/parallel Task. Каждая child Task проходит Dev → Review → QA → Integration в Epic branch. После required Tasks выполняются Epic Review, optional Architecture Review, Epic QA, final current-`master` integration и user approval. После merge Epic становится DONE, child Tasks — RELEASED.
 
-## 21.6. Definition of Done v1
+## 21.6. Definition of Done для v1
 
 v1 считается готовым, когда:
 
@@ -1689,7 +1689,7 @@ v1 считается готовым, когда:
 
 ---
 
-# Appendix A — Утверждённая Web UI architecture
+# Приложение A — утверждённая архитектура Web UI
 
 Все перечисленные ниже концепты были отдельно просмотрены и утверждены.
 
@@ -1697,37 +1697,37 @@ v1 считается готовым, когда:
 
 Показывает Running agents, Active work, Need approval, AI spend, Active projects, Approval Inbox summary, Execution Queue, Agent Pool и Coordinator Chat. Основные действия — Pause All и New Request.
 
-Концепт: `orchestrator-dashboard-concept.html`.
+Концепт: `ebb-orchestrator-dashboard-concept.html`.
 
 ## Project View
 
 Repository/path/default branch/GitHub status, Overview/Epics/Tasks/Runs/Git/Guidelines/Usage, active Epic, dependency state, runtime/isolation/parallel/merge settings, activity, budget и project-scoped Coordinator.
 
-Концепт: `orchestrator-project-view-concept.html`.
+Концепт: `ebb-orchestrator-project-view-concept.html`.
 
 ## Epic View
 
-Epic lifecycle, parallel work graph, Task status/agents, Epic Contract, branch state, approvals/blockers, budget/events и финальные Epic Review / Architecture Review / Epic QA / Merge stages.
+Жизненный цикл Epic, parallel work graph, Task status/agents, Epic Contract, branch state, approvals/blockers, budget/events и финальные Epic Review / Architecture Review / Epic QA / Merge stages.
 
-Концепт: `orchestrator-epic-view-concept.html`.
+Концепт: `ebb-orchestrator-epic-view-concept.html`.
 
 ## Task View
 
 Workflow Dev → Review → QA → Integration → Epic/master, Task Contract, Agent Runs, Review findings, QA defects, Git/worktree/PR state, Recovery, Usage, Dependencies и events.
 
-Концепт: `orchestrator-task-view-concept.html`.
+Концепт: `ebb-orchestrator-task-view-concept.html`.
 
 ## Approval Inbox
 
 Только реальные human gates: Plans, Architecture, Permissions, Budget, Merge. Detail panel показывает что запрашивается, почему, impact/evidence и Approve / Reject / Request Changes.
 
-Концепт: `orchestrator-approval-inbox-concept.html`.
+Концепт: `ebb-orchestrator-approval-inbox-concept.html`.
 
 ## Execution Queue / Agents Monitor
 
 Running / Queued / Blocked / Waiting approval, scheduler capacity, точная причина ожидания, Resource Locks, scheduler events, Pause / Cancel / Stop All Agents.
 
-Концепт: `orchestrator-execution-queue-concept.html`.
+Концепт: `ebb-orchestrator-execution-queue-concept.html`.
 
 ## Agent Run Detail / Live Logs
 
@@ -1735,13 +1735,13 @@ Live observable events, controlled tool calls, sanitized terminal output, permis
 
 UI показывает **наблюдаемые действия и результаты**, но не скрытую chain-of-thought модели.
 
-Концепт: `orchestrator-agent-run-detail-concept.html`.
+Концепт: `ebb-orchestrator-agent-run-detail-concept.html`.
 
 ## Usage & Budget
 
 Spend/tokens/cache/recovery share, budgets, spend by role/reason, deterministic `$0` checks, anomalies, model comparison и effective cost.
 
-Концепт: `orchestrator-usage-budget-concept.html`.
+Концепт: `ebb-orchestrator-usage-budget-concept.html`.
 
 ## Settings / Project Configuration
 
@@ -1758,17 +1758,17 @@ Global defaults
 
 Security остаётся most-restrictive-wins.
 
-Концепт: `orchestrator-settings-concept.html`.
+Концепт: `ebb-orchestrator-settings-concept.html`.
 
 ## Project Onboarding
 
 Repository → Discovery → Review Findings → Approve Config → Activate Project. DETECTED и PROPOSED визуально разделены. Показывается, какие `.orchestrator/*` файлы будут созданы, а secrets/runtime state остаются локальными.
 
-Концепт: `orchestrator-project-onboarding-concept.html`.
+Концепт: `ebb-orchestrator-project-onboarding-concept.html`.
 
 ---
 
-# Appendix B — Фундаментальные invariants
+# Приложение B — фундаментальные инварианты
 
 1. AI не изменяет domain workflow state напрямую.
 2. AI не выделяет authoritative Task/Epic IDs.
@@ -1798,7 +1798,7 @@ Repository → Discovery → Review Findings → Approve Config → Activate Pro
 
 ---
 
-# Appendix C — Граница архитектуры v1
+# Приложение C — граница архитектуры v1
 
 Эта архитектура намеренно сначала строит надёжный single-user local orchestrator, а не distributed AI-development platform.
 

@@ -291,7 +291,7 @@ describe("Autonomous Task End-to-End Workflow", () => {
     }
 
     const worktree = await worktreeManager.createTaskWorkspace(taskId, masterRepoPath, "master");
-    const mcpCli = join(import.meta.dirname, "../../src/bin/orchestrator-mcp.ts");
+    const mcpCli = join(import.meta.dirname, "../../src/bin/ebb-orchestrator-mcp.ts");
     const databasePath = join(tmpDir, "acceptance.db");
     const resultDirectory = join(tmpDir, "hermes-results");
     const workspaceByRun = new Map<string, string>();
@@ -317,7 +317,7 @@ describe("Autonomous Task End-to-End Workflow", () => {
         expect(config).toContain(`- ${JSON.stringify(databasePath)}`);
         expect(config).toContain(`- ${JSON.stringify(resultPath)}`);
         const handshake = await runMcpHandshake(mcpCli, roleWorkspace, databasePath, capabilityRef);
-        expect(handshake).toContain('"name":"orchestrator-mcp"');
+        expect(handshake).toContain('"name":"ebb-orchestrator-mcp"');
         expect(handshake).toContain('"submit_result"');
         expect(handshake).toContain('"id":1');
         expect(handshake).toContain('"id":2');

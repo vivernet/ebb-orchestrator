@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Agent Orchestrator — Epic View Concept</title>
+<title>Agent Orchestrator — Концепция представления эпика</title>
 <style>
 :root{
   --bg:#0b0d10; --panel:#12161b; --panel2:#171c22; --line:#252c34;
@@ -51,46 +51,46 @@ body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 Inter,ui-san
 <body>
 <div class="app">
   <aside class="sidebar">
-    <div class="brand">Agent Orchestrator<small>Local workspace</small></div>
+    <div class="brand">Agent Orchestrator<small>Локальное рабочее пространство</small></div>
     <nav class="nav">
-      <a href="#">Dashboard</a>
-      <a href="#">Projects</a>
-      <a class="active" href="#">Epics & Tasks</a>
-      <a href="#">Execution Queue</a>
-      <a href="#">Approvals <span class="warn">3</span></a>
-      <a href="#">Agents</a>
-      <a href="#">Usage & Budget</a>
-      <a href="#">Settings</a>
+      <a href="#">Панель управления</a>
+      <a href="#">Проекты</a>
+      <a class="active" href="#">Эпики и задачи</a>
+      <a href="#">Очередь выполнения</a>
+      <a href="#">Согласования <span class="warn">3</span></a>
+      <a href="#">Агенты</a>
+      <a href="#">Использование и бюджет</a>
+      <a href="#">Настройки</a>
     </nav>
-    <div class="bottom">Hermes runtime · Local mode<br/>4 parallel slots</div>
+    <div class="bottom">Hermes runtime · Локальный режим<br/>4 параллельных слота</div>
   </aside>
 
   <main class="main">
     <div class="topbar">
       <div class="title">
         <h1>EPIC-42 · Anthropic Provider</h1>
-        <p>Ebb AI Hub · branch: <b>epic/42-anthropic-provider</b> · target: <b>master</b></p>
+        <p>Ebb AI Hub · ветка: <b>epic/42-anthropic-provider</b> · target: <b>master</b></p>
       </div>
       <div class="actions">
-        <button class="btn">Pause epic</button>
-        <button class="btn">Replan</button>
-        <button class="btn primary">Open Coordinator</button>
+        <button class="btn">Приостановить epic</button>
+        <button class="btn">Перепланировать</button>
+        <button class="btn primary">Открыть Координатор</button>
       </div>
     </div>
 
     <div class="tabs">
-      <div class="tab active">Overview</div>
-      <div class="tab">Tasks</div>
-      <div class="tab">Dependency Graph</div>
-      <div class="tab">Architecture</div>
-      <div class="tab">Runs</div>
+      <div class="tab active">Обзор</div>
+      <div class="tab">Задачи</div>
+      <div class="tab">Граф зависимостей</div>
+      <div class="tab">Архитектура</div>
+      <div class="tab">Запуски</div>
       <div class="tab">Git</div>
-      <div class="tab">Usage</div>
+      <div class="tab">Использование</div>
     </div>
 
     <section class="metrics">
-      <div class="metric"><span class="muted">Required tasks</span><b>7 / 9</b></div>
-      <div class="metric"><span class="muted">Running agents</span><b>3</b></div>
+      <div class="metric"><span class="muted">Обязательно tasks</span><b>7 / 9</b></div>
+      <div class="metric"><span class="muted">Работающие агенты</span><b>3</b></div>
       <div class="metric"><span class="muted">Blocked</span><b class="warn">1</b></div>
       <div class="metric"><span class="muted">Epic spend</span><b>$8.41</b></div>
       <div class="metric"><span class="muted">Ready for master</span><b class="bad">No</b></div>
@@ -101,46 +101,46 @@ body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 Inter,ui-san
         <section class="card">
           <div class="row">
             <div>
-              <h3 style="margin-bottom:4px">Epic lifecycle</h3>
+              <h3 style="margin-bottom:4px">Жизненный цикл эпика</h3>
               <div class="muted">Большая фича проходит отдельную финальную проверку после интеграции всех задач.</div>
             </div>
-            <span class="chip">Architecture review required</span>
+            <span class="chip">Архитектура review required</span>
           </div>
 
           <div class="pipeline">
             <div class="stage done">Plan ✓</div>
-            <div class="stage done">Architecture ✓</div>
-            <div class="stage active">Task execution ●</div>
-            <div class="stage">Epic review</div>
-            <div class="stage">Epic QA</div>
-            <div class="stage">Merge → master</div>
+            <div class="stage done">Архитектура ✓</div>
+            <div class="stage active">Выполнение задач ●</div>
+            <div class="stage">Ревью эпика</div>
+            <div class="stage">QA эпика</div>
+            <div class="stage">Слияние → master</div>
           </div>
 
           <div class="progress"><span></span></div>
-          <div class="row"><span class="muted">7 of 9 required tasks integrated into epic branch</span><span>72%</span></div>
+          <div class="row"><span class="muted">7 из 9 обязательных задач интегрировано в ветку эпика</span><span>72%</span></div>
         </section>
 
         <section class="card" style="margin-top:16px">
-          <div class="row"><h3>Parallel work graph</h3><span class="muted">scheduler view</span></div>
+          <div class="row"><h3>Граф параллельной работы</h3><span class="muted">представление планировщика</span></div>
           <div class="graph">
             <div class="col">
-              <div class="coltitle">Foundation</div>
+              <div class="coltitle">Основа</div>
               <div class="node good">
                 <strong>TASK-421</strong>
-                Provider abstraction
+                Абстракция провайдера
                 <small>Senior Developer · integrated</small>
                 <div class="meta"><span class="chip">Review ✓</span><span class="chip">QA ✓</span></div>
               </div>
               <div class="node good">
                 <strong>TASK-422</strong>
-                Anthropic client
+                Клиент Anthropic
                 <small>Senior Developer · integrated</small>
                 <div class="meta"><span class="chip">depends 421</span></div>
               </div>
             </div>
 
             <div class="col">
-              <div class="coltitle">Parallel implementation</div>
+              <div class="coltitle">Параллельная реализация</div>
               <div class="node good">
                 <strong>TASK-423</strong>
                 Request mapping
@@ -154,19 +154,19 @@ body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 Inter,ui-san
               <div class="node running">
                 <strong>TASK-425</strong>
                 Streaming
-                <small>QA running · Hermes</small>
+                <small>QA выполняется · Hermes</small>
                 <div class="meta"><span class="chip">Review ✓</span><span class="chip">QA ●</span></div>
               </div>
               <div class="node running">
                 <strong>TASK-426</strong>
                 Tool calling
-                <small>Reviewer running · Hermes</small>
+                <small>Reviewer выполняется · Hermes</small>
                 <div class="meta"><span class="chip">Review ●</span></div>
               </div>
             </div>
 
             <div class="col">
-              <div class="coltitle">Validation</div>
+              <div class="coltitle">Проверка</div>
               <div class="node good">
                 <strong>TASK-427</strong>
                 Error normalization
@@ -181,86 +181,86 @@ body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 Inter,ui-san
             </div>
 
             <div class="col">
-              <div class="coltitle">Finish</div>
+              <div class="coltitle">Завершение</div>
               <div class="node">
                 <strong>TASK-429</strong>
-                Documentation
-                <small>Queued · low priority</small>
+                Документация
+                <small>В очереди · низкий приоритет</small>
               </div>
               <div class="node">
                 <strong>Epic Review</strong>
-                Final code review
-                <small>waiting for all required tasks</small>
+                Финальное ревью кода
+                <small>ожидает все обязательные задачи</small>
               </div>
               <div class="node">
-                <strong>Epic QA</strong>
-                End-to-end validation
-                <small>waiting</small>
+                <strong>QA эпика</strong>
+                Сквозная проверка
+                <small>ожидание</small>
               </div>
             </div>
           </div>
         </section>
 
         <section class="card" style="margin-top:16px">
-          <div class="row"><h3>Epic contract</h3><span class="chip">Approved</span></div>
+          <div class="row"><h3>Контракт эпика</h3><span class="chip">Согласоватьd</span></div>
           <div class="kv">
-            <div>Goal</div><div>Полная поддержка Anthropic через общий Provider API.</div>
-            <div>Required</div><div>Text, streaming, tool calling, normalized errors, tests.</div>
-            <div>Non-goals</div><div>Batch API, fine-tuning.</div>
-            <div>Architecture</div><div>Provider-specific objects must not leak into core.</div>
+            <div>Цель</div><div>Полная поддержка Anthropic через общий Provider API.</div>
+            <div>Обязательно</div><div>Text, streaming, tool calling, normalized errors, tests.</div>
+            <div>Вне целей</div><div>Batch API, fine-tuning.</div>
+            <div>Архитектура</div><div>Объекты, специфичные для провайдера, не должны проникать в ядро.</div>
           </div>
         </section>
       </div>
 
       <div>
         <section class="card">
-          <h3>Epic branch</h3>
+          <h3>Ветка эпика</h3>
           <div class="branch">epic/42-anthropic-provider → master</div>
           <div class="kv" style="margin-top:12px">
-            <div>Git state</div><div class="good">In sync</div>
-            <div>Latest commit</div><div>7c8f2a1</div>
-            <div>Task PRs merged</div><div>7</div>
-            <div>Final PR</div><div class="muted">Not created yet</div>
+            <div>Состояние Git</div><div class="good">Синхронизировано</div>
+            <div>Последний коммит</div><div>7c8f2a1</div>
+            <div>PR задач слито</div><div>7</div>
+            <div>Финальный PR</div><div class="muted">Ещё не создан</div>
           </div>
         </section>
 
         <section class="card" style="margin-top:16px">
-          <div class="row"><h3>Active agents</h3><span>3 / 4 slots</span></div>
+          <div class="row"><h3>Активные агенты</h3><span>3 / 4 slots</span></div>
           <div class="agent"><div><span class="dot busy"></span><b>QA</b><div class="muted">TASK-425 Streaming</div></div><span>8m</span></div>
           <div class="agent"><div><span class="dot busy"></span><b>Reviewer</b><div class="muted">TASK-426 Tool calling</div></div><span>4m</span></div>
-          <div class="agent"><div><span class="dot busy"></span><b>Middle Developer</b><div class="muted">TASK-429 Documentation</div></div><span>2m</span></div>
-          <div class="agent"><div><span class="dot idle"></span><b>Integration Agent</b><div class="muted">waiting</div></div><span>—</span></div>
+          <div class="agent"><div><span class="dot busy"></span><b>Middle Developer</b><div class="muted">TASK-429 Документация</div></div><span>2m</span></div>
+          <div class="agent"><div><span class="dot idle"></span><b>Integration Agent</b><div class="muted">ожидание</div></div><span>—</span></div>
         </section>
 
         <section class="card" style="margin-top:16px">
-          <div class="row"><h3>Approvals & blockers</h3><span class="warn">1 attention</span></div>
+          <div class="row"><h3>Согласования & blockers</h3><span class="warn">1 требует внимания</span></div>
           <div class="approval">
-            <b>Dependency proposal</b>
+            <b>Предложение зависимости</b>
             <div class="muted">TASK-428 may require additional fixture setup.</div>
-            <div style="margin-top:8px"><button class="btn">Review proposal</button></div>
+            <div style="margin-top:8px"><button class="btn">Посмотреть предложение</button></div>
           </div>
-          <div class="muted">Final merge approval will appear only after Epic Review, Architecture Review, Epic QA and final integration pass.</div>
+          <div class="muted">Согласование финального слияния появится только после ревью эпика, ревью архитектуры, QA эпика и финального прохода интеграции.</div>
         </section>
 
         <section class="card" style="margin-top:16px">
-          <div class="row"><h3>Budget</h3><span>$8.41 / $15 soft</span></div>
+          <div class="row"><h3>Бюджет</h3><span>$8.41 / $15 soft</span></div>
           <div class="progress"><span style="width:56%"></span></div>
-          <div class="muted">Recovery spend: $1.12 · Review/rework: $1.84</div>
+          <div class="muted">Восстановление spend: $1.12 · Review/доработка: $1.84</div>
         </section>
 
         <section class="card" style="margin-top:16px">
-          <div class="row"><h3>Recent events</h3><span class="muted">live</span></div>
+          <div class="row"><h3>Недавние события</h3><span class="muted">в реальном времени</span></div>
           <div class="timeline">
-            <div class="event"><b>TASK-425 review passed</b><div>2m ago</div></div>
-            <div class="event"><b>TASK-426 review started</b><div>4m ago</div></div>
-            <div class="event"><b>TASK-424 integrated into epic</b><div>18m ago</div></div>
-            <div class="event"><b>TASK-428 blocked</b><div>21m ago · dependencies</div></div>
+            <div class="event"><b>Ревью TASK-425 пройдено</b><div>2m назад</div></div>
+            <div class="event"><b>Начато ревью TASK-426</b><div>4m назад</div></div>
+            <div class="event"><b>TASK-424 integrated into epic</b><div>18m назад</div></div>
+            <div class="event"><b>TASK-428 заблокировано</b><div>21m назад · зависимости</div></div>
           </div>
         </section>
       </div>
     </div>
 
-    <div class="footer-note">Epic View concept v0.1 · Parallel tasks merge into epic branch first · final Epic validation precedes master</div>
+    <div class="footer-note">Концепция представления эпика v0.1 · параллельные задачи сначала сливаются в ветку эпика · финальная проверка эпика предшествует master</div>
   </main>
 </div>
 </body>

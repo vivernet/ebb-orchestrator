@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Agent Orchestrator — Approval Inbox Concept</title>
+<title>Agent Orchestrator — Концепция центра согласований</title>
 <style>
 :root{
   --bg:#0b0d10; --panel:#12161b; --panel2:#171c22; --line:#252c34;
@@ -52,56 +52,56 @@ body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 Inter,ui-san
 <body>
 <div class="app">
   <aside class="sidebar">
-    <div class="brand">Agent Orchestrator<small>Local workspace</small></div>
+    <div class="brand">Agent Orchestrator<small>Локальное рабочее пространство</small></div>
     <nav class="nav">
-      <a href="#">Dashboard</a>
-      <a href="#">Projects</a>
-      <a href="#">Epics & Tasks</a>
-      <a href="#">Execution Queue</a>
-      <a class="active" href="#">Approvals <span class="warn">5</span></a>
-      <a href="#">Agents</a>
-      <a href="#">Usage & Budget</a>
-      <a href="#">Settings</a>
+      <a href="#">Панель управления</a>
+      <a href="#">Проекты</a>
+      <a href="#">Эпики и задачи</a>
+      <a href="#">Очередь выполнения</a>
+      <a class="active" href="#">Согласования <span class="warn">5</span></a>
+      <a href="#">Агенты</a>
+      <a href="#">Использование и бюджет</a>
+      <a href="#">Настройки</a>
     </nav>
-    <div class="bottom">Hermes runtime · Local mode<br/>4 parallel slots</div>
+    <div class="bottom">Hermes runtime · Локальный режим<br/>4 параллельных слота</div>
   </aside>
 
   <main class="main">
     <div class="topbar">
       <div class="title">
-        <h1>Approval Inbox</h1>
+        <h1>Центр согласований</h1>
         <p>Только решения, которые требуют человека. Всё остальное Orchestrator обрабатывает автоматически по policy.</p>
       </div>
       <div class="actions">
-        <button class="btn">History</button>
-        <button class="btn">Approval policies</button>
+        <button class="btn">История</button>
+        <button class="btn">Политики согласований</button>
       </div>
     </div>
 
     <section class="metrics">
-      <div class="metric"><span class="muted">Pending</span><b class="warn">5</b></div>
-      <div class="metric"><span class="muted">High priority</span><b>2</b></div>
-      <div class="metric"><span class="muted">Merge approvals</span><b>1</b></div>
-      <div class="metric"><span class="muted">Oldest request</span><b>18m</b></div>
+      <div class="metric"><span class="muted">Ожидают</span><b class="warn">5</b></div>
+      <div class="metric"><span class="muted">Высокий приоритет</span><b>2</b></div>
+      <div class="metric"><span class="muted">Согласования слияния</span><b>1</b></div>
+      <div class="metric"><span class="muted">Самый давний запрос</span><b>18m</b></div>
     </section>
 
     <div class="grid">
       <section class="card">
         <div class="filter">
-          <span class="chip active">All 5</span>
-          <span class="chip">Plans 1</span>
-          <span class="chip">Architecture 1</span>
-          <span class="chip">Permissions 1</span>
-          <span class="chip">Budget 1</span>
-          <span class="chip">Merge 1</span>
+          <span class="chip active">Все 5</span>
+          <span class="chip">Планы 1</span>
+          <span class="chip">Архитектура 1</span>
+          <span class="chip">Разрешения 1</span>
+          <span class="chip">Бюджет 1</span>
+          <span class="chip">Слияние 1</span>
         </div>
 
         <div class="item">
           <div>
-            <h4>EPIC-42 · Plan change</h4>
-            <div class="muted">Coordinator предлагает добавить prerequisite TASK-430 для shared streaming fixtures.</div>
+            <h4>EPIC-42 · Изменение плана</h4>
+            <div class="muted">Координатор предлагает добавить обязательную TASK-430 для общих streaming fixtures.</div>
             <div class="meta">
-              <span class="chip">Ebb AI Hub</span><span class="chip">PLAN_CHANGE</span><span class="priority">High</span>
+              <span class="chip">Ebb AI Hub</span><span class="chip">PLAN_CHANGE</span><span class="priority">Высокий</span>
             </div>
           </div>
           <div class="warn">18m</div>
@@ -109,8 +109,8 @@ body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 Inter,ui-san
 
         <div class="item">
           <div>
-            <h4>Architecture decision · Provider interface</h4>
-            <div class="muted">Architect обнаружил два допустимых варианта normalization contract.</div>
+            <h4>Архитектурное решение · интерфейс провайдера</h4>
+            <div class="muted">Architect обнаружил два допустимых варианта контракта нормализации.</div>
             <div class="meta">
               <span class="chip">Ebb AI Hub</span><span class="chip">ARCHITECTURE</span>
             </div>
@@ -120,7 +120,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 Inter,ui-san
 
         <div class="item">
           <div>
-            <h4>DevOps permission request</h4>
+            <h4>Запрос разрешения DevOps</h4>
             <div class="muted">TASK-116 просит выполнить docker push в тестовый registry.</div>
             <div class="meta">
               <span class="chip">xRocket SDK</span><span class="chip">PERMISSION</span>
@@ -131,8 +131,8 @@ body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 Inter,ui-san
 
         <div class="item">
           <div>
-            <h4>Task budget override</h4>
-            <div class="muted">TASK-508 достигла soft limit $3.00 и запрашивает Senior recovery run.</div>
+            <h4>Переопределение бюджета задачи</h4>
+            <div class="muted">TASK-508 достигла мягкий лимит $3.00 и запрашивает восстановительный запуск Senior.</div>
             <div class="meta">
               <span class="chip">Ebb Censor Bot</span><span class="chip">BUDGET</span>
             </div>
@@ -142,10 +142,10 @@ body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 Inter,ui-san
 
         <div class="item">
           <div>
-            <h4>Final merge · TASK-116 → master</h4>
-            <div class="muted">Review, QA и Integration прошли успешно. Изменения готовы к финальному merge.</div>
+            <h4>Финальное слияние · TASK-116 → master</h4>
+            <div class="muted">Review, QA и Integration прошли успешно. Изменения готовы к финальному слиянию.</div>
             <div class="meta">
-              <span class="chip">xRocket SDK</span><span class="chip">FINAL_MERGE</span><span class="priority">High</span>
+              <span class="chip">xRocket SDK</span><span class="chip">FINAL_MERGE</span><span class="priority">Высокий</span>
             </div>
           </div>
           <div class="muted">2m</div>
@@ -155,16 +155,16 @@ body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 Inter,ui-san
       <aside class="detail">
         <div class="row">
           <div>
-            <h2>EPIC-42 · Plan change</h2>
-            <div class="muted">Requested by Coordinator · 18 minutes ago</div>
+            <h2>EPIC-42 · Изменение плана</h2>
+            <div class="muted">Запросил Координатор · 18 минут назад</div>
           </div>
-          <span class="priority">High</span>
+          <span class="priority">Высокий</span>
         </div>
 
         <div class="section">
           <h3>Что предлагается</h3>
           <div class="note">
-            Добавить новую обязательную TASK-430 — <b>Shared streaming fixtures</b> — и сделать TASK-428 Integration tests зависимой от неё.
+            Добавить новую обязательную TASK-430 — <b>Доляd streaming fixtures</b> — и сделать TASK-428 Integration tests зависимой от неё.
           </div>
         </div>
 
@@ -189,37 +189,37 @@ TASK-427 ─┘</div>
         </div>
 
         <div class="section">
-          <h3>Impact</h3>
+          <h3>Влияние</h3>
           <div class="kv">
-            <div>Scope</div><div>+1 required task</div>
-            <div>Assigned role</div><div>Middle Developer</div>
-            <div>Architecture</div><div class="good">No public API change</div>
-            <div>Estimated delay</div><div>Not calculated by AI</div>
-            <div>Budget impact</div><div>Expected +$0.35–$0.80 based on role history</div>
+            <div>Область</div><div>+1 обязательная задача</div>
+            <div>Назначенная роль</div><div>Middle Developer</div>
+            <div>Архитектура</div><div class="good">Публичный API не изменяется</div>
+            <div>Расчётная задержка</div><div>ИИ не рассчитывал</div>
+            <div>Влияние на бюджет</div><div>Ожидается +$0.35–$0.80 на основе истории роли</div>
           </div>
           <div class="warnbox">
-            Это изменение approved Epic plan, поэтому текущая policy требует твоего подтверждения.
+            Это изменение утверждённого плана эпика, поэтому текущая политика требует твоего подтверждения.
           </div>
         </div>
 
         <div class="section">
-          <h3>Evidence</h3>
+          <h3>Подтверждения</h3>
           <div class="timeline">
-            <div class="event"><b>Developer proposal</b><div>TASK-428 · shared fixtures missing</div></div>
-            <div class="event"><b>QA confirmation</b><div>Combined streaming scenario cannot be expressed cleanly</div></div>
-            <div class="event"><b>Coordinator analysis</b><div>Proposal accepted as plan change candidate</div></div>
+            <div class="event"><b>Предложение разработчика</b><div>TASK-428 · отсутствуют общие fixtures</div></div>
+            <div class="event"><b>Подтверждение QA</b><div>Комбинированный streaming-сценарий нельзя корректно выразить</div></div>
+            <div class="event"><b>Анализ координатора</b><div>Предложение принято как кандидат на изменение плана</div></div>
           </div>
         </div>
 
         <div class="cta">
-          <button class="btn goodbtn">Approve</button>
-          <button class="btn badbtn">Reject</button>
-          <button class="btn full">Request changes</button>
+          <button class="btn goodbtn">Согласовать</button>
+          <button class="btn badbtn">Отклонить</button>
+          <button class="btn full">Запросить изменения</button>
         </div>
       </aside>
     </div>
 
-    <div class="footer-note">Approval Inbox concept v0.1 · approvals are typed, auditable and never generated just for routine state transitions</div>
+    <div class="footer-note">Концепция центра согласований v0.1 · согласования типизированы, аудируемы и не создаются для обычных переходов состояний</div>
   </main>
 </div>
 </body>

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Agent Orchestrator — Settings Concept</title>
+<title>Agent Orchestrator — Концепция настроек</title>
 <style>
 :root{
   --bg:#0b0d10; --panel:#12161b; --panel2:#171c22; --line:#252c34;
@@ -43,87 +43,87 @@ body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 Inter,ui-san
 <body>
 <div class="app">
   <aside class="sidebar">
-    <div class="brand">Agent Orchestrator<small>Local workspace</small></div>
+    <div class="brand">Agent Orchestrator<small>Локальное рабочее пространство</small></div>
     <nav class="nav">
-      <a href="#">Dashboard</a>
-      <a href="#">Projects</a>
-      <a href="#">Epics & Tasks</a>
-      <a href="#">Execution Queue</a>
-      <a href="#">Approvals</a>
-      <a href="#">Agents</a>
-      <a href="#">Usage & Budget</a>
-      <a class="active" href="#">Settings</a>
+      <a href="#">Панель управления</a>
+      <a href="#">Проекты</a>
+      <a href="#">Эпики и задачи</a>
+      <a href="#">Очередь выполнения</a>
+      <a href="#">Согласования</a>
+      <a href="#">Агенты</a>
+      <a href="#">Использование и бюджет</a>
+      <a class="active" href="#">Настройки</a>
     </nav>
-    <div class="bottom">Hermes runtime · Local mode<br/>4 global slots</div>
+    <div class="bottom">Hermes runtime · Локальный режим<br/>4 глобальных слота</div>
   </aside>
 
   <main class="main">
     <div class="topbar">
       <div class="title">
-        <h1>Project Settings · Ebb AI Hub</h1>
-        <p>Versioned project rules are separated from local secrets, paths and runtime state.</p>
+        <h1>Настройки проекта · Ebb AI Hub</h1>
+        <p>Версионируемые правила проекта отделены от локальных секретов, путей и состояния выполнения.</p>
       </div>
       <div class="actions">
-        <button class="btn">View config diff</button>
-        <button class="btn primary">Save changes</button>
+        <button class="btn">Посмотреть diff конфигурации</button>
+        <button class="btn primary">Сохранить изменения</button>
       </div>
     </div>
 
     <div class="layout">
       <aside class="settingsnav">
         <div class="active">General</div>
-        <div>Roles & Models</div>
-        <div>Workflows</div>
-        <div>Runtime</div>
+        <div>Роли и модели</div>
+        <div>Процессы</div>
+        <div>Среда выполнения</div>
         <div>Scheduler</div>
-        <div>Recovery</div>
-        <div>Permissions</div>
+        <div>Восстановление</div>
+        <div>Разрешения</div>
         <div>Git & GitHub</div>
-        <div>Budgets</div>
-        <div>Guidelines</div>
+        <div>Бюджетs</div>
+        <div>Рекомендации</div>
         <div>Secrets</div>
       </aside>
 
       <div>
         <section class="card">
           <h3>General</h3>
-          <div class="subtitle">Project identity and repository-level defaults.</div>
+          <div class="subtitle">Идентичность проекта и значения по умолчанию на уровне репозитория.</div>
 
           <div class="row">
-            <div><b>Project name</b><div class="desc">Human-readable name inside Orchestrator.</div></div>
+            <div><b>Название проекта</b><div class="desc">Удобочитаемое имя в Orchestrator.</div></div>
             <div class="control"><span class="input">Ebb AI Hub</span></div>
           </div>
 
           <div class="row">
-            <div><b>Repository</b><div class="desc">Local Git repository managed by this project.</div></div>
+            <div><b>Репозиторий</b><div class="desc">Локальный Git-репозиторий, которым управляет этот проект.</div></div>
             <div class="control"><span class="input">C:\Repos\ebb-ai-hub</span></div>
           </div>
 
           <div class="row">
-            <div><b>Default branch</b><div class="desc">Target branch for standalone Tasks and Epics.</div></div>
+            <div><b>Default branch</b><div class="desc">Целевая ветка для отдельных задач и эпиков.</div></div>
             <div class="control"><span class="select">master ▾</span></div>
           </div>
 
           <div class="row">
-            <div><b>Execution mode</b><div class="desc">Local in v1; Container becomes available later.</div></div>
+            <div><b>Режим выполнения</b><div class="desc">В v1 — локальный режим; Container станет доступен позже.</div></div>
             <div class="control"><span class="select">Local ▾</span></div>
           </div>
         </section>
 
         <section class="card">
-          <h3>Roles & Models</h3>
-          <div class="subtitle">Role decides the job. Model decides the reasoning capability. Runtime executes the role.</div>
+          <h3>Роли и модели</h3>
+          <div class="subtitle">Роль определяет работу. Модель определяет способность рассуждать. Среда выполнения исполняет роль.</div>
 
           <table class="table">
-            <thead><tr><th>Role</th><th>Runtime</th><th>Model</th><th>Override</th></tr></thead>
+            <thead><tr><th>Роль</th><th>Среда выполнения</th><th>Модель</th><th>Переопределение</th></tr></thead>
             <tbody>
-              <tr><td>Coordinator</td><td>Hermes</td><td>gpt-5.6-terra</td><td><span class="chip">Project</span></td></tr>
-              <tr><td>Product Manager</td><td>Hermes</td><td>gpt-5.6-luna</td><td><span class="chip">Global</span></td></tr>
+              <tr><td>Координатор</td><td>Hermes</td><td>gpt-5.6-terra</td><td><span class="chip">Project</span></td></tr>
+              <tr><td>Product Manager</td><td>Hermes</td><td>gpt-5.6-luna</td><td><span class="chip">Глобальная</span></td></tr>
               <tr><td>Architect</td><td>Hermes</td><td>gpt-5.6-terra</td><td><span class="chip">Project</span></td></tr>
               <tr><td>Middle Developer</td><td>Hermes</td><td>gpt-5.6-luna</td><td><span class="chip">Project</span></td></tr>
               <tr><td>Senior Developer</td><td>Hermes</td><td>gpt-5.6-terra</td><td><span class="chip">Project</span></td></tr>
               <tr><td>Reviewer</td><td>Hermes</td><td>gpt-5.6-terra</td><td><span class="chip">Project</span></td></tr>
-              <tr><td>QA</td><td>Hermes</td><td>gpt-5.6-luna</td><td><span class="chip">Global</span></td></tr>
+              <tr><td>QA</td><td>Hermes</td><td>gpt-5.6-luna</td><td><span class="chip">Глобальная</span></td></tr>
               <tr><td>Integration</td><td>Hermes</td><td>gpt-5.6-terra</td><td><span class="chip">Project</span></td></tr>
               <tr><td>DevOps</td><td>Hermes</td><td>gpt-5.6-terra</td><td><span class="chip">Project</span></td></tr>
             </tbody>
@@ -132,32 +132,32 @@ body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 Inter,ui-san
 
         <section class="card">
           <h3>Scheduler</h3>
-          <div class="subtitle">Deterministic limits; no LLM is called to decide ordinary queue admission.</div>
+          <div class="subtitle">Детерминированные лимиты; LLM не вызывается для решения об обычном допуске в очередь.</div>
 
           <div class="row">
-            <div><b>Project parallel agents</b><div class="desc">Maximum simultaneous runs for this repository.</div></div>
+            <div><b>Параллельные агенты проекта</b><div class="desc">Максимальное число одновременных запусков для этого репозитория.</div></div>
             <div class="control"><span class="input">3</span></div>
           </div>
           <div class="row">
-            <div><b>Priority aging</b><div class="desc">Prevent low-priority work from starving forever.</div></div>
+            <div><b>Старение приоритета</b><div class="desc">Не допускать бесконечного голодания низкоприоритетных работ.</div></div>
             <div class="control"><span class="switch on"><span></span></span></div>
           </div>
           <div class="row">
-            <div><b>Critical path boost</b><div class="desc">Boost tasks that unblock the largest downstream chain.</div></div>
+            <div><b>Повышение критического пути</b><div class="desc">Повышать приоритет задач, разблокирующих самую длинную последующую цепочку.</div></div>
             <div class="control"><span class="switch on"><span></span></span></div>
           </div>
         </section>
 
         <section class="card">
-          <h3>Recovery</h3>
-          <div class="subtitle">Retry is treated as a limited resource, not the default response to every failure.</div>
+          <h3>Восстановление</h3>
+          <div class="subtitle">Повторная попытка считается ограниченным ресурсом, а не ответом по умолчанию на каждую ошибку.</div>
 
           <div class="row">
-            <div><b>Resume Hermes session first</b></div>
+            <div><b>Сначала возобновлять сессию Hermes</b></div>
             <div class="control"><span class="switch on"><span></span></span></div>
           </div>
           <div class="row">
-            <div><b>Middle attempts before escalation</b></div>
+            <div><b>Попытки Middle до эскалации</b></div>
             <div class="control"><span class="input">2</span></div>
           </div>
           <div class="row">
@@ -165,33 +165,33 @@ body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 Inter,ui-san
             <div class="control"><span class="input">2</span></div>
           </div>
           <div class="row">
-            <div><b>Loop detection</b></div>
+            <div><b>Обнаружение циклов</b></div>
             <div class="control"><span class="switch on"><span></span></span></div>
           </div>
           <div class="row">
-            <div><b>No-progress threshold</b></div>
-            <div class="control"><span class="input">2 consecutive runs</span></div>
+            <div><b>Порог отсутствия прогресса</b></div>
+            <div class="control"><span class="input">2 последовательных запуска</span></div>
           </div>
         </section>
 
         <section class="card">
           <h3>Git & GitHub</h3>
-          <div class="subtitle">Git is local-first. GitHub is optional synchronization and collaboration.</div>
+          <div class="subtitle">Git работает по принципу «сначала локально». GitHub — необязательная синхронизация и совместная работа.</div>
 
           <div class="row">
-            <div><b>Integration strategy</b><div class="desc">How target changes are incorporated before integration.</div></div>
-            <div class="control"><span class="select">Merge ▾</span></div>
+            <div><b>Стратегия интеграции</b><div class="desc">Как целевые изменения включаются перед интеграцией.</div></div>
+            <div class="control"><span class="select">Слияние ▾</span></div>
           </div>
           <div class="row">
-            <div><b>GitHub integration</b></div>
-            <div class="control"><span class="good">Connected</span></div>
+            <div><b>Интеграция с GitHub</b></div>
+            <div class="control"><span class="good">Подключён</span></div>
           </div>
           <div class="row">
-            <div><b>Create Issues for Tasks</b></div>
+            <div><b>Создавать Issues для задач</b></div>
             <div class="control"><span class="switch on"><span></span></span></div>
           </div>
           <div class="row">
-            <div><b>Merge via GitHub PR</b></div>
+            <div><b>Сливать через GitHub PR</b></div>
             <div class="control"><span class="switch on"><span></span></span></div>
           </div>
           <div class="row">
@@ -201,10 +201,10 @@ body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 Inter,ui-san
         </section>
 
         <section class="card">
-          <h3>Config ownership</h3>
-          <div class="subtitle">Clear boundary between versioned project configuration and local machine state.</div>
+          <h3>Владение конфигурацией</h3>
+          <div class="subtitle">Чёткая граница между версионируемой конфигурацией проекта и состоянием локальной машины.</div>
 
-          <div class="code">Repository (.orchestrator/)
+          <div class="code">Репозиторий (.orchestrator/)
 ├── project.yaml
 ├── workflows.yaml
 └── guidelines/
@@ -223,18 +223,18 @@ Local SQLite / secure storage
 └── recovery state</div>
 
           <div class="note">
-            Repository config answers: <b>“How should this project be developed?”</b><br/>
-            Local state answers: <b>“What is happening on this machine right now?”</b>
+            Конфигурация репозитория отвечает: <b>«Как следует разрабатывать этот проект?»</b><br/>
+            Локальное состояние отвечает: <b>«Что сейчас происходит на этой машине?»</b>
           </div>
 
           <div class="warnbox">
-            Semantic changes to approved Guidelines or workflows can require an Approval before becoming active.
+            Смысловые изменения утверждённых рекомендаций или процессов могут требовать согласования до активации.
           </div>
         </section>
       </div>
     </div>
 
-    <div class="footer-note">Settings concept v0.1 · global defaults → project overrides → role overrides → task/epic override</div>
+    <div class="footer-note">Концепция настроек v0.1 · глобальные значения по умолчанию → переопределения проекта → переопределения роли → переопределение задачи/эпика</div>
   </main>
 </div>
 </body>

@@ -115,7 +115,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
     this.environment = config?.environment;
     this.resultDirectory = config?.resultDirectory ?? path.join(os.tmpdir(), "orchestrator-hermes-results");
     this.databasePath = config?.databasePath;
-    this.mcpCommand = config?.mcpCommand ?? "orchestrator-mcp";
+    this.mcpCommand = config?.mcpCommand ?? "ebb-orchestrator-mcp";
     this.mcpArgs = config?.mcpArgs ?? [];
     this.cliBuilder = new HermesCliBuilder();
   }

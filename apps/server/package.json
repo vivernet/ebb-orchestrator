@@ -2,7 +2,7 @@
   "name": "@ebb-orchestrator/server",
   "private": true,
   "bin": {
-    "orchestrator-mcp": "src/bin/orchestrator-mcp.ts"
+    "ebb-orchestrator-mcp": "src/bin/ebb-orchestrator-mcp.ts"
   },
   "type": "module",
   "scripts": {

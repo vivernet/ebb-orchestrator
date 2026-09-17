@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Agent Orchestrator — Project Onboarding Concept</title>
+<title>Agent Orchestrator — Концепция подключения проекта</title>
 <style>
 :root{
   --bg:#0b0d10; --panel:#12161b; --panel2:#171c22; --line:#252c34;
@@ -46,18 +46,18 @@ h1{margin:0;font-size:26px}.sub{color:var(--muted);margin-top:6px}
 <div class="wrap">
   <div class="top">
     <div>
-      <h1>Add Project · Repository Discovery</h1>
-      <div class="sub">Orchestrator separates what it <b>detected</b> from what it merely <b>proposes</b>. Nothing semantic becomes project policy without review.</div>
+      <h1>Добавление проекта · обнаружение репозитория</h1>
+      <div class="sub">Orchestrator отделяет то, что он <b>обнаружил</b>, от того, что лишь <b>предлагает</b>. Ничто, имеющее смысл для проекта, не становится политикой без ревью.</div>
     </div>
-    <button class="btn">Cancel</button>
+    <button class="btn">Отмена</button>
   </div>
 
   <div class="steps">
-    <div class="step done">1. Repository ✓</div>
-    <div class="step done">2. Discovery ✓</div>
-    <div class="step active">3. Review findings</div>
-    <div class="step">4. Approve config</div>
-    <div class="step">5. Activate project</div>
+    <div class="step done">1. Репозиторий ✓</div>
+    <div class="step done">2. Обнаружение ✓</div>
+    <div class="step active">3. Проверка результатов</div>
+    <div class="step">4. Согласовать config</div>
+    <div class="step">5. Активация проекта</div>
   </div>
 
   <div class="grid">
@@ -65,38 +65,38 @@ h1{margin:0;font-size:26px}.sub{color:var(--muted);margin-top:6px}
       <section class="card">
         <div class="row">
           <div>
-            <h3>Selected repository</h3>
-            <div class="muted">Local Git repository discovered successfully.</div>
+            <h3>Выбранный репозиторий</h3>
+            <div class="muted">Локальный Git-репозиторий успешно обнаружен.</div>
           </div>
-          <span class="badge good">Git repository</span>
+          <span class="badge good">Git-репозиторий</span>
         </div>
         <div class="repo">C:\Repos\ebb-ai-hub</div>
 
         <div class="section">
-          <h4>Detected facts</h4>
+          <h4>Обнаруженные факты</h4>
 
           <div class="item detected">
-            <b>Default branch: master</b>
-            <small>Detected from local Git.</small>
+            <b>Default ветка: master</b>
+            <small>Обнаружено в локальном Git.</small>
           </div>
 
           <div class="item detected">
-            <b>Node.js / TypeScript project</b>
-            <small>Detected from package.json, tsconfig.json and source files.</small>
+            <b>Проект Node.js / TypeScript</b>
+            <small>Обнаружено по package.json, tsconfig.json и исходным файлам.</small>
           </div>
 
           <div class="item detected">
             <b>Package manager: pnpm</b>
-            <small>Detected from pnpm-lock.yaml.</small>
+            <small>Обнаружено по pnpm-lock.yaml.</small>
           </div>
 
           <div class="item detected">
             <b>Test runner: Vitest</b>
-            <small>Detected from package scripts and configuration.</small>
+            <small>Обнаружено по скриптам и конфигурации пакета.</small>
           </div>
 
           <div class="item detected">
-            <b>GitHub remote found</b>
+            <b>Найден удалённый репозиторий GitHub</b>
             <small>origin → github.com/vivernet/ebb-ai-hub</small>
           </div>
         </div>
@@ -105,30 +105,30 @@ h1{margin:0;font-size:26px}.sub{color:var(--muted);margin-top:6px}
       <section class="card" style="margin-top:16px">
         <div class="row">
           <div>
-            <h3>Coordinator proposals</h3>
-            <div class="muted">These are recommendations, not detected facts.</div>
+            <h3>Координатор proposals</h3>
+            <div class="muted">Это рекомендации, а не обнаруженные факты.</div>
           </div>
-          <span class="badge">Hermes analysis</span>
+          <span class="badge">Анализ Hermes</span>
         </div>
 
         <div class="section">
           <div class="item proposed">
-            <b>Use standard development workflow</b>
+            <b>Использовать стандартный процесс разработки</b>
             <small>Development → Review → QA → Integration.</small>
           </div>
 
           <div class="item proposed">
-            <b>Architecture-sensitive changes should require Architect review</b>
-            <small>Detected project structure suggests a central provider abstraction.</small>
+            <b>Изменения, чувствительные к архитектуре, должны требовать ревью Architect</b>
+            <small>Обнаруженная структура проекта предполагает центральную абстракцию провайдера.</small>
           </div>
 
           <div class="item proposed">
-            <b>Suggested project guidelines</b>
+            <b>Предлагаемые рекомендации проекта</b>
             <small>Keep provider-specific types out of the common API; use existing error normalization patterns.</small>
           </div>
 
           <div class="item proposed">
-            <b>Suggested commands</b>
+            <b>Предлагаемые команды</b>
             <small>test = pnpm test · lint = pnpm lint · typecheck = pnpm typecheck · build = pnpm build</small>
           </div>
         </div>
@@ -137,44 +137,44 @@ h1{margin:0;font-size:26px}.sub{color:var(--muted);margin-top:6px}
 
     <div>
       <section class="card">
-        <h3>Review project configuration</h3>
-        <div class="muted">You can accept, change or reject proposals before activation.</div>
+        <h3>Проверка конфигурации проекта</h3>
+        <div class="muted">Перед активацией можно принять, изменить или отклонить предложения.</div>
 
         <div class="section">
           <div class="review">
-            <div><b>Project name</b><small class="muted">Proposed from repository metadata</small></div>
+            <div><b>Название проекта</b><small class="muted">Предложено на основе метаданных репозитория</small></div>
             <div class="select">Ebb AI Hub</div>
           </div>
 
           <div class="review">
-            <div><b>Default branch</b><small class="muted">Detected fact</small></div>
+            <div><b>Default branch</b><small class="muted">Обнаруженный факт</small></div>
             <div class="select">master</div>
           </div>
 
           <div class="review">
-            <div><b>Default workflow</b><small class="muted">Coordinator proposal</small></div>
+            <div><b>Процесс по умолчанию</b><small class="muted">Координатор proposal</small></div>
             <div class="select">standard ▾</div>
           </div>
 
           <div class="review">
-            <div><b>Execution mode</b><small class="muted">v1 default</small></div>
+            <div><b>Режим выполнения</b><small class="muted">Значение v1 по умолчанию</small></div>
             <div class="select">Local ▾</div>
           </div>
 
           <div class="review">
-            <div><b>Parallel agents</b><small class="muted">Project limit</small></div>
+            <div><b>Параллельные агенты</b><small class="muted">Лимит проекта</small></div>
             <div class="select">3</div>
           </div>
 
           <div class="review">
-            <div><b>GitHub integration</b><small class="muted">Remote detected; connection optional</small></div>
-            <div class="select">Connect later ▾</div>
+            <div><b>Интеграция с GitHub</b><small class="muted">Удалённый репозиторий обнаружен; подключение необязательно</small></div>
+            <div class="select">Подключить позже ▾</div>
           </div>
         </div>
       </section>
 
       <section class="card" style="margin-top:16px">
-        <h3>Files to create</h3>
+        <h3>Создаваемые файлы</h3>
         <div class="code">.orchestrator/
 ├── project.yaml
 ├── workflows.yaml
@@ -183,32 +183,32 @@ h1{margin:0;font-size:26px}.sub{color:var(--muted);margin-top:6px}
     └── git.md</div>
 
         <div class="note">
-          These files contain <b>project development rules</b> and can be committed to Git.
+          Эти файлы содержат <b>правила разработки проекта</b> и могут быть зафиксированы в Git.
         </div>
 
         <div class="warnbox">
-          Secrets, absolute local paths, Hermes sessions, approvals, runtime state and GitHub credentials will stay outside the repository in local storage.
+          Секреты, абсолютные локальные пути, сессии Hermes, согласования, состояние выполнения и учётные данные GitHub останутся вне репозитория в локальном хранилище.
         </div>
       </section>
 
       <section class="card" style="margin-top:16px">
-        <h3>Activation summary</h3>
+        <h3>Итоги активации</h3>
         <div class="section">
-          <div class="item"><b>Detected facts</b><small>5 accepted automatically as repository observations.</small></div>
-          <div class="item"><b>Coordinator proposals</b><small>4 require your review before becoming active configuration.</small></div>
-          <div class="item"><b>Repository changes</b><small>Only new .orchestrator/ files will be created.</small></div>
-          <div class="item"><b>Existing source code</b><small class="good">No source code will be modified.</small></div>
+          <div class="item"><b>Обнаруженные факты</b><small>5 автоматически приняты как наблюдения о репозитории.</small></div>
+          <div class="item"><b>Координатор proposals</b><small>Для 4 требуется ревью до превращения в активную конфигурацию.</small></div>
+          <div class="item"><b>Репозиторий changes</b><small>Будут созданы только новые файлы .orchestrator/.</small></div>
+          <div class="item"><b>Существующий исходный код</b><small class="good">Исходный код изменён не будет.</small></div>
         </div>
       </section>
     </div>
   </div>
 
   <div class="actions">
-    <button class="btn">Back to discovery</button>
-    <button class="btn primary">Approve & activate project</button>
+    <button class="btn">Назад к обнаружению</button>
+    <button class="btn primary">Согласовать и активировать проект</button>
   </div>
 
-  <div class="footer">Project Onboarding concept v0.1 · DETECTED facts are never mixed with PROPOSED policies.</div>
+  <div class="footer">Концепция подключения проекта v0.1 · ОБНАРУЖЕННЫЕ факты никогда не смешиваются с ПРЕДЛАГАЕМЫМИ политиками.</div>
 </div>
 </body>
 </html>

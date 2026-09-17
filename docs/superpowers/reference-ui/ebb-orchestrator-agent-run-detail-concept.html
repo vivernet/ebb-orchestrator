@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Agent Orchestrator — Agent Run Detail Concept</title>
+<title>Agent Orchestrator — Концепция детализации запуска агента</title>
 <style>
 :root{
   --bg:#0b0d10; --panel:#12161b; --panel2:#171c22; --line:#252c34;
@@ -47,18 +47,18 @@ body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 Inter,ui-san
 <body>
 <div class="app">
   <aside class="sidebar">
-    <div class="brand">Agent Orchestrator<small>Local workspace</small></div>
+    <div class="brand">Agent Orchestrator<small>Локальное рабочее пространство</small></div>
     <nav class="nav">
-      <a href="#">Dashboard</a>
-      <a href="#">Projects</a>
-      <a href="#">Epics & Tasks</a>
-      <a class="active" href="#">Execution Queue</a>
-      <a href="#">Approvals <span class="warn">3</span></a>
-      <a href="#">Agents</a>
-      <a href="#">Usage & Budget</a>
-      <a href="#">Settings</a>
+      <a href="#">Панель управления</a>
+      <a href="#">Проекты</a>
+      <a href="#">Эпики и задачи</a>
+      <a class="active" href="#">Очередь выполнения</a>
+      <a href="#">Согласования <span class="warn">3</span></a>
+      <a href="#">Агенты</a>
+      <a href="#">Использование и бюджет</a>
+      <a href="#">Настройки</a>
     </nav>
-    <div class="bottom">Hermes runtime · Local mode<br/>4 global slots</div>
+    <div class="bottom">Hermes runtime · Локальный режим<br/>4 глобальных слота</div>
   </aside>
 
   <main class="main">
@@ -68,40 +68,40 @@ body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 Inter,ui-san
         <p>TASK-425 · Anthropic Streaming · Hermes session: <b>dev-425</b></p>
       </div>
       <div class="actions">
-        <button class="btn">Create checkpoint</button>
-        <button class="btn">Pause</button>
-        <button class="btn danger">Cancel run</button>
+        <button class="btn">Создать контрольную точку</button>
+        <button class="btn">Приостановить</button>
+        <button class="btn danger">Отменить запуск</button>
       </div>
     </div>
 
     <div class="tabs">
-      <div class="tab active">Live</div>
-      <div class="tab">Tool Calls</div>
-      <div class="tab">Terminal</div>
-      <div class="tab">Permissions</div>
-      <div class="tab">Context</div>
-      <div class="tab">Usage</div>
-      <div class="tab">Recovery</div>
+      <div class="tab active">В реальном времени</div>
+      <div class="tab">Вызовы инструментов</div>
+      <div class="tab">Терминал</div>
+      <div class="tab">Разрешения</div>
+      <div class="tab">Контекст</div>
+      <div class="tab">Использование</div>
+      <div class="tab">Восстановление</div>
     </div>
 
     <section class="metrics">
-      <div class="metric"><span class="muted">Status</span><b><span class="dot busy"></span>Running</b></div>
-      <div class="metric"><span class="muted">Elapsed</span><b>18m 42s</b></div>
-      <div class="metric"><span class="muted">Tool calls</span><b>37</b></div>
-      <div class="metric"><span class="muted">Tokens</span><b>74.2k</b></div>
-      <div class="metric"><span class="muted">Cost</span><b>$0.78</b></div>
-      <div class="metric"><span class="muted">Progress</span><b>68%</b></div>
+      <div class="metric"><span class="muted">Статус</span><b><span class="dot busy"></span>Выполняется</b></div>
+      <div class="metric"><span class="muted">Прошло</span><b>18m 42s</b></div>
+      <div class="metric"><span class="muted">Вызовы инструментов</span><b>37</b></div>
+      <div class="metric"><span class="muted">Токены</span><b>74.2k</b></div>
+      <div class="metric"><span class="muted">Стоимость</span><b>$0.78</b></div>
+      <div class="metric"><span class="muted">Прогресс</span><b>68%</b></div>
     </section>
 
     <div class="grid">
       <div>
         <section class="card">
-          <div class="row"><h3>Live event stream</h3><span class="chip">auto-scroll</span></div>
+          <div class="row"><h3>Поток событий в реальном времени</h3><span class="chip">автопрокрутка</span></div>
           <div class="timeline">
             <div class="event">
               <div class="time">06:18:43</div>
               <div class="evbody">
-                <b><span class="dot busy"></span>Tool call started</b>
+                <b><span class="dot busy"></span>Начат вызов инструмента</b>
                 <small>project.test</small>
                 <div class="toolcall"><code>project.test("streaming disconnect")</code></div>
               </div>
@@ -110,7 +110,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 Inter,ui-san
             <div class="event">
               <div class="time">06:18:12</div>
               <div class="evbody">
-                <b><span class="dot ok"></span>File patched</b>
+                <b><span class="dot ok"></span>Файл изменён</b>
                 <small>Permission Engine: ALLOW</small>
                 <div class="toolcall"><code>workspace.patch(
   "src/providers/anthropic/stream.ts"
@@ -121,8 +121,8 @@ body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 Inter,ui-san
             <div class="event">
               <div class="time">06:17:54</div>
               <div class="evbody">
-                <b><span class="dot ok"></span>Test completed</b>
-                <small>1 failing → 0 failing in selected test file</small>
+                <b><span class="dot ok"></span>Тест завершён</b>
+                <small>1 ошибка → 0 ошибок в выбранном файле тестов</small>
                 <div class="output">PASS src/providers/anthropic/stream.test.ts
 Tests: 14 passed, 14 total
 Duration: 2.84s</div>
@@ -132,25 +132,25 @@ Duration: 2.84s</div>
             <div class="event">
               <div class="time">06:16:31</div>
               <div class="evbody">
-                <b><span class="dot wait"></span>Permission requested</b>
-                <small>Generic command required explicit approval</small>
+                <b><span class="dot wait"></span>Запрошено разрешение</b>
+                <small>Для универсальной команды требуется явное согласование</small>
                 <div class="toolcall"><code>command.run("pnpm vitest --runInBand stream.disconnect.test.ts")</code></div>
-                <div style="margin-top:7px"><span class="chip good">Allowed once by user</span></div>
+                <div style="margin-top:7px"><span class="chip good">Разрешено пользователем один раз</span></div>
               </div>
             </div>
 
             <div class="event">
               <div class="time">06:15:08</div>
               <div class="evbody">
-                <b><span class="dot ok"></span>Context checkpoint</b>
-                <small>Meaningful progress detected · same session continues</small>
+                <b><span class="dot ok"></span>Контрольная точка контекста</b>
+                <small>Обнаружен осмысленный прогресс · продолжается та же сессия</small>
               </div>
             </div>
           </div>
         </section>
 
         <section class="card" style="margin-top:16px">
-          <div class="row"><h3>Terminal output</h3><span class="muted">sanitized live stream</span></div>
+          <div class="row"><h3>Вывод терминала</h3><span class="muted">санитизированный поток в реальном времени</span></div>
           <div class="output">$ pnpm test streaming disconnect
 
 > ebb-ai-hub@0.4.0 test
@@ -167,74 +167,74 @@ Duration    2.84s</div>
         </section>
 
         <section class="card" style="margin-top:16px">
-          <div class="row"><h3>Run objective</h3><span class="chip">Task Contract</span></div>
+          <div class="row"><h3>Цель запуска</h3><span class="chip">Task Контракт</span></div>
           <div class="kv">
-            <div>Goal</div><div>Fix disconnect/reconnect edge cases before QA handoff.</div>
-            <div>Trigger</div><div>REVIEW_REWORK</div>
-            <div>Expected output</div><div>Code changes + passing targeted tests + concise completion report.</div>
-            <div>Workspace</div><div>task/425-anthropic-streaming</div>
+            <div>Цель</div><div>Исправить особые случаи disconnect/reconnect до передачи в QA.</div>
+            <div>Триггер</div><div>REVIEW_REWORK</div>
+            <div>Ожидаемый результат</div><div>Изменения кода + успешные целевые тесты + краткий отчёт о завершении.</div>
+            <div>Рабочее пространство</div><div>task/425-anthropic-streaming</div>
           </div>
         </section>
       </div>
 
       <div>
         <section class="card">
-          <div class="row"><h3>Runtime</h3><span class="good">Healthy</span></div>
+          <div class="row"><h3>Среда выполнения</h3><span class="good">В норме</span></div>
           <div class="kv">
-            <div>Runtime</div><div>Hermes</div>
-            <div>Session</div><div>dev-425</div>
-            <div>Execution</div><div>Local</div>
-            <div>Role</div><div>Senior Developer</div>
-            <div>Attempt</div><div>2</div>
-            <div>Resume</div><div class="good">Yes · previous session</div>
+            <div>Среда выполнения</div><div>Hermes</div>
+            <div>Сессия</div><div>dev-425</div>
+            <div>Выполнение</div><div>Local</div>
+            <div>Роль</div><div>Senior Developer</div>
+            <div>Попытка</div><div>2</div>
+            <div>Возобновление</div><div class="good">Да · предыдущая сессия</div>
           </div>
         </section>
 
         <section class="card" style="margin-top:16px">
-          <div class="row"><h3>Permission decisions</h3><span class="muted">this run</span></div>
-          <div class="permission"><div><b>workspace.patch</b><div class="muted">inside task worktree</div></div><span class="chip good">ALLOW</span></div>
-          <div class="permission"><div><b>project.test</b><div class="muted">configured project action</div></div><span class="chip good">ALLOW</span></div>
-          <div class="permission"><div><b>command.run</b><div class="muted">generic vitest command</div></div><span class="chip warn">ALLOW ONCE</span></div>
-          <div class="permission"><div><b>git.push</b><div class="muted">developer role</div></div><span class="chip bad">DENY</span></div>
+          <div class="row"><h3>Решения по разрешениям</h3><span class="muted">этот запуск</span></div>
+          <div class="permission"><div><b>workspace.patch</b><div class="muted">внутри рабочего дерева задачи</div></div><span class="chip good">ALLOW</span></div>
+          <div class="permission"><div><b>project.test</b><div class="muted">настроенное действие проекта</div></div><span class="chip good">ALLOW</span></div>
+          <div class="permission"><div><b>command.run</b><div class="muted">универсальная команда vitest</div></div><span class="chip warn">РАЗРЕШИТЬ ОДИН РАЗ</span></div>
+          <div class="permission"><div><b>git.push</b><div class="muted">роль разработчика</div></div><span class="chip bad">DENY</span></div>
         </section>
 
         <section class="card" style="margin-top:16px">
-          <div class="row"><h3>Usage</h3><span>$0.78</span></div>
+          <div class="row"><h3>Использование</h3><span>$0.78</span></div>
           <div class="kv">
-            <div>Input</div><div>63.4k</div>
-            <div>Cached input</div><div>42.1k</div>
-            <div>Output</div><div>10.8k</div>
-            <div>Cache ratio</div><div>66%</div>
+            <div>Вход</div><div>63.4k</div>
+            <div>Кэшированный вход</div><div>42.1k</div>
+            <div>Выход</div><div>10.8k</div>
+            <div>Доля кэша</div><div>66%</div>
           </div>
           <div class="progress"><span style="width:39%"></span></div>
-          <div class="muted" style="margin-top:6px">Task soft budget: $2.00 · current task spend: $0.78</div>
+          <div class="muted" style="margin-top:6px">Мягкий бюджет задачи: $2.00 · текущие расходы задачи: $0.78</div>
         </section>
 
         <section class="card" style="margin-top:16px">
-          <div class="row"><h3>Recovery signals</h3><span class="good">No loop</span></div>
+          <div class="row"><h3>Сигналы восстановления</h3><span class="good">Циклов нет</span></div>
           <div class="kv">
-            <div>Progress</div><div class="good">Meaningful</div>
-            <div>Repeated failure</div><div>No</div>
-            <div>Same command loop</div><div>No</div>
-            <div>Escalation</div><div>Not needed</div>
-            <div>Checkpoint</div><div>06:15:08</div>
+            <div>Прогресс</div><div class="good">Осмысленный</div>
+            <div>Повторная ошибка</div><div>No</div>
+            <div>Цикл одной команды</div><div>No</div>
+            <div>Эскалация</div><div>Не требуется</div>
+            <div>Контрольная точка</div><div>06:15:08</div>
           </div>
         </section>
 
         <section class="card" style="margin-top:16px">
-          <div class="row"><h3>Context package</h3><span class="chip">31.8k tokens</span></div>
+          <div class="row"><h3>Пакет контекста</h3><span class="chip">31.8k токенов</span></div>
           <div class="kv">
-            <div>Task contract</div><div>included</div>
-            <div>Review findings</div><div>2 unresolved → now resolved</div>
-            <div>Epic summary</div><div>included</div>
-            <div>Guidelines</div><div>architecture + git</div>
-            <div>Repository dump</div><div class="good">not included</div>
+            <div>Контракт задачи</div><div>включён</div>
+            <div>Проверка результатов</div><div>2 нерешённых → теперь решены</div>
+            <div>Сводка эпика</div><div>включён</div>
+            <div>Рекомендации</div><div>архитектура + git</div>
+            <div>Дамп репозитория</div><div class="good">не включён</div>
           </div>
         </section>
       </div>
     </div>
 
-    <div class="footer-note">Agent Run Detail concept v0.1 · technical observability without exposing secrets or granting extra control to Hermes</div>
+    <div class="footer-note">Концепция детализации запуска агента v0.1 · техническая наблюдаемость без раскрытия секретов и расширения контроля Hermes</div>
   </main>
 </div>
 </body>
