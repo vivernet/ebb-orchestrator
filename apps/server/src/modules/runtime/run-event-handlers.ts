@@ -15,7 +15,13 @@ export class RuntimeEventHandlers {
   constructor(
     private readonly db: Database,
     private readonly workflowEngine: WorkflowEngine,
-  ) {}
+  ) {
+    // Final merge provenance is authoritative even for databases created
+    // before the provenance migration was installed.
+    for (const column of ["approval_id TEXT", "source_sha TEXT", "expected_target_sha TEXT", "resulting_target_sha TEXT"]) {
+      try { this.db.exec(`ALTER TABLE git_operations ADD COLUMN ${column}`); } catch { /* already present */ }
+    }
+  }
 
   /**
    * Handle AgentRunRequested event.
@@ -190,6 +196,9 @@ export class RuntimeEventHandlers {
 
   /** Complete the Epic merge and only then release its integrated children. */
   handleEpicMergeCompleted(epicId: string, approvalId: string): void {
+    for (const column of ["approval_id TEXT", "source_sha TEXT", "expected_target_sha TEXT", "resulting_target_sha TEXT"]) {
+      try { this.db.exec(`ALTER TABLE git_operations ADD COLUMN ${column}`); } catch { /* table/column is installed by migration */ }
+    }
     const orchestration = this.db.get<{ stage: string; final_approval_id: string | null }>(
       "SELECT stage, final_approval_id FROM epic_orchestrations WHERE epic_id=$epicId", { epicId });
     if (!orchestration || orchestration.final_approval_id !== approvalId || !["FINAL_APPROVAL", "DONE"].includes(orchestration.stage)) {
@@ -202,11 +211,14 @@ export class RuntimeEventHandlers {
     }
     const epic = this.db.get<{ status: string; display_id: string }>("SELECT status, display_id FROM epics WHERE id=$epicId", { epicId });
     if (!epic) throw new Error(`Epic ${epicId} not found`);
-    const mergeOperation = this.db.get<{ id: string }>(
-      "SELECT id FROM git_operations WHERE type='MERGE' AND status='VERIFIED' AND target_ref='master' AND branch_name=$branch ORDER BY verified_at DESC LIMIT 1",
-      { branch: `epic/${epic.display_id}` },
+    const mergeOperation = this.db.get<{ id: string; approval_id: string; source_sha: string; expected_target_sha: string; resulting_target_sha: string }>(
+      "SELECT id,approval_id,source_sha,expected_target_sha,resulting_target_sha FROM git_operations WHERE type='MERGE' AND status='VERIFIED' AND target_ref='master' AND branch_name=$branch AND approval_id=$approvalId AND source_sha IS NOT NULL AND expected_target_sha IS NOT NULL AND resulting_target_sha IS NOT NULL ORDER BY verified_at DESC LIMIT 1",
+      { branch: `epic/${epic.display_id}`, approvalId },
     );
     if (!mergeOperation) throw new Error(`Epic ${epicId} has no persisted successful Merge Service operation for master`);
+    if (mergeOperation.approval_id !== approvalId || !mergeOperation.source_sha || !mergeOperation.expected_target_sha || !mergeOperation.resulting_target_sha) {
+      throw new Error(`Epic ${epicId} merge operation has incomplete approval/SHA provenance`);
+    }
     if (epic.status === "DONE") return;
     if (epic.status !== "IN_PROGRESS") throw new Error(`Epic ${epicId} is not ready for final merge`);
     const remaining = this.db.get<{ count: number }>(

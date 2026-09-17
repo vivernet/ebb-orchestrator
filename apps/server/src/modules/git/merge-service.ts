@@ -35,6 +35,8 @@ export interface MergeServiceOptions {
   integrationAttempt?: IntegrationAttempt;
   database?: Database;
   onVerifiedCompletion?: (result: MergeResult) => void;
+  /** Persisted approval link for an Epic-specific final merge operation. */
+  approvalId?: string;
 }
 
 function optionsDatabase(attempt: IntegrationAttempt | null, database?: Database): Database | null {
@@ -62,6 +64,7 @@ export class MergeService {
   private readonly integrationAttempt: IntegrationAttempt | null;
   private readonly onVerifiedCompletion: ((result: MergeResult) => void) | undefined;
   private readonly database: Database | undefined;
+  private readonly approvalId: string | null;
 
   constructor(options: MergeServiceOptions = {}) {
     this.git = options.git ?? new GitCli();
@@ -73,6 +76,12 @@ export class MergeService {
     this.integrationAttempt = options.integrationAttempt ?? null;
     this.database = options.database;
     this.onVerifiedCompletion = options.onVerifiedCompletion;
+    this.approvalId = options.approvalId ?? null;
+    if (this.database) {
+      for (const column of ["approval_id TEXT", "source_sha TEXT", "expected_target_sha TEXT", "resulting_target_sha TEXT"]) {
+        try { this.database.exec(`ALTER TABLE git_operations ADD COLUMN ${column}`); } catch { /* already present */ }
+      }
+    }
   }
 
   /**
@@ -157,11 +166,26 @@ export class MergeService {
       throw new Error("Missing verified integration provenance: expected target SHA does not match integration record");
     }
 
+    if (this.database && this.approvalId) {
+      const prior = this.database.get<{ target_ref: string; source_sha: string; expected_target_sha: string; resulting_target_sha: string }>(
+        "SELECT target_ref,source_sha,expected_target_sha,resulting_target_sha FROM git_operations WHERE type='MERGE' AND status='VERIFIED' AND approval_id=$approvalId ORDER BY verified_at DESC LIMIT 1", { approvalId: this.approvalId });
+      if (prior && prior.target_ref === verified.currentTargetBranch && prior.source_sha === verified.sourceSha && prior.expected_target_sha === verified.expectedTargetSha && prior.resulting_target_sha) {
+        return { success: true, subjectId, targetBranch: prior.target_ref, mergeCommitSha: prior.resulting_target_sha, resultingTargetSha: prior.resulting_target_sha, verifiedCompletion: true };
+      }
+    }
+    const operationId = this.database && this.approvalId ? crypto.randomUUID() : null;
+    if (operationId) {
+      this.database!.run("INSERT INTO git_operations(id,type,status,repo_path,branch_name,target_ref,created_at,approval_id,source_sha,expected_target_sha) VALUES($id,'MERGE','STARTED',$repo,$branch,$target,$at,$approval,$source,$expected)", { id: operationId, repo: verified.repoPath, branch: verified.sourceBranch, target: verified.currentTargetBranch, at: new Date().toISOString(), approval: this.approvalId, source: verified.sourceSha, expected: verified.expectedTargetSha });
+    }
     // Perform the merge
     try {
       const mergeResult = await this.performMerge(subjectId, verified);
+      if (operationId) this.database!.run("UPDATE git_operations SET status='VERIFIED',verified_at=$at,resulting_target_sha=$result WHERE id=$id AND status='STARTED'", { id: operationId, at: new Date().toISOString(), result: mergeResult.resultingTargetSha });
       this.onVerifiedCompletion?.(mergeResult);
       return mergeResult;
+    } catch (error) {
+      if (operationId) this.database!.run("UPDATE git_operations SET status='FAILED' WHERE id=$id AND status='STARTED'", { id: operationId });
+      throw error;
     } finally {
       if (!this.database && provenanceDb) provenanceDb.close();
     }

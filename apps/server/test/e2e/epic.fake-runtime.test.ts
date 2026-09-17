@@ -92,8 +92,8 @@ describe("full epic orchestration with FakeAgentRuntime", () => {
     expect(resumed.finalApprovalId).toBe(pending.finalApprovalId);
     expect(runtime.calls.length).toBe(callsBeforeRestart);
     const approval = new ApprovalService(db).approve(pending.finalApprovalId!, "user");
-    db.exec("CREATE TABLE git_operations (id TEXT PRIMARY KEY, type TEXT NOT NULL, status TEXT NOT NULL, repo_path TEXT NOT NULL, branch_name TEXT, target_ref TEXT, created_at TEXT NOT NULL, verified_at TEXT)");
-    db.run("INSERT INTO git_operations (id,type,status,repo_path,branch_name,target_ref,created_at,verified_at) VALUES ($id,'MERGE','VERIFIED','/repo','epic/EPIC-1','master',$now,$now)", { id: randomUUID(), now: new Date().toISOString() });
+    db.exec("CREATE TABLE git_operations (id TEXT PRIMARY KEY, type TEXT NOT NULL, status TEXT NOT NULL, repo_path TEXT NOT NULL, branch_name TEXT, target_ref TEXT, created_at TEXT NOT NULL, verified_at TEXT, approval_id TEXT, source_sha TEXT, expected_target_sha TEXT, resulting_target_sha TEXT)");
+    db.run("INSERT INTO git_operations (id,type,status,repo_path,branch_name,target_ref,created_at,verified_at,approval_id,source_sha,expected_target_sha,resulting_target_sha) VALUES ($id,'MERGE','VERIFIED','/repo','epic/EPIC-1','master',$now,$now,$approval,'source-sha','master-before','master-after')", { id: randomUUID(), approval: approval.id, now: new Date().toISOString() });
     const result = orchestrator.approveFinalMerge(pending.epicId, approval.id);
     expect(result.childStatuses.every((status) => status === "RELEASED")).toBe(true);
     expect(db.get<{ status: string }>("SELECT status FROM epics LIMIT 1")?.status).toBe("DONE");

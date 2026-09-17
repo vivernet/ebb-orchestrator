@@ -25,6 +25,9 @@ export class EpicOrchestrator {
     this.approvals = new ApprovalService(db);
     this.scheduler = new SchedulerService(db);
     this.db.exec(`CREATE TABLE IF NOT EXISTS epic_orchestrations (epic_id TEXT PRIMARY KEY, plan_id TEXT NOT NULL, input_json TEXT NOT NULL, stage TEXT NOT NULL, sequence_json TEXT NOT NULL DEFAULT '[]', architecture_review_authorized INTEGER NOT NULL DEFAULT 0, final_approval_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`);
+    this.db.exec(`CREATE TABLE IF NOT EXISTS orchestration_phase_runs (id TEXT PRIMARY KEY, epic_id TEXT, task_id TEXT, phase TEXT NOT NULL, role TEXT NOT NULL, agent_run_id TEXT NOT NULL UNIQUE, result_json TEXT NOT NULL, evidence_json TEXT NOT NULL, validated INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, UNIQUE (epic_id, task_id, phase))`);
+    this.db.exec(`CREATE TABLE IF NOT EXISTS agent_runs (id TEXT PRIMARY KEY, role TEXT NOT NULL, runtime TEXT NOT NULL, model TEXT NOT NULL, task_id TEXT, epic_id TEXT, status TEXT NOT NULL, started_at TEXT, ended_at TEXT, exit_code INTEGER, output TEXT)`);
+    this.db.exec(`CREATE TABLE IF NOT EXISTS scheduler_capacity_reservations (task_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, owner_id TEXT NOT NULL, reserved_at TEXT NOT NULL)`);
     try { this.db.exec("ALTER TABLE planning_plans ADD COLUMN epic_id TEXT"); } catch { /* already present */ }
   }
 
@@ -70,16 +73,16 @@ export class EpicOrchestrator {
     const sequence = JSON.parse(state.sequence_json) as string[];
     let architectureProposalAccepted = false;
     if (input.includeProductManager && !sequence.includes("pm")) {
-      this.requireAccepted(await this.runtime.run({ phase: "pm", role: "product_manager", epicId })); add("pm");
+      await this.runPhase(epicId, undefined, "pm", "product_manager", { phase: "pm", role: "product_manager", epicId }); add("pm");
     }
     if (input.includeArchitect && !sequence.includes("architect")) {
-      const architect = await this.runtime.run({ phase: "architect", role: "architect", epicId });
-      this.requireAccepted(architect); architectureProposalAccepted = architect.architectureChangingProposalAccepted === true;
+      const architect = await this.runPhase(epicId, undefined, "architect", "architect", { phase: "architect", role: "architect", epicId });
+      architectureProposalAccepted = architect.architectureChangingProposalAccepted === true;
       if (architectureProposalAccepted) this.db.run("UPDATE epic_orchestrations SET architecture_review_authorized=1,updated_at=$at WHERE epic_id=$epicId", { epicId, at: new Date().toISOString() });
       add("architect");
     }
     if (state.stage === "CHILDREN") { await this.runDependencyAwareChildren(epicId, epic.display_id, input.tasks.map((task) => task.ref)); checkpoint("EPIC_REVIEW"); state = row(); }
-    const phase = async (name: string, role: string, next: Stage) => { if (row().stage !== name.toUpperCase() && !["EPIC_REVIEW","ARCHITECTURE_REVIEW","EPIC_QA","INTEGRATION"].includes(row().stage)) return; this.requireAccepted(await this.runtime.run({ phase: name, role, epicId })); add(name); checkpoint(next); };
+    const phase = async (name: string, role: string, next: Stage) => { if (row().stage !== name.toUpperCase() && !["EPIC_REVIEW","ARCHITECTURE_REVIEW","EPIC_QA","INTEGRATION"].includes(row().stage)) return; await this.runPhase(epicId, undefined, name, role, { phase: name, role, epicId }); add(name); checkpoint(next); };
     if (state.stage === "EPIC_REVIEW") { await phase("epic_review", "reviewer", input.architectureReviewRequired || input.architecture_review_required || architectureProposalAccepted || row().architecture_review_authorized === 1 ? "ARCHITECTURE_REVIEW" : "EPIC_QA"); state = row(); }
     if (state.stage === "ARCHITECTURE_REVIEW") { await phase("architecture_review", "architect", "EPIC_QA"); state = row(); }
     if (state.stage === "EPIC_QA") { await phase("epic_qa", "qa", "INTEGRATION"); state = row(); }
@@ -119,16 +122,21 @@ export class EpicOrchestrator {
     const current = this.workflow.currentStage(task.id);
     if (current === "READY") {
       this.scheduler.dispatchTask(task.id, this.workflow, () => undefined);
-      result = await this.runtime.run({ phase: "child_task", role: "developer", taskId: task.id, epicId, targetBranch: branch });
+       result = await this.runPhase(epicId, task.id, "child_task", "developer", { phase: "child_task", role: "developer", taskId: task.id, epicId, targetBranch: branch });
     } else if (current === "DEVELOPMENT") {
       // DEVELOPMENT is the durable in-flight checkpoint after a restart.
-      result = await this.runtime.run({ phase: "child_task_reconcile", role: "developer", taskId: task.id, epicId, targetBranch: branch });
+      result = await this.runPhase(epicId, task.id, "child_task", "developer", { phase: "child_task_reconcile", role: "developer", taskId: task.id, epicId, targetBranch: branch });
     } else {
-      return;
+      result = this.loadPhaseResult(epicId, task.id, "child_task");
     }
-    this.requireAccepted(result);
-    this.workflow.transition(task.id, "REVIEW"); this.workflow.transition(task.id, "QA"); this.workflow.transition(task.id, "READY_FOR_INTEGRATION"); this.workflow.transition(task.id, "INTEGRATION");
-    this.workflow.transition(task.id, "INTEGRATED_INTO_EPIC", { hasReviewPassed: true, hasSuccessfulIntegration: true, hasFinalMergeApproval: false, parentEpicReleased: false });
+    this.requirePersistedEvidence(epicId, task.id, "child_task", result);
+    const stage = this.workflow.currentStage(task.id);
+    if (stage === "DEVELOPMENT") this.workflow.transition(task.id, "REVIEW");
+    if (this.workflow.currentStage(task.id) === "REVIEW") this.workflow.transition(task.id, "QA", { hasReviewPassed: true, hasSuccessfulIntegration: false, hasFinalMergeApproval: false, parentEpicReleased: false });
+    if (this.workflow.currentStage(task.id) === "QA") this.workflow.transition(task.id, "READY_FOR_INTEGRATION");
+    if (this.workflow.currentStage(task.id) === "READY_FOR_INTEGRATION") this.workflow.transition(task.id, "INTEGRATION");
+    if (this.workflow.currentStage(task.id) === "INTEGRATION") this.workflow.transition(task.id, "INTEGRATED_INTO_EPIC", { hasReviewPassed: true, hasSuccessfulIntegration: true, hasFinalMergeApproval: false, parentEpicReleased: false });
+    this.scheduler.releaseTask(task.id);
   }
   private result(epicId: string): EpicRunResult {
     const state = this.db.get<{ sequence_json: string; stage: Stage; final_approval_id: string | null }>("SELECT sequence_json,stage,final_approval_id FROM epic_orchestrations WHERE epic_id=$epicId", { epicId });
@@ -137,5 +145,36 @@ export class EpicOrchestrator {
     if (state.final_approval_id) result.finalApprovalId = state.final_approval_id;
     return result;
   }
-  private requireAccepted(result: EpicAgentResult): void { if (!result.accepted) throw new Error("Epic role result was not accepted"); }
+  private async runPhase(epicId: string, taskId: string | undefined, phase: string, role: string, request: EpicAgentRequest): Promise<EpicAgentResult> {
+    const existing = this.db.get<{ result_json: string; validated: number }>("SELECT result_json,validated FROM orchestration_phase_runs WHERE epic_id=$epicId AND task_id IS $taskId AND phase=$phase", { epicId, taskId: taskId ?? null, phase });
+    if (existing) {
+      if (existing.validated !== 1) throw new Error(`Persisted ${phase} evidence is not validated`);
+      return JSON.parse(existing.result_json) as EpicAgentResult;
+    }
+    return this.persistedPhase(epicId, taskId, phase, role, await this.runtime.run(request));
+  }
+
+  private persistedPhase(epicId: string, taskId: string | undefined, phase: string, role: string, result: EpicAgentResult): EpicAgentResult {
+    const now = new Date().toISOString();
+    const agentRunId = crypto.randomUUID();
+    const phaseId = crypto.randomUUID();
+    const evidence = { kind: "validated-orchestration-result", phase, role, accepted: result.accepted === true, recordedAt: now };
+    if (!result.accepted) throw new Error(`Epic role result was not accepted`);
+    this.db.transaction((tx) => {
+      tx.run(`INSERT INTO agent_runs (id,role,runtime,model,task_id,epic_id,status,started_at,ended_at,exit_code,output) VALUES($id,$role,'orchestrator','persisted',$taskId,$epicId,'COMPLETED',$at,$at,0,$output)`, { id: agentRunId, role, taskId: taskId ?? null, epicId, at: now, output: JSON.stringify(result) });
+      tx.run(`INSERT INTO orchestration_phase_runs(id,epic_id,task_id,phase,role,agent_run_id,result_json,evidence_json,validated,created_at) VALUES($id,$epicId,$taskId,$phase,$role,$run,$result,$evidence,1,$at)`, { id: phaseId, epicId, taskId: taskId ?? null, phase, role, run: agentRunId, result: JSON.stringify(result), evidence: JSON.stringify(evidence), at: now });
+    });
+    return result;
+  }
+
+  private loadPhaseResult(epicId: string, taskId: string, phase: string): EpicAgentResult {
+    const row = this.db.get<{ result_json: string; validated: number }>("SELECT result_json,validated FROM orchestration_phase_runs WHERE epic_id=$epicId AND task_id=$taskId AND phase=$phase", { epicId, taskId, phase });
+    if (!row || row.validated !== 1) throw new Error(`Missing validated persisted result for ${phase} ${taskId}`);
+    return JSON.parse(row.result_json) as EpicAgentResult;
+  }
+
+  private requirePersistedEvidence(epicId: string, taskId: string, phase: string, result: EpicAgentResult): void {
+    const persisted = this.loadPhaseResult(epicId, taskId, phase);
+    if (!persisted.accepted || persisted.accepted !== result.accepted) throw new Error(`Persisted evidence for ${phase} is invalid`);
+  }
 }

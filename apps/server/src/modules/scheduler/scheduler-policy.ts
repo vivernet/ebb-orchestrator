@@ -116,8 +116,9 @@ function budgetAvailable(): boolean {
  * Placeholder for approval check.
  */
 function approvalGranted(_task: SchedulableTask): boolean {
-  // In a real implementation, this would check approval status
-  return true;
+  // `hasPendingApproval` is populated from the persisted approval store by
+  // SchedulerService.  A pending row is never an implicit grant.
+  return false;
 }
 
 /**

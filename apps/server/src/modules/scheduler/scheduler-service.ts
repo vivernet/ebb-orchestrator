@@ -34,6 +34,14 @@ export class SchedulerService {
 
   constructor(private readonly db: Database) {
     this.lockService = new ResourceLockService(db);
+    // Keep older test/embedded databases usable while migrations are applied.
+    this.db.exec(`CREATE TABLE IF NOT EXISTS scheduler_capacity_reservations (
+      task_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, owner_id TEXT NOT NULL, reserved_at TEXT NOT NULL
+    )`);
+    this.db.exec(`CREATE TABLE IF NOT EXISTS scheduler_budgets (
+      project_id TEXT PRIMARY KEY, limit_cost REAL NOT NULL, spent_cost REAL NOT NULL DEFAULT 0,
+      reserved_cost REAL NOT NULL DEFAULT 0
+    )`);
   }
 
   /**
@@ -161,8 +169,11 @@ export class SchedulerService {
         createdAt: row.created_at,
         dependsOnTaskIds: contract.dependencies ?? [],
         hasResourceLock: this.lockService.isLocked(row.id),
-        hasBudgetPlaceholder: hasBudgetPlaceholder(row.status),
-        hasPendingApproval: hasPendingApproval(row.status),
+        // The policy field is true only when a persisted budget account exists
+        // but cannot reserve the next run; absence of an account means the
+        // project has no budget gate configured.
+        hasBudgetPlaceholder: this.budgetUnavailable(row.project_id),
+        hasPendingApproval: this.hasPendingApproval(row.id),
       };
     });
   }
@@ -262,12 +273,35 @@ export class SchedulerService {
       "SELECT project_id, status FROM tasks WHERE id = $id", { id: taskId });
     if (!task) throw new Error(`Task ${taskId} not found`);
     if (task.status !== "READY") throw new Error(`Task ${taskId} is not READY`);
-    const eligibility = this.getEligibility(taskId, { projectId: task.project_id });
-    if (eligibility.status !== "RUNNABLE") {
-      throw new Error(`Task ${taskId} is not schedulable: ${eligibility.reason}`);
-    }
-    workflowEngine.transition(taskId, "DEVELOPMENT");
+    this.db.transaction((tx) => {
+      const eligibility = this.getEligibility(taskId, { projectId: task.project_id });
+      if (eligibility.status !== "RUNNABLE") {
+        throw new Error(`Task ${taskId} is not schedulable: ${eligibility.reason}`);
+      }
+      const global = tx.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_capacity_reservations");
+      const project = tx.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_capacity_reservations WHERE project_id=$projectId", { projectId: task.project_id });
+      if ((global?.count ?? 0) >= CAPACITY.globalMax || (project?.count ?? 0) >= CAPACITY.projectMax) {
+        throw new Error(`Task ${taskId} is not schedulable: WAITING_FOR_CAPACITY`);
+      }
+      const existing = tx.get("SELECT task_id FROM scheduler_capacity_reservations WHERE task_id=$taskId", { taskId });
+      if (!existing) tx.run("INSERT INTO scheduler_capacity_reservations(task_id,project_id,owner_id,reserved_at) VALUES($taskId,$projectId,$ownerId,$at)", { taskId, projectId: task.project_id, ownerId: `task:${taskId}`, at: new Date().toISOString() });
+      workflowEngine.transitionInTransaction(tx, taskId, "DEVELOPMENT");
+    });
     onWorkflowRunStarted(taskId, "epic-child");
+  }
+
+  /** Release a reservation only after the persisted run has reached a terminal state. */
+  releaseTask(taskId: string): void {
+    this.db.run("DELETE FROM scheduler_capacity_reservations WHERE task_id=$taskId", { taskId });
+  }
+
+  private budgetUnavailable(projectId: string): boolean {
+    const budget = this.db.get<{ limit_cost: number; spent_cost: number; reserved_cost: number }>("SELECT limit_cost,spent_cost,reserved_cost FROM scheduler_budgets WHERE project_id=$projectId", { projectId });
+    return Boolean(budget && budget.spent_cost + budget.reserved_cost >= budget.limit_cost);
+  }
+
+  private hasPendingApproval(taskId: string): boolean {
+    return Boolean(this.db.get("SELECT id FROM approvals WHERE subject_id=$taskId AND status='PENDING'", { taskId }));
   }
 }
 
@@ -282,17 +316,6 @@ function isTerminalStatus(status: string): boolean {
 /**
  * Check if task needs budget placeholder.
  */
-function hasBudgetPlaceholder(status: string): boolean {
-  return status === "DRAFT" || status === "READY" || status === "DEVELOPMENT";
-}
-
-/**
- * Check if task needs approval.
- */
-function hasPendingApproval(status: string): boolean {
-  return status === "READY_FOR_MERGE" || status === "DONE";
-}
-
 /**
  * Compare priorities - returns negative if a is higher priority.
  */
