@@ -32,6 +32,11 @@ import { WorkflowEngine } from "../modules/workflow/workflow-engine.js";
 import { WorkflowRegistry } from "../modules/workflow/workflow-registry.js";
 import { templates } from "../modules/workflow/templates.js";
 import { schedulerRoutes } from "./routes/scheduler.js";
+import { githubRoutes } from "./routes/github.js";
+import { diagnosticsRoutes } from "./routes/diagnostics.js";
+import { secretsRoutes } from "./routes/secrets.js";
+import type { GitHubSyncWorker } from "../modules/github/github-sync-worker.js";
+import type { DiagnosticsService } from "../platform/diagnostics/diagnostics-service.js";
 
 export interface AppDeps {
   /** Loopback host (default "127.0.0.1"). */
@@ -46,6 +51,8 @@ export interface AppDeps {
   scheduler: SchedulerService;
   /** Production must provide the real runtime. Test doubles belong in test deps. */
   runtime?: AgentRuntime;
+  github?: { worker: GitHubSyncWorker; repository: string };
+  diagnostics?: DiagnosticsService;
 }
 
 export interface OrchestratorApp extends FastifyInstance {
@@ -137,6 +144,9 @@ export function createApp(deps: AppDeps): OrchestratorApp {
     await onboardingRoutes(instance, { db: deps.db });
     await settingsRoutes(instance, { db: deps.db });
     await usageRoutes(instance, { db: deps.db });
+    await secretsRoutes(instance, { db: deps.db });
+    if (deps.github) await githubRoutes(instance, deps.github);
+    if (deps.diagnostics) await diagnosticsRoutes(instance, deps.diagnostics);
   });
 
   // Protected test route (used by security tests)

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { apiClient } from '../api/client.js';
+import { apiClient } from '../../api/client.js';
 
 interface Approval {
   id: string;

@@ -3,11 +3,12 @@
  * Note: No endpoint returns secret plaintext after storage.
  */
 import type { FastifyInstance } from "fastify";
-import { KeyringSecretStore, InMemorySecretStore } from '../platform/security/secret-store.js';
-import type { Database } from '../platform/database/database.js';
+import { InMemorySecretStore } from '../../platform/security/secret-store.js';
+import { KeyringSecretStore } from '../../platform/security/keyring-secret-store.js';
+import type { Database } from '../../platform/database/database.js';
 
 export interface SecretsRouteDeps {
-  db?: Database;
+  db?: Database | undefined;
   useKeyring?: boolean;
 }
 
@@ -37,7 +38,7 @@ export async function secretsRoutes(
     },
     async (request, reply) => {
       const { service, name, value } = request.body;
-      const result = await store.set(service, name, value);
+      const result = await store.store(service, name, value);
       // Return metadata only - never the plaintext value
       return reply.code(201).send({
         id: result.id,
@@ -63,7 +64,7 @@ export async function secretsRoutes(
     },
     async (request) => {
       const { service } = request.params;
-      const secrets = await store.list(service);
+      const secrets = await store.listMetadata(service);
       // Return metadata only - never plaintext values
       return {
         service,
@@ -92,20 +93,14 @@ export async function secretsRoutes(
         },
       },
     },
-    async (request) => {
+    async (request, reply) => {
       const { service, name } = request.params;
-      const metadata = await store.getMetadata(service, name);
-      if (!metadata) {
+      const metadata = await store.listMetadata(service);
+      const found = metadata.find((item) => item.name === name);
+      if (!found) {
         return reply.code(404).send({ error: "Secret not found" });
       }
-      // Return metadata only - never plaintext value
-      return {
-        referenceId: metadata.referenceId,
-        service: metadata.service,
-        name: metadata.name,
-        createdAt: metadata.createdAt,
-        updatedAt: metadata.updatedAt,
-      };
+      return found;
     }
   );
 
@@ -126,7 +121,7 @@ export async function secretsRoutes(
     },
     async (request, reply) => {
       const { service, name } = request.params;
-      await store.delete(service, name);
+      await store.revoke(service, name);
       return reply.code(204).send();
     }
   );

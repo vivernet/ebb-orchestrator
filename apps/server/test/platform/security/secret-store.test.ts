@@ -6,7 +6,8 @@ import { mkdtemp } from 'node:fs/promises';
 import { readFileSync, readdirSync } from 'node:fs';
 import { createSqliteDatabase } from '../../../src/platform/database/sqlite-database.js';
 import { runMigrations, type Migration } from '../../../src/platform/database/migrator.js';
-import { SecretStore, InMemorySecretStore, KeyringSecretStore, SecretRedactor } from '../../../src/platform/security/secret-store.js';
+import { InMemorySecretStore } from '../../../src/platform/security/secret-store.js';
+import { SecretRedactor } from '../../../src/platform/security/secret-redactor.js';
 
 const migrationsDir = join(import.meta.dirname, '../../../src/platform/database/migrations');
 const migrations: Migration[] = readdirSync(migrationsDir)
@@ -38,7 +39,7 @@ describe('SecretStore no-plaintext', () => {
   describe('SQLite dump does not contain plaintext secrets', () => {
     it('stores secret reference in SQLite, not plaintext value', async () => {
       const secretValue = 'super-secret-token-12345';
-      const result = await db.set('test-service', 'test-secret', secretValue);
+      const result = await db.store('test-service', 'test-secret', secretValue);
       const refId = result.id;
 
       // Check that metadata was stored (not value)
@@ -53,7 +54,7 @@ describe('SecretStore no-plaintext', () => {
     it('secret values are never logged', async () => {
       const secretValue = 'api-key-xyz-789';
       
-      await db.set('logging-service', 'api-key', secretValue);
+       await db.store('logging-service', 'api-key', secretValue);
 
       // In a real implementation, you would check actual logs
       // For now, verify the store doesn't expose values through toString/inspect
@@ -68,10 +69,10 @@ describe('SecretStore no-plaintext', () => {
     it('secret references only appear in metadata', async () => {
       const secretValue = 'deployment-token-abc';
       
-      await db.set('deploy-service', 'token', secretValue);
+       await db.store('deploy-service', 'token', secretValue);
 
       // Get metadata that would be stored with artifacts
-      const metadata = await db.list('deploy-service');
+      const metadata = await db.listMetadata('deploy-service');
       
       // Should have reference, not value
       expect(metadata[0]?.referenceId).toBeDefined();
@@ -83,7 +84,7 @@ describe('SecretStore no-plaintext', () => {
     it('secret values are redacted in diagnostics', async () => {
       const secretValue = 'diagnostic-test-secret';
       
-      await db.set('diag-service', 'test', secretValue);
+      await db.store('diag-service', 'test', secretValue);
 
       // Simulate diagnostics export
       const diagnostics: Record<string, unknown> = {
@@ -100,7 +101,7 @@ describe('SecretStore no-plaintext', () => {
     it('secrets are injected only when needed and never exposed', async () => {
       const secretValue = 'agent-test-env-secret';
       
-      await db.set('agent-service', 'env-secret', secretValue);
+       await db.store('agent-service', 'env-secret', secretValue);
 
       // By default, secrets should not be in agent environment
       // (The execution layer would inject secrets only for specific operations)

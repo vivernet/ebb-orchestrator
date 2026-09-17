@@ -101,7 +101,7 @@ export default function ExecutionPage({ projectId }: ExecutionPageProps) {
                 <td className={`priority-${entry.priority}`}>{entry.priority.toUpperCase()}</td>
                 <td className="entry-actions">
                   {entry.status !== 'blocked' && (
-                    <button onClick={() => handlePause(entry.id)} disabled={entry.status === 'blocked'}>
+                    <button onClick={() => handlePause(entry.id)}>
                       Pause
                     </button>
                   )}

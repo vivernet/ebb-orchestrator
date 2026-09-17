@@ -18,8 +18,8 @@ export async function onboardingRoutes(app: FastifyInstance, deps: OnboardingRou
     }
 
     const projectRow = deps.db.get(
-      "SELECT * FROM projects WHERE id = ?",
-      request.params.id
+      "SELECT * FROM projects WHERE id = $id",
+      { id: request.params.id }
     );
 
     if (!projectRow) {
@@ -63,15 +63,17 @@ export async function onboardingRoutes(app: FastifyInstance, deps: OnboardingRou
       return reply.code(503).send({ error: "database unavailable" });
     }
 
-    const result = deps.db.run(
-      "UPDATE projects SET status = 'READY' WHERE id = ?",
-      request.params.id
+    const project = deps.db.get(
+      "SELECT id FROM projects WHERE id = $id",
+      { id: request.params.id }
     );
-
-    if (result.changes === 0) {
+    if (!project) {
       return reply.code(404).send({ error: "project not found" });
     }
-
+    deps.db.run(
+      "UPDATE projects SET status = 'READY' WHERE id = $id",
+      { id: request.params.id }
+    );
     return { success: true, projectId: request.params.id };
   });
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { SecretRedactor } from '../../../src/platform/security/secret-store.js';
+import { SecretRedactor } from '../../../src/platform/security/secret-redactor.js';
 
 describe('SecretRedactor', () => {
   describe('exact-value redaction', () => {

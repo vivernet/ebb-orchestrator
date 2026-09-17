@@ -12,12 +12,15 @@ interface SanitizedTerminalProps {
 function sanitizeTerminalOutput(text: string): string {
   // Strip ANSI escape sequences (colors, formatting, etc.)
   // Pattern matches: ESC [ ... (m (SGR), ESC [ ... H (cursor), etc.
+  // eslint-disable-next-line no-control-regex
   const ansiPattern = /\u001b\[[0-9;]*[a-zA-Z]/g;
   
   // Strip OSC (Operating System Command) sequences like ESC ] 0 ; title BEL
+  // eslint-disable-next-line no-control-regex
   const oscPattern = /\u001b\][^\u0007]*\u0007/g;
   
   // Also strip other control characters (except newlines and tabs for formatting)
+  // eslint-disable-next-line no-control-regex
   const controlPattern = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
   
   return text

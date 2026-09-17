@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import type { Database } from "../../platform/database/database.js";
+type ConfigRow = Record<string, unknown>;
 
 export interface SettingsRouteDeps { db?: Database | undefined; }
 
@@ -20,22 +21,22 @@ export async function settingsRoutes(app: FastifyInstance, deps: SettingsRouteDe
       };
     }
 
-    const globalConfig = deps.db.get("SELECT * FROM config WHERE level = 'global'");
-    const projectConfig = deps.db.get("SELECT * FROM config WHERE level = 'project'");
-    const roleConfig = deps.db.all("SELECT * FROM config WHERE level = 'role'");
-    const taskEpicConfig = deps.db.all("SELECT * FROM config WHERE level IN ('task', 'epic')");
-    const securitySettings = deps.db.get("SELECT * FROM security_settings LIMIT 1");
+    const globalConfig = deps.db.get<ConfigRow>("SELECT * FROM config WHERE level = 'global'");
+    const projectConfig = deps.db.get<ConfigRow>("SELECT * FROM config WHERE level = 'project'");
+    const roleConfig = deps.db.all<ConfigRow>("SELECT * FROM config WHERE level = 'role'");
+    const taskEpicConfig = deps.db.all<ConfigRow>("SELECT * FROM config WHERE level IN ('task', 'epic')");
+    const securitySettings = deps.db.get<ConfigRow>("SELECT * FROM security_settings LIMIT 1");
 
     return {
       effectiveHierarchy: {
         global: globalConfig?.data || {},
         project: projectConfig?.data || {},
         role: roleConfig.reduce((acc, row) => {
-          acc[row.role] = row.data || {};
+          acc[String(row.role)] = row.data || {};
           return acc;
         }, {} as Record<string, Record<string, unknown>>),
         taskEpic: taskEpicConfig.reduce((acc, row) => {
-          acc[row.subject_type] = row.data || {};
+          acc[String(row.subject_type)] = row.data || {};
           return acc;
         }, {} as Record<string, Record<string, unknown>>),
       },
@@ -57,8 +58,8 @@ export async function settingsRoutes(app: FastifyInstance, deps: SettingsRouteDe
     }
 
     deps.db.run(
-      "INSERT OR REPLACE INTO config (level, key, value) VALUES (?, ?, ?)",
-      body.level, body.key, JSON.stringify(body.value)
+      "INSERT OR REPLACE INTO config (level, key, value) VALUES ($level, $key, $value)",
+      { level: body.level, key: body.key, value: JSON.stringify(body.value) }
     );
 
     return { success: true };
