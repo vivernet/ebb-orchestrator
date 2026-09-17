@@ -43,7 +43,8 @@ WHERE EXISTS (
   SELECT 1
   FROM scheduler_capacity_reservations c
   JOIN scheduler_reservations r ON r.subject_id = c.task_id
-  WHERE r.kind <> 'TASK'
+  WHERE r.id IS NOT ('legacy-capacity:' || c.task_id)
+     OR r.kind <> 'TASK'
      OR r.project_id IS NOT c.project_id
      OR r.owner_id IS NOT c.owner_id
      OR r.reserved_at IS NOT c.reserved_at
@@ -52,6 +53,8 @@ WHERE EXISTS (
      OR r.actual_cost IS NOT c.actual_cost
      OR r.approval_id IS NOT c.approval_id
      OR r.run_id IS NOT c.run_id
+     OR r.role IS NOT 'developer'
+     OR r.model IS NOT 'default'
 );
 
 -- A lock without a corresponding legacy capacity row must never be attached
@@ -79,6 +82,11 @@ WHERE EXISTS (
   WHERE sl.project_id IS NOT (SELECT t.project_id FROM tasks t WHERE t.id = l.task_id)
      OR sl.owner_id IS NOT l.owner_id
      OR sl.locked_at IS NOT l.locked_at
+     OR sl.reservation_id IS NOT (
+       CASE WHEN EXISTS (
+         SELECT 1 FROM scheduler_capacity_reservations c WHERE c.task_id = l.task_id
+       ) THEN 'legacy-capacity:' || l.task_id ELSE 'legacy-lock:' || l.task_id END
+     )
      OR NOT EXISTS (SELECT 1 FROM scheduler_reservations r WHERE r.id = sl.reservation_id)
 );
 INSERT INTO scheduler_014_completeness_guard(valid)
@@ -87,6 +95,34 @@ WHERE EXISTS (
   SELECT 1 FROM scheduler_capacity_reservations c
   LEFT JOIN tasks t ON t.id = c.task_id
   WHERE t.id IS NULL
+);
+
+-- When capacity is absent, locks get one synthetic reservation per task.  An
+-- existing row for that subject is usable only if it is exactly that row;
+-- matching visible fields alone is not sufficient because its ID is the
+-- durable association used by every migrated lock mapping.
+INSERT INTO scheduler_014_completeness_guard(valid)
+SELECT 0
+WHERE EXISTS (
+  SELECT 1
+  FROM resource_locks l
+  JOIN tasks t ON t.id = l.task_id
+  JOIN scheduler_reservations r ON r.subject_id = 'lock:' || l.task_id
+  WHERE NOT EXISTS (
+          SELECT 1 FROM scheduler_capacity_reservations c WHERE c.task_id = l.task_id
+        )
+    AND (r.id IS NOT ('legacy-lock:' || l.task_id)
+      OR r.kind IS NOT 'LOCK'
+      OR r.project_id IS NOT t.project_id
+      OR r.owner_id IS NOT (SELECT MIN(owner_id) FROM resource_locks WHERE task_id = l.task_id)
+      OR r.reserved_at IS NOT (SELECT MIN(locked_at) FROM resource_locks WHERE task_id = l.task_id)
+      OR r.estimate_cost IS NOT 0
+      OR r.status IS NOT 'RESERVED'
+      OR r.actual_cost IS NOT NULL
+      OR r.approval_id IS NOT NULL
+      OR r.run_id IS NOT NULL
+      OR r.role IS NOT 'lock'
+      OR r.model IS NOT 'legacy')
 );
 
 INSERT INTO scheduler_reservations (
