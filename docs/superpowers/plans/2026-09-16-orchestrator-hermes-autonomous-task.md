@@ -55,7 +55,7 @@ QA `PASS` with required AC `FAIL` must also fail.
 - [ ] **Step 2: Verify tests fail**
 
 ```bash
-pnpm --filter @orchestrator/server test -- output-validator.test.ts
+pnpm --filter @ebb-orchestrator/server test -- output-validator.test.ts
 ```
 
 - [ ] **Step 3: Implement compact versioned schemas**
@@ -70,7 +70,7 @@ Do not require taskId/runId/model in model output; backend already owns metadata
 - [ ] **Step 4: Run tests/typecheck**
 
 ```bash
-pnpm --filter @orchestrator/server test -- output-validator.test.ts
+pnpm --filter @ebb-orchestrator/server test -- output-validator.test.ts
 pnpm typecheck
 ```
 
@@ -101,7 +101,7 @@ Reviewer snapshot must not contain `workspace.patch`, `git.commit`, `command.she
 - [ ] **Step 2: Verify failure**
 
 ```bash
-pnpm --filter @orchestrator/server test -- role-registry.test.ts
+pnpm --filter @ebb-orchestrator/server test -- role-registry.test.ts
 ```
 
 - [ ] **Step 3: Implement role definitions**
@@ -124,7 +124,7 @@ Do not hardcode actual model names in domain code; resolve from project/global c
 - [ ] **Step 4: Run snapshot tests**
 
 ```bash
-pnpm --filter @orchestrator/server test -- role-registry.test.ts
+pnpm --filter @ebb-orchestrator/server test -- role-registry.test.ts
 ```
 
 - [ ] **Step 5: Commit**
@@ -156,7 +156,7 @@ Instantiate MCP server for Reviewer capability; assert tool list contains read/s
 - [ ] **Step 2: Verify failure**
 
 ```bash
-pnpm --filter @orchestrator/server test -- mcp-server.test.ts
+pnpm --filter @ebb-orchestrator/server test -- mcp-server.test.ts
 ```
 
 - [ ] **Step 3: Implement stdio MCP bridge**
@@ -168,7 +168,7 @@ After a valid `submit_result`, block new write-capable tool calls for that Run.
 - [ ] **Step 4: Run tests**
 
 ```bash
-pnpm --filter @orchestrator/server test -- mcp-server.test.ts
+pnpm --filter @ebb-orchestrator/server test -- mcp-server.test.ts
 ```
 
 - [ ] **Step 5: Commit**
@@ -207,7 +207,7 @@ Generated `config.yaml` contains only Orchestrator-managed settings and MCP serv
 - [ ] **Step 2: Verify failure**
 
 ```bash
-pnpm --filter @orchestrator/server test -- hermes-profile.test.ts
+pnpm --filter @ebb-orchestrator/server test -- hermes-profile.test.ts
 ```
 
 - [ ] **Step 3: Implement profile builder**
@@ -217,7 +217,7 @@ Do not persist provider API keys into prompts. If Hermes itself requires a provi
 - [ ] **Step 4: Run tests**
 
 ```bash
-pnpm --filter @orchestrator/server test -- hermes-profile.test.ts
+pnpm --filter @ebb-orchestrator/server test -- hermes-profile.test.ts
 ```
 
 - [ ] **Step 5: Commit**
@@ -261,7 +261,7 @@ Assert adapter never adds `--worktree` or `--yolo`; prompt body is written to a 
 - [ ] **Step 2: Verify failure**
 
 ```bash
-pnpm --filter @orchestrator/server test -- hermes-runtime-adapter.test.ts
+pnpm --filter @ebb-orchestrator/server test -- hermes-runtime-adapter.test.ts
 ```
 
 - [ ] **Step 3: Implement adapter**
@@ -271,7 +271,7 @@ Capture session ID, process PID, stdout/stderr artifacts, exit code. A process e
 - [ ] **Step 4: Run adapter contract suite against fake CLI**
 
 ```bash
-pnpm --filter @orchestrator/server test -- hermes-runtime-adapter.test.ts
+pnpm --filter @ebb-orchestrator/server test -- hermes-runtime-adapter.test.ts
 ```
 
 - [ ] **Step 5: Commit**
@@ -304,7 +304,7 @@ Reviewer context must not contain Developer session transcript. Resolved finding
 - [ ] **Step 2: Verify failure**
 
 ```bash
-pnpm --filter @orchestrator/server test -- context-builder.test.ts
+pnpm --filter @ebb-orchestrator/server test -- context-builder.test.ts
 ```
 
 - [ ] **Step 3: Implement P0–P3 budget pruning**
@@ -314,7 +314,7 @@ No LLM summarization. Source code is not bulk-loaded; Developer/Reviewer read on
 - [ ] **Step 4: Run tests**
 
 ```bash
-pnpm --filter @orchestrator/server test -- context-builder.test.ts
+pnpm --filter @ebb-orchestrator/server test -- context-builder.test.ts
 ```
 
 - [ ] **Step 5: Commit**
@@ -346,7 +346,7 @@ Reviewer first output `finding_1` → persisted `FINDING-1`. Re-review marks sam
 - [ ] **Step 2: Verify failure**
 
 ```bash
-pnpm --filter @orchestrator/server test -- quality-records.test.ts
+pnpm --filter @ebb-orchestrator/server test -- quality-records.test.ts
 ```
 
 - [ ] **Step 3: Implement mapping and fingerprints**
@@ -356,7 +356,7 @@ Persist source run, severity, blocking, evidence, guideline ref, status. Generat
 - [ ] **Step 4: Run tests**
 
 ```bash
-pnpm --filter @orchestrator/server test -- quality-records.test.ts recovery.test.ts
+pnpm --filter @ebb-orchestrator/server test -- quality-records.test.ts recovery.test.ts
 ```
 
 - [ ] **Step 5: Commit**
@@ -391,7 +391,7 @@ Non-goal: no auth changes
 - [ ] **Step 2: Run with real Hermes and expect first wiring failure**
 
 ```bash
-RUN_HERMES_E2E=1 pnpm --filter @orchestrator/server test -- autonomous-task.hermes.test.ts
+RUN_HERMES_E2E=1 pnpm --filter @ebb-orchestrator/server test -- autonomous-task.hermes.test.ts
 ```
 
 Do not weaken permissions to make it pass; fix adapter/tool/context wiring.
@@ -434,7 +434,7 @@ pnpm test
 Required opt-in real runtime smoke:
 
 ```bash
-RUN_HERMES_E2E=1 pnpm --filter @orchestrator/server test -- autonomous-task.hermes.test.ts
+RUN_HERMES_E2E=1 pnpm --filter @ebb-orchestrator/server test -- autonomous-task.hermes.test.ts
 ```
 
 The run must prove Hermes uses Orchestrator-managed worktree and MCP tools, no repository rules are auto-injected, no personal GitHub/SSH credentials are inherited, and final merge is impossible until explicit approval.

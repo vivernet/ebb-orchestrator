@@ -41,7 +41,7 @@
 
 **Interfaces:**
 - Produces: root commands `pnpm lint`, `pnpm typecheck`, `pnpm test`.
-- Produces: workspace packages `@orchestrator/contracts`, `@orchestrator/testing`, `@orchestrator/server`.
+- Produces: workspace packages `@ebb-orchestrator/contracts`, `@ebb-orchestrator/testing`, `@ebb-orchestrator/server`.
 
 - [ ] **Step 1: Create workspace manifests and the failing smoke test**
 
@@ -49,7 +49,7 @@ Root `package.json`:
 
 ```json
 {
-  "name": "local-ai-development-orchestrator",
+  "name": "ebb-orchestrator",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.27.0",
@@ -115,7 +115,7 @@ export default tseslint.config(
 
 ```json
 {
-  "name": "@orchestrator/server",
+  "name": "@ebb-orchestrator/server",
   "private": true,
   "type": "module",
   "scripts": {
@@ -124,7 +124,7 @@ export default tseslint.config(
     "test": "vitest run"
   },
   "dependencies": {
-    "@orchestrator/contracts": "workspace:*",
+    "@ebb-orchestrator/contracts": "workspace:*",
     "fastify": "^5.12.4",
     "zod": "^4.6.0"
   }
@@ -135,7 +135,7 @@ export default tseslint.config(
 
 ```json
 {
-  "name": "@orchestrator/contracts",
+  "name": "@ebb-orchestrator/contracts",
   "private": true,
   "type": "module",
   "exports": { ".": "./src/index.ts" },
@@ -150,7 +150,7 @@ export default tseslint.config(
 
 ```json
 {
-  "name": "@orchestrator/testing",
+  "name": "@ebb-orchestrator/testing",
   "private": true,
   "type": "module",
   "exports": { ".": "./src/index.ts" },
@@ -167,11 +167,11 @@ Create `apps/server/test/bootstrap.test.ts`:
 
 ```ts
 import { describe, expect, it } from "vitest";
-import { SYSTEM_NAME } from "@orchestrator/contracts";
+import { SYSTEM_NAME } from "@ebb-orchestrator/contracts";
 
 describe("workspace", () => {
   it("resolves shared packages", () => {
-    expect(SYSTEM_NAME).toBe("orchestrator");
+    expect(SYSTEM_NAME).toBe("ebb-orchestrator");
   });
 });
 ```
@@ -182,17 +182,17 @@ Run:
 
 ```bash
 pnpm install
-pnpm --filter @orchestrator/server test -- bootstrap.test.ts
+pnpm --filter @ebb-orchestrator/server test -- bootstrap.test.ts
 ```
 
-Expected: FAIL because `@orchestrator/contracts` does not export `SYSTEM_NAME`.
+Expected: FAIL because `@ebb-orchestrator/contracts` does not export `SYSTEM_NAME`.
 
 - [ ] **Step 3: Add the minimal shared contract export**
 
 Replace `packages/contracts/src/index.ts` with:
 
 ```ts
-export const SYSTEM_NAME = "orchestrator" as const;
+export const SYSTEM_NAME = "ebb-orchestrator" as const;
 ```
 
 - [ ] **Step 4: Run the complete workspace verification**
@@ -248,7 +248,7 @@ it("rejects unknown project config fields", () => {
 - [ ] **Step 2: Verify tests fail**
 
 ```bash
-pnpm --filter @orchestrator/server test -- project-config.test.ts orchestrator-home.test.ts
+pnpm --filter @ebb-orchestrator/server test -- project-config.test.ts orchestrator-home.test.ts
 ```
 
 - [ ] **Step 3: Implement schemas and platform paths**
@@ -273,7 +273,7 @@ export const ProjectConfigV1Schema = z.strictObject({
 - [ ] **Step 4: Run tests and typecheck**
 
 ```bash
-pnpm --filter @orchestrator/server test -- project-config.test.ts orchestrator-home.test.ts
+pnpm --filter @ebb-orchestrator/server test -- project-config.test.ts orchestrator-home.test.ts
 pnpm typecheck
 ```
 
@@ -316,7 +316,7 @@ Also inject a failing migration and assert its partial table is absent after rol
 - [ ] **Step 2: Verify failure**
 
 ```bash
-pnpm --filter @orchestrator/server test -- migrator.test.ts
+pnpm --filter @ebb-orchestrator/server test -- migrator.test.ts
 ```
 
 - [ ] **Step 3: Implement adapter and first migration**
@@ -414,7 +414,7 @@ Never interpolate values into SQL; use prepared statements.
 - [ ] **Step 4: Run migration tests**
 
 ```bash
-pnpm --filter @orchestrator/server test -- migrator.test.ts
+pnpm --filter @ebb-orchestrator/server test -- migrator.test.ts
 pnpm typecheck
 ```
 
@@ -461,7 +461,7 @@ Test B: register consumer `audit`, call `dispatchBatch()` twice for the same eve
 - [ ] **Step 2: Verify failure**
 
 ```bash
-pnpm --filter @orchestrator/server test -- outbox.test.ts
+pnpm --filter @ebb-orchestrator/server test -- outbox.test.ts
 ```
 
 - [ ] **Step 3: Implement durable delivery**
@@ -485,7 +485,7 @@ If a handler throws, leave event pending and increment `attempts`; do not mark o
 - [ ] **Step 4: Run tests**
 
 ```bash
-pnpm --filter @orchestrator/server test -- outbox.test.ts
+pnpm --filter @ebb-orchestrator/server test -- outbox.test.ts
 ```
 
 Expected: PASS including duplicate delivery test.
@@ -525,7 +525,7 @@ expired lease -> another runner can claim
 - [ ] **Step 2: Verify tests fail**
 
 ```bash
-pnpm --filter @orchestrator/server test -- job-runner.test.ts
+pnpm --filter @ebb-orchestrator/server test -- job-runner.test.ts
 ```
 
 - [ ] **Step 3: Implement claim/update loop**
@@ -541,7 +541,7 @@ Claim jobs in a DB transaction, assign `lease_owner` + `lease_expires_at`; use d
 - [ ] **Step 4: Run tests**
 
 ```bash
-pnpm --filter @orchestrator/server test -- job-runner.test.ts
+pnpm --filter @ebb-orchestrator/server test -- job-runner.test.ts
 ```
 
 - [ ] **Step 5: Commit**
@@ -579,7 +579,7 @@ Inject a failure before rename and assert no final file/DB row exists.
 - [ ] **Step 2: Verify test fails**
 
 ```bash
-pnpm --filter @orchestrator/server test -- artifact-store.test.ts
+pnpm --filter @ebb-orchestrator/server test -- artifact-store.test.ts
 ```
 
 - [ ] **Step 3: Implement staged temp-file + rename flow**
@@ -606,7 +606,7 @@ Store SHA-256, size and media type before inserting the `STAGING` row. Add `reco
 - [ ] **Step 4: Run tests**
 
 ```bash
-pnpm --filter @orchestrator/server test -- artifact-store.test.ts
+pnpm --filter @ebb-orchestrator/server test -- artifact-store.test.ts
 ```
 
 - [ ] **Step 5: Commit**
@@ -648,7 +648,7 @@ Add Origin mismatch test returning 403.
 - [ ] **Step 2: Verify tests fail**
 
 ```bash
-pnpm --filter @orchestrator/server test -- health.test.ts security.test.ts
+pnpm --filter @ebb-orchestrator/server test -- health.test.ts security.test.ts
 ```
 
 - [ ] **Step 3: Implement loopback server and auth hook**
@@ -664,8 +664,8 @@ SSE sends only ephemeral UI events; reconnecting UI must re-fetch projections fo
 - [ ] **Step 4: Run tests and start smoke server**
 
 ```bash
-pnpm --filter @orchestrator/server test -- health.test.ts security.test.ts
-pnpm --filter @orchestrator/server dev
+pnpm --filter @ebb-orchestrator/server test -- health.test.ts security.test.ts
+pnpm --filter @ebb-orchestrator/server dev
 ```
 
 Expected: health reachable only on configured loopback listener.
@@ -711,7 +711,7 @@ And assert second instance cannot acquire lock.
 - [ ] **Step 2: Verify failure**
 
 ```bash
-pnpm --filter @orchestrator/server test -- startup.test.ts
+pnpm --filter @ebb-orchestrator/server test -- startup.test.ts
 ```
 
 - [ ] **Step 3: Implement lifecycle orchestration**

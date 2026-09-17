@@ -54,7 +54,7 @@ it("does not allow a task to belong to two epics", () => {
 - [ ] **Step 2: Verify tests fail**
 
 ```bash
-pnpm --filter @orchestrator/server test -- work-service.test.ts
+pnpm --filter @ebb-orchestrator/server test -- work-service.test.ts
 ```
 
 - [ ] **Step 3: Implement entities and migration**
@@ -75,7 +75,7 @@ Persist Task Contract as versioned structured JSON plus normalized fields requir
 - [ ] **Step 4: Run tests/typecheck**
 
 ```bash
-pnpm --filter @orchestrator/server test -- work-service.test.ts
+pnpm --filter @ebb-orchestrator/server test -- work-service.test.ts
 pnpm typecheck
 ```
 
@@ -124,7 +124,7 @@ expect(() => approvals.approve(approval.id, actor)).toThrow(/already resolved/i)
 - [ ] **Step 2: Verify failure**
 
 ```bash
-pnpm --filter @orchestrator/server test -- dependencies.test.ts approvals.test.ts
+pnpm --filter @ebb-orchestrator/server test -- dependencies.test.ts approvals.test.ts
 ```
 
 - [ ] **Step 3: Implement graph checks and audited approval events**
@@ -142,7 +142,7 @@ Approval state changes append `ApprovalRequested|ApprovalApproved|ApprovalReject
 - [ ] **Step 4: Run tests**
 
 ```bash
-pnpm --filter @orchestrator/server test -- dependencies.test.ts approvals.test.ts
+pnpm --filter @ebb-orchestrator/server test -- dependencies.test.ts approvals.test.ts
 ```
 
 - [ ] **Step 5: Commit**
@@ -183,7 +183,7 @@ READY_FOR_MERGE → MERGING requires resolved FINAL_MERGE approval
 - [ ] **Step 2: Verify failures**
 
 ```bash
-pnpm --filter @orchestrator/server test -- workflow-engine.test.ts
+pnpm --filter @ebb-orchestrator/server test -- workflow-engine.test.ts
 ```
 
 - [ ] **Step 3: Implement pure transition rules first**
@@ -203,7 +203,7 @@ export type TransitionContext = {
 - [ ] **Step 4: Run tests including duplicate event replay**
 
 ```bash
-pnpm --filter @orchestrator/server test -- workflow-engine.test.ts outbox.test.ts
+pnpm --filter @ebb-orchestrator/server test -- workflow-engine.test.ts outbox.test.ts
 ```
 
 - [ ] **Step 5: Commit**
@@ -244,7 +244,7 @@ Assert first Run fails and second succeeds, with separate AgentRun rows and trig
 - [ ] **Step 2: Verify failure**
 
 ```bash
-pnpm --filter @orchestrator/server test -- run-service.test.ts
+pnpm --filter @ebb-orchestrator/server test -- run-service.test.ts
 ```
 
 - [ ] **Step 3: Implement runtime port and persistent AgentRun**
@@ -262,7 +262,7 @@ Fake runtime must never sleep or use network.
 - [ ] **Step 4: Run tests**
 
 ```bash
-pnpm --filter @orchestrator/server test -- run-service.test.ts
+pnpm --filter @ebb-orchestrator/server test -- run-service.test.ts
 ```
 
 - [ ] **Step 5: Commit**
@@ -308,7 +308,7 @@ Also verify Reviewer queued ahead of a fourth new Developer when reviewer slot i
 - [ ] **Step 2: Verify failure**
 
 ```bash
-pnpm --filter @orchestrator/server test -- scheduler.test.ts
+pnpm --filter @ebb-orchestrator/server test -- scheduler.test.ts
 ```
 
 - [ ] **Step 3: Implement deterministic ordering**
@@ -329,7 +329,7 @@ Then explicit priority `Critical > High > Normal > Low`, aging, simple downstrea
 - [ ] **Step 4: Run scheduler tests twice with randomized insertion order**
 
 ```bash
-pnpm --filter @orchestrator/server test -- scheduler.test.ts --repeat=2
+pnpm --filter @ebb-orchestrator/server test -- scheduler.test.ts --repeat=2
 ```
 
 Expected: same selected runs regardless of insertion order.
@@ -371,7 +371,7 @@ Expected Task status ends at `WAITING_FOR_APPROVAL` with exactly one pending `FI
 - [ ] **Step 2: Verify failure**
 
 ```bash
-pnpm --filter @orchestrator/server test -- standalone-task.fake-runtime.test.ts
+pnpm --filter @ebb-orchestrator/server test -- standalone-task.fake-runtime.test.ts
 ```
 
 - [ ] **Step 3: Implement event handlers**
@@ -381,7 +381,7 @@ Only domain services may transition stages. Runtime completion handler validates
 - [ ] **Step 4: Run scenario + idempotency**
 
 ```bash
-pnpm --filter @orchestrator/server test -- standalone-task.fake-runtime.test.ts outbox.test.ts
+pnpm --filter @ebb-orchestrator/server test -- standalone-task.fake-runtime.test.ts outbox.test.ts
 ```
 
 - [ ] **Step 5: Commit**
@@ -422,7 +422,7 @@ same review finding 3 cycles -> loop detected
 - [ ] **Step 2: Verify failure**
 
 ```bash
-pnpm --filter @orchestrator/server test -- recovery.test.ts
+pnpm --filter @ebb-orchestrator/server test -- recovery.test.ts
 ```
 
 - [ ] **Step 3: Implement policy with exact counters**
@@ -445,7 +445,7 @@ Recovery creates a new scheduler request; it never calls runtime directly.
 - [ ] **Step 4: Run tests**
 
 ```bash
-pnpm --filter @orchestrator/server test -- recovery.test.ts
+pnpm --filter @ebb-orchestrator/server test -- recovery.test.ts
 ```
 
 - [ ] **Step 5: Commit**
@@ -483,7 +483,7 @@ Fake all role outputs. Assert TASK-1 reaches `INTEGRATED_INTO_EPIC`, then TASK-2
 - [ ] **Step 2: Verify failure**
 
 ```bash
-pnpm --filter @orchestrator/server test -- epic.fake-runtime.test.ts
+pnpm --filter @ebb-orchestrator/server test -- epic.fake-runtime.test.ts
 ```
 
 - [ ] **Step 3: Add only missing deterministic Epic transitions**

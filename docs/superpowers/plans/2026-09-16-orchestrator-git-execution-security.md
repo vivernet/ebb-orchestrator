@@ -44,7 +44,7 @@ Also cover timeout, `AbortSignal` cancellation, non-zero exit capture, and bound
 - [ ] **Step 2: Verify failure**
 
 ```bash
-pnpm --filter @orchestrator/server test -- git-cli.test.ts
+pnpm --filter @ebb-orchestrator/server test -- git-cli.test.ts
 ```
 
 - [ ] **Step 3: Implement executor**
@@ -54,7 +54,7 @@ Use `spawn(file, args, { shell: false, cwd, env, windowsHide: true })`, bounded 
 - [ ] **Step 4: Run tests on current platform**
 
 ```bash
-pnpm --filter @orchestrator/server test -- git-cli.test.ts
+pnpm --filter @ebb-orchestrator/server test -- git-cli.test.ts
 ```
 
 - [ ] **Step 5: Commit**
@@ -84,7 +84,7 @@ Create temp repo with `master`, `package.json`, `pnpm-lock.yaml`, `vitest.config
 - [ ] **Step 2: Verify failure**
 
 ```bash
-pnpm --filter @orchestrator/server test -- repository-discovery.test.ts
+pnpm --filter @ebb-orchestrator/server test -- repository-discovery.test.ts
 ```
 
 - [ ] **Step 3: Implement deterministic discovery**
@@ -94,7 +94,7 @@ Use Git commands + filesystem checks only. Do not run package scripts. Existing 
 - [ ] **Step 4: Run tests**
 
 ```bash
-pnpm --filter @orchestrator/server test -- repository-discovery.test.ts
+pnpm --filter @ebb-orchestrator/server test -- repository-discovery.test.ts
 ```
 
 - [ ] **Step 5: Commit**
@@ -135,7 +135,7 @@ failed verification leaves GitOperation STARTED for reconciliation
 - [ ] **Step 2: Verify failure**
 
 ```bash
-pnpm --filter @orchestrator/server test -- worktree-manager.test.ts
+pnpm --filter @ebb-orchestrator/server test -- worktree-manager.test.ts
 ```
 
 - [ ] **Step 3: Implement journalled operations**
@@ -149,7 +149,7 @@ Retries after a crash must reconcile an existing STARTED operation instead of bl
 - [ ] **Step 4: Run tests**
 
 ```bash
-pnpm --filter @orchestrator/server test -- worktree-manager.test.ts
+pnpm --filter @ebb-orchestrator/server test -- worktree-manager.test.ts
 ```
 
 - [ ] **Step 5: Commit**
@@ -183,7 +183,7 @@ Also assert MergeService refuses when the approval is absent, rejected, the wron
 - [ ] **Step 2: Verify failure**
 
 ```bash
-pnpm --filter @orchestrator/server test -- integration-service.test.ts merge-service.test.ts
+pnpm --filter @ebb-orchestrator/server test -- integration-service.test.ts merge-service.test.ts
 ```
 
 - [ ] **Step 3: Implement integration branch/worktree**
@@ -197,7 +197,7 @@ Persist each merge conflict as a first-class record with source, target, files, 
 - [ ] **Step 4: Run tests**
 
 ```bash
-pnpm --filter @orchestrator/server test -- integration-service.test.ts merge-service.test.ts
+pnpm --filter @ebb-orchestrator/server test -- integration-service.test.ts merge-service.test.ts
 ```
 
 - [ ] **Step 5: Commit**
@@ -242,7 +242,7 @@ ABSOLUTE_DENY cannot be weakened by more specific scope
 - [ ] **Step 2: Verify failure**
 
 ```bash
-pnpm --filter @orchestrator/server test -- permission-engine.test.ts
+pnpm --filter @ebb-orchestrator/server test -- permission-engine.test.ts
 ```
 
 - [ ] **Step 3: Implement most-restrictive composition**
@@ -258,7 +258,7 @@ Return reason + matched policy refs for UI/Audit. Unknown/unregistered Action ID
 - [ ] **Step 4: Run tests**
 
 ```bash
-pnpm --filter @orchestrator/server test -- permission-engine.test.ts
+pnpm --filter @ebb-orchestrator/server test -- permission-engine.test.ts
 ```
 
 - [ ] **Step 5: Commit**
@@ -297,7 +297,7 @@ Also assert agent-facing Git requests cannot supply a different repository/workt
 - [ ] **Step 2: Verify failure**
 
 ```bash
-pnpm --filter @orchestrator/server test -- action-gateway.test.ts git-tools.test.ts path-resolver.test.ts
+pnpm --filter @ebb-orchestrator/server test -- action-gateway.test.ts git-tools.test.ts path-resolver.test.ts
 ```
 
 - [ ] **Step 3: Implement canonical containment check**
@@ -309,7 +309,7 @@ Resolve existing ancestor realpaths and target path; compare path segments, not 
 - [ ] **Step 4: Run the portable security tests on the current platform**
 
 ```bash
-pnpm --filter @orchestrator/server test -- action-gateway.test.ts git-tools.test.ts path-resolver.test.ts
+pnpm --filter @ebb-orchestrator/server test -- action-gateway.test.ts git-tools.test.ts path-resolver.test.ts
 ```
 
 The suite must contain both Windows-junction and Unix-symlink branches so the same tests exercise the appropriate implementation when CI for the other OS is added later. Lack of Unix CI in Plan 3 must not block local completion; Plan 6 CI must run this suite on at least Windows and one Unix runner before v1 release.
@@ -343,7 +343,7 @@ Set parent process env with `TEST_SECRET_SUPER_UNIQUE_123`, `GITHUB_TOKEN`, `SSH
 - [ ] **Step 2: Verify failure**
 
 ```bash
-pnpm --filter @orchestrator/server test -- command-tools.test.ts environment-builder.test.ts
+pnpm --filter @ebb-orchestrator/server test -- command-tools.test.ts environment-builder.test.ts
 ```
 
 - [ ] **Step 3: Implement allowlisted minimal env and shell classification**
@@ -355,7 +355,7 @@ Treat executables `bash`, `sh`, `zsh`, `cmd`, `powershell`, `pwsh` as `SHELL_EXE
 - [ ] **Step 4: Run tests**
 
 ```bash
-pnpm --filter @orchestrator/server test -- command-tools.test.ts environment-builder.test.ts
+pnpm --filter @ebb-orchestrator/server test -- command-tools.test.ts environment-builder.test.ts
 ```
 
 - [ ] **Step 5: Commit**
@@ -384,7 +384,7 @@ Create unfinished `GitOperation`, manually mutate HEAD/delete worktree, restart 
 - [ ] **Step 2: Verify failure**
 
 ```bash
-pnpm --filter @orchestrator/server test -- git-reconciler.test.ts
+pnpm --filter @ebb-orchestrator/server test -- git-reconciler.test.ts
 ```
 
 - [ ] **Step 3: Implement reconciliation**
