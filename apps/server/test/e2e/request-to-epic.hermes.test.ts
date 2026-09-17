@@ -33,12 +33,17 @@ import { MergeService } from "../../src/modules/git/merge-service.js";
 // ── Migration setup ──
 
 const migrationFiles = [
-  "001_system", "002_work_domain", "003_work_control", "010_planning",
+  "001_system", "002_work_domain", "003_work_control", "004_agent_runs",
+  "005_scheduler", "006_recovery", "007_git", "008_quality",
+  "009_integration_provenance", "010_planning", "011_epic_orchestration",
+  "012_epic_runtime_authority", "013_remove_legacy_scheduler_locks",
+  "014_migrate_legacy_scheduler_authority", "015_knowledge",
+  "016_context", "017_usage", "018_scheduler_config_audit",
 ];
 
 function loadMigrations(): Migration[] {
   return migrationFiles.map((name, index) => ({
-    version: index === 3 ? 10 : index + 1,
+    version: index + 1,
     name,
     sql: readFileSync(join(import.meta.dirname, `../../src/platform/database/migrations/${name}.sql`), "utf8"),
   }));

@@ -12,6 +12,7 @@ import { WorkflowEngine } from "../workflow/workflow-engine.js";
 import { EventBus } from "../../platform/events/event-bus.js";
 import { EventDispatcher } from "../../platform/events/event-dispatcher.js";
 import { RuntimeEventHandlers } from "./run-event-handlers.js";
+import { SchedulerService } from "../scheduler/scheduler-service.js";
 
 /**
  * Orchestrator for runtime events.
@@ -35,8 +36,9 @@ export class RuntimeOrchestrator {
     private readonly workflowEngine: WorkflowEngine,
     private readonly bus: EventBus,
     private readonly dispatcher: EventDispatcher,
+    scheduler: SchedulerService,
   ) {
-    this.eventHandlers = new RuntimeEventHandlers(db, workflowEngine);
+    this.eventHandlers = new RuntimeEventHandlers(db, workflowEngine, scheduler);
   }
 
   /**
@@ -95,12 +97,14 @@ export function registerRuntimeOrchestrator(
   workflowEngine: WorkflowEngine,
   bus: EventBus,
   dispatcher: EventDispatcher,
+  scheduler: SchedulerService,
 ): RuntimeOrchestrator {
   const orchestrator = new RuntimeOrchestrator(
     db,
     workflowEngine,
     bus,
     dispatcher,
+    scheduler,
   );
   orchestrator.initialize();
   return orchestrator;

@@ -39,7 +39,8 @@ export interface AppDeps {
   workService?: WorkCommandService;
   approvalService?: ApprovalCommandService;
   runService?: RunCommandService;
-  scheduler?: SchedulerService;
+  /** Production must provide the single shared SchedulerService instance. */
+  scheduler: SchedulerService;
   /** Production must provide the real runtime. Test doubles belong in test deps. */
   runtime?: AgentRuntime;
 }
@@ -58,7 +59,7 @@ export interface OrchestratorApp extends FastifyInstance {
  * - Attaches `sessionToken` on the returned instance for programmatic
  *   access (used by tests and by main.ts for startup logging).
  */
-export function createApp(deps: AppDeps = {}): OrchestratorApp {
+export function createApp(deps: AppDeps): OrchestratorApp {
   const host = deps.host ?? "127.0.0.1";
   const port = deps.port ?? 3000;
 
@@ -66,7 +67,7 @@ export function createApp(deps: AppDeps = {}): OrchestratorApp {
   const workflowRegistry = new WorkflowRegistry();
   for (const template of Object.values(templates)) workflowRegistry.register(template);
   const workflow = deps.db ? new WorkflowEngine(deps.db, workflowRegistry) : undefined;
-  const scheduler = deps.scheduler ?? (deps.db ? new SchedulerService(deps.db) : undefined);
+  const scheduler = deps.scheduler;
   const workService = deps.workService ?? (deps.db ? new WorkService(deps.db, workflow) : undefined);
   const approvalService = deps.approvalService ?? (deps.db ? new ApprovalService(deps.db) : undefined);
   if (deps.db && !deps.runtime && !deps.runService) throw new Error("production runtime is required");
@@ -126,10 +127,10 @@ export function createApp(deps: AppDeps = {}): OrchestratorApp {
   app.register(async (instance) => schedulerRoutes(instance, scheduler));
   app.register(async (instance) => {
     instance.get("/api/v1/dashboard", async () => new DashboardProjection(deps.db, scheduler).get());
-     await projectRoutes(instance, { db: deps.db, scheduler });
-     await workRoutes(instance, { db: deps.db, workService, scheduler });
+    await projectRoutes(instance, { db: deps.db, scheduler });
+    await workRoutes(instance, { db: deps.db, workService, scheduler });
     await approvalRoutes(instance, { db: deps.db, approvalService });
-     await runRoutes(instance, { db: deps.db, runService, scheduler });
+    await runRoutes(instance, { db: deps.db, runService, scheduler });
   });
 
   // Protected test route (used by security tests)

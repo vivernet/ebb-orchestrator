@@ -16,15 +16,14 @@ export class RuntimeEventHandlers {
   constructor(
     private readonly db: Database,
     private readonly workflowEngine: WorkflowEngine,
+    private readonly scheduler: SchedulerService,
   ) {
-    this.scheduler = new SchedulerService(db);
     // Final merge provenance is authoritative even for databases created
     // before the provenance migration was installed.
     for (const column of ["approval_id TEXT", "source_sha TEXT", "expected_target_sha TEXT", "resulting_target_sha TEXT"]) {
       try { this.db.exec(`ALTER TABLE git_operations ADD COLUMN ${column}`); } catch { /* already present */ }
     }
   }
-  private readonly scheduler: SchedulerService;
 
   /**
    * Handle AgentRunRequested event.

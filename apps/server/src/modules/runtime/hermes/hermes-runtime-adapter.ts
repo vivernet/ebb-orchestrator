@@ -67,6 +67,9 @@ class InMemoryArtifactStore implements ArtifactStore {
  * HermesRuntimeAdapter implements the AgentRuntime interface for the Hermes CLI.
  */
 export class HermesRuntimeAdapter implements AgentRuntime {
+  active = 0;
+  maxActive = 0;
+  readonly calls: Array<{ phase: string; role: string; taskId?: string; targetBranch?: string }> = [];
   private readonly runs = new Map<string, RunState>();
   private readonly cliBuilder: HermesCliBuilder;
   private readonly executor: ProcessExecutor;
@@ -387,8 +390,31 @@ export class HermesRuntimeAdapter implements AgentRuntime {
   }
 
   /**
-   * Check if the runtime is healthy.
-   */
+    * Get the result from a run.
+    */
+  async runResult(runId: string): Promise<RunOutcome> {
+    const state = this.runs.get(runId);
+    if (!state) {
+      throw new Error(`Run ${runId} not found`);
+    }
+    return {
+      success: state.exitCode === 0,
+      exitCode: state.exitCode ?? -1,
+      output: state.stdout,
+      validatedSubmission: false,
+      diagnostics: {
+        runId,
+        sessionId: state.sessionId,
+        stderr: state.stderr,
+        exitCode: state.exitCode ?? -1,
+        artifactReferences: [state.resultPath],
+      },
+    };
+  }
+
+  /**
+    * Check if the runtime is healthy.
+    */
   async healthCheck(): Promise<boolean> {
     return true;
   }

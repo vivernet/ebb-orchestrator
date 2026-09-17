@@ -139,9 +139,10 @@ export class ApprovalService {
     return rows.map(rowToApproval);
   }
 
-  /**
-   * Core resolution logic – enforces single-transition and appends outbox event.
-   */
+    /**
+    * Core resolution logic – enforces single-transition, appends outbox
+    * event, and writes audit_log entry atomically.
+    */
   private resolve(
     approvalId: string,
     newStatus: ApprovalStatus,
@@ -190,6 +191,20 @@ export class ApprovalService {
         },
       });
       appendOutboxEvent(tx, event);
+
+      // Write audit_log entry atomically with state + outbox.
+      tx.run(
+        `INSERT INTO audit_log(id,action,actor,aggregate_type,aggregate_id,details_json,created_at) VALUES($id,$action,$actor,$aggregate_type,$aggregate_id,$details,$created_at)`,
+        {
+          id: crypto.randomUUID(),
+          action: `APPROVAL_${newStatus}`,
+          actor,
+          aggregate_type: "Approval",
+          aggregate_id: approvalId,
+          details: JSON.stringify({ approvalId, approvalType: row.type, subjectId: row.subject_id, subjectType: row.subject_type, status: newStatus, resolvedBy: actor, resolutionNote: note }),
+          created_at: now,
+        },
+      );
 
       return {
         id: row.id,
