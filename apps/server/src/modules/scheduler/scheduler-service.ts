@@ -106,6 +106,19 @@ export class SchedulerService {
       }
     }
 
+    // Role capacity is evaluated from the same durable reservations used by
+    // dispatch, so a reviewer task cannot appear runnable while its role slot
+    // is already occupied.
+    const reservedReviewers = this.db.get<{ count: number }>(
+      "SELECT COUNT(*) AS count FROM scheduler_reservations WHERE status='RESERVED' AND kind <> 'LOCK' AND lower(role)='reviewer'",
+    )?.count ?? 0;
+    if (reservedReviewers >= CAPACITY.reviewerMax) {
+      const roleLimited = runnables.filter((task) => task.category === "reviewer");
+      const roleLimitedIds = new Set(roleLimited.map((task) => task.id));
+      runnables.splice(0, runnables.length, ...runnables.filter((task) => !roleLimitedIds.has(task.id)));
+      waiting.push(...roleLimited.map((task) => ({ task, reason: "WAITING_FOR_ROLE_CAPACITY" as const })));
+    }
+
     // Sort runnables deterministically
     runnables.sort((a, b) => compareTasks(a, b));
 
@@ -130,17 +143,21 @@ export class SchedulerService {
 
     // Limit each project's runnables
     const limitedByProject: SchedulableTask[] = [];
+    const capacityWaiting: { task: SchedulableTask; reason: WaitReason }[] = [];
     for (const [projectId, tasks] of runnablesByProject) {
       const running = runningByProject.get(projectId) ?? 0;
       const available = Math.max(0, CAPACITY.projectMax - running);
       limitedByProject.push(...tasks.slice(0, available));
+      capacityWaiting.push(...tasks.slice(available).map((task) => ({ task, reason: "WAITING_FOR_CAPACITY" as const })));
     }
 
     // Then limit globally
     const globalAvailable = Math.max(0, CAPACITY.globalMax - reservedGlobal);
-    limitedByProject.splice(globalAvailable);
+    const globallyLimited = limitedByProject.splice(globalAvailable);
+    capacityWaiting.push(...globallyLimited.map((task) => ({ task, reason: "WAITING_FOR_CAPACITY" as const })));
     runnables.length = 0;
     runnables.push(...limitedByProject);
+    waiting.push(...capacityWaiting);
 
     // Sort waiting and blocked by priority (most important first)
     waiting.sort((a, b) =>
@@ -156,6 +173,12 @@ export class SchedulerService {
       blocked,
       currentRunningCount: reservedGlobal,
     };
+  }
+
+  /** Return the scheduler-owned reason for a task as used by dispatch. */
+  getWaitReason(taskId: string): WaitReason | null {
+    const result = this.recalculate();
+    return result.waiting.find((entry) => entry.task.id === taskId)?.reason ?? null;
   }
 
   /**
@@ -290,8 +313,8 @@ export class SchedulerService {
    ): void {
     const options = typeof triggerReasonOrOptions === "string" ? { triggerReason: triggerReasonOrOptions } : triggerReasonOrOptions;
     const triggerReason = options.triggerReason ?? "epic-child";
-    const task = this.db.get<{ project_id: string; status: string }>(
-      "SELECT project_id, status FROM tasks WHERE id = $id", { id: taskId });
+    const task = this.db.get<{ project_id: string; status: string; contract_json: string }>(
+      "SELECT project_id, status, contract_json FROM tasks WHERE id = $id", { id: taskId });
     if (!task) throw new Error(`Task ${taskId} not found`);
     if (task.status !== "READY") throw new Error(`Task ${taskId} is not READY`);
     this.db.transaction((tx) => {
@@ -304,9 +327,18 @@ export class SchedulerService {
       if ((global?.count ?? 0) >= CAPACITY.globalMax || (project?.count ?? 0) >= CAPACITY.projectMax) {
         throw new Error(`Task ${taskId} is not schedulable: WAITING_FOR_CAPACITY`);
       }
+      const category = (JSON.parse(task.contract_json) as { category?: string }).category;
+      const role = options.role ?? (category === "reviewer" ? "reviewer" : "developer");
+      const roleCount = tx.get<{ count: number }>(
+        "SELECT COUNT(*) AS count FROM scheduler_reservations WHERE status='RESERVED' AND kind <> 'LOCK' AND lower(role)=$role",
+        { role },
+      )?.count ?? 0;
+      if (role === "reviewer" && roleCount >= CAPACITY.reviewerMax) {
+        throw new Error(`Task ${taskId} is not schedulable: WAITING_FOR_ROLE_CAPACITY`);
+      }
       const existing = tx.get<{ id: string; run_id: string | null; status: string }>("SELECT id,run_id,status FROM scheduler_reservations WHERE subject_id=$taskId", { taskId });
       if (!existing || existing.status === "RELEASED") {
-        const estimate = this.estimateCost(task.project_id, "developer", "default");
+        const estimate = this.estimateCost(task.project_id, role, "default");
         const budget = tx.get<{ limit_cost: number; spent_cost: number; reserved_cost: number }>("SELECT limit_cost,spent_cost,reserved_cost FROM scheduler_budgets WHERE project_id=$projectId", { projectId: task.project_id });
         if (budget && budget.spent_cost + budget.reserved_cost + estimate > budget.limit_cost) throw new Error("Task " + taskId + " is not schedulable: WAITING_FOR_BUDGET");
         if (budget) tx.run("UPDATE scheduler_budgets SET reserved_cost=reserved_cost+$estimate WHERE project_id=$projectId", { projectId: task.project_id, estimate });
@@ -323,9 +355,9 @@ export class SchedulerService {
         const conflictingLock = tx.get<{ reservation_id: string }>("SELECT reservation_id FROM scheduler_resource_locks WHERE resource_key=$resourceKey", { resourceKey });
         if (conflictingLock) throw new Error(`Task ${taskId} is not schedulable: WAITING_FOR_RESOURCE_LOCK`);
         if (existing) {
-          tx.run("UPDATE scheduler_reservations SET project_id=$projectId,owner_id=$ownerId,reserved_at=$at,estimate_cost=$estimate,status='RESERVED',actual_cost=NULL,role='developer',model='default',approval_id=$approvalId,run_id=$runId WHERE id=$id AND status='RELEASED'", { id: reservationId, projectId: task.project_id, ownerId: `task:${taskId}`, at: new Date().toISOString(), estimate, approvalId: options.approvalId ?? null, runId: options.runId ?? null });
+          tx.run("UPDATE scheduler_reservations SET project_id=$projectId,owner_id=$ownerId,reserved_at=$at,estimate_cost=$estimate,status='RESERVED',actual_cost=NULL,role=$role,model='default',approval_id=$approvalId,run_id=$runId WHERE id=$id AND status='RELEASED'", { id: reservationId, projectId: task.project_id, ownerId: `task:${taskId}`, at: new Date().toISOString(), estimate, role, approvalId: options.approvalId ?? null, runId: options.runId ?? null });
         } else {
-          tx.run("INSERT INTO scheduler_reservations(id,kind,subject_id,project_id,owner_id,reserved_at,estimate_cost,status,role,model,approval_id,run_id) VALUES($id,'TASK',$taskId,$projectId,$ownerId,$at,$estimate,'RESERVED','developer','default',$approvalId,$runId)", { id: reservationId, taskId, projectId: task.project_id, ownerId: `task:${taskId}`, at: new Date().toISOString(), estimate, approvalId: options.approvalId ?? null, runId: options.runId ?? null });
+          tx.run("INSERT INTO scheduler_reservations(id,kind,subject_id,project_id,owner_id,reserved_at,estimate_cost,status,role,model,approval_id,run_id) VALUES($id,'TASK',$taskId,$projectId,$ownerId,$at,$estimate,'RESERVED',$role,'default',$approvalId,$runId)", { id: reservationId, taskId, projectId: task.project_id, ownerId: `task:${taskId}`, at: new Date().toISOString(), estimate, role, approvalId: options.approvalId ?? null, runId: options.runId ?? null });
         }
         tx.run("INSERT INTO scheduler_resource_locks(resource_key,reservation_id,project_id,owner_id,locked_at) VALUES($resourceKey,$reservationId,$projectId,$ownerId,$at)", { resourceKey, reservationId, projectId: task.project_id, ownerId: `task:${taskId}`, at: new Date().toISOString() });
       } else if (options.runId !== undefined && existing.run_id !== options.runId) {

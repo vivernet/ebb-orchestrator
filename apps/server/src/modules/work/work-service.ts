@@ -5,17 +5,27 @@
 import type { Database } from "../../platform/database/database.js";
 import { WorkRepository } from "./work-repository.js";
 import type { Task, Epic, TaskContract } from "./work-types.js";
+import { WorkflowEngine } from "../workflow/workflow-engine.js";
+import { WorkflowRegistry } from "../workflow/workflow-registry.js";
+import { templates } from "../workflow/templates.js";
 
 export class WorkService {
-  constructor(private readonly db: Database) {}
+  private readonly workflow: WorkflowEngine;
+
+  constructor(private readonly db: Database, workflow?: WorkflowEngine) {
+    if (workflow) {
+      this.workflow = workflow;
+    } else {
+      const registry = new WorkflowRegistry();
+      for (const template of Object.values(templates)) registry.register(template);
+      this.workflow = new WorkflowEngine(db, registry);
+    }
+  }
 
   /** Pause a task through the work aggregate's state transition boundary. */
   pauseTask(taskId: string): Task {
-    return this.db.transaction((tx) => {
-      const existing = WorkRepository.getTaskById(tx, taskId);
-      if (!existing) throw new Error(`Task ${taskId} not found`);
-      return WorkRepository.setTaskStatus(tx, taskId, "PAUSED");
-    });
+    this.workflow.transition(taskId, "PAUSED");
+    return this.db.transaction((tx) => WorkRepository.getTaskById(tx, taskId)!);
   }
 
   /**

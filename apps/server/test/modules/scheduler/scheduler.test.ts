@@ -176,6 +176,14 @@ describe("SchedulerService", () => {
     expect(result.runnables.length).toBeLessThanOrEqual(3);
   });
 
+  it("reports a concrete capacity reason for READY tasks beyond capacity", async () => {
+    await setup();
+    for (let i = 0; i < 4; i++) insertTask(db!, projectId, { id: `capacity-${i}`, status: "READY" });
+
+    const result = scheduler.recalculate();
+    expect(result.waiting.find((entry) => entry.task.id === "capacity-3")?.reason).toBe("WAITING_FOR_CAPACITY");
+  });
+
   // �� Dependency tests ��
 
   it("waits for unresolved dependencies", async () => {

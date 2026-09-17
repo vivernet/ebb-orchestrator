@@ -21,7 +21,9 @@ export type WaitReason =
   | "WAITING_FOR_DEPENDENCY"
   | "WAITING_FOR_RESOURCE_LOCK"
   | "WAITING_FOR_BUDGET"
-  | "WAITING_FOR_APPROVAL";
+  | "WAITING_FOR_APPROVAL"
+  | "WAITING_FOR_CAPACITY"
+  | "WAITING_FOR_ROLE_CAPACITY";
 
 /**
  * Reasons a task may be blocked (hard constraints).

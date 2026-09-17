@@ -158,4 +158,22 @@ describe("WorkService", () => {
     const archived = work.archiveTask(task.id);
     expect(archived.status).toBe("CANCELLED");
   });
+
+  it("pauses through the workflow engine and appends a state-change event", async () => {
+    await setupWithProjects();
+    const task = work.createStandaloneTask(projectA.id, contract("to-pause"));
+    const paused = work.pauseTask(task.id);
+
+    expect(paused.status).toBe("PAUSED");
+    const event = db!.get<{ type: string; payload_json: string }>(
+      "SELECT type,payload_json FROM outbox_events WHERE aggregate_id=$taskId",
+      { taskId: task.id },
+    );
+    expect(event?.type).toBe("TaskStateChanged");
+    expect(JSON.parse(event!.payload_json)).toMatchObject({
+      taskId: task.id,
+      fromStatus: "DRAFT",
+      toStatus: "PAUSED",
+    });
+  });
 });

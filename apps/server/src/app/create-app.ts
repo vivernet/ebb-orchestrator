@@ -24,6 +24,10 @@ import { WorkService } from "../modules/work/work-service.js";
 import { ApprovalService } from "../modules/approvals/approval-service.js";
 import { RunService } from "../modules/runtime/run-service.js";
 import type { AgentRuntime } from "../modules/runtime/agent-runtime.js";
+import { SchedulerService } from "../modules/scheduler/scheduler-service.js";
+import { WorkflowEngine } from "../modules/workflow/workflow-engine.js";
+import { WorkflowRegistry } from "../modules/workflow/workflow-registry.js";
+import { templates } from "../modules/workflow/templates.js";
 
 const localRuntime: AgentRuntime = {
   async startRun() {}, async resumeRun() {}, async cancelRun() {},
@@ -62,7 +66,11 @@ export function createApp(deps: AppDeps = {}): OrchestratorApp {
   const port = deps.port ?? 3000;
 
   const session: LocalSession = createLocalSession({ host, port });
-  const workService = deps.workService ?? (deps.db ? new WorkService(deps.db) : undefined);
+  const workflowRegistry = new WorkflowRegistry();
+  for (const template of Object.values(templates)) workflowRegistry.register(template);
+  const workflow = deps.db ? new WorkflowEngine(deps.db, workflowRegistry) : undefined;
+  const scheduler = deps.db ? new SchedulerService(deps.db) : undefined;
+  const workService = deps.workService ?? (deps.db ? new WorkService(deps.db, workflow) : undefined);
   const approvalService = deps.approvalService ?? (deps.db ? new ApprovalService(deps.db) : undefined);
   const runService = deps.runService ?? (deps.db ? new RunService(deps.db, localRuntime) : undefined);
 
@@ -108,7 +116,7 @@ export function createApp(deps: AppDeps = {}): OrchestratorApp {
   // Authenticated
   app.register(eventRoutes);
   app.register(async (instance) => {
-    instance.get("/api/v1/dashboard", async () => new DashboardProjection(deps.db).get());
+    instance.get("/api/v1/dashboard", async () => new DashboardProjection(deps.db, scheduler).get());
     await projectRoutes(instance, { db: deps.db });
     await workRoutes(instance, { db: deps.db, workService });
     await approvalRoutes(instance, { db: deps.db, approvalService });
