@@ -308,6 +308,20 @@ describe("SchedulerService", () => {
     expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_usage_history WHERE project_id=$projectId", { projectId })?.count).toBe(1);
   });
 
+  it("fails closed when a reserved phase subject collides with another run identity", async () => {
+    await setup();
+    db!.run(
+      "INSERT INTO scheduler_reservations(id,kind,subject_id,project_id,owner_id,reserved_at,status,role,model,run_id) VALUES('collision','PHASE','run-collision',$projectId,'run:run-collision',$at,'RESERVED','reviewer','test',$otherRun)",
+      { projectId, at: new Date().toISOString(), otherRun: "other-run" },
+    );
+
+    expect(() => scheduler.dispatchAgentRun("run-collision", projectId, "reviewer", "test")).toThrow(/run identity mismatch/);
+    expect(db!.get<{ run_id: string }>("SELECT run_id FROM scheduler_reservations WHERE id='collision'")?.run_id).toBe("other-run");
+
+    db!.run("UPDATE scheduler_reservations SET run_id=NULL WHERE id='collision'");
+    expect(() => scheduler.dispatchAgentRun("run-collision", projectId, "reviewer", "test")).toThrow(/found NULL/);
+  });
+
   it("releases a task reservation when failure cleanup is addressed by AgentRun id", async () => {
     await setup();
     db!.exec("CREATE TABLE agent_runs (id TEXT PRIMARY KEY, role TEXT NOT NULL, runtime TEXT NOT NULL, model TEXT NOT NULL, status TEXT NOT NULL, task_id TEXT, cost REAL, started_at TEXT)");
@@ -367,6 +381,43 @@ describe("SchedulerService", () => {
     expect(db!.get<{ status: string }>("SELECT status FROM scheduler_reservations WHERE subject_id='stale-run'")?.status).toBe("RELEASED");
     expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_resource_locks WHERE owner_id='run:stale-run'")?.count).toBe(0);
     expect(db!.get<{ reserved_cost: number }>("SELECT reserved_cost FROM scheduler_budgets WHERE project_id=$projectId", { projectId })?.reserved_cost).toBe(0);
+  });
+
+  it("blocks reconciliation when the exact reserved run is missing instead of using task_id", async () => {
+    await setup();
+    db!.exec("CREATE TABLE agent_runs (id TEXT PRIMARY KEY, role TEXT NOT NULL, runtime TEXT NOT NULL, model TEXT NOT NULL, status TEXT NOT NULL, task_id TEXT, cost REAL)");
+    const reservationId = "identity-collision-reservation";
+    db!.run(
+      "INSERT INTO agent_runs (id,role,runtime,model,status,task_id,cost) VALUES ('unrelated-run','reviewer','test','test','COMPLETED','phase-subject',2)",
+    );
+    db!.run(
+      "INSERT INTO scheduler_reservations(id,kind,subject_id,project_id,owner_id,reserved_at,status,role,model,run_id) VALUES($id,'PHASE','phase-subject',$projectId,'run:expected-run',$at,'RESERVED','reviewer','test','expected-run')",
+      { id: reservationId, projectId, at: new Date().toISOString() },
+    );
+    db!.run(
+      "INSERT INTO scheduler_resource_locks(resource_key,reservation_id,project_id,owner_id,locked_at) VALUES('phase-subject-resource',$id,$projectId,'run:expected-run',$at)",
+      { id: reservationId, projectId, at: new Date().toISOString() },
+    );
+
+    expect(scheduler.reconcile()).toEqual({ releasedReservationIds: [], blockedReservationIds: [reservationId] });
+    expect(db!.get<{ status: string }>("SELECT status FROM scheduler_reservations WHERE id=$id", { id: reservationId })?.status).toBe("RESERVED");
+    expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_resource_locks WHERE reservation_id=$id", { id: reservationId })?.count).toBe(1);
+  });
+
+  it("blocks reconciliation when a reservation has no run identity", async () => {
+    await setup();
+    db!.exec("CREATE TABLE agent_runs (id TEXT PRIMARY KEY, role TEXT NOT NULL, runtime TEXT NOT NULL, model TEXT NOT NULL, status TEXT NOT NULL, task_id TEXT, cost REAL)");
+    const reservationId = "null-run-id-reservation";
+    db!.run(
+      "INSERT INTO scheduler_reservations(id,kind,subject_id,project_id,owner_id,reserved_at,status,role,model,run_id) VALUES($id,'PHASE','phase-without-run',$projectId,'run:phase-without-run',$at,'RESERVED','reviewer','test',NULL)",
+      { id: reservationId, projectId, at: new Date().toISOString() },
+    );
+    db!.run(
+      "INSERT INTO scheduler_resource_locks(resource_key,reservation_id,project_id,owner_id,locked_at) VALUES('phase-without-run-resource',$id,$projectId,'run:phase-without-run',$at)",
+      { id: reservationId, projectId, at: new Date().toISOString() },
+    );
+
+    expect(scheduler.reconcile()).toEqual({ releasedReservationIds: [], blockedReservationIds: [reservationId] });
   });
 
   it("does not release a live run lock as if it were a task lock", async () => {

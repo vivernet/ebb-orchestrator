@@ -166,6 +166,7 @@ describe("scheduler lock compatibility migration", () => {
     expect(() => scheduler.dispatchTask(secondTaskId, workflow, () => undefined)).toThrow(/WAITING_FOR_RESOURCE_LOCK/);
 
     db.exec("CREATE TABLE agent_runs (id TEXT PRIMARY KEY, status TEXT NOT NULL, cost REAL, task_id TEXT, started_at TEXT)");
+    db.run("INSERT INTO agent_runs(id,status,cost,task_id,started_at) VALUES('run-1','COMPLETED',0,$task,$at)", { task: taskId, at: lockedAt });
     db.run("UPDATE tasks SET status='DONE' WHERE id=$id", { id: taskId });
     db.run("UPDATE scheduler_resource_locks SET owner_id='unexpected-owner' WHERE resource_key='global'");
     expect(scheduler.reconcile().blockedReservationIds).toContain(`legacy-capacity:${taskId}`);

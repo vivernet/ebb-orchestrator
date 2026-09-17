@@ -339,8 +339,13 @@ export class SchedulerService {
   /** Reserve a non-task AI phase through the same budget/capacity authority. */
   dispatchAgentRun(runId: string, projectId: string, role: string, model: string, resourceKey = `run:${runId}`): void {
     this.db.transaction((tx) => {
-      const existing = tx.get<{ status: string }>("SELECT status FROM scheduler_reservations WHERE subject_id=$runId", { runId });
-      if (existing?.status === "RESERVED") return;
+      const existing = tx.get<{ status: string; run_id: string | null }>("SELECT status,run_id FROM scheduler_reservations WHERE subject_id=$runId", { runId });
+      if (existing?.status === "RESERVED") {
+        if (existing.run_id !== runId) {
+          throw new Error(`Run ${runId} reservation run identity mismatch: expected ${runId}, found ${existing.run_id ?? "NULL"}`);
+        }
+        return;
+      }
        const global = tx.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_reservations WHERE status='RESERVED' AND kind <> 'LOCK'")?.count ?? 0;
        const project = tx.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_reservations WHERE project_id=$projectId AND status='RESERVED' AND kind <> 'LOCK'", { projectId })?.count ?? 0;
       if (global >= CAPACITY.globalMax || project >= CAPACITY.projectMax) throw new Error(`Run ${runId} is not schedulable: WAITING_FOR_CAPACITY`);
@@ -413,12 +418,20 @@ export class SchedulerService {
           result.releasedReservationIds.push(row.id);
           continue;
         }
+        if (row.run_id === null) {
+          result.blockedReservationIds.push(row.id);
+          continue;
+        }
         const run = tx.get<{ status: string; cost: number | null }>(
-          "SELECT status,cost FROM agent_runs WHERE id=$runId OR task_id=$taskId ORDER BY CASE WHEN id=$runId THEN 0 ELSE 1 END, started_at DESC LIMIT 1",
-          { runId: row.run_id, taskId: row.subject_id },
+          "SELECT status,cost FROM agent_runs WHERE id=$runId",
+          { runId: row.run_id },
         );
-        if (!run || ["FAILED", "CANCELLED", "COMPLETED"].includes(run.status)) {
-          const actual = run?.cost ?? 0;
+        if (!run) {
+          result.blockedReservationIds.push(row.id);
+          continue;
+        }
+        if (["FAILED", "CANCELLED", "COMPLETED"].includes(run.status)) {
+          const actual = run.cost ?? 0;
           tx.run("UPDATE scheduler_budgets SET reserved_cost=MAX(0,reserved_cost-$estimate),spent_cost=spent_cost+$actual WHERE project_id=$projectId", { projectId: row.project_id, estimate: row.estimate_cost, actual });
           tx.run("UPDATE scheduler_reservations SET status='RELEASED',actual_cost=$actual WHERE id=$id AND status='RESERVED'", { id: row.id, actual });
           tx.run("DELETE FROM scheduler_resource_locks WHERE reservation_id=$id", { id: row.id });
