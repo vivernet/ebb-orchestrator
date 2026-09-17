@@ -233,5 +233,15 @@ describe('RoleRegistry', () => {
       const contract = getContract('developer');
       expect(contract?.outputSchema.path).toContain('DeveloperOutputSchema');
     });
+
+    it.each([
+      ['coordinator', 'CoordinatorOutputSchema'],
+      ['product_manager', 'ProductDefinitionSchema'],
+      ['architect', 'DesignResultSchema'],
+      ['devops', 'DevOpsOutputSchema'],
+    ])('should wire %s to its specialized output schema', (role, schemaName) => {
+      const contract = getContract(role);
+      expect(contract?.outputSchema.path).toBe(`@ebb-orchestrator/contracts#${schemaName}`);
+    });
   });
 });
