@@ -7,8 +7,8 @@ interface TaskPageProps { id?: string; }
 export default function TaskPage({ id = '' }: TaskPageProps) {
   const [projection, setProjection] = useState<TaskOverviewProjection | null>(null);
   useEffect(() => { if (id) void apiClient.get<TaskOverviewProjection>(`/tasks/${encodeURIComponent(id)}`).then(setProjection).catch(() => undefined); }, [id]);
-  const task = projection?.task as { title?: string; display_id?: string; status?: string; contract_json?: string; branch?: string; worktree_path?: string; pr_url?: string } | undefined;
-  const contract = task?.contract_json ? (() => { try { return JSON.stringify(JSON.parse(task.contract_json)); } catch { return task.contract_json; } })() : 'No contract recorded.';
+  const task = projection?.task as { title?: string; display_id?: string; status?: string } | undefined;
+  const contract = projection?.contract ? JSON.stringify(projection.contract) : 'No contract recorded.';
   return (
     <div className="task-page">
       <h1>Task: {(task?.title ?? task?.display_id ?? id) || 'Loading'}</h1>
@@ -19,7 +19,7 @@ export default function TaskPage({ id = '' }: TaskPageProps) {
       <section aria-label="Workflow">
         <h2>Workflow</h2>
         <p>{task?.status ?? 'Loading task projection…'}</p>
-        {task?.status && <WorkflowTimeline stages={['DEV', 'REVIEW', 'QA', 'INTEGRATION']} currentStage={task.status} />}
+        {task?.status && <WorkflowTimeline stages={['DEV', 'REVIEW', 'QA', 'INTEGRATION', 'MERGE']} currentStage={task.status} />}
       </section>
       <section aria-label="Agent Runs">
         <h2>Agent Runs</h2>
@@ -29,14 +29,14 @@ export default function TaskPage({ id = '' }: TaskPageProps) {
         <h2>Findings</h2>
         <p>{projection ? `${projection.findings.length} findings · ${projection.defects.length} defects` : 'Loading findings…'}</p>
       </section>
-      <section aria-label="Dependencies and events"><h2>Dependencies / events</h2><p>{projection ? `${projection.findings.length + projection.defects.length} recorded findings and defects; dependency and event history are projection-backed.` : 'Loading dependencies and events…'}</p></section>
+      <section aria-label="Dependencies and events"><h2>Dependencies / events</h2><p>{projection ? `${projection.dependencies.length} dependencies · ${projection.events.length} events · ${projection.approvals.length} approvals` : 'Loading dependencies and events…'}</p></section>
       <section aria-label="Git">
         <h2>Git</h2>
-        <p>{task?.branch ?? 'Branch unavailable'}{task?.pr_url ? ` · ${task.pr_url}` : ''}</p>
+        <p>{projection?.git.branch ?? 'No branch recorded'} · {projection?.git.repositoryPath ?? 'No repository recorded'}{projection?.git.github?.url ? ` · ${projection.git.github.url}` : ''}</p>
       </section>
       <section aria-label="Recovery">
         <h2>Recovery</h2>
-        <p>{projection?.waitReason?.message ?? 'No recovery blocker reported.'}</p>
+        <p>{projection?.waitReason?.message ?? 'No recovery state recorded.'}</p>
       </section>
       <section aria-label="Usage">
         <h2>Usage</h2>

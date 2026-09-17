@@ -3,8 +3,20 @@ interface WorkflowTimelineProps {
   currentStage?: string;
 }
 
+export const displayStageForLifecycle = (lifecycle: string): string | null => {
+  const state = lifecycle.toUpperCase();
+  if (state === 'DRAFT') return null;
+  if (state === 'READY' || state === 'DEVELOPMENT') return 'DEV';
+  if (state === 'WAITING_FOR_DEPENDENCY' || state === 'WAITING_FOR_APPROVAL' || state === 'PAUSED') return null;
+  if (state === 'REVIEW') return 'REVIEW';
+  if (state === 'QA') return 'QA';
+  if (state === 'READY_FOR_INTEGRATION' || state === 'INTEGRATION' || state === 'INTEGRATED_INTO_EPIC') return 'INTEGRATION';
+  if (state === 'READY_FOR_MERGE' || state === 'MERGING' || state === 'DONE' || state === 'RELEASED') return 'MERGE';
+  return null;
+};
+
 export default function WorkflowTimeline({ stages, currentStage }: WorkflowTimelineProps) {
-  const normalizedStage = currentStage?.toUpperCase().replace('DEVELOPMENT', 'DEV');
+  const normalizedStage = currentStage ? displayStageForLifecycle(currentStage) ?? currentStage.toUpperCase() : undefined;
   return (
     <div className="workflow-timeline" aria-label="Workflow timeline">
       <ol>

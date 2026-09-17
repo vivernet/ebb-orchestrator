@@ -5,6 +5,27 @@ import ProjectPage from '../src/features/projects/ProjectPage.js';
 import EpicPage from '../src/features/epics/EpicPage.js';
 import TaskPage from '../src/features/tasks/TaskPage.js';
 import { apiClient } from '../src/api/client.js';
+import { displayStageForLifecycle } from '../src/components/WorkflowTimeline.js';
+
+describe('Workflow lifecycle display mapping', () => {
+  test.each([
+    ['DRAFT', null],
+    ['READY', 'DEV'],
+    ['DEVELOPMENT', 'DEV'],
+    ['REVIEW', 'REVIEW'],
+    ['QA', 'QA'],
+    ['READY_FOR_INTEGRATION', 'INTEGRATION'],
+    ['INTEGRATION', 'INTEGRATION'],
+    ['INTEGRATED_INTO_EPIC', 'INTEGRATION'],
+    ['READY_FOR_MERGE', 'MERGE'],
+    ['MERGING', 'MERGE'],
+    ['DONE', 'MERGE'],
+    ['RELEASED', 'MERGE'],
+    ['BLOCKED', null],
+  ])('maps %s to %s', (lifecycle, stage) => {
+    expect(displayStageForLifecycle(lifecycle)).toBe(stage);
+  });
+});
 
 describe('Dashboard', () => {
   test('renders values from the dashboard projection', async () => {

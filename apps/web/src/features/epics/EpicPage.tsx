@@ -18,10 +18,10 @@ export default function EpicPage({ id }: EpicPageProps) {
         <p>{epic ? `${epic.status ?? 'Unknown'} · ${projection?.tasks.length ?? 0} tasks` : 'Loading epic projection…'}</p>
         {projection && <p>Usage: {projection.usage.totalTokens} tokens · ${projection.usage.cost.toFixed(2)}</p>}
       </section>
-      <section aria-label="Epic lifecycle and parallel work graph"><h2>Lifecycle / parallel work graph</h2><p>{epic?.status ?? 'Lifecycle unavailable'} · Task status and agents</p></section>
-      <section aria-label="Epic Contract"><h2>Epic Contract</h2><p>Contract and acceptance criteria are projection-backed.</p></section>
-      <section aria-label="Epic branch and approvals"><h2>Branch / approvals / blockers</h2><p>Branch state, approvals and blockers</p></section>
-      <section aria-label="Epic events and stages"><h2>Events / review / QA / merge</h2><p>Epic Review · Architecture Review · Epic QA · Merge</p></section>
+       <section aria-label="Epic lifecycle and parallel work graph"><h2>Lifecycle / parallel work graph</h2><p>{projection?.lifecycle.stage ?? epic?.status ?? 'No lifecycle stage recorded'} · {projection?.tasks.length ?? 0} tasks</p></section>
+       <section aria-label="Epic Contract"><h2>Epic Contract</h2><p>{projection?.contract ? JSON.stringify(projection.contract) : 'No contract recorded.'}</p></section>
+       <section aria-label="Epic branch and approvals"><h2>Branch / approvals / blockers</h2><p>{projection?.git.branch ?? 'No branch recorded'} · {projection?.git.repositoryPath ?? 'No repository recorded'} · {projection?.approvals.length ?? 0} approvals · {projection?.blockers.length ?? 0} blockers</p></section>
+       <section aria-label="Epic events and stages"><h2>Events / review / QA / merge</h2><p>{projection?.events.length ?? 0} events</p></section>
       <section aria-label="Epic tasks">
         <h2>Tasks</h2>
         <ul>{projection?.tasks.map((task) => { const item = task as { id?: string; title?: string; display_id?: string; status?: string }; return <li key={item.id}>{item.title ?? item.display_id ?? item.id} · {item.status}</li>; })}</ul>
