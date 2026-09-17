@@ -6,7 +6,7 @@
  */
 
 import { writeFile, mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -53,10 +53,8 @@ export class KnowledgeGitService {
     for (const change of changes) {
       const fullPath = join(repoDir, change.filePath);
       // Ensure parent directory exists
-      const dir = fullPath.substring(0, fullPath.lastIndexOf("/"));
-      if (dir) {
-        await mkdir(dir, { recursive: true });
-      }
+      const dir = dirname(fullPath);
+      await mkdir(dir, { recursive: true });
       await writeFile(fullPath, change.markdown, "utf8");
       filesChanged.push(change.filePath);
     }
