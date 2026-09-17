@@ -9,7 +9,7 @@ html, body {
   font-size: 14px;
   line-height: 1.5;
   color: #e5e5e5;
-  background-color: #1a1a1a;
+  background-color: #0b0d10;
 }
 
 .app-shell {
@@ -19,31 +19,123 @@ html, body {
 
 .left-nav {
   width: 200px;
-  background-color: #252525;
+  background-color: #12161b;
   padding: 16px;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  border-right: 1px solid #1e2329;
 }
 
 .left-nav a {
-  color: #a0a0a0;
+  color: #8a8d91;
   text-decoration: none;
   padding: 8px 12px;
   border-radius: 4px;
+  transition: color 0.2s, background-color 0.2s;
 }
 
 .left-nav a:hover {
-  background-color: #303030;
+  background-color: #1a1f26;
   color: #e5e5e5;
 }
 
 .left-nav a.active {
-  background-color: #404040;
+  background-color: #252a32;
   color: #e5e5e5;
 }
 
 .main-content {
   flex: 1;
   padding: 24px;
+  background-color: #0b0d10;
+}
+
+/* Section and title styles */
+.main-content h1 {
+  font-size: 24px;
+  font-weight: 600;
+  color: #e5e5e5;
+  margin-bottom: 24px;
+}
+
+.main-content h2 {
+  font-size: 16px;
+  font-weight: 600;
+  color: #e5e5e5;
+  margin-bottom: 12px;
+}
+
+.main-content section {
+  background-color: #12161b;
+  border: 1px solid #1e2329;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.main-content section p {
+  color: #8a8d91;
+  font-size: 14px;
+}
+
+/* Responsive layout */
+@media (max-width: 1024px) {
+  .left-nav {
+    width: 180px;
+  }
+
+  .main-content {
+    padding: 20px;
+  }
+}
+
+@media (max-width: 768px) {
+  .left-nav {
+    width: 60px;
+    padding: 12px;
+  }
+
+  .left-nav a {
+    padding: 8px;
+    text-align: center;
+  }
+
+  .left-nav a span {
+    display: none;
+  }
+
+  .main-content {
+    padding: 16px;
+  }
+
+  .main-content h1 {
+    font-size: 20px;
+  }
+
+  .main-content h2 {
+    font-size: 14px;
+  }
+
+  .main-content section {
+    padding: 12px;
+  }
+}
+
+@media (max-width: 480px) {
+  .left-nav {
+    width: 100%;
+    flex-direction: row;
+    overflow-x: auto;
+    border-right: none;
+    border-bottom: 1px solid #1e2329;
+  }
+
+  .main-content {
+    padding: 12px;
+  }
+
+  .main-content h1 {
+    font-size: 18px;
+  }
 }
