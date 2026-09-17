@@ -8,8 +8,7 @@
  */
 
 import { readdir, readFile, stat } from "node:fs/promises";
-import { join, relative } from "node:path";
-import { createHash } from "node:crypto";
+import { join } from "node:path";
 import type { Database, DatabaseTx } from "../../platform/database/database.js";
 import { DomainEvent } from "../../platform/events/domain-event.js";
 import { appendOutboxEvent } from "../../platform/events/outbox-repository.js";
@@ -443,7 +442,7 @@ export class KnowledgeService {
       type: "GuidelineActivated",
       aggregateType: "Guideline",
       aggregateId: row.id,
-      payload: { guidelineId: row.id, displayId: row.displayId, version: row.version },
+      payload: { guidelineId: row.id, displayId: row.display_id, version: row.version },
     }));
   }
 
@@ -465,7 +464,7 @@ export class KnowledgeService {
       type: "DecisionAccepted",
       aggregateType: "Decision",
       aggregateId: row.id,
-      payload: { decisionId: row.id, displayId: row.displayId },
+      payload: { decisionId: row.id, displayId: row.display_id },
     }));
   }
 }
