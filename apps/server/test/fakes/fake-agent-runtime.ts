@@ -3,7 +3,7 @@
  * Never sleeps or uses the network.
  */
 
-import type { AgentRun } from "@orchestrator/contracts";
+import type { AgentRun } from "@ebb-orchestrator/contracts";
 import type { AgentRuntime } from "../../src/modules/runtime/agent-runtime.js";
 import type { RunOutcome } from "../../src/modules/runtime/run-types.js";
 

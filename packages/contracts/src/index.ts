@@ -1,4 +1,4 @@
-export const SYSTEM_NAME = "orchestrator" as const;
+export const SYSTEM_NAME = "ebb-orchestrator" as const;
 
 export * from "./agent-run.js";
 export * from "./roles/common.js";

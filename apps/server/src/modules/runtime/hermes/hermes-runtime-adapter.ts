@@ -3,7 +3,7 @@
  */
 
 import type { AgentRuntime } from "../agent-runtime.js";
-import type { AgentRun, RunStatus } from "@orchestrator/contracts";
+import type { AgentRun, RunStatus } from "@ebb-orchestrator/contracts";
 import type { RunOutcome } from "../run-types.js";
 import { ProcessExecutor, ExitCodeError, type ProcessOptions } from "../../../platform/process/process-executor.js";
 import { HermesCliBuilder } from "./hermes-cli.js";

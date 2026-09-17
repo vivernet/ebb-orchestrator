@@ -11,7 +11,7 @@ import {
   ReviewerOutputSchema,
   QaOutputSchema,
   IntegrationOutputSchema,
-} from "@orchestrator/contracts";
+} from "@ebb-orchestrator/contracts";
 
 export type { RoleOutput, ValidatedRoleOutput };
 

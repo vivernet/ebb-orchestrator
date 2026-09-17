@@ -33,7 +33,7 @@ import { GitTools } from "../../src/modules/execution/git-tools.js";
 import { PathResolver } from "../../src/platform/security/path-resolver.js";
 import { RunService } from "../../src/modules/runtime/run-service.js";
 import type { AgentRuntime } from "../../src/modules/runtime/agent-runtime.js";
-import type { AgentRun } from "@orchestrator/contracts";
+import type { AgentRun } from "@ebb-orchestrator/contracts";
 import type { RunOutcome } from "../../src/modules/runtime/run-types.js";
 import { HermesRuntimeAdapter } from "../../src/modules/runtime/hermes/hermes-runtime-adapter.js";
 import { ProcessExecutor } from "../../src/platform/process/process-executor.js";

@@ -2,7 +2,7 @@
  * Agent runtime port - interface for interacting with an LLM runtime.
  */
 
-import type { AgentRun } from "@orchestrator/contracts";
+import type { AgentRun } from "@ebb-orchestrator/contracts";
 import type { RunOutcome } from "./run-types.js";
 
 export interface AgentRuntime {

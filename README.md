@@ -1,4 +1,4 @@
-# Local AI Development Orchestrator — Planning Package
+# Ebb Orchestrator — Planning Package
 
 This package contains the approved design specification, the v1 implementation roadmap, six sequential implementation plans, and the approved Web UI reference mockups.
 

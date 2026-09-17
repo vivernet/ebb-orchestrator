@@ -27,7 +27,7 @@ export interface ModelRef {
 
 // Output schema reference (path to schema in contracts package)
 export interface OutputSchemaRef {
-  /** Path to the output schema in the contracts package, e.g., '@orchestrator/contracts#DeveloperOutputSchema' */
+  /** Path to the output schema in the contracts package, e.g., '@ebb-orchestrator/contracts#DeveloperOutputSchema' */
   path: string;
   /** Schema version for backward compatibility */
   version: string;

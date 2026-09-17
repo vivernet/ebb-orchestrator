@@ -1,5 +1,5 @@
 {
-  "name": "@orchestrator/server",
+  "name": "@ebb-orchestrator/server",
   "private": true,
   "bin": {
     "orchestrator-mcp": "src/bin/orchestrator-mcp.ts"
@@ -11,8 +11,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@orchestrator/contracts": "workspace:*",
-    "@orchestrator/testing": "workspace:*",
+    "@ebb-orchestrator/contracts": "workspace:*",
+    "@ebb-orchestrator/testing": "workspace:*",
     "fastify": "^5.12.4",
     "zod": "^4.6.0"
   }

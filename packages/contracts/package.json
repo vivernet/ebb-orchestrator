@@ -1,5 +1,5 @@
 {
-  "name": "@orchestrator/contracts",
+  "name": "@ebb-orchestrator/contracts",
   "private": true,
   "type": "module",
   "exports": { ".": "./src/index.ts" },

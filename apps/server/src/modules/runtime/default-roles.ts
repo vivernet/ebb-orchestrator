@@ -71,18 +71,18 @@ export const DefaultModels = {
  * Base schema paths in the contracts package.
  */
 export const SchemaPaths = {
-  base: '@orchestrator/contracts#BaseOutputSchema',
-  developer: '@orchestrator/contracts#DeveloperOutputSchema',
-  reviewer: '@orchestrator/contracts#ReviewerOutputSchema',
-  qa: '@orchestrator/contracts#QaOutputSchema',
-  integration: '@orchestrator/contracts#IntegrationOutputSchema',
+  base: '@ebb-orchestrator/contracts#BaseOutputSchema',
+  developer: '@ebb-orchestrator/contracts#DeveloperOutputSchema',
+  reviewer: '@ebb-orchestrator/contracts#ReviewerOutputSchema',
+  qa: '@ebb-orchestrator/contracts#QaOutputSchema',
+  integration: '@ebb-orchestrator/contracts#IntegrationOutputSchema',
 } as const;
 
 /**
  * Shared input schema path for all roles.
  */
 const DefaultInputSchema = {
-  path: '@orchestrator/contracts#BaseOutputSchema',
+  path: '@ebb-orchestrator/contracts#BaseOutputSchema',
   version: '1.0.0',
 };
 

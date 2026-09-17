@@ -190,10 +190,10 @@ importers:
 
   apps/server:
     dependencies:
-      '@orchestrator/contracts':
+      '@ebb-orchestrator/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
-      '@orchestrator/testing':
+      '@ebb-orchestrator/testing':
         specifier: workspace:*
         version: link:../../packages/testing
       fastify:

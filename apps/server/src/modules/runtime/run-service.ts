@@ -4,7 +4,7 @@
 
 import type { Database, DatabaseTx } from "../../platform/database/database.js";
 import type { AgentRuntime } from "./agent-runtime.js";
-import type { AgentRun, RunStatus, RunTrigger } from "@orchestrator/contracts";
+import type { AgentRun, RunStatus, RunTrigger } from "@ebb-orchestrator/contracts";
 import type { StartRunOptions, ResumeRunOptions, RunOutcome } from "./run-types.js";
 import { validateRoleOutput } from "./output-validator.js";
 import { DatabaseCompletionStore, type CompletionStore } from "../execution/mcp/submit-result-tool.js";
