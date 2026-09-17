@@ -25,6 +25,7 @@ export interface ResumeRunOptions {
 }
 
 export interface StartRunOptions {
+  runId?: string;
   role: string;
   model: string;
   taskId: string;

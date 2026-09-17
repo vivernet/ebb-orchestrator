@@ -35,6 +35,8 @@ export interface MergeServiceOptions {
   integrationAttempt?: IntegrationAttempt;
   database?: Database;
   onVerifiedCompletion?: (result: MergeResult) => void;
+  /** Persisted approval link for an Epic-specific final merge operation. */
+  approvalId?: string;
 }
 
 function optionsDatabase(attempt: IntegrationAttempt | null, database?: Database): Database | null {
@@ -59,7 +61,7 @@ export class MergeService {
   private readonly sourceBranch: string | null;
   private readonly targetBranch: string | null;
   private readonly expectedTargetSha: string | null;
-  private readonly integrationAttempt: IntegrationAttempt | null;
+  private integrationAttempt: IntegrationAttempt | null;
   private readonly onVerifiedCompletion: ((result: MergeResult) => void) | undefined;
   private readonly database: Database | undefined;
 
@@ -73,6 +75,19 @@ export class MergeService {
     this.integrationAttempt = options.integrationAttempt ?? null;
     this.database = options.database;
     this.onVerifiedCompletion = options.onVerifiedCompletion;
+    if (this.database) {
+      this.database.exec(`CREATE TABLE IF NOT EXISTS git_operations (
+        id TEXT PRIMARY KEY, type TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'STARTED',
+        repo_path TEXT NOT NULL, branch_name TEXT, target_ref TEXT, created_at TEXT NOT NULL,
+        verified_at TEXT, approval_id TEXT, source_sha TEXT, expected_target_sha TEXT,
+        resulting_target_sha TEXT, failure_reason TEXT
+      )`);
+    }
+    if (this.database) {
+      for (const column of ["approval_id TEXT", "source_sha TEXT", "expected_target_sha TEXT", "resulting_target_sha TEXT", "failure_reason TEXT"]) {
+        try { this.database.exec(`ALTER TABLE git_operations ADD COLUMN ${column}`); } catch { /* already present */ }
+      }
+    }
   }
 
   /**
@@ -97,7 +112,10 @@ export class MergeService {
     subjectId: string,
     approvalId: string
   ): Promise<MergeResult> {
-    const approval = this.approvalStore.get(approvalId);
+    const approval = this.approvalStore.get(approvalId) ?? this.database?.get<Approval>(
+      "SELECT id,subject_id AS subjectId,type,status FROM approvals WHERE id=$approvalId",
+      { approvalId },
+    );
 
     if (!approval) {
       throw new Error(`Approval not found: ${approvalId}`);
@@ -157,14 +175,153 @@ export class MergeService {
       throw new Error("Missing verified integration provenance: expected target SHA does not match integration record");
     }
 
+    // The approval supplied to this invocation is authoritative.  The
+    // constructor value is retained only for compatibility with older
+    // callers; it must never make the journal point at another approval.
+    if (this.database) {
+      const prior = this.database.get<{ target_ref: string; source_sha: string; expected_target_sha: string; resulting_target_sha: string }>(
+        "SELECT target_ref,source_sha,expected_target_sha,resulting_target_sha FROM git_operations WHERE type='MERGE' AND status='VERIFIED' AND approval_id=$approvalId ORDER BY verified_at DESC LIMIT 1", { approvalId });
+      if (prior && prior.target_ref === verified.currentTargetBranch && prior.source_sha === verified.sourceSha && prior.expected_target_sha === verified.expectedTargetSha && prior.resulting_target_sha) {
+        return { success: true, subjectId, targetBranch: prior.target_ref, mergeCommitSha: prior.resulting_target_sha, resultingTargetSha: prior.resulting_target_sha, verifiedCompletion: true };
+      }
+
+      const reconciliationFailure = this.database.get<{ id: string }>(
+        "SELECT id FROM git_operations WHERE type='MERGE' AND status='FAILED' AND failure_reason='RECONCILIATION_FAILED' AND approval_id=$approvalId AND repo_path=$repo AND branch_name=$branch AND target_ref=$target AND source_sha=$source AND expected_target_sha=$expected ORDER BY created_at DESC LIMIT 1",
+        {
+          approvalId,
+          repo: verified.repoPath,
+          branch: verified.sourceBranch,
+          target: verified.currentTargetBranch,
+          source: verified.sourceSha,
+          expected: verified.expectedTargetSha,
+        },
+      );
+      if (reconciliationFailure) {
+        throw new Error("MERGE_RECOVERY_FAILED: a matching terminal reconciliation failure already exists; manual reconciliation required");
+      }
+
+      const started = this.database.get<{
+        id: string;
+        target_ref: string;
+        source_sha: string;
+        expected_target_sha: string;
+      }>(
+        "SELECT id,target_ref,source_sha,expected_target_sha FROM git_operations WHERE type='MERGE' AND status='STARTED' AND approval_id=$approvalId AND repo_path=$repo AND branch_name=$branch AND target_ref=$target AND source_sha=$source AND expected_target_sha=$expected ORDER BY created_at DESC LIMIT 1",
+        {
+          approvalId,
+          repo: verified.repoPath,
+          branch: verified.sourceBranch,
+          target: verified.currentTargetBranch,
+          source: verified.sourceSha,
+          expected: verified.expectedTargetSha,
+        },
+      );
+      if (started) {
+        const recovered = await this.reconcileStartedMerge(started, subjectId);
+        this.onVerifiedCompletion?.(recovered);
+        return recovered;
+      }
+    }
+    const operationId = this.database ? crypto.randomUUID() : null;
+    if (operationId) {
+      this.database!.run("INSERT INTO git_operations(id,type,status,repo_path,branch_name,target_ref,created_at,approval_id,source_sha,expected_target_sha) VALUES($id,'MERGE','STARTED',$repo,$branch,$target,$at,$approval,$source,$expected)", { id: operationId, repo: verified.repoPath, branch: verified.sourceBranch, target: verified.currentTargetBranch, at: new Date().toISOString(), approval: approvalId, source: verified.sourceSha, expected: verified.expectedTargetSha });
+    }
     // Perform the merge
     try {
       const mergeResult = await this.performMerge(subjectId, verified);
+      if (operationId) this.database!.run("UPDATE git_operations SET status='VERIFIED',verified_at=$at,resulting_target_sha=$result WHERE id=$id AND status='STARTED'", { id: operationId, at: new Date().toISOString(), result: mergeResult.resultingTargetSha });
       this.onVerifiedCompletion?.(mergeResult);
       return mergeResult;
+    } catch (error) {
+      if (operationId) this.database!.run("UPDATE git_operations SET status='FAILED' WHERE id=$id AND status='STARTED'", { id: operationId });
+      throw error;
     } finally {
       if (!this.database && provenanceDb) provenanceDb.close();
     }
+  }
+
+  /**
+   * Resolve a journal entry left STARTED by a process crash after git mutated
+   * the target.  A target is considered completed only when both the captured
+   * target and the captured source are ancestors of the observed target.  All
+   * other states are terminal: retrying them could apply the merge twice or
+   * merge onto an unrelated target.
+   */
+  private async reconcileStartedMerge(
+    operation: { id: string; target_ref: string; source_sha: string; expected_target_sha: string },
+    subjectId: string,
+  ): Promise<MergeResult> {
+    let resultingTargetSha: string | undefined;
+    try {
+      const source = (await this.git.run(this.repoPath, ["rev-parse", operation.source_sha])).stdout.trim();
+      const target = (await this.git.run(this.repoPath, ["rev-parse", operation.target_ref])).stdout.trim();
+      if (source !== operation.source_sha) throw new Error("source SHA is no longer available");
+
+      const isAncestor = async (ancestor: string, descendant: string): Promise<boolean> => {
+        try {
+          await this.git.run(this.repoPath, ["merge-base", "--is-ancestor", ancestor, descendant]);
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      if (await isAncestor(operation.expected_target_sha, target) && await isAncestor(operation.source_sha, target)) {
+        resultingTargetSha = target;
+      } else {
+        throw new Error("observed target does not prove completion of the recorded merge");
+      }
+    } catch (error) {
+      this.database!.run("UPDATE git_operations SET status='FAILED',failure_reason='RECONCILIATION_FAILED' WHERE id=$id AND status='STARTED'", { id: operation.id });
+      const reason = error instanceof Error ? error.message : "unknown reconciliation error";
+      throw new Error(`MERGE_RECOVERY_FAILED: ${reason}; manual reconciliation required`, { cause: error });
+    }
+
+    this.database!.run(
+      "UPDATE git_operations SET status='VERIFIED',verified_at=$at,resulting_target_sha=$result WHERE id=$id AND status='STARTED'",
+      { id: operation.id, at: new Date().toISOString(), result: resultingTargetSha },
+    );
+    return {
+      success: true,
+      subjectId,
+      targetBranch: operation.target_ref,
+      mergeCommitSha: resultingTargetSha,
+      resultingTargetSha,
+      verifiedCompletion: true,
+    };
+  }
+
+  /**
+   * Authority-bound entry point used by Epic orchestration.  It resolves the
+   * exact Integration AgentRun from durable provenance before entering the
+   * normal approval/SHA verification path; callers cannot supply a fabricated
+   * attempt or substitute another run.
+   */
+  async mergeApprovedForIntegration(subjectId: string, approvalId: string, integrationRunId: string): Promise<MergeResult> {
+    if (!this.database) throw new Error("Authoritative database is required for Integration provenance");
+    const row = this.database.get<{
+      id: string; source_branch: string; target_branch: string; repository_path: string;
+      expected_target_sha: string; source_sha: string; worktree_path: string;
+      integration_run_id: string; status: IntegrationAttempt["status"]; created_at: string;
+    }>(`SELECT ia.*
+        FROM integration_attempts ia
+        JOIN agent_runs ar ON ar.id = ia.integration_run_id
+          AND lower(ar.role) = 'integration'
+          AND ar.epic_id = $subjectId
+        JOIN orchestration_phase_runs pr ON pr.agent_run_id = ar.id
+          AND pr.epic_id = $subjectId
+          AND lower(pr.phase) = 'integration'
+          AND pr.validated = 1
+        JOIN epic_orchestrations eo ON eo.epic_id = $subjectId
+        WHERE ia.integration_run_id = $runId AND ia.status = 'MERGED'`, { runId: integrationRunId, subjectId });
+    if (!row || row.integration_run_id !== integrationRunId) throw new Error("Missing exact Integration provenance");
+    this.integrationAttempt = {
+      id: row.id, sourceBranch: row.source_branch, currentTargetBranch: row.target_branch,
+      expectedTargetBranch: row.target_branch, repoPath: row.repository_path,
+      expectedTargetSha: row.expected_target_sha, sourceSha: row.source_sha,
+      worktreePath: row.worktree_path, status: row.status, createdAt: row.created_at,
+      integrationRunId,
+    };
+    return this.mergeApproved(subjectId, approvalId);
   }
 
   /**

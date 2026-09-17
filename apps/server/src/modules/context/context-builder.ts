@@ -15,6 +15,7 @@ import type {
   DeveloperContextPackage,
   ReviewerContextPackage,
 } from './context-types.js';
+import { ContextBudget } from './context-budget.js';
 
 /**
  * Builds context packages for agent roles.
@@ -143,8 +144,7 @@ export class ContextBuilder {
 
   /**
    * Apply P0-P3 budget pruning without LLM summarization.
-   * P0 items are always included.
-   * P3 items are pruned first under budget pressure.
+   * Delegates to ContextBudget for deterministic priority-based pruning.
    */
   private pruneByBudget<T extends { priority?: Priority }>(
     items: T[],
@@ -155,24 +155,8 @@ export class ContextBuilder {
       return items;
     }
 
-    // P0 items are NEVER pruned
-    const mandatory = items.filter((item) => item.priority === 'p0');
-
-    // P1 and P2 items - included by default
-    const optional = items.filter(
-      (item) => item.priority === 'p1' || item.priority === 'p2'
-    );
-
-    // P3 items - pruned under any budget pressure
-    const optionalP3 = items.filter((item) => item.priority === 'p3');
-
-    // If we have budget pressure, remove P3 items
-    if (budgetLimit < 10000) {
-      // Budget pressure exists - exclude P3 items
-      return mandatory.concat(optional);
-    }
-
-    return mandatory.concat(optional).concat(optionalP3);
+    const contextBudget = new ContextBudget();
+    return contextBudget.pruneByBudget(items, budgetLimit);
   }
 
   /**

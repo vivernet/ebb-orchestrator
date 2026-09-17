@@ -50,7 +50,7 @@ missing Task acceptance criteria
 - [ ] **Step 2: Verify failure**
 
 ```bash
-pnpm --filter @orchestrator/server test -- planning-output-validator.test.ts
+pnpm --filter @ebb-orchestrator/server test -- planning-output-validator.test.ts
 ```
 
 - [ ] **Step 3: Implement role schemas + semantic checks**
@@ -60,7 +60,7 @@ Coordinator `recommended_*` fields remain recommendations; policy engine has fin
 - [ ] **Step 4: Run tests**
 
 ```bash
-pnpm --filter @orchestrator/server test -- planning-output-validator.test.ts
+pnpm --filter @ebb-orchestrator/server test -- planning-output-validator.test.ts
 ```
 
 - [ ] **Step 5: Commit**
@@ -101,7 +101,7 @@ A simple standalone Task may be materialized without planning approval; Epic pla
 - [ ] **Step 2: Verify failure**
 
 ```bash
-pnpm --filter @orchestrator/server test -- planning-service.test.ts
+pnpm --filter @ebb-orchestrator/server test -- planning-service.test.ts
 ```
 
 - [ ] **Step 3: Implement temporary-ref materialization**
@@ -118,7 +118,7 @@ Emit `PlanApproved` and domain creation events. No partial Task creation on vali
 - [ ] **Step 4: Run tests**
 
 ```bash
-pnpm --filter @orchestrator/server test -- planning-service.test.ts
+pnpm --filter @ebb-orchestrator/server test -- planning-service.test.ts
 ```
 
 - [ ] **Step 5: Commit**
@@ -148,7 +148,7 @@ Use three Tasks, two parallel after foundation. Assert required/optional semanti
 - [ ] **Step 2: Verify failure**
 
 ```bash
-pnpm --filter @orchestrator/server test -- epic.fake-runtime.test.ts
+pnpm --filter @ebb-orchestrator/server test -- epic.fake-runtime.test.ts
 ```
 
 - [ ] **Step 3: Implement orchestration conditions**
@@ -158,7 +158,7 @@ Architecture Review runs only when `architecture_review_required` or accepted ar
 - [ ] **Step 4: Run test**
 
 ```bash
-pnpm --filter @orchestrator/server test -- epic.fake-runtime.test.ts
+pnpm --filter @ebb-orchestrator/server test -- epic.fake-runtime.test.ts
 ```
 
 - [ ] **Step 5: Commit**
@@ -191,7 +191,7 @@ Assert active current guideline only is returned, superseded versions remain his
 - [ ] **Step 2: Verify failure**
 
 ```bash
-pnpm --filter @orchestrator/server test -- knowledge-service.test.ts
+pnpm --filter @ebb-orchestrator/server test -- knowledge-service.test.ts
 ```
 
 - [ ] **Step 3: Implement Markdown metadata parser + DB index**
@@ -201,7 +201,7 @@ Keep canonical text in repository Markdown; DB stores searchable metadata/versio
 - [ ] **Step 4: Run tests**
 
 ```bash
-pnpm --filter @orchestrator/server test -- knowledge-service.test.ts
+pnpm --filter @ebb-orchestrator/server test -- knowledge-service.test.ts
 ```
 
 - [ ] **Step 5: Commit**
@@ -230,7 +230,7 @@ New database guideline is compared only against active database/overlapping scop
 - [ ] **Step 2: Verify failure**
 
 ```bash
-pnpm --filter @orchestrator/server test -- knowledge-analyzer.test.ts
+pnpm --filter @ebb-orchestrator/server test -- knowledge-analyzer.test.ts
 ```
 
 - [ ] **Step 3: Implement candidate narrowing and approved commit**
@@ -240,7 +240,7 @@ Formatting/whitespace-only changes classify editorial deterministically. Potenti
 - [ ] **Step 4: Run tests**
 
 ```bash
-pnpm --filter @orchestrator/server test -- knowledge-analyzer.test.ts
+pnpm --filter @ebb-orchestrator/server test -- knowledge-analyzer.test.ts
 ```
 
 - [ ] **Step 5: Commit**
@@ -272,7 +272,7 @@ For provider Task include matching provider/architecture guideline and Epic deci
 - [ ] **Step 2: Verify failure**
 
 ```bash
-pnpm --filter @orchestrator/server test -- context-selection.test.ts
+pnpm --filter @ebb-orchestrator/server test -- context-selection.test.ts
 ```
 
 - [ ] **Step 3: Implement structural selection**
@@ -282,7 +282,7 @@ Relevance uses scope/area/path/role/tags. Resume delta reports `NEW|UPDATED|REMO
 - [ ] **Step 4: Run tests**
 
 ```bash
-pnpm --filter @orchestrator/server test -- context-selection.test.ts
+pnpm --filter @ebb-orchestrator/server test -- context-selection.test.ts
 ```
 
 - [ ] **Step 5: Commit**
@@ -315,7 +315,7 @@ Remaining budget `$5`; three concurrent `$2` reservations. Assert only two acqui
 - [ ] **Step 2: Verify failure**
 
 ```bash
-pnpm --filter @orchestrator/server test -- budget-service.test.ts
+pnpm --filter @ebb-orchestrator/server test -- budget-service.test.ts
 ```
 
 - [ ] **Step 3: Implement hierarchical budget resolution**
@@ -325,7 +325,7 @@ Scopes: global/project/epic/task, effective most restrictive available limit. Es
 - [ ] **Step 4: Run tests**
 
 ```bash
-pnpm --filter @orchestrator/server test -- budget-service.test.ts scheduler.test.ts
+pnpm --filter @ebb-orchestrator/server test -- budget-service.test.ts scheduler.test.ts
 ```
 
 - [ ] **Step 5: Commit**
@@ -353,7 +353,7 @@ Use a request that necessarily needs 2–3 dependent Tasks. Test asserts Coordin
 - [ ] **Step 2: Run once to expose integration gaps**
 
 ```bash
-RUN_HERMES_E2E=1 pnpm --filter @orchestrator/server test -- request-to-epic.hermes.test.ts
+RUN_HERMES_E2E=1 pnpm --filter @ebb-orchestrator/server test -- request-to-epic.hermes.test.ts
 ```
 
 - [ ] **Step 3: Complete wiring without relaxing policy**

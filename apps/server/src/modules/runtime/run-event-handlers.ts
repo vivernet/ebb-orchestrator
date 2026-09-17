@@ -7,6 +7,7 @@ import type { Database } from "../../platform/database/database.js";
 import { WorkflowEngine } from "../workflow/workflow-engine.js";
 import type { RunOutcome } from "./run-types.js";
 import { validateRoleOutput } from "./output-validator.js";
+import { SchedulerService } from "../scheduler/scheduler-service.js";
 
 /**
  * Orchestrates runtime events and workflow transitions.
@@ -15,7 +16,15 @@ export class RuntimeEventHandlers {
   constructor(
     private readonly db: Database,
     private readonly workflowEngine: WorkflowEngine,
-  ) {}
+  ) {
+    this.scheduler = new SchedulerService(db);
+    // Final merge provenance is authoritative even for databases created
+    // before the provenance migration was installed.
+    for (const column of ["approval_id TEXT", "source_sha TEXT", "expected_target_sha TEXT", "resulting_target_sha TEXT"]) {
+      try { this.db.exec(`ALTER TABLE git_operations ADD COLUMN ${column}`); } catch { /* already present */ }
+    }
+  }
+  private readonly scheduler: SchedulerService;
 
   /**
    * Handle AgentRunRequested event.
@@ -52,8 +61,13 @@ export class RuntimeEventHandlers {
       );
     }
 
-    // Transition to DEVELOPMENT (workflow engine is the only domain service that can do this)
-    this.workflowEngine.transition(taskId, "DEVELOPMENT");
+    // Scheduler is the only dispatch authority: it atomically reserves
+    // capacity/budget/resource lock before advancing the workflow.
+    this.scheduler.dispatchTask(taskId, this.workflowEngine, () => undefined, {
+      triggerReason: "runtime-request",
+      role,
+      model,
+    });
 
     // Log/emit AgentRunStarted event
     this.emitAgentRunStarted(taskId, role, model);
@@ -69,8 +83,8 @@ export class RuntimeEventHandlers {
   ): void {
     // The run is the authorization boundary. Never select a latest run for a
     // task: that permits a stale/foreign completion to advance the workflow.
-    const run = this.db.get<{ id: string; task_id: string | null; role: string; status: string; output: string | null }>(
-      "SELECT id, task_id, role, status, output FROM agent_runs WHERE id = $id",
+    const run = this.db.get<{ id: string; task_id: string | null; role: string; status: string; output: string | null; cost: number | null }>(
+      "SELECT id, task_id, role, status, output, cost FROM agent_runs WHERE id = $id",
       { id: runId },
     );
     if (!run) throw new Error(`Run ${runId} not found`);
@@ -117,6 +131,7 @@ export class RuntimeEventHandlers {
     } else {
       this.emitAgentRunFailed(taskId, outcome);
     }
+    this.scheduler.releaseTask(taskId, run.cost ?? 0);
   }
 
   /**
@@ -142,6 +157,7 @@ export class RuntimeEventHandlers {
 
     // Transition to CANCELLED
     this.workflowEngine.transition(taskId, "CANCELLED");
+    this.scheduler.releaseTask(taskId);
     this.emitAgentRunInterrupted(taskId);
   }
 
@@ -186,6 +202,53 @@ export class RuntimeEventHandlers {
     });
 
     this.emitTaskTransitioned(taskId, "READY_FOR_MERGE", "MERGING");
+  }
+
+  /** Complete the Epic merge and only then release its integrated children. */
+  handleEpicMergeCompleted(epicId: string, approvalId: string): void {
+    for (const column of ["approval_id TEXT", "source_sha TEXT", "expected_target_sha TEXT", "resulting_target_sha TEXT"]) {
+      try { this.db.exec(`ALTER TABLE git_operations ADD COLUMN ${column}`); } catch { /* table/column is installed by migration */ }
+    }
+    const orchestration = this.db.get<{ stage: string; final_approval_id: string | null }>(
+      "SELECT stage, final_approval_id FROM epic_orchestrations WHERE epic_id=$epicId", { epicId });
+    if (!orchestration || orchestration.final_approval_id !== approvalId || !["FINAL_APPROVAL", "DONE"].includes(orchestration.stage)) {
+      throw new Error(`Epic ${epicId} has no matching persisted final approval`);
+    }
+    const approval = this.db.get<{ type: string; subject_id: string; subject_type: string; status: string }>(
+      "SELECT type, subject_id, subject_type, status FROM approvals WHERE id=$approvalId", { approvalId });
+    if (!approval || approval.type !== "FINAL_MERGE" || approval.subject_type !== "EPIC" || approval.subject_id !== epicId || approval.status !== "APPROVED") {
+      throw new Error(`Approval ${approvalId} is not an approved FINAL_MERGE for Epic ${epicId}`);
+    }
+    const epic = this.db.get<{ status: string; display_id: string }>("SELECT status, display_id FROM epics WHERE id=$epicId", { epicId });
+    if (!epic) throw new Error(`Epic ${epicId} not found`);
+    const mergeOperation = this.db.get<{ id: string; approval_id: string; source_sha: string; expected_target_sha: string; resulting_target_sha: string }>(
+      "SELECT id,approval_id,source_sha,expected_target_sha,resulting_target_sha FROM git_operations WHERE type='MERGE' AND status='VERIFIED' AND target_ref='master' AND branch_name=$branch AND approval_id=$approvalId AND source_sha IS NOT NULL AND expected_target_sha IS NOT NULL AND resulting_target_sha IS NOT NULL ORDER BY verified_at DESC LIMIT 1",
+      { branch: `epic/${epic.display_id}`, approvalId },
+    );
+    if (!mergeOperation) throw new Error(`Epic ${epicId} has no persisted successful Merge Service operation for master`);
+    if (mergeOperation.approval_id !== approvalId || !mergeOperation.source_sha || !mergeOperation.expected_target_sha || !mergeOperation.resulting_target_sha) {
+      throw new Error(`Epic ${epicId} merge operation has incomplete approval/SHA provenance`);
+    }
+    if (epic.status === "DONE") return;
+    if (epic.status !== "IN_PROGRESS") throw new Error(`Epic ${epicId} is not ready for final merge`);
+    const remaining = this.db.get<{ count: number }>(
+      "SELECT COUNT(*) AS count FROM tasks WHERE epic_id=$epicId AND required=1 AND status <> 'INTEGRATED_INTO_EPIC'",
+      { epicId },
+    );
+    if ((remaining?.count ?? 1) !== 0) throw new Error(`Epic ${epicId} has required children that are not integrated`);
+    this.db.transaction((tx) => {
+      const now = new Date().toISOString();
+      tx.run("UPDATE epics SET status='DONE', updated_at=$updatedAt WHERE id=$epicId AND status='IN_PROGRESS'", { epicId, updatedAt: now });
+      const children = tx.all<{ id: string; status: string }>("SELECT id, status FROM tasks WHERE epic_id=$epicId ORDER BY display_id", { epicId });
+      for (const child of children) {
+        if (child.status === "RELEASED") continue;
+        if (child.status !== "INTEGRATED_INTO_EPIC") throw new Error(`Epic ${epicId} child ${child.id} is not integrated`);
+        this.workflowEngine.transitionInTransaction(tx, child.id, "RELEASED", {
+          hasReviewPassed: true, hasSuccessfulIntegration: true, hasFinalMergeApproval: true, parentEpicReleased: true,
+        });
+      }
+      tx.run("UPDATE epic_orchestrations SET stage='DONE', updated_at=$updatedAt WHERE epic_id=$epicId", { epicId, updatedAt: now });
+      });
   }
 
   /**

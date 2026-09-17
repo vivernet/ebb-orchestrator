@@ -72,6 +72,10 @@ export const DefaultModels = {
  */
 export const SchemaPaths = {
   base: '@ebb-orchestrator/contracts#BaseOutputSchema',
+  coordinator: '@ebb-orchestrator/contracts#CoordinatorOutputSchema',
+  productManager: '@ebb-orchestrator/contracts#ProductDefinitionSchema',
+  architect: '@ebb-orchestrator/contracts#DesignResultSchema',
+  devops: '@ebb-orchestrator/contracts#DevOpsOutputSchema',
   developer: '@ebb-orchestrator/contracts#DeveloperOutputSchema',
   reviewer: '@ebb-orchestrator/contracts#ReviewerOutputSchema',
   qa: '@ebb-orchestrator/contracts#QaOutputSchema',
@@ -111,7 +115,7 @@ export const CoordinatorContract: RoleContract = {
   purpose: 'Classifies requests, plans tasks/epics, manages dependencies, and performs complex diagnostics.',
   allowedWorkflows: ['standard', 'bugfix', 'architecture_change', 'documentation', 'devops'],
   inputSchema: DefaultInputSchema,
-  outputSchema: { path: SchemaPaths.base, version: '1.0.0' },
+  outputSchema: { path: SchemaPaths.coordinator, version: '1.0.0' },
   permissionProfile: 'standard',
   defaultModel: DefaultModels.standard,
   allowedTools: [
@@ -145,7 +149,7 @@ export const ProductManagerContract: RoleContract = {
   purpose: 'Defines goals, user behavior, scope, requirements, and acceptance criteria without choosing technical implementation.',
   allowedWorkflows: ['standard', 'bugfix', 'documentation'],
   inputSchema: DefaultInputSchema,
-  outputSchema: { path: SchemaPaths.base, version: '1.0.0' },
+  outputSchema: { path: SchemaPaths.productManager, version: '1.0.0' },
   permissionProfile: 'restricted',
   defaultModel: DefaultModels.standard,
   allowedTools: [
@@ -169,7 +173,7 @@ export const ArchitectContract: RoleContract = {
   purpose: 'Defines components, interfaces, data flow, decisions, and performs architecture reviews.',
   allowedWorkflows: ['standard', 'bugfix', 'architecture_change', 'documentation'],
   inputSchema: DefaultInputSchema,
-  outputSchema: { path: SchemaPaths.base, version: '1.0.0' },
+  outputSchema: { path: SchemaPaths.architect, version: '1.0.0' },
   permissionProfile: 'standard',
   defaultModel: DefaultModels.strong,
   allowedTools: [
@@ -268,7 +272,7 @@ export const DevOpsContract: RoleContract = {
   purpose: 'Handles CI/CD, Docker, deployment, environment, build, release, and infrastructure as code.',
   allowedWorkflows: ['devops'],
   inputSchema: DefaultInputSchema,
-  outputSchema: { path: SchemaPaths.base, version: '1.0.0' },
+  outputSchema: { path: SchemaPaths.devops, version: '1.0.0' },
   permissionProfile: 'elevated',
   defaultModel: DefaultModels.standard,
   allowedTools: [

@@ -53,6 +53,7 @@ export class WorkflowEngine {
     const template = this.getTaskTemplate(row);
     if (!template) return false;
 
+    if (toStatus === "RELEASED" && row.epic_id && !this.epicMergeCompleted(row.epic_id)) return false;
     return this.evaluateTransition(
       row.status as TaskStatus,
       toStatus,
@@ -72,7 +73,16 @@ export class WorkflowEngine {
     toStatus: TaskStatus,
     context?: TransitionContext,
   ): { id: string; status: TaskStatus; updatedAt: string } {
-    return this.db.transaction((tx) => {
+    return this.db.transaction((tx) => this.transitionInTransaction(tx, taskId, toStatus, context));
+  }
+
+  /** Apply a transition while the caller owns a larger domain transaction. */
+  transitionInTransaction(
+    tx: DatabaseTx,
+    taskId: string,
+    toStatus: TaskStatus,
+    context?: TransitionContext,
+  ): { id: string; status: TaskStatus; updatedAt: string } {
       const row = tx.get<TaskRow>(
         "SELECT id, status, epic_id FROM tasks WHERE id = $id",
         { id: taskId },
@@ -89,6 +99,9 @@ export class WorkflowEngine {
         );
       }
 
+      if (toStatus === "RELEASED" && row.epic_id && !this.epicMergeCompleted(row.epic_id, tx)) {
+        throw new Error(`Transition to RELEASED is not allowed by template: Epic child ${taskId} cannot be released before final Epic merge completion`);
+      }
       if (!this.evaluateTransition(fromStatus, toStatus, template, context)) {
         throw new Error(
           `Transition ${fromStatus} → ${toStatus} is not allowed by template "${template.name}"`,
@@ -116,7 +129,6 @@ export class WorkflowEngine {
       appendOutboxEvent(tx, event);
 
       return { id: taskId, status: toStatus, updatedAt: now };
-    });
   }
 
   /**
@@ -160,6 +172,12 @@ export class WorkflowEngine {
     // Self-transitions are never allowed
     if (fromStatus === toStatus) return false;
 
+    // Child Tasks are already integrated into the Epic branch at this point;
+    // their release is a release marker, not a second child merge.
+    if (fromStatus === "INTEGRATED_INTO_EPIC" && toStatus === "RELEASED") {
+      return context?.parentEpicReleased === true;
+    }
+
     // Check if the statuses are valid stages in this template
     if (
       !template.stages.includes(fromStatus) ||
@@ -183,5 +201,9 @@ export class WorkflowEngine {
     }
 
     return true;
+  }
+
+  private epicMergeCompleted(epicId: string, source: Database | DatabaseTx = this.db): boolean {
+    return source.get<{ status: string }>("SELECT status FROM epics WHERE id = $epicId", { epicId })?.status === "DONE";
   }
 }

@@ -61,7 +61,7 @@ Mutating requests without local session/CSRF token fail.
 - [ ] **Step 2: Verify failure**
 
 ```bash
-pnpm --filter @orchestrator/server test -- api.test.ts
+pnpm --filter @ebb-orchestrator/server test -- api.test.ts
 ```
 
 - [ ] **Step 3: Implement projections and thin controllers**
@@ -71,7 +71,7 @@ Controllers call application services only; no direct domain writes in route han
 - [ ] **Step 4: Run API tests**
 
 ```bash
-pnpm --filter @orchestrator/server test -- api.test.ts
+pnpm --filter @ebb-orchestrator/server test -- api.test.ts
 ```
 
 - [ ] **Step 5: Commit**
@@ -107,7 +107,7 @@ Render app with mocked API and assert persistent left navigation includes Dashbo
 - [ ] **Step 2: Verify failure**
 
 ```bash
-pnpm --filter @orchestrator/web test -- app-shell.test.tsx
+pnpm --filter @ebb-orchestrator/web test -- app-shell.test.tsx
 ```
 
 - [ ] **Step 3: Add the web package and implement app shell/authenticated client**
@@ -116,7 +116,7 @@ pnpm --filter @orchestrator/web test -- app-shell.test.tsx
 
 ```json
 {
-  "name": "@orchestrator/web",
+  "name": "@ebb-orchestrator/web",
   "private": true,
   "type": "module",
   "scripts": {
@@ -126,7 +126,7 @@ pnpm --filter @orchestrator/web test -- app-shell.test.tsx
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@orchestrator/contracts": "workspace:*",
+    "@ebb-orchestrator/contracts": "workspace:*",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "react-router": "^7.18.3",
@@ -164,8 +164,8 @@ Bootstrap the local session from the server-provided same-origin endpoint; keep 
 - [ ] **Step 4: Run web tests/build**
 
 ```bash
-pnpm --filter @orchestrator/web test
-pnpm --filter @orchestrator/web build
+pnpm --filter @ebb-orchestrator/web test
+pnpm --filter @ebb-orchestrator/web build
 ```
 
 - [ ] **Step 5: Commit**
@@ -198,7 +198,7 @@ Dashboard must expose Running agents, Active work, Need approval, AI spend, acti
 - [ ] **Step 2: Verify failure**
 
 ```bash
-pnpm --filter @orchestrator/web test -- core-views.test.tsx
+pnpm --filter @ebb-orchestrator/web test -- core-views.test.tsx
 ```
 
 - [ ] **Step 3: Implement views with real projections**
@@ -208,8 +208,8 @@ Preserve dark visual language from approved concepts, but prioritize semantic HT
 - [ ] **Step 4: Run tests and production build**
 
 ```bash
-pnpm --filter @orchestrator/web test -- core-views.test.tsx
-pnpm --filter @orchestrator/web build
+pnpm --filter @ebb-orchestrator/web test -- core-views.test.tsx
+pnpm --filter @ebb-orchestrator/web build
 ```
 
 - [ ] **Step 5: Commit**
@@ -240,7 +240,7 @@ Agent text `<img onerror=...>` renders as text, not DOM node. ANSI/OSC terminal 
 - [ ] **Step 2: Verify failure**
 
 ```bash
-pnpm --filter @orchestrator/web test -- operations-views.test.tsx
+pnpm --filter @ebb-orchestrator/web test -- operations-views.test.tsx
 ```
 
 - [ ] **Step 3: Implement operational views**
@@ -250,7 +250,7 @@ Run page shows observable actions/results, permissions, usage, context manifest,
 - [ ] **Step 4: Run tests**
 
 ```bash
-pnpm --filter @orchestrator/web test -- operations-views.test.tsx
+pnpm --filter @ebb-orchestrator/web test -- operations-views.test.tsx
 ```
 
 - [ ] **Step 5: Commit**
@@ -283,7 +283,7 @@ Detected default branch/package manager must render separately from Coordinator 
 - [ ] **Step 2: Verify failure**
 
 ```bash
-pnpm --filter @orchestrator/web test -- configuration-views.test.tsx
+pnpm --filter @ebb-orchestrator/web test -- configuration-views.test.tsx
 ```
 
 - [ ] **Step 3: Implement configuration forms**
@@ -293,8 +293,8 @@ Settings show effective hierarchy Global → Project → Role → Task/Epic and 
 - [ ] **Step 4: Run tests/build**
 
 ```bash
-pnpm --filter @orchestrator/web test
-pnpm --filter @orchestrator/web build
+pnpm --filter @ebb-orchestrator/web test
+pnpm --filter @ebb-orchestrator/web build
 ```
 
 - [ ] **Step 5: Commit**
@@ -327,7 +327,7 @@ Store unique secret and assert it does not appear in SQLite dump, logs, artifact
 - [ ] **Step 2: Verify failure**
 
 ```bash
-pnpm --filter @orchestrator/server test -- secret-store.test.ts redaction.test.ts
+pnpm --filter @ebb-orchestrator/server test -- secret-store.test.ts redaction.test.ts
 ```
 
 - [ ] **Step 3: Implement keyring adapter and exact-value redactor**
@@ -370,7 +370,7 @@ Assert expired installation token triggers refresh; 401 -> `BLOCKED_AUTH`, 403 -
 - [ ] **Step 2: Verify failure**
 
 ```bash
-pnpm --filter @orchestrator/server test -- github-adapter.test.ts
+pnpm --filter @ebb-orchestrator/server test -- github-adapter.test.ts
 ```
 
 - [ ] **Step 3: Implement REST adapter and token provider**
@@ -380,7 +380,7 @@ Generate GitHub App JWT only inside token provider, exchange for installation ac
 - [ ] **Step 4: Run adapter tests**
 
 ```bash
-pnpm --filter @orchestrator/server test -- github-adapter.test.ts
+pnpm --filter @ebb-orchestrator/server test -- github-adapter.test.ts
 ```
 
 - [ ] **Step 5: Commit**
@@ -409,7 +409,7 @@ Simulate PR create success followed by process crash before job acknowledgement.
 - [ ] **Step 2: Verify failure**
 
 ```bash
-pnpm --filter @orchestrator/server test -- github-sync-worker.test.ts
+pnpm --filter @ebb-orchestrator/server test -- github-sync-worker.test.ts
 ```
 
 - [ ] **Step 3: Implement polling worker**
@@ -419,7 +419,7 @@ Outbound objects carry Orchestrator marker to avoid feedback loops. GitHub Issue
 - [ ] **Step 4: Run tests**
 
 ```bash
-pnpm --filter @orchestrator/server test -- github-sync-worker.test.ts
+pnpm --filter @ebb-orchestrator/server test -- github-sync-worker.test.ts
 ```
 
 - [ ] **Step 5: Commit**
@@ -451,7 +451,7 @@ Open old fixture DB/config, create backup, migrate to latest, run integrity/fore
 - [ ] **Step 2: Verify failure**
 
 ```bash
-pnpm --filter @orchestrator/server test -- backup.test.ts diagnostics.test.ts
+pnpm --filter @ebb-orchestrator/server test -- backup.test.ts diagnostics.test.ts
 ```
 
 - [ ] **Step 3: Implement backup/diagnostics**
@@ -523,14 +523,14 @@ Deterministic CI:
 pnpm lint
 pnpm typecheck
 pnpm test
-pnpm --filter @orchestrator/web build
-pnpm --filter @orchestrator/web test:e2e
+pnpm --filter @ebb-orchestrator/web build
+pnpm --filter @ebb-orchestrator/web test:e2e
 ```
 
 Opt-in real Hermes acceptance:
 
 ```bash
-RUN_HERMES_E2E=1 pnpm --filter @orchestrator/server test -- v1-autonomous-task.test.ts v1-epic.test.ts
+RUN_HERMES_E2E=1 pnpm --filter @ebb-orchestrator/server test -- v1-autonomous-task.test.ts v1-epic.test.ts
 ```
 
 - [ ] **Step 5: Commit**
