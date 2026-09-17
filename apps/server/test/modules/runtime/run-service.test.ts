@@ -289,4 +289,20 @@ describe("RunService with FakeAgentRuntime", () => {
       "SELECT status, ended_at, capability_ref, capability_json FROM agent_runs WHERE id = $id", { id: run.id },
     )).toMatchObject({ status: "FAILED", capability_ref: null, capability_json: null });
   });
+
+  it("marks the same authoritative run failed when execution cannot produce validated evidence", async () => {
+    await setup();
+    const runId = randomUUID();
+    fakeRuntime.script("developer", [{ success: false, exitCode: 1, output: "runtime failed" }]);
+
+    await expect(runService.execute({
+      runId,
+      role: "developer", model: "gpt-4", taskId, epicId, triggerReason: "epic-plan",
+      contextVersion: "1", outputSchemaVersion: "1",
+    })).rejects.toThrow(/COMPLETING/);
+
+    expect(db!.get<{ count: number; id: string; status: string }>(
+      "SELECT COUNT(*) AS count, MAX(id) AS id, MAX(status) AS status FROM agent_runs WHERE id = $id", { id: runId },
+    )).toEqual({ count: 1, id: runId, status: "FAILED" });
+  });
 });

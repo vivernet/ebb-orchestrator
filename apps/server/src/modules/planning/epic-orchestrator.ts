@@ -7,12 +7,10 @@ import { ApprovalService } from "../approvals/approval-service.js";
 import { SchedulerService } from "../scheduler/scheduler-service.js";
 import type { MergeService, MergeResult } from "../git/merge-service.js";
 import { validateRoleOutput } from "../runtime/output-validator.js";
-import type { AgentRuntime } from "../runtime/agent-runtime.js";
 import { RunService } from "../runtime/run-service.js";
 
 export interface EpicAgentRequest { phase: string; role: string; epicId?: string; taskId?: string; targetBranch?: string }
 export interface EpicAgentResult { accepted: boolean; output: unknown; architectureChangingProposalAccepted?: boolean; usage?: { cost: number } }
-export type EpicAgentRuntime = AgentRuntime;
 export interface EpicStartInput extends PlanningPlanInput { includeProductManager?: boolean; includeArchitect?: boolean; architectureReviewRequired?: boolean; architecture_review_required?: boolean }
 export interface EpicRunResult { epicId: string; sequence: string[]; childStatuses: string[]; finalApprovalRequired: boolean; pendingFinalApproval: boolean; finalApprovalId?: string }
 type Stage = "CHILDREN" | "EPIC_REVIEW" | "ARCHITECTURE_REVIEW" | "EPIC_QA" | "INTEGRATION" | "FINAL_APPROVAL" | "DONE";
@@ -27,7 +25,7 @@ export class EpicOrchestrator {
   private readonly scheduler: SchedulerService;
   private readonly runs: RunService;
 
-  constructor(private readonly db: Database, private readonly workflow: WorkflowEngine, private readonly planning: PlanningService, private readonly runtime: EpicAgentRuntime, private readonly mergeService: EpicMergeAuthority) {
+  constructor(private readonly db: Database, private readonly workflow: WorkflowEngine, private readonly planning: PlanningService, runs: RunService, private readonly mergeService: EpicMergeAuthority) {
     this.handlers = new RuntimeEventHandlers(db, workflow);
     this.approvals = new ApprovalService(db);
     this.db.exec(`CREATE TABLE IF NOT EXISTS epic_orchestrations (epic_id TEXT PRIMARY KEY, plan_id TEXT NOT NULL, input_json TEXT NOT NULL, stage TEXT NOT NULL, sequence_json TEXT NOT NULL DEFAULT '[]', architecture_review_authorized INTEGER NOT NULL DEFAULT 0, final_approval_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`);
@@ -40,7 +38,7 @@ export class EpicOrchestrator {
     for (const column of ["status TEXT NOT NULL DEFAULT 'INTENT'", "request_json TEXT", "started_at TEXT", "ended_at TEXT"]) {
       try { this.db.exec(`ALTER TABLE orchestration_phase_runs ADD COLUMN ${column}`); } catch { /* current schema */ }
     }
-    this.runs = new RunService(db, runtime);
+    this.runs = runs;
     this.reconcileStaleRuns();
     // AgentRuns must be marked terminal before their scheduler reservations are
     // reconciled.  Otherwise a stale phase still looks live to the scheduler.
@@ -230,8 +228,7 @@ export class EpicOrchestrator {
       return this.persistedPhase(epicId, taskId, phase, role, result, agentRunId, activePhaseId);
     } catch (error) {
       this.db.transaction((tx) => {
-        tx.run("UPDATE agent_runs SET status='FAILED',ended_at=$at,exit_code=-1,output=$output WHERE id=$id", { id: agentRunId, at: new Date().toISOString(), output: String(error) });
-        tx.run("UPDATE orchestration_phase_runs SET status='FAILED',ended_at=$at WHERE id=$id AND status='RUNNING'", { id: activePhaseId, at: new Date().toISOString() });
+        tx.run("UPDATE orchestration_phase_runs SET status='FAILED',ended_at=$at WHERE id=$id AND status IN ('INTENT','RUNNING')", { id: activePhaseId, at: new Date().toISOString() });
       });
       this.scheduler.releaseAgentRun(agentRunId, 0);
       throw error;
@@ -253,7 +250,6 @@ export class EpicOrchestrator {
     const evidence = { kind: "validated-role-result", phase, role, outcome: validation.outcome, schema: validation.output, recordedAt: now };
     if (!accepted) throw new Error(`Epic role result was not accepted`);
     this.db.transaction((tx) => {
-      tx.run("UPDATE agent_runs SET status='COMPLETED',ended_at=$at,exit_code=0,cost=$cost,output=$output WHERE id=$id AND status='STARTED'", { id: agentRunId, at: now, cost: result.usage?.cost ?? 0, output: JSON.stringify(validation.output) });
       tx.run("UPDATE orchestration_phase_runs SET result_json=$result,evidence_json=$evidence,validated=1,status='COMPLETED',ended_at=$at WHERE id=$id AND status='RUNNING'", { id: phaseId, result: JSON.stringify(normalized), evidence: JSON.stringify(evidence), at: now });
     });
     this.scheduler.releaseAgentRun(agentRunId, result.usage?.cost ?? 0);

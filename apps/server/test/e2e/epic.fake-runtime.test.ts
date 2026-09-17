@@ -15,6 +15,7 @@ import { EpicOrchestrator } from "../../src/modules/planning/epic-orchestrator.j
 import type { AgentRuntime } from "../../src/modules/runtime/agent-runtime.js";
 import type { AgentRun } from "@ebb-orchestrator/contracts";
 import type { RunOutcome } from "../../src/modules/runtime/run-types.js";
+import { RunService } from "../../src/modules/runtime/run-service.js";
 import { DatabaseCompletionStore } from "../../src/modules/execution/mcp/submit-result-tool.js";
 import { SchedulerService } from "../../src/modules/scheduler/scheduler-service.js";
 import { ApprovalService } from "../../src/modules/approvals/approval-service.js";
@@ -115,7 +116,7 @@ describe("full epic orchestration with FakeAgentRuntime", () => {
 
     const registry = new WorkflowRegistry();
     for (const template of Object.values(templates)) registry.register(template);
-    new EpicOrchestrator(db, new WorkflowEngine(db, registry), new PlanningService(db), new FakeAgentRuntime(), {} as never);
+    new EpicOrchestrator(db, new WorkflowEngine(db, registry), new PlanningService(db), new RunService(db, new FakeAgentRuntime()), {} as never);
 
     expect(db.get<{ status: string }>("SELECT status FROM agent_runs WHERE id=$id", { id: runId })?.status).toBe("FAILED");
     expect(db.get<{ status: string }>("SELECT status FROM scheduler_reservations WHERE id=$id", { id: reservationId })?.status).toBe("RELEASED");
@@ -148,7 +149,7 @@ describe("full epic orchestration with FakeAgentRuntime", () => {
     // provenance schema; no synthetic VERIFIED journal row is inserted here.
     new IntegrationService({ database: db, worktreeDir: directory });
     const merge = new MergeService({ database: db, repoPath: directory, targetBranch: "master" });
-    const orchestrator = new EpicOrchestrator(db, new WorkflowEngine(db, registry), new PlanningService(db), runtime, merge);
+    const orchestrator = new EpicOrchestrator(db, new WorkflowEngine(db, registry), new PlanningService(db), new RunService(db, runtime), merge);
     db.run("INSERT INTO scheduler_budgets (project_id,limit_cost,spent_cost,reserved_cost) VALUES ($projectId,100,0,0)", { projectId });
     const plan = await orchestrator.start({
       projectId,
@@ -180,6 +181,8 @@ describe("full epic orchestration with FakeAgentRuntime", () => {
     expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM orchestration_phase_runs WHERE epic_id=$epicId AND validated=1", { epicId: pending.epicId })?.count).toBe(runtime.calls.length);
     expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM agent_runs WHERE epic_id=$epicId", { epicId: pending.epicId })?.count).toBe(runtime.calls.length);
     expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM agent_runs WHERE epic_id=$epicId AND status='COMPLETED' AND output IS NOT NULL", { epicId: pending.epicId })?.count).toBe(runtime.calls.length);
+    expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM agent_runs ar JOIN orchestration_phase_runs pr ON pr.agent_run_id=ar.id WHERE pr.epic_id=$epicId AND pr.validated=1", { epicId: pending.epicId })?.count).toBe(runtime.calls.length);
+    expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_reservations WHERE run_id IS NOT NULL AND run_id NOT IN (SELECT agent_run_id FROM orchestration_phase_runs)")?.count).toBe(0);
     expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_reservations WHERE status='RESERVED'")?.count).toBe(0);
     expect(db.get<{ spent_cost: number }>("SELECT spent_cost FROM scheduler_budgets WHERE project_id=$projectId", { projectId })?.spent_cost ?? 0).toBeCloseTo(runtime.calls.length * 0.25);
     const callsBeforeRestart = runtime.calls.length;
@@ -221,7 +224,7 @@ describe("full epic orchestration with FakeAgentRuntime", () => {
     for (const template of Object.values(templates)) registry.register(template);
     const runtime = new FakeAgentRuntime(db);
     const merge = new MergeService({ database: db, repoPath: directory, targetBranch: "master" });
-    const orchestrator = new EpicOrchestrator(db, new WorkflowEngine(db, registry), new PlanningService(db), runtime, merge);
+    const orchestrator = new EpicOrchestrator(db, new WorkflowEngine(db, registry), new PlanningService(db), new RunService(db, runtime), merge);
     db.run("INSERT INTO scheduler_budgets (project_id,limit_cost,spent_cost,reserved_cost) VALUES ($projectId,100,0,0)", { projectId });
     const plan = await orchestrator.start({ projectId, requestedBy: "user", tasks: [{ ref: "task_1", title: "Foundation", acceptanceCriteria: ["works"], role: "developer", workflow: "standard" }], epic: { title: "Merge epic", goal: "Merge" } });
     const pending = await orchestrator.approveAndRun(plan.id, "user");

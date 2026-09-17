@@ -18,6 +18,11 @@ export class RunService {
     private readonly db: Database,
     private readonly runtime: AgentRuntime
   ) {
+    this.db.exec(`CREATE TABLE IF NOT EXISTS agent_runs (
+      id TEXT PRIMARY KEY, role TEXT NOT NULL, runtime TEXT NOT NULL, model TEXT NOT NULL,
+      task_id TEXT, epic_id TEXT, status TEXT NOT NULL, started_at TEXT, ended_at TEXT,
+      exit_code INTEGER, input_tokens INTEGER, output_tokens INTEGER, cost REAL, output TEXT
+    )`);
     // Keep databases created before capability_json usable while the migration
     // set is upgraded by the host process.
     const columns = this.db.all<{ name: string }>("PRAGMA table_info(agent_runs)");
