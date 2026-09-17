@@ -7,6 +7,9 @@ import TaskPage from '../features/tasks/TaskPage.js';
 import ProjectOnboardingPage from '../features/onboarding/ProjectOnboardingPage.js';
 import SettingsPage from '../features/settings/SettingsPage.js';
 import UsagePage from '../features/usage/UsagePage.js';
+import ApprovalInboxPage from '../features/approvals/ApprovalInboxPage.js';
+import ExecutionPage from '../features/execution/ExecutionPage.js';
+import AgentRunPage from '../features/runs/AgentRunPage.js';
 import { useParams } from 'react-router';
 
 const ProjectRoute = () => <ProjectPage id={useParams().id ?? ''} />;
@@ -15,6 +18,9 @@ const TaskRoute = () => <TaskPage id={useParams().id ?? ''} />;
 const OnboardingRoute = () => <ProjectOnboardingPage id={useParams().id ?? ''} />;
 const SettingsRoute = () => <SettingsPage />;
 const UsageRoute = () => <UsagePage />;
+const ApprovalRoute = () => <ApprovalInboxPage />;
+const ExecutionRoute = () => <ExecutionPage />;
+const RunRoute = () => <AgentRunPage id={useParams().id ?? ''} />;
 
 export const router = createBrowserRouter([
   {
@@ -43,15 +49,15 @@ export const router = createBrowserRouter([
       },
       {
         path: 'approvals',
-        Component: () => <div>Approvals</div>,
+        Component: ApprovalRoute,
       },
       {
         path: 'execution',
-        Component: () => <div>Execution</div>,
+        Component: ExecutionRoute,
       },
       {
         path: 'runs/:id',
-        Component: () => <div>Run</div>,
+        Component: RunRoute,
       },
       {
         path: 'usage',
