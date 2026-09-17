@@ -19,7 +19,7 @@ export class PathResolver {
         const root = path.resolve(workspace);
         const requested = path.resolve(root, target);
         if (!this.isWithinWorkspace(root, requested)) return { success: false, error: 'Path is outside workspace' };
-        if (!fs.existsSync(root)) {
+        if (!this.hasExistingRoot(root)) {
           return { success: true, path: path.relative(path.parse(requested).root, requested).split(path.sep).join('/') };
         }
       } catch { /* fail closed below */ }
@@ -31,9 +31,21 @@ export class PathResolver {
     try {
       const root = path.resolve(workspace);
       const requested = path.resolve(root, target);
-      if (!fs.existsSync(root)) return this.isWithinWorkspace(root, requested);
+      if (!this.hasExistingRoot(root)) return this.isWithinWorkspace(root, requested);
       return this.isWithinWorkspace(fs.realpathSync(root), this.resolveExistingAncestor(requested));
     } catch { return false; }
+  }
+
+  private hasExistingRoot(root: string): boolean {
+    try {
+      // lstat distinguishes a dangling symlink from a genuinely absent root;
+      // existsSync follows links and would incorrectly classify the former as absent.
+      fs.lstatSync(root);
+      return true;
+    } catch (err: unknown) {
+      if (err instanceof Error && 'code' in err && err.code === 'ENOENT') return false;
+      throw err;
+    }
   }
 
   private resolveExistingAncestor(target: string): string {

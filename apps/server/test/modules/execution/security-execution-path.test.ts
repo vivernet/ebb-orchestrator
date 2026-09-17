@@ -29,6 +29,18 @@ describe('security execution and path remediation', () => {
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   });
 
+  it('rejects a dangling Unix symlink used as the workspace root', async () => {
+    if (process.platform === 'win32') return;
+    const root = fs.mkdtempSync(path.join(tmpdir(), 'security-path-'));
+    try {
+      const workspace = path.join(root, 'dangling-workspace');
+      fs.symlinkSync(path.join(root, 'missing'), workspace, 'dir');
+      const resolver = new PathResolver();
+      expect(resolver.isPathContained(workspace, path.join(workspace, 'new.txt'))).toBe(false);
+      expect((await resolver.resolveSafePath(workspace, 'new.txt')).success).toBe(false);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
   it('allows new files beneath the real workspace', async () => {
     const workspace = fs.mkdtempSync(path.join(tmpdir(), 'security-path-'));
     try { expect((await new PathResolver().resolveSafePath(workspace, 'new/dir/file.txt')).success).toBe(true); }
@@ -45,6 +57,20 @@ describe('security execution and path remediation', () => {
       expect(output.success).toBe(false); expect(output.stderr).toContain('buffer exceeded');
       expect(Object.keys(timeout).sort()).toEqual(['exitCode', 'stderr', 'stdout', 'success']);
     } finally { fs.rmSync(workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); }
+  });
+
+  it('rejects an already-aborted signal before spawning', async () => {
+    const workspace = fs.mkdtempSync(path.join(tmpdir(), 'security-command-'));
+    try {
+      const controller = new AbortController();
+      controller.abort();
+      const result = await new CommandTools().exec({
+        executable: 'node', args: ['-e', 'process.exit(0)'], signal: controller.signal,
+      }, workspace);
+      expect(result.success).toBe(false);
+      expect(result.stderr).toContain('aborted before spawn');
+      expect(result.exitCode).toBeNull();
+    } finally { fs.rmSync(workspace, { recursive: true, force: true }); }
   });
 
   it('passes AbortSignal through CommandTools to ProcessExecutor', async () => {

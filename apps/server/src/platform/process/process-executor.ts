@@ -44,6 +44,10 @@ export class ProcessExecutor {
       maxBuffer = 10 * 1024 * 1024, // 10MB default
     } = options;
 
+    if (signal?.aborted) {
+      throw new Error('Process aborted before spawn');
+    }
+
     return new Promise<ProcessResult>((resolve, reject) => {
       const child = spawn(file, args, {
         shell: false,

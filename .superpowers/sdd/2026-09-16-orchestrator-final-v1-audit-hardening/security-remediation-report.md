@@ -45,3 +45,20 @@ Remediated SEC-001, SEC-002, SEC-004, EXEC-005, and GIT-007 only. SEC-003, GIT-0
 - SEC-003, GIT-006, and GIT-008 remain intentionally out of scope.
 - Windows junction coverage remains guarded by existing platform tests; dangling-symlink regression executes on Unix only.
 - The pre-existing untracked plan file `docs/superpowers/plans/2026-09-16-orchestrator-final-v1-hardening.md` was not modified.
+
+## Critical dangling workspace-root and aborted-signal closure
+
+### Changed files
+- `apps/server/src/platform/security/path-resolver.ts`: uses `lstat` to distinguish a dangling workspace-root symlink from a genuinely absent virtual root; dangling or otherwise existing roots cannot enter lexical fallback.
+- `apps/server/src/platform/process/process-executor.ts`: rejects an already-aborted `AbortSignal` before calling `spawn`, preserving the existing failure result contract through `CommandTools`.
+- `apps/server/test/modules/execution/security-execution-path.test.ts`: adds Unix-guarded dangling workspace-root coverage for both containment APIs and already-aborted signal coverage.
+
+### Verification
+- Focused path/execution tests: `2 files passed; 16 tests passed`.
+- Server test suite: `60 files passed; 610 tests passed; 2 skipped`.
+- Server typecheck: passed (`tsc -p tsconfig.json --noEmit`).
+- Root lint: passed (`eslint .`).
+
+### Remaining concerns
+- SEC-003, GIT-006, and GIT-008 remain intentionally out of scope.
+- Unix symlink regression is platform-guarded; Windows junction behavior remains covered by existing tests.
