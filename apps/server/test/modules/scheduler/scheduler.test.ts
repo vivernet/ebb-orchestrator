@@ -282,8 +282,163 @@ describe("SchedulerService", () => {
     const locked = scheduler.resourceLockService.acquire(id, "owner");
     expect(locked).toBe(true);
     expect(scheduler.resourceLockService.isLocked(id)).toBe(true);
-    scheduler.resourceLockService.release(id);
+    expect(scheduler.resourceLockService.release(id)).toMatchObject({ status: "RELEASED" });
+    expect(scheduler.resourceLockService.release(id)).toEqual({ status: "ALREADY_RELEASED" });
     expect(scheduler.resourceLockService.isLocked(id)).toBe(false);
+  });
+
+  it("uses one capacity authority for task and phase reservations", async () => {
+    await setup();
+    for (let i = 0; i < 3; i++) scheduler.dispatchAgentRun(`run-${i}`, projectId, "reviewer", "test");
+    insertTask(db!, projectId, { id: "over-capacity", status: "READY" });
+    const registry = { transitionInTransaction: () => undefined } as never;
+    expect(() => scheduler.dispatchAgentRun("run-3", projectId, "qa", "test")).toThrow(/WAITING_FOR_CAPACITY/);
+    expect(() => scheduler.dispatchTask("over-capacity", registry, () => undefined)).toThrow(/WAITING_FOR_CAPACITY/);
+  });
+
+  it("releases an AgentRun reservation idempotently", async () => {
+    await setup();
+    db!.exec("CREATE TABLE agent_runs (id TEXT PRIMARY KEY, role TEXT NOT NULL, runtime TEXT NOT NULL, model TEXT NOT NULL, status TEXT NOT NULL, cost REAL)");
+    db!.run("INSERT INTO scheduler_budgets (project_id,limit_cost,spent_cost,reserved_cost) VALUES ($projectId,100,0,0)", { projectId });
+    scheduler.dispatchAgentRun("duplicate-run", projectId, "reviewer", "test");
+    db!.run("INSERT INTO agent_runs (id,role,runtime,model,status) VALUES ('duplicate-run','reviewer','test','test','STARTED')");
+    expect(scheduler.releaseAgentRun("duplicate-run", 2)).toMatchObject({ status: "RELEASED" });
+    expect(scheduler.releaseAgentRun("duplicate-run", 99)).toEqual({ status: "ALREADY_RELEASED" });
+    expect(db!.get<{ spent_cost: number }>("SELECT spent_cost FROM scheduler_budgets WHERE project_id=$projectId", { projectId })?.spent_cost).toBe(2);
+    expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_usage_history WHERE project_id=$projectId", { projectId })?.count).toBe(1);
+  });
+
+  it("releases a task reservation when failure cleanup is addressed by AgentRun id", async () => {
+    await setup();
+    db!.exec("CREATE TABLE agent_runs (id TEXT PRIMARY KEY, role TEXT NOT NULL, runtime TEXT NOT NULL, model TEXT NOT NULL, status TEXT NOT NULL, task_id TEXT, cost REAL, started_at TEXT)");
+    db!.run("INSERT INTO scheduler_budgets (project_id,limit_cost,spent_cost,reserved_cost) VALUES ($projectId,100,0,0)", { projectId });
+    const taskId = insertTask(db!, projectId, { id: "failed-task", status: "READY" }).id;
+    db!.run("INSERT INTO agent_runs (id,role,runtime,model,status,task_id,started_at) VALUES ('failed-run','developer','test','test','STARTED',$taskId,$at)", { taskId, at: new Date().toISOString() });
+    const registry = { transitionInTransaction: () => undefined } as never;
+    scheduler.dispatchTask(taskId, registry, () => undefined, { runId: "failed-run" });
+
+    scheduler.releaseAgentRun("failed-run", 0);
+    scheduler.releaseAgentRun("failed-run", 99);
+
+    expect(db!.get<{ status: string }>("SELECT status FROM scheduler_reservations WHERE subject_id=$taskId", { taskId })?.status).toBe("RELEASED");
+    expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_resource_locks WHERE reservation_id IN (SELECT id FROM scheduler_reservations WHERE subject_id=$taskId)", { taskId })?.count).toBe(0);
+    expect(db!.get<{ reserved_cost: number }>("SELECT reserved_cost FROM scheduler_budgets WHERE project_id=$projectId", { projectId })?.reserved_cost).toBe(0);
+  });
+
+  it("applies phase locks through the same lock authority", async () => {
+    await setup();
+    scheduler.dispatchAgentRun("locked-1", projectId, "reviewer", "test", "shared-resource");
+    expect(() => scheduler.dispatchAgentRun("locked-2", projectId, "qa", "test", "shared-resource")).toThrow(/WAITING_FOR_RESOURCE_LOCK/);
+  });
+
+  it("reconciles run-owned locks from AgentRun and reservation state", async () => {
+    await setup();
+    db!.exec("CREATE TABLE agent_runs (id TEXT PRIMARY KEY, role TEXT NOT NULL, runtime TEXT NOT NULL, model TEXT NOT NULL, status TEXT NOT NULL, cost REAL)");
+    db!.run("INSERT INTO scheduler_budgets (project_id,limit_cost,spent_cost,reserved_cost) VALUES ($projectId,100,0,0)", { projectId });
+    db!.run("INSERT INTO agent_runs (id,role,runtime,model,status,cost) VALUES ('stale-run','reviewer','test','test','FAILED',0)");
+    scheduler.dispatchAgentRun("stale-run", projectId, "reviewer", "test");
+    const reservationId = db!.get<{ id: string }>("SELECT id FROM scheduler_reservations WHERE subject_id='stale-run'")!.id;
+    db!.run("INSERT INTO scheduler_resource_locks(resource_key,reservation_id,project_id,owner_id,locked_at) VALUES('stale-run-secondary',$reservationId,$projectId,'run:stale-run',$at)", { reservationId, projectId, at: new Date().toISOString() });
+
+    expect(scheduler.resourceLockService.reconcileDeadOwners()).toEqual({ releasedReservationIds: [reservationId], blockedReservationIds: [] });
+
+    expect(db!.get<{ status: string }>("SELECT status FROM scheduler_reservations WHERE subject_id='stale-run'")?.status).toBe("RELEASED");
+    expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_resource_locks WHERE owner_id='run:stale-run'")?.count).toBe(0);
+    expect(db!.get<{ reserved_cost: number }>("SELECT reserved_cost FROM scheduler_budgets WHERE project_id=$projectId", { projectId })?.reserved_cost).toBe(0);
+  });
+
+  it("does not release a live run lock as if it were a task lock", async () => {
+    await setup();
+    db!.exec("CREATE TABLE agent_runs (id TEXT PRIMARY KEY, role TEXT NOT NULL, runtime TEXT NOT NULL, model TEXT NOT NULL, status TEXT NOT NULL, cost REAL)");
+    db!.run("INSERT INTO agent_runs (id,role,runtime,model,status,cost) VALUES ('live-run','reviewer','test','test','STARTED',0)");
+    scheduler.dispatchAgentRun("live-run", projectId, "reviewer", "test");
+
+    scheduler.resourceLockService.reconcileDeadOwners();
+
+    expect(db!.get<{ status: string }>("SELECT status FROM scheduler_reservations WHERE subject_id='live-run'")?.status).toBe("RESERVED");
+    expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_resource_locks WHERE owner_id='run:live-run'")?.count).toBe(1);
+  });
+
+  it("preserves an active task LOCK reservation across scheduler restart reconciliation", async () => {
+    await setup();
+    db!.exec("CREATE TABLE agent_runs (id TEXT PRIMARY KEY, role TEXT NOT NULL, runtime TEXT NOT NULL, model TEXT NOT NULL, status TEXT NOT NULL, cost REAL)");
+    const taskId = insertTask(db!, projectId, { id: "active-locked-task", status: "DEVELOPMENT" }).id;
+    expect(scheduler.resourceLockService.acquire(taskId, "owner")).toBe(true);
+
+    scheduler.reconcile();
+    scheduler.reconcile();
+
+    expect(db!.get<{ status: string }>("SELECT status FROM scheduler_reservations WHERE subject_id=$subject", { subject: `lock:${taskId}` })?.status).toBe("RESERVED");
+    expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_resource_locks WHERE owner_id=$owner", { owner: `task:${taskId}` })?.count).toBe(1);
+  });
+
+  it("preserves a run lock and reservation when the lock owner does not match", async () => {
+    await setup();
+    db!.exec("CREATE TABLE agent_runs (id TEXT PRIMARY KEY, role TEXT NOT NULL, runtime TEXT NOT NULL, model TEXT NOT NULL, status TEXT NOT NULL, cost REAL)");
+    db!.run("INSERT INTO scheduler_budgets (project_id,limit_cost,spent_cost,reserved_cost) VALUES ($projectId,100,0,0)", { projectId });
+    db!.run("INSERT INTO agent_runs (id,role,runtime,model,status,cost) VALUES ('authoritative-run','reviewer','test','test','STARTED',0)");
+    scheduler.dispatchAgentRun("authoritative-run", projectId, "reviewer", "test", "shared-resource");
+    db!.run("UPDATE scheduler_resource_locks SET owner_id='run:other-run' WHERE resource_key='shared-resource'");
+
+    scheduler.resourceLockService.reconcileDeadOwners();
+    scheduler.resourceLockService.reconcileDeadOwners();
+
+    expect(db!.get<{ status: string }>("SELECT status FROM scheduler_reservations WHERE subject_id='authoritative-run'")?.status).toBe("RESERVED");
+    expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_resource_locks WHERE resource_key='shared-resource'")?.count).toBe(1);
+    expect(db!.get<{ reserved_cost: number }>("SELECT reserved_cost FROM scheduler_budgets WHERE project_id=$projectId", { projectId })?.reserved_cost).toBe(1);
+  });
+
+  it("blocks terminal-run reconciliation on durable lock ownership drift", async () => {
+    await setup();
+    db!.exec("CREATE TABLE agent_runs (id TEXT PRIMARY KEY, role TEXT NOT NULL, runtime TEXT NOT NULL, model TEXT NOT NULL, status TEXT NOT NULL, task_id TEXT, cost REAL, started_at TEXT)");
+    db!.run("INSERT INTO scheduler_budgets (project_id,limit_cost,spent_cost,reserved_cost) VALUES ($projectId,100,0,0)", { projectId });
+    db!.run("INSERT INTO agent_runs (id,role,runtime,model,status,cost) VALUES ('run-a','reviewer','test','test','COMPLETED',2)");
+    scheduler.dispatchAgentRun("run-a", projectId, "reviewer", "test", "run-a-resource");
+    const reservationId = db!.get<{ id: string }>("SELECT id FROM scheduler_reservations WHERE subject_id='run-a'")!.id;
+    db!.run("INSERT INTO scheduler_resource_locks(resource_key,reservation_id,project_id,owner_id,locked_at) VALUES('run-a-secondary',$reservationId,$projectId,'run:run-b',$at)", { reservationId, projectId, at: new Date().toISOString() });
+
+    expect(scheduler.reconcile()).toEqual({ releasedReservationIds: [], blockedReservationIds: [reservationId] });
+    expect(db!.get<{ status: string }>("SELECT status FROM scheduler_reservations WHERE subject_id='run-a'")?.status).toBe("RESERVED");
+    expect(db!.get<{ owner_id: string }>("SELECT owner_id FROM scheduler_resource_locks WHERE resource_key='run-a-secondary'")?.owner_id).toBe("run:run-b");
+    expect(db!.get<{ reserved_cost: number }>("SELECT reserved_cost FROM scheduler_budgets WHERE project_id=$projectId", { projectId })?.reserved_cost).toBe(1);
+  });
+
+  it("blocks AgentRun release on durable lock ownership drift", async () => {
+    await setup();
+    db!.run("INSERT INTO scheduler_budgets (project_id,limit_cost,spent_cost,reserved_cost) VALUES ($projectId,100,0,0)", { projectId });
+    scheduler.dispatchAgentRun("run-a", projectId, "reviewer", "test", "run-a-resource");
+    const reservationId = db!.get<{ id: string }>("SELECT id FROM scheduler_reservations WHERE subject_id='run-a'")!.id;
+    db!.run("INSERT INTO scheduler_resource_locks(resource_key,reservation_id,project_id,owner_id,locked_at) VALUES('run-a-secondary',$reservationId,$projectId,'run:run-b',$at)", { reservationId, projectId, at: new Date().toISOString() });
+
+    expect(scheduler.releaseAgentRun("run-a", 2)).toMatchObject({ status: "BLOCKED_OWNERSHIP_DRIFT" });
+    expect(db!.get<{ status: string }>("SELECT status FROM scheduler_reservations WHERE subject_id='run-a'")?.status).toBe("RESERVED");
+    expect(db!.get<{ reserved_cost: number }>("SELECT reserved_cost FROM scheduler_budgets WHERE project_id=$projectId", { projectId })?.reserved_cost).toBe(1);
+  });
+
+  it("blocks task release on durable lock ownership drift", async () => {
+    await setup();
+    db!.run("INSERT INTO scheduler_budgets (project_id,limit_cost,spent_cost,reserved_cost) VALUES ($projectId,100,0,0)", { projectId });
+    const taskId = insertTask(db!, projectId, { id: "task-a", status: "READY" }).id;
+    const registry = { transitionInTransaction: () => undefined } as never;
+    scheduler.dispatchTask(taskId, registry, () => undefined);
+    const reservationId = db!.get<{ id: string }>("SELECT id FROM scheduler_reservations WHERE subject_id=$taskId", { taskId })!.id;
+    db!.run("INSERT INTO scheduler_resource_locks(resource_key,reservation_id,project_id,owner_id,locked_at) VALUES('task-a-secondary',$reservationId,$projectId,'run:run-b',$at)", { reservationId, projectId, at: new Date().toISOString() });
+
+    expect(scheduler.releaseTask(taskId, 2)).toMatchObject({ status: "BLOCKED_OWNERSHIP_DRIFT" });
+    expect(db!.get<{ status: string }>("SELECT status FROM scheduler_reservations WHERE subject_id=$taskId", { taskId })?.status).toBe("RESERVED");
+    expect(db!.get<{ reserved_cost: number }>("SELECT reserved_cost FROM scheduler_budgets WHERE project_id=$projectId", { projectId })?.reserved_cost).toBe(1);
+  });
+
+  it("blocks task-lock release on durable lock ownership drift", async () => {
+    await setup();
+    const taskId = insertTask(db!, projectId, { id: "task-a", status: "READY" }).id;
+    expect(scheduler.resourceLockService.acquire(taskId, "owner")).toBe(true);
+    const reservationId = db!.get<{ id: string }>("SELECT id FROM scheduler_reservations WHERE subject_id=$subject", { subject: `lock:${taskId}` })!.id;
+    db!.run("INSERT INTO scheduler_resource_locks(resource_key,reservation_id,project_id,owner_id,locked_at) VALUES('task-a-secondary',$reservationId,$projectId,'task:task-b',$at)", { reservationId, projectId, at: new Date().toISOString() });
+
+    expect(scheduler.resourceLockService.release(taskId)).toMatchObject({ status: "BLOCKED_OWNERSHIP_DRIFT" });
+    expect(db!.get<{ status: string }>("SELECT status FROM scheduler_reservations WHERE subject_id=$subject", { subject: `lock:${taskId}` })?.status).toBe("RESERVED");
+    expect(db!.get<{ owner_id: string }>("SELECT owner_id FROM scheduler_resource_locks WHERE resource_key='task-a-secondary'")?.owner_id).toBe("task:task-b");
   });
 
   // �� Scope tests ��

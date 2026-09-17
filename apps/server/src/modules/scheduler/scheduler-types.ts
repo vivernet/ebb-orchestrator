@@ -79,3 +79,15 @@ export interface RecalculateResult {
   /** Count of currently running tasks (for capacity). */
   currentRunningCount: number;
 }
+
+/** Result of a reservation cleanup request. */
+export type ReservationReleaseResult =
+  | { status: "RELEASED"; reservationId: string }
+  | { status: "ALREADY_RELEASED" }
+  | { status: "BLOCKED_OWNERSHIP_DRIFT"; reservationId: string };
+
+/** Durable scheduler reconciliation outcome. */
+export interface SchedulerReconciliationResult {
+  releasedReservationIds: string[];
+  blockedReservationIds: string[];
+}

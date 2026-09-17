@@ -46,6 +46,37 @@ async function successfulIntegration(repoPath: string, git: GitCli, sourceBranch
 
 describe("MergeService", () => {
   describe("mergeApproved", () => {
+    it("uses the method approval and persists a verified provenance-bound operation", async () => {
+      const repoPath = createTempDir();
+      const git = await initGitRepo(repoPath);
+      const db = createSqliteDatabase(join(repoPath, "orchestrator.sqlite"));
+      db.exec("CREATE TABLE agent_runs (id TEXT PRIMARY KEY, role TEXT, status TEXT, output TEXT)");
+      db.exec("CREATE TABLE git_operations (id TEXT PRIMARY KEY, type TEXT, status TEXT, repo_path TEXT, branch_name TEXT, target_ref TEXT, created_at TEXT, verified_at TEXT, approval_id TEXT, source_sha TEXT, expected_target_sha TEXT, resulting_target_sha TEXT)");
+      const runId = "integration-real-run";
+      db.run("INSERT INTO agent_runs (id,role,status,output) VALUES ($id,'Integration','STARTED',NULL)", { id: runId });
+      const integration = new IntegrationService({ git, database: db, worktreeDir: createTempDir(), integrationRunId: runId });
+      const attempt = await integration.prepareIntegration("HEAD", "master", repoPath);
+      await integration.runInIntegrationWorktree(attempt, async () => {
+        db.run("UPDATE agent_runs SET status='COMPLETED',output=$output WHERE id=$id", { id: runId, output: JSON.stringify({ outcome: "PASS" }) });
+      });
+      const service = new MergeService({
+        database: db,
+        repoPath,
+        approvalId: "stale-constructor-approval",
+        approvalStore: new Map([["method-approval", { id: "method-approval", subjectId: "epic-1", type: "FINAL_MERGE", status: "APPROVED" }]]),
+      });
+
+      const result = await service.mergeApprovedForIntegration("epic-1", "method-approval", runId);
+      expect(result.verifiedCompletion).toBe(true);
+      expect(db.get<{ status: string; approval_id: string; source_sha: string; expected_target_sha: string; resulting_target_sha: string }>("SELECT status,approval_id,source_sha,expected_target_sha,resulting_target_sha FROM git_operations")).toMatchObject({
+        status: "VERIFIED",
+        approval_id: "method-approval",
+        source_sha: attempt.sourceSha,
+        expected_target_sha: attempt.expectedTargetSha,
+        resulting_target_sha: result.resultingTargetSha,
+      });
+      db.close();
+    });
     it("rejects approval-only merges without verified integration provenance", async () => {
       const repoPath = createTempDir();
       await initGitRepo(repoPath);

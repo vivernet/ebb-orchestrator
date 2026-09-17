@@ -61,10 +61,9 @@ export class MergeService {
   private readonly sourceBranch: string | null;
   private readonly targetBranch: string | null;
   private readonly expectedTargetSha: string | null;
-  private readonly integrationAttempt: IntegrationAttempt | null;
+  private integrationAttempt: IntegrationAttempt | null;
   private readonly onVerifiedCompletion: ((result: MergeResult) => void) | undefined;
   private readonly database: Database | undefined;
-  private readonly approvalId: string | null;
 
   constructor(options: MergeServiceOptions = {}) {
     this.git = options.git ?? new GitCli();
@@ -76,7 +75,14 @@ export class MergeService {
     this.integrationAttempt = options.integrationAttempt ?? null;
     this.database = options.database;
     this.onVerifiedCompletion = options.onVerifiedCompletion;
-    this.approvalId = options.approvalId ?? null;
+    if (this.database) {
+      this.database.exec(`CREATE TABLE IF NOT EXISTS git_operations (
+        id TEXT PRIMARY KEY, type TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'STARTED',
+        repo_path TEXT NOT NULL, branch_name TEXT, target_ref TEXT, created_at TEXT NOT NULL,
+        verified_at TEXT, approval_id TEXT, source_sha TEXT, expected_target_sha TEXT,
+        resulting_target_sha TEXT
+      )`);
+    }
     if (this.database) {
       for (const column of ["approval_id TEXT", "source_sha TEXT", "expected_target_sha TEXT", "resulting_target_sha TEXT"]) {
         try { this.database.exec(`ALTER TABLE git_operations ADD COLUMN ${column}`); } catch { /* already present */ }
@@ -106,9 +112,6 @@ export class MergeService {
     subjectId: string,
     approvalId: string
   ): Promise<MergeResult> {
-    if (this.approvalId && this.approvalId !== approvalId) {
-      throw new Error(`Approval argument ${approvalId} does not match configured approval ${this.approvalId}`);
-    }
     const approval = this.approvalStore.get(approvalId) ?? this.database?.get<Approval>(
       "SELECT id,subject_id AS subjectId,type,status FROM approvals WHERE id=$approvalId",
       { approvalId },
@@ -172,16 +175,19 @@ export class MergeService {
       throw new Error("Missing verified integration provenance: expected target SHA does not match integration record");
     }
 
-    if (this.database && this.approvalId) {
+    // The approval supplied to this invocation is authoritative.  The
+    // constructor value is retained only for compatibility with older
+    // callers; it must never make the journal point at another approval.
+    if (this.database) {
       const prior = this.database.get<{ target_ref: string; source_sha: string; expected_target_sha: string; resulting_target_sha: string }>(
-        "SELECT target_ref,source_sha,expected_target_sha,resulting_target_sha FROM git_operations WHERE type='MERGE' AND status='VERIFIED' AND approval_id=$approvalId ORDER BY verified_at DESC LIMIT 1", { approvalId: this.approvalId });
+        "SELECT target_ref,source_sha,expected_target_sha,resulting_target_sha FROM git_operations WHERE type='MERGE' AND status='VERIFIED' AND approval_id=$approvalId ORDER BY verified_at DESC LIMIT 1", { approvalId });
       if (prior && prior.target_ref === verified.currentTargetBranch && prior.source_sha === verified.sourceSha && prior.expected_target_sha === verified.expectedTargetSha && prior.resulting_target_sha) {
         return { success: true, subjectId, targetBranch: prior.target_ref, mergeCommitSha: prior.resulting_target_sha, resultingTargetSha: prior.resulting_target_sha, verifiedCompletion: true };
       }
     }
-    const operationId = this.database && this.approvalId ? crypto.randomUUID() : null;
+    const operationId = this.database ? crypto.randomUUID() : null;
     if (operationId) {
-      this.database!.run("INSERT INTO git_operations(id,type,status,repo_path,branch_name,target_ref,created_at,approval_id,source_sha,expected_target_sha) VALUES($id,'MERGE','STARTED',$repo,$branch,$target,$at,$approval,$source,$expected)", { id: operationId, repo: verified.repoPath, branch: verified.sourceBranch, target: verified.currentTargetBranch, at: new Date().toISOString(), approval: this.approvalId, source: verified.sourceSha, expected: verified.expectedTargetSha });
+      this.database!.run("INSERT INTO git_operations(id,type,status,repo_path,branch_name,target_ref,created_at,approval_id,source_sha,expected_target_sha) VALUES($id,'MERGE','STARTED',$repo,$branch,$target,$at,$approval,$source,$expected)", { id: operationId, repo: verified.repoPath, branch: verified.sourceBranch, target: verified.currentTargetBranch, at: new Date().toISOString(), approval: approvalId, source: verified.sourceSha, expected: verified.expectedTargetSha });
     }
     // Perform the merge
     try {
@@ -195,6 +201,30 @@ export class MergeService {
     } finally {
       if (!this.database && provenanceDb) provenanceDb.close();
     }
+  }
+
+  /**
+   * Authority-bound entry point used by Epic orchestration.  It resolves the
+   * exact Integration AgentRun from durable provenance before entering the
+   * normal approval/SHA verification path; callers cannot supply a fabricated
+   * attempt or substitute another run.
+   */
+  async mergeApprovedForIntegration(subjectId: string, approvalId: string, integrationRunId: string): Promise<MergeResult> {
+    if (!this.database) throw new Error("Authoritative database is required for Integration provenance");
+    const row = this.database.get<{
+      id: string; source_branch: string; target_branch: string; repository_path: string;
+      expected_target_sha: string; source_sha: string; worktree_path: string;
+      integration_run_id: string; status: IntegrationAttempt["status"]; created_at: string;
+    }>("SELECT * FROM integration_attempts WHERE integration_run_id=$runId AND status='MERGED'", { runId: integrationRunId });
+    if (!row || row.integration_run_id !== integrationRunId) throw new Error("Missing exact Integration provenance");
+    this.integrationAttempt = {
+      id: row.id, sourceBranch: row.source_branch, currentTargetBranch: row.target_branch,
+      expectedTargetBranch: row.target_branch, repoPath: row.repository_path,
+      expectedTargetSha: row.expected_target_sha, sourceSha: row.source_sha,
+      worktreePath: row.worktree_path, status: row.status, createdAt: row.created_at,
+      integrationRunId,
+    };
+    return this.mergeApproved(subjectId, approvalId);
   }
 
   /**

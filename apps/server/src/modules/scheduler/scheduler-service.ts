@@ -2,7 +2,7 @@
  * Scheduler service - coordinates task scheduling and eligibility evaluation.
  */
 
-import type { Database } from "../../platform/database/database.js";
+import type { Database, DatabaseTx } from "../../platform/database/database.js";
 import type { WorkflowEngine } from "../workflow/workflow-engine.js";
 import type {
   SchedulableTask,
@@ -12,6 +12,8 @@ import type {
   Priority,
   Category,
   RecalculateResult,
+  ReservationReleaseResult,
+  SchedulerReconciliationResult,
 } from "./scheduler-types.js";
 import { CAPACITY } from "./scheduler-types.js";
 import { determineEligibility, compareTasks } from "./scheduler-policy.js";
@@ -31,21 +33,9 @@ interface TaskRow {
  */
 export class SchedulerService {
   private readonly lockService: ResourceLockService;
-  private readonly lockTimestampColumn: "locked_at" | "acquired_at";
 
   constructor(private readonly db: Database) {
-    this.db.exec(`CREATE TABLE IF NOT EXISTS resource_locks (
-      id TEXT PRIMARY KEY, task_id TEXT NOT NULL, locked_at TEXT NOT NULL, owner_id TEXT NOT NULL
-    )`);
     this.lockService = new ResourceLockService(db);
-    const lockColumns = this.db.all<{ name: string }>("PRAGMA table_info(resource_locks)");
-    this.lockTimestampColumn = lockColumns.some((column) => column.name === "locked_at") ? "locked_at" : "acquired_at";
-    // Keep older test/embedded databases usable while migrations are applied.
-    this.db.exec(`CREATE TABLE IF NOT EXISTS scheduler_capacity_reservations (
-      task_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, owner_id TEXT NOT NULL, reserved_at TEXT NOT NULL,
-      estimate_cost REAL NOT NULL DEFAULT 0, run_id TEXT, status TEXT NOT NULL DEFAULT 'RESERVED', actual_cost REAL
-      , approval_id TEXT
-    )`);
     this.db.exec(`CREATE TABLE IF NOT EXISTS scheduler_budgets (
       project_id TEXT PRIMARY KEY, limit_cost REAL NOT NULL, spent_cost REAL NOT NULL DEFAULT 0,
       reserved_cost REAL NOT NULL DEFAULT 0
@@ -54,9 +44,18 @@ export class SchedulerService {
       project_id TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'developer', model TEXT NOT NULL DEFAULT 'default',
       cost REAL NOT NULL, recorded_at TEXT NOT NULL
     )`);
-    for (const column of ["estimate_cost REAL NOT NULL DEFAULT 0", "run_id TEXT", "status TEXT NOT NULL DEFAULT 'RESERVED'", "actual_cost REAL", "approval_id TEXT"]) {
-      try { this.db.exec(`ALTER TABLE scheduler_capacity_reservations ADD COLUMN ${column}`); } catch { /* current schema */ }
-    }
+    // One physical reservation/lock authority for both tasks and agent runs.
+    this.db.exec(`CREATE TABLE IF NOT EXISTS scheduler_reservations (
+      id TEXT PRIMARY KEY, kind TEXT NOT NULL, subject_id TEXT NOT NULL UNIQUE,
+      project_id TEXT NOT NULL, owner_id TEXT NOT NULL, reserved_at TEXT NOT NULL,
+      estimate_cost REAL NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'RESERVED',
+      actual_cost REAL, role TEXT NOT NULL, model TEXT NOT NULL, approval_id TEXT,
+      run_id TEXT
+    )`);
+    this.db.exec(`CREATE TABLE IF NOT EXISTS scheduler_resource_locks (
+      resource_key TEXT PRIMARY KEY, reservation_id TEXT NOT NULL,
+      project_id TEXT NOT NULL, owner_id TEXT NOT NULL, locked_at TEXT NOT NULL
+    )`);
   }
 
   /**
@@ -79,6 +78,9 @@ export class SchedulerService {
     const alreadyRunning = tasks.filter(
       (t) => !isTerminalStatus(t.status) && t.status !== "READY" && t.status !== "DRAFT"
     );
+    // Eligibility projection and dispatch use the same durable reservation
+    // authority.  In particular, non-task phases consume these slots too.
+    const reservedGlobal = this.db.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_reservations WHERE status='RESERVED' AND kind <> 'LOCK'")?.count ?? 0;
 
     // Get ALL non-terminal tasks for dependency checking
     const allActiveTasks = tasks.filter((t) => !isTerminalStatus(t.status));
@@ -122,6 +124,9 @@ export class SchedulerService {
     for (const task of alreadyRunning) {
       runningByProject.set(task.projectId, (runningByProject.get(task.projectId) ?? 0) + 1);
     }
+    for (const row of this.db.all<{ project_id: string; count: number }>("SELECT project_id,COUNT(*) AS count FROM scheduler_reservations WHERE status='RESERVED' AND kind <> 'LOCK' GROUP BY project_id")) {
+      runningByProject.set(row.project_id, Math.max(runningByProject.get(row.project_id) ?? 0, row.count));
+    }
 
     // Limit each project's runnables
     const limitedByProject: SchedulableTask[] = [];
@@ -132,7 +137,7 @@ export class SchedulerService {
     }
 
     // Then limit globally
-    const globalAvailable = Math.max(0, CAPACITY.globalMax - alreadyRunning.length);
+    const globalAvailable = Math.max(0, CAPACITY.globalMax - reservedGlobal);
     limitedByProject.splice(globalAvailable);
     runnables.length = 0;
     runnables.push(...limitedByProject);
@@ -149,7 +154,7 @@ export class SchedulerService {
       runnables,
       waiting,
       blocked,
-      currentRunningCount: alreadyRunning.length,
+      currentRunningCount: reservedGlobal,
     };
   }
 
@@ -218,8 +223,8 @@ export class SchedulerService {
     available: number;
   } {
     const query = projectId
-      ? "SELECT COUNT(*) as count FROM tasks WHERE status NOT IN ('DONE', 'CANCELLED', 'FAILED') AND project_id = $project_id"
-      : "SELECT COUNT(*) as count FROM tasks WHERE status NOT IN ('DONE', 'CANCELLED', 'FAILED')";
+      ? "SELECT COUNT(*) as count FROM scheduler_reservations WHERE status='RESERVED' AND kind <> 'LOCK' AND project_id = $project_id"
+      : "SELECT COUNT(*) as count FROM scheduler_reservations WHERE status='RESERVED' AND kind <> 'LOCK'";
 
     const result = this.db.get<{ count: number }>(query,
       projectId ? { project_id: projectId } : {});
@@ -281,8 +286,8 @@ export class SchedulerService {
     taskId: string,
     workflowEngine: WorkflowEngine,
     onWorkflowRunStarted: (taskId: string, triggerReason: string) => void,
-    triggerReasonOrOptions: string | { triggerReason?: string; approvalId?: string; role?: string; model?: string } = "epic-child",
-  ): void {
+    triggerReasonOrOptions: string | { triggerReason?: string; approvalId?: string; role?: string; model?: string; runId?: string } = "epic-child",
+   ): void {
     const options = typeof triggerReasonOrOptions === "string" ? { triggerReason: triggerReasonOrOptions } : triggerReasonOrOptions;
     const triggerReason = options.triggerReason ?? "epic-child";
     const task = this.db.get<{ project_id: string; status: string }>(
@@ -294,12 +299,12 @@ export class SchedulerService {
       if (eligibility.status !== "RUNNABLE") {
         throw new Error(`Task ${taskId} is not schedulable: ${eligibility.reason}`);
       }
-      const global = tx.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_capacity_reservations WHERE status='RESERVED'");
-      const project = tx.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_capacity_reservations WHERE project_id=$projectId AND status='RESERVED'", { projectId: task.project_id });
+       const global = tx.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_reservations WHERE status='RESERVED' AND kind <> 'LOCK'");
+       const project = tx.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_reservations WHERE project_id=$projectId AND status='RESERVED' AND kind <> 'LOCK'", { projectId: task.project_id });
       if ((global?.count ?? 0) >= CAPACITY.globalMax || (project?.count ?? 0) >= CAPACITY.projectMax) {
         throw new Error(`Task ${taskId} is not schedulable: WAITING_FOR_CAPACITY`);
       }
-      const existing = tx.get("SELECT task_id FROM scheduler_capacity_reservations WHERE task_id=$taskId AND status='RESERVED'", { taskId });
+      const existing = tx.get("SELECT id FROM scheduler_reservations WHERE subject_id=$taskId AND status='RESERVED'", { taskId });
       if (!existing) {
         const estimate = this.estimateCost(task.project_id, "developer", "default");
         const budget = tx.get<{ limit_cost: number; spent_cost: number; reserved_cost: number }>("SELECT limit_cost,spent_cost,reserved_cost FROM scheduler_budgets WHERE project_id=$projectId", { projectId: task.project_id });
@@ -311,47 +316,118 @@ export class SchedulerService {
         }
         // The lock is acquired in this same transaction.  Calling the lock
         // service here would create a second transaction and permit races.
-        const externalLock = tx.get<{ task_id: string }>("SELECT task_id FROM resource_locks WHERE id='global'");
-        if (externalLock && externalLock.task_id !== taskId) throw new Error("Task " + taskId + " is not schedulable: WAITING_FOR_RESOURCE_LOCK");
-        const ownLock = tx.get("SELECT id FROM resource_locks WHERE task_id=$taskId", { taskId });
-        if (!ownLock) tx.run(`INSERT INTO resource_locks(id,task_id,owner_id,${this.lockTimestampColumn}) VALUES($lockId,$taskId,$ownerId,$at)`, { lockId: `dispatch:${taskId}`, taskId, ownerId: `task:${taskId}`, at: new Date().toISOString() });
-        tx.run("INSERT INTO scheduler_capacity_reservations(task_id,project_id,owner_id,reserved_at,estimate_cost,status,approval_id) VALUES($taskId,$projectId,$ownerId,$at,$estimate,'RESERVED',$approvalId)", { taskId, projectId: task.project_id, ownerId: `task:${taskId}`, at: new Date().toISOString(), estimate, approvalId: options.approvalId ?? null });
+        const reservationId = crypto.randomUUID();
+        const resourceKey = `task:${taskId}`;
+        const externalLock = tx.get<{ owner_id: string }>("SELECT owner_id FROM scheduler_resource_locks WHERE resource_key='global'");
+        if (externalLock && externalLock.owner_id !== `task:${taskId}`) throw new Error("Task " + taskId + " is not schedulable: WAITING_FOR_RESOURCE_LOCK");
+        const conflictingLock = tx.get<{ reservation_id: string }>("SELECT reservation_id FROM scheduler_resource_locks WHERE resource_key=$resourceKey", { resourceKey });
+        if (conflictingLock) throw new Error(`Task ${taskId} is not schedulable: WAITING_FOR_RESOURCE_LOCK`);
+        tx.run("INSERT INTO scheduler_reservations(id,kind,subject_id,project_id,owner_id,reserved_at,estimate_cost,status,role,model,approval_id,run_id) VALUES($id,'TASK',$taskId,$projectId,$ownerId,$at,$estimate,'RESERVED','developer','default',$approvalId,$runId)", { id: reservationId, taskId, projectId: task.project_id, ownerId: `task:${taskId}`, at: new Date().toISOString(), estimate, approvalId: options.approvalId ?? null, runId: options.runId ?? null });
+        tx.run("INSERT INTO scheduler_resource_locks(resource_key,reservation_id,project_id,owner_id,locked_at) VALUES($resourceKey,$reservationId,$projectId,$ownerId,$at)", { resourceKey, reservationId, projectId: task.project_id, ownerId: `task:${taskId}`, at: new Date().toISOString() });
       }
       workflowEngine.transitionInTransaction(tx, taskId, "DEVELOPMENT");
     });
     onWorkflowRunStarted(taskId, triggerReason);
   }
 
-  /** Release a reservation only after the persisted run has reached a terminal state. */
-  releaseTask(taskId: string, actualCost = 0): void {
+  /** Reserve a non-task AI phase through the same budget/capacity authority. */
+  dispatchAgentRun(runId: string, projectId: string, role: string, model: string, resourceKey = `run:${runId}`): void {
     this.db.transaction((tx) => {
-      const reservation = tx.get<{ project_id: string; estimate_cost: number; status: string }>("SELECT project_id,estimate_cost,status FROM scheduler_capacity_reservations WHERE task_id=$taskId", { taskId });
-      if (!reservation) { tx.run("DELETE FROM resource_locks WHERE task_id=$taskId", { taskId }); return; }
+      const existing = tx.get<{ status: string }>("SELECT status FROM scheduler_reservations WHERE subject_id=$runId", { runId });
+      if (existing?.status === "RESERVED") return;
+       const global = tx.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_reservations WHERE status='RESERVED' AND kind <> 'LOCK'")?.count ?? 0;
+       const project = tx.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_reservations WHERE project_id=$projectId AND status='RESERVED' AND kind <> 'LOCK'", { projectId })?.count ?? 0;
+      if (global >= CAPACITY.globalMax || project >= CAPACITY.projectMax) throw new Error(`Run ${runId} is not schedulable: WAITING_FOR_CAPACITY`);
+      if (tx.get("SELECT resource_key FROM scheduler_resource_locks WHERE resource_key=$resourceKey", { resourceKey })) throw new Error(`Run ${runId} is not schedulable: WAITING_FOR_RESOURCE_LOCK`);
+      const estimate = this.estimateCost(projectId, role, model);
+      const budget = tx.get<{ limit_cost: number; spent_cost: number; reserved_cost: number }>("SELECT limit_cost,spent_cost,reserved_cost FROM scheduler_budgets WHERE project_id=$projectId", { projectId });
+      if (budget && budget.spent_cost + budget.reserved_cost + estimate > budget.limit_cost) throw new Error(`Run ${runId} is not schedulable: WAITING_FOR_BUDGET`);
+      if (budget) tx.run("UPDATE scheduler_budgets SET reserved_cost=reserved_cost+$estimate WHERE project_id=$projectId", { projectId, estimate });
+      const now = new Date().toISOString();
+      tx.run("INSERT INTO scheduler_reservations(id,kind,subject_id,project_id,owner_id,reserved_at,estimate_cost,status,role,model,run_id) VALUES($id,'PHASE',$runId,$projectId,$ownerId,$at,$estimate,'RESERVED',$role,$model,$runId)", { id: crypto.randomUUID(), runId, projectId, ownerId: `run:${runId}`, at: now, estimate, role, model });
+      const reservation = tx.get<{ id: string }>("SELECT id FROM scheduler_reservations WHERE subject_id=$runId", { runId })!;
+      tx.run("INSERT INTO scheduler_resource_locks(resource_key,reservation_id,project_id,owner_id,locked_at) VALUES($resourceKey,$reservationId,$projectId,$ownerId,$at)", { resourceKey, reservationId: reservation.id, projectId, ownerId: `run:${runId}`, at: now });
+    });
+  }
+
+  /** Reconcile a phase reservation against this exact AgentRun. */
+  releaseAgentRun(runId: string, actualCost: number): ReservationReleaseResult {
+    return this.db.transaction((tx) => {
+      const reservation = tx.get<{ id: string; project_id: string; estimate_cost: number; role: string; model: string; owner_id: string }>("SELECT id,project_id,estimate_cost,role,model,owner_id FROM scheduler_reservations WHERE status='RESERVED' AND (run_id=$runId OR subject_id=$runId) ORDER BY CASE WHEN run_id=$runId THEN 0 ELSE 1 END LIMIT 1", { runId });
+      if (!reservation) return { status: "ALREADY_RELEASED" };
+      if (!this.lockOwnerMatches(tx, reservation)) return { status: "BLOCKED_OWNERSHIP_DRIFT", reservationId: reservation.id };
+      const actual = Math.max(0, actualCost);
+      tx.run("UPDATE scheduler_reservations SET status='RELEASED',actual_cost=$actual WHERE id=$id AND status='RESERVED'", { id: reservation.id, actual });
+      if (tx.get<{ changes: number }>("SELECT changes() AS changes")?.changes !== 1) return { status: "ALREADY_RELEASED" };
+      tx.run("UPDATE scheduler_budgets SET reserved_cost=MAX(0,reserved_cost-$estimate),spent_cost=spent_cost+$actual WHERE project_id=$projectId", { projectId: reservation.project_id, estimate: reservation.estimate_cost, actual });
+      if (actual > 0) tx.run("INSERT INTO scheduler_usage_history(project_id,role,model,cost,recorded_at) VALUES($projectId,$role,$model,$actual,$at)", { projectId: reservation.project_id, role: reservation.role, model: reservation.model, actual, at: new Date().toISOString() });
+      tx.run("DELETE FROM scheduler_resource_locks WHERE reservation_id=$id", { id: reservation.id });
+      return { status: "RELEASED", reservationId: reservation.id };
+    });
+  }
+
+  /** Release a reservation only after the persisted run has reached a terminal state. */
+  releaseTask(taskId: string, actualCost = 0): ReservationReleaseResult {
+    return this.db.transaction((tx) => {
+      const reservation = tx.get<{ id: string; project_id: string; estimate_cost: number; owner_id: string }>("SELECT id,project_id,estimate_cost,owner_id FROM scheduler_reservations WHERE subject_id=$taskId AND status='RESERVED'", { taskId });
+      if (!reservation) return { status: "ALREADY_RELEASED" };
+      if (!this.lockOwnerMatches(tx, reservation)) return { status: "BLOCKED_OWNERSHIP_DRIFT", reservationId: reservation.id };
       const actual = Math.max(0, actualCost);
       const budget = tx.get<{ reserved_cost: number }>("SELECT reserved_cost FROM scheduler_budgets WHERE project_id=$projectId", { projectId: reservation.project_id });
+      tx.run("UPDATE scheduler_reservations SET status='RELEASED',actual_cost=$actual WHERE id=$id AND status='RESERVED'", { id: reservation.id, actual });
+      if (tx.get<{ changes: number }>("SELECT changes() AS changes")?.changes !== 1) return { status: "ALREADY_RELEASED" };
       if (budget) tx.run("UPDATE scheduler_budgets SET reserved_cost=MAX(0,reserved_cost-$estimate), spent_cost=spent_cost+$actual WHERE project_id=$projectId", { projectId: reservation.project_id, estimate: reservation.estimate_cost, actual });
       if (actual > 0) tx.run("INSERT INTO scheduler_usage_history(project_id,role,model,cost,recorded_at) VALUES($projectId,'developer','default',$actual,$at)", { projectId: reservation.project_id, actual, at: new Date().toISOString() });
-      tx.run("DELETE FROM scheduler_capacity_reservations WHERE task_id=$taskId", { taskId });
-      tx.run("DELETE FROM resource_locks WHERE task_id=$taskId", { taskId });
+      tx.run("DELETE FROM scheduler_resource_locks WHERE reservation_id=$id", { id: reservation.id });
+      return { status: "RELEASED", reservationId: reservation.id };
     });
   }
 
   /** Reconcile reservations and locks after a crash or interrupted run. */
-  reconcile(): void {
-    if (!this.db.get<{ name: string }>("SELECT name FROM sqlite_master WHERE type='table' AND name='agent_runs'")) return;
-    this.db.transaction((tx) => {
-      const rows = tx.all<{ task_id: string; project_id: string; estimate_cost: number }>("SELECT task_id,project_id,estimate_cost FROM scheduler_capacity_reservations WHERE status='RESERVED'");
+  reconcile(): SchedulerReconciliationResult {
+    if (!this.db.get<{ name: string }>("SELECT name FROM sqlite_master WHERE type='table' AND name='agent_runs'")) return { releasedReservationIds: [], blockedReservationIds: [] };
+    return this.db.transaction((tx) => {
+      const result: SchedulerReconciliationResult = { releasedReservationIds: [], blockedReservationIds: [] };
+      const rows = tx.all<{ id: string; subject_id: string; project_id: string; estimate_cost: number; kind: string; owner_id: string; run_id: string | null }>("SELECT id,subject_id,project_id,estimate_cost,kind,owner_id,run_id FROM scheduler_reservations WHERE status='RESERVED' ORDER BY id");
       for (const row of rows) {
-        const run = tx.get<{ status: string; cost: number | null }>("SELECT status,cost FROM agent_runs WHERE task_id=$taskId ORDER BY started_at DESC LIMIT 1", { taskId: row.task_id });
+        if (!this.lockOwnerMatches(tx, row)) {
+          result.blockedReservationIds.push(row.id);
+          continue;
+        }
+        // LOCK reservations are owned by the task/resource lock authority,
+        // not by an AgentRun with a task-shaped subject id.  In particular,
+        // an active task must keep its lock across a restart.
+        if (row.kind === "LOCK") {
+          if (!row.subject_id.startsWith("lock:")) continue;
+          const task = tx.get<{ status: string }>("SELECT status FROM tasks WHERE id=$taskId", { taskId: row.subject_id.slice("lock:".length) });
+          if (!task || !isTerminalStatus(task.status)) continue;
+          tx.run("UPDATE scheduler_budgets SET reserved_cost=MAX(0,reserved_cost-$estimate) WHERE project_id=$projectId", { projectId: row.project_id, estimate: row.estimate_cost });
+          tx.run("UPDATE scheduler_reservations SET status='RELEASED',actual_cost=0 WHERE id=$id AND status='RESERVED'", { id: row.id });
+          tx.run("DELETE FROM scheduler_resource_locks WHERE reservation_id=$id", { id: row.id });
+          result.releasedReservationIds.push(row.id);
+          continue;
+        }
+        const run = tx.get<{ status: string; cost: number | null }>(
+          "SELECT status,cost FROM agent_runs WHERE id=$runId OR task_id=$taskId ORDER BY CASE WHEN id=$runId THEN 0 ELSE 1 END, started_at DESC LIMIT 1",
+          { runId: row.run_id, taskId: row.subject_id },
+        );
         if (!run || ["FAILED", "CANCELLED", "COMPLETED"].includes(run.status)) {
           const actual = run?.cost ?? 0;
           tx.run("UPDATE scheduler_budgets SET reserved_cost=MAX(0,reserved_cost-$estimate),spent_cost=spent_cost+$actual WHERE project_id=$projectId", { projectId: row.project_id, estimate: row.estimate_cost, actual });
-          tx.run("DELETE FROM scheduler_capacity_reservations WHERE task_id=$taskId", { taskId: row.task_id });
-          tx.run("DELETE FROM resource_locks WHERE task_id=$taskId", { taskId: row.task_id });
+          tx.run("UPDATE scheduler_reservations SET status='RELEASED',actual_cost=$actual WHERE id=$id AND status='RESERVED'", { id: row.id, actual });
+          tx.run("DELETE FROM scheduler_resource_locks WHERE reservation_id=$id", { id: row.id });
+          result.releasedReservationIds.push(row.id);
         }
       }
-      tx.run("DELETE FROM resource_locks WHERE task_id NOT IN (SELECT id FROM tasks WHERE status NOT IN ('DONE','FAILED','CANCELLED','RELEASED'))");
+      return result;
     });
+  }
+
+  private lockOwnerMatches(tx: DatabaseTx, reservation: { id: string; owner_id: string }): boolean {
+    return !tx.get(
+      "SELECT 1 FROM scheduler_resource_locks WHERE reservation_id=$id AND owner_id<>$owner LIMIT 1",
+      { id: reservation.id, owner: reservation.owner_id },
+    );
   }
 
   private estimateCost(projectId: string, role: string, model: string): number {

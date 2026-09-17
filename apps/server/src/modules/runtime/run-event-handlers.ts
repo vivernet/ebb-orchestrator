@@ -61,8 +61,13 @@ export class RuntimeEventHandlers {
       );
     }
 
-    // Transition to DEVELOPMENT (workflow engine is the only domain service that can do this)
-    this.workflowEngine.transition(taskId, "DEVELOPMENT");
+    // Scheduler is the only dispatch authority: it atomically reserves
+    // capacity/budget/resource lock before advancing the workflow.
+    this.scheduler.dispatchTask(taskId, this.workflowEngine, () => undefined, {
+      triggerReason: "runtime-request",
+      role,
+      model,
+    });
 
     // Log/emit AgentRunStarted event
     this.emitAgentRunStarted(taskId, role, model);
@@ -78,8 +83,8 @@ export class RuntimeEventHandlers {
   ): void {
     // The run is the authorization boundary. Never select a latest run for a
     // task: that permits a stale/foreign completion to advance the workflow.
-    const run = this.db.get<{ id: string; task_id: string | null; role: string; status: string; output: string | null }>(
-      "SELECT id, task_id, role, status, output FROM agent_runs WHERE id = $id",
+    const run = this.db.get<{ id: string; task_id: string | null; role: string; status: string; output: string | null; cost: number | null }>(
+      "SELECT id, task_id, role, status, output, cost FROM agent_runs WHERE id = $id",
       { id: runId },
     );
     if (!run) throw new Error(`Run ${runId} not found`);
@@ -126,7 +131,7 @@ export class RuntimeEventHandlers {
     } else {
       this.emitAgentRunFailed(taskId, outcome);
     }
-    this.scheduler.releaseTask(taskId);
+    this.scheduler.releaseTask(taskId, run.cost ?? 0);
   }
 
   /**
