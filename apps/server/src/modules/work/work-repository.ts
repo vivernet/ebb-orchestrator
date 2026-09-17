@@ -108,6 +108,16 @@ export const WorkRepository = {
   },
 
   /**
+   * Update a task contract after all task IDs in a plan are known.
+   */
+  updateTaskContract(tx: DatabaseTx, taskId: string, contract: TaskContract): void {
+    tx.run(
+      "UPDATE tasks SET contract_json = $contract_json, updated_at = $updated_at WHERE id = $id",
+      { id: taskId, contract_json: JSON.stringify(contract), updated_at: new Date().toISOString() },
+    );
+  },
+
+  /**
    * Insert an epic row.
    */
   insertEpic(

@@ -49,6 +49,30 @@ describe("PlanningService", () => {
     expect(approved.temporaryIdMap).toEqual({ task_1: "TASK-1", task_2: "TASK-2" });
     expect(db?.get<{ count: number }>("SELECT COUNT(*) AS count FROM dependencies")?.count).toBe(1);
     expect(db?.get<{ count: number }>("SELECT COUNT(*) AS count FROM outbox_events WHERE type='PlanApproved'")?.count).toBe(1);
+
+    const tasks = db?.all<{ id: string; display_id: string; contract_json: string }>("SELECT id, display_id, contract_json FROM tasks ORDER BY display_id");
+    expect(JSON.parse(tasks![1]!.contract_json).dependencies).toEqual([tasks![0]!.id]);
+    const dependency = db?.get<{ task_id: string; depends_on_task_id: string }>("SELECT task_id, depends_on_task_id FROM dependencies");
+    expect(dependency).toEqual({ task_id: tasks![1]!.id, depends_on_task_id: tasks![0]!.id });
+    const event = db?.get<{ aggregate_id: string; payload_json: string }>("SELECT aggregate_id, payload_json FROM outbox_events WHERE type='DependencyCreated'");
+    expect(event?.aggregate_id).toBe(tasks![1]!.id);
+    expect(JSON.parse(event!.payload_json)).toEqual({ taskId: tasks![1]!.id, dependsOnTaskId: tasks![0]!.id });
+  });
+
+  it("rolls back work and outbox state when materialization fails", async () => {
+    const { service, projectId } = await setup();
+    const plan = service.preparePlan({ projectId, epic: { title: "Feature" }, tasks: [
+      { ref: "task_1", title: "Foundation", acceptanceCriteria: ["done"], role: "developer", workflow: "standard" },
+      { ref: "task_2", title: "Follow-up", acceptanceCriteria: ["done"], role: "developer", workflow: "standard", dependsOn: ["task_1"] },
+    ] });
+    db?.exec("CREATE TRIGGER fail_task_materialization BEFORE INSERT ON tasks WHEN NEW.title = 'Follow-up' BEGIN SELECT RAISE(ABORT, 'forced materialization failure'); END");
+
+    expect(() => service.approvePlan(plan.id, "user")).toThrow(/forced materialization failure/);
+    expect(db?.get<{ count: number }>("SELECT COUNT(*) AS count FROM epics")?.count).toBe(0);
+    expect(db?.get<{ count: number }>("SELECT COUNT(*) AS count FROM tasks")?.count).toBe(0);
+    expect(db?.get<{ count: number }>("SELECT COUNT(*) AS count FROM dependencies")?.count).toBe(0);
+    expect(db?.get<{ count: number }>("SELECT COUNT(*) AS count FROM outbox_events")?.count).toBe(0);
+    expect(db?.get<{ status: string }>("SELECT status FROM planning_plans WHERE id=$id", { id: plan.id })?.status).toBe("PENDING");
   });
 
   it("rejects invalid plans before creating any work", async () => {

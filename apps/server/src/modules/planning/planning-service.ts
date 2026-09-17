@@ -65,6 +65,8 @@ export class PlanningService {
   private materialize(tx: DatabaseTx, plan: PlanningPlan, actor: string): PlanningPlan {
     const validation = validatePlan(plan);
     const map: Record<string, string> = {};
+    const taskIds = new Map<string, string>();
+    const taskDisplayIds = new Map<string, string>();
     let epicId: string | null = null;
     if (plan.epic) {
       const id = crypto.randomUUID(); const num = WorkRepository.nextEpicNumber(tx, plan.projectId);
@@ -72,15 +74,30 @@ export class PlanningService {
       epicId = epic.id;
       appendOutboxEvent(tx, DomainEvent.create({ type: "EpicCreated", aggregateType: "Epic", aggregateId: epic.id, payload: { epicId: epic.id, displayId: epic.displayId } }));
     }
+    // Allocate every domain ID before building contracts so temporary refs never
+    // cross the planning/work domain boundary.
+    const firstTaskNumber = WorkRepository.nextTaskNumber(tx, plan.projectId);
+    for (const [index, task] of plan.tasks.entries()) {
+      const id = crypto.randomUUID(); const num = firstTaskNumber + index;
+      const displayId = `TASK-${num}`;
+      taskIds.set(task.ref, id);
+      taskDisplayIds.set(task.ref, displayId);
+      map[task.ref] = displayId;
+    }
     for (const task of plan.tasks) {
-      const id = crypto.randomUUID(); const num = WorkRepository.nextTaskNumber(tx, plan.projectId);
-      const created = WorkRepository.insertTask(tx, { id, projectId: plan.projectId, epicId, displayId: `TASK-${num}`, title: task.title, status: "DRAFT", contract: validation.contracts.get(task.ref)!, required: !task.optional });
-      map[task.ref] = created.displayId;
+      const id = taskIds.get(task.ref)!;
+      const created = WorkRepository.insertTask(tx, { id, projectId: plan.projectId, epicId, displayId: taskDisplayIds.get(task.ref)!, title: task.title, status: "DRAFT", contract: { ...validation.contracts.get(task.ref)!, dependencies: [] }, required: !task.optional });
       appendOutboxEvent(tx, DomainEvent.create({ type: "TaskCreated", aggregateType: "Task", aggregateId: created.id, payload: { taskId: created.id, displayId: created.displayId, planId: plan.id } }));
     }
+    for (const task of plan.tasks) {
+      const taskId = taskIds.get(task.ref)!;
+      WorkRepository.updateTaskContract(tx, taskId, { ...validation.contracts.get(task.ref)!, dependencies: (task.dependsOn ?? []).map((dependency) => taskIds.get(dependency)!) });
+    }
     for (const task of plan.tasks) for (const dependency of task.dependsOn ?? []) {
-      tx.run("INSERT INTO dependencies (id, task_id, depends_on_task_id, type, created_at) SELECT $id, t.id, d.id, 'BLOCKING', $created_at FROM tasks t, tasks d WHERE t.display_id=$task AND d.display_id=$dependency AND t.project_id=$project AND d.project_id=$project", { id: crypto.randomUUID(), task: map[task.ref]!, dependency: map[dependency]!, project: plan.projectId, created_at: new Date().toISOString() });
-      appendOutboxEvent(tx, DomainEvent.create({ type: "DependencyCreated", aggregateType: "Task", payload: { task: map[task.ref], dependsOn: map[dependency] } }));
+      const taskId = taskIds.get(task.ref)!;
+      const dependsOnTaskId = taskIds.get(dependency)!;
+      tx.run("INSERT INTO dependencies (id, task_id, depends_on_task_id, type, created_at) VALUES ($id, $task_id, $depends_on_task_id, 'BLOCKING', $created_at)", { id: crypto.randomUUID(), task_id: taskId, depends_on_task_id: dependsOnTaskId, created_at: new Date().toISOString() });
+      appendOutboxEvent(tx, DomainEvent.create({ type: "DependencyCreated", aggregateType: "Task", aggregateId: taskId, payload: { taskId, dependsOnTaskId } }));
     }
     tx.run("UPDATE planning_plans SET status='APPROVED', temporary_id_map_json=$map, approved_by=$actor, approved_at=$at WHERE id=$id", { id: plan.id, map: JSON.stringify(map), actor, at: new Date().toISOString() });
     appendOutboxEvent(tx, DomainEvent.create({ type: "PlanApproved", aggregateType: "PlanningPlan", aggregateId: plan.id, payload: { planId: plan.id, temporaryIdMap: map, approvedBy: actor } }));
