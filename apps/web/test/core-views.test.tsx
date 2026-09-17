@@ -26,7 +26,7 @@ describe('Workflow lifecycle display mapping', () => {
     expect(displayStageForLifecycle(lifecycle)).toBe(stage);
   });
 
-  test.each(['WAITING_FOR_DEPENDENCY', 'FAILED', 'CANCELLED'])('%s does not complete normal stages by position', (status) => {
+  test.each(['WAITING_FOR_DEPENDENCY', 'WAITING_FOR_APPROVAL', 'BLOCKED', 'PAUSED', 'FAILED', 'CANCELLED'])('%s does not complete normal stages by position', (status) => {
     render(<WorkflowTimeline stages={['DEV', 'REVIEW', 'QA', 'FAILED', 'CANCELLED']} currentStage={status} />);
 
     expect(screen.getByText(status)).toHaveStyle({ color: '#fff', fontWeight: '600' });
