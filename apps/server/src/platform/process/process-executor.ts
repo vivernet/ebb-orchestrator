@@ -55,6 +55,7 @@ export class ProcessExecutor {
       let stdout = "";
       let stderr = "";
       let timedOut = false;
+      let outputExceeded = false;
 
       const cleanup = () => {
         if (!child.killed) {
@@ -81,8 +82,8 @@ export class ProcessExecutor {
       child.stdout?.on("data", (chunk: Buffer) => {
         stdout += chunk.toString();
         if (stdout.length > maxBuffer) {
+          outputExceeded = true;
           cleanup();
-          reject(new Error("stdout buffer exceeded"));
           return;
         }
       });
@@ -90,8 +91,8 @@ export class ProcessExecutor {
       child.stderr?.on("data", (chunk: Buffer) => {
         stderr += chunk.toString();
         if (stderr.length > maxBuffer) {
+          outputExceeded = true;
           cleanup();
-          reject(new Error("stderr buffer exceeded"));
           return;
         }
       });
@@ -112,6 +113,10 @@ export class ProcessExecutor {
 
         if (timedOut) {
           reject(new Error(`Process timed out after ${timeout}ms`));
+          return;
+        }
+        if (outputExceeded) {
+          reject(new Error("output buffer exceeded"));
           return;
         }
 

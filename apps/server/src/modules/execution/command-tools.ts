@@ -3,12 +3,14 @@
  * It executes commands without shell syntax, preferring explicit executable + args.
  */
 import { EnvironmentBuilder } from '../../platform/security/environment-builder.js';
-import * as _childProcess from 'node:child_process';
+import { ProcessExecutor } from '../../platform/process/process-executor.js';
 import * as path from 'node:path';
 
 export type ExecOptions = {
   executable: string;
   args: string[];
+  timeout?: number;
+  maxOutput?: number;
 };
 
 export type ExecResult = {
@@ -20,127 +22,43 @@ export type ExecResult = {
 
 export type ProjectAction = 'test' | 'lint' | 'typecheck' | 'build';
 
-/**
- * Shell types that require separate permission (SHELL_EXECUTION capability).
- * These are treated differently from regular executables due to security risks.
- */
 export enum ShellType {
-  bash = 'bash',
-  sh = 'sh',
-  zsh = 'zsh',
-  cmd = 'cmd',
-  powershell = 'powershell',
-  pwsh = 'pwsh',
+  bash = 'bash', sh = 'sh', zsh = 'zsh', cmd = 'cmd', powershell = 'powershell', pwsh = 'pwsh',
 }
-
 const SHELL_EXECUTABLES = new Set(Object.values(ShellType));
+const DEFAULT_TIMEOUT = 5 * 60 * 1000;
+const DEFAULT_MAX_OUTPUT = 1024 * 1024;
 
 export class CommandTools {
-  private envBuilder: EnvironmentBuilder;
+  private readonly envBuilder = new EnvironmentBuilder();
+  private readonly executor = new ProcessExecutor();
 
-  constructor() {
-    this.envBuilder = new EnvironmentBuilder();
-  }
-
-  /**
-   * Check if an executable is a shell requiring special permission.
-   */
   isShellExecutable(executable: string): boolean {
-    const normalized = executable.toLowerCase();
-    // Also check just the executable name without path
-    const baseName = path.basename(normalized);
+    const baseName = path.basename(executable.toLowerCase()).replace(/\.exe$/, '');
     return SHELL_EXECUTABLES.has(baseName as ShellType);
   }
 
-  /**
-   * Execute a command without shell syntax.
-   * 
-   * This method executes commands with explicit executable and args,
-   * avoiding raw shell syntax that could introduce security risks.
-   * 
-   * @param options - The command to execute
-   * @param cwd - Current working directory
-   * @param injectedEnv - Optional environment variables to inject
-   * @returns Execution result
-   */
-  async exec(
-    options: ExecOptions,
-    cwd: string,
-    injectedEnv: Record<string, string> = {}
-  ): Promise<ExecResult> {
-    // Build isolated environment - does not inherit process.env by default
-    const env = this.envBuilder.build({
-      allowlist: ['PATH'],
-      injected: injectedEnv
-    });
-
-    return new Promise((resolve) => {
-       const spawned = _childProcess.spawn(
-        options.executable,
-        options.args,
-        {
-          cwd,
-          env,
-          shell: false, // Explicitly disable shell
-        }
-      );
-
-      let stdout = '';
-      let stderr = '';
-
-      spawned.stdout.on('data', (data: Buffer) => {
-        stdout += data.toString();
+  async exec(options: ExecOptions, cwd: string, injectedEnv: Record<string, string> = {}): Promise<ExecResult> {
+    const env = this.envBuilder.build({ allowlist: ['PATH'], injected: injectedEnv });
+    try {
+      const result = await this.executor.exec(options.executable, options.args, {
+        cwd,
+        env,
+        timeout: options.timeout ?? DEFAULT_TIMEOUT,
+        maxBuffer: options.maxOutput ?? DEFAULT_MAX_OUTPUT,
       });
-
-      spawned.stderr.on('data', (data: Buffer) => {
-        stderr += data.toString();
-      });
-
-      spawned.on('close', (code: number | null) => {
-        resolve({
-          success: code === 0,
-          stdout,
-          stderr,
-          exitCode: code
-        });
-      });
-
-      spawned.on('error', (error: Error) => {
-        resolve({
-          success: false,
-          stdout: '',
-          stderr: error.message,
-          exitCode: null
-        });
-      });
-    });
+      return { success: true, stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode };
+    } catch (error: unknown) {
+      const failure = error instanceof Error ? error : new Error(String(error));
+      const exitCode = 'exitCode' in failure && typeof failure.exitCode === 'number' ? failure.exitCode : null;
+      const stdout = 'stdout' in failure && typeof failure.stdout === 'string' ? failure.stdout : '';
+      const stderr = 'stderr' in failure && typeof failure.stderr === 'string' ? failure.stderr : failure.message;
+      return { success: false, stdout, stderr, exitCode };
+    }
   }
 
-  /**
-   * Execute a project test action (typed mapping from project config).
-   */
-  async test(options: ExecOptions, cwd: string, injectedEnv?: Record<string, string>): Promise<ExecResult> {
-    return this.exec(options, cwd, injectedEnv);
-  }
-
-  /**
-   * Execute a project lint action (typed mapping from project config).
-   */
-  async lint(options: ExecOptions, cwd: string, injectedEnv?: Record<string, string>): Promise<ExecResult> {
-    return this.exec(options, cwd, injectedEnv);
-  }
-
-  /**
-   * Execute a project typecheck action (typed mapping from project config).
-   */
-  async typecheck(options: ExecOptions, cwd: string, injectedEnv?: Record<string, string>): Promise<ExecResult> {
-    return this.exec(options, cwd, injectedEnv);
-  }
-
-  /**
-   * Execute a project build action (typed mapping from project config).
-   */
-  async build(options: ExecOptions, cwd: string, injectedEnv?: Record<string, string>): Promise<ExecResult> {
-    return this.exec(options, cwd, injectedEnv);
-  }
+  async test(options: ExecOptions, cwd: string, injectedEnv?: Record<string, string>): Promise<ExecResult> { return this.exec(options, cwd, injectedEnv); }
+  async lint(options: ExecOptions, cwd: string, injectedEnv?: Record<string, string>): Promise<ExecResult> { return this.exec(options, cwd, injectedEnv); }
+  async typecheck(options: ExecOptions, cwd: string, injectedEnv?: Record<string, string>): Promise<ExecResult> { return this.exec(options, cwd, injectedEnv); }
+  async build(options: ExecOptions, cwd: string, injectedEnv?: Record<string, string>): Promise<ExecResult> { return this.exec(options, cwd, injectedEnv); }
 }
