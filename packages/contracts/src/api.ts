@@ -10,7 +10,7 @@ export const usageSummarySchema = z.object({
 
 export type UsageSummary = z.infer<typeof usageSummarySchema>;
 
-export interface WaitReason { code: string; message: string; }
+export interface WaitReason { code: string; message: string; details?: Record<string, string | number>; }
 export interface ActiveAgent { runId: string; role: string; taskId: string | null; status: string; }
 export interface DashboardProjection {
   activeAgents: ActiveAgent[];

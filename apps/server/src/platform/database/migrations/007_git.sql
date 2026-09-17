@@ -25,12 +25,13 @@ CREATE TABLE IF NOT EXISTS branches (
   name TEXT NOT NULL,
   target_ref TEXT,
   created_at TEXT NOT NULL,
-  removed_at TEXT,
-  UNIQUE (repo_path, name, removed_at IS NULL)
+  removed_at TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_branches_repo ON branches(repo_path);
 CREATE INDEX IF NOT EXISTS idx_branches_removed ON branches(removed_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_branches_active_name
+  ON branches (repo_path, name) WHERE removed_at IS NULL;
 
 -- Worktree tracking (for reconciliation and audit)
 CREATE TABLE IF NOT EXISTS worktrees (
@@ -39,12 +40,13 @@ CREATE TABLE IF NOT EXISTS worktrees (
   path TEXT NOT NULL,
   branch TEXT NOT NULL,
   created_at TEXT NOT NULL,
-  removed_at TEXT,
-  UNIQUE (repo_path, path, removed_at IS NULL)
+  removed_at TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_worktrees_repo ON worktrees(repo_path);
 CREATE INDEX IF NOT EXISTS idx_worktrees_removed ON worktrees(removed_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_worktrees_active_path
+  ON worktrees (repo_path, path) WHERE removed_at IS NULL;
 
 -- MergeConflict records for tracking merge failures
 CREATE TABLE IF NOT EXISTS merge_conflicts (

@@ -48,4 +48,16 @@ describe("orchestrator read API", () => {
     expect(response.statusCode).toBe(403);
     await app.close();
   });
+
+  it("rejects an authenticated mutation without an Origin header", async () => {
+    const app = createApp();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/approvals/approval-1/approve",
+      headers: { authorization: `Bearer ${app.sessionToken}` },
+    });
+
+    expect(response.statusCode).toBe(403);
+    await app.close();
+  });
 });

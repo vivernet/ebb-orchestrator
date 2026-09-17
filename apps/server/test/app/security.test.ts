@@ -12,13 +12,13 @@ describe("local-session security", () => {
     await app.close();
   });
 
-  it("allows authenticated requests to protected routes", async () => {
+  it("requires same-origin validation for authenticated mutations", async () => {
     const app = createApp();
     const token = app.sessionToken;
     const res = await app.inject({
       method: "POST",
       url: "/api/v1/protected-test",
-      headers: { authorization: `Bearer ${token}` },
+       headers: { authorization: `Bearer ${token}`, origin: "http://127.0.0.1:3000" },
     });
     expect(res.statusCode).toBe(200);
     await app.close();
@@ -39,7 +39,7 @@ describe("local-session security", () => {
     await app.close();
   });
 
-  it("allows requests without origin header (same-origin)", async () => {
+  it("rejects requests without origin header to prevent CSRF", async () => {
     const app = createApp();
     const token = app.sessionToken;
     const res = await app.inject({
@@ -48,7 +48,7 @@ describe("local-session security", () => {
       headers: { authorization: `Bearer ${token}` },
       // No origin header – should succeed (same-origin / non-CORS).
     });
-    expect(res.statusCode).toBe(200);
+    expect(res.statusCode).toBe(403);
     await app.close();
   });
 

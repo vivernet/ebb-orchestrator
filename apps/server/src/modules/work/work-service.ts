@@ -9,6 +9,15 @@ import type { Task, Epic, TaskContract } from "./work-types.js";
 export class WorkService {
   constructor(private readonly db: Database) {}
 
+  /** Pause a task through the work aggregate's state transition boundary. */
+  pauseTask(taskId: string): Task {
+    return this.db.transaction((tx) => {
+      const existing = WorkRepository.getTaskById(tx, taskId);
+      if (!existing) throw new Error(`Task ${taskId} not found`);
+      return WorkRepository.setTaskStatus(tx, taskId, "PAUSED");
+    });
+  }
+
   /**
    * Create a standalone task (not in an epic) with a project-local display ID.
    */

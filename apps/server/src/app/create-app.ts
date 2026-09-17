@@ -20,6 +20,18 @@ import { projectRoutes } from "./routes/projects.js";
 import { workRoutes, type WorkCommandService } from "./routes/work.js";
 import { approvalRoutes, type ApprovalCommandService } from "./routes/approvals.js";
 import { runRoutes, type RunCommandService } from "./routes/runs.js";
+import { WorkService } from "../modules/work/work-service.js";
+import { ApprovalService } from "../modules/approvals/approval-service.js";
+import { RunService } from "../modules/runtime/run-service.js";
+import type { AgentRuntime } from "../modules/runtime/agent-runtime.js";
+
+const localRuntime: AgentRuntime = {
+  async startRun() {}, async resumeRun() {}, async cancelRun() {},
+  async inspectRun() { throw new Error("runtime inspection is unavailable"); },
+  async collectResult() { throw new Error("runtime result collection is unavailable"); },
+  async collectUsage() { return { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, cost: 0 }; },
+  async healthCheck() { return true; },
+};
 
 export interface AppDeps {
   /** Loopback host (default "127.0.0.1"). */
@@ -50,6 +62,9 @@ export function createApp(deps: AppDeps = {}): OrchestratorApp {
   const port = deps.port ?? 3000;
 
   const session: LocalSession = createLocalSession({ host, port });
+  const workService = deps.workService ?? (deps.db ? new WorkService(deps.db) : undefined);
+  const approvalService = deps.approvalService ?? (deps.db ? new ApprovalService(deps.db) : undefined);
+  const runService = deps.runService ?? (deps.db ? new RunService(deps.db, localRuntime) : undefined);
 
   const app = Fastify({ logger: false }) as unknown as OrchestratorApp;
 
@@ -77,8 +92,9 @@ export function createApp(deps: AppDeps = {}): OrchestratorApp {
     const mutating = request.method !== "GET" && request.method !== "HEAD";
     if (mutating) {
       const origin = request.headers.origin;
-      // Absent origin is allowed (same-origin / non-CORS).
-      if (origin !== undefined && origin !== session.allowedOrigin) {
+      // A bearer token is not a CSRF token by itself: browser requests must
+      // also prove they originated from this local application.
+      if (origin !== session.allowedOrigin) {
         reply.code(403).send({ error: "forbidden" });
         return reply;
       }
@@ -94,9 +110,9 @@ export function createApp(deps: AppDeps = {}): OrchestratorApp {
   app.register(async (instance) => {
     instance.get("/api/v1/dashboard", async () => new DashboardProjection(deps.db).get());
     await projectRoutes(instance, { db: deps.db });
-    await workRoutes(instance, { db: deps.db, workService: deps.workService });
-    await approvalRoutes(instance, { db: deps.db, approvalService: deps.approvalService });
-    await runRoutes(instance, { db: deps.db, runService: deps.runService });
+    await workRoutes(instance, { db: deps.db, workService });
+    await approvalRoutes(instance, { db: deps.db, approvalService });
+    await runRoutes(instance, { db: deps.db, runService });
   });
 
   // Protected test route (used by security tests)
