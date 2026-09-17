@@ -325,6 +325,28 @@ describe("SchedulerService", () => {
     expect(db!.get<{ reserved_cost: number }>("SELECT reserved_cost FROM scheduler_budgets WHERE project_id=$projectId", { projectId })?.reserved_cost).toBe(0);
   });
 
+  it("fails closed when a retry encounters a reservation owned by another AgentRun", async () => {
+    await setup();
+    const taskId = insertTask(db!, projectId, { id: "retry-task", status: "READY" }).id;
+    const registry = { transitionInTransaction: () => undefined } as never;
+
+    scheduler.dispatchTask(taskId, registry, () => undefined, { runId: "failed-run" });
+    expect(db!.get<{ run_id: string | null }>("SELECT run_id FROM scheduler_reservations WHERE subject_id=$taskId", { taskId })?.run_id).toBe("failed-run");
+
+    db!.run("UPDATE scheduler_reservations SET run_id=NULL WHERE subject_id=$taskId", { taskId });
+    expect(() => scheduler.dispatchTask(taskId, registry, () => undefined, { runId: "retry-run" })).toThrow(/found NULL/);
+    expect(db!.get<{ run_id: string | null }>("SELECT run_id FROM scheduler_reservations WHERE subject_id=$taskId", { taskId })?.run_id).toBeNull();
+    db!.run("UPDATE scheduler_reservations SET run_id='failed-run' WHERE subject_id=$taskId", { taskId });
+
+    expect(() => scheduler.dispatchTask(taskId, registry, () => undefined, { runId: "retry-run" })).toThrow(/run identity mismatch/);
+    expect(db!.get<{ run_id: string | null }>("SELECT run_id FROM scheduler_reservations WHERE subject_id=$taskId", { taskId })?.run_id).toBe("failed-run");
+
+    expect(scheduler.releaseAgentRun("failed-run", 0)).toMatchObject({ status: "RELEASED" });
+    scheduler.dispatchTask(taskId, registry, () => undefined, { runId: "retry-run" });
+    expect(db!.get<{ run_id: string | null }>("SELECT run_id FROM scheduler_reservations WHERE subject_id=$taskId", { taskId })?.run_id).toBe("retry-run");
+    expect(scheduler.releaseAgentRun("retry-run", 0)).toMatchObject({ status: "RELEASED" });
+  });
+
   it("applies phase locks through the same lock authority", async () => {
     await setup();
     scheduler.dispatchAgentRun("locked-1", projectId, "reviewer", "test", "shared-resource");

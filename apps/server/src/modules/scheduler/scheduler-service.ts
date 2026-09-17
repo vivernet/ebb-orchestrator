@@ -304,8 +304,8 @@ export class SchedulerService {
       if ((global?.count ?? 0) >= CAPACITY.globalMax || (project?.count ?? 0) >= CAPACITY.projectMax) {
         throw new Error(`Task ${taskId} is not schedulable: WAITING_FOR_CAPACITY`);
       }
-      const existing = tx.get("SELECT id FROM scheduler_reservations WHERE subject_id=$taskId AND status='RESERVED'", { taskId });
-      if (!existing) {
+      const existing = tx.get<{ id: string; run_id: string | null; status: string }>("SELECT id,run_id,status FROM scheduler_reservations WHERE subject_id=$taskId", { taskId });
+      if (!existing || existing.status === "RELEASED") {
         const estimate = this.estimateCost(task.project_id, "developer", "default");
         const budget = tx.get<{ limit_cost: number; spent_cost: number; reserved_cost: number }>("SELECT limit_cost,spent_cost,reserved_cost FROM scheduler_budgets WHERE project_id=$projectId", { projectId: task.project_id });
         if (budget && budget.spent_cost + budget.reserved_cost + estimate > budget.limit_cost) throw new Error("Task " + taskId + " is not schedulable: WAITING_FOR_BUDGET");
@@ -316,14 +316,20 @@ export class SchedulerService {
         }
         // The lock is acquired in this same transaction.  Calling the lock
         // service here would create a second transaction and permit races.
-        const reservationId = crypto.randomUUID();
+        const reservationId = existing?.id ?? crypto.randomUUID();
         const resourceKey = `task:${taskId}`;
         const externalLock = tx.get<{ owner_id: string }>("SELECT owner_id FROM scheduler_resource_locks WHERE resource_key='global'");
         if (externalLock && externalLock.owner_id !== `task:${taskId}`) throw new Error("Task " + taskId + " is not schedulable: WAITING_FOR_RESOURCE_LOCK");
         const conflictingLock = tx.get<{ reservation_id: string }>("SELECT reservation_id FROM scheduler_resource_locks WHERE resource_key=$resourceKey", { resourceKey });
         if (conflictingLock) throw new Error(`Task ${taskId} is not schedulable: WAITING_FOR_RESOURCE_LOCK`);
-        tx.run("INSERT INTO scheduler_reservations(id,kind,subject_id,project_id,owner_id,reserved_at,estimate_cost,status,role,model,approval_id,run_id) VALUES($id,'TASK',$taskId,$projectId,$ownerId,$at,$estimate,'RESERVED','developer','default',$approvalId,$runId)", { id: reservationId, taskId, projectId: task.project_id, ownerId: `task:${taskId}`, at: new Date().toISOString(), estimate, approvalId: options.approvalId ?? null, runId: options.runId ?? null });
+        if (existing) {
+          tx.run("UPDATE scheduler_reservations SET project_id=$projectId,owner_id=$ownerId,reserved_at=$at,estimate_cost=$estimate,status='RESERVED',actual_cost=NULL,role='developer',model='default',approval_id=$approvalId,run_id=$runId WHERE id=$id AND status='RELEASED'", { id: reservationId, projectId: task.project_id, ownerId: `task:${taskId}`, at: new Date().toISOString(), estimate, approvalId: options.approvalId ?? null, runId: options.runId ?? null });
+        } else {
+          tx.run("INSERT INTO scheduler_reservations(id,kind,subject_id,project_id,owner_id,reserved_at,estimate_cost,status,role,model,approval_id,run_id) VALUES($id,'TASK',$taskId,$projectId,$ownerId,$at,$estimate,'RESERVED','developer','default',$approvalId,$runId)", { id: reservationId, taskId, projectId: task.project_id, ownerId: `task:${taskId}`, at: new Date().toISOString(), estimate, approvalId: options.approvalId ?? null, runId: options.runId ?? null });
+        }
         tx.run("INSERT INTO scheduler_resource_locks(resource_key,reservation_id,project_id,owner_id,locked_at) VALUES($resourceKey,$reservationId,$projectId,$ownerId,$at)", { resourceKey, reservationId, projectId: task.project_id, ownerId: `task:${taskId}`, at: new Date().toISOString() });
+      } else if (options.runId !== undefined && existing.run_id !== options.runId) {
+        throw new Error(`Task ${taskId} reservation run identity mismatch: expected ${options.runId}, found ${existing.run_id ?? "NULL"}`);
       }
       workflowEngine.transitionInTransaction(tx, taskId, "DEVELOPMENT");
     });
@@ -353,7 +359,7 @@ export class SchedulerService {
   /** Reconcile a phase reservation against this exact AgentRun. */
   releaseAgentRun(runId: string, actualCost: number): ReservationReleaseResult {
     return this.db.transaction((tx) => {
-      const reservation = tx.get<{ id: string; project_id: string; estimate_cost: number; role: string; model: string; owner_id: string }>("SELECT id,project_id,estimate_cost,role,model,owner_id FROM scheduler_reservations WHERE status='RESERVED' AND (run_id=$runId OR subject_id=$runId) ORDER BY CASE WHEN run_id=$runId THEN 0 ELSE 1 END LIMIT 1", { runId });
+      const reservation = tx.get<{ id: string; project_id: string; estimate_cost: number; role: string; model: string; owner_id: string }>("SELECT id,project_id,estimate_cost,role,model,owner_id FROM scheduler_reservations WHERE status='RESERVED' AND run_id=$runId LIMIT 1", { runId });
       if (!reservation) return { status: "ALREADY_RELEASED" };
       if (!this.lockOwnerMatches(tx, reservation)) return { status: "BLOCKED_OWNERSHIP_DRIFT", reservationId: reservation.id };
       const actual = Math.max(0, actualCost);
