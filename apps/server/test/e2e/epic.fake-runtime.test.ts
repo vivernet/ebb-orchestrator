@@ -52,6 +52,7 @@ describe("full epic orchestration with FakeAgentRuntime", () => {
       sql: readFileSync(join(import.meta.dirname, `../../src/platform/database/migrations/${name}.sql`), "utf8"),
     }));
     runMigrations(db, migrations);
+    db.exec("CREATE TABLE resource_locks (id TEXT PRIMARY KEY, task_id TEXT NOT NULL, owner_id TEXT NOT NULL, acquired_at TEXT NOT NULL, expires_at TEXT)");
     const projectId = randomUUID();
     const now = new Date().toISOString();
     db.run("INSERT INTO projects (id,name,display_name,status,created_at,updated_at) VALUES ($id,'demo','Demo','ACTIVE',$now,$now)", { id: projectId, now });
@@ -84,7 +85,15 @@ describe("full epic orchestration with FakeAgentRuntime", () => {
     expect(pending.finalApprovalRequired).toBe(true);
     expect(pending.childStatuses.every((status) => status === "INTEGRATED_INTO_EPIC")).toBe(true);
     expect(db.get<{ status: string }>("SELECT status FROM epics LIMIT 1")?.status).toBe("IN_PROGRESS");
+    expect(db.get<{ plan_id: string; stage: string }>("SELECT plan_id, stage FROM epic_orchestrations WHERE epic_id=$epicId", { epicId: pending.epicId })).toEqual({ plan_id: plan.id, stage: "FINAL_APPROVAL" });
+    expect(db.get<{ subject_id: string; subject_type: string }>("SELECT subject_id, subject_type FROM approvals WHERE id=$id", { id: pending.finalApprovalId! })).toEqual({ subject_id: pending.epicId, subject_type: "EPIC" });
+    const callsBeforeRestart = runtime.calls.length;
+    const resumed = await orchestrator.approveAndRun(plan.id, "user");
+    expect(resumed.finalApprovalId).toBe(pending.finalApprovalId);
+    expect(runtime.calls.length).toBe(callsBeforeRestart);
     const approval = new ApprovalService(db).approve(pending.finalApprovalId!, "user");
+    db.exec("CREATE TABLE git_operations (id TEXT PRIMARY KEY, type TEXT NOT NULL, status TEXT NOT NULL, repo_path TEXT NOT NULL, branch_name TEXT, target_ref TEXT, created_at TEXT NOT NULL, verified_at TEXT)");
+    db.run("INSERT INTO git_operations (id,type,status,repo_path,branch_name,target_ref,created_at,verified_at) VALUES ($id,'MERGE','VERIFIED','/repo','epic/EPIC-1','master',$now,$now)", { id: randomUUID(), now: new Date().toISOString() });
     const result = orchestrator.approveFinalMerge(pending.epicId, approval.id);
     expect(result.childStatuses.every((status) => status === "RELEASED")).toBe(true);
     expect(db.get<{ status: string }>("SELECT status FROM epics LIMIT 1")?.status).toBe("DONE");

@@ -99,7 +99,7 @@ export class PlanningService {
       tx.run("INSERT INTO dependencies (id, task_id, depends_on_task_id, type, created_at) VALUES ($id, $task_id, $depends_on_task_id, 'BLOCKING', $created_at)", { id: crypto.randomUUID(), task_id: taskId, depends_on_task_id: dependsOnTaskId, created_at: new Date().toISOString() });
       appendOutboxEvent(tx, DomainEvent.create({ type: "DependencyCreated", aggregateType: "Task", aggregateId: taskId, payload: { taskId, dependsOnTaskId } }));
     }
-    tx.run("UPDATE planning_plans SET status='APPROVED', temporary_id_map_json=$map, approved_by=$actor, approved_at=$at WHERE id=$id", { id: plan.id, map: JSON.stringify(map), actor, at: new Date().toISOString() });
+    tx.run("UPDATE planning_plans SET status='APPROVED', temporary_id_map_json=$map, approved_by=$actor, approved_at=$at, epic_id=$epicId WHERE id=$id", { id: plan.id, map: JSON.stringify(map), actor, epicId, at: new Date().toISOString() });
     appendOutboxEvent(tx, DomainEvent.create({ type: "PlanApproved", aggregateType: "PlanningPlan", aggregateId: plan.id, payload: { planId: plan.id, temporaryIdMap: map, approvedBy: actor } }));
     return { ...plan, status: "APPROVED", temporaryIdMap: map };
   }

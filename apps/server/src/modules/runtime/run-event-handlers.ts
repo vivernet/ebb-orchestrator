@@ -200,8 +200,13 @@ export class RuntimeEventHandlers {
     if (!approval || approval.type !== "FINAL_MERGE" || approval.subject_type !== "EPIC" || approval.subject_id !== epicId || approval.status !== "APPROVED") {
       throw new Error(`Approval ${approvalId} is not an approved FINAL_MERGE for Epic ${epicId}`);
     }
-    const epic = this.db.get<{ status: string }>("SELECT status FROM epics WHERE id=$epicId", { epicId });
+    const epic = this.db.get<{ status: string; display_id: string }>("SELECT status, display_id FROM epics WHERE id=$epicId", { epicId });
     if (!epic) throw new Error(`Epic ${epicId} not found`);
+    const mergeOperation = this.db.get<{ id: string }>(
+      "SELECT id FROM git_operations WHERE type='MERGE' AND status='VERIFIED' AND target_ref='master' AND branch_name=$branch ORDER BY verified_at DESC LIMIT 1",
+      { branch: `epic/${epic.display_id}` },
+    );
+    if (!mergeOperation) throw new Error(`Epic ${epicId} has no persisted successful Merge Service operation for master`);
     if (epic.status === "DONE") return;
     if (epic.status !== "IN_PROGRESS") throw new Error(`Epic ${epicId} is not ready for final merge`);
     const remaining = this.db.get<{ count: number }>(

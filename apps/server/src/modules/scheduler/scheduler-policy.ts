@@ -127,7 +127,8 @@ function canRunWithinCapacity(
   task: SchedulableTask,
   activeTasks: SchedulableTask[],
 ): boolean {
-  const runningCount = activeTasks.length;
+  const running = activeTasks.filter((candidate) => candidate.status !== "READY" && candidate.status !== "DRAFT");
+  const runningCount = running.length;
 
   // Global capacity check
   if (runningCount >= CAPACITY.globalMax) {
@@ -135,13 +136,13 @@ function canRunWithinCapacity(
   }
 
   // Project capacity check
-  const projectCount = activeTasks.filter((t) => t.projectId === task.projectId).length;
+  const projectCount = running.filter((t) => t.projectId === task.projectId).length;
   if (projectCount >= CAPACITY.projectMax) {
     return false;
   }
 
   // Reviewer capacity check (assuming REVIEW status tasks need a reviewer)
-  const reviewerCount = activeTasks.filter((t) => t.status === "REVIEW").length;
+  const reviewerCount = running.filter((t) => t.status === "REVIEW").length;
   if (task.status === "REVIEW" && reviewerCount >= CAPACITY.reviewerMax) {
     return false;
   }
@@ -153,7 +154,8 @@ function canRunWithinCapacity(
  * Check if a task status is terminal (completed).
  */
 function isTaskCompleted(status: string): boolean {
-  return status === "DONE" || status === "CANCELLED" || status === "FAILED";
+  return status === "DONE" || status === "CANCELLED" || status === "FAILED" ||
+    status === "INTEGRATED_INTO_EPIC" || status === "RELEASED";
 }
 
 /**

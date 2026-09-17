@@ -251,13 +251,32 @@ export class SchedulerService {
 
     return { startedTaskIds, skipped };
   }
+
+  /** Authoritative single-task dispatch used by durable workflow recovery. */
+  dispatchTask(
+    taskId: string,
+    workflowEngine: WorkflowEngine,
+    onWorkflowRunStarted: (taskId: string, triggerReason: string) => void,
+  ): void {
+    const task = this.db.get<{ project_id: string; status: string }>(
+      "SELECT project_id, status FROM tasks WHERE id = $id", { id: taskId });
+    if (!task) throw new Error(`Task ${taskId} not found`);
+    if (task.status !== "READY") throw new Error(`Task ${taskId} is not READY`);
+    const eligibility = this.getEligibility(taskId, { projectId: task.project_id });
+    if (eligibility.status !== "RUNNABLE") {
+      throw new Error(`Task ${taskId} is not schedulable: ${eligibility.reason}`);
+    }
+    workflowEngine.transition(taskId, "DEVELOPMENT");
+    onWorkflowRunStarted(taskId, "epic-child");
+  }
 }
 
 /**
  * Check if status is terminal.
  */
 function isTerminalStatus(status: string): boolean {
-  return status === "DONE" || status === "CANCELLED" || status === "FAILED";
+  return status === "DONE" || status === "CANCELLED" || status === "FAILED" ||
+    status === "INTEGRATED_INTO_EPIC" || status === "RELEASED";
 }
 
 /**

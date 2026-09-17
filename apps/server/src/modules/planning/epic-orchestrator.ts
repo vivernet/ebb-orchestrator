@@ -4,6 +4,7 @@ import { PlanningService } from "./planning-service.js";
 import { WorkflowEngine } from "../workflow/workflow-engine.js";
 import { RuntimeEventHandlers } from "../runtime/run-event-handlers.js";
 import { ApprovalService } from "../approvals/approval-service.js";
+import { SchedulerService } from "../scheduler/scheduler-service.js";
 
 export interface EpicAgentRequest { phase: string; role: string; epicId?: string; taskId?: string; targetBranch?: string }
 export interface EpicAgentResult { accepted: boolean; architectureChangingProposalAccepted?: boolean }
@@ -17,11 +18,14 @@ type Child = { id: string; display_id: string; status: string };
 export class EpicOrchestrator {
   private readonly handlers: RuntimeEventHandlers;
   private readonly approvals: ApprovalService;
+  private readonly scheduler: SchedulerService;
 
   constructor(private readonly db: Database, private readonly workflow: WorkflowEngine, private readonly planning: PlanningService, private readonly runtime: EpicAgentRuntime) {
     this.handlers = new RuntimeEventHandlers(db, workflow);
     this.approvals = new ApprovalService(db);
+    this.scheduler = new SchedulerService(db);
     this.db.exec(`CREATE TABLE IF NOT EXISTS epic_orchestrations (epic_id TEXT PRIMARY KEY, plan_id TEXT NOT NULL, input_json TEXT NOT NULL, stage TEXT NOT NULL, sequence_json TEXT NOT NULL DEFAULT '[]', architecture_review_authorized INTEGER NOT NULL DEFAULT 0, final_approval_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`);
+    try { this.db.exec("ALTER TABLE planning_plans ADD COLUMN epic_id TEXT"); } catch { /* already present */ }
   }
 
   async start(input: EpicStartInput): Promise<PlanningPlan> {
@@ -37,11 +41,14 @@ export class EpicOrchestrator {
     if (!row) throw new Error(`Epic plan ${planId} not found`);
     const input = JSON.parse(row.plan_json) as EpicStartInput;
     if (row.status === "PENDING") this.planning.approvePlan(planId, actor);
-    const epic = this.db.get<{ id: string }>("SELECT id FROM epics WHERE project_id=$projectId ORDER BY rowid DESC LIMIT 1", { projectId: row.project_id });
+    const epic = this.db.get<{ id: string }>("SELECT epic_id AS id FROM planning_plans WHERE id=$planId AND epic_id IS NOT NULL", { planId });
     if (!epic) throw new Error("Approved Epic plan did not materialize an Epic");
-    if (!this.db.get("SELECT epic_id FROM epic_orchestrations WHERE epic_id=$epicId", { epicId: epic.id })) {
+    const persisted = this.db.get<{ input_json: string }>("SELECT input_json FROM epic_orchestrations WHERE epic_id=$epicId AND plan_id=$planId", { epicId: epic.id, planId });
+    if (!persisted) {
       const now = new Date().toISOString();
       this.db.run("INSERT INTO epic_orchestrations (epic_id,plan_id,input_json,stage,sequence_json,created_at,updated_at) VALUES ($epicId,$planId,$input,'CHILDREN',$sequence,$now,$now)", { epicId: epic.id, planId, input: JSON.stringify(input), sequence: JSON.stringify(["plan"]), now });
+    } else {
+      return this.execute(epic.id, JSON.parse(persisted.input_json) as EpicStartInput);
     }
     return this.execute(epic.id, input);
   }
@@ -108,8 +115,18 @@ export class EpicOrchestrator {
   private async runChild(task: Child, epicId: string, branch: string): Promise<void> {
     if (task.status === "INTEGRATED_INTO_EPIC" || task.status === "RELEASED") return;
     if (task.status === "DRAFT") this.workflow.transition(task.id, "READY");
-    this.workflow.transition(task.id, "DEVELOPMENT");
-    this.requireAccepted(await this.runtime.run({ phase: "child_task", role: "developer", taskId: task.id, epicId, targetBranch: branch }));
+    let result: EpicAgentResult;
+    const current = this.workflow.currentStage(task.id);
+    if (current === "READY") {
+      this.scheduler.dispatchTask(task.id, this.workflow, () => undefined);
+      result = await this.runtime.run({ phase: "child_task", role: "developer", taskId: task.id, epicId, targetBranch: branch });
+    } else if (current === "DEVELOPMENT") {
+      // DEVELOPMENT is the durable in-flight checkpoint after a restart.
+      result = await this.runtime.run({ phase: "child_task_reconcile", role: "developer", taskId: task.id, epicId, targetBranch: branch });
+    } else {
+      return;
+    }
+    this.requireAccepted(result);
     this.workflow.transition(task.id, "REVIEW"); this.workflow.transition(task.id, "QA"); this.workflow.transition(task.id, "READY_FOR_INTEGRATION"); this.workflow.transition(task.id, "INTEGRATION");
     this.workflow.transition(task.id, "INTEGRATED_INTO_EPIC", { hasReviewPassed: true, hasSuccessfulIntegration: true, hasFinalMergeApproval: false, parentEpicReleased: false });
   }
