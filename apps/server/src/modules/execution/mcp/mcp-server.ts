@@ -1,5 +1,5 @@
 import { RunCapability } from '../run-capability.js';
-import { ToolRegistry, type ToolDefinition } from './tool-registry.js';
+import { ToolRegistry, type SchemaDefinition, type ToolDefinition } from './tool-registry.js';
 import type { CompletionStore } from './submit-result-tool.js';
 
 /**
@@ -33,30 +33,55 @@ const validateToolArguments = (
   schema: ToolDefinition['inputSchema'],
   value: unknown,
 ): Record<string, unknown> | string => {
-  if (!isRecord(value)) return 'arguments must be an object';
+  const validateValue = (definition: SchemaDefinition, candidate: unknown, path: string): string | undefined => {
+    const validType = definition.type === 'object'
+      ? isRecord(candidate)
+      : definition.type === 'array'
+        ? Array.isArray(candidate)
+        : typeof candidate === definition.type;
+    if (!validType) return `${path} must be ${definition.type === 'array' || definition.type === 'object' ? 'an' : 'a'} ${definition.type}`;
 
+    if (definition.type === 'array' && definition.items && Array.isArray(candidate)) {
+      for (const [index, item] of candidate.entries()) {
+        const error = validateValue(definition.items, item, `${path}[${index}]`);
+        if (error) return error;
+      }
+    }
+    if (definition.type === 'object' && definition.properties && isRecord(candidate)) {
+      for (const required of definition.required ?? []) {
+        if (!(required in candidate)) return `${path} missing required property: ${required}`;
+      }
+      if (definition.additionalProperties === false) {
+        for (const key of Object.keys(candidate)) {
+          if (!(key in definition.properties)) return `${path} unexpected property: ${key}`;
+        }
+      }
+      for (const [key, propertySchema] of Object.entries(definition.properties)) {
+        if (key in candidate) {
+          const error = validateValue(propertySchema, candidate[key], `${path}.${key}`);
+          if (error) return error;
+        }
+      }
+    }
+    return undefined;
+  };
+
+  if (!isRecord(value)) return 'arguments must be an object';
   for (const required of schema.required ?? []) {
     if (!(required in value)) return `missing required property: ${required}`;
   }
-
   if (schema.additionalProperties === false) {
     const properties = new Set(Object.keys(schema.properties));
     for (const key of Object.keys(value)) {
       if (!properties.has(key)) return `unexpected property: ${key}`;
     }
   }
-
   for (const [key, propertySchema] of Object.entries(schema.properties)) {
-    if (!(key in value) || !isRecord(propertySchema) || typeof propertySchema.type !== 'string') continue;
-    const propertyValue = value[key];
-    const valid = propertySchema.type === 'object'
-      ? isRecord(propertyValue)
-      : propertySchema.type === 'array'
-        ? Array.isArray(propertyValue)
-        : typeof propertyValue === propertySchema.type;
-    if (!valid) return `${key} must be ${propertySchema.type === 'array' || propertySchema.type === 'object' ? 'an' : 'a'} ${propertySchema.type}`;
+    if (key in value) {
+      const error = validateValue(propertySchema, value[key], key);
+      if (error) return error;
+    }
   }
-
   return value;
 };
 

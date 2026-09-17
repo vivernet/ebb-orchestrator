@@ -75,6 +75,7 @@ describe('MCP Server', () => {
         id: 'schema-validation', role: 'developer', workspace: workspaceDir,
         allowedTools: ['workspace.read', 'workspace.patch', 'git.commit'],
       }));
+      fs.writeFileSync(path.join(workspaceDir, 'file.txt'), 'hello');
 
       await expect(server.callTool('workspace.read', {})).resolves.toMatchObject({
         success: false, error: expect.stringContaining('missing required property: path'),
@@ -91,6 +92,12 @@ describe('MCP Server', () => {
       await expect(server.callTool('workspace.patch', { path: 'file.txt', patches: {} })).resolves.toMatchObject({
         success: false, error: expect.stringContaining('patches must be an array'),
       });
+      await expect(server.callTool('workspace.patch', {
+        path: 'file.txt', patches: [{ start: 'bad', end: 0, content: 'X' }],
+      })).resolves.toMatchObject({
+        success: false, error: expect.stringContaining('patches[0].start must be a number'),
+      });
+      expect(fs.readFileSync(path.join(workspaceDir, 'file.txt'), 'utf8')).toBe('hello');
       await expect(server.callTool('workspace.patch', { path: 'file.txt' })).resolves.toMatchObject({
         success: false, error: expect.stringContaining('missing required property: patches'),
       });
@@ -106,7 +113,10 @@ describe('MCP Server', () => {
       }));
 
       await expect(server.callTool('workspace.read', { path: 'file.txt' })).resolves.toMatchObject({ success: true });
-      await expect(server.callTool('workspace.patch', { path: 'file.txt', patches: [] })).resolves.toMatchObject({ success: true });
+      await expect(server.callTool('workspace.patch', {
+        path: 'file.txt', patches: [{ start: 0, end: 5, content: 'world' }],
+      })).resolves.toMatchObject({ success: true });
+      expect(fs.readFileSync(path.join(workspaceDir, 'file.txt'), 'utf8')).toBe('world');
       await expect(server.callTool('git.commit', { message: 'validation test' })).resolves.toMatchObject({ success: true });
     });
 

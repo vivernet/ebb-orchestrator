@@ -28,3 +28,23 @@
 ## Concerns
 
 The declared `workspace.patch.patches` schema only specifies `type: array`; item-level shape validation is intentionally not added because it is not present in the existing `inputSchema`.
+
+## HIGH item-level patch validation fix
+
+### Status
+
+`ADDRESSED` — `workspace.patch.patches` now declares and enforces item objects with required numeric `start`/`end`, string `content`, and no additional properties before handler dispatch.
+
+### Changes
+
+- Added recursive array/object schema support to MCP runtime argument validation.
+- Added the complete `workspace.patch` patch-item schema and removed the handler's unsafe patch-array cast via type narrowing.
+- Added regression coverage proving an invalid item is rejected without mutating the workspace, while a valid patch still mutates as before.
+- No architecture findings were changed.
+
+### Verification
+
+- Focused MCP test: PASS.
+- Full server tests: PASS.
+- Typecheck: PASS.
+- Lint: PASS.
