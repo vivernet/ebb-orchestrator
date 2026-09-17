@@ -46,6 +46,7 @@ export interface AppDeps {
   workService?: WorkCommandService;
   approvalService?: ApprovalCommandService;
   runService?: RunCommandService;
+  scheduler?: SchedulerService;
 }
 
 export interface OrchestratorApp extends FastifyInstance {
@@ -69,7 +70,7 @@ export function createApp(deps: AppDeps = {}): OrchestratorApp {
   const workflowRegistry = new WorkflowRegistry();
   for (const template of Object.values(templates)) workflowRegistry.register(template);
   const workflow = deps.db ? new WorkflowEngine(deps.db, workflowRegistry) : undefined;
-  const scheduler = deps.db ? new SchedulerService(deps.db) : undefined;
+  const scheduler = deps.scheduler ?? (deps.db ? new SchedulerService(deps.db) : undefined);
   const workService = deps.workService ?? (deps.db ? new WorkService(deps.db, workflow) : undefined);
   const approvalService = deps.approvalService ?? (deps.db ? new ApprovalService(deps.db) : undefined);
   const runService = deps.runService ?? (deps.db ? new RunService(deps.db, localRuntime) : undefined);

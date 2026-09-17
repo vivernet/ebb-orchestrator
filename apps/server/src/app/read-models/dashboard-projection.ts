@@ -38,7 +38,9 @@ export function waitReason(status: string): { code: string; message: string } | 
 
 /** Read the scheduler's durable evidence, rather than inferring from status. */
 export function schedulerWaitReason(db: Database, task: SchedulerTaskRow, scheduler?: SchedulerService): WaitReason | null {
-  const schedulerReason = scheduler?.getWaitReason(task.id);
+  const authoritativeScheduler = scheduler ?? new SchedulerService(db);
+  const eligibility = authoritativeScheduler.getEligibility(task.id, { projectId: task.project_id });
+  const schedulerReason = eligibility.status === "WAIT" ? eligibility.reason : authoritativeScheduler.getWaitReason(task.id);
   if (schedulerReason) return schedulerReasonToProjection(schedulerReason, task);
   if (task.wait_reason) {
     try { return JSON.parse(task.wait_reason) as WaitReason; } catch { return { code: task.wait_reason, message: task.wait_reason }; }

@@ -14,9 +14,10 @@ import type {
   RecalculateResult,
   ReservationReleaseResult,
   SchedulerReconciliationResult,
+  SchedulerLimits,
 } from "./scheduler-types.js";
-import { CAPACITY } from "./scheduler-types.js";
-import { determineEligibility, compareTasks } from "./scheduler-policy.js";
+import { DEFAULT_SCHEDULER_LIMITS } from "./scheduler-types.js";
+import { compareTasks } from "./scheduler-policy.js";
 import { ResourceLockService } from "./resource-lock-service.js";
 
 interface TaskRow {
@@ -80,10 +81,10 @@ export class SchedulerService {
     );
     // Eligibility projection and dispatch use the same durable reservation
     // authority.  In particular, non-task phases consume these slots too.
-    const reservedGlobal = this.db.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_reservations WHERE status='RESERVED' AND kind <> 'LOCK'")?.count ?? 0;
+    const reservedGlobal = this.reservedCount();
 
     // Get ALL non-terminal tasks for dependency checking
-    const allActiveTasks = tasks.filter((t) => !isTerminalStatus(t.status));
+    const allActiveTasks = (scope ? this.getSchedulableTasks() : tasks).filter((t) => !isTerminalStatus(t.status));
 
     // Evaluate eligibility for each task
     const runnables: SchedulableTask[] = [];
@@ -91,7 +92,7 @@ export class SchedulerService {
     const blocked: { task: SchedulableTask; reason: BlockReason }[] = [];
 
     for (const task of tasks) {
-      const eligibility = determineEligibility(task, allActiveTasks);
+      const eligibility = this.evaluateEligibility(task, allActiveTasks);
 
       switch (eligibility.status) {
         case "RUNNABLE":
@@ -109,10 +110,11 @@ export class SchedulerService {
     // Role capacity is evaluated from the same durable reservations used by
     // dispatch, so a reviewer task cannot appear runnable while its role slot
     // is already occupied.
+    const limits = this.getLimits();
     const reservedReviewers = this.db.get<{ count: number }>(
       "SELECT COUNT(*) AS count FROM scheduler_reservations WHERE status='RESERVED' AND kind <> 'LOCK' AND lower(role)='reviewer'",
     )?.count ?? 0;
-    if (reservedReviewers >= CAPACITY.reviewerMax) {
+    if (reservedReviewers >= limits.reviewerMax) {
       const roleLimited = runnables.filter((task) => task.category === "reviewer");
       const roleLimitedIds = new Set(roleLimited.map((task) => task.id));
       runnables.splice(0, runnables.length, ...runnables.filter((task) => !roleLimitedIds.has(task.id)));
@@ -146,13 +148,13 @@ export class SchedulerService {
     const capacityWaiting: { task: SchedulableTask; reason: WaitReason }[] = [];
     for (const [projectId, tasks] of runnablesByProject) {
       const running = runningByProject.get(projectId) ?? 0;
-      const available = Math.max(0, CAPACITY.projectMax - running);
+      const available = Math.max(0, this.getLimits(projectId).projectMax - running);
       limitedByProject.push(...tasks.slice(0, available));
       capacityWaiting.push(...tasks.slice(available).map((task) => ({ task, reason: "WAITING_FOR_CAPACITY" as const })));
     }
 
     // Then limit globally
-    const globalAvailable = Math.max(0, CAPACITY.globalMax - reservedGlobal);
+    const globalAvailable = Math.max(0, limits.globalMax - reservedGlobal);
     const globallyLimited = limitedByProject.splice(globalAvailable);
     capacityWaiting.push(...globallyLimited.map((task) => ({ task, reason: "WAITING_FOR_CAPACITY" as const })));
     runnables.length = 0;
@@ -181,6 +183,30 @@ export class SchedulerService {
     return result.waiting.find((entry) => entry.task.id === taskId)?.reason ?? null;
   }
 
+  /** Read the durable scheduler configuration used by both projections and dispatch. */
+  getLimits(projectId?: string): SchedulerLimits {
+    const row = this.db.get<{ value_json: string }>(
+      "SELECT value_json FROM system_state WHERE key IN ('scheduler_limits','scheduler.limits') ORDER BY CASE key WHEN 'scheduler_limits' THEN 0 ELSE 1 END LIMIT 1",
+    );
+    if (!row) return { ...DEFAULT_SCHEDULER_LIMITS };
+    try {
+      const value = JSON.parse(row.value_json) as {
+        globalMax?: unknown; projectMax?: unknown; reviewerMax?: unknown;
+        projects?: Record<string, { projectMax?: unknown }>;
+      };
+      const positive = (candidate: unknown, fallback: number): number =>
+        typeof candidate === "number" && Number.isInteger(candidate) && candidate > 0 ? candidate : fallback;
+      const projectOverride = projectId ? value.projects?.[projectId]?.projectMax : undefined;
+      return {
+        globalMax: positive(value.globalMax, DEFAULT_SCHEDULER_LIMITS.globalMax),
+        projectMax: positive(projectOverride ?? value.projectMax, DEFAULT_SCHEDULER_LIMITS.projectMax),
+        reviewerMax: positive(value.reviewerMax, DEFAULT_SCHEDULER_LIMITS.reviewerMax),
+      };
+    } catch {
+      return { ...DEFAULT_SCHEDULER_LIMITS };
+    }
+  }
+
   /**
    * Get all schedulable tasks, optionally scoped to a project.
    */
@@ -194,46 +220,20 @@ export class SchedulerService {
       scope ? { project_id: scope.projectId } : {},
     );
 
-    return rows.map((row) => {
-      const contract = JSON.parse(row.contract_json) as {
-        dependencies?: string[];
-        required?: boolean;
-        priority?: Priority;
-        category?: Category;
-      };
-
-      return {
-        id: row.id,
-        projectId: row.project_id,
-        epicId: row.epic_id,
-        status: row.status,
-        priority: contract.priority ?? "Normal",
-        category: contract.category ?? "new-development",
-        createdAt: row.created_at,
-        dependsOnTaskIds: contract.dependencies ?? [],
-        hasResourceLock: this.lockService.isLocked(row.id),
-        // The policy field is true only when a persisted budget account exists
-        // but cannot reserve the next run; absence of an account means the
-        // project has no budget gate configured.
-        hasBudgetPlaceholder: this.budgetUnavailable(row.project_id),
-        hasPendingApproval: this.hasPendingApproval(row.id),
-      };
-    });
+    return rows.map((row) => this.toSchedulableTask(row, this.db));
   }
 
   /**
    * Get eligibility for a single task.
    */
   getEligibility(taskId: string, scope?: { projectId: string }): Eligibility {
-    const tasks = this.getSchedulableTasks(scope);
-    const task = tasks.find((t) => t.id === taskId);
-
-    if (!task) {
-      return { status: "BLOCK", reason: "BLOCKED_BY_WORKFLOW" };
-    }
-
-    const allActiveTasks = tasks.filter((t) => !isTerminalStatus(t.status));
-    return determineEligibility(task, allActiveTasks);
+    const result = this.recalculate(scope);
+    const runnable = result.runnables.some((task) => task.id === taskId);
+    if (runnable) return { status: "RUNNABLE" };
+    const waiting = result.waiting.find((entry) => entry.task.id === taskId);
+    if (waiting) return { status: "WAIT", reason: waiting.reason };
+    const blocked = result.blocked.find((entry) => entry.task.id === taskId);
+    return blocked ? { status: "BLOCK", reason: blocked.reason } : { status: "BLOCK", reason: "BLOCKED_BY_WORKFLOW" };
   }
 
   /**
@@ -255,9 +255,9 @@ export class SchedulerService {
 
     return {
       running,
-      globalMax: CAPACITY.globalMax,
-      projectMax: projectId ? CAPACITY.projectMax : CAPACITY.globalMax,
-      available: CAPACITY.globalMax - running,
+      globalMax: this.getLimits().globalMax,
+      projectMax: projectId ? this.getLimits(projectId).projectMax : this.getLimits().globalMax,
+      available: this.getLimits().globalMax - running,
     };
   }
 
@@ -318,13 +318,17 @@ export class SchedulerService {
     if (!task) throw new Error(`Task ${taskId} not found`);
     if (task.status !== "READY") throw new Error(`Task ${taskId} is not READY`);
     this.db.transaction((tx) => {
-      const eligibility = this.getEligibility(taskId, { projectId: task.project_id });
-      if (eligibility.status !== "RUNNABLE") {
+       const rows = tx.all<TaskRow>("SELECT id,project_id,epic_id,status,contract_json,created_at FROM tasks");
+       const candidates = rows.map((row) => this.toSchedulableTask(row, tx));
+       const candidate = candidates.find((entry) => entry.id === taskId);
+       const eligibility = candidate ? this.evaluateDispatchEligibilityTx(tx, candidate, candidates.filter((entry) => !isTerminalStatus(entry.status))) : { status: "BLOCK", reason: "BLOCKED_BY_WORKFLOW" } as const;
+       if (eligibility.status !== "RUNNABLE") {
         throw new Error(`Task ${taskId} is not schedulable: ${eligibility.reason}`);
       }
        const global = tx.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_reservations WHERE status='RESERVED' AND kind <> 'LOCK'");
        const project = tx.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_reservations WHERE project_id=$projectId AND status='RESERVED' AND kind <> 'LOCK'", { projectId: task.project_id });
-      if ((global?.count ?? 0) >= CAPACITY.globalMax || (project?.count ?? 0) >= CAPACITY.projectMax) {
+       const limits = this.getLimits(task.project_id);
+       if ((global?.count ?? 0) >= limits.globalMax || (project?.count ?? 0) >= limits.projectMax) {
         throw new Error(`Task ${taskId} is not schedulable: WAITING_FOR_CAPACITY`);
       }
       const category = (JSON.parse(task.contract_json) as { category?: string }).category;
@@ -333,12 +337,12 @@ export class SchedulerService {
         "SELECT COUNT(*) AS count FROM scheduler_reservations WHERE status='RESERVED' AND kind <> 'LOCK' AND lower(role)=$role",
         { role },
       )?.count ?? 0;
-      if (role === "reviewer" && roleCount >= CAPACITY.reviewerMax) {
+       if (role === "reviewer" && roleCount >= limits.reviewerMax) {
         throw new Error(`Task ${taskId} is not schedulable: WAITING_FOR_ROLE_CAPACITY`);
       }
       const existing = tx.get<{ id: string; run_id: string | null; status: string }>("SELECT id,run_id,status FROM scheduler_reservations WHERE subject_id=$taskId", { taskId });
       if (!existing || existing.status === "RELEASED") {
-        const estimate = this.estimateCost(task.project_id, role, "default");
+         const estimate = this.estimateCostTx(tx, task.project_id, role, "default");
         const budget = tx.get<{ limit_cost: number; spent_cost: number; reserved_cost: number }>("SELECT limit_cost,spent_cost,reserved_cost FROM scheduler_budgets WHERE project_id=$projectId", { projectId: task.project_id });
         if (budget && budget.spent_cost + budget.reserved_cost + estimate > budget.limit_cost) throw new Error("Task " + taskId + " is not schedulable: WAITING_FOR_BUDGET");
         if (budget) tx.run("UPDATE scheduler_budgets SET reserved_cost=reserved_cost+$estimate WHERE project_id=$projectId", { projectId: task.project_id, estimate });
@@ -380,9 +384,10 @@ export class SchedulerService {
       }
        const global = tx.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_reservations WHERE status='RESERVED' AND kind <> 'LOCK'")?.count ?? 0;
        const project = tx.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_reservations WHERE project_id=$projectId AND status='RESERVED' AND kind <> 'LOCK'", { projectId })?.count ?? 0;
-      if (global >= CAPACITY.globalMax || project >= CAPACITY.projectMax) throw new Error(`Run ${runId} is not schedulable: WAITING_FOR_CAPACITY`);
+       const limits = this.getLimits(projectId);
+       if (global >= limits.globalMax || project >= limits.projectMax) throw new Error(`Run ${runId} is not schedulable: WAITING_FOR_CAPACITY`);
       if (tx.get("SELECT resource_key FROM scheduler_resource_locks WHERE resource_key=$resourceKey", { resourceKey })) throw new Error(`Run ${runId} is not schedulable: WAITING_FOR_RESOURCE_LOCK`);
-      const estimate = this.estimateCost(projectId, role, model);
+       const estimate = this.estimateCost(projectId, role, model);
       const budget = tx.get<{ limit_cost: number; spent_cost: number; reserved_cost: number }>("SELECT limit_cost,spent_cost,reserved_cost FROM scheduler_budgets WHERE project_id=$projectId", { projectId });
       if (budget && budget.spent_cost + budget.reserved_cost + estimate > budget.limit_cost) throw new Error(`Run ${runId} is not schedulable: WAITING_FOR_BUDGET`);
       if (budget) tx.run("UPDATE scheduler_budgets SET reserved_cost=reserved_cost+$estimate WHERE project_id=$projectId", { projectId, estimate });
@@ -488,13 +493,113 @@ export class SchedulerService {
     return Math.max(0, values[index]!.cost * 1.25);
   }
 
-  private budgetUnavailable(projectId: string): boolean {
-    const budget = this.db.get<{ limit_cost: number; spent_cost: number; reserved_cost: number }>("SELECT limit_cost,spent_cost,reserved_cost FROM scheduler_budgets WHERE project_id=$projectId", { projectId });
-    return Boolean(budget && budget.spent_cost + budget.reserved_cost >= budget.limit_cost);
+  private estimateCostTx(tx: DatabaseTx, projectId: string, role: string, model: string): number {
+    const values = tx.all<{ cost: number }>("SELECT cost FROM scheduler_usage_history WHERE project_id=$projectId AND role=$role AND model=$model ORDER BY cost", { projectId, role, model });
+    if (!values.length) return 1;
+    const index = Math.min(values.length - 1, Math.ceil(values.length * 0.9) - 1);
+    return Math.max(0, values[index]!.cost * 1.25);
   }
 
-  private hasPendingApproval(taskId: string): boolean {
-    return Boolean(this.db.get("SELECT id FROM approvals WHERE subject_id=$taskId AND status='PENDING'", { taskId }));
+  private reservedCount(projectId?: string, role?: string): number {
+    const clauses = ["status='RESERVED'", "kind <> 'LOCK'"];
+    const params: Record<string, string> = {};
+    if (projectId) { clauses.push("project_id=$projectId"); params.projectId = projectId; }
+    if (role) { clauses.push("lower(role)=lower($role)"); params.role = role; }
+    return this.db.get<{ count: number }>(`SELECT COUNT(*) AS count FROM scheduler_reservations WHERE ${clauses.join(" AND ")}`, params)?.count ?? 0;
+  }
+
+  /** The only eligibility implementation. It reads durable state, never hints. */
+  private evaluateEligibility(task: SchedulableTask, activeTasks: SchedulableTask[]): Eligibility {
+    return this.evaluateEligibilityTx(this.db, task, activeTasks);
+  }
+
+  private evaluateEligibilityTx(tx: DatabaseTx, task: SchedulableTask, activeTasks: SchedulableTask[]): Eligibility {
+    const projectState = tx.get<{ status: string }>("SELECT status FROM projects WHERE id=$projectId", { projectId: task.projectId });
+    if (projectState && projectState.status !== "ACTIVE") return { status: "BLOCK", reason: "BLOCKED_BY_PROJECT_STATE" };
+    if (isTerminalStatus(task.status) || task.status === "DRAFT" || task.status === "PAUSED") return { status: "BLOCK", reason: task.status === "DRAFT" ? "BLOCKED_BY_PROJECT_STATE" : "BLOCKED_BY_WORKFLOW" };
+    if (task.status !== "READY") {
+      if (task.status === "WAITING_FOR_DEPENDENCY") return { status: "WAIT", reason: "WAITING_FOR_DEPENDENCY" };
+      if (task.status === "WAITING_FOR_APPROVAL") return { status: "WAIT", reason: "WAITING_FOR_APPROVAL" };
+      if (task.status === "WAITING_FOR_RESOURCE_LOCK") return { status: "WAIT", reason: "WAITING_FOR_RESOURCE_LOCK" };
+      if (task.status === "WAITING_FOR_BUDGET") return { status: "WAIT", reason: "WAITING_FOR_BUDGET" };
+      if (task.status === "WAITING_FOR_CAPACITY") return { status: "WAIT", reason: "WAITING_FOR_CAPACITY" };
+      if (task.status === "WAITING_FOR_ROLE_CAPACITY") return { status: "WAIT", reason: "WAITING_FOR_ROLE_CAPACITY" };
+      return { status: "BLOCK", reason: "BLOCKED_BY_WORKFLOW" };
+    }
+    const dependency = task.dependsOnTaskIds.some((id) => {
+      const candidate = activeTasks.find((entry) => entry.id === id);
+      return candidate !== undefined && !isTerminalStatus(candidate.status);
+    });
+    if (dependency) return { status: "WAIT", reason: "WAITING_FOR_DEPENDENCY" };
+
+    const owner = `task:${task.id}`;
+    if (tx.get("SELECT 1 FROM scheduler_resource_locks WHERE owner_id<>$owner AND resource_key IN ('global',$resource)", { owner, resource: `task:${task.id}` })) return { status: "WAIT", reason: "WAITING_FOR_RESOURCE_LOCK" };
+    if (this.hasPendingApprovalTx(tx, task.id)) return { status: "WAIT", reason: "WAITING_FOR_APPROVAL" };
+
+    const role = task.category === "reviewer" ? "reviewer" : "developer";
+    const limits = this.getLimits(task.projectId);
+    const global = this.countTx(tx, "status='RESERVED' AND kind <> 'LOCK'");
+    const projectCount = this.countTx(tx, "status='RESERVED' AND kind <> 'LOCK' AND project_id=$projectId", { projectId: task.projectId });
+    if (global >= limits.globalMax || projectCount >= limits.projectMax) return { status: "WAIT", reason: "WAITING_FOR_CAPACITY" };
+    if (role === "reviewer" && this.countTx(tx, "status='RESERVED' AND kind <> 'LOCK' AND lower(role)='reviewer'") >= limits.reviewerMax) return { status: "WAIT", reason: "WAITING_FOR_ROLE_CAPACITY" };
+
+    const budget = tx.get<{ limit_cost: number; spent_cost: number; reserved_cost: number }>("SELECT limit_cost,spent_cost,reserved_cost FROM scheduler_budgets WHERE project_id=$projectId", { projectId: task.projectId });
+    if (budget && budget.spent_cost + budget.reserved_cost + this.estimateCostTx(tx, task.projectId, role, "default") > budget.limit_cost) return { status: "WAIT", reason: "WAITING_FOR_BUDGET" };
+    return { status: "RUNNABLE" };
+  }
+
+  private evaluateDispatchEligibilityTx(tx: DatabaseTx, task: SchedulableTask, activeTasks: SchedulableTask[]): Eligibility {
+    const base = this.evaluateEligibilityTx(tx, task, activeTasks);
+    if (base.status !== "RUNNABLE") return base;
+    const limits = this.getLimits(task.projectId);
+    let global = this.countTx(tx, "status='RESERVED' AND kind <> 'LOCK'");
+    const projectCounts = new Map<string, number>();
+    for (const row of tx.all<{ project_id: string; count: number }>("SELECT project_id,COUNT(*) AS count FROM scheduler_reservations WHERE status='RESERVED' AND kind <> 'LOCK' GROUP BY project_id")) projectCounts.set(row.project_id, row.count);
+    let reviewers = this.countTx(tx, "status='RESERVED' AND kind <> 'LOCK' AND lower(role)='reviewer'");
+    const candidates = activeTasks.filter((entry) => this.evaluateEligibilityTx(tx, entry, activeTasks).status === "RUNNABLE").sort(compareTasks);
+    for (const candidate of candidates) {
+      const role = candidate.category === "reviewer" ? "reviewer" : "developer";
+      if (global >= limits.globalMax || (projectCounts.get(candidate.projectId) ?? 0) >= this.getLimits(candidate.projectId).projectMax) continue;
+      if (role === "reviewer" && reviewers >= limits.reviewerMax) continue;
+      global++;
+      projectCounts.set(candidate.projectId, (projectCounts.get(candidate.projectId) ?? 0) + 1);
+      if (role === "reviewer") reviewers++;
+      if (candidate.id === task.id) return { status: "RUNNABLE" };
+    }
+    return { status: "WAIT", reason: task.category === "reviewer" && reviewers >= limits.reviewerMax ? "WAITING_FOR_ROLE_CAPACITY" : "WAITING_FOR_CAPACITY" };
+  }
+
+  private countTx(tx: DatabaseTx, predicate: string, params: Record<string, string> = {}): number {
+    return tx.get<{ count: number }>(`SELECT COUNT(*) AS count FROM scheduler_reservations WHERE ${predicate}`, params)?.count ?? 0;
+  }
+
+  private hasPendingApprovalTx(tx: DatabaseTx, taskId: string): boolean {
+    return Boolean(tx.get("SELECT id FROM approvals WHERE subject_id=$taskId AND status='PENDING'", { taskId }));
+  }
+
+  private toSchedulableTask(row: TaskRow, source: DatabaseTx): SchedulableTask {
+    const contract = JSON.parse(row.contract_json) as { dependencies?: string[]; priority?: Priority; category?: Category };
+    return { id: row.id, projectId: row.project_id, epicId: row.epic_id, status: row.status, priority: contract.priority ?? "Normal", category: contract.category ?? "new-development", createdAt: row.created_at, dependsOnTaskIds: contract.dependencies ?? [], hasResourceLock: Boolean(source.get("SELECT 1 FROM scheduler_resource_locks WHERE owner_id=$owner", { owner: `task:${row.id}` })), hasBudgetPlaceholder: false, hasPendingApproval: this.hasPendingApprovalTx(source, row.id) };
+  }
+
+}
+
+/** Periodic safety reconciliation for the single production scheduler. */
+export class SchedulerSafetyWorker {
+  private timer: ReturnType<typeof setInterval> | undefined;
+
+  constructor(private readonly scheduler: Pick<SchedulerService, "reconcile">, private readonly intervalMs = 5_000) {}
+
+  start(): void {
+    this.timer = setInterval(() => {
+      try { this.scheduler.reconcile(); } catch { /* next tick retries; state remains durable */ }
+    }, this.intervalMs);
+    this.timer.unref?.();
+  }
+
+  stop(): void {
+    if (this.timer !== undefined) clearInterval(this.timer);
+    this.timer = undefined;
   }
 }
 

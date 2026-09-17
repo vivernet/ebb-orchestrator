@@ -20,6 +20,7 @@ import { createSqliteDatabase } from "./platform/database/sqlite-database.js";
 import { runMigrations, type Migration } from "./platform/database/migrator.js";
 import { resolveOrchestratorHome } from "./platform/home/orchestrator-home.js";
 import { SingleInstanceLock } from "./platform/process/single-instance-lock.js";
+import { SchedulerSafetyWorker, SchedulerService } from "./modules/scheduler/scheduler-service.js";
 import {
   StatusTracker,
   shutdownSystem,
@@ -50,7 +51,14 @@ try {
   process.exit(1);
 }
 
-const app = createApp({ host, port, db: database });
+const scheduler = new SchedulerService(database);
+const app = createApp({ host, port, db: database, scheduler });
+
+// Use the production scheduler instance for restart recovery and the periodic
+// safety pass. Ambiguous ownership is intentionally preserved by reconcile().
+scheduler.reconcile();
+const schedulerSafetyWorker = new SchedulerSafetyWorker(scheduler);
+schedulerSafetyWorker.start();
 
 await app.listen({ host, port });
 await status.set("READY");
@@ -63,6 +71,7 @@ console.log(`[orchestrator] status: ${status.get()}`);
 // Graceful shutdown on SIGINT / SIGTERM.
 async function gracefulShutdown(signal: string): Promise<void> {
   console.log(`\n[orchestrator] received ${signal}, shutting down…`);
+  schedulerSafetyWorker.stop();
   await shutdownSystem({
     status,
     workers: [],
