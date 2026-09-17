@@ -225,6 +225,24 @@ describe("scheduler lock compatibility migration", () => {
     expect(scheduler.reconcile().releasedReservationIds).toContain("legacy-lock:" + taskId);
   });
 
+  it("aborts without dropping orphaned legacy locks", async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "orch-scheduler-migration-orphan-"));
+    db = createSqliteDatabase(join(tmpDir, `${randomUUID()}.db`));
+
+    runMigrations(db, baseMigrations);
+    createV12Prerequisites(db);
+    runMigrations(db, [legacyMigration012]);
+    db.exec("PRAGMA foreign_keys=OFF");
+    db.run(
+      "INSERT INTO resource_locks(id,task_id,locked_at,owner_id) VALUES('orphan','missing-task','2026-09-17T12:00:00.000Z','owner')",
+    );
+
+    expect(() => runMigrations(db!, forwardMigrations)).toThrow(/CHECK constraint failed/);
+    expect(db.get("SELECT id FROM resource_locks WHERE id='orphan'")).toBeDefined();
+    expect(db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='scheduler_014_completeness_guard'")).toBeUndefined();
+    expect(db.get("SELECT version FROM schema_migrations WHERE version=14")).toBeUndefined();
+  });
+
   it("passes the fresh migration chain", async () => {
     tmpDir = await mkdtemp(join(tmpdir(), "orch-scheduler-fresh-"));
     db = createSqliteDatabase(join(tmpDir, `${randomUUID()}.db`));

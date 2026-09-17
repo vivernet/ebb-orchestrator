@@ -19,6 +19,20 @@ CREATE TABLE IF NOT EXISTS resource_locks (
   owner_id TEXT NOT NULL
 );
 
+-- Do not let the inner joins below turn malformed legacy rows into silent
+-- data loss.  A CHECK violation aborts this migration transaction, leaving
+-- both source tables available for repair and retry.
+CREATE TABLE scheduler_014_completeness_guard (
+  valid INTEGER NOT NULL CHECK (valid = 1)
+);
+INSERT INTO scheduler_014_completeness_guard(valid)
+SELECT 0
+WHERE EXISTS (
+  SELECT 1 FROM resource_locks l
+  LEFT JOIN tasks t ON t.id = l.task_id
+  WHERE t.id IS NULL
+);
+
 INSERT INTO scheduler_reservations (
   id, kind, subject_id, project_id, owner_id, reserved_at,
   estimate_cost, status, actual_cost, role, model, approval_id, run_id
@@ -78,6 +92,28 @@ JOIN scheduler_reservations r ON r.subject_id IN (l.task_id, 'lock:' || l.task_i
 WHERE NOT EXISTS (
   SELECT 1 FROM scheduler_resource_locks existing WHERE existing.resource_key = l.id
 );
+
+-- Verify every source row has a concrete, referentially usable destination
+-- before either source table is removed.
+INSERT INTO scheduler_014_completeness_guard(valid)
+SELECT 0
+WHERE EXISTS (
+  SELECT 1
+  FROM resource_locks l
+  LEFT JOIN scheduler_resource_locks sl ON sl.resource_key = l.id
+  LEFT JOIN scheduler_reservations r ON r.id = sl.reservation_id
+  WHERE sl.resource_key IS NULL OR r.id IS NULL
+);
+INSERT INTO scheduler_014_completeness_guard(valid)
+SELECT 0
+WHERE EXISTS (
+  SELECT 1
+  FROM scheduler_capacity_reservations c
+  LEFT JOIN scheduler_reservations r ON r.subject_id = c.task_id
+  WHERE r.id IS NULL
+);
+
+DROP TABLE scheduler_014_completeness_guard;
 
 DROP TABLE IF EXISTS resource_locks;
 DROP TABLE IF EXISTS scheduler_capacity_reservations;

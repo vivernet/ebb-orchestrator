@@ -184,6 +184,28 @@ export class MergeService {
       if (prior && prior.target_ref === verified.currentTargetBranch && prior.source_sha === verified.sourceSha && prior.expected_target_sha === verified.expectedTargetSha && prior.resulting_target_sha) {
         return { success: true, subjectId, targetBranch: prior.target_ref, mergeCommitSha: prior.resulting_target_sha, resultingTargetSha: prior.resulting_target_sha, verifiedCompletion: true };
       }
+
+      const started = this.database.get<{
+        id: string;
+        target_ref: string;
+        source_sha: string;
+        expected_target_sha: string;
+      }>(
+        "SELECT id,target_ref,source_sha,expected_target_sha FROM git_operations WHERE type='MERGE' AND status='STARTED' AND approval_id=$approvalId AND repo_path=$repo AND branch_name=$branch AND target_ref=$target AND source_sha=$source AND expected_target_sha=$expected ORDER BY created_at DESC LIMIT 1",
+        {
+          approvalId,
+          repo: verified.repoPath,
+          branch: verified.sourceBranch,
+          target: verified.currentTargetBranch,
+          source: verified.sourceSha,
+          expected: verified.expectedTargetSha,
+        },
+      );
+      if (started) {
+        const recovered = await this.reconcileStartedMerge(started, subjectId);
+        this.onVerifiedCompletion?.(recovered);
+        return recovered;
+      }
     }
     const operationId = this.database ? crypto.randomUUID() : null;
     if (operationId) {
@@ -201,6 +223,56 @@ export class MergeService {
     } finally {
       if (!this.database && provenanceDb) provenanceDb.close();
     }
+  }
+
+  /**
+   * Resolve a journal entry left STARTED by a process crash after git mutated
+   * the target.  A target is considered completed only when both the captured
+   * target and the captured source are ancestors of the observed target.  All
+   * other states are terminal: retrying them could apply the merge twice or
+   * merge onto an unrelated target.
+   */
+  private async reconcileStartedMerge(
+    operation: { id: string; target_ref: string; source_sha: string; expected_target_sha: string },
+    subjectId: string,
+  ): Promise<MergeResult> {
+    let resultingTargetSha: string | undefined;
+    try {
+      const source = (await this.git.run(this.repoPath, ["rev-parse", operation.source_sha])).stdout.trim();
+      const target = (await this.git.run(this.repoPath, ["rev-parse", operation.target_ref])).stdout.trim();
+      if (source !== operation.source_sha) throw new Error("source SHA is no longer available");
+
+      const isAncestor = async (ancestor: string, descendant: string): Promise<boolean> => {
+        try {
+          await this.git.run(this.repoPath, ["merge-base", "--is-ancestor", ancestor, descendant]);
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      if (await isAncestor(operation.expected_target_sha, target) && await isAncestor(operation.source_sha, target)) {
+        resultingTargetSha = target;
+      } else {
+        throw new Error("observed target does not prove completion of the recorded merge");
+      }
+    } catch (error) {
+      this.database!.run("UPDATE git_operations SET status='FAILED' WHERE id=$id AND status='STARTED'", { id: operation.id });
+      const reason = error instanceof Error ? error.message : "unknown reconciliation error";
+      throw new Error(`MERGE_RECOVERY_FAILED: ${reason}; manual reconciliation required`);
+    }
+
+    this.database!.run(
+      "UPDATE git_operations SET status='VERIFIED',verified_at=$at,resulting_target_sha=$result WHERE id=$id AND status='STARTED'",
+      { id: operation.id, at: new Date().toISOString(), result: resultingTargetSha },
+    );
+    return {
+      success: true,
+      subjectId,
+      targetBranch: operation.target_ref,
+      mergeCommitSha: resultingTargetSha,
+      resultingTargetSha,
+      verifiedCompletion: true,
+    };
   }
 
   /**

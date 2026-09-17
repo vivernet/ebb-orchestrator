@@ -8,6 +8,7 @@ import { MergeService } from "../../../src/modules/git/merge-service.js";
 import { IntegrationService } from "../../../src/modules/git/integration-service.js";
 import type { IntegrationAttempt } from "../../../src/modules/git/integration-service.js";
 import { createSqliteDatabase } from "../../../src/platform/database/sqlite-database.js";
+import type { StatementParams } from "../../../src/platform/database/database.js";
 
 function createTempDir(): string {
   return mkdtempSync(join(tmpdir(), "git-merge-"));
@@ -75,6 +76,50 @@ describe("MergeService", () => {
         expected_target_sha: attempt.expectedTargetSha,
         resulting_target_sha: result.resultingTargetSha,
       });
+      db.close();
+    });
+
+    it("reconciles a STARTED journal entry after git mutation before persistence", async () => {
+      const repoPath = createTempDir();
+      const git = await initGitRepo(repoPath);
+      await git.run(repoPath, ["checkout", "-b", "feature"]);
+      writeFileSync(join(repoPath, "feature.txt"), "feature");
+      await git.run(repoPath, ["add", "feature.txt"]);
+      await git.run(repoPath, ["commit", "-m", "feature"]);
+      await git.run(repoPath, ["checkout", "master"]);
+
+      const db = createSqliteDatabase(join(repoPath, "orchestrator.sqlite"));
+      db.exec("CREATE TABLE agent_runs (id TEXT PRIMARY KEY, role TEXT, status TEXT, output TEXT)");
+      db.exec("CREATE TABLE git_operations (id TEXT PRIMARY KEY, type TEXT, status TEXT, repo_path TEXT, branch_name TEXT, target_ref TEXT, created_at TEXT, verified_at TEXT, approval_id TEXT, source_sha TEXT, expected_target_sha TEXT, resulting_target_sha TEXT)");
+      const runId = "integration-recovery-run";
+      db.run("INSERT INTO agent_runs (id,role,status,output) VALUES ($id,'Integration','STARTED',NULL)", { id: runId });
+      const integration = new IntegrationService({ git, database: db, worktreeDir: createTempDir(), integrationRunId: runId });
+      const attempt = await integration.prepareIntegration("feature", "master", repoPath);
+      await integration.runInIntegrationWorktree(attempt, async () => {
+        db.run("UPDATE agent_runs SET status='COMPLETED',output=$output WHERE id=$id", { id: runId, output: JSON.stringify({ outcome: "PASS" }) });
+      });
+      const approvalStore = new Map([["approval-recovery", { id: "approval-recovery", subjectId: "epic-recovery", type: "FINAL_MERGE", status: "APPROVED" }]]);
+      const originalRun = db.run.bind(db);
+      let failJournalWrite = true;
+      db.run = (sql: string, params?: StatementParams): void => {
+        if (failJournalWrite && (sql.includes("SET status='VERIFIED'") || sql.includes("SET status='FAILED'"))) {
+          throw new Error("simulated journal crash");
+        }
+        originalRun(sql, params);
+      };
+      const firstService = new MergeService({ database: db, git, repoPath, approvalStore });
+      await expect(firstService.mergeApprovedForIntegration("epic-recovery", "approval-recovery", runId)).rejects.toThrow("simulated journal crash");
+      expect(db.get<{ status: string }>("SELECT status FROM git_operations")).toEqual({ status: "STARTED" });
+      failJournalWrite = false;
+
+      const secondService = new MergeService({ database: db, git, repoPath, approvalStore });
+      const result = await secondService.mergeApprovedForIntegration("epic-recovery", "approval-recovery", runId);
+      expect(result.verifiedCompletion).toBe(true);
+      expect(db.get<{ status: string; resulting_target_sha: string }>("SELECT status,resulting_target_sha FROM git_operations")).toMatchObject({
+        status: "VERIFIED",
+        resulting_target_sha: result.resultingTargetSha,
+      });
+      expect((await git.run(repoPath, ["show", "master:feature.txt"])).stdout.trim()).toBe("feature");
       db.close();
     });
     it("rejects approval-only merges without verified integration provenance", async () => {
