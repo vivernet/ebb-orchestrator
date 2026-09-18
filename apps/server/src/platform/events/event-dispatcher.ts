@@ -20,6 +20,9 @@ interface ProcessedRow {
   event_id: string;
 }
 
+/**
+ * Предоставляет публичный контракт модуля event-dispatcher для взаимодействия слоёв приложения.
+ */
 export class EventDispatcher {
   constructor(
     private readonly db: Database,

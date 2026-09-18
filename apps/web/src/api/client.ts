@@ -62,6 +62,9 @@ function createApiClient(): ApiClient {
 
 export const apiClient = createApiClient();
 
+/**
+ * Представляет пользовательский экран client; авторитетные проверки выполняются backend.
+ */
 export function bootstrap(): Promise<void> {
   return apiClient.get<{ sessionToken: string; csrfToken: string }>('/session/bootstrap').then(({ sessionToken, csrfToken }) => {
     apiClient.sessionToken = sessionToken;

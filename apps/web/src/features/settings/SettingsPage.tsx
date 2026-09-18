@@ -18,6 +18,9 @@ interface SettingsData {
   securitySettings: SecuritySettings;
 }
 
+/**
+ * Представляет пользовательский экран SettingsPage; авторитетные проверки выполняются backend.
+ */
 export default function SettingsPage() {
   const [data, setData] = useState<SettingsData | null>(null);
   const [error, setError] = useState<string | null>(null);

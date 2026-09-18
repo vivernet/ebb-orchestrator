@@ -14,6 +14,9 @@ interface UsageData {
   effectiveLimit: 'global' | 'project' | 'epic' | 'task';
 }
 
+/**
+ * Представляет пользовательский экран UsagePage; авторитетные проверки выполняются backend.
+ */
 export default function UsagePage() {
   const [data, setData] = useState<UsageData | null>(null);
   const [error, setError] = useState<string | null>(null);

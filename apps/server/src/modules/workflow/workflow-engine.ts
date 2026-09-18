@@ -1,8 +1,8 @@
 /**
- * Workflow engine – deterministic state machine for task transitions.
+ * Workflow engine — детерминированный state machine для transitions задач.
  *
- * Side-effect-free `canTransition` and transactional `transition`
- * that persists state + TaskStateChanged outbox event atomically.
+ * Методы `canTransition` без side effects и транзакционный `transition`,
+ * который атомарно сохраняет состояние + событие outbox TaskStateChanged.
  */
 
 import type { Database, DatabaseTx } from "../../platform/database/database.js";
@@ -24,6 +24,9 @@ interface TaskRow {
   epic_id: string | null;
 }
 
+/**
+ * Определяет workflow-контракт workflow-engine и сохраняет допустимые переходы состояний.
+ */
 export class WorkflowEngine {
   constructor(
     private readonly db: Database,
@@ -31,13 +34,13 @@ export class WorkflowEngine {
   ) {}
 
   /**
-   * Check whether a transition is allowed without persisting anything.
+   * Проверяет, разрешён ли переход, не сохраняя ничего.
    *
-   * Returns `false` when:
-   * - the task does not exist
-   * - the template is not registered
-   * - the transition is not in the template
-   * - required context conditions are not met
+   * Возвращает `false`, когда:
+   * - задача не существует
+   * - шаблон не зарегистрирован
+   * - переход не указан в шаблоне
+   * - не выполнены необходимые условия контекста
    */
   canTransition(
     taskId: string,
@@ -63,10 +66,10 @@ export class WorkflowEngine {
   }
 
   /**
-   * Execute a transition: update status and emit TaskStateChanged outbox event
-   * within a single transaction.
+   * Выполняет переход: обновляет статус и выбрасывает событие outbox TaskStateChanged
+   * в рамках одной транзакции.
    *
-   * Throws if the transition is not allowed.
+   * Бросает ошибку, если переход не разрешён.
    */
   transition(
     taskId: string,
@@ -76,7 +79,7 @@ export class WorkflowEngine {
     return this.db.transaction((tx) => this.transitionInTransaction(tx, taskId, toStatus, context));
   }
 
-  /** Apply a transition while the caller owns a larger domain transaction. */
+  /** Применяет переход, когда вызывающий владеет более крупной domain-транзакцией. */
   transitionInTransaction(
     tx: DatabaseTx,
     taskId: string,
@@ -132,7 +135,7 @@ export class WorkflowEngine {
   }
 
   /**
-   * Return the current workflow stage (status) of a task.
+   * Возвращает текущий workflow stage (status) задачи.
    */
   currentStage(taskId: string): TaskStatus | undefined {
     const row = this.db.get<{ status: string }>(
@@ -145,7 +148,7 @@ export class WorkflowEngine {
   // ── Private helpers ──
 
   /**
-   * Determine which template applies to a task based on its epic_id.
+   * Определяет, какой шаблон применяется к задаче на основе её epic_id.
    */
   private getTaskTemplate(row: TaskRow): WorkflowTemplate | undefined {
     const name = row.epic_id ? EPIC_CHILD_TEMPLATE : STANDALONE_TEMPLATE;
@@ -161,7 +164,7 @@ export class WorkflowEngine {
    }
 
   /**
-   * Evaluate whether a transition is allowed according to the template rules.
+   * Проверяет, разрешён ли переход согласно правилам шаблона.
    */
   private evaluateTransition(
     fromStatus: TaskStatus,

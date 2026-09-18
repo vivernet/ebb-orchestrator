@@ -9,6 +9,9 @@ import * as path from 'node:path';
 export type WorkspaceReadResult = { success: boolean; content?: string; error?: string };
 export type WorkspaceWriteResult = { success: boolean; error?: string };
 
+/**
+ * Предоставляет execution-контракт workspace-tools с проверкой capability перед побочным эффектом.
+ */
 export class WorkspaceTools {
   constructor(
     private resolver: PathResolver,

@@ -13,6 +13,9 @@ import { RoleRegistry } from './role-registry.js';
 import { appendOutboxEvent } from "../../platform/events/outbox-repository.js";
 import { DomainEvent } from "../../platform/events/domain-event.js";
 
+/**
+ * Связывает runtime-контракт run-service с жизненным циклом agent run и структурированным результатом.
+ */
 export class RunService {
   private readonly roles = new RoleRegistry();
 

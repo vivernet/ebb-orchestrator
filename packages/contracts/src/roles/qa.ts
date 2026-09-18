@@ -5,6 +5,7 @@
 import { z } from "zod";
 import { BaseOutputSchema, QaOutcome } from "./common.js";
 
+/** Схема результата QA с evidence и обязательными failed criteria. */
 export const QaOutputSchema = BaseOutputSchema.extend({
   outcome: QaOutcome,
   evidence: z.array(z.string().min(1)).optional(),
@@ -20,4 +21,5 @@ export const QaOutputSchema = BaseOutputSchema.extend({
     .describe("List of failed criteria"),
 });
 
+/** Тип проверенного результата QA. */
 export type QaOutput = z.infer<typeof QaOutputSchema>;

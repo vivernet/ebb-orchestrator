@@ -17,7 +17,7 @@ describe('ActionGateway', () => {
     workspaceDir = path.join(testDir, 'workspace');
     fs.mkdirSync(workspaceDir, { recursive: true });
     resolver = new PathResolver();
-    gateway = new ActionGateway(resolver, workspaceDir);
+    gateway = new ActionGateway(resolver, workspaceDir, ['workspace.read', 'workspace.patch', 'project.test']);
   });
 
    afterEach(() => {

@@ -25,6 +25,9 @@ import {
 import { parseGuideline, validateGuideline } from "./guideline-parser.js";
 import { parseDecision, validateDecision } from "./decision-parser.js";
 
+/**
+ * Предоставляет публичный контракт модуля knowledge-service для взаимодействия слоёв приложения.
+ */
 export class KnowledgeService {
   constructor(private readonly db: Database) {}
 

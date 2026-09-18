@@ -17,6 +17,9 @@ export interface LockHandle {
   pid: number;
 }
 
+/**
+ * Предоставляет публичный контракт модуля single-instance-lock для взаимодействия слоёв приложения.
+ */
 export class SingleInstanceLock {
   private held = false;
 

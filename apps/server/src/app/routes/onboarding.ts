@@ -3,6 +3,9 @@ import type { Database } from "../../platform/database/database.js";
 
 export interface OnboardingRouteDeps { db?: Database | undefined; }
 
+/**
+ * Регистрирует HTTP-маршруты onboarding и передаёт изменяющие состояние действия backend policy.
+ */
 export async function onboardingRoutes(app: FastifyInstance, deps: OnboardingRouteDeps = {}): Promise<void> {
   app.get<{ Params: { id: string } }>("/api/v1/onboarding/:id", async (request) => {
     if (!deps.db) {

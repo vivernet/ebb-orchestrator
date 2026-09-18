@@ -14,6 +14,9 @@ import { BACKOFF_SCHEDULE } from "./job-types.js";
 /** Lease duration in milliseconds (5 minutes). */
 const LEASE_DURATION_MS = 5 * 60 * 1000;
 
+/**
+ * Предоставляет публичный контракт модуля job-runner для взаимодействия слоёв приложения.
+ */
 export class JobRunner {
   constructor(
     private readonly db: Database,

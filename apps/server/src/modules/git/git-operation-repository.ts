@@ -10,6 +10,9 @@ export interface CreateGitOperationParams {
   targetRef?: string | null;
 }
 
+/**
+ * Инкапсулирует операцию Git git-operation-repository с журналированием и проверкой целевого repository/worktree.
+ */
 export class GitOperationRepository {
   constructor(private readonly db: Database) {}
 

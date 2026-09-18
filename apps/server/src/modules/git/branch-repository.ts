@@ -1,6 +1,9 @@
 import type { Database, StatementParams } from "../../platform/database/database.js";
 import type { BranchRecord } from "./branch-manager.js";
 
+/**
+ * Инкапсулирует операцию Git branch-repository с журналированием и проверкой целевого repository/worktree.
+ */
 export class BranchRepository {
   constructor(private readonly db: Database) {}
 

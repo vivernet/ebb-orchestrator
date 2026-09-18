@@ -29,6 +29,9 @@ function sanitizeTerminalOutput(text: string): string {
     .replace(controlPattern, '');
 }
 
+/**
+ * Представляет пользовательский экран SanitizedTerminal; авторитетные проверки выполняются backend.
+ */
 export default function SanitizedTerminal({ logs, maxHeight = '400px' }: SanitizedTerminalProps) {
   const [scrollRef, setScrollRef] = useState<HTMLPreElement | null>(null);
 

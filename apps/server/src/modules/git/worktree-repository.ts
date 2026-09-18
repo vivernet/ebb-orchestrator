@@ -1,6 +1,9 @@
 import type { Database, StatementParams } from "../../platform/database/database.js";
 import type { WorktreeRecord } from "./worktree-manager.js";
 
+/**
+ * Инкапсулирует операцию Git worktree-repository с журналированием и проверкой целевого repository/worktree.
+ */
 export class WorktreeRepository {
   constructor(private readonly db: Database) {}
 

@@ -30,6 +30,9 @@ const SHELL_EXECUTABLES = new Set(Object.values(ShellType));
 const DEFAULT_TIMEOUT = 5 * 60 * 1000;
 const DEFAULT_MAX_OUTPUT = 1024 * 1024;
 
+/**
+ * Предоставляет execution-контракт command-tools с проверкой capability перед побочным эффектом.
+ */
 export class CommandTools {
   private readonly envBuilder = new EnvironmentBuilder();
   private readonly executor = new ProcessExecutor();

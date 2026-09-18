@@ -4,6 +4,9 @@
 
 import type { WorkflowTemplate } from "./workflow-types.js";
 
+/**
+ * Определяет workflow-контракт workflow-registry и сохраняет допустимые переходы состояний.
+ */
 export class WorkflowRegistry {
   private readonly templates = new Map<string, WorkflowTemplate>();
 

@@ -9,6 +9,9 @@
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
+/**
+ * Регистрирует HTTP-маршруты events и передаёт изменяющие состояние действия backend policy.
+ */
 export async function eventRoutes(app: FastifyInstance): Promise<void> {
   app.get(
     "/api/v1/events",

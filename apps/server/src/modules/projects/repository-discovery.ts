@@ -12,6 +12,9 @@ export interface RepositoryFacts {
   readonly untrustedExistingConfig: boolean;
 }
 
+/**
+ * Предоставляет публичный контракт модуля repository-discovery для взаимодействия слоёв приложения.
+ */
 export class RepositoryDiscovery {
   private readonly git: GitCli;
 

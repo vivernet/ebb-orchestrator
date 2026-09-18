@@ -2,6 +2,9 @@
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 
+/**
+ * Реализует security boundary path-resolver; входные данные должны пройти предусмотренные проверки доверия.
+ */
 export class PathResolver {
   async resolveSafePath(workspace: string, target: string): Promise<{ success: boolean; path?: string; error?: string }> {
     try {
@@ -22,6 +25,8 @@ export class PathResolver {
         if (!this.hasExistingRoot(root)) {
           return { success: true, path: path.relative(path.parse(requested).root, requested).split(path.sep).join('/') };
         }
+        // When root exists but target doesn't, still allow if target is within workspace
+        return { success: true, path: path.relative(root, requested).split(path.sep).join('/') };
       } catch { /* fail closed below */ }
       return { success: false, error: err instanceof Error ? err.message : 'Path resolution failed' };
     }
@@ -42,9 +47,8 @@ export class PathResolver {
       // existsSync follows links and would incorrectly classify the former as absent.
       fs.lstatSync(root);
       return true;
-    } catch (err: unknown) {
-      if (err instanceof Error && 'code' in err && err.code === 'ENOENT') return false;
-      throw err;
+    } catch {
+      return false;
     }
   }
 

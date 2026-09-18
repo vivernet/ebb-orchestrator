@@ -19,6 +19,9 @@ interface ExecutionPageProps {
   projectId?: string;
 }
 
+/**
+ * Предоставляет execution-контракт ExecutionPage с проверкой capability перед побочным эффектом.
+ */
 export default function ExecutionPage({ projectId }: ExecutionPageProps) {
   const [queue, setQueue] = useState<ExecutionQueueEntry[]>([]);
   const [loading, setLoading] = useState(true);

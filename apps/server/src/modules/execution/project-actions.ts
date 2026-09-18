@@ -25,6 +25,9 @@ export type ActionResult = {
   exitCode: number | null;
 };
 
+/**
+ * Предоставляет execution-контракт project-actions с проверкой capability перед побочным эффектом.
+ */
 export class ProjectActions {
   private commandTools: CommandTools;
 

@@ -21,6 +21,9 @@ const DEFAULT_TIERS: PricingTier[] = [
   { role: "developer", model: "claude-opus-4-20250514", inputPerToken: 0.000015, outputPerToken: 0.000075, cachedPerToken: 0.0000015 },
 ];
 
+/**
+ * Предоставляет публичный контракт модуля pricing-catalog для взаимодействия слоёв приложения.
+ */
 export class PricingCatalog {
   private tiers: Map<string, PricingTier>;
 

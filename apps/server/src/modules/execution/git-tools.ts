@@ -4,6 +4,9 @@
  */
 import { GitCli } from '../../modules/git/git-cli.js';
 
+/**
+ * Предоставляет execution-контракт git-tools с проверкой capability перед побочным эффектом.
+ */
 export class GitTools {
   private readonly git: GitCli;
 

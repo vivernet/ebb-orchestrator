@@ -39,6 +39,9 @@ export interface InsertArtifactParams {
   expiresAt: string | null;
 }
 
+/**
+ * Предоставляет публичный контракт модуля artifact-repository для взаимодействия слоёв приложения.
+ */
 export class ArtifactRepository {
   constructor(private readonly db: Database) {}
 

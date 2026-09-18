@@ -12,6 +12,9 @@ export interface SecretsRouteDeps {
   useKeyring?: boolean;
 }
 
+/**
+ * Регистрирует HTTP-маршруты secrets и передаёт изменяющие состояние действия backend policy.
+ */
 export async function secretsRoutes(
   app: FastifyInstance,
   deps: SecretsRouteDeps = {}

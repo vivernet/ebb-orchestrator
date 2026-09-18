@@ -20,6 +20,9 @@ export interface WorktreeRecord {
   removedAt: string | null;
 }
 
+/**
+ * Инкапсулирует операцию Git worktree-manager с журналированием и проверкой целевого repository/worktree.
+ */
 export class WorktreeManager {
   private readonly git: GitCli;
   private readonly worktreeRepo: WorktreeRepository | null;

@@ -171,6 +171,9 @@ function hasContradiction(candidateContent: string, proposalContent: string): bo
 
 // ── Main Analyzer ───────────────────────────────────────────────────
 
+/**
+ * Предоставляет публичный контракт модуля knowledge-analyzer для взаимодействия слоёв приложения.
+ */
 export class KnowledgeAnalyzer {
   /**
    * Classify a proposal against the existing guideline records.

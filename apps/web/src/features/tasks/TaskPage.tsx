@@ -4,6 +4,9 @@ import { apiClient } from '../../api/client.js';
 import WorkflowTimeline, { TASK_LIFECYCLE_STAGES } from '../../components/WorkflowTimeline.js';
 
 interface TaskPageProps { id?: string; }
+/**
+ * Представляет пользовательский экран TaskPage; авторитетные проверки выполняются backend.
+ */
 export default function TaskPage({ id = '' }: TaskPageProps) {
   const [projection, setProjection] = useState<TaskOverviewProjection | null>(null);
   useEffect(() => { if (id) void apiClient.get<TaskOverviewProjection>(`/tasks/${encodeURIComponent(id)}`).then(setProjection).catch(() => undefined); }, [id]);

@@ -6,6 +6,9 @@ interface EpicPageProps {
   id: string;
 }
 
+/**
+ * Представляет пользовательский экран EpicPage; авторитетные проверки выполняются backend.
+ */
 export default function EpicPage({ id }: EpicPageProps) {
   const [projection, setProjection] = useState<EpicOverviewProjection | null>(null);
   useEffect(() => { void apiClient.get<EpicOverviewProjection>(`/epics/${encodeURIComponent(id)}`).then(setProjection).catch(() => undefined); }, [id]);

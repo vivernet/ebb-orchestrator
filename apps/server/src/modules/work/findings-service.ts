@@ -24,6 +24,9 @@ export interface Finding {
   readonly updatedAt: string;
 }
 
+/**
+ * Предоставляет публичный контракт модуля findings-service для взаимодействия слоёв приложения.
+ */
 export class FindingsService {
   constructor(private readonly db: Database) {}
 
