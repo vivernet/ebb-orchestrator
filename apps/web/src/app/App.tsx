@@ -3,7 +3,7 @@ import { useEventClient } from '../hooks/useEventClient.js';
 import { router } from './router.js';
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Представляет пользовательский экран App; авторитетные проверки выполняются backend.
  */
 function App() {
   // Initialize SSE connection on app startup

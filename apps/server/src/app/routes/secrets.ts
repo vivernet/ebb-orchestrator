@@ -13,7 +13,7 @@ export interface SecretsRouteDeps {
 }
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Регистрирует HTTP-маршруты secrets и передаёт изменяющие состояние действия backend policy.
  */
 export async function secretsRoutes(
   app: FastifyInstance,

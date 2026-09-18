@@ -22,7 +22,7 @@ const DEFAULT_TIERS: PricingTier[] = [
 ];
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Предоставляет публичный контракт модуля pricing-catalog для взаимодействия слоёв приложения.
  */
 export class PricingCatalog {
   private tiers: Map<string, PricingTier>;

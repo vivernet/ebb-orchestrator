@@ -2,7 +2,7 @@ import type { Database, StatementParams } from "../../platform/database/database
 import type { WorktreeRecord } from "./worktree-manager.js";
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Инкапсулирует операцию Git worktree-repository с журналированием и проверкой целевого repository/worktree.
  */
 export class WorktreeRepository {
   constructor(private readonly db: Database) {}

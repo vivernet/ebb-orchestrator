@@ -7,7 +7,7 @@ interface ProjectRow { id: string; name: string; display_name: string; status: s
 interface WorkRow { id: string; epic_id?: string | null; display_id: string; title: string; status: string; required: number; contract_json: string; }
 interface UsageRow { inputTokens: number; cachedTokens: number; outputTokens: number; totalTokens: number; cost: number; }
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Формирует read model project-projection из авторитетного состояния оркестрации для API и UI.
  */
 export class ProjectProjection {
   constructor(private readonly db?: Database, private readonly scheduler?: SchedulerService) {}

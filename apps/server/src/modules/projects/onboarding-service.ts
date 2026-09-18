@@ -7,7 +7,7 @@ export interface Onboarding {
 }
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Предоставляет публичный контракт модуля onboarding-service для взаимодействия слоёв приложения.
  */
 export class OnboardingService {
   private readonly discovery: RepositoryDiscovery;

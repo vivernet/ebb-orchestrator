@@ -15,7 +15,7 @@ interface UsageData {
 }
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Представляет пользовательский экран UsagePage; авторитетные проверки выполняются backend.
  */
 export default function UsagePage() {
   const [data, setData] = useState<UsageData | null>(null);

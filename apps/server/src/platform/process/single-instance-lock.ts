@@ -18,7 +18,7 @@ export interface LockHandle {
 }
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Предоставляет публичный контракт модуля single-instance-lock для взаимодействия слоёв приложения.
  */
 export class SingleInstanceLock {
   private held = false;

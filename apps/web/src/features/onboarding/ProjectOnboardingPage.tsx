@@ -22,7 +22,7 @@ interface OnboardingProject {
 }
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Представляет пользовательский экран ProjectOnboardingPage; авторитетные проверки выполняются backend.
  */
 export default function ProjectOnboardingPage({ id }: { id: string }) {
   const [data, setData] = useState<OnboardingProject | null>(null);

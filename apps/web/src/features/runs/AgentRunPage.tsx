@@ -49,7 +49,7 @@ interface AgentRunPageProps {
 }
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Представляет пользовательский экран AgentRunPage; авторитетные проверки выполняются backend.
  */
 export default function AgentRunPage({ id }: AgentRunPageProps) {
   const [run, setRun] = useState<AgentRun | null>(null);

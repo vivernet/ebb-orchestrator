@@ -13,7 +13,7 @@ export function assertSafeGitRef(ref: string): void {
 }
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Инкапсулирует операцию Git git-cli с журналированием и проверкой целевого repository/worktree.
  */
 export class GitCli {
   private readonly executor: ProcessExecutor;

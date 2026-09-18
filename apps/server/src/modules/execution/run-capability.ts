@@ -31,7 +31,7 @@ export interface RunCapabilityDef {
 }
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Предоставляет execution-контракт run-capability с проверкой capability перед побочным эффектом.
  */
 export class RunCapability {
   private resolver: PathResolver;

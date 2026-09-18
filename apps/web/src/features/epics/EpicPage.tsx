@@ -7,7 +7,7 @@ interface EpicPageProps {
 }
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Представляет пользовательский экран EpicPage; авторитетные проверки выполняются backend.
  */
 export default function EpicPage({ id }: EpicPageProps) {
   const [projection, setProjection] = useState<EpicOverviewProjection | null>(null);

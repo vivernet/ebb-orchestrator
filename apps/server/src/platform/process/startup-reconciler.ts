@@ -15,7 +15,7 @@ export interface StartupReport {
 }
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Предоставляет публичный контракт модуля startup-reconciler для взаимодействия слоёв приложения.
  */
 export class StartupReconciler {
   private readonly reconcilers: Array<() => Promise<void>> = [];

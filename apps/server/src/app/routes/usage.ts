@@ -4,7 +4,7 @@ import type { Database } from "../../platform/database/database.js";
 export interface UsageRouteDeps { db?: Database | undefined; }
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Регистрирует HTTP-маршруты usage и передаёт изменяющие состояние действия backend policy.
  */
 export async function usageRoutes(app: FastifyInstance, deps: UsageRouteDeps = {}): Promise<void> {
   app.get("/api/v1/usage", async () => {

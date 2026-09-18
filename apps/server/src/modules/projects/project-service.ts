@@ -6,7 +6,7 @@ import type { Database } from "../../platform/database/database.js";
 import type { Project } from "./project-types.js";
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Предоставляет публичный контракт модуля project-service для взаимодействия слоёв приложения.
  */
 export class ProjectService {
   constructor(private readonly db: Database) {}

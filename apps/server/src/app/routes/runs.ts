@@ -5,7 +5,7 @@ import type { SchedulerService } from "../../modules/scheduler/scheduler-service
 export interface RunCommandService { cancelRun(id: string): unknown | Promise<unknown>; }
 export interface RunRouteDeps { db?: Database | undefined; runService?: RunCommandService | undefined; scheduler?: SchedulerService | undefined; }
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Регистрирует HTTP-маршруты runs и передаёт изменяющие состояние действия backend policy.
  */
 export async function runRoutes(app: FastifyInstance, deps: RunRouteDeps = {}): Promise<void> {
   const projection = new ExecutionProjection(deps.db, deps.scheduler);

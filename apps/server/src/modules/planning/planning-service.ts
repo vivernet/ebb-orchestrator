@@ -7,7 +7,7 @@ import { planningApprovalRequired, effectivePlanningApprovalPolicy } from "./pla
 import { validatePlan } from "./plan-validator.js";
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Предоставляет публичный контракт модуля planning-service для взаимодействия слоёв приложения.
  */
 export class PlanningService {
   constructor(private readonly db: Database) {}

@@ -19,7 +19,7 @@ interface SettingsData {
 }
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Представляет пользовательский экран SettingsPage; авторитетные проверки выполняются backend.
  */
 export default function SettingsPage() {
   const [data, setData] = useState<SettingsData | null>(null);

@@ -20,7 +20,7 @@ type Child = { id: string; display_id: string; status: string };
 type EpicMergeAuthority = Pick<MergeService, "mergeApproved"> & Partial<Pick<MergeService, "mergeApprovedForIntegration">>;
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Предоставляет публичный контракт модуля epic-orchestrator для взаимодействия слоёв приложения.
  */
 export class EpicOrchestrator {
   private readonly handlers: RuntimeEventHandlers;

@@ -4,7 +4,7 @@ import { ProjectProjection } from "../read-models/project-projection.js";
 import type { SchedulerService } from "../../modules/scheduler/scheduler-service.js";
 export interface ProjectRouteDeps { db?: Database | undefined; scheduler?: SchedulerService | undefined; }
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Регистрирует HTTP-маршруты projects и передаёт изменяющие состояние действия backend policy.
  */
 export async function projectRoutes(app: FastifyInstance, deps: ProjectRouteDeps = {}): Promise<void> {
   const projection = new ProjectProjection(deps.db, deps.scheduler);

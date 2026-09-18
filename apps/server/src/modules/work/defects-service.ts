@@ -26,7 +26,7 @@ export interface Defect {
 }
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Предоставляет публичный контракт модуля defects-service для взаимодействия слоёв приложения.
  */
 export class DefectsService {
   constructor(private readonly db: Database) {}

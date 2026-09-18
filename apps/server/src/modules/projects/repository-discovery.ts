@@ -13,7 +13,7 @@ export interface RepositoryFacts {
 }
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Предоставляет публичный контракт модуля repository-discovery для взаимодействия слоёв приложения.
  */
 export class RepositoryDiscovery {
   private readonly git: GitCli;

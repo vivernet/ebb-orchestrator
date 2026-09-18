@@ -5,7 +5,7 @@ const roles = new Set(["coordinator", "product_manager", "architect", "middle_de
 const workflows = new Set(["standard", "bugfix", "architecture_change", "documentation", "devops"]);
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Предоставляет публичный контракт модуля plan-validator для взаимодействия слоёв приложения.
  */
 export function validatePlan(plan: PlanningPlanInput): PlanValidationResult {
   if (!plan.projectId) throw new Error("Plan projectId is required");

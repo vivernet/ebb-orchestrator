@@ -7,7 +7,7 @@ interface TaskRow extends SchedulerTaskRow { [key: string]: unknown; }
 interface RunRow { id: string; role: string; runtime: string; model: string; status: string; started_at: string | null; ended_at: string | null; input_tokens: number | null; cached_input_tokens: number | null; output_tokens: number | null; cost: number | null; }
 interface UsageRow { inputTokens: number; cachedTokens: number; outputTokens: number; totalTokens: number; cost: number; }
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Формирует read model task-projection из авторитетного состояния оркестрации для API и UI.
  */
 export class TaskProjection {
   constructor(private readonly db?: Database, private readonly scheduler?: SchedulerService) {}

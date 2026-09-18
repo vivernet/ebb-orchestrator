@@ -13,7 +13,7 @@ export interface Subscription {
 }
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Предоставляет публичный контракт модуля event-bus для взаимодействия слоёв приложения.
  */
 export class EventBus {
   private subscriptions: Subscription[] = [];

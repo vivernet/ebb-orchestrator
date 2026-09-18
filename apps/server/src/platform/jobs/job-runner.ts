@@ -15,7 +15,7 @@ import { BACKOFF_SCHEDULE } from "./job-types.js";
 const LEASE_DURATION_MS = 5 * 60 * 1000;
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Предоставляет публичный контракт модуля job-runner для взаимодействия слоёв приложения.
  */
 export class JobRunner {
   constructor(

@@ -5,7 +5,7 @@ import type { SchedulerService } from "../../modules/scheduler/scheduler-service
 interface RunRow { id: string; role: string; task_id: string | null; status: string; }
 type TaskRow = SchedulerTaskRow;
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Формирует read model execution-projection из авторитетного состояния оркестрации для API и UI.
  */
 export class ExecutionProjection {
    constructor(private readonly db?: Database, private readonly scheduler?: SchedulerService) {}

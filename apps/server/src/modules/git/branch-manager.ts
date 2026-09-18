@@ -21,7 +21,7 @@ export interface BranchRecord {
 }
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Инкапсулирует операцию Git branch-manager с журналированием и проверкой целевого repository/worktree.
  */
 export class BranchManager {
   private readonly git: GitCli;

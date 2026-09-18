@@ -30,7 +30,7 @@ function sanitizeTerminalOutput(text: string): string {
 }
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Представляет пользовательский экран SanitizedTerminal; авторитетные проверки выполняются backend.
  */
 export default function SanitizedTerminal({ logs, maxHeight = '400px' }: SanitizedTerminalProps) {
   const [scrollRef, setScrollRef] = useState<HTMLPreElement | null>(null);

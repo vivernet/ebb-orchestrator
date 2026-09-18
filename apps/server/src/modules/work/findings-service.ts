@@ -25,7 +25,7 @@ export interface Finding {
 }
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Предоставляет публичный контракт модуля findings-service для взаимодействия слоёв приложения.
  */
 export class FindingsService {
   constructor(private readonly db: Database) {}

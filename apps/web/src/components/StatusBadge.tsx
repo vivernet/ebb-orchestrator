@@ -4,7 +4,7 @@ interface StatusBadgeProps {
 }
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Представляет пользовательский экран StatusBadge; авторитетные проверки выполняются backend.
  */
 export default function StatusBadge({ status, variant = 'default' }: StatusBadgeProps) {
   const variants = {

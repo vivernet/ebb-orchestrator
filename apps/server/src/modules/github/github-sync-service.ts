@@ -3,7 +3,7 @@ import type { GitHosting, PullRequest } from './git-hosting.js';
 export interface SyncRecord { key: string; repository: string; marker: string; pullRequest?: PullRequest; status: 'PENDING' | 'SUCCEEDED' | 'FAILED'; updatedAt: number; }
 export interface SyncState { get(key: string): SyncRecord | undefined; set(record: SyncRecord): void; }
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Предоставляет публичный контракт модуля github-sync-service для взаимодействия слоёв приложения.
  */
 export class InMemorySyncState implements SyncState { private records = new Map<string, SyncRecord>(); get(key: string) { return this.records.get(key); } set(record: SyncRecord) { this.records.set(record.key, record); } }
 

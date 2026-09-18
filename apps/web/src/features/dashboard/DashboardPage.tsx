@@ -8,7 +8,7 @@ function message(error: unknown): string {
 }
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Представляет пользовательский экран DashboardPage; авторитетные проверки выполняются backend.
  */
 export default function DashboardPage() {
   const [projection, setProjection] = useState<DashboardProjection | null>(null);

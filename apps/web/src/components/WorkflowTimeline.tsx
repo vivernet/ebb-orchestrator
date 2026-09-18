@@ -27,7 +27,7 @@ export const displayStageForLifecycle = (lifecycle: string): string | null => {
 };
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Представляет пользовательский экран WorkflowTimeline; авторитетные проверки выполняются backend.
  */
 export default function WorkflowTimeline({ stages, currentStage }: WorkflowTimelineProps) {
   const rawStage = currentStage?.toUpperCase();

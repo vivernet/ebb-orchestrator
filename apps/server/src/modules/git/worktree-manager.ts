@@ -21,7 +21,7 @@ export interface WorktreeRecord {
 }
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Инкапсулирует операцию Git worktree-manager с журналированием и проверкой целевого repository/worktree.
  */
 export class WorktreeManager {
   private readonly git: GitCli;

@@ -13,7 +13,7 @@ export type BuildEnvOptions = {
 };
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Реализует security boundary environment-builder; входные данные должны пройти предусмотренные проверки доверия.
  */
 export class EnvironmentBuilder {
   /**

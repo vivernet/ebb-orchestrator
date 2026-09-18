@@ -60,7 +60,7 @@ export interface ProposalCreateInput {
 }
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Предоставляет публичный контракт модуля proposal-service для взаимодействия слоёв приложения.
  */
 export class ProposalService {
   constructor(private readonly db: Database) {}

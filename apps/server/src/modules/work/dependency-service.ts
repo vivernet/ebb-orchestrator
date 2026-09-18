@@ -32,7 +32,7 @@ function rowToDependency(row: DependencyRow): TaskDependency {
 }
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Предоставляет публичный контракт модуля dependency-service для взаимодействия слоёв приложения.
  */
 export class DependencyService {
   constructor(private readonly db: Database) {}

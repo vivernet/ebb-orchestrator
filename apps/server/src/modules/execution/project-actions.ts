@@ -26,7 +26,7 @@ export type ActionResult = {
 };
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Предоставляет execution-контракт project-actions с проверкой capability перед побочным эффектом.
  */
 export class ProjectActions {
   private commandTools: CommandTools;

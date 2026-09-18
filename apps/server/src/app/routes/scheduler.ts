@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { SchedulerService } from "../../modules/scheduler/scheduler-service.js";
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Регистрирует HTTP-маршруты scheduler и передаёт изменяющие состояние действия backend policy.
  */
 export async function schedulerRoutes(app: FastifyInstance, scheduler: SchedulerService | undefined): Promise<void> {
   app.get("/api/v1/scheduler/config", async (_request, reply) => {

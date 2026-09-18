@@ -5,7 +5,7 @@
 import type { WorkflowTemplate } from "./workflow-types.js";
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Определяет workflow-контракт workflow-registry и сохраняет допустимые переходы состояний.
  */
 export class WorkflowRegistry {
   private readonly templates = new Map<string, WorkflowTemplate>();

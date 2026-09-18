@@ -3,7 +3,7 @@
  */
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Реализует security boundary secret-redactor; входные данные должны пройти предусмотренные проверки доверия.
  */
 export class SecretRedactor {
   private secrets: Map<string, Set<string>> = new Map();

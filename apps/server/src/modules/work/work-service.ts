@@ -10,7 +10,7 @@ import { WorkflowRegistry } from "../workflow/workflow-registry.js";
 import { templates } from "../workflow/templates.js";
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Предоставляет публичный контракт модуля work-service для взаимодействия слоёв приложения.
  */
 export class WorkService {
   private readonly workflow: WorkflowEngine;

@@ -12,7 +12,7 @@ interface CountRow { count: number; }
 function hasTable(db: Database, name: string): boolean { return Boolean(db.get<{ name: string }>("SELECT name FROM sqlite_master WHERE type='table' AND name=$name", { name })); }
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Формирует read model dashboard-projection из авторитетного состояния оркестрации для API и UI.
  */
 export class DashboardProjection {
   private readonly scheduler: SchedulerService | undefined;
@@ -30,7 +30,7 @@ export class DashboardProjection {
   }
 }
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Формирует read model dashboard-projection из авторитетного состояния оркестрации для API и UI.
  */
 export function waitReason(status: string): { code: string; message: string } | null {
   if (status === "WAITING_FOR_DEPENDENCY") return { code: "DEPENDENCY", message: "Waiting for a blocking dependency" };

@@ -8,7 +8,7 @@ export const DEFAULT_PLANNING_APPROVAL_POLICY: PlanningApprovalPolicy = {
 };
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Предоставляет публичный контракт модуля planning-policy для взаимодействия слоёв приложения.
  */
 export function effectivePlanningApprovalPolicy(
   overrides: Partial<PlanningApprovalPolicy> = {},
@@ -17,7 +17,7 @@ export function effectivePlanningApprovalPolicy(
 }
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Предоставляет публичный контракт модуля planning-policy для взаимодействия слоёв приложения.
  */
 export function planningApprovalRequired(
   plan: Pick<PlanningPlanInput, "tasks" | "epic" | "architectureChange">,

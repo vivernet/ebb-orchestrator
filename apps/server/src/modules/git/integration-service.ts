@@ -47,7 +47,7 @@ export interface IntegrationServiceOptions {
 }
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Инкапсулирует операцию Git integration-service с журналированием и проверкой целевого repository/worktree.
  */
 export function getIntegrationProvenance(db: Database, attempt: IntegrationAttempt): VerifiedIntegrationProvenance | null {
   const row = db.get<{ id: string; source_branch: string; target_branch: string; repository_path: string; expected_target_sha: string; source_sha: string; worktree_path: string; status: IntegrationAttempt["status"]; created_at: string; integration_run_id: string | null }>("SELECT * FROM integration_attempts WHERE id = $id", { id: attempt.id });

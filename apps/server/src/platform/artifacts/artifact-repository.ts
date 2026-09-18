@@ -40,7 +40,7 @@ export interface InsertArtifactParams {
 }
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Предоставляет публичный контракт модуля artifact-repository для взаимодействия слоёв приложения.
  */
 export class ArtifactRepository {
   constructor(private readonly db: Database) {}

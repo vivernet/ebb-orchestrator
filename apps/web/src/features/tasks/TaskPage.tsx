@@ -5,7 +5,7 @@ import WorkflowTimeline, { TASK_LIFECYCLE_STAGES } from '../../components/Workfl
 
 interface TaskPageProps { id?: string; }
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Представляет пользовательский экран TaskPage; авторитетные проверки выполняются backend.
  */
 export default function TaskPage({ id = '' }: TaskPageProps) {
   const [projection, setProjection] = useState<TaskOverviewProjection | null>(null);

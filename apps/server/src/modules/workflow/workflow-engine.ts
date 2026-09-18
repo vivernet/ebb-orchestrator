@@ -25,7 +25,7 @@ interface TaskRow {
 }
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Определяет workflow-контракт workflow-engine и сохраняет допустимые переходы состояний.
  */
 export class WorkflowEngine {
   constructor(

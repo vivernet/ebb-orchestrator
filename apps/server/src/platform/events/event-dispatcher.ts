@@ -21,7 +21,7 @@ interface ProcessedRow {
 }
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Предоставляет публичный контракт модуля event-dispatcher для взаимодействия слоёв приложения.
  */
 export class EventDispatcher {
   constructor(

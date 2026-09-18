@@ -15,7 +15,7 @@ export interface ProcessResult {
 }
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Предоставляет публичный контракт модуля process-executor для взаимодействия слоёв приложения.
  */
 export class ExitCodeError extends Error {
   constructor(
@@ -30,7 +30,7 @@ export class ExitCodeError extends Error {
 }
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Предоставляет публичный контракт модуля process-executor для взаимодействия слоёв приложения.
  */
 export class ProcessExecutor {
   /**

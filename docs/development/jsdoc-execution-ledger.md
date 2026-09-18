@@ -52,5 +52,7 @@ source. Включены как errors: `jsdoc/require-jsdoc`,
   не является OS sandbox.
 - DOCUMENTATION AMBIGUITIES: старый README был planning-package placeholder,
   поэтому факты для нового README сверялись с кодом, workspace manifests и
-  design/audit material. Предсуществующие удаления `AGENTS.md` оставлены
-  владельцу рабочего дерева.
+  design/audit material. Шаблонные migration-комментарии после независимой
+  рецензии заменены на описания по модулю; README теперь явно говорит, что
+  ESLint проверяет структуру JSDoc, а русский язык проверяется review.
+  Предсуществующие удаления `AGENTS.md` оставлены владельцу рабочего дерева.

@@ -172,7 +172,7 @@ function hasContradiction(candidateContent: string, proposalContent: string): bo
 // ── Main Analyzer ───────────────────────────────────────────────────
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Предоставляет публичный контракт модуля knowledge-analyzer для взаимодействия слоёв приложения.
  */
 export class KnowledgeAnalyzer {
   /**

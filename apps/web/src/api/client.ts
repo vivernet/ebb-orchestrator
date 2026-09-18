@@ -63,7 +63,7 @@ function createApiClient(): ApiClient {
 export const apiClient = createApiClient();
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Представляет пользовательский экран client; авторитетные проверки выполняются backend.
  */
 export function bootstrap(): Promise<void> {
   return apiClient.get<{ sessionToken: string; csrfToken: string }>('/session/bootstrap').then(({ sessionToken, csrfToken }) => {

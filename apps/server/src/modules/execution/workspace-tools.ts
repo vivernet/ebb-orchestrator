@@ -10,7 +10,7 @@ export type WorkspaceReadResult = { success: boolean; content?: string; error?: 
 export type WorkspaceWriteResult = { success: boolean; error?: string };
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Предоставляет execution-контракт workspace-tools с проверкой capability перед побочным эффектом.
  */
 export class WorkspaceTools {
   constructor(

@@ -54,7 +54,7 @@ export interface DecisionCreateInput {
 }
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Предоставляет публичный контракт модуля decision-service для взаимодействия слоёв приложения.
  */
 export class DecisionService {
   constructor(private readonly db: Database) {}

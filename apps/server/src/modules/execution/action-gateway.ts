@@ -11,7 +11,7 @@ export type FilePatch = { start: number; end: number; content: string };
 export type FilePatchResult = { success: boolean; error?: string };
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Предоставляет execution-контракт action-gateway с проверкой capability перед побочным эффектом.
  */
 export class ActionGateway {
   constructor(

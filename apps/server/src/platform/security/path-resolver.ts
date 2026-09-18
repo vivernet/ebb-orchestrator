@@ -3,7 +3,7 @@ import * as path from 'node:path';
 import * as fs from 'node:fs';
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Реализует security boundary path-resolver; входные данные должны пройти предусмотренные проверки доверия.
  */
 export class PathResolver {
   async resolveSafePath(workspace: string, target: string): Promise<{ success: boolean; path?: string; error?: string }> {

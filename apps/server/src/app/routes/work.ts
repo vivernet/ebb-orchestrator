@@ -7,7 +7,7 @@ export interface WorkCommandService { pauseTask(taskId: string): unknown | Promi
 export interface WorkRouteDeps { db?: Database | undefined; workService?: WorkCommandService | undefined; scheduler?: SchedulerService | undefined; }
 const emptyUsage = { inputTokens: 0, cachedTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 };
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Регистрирует HTTP-маршруты work и передаёт изменяющие состояние действия backend policy.
  */
 export async function workRoutes(app: FastifyInstance, deps: WorkRouteDeps = {}): Promise<void> {
   const epicProjection = new EpicProjection(deps.db, deps.scheduler);

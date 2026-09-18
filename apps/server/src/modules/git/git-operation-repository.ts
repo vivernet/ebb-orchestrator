@@ -11,7 +11,7 @@ export interface CreateGitOperationParams {
 }
 
 /**
- * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ * Инкапсулирует операцию Git git-operation-repository с журналированием и проверкой целевого repository/worktree.
  */
 export class GitOperationRepository {
   constructor(private readonly db: Database) {}
