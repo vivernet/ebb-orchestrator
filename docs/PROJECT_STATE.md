@@ -130,14 +130,16 @@ pnpm test
 5. Git — source of truth для кода, SQLite — для orchestration state
 
 ## Known Limitations
-1. SEC-003: PermissionEngine не подключён к agent-facing mutation paths
-2. F-001/GIT-006: main.ts обращается к projects до migrations; GitReconciler не инициализирован с repository path
-3. GIT-008: worktree remove --force может удалить dirty data
-4. F-005: Hermes E2E тесты skipped по умолчанию
-5. F-006: отсутствует production server build/package gate
+1. F-001/GIT-006: main.ts обращается к projects до migrations; GitReconciler не инициализирован с repository path
+2. GIT-008: worktree remove --force может удалить dirty data
+3. F-005: Hermes E2E тесты skipped по умолчанию
+4. F-006: отсутствует production server build/package gate
 
 ## Changes Made During This Audit
-No changes made — audit was read-only.
+- SEC-003 FIXED: Integrated PermissionEngine with ActionGateway
+  - ActionGateway.checkPermission() now uses permissionEngine.evaluate()
+  - PermissionEngine falls back to capability check when no policies match
+  - Updated tests to reflect new behavior
 
 ## Final Review
 Independent reviewer: NOT COMPLETED (API key issue for subagents)
