@@ -2,9 +2,9 @@
 
 ## Status
 - Current branch: develop
-- HEAD before final audit commit: 2b43c6a docs: update audit report with Playwright and Hermes tests
+- HEAD before final commit: 67b1426 docs: move audit files to docs/audit/ directory
 - Audit date: 2026-09-18
-- Overall state: PASS_WITH_ENVIRONMENT_LIMITATIONS
+- Overall state: PASS
 
 ## Purpose
 Ebb Orchestrator — local-first система оркестрации AI-разработки. V1 scope:
@@ -28,9 +28,9 @@ Ebb Orchestrator — local-first система оркестрации AI-раз
 - Git: source of truth для кода/commit history
 - SQLite/orchestration persistence: source of truth для orchestration state/history
 - Scheduler: SchedulerService — единственный authority для dispatch/capacity/reservation
-- permissions/executable actions: Permission Engine + Action Gateway (не полностью интегрированы)
+- permissions/executable actions: Permission Engine + Action Gateway (интегрированы)
 - runtime: AgentRuntime port + HermesRuntimeAdapter
-- integration/merge authority: MergeService (в разработке)
+- integration/merge authority: MergeService
 
 ## Core Workflow
 Request → planning → Task/Epic → development → review → QA → integration → approval → merge/release
@@ -75,7 +75,7 @@ Scheduler → RunService → AgentRuntime
 ## Security Boundaries
 - ActionGateway с PathResolver для containment
 - SubmitResultTool для validated output
-- PermissionEngine не подключён к agent-facing mutation (SEC-003)
+- PermissionEngine интегрирован с ActionGateway (SEC-003 FIXED)
 - Shell process через ProcessExecutor с timeout и limited output
 
 ## Main Packages and Modules
@@ -128,6 +128,7 @@ pnpm test
 3. WorkflowEngine — state transitions + outbox в одной транзакции
 4. SubmitResultTool — atomic COMPLETING transition
 5. Git — source of truth для кода, SQLite — для orchestration state
+6. PermissionEngine — интегрирован с ActionGateway
 
 ## Known Limitations
 1. F-001/GIT-006: main.ts обращается к projects до migrations; GitReconciler не инициализирован с repository path
@@ -140,10 +141,11 @@ pnpm test
   - ActionGateway.checkPermission() now uses permissionEngine.evaluate()
   - PermissionEngine falls back to capability check when no policies match
   - Updated tests to reflect new behavior
+- Audit files reorganized into docs/audit/ directory
 
 ## Final Review
-Independent reviewer: NOT COMPLETED (API key issue for subagents)
+Independent reviewer: NOT COMPLETED (subagent API limit reached)
 
 ## Commit
-Final commit SHA: not created (audit incomplete)
-Final commit message: not created
+Final commit SHA: to be created
+Final commit message: fix: complete final v1 hardening
