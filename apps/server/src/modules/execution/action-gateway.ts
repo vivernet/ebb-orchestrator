@@ -1,4 +1,4 @@
-/**
+/**\
  * Gateway для операций с файлами, обеспечивающий ограничение путей.
  * Все операции с файлами должны быть ограничены workspace, назначенным capability.
  */
@@ -6,6 +6,8 @@ import { PathResolver } from '../../platform/security/path-resolver.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { ProjectActions, type ProjectConfig, type ActionResult } from './project-actions.js';
+import { PermissionEngine } from '../permissions/permission-engine.js';
+import { ActionId, type EvaluationInput, PermissionDecision } from '../permissions/permission-types.js';
 
 export type FilePatch = { start: number; end: number; content: string };
 export type FilePatchResult = { success: boolean; error?: string };
@@ -14,17 +16,38 @@ export type FilePatchResult = { success: boolean; error?: string };
  * Предоставляет execution-контракт action-gateway с проверкой capability перед побочным эффектом.
  */
 export class ActionGateway {
+  private readonly permissionEngine: PermissionEngine;
+
   constructor(
     private resolver: PathResolver,
     private workspace: string,
+    private capabilities: ActionId[],
     projectConfig?: ProjectConfig
   ) {
+    this.permissionEngine = new PermissionEngine();
     this.projectActions = projectConfig ? new ProjectActions(projectConfig) : null;
   }
 
   private readonly projectActions: ProjectActions | null;
 
+  /**\
+   * Проверяет разрешение на выполнение действия через PermissionEngine.
+   * @param actionId Идентификатор действия.
+   * @returns true если действие разрешено, иначе false.
+   */
+  private checkPermission(actionId: ActionId): boolean {
+    const input: EvaluationInput = {
+      capability: this.capabilities,
+      action: actionId,
+    };
+    const result = this.permissionEngine.evaluate(input);
+    return result.decision === PermissionDecision.ALLOW;
+  }
+
   async test(): Promise<ActionResult> {
+    if (!this.checkPermission(ActionId.ProjectTest)) {
+      return { action: 'test', success: false, stdout: '', stderr: 'Permission denied: project.test action not allowed', exitCode: null };
+    }
     if (!this.projectActions) {
       return { action: 'test', success: false, stdout: '', stderr: 'project test is not configured', exitCode: null };
     }
@@ -93,13 +116,16 @@ export class ActionGateway {
     return results;
   }
 
-  /**
+  /**\
    * Применяет патчи к файлу в workspace.
    * @param relPath Относительный путь к файлу.
    * @param patches Массив изменений с диапазонами и новым содержимым.
    * @returns Результат операции замены.
    */
   async patch(relPath: string, patches: FilePatch[]): Promise<FilePatchResult> {
+    if (!this.checkPermission(ActionId.WorkspacePatch)) {
+      return { success: false, error: 'Permission denied: workspace.patch action not allowed' };
+    }
     // Use path.join for proper path construction
     const fullPath = path.join(this.workspace, relPath);
     const result = await this.resolver.resolveSafePath(this.workspace, fullPath);
