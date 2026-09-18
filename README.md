@@ -115,9 +115,13 @@ pnpm --filter @ebb-orchestrator/web dev
 ## Backend и Web UI
 
 Backend — пакет `@ebb-orchestrator/server`: Fastify API, startup lifecycle,
-SQLite, scheduler, Git, runtime, MCP и фоновые workers. Его production-
-команда запуска в корневом workspace не объявлена; для разработки используется
-`pnpm --filter @ebb-orchestrator/server dev`.
+SQLite, scheduler, Git, runtime, MCP и фоновые workers.
+
+Production build:
+
+```bash
+pnpm --filter @ebb-orchestrator/server build
+```
 
 Web UI — пакет `@ebb-orchestrator/web`, собираемый Vite:
 
@@ -192,10 +196,15 @@ policy, а `Action Gateway` не должен обходиться прямым 
 ## Git и worktrees
 
 Git-модуль работает с выбранным repository и worktree, фиксирует операции в
-журнале и поддерживает reconciliation после перезапуска. Hooks и сетевые
-операции являются внешними побочными эффектами и проходят соответствующие
-guards. Merge/reconciliation не должны объявлять SQLite и рабочую копию
-согласованными без проверки фактического Git-состояния.
+журнале и поддерживает reconciliation после перезапуска.
+
+**Безопасность worktree:** удаление managed worktree выполняется только после
+проверки на отсутствие неоткоммиченных изменений. Dirty worktree не удаляется
+автоматически — это предотвращает потерю пользовательских данных.
+
+Hooks и сетевые операции являются внешними побочными эффектами и проходят
+соответствующие guards. Merge/reconciliation не должны объявлять SQLite и
+рабочую копию согласованными без проверки фактического Git-состояния.
 
 ## Конфигурация
 
@@ -251,10 +260,9 @@ git diff --check
 
 `pnpm lint` включает обязательную JSDoc-policy для production source:
 наличие комментариев у настроенных публичных классов и функций, непустые
-описания, корректные имена параметров и тегов, а также синтаксис JSDoc. Lint
-не проверяет естественный язык комментариев автоматически, поэтому смысл и
-русский текст проверяются на code review. Тестовые fixtures не входят в
-обязательное покрытие JSDoc.
+описания, корректные имена параметров и тегов, а также синтаксис JSDoc.
+Все комментарии к production-коду пишутся на русском языке. Тестовые
+fixtures не входят в обязательное покрытие JSDoc.
 
 ## Диагностика
 
