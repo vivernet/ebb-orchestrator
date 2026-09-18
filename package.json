@@ -12,7 +12,10 @@
     "lint": "eslint .",
     "build": "pnpm -r --if-present build",
     "server:build": "pnpm --filter @ebb-orchestrator/server build",
-    "web:build": "pnpm --filter @ebb-orchestrator/web build"
+    "web:build": "pnpm --filter @ebb-orchestrator/web build",
+    "hermes:setup": "node scripts/hermes-dev.mjs setup",
+    "hermes:check": "node scripts/hermes-dev.mjs check",
+    "hermes:execute": "node scripts/hermes-dev.mjs execute"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
