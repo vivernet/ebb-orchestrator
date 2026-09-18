@@ -1,6 +1,6 @@
-# Ebb AI Development Orchestrator
+# Ebb Orchestrator
 
-Ebb AI Development Orchestrator — локально запускаемый modular monolith для
+|Ebb Orchestrator — локально запускаемый modular monolith для
 управления разработкой через задачи, workflow, Git worktrees и агентские
 запуски. Проект хранит состояние в SQLite, использует Git как источник
 состояния рабочей копии и предоставляет Fastify API и React Web UI.

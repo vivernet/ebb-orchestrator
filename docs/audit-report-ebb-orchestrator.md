@@ -1,7 +1,7 @@
 # Итоговый отчёт по Ebb Orchestrator
 
 **Дата:** 2026-09-18  
-**Проект:** Ebb AI Development Orchestrator  
+**Проект:** Ebb Orchestrator  
 **Ветка аудита:** `audit/final-v1-hardening`
 
 ---
