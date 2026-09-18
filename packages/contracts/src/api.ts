@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+/** Схема агрегированных token/cost metrics для API и usage projections. */
 export const usageSummarySchema = z.object({
   inputTokens: z.number().int().nonnegative(),
   cachedTokens: z.number().int().nonnegative(),
@@ -8,10 +9,14 @@ export const usageSummarySchema = z.object({
   cost: z.number().nonnegative(),
 });
 
+/** Сводка использования runtime, включая стоимость в единицах каталога. */
 export type UsageSummary = z.infer<typeof usageSummarySchema>;
 
+/** Причина ожидания, пригодная для отображения и диагностики. */
 export interface WaitReason { code: string; message: string; details?: Record<string, string | number>; }
+/** Краткое представление активного агентского запуска. */
 export interface ActiveAgent { runId: string; role: string; taskId: string | null; status: string; }
+/** Снимок данных dashboard, собранный из авторитетных read models. */
 export interface DashboardProjection {
   activeAgents: ActiveAgent[];
   activeWork: Array<{ id: string; title: string; status: string; waitReason: WaitReason | null }>;
@@ -19,6 +24,7 @@ export interface DashboardProjection {
   usage: UsageSummary;
   projects: Array<{ id: string; name: string; displayName: string; status: string }>;
 }
+/** Состояние Git и optional GitHub-связи проекта. */
 export interface GitProjection {
   repositoryPath: string | null;
   branch: string | null;
@@ -26,6 +32,7 @@ export interface GitProjection {
   github: { status: string; url: string | null } | null;
   worktreePath: string | null;
 }
+/** Ссылка на approval в read model проекта или работы. */
 export interface ApprovalProjection { id: string; type: string; status: string; createdAt: string; }
 export interface EventProjection { id: string; type: string; createdAt: string; payload: unknown; }
 export interface DependencyProjection { id: string; taskId: string; dependsOnTaskId: string; type: string; status: string | null; }

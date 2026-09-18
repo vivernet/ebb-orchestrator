@@ -7,6 +7,9 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : 'unknown error';
 }
 
+/**
+ * Представляет пользовательский экран DashboardPage; авторитетные проверки выполняются backend.
+ */
 export default function DashboardPage() {
   const [projection, setProjection] = useState<DashboardProjection | null>(null);
   const [queue, setQueue] = useState<ExecutionQueueProjection | null>(null);

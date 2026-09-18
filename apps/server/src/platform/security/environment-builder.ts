@@ -12,6 +12,9 @@ export type BuildEnvOptions = {
   injected: Record<string, string>;
 };
 
+/**
+ * Реализует security boundary environment-builder; входные данные должны пройти предусмотренные проверки доверия.
+ */
 export class EnvironmentBuilder {
   /**
    * Get the base platform environment. Only minimal variables required for

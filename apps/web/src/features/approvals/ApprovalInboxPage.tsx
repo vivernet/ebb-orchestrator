@@ -43,6 +43,9 @@ const scopeMap: Record<string, Approval['scope']> = {
   RUN: 'run',
 };
 
+/**
+ * Представляет пользовательский экран ApprovalInboxPage; авторитетные проверки выполняются backend.
+ */
 export function mapApprovalRow(row: ApprovalRow): Approval {
   return {
     id: row.id,
@@ -60,6 +63,9 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'unknown error';
 }
 
+/**
+ * Представляет пользовательский экран ApprovalInboxPage; авторитетные проверки выполняются backend.
+ */
 export default function ApprovalInboxPage({ projectId }: ApprovalInboxProps) {
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [loading, setLoading] = useState(true);

@@ -7,12 +7,18 @@ export const DEFAULT_PLANNING_APPROVAL_POLICY: PlanningApprovalPolicy = {
   architecture_change: true,
 };
 
+/**
+ * Предоставляет публичный контракт модуля planning-policy для взаимодействия слоёв приложения.
+ */
 export function effectivePlanningApprovalPolicy(
   overrides: Partial<PlanningApprovalPolicy> = {},
 ): PlanningApprovalPolicy {
   return { ...DEFAULT_PLANNING_APPROVAL_POLICY, ...overrides };
 }
 
+/**
+ * Предоставляет публичный контракт модуля planning-policy для взаимодействия слоёв приложения.
+ */
 export function planningApprovalRequired(
   plan: Pick<PlanningPlanInput, "tasks" | "epic" | "architectureChange">,
   policy: Partial<PlanningApprovalPolicy> = {},

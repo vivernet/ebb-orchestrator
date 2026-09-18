@@ -80,8 +80,10 @@ Exported reusable components/hooks/services документировать ру�
 
 ```bash
 pnpm lint
-pnpm typecheck
 pnpm test
+pnpm --filter @ebb-orchestrator/web build
 ```
 
-А также web build/E2E commands, если они существуют в текущем `package.json`.
+Web package не имеет отдельного `typecheck` script: проверка TypeScript входит
+в `build` через `tsc -b`. E2E-команду выполнить дополнительно, если она нужна
+для изменённой области и окружение для неё доступно.

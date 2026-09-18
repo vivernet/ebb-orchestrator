@@ -11,10 +11,10 @@ import type {
 import { composeDecisions, getMatchingRules } from './permission-policy.js';
 
 /**
- * Permission Engine - evaluates actions against composed policies from multiple scopes.
- * Uses most-restrictive-wins composition.
- * - Unknown/unregistered Action IDs fail closed (return ABSOLUTE_DENY)
- * - ABSOLUTE_DENY cannot be weakened by more specific scopes
+ * Permission Engine — оценивает действия на основе композитных политик из нескольких scopes.
+ * Использует композицию «самое строгое решение побеждает».
+ * — Нераспознанные Action ID отвергаются (возвращается ABSOLUTE_DENY)
+ * — ABSOLUTE_DENY не может быть ослаблено более специфичными scopes
  */
 export class PermissionEngine {
   private readonly canonicalActions: Set<string>;
@@ -25,15 +25,19 @@ export class PermissionEngine {
   }
 
   /**
-   * Validate if an action ID is known/registered
+   * Проверяет, известен ли action ID (зарегистрирован в системе).
+   * @param action Идентификатор действия.
+   * @returns true, если действие зарегистрировано, иначе false.
    */
   isRegisteredAction(action: ActionId): boolean {
     return this.canonicalActions.has(action as string);
   }
 
   /**
-   * Evaluate action against composed policies from multiple scopes.
-   * Returns most-restrictive decision with reason and matched policy references.
+   * Оценивает действие на основе композитных политик из нескольких scopes.
+   * Возвращает самое строгое решение с обоснованием и ссылками на совпавшие правила.
+   * @param input Данные для оценки: действие и политики всех уровней.
+   * @returns Результат оценки: решение, причина и ссылки на правила.
    */
   evaluate(input: EvaluationInput): EvaluationResult {
     const { action, globalPolicy, projectPolicy, rolePolicy, taskPolicy } = input;
@@ -92,7 +96,10 @@ export class PermissionEngine {
   }
 
   /**
-   * Check if action is in the capability set for a run
+   * Проверяет, разрешено ли действие в наборе capabilities для выполнения.
+   * @param action Идентификатор действия.
+   * @param capabilities Список разрешённых действий.
+   * @returns true, если действие в списке capabilities, иначе false.
    */
   isActionPermitted(action: ActionId, capabilities: ActionId[]): boolean {
     return capabilities.includes(action);

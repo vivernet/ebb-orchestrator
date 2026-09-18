@@ -56,15 +56,18 @@ const migrations: Migration[] = readdirSync(migrationDir).filter((file) => file.
 });
 try {
    await lock.acquire();
- } catch (err) {
-   console.error(
-     `[orchestrator] ${err instanceof Error ? err.message : String(err)}`,
-   );
-   process.exit(1);
- }
+} catch (err) {
+  console.error(
+    `[orchestrator] ${err instanceof Error ? err.message : String(err)}`,
+  );
+  process.exit(1);
+}
 
- // Create the single production SchedulerService instance, shared everywhere.
- const scheduler = new SchedulerService(database);
+// Run migrations BEFORE creating any services that depend on tables.
+runMigrations(database, migrations);
+
+// Create the single production SchedulerService instance, shared everywhere.
+const scheduler = new SchedulerService(database);
 const runtime = new HermesRuntimeAdapter(new ProcessExecutor(), undefined, { databasePath: home.database });
 const workflowRegistry = new WorkflowRegistry();
 for (const template of Object.values(templates)) workflowRegistry.register(template);

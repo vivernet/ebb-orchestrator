@@ -14,6 +14,9 @@ export interface ProcessResult {
   stderr: string;
 }
 
+/**
+ * Предоставляет публичный контракт модуля process-executor для взаимодействия слоёв приложения.
+ */
 export class ExitCodeError extends Error {
   constructor(
     public readonly command: string,
@@ -26,6 +29,9 @@ export class ExitCodeError extends Error {
   }
 }
 
+/**
+ * Предоставляет публичный контракт модуля process-executor для взаимодействия слоёв приложения.
+ */
 export class ProcessExecutor {
   /**
    * Executes a process safely with shell: false to prevent shell injection.

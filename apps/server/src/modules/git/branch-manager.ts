@@ -20,6 +20,9 @@ export interface BranchRecord {
   removedAt: string | null;
 }
 
+/**
+ * Инкапсулирует операцию Git branch-manager с журналированием и проверкой целевого repository/worktree.
+ */
 export class BranchManager {
   private readonly git: GitCli;
   private readonly branchRepo: BranchRepository | null;

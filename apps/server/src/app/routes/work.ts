@@ -6,6 +6,9 @@ import type { SchedulerService } from "../../modules/scheduler/scheduler-service
 export interface WorkCommandService { pauseTask(taskId: string): unknown | Promise<unknown>; }
 export interface WorkRouteDeps { db?: Database | undefined; workService?: WorkCommandService | undefined; scheduler?: SchedulerService | undefined; }
 const emptyUsage = { inputTokens: 0, cachedTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 };
+/**
+ * Регистрирует HTTP-маршруты work и передаёт изменяющие состояние действия backend policy.
+ */
 export async function workRoutes(app: FastifyInstance, deps: WorkRouteDeps = {}): Promise<void> {
   const epicProjection = new EpicProjection(deps.db, deps.scheduler);
   const taskProjection = new TaskProjection(deps.db, deps.scheduler);

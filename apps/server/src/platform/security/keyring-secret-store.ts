@@ -8,6 +8,9 @@ import { createRequire } from 'node:module';
 import type { Database } from '../database/database.js';
 import type { SecretStore, StoreResult, SecretMetadata } from './secret-store.js';
 
+/**
+ * Реализует security boundary keyring-secret-store; входные данные должны пройти предусмотренные проверки доверия.
+ */
 export class KeyringSecretStore implements SecretStore {
   private keyring: { setPassword: (service: string, account: string, value: string) => Promise<void>; getPassword: (service: string, account: string) => Promise<string | undefined>; deletePassword: (service: string, account: string) => Promise<void>; } | undefined;
 

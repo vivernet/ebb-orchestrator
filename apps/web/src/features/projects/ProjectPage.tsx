@@ -6,6 +6,9 @@ interface ProjectPageProps {
   id: string;
 }
 
+/**
+ * Представляет пользовательский экран ProjectPage; авторитетные проверки выполняются backend.
+ */
 export default function ProjectPage({ id }: ProjectPageProps) {
   const [projection, setProjection] = useState<ProjectOverviewProjection | null>(null);
   useEffect(() => { void apiClient.get<ProjectOverviewProjection>(`/projects/${encodeURIComponent(id)}`).then(setProjection).catch(() => undefined); }, [id]);

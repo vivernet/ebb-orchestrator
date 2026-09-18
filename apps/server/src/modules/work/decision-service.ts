@@ -53,6 +53,9 @@ export interface DecisionCreateInput {
   readonly decidedBy: string;
 }
 
+/**
+ * Предоставляет публичный контракт модуля decision-service для взаимодействия слоёв приложения.
+ */
 export class DecisionService {
   constructor(private readonly db: Database) {}
 

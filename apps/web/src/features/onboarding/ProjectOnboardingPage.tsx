@@ -21,6 +21,9 @@ interface OnboardingProject {
   localModeEnabled: boolean;
 }
 
+/**
+ * Представляет пользовательский экран ProjectOnboardingPage; авторитетные проверки выполняются backend.
+ */
 export default function ProjectOnboardingPage({ id }: { id: string }) {
   const [data, setData] = useState<OnboardingProject | null>(null);
   const [error, setError] = useState<string | null>(null);

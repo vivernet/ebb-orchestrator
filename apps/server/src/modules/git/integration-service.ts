@@ -46,6 +46,9 @@ export interface IntegrationServiceOptions {
   integrationRunId?: string;
 }
 
+/**
+ * Инкапсулирует операцию Git integration-service с журналированием и проверкой целевого repository/worktree.
+ */
 export function getIntegrationProvenance(db: Database, attempt: IntegrationAttempt): VerifiedIntegrationProvenance | null {
   const row = db.get<{ id: string; source_branch: string; target_branch: string; repository_path: string; expected_target_sha: string; source_sha: string; worktree_path: string; status: IntegrationAttempt["status"]; created_at: string; integration_run_id: string | null }>("SELECT * FROM integration_attempts WHERE id = $id", { id: attempt.id });
   if (!row || row.status !== "MERGED" || attempt.status !== "MERGED" || !attempt.integrationRunId || row.integration_run_id !== attempt.integrationRunId || row.source_branch !== attempt.sourceBranch || row.target_branch !== attempt.currentTargetBranch || row.repository_path !== attempt.repoPath || row.expected_target_sha !== attempt.expectedTargetSha || row.source_sha !== attempt.sourceSha || row.worktree_path !== attempt.worktreePath || row.created_at !== attempt.createdAt) return null;

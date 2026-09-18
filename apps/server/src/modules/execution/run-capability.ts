@@ -30,6 +30,9 @@ export interface RunCapabilityDef {
   projectConfig?: ProjectConfig;
 }
 
+/**
+ * Предоставляет execution-контракт run-capability с проверкой capability перед побочным эффектом.
+ */
 export class RunCapability {
   private resolver: PathResolver;
   private gateway: ActionGateway;
@@ -38,7 +41,7 @@ export class RunCapability {
 
   constructor(public capability: RunCapabilityDef, private readonly revalidate?: () => void) {
     this.resolver = new PathResolver();
-    this.gateway = new ActionGateway(this.resolver, capability.workspace, capability.projectConfig);
+    this.gateway = new ActionGateway(this.resolver, capability.workspace, capability.allowedTools, capability.projectConfig);
     this.workspaceTools = new WorkspaceTools(this.resolver, capability.workspace);
     this.gitTools = capability.workspace ? new GitTools(capability.workspace) : null;
   }

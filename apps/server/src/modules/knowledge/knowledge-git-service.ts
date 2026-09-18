@@ -36,6 +36,9 @@ export interface CommitResult {
 
 // ── Service ─────────────────────────────────────────────────────────
 
+/**
+ * Предоставляет публичный контракт модуля knowledge-git-service для взаимодействия слоёв приложения.
+ */
 export class KnowledgeGitService {
   /**
    * Write approved knowledge changes to disk and commit them atomically.

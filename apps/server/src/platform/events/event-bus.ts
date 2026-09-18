@@ -12,6 +12,9 @@ export interface Subscription {
   readonly handler: EventHandler;
 }
 
+/**
+ * Предоставляет публичный контракт модуля event-bus для взаимодействия слоёв приложения.
+ */
 export class EventBus {
   private subscriptions: Subscription[] = [];
 

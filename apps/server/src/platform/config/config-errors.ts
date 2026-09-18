@@ -2,6 +2,9 @@
  * Error types for configuration validation.
  */
 
+/**
+ * Предоставляет публичный контракт модуля config-errors для взаимодействия слоёв приложения.
+ */
 export class ConfigValidationError extends Error {
   constructor(
     message: string,

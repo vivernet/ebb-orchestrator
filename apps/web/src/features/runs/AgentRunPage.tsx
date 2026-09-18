@@ -48,6 +48,9 @@ interface AgentRunPageProps {
   id: string;
 }
 
+/**
+ * Представляет пользовательский экран AgentRunPage; авторитетные проверки выполняются backend.
+ */
 export default function AgentRunPage({ id }: AgentRunPageProps) {
   const [run, setRun] = useState<AgentRun | null>(null);
   const [usage, setUsage] = useState<UsageRecord | null>(null);

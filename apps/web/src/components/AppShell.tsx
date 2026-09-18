@@ -1,5 +1,8 @@
 import { Outlet, NavLink } from 'react-router';
 
+/**
+ * Представляет пользовательский экран AppShell; авторитетные проверки выполняются backend.
+ */
 function AppShell() {
   return (
     <div className="app-shell">

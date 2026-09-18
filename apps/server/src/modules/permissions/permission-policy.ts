@@ -18,6 +18,9 @@ function decisionToRank(decision: PermissionDecision): number {
 }
 
 // Convert policy rule type to decision
+/**
+ * Предоставляет публичный контракт модуля permission-policy для взаимодействия слоёв приложения.
+ */
 export function ruleTypeToDecision(type: PolicyRuleType): PermissionDecision {
   switch (type) {
     case PolicyRuleType.Allow:

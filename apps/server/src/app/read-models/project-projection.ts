@@ -6,6 +6,9 @@ import { persistedGitState } from "./git-state.js";
 interface ProjectRow { id: string; name: string; display_name: string; status: string; }
 interface WorkRow { id: string; epic_id?: string | null; display_id: string; title: string; status: string; required: number; contract_json: string; }
 interface UsageRow { inputTokens: number; cachedTokens: number; outputTokens: number; totalTokens: number; cost: number; }
+/**
+ * Формирует read model project-projection из авторитетного состояния оркестрации для API и UI.
+ */
 export class ProjectProjection {
   constructor(private readonly db?: Database, private readonly scheduler?: SchedulerService) {}
   get(id: string): ProjectOverviewProjection | undefined {

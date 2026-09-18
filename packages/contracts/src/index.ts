@@ -1,3 +1,4 @@
+/** Стабильное имя системы для общих контрактов и диагностик. */
 export const SYSTEM_NAME = "ebb-orchestrator" as const;
 
 export * from "./agent-run.js";

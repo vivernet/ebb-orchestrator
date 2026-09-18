@@ -14,6 +14,9 @@ export interface StartupReport {
   errors: Error[];
 }
 
+/**
+ * Предоставляет публичный контракт модуля startup-reconciler для взаимодействия слоёв приложения.
+ */
 export class StartupReconciler {
   private readonly reconcilers: Array<() => Promise<void>> = [];
   private gitReconciler: GitReconciler | null = null;

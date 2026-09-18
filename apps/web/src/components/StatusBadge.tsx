@@ -3,6 +3,9 @@ interface StatusBadgeProps {
   variant?: 'default' | 'success' | 'warning' | 'error';
 }
 
+/**
+ * Представляет пользовательский экран StatusBadge; авторитетные проверки выполняются backend.
+ */
 export default function StatusBadge({ status, variant = 'default' }: StatusBadgeProps) {
   const variants = {
     default: { bg: '#404040', text: '#e5e5e5' },

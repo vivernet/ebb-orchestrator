@@ -34,17 +34,15 @@ interface TaskRow {
   created_at: string;
 }
 
+/**\n * Сервис планировщика — координирует планирование задач и оценку элигибельности.\n *\n * Использует единственный production-экземпляр, разделяемый всеми runtime-компонентами.\n * Единый долговечный authority для элигибельности/резервирований применяется ко ВСЕМ ролям\n * с точным контролем capacity для каждой роли.\n */
 /**
- * Scheduler service - coordinates task scheduling and eligibility evaluation.
  *
- * Uses a single production instance shared by all runtime components.
- * One durable eligibility/reservation authority applies to ALL roles
- * with precise per-role capacity enforcement.
  */
 export class SchedulerService {
+  /** Приватный сервис блокировок для управления ресурсами. */
   private readonly lockService: ResourceLockService;
 
-  /** The supported schema version range for scheduler configuration. */
+  /** Диапазон поддерживаемых версий схемы конфигурации планировщика. */
   static readonly SUPPORTED_SCHEME_VERSIONS = SUPPORTED_SCHEME_VERSIONS;
   static readonly DEFAULT_SCHEME_VERSION = DEFAULT_SCHEME_VERSION;
   static readonly ALL_ROLES = ALL_ROLES;
@@ -96,18 +94,12 @@ export class SchedulerService {
     }
   }
 
-  /**
-   * Get the resource lock service for external use.
-   */
+  /**\n   * Возвращает сервис блокировок ресурсов для внешнего использования.\n   */
   get resourceLockService(): ResourceLockService {
     return this.lockService;
   }
 
-  /**
-   * Recalculate eligibility for all active tasks (optionally scoped to a project).
-   *
-   * Results are deterministic - same state always produces same ordering.
-   */
+  /**\n   * Пересчитывает элигибельность для всех активных задач (опционально в пределах проекта).\n   *\n   * Результаты детерминированы — одно и то же состояние всегда даёт одинаковый порядок.\n   */
   recalculate(scope?: { projectId: string }): RecalculateResult {
     // Get all tasks (filtered by scope if provided)
     const tasks = this.getSchedulableTasks(scope);
@@ -214,14 +206,14 @@ export class SchedulerService {
     };
   }
 
-  /** Validate that the persisted schema version is within the supported range. */
+  /** Проверяет, что сохранённая версия схемы находится в поддерживаемом диапазоне. */
   private validateSchemaVersion(schemaVersion: number): void {
     if (!SchedulerService.SUPPORTED_SCHEME_VERSIONS.has(schemaVersion)) {
       throw new Error(`unsupported scheduler configuration schema version: ${schemaVersion}`);
     }
   }
 
-  /** Read and validate the persisted scheduler configuration. Fail-closed on any issue. */
+  /** Считывает и валидирует сохранённую конфигурацию планировщика. При любой проблеме — fail-closed. */
   private getPersistedConfig(): { schema_version: number; config_json: string } {
     const row = this.db.get<{ schema_version: number; config_json: string }>("SELECT schema_version,config_json FROM scheduler_config WHERE id=1");
     if (!row) throw new Error("missing persisted scheduler configuration");
@@ -229,7 +221,7 @@ export class SchedulerService {
     return row;
   }
 
-  /** Parse and validate the config JSON, failing closed on any issue. */
+  /** Парсит и валидирует JSON конфигурации, при любой проблеме — fail-closed. */
   private parseConfig(config_json: string): { globalMax: number; projectMax: number; roleCapacity: Record<string, number> } {
     let raw: { globalMax?: unknown; projectMax?: unknown; roleCapacity?: Record<string, unknown>; projects?: Record<string, { projectMax?: unknown }> };
     try { raw = JSON.parse(config_json) as typeof raw; } catch { throw new Error("malformed persisted scheduler configuration"); }
@@ -251,7 +243,7 @@ export class SchedulerService {
     return { globalMax: raw.globalMax, projectMax: raw.projectMax, roleCapacity };
   }
 
-  /** Read the durable scheduler configuration. Fail-closed on any issue. */
+  /** Считывает долговечную конфигурацию планировщика. При любой проблеме — fail-closed. */
   getLimits(_projectId?: string): SchedulerLimits {
     const persisted = this.getPersistedConfig();
     const value = this.parseConfig(persisted.config_json);
@@ -314,9 +306,7 @@ export class SchedulerService {
     return this.getConfig();
   }
 
-  /**
-   * Get all schedulable tasks, optionally scoped to a project.
-   */
+  /**\n   * Считывает все планируемые задачи, опционально в пределах проекта.\n   */
   private getSchedulableTasks(
     scope?: { projectId: string },
   ): SchedulableTask[] {
@@ -330,9 +320,7 @@ export class SchedulerService {
     return rows.map((row) => this.toSchedulableTask(row, this.db));
   }
 
-  /**
-   * Get eligibility for a single task.
-   */
+  /**\n   * Возвращает элигибельность для отдельной задачи.\n   */
 getEligibility(taskId: string, scope?: { projectId: string }): Eligibility {
      const result = this.recalculate(scope);
      const runnable = result.runnables.some((task) => task.id === taskId);
@@ -343,16 +331,14 @@ getEligibility(taskId: string, scope?: { projectId: string }): Eligibility {
      return blocked ? { status: "BLOCK", reason: blocked.reason } : { status: "BLOCK", reason: "BLOCKED_BY_WORKFLOW" };
    }
 
-   /** Get the wait reason for a task, or null if not waiting. */
+   /** Возвращает причину ожидания для задачи или null, если задача не ожидает. */
    getWaitReason(taskId: string): string | null {
      const result = this.recalculate();
      const waiting = result.waiting.find((entry) => entry.task.id === taskId);
      return waiting ? waiting.reason : null;
    }
 
-   /**
-    * Get current capacity usage.
-    */
+   /**\n    * Возвращает текущее использование capacity.\n    */
   getCapacityUsage(projectId?: string): {
     running: number;
     globalMax: number;
@@ -375,10 +361,7 @@ getEligibility(taskId: string, scope?: { projectId: string }): Eligibility {
     };
   }
 
-  /**
-   * Start workflow runs for eligible tasks.
-   * Returns the list of tasks that were started.
-   */
+  /**\n   * Запускает workflow runs для элигибельных задач.\n   * Возвращает список запущенных задач.\n   */
   startWorkflowRuns(
     workflowEngine: WorkflowEngine,
     onWorkflowRunStarted: (taskId: string, triggerReason: string) => void,
@@ -418,7 +401,7 @@ getEligibility(taskId: string, scope?: { projectId: string }): Eligibility {
     return { startedTaskIds, skipped };
   }
 
-  /** Authoritative single-task dispatch used by durable workflow recovery. */
+  /** Авторитетный dispatch отдельной задачи, используемый при долговечном восстановлении workflow. */
   dispatchTask(
     taskId: string,
     workflowEngine: WorkflowEngine,
@@ -486,7 +469,7 @@ getEligibility(taskId: string, scope?: { projectId: string }): Eligibility {
     onWorkflowRunStarted(taskId, triggerReason);
   }
 
-  /** Reserve a non-task AI phase through the same budget/capacity authority. */
+  /** Резервирует non-task AI phase через тот же authority для budget/capacity. */
   dispatchAgentRun(runId: string, projectId: string, role: string, model: string, resourceKey = `run:${runId}`, options: { approvalId?: string } = {}): void {
     this.db.transaction((tx) => {
       const existing = tx.get<{ status: string; run_id: string | null }>("SELECT status,run_id FROM scheduler_reservations WHERE subject_id=$runId", { runId });
@@ -520,7 +503,7 @@ getEligibility(taskId: string, scope?: { projectId: string }): Eligibility {
     });
   }
 
-  /** Reconcile a phase reservation against this exact AgentRun. */
+  /** Сводит phase reservation с конкретным AgentRun. */
   releaseAgentRun(runId: string, actualCost: number): ReservationReleaseResult {
     return this.db.transaction((tx) => {
       const reservation = tx.get<{ id: string; project_id: string; estimate_cost: number; role: string; model: string; owner_id: string }>("SELECT id,project_id,estimate_cost,role,model,owner_id FROM scheduler_reservations WHERE status='RESERVED' AND run_id=$runId LIMIT 1", { runId });
@@ -536,7 +519,7 @@ getEligibility(taskId: string, scope?: { projectId: string }): Eligibility {
     });
   }
 
-  /** Release a reservation only after the persisted run has reached a terminal state. */
+  /** Освобождает резервацию только после того, как сохранённый run достигнет terminal state. */
   releaseTask(taskId: string, actualCost = 0): ReservationReleaseResult {
     return this.db.transaction((tx) => {
       const reservation = tx.get<{ id: string; project_id: string; estimate_cost: number; owner_id: string }>("SELECT id,project_id,estimate_cost,owner_id FROM scheduler_reservations WHERE subject_id=$taskId AND status='RESERVED'", { taskId });
@@ -553,7 +536,7 @@ getEligibility(taskId: string, scope?: { projectId: string }): Eligibility {
     });
   }
 
-  /** Reconcile reservations and locks after a crash or interrupted run. */
+  /** Сводит резервации и блокировки после краша или прерванного run. */
   reconcile(): SchedulerReconciliationResult {
     if (!this.db.get<{ name: string }>("SELECT name FROM sqlite_master WHERE type='table' AND name='agent_runs'")) return { releasedReservationIds: [], blockedReservationIds: [] };
     return this.db.transaction((tx) => {
@@ -630,7 +613,7 @@ getEligibility(taskId: string, scope?: { projectId: string }): Eligibility {
     return this.db.get<{ count: number }>(`SELECT COUNT(*) AS count FROM scheduler_reservations WHERE ${clauses.join(" AND ")}`, params)?.count ?? 0;
   }
 
-  /** The only eligibility implementation. It reads durable state, never hints. */
+  /** Единственная реализация элигибельности. Считывает долговечное состояние, никогда не подсказывает. */
   private evaluateEligibility(task: SchedulableTask, activeTasks: SchedulableTask[]): Eligibility {
     return this.evaluateEligibilityTx(this.db, task, activeTasks);
   }
@@ -715,7 +698,7 @@ getEligibility(taskId: string, scope?: { projectId: string }): Eligibility {
 
 }
 
-/** Periodic safety reconciliation for the single production scheduler. */
+/** Периодическая безопасная рекоилиляция для единственного production планировщика. */
 export class SchedulerSafetyWorker {
   private timer: ReturnType<typeof setInterval> | undefined;
 
@@ -734,9 +717,7 @@ export class SchedulerSafetyWorker {
   }
 }
 
-/**
- * Check if status is terminal.
- */
+/**\n * Проверяет, является ли статус терминальным.\n */
 function isTerminalStatus(status: string): boolean {
   return status === "DONE" || status === "CANCELLED" || status === "FAILED" ||
     status === "INTEGRATED_INTO_EPIC" || status === "RELEASED";
@@ -745,9 +726,7 @@ function isTerminalStatus(status: string): boolean {
 /**
  * Check if task needs budget placeholder.
  */
-/**
- * Compare priorities - returns negative if a is higher priority.
- */
+/**\n * Сравнивает приоритеты — возвращает отрицательное число, если a имеет более высокий приоритет.\n */
 function comparePriority(a: Priority, b: Priority): number {
   const order: Record<Priority, number> = {
     Critical: 0,

@@ -26,6 +26,9 @@ export const displayStageForLifecycle = (lifecycle: string): string | null => {
   return null;
 };
 
+/**
+ * Представляет пользовательский экран WorkflowTimeline; авторитетные проверки выполняются backend.
+ */
 export default function WorkflowTimeline({ stages, currentStage }: WorkflowTimelineProps) {
   const rawStage = currentStage?.toUpperCase();
   const normalizedStage = rawStage && stages.includes(rawStage)
