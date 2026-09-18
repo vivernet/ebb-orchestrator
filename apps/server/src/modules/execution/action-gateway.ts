@@ -7,7 +7,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { ProjectActions, type ProjectConfig, type ActionResult } from './project-actions.js';
 import { PermissionEngine } from '../permissions/permission-engine.js';
-import { ActionId } from '../permissions/permission-types.js';
+import { ActionId, PermissionDecision, type EvaluationInput } from '../permissions/permission-types.js';
 
 export type FilePatch = { start: number; end: number; content: string };
 export type FilePatchResult = { success: boolean; error?: string };
@@ -30,18 +30,19 @@ export class ActionGateway {
 
   private readonly projectActions: ProjectActions | null;
 
-  /**\
+  /**
    * Проверяет разрешение на выполнение действия через PermissionEngine.
    * @param actionId Идентификатор действия.
    * @returns true если действие разрешено, иначе false.
    */
   private checkPermission(actionId: ActionId): boolean {
-    // If no capabilities are specified, allow all actions (backward compatibility)
-    if (!this.capabilities || this.capabilities.length === 0) {
-      return true;
-    }
-    // Check if action is in capabilities list (basic access control)
-    return this.capabilities.includes(actionId);
+    // Use PermissionEngine for policy evaluation
+    const input: EvaluationInput = {
+      capability: (this.capabilities || []) as ActionId[],
+      action: actionId,
+    };
+    const result = this.permissionEngine.evaluate(input);
+    return result.decision === PermissionDecision.ALLOW;
   }
 
   async test(): Promise<ActionResult> {

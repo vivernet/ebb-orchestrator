@@ -40,7 +40,7 @@ export class PermissionEngine {
    * @returns Результат оценки: решение, причина и ссылки на правила.
    */
   evaluate(input: EvaluationInput): EvaluationResult {
-    const { action, globalPolicy, projectPolicy, rolePolicy, taskPolicy } = input;
+    const { action, capability, globalPolicy, projectPolicy, rolePolicy, taskPolicy } = input;
 
     // Unknown/unregistered Action IDs must fail closed
     if (!this.isRegisteredAction(action)) {
@@ -54,8 +54,16 @@ export class PermissionEngine {
     // Get all matching rules from all policy scopes
     const allMatchingRules = getMatchingRules(action, globalPolicy, projectPolicy, rolePolicy, taskPolicy);
 
-    // If no rules match, default to DENY (fail closed)
+    // If no policy rules match, fall back to capability check
     if (allMatchingRules.length === 0) {
+      // Check if action is in capability list (for ActionGateway compatibility)
+      if (capability && capability.includes(action)) {
+        return {
+          decision: PermissionDecision.ALLOW,
+          reason: `Action ${action} is in capability list.`,
+          matchedPolicyRefs: [],
+        };
+      }
       return {
         decision: PermissionDecision.DENY,
         reason: `No policy rules match action: ${action}. Default deny applies.`,

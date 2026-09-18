@@ -90,7 +90,7 @@ class AcceptanceWorkflow {
   async developer(): Promise<WorktreeRecord> {
     this.workflow.transition(this.taskId, "DEVELOPMENT");
     const worktree = await this.worktrees.createTaskWorkspace(this.taskId, this.repoPath, "master");
-    const workspace = new ActionGateway(new PathResolver(), worktree.path);
+    const workspace = new ActionGateway(new PathResolver(), worktree.path, ['workspace.read', 'workspace.patch']);
     const existing = await workspace.readFile("src/server.js");
     expect(existing.success).toBe(true);
     const write = await workspace.patch("src/server.js", [{ start: 0, end: existing.content?.length ?? 0, content: `import http from "http";\nimport { pathToFileURL } from "node:url";\n\nconst server = http.createServer((req, res) => {\n  if (req.method === "GET" && req.url === "/health") {\n    res.writeHead(200, { "Content-Type": "application/json" });\n    res.end(JSON.stringify({ status: "ok" }));\n    return;\n  }\n  res.writeHead(404);\n  res.end("Not Found");\n});\n\nif (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) server.listen(process.env.PORT || 3000);\nexport default server;\n` }]);

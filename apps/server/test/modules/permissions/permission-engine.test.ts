@@ -21,15 +21,15 @@ interface TestCase {
 }
 
 const testCases: TestCase[] = [
-  // Test 1: No policies, action is registered -> should default to DENY
+  // Test 1: No policies, action is in capability -> should ALLOW (capability-based access control)
   {
-    name: 'should deny when no policies match a registered action',
+    name: 'should allow when action is in capability list',
     input: {
       capability: [ActionId.WorkspaceRead],
       action: ActionId.WorkspaceRead,
     },
-    expectedDecision: PermissionDecision.DENY,
-    expectedReasonContains: 'Default deny',
+    expectedDecision: PermissionDecision.ALLOW,
+    expectedReasonContains: 'capability',
     expectedMatchedRefsCount: 0,
   },
 
