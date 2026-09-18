@@ -195,7 +195,7 @@ git commit -m "feat: expose capability-bound orchestrator mcp"
 Проверить сгенерированное окружение:
 
 ```text
-HERMES_HOME=<ORCHESTRATOR_HOME>/runtime/hermes
+HERMES_HOME=<EBB_ORCHESTRATOR_HOME>/runtime/hermes
 HOME=<HERMES_HOME>/home for tool subprocess isolation
 no GITHUB_TOKEN
 no SSH_AUTH_SOCK

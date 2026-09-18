@@ -21,7 +21,7 @@ function defaultMcpLauncher(): { command: string; args: string[] } {
  * Orchestrator home directory.
  */
 export function getOrchestratorHome(): string {
-  return process.env.ORCHESTRATOR_HOME ?? path.join(os.homedir(), ".orchestrator");
+  return process.env.EBB_ORCHESTRATOR_HOME ?? path.join(os.homedir(), ".ebb-orchestrator");
 }
 
 /**

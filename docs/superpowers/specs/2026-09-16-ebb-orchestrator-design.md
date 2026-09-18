@@ -1370,7 +1370,7 @@ Backend защищён single-instance lock. Worker leases дополнител�
 ## 20.1. Версионируемое состояние репозитория
 
 ```text
-<repo>/.orchestrator/
+<repo>/.ebb-orchestrator/
 ```
 
 Здесь project config, workflows, Guidelines, Decisions.
@@ -1378,8 +1378,8 @@ Backend защищён single-instance lock. Worker leases дополнител�
 ## 20.2. Локальное постоянное состояние и состояние среды выполнения
 
 ```text
-~/.orchestrator/
-├── orchestrator.db
+~/.ebb-orchestrator/
+├── ebb-orchestrator.db
 ├── artifacts/
 ├── runtime/
 ├── logs/
@@ -1451,7 +1451,7 @@ Secrets в repository config указываются только как logical 
 
 Artifact paths по возможности хранятся относительно Orchestrator home. Artifact/config writes выполняются atomically через temp + rename/verification.
 
-Изменения `.orchestrator/` должны коммититься как отдельные понятные Git operations, а не случайно смешиваться с кодом Developer.
+Изменения `.ebb-orchestrator/` должны коммититься как отдельные понятные Git operations, а не случайно смешиваться с кодом Developer.
 
 ---
 

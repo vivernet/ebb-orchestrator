@@ -40,15 +40,15 @@ async function main() {
   const args = parseArgs();
 
   // Get capability from environment or args
-  const capabilityRef = args.capabilityRef || process.env.ORCHESTRATOR_CAPABILITY_REF;
-  const resultFile = args.resultFile || process.env.ORCHESTRATOR_RESULT_FILE;
+  const capabilityRef = args.capabilityRef || process.env.EBB_ORCHESTRATOR_CAPABILITY_REF;
+  const resultFile = args.resultFile || process.env.EBB_ORCHESTRATOR_RESULT_FILE;
 
   if (!capabilityRef) {
     console.error('Error: orchestrator-issued capability reference required');
     process.exit(1);
   }
-  const databasePath = args.database ?? process.env.ORCHESTRATOR_DATABASE;
-  if (!databasePath) throw new Error('orchestrator database is required');
+  const databasePath = args.database ?? process.env.EBB_ORCHESTRATOR_DATABASE;
+  if (!databasePath) throw new Error('ebb-orchestrator database is required');
   const db = createSqliteDatabase(databasePath);
   const capability = loadValidatedCapability(db, capabilityRef);
 

@@ -2,13 +2,13 @@ import { describe, expect, it } from "vitest";
 import { resolveOrchestratorHome } from "../../../src/platform/home/orchestrator-home.js";
 
 describe("resolveOrchestratorHome", () => {
-  it("resolves an explicit ORCHESTRATOR_HOME", () => {
+  it("resolves an explicit EBB_ORCHESTRATOR_HOME", () => {
     const paths = resolveOrchestratorHome(
-      { ORCHESTRATOR_HOME: "/tmp/orch" },
+      { EBB_ORCHESTRATOR_HOME: "/tmp/orch" },
       "linux",
     );
     expect(paths.root).toBe("/tmp/orch");
-    expect(paths.database).toBe("/tmp/orch/orchestrator.db");
+    expect(paths.database).toBe("/tmp/orch/ebb-orchestrator.db");
     expect(paths.artifacts).toBe("/tmp/orch/artifacts");
     expect(paths.runtime).toBe("/tmp/orch/runtime");
     expect(paths.logs).toBe("/tmp/orch/logs");
@@ -18,9 +18,9 @@ describe("resolveOrchestratorHome", () => {
 
   it("resolves default home on linux", () => {
     const paths = resolveOrchestratorHome({ HOME: "/home/user" }, "linux");
-    expect(paths.root).toBe("/home/user/.orchestrator");
-    expect(paths.database).toBe("/home/user/.orchestrator/orchestrator.db");
-    expect(paths.artifacts).toBe("/home/user/.orchestrator/artifacts");
+    expect(paths.root).toBe("/home/user/.ebb-orchestrator");
+    expect(paths.database).toBe("/home/user/.ebb-orchestrator/ebb-orchestrator.db");
+    expect(paths.artifacts).toBe("/home/user/.ebb-orchestrator/artifacts");
   });
 
   it("resolves default home on win32 using USERPROFILE", () => {
@@ -28,22 +28,22 @@ describe("resolveOrchestratorHome", () => {
       { USERPROFILE: "C:\\Users\\test" },
       "win32",
     );
-    expect(paths.root).toBe("C:\\Users\\test\\.orchestrator");
-    expect(paths.database).toBe("C:\\Users\\test\\.orchestrator\\orchestrator.db");
-    expect(paths.artifacts).toBe("C:\\Users\\test\\.orchestrator\\artifacts");
-    expect(paths.runtime).toBe("C:\\Users\\test\\.orchestrator\\runtime");
-    expect(paths.logs).toBe("C:\\Users\\test\\.orchestrator\\logs");
+    expect(paths.root).toBe("C:\\Users\\test\\.ebb-orchestrator");
+    expect(paths.database).toBe("C:\\Users\\test\\.ebb-orchestrator\\ebb-orchestrator.db");
+    expect(paths.artifacts).toBe("C:\\Users\\test\\.ebb-orchestrator\\artifacts");
+    expect(paths.runtime).toBe("C:\\Users\\test\\.ebb-orchestrator\\runtime");
+    expect(paths.logs).toBe("C:\\Users\\test\\.ebb-orchestrator\\logs");
   });
 
   it("resolves default home on darwin", () => {
     const paths = resolveOrchestratorHome({ HOME: "/Users/alice" }, "darwin");
-    expect(paths.root).toBe("/Users/alice/.orchestrator");
-    expect(paths.database).toBe("/Users/alice/.orchestrator/orchestrator.db");
+    expect(paths.root).toBe("/Users/alice/.ebb-orchestrator");
+    expect(paths.database).toBe("/Users/alice/.ebb-orchestrator/ebb-orchestrator.db");
   });
 
   it("returns typed OrchestratorHomePaths", () => {
     const paths = resolveOrchestratorHome(
-      { ORCHESTRATOR_HOME: "/x" },
+      { EBB_ORCHESTRATOR_HOME: "/x" },
       "linux",
     );
     // Verify all expected keys are present

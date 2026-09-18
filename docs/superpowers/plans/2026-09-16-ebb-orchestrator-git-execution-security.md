@@ -128,7 +128,7 @@ git commit -m "feat: add deterministic repository discovery"
 ```text
 standalone task branches from current master
 Epic child branches from current epic branch
-managed worktree appears outside source repo in ORCHESTRATOR_HOME/worktrees
+managed worktree appears outside source repo in EBB_ORCHESTRATOR_HOME/worktrees
 failed verification leaves GitOperation STARTED for reconciliation
 ```
 

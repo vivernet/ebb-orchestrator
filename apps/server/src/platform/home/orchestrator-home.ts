@@ -2,8 +2,8 @@
  * Resolves the orchestrator home directory and its well-known subpaths.
  *
  * Precedence:
- * 1. `ORCHESTRATOR_HOME` env var (explicit override)
- * 2. `~/.orchestrator/` (platform-appropriate default)
+ * 1. `EBB_ORCHESTRATOR_HOME` env var (explicit override)
+ * 2. `~/.ebb-orchestrator/` (platform-appropriate default)
  */
 
 import { join, posix } from "node:path";
@@ -32,10 +32,10 @@ export interface OrchestratorHomePaths {
  * Only the relevant keys are accessed.
  */
 export interface HomeEnv {
-  ORCHESTRATOR_HOME?: string;
-  /** Used as fallback on Windows when ORCHESTRATOR_HOME is not set. */
+  EBB_ORCHESTRATOR_HOME?: string;
+  /** Used as fallback on Windows when EBB_ORCHESTRATOR_HOME is not set. */
   USERPROFILE?: string;
-  /** Used as fallback on POSIX when ORCHESTRATOR_HOME is not set. */
+  /** Used as fallback on POSIX when EBB_ORCHESTRATOR_HOME is not set. */
   HOME?: string;
 }
 
@@ -52,8 +52,8 @@ function resolveHomeRoot(
   platform: Platform,
   joinFn: (a: string, b: string) => string,
 ): string {
-  if (env.ORCHESTRATOR_HOME) {
-    return env.ORCHESTRATOR_HOME;
+  if (env.EBB_ORCHESTRATOR_HOME) {
+    return env.EBB_ORCHESTRATOR_HOME;
   }
 
   const homeBase = platform === "win32" ? env.USERPROFILE : env.HOME;
@@ -61,11 +61,11 @@ function resolveHomeRoot(
   if (!homeBase) {
     throw new Error(
       `Cannot determine home directory on ${platform}. ` +
-        `Set ORCHESTRATOR_HOME or ensure the platform home env var is available.`,
+        `Set EBB_ORCHESTRATOR_HOME or ensure the platform home env var is available.`,
     );
   }
 
-  return joinFn(homeBase, ".orchestrator");
+  return joinFn(homeBase, ".ebb-orchestrator");
 }
 
 /**
@@ -80,7 +80,7 @@ export function resolveOrchestratorHome(
 
   return {
     root,
-    database: joinFn(root, "orchestrator.db"),
+    database: joinFn(root, "ebb-orchestrator.db"),
     artifacts: joinFn(root, "artifacts"),
     runtime: joinFn(root, "runtime"),
     logs: joinFn(root, "logs"),

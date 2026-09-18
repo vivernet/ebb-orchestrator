@@ -16,7 +16,7 @@
 - SQLite: WAL, foreign keys ON, busy timeout; workers не стартуют до migrations и startup reconciliation.
 - Durable event delivery at-least-once; consumers обязаны быть idempotent.
 - Persistent formats имеют явный `schema_version`.
-- Artifact paths в БД относительны `ORCHESTRATOR_HOME`.
+- Artifact paths в БД относительны `EBB_ORCHESTRATOR_HOME`.
 - Никаких AI/LLM вызовов в этом плане.
 
 ---
@@ -233,8 +233,8 @@ git commit -m "chore: bootstrap orchestrator workspace"
 - [ ] **Шаг 1: Написать не проходящие тесты для paths и неизвестных ключей конфигурации**
 
 ```ts
-it("resolves an explicit ORCHESTRATOR_HOME", () => {
-  const paths = resolveOrchestratorHome({ ORCHESTRATOR_HOME: "/tmp/orch" }, "linux");
+it("resolves an explicit EBB_ORCHESTRATOR_HOME", () => {
+  const paths = resolveOrchestratorHome({ EBB_ORCHESTRATOR_HOME: "/tmp/orch" }, "linux");
   expect(paths.database).toBe("/tmp/orch/orchestrator.db");
   expect(paths.artifacts).toBe("/tmp/orch/artifacts");
 });

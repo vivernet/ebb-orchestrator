@@ -18,7 +18,7 @@ describe("Hermes profile isolation", () => {
     originalEnv = { ...process.env };
     
     // Set up test environment
-    process.env.ORCHESTRATOR_HOME = "/test/orchestrator";
+    process.env.EBB_ORCHESTRATOR_HOME = "/test/orchestrator";
     process.env.GITHUB_TOKEN = "ghp_sensitive_token";
     process.env.SSH_AUTH_SOCK = "/tmp/ssh-agent";
     process.env.HERMES_PROFILE = "personal_profile";
@@ -35,10 +35,10 @@ describe("Hermes profile isolation", () => {
       expect(home).toBe("/test/orchestrator");
     });
 
-    it("falls back to ~/.orchestrator when not set", () => {
-      delete process.env.ORCHESTRATOR_HOME;
+    it("falls back to ~/.ebb-orchestrator when not set", () => {
+      delete process.env.EBB_ORCHESTRATOR_HOME;
       const home = getOrchestratorHome();
-      expect(home).toBe(path.join(os.homedir(), ".orchestrator"));
+      expect(home).toBe(path.join(os.homedir(), ".ebb-orchestrator"));
     });
   });
 
