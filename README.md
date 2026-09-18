@@ -1,6 +1,6 @@
 # Ebb Orchestrator
 
-|Ebb Orchestrator — локально запускаемый modular monolith для
+Ebb Orchestrator — локально запускаемый modular monolith для
 управления разработкой через задачи, workflow, Git worktrees и агентские
 запуски. Проект хранит состояние в SQLite, использует Git как источник
 состояния рабочей копии и предоставляет Fastify API и React Web UI.
@@ -199,24 +199,24 @@ guards. Merge/reconciliation не должны объявлять SQLite и ра
 
 ## Конфигурация
 
-`ORCHESTRATOR_HOME` имеет приоритет над платформенным home и определяет каталог
+`EBB_ORCHESTRATOR_HOME` имеет приоритет над платформенным home и определяет каталог
 локального состояния. `PORT` задаёт порт backend и по умолчанию равен `3000`.
 Runtime использует `HERMES_HOME`, `HERMES_CONFIG` и разрешённые runtime keys,
 которые формирует адаптер; профиль не должен наследовать произвольное
-окружение процесса. Для MCP также поддерживаются `ORCHESTRATOR_CAPABILITY_REF`,
-`ORCHESTRATOR_RESULT_FILE` и `ORCHESTRATOR_DATABASE` согласно CLI-коду.
+окружение процесса. Для MCP также поддерживаются `EBB_ORCHESTRATOR_CAPABILITY_REF`,
+EBB_ORCHESTRATOR_RESULT_FILE` и `EBB_ORCHESTRATOR_DATABASE` согласно CLI-коду.
 
 Не добавляйте обычные настройки в `.env` вместо конфигурации и не передавайте
 секреты через публичные примеры.
 
 ## Локальные данные
 
-По умолчанию используется `~/.orchestrator` (на Windows — каталог из
-`USERPROFILE`), либо значение `ORCHESTRATOR_HOME`. Внутри создаются:
+По умолчанию используется `~/.ebb-orchestrator` (на Windows — каталог из
+`USERPROFILE`), либо значение `EBB_ORCHESTRATOR_HOME`. Внутри создаются:
 
 ```text
-.orchestrator/
-├── orchestrator.db
+.ebb-orchestrator/
+├── ebb-orchestrator.db
 ├── artifacts/
 ├── runtime/
 ├── logs/
@@ -257,7 +257,7 @@ git diff --check
 
 ## Диагностика
 
-- Если сервер не запускается, проверьте `ORCHESTRATOR_HOME`, наличие прав на
+- Если сервер не запускается, проверьте `EBB_ORCHESTRATOR_HOME`, наличие прав на
   каталог, занятый single-instance lock и доступность `PORT`.
 - Если состояние осталось в `RECOVERING`, исследуйте migrations,
   reconciliation, outbox/jobs и журналы в `logs/`.
@@ -292,8 +292,3 @@ workflow, permissions, Git, persistence или runtime добавляйте те
 Не изменяйте runtime ради прохождения lint, не добавляйте blanket excludes и не
 выдумывайте контракт, которого нет в реализации. Перед отправкой изменений
 запускайте lint, typecheck, test, Web build и `git diff --check`.
-
-## Лицензия
-
-В репозитории не найден файл лицензии; отдельная лицензия этим README не
-заявляется.
