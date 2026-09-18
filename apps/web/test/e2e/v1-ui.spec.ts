@@ -27,7 +27,22 @@ test('v1 UI renders a completed task and approves a pending merge', async ({ pag
       return;
     }
     if (url.pathname.endsWith('/approvals')) {
-      await route.fulfill({ json: [{ id: 'approval-1', scope: 'task', action: 'FINAL_MERGE', description: 'Merge task-1', requestedBy: 'orchestrator', context: 'task-1', status: 'pending', createdAt: new Date().toISOString() }] });
+      await route.fulfill({
+        json: {
+          approvals: [{
+            id: 'approval-1',
+            type: 'FINAL_MERGE',
+            subject_type: 'task',
+            subject_id: 'task-1',
+            status: 'PENDING',
+            requested_by: 'orchestrator',
+            resolved_by: null,
+            resolution_note: '',
+            created_at: new Date().toISOString(),
+            resolved_at: null
+          }]
+        }
+      });
       return;
     }
     if (route.request().method() === 'POST' && url.pathname.endsWith('/approve')) {

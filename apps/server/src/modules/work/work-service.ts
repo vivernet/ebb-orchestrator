@@ -1,5 +1,5 @@
 /**
- * Work service – domain operations for tasks and epics.
+ * Сервис Work предоставляет операции домена для задач и эпиков.
  */
 
 import type { Database } from "../../platform/database/database.js";
@@ -26,7 +26,9 @@ export class WorkService {
     }
   }
 
-  /** Pause a task through the work aggregate's state transition boundary. */
+  /**
+   * Приостанавливает задачу через границу переходов состояния агрегата work.
+   */
   pauseTask(taskId: string): Task {
     return this.db.transaction((tx) => {
       this.workflow.transitionInTransaction(tx, taskId, "PAUSED");
@@ -40,7 +42,7 @@ export class WorkService {
   }
 
   /**
-   * Create a standalone task (not in an epic) with a project-local display ID.
+   * Создает отдельную задачу (не входящую в эпик) с локальным отображаемым идентификатором проекта.
    */
   createStandaloneTask(projectId: string, contract: TaskContract): Task {
     return this.db.transaction((tx) => {
@@ -59,7 +61,7 @@ export class WorkService {
   }
 
   /**
-   * Create an epic with a project-local display ID.
+   * Создает эпик с локальным отображаемым идентификатором проекта.
    */
   createEpic(projectId: string, contract: TaskContract): Epic {
     return this.db.transaction((tx) => {
@@ -76,7 +78,7 @@ export class WorkService {
   }
 
   /**
-   * Create a task within an epic. The project is determined from the epic.
+   * Создает задачу внутри эпика. Проект определяется из эпика.
    */
   createEpicTask(epicId: string, contract: TaskContract): Task {
     return this.db.transaction((tx) => {
@@ -103,7 +105,7 @@ export class WorkService {
   }
 
   /**
-   * Attach a task to an epic. Throws if the task already belongs to an epic.
+   * Прикрепляет задачу к эпику. Выбрасывает ошибку, если задача уже принадлежит эпику.
    */
   attachTaskToEpic(taskId: string, epicId: string): Task {
     return this.db.transaction((tx) => {
@@ -135,7 +137,7 @@ export class WorkService {
   }
 
   /**
-   * Archive a task by setting its status to CANCELLED.
+   * Архивирует задачу, устанавливая её статус в CANCELLED.
    */
   archiveTask(taskId: string): Task {
     return this.db.transaction((tx) => {

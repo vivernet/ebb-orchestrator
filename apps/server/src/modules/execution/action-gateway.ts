@@ -1,6 +1,6 @@
 /**
- * ActionGateway enforces path confinement for workspace operations.
- * All file operations must be scoped to the capability-assigned workspace.
+ * Gateway для операций с файлами, обеспечивающий ограничение путей.
+ * Все операции с файлами должны быть ограничены workspace, назначенным capability.
  */
 import { PathResolver } from '../../platform/security/path-resolver.js';
 import * as fs from 'node:fs';
@@ -36,7 +36,9 @@ export class ActionGateway {
   }
 
   /**
-   * Read a file from the workspace.
+   * Читает файл из workspace.
+   * @param relPath Относительный путь к файлу.
+   * @returns Результат операции: успех, содержимое или ошибка.
    */
   async readFile(relPath: string): Promise<{ success: boolean; content?: string; error?: string }> {
     // Use path.join for proper path construction
@@ -56,7 +58,10 @@ export class ActionGateway {
   }
 
   /**
-   * Search for patterns in the workspace.
+   * Выполняет поиск по шаблону в workspace.
+   * @param pattern Регулярное выражение для поиска.
+   * @param ext Фильтр по расширению файла (например, '.txt').
+   * @returns Список путей к файлам, содержащим совпадения.
    */
   async search(pattern: string, ext?: string): Promise<string[]> {
     const results: string[] = [];
@@ -89,7 +94,10 @@ export class ActionGateway {
   }
 
   /**
-   * Patch a file in the workspace.
+   * Применяет патчи к файлу в workspace.
+   * @param relPath Относительный путь к файлу.
+   * @param patches Массив изменений с диапазонами и новым содержимым.
+   * @returns Результат операции замены.
    */
   async patch(relPath: string, patches: FilePatch[]): Promise<FilePatchResult> {
     // Use path.join for proper path construction
