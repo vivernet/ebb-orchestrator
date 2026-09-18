@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync, execFileSync } from 'node:child_process';
-import { realpathSync, rmSync, mkdirSync, copyFileSync, readdirSync, statSync, readFileSync } from 'node:fs';
+import { rmSync, mkdirSync, copyFileSync, readdirSync, statSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
 import { join, resolve, relative } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -172,6 +172,8 @@ function doCheck() {
 }
 
 function doExecute(args) {
+  // Handle -- separator that may be passed by package managers
+  args = args.filter(a => a !== '--');
   if (args.length === 0) {
     console.error('Usage: hermes-dev.js execute <plan-path>');
     process.exit(1);
@@ -180,12 +182,27 @@ function doExecute(args) {
   const planPath = args[0];
   const worktreeRoot = spawnSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).stdout.trim();
 
-  // Resolve plan path
-  const resolvedPlan = planPath.startsWith('/') ? planPath : join(worktreeRoot, planPath);
+  // Normalize paths - convert to Windows native format for comparison
+  const normalizePath = (p) => {
+    // Handle MSYS-style paths (/c/Users/...) -> Windows (C:\Users\...)
+    if (p.startsWith('/') && p.match(/^\/[a-z]\//i)) {
+      p = p.replace(/^\/([a-z])\//i, '$1:\\')
+        .replace(/\//g, '\\');
+    }
+    // Normalize backslashes to forward slashes for comparison
+    return p.replace(/\\/g, '/');
+  };
+
+  const resolvedPlan = normalizePath(planPath);
+  const normalizedWorktree = normalizePath(worktreeRoot);
+
+  // Resolve plan path relative to worktree unless absolute
+  const finalPlan = resolvedPlan.match(/^([a-z]:|[\\/])/i)
+    ? resolvedPlan
+    : `${normalizedWorktree}/${resolvedPlan}`;
 
   // Validate path doesn't escape worktree
-  const relPath = relative(worktreeRoot, resolvedPlan);
-  if (relPath.startsWith('..') || !relPath.startsWith(worktreeRoot)) {
+  if (!finalPlan.startsWith(normalizedWorktree.replace(/\\/g, '/'))) {
     console.error('Error: plan path escapes current worktree');
     process.exit(1);
   }
@@ -211,13 +228,12 @@ Max 2 concurrent subagents.
 No nested delegation.
 `;
 
-    Bun.write(tmpFile, promptContent);
+    writeFileSync(tmpFile, promptContent);
 
-    // Spawn hermes
+    // Spawn hermes in one-shot mode
     const result = spawnSync('hermes', [
-      '--in', worktreeRoot,
-      'chat',
-      '--query-file', tmpFile
+      '-z', promptContent,
+      '--in', worktreeRoot
     ], {
       stdio: 'inherit',
       encoding: 'utf8'
