@@ -2,6 +2,7 @@
  * AgentRun model - records execution metadata and results.
  */
 
+/** Состояние выполнения агентского запуска в его сохраняемом lifecycle. */
 export type RunStatus =
   | "STARTED"
   | "IN_PROGRESS"
@@ -9,6 +10,7 @@ export type RunStatus =
   | "FAILED"
   | "CANCELLED";
 
+/** Причина, по которой оркестратор создал агентский запуск. */
 export type RunTrigger =
   | "task-assignment"
   | "review-request"
@@ -16,6 +18,7 @@ export type RunTrigger =
   | "test-assignment"
   | "custom";
 
+/** Метаданные запуска, связывающие runtime, доменную работу и usage. */
 export interface AgentRun {
   id: string;
   role: string;
