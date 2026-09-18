@@ -58,12 +58,12 @@ export function getIntegrationProvenance(db: Database, attempt: IntegrationAttem
 export type IntegrationRunner<T> = (worktreePath: string, attempt: Readonly<IntegrationAttempt>) => Promise<T>;
 
 /**
- * IntegrationService manages the preparation of integration workspaces.
+ * IntegrationService управляет подготовкой интеграционных пространств.
  * 
- * Key properties:
- * - Uses temporary integration branch/worktree owned by the integration attempt
- * - Never experiments in the Task worktree or master
- * - Verifies current target SHA before preparing integration
+ * Ключевые свойства:
+ * - Использует временный интеграционный branch/worktree принадлежащий попытке интеграции
+ * - Никогда не экспериментирует в Task worktree или master
+ * - Проверяет текущий target SHA перед подготовкой интеграции
  */
 export class IntegrationService {
   private readonly git: GitCli;
@@ -88,12 +88,12 @@ export class IntegrationService {
   }
 
   /**
-   * Prepares an integration workspace for merging sourceBranch into currentTargetBranch.
+   * Подготавливает интеграционное пространство для слияния sourceBranch в currentTargetBranch.
    * 
-   * Creates a dedicated integration worktree that:
-   * - Is based on the current target branch (handles moving target)
-   * - Can safely perform merge operations without affecting master or task worktrees
-   * - Is owned by this integration attempt and should be cleaned up after use
+   * Создаёт выделенный интеграционный worktree который:
+   * - Основан на текущем target branch (обрабатывает движущийся target)
+   * - Может безопасно выполнять операции слияния не затрагивая master или task worktrees
+   * - Принадлежит этой попытке интеграции и должен быть удалён после использования
    */
   async prepareIntegration(
     sourceBranch: string,
@@ -104,21 +104,21 @@ export class IntegrationService {
     const integrationBranch = `integration/${attemptId}`;
     const worktreePath = join(this.worktreeDir, attemptId);
 
-    // Ensure worktree directory exists
+    // Гарантирует существование директории worktree
     mkdirSync(this.worktreeDir, { recursive: true });
 
-    // Get current target SHA to verify we're working from the right base
+    // Получает текущий target SHA для проверки что работаем с правильной основой
     const targetShaResult = await this.git.run(repoPath, ["rev-parse", currentTargetBranch]);
     const expectedTargetSha = targetShaResult.stdout.trim();
     const sourceSha = (await this.git.run(repoPath, ["rev-parse", sourceBranch])).stdout.trim();
 
-    // Create empty hooks directory to disable hooks
+    // Создаёт пустую директорию hooks для отключения hooks
     const emptyHooksDir = join(this.worktreeDir, `hooks-${Date.now()}`);
     mkdirSync(emptyHooksDir, { recursive: true });
 
     try {
-      // Create worktree with integration branch directly from target branch
-      // Using -B to force creation/checkout if branch exists
+      // Создаёт worktree с интеграционным branch напрямую из target branch
+      // Используя -B для принудительного создания/чекута если branch существует
       await this.git.run(repoPath, [
         "-c",
         `core.hooksPath=${emptyHooksDir.replace(/\\/g, "/")}`,
@@ -149,24 +149,26 @@ export class IntegrationService {
 
       return attempt;
     } catch (error) {
-      // Clean up partial worktree on failure
+      // Очищает частичный worktree при ошибке
       try {
         rmSync(worktreePath, { recursive: true, force: true });
       } catch {
-        // Ignore cleanup errors
+        // Пропускаем ошибки очистки
       }
       throw error;
     } finally {
-      // Clean up empty hooks directory
+      // Очищает пустую директорию hooks
       try {
         rmSync(emptyHooksDir, { recursive: true, force: true });
       } catch {
-        // Ignore cleanup errors
+        // Пропускаем ошибки очистки
       }
     }
   }
 
-  /** Bind an already-created integration workspace to its authenticated run. */
+  /**
+   * Связывает уже созданный интеграционный workspace с авторизованным run.
+   */
   bindIntegrationRun(attempt: IntegrationAttempt, integrationRunId: string): IntegrationAttempt {
     if (this.databaseClosed) throw new Error("Integration database is closed");
     this.integrationRunId = integrationRunId;
@@ -174,7 +176,9 @@ export class IntegrationService {
     return { ...attempt, integrationRunId };
   }
 
-  /** Run the real Integration role only after the isolated worktree is prepared. */
+  /**
+   * Запускает реальную роль Integration только после того как изолированный worktree подготовлен.
+   */
   async runInIntegrationWorktree<T>(attempt: IntegrationAttempt, runner: IntegrationRunner<T>): Promise<T> {
     if (!this.integrationRunId || !attempt.integrationRunId || attempt.integrationRunId !== this.integrationRunId) {
       throw new Error("integrationRunId is required and must be bound to the IntegrationService");
@@ -222,8 +226,8 @@ export class IntegrationService {
       if (provenanceChanged) {
         throw new Error("INTEGRATION_PROVENANCE_MUTATED: runner changed the integration attempt");
       }
-      // The target may have moved while the integration role was running.  Do
-      // this check here, rather than leaving it to an end-to-end caller.
+      // Целевой branch мог переместиться пока выполнялась роль Integration. Выполняем
+      // эту проверку здесь, а не оставляем её конечному вызывающему.
       const currentTargetSha = (await this.git.run(snapshot.repoPath, ["rev-parse", snapshot.currentTargetBranch])).stdout.trim();
       if (!snapshot.expectedTargetSha || currentTargetSha !== snapshot.expectedTargetSha) {
         throw new Error(`TARGET_MOVED: expected ${snapshot.expectedTargetSha ?? "a verified target"}, found ${currentTargetSha}; restart integration`);
@@ -241,7 +245,9 @@ export class IntegrationService {
     }
   }
 
-  /** Persist the attempt and its authenticated agent run failure together. */
+  /**
+   * Сохраняет попытку и её сбой авторизованного agent run вместе.
+   */
   private failIntegration(attempt: IntegrationAttempt, error: unknown): void {
     const message = error instanceof Error ? error.message : String(error);
     const diagnostics = JSON.stringify({
@@ -264,7 +270,9 @@ export class IntegrationService {
     });
   }
 
-  /** Merge the prepared task commit before the Integration Agent is started. */
+  /**
+   * Слияет подготовленный commit задачи перед запуском Integration Agent.
+   */
   async mergePreparedSource(attempt: IntegrationAttempt): Promise<void> {
     if (this.databaseClosed) throw new Error("Integration database is closed");
     const persisted = this.database.get<{ status: IntegrationAttempt["status"]; integration_run_id: string | null }>(
@@ -287,12 +295,21 @@ export class IntegrationService {
   }
 
   /**
-   * Cleans up an integration attempt by removing its worktree.
+   * Очищает попытку интеграции удаляя её worktree.
    */
   async cleanupIntegration(attempt: IntegrationAttempt): Promise<void> {
     for (let attemptNo = 0; attemptNo < 10; attemptNo += 1) {
       try {
-        await this.git.run(attempt.repoPath, ["worktree", "remove", "--force", attempt.worktreePath]);
+        // Check if worktree has uncommitted changes (dirty)
+        const status = await this.git.run(attempt.repoPath, ["status", "--porcelain"]);
+        if (status.stdout.trim() !== "") {
+          throw new Error(
+            `Cannot remove dirty integration worktree: ${attempt.worktreePath}. ` +
+            `The worktree has uncommitted changes. Commit or stash changes before cleanup.`
+          );
+        }
+
+        await this.git.run(attempt.repoPath, ["worktree", "remove", attempt.worktreePath]);
         return;
       } catch {
         try { rmSync(attempt.worktreePath, { recursive: true, force: true }); } catch { /* retry after a process releases the handle */ }

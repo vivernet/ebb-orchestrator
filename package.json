@@ -9,7 +9,10 @@
   "scripts": {
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present test",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "build": "pnpm -r --if-present build",
+    "server:build": "pnpm --filter @ebb-orchestrator/server build",
+    "web:build": "pnpm --filter @ebb-orchestrator/web build"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

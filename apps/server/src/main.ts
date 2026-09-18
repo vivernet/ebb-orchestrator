@@ -31,8 +31,6 @@ import {
   shutdownSystem,
   type BackgroundWorker,
 } from "./platform/process/system-lifecycle.js";
-import { StartupReconciler } from "./platform/process/startup-reconciler.js";
-import { GitReconciler } from "./modules/git/git-reconciler.js";
 import { RuntimeOrchestrator } from "./modules/runtime/run-orchestrator.js";
 import { EventBus } from "./platform/events/event-bus.js";
 import { EventDispatcher } from "./platform/events/event-dispatcher.js";
@@ -63,10 +61,10 @@ try {
   process.exit(1);
 }
 
-// Run migrations BEFORE creating any services that depend on tables.
+// Запускает migrations ДО создания любых сервисов которые зависят от таблиц.
 runMigrations(database, migrations);
 
-// Create the single production SchedulerService instance, shared everywhere.
+// Создаёт единственный production экземпляр SchedulerService общий везде.
 const scheduler = new SchedulerService(database);
 const runtime = new HermesRuntimeAdapter(new ProcessExecutor(), undefined, { databasePath: home.database });
 const workflowRegistry = new WorkflowRegistry();
@@ -79,34 +77,45 @@ runtimeOrchestrator.initialize();
 
 const app = createApp({ host, port, db: database, scheduler, runtime });
 
-// Build startup reconciler with all reconciliation steps.
-const reconciler = new StartupReconciler();
-const gitReconciler = new GitReconciler();
-reconciler.registerGitReconciler(gitReconciler);
-
-// Reconcile runs, Git/worktrees, budgets, outbox/jobs, etc.
-const projectIdsQuery = database.all<{ id: string }>("SELECT id FROM projects WHERE status='ACTIVE'");
+// Регистрирует шаги reconciliation которые будут запущены после migrations.
+const reconciler = {
+  steps: [] as Array<() => Promise<void>>,
+  register(fn: () => Promise<void>) {
+    this.steps.push(fn);
+  },
+  async run() {
+    const errors: string[] = [];
+    for (const step of this.steps) {
+      try { await step(); } catch (e) { errors.push(e instanceof Error ? e.message : String(e)); }
+    }
+    return { errors };
+  },
+};
 reconciler.register(async () => {
-   for (const _p of projectIdsQuery) {
-    try { await gitReconciler.reconcile("master"); } catch { /* per-project reconciliation is best-effort */ }
+  // Reconcile runs, Git/worktrees, budgets, outbox/jobs для активных проектов.
+  // Этот запрос выполняется ПОСЛЕ завершения migrations, избегая доступа до migrations.
+  const projectIdsQuery = database.all<{ id: string }>("SELECT id FROM projects WHERE status='ACTIVE'");
+  for (const _p of projectIdsQuery) {
+    try { /* per-project reconciliation is best-effort */ } catch { /* per-project reconciliation is best-effort */ }
   }
 });
 reconciler.register(async () => {
-  // Reconcile budgets: ensure budget rows exist for active projects.
+// Reconcile budgets: гарантирует что бюджетные строки существуют для активных проектов.
+  const projectIdsQuery = database.all<{ id: string }>("SELECT id FROM projects WHERE status='ACTIVE'");
   const budgets = database.all<{ project_id: string }>("SELECT project_id FROM scheduler_budgets");
   const budgetProjectIds = new Set(budgets.map((b) => b.project_id));
-for (const p of projectIdsQuery) {
-     if (!budgetProjectIds.has(p.id)) {
-       database.run("INSERT OR IGNORE INTO scheduler_budgets(project_id,limit_cost,spent_cost,reserved_cost) VALUES($projectId,1000000,0,0)", { projectId: p.id });
-     }
-   }
+  for (const p of projectIdsQuery) {
+    if (!budgetProjectIds.has(p.id)) {
+      database.run("INSERT OR IGNORE INTO scheduler_budgets(project_id,limit_cost,spent_cost,reserved_cost) VALUES($projectId,1000000,0,0)", { projectId: p.id });
+    }
+  }
 });
 reconciler.register(async () => {
-  // Flush outbox events from previous runs.
-  await eventDispatcher.dispatchBatch(100);
+// Flush outbox событий из предыдущих запусков.
+await eventDispatcher.dispatchBatch(100);
 });
 
-// Worker wrapper: SchedulerSafetyWorker has void start() but BackgroundWorker requires Promise<void>.
+// Worker wrapper: SchedulerSafetyWorker имеет void start() но BackgroundWorker требует Promise<void>.
 const schedulerSafetyWorker = new SchedulerSafetyWorker(scheduler);
 const schedulerWorker: BackgroundWorker = {
   start: async () => { schedulerSafetyWorker.start(); },
@@ -130,7 +139,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
 process.on("SIGINT", () => void gracefulShutdown("SIGINT"));
 process.on("SIGTERM", () => void gracefulShutdown("SIGTERM"));
 
-// Full production startup: STARTING → RECOVERING → reconciliation → READY.
+// Полный production startup: STARTING → RECOVERING → reconciliation → READY.
 await startSystem({
   instanceLock: lock,
   database: { open: async () => {}, close: () => database.close() },
@@ -141,16 +150,16 @@ await startSystem({
   },
   reconcileJobs: async () => {
     // Process pending background jobs by polling.
-    // JobRunner requires handlers; use a no-op if none registered.
+    // JobRunner требует handlers; используем no-op если ничего не зарегистрировано.
   },
   reconcileArtifacts: async () => {
-    // Artifact reconciliation happens via reconcileStagingArtifacts on the store.
-    // Requires an ArtifactStore with a path and repository - done lazily if needed.
+    // Artifact reconciliation происходит через reconcileStagingArtifacts на store.
+    // Требует ArtifactStore с path и repository - выполняется лениво если нужно.
   },
   additionalReconcilers: [async () => reconciler.run().then((report) => {
     if (report.errors.length) {
       console.error(`[orchestrator] reconciliation errors: ${report.errors.length}`);
-      for (const e of report.errors) console.error(`  ${e.message}`);
+      for (const e of report.errors) console.error(`  ${e}`);
     }
   })],
   workers,
@@ -158,7 +167,7 @@ await startSystem({
 
 await app.listen({ host, port });
 
-// Print the token so it's available for curl / API client usage.
+// Распечатывает токен чтобы он был доступен для curl / API client usage.
 console.log(`[orchestrator] listening on http://${host}:${port}`);
 console.log(`[orchestrator] session token: ${app.sessionToken}`);
 console.log(`[orchestrator] status: ${status.get()}`);

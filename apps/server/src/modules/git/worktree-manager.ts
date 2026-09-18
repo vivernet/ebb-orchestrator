@@ -35,8 +35,8 @@ export class WorktreeManager {
   }
 
   /**
-   * Creates a managed worktree for a task.
-   * Uses disabled hooks to prevent arbitrary code execution.
+   * Создаёт управляемый worktree для задачи.
+   * Использует отключённые hooks для предотвращения произвольного выполнения кода.
    */
   async createTaskWorkspace(
     taskId: string,
@@ -45,18 +45,18 @@ export class WorktreeManager {
   ): Promise<WorktreeRecord> {
     const worktreePath = join(this.worktreeDir, `task-${taskId}`);
     
-    // Ensure the parent worktree directory exists
+    // Гарантирует существование родительской директории worktree
     try {
       mkdirSync(this.worktreeDir, { recursive: true });
     } catch {
-      // Ignore if directory already exists or can't be created
+      // Пропускаем если директория уже существует или не может быть создана
     }
     
-    // Create empty hooks directory to disable hooks
+    // Создаёт пустую директорию hooks для отключения hooks
     const emptyHooksDir = this.createEmptyHooksDir();
 
     try {
-      // Create worktree with hooks disabled using -c option before worktree subcommand
+      // Создаёт worktree с отключёнными hooks через опцию -c перед подкомандой worktree
       await this.git.run(repoPath, [
         "-c",
         `core.hooksPath=${emptyHooksDir.replace(/\\/g, "/")}`,
@@ -77,32 +77,33 @@ export class WorktreeManager {
         removedAt: null,
       };
 
-      // Persist to database if available
+      // Сохраняет в базу данных если доступна
       if (this.worktreeRepo) {
         this.worktreeRepo.create(record);
       }
 
       return record;
     } catch (error) {
-      // Clean up partial worktree on failure
+      // Очищает частичный worktree при ошибке
       try {
         rmSync(worktreePath, { recursive: true, force: true });
       } catch {
-        // Ignore cleanup errors
+        // Пропускаем ошибки очистки
       }
       throw error;
     } finally {
-      // Clean up empty hooks directory
+      // Очищает пустую директорию hooks
       try {
         rmSync(emptyHooksDir, { recursive: true, force: true });
       } catch {
-        // Ignore cleanup errors
+        // Пропускаем ошибки очистки
       }
     }
   }
 
   /**
-   * Removes a managed worktree by ID.
+   * Удаляет управляемый worktree по ID.
+   * Проверяет наличие неоткоммиченных изменений перед удалением.
    */
   async removeWorkspace(worktreeId: string): Promise<void> {
     const worktree = this.worktreeRepo?.findById(worktreeId);
@@ -112,31 +113,39 @@ export class WorktreeManager {
     }
 
     try {
-      // Remove the worktree from git
+      // Проверяет наличие неоткоммиченных изменений (dirty)
+      const status = await this.git.run(worktree.repoPath, ["status", "--porcelain"]);
+      if (status.stdout.trim() !== "") {
+        throw new Error(
+          `Cannot remove dirty worktree: ${worktree.path}. ` +
+          `The worktree has uncommitted changes. Commit or stash changes before removal.`
+        );
+      }
+
+      // Удаляет worktree через git
       await this.git.run(worktree.repoPath, [
         "worktree",
         "remove",
-        "--force",
         worktree.path,
       ]);
 
-      // Update database record
+      // Обновляет запись в базе данных
       if (this.worktreeRepo) {
         this.worktreeRepo.remove(worktreeId);
       }
     } catch (error) {
-      // If git command fails, still clean up local directory
+      // Если git-команда не удалась, всё равно очищаем локальную директорию
       try {
         rmSync(worktree.path, { recursive: true, force: true });
       } catch {
-        // Ignore cleanup errors
+        // Пропускаем ошибки очистки
       }
       throw error;
     }
   }
 
   /**
-   * Creates an empty directory for disabling git hooks.
+   * Создаёт пустую директорию для отключения git hooks.
    */
   private createEmptyHooksDir(): string {
     const hooksDir = join(tmpdir(), `orchestrator-hooks-${Date.now()}`);
