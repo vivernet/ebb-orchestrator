@@ -215,78 +215,57 @@ describe("MergeService", () => {
       const repoPath = createTempDir();
       await initGitRepo(repoPath);
       
-      const originalCwd = process.cwd();
-      process.chdir(repoPath);
+      const approvalStore = new Map();
+      approvalStore.set("approval-456", {
+        id: "approval-456",
+        subjectId: "subject-123",
+        type: "CODE_REVIEW",
+        status: "APPROVED",
+      });
       
-      try {
-        const approvalStore = new Map();
-        approvalStore.set("approval-456", {
-          id: "approval-456",
-          subjectId: "subject-123",
-          type: "CODE_REVIEW",
-          status: "APPROVED",
-        });
-        
-         const mergeService = new MergeService({ approvalStore });
-        
-        await expect(
-          mergeService.mergeApproved("subject-123", "approval-456")
-        ).rejects.toThrow(/type.*FINAL_MERGE/i);
-      } finally {
-        process.chdir(originalCwd);
-      }
+      const mergeService = new MergeService({ approvalStore, repoPath });
+      
+      await expect(
+        mergeService.mergeApproved("subject-123", "approval-456")
+      ).rejects.toThrow(/type.*FINAL_MERGE/i);
     });
 
     it("rejects merge when approval status is not APPROVED", async () => {
       const repoPath = createTempDir();
       await initGitRepo(repoPath);
       
-      const originalCwd = process.cwd();
-      process.chdir(repoPath);
+      const approvalStore = new Map();
+      approvalStore.set("approval-456", {
+        id: "approval-456",
+        subjectId: "subject-123",
+        type: "FINAL_MERGE",
+        status: "PENDING",
+      });
       
-      try {
-        const approvalStore = new Map();
-        approvalStore.set("approval-456", {
-          id: "approval-456",
-          subjectId: "subject-123",
-          type: "FINAL_MERGE",
-          status: "PENDING",
-        });
-        
-         const mergeService = new MergeService({ approvalStore });
-        
-        await expect(
-          mergeService.mergeApproved("subject-123", "approval-456")
-        ).rejects.toThrow(/status.*APPROVED/i);
-      } finally {
-        process.chdir(originalCwd);
-      }
+      const mergeService = new MergeService({ approvalStore, repoPath });
+      
+      await expect(
+        mergeService.mergeApproved("subject-123", "approval-456")
+      ).rejects.toThrow(/status.*APPROVED/i);
     });
 
     it("rejects merge when subjectId does not match", async () => {
       const repoPath = createTempDir();
       await initGitRepo(repoPath);
       
-      const originalCwd = process.cwd();
-      process.chdir(repoPath);
+      const approvalStore = new Map();
+      approvalStore.set("approval-456", {
+        id: "approval-456",
+        subjectId: "subject-789",
+        type: "FINAL_MERGE",
+        status: "APPROVED",
+      });
       
-      try {
-        const approvalStore = new Map();
-        approvalStore.set("approval-456", {
-          id: "approval-456",
-          subjectId: "subject-789",
-          type: "FINAL_MERGE",
-          status: "APPROVED",
-        });
-        
-         const mergeService = new MergeService({ approvalStore });
-        
-        await expect(
-          mergeService.mergeApproved("subject-123", "approval-456")
-        ).rejects.toThrow(/subjectId.*subject-123/i);
-      } finally {
-        process.chdir(originalCwd);
-      }
+      const mergeService = new MergeService({ approvalStore, repoPath });
+      
+      await expect(
+        mergeService.mergeApproved("subject-123", "approval-456")
+      ).rejects.toThrow(/subjectId.*subject-123/i);
     });
 
     it("performs merge when all validations pass", async () => {
@@ -298,33 +277,26 @@ describe("MergeService", () => {
       await git.run(repoPath, ["add", "readme.txt"]);
       await git.run(repoPath, ["commit", "-m", "add readme"]);
       
-      const originalCwd = process.cwd();
-      process.chdir(repoPath);
+      const approvalStore = new Map();
+      approvalStore.set("approval-456", {
+        id: "approval-456",
+        subjectId: "subject-123",
+        type: "FINAL_MERGE",
+        status: "APPROVED",
+      });
       
-      try {
-        const approvalStore = new Map();
-        approvalStore.set("approval-456", {
-          id: "approval-456",
-          subjectId: "subject-123",
-          type: "FINAL_MERGE",
-          status: "APPROVED",
-        });
-        
-         const mergeService = new MergeService({ approvalStore, repoPath, integrationAttempt: await successfulIntegration(repoPath, git) });
-        
-        // Should succeed with valid approval
-        const result = await mergeService.mergeApproved("subject-123", "approval-456");
-        
-        expect(result.success).toBe(true);
-        expect(result.subjectId).toBe("subject-123");
-        expect(result.mergeCommitSha).toBeDefined();
-        
-        // Verify file exists in master after merge
-        const content = await git.run(repoPath, ["show", "master:readme.txt"]);
-        expect(content.stdout.trim()).toBe("readme content");
-      } finally {
-        process.chdir(originalCwd);
-      }
+      const mergeService = new MergeService({ approvalStore, repoPath, integrationAttempt: await successfulIntegration(repoPath, git) });
+      
+      // Should succeed with valid approval
+      const result = await mergeService.mergeApproved("subject-123", "approval-456");
+      
+      expect(result.success).toBe(true);
+      expect(result.subjectId).toBe("subject-123");
+      expect(result.mergeCommitSha).toBeDefined();
+      
+      // Verify file exists in master after merge
+      const content = await git.run(repoPath, ["show", "master:readme.txt"]);
+      expect(content.stdout.trim()).toBe("readme content");
     });
 
     it("verifies target SHA after merge", async () => {
@@ -336,31 +308,24 @@ describe("MergeService", () => {
       await git.run(repoPath, ["add", "readme.txt"]);
       await git.run(repoPath, ["commit", "-m", "add readme"]);
       
-      const originalCwd = process.cwd();
-      process.chdir(repoPath);
+      const approvalStore = new Map();
+      approvalStore.set("approval-456", {
+        id: "approval-456",
+        subjectId: "subject-123",
+        type: "FINAL_MERGE",
+        status: "APPROVED",
+      });
       
-      try {
-        const approvalStore = new Map();
-        approvalStore.set("approval-456", {
-          id: "approval-456",
-          subjectId: "subject-123",
-          type: "FINAL_MERGE",
-          status: "APPROVED",
-        });
-        
-         const mergeService = new MergeService({ approvalStore, repoPath, integrationAttempt: await successfulIntegration(repoPath, git) });
-        const result = await mergeService.mergeApproved("subject-123", "approval-456");
-        
-        // Verify resulting SHA is recorded
-        expect(result.resultingTargetSha).toBeDefined();
-        expect(result.resultingTargetSha).toBeTruthy();
-        
-        // Verify SHA matches what git reports
-        const actualHead = await git.run(repoPath, ["rev-parse", "HEAD"]);
-        expect(actualHead.stdout.trim()).toBe(result.resultingTargetSha);
-      } finally {
-        process.chdir(originalCwd);
-      }
+      const mergeService = new MergeService({ approvalStore, repoPath, integrationAttempt: await successfulIntegration(repoPath, git) });
+      const result = await mergeService.mergeApproved("subject-123", "approval-456");
+      
+      // Verify resulting SHA is recorded
+      expect(result.resultingTargetSha).toBeDefined();
+      expect(result.resultingTargetSha).toBeTruthy();
+      
+      // Verify SHA matches what git reports
+      const actualHead = await git.run(repoPath, ["rev-parse", "HEAD"]);
+      expect(actualHead.stdout.trim()).toBe(result.resultingTargetSha);
     });
 
     it("rejects a target that moved after integration was captured", async () => {
@@ -414,27 +379,20 @@ describe("MergeService", () => {
       mkdirSync(hooksPath, { recursive: true });
       writeFileSync(join(hooksPath, "pre-commit"), "#!/bin/bash\nexit 1", "utf8");
       
-      const originalCwd = process.cwd();
-      process.chdir(repoPath);
+      const approvalStore = new Map();
+      approvalStore.set("approval-456", {
+        id: "approval-456",
+        subjectId: "subject-123",
+        type: "FINAL_MERGE",
+        status: "APPROVED",
+      });
       
-      try {
-        const approvalStore = new Map();
-        approvalStore.set("approval-456", {
-          id: "approval-456",
-          subjectId: "subject-123",
-          type: "FINAL_MERGE",
-          status: "APPROVED",
-        });
-        
-         const mergeService = new MergeService({ approvalStore, repoPath, integrationAttempt: await successfulIntegration(repoPath, await new GitCli()) });
-        
-        // Should succeed despite failing hook (hooks are disabled)
-        const result = await mergeService.mergeApproved("subject-123", "approval-456");
-        
-        expect(result.success).toBe(true);
-      } finally {
-        process.chdir(originalCwd);
-      }
+      const mergeService = new MergeService({ approvalStore, repoPath, integrationAttempt: await successfulIntegration(repoPath, await new GitCli()) });
+      
+      // Should succeed despite failing hook (hooks are disabled)
+      const result = await mergeService.mergeApproved("subject-123", "approval-456");
+      
+      expect(result.success).toBe(true);
     });
   });
 });

@@ -45,9 +45,8 @@ export class PathResolver {
       // existsSync follows links and would incorrectly classify the former as absent.
       fs.lstatSync(root);
       return true;
-    } catch (err: unknown) {
-      if (err instanceof Error && 'code' in err && err.code === 'ENOENT') return false;
-      throw err;
+    } catch {
+      return false;
     }
   }
 
