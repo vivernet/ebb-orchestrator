@@ -43,6 +43,9 @@ const scopeMap: Record<string, Approval['scope']> = {
   RUN: 'run',
 };
 
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 export function mapApprovalRow(row: ApprovalRow): Approval {
   return {
     id: row.id,
@@ -60,6 +63,9 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'unknown error';
 }
 
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 export default function ApprovalInboxPage({ projectId }: ApprovalInboxProps) {
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [loading, setLoading] = useState(true);

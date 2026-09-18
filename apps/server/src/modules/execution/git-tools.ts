@@ -4,6 +4,9 @@
  */
 import { GitCli } from '../../modules/git/git-cli.js';
 
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 export class GitTools {
   private readonly git: GitCli;
 

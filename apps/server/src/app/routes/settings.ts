@@ -4,6 +4,9 @@ type ConfigRow = Record<string, unknown>;
 
 export interface SettingsRouteDeps { db?: Database | undefined; }
 
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 export async function settingsRoutes(app: FastifyInstance, deps: SettingsRouteDeps = {}): Promise<void> {
   app.get("/api/v1/settings", async () => {
     if (!deps.db) {

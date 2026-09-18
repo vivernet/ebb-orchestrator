@@ -25,6 +25,9 @@ export interface Defect {
   readonly updatedAt: string;
 }
 
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 export class DefectsService {
   constructor(private readonly db: Database) {}
 

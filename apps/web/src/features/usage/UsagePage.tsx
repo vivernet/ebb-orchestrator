@@ -14,6 +14,9 @@ interface UsageData {
   effectiveLimit: 'global' | 'project' | 'epic' | 'task';
 }
 
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 export default function UsagePage() {
   const [data, setData] = useState<UsageData | null>(null);
   const [error, setError] = useState<string | null>(null);

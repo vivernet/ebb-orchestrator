@@ -19,6 +19,9 @@ interface ExecutionPageProps {
   projectId?: string;
 }
 
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 export default function ExecutionPage({ projectId }: ExecutionPageProps) {
   const [queue, setQueue] = useState<ExecutionQueueEntry[]>([]);
   const [loading, setLoading] = useState(true);

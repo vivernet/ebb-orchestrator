@@ -6,6 +6,9 @@ import type { PlanningClassification, PlanningPlan, PlanningPlanInput, PlanningR
 import { planningApprovalRequired, effectivePlanningApprovalPolicy } from "./planning-policy.js";
 import { validatePlan } from "./plan-validator.js";
 
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 export class PlanningService {
   constructor(private readonly db: Database) {}
 

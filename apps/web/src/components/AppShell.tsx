@@ -1,5 +1,8 @@
 import { Outlet, NavLink } from 'react-router';
 
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 function AppShell() {
   return (
     <div className="app-shell">

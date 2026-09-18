@@ -3,6 +3,9 @@ interface StatusBadgeProps {
   variant?: 'default' | 'success' | 'warning' | 'error';
 }
 
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 export default function StatusBadge({ status, variant = 'default' }: StatusBadgeProps) {
   const variants = {
     default: { bg: '#404040', text: '#e5e5e5' },

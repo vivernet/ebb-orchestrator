@@ -18,6 +18,9 @@ interface SettingsData {
   securitySettings: SecuritySettings;
 }
 
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 export default function SettingsPage() {
   const [data, setData] = useState<SettingsData | null>(null);
   const [error, setError] = useState<string | null>(null);

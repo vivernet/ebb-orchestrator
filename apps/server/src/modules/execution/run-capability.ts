@@ -30,6 +30,9 @@ export interface RunCapabilityDef {
   projectConfig?: ProjectConfig;
 }
 
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 export class RunCapability {
   private resolver: PathResolver;
   private gateway: ActionGateway;

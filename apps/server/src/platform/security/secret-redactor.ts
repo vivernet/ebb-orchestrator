@@ -2,6 +2,9 @@
  * Redacts secret values from text (exact value matching).
  */
 
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 export class SecretRedactor {
   private secrets: Map<string, Set<string>> = new Map();
 

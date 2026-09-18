@@ -3,6 +3,9 @@ import type { Database } from "../../platform/database/database.js";
 
 export interface OnboardingRouteDeps { db?: Database | undefined; }
 
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 export async function onboardingRoutes(app: FastifyInstance, deps: OnboardingRouteDeps = {}): Promise<void> {
   app.get<{ Params: { id: string } }>("/api/v1/onboarding/:id", async (request) => {
     if (!deps.db) {

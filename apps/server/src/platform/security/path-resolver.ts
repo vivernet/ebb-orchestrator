@@ -2,6 +2,9 @@
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 export class PathResolver {
   async resolveSafePath(workspace: string, target: string): Promise<{ success: boolean; path?: string; error?: string }> {
     try {

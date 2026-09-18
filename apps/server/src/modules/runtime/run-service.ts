@@ -13,6 +13,9 @@ import { RoleRegistry } from './role-registry.js';
 import { appendOutboxEvent } from "../../platform/events/outbox-repository.js";
 import { DomainEvent } from "../../platform/events/domain-event.js";
 
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 export class RunService {
   private readonly roles = new RoleRegistry();
 

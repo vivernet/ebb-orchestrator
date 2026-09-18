@@ -8,6 +8,9 @@ import { createRequire } from 'node:module';
 import type { Database } from '../database/database.js';
 import type { SecretStore, StoreResult, SecretMetadata } from './secret-store.js';
 
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 export class KeyringSecretStore implements SecretStore {
   private keyring: { setPassword: (service: string, account: string, value: string) => Promise<void>; getPassword: (service: string, account: string) => Promise<string | undefined>; deletePassword: (service: string, account: string) => Promise<void>; } | undefined;
 

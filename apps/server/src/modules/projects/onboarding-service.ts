@@ -6,6 +6,9 @@ export interface Onboarding {
   readonly onboardingStatus: "new" | "existing";
 }
 
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 export class OnboardingService {
   private readonly discovery: RepositoryDiscovery;
 

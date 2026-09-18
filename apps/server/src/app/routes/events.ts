@@ -9,6 +9,9 @@
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 export async function eventRoutes(app: FastifyInstance): Promise<void> {
   app.get(
     "/api/v1/events",

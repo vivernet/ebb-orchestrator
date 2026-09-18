@@ -4,6 +4,9 @@ import type { TaskContract } from "../work/work-types.js";
 const roles = new Set(["coordinator", "product_manager", "architect", "middle_dev", "senior_dev", "developer", "devops", "reviewer", "qa", "integration"]);
 const workflows = new Set(["standard", "bugfix", "architecture_change", "documentation", "devops"]);
 
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 export function validatePlan(plan: PlanningPlanInput): PlanValidationResult {
   if (!plan.projectId) throw new Error("Plan projectId is required");
   const refs = new Set<string>();

@@ -20,6 +20,9 @@ export interface BranchRecord {
   removedAt: string | null;
 }
 
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 export class BranchManager {
   private readonly git: GitCli;
   private readonly branchRepo: BranchRepository | null;

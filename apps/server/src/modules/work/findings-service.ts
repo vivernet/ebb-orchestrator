@@ -24,6 +24,9 @@ export interface Finding {
   readonly updatedAt: string;
 }
 
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 export class FindingsService {
   constructor(private readonly db: Database) {}
 

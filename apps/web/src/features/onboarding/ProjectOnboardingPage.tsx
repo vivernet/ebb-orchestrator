@@ -21,6 +21,9 @@ interface OnboardingProject {
   localModeEnabled: boolean;
 }
 
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 export default function ProjectOnboardingPage({ id }: { id: string }) {
   const [data, setData] = useState<OnboardingProject | null>(null);
   const [error, setError] = useState<string | null>(null);

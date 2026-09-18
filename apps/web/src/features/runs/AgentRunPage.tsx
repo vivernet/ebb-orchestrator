@@ -48,6 +48,9 @@ interface AgentRunPageProps {
   id: string;
 }
 
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 export default function AgentRunPage({ id }: AgentRunPageProps) {
   const [run, setRun] = useState<AgentRun | null>(null);
   const [usage, setUsage] = useState<UsageRecord | null>(null);

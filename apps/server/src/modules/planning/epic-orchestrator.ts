@@ -19,6 +19,9 @@ type Child = { id: string; display_id: string; status: string };
 /** Owns the fixed lifecycle. All checkpoints are persisted before returning. */
 type EpicMergeAuthority = Pick<MergeService, "mergeApproved"> & Partial<Pick<MergeService, "mergeApprovedForIntegration">>;
 
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 export class EpicOrchestrator {
   private readonly handlers: RuntimeEventHandlers;
   private readonly approvals: ApprovalService;

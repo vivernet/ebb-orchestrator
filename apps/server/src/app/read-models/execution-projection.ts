@@ -4,6 +4,9 @@ import { schedulerWaitReason, type SchedulerTaskRow } from "./dashboard-projecti
 import type { SchedulerService } from "../../modules/scheduler/scheduler-service.js";
 interface RunRow { id: string; role: string; task_id: string | null; status: string; }
 type TaskRow = SchedulerTaskRow;
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 export class ExecutionProjection {
    constructor(private readonly db?: Database, private readonly scheduler?: SchedulerService) {}
   get(): ExecutionQueueProjection {

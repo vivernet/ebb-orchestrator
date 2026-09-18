@@ -1,6 +1,9 @@
 import type { Database, StatementParams } from "../../platform/database/database.js";
 import type { BranchRecord } from "./branch-manager.js";
 
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 export class BranchRepository {
   constructor(private readonly db: Database) {}
 

@@ -31,6 +31,9 @@ function rowToDependency(row: DependencyRow): TaskDependency {
   };
 }
 
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 export class DependencyService {
   constructor(private readonly db: Database) {}
 

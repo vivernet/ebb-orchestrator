@@ -12,6 +12,9 @@ export function assertSafeGitRef(ref: string): void {
   }
 }
 
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 export class GitCli {
   private readonly executor: ProcessExecutor;
 

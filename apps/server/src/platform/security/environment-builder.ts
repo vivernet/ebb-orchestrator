@@ -12,6 +12,9 @@ export type BuildEnvOptions = {
   injected: Record<string, string>;
 };
 
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 export class EnvironmentBuilder {
   /**
    * Get the base platform environment. Only minimal variables required for

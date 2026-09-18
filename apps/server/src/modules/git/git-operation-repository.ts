@@ -10,6 +10,9 @@ export interface CreateGitOperationParams {
   targetRef?: string | null;
 }
 
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 export class GitOperationRepository {
   constructor(private readonly db: Database) {}
 

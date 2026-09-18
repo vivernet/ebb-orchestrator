@@ -42,6 +42,9 @@ function rowToApproval(row: ApprovalRow): Approval {
   };
 }
 
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 export class ApprovalService {
   constructor(private readonly db: Database) {}
 

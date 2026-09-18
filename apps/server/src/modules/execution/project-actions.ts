@@ -25,6 +25,9 @@ export type ActionResult = {
   exitCode: number | null;
 };
 
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 export class ProjectActions {
   private commandTools: CommandTools;
 

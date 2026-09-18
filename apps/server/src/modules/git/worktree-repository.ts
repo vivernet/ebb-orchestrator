@@ -1,6 +1,9 @@
 import type { Database, StatementParams } from "../../platform/database/database.js";
 import type { WorktreeRecord } from "./worktree-manager.js";
 
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 export class WorktreeRepository {
   constructor(private readonly db: Database) {}
 

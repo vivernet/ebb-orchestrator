@@ -56,6 +56,9 @@ export interface ArtifactStoreOptions {
   _failBeforeRename?: boolean;
 }
 
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 export class ArtifactStore {
   constructor(
     private readonly artifactsDir: string,

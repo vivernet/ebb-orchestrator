@@ -10,6 +10,9 @@ import { ProjectActions, type ProjectConfig, type ActionResult } from './project
 export type FilePatch = { start: number; end: number; content: string };
 export type FilePatchResult = { success: boolean; error?: string };
 
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 export class ActionGateway {
   constructor(
     private resolver: PathResolver,

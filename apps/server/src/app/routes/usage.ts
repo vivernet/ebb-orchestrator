@@ -3,6 +3,9 @@ import type { Database } from "../../platform/database/database.js";
 
 export interface UsageRouteDeps { db?: Database | undefined; }
 
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 export async function usageRoutes(app: FastifyInstance, deps: UsageRouteDeps = {}): Promise<void> {
   app.get("/api/v1/usage", async () => {
     if (!deps.db) {

@@ -9,6 +9,9 @@ import * as path from 'node:path';
 export type WorkspaceReadResult = { success: boolean; content?: string; error?: string };
 export type WorkspaceWriteResult = { success: boolean; error?: string };
 
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 export class WorkspaceTools {
   constructor(
     private resolver: PathResolver,

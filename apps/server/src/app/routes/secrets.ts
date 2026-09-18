@@ -12,6 +12,9 @@ export interface SecretsRouteDeps {
   useKeyring?: boolean;
 }
 
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 export async function secretsRoutes(
   app: FastifyInstance,
   deps: SecretsRouteDeps = {}

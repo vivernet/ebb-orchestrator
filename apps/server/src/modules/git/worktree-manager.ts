@@ -20,6 +20,9 @@ export interface WorktreeRecord {
   removedAt: string | null;
 }
 
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 export class WorktreeManager {
   private readonly git: GitCli;
   private readonly worktreeRepo: WorktreeRepository | null;

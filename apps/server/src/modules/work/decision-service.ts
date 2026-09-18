@@ -53,6 +53,9 @@ export interface DecisionCreateInput {
   readonly decidedBy: string;
 }
 
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 export class DecisionService {
   constructor(private readonly db: Database) {}
 

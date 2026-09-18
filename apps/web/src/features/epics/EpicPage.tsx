@@ -6,6 +6,9 @@ interface EpicPageProps {
   id: string;
 }
 
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 export default function EpicPage({ id }: EpicPageProps) {
   const [projection, setProjection] = useState<EpicOverviewProjection | null>(null);
   useEffect(() => { void apiClient.get<EpicOverviewProjection>(`/epics/${encodeURIComponent(id)}`).then(setProjection).catch(() => undefined); }, [id]);

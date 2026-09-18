@@ -17,18 +17,17 @@ export default tseslint.config(
       jsdoc: { mode: "typescript" },
     },
     rules: {
-      "jsdoc/check-param-names": "warn",
-      "jsdoc/check-tag-names": "warn",
-      "jsdoc/check-syntax": "warn",
-      "jsdoc/require-description": ["warn", { descriptionStyle: "body" }],
+      "jsdoc/check-param-names": "error",
+      "jsdoc/check-tag-names": "error",
+      "jsdoc/check-syntax": "error",
+      "jsdoc/require-description": ["error", { descriptionStyle: "body" }],
       "jsdoc/require-jsdoc": [
-        "warn",
+        "error",
         {
           publicOnly: true,
           require: {
             ClassDeclaration: true,
             FunctionDeclaration: true,
-            MethodDefinition: true,
           },
         },
       ],

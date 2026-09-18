@@ -6,6 +6,9 @@ interface ProjectPageProps {
   id: string;
 }
 
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 export default function ProjectPage({ id }: ProjectPageProps) {
   const [projection, setProjection] = useState<ProjectOverviewProjection | null>(null);
   useEffect(() => { void apiClient.get<ProjectOverviewProjection>(`/projects/${encodeURIComponent(id)}`).then(setProjection).catch(() => undefined); }, [id]);

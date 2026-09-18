@@ -24,6 +24,9 @@ interface TaskRow {
   epic_id: string | null;
 }
 
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 export class WorkflowEngine {
   constructor(
     private readonly db: Database,

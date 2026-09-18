@@ -14,6 +14,9 @@ export interface StartupReport {
   errors: Error[];
 }
 
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 export class StartupReconciler {
   private readonly reconcilers: Array<() => Promise<void>> = [];
   private gitReconciler: GitReconciler | null = null;

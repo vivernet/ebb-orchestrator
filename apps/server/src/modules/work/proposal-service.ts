@@ -59,6 +59,9 @@ export interface ProposalCreateInput {
   readonly details?: Record<string, unknown>;
 }
 
+/**
+ * Экспортируемый компонент или контракт модуля, доступный другим слоям приложения.
+ */
 export class ProposalService {
   constructor(private readonly db: Database) {}
 
