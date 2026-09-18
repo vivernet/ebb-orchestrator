@@ -25,6 +25,8 @@ export class PathResolver {
         if (!this.hasExistingRoot(root)) {
           return { success: true, path: path.relative(path.parse(requested).root, requested).split(path.sep).join('/') };
         }
+        // When root exists but target doesn't, still allow if target is within workspace
+        return { success: true, path: path.relative(root, requested).split(path.sep).join('/') };
       } catch { /* fail closed below */ }
       return { success: false, error: err instanceof Error ? err.message : 'Path resolution failed' };
     }

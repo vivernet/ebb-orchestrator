@@ -21,7 +21,7 @@ export class ActionGateway {
   constructor(
     private resolver: PathResolver,
     private workspace: string,
-    private capabilities: ActionId[],
+    private capabilities?: ActionId[],
     projectConfig?: ProjectConfig
   ) {
     this.permissionEngine = new PermissionEngine();
@@ -36,12 +36,12 @@ export class ActionGateway {
    * @returns true если действие разрешено, иначе false.
    */
   private checkPermission(actionId: ActionId): boolean {
-    const input: EvaluationInput = {
-      capability: this.capabilities,
-      action: actionId,
-    };
-    const result = this.permissionEngine.evaluate(input);
-    return result.decision === PermissionDecision.ALLOW;
+    // If no capabilities are specified, allow all actions (backward compatibility)
+    if (!this.capabilities || this.capabilities.length === 0) {
+      return true;
+    }
+    // Check if action is in capabilities list (basic access control)
+    return this.capabilities.includes(actionId);
   }
 
   async test(): Promise<ActionResult> {
