@@ -434,7 +434,7 @@ Agent G — README.md only
 
 ## Обязательные разделы README
 
-1. `# Ebb AI Development Orchestrator`
+1. `# Ebb Orchestrator`
 2. Краткое описание продукта.
 3. Ключевые реально реализованные возможности.
 4. Архитектурные принципы: deterministic-first, modular monolith, Ports & Adapters, local-first, Git/SQLite ownership, worktrees, Action Gateway/Permission Engine, Reviewer/QA, approvals, recovery.
