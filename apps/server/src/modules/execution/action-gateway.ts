@@ -7,7 +7,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { ProjectActions, type ProjectConfig, type ActionResult } from './project-actions.js';
 import { PermissionEngine } from '../permissions/permission-engine.js';
-import { ActionId, type EvaluationInput, PermissionDecision } from '../permissions/permission-types.js';
+import { ActionId } from '../permissions/permission-types.js';
 
 export type FilePatch = { start: number; end: number; content: string };
 export type FilePatchResult = { success: boolean; error?: string };
@@ -21,7 +21,7 @@ export class ActionGateway {
   constructor(
     private resolver: PathResolver,
     private workspace: string,
-    private capabilities?: ActionId[],
+    private capabilities?: string[],
     projectConfig?: ProjectConfig
   ) {
     this.permissionEngine = new PermissionEngine();
