@@ -41,7 +41,113 @@ function makeAppWithDatabase() {
   return { app: createApp({ db, scheduler, runtime: mockRuntime }), db };
 }
 
+const validContract = {
+  version: 1,
+  goal: "Implement health endpoint",
+  context: "The service needs a stable health probe.",
+  requirements: ["Expose GET /health"],
+  acceptanceCriteria: ["Returns HTTP 200"],
+  dependencies: [],
+  nonGoals: [],
+  definitionOfDone: ["Tests pass"],
+};
+
+function mutationHeaders(app: ReturnType<typeof makeApp>) {
+  return {
+    authorization: `Bearer ${app.sessionToken}`,
+    origin: "http://127.0.0.1:3000",
+    "x-csrf-token": app.csrfToken,
+  };
+}
+
 describe("orchestrator read API", () => {
+  it("creates projects, epics, and tasks through strict command routes", async () => {
+    const { app, db } = makeAppWithDatabase();
+    const projectResponse = await app.inject({
+      method: "POST",
+      url: "/api/v1/projects",
+      headers: mutationHeaders(app),
+      payload: { name: "health-service", displayName: "Health Service" },
+    });
+    expect(projectResponse.statusCode).toBe(201);
+    const project = JSON.parse(projectResponse.body).project;
+
+    const epicResponse = await app.inject({
+      method: "POST",
+      url: `/api/v1/projects/${project.id}/epics`,
+      headers: mutationHeaders(app),
+      payload: validContract,
+    });
+    expect(epicResponse.statusCode).toBe(201);
+    const epic = JSON.parse(epicResponse.body).epic;
+
+    const standaloneResponse = await app.inject({
+      method: "POST",
+      url: `/api/v1/projects/${project.id}/tasks`,
+      headers: mutationHeaders(app),
+      payload: validContract,
+    });
+    expect(standaloneResponse.statusCode).toBe(201);
+    expect(JSON.parse(standaloneResponse.body).task.projectId).toBe(project.id);
+
+    const childResponse = await app.inject({
+      method: "POST",
+      url: `/api/v1/epics/${epic.id}/tasks`,
+      headers: mutationHeaders(app),
+      payload: validContract,
+    });
+    expect(childResponse.statusCode).toBe(201);
+    expect(JSON.parse(childResponse.body).task.epicId).toBe(epic.id);
+    expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM tasks")?.count).toBe(2);
+    await app.close();
+    db.close();
+  });
+
+  it("rejects extra command fields and missing parents", async () => {
+    const { app, db } = makeAppWithDatabase();
+    const invalidProject = await app.inject({
+      method: "POST",
+      url: "/api/v1/projects",
+      headers: mutationHeaders(app),
+      payload: { name: "x", displayName: "X", repositoryPath: "C:/secret" },
+    });
+    expect(invalidProject.statusCode).toBe(400);
+
+    const missingProject = await app.inject({
+      method: "POST",
+      url: "/api/v1/projects/missing/tasks",
+      headers: mutationHeaders(app),
+      payload: validContract,
+    });
+    expect(missingProject.statusCode).toBe(404);
+
+    const invalidContract = await app.inject({
+      method: "POST",
+      url: "/api/v1/projects/missing/epics",
+      headers: mutationHeaders(app),
+      payload: { ...validContract, prompt: "unexpected" },
+    });
+    expect(invalidContract.statusCode).toBe(400);
+    await app.close();
+    db.close();
+  });
+
+  it("returns 503 when command services are not composed", async () => {
+    const db = createSqliteDatabase(":memory:");
+    runMigrations(db, migrations);
+    const scheduler = new SchedulerService(db);
+    const app = createApp({ scheduler });
+    const headers = mutationHeaders(app);
+
+    const project = await app.inject({ method: "POST", url: "/api/v1/projects", headers, payload: { name: "x", displayName: "X" } });
+    expect(project.statusCode).toBe(503);
+    const task = await app.inject({ method: "POST", url: "/api/v1/projects/p/tasks", headers, payload: validContract });
+    expect(task.statusCode).toBe(503);
+
+    await app.close();
+    db.close();
+  });
+
   it("fails closed when onboarding activation has no persisted semantic approval authority", async () => {
     const { app, db } = makeAppWithDatabase();
     const now = "2026-09-20T00:00:00.000Z";

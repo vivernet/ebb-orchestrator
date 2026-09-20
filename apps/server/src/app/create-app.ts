@@ -22,11 +22,12 @@ import { settingsRoutes } from "./routes/settings.js";
 import { usageRoutes } from "./routes/usage.js";
 import type { Database } from "../platform/database/database.js";
 import { DashboardProjection } from "./read-models/dashboard-projection.js";
-import { projectRoutes } from "./routes/projects.js";
+import { projectRoutes, type ProjectCommandService } from "./routes/projects.js";
 import { workRoutes, type WorkCommandService } from "./routes/work.js";
 import { approvalRoutes, type ApprovalCommandService } from "./routes/approvals.js";
 import { runRoutes, type RunCommandService } from "./routes/runs.js";
 import { WorkService } from "../modules/work/work-service.js";
+import { ProjectService } from "../modules/projects/project-service.js";
 import { ApprovalService } from "../modules/approvals/approval-service.js";
 import { RunService } from "../modules/runtime/run-service.js";
 import type { AgentRuntime } from "../modules/runtime/agent-runtime.js";
@@ -50,6 +51,7 @@ export interface AppDeps {
   /** Port the server will listen on (default 3000). */
   port?: number;
   db?: Database;
+  projectService?: ProjectCommandService;
   workService?: WorkCommandService;
   approvalService?: ApprovalCommandService;
   runService?: RunCommandService;
@@ -91,6 +93,7 @@ export function createApp(deps: AppDeps): OrchestratorApp {
   const workflow = deps.db ? new WorkflowEngine(deps.db, workflowRegistry) : undefined;
   const scheduler = deps.scheduler;
   const workService = deps.workService ?? (deps.db ? new WorkService(deps.db, workflow) : undefined);
+  const projectService = deps.projectService ?? (deps.db ? new ProjectService(deps.db) : undefined);
   const approvalService = deps.approvalService ?? (deps.db ? new ApprovalService(deps.db) : undefined);
   if (deps.db && !deps.runtime && !deps.runService) throw new Error("production runtime is required");
   const runService = deps.runService ?? (deps.db && deps.runtime ? new RunService(deps.db, deps.runtime) : undefined);
@@ -169,7 +172,7 @@ export function createApp(deps: AppDeps): OrchestratorApp {
   app.register(async (instance) => schedulerRoutes(instance, scheduler));
   app.register(async (instance) => {
     instance.get("/api/v1/dashboard", async () => new DashboardProjection(deps.db, scheduler).get());
-    await projectRoutes(instance, { db: deps.db, scheduler });
+    await projectRoutes(instance, { db: deps.db, scheduler, projectService });
     await workRoutes(instance, { db: deps.db, workService, scheduler });
     await approvalRoutes(instance, { db: deps.db, approvalService });
     await runRoutes(instance, { db: deps.db, runService, scheduler });
