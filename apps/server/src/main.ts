@@ -49,6 +49,8 @@ import { MergeService, type MergeResult } from "./modules/git/merge-service.js";
 import { GitReconciler } from "./modules/git/git-reconciler.js";
 import { ArtifactRepository } from "./platform/artifacts/artifact-repository.js";
 import { ArtifactStore } from "./platform/artifacts/artifact-store.js";
+import { JobRunner } from "./platform/jobs/job-runner.js";
+import { JobWorker } from "./platform/jobs/job-worker.js";
 
 const host = "127.0.0.1";
 const port = Number(process.env["PORT"] ?? 3000);
@@ -176,7 +178,10 @@ const schedulerWorker: BackgroundWorker = {
   stop: async () => { schedulerSafetyWorker.stop(); },
 };
 const outboxWorker = new OutboxWorker(eventDispatcher);
-const workers = [schedulerWorker, outboxWorker];
+// Registry намеренно пуст: production handlers добавляются только явным
+// модулем-владельцем. Неизвестные типы безопасно завершаются JobRunner.
+const jobWorker = new JobWorker(new JobRunner(database, {}));
+const workers = [schedulerWorker, outboxWorker, jobWorker];
 
 async function gracefulShutdown(signal: string): Promise<void> {
    console.log(`\n[orchestrator] received ${signal}, shutting down…`);
