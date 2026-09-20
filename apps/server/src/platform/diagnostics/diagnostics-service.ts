@@ -15,9 +15,9 @@ export class DiagnosticsService {
       appVersion: this.options.appVersion,
       schemaVersion: this.options.schemaVersion,
       migrationHistory: rows('SELECT version, name, applied_at FROM schema_migrations ORDER BY version'),
-      workerHealth: rows('SELECT * FROM jobs LIMIT 100'),
-      pendingOutbox: count("SELECT COUNT(*) as count FROM outbox WHERE status = 'PENDING'"),
-      deadLetter: count("SELECT COUNT(*) as count FROM outbox WHERE status = 'DEAD_LETTER'"),
+      workerHealth: rows('SELECT id, type, status, attempts, max_attempts, lease_owner, lease_expires_at, last_error, updated_at FROM background_jobs ORDER BY updated_at DESC LIMIT 100'),
+      pendingOutbox: count("SELECT COUNT(*) as count FROM outbox_events WHERE processed_at IS NULL AND dead_lettered_at IS NULL"),
+      deadLetter: count("SELECT COUNT(*) as count FROM outbox_events WHERE dead_lettered_at IS NOT NULL"),
       staleLocks: count('SELECT COUNT(*) as count FROM scheduler_resource_locks'),
       recentErrors: (this.options.recentErrors ?? []).map((error) => JSON.parse(redact(error))),
     };

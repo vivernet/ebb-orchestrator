@@ -320,4 +320,19 @@ describe("RunService with FakeAgentRuntime", () => {
     expect(db!.get<{ status: string; prompt: string }>("SELECT status,prompt FROM agent_runs WHERE id=$id", { id: run.id }))
       .toEqual({ status: "FAILED", prompt: "prepared prompt" });
   });
+
+  it("fails non-terminal runs during startup recovery and clears capabilities", async () => {
+    await setup();
+    const run = runService.prepareRun({
+      runId: randomUUID(), role: "developer", model: "gpt-4", taskId, epicId,
+      triggerReason: "epic-plan", contextVersion: "1", outputSchemaVersion: "1",
+    });
+    db!.run("UPDATE agent_runs SET status='IN_PROGRESS' WHERE id=$id", { id: run.id });
+
+    expect(runService.reconcileInterruptedRuns()).toBe(1);
+    expect(db!.get<{ status: string; capability_ref: string | null; output: string }>(
+      "SELECT status, capability_ref, output FROM agent_runs WHERE id=$id", { id: run.id },
+    )).toEqual({ status: "FAILED", capability_ref: null, output: "Run interrupted by orchestrator restart" });
+    expect(runService.reconcileInterruptedRuns()).toBe(0);
+  });
 });

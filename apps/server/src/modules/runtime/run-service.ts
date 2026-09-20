@@ -46,6 +46,25 @@ export class RunService {
     return new DatabaseCompletionStore(this.db);
   }
 
+  /**
+   * Помечает незавершённые runs как прерванные рестартом процесса.
+   *
+   * После захвата single-instance lock старый runtime уже не может продолжать
+   * выполнение в этом процессе, поэтому оставлять capability активной опасно:
+   * это создаёт ложное состояние и блокирует recovery scheduler.
+   */
+  reconcileInterruptedRuns(): number {
+    const now = new Date().toISOString();
+    this.db.run(
+      `UPDATE agent_runs
+          SET status='FAILED', ended_at=$ended_at, exit_code=-1,
+              output=$output, capability_ref=NULL, capability_json=NULL
+        WHERE status IN ('STARTED','IN_PROGRESS','COMPLETING')`,
+      { ended_at: now, output: "Run interrupted by orchestrator restart" },
+    );
+    return this.db.get<{ changes: number }>("SELECT changes() AS changes")?.changes ?? 0;
+  }
+
   getCapabilityReference(runId: string): string {
     const row = this.db.get<{ capability_ref: string | null }>(
       "SELECT capability_ref FROM agent_runs WHERE id = $id", { id: runId });

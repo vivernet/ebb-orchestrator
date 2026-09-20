@@ -16,9 +16,14 @@ const migration001 = await readFile(
   join(import.meta.dirname, "../../../src/platform/database/migrations/001_system.sql"),
   "utf-8",
 );
+const migration022 = await readFile(
+  join(import.meta.dirname, "../../../src/platform/database/migrations/022_outbox_dead_letter.sql"),
+  "utf-8",
+);
 
 const migrations: Migration[] = [
   { version: 1, name: "001_system", sql: migration001 },
+  { version: 22, name: "022_outbox_dead_letter", sql: migration022 },
 ];
 
 function createTestEvent(overrides?: Partial<DomainEventInput>): DomainEvent {
@@ -224,5 +229,22 @@ describe("transactional outbox", () => {
     const batch2 = await dispatcher.dispatchBatch(2);
     expect(batch2).toBe(1);
     expect(dispatchedIds).toHaveLength(3);
+  });
+
+  it("moves an event to dead letter after the bounded retry budget", async () => {
+    db = await setupDb();
+    const bus = new EventBus();
+    bus.subscribe("test.entity.created", "always-fails", async () => { throw new Error("handler exploded"); });
+    const dispatcher = new EventDispatcher(db, bus);
+    const event = createTestEvent();
+    db.transaction((tx) => { appendOutboxEvent(tx, event); });
+    db.run("UPDATE outbox_events SET attempts = 4, available_at = $now WHERE id = $id", { id: event.id, now: new Date().toISOString() });
+
+    expect(await dispatcher.dispatchBatch(100)).toBe(0);
+    const row = db.get<{ attempts: number; processed_at: string | null; dead_lettered_at: string | null; dead_letter_reason: string | null }>(
+      "SELECT attempts, processed_at, dead_lettered_at, dead_letter_reason FROM outbox_events WHERE id = $id", { id: event.id });
+    expect(row).toMatchObject({ attempts: 5, processed_at: null, dead_letter_reason: "maximum delivery attempts exceeded" });
+    expect(row?.dead_lettered_at).toEqual(expect.any(String));
+    expect(await dispatcher.dispatchBatch(100)).toBe(0);
   });
 });

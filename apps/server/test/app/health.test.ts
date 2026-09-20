@@ -7,6 +7,7 @@ import { createSqliteDatabase } from "../../src/platform/database/sqlite-databas
 import { SchedulerService } from "../../src/modules/scheduler/scheduler-service.js";
 import { runMigrations, type Migration } from "../../src/platform/database/migrator.js";
 import type { AgentRuntime } from "../../src/modules/runtime/agent-runtime.js";
+import { StatusTracker } from "../../src/platform/process/system-lifecycle.js";
 
 const migrationDir = fileURLToPath(new URL("../../src/platform/database/migrations/", import.meta.url));
 const migrations: Migration[] = readdirSync(migrationDir).filter((file) => file.endsWith(".sql")).map((file) => {
@@ -27,19 +28,31 @@ const mockRuntime: AgentRuntime = {
   async healthCheck() { return true; },
 };
 
-function makeApp() {
+function makeApp(status = new StatusTracker()) {
   const db = createSqliteDatabase(":memory:");
   runMigrations(db, migrations);
   const scheduler = new SchedulerService(db);
-  return createApp({ db, scheduler, runtime: mockRuntime });
+  return createApp({ db, scheduler, runtime: mockRuntime, status });
 }
 
 describe("GET /api/v1/health", () => {
   it("returns 200 with status ok", async () => {
-    const app = makeApp();
+    const status = new StatusTracker();
+    await status.set("READY");
+    const app = makeApp(status);
     const res = await app.inject({ method: "GET", url: "/api/v1/health" });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ status: "ok" });
+    expect(res.json()).toEqual({ status: "ok", lifecycle: "READY" });
+    await app.close();
+  });
+
+  it.each(["STARTING", "RECOVERING", "DEGRADED", "SHUTTING_DOWN"] as const)("does not report %s as ready", async (lifecycle) => {
+    const status = new StatusTracker();
+    await status.set(lifecycle);
+    const app = makeApp(status);
+    const res = await app.inject({ method: "GET", url: "/api/v1/health" });
+    expect(res.statusCode).toBe(503);
+    expect(res.json()).toEqual({ status: "unavailable", lifecycle });
     await app.close();
   });
 });

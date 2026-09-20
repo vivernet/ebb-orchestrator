@@ -17,6 +17,8 @@ interface PendingEventRow {
   attempts: number;
 }
 
+const DEFAULT_MAX_ATTEMPTS = 5;
+
 interface ProcessedRow {
   event_id: string;
 }
@@ -25,10 +27,19 @@ interface ProcessedRow {
  * Предоставляет публичный контракт модуля event-dispatcher для взаимодействия слоёв приложения.
  */
 export class EventDispatcher {
+  private readonly supportsDeadLetterColumns: boolean;
+
   constructor(
     private readonly db: Database,
     private readonly bus: EventBus,
-  ) {}
+  ) {
+    // A few embedders still open a v1-only database in tests/recovery tools.
+    // Production migrations always install these columns, but keeping the
+    // dispatcher readable against the old schema preserves restart safety.
+    this.supportsDeadLetterColumns = this.db
+      .all<{ name: string }>("PRAGMA table_info(outbox_events)")
+      .some((column) => column.name === "dead_lettered_at");
+  }
 
   /**
    * Dispatch up to `limit` pending events to their subscribers.
@@ -36,7 +47,9 @@ export class EventDispatcher {
    */
   async dispatchBatch(limit: number): Promise<number> {
     const pendingEvents = this.db.all<PendingEventRow>(
-      "SELECT id, type, aggregate_type, aggregate_id, payload_json, created_at, available_at, attempts FROM outbox_events WHERE processed_at IS NULL AND available_at <= $now ORDER BY created_at LIMIT $limit",
+      `SELECT id, type, aggregate_type, aggregate_id, payload_json, created_at, available_at, attempts FROM outbox_events
+       WHERE processed_at IS NULL${this.supportsDeadLetterColumns ? " AND dead_lettered_at IS NULL" : ""}
+         AND available_at <= $now ORDER BY created_at LIMIT $limit`,
       { now: new Date().toISOString(), limit },
     );
 
@@ -75,11 +88,19 @@ export class EventDispatcher {
         } catch {
           // Handler failed — leave event pending and apply bounded backoff.
           allConsumersHandled = false;
-          const retryAt = new Date(Date.now() + Math.min(30_000, 250 * 2 ** Math.min(7, row.attempts))).toISOString();
-          this.db.run(
-            "UPDATE outbox_events SET attempts = attempts + 1, available_at = $available_at, last_error = $error WHERE id = $id",
-            { id: event.id, available_at: retryAt, error: "handler failed" },
-          );
+          const nextAttempts = row.attempts + 1;
+          if (this.supportsDeadLetterColumns && nextAttempts >= DEFAULT_MAX_ATTEMPTS) {
+            this.db.run(
+              "UPDATE outbox_events SET attempts = $attempts, dead_lettered_at = $dead_lettered_at, dead_letter_reason = $reason, last_error = $error WHERE id = $id",
+              { id: event.id, attempts: nextAttempts, dead_lettered_at: new Date().toISOString(), reason: "maximum delivery attempts exceeded", error: "handler failed" },
+            );
+          } else {
+            const retryAt = new Date(Date.now() + Math.min(30_000, 250 * 2 ** Math.min(7, row.attempts))).toISOString();
+            this.db.run(
+              "UPDATE outbox_events SET attempts = $attempts, available_at = $available_at, last_error = $error WHERE id = $id",
+              { id: event.id, attempts: nextAttempts, available_at: retryAt, error: "handler failed" },
+            );
+          }
           // Do not mark other consumers as unprocessed – break out of the subscription loop
           break;
         }

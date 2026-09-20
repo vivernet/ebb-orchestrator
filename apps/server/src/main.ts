@@ -46,6 +46,9 @@ import { PlanningService } from "./modules/planning/planning-service.js";
 import { EpicOrchestrator, type IntegrationServiceFactory } from "./modules/planning/epic-orchestrator.js";
 import { IntegrationService } from "./modules/git/integration-service.js";
 import { MergeService, type MergeResult } from "./modules/git/merge-service.js";
+import { GitReconciler } from "./modules/git/git-reconciler.js";
+import { ArtifactRepository } from "./platform/artifacts/artifact-repository.js";
+import { ArtifactStore } from "./platform/artifacts/artifact-store.js";
 
 const host = "127.0.0.1";
 const port = Number(process.env["PORT"] ?? 3000);
@@ -108,8 +111,10 @@ const infisicalOptions = resolveInfisicalSecretStoreOptions(process.env);
 const secretStore = infisicalOptions
   ? createInfisicalSecretStore(database, infisicalOptions)
   : new KeyringSecretStore(database);
+mkdirSync(home.artifacts, { recursive: true });
+const artifactStore = new ArtifactStore(home.artifacts, new ArtifactRepository(database));
 
-const app = createApp({ host, port, db: database, scheduler, runtime, runService, secretStore, epicOrchestrator, ...(existsSync(webRoot) ? { webRoot } : {}) });
+const app = createApp({ host, port, db: database, scheduler, runtime, runService, secretStore, epicOrchestrator, status, ...(existsSync(webRoot) ? { webRoot } : {}) });
 
 // Регистрирует шаги reconciliation которые будут запущены после migrations.
 const reconciler = {
@@ -128,10 +133,25 @@ const reconciler = {
 reconciler.register(async () => {
   // Reconcile runs, Git/worktrees, budgets, outbox/jobs для активных проектов.
   // Этот запрос выполняется ПОСЛЕ завершения migrations, избегая доступа до migrations.
-  const projectIdsQuery = database.all<{ id: string }>("SELECT id FROM projects WHERE status='ACTIVE'");
-  for (const _p of projectIdsQuery) {
-    try { /* per-project reconciliation is best-effort */ } catch { /* per-project reconciliation is best-effort */ }
+  const onboarding = database.all<{ repository_path: string; proposed_json: string }>(
+    `SELECT repository_path, proposed_json FROM onboarding_configs WHERE status='ACTIVE'`,
+  );
+  for (const project of onboarding) {
+    try {
+      const proposed = JSON.parse(project.proposed_json) as { defaultBranch?: unknown };
+      const branch = typeof proposed.defaultBranch === "string" && proposed.defaultBranch.length > 0 ? proposed.defaultBranch : "master";
+      const git = new GitReconciler();
+      await git.initialize(project.repository_path);
+      const result = await git.reconcile(branch);
+      if (result.state !== "IN_SYNC") console.warn(`[orchestrator] Git drift: ${result.state}`);
+    } catch (error) {
+      console.warn(`[orchestrator] Git reconciliation skipped: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
+});
+reconciler.register(async () => {
+  const interrupted = runService.reconcileInterruptedRuns();
+  if (interrupted > 0) console.warn(`[orchestrator] Recovered interrupted runs: ${interrupted}`);
 });
 reconciler.register(async () => {
 // Reconcile budgets: гарантирует что бюджетные строки существуют для активных проектов.
@@ -185,12 +205,17 @@ await startSystem({
     await eventDispatcher.dispatchBatch(100);
   },
   reconcileJobs: async () => {
-    // Process pending background jobs by polling.
-    // JobRunner требует handlers; используем no-op если ничего не зарегистрировано.
+    // Возвращаем протухшие leases в очередь; handlers выполняются только
+    // зарегистрированным JobRunner, а не произвольным runtime output.
+    database.run(
+      `UPDATE background_jobs
+          SET status='QUEUED', lease_owner=NULL, lease_expires_at=NULL, updated_at=$now
+        WHERE status='RUNNING' AND lease_expires_at < $now`,
+      { now: new Date().toISOString() },
+    );
   },
   reconcileArtifacts: async () => {
-    // Artifact reconciliation происходит через reconcileStagingArtifacts на store.
-    // Требует ArtifactStore с path и repository - выполняется лениво если нужно.
+    await artifactStore.reconcileStagingArtifacts();
   },
   additionalReconcilers: [async () => reconciler.run().then((report) => {
     if (report.errors.length) {

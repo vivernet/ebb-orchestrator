@@ -48,6 +48,7 @@ import { dependencyRoutes, type DependencyCommandService } from "./routes/depend
 import { finalMergeRoutes, type FinalMergeServiceFactory } from "./routes/final-merge.js";
 import { epicRoutes } from "./routes/epics.js";
 import type { EpicOrchestrator } from "../modules/planning/epic-orchestrator.js";
+import type { StatusTrackerInterface } from "../platform/process/system-lifecycle.js";
 
 const LOCAL_SESSION_COOKIE = "ebb_local_session";
 
@@ -75,6 +76,8 @@ export interface AppDeps {
   diagnostics?: DiagnosticsService;
   /** Production SecretStore; tests may inject an explicit deterministic backend. */
   secretStore?: SecretStore;
+  /** Lifecycle status exposed by the public readiness probe. */
+  status?: StatusTrackerInterface;
   /** Абсолютный путь к собранному Vite bundle для same-origin production UI. */
   webRoot?: string;
 }
@@ -160,7 +163,7 @@ export function createApp(deps: AppDeps): OrchestratorApp {
 
   // ── Routes ─────────────────────────────────────────────────────────
   // Public
-  app.register(healthRoutes);
+  app.register(async (instance) => healthRoutes(instance, deps.status));
   app.get("/api/v1/session/bootstrap", async (request, reply) => {
     const supplied = request.headers["x-ebb-bootstrap-token"];
     if (typeof supplied !== "string" || !session.bootstrapToken || !safeEquals(supplied, session.bootstrapToken)) {
