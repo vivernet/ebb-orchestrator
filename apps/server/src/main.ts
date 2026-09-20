@@ -33,6 +33,7 @@ import {
   type BackgroundWorker,
 } from "./platform/process/system-lifecycle.js";
 import { RuntimeOrchestrator } from "./modules/runtime/run-orchestrator.js";
+import { RunService } from "./modules/runtime/run-service.js";
 import { EventBus } from "./platform/events/event-bus.js";
 import { EventDispatcher } from "./platform/events/event-dispatcher.js";
 import { OutboxWorker } from "./platform/events/outbox-worker.js";
@@ -81,14 +82,15 @@ for (const template of Object.values(templates)) workflowRegistry.register(templ
 const workflowEngine = new WorkflowEngine(database, workflowRegistry);
 const eventBus = new EventBus();
 const eventDispatcher = new EventDispatcher(database, eventBus);
-const runtimeOrchestrator = new RuntimeOrchestrator(database, workflowEngine, eventBus, eventDispatcher, scheduler);
+const runService = new RunService(database, runtime);
+const runtimeOrchestrator = new RuntimeOrchestrator(database, workflowEngine, eventBus, eventDispatcher, scheduler, runService);
 runtimeOrchestrator.initialize();
 const infisicalOptions = resolveInfisicalSecretStoreOptions(process.env);
 const secretStore = infisicalOptions
   ? createInfisicalSecretStore(database, infisicalOptions)
   : new KeyringSecretStore(database);
 
-const app = createApp({ host, port, db: database, scheduler, runtime, secretStore, ...(existsSync(webRoot) ? { webRoot } : {}) });
+const app = createApp({ host, port, db: database, scheduler, runtime, runService, secretStore, ...(existsSync(webRoot) ? { webRoot } : {}) });
 
 // Регистрирует шаги reconciliation которые будут запущены после migrations.
 const reconciler = {

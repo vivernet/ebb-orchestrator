@@ -10,8 +10,8 @@
  * 3. Run migrations
  * 4. Set status to RECOVERING
  * 5. Reconcile outbox / jobs / artifacts / additional reconcilers
- * 6. Set status to READY
- * 7. Start workers
+ * 6. Start workers
+ * 7. Set status to READY
  */
 
 export type SystemStatus =
@@ -89,10 +89,25 @@ export async function startSystem(deps: SystemLifecycleDeps): Promise<void> {
   for (const reconcile of deps.additionalReconcilers) {
     await reconcile();
   }
-  await deps.status.set("READY");
-  for (const worker of deps.workers) {
-    await worker.start();
+  const startedWorkers: BackgroundWorker[] = [];
+  try {
+    for (const worker of deps.workers) {
+      await worker.start();
+      startedWorkers.push(worker);
+    }
+  } catch (error) {
+    // Do not leave partially started workers running when startup cannot
+    // establish a fully operational system.  The status must also remain
+    // non-ready so readiness probes cannot report a false positive.
+    await Promise.allSettled(
+      startedWorkers.map(async (worker) => {
+        await worker.stop();
+      }),
+    );
+    await deps.status.set("DEGRADED");
+    throw error;
   }
+  await deps.status.set("READY");
 }
 
 /**
@@ -131,13 +146,20 @@ export async function shutdownSystem(deps: {
 
   await deps.status.set("SHUTTING_DOWN");
 
-  // Stop workers – prevents new work from starting.
-  for (const worker of deps.workers) {
-    await worker.stop();
-  }
-
-  // Give in-flight operations a grace period.
-  await new Promise((resolve) => setTimeout(resolve, timeout));
+  // Stop workers concurrently and enforce one grace-period deadline for the
+  // whole shutdown.  A worker that cannot stop in time must not multiply the
+  // process shutdown latency by the number of workers.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const stopPromise = Promise.allSettled(
+    deps.workers.map(async (worker) => {
+      await worker.stop();
+    }),
+  );
+  const timeoutPromise = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, timeout);
+  });
+  await Promise.race([stopPromise.then(() => undefined), timeoutPromise]);
+  if (timer !== undefined) clearTimeout(timer);
 
   deps.database.close();
   await deps.instanceLock.release();

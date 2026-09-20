@@ -13,6 +13,7 @@ import { EventBus } from "../../platform/events/event-bus.js";
 import { EventDispatcher } from "../../platform/events/event-dispatcher.js";
 import { RuntimeEventHandlers } from "./run-event-handlers.js";
 import { SchedulerService } from "../scheduler/scheduler-service.js";
+import { RunService } from "./run-service.js";
 
 /**
  * Orchestrator for runtime events.
@@ -37,8 +38,9 @@ export class RuntimeOrchestrator {
     private readonly bus: EventBus,
     private readonly dispatcher: EventDispatcher,
     scheduler: SchedulerService,
+    runService?: RunService,
   ) {
-    this.eventHandlers = new RuntimeEventHandlers(db, workflowEngine, scheduler);
+    this.eventHandlers = new RuntimeEventHandlers(db, workflowEngine, scheduler, runService);
   }
 
   /**
@@ -50,7 +52,7 @@ export class RuntimeOrchestrator {
       "AgentRunRequested",
       "runtime-orchestrator",
       (event: { readonly type: string; readonly aggregateId: string | undefined; readonly payload: Record<string, unknown> }) => {
-        this.eventHandlers.handleAgentRunRequested(event);
+        return this.eventHandlers.handleAgentRunRequested(event);
       },
     );
 
@@ -98,6 +100,7 @@ export function registerRuntimeOrchestrator(
   bus: EventBus,
   dispatcher: EventDispatcher,
   scheduler: SchedulerService,
+  runService?: RunService,
 ): RuntimeOrchestrator {
   const orchestrator = new RuntimeOrchestrator(
     db,
@@ -105,6 +108,7 @@ export function registerRuntimeOrchestrator(
     bus,
     dispatcher,
     scheduler,
+    runService,
   );
   orchestrator.initialize();
   return orchestrator;

@@ -1,10 +1,11 @@
-import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
   startSystem,
+  shutdownSystem,
   type SystemLifecycleDeps,
   type SystemStatus,
   type LockHandle,
@@ -83,8 +84,8 @@ describe("startup lifecycle", () => {
       "reconcile outbox",
       "reconcile jobs",
       "reconcile artifacts",
-      "status READY",
       "worker start",
+      "status READY",
     ]);
 
     expect(currentStatus).toBe("READY");
@@ -154,6 +155,69 @@ describe("startup lifecycle", () => {
     await startSystem(deps);
 
     expect(steps).toEqual(["open DB", "migrations", "status RECOVERING", "status READY"]);
+  });
+
+  it("does not become ready when a worker fails to start", async () => {
+    const statuses: SystemStatus[] = [];
+    const stopped: string[] = [];
+    const deps: SystemLifecycleDeps = {
+      instanceLock: { acquire: async () => ({ pid: 1 }), release: async () => {} },
+      database: { open: async () => {}, close: () => {} },
+      migrator: { run: async () => {} },
+      status: {
+        get: () => statuses.at(-1) ?? "STARTING",
+        set: async (status) => { statuses.push(status); },
+      },
+      reconcileOutbox: async () => {},
+      reconcileJobs: async () => {},
+      reconcileArtifacts: async () => {},
+      additionalReconcilers: [],
+      workers: [
+        {
+          start: async () => {},
+          stop: async () => { stopped.push("first"); },
+        },
+        {
+          start: async () => { throw new Error("worker failed"); },
+          stop: async () => { stopped.push("failed"); },
+        },
+      ],
+    };
+
+    await expect(startSystem(deps)).rejects.toThrow("worker failed");
+    expect(statuses).toEqual(["RECOVERING", "DEGRADED"]);
+    expect(stopped).toEqual(["first"]);
+  });
+
+  it("uses one shutdown deadline for all workers", async () => {
+    vi.useFakeTimers();
+    try {
+      const stopped: string[] = [];
+      const closed = vi.fn();
+      const released = vi.fn(async () => {});
+      const shutdown = shutdownSystem({
+        status: { get: () => "READY", set: vi.fn(async () => {}) },
+        workers: [
+          { start: async () => {}, stop: async () => { stopped.push("one"); await new Promise<void>(() => {}); } },
+          { start: async () => {}, stop: async () => { stopped.push("two"); await new Promise<void>(() => {}); } },
+        ],
+        database: { open: async () => {}, close: closed },
+        instanceLock: { release: released },
+        timeoutMs: 1_000,
+      });
+
+      await Promise.resolve();
+      expect(stopped).toEqual(["one", "two"]);
+      expect(closed).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      await shutdown;
+
+      expect(closed).toHaveBeenCalledOnce();
+      expect(released).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("prevents second instance from acquiring lock", async () => {

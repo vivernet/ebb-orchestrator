@@ -8,6 +8,7 @@ import { WorkflowEngine } from "../workflow/workflow-engine.js";
 import type { RunOutcome } from "./run-types.js";
 import { validateRoleOutput } from "./output-validator.js";
 import { SchedulerService } from "../scheduler/scheduler-service.js";
+import { RunService } from "./run-service.js";
 
 /**
  * Orchestrates runtime events and workflow transitions.
@@ -17,6 +18,7 @@ export class RuntimeEventHandlers {
     private readonly db: Database,
     private readonly workflowEngine: WorkflowEngine,
     private readonly scheduler: SchedulerService,
+    private readonly runService?: RunService,
   ) {
     // Final merge provenance is authoritative even for databases created
     // before the provenance migration was installed.
@@ -33,7 +35,7 @@ export class RuntimeEventHandlers {
     readonly type: string;
     readonly aggregateId: string | undefined;
     readonly payload: Record<string, unknown>;
-  }): void {
+  }): void | Promise<void> {
     if (event.type !== "AgentRunRequested" || !event.aggregateId) {
       return;
     }
@@ -60,16 +62,60 @@ export class RuntimeEventHandlers {
       );
     }
 
-    // Scheduler is the only dispatch authority: it atomically reserves
-    // capacity/budget/resource lock before advancing the workflow.
-    this.scheduler.dispatchTask(taskId, this.workflowEngine, () => undefined, {
-      triggerReason: "runtime-request",
+    // The run identity is persisted before scheduling. The scheduler then
+    // stores that exact identity in its reservation, preventing a later
+    // runtime from being attached to a different reservation/run.
+    if (!this.runService) {
+      // Keep direct legacy scenario fixtures usable until their composition
+      // is migrated. Production RuntimeOrchestrator always supplies RunService.
+      this.scheduler.dispatchTask(taskId, this.workflowEngine, () => undefined, {
+        triggerReason: "runtime-request",
+        role,
+        model,
+      });
+      this.emitAgentRunStarted(taskId, role, model);
+      return;
+    }
+
+    const run = this.runService.prepareRun({
       role,
       model,
+      taskId,
+      epicId: null,
+      triggerReason: "runtime-request",
+      contextVersion: "runtime-request-v1",
+      outputSchemaVersion: "1",
     });
 
-    // Log/emit AgentRunStarted event
+    try {
+      // Scheduler is the only dispatch authority: it atomically reserves
+      // capacity/budget/resource lock before advancing the workflow.
+      this.scheduler.dispatchTask(taskId, this.workflowEngine, () => undefined, {
+        triggerReason: "runtime-request",
+        role,
+        model,
+        runId: run.id,
+      });
+    } catch (error) {
+      this.runService.failPreparedRun(run.id, error);
+      this.scheduler.releaseTask(taskId, 0);
+      throw error;
+    }
+
     this.emitAgentRunStarted(taskId, role, model);
+    return this.executePreparedRun(taskId, run.id);
+  }
+
+  /** Executes a scheduler-bound run and applies only its persisted outcome. */
+  private async executePreparedRun(taskId: string, runId: string): Promise<void> {
+    try {
+      const execution = await this.runService!.executePreparedRun(runId);
+      this.handleRuntimeCompletion(runId, execution.outcome);
+    } catch (error) {
+      this.runService!.failPreparedRun(runId, error);
+      this.scheduler.releaseTask(taskId, 0);
+      throw error;
+    }
   }
 
   /**
