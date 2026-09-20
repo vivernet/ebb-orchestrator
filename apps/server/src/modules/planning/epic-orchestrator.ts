@@ -6,6 +6,7 @@ import { RuntimeEventHandlers } from "../runtime/run-event-handlers.js";
 import { ApprovalService } from "../approvals/approval-service.js";
 import { SchedulerService } from "../scheduler/scheduler-service.js";
 import type { MergeService, MergeResult } from "../git/merge-service.js";
+import type { IntegrationAttempt, IntegrationService } from "../git/integration-service.js";
 import { validateRoleOutput } from "../runtime/output-validator.js";
 import { RunService } from "../runtime/run-service.js";
 
@@ -13,6 +14,22 @@ export interface EpicAgentRequest { phase: string; role: string; epicId?: string
 export interface EpicAgentResult { accepted: boolean; output: unknown; architectureChangingProposalAccepted?: boolean; usage?: { cost: number } }
 export interface EpicStartInput extends PlanningPlanInput { includeProductManager?: boolean; includeArchitect?: boolean; architectureReviewRequired?: boolean; architecture_review_required?: boolean }
 export interface EpicRunResult { epicId: string; sequence: string[]; childStatuses: string[]; finalApprovalRequired: boolean; pendingFinalApproval: boolean; finalApprovalId?: string }
+/**
+ * Контекст создаваемой интеграции. Репозиторий берётся оркестратором только
+ * из durable Git/onboarding state; корень worktree предоставляет composition
+ * root, чтобы runtime не мог выбрать произвольный путь.
+ */
+export interface IntegrationServiceFactoryContext {
+  repoPath: string;
+  worktreeRoot: string;
+  taskId: string;
+  epicId: string;
+}
+export type IntegrationServiceFactory = (context: IntegrationServiceFactoryContext) => IntegrationService;
+export interface EpicOrchestratorOptions {
+  integrationServiceFactory?: IntegrationServiceFactory;
+  integrationWorktreeRoot?: string;
+}
 type Stage = "CHILDREN" | "EPIC_REVIEW" | "ARCHITECTURE_REVIEW" | "EPIC_QA" | "INTEGRATION" | "FINAL_APPROVAL" | "DONE";
 type Child = { id: string; display_id: string; status: string };
 
@@ -27,6 +44,8 @@ export class EpicOrchestrator {
   private readonly approvals: ApprovalService;
   private readonly scheduler: SchedulerService;
   private readonly runs: RunService;
+  private readonly integrationServiceFactory: IntegrationServiceFactory | undefined;
+  private readonly integrationWorktreeRoot: string | undefined;
 
   constructor(
     private readonly db: Database,
@@ -35,11 +54,14 @@ export class EpicOrchestrator {
     runs: RunService,
     private readonly mergeService: EpicMergeAuthority,
     scheduler: SchedulerService,
+    options: EpicOrchestratorOptions = {},
   ) {
     this.handlers = new RuntimeEventHandlers(db, workflow, scheduler);
     this.approvals = new ApprovalService(db);
     this.scheduler = scheduler;
     this.runs = runs;
+    this.integrationServiceFactory = options.integrationServiceFactory;
+    this.integrationWorktreeRoot = options.integrationWorktreeRoot;
     for (const column of ["cost REAL", "input_tokens INTEGER", "output_tokens INTEGER"]) {
       try { this.db.exec(`ALTER TABLE agent_runs ADD COLUMN ${column}`); } catch { /* migration already installed */ }
     }
@@ -214,20 +236,45 @@ export class EpicOrchestrator {
        if (existing) tx.run("UPDATE orchestration_phase_runs SET agent_run_id=$run,result_json='{}',evidence_json='{}',validated=0,status='RUNNING',request_json=$request,started_at=$at,ended_at=NULL WHERE id=$id", { id: existing.id, run: agentRunId, request: JSON.stringify(request), at: now });
        else tx.run("INSERT INTO orchestration_phase_runs(id,epic_id,task_id,phase,role,agent_run_id,result_json,evidence_json,validated,status,request_json,created_at) VALUES($id,$epicId,$taskId,$phase,$role,$run,'{}','{}',0,'INTENT',$request,$at)", { id: phaseId, epicId, taskId: taskId ?? null, phase, role, run: agentRunId, request: JSON.stringify(request), at: now });
      });
+    let integration: { service: IntegrationService; attempt: IntegrationAttempt } | undefined;
     try {
+      if (phase === "integration" && taskId && this.integrationServiceFactory) {
+        if (!this.integrationWorktreeRoot) throw new Error("Integration worktree root is not configured");
+        const git = this.resolvePersistedIntegrationGit(epicId, taskId);
+        const service = this.integrationServiceFactory({
+          repoPath: git.repoPath,
+          worktreeRoot: this.integrationWorktreeRoot,
+          taskId,
+          epicId,
+        });
+        const attempt = await service.prepareIntegration(git.sourceBranch, git.targetBranch, git.repoPath);
+        integration = { service, attempt };
+      }
       this.runs.prepareRun({
         runId: agentRunId, role, model: "persisted", taskId: taskId ?? "", epicId,
         triggerReason: `epic-${phase}`, contextVersion: "1", outputSchemaVersion: "1",
         prompt: JSON.stringify(request),
+        ...(integration ? { capability: { workspace: integration.attempt.worktreePath } } : {}),
       });
       this.db.run("UPDATE orchestration_phase_runs SET status='RUNNING',started_at=$at WHERE id=$id AND status='INTENT'", { id: activePhaseId, at: now });
-      if (taskId && this.workflow.currentStage(taskId) === "READY") this.scheduler.dispatchTask(taskId, this.workflow, () => undefined, { triggerReason: `epic-${phase}`, role, model: "persisted", runId: agentRunId });
+      let execution: Awaited<ReturnType<RunService["executePreparedRun"]>>;
+      if (integration) {
+        const bound = integration.service.bindIntegrationRun(integration.attempt, agentRunId);
+        await integration.service.mergePreparedSource(bound);
+        const projectId = this.db.get<{ project_id: string }>("SELECT project_id FROM epics WHERE id=$epicId", { epicId })?.project_id;
+        if (!projectId) throw new Error(`Epic ${epicId} project not found`);
+        this.scheduler.dispatchAgentRun(agentRunId, projectId, role, "persisted");
+        execution = await integration.service.runInIntegrationWorktree(bound, async () => this.runs.executePreparedRun(agentRunId));
+      } else if (taskId && this.workflow.currentStage(taskId) === "READY") {
+        this.scheduler.dispatchTask(taskId, this.workflow, () => undefined, { triggerReason: `epic-${phase}`, role, model: "persisted", runId: agentRunId });
+        execution = await this.runs.executePreparedRun(agentRunId);
+      }
       else {
         const projectId = this.db.get<{ project_id: string }>("SELECT project_id FROM epics WHERE id=$epicId", { epicId })?.project_id;
         if (!projectId) throw new Error(`Epic ${epicId} project not found`);
         this.scheduler.dispatchAgentRun(agentRunId, projectId, role, "persisted");
+        execution = await this.runs.executePreparedRun(agentRunId);
       }
-      const execution = await this.runs.executePreparedRun(agentRunId);
       const result: EpicAgentResult = {
         accepted: true,
         output: JSON.parse(execution.outcome.output),
@@ -242,6 +289,37 @@ export class EpicOrchestrator {
       this.scheduler.releaseAgentRun(agentRunId, 0);
       throw error;
     }
+  }
+
+  /**
+   * Разрешает только persisted Git/onboarding facts для child integration.
+   * HTTP request/request.targetBranch намеренно не участвует в выборе refs.
+   */
+  private resolvePersistedIntegrationGit(epicId: string, taskId: string): { repoPath: string; sourceBranch: string; targetBranch: string } {
+    const task = this.db.get<{ project_id: string }>("SELECT project_id FROM tasks WHERE id=$taskId AND epic_id=$epicId", { taskId, epicId });
+    if (!task) throw new Error(`Task ${taskId} is not part of Epic ${epicId}`);
+    const sourceBranch = `task/${taskId}`;
+    const operation = this.db.get<{ repo_path: string; branch_name: string | null; target_ref: string | null }>(
+      "SELECT repo_path,branch_name,target_ref FROM git_operations WHERE branch_name=$branch AND repo_path IS NOT NULL ORDER BY created_at DESC LIMIT 1",
+      { branch: sourceBranch },
+    );
+    const onboarding = this.db.get<{ repository_path: string; facts_json: string; proposed_json: string; status: string }>(
+      "SELECT repository_path,facts_json,proposed_json,status FROM onboarding_configs WHERE project_id=$projectId",
+      { projectId: task.project_id },
+    );
+    if (onboarding && onboarding.status !== "ACTIVE") throw new Error(`Onboarding for project ${task.project_id} is not active`);
+    if (!operation?.branch_name) throw new Error(`No persisted source branch configured for task ${taskId}`);
+    if (onboarding && operation.repo_path !== onboarding.repository_path) throw new Error(`Persisted repository mismatch for task ${taskId}`);
+    const repoPath = operation.repo_path ?? onboarding?.repository_path;
+    if (!repoPath) throw new Error(`No persisted repository configured for task ${taskId}`);
+    let facts: Record<string, unknown> = {};
+    let proposed: Record<string, unknown> = {};
+    try { facts = onboarding ? JSON.parse(onboarding.facts_json) as Record<string, unknown> : {}; } catch { /* fail closed below */ }
+    try { proposed = onboarding ? JSON.parse(onboarding.proposed_json) as Record<string, unknown> : {}; } catch { /* fail closed below */ }
+    const targetBranch = operation?.target_ref ?? (typeof proposed.defaultBranch === "string" ? proposed.defaultBranch : typeof facts.defaultBranch === "string" ? facts.defaultBranch : undefined);
+    if (!targetBranch) throw new Error(`No persisted target branch configured for task ${taskId}`);
+    if (operation.branch_name !== sourceBranch) throw new Error(`Persisted source branch mismatch for task ${taskId}`);
+    return { repoPath, sourceBranch: operation.branch_name, targetBranch };
   }
 
   private persistedPhase(epicId: string, taskId: string | undefined, phase: string, role: string, result: EpicAgentResult, agentRunId: string, phaseId: string): EpicAgentResult {
