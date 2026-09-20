@@ -24,13 +24,11 @@ Ebb Orchestrator — локально запускаемый modular monolith д
 ### Граница текущей production-композиции
 
 Ядро доменных workflow, Git, scheduler, outbox, SecretStore/Infisical и
-production artifact покрыты тестами и доступны локальному серверу. При этом
-текущая HTTP-композиция v1 предоставляет health/session, read projections,
-settings, pause/cancel и approval mutation endpoints; полный пользовательский
-flow `создание проекта → запуск Hermes → integration → merge` пока не подключён
-как единый публичный API flow. Поэтому README описывает доменные возможности,
-а production sign-off должен отдельно подтвердить wiring этих mutation paths,
-recovery adapters и live runtime credentials.
+production artifact покрыты тестами и доступны локальному серверу. HTTP-срез
+теперь включает создание Project/Task/Epic, onboarding discovery и persisted
+approval, task dispatch, зависимости и authority-safe final merge. Полный
+сквозной flow всё ещё требует production composition Integration Agent и
+recovery adapters; его нельзя считать подтверждённым только по unit/API-тестам.
 
 ## Архитектурные принципы
 
