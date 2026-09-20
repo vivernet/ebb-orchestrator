@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json.schemastore.org/scan-manifest.json",
+  "schemaVersion": 1,
+  "project": "ebb-orchestrator",
+  "repository": {
+    "branch": "develop",
+    "mainBranch": "master",
+    "sourceRoots": ["apps", "packages", "scripts"]
+  },
+  "include": [
+    "apps/**/*.ts",
+    "apps/**/*.tsx",
+    "packages/**/*.ts",
+    "scripts/**/*.mjs",
+    "*.json",
+    "*.yaml",
+    "*.yml"
+  ],
+  "exclude": [
+    "node_modules/**",
+    "**/dist/**",
+    "**/.playwright/**",
+    "**/coverage/**",
+    "**/*.db",
+    "**/*.db-*"
+  ],
+  "qualityGates": [
+    "pnpm lint",
+    "pnpm typecheck",
+    "pnpm test",
+    "pnpm server:build",
+    "pnpm web:build"
+  ],
+  "secretPolicy": {
+    "failOnTrackedEnvFiles": true,
+    "allowExampleEnvFiles": true,
+    "redactFindings": true
+  }
+}
