@@ -1,14 +1,14 @@
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [react()],
   server: {
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:3000',
+        target: mode === 'e2e' ? 'http://127.0.0.1:3001' : 'http://127.0.0.1:3000',
         changeOrigin: true,
-        headers: { Origin: 'http://127.0.0.1:3000' },
+        headers: { Origin: mode === 'e2e' ? 'http://127.0.0.1:3001' : 'http://127.0.0.1:3000' },
       },
     },
   },
@@ -17,4 +17,4 @@ export default defineConfig({
     setupFiles: ["./test/setup.ts"],
     exclude: ["test/e2e/**", "node_modules/**"],
   },
-});
+}));

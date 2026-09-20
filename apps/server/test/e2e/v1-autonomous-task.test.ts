@@ -247,7 +247,7 @@ describe("Autonomous Task End-to-End Workflow", () => {
     expect(readFileSync(join(masterRepoPath, "src", "server.js"), "utf8")).toContain("/health");
      workflow.transition(taskId, "MERGING", { hasReviewPassed: true, hasSuccessfulIntegration: true, hasFinalMergeApproval: true, parentEpicReleased: false });
      workflow.transition(taskId, "DONE");
-     const cleanup = new IntegrationService(); await cleanup.cleanupIntegration(integration);
+     await integrationService.cleanupIntegration(integration);
      await worktreeManager.removeWorkspace(worktree.id);
      expect(() => readFileSync(join(worktree.path, "src", "server.js"), "utf8")).toThrow();
      expect(db!.get<{ status: string }>("SELECT status FROM tasks WHERE id = $id", { id: taskId })?.status).toBe("DONE");
