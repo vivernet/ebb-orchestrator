@@ -12,9 +12,11 @@
     "apps/**/*.tsx",
     "packages/**/*.ts",
     "scripts/**/*.mjs",
-    "*.json",
-    "*.yaml",
-    "*.yml"
+    "**/package.json",
+    "**/pnpm-lock.yaml",
+    "**/*.json",
+    "**/*.yaml",
+    "**/*.yml"
   ],
   "exclude": [
     "node_modules/**",
@@ -29,8 +31,31 @@
     "pnpm typecheck",
     "pnpm test",
     "pnpm server:build",
-    "pnpm web:build"
+    "pnpm web:build",
+    "pnpm --dir apps/web test:e2e"
   ],
+  "securityGates": [
+    {
+      "command": "pnpm audit --prod --json",
+      "purpose": "dependency-vulnerability-audit",
+      "required": true,
+      "result": "must-complete-in-release-runner"
+    },
+    {
+      "command": "git diff --check",
+      "purpose": "repository-integrity",
+      "required": true,
+      "result": "must-be-clean"
+    }
+  ],
+  "scanner": {
+    "provider": "pnpm",
+    "tool": "pnpm audit --prod --json",
+    "version": "12.4.2",
+    "lastRun": "2026-09-21T02:48:42.3517756+03:00",
+    "artifact": "artifacts/security/pnpm-audit-prod-2026-09-21.json",
+    "result": "passed"
+  },
   "secretPolicy": {
     "failOnTrackedEnvFiles": true,
     "allowExampleEnvFiles": true,

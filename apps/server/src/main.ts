@@ -51,6 +51,8 @@ import { ArtifactRepository } from "./platform/artifacts/artifact-repository.js"
 import { ArtifactStore } from "./platform/artifacts/artifact-store.js";
 import { JobRunner } from "./platform/jobs/job-runner.js";
 import { JobWorker } from "./platform/jobs/job-worker.js";
+import { WorktreeManager } from "./modules/git/worktree-manager.js";
+import { TaskWorkspaceProvisioner } from "./modules/git/task-workspace-provisioner.js";
 
 const host = "127.0.0.1";
 const port = Number(process.env["PORT"] ?? 3000);
@@ -99,6 +101,13 @@ const integrationServiceFactory: IntegrationServiceFactory = ({ worktreeRoot, ep
   database,
   worktreeDir: join(worktreeRoot, epicId, taskId),
 });
+const taskWorkspaceProvisioner = new TaskWorkspaceProvisioner({
+  database,
+  worktreeManager: new WorktreeManager({
+    db: database,
+    worktreeDir: join(home.worktrees, "tasks"),
+  }),
+});
 const epicMergeAuthority = createEpicMergeAuthority(database);
 const epicOrchestrator = new EpicOrchestrator(
   database,
@@ -107,7 +116,11 @@ const epicOrchestrator = new EpicOrchestrator(
   runService,
   epicMergeAuthority,
   scheduler,
-  { integrationServiceFactory, integrationWorktreeRoot: join(home.worktrees, "epic-integration") },
+  {
+    integrationServiceFactory,
+    integrationWorktreeRoot: join(home.worktrees, "epic-integration"),
+    taskWorkspaceProvisioner,
+  },
 );
 const infisicalOptions = resolveInfisicalSecretStoreOptions(process.env);
 const secretStore = infisicalOptions
@@ -116,7 +129,7 @@ const secretStore = infisicalOptions
 mkdirSync(home.artifacts, { recursive: true });
 const artifactStore = new ArtifactStore(home.artifacts, new ArtifactRepository(database));
 
-const app = createApp({ host, port, db: database, scheduler, runtime, runService, secretStore, epicOrchestrator, status, ...(existsSync(webRoot) ? { webRoot } : {}) });
+const app = createApp({ host, port, db: database, scheduler, runtime, runService, secretStore, epicOrchestrator, status, eventBus, ...(existsSync(webRoot) ? { webRoot } : {}) });
 
 // Регистрирует шаги reconciliation которые будут запущены после migrations.
 const reconciler = {

@@ -289,4 +289,20 @@ describe("orchestrator read API", () => {
     expect(response.statusCode).toBe(403);
     await app.close();
   });
+
+  it("rejects malformed approval bodies before calling the service", async () => {
+    const app = makeApp();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/approvals/approval-1/approve",
+      headers: {
+        authorization: `Bearer ${app.sessionToken}`,
+        origin: "http://127.0.0.1:3000",
+        "x-csrf-token": app.csrfToken,
+      },
+      payload: { note: "x", unexpected: true },
+    });
+    expect(response.statusCode).toBe(400);
+    await app.close();
+  });
 });

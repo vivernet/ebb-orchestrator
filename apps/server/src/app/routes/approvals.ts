@@ -12,9 +12,26 @@ export async function approvalRoutes(app: FastifyInstance, deps: ApprovalRouteDe
      const rows = deps.db.all<ApprovalRow>("SELECT * FROM approvals WHERE status='PENDING' ORDER BY created_at");
     return { approvals: rows };
   });
-  app.post<{ Params: { id: string }; Body?: { note?: string } }>("/api/v1/approvals/:id/approve", async (request, reply) => {
+  app.post<{ Params: { id: string }; Body: unknown }>("/api/v1/approvals/:id/approve", async (request, reply) => {
     if (!deps.approvalService) return reply.code(503).send({ error: "approval service unavailable" });
-    const body = request.body ?? {};
-    return deps.approvalService.approve(request.params.id, "local-user", body.note);
+    const body = parseApprovalBody(request.body);
+    if (!body) return reply.code(400).send({ error: "invalid approval body" });
+    try {
+      return await deps.approvalService.approve(request.params.id, "local-user", body.note);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (/not found/i.test(message)) return reply.code(404).send({ error: "approval not found" });
+      if (/already resolved|status/i.test(message)) return reply.code(409).send({ error: "approval is already resolved" });
+      return reply.code(409).send({ error: "approval could not be resolved" });
+    }
   });
+}
+
+function parseApprovalBody(value: unknown): { note?: string } | null {
+  if (value === undefined) return {};
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).some((key) => key !== "note")) return null;
+  if (record.note !== undefined && (typeof record.note !== "string" || record.note.length > 2000)) return null;
+  return typeof record.note === "string" ? { note: record.note } : {};
 }

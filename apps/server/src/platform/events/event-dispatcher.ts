@@ -121,6 +121,7 @@ export class EventDispatcher {
         );
         dispatchedCount++;
       }
+      if (allConsumersHandled) this.bus.emitObserved(event);
     }
 
     return dispatchedCount;

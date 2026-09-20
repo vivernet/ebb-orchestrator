@@ -1,7 +1,7 @@
 import { GitCli } from "./git-cli.js";
 import { tmpdir } from "os";
 import { isAbsolute, join, relative, resolve } from "path";
-import { mkdtempSync, rmSync, mkdirSync } from "fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync } from "fs";
 import type { Database } from "../../platform/database/database.js";
 import { createSqliteDatabase } from "../../platform/database/sqlite-database.js";
 import { readFileSync } from "node:fs";
@@ -103,6 +103,7 @@ export class IntegrationService {
     const attemptId = `integration-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     const integrationBranch = `integration/${attemptId}`;
     const worktreePath = join(this.worktreeDir, attemptId);
+    const worktreeExistedBeforeCreate = existsSync(worktreePath);
 
     // Гарантирует существование директории worktree
     mkdirSync(this.worktreeDir, { recursive: true });
@@ -148,11 +149,9 @@ export class IntegrationService {
 
       return attempt;
     } catch (error) {
-      // Очищает частичный worktree при ошибке
-      try {
-        rmSync(worktreePath, { recursive: true, force: true });
-      } catch {
-        // Пропускаем ошибки очистки
+      // Удаляет только созданный этой попыткой, чистый и path-confined orphan.
+      if (!worktreeExistedBeforeCreate) {
+        await this.removeCleanOrphan(worktreePath);
       }
       throw error;
     } finally {
@@ -327,5 +326,42 @@ export class IntegrationService {
     if (!relativePath || relativePath.startsWith("..") || isAbsolute(relativePath)) {
       throw new Error(`Integration worktree path is outside the managed root: ${worktreePath}`);
     }
+  }
+
+  /** Удаляет только подтверждённо чистый orphan внутри managed root. */
+  private async removeCleanOrphan(worktreePath: string): Promise<void> {
+    try {
+      this.assertManagedWorktreePath(worktreePath);
+      const root = realpathSync(this.worktreeDir);
+      const candidateStat = lstatSync(worktreePath);
+      if (!candidateStat.isDirectory() || candidateStat.isSymbolicLink()) return;
+      const candidate = realpathSync(worktreePath);
+      const candidateRelative = relative(root, candidate);
+      if (!candidateRelative || candidateRelative.startsWith("..") || isAbsolute(candidateRelative)) return;
+      if (this.containsSymlink(worktreePath)) return;
+
+      const entries = readdirSync(worktreePath);
+      if (entries.length > 0) {
+        const status = await this.git.run(worktreePath, ["status", "--porcelain"]);
+        if (status.stdout.trim() !== "") return;
+      }
+
+      this.assertManagedWorktreePath(worktreePath);
+      const finalStat = lstatSync(worktreePath);
+      if (!finalStat.isDirectory() || finalStat.isSymbolicLink() || this.containsSymlink(worktreePath)) return;
+      rmSync(worktreePath, { recursive: true, force: true });
+    } catch {
+      // Ошибка проверки или Git оставляет orphan для ручного recovery.
+    }
+  }
+
+  private containsSymlink(directory: string): boolean {
+    for (const entry of readdirSync(directory)) {
+      const path = join(directory, entry);
+      const stat = lstatSync(path);
+      if (stat.isSymbolicLink()) return true;
+      if (stat.isDirectory() && this.containsSymlink(path)) return true;
+    }
+    return false;
   }
 }

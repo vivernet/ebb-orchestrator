@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { Database } from "../../platform/database/database.js";
 import { MergeService, type MergeResult } from "../../modules/git/merge-service.js";
 import type { WorkflowEngine } from "../../modules/workflow/workflow-engine.js";
+import type { EpicOrchestrator } from "../../modules/planning/epic-orchestrator.js";
 
 /** Минимальный authority-bound контракт финального merge. */
 export interface FinalMergeCommandService {
@@ -18,6 +19,7 @@ export interface FinalMergeRouteDeps {
   db?: Database | undefined;
   mergeServiceFactory?: FinalMergeServiceFactory | undefined;
   workflow?: WorkflowEngine | undefined;
+  epicOrchestrator?: { approveFinalMergeAsync?: EpicOrchestrator["approveFinalMergeAsync"] } | undefined;
 }
 
 interface FinalMergeBody {
@@ -58,6 +60,18 @@ export async function finalMergeRoutes(app: FastifyInstance, deps: FinalMergeRou
       );
       if (!approval || approval.subject_id !== subjectId || approval.type !== "FINAL_MERGE" || approval.status !== "APPROVED") {
         return reply.code(409).send({ error: "approved FINAL_MERGE for exact subject is required" });
+      }
+
+      if (approval.subject_type === "EPIC") {
+        if (!deps.epicOrchestrator?.approveFinalMergeAsync) {
+          return reply.code(503).send({ error: "Epic merge authority unavailable" });
+        }
+        try {
+          const result = await deps.epicOrchestrator.approveFinalMergeAsync(subjectId, body.approvalId);
+          return reply.code(200).send({ result });
+        } catch {
+          return reply.code(409).send({ error: "final Epic merge provenance validation failed" });
+        }
       }
 
       const repository = findActiveOnboardingRepository(deps.db, subjectId, approval.subject_type);

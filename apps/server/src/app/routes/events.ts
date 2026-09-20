@@ -8,11 +8,13 @@
  * @see spec §13.2 – SSE for live updates
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type { EventBus } from "../../platform/events/event-bus.js";
+import type { DomainEvent } from "../../platform/events/domain-event.js";
 
 /**
  * Регистрирует HTTP-маршруты events и передаёт изменяющие состояние действия backend policy.
  */
-export async function eventRoutes(app: FastifyInstance): Promise<void> {
+export async function eventRoutes(app: FastifyInstance, eventBus?: EventBus): Promise<void> {
   app.get(
     "/api/v1/events",
     async (request: FastifyRequest, reply: FastifyReply) => {
@@ -25,6 +27,11 @@ export async function eventRoutes(app: FastifyInstance): Promise<void> {
       // Send an initial comment to confirm the connection is open.
       reply.raw.write(":ok\n\n");
 
+      const writeEvent = (event: DomainEvent) => {
+        if (!reply.raw.destroyed) reply.raw.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+      };
+      const unsubscribe = eventBus?.observe(writeEvent);
+
       // Keep the connection alive with periodic heartbeats.
       const heartbeat = setInterval(() => {
         reply.raw.write(":heartbeat\n\n");
@@ -32,6 +39,7 @@ export async function eventRoutes(app: FastifyInstance): Promise<void> {
 
       request.raw.on("close", () => {
         clearInterval(heartbeat);
+        unsubscribe?.();
       });
 
       // Prevent Fastify from closing the response – we own it.

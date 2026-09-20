@@ -5,6 +5,9 @@ import type { SchedulerService } from "../../modules/scheduler/scheduler-service
 import type { AgentRun } from "@ebb-orchestrator/contracts";
 import type { StartRunOptions } from "../../modules/runtime/run-types.js";
 import type { WorkflowEngine } from "../../modules/workflow/workflow-engine.js";
+import { existsSync, statSync } from "node:fs";
+import { isAbsolute } from "node:path";
+import { WorktreeRepository } from "../../modules/git/worktree-repository.js";
 
 export interface RunCommandService {
   cancelRun(id: string): unknown | Promise<unknown>;
@@ -18,6 +21,7 @@ export interface RunRouteDeps {
   runService?: RunCommandService | undefined;
   scheduler?: SchedulerService | undefined;
   workflow?: WorkflowEngine | undefined;
+  worktreeRepository?: WorktreeRepository | undefined;
 }
 /**
  * Регистрирует HTTP-маршруты runs и передаёт изменяющие состояние действия backend policy.
@@ -40,6 +44,14 @@ export async function runRoutes(app: FastifyInstance, deps: RunRouteDeps = {}): 
       return reply.code(409).send({ error: "task is not READY", status: task.status });
     }
 
+    // Standalone dispatch must use the persisted managed task worktree. Never
+    // accept a workspace/branch from the caller and never let Hermes choose a
+    // process-local fallback path.
+    const worktree = (deps.worktreeRepository ?? new WorktreeRepository(deps.db)).findTaskWorkspace(task.id);
+    if (!worktree || !isAbsolute(worktree.path) || !existsSync(worktree.path) || !statIsDirectory(worktree.path)) {
+      return reply.code(409).send({ error: "managed task workspace is required" });
+    }
+
     const options = parseDispatchBody(request.body);
     if (!options) return reply.code(400).send({ error: "invalid dispatch options" });
 
@@ -53,6 +65,7 @@ export async function runRoutes(app: FastifyInstance, deps: RunRouteDeps = {}): 
         triggerReason: "runtime-request",
         contextVersion: "runtime-request-v1",
         outputSchemaVersion: "1",
+        capability: { workspace: worktree.path },
       });
       deps.scheduler.dispatchTask(task.id, deps.workflow, () => undefined, {
         triggerReason: "runtime-request",
@@ -110,6 +123,10 @@ export async function runRoutes(app: FastifyInstance, deps: RunRouteDeps = {}): 
     await deps.runService.cancelRun(request.params.id);
     return { status: "CANCELLED", runId: request.params.id };
   });
+}
+
+function statIsDirectory(path: string): boolean {
+  try { return statSync(path).isDirectory(); } catch { return false; }
 }
 
 function parseDispatchBody(value: unknown): { role: string; model: string } | null {

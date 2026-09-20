@@ -50,6 +50,8 @@ export class ProcessExecutor {
       maxBuffer = 10 * 1024 * 1024, // 10MB default
     } = options;
 
+    const childEnv = env ?? buildMinimalEnvironment();
+
     if (signal?.aborted) {
       throw new Error('Process aborted before spawn');
     }
@@ -58,7 +60,7 @@ export class ProcessExecutor {
       const child = spawn(file, args, {
         shell: false,
         cwd,
-        env,
+        env: childEnv,
         windowsHide: true,
       });
 
@@ -145,4 +147,13 @@ export class ProcessExecutor {
       });
     });
   }
+}
+
+/** Возвращает минимальное окружение subprocess без наследования секретов. */
+function buildMinimalEnvironment(): Record<string, string> {
+  const allowed = ["PATH", "SystemRoot", "WINDIR", "TEMP", "TMP", "HOME", "USERPROFILE", "LANG", "LC_ALL"];
+  return Object.fromEntries(allowed.flatMap((key) => {
+    const value = process.env[key];
+    return value === undefined ? [] : [[key, value]];
+  }));
 }

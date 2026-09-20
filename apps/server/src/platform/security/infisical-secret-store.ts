@@ -23,7 +23,9 @@ export interface SecretBackendEnvironment {
 
 /** Возвращает Infisical options только для явно выбранного remote backend. */
 export function resolveInfisicalSecretStoreOptions(env: SecretBackendEnvironment): InfisicalSecretStoreOptions | undefined {
-  if (env.EBB_SECRET_BACKEND !== "infisical") return undefined;
+  const backend = env.EBB_SECRET_BACKEND;
+  if (backend === undefined || backend === "" || backend === "keyring") return undefined;
+  if (backend !== "infisical") throw new Error("Unknown secret backend");
   const { INFISICAL_CLIENT_ID: clientId, INFISICAL_CLIENT_SECRET: clientSecret, INFISICAL_PROJECT_ID: projectId, INFISICAL_ENVIRONMENT: environment } = env;
   if (!clientId || !clientSecret || !projectId || !environment) {
     throw new Error("Infisical secret storage is misconfigured");

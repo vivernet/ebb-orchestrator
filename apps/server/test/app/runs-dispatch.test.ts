@@ -4,6 +4,8 @@ import { createSqliteDatabase } from "../../src/platform/database/sqlite-databas
 import { runMigrations, type Migration } from "../../src/platform/database/migrator.js";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 const migrationDir = fileURLToPath(new URL("../../src/platform/database/migrations/", import.meta.url));
@@ -35,13 +37,19 @@ function setup() {
   };
   const app = createApp({ db, scheduler: scheduler as never, runService });
   const now = new Date().toISOString();
+  const workspace = mkdtempSync(join(tmpdir(), "dispatch-workspace-"));
+  db.run(
+    `INSERT INTO worktrees (id,repo_path,path,branch,created_at,removed_at)
+     VALUES ('task-1','/repo', $workspace, 'task/task-1', $now, NULL)`,
+    { workspace, now },
+  );
   db.run("INSERT INTO projects (id,name,display_name,status,created_at,updated_at) VALUES ('project-1','p','P','ACTIVE',$now,$now)", { now });
   db.run(
     `INSERT INTO tasks (id,project_id,display_id,title,status,contract_json,created_at,updated_at)
      VALUES ('task-1','project-1','T-1','Task','READY',$contract,$now,$now)`,
     { contract: JSON.stringify({ version: 1, goal: "run", context: "test", requirements: [], acceptanceCriteria: [], dependencies: [], nonGoals: [], definitionOfDone: [] }), now },
   );
-  return { app, db, runService, scheduler };
+  return { app, db, runService, scheduler, workspace };
 }
 
 function headers(app: ReturnType<typeof createApp>) {
@@ -50,20 +58,21 @@ function headers(app: ReturnType<typeof createApp>) {
 
 describe("task dispatch route", () => {
   it("prepares one durable run, binds it to scheduler, and acknowledges asynchronously", async () => {
-    const { app, db, runService, scheduler } = setup();
+    const { app, db, runService, scheduler, workspace } = setup();
     const response = await app.inject({ method: "POST", url: "/api/v1/tasks/task-1/dispatch", headers: headers(app) });
     expect(response.statusCode).toBe(202);
     expect(JSON.parse(response.body)).toMatchObject({ runId: "run-1", taskId: "task-1", status: "STARTED" });
-    expect(runService.prepareRun).toHaveBeenCalledWith(expect.objectContaining({ role: "developer", model: "default", taskId: "task-1" }));
+    expect(runService.prepareRun).toHaveBeenCalledWith(expect.objectContaining({ role: "developer", model: "default", taskId: "task-1", capability: { workspace } }));
     expect(scheduler.dispatchTask).toHaveBeenCalledWith("task-1", expect.anything(), expect.any(Function), expect.objectContaining({ runId: "run-1" }));
     await Promise.resolve();
     expect(runService.executePreparedRun).toHaveBeenCalledWith("run-1");
     await app.close();
     db.close();
+    rmSync(workspace, { recursive: true, force: true });
   });
 
   it("rejects unknown fields and non-ready tasks", async () => {
-    const { app, db } = setup();
+    const { app, db, workspace } = setup();
     const invalid = await app.inject({ method: "POST", url: "/api/v1/tasks/task-1/dispatch", headers: headers(app), payload: { role: "developer", extra: true } });
     expect(invalid.statusCode).toBe(400);
     db.run("UPDATE tasks SET status='DRAFT' WHERE id='task-1'");
@@ -71,5 +80,17 @@ describe("task dispatch route", () => {
     expect(notReady.statusCode).toBe(409);
     await app.close();
     db.close();
+    rmSync(workspace, { recursive: true, force: true });
+  });
+
+  it("rejects dispatch when no persisted managed workspace exists", async () => {
+    const { app, db, workspace } = setup();
+    db.run("UPDATE worktrees SET removed_at=$now WHERE id='task-1'", { now: new Date().toISOString() });
+    const response = await app.inject({ method: "POST", url: "/api/v1/tasks/task-1/dispatch", headers: headers(app) });
+    expect(response.statusCode).toBe(409);
+    expect(JSON.parse(response.body)).toEqual({ error: "managed task workspace is required" });
+    await app.close();
+    db.close();
+    rmSync(workspace, { recursive: true, force: true });
   });
 });

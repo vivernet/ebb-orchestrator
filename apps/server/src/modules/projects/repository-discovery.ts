@@ -45,37 +45,33 @@ export class RepositoryDiscovery {
 
   private async detectDefaultBranch(repoPath: string): Promise<string> {
     try {
-      const result = await this.git.run(repoPath, ["remote", "get-url", "origin"]);
-      if (result.exitCode === 0) {
-        const branch = result.stdout.trim();
-        if (branch.startsWith("refs/heads/")) {
-          return branch.slice("refs/heads/".length);
-        }
-        return branch;
-      }
-    } catch {
-      // Fallback if no origin remote exists
-    }
-
-    try {
       const result = await this.git.run(repoPath, ["symbolic-ref", "refs/remotes/origin/HEAD"]);
       if (result.exitCode === 0) {
         const branch = result.stdout.trim();
-        if (branch.startsWith("refs/remotes/origin/")) {
-          return branch.slice("refs/remotes/origin/".length);
-        }
+        if (branch.startsWith("refs/remotes/origin/")) return branch.slice("refs/remotes/origin/".length);
       }
     } catch {
-      // Fallback if no HEAD symbolic ref
+      // Fallback if no origin HEAD exists.
     }
 
     try {
       const result = await this.git.run(repoPath, ["branch", "--show-current"]);
-      if (result.exitCode === 0 && result.stdout.trim()) {
-        return result.stdout.trim();
+      if (result.exitCode === 0) {
+        const branch = result.stdout.trim();
+        if (branch) return branch;
       }
     } catch {
-      // Fallback to default main
+      // Fallback to main.
+    }
+
+    try {
+      const result = await this.git.run(repoPath, ["remote", "show", "origin"]);
+      if (result.exitCode === 0 && result.stdout.trim()) {
+        const match = /HEAD branch:\s*(\S+)/.exec(result.stdout);
+        if (match?.[1]) return match[1];
+      }
+    } catch {
+      // Fallback to main.
     }
 
     return "main";

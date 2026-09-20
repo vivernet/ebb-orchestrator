@@ -49,6 +49,7 @@ import { finalMergeRoutes, type FinalMergeServiceFactory } from "./routes/final-
 import { epicRoutes } from "./routes/epics.js";
 import type { EpicOrchestrator } from "../modules/planning/epic-orchestrator.js";
 import type { StatusTrackerInterface } from "../platform/process/system-lifecycle.js";
+import type { EventBus } from "../platform/events/event-bus.js";
 
 const LOCAL_SESSION_COOKIE = "ebb_local_session";
 
@@ -67,7 +68,7 @@ export interface AppDeps {
   /** Optional authority-bound factory; production default uses MergeService. */
   finalMergeServiceFactory?: FinalMergeServiceFactory;
   /** Production Epic planning/orchestration facade. */
-  epicOrchestrator?: Pick<EpicOrchestrator, "start" | "approveAndRun">;
+  epicOrchestrator?: Pick<EpicOrchestrator, "start" | "approveAndRun"> & Partial<Pick<EpicOrchestrator, "approveFinalMergeAsync">>;
   /** Production must provide the single shared SchedulerService instance. */
   scheduler: SchedulerService;
   /** Production must provide the real runtime. Test doubles belong in test deps. */
@@ -78,6 +79,8 @@ export interface AppDeps {
   secretStore?: SecretStore;
   /** Lifecycle status exposed by the public readiness probe. */
   status?: StatusTrackerInterface;
+  /** Read-only event stream source for authenticated SSE clients. */
+  eventBus?: EventBus;
   /** Абсолютный путь к собранному Vite bundle для same-origin production UI. */
   webRoot?: string;
 }
@@ -185,14 +188,14 @@ export function createApp(deps: AppDeps): OrchestratorApp {
   }));
 
   // Authenticated
-  app.register(eventRoutes);
+  app.register(async (instance) => eventRoutes(instance, deps.eventBus));
   app.register(async (instance) => schedulerRoutes(instance, scheduler));
   app.register(async (instance) => {
     instance.get("/api/v1/dashboard", async () => new DashboardProjection(deps.db, scheduler).get());
     await projectRoutes(instance, { db: deps.db, scheduler, projectService });
     await workRoutes(instance, { db: deps.db, workService, scheduler });
     await dependencyRoutes(instance, { db: deps.db, dependencyService });
-    await finalMergeRoutes(instance, { db: deps.db, mergeServiceFactory: deps.finalMergeServiceFactory, workflow });
+    await finalMergeRoutes(instance, { db: deps.db, mergeServiceFactory: deps.finalMergeServiceFactory, workflow, epicOrchestrator: deps.epicOrchestrator });
     await epicRoutes(instance, { db: deps.db, epicOrchestrator: deps.epicOrchestrator });
     await approvalRoutes(instance, { db: deps.db, approvalService });
     await runRoutes(instance, { db: deps.db, runService, scheduler, workflow });

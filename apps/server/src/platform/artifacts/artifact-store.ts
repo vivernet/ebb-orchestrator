@@ -13,10 +13,11 @@
 
 import { randomUUID, createHash } from "node:crypto";
 import { open, rename, unlink, access, mkdir, readFile, readdir, rmdir } from "node:fs/promises";
-import { createReadStream } from "node:fs";
+import { createReadStream, lstatSync } from "node:fs";
 import { Readable } from "node:stream";
 import { join } from "node:path";
 import { ArtifactRepository } from "./artifact-repository.js";
+import { PathResolver } from "../security/path-resolver.js";
 
 /** Public interface returned to callers. */
 export interface ArtifactRecord {
@@ -60,6 +61,7 @@ export interface ArtifactStoreOptions {
  * Предоставляет публичный контракт модуля artifact-store для взаимодействия слоёв приложения.
  */
 export class ArtifactStore {
+  private readonly pathResolver = new PathResolver();
   constructor(
     private readonly artifactsDir: string,
     private readonly repository: ArtifactRepository,
@@ -146,7 +148,7 @@ export class ArtifactStore {
       throw new Error(`Artifact not found: ${id}`);
     }
 
-    const absolutePath = join(this.artifactsDir, row.relative_path);
+    const absolutePath = this.resolveRegularArtifactPath(row.relative_path);
 
     return createReadStream(absolutePath);
   }
@@ -166,7 +168,27 @@ export class ArtifactStore {
     let cleaned = 0;
 
     for (const row of staging) {
-      const absoluteFinalPath = join(this.artifactsDir, row.relative_path);
+      const lexicalPath = join(this.artifactsDir, row.relative_path);
+      let absoluteFinalPath: string;
+      try {
+        lstatSync(lexicalPath);
+        absoluteFinalPath = this.resolveRegularArtifactPath(row.relative_path);
+      } catch (error) {
+        if (isMissingPath(error, lexicalPath)) {
+          this.repository.deleteById(row.id);
+          const parentDir = join(this.artifactsDir, row.id);
+          try {
+            const files = await readdir(parentDir);
+            for (const f of files) if (f.endsWith(".tmp")) await unlink(join(parentDir, f)).catch(() => {});
+            await rmdir(parentDir).catch(() => {});
+          } catch { /* orphan directory may already be gone */ }
+          cleaned++;
+          continue;
+        }
+        this.repository.updateStatus(row.id, "MISSING");
+        cleaned++;
+        continue;
+      }
 
       // Check if the final file exists.
       let fileExists = false;
@@ -216,4 +238,25 @@ export class ArtifactStore {
 
     return { promoted, cleaned };
   }
+
+  private resolveRegularArtifactPath(relativePath: string): string {
+    const resolved = this.pathResolver.resolveSafePathSync(this.artifactsDir, relativePath);
+    if (!resolved.success || !resolved.path || !this.pathResolver.isPathContained(this.artifactsDir, resolved.path)) {
+      throw new Error("Artifact path is outside managed root");
+    }
+    const absolute = join(this.artifactsDir, relativePath);
+    const stat = requireLstat(absolute);
+    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("Artifact path is not a regular file");
+    return resolved.path;
+  }
+}
+
+function requireLstat(path: string): { isFile(): boolean; isSymbolicLink(): boolean } {
+  // ArtifactStore's public methods are async; this synchronous check is kept
+  // isolated so persisted rows can never redirect a read through a symlink.
+  return lstatSync(path);
+}
+
+function isMissingPath(error: unknown, path: string): boolean {
+  try { lstatSync(path); return false; } catch { return true; }
 }

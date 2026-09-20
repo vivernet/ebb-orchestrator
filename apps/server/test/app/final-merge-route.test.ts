@@ -25,8 +25,9 @@ function setup() {
   const scheduler = { projectProjection: vi.fn(() => ({ global: { active: 0, max: 1 }, projects: [] })) };
   const merge = { mergeApprovedForIntegration: vi.fn(async () => ({ success: true, subjectId: "epic-1", targetBranch: "master", mergeCommitSha: "sha", resultingTargetSha: "sha", verifiedCompletion: true as const })) };
   const factory = vi.fn(() => merge);
-  const app = createApp({ db, scheduler: scheduler as never, runService: {} as never, finalMergeServiceFactory: factory });
-  return { db, app, factory, merge };
+  const epicOrchestrator = { approveFinalMergeAsync: vi.fn(async () => ({ epicId: "epic-1", status: "DONE" })) };
+  const app = createApp({ db, scheduler: scheduler as never, runService: {} as never, finalMergeServiceFactory: factory, epicOrchestrator: epicOrchestrator as never });
+  return { db, app, factory, merge, epicOrchestrator };
 }
 
 function headers(app: ReturnType<typeof createApp>) {
@@ -34,8 +35,8 @@ function headers(app: ReturnType<typeof createApp>) {
 }
 
 describe("final merge route", () => {
-  it("resolves repository from active onboarding and delegates only persisted identifiers", async () => {
-    const { db, app, factory, merge } = setup();
+  it("delegates Epic merge to the persisted orchestration authority", async () => {
+    const { db, app, factory, merge, epicOrchestrator } = setup();
     const response = await app.inject({
       method: "POST",
       url: "/api/v1/final-merges/epic-1",
@@ -43,8 +44,9 @@ describe("final merge route", () => {
       payload: { approvalId: "merge-approval", integrationRunId: "integration-run-1" },
     });
     expect(response.statusCode).toBe(200);
-    expect(factory).toHaveBeenCalledWith(db, "C:\\authoritative\\repo");
-    expect(merge.mergeApprovedForIntegration).toHaveBeenCalledWith("epic-1", "merge-approval", "integration-run-1");
+    expect(epicOrchestrator.approveFinalMergeAsync).toHaveBeenCalledWith("epic-1", "merge-approval");
+    expect(factory).not.toHaveBeenCalled();
+    expect(merge.mergeApprovedForIntegration).not.toHaveBeenCalled();
     await app.close();
     db.close();
   });

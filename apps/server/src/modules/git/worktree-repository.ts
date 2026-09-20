@@ -23,6 +23,22 @@ export class WorktreeRepository {
     return row ? this.toRecord(row) : undefined;
   }
 
+  /**
+   * Возвращает активный task worktree только для канонического task branch.
+   *
+   * Идентификатор задачи является единственным входом этого lookup; path и
+   * branch не принимаются от HTTP-клиента. Это сохраняет managed worktree
+   * authority-bound перед передачей workspace в runtime capability.
+   */
+  findTaskWorkspace(taskId: string): WorktreeRecord | undefined {
+    const row = this.db.get<Record<string, unknown>>(
+      `SELECT * FROM worktrees
+         WHERE id = $id AND branch = $branch AND removed_at IS NULL`,
+      { id: taskId, branch: `task/${taskId}` } as StatementParams,
+    );
+    return row ? this.toRecord(row) : undefined;
+  }
+
   remove(id: string): void {
     this.db.run(
       `UPDATE worktrees SET removed_at = $removed_at WHERE id = $id`,

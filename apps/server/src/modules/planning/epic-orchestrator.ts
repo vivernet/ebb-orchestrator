@@ -29,6 +29,7 @@ export type IntegrationServiceFactory = (context: IntegrationServiceFactoryConte
 export interface EpicOrchestratorOptions {
   integrationServiceFactory?: IntegrationServiceFactory;
   integrationWorktreeRoot?: string;
+  taskWorkspaceProvisioner?: { provisionForEpic(epicId: string): Promise<void> };
 }
 type Stage = "CHILDREN" | "EPIC_REVIEW" | "ARCHITECTURE_REVIEW" | "EPIC_QA" | "INTEGRATION" | "FINAL_APPROVAL" | "DONE";
 type Child = { id: string; display_id: string; status: string };
@@ -46,6 +47,7 @@ export class EpicOrchestrator {
   private readonly runs: RunService;
   private readonly integrationServiceFactory: IntegrationServiceFactory | undefined;
   private readonly integrationWorktreeRoot: string | undefined;
+  private readonly taskWorkspaceProvisioner: EpicOrchestratorOptions["taskWorkspaceProvisioner"];
 
   constructor(
     private readonly db: Database,
@@ -62,6 +64,7 @@ export class EpicOrchestrator {
     this.runs = runs;
     this.integrationServiceFactory = options.integrationServiceFactory;
     this.integrationWorktreeRoot = options.integrationWorktreeRoot;
+    this.taskWorkspaceProvisioner = options.taskWorkspaceProvisioner;
     for (const column of ["cost REAL", "input_tokens INTEGER", "output_tokens INTEGER"]) {
       try { this.db.exec(`ALTER TABLE agent_runs ADD COLUMN ${column}`); } catch { /* migration already installed */ }
     }
@@ -89,6 +92,7 @@ export class EpicOrchestrator {
     if (row.status === "PENDING") this.planning.approvePlan(planId, actor);
     const epic = this.db.get<{ id: string }>("SELECT epic_id AS id FROM planning_plans WHERE id=$planId AND epic_id IS NOT NULL", { planId });
     if (!epic) throw new Error("Approved Epic plan did not materialize an Epic");
+    if (this.taskWorkspaceProvisioner) await this.taskWorkspaceProvisioner.provisionForEpic(epic.id);
     const persisted = this.db.get<{ input_json: string }>("SELECT input_json FROM epic_orchestrations WHERE epic_id=$epicId AND plan_id=$planId", { epicId: epic.id, planId });
     if (!persisted) {
       const now = new Date().toISOString();

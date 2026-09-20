@@ -36,7 +36,7 @@ export class GitOperationRepository {
     this.db.run(
       `INSERT INTO git_operations (
         id, type, status, repo_path, branch_name, worktree_id, target_ref, created_at, verified_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES ($id, $type, $status, $repo_path, $branch_name, $worktree_id, $target_ref, $created_at, $verified_at)`,
       {
         id: op.id,
         type: op.type,
@@ -59,9 +59,9 @@ export class GitOperationRepository {
    */
   verify(operationId: string): void {
     this.db.run(
-      `UPDATE git_operations 
-       SET status = 'VERIFIED', verified_at = ? 
-       WHERE id = ? AND status = 'STARTED'`,
+      `UPDATE git_operations
+       SET status = 'VERIFIED', verified_at = $verified_at
+       WHERE id = $id AND status = 'STARTED'`,
       { verified_at: new Date().toISOString(), id: operationId } as StatementParams
     );
   }
@@ -71,7 +71,7 @@ export class GitOperationRepository {
    */
   findById(id: string): GitOperation | undefined {
     return this.db.get(
-      `SELECT * FROM git_operations WHERE id = ?`,
+      `SELECT * FROM git_operations WHERE id = $id`,
       { id } as StatementParams
     ) as GitOperation | undefined;
   }
@@ -82,7 +82,7 @@ export class GitOperationRepository {
    */
   findStartedOperations(repoPath: string): GitOperation[] {
     return this.db.all(
-      `SELECT * FROM git_operations WHERE repo_path = ? AND status = 'STARTED'`,
+      `SELECT * FROM git_operations WHERE repo_path = $repo_path AND status = 'STARTED'`,
       { repo_path: repoPath } as StatementParams
     ) as GitOperation[];
   }
@@ -91,6 +91,6 @@ export class GitOperationRepository {
    * Delete an operation after successful verification.
    */
   delete(operationId: string): void {
-    this.db.run(`DELETE FROM git_operations WHERE id = ?`, { id: operationId } as StatementParams);
+    this.db.run(`DELETE FROM git_operations WHERE id = $id`, { id: operationId } as StatementParams);
   }
 }
