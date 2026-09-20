@@ -13,6 +13,7 @@
   "dependencies": {
     "@ebb-orchestrator/contracts": "workspace:*",
     "@ebb-orchestrator/testing": "workspace:*",
+    "@infisical/sdk": "^5.0.2",
     "@napi-rs/keyring": "2.1.0",
     "fastify": "^5.12.4",
     "zod": "^4.6.0"

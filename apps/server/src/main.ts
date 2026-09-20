@@ -38,6 +38,8 @@ import { EventDispatcher } from "./platform/events/event-dispatcher.js";
 import { WorkflowEngine } from "./modules/workflow/workflow-engine.js";
 import { WorkflowRegistry } from "./modules/workflow/workflow-registry.js";
 import { templates } from "./modules/workflow/templates.js";
+import { KeyringSecretStore } from "./platform/security/keyring-secret-store.js";
+import { createInfisicalSecretStore, resolveInfisicalSecretStoreOptions } from "./platform/security/infisical-secret-store.js";
 
 const host = "127.0.0.1";
 const port = Number(process.env["PORT"] ?? 3000);
@@ -80,8 +82,12 @@ const eventBus = new EventBus();
 const eventDispatcher = new EventDispatcher(database, eventBus);
 const runtimeOrchestrator = new RuntimeOrchestrator(database, workflowEngine, eventBus, eventDispatcher, scheduler);
 runtimeOrchestrator.initialize();
+const infisicalOptions = resolveInfisicalSecretStoreOptions(process.env);
+const secretStore = infisicalOptions
+  ? createInfisicalSecretStore(database, infisicalOptions)
+  : new KeyringSecretStore(database);
 
-const app = createApp({ host, port, db: database, scheduler, runtime, ...(existsSync(webRoot) ? { webRoot } : {}) });
+const app = createApp({ host, port, db: database, scheduler, runtime, secretStore, ...(existsSync(webRoot) ? { webRoot } : {}) });
 
 // Регистрирует шаги reconciliation которые будут запущены после migrations.
 const reconciler = {

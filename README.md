@@ -218,6 +218,30 @@ Runtime использует `HERMES_HOME`, `HERMES_CONFIG` и разрешён�
 Не добавляйте обычные настройки в `.env` вместо конфигурации и не передавайте
 секреты через публичные примеры.
 
+### SecretStore
+
+По умолчанию backend использует локальный OS keyring (`@napi-rs/keyring`): на
+Windows это Credential Manager. Если keyring недоступен, API секретов отвечает
+`503` и не создаёт SQLite metadata — это fail-closed поведение.
+
+Опционально можно включить Infisical Cloud или self-hosted Infisical:
+
+```text
+EBB_SECRET_BACKEND=infisical
+INFISICAL_CLIENT_ID=...
+INFISICAL_CLIENT_SECRET=...
+INFISICAL_PROJECT_ID=...
+INFISICAL_ENVIRONMENT=production
+# Необязательные: INFISICAL_SECRET_PATH=/orchestrator
+#                 INFISICAL_SITE_URL=https://app.infisical.com
+```
+
+Используйте отдельную Machine Identity с минимальными правами только на
+назначенные project/environment/path. Эти значения передаются процессу через
+безопасный механизм deployment environment, а не через Git, prompts или UI.
+При включённом Infisical неполная конфигурация останавливает startup; ошибка
+remote backend возвращает `503` и не переключается неявно на другой storage.
+
 ## Локальные данные
 
 По умолчанию используется `~/.ebb-orchestrator` (на Windows — каталог из
