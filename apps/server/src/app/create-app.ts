@@ -43,6 +43,8 @@ import type { GitHubSyncWorker } from "../modules/github/github-sync-worker.js";
 import type { DiagnosticsService } from "../platform/diagnostics/diagnostics-service.js";
 import type { SecretStore } from "../platform/security/secret-store.js";
 import { OnboardingService } from "../modules/projects/onboarding-service.js";
+import { DependencyService } from "../modules/work/dependency-service.js";
+import { dependencyRoutes, type DependencyCommandService } from "./routes/dependencies.js";
 
 const LOCAL_SESSION_COOKIE = "ebb_local_session";
 
@@ -57,6 +59,7 @@ export interface AppDeps {
   approvalService?: ApprovalCommandService;
   onboardingService?: OnboardingCommandService;
   runService?: RunCommandService;
+  dependencyService?: DependencyCommandService;
   /** Production must provide the single shared SchedulerService instance. */
   scheduler: SchedulerService;
   /** Production must provide the real runtime. Test doubles belong in test deps. */
@@ -100,6 +103,7 @@ export function createApp(deps: AppDeps): OrchestratorApp {
   const onboardingService = deps.onboardingService ?? (deps.db ? new OnboardingService() : undefined);
   if (deps.db && !deps.runtime && !deps.runService) throw new Error("production runtime is required");
   const runService = deps.runService ?? (deps.db && deps.runtime ? new RunService(deps.db, deps.runtime) : undefined);
+  const dependencyService = deps.dependencyService ?? (deps.db ? new DependencyService(deps.db) : undefined);
 
   const app = Fastify({ logger: false }) as unknown as OrchestratorApp;
 
@@ -177,6 +181,7 @@ export function createApp(deps: AppDeps): OrchestratorApp {
     instance.get("/api/v1/dashboard", async () => new DashboardProjection(deps.db, scheduler).get());
     await projectRoutes(instance, { db: deps.db, scheduler, projectService });
     await workRoutes(instance, { db: deps.db, workService, scheduler });
+    await dependencyRoutes(instance, { db: deps.db, dependencyService });
     await approvalRoutes(instance, { db: deps.db, approvalService });
     await runRoutes(instance, { db: deps.db, runService, scheduler, workflow });
     await onboardingRoutes(instance, {
