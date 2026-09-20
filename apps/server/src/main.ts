@@ -44,10 +44,10 @@ import { createInfisicalSecretStore, resolveInfisicalSecretStoreOptions } from "
 const host = "127.0.0.1";
 const port = Number(process.env["PORT"] ?? 3000);
 
-const lock = new SingleInstanceLock("orchestrator.lock");
 const status = new StatusTracker();
 const home = resolveOrchestratorHome(process.env, process.platform === "win32" ? "win32" : "linux");
 mkdirSync(home.root, { recursive: true });
+const lock = new SingleInstanceLock(join(home.root, "orchestrator.lock"));
 const database = createSqliteDatabase(home.database);
 const migrationDir = fileURLToPath(new URL("./platform/database/migrations/", import.meta.url));
 const webRoot = fileURLToPath(new URL("../../web/dist/", import.meta.url));

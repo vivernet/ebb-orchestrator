@@ -5,16 +5,12 @@
 import type { HermesLaunchProfile, HermesRunBuildConfig } from "./hermes-config.js";
 import * as path from "path";
 import * as os from "os";
-import { createRequire } from "node:module";
-import { fileURLToPath, pathToFileURL } from "node:url";
-
-const require = createRequire(import.meta.url);
+import { fileURLToPath } from "node:url";
 
 /** The launcher is deliberately independent of pnpm bin shims and cwd. */
 function defaultMcpLauncher(): { command: string; args: string[] } {
-  const entrypoint = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../bin/ebb-orchestrator-mcp.ts");
-  const tsxLoader = pathToFileURL(require.resolve("tsx/esm")).href;
-  return { command: process.execPath, args: ["--import", tsxLoader, entrypoint] };
+  const entrypoint = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../bin/ebb-orchestrator-mcp.js");
+  return { command: process.execPath, args: [entrypoint] };
 }
 
 /**

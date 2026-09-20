@@ -145,8 +145,8 @@ describe("Hermes profile isolation", () => {
       expect(config).toContain("mcp_servers:");
       expect(config).toContain("ebb-orchestrator-mcp:");
        expect(config).toContain(`command: ${JSON.stringify(process.execPath)}`);
-       expect(config).toContain("ebb-orchestrator-mcp.ts");
-       expect(config).toMatch(/file:.*tsx[\\/]dist[\\/]esm[\\/]index\.mjs/);
+       expect(config).toContain("ebb-orchestrator-mcp.js");
+       expect(config).not.toContain("tsx/esm");
     });
 
     it("sets terminal.home_mode to profile", () => {
