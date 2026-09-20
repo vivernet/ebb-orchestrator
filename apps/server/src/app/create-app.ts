@@ -45,6 +45,7 @@ import type { SecretStore } from "../platform/security/secret-store.js";
 import { OnboardingService } from "../modules/projects/onboarding-service.js";
 import { DependencyService } from "../modules/work/dependency-service.js";
 import { dependencyRoutes, type DependencyCommandService } from "./routes/dependencies.js";
+import { finalMergeRoutes, type FinalMergeServiceFactory } from "./routes/final-merge.js";
 
 const LOCAL_SESSION_COOKIE = "ebb_local_session";
 
@@ -60,6 +61,8 @@ export interface AppDeps {
   onboardingService?: OnboardingCommandService;
   runService?: RunCommandService;
   dependencyService?: DependencyCommandService;
+  /** Optional authority-bound factory; production default uses MergeService. */
+  finalMergeServiceFactory?: FinalMergeServiceFactory;
   /** Production must provide the single shared SchedulerService instance. */
   scheduler: SchedulerService;
   /** Production must provide the real runtime. Test doubles belong in test deps. */
@@ -182,6 +185,7 @@ export function createApp(deps: AppDeps): OrchestratorApp {
     await projectRoutes(instance, { db: deps.db, scheduler, projectService });
     await workRoutes(instance, { db: deps.db, workService, scheduler });
     await dependencyRoutes(instance, { db: deps.db, dependencyService });
+    await finalMergeRoutes(instance, { db: deps.db, mergeServiceFactory: deps.finalMergeServiceFactory });
     await approvalRoutes(instance, { db: deps.db, approvalService });
     await runRoutes(instance, { db: deps.db, runService, scheduler, workflow });
     await onboardingRoutes(instance, {
