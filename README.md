@@ -21,6 +21,17 @@ Ebb Orchestrator — локально запускаемый modular monolith д
 - Web UI для dashboard, проектов, задач, Epic, запусков, approvals, execution,
   settings и usage.
 
+### Граница текущей production-композиции
+
+Ядро доменных workflow, Git, scheduler, outbox, SecretStore/Infisical и
+production artifact покрыты тестами и доступны локальному серверу. При этом
+текущая HTTP-композиция v1 предоставляет health/session, read projections,
+settings, pause/cancel и approval mutation endpoints; полный пользовательский
+flow `создание проекта → запуск Hermes → integration → merge` пока не подключён
+как единый публичный API flow. Поэтому README описывает доменные возможности,
+а production sign-off должен отдельно подтвердить wiring этих mutation paths,
+recovery adapters и live runtime credentials.
+
 ## Архитектурные принципы
 
 Проект следует следующим ограничениям:
