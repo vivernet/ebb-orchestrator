@@ -287,7 +287,19 @@ export class IntegrationService {
     if (targetSha !== attempt.expectedTargetSha) {
       throw new Error(`TARGET_MOVED: expected ${attempt.expectedTargetSha ?? "a verified target"}, found ${targetSha}; restart integration`);
     }
-    await this.git.run(attempt.worktreePath, ["merge", "--no-edit", attempt.sourceBranch]);
+    const emptyHooksDir = join(this.worktreeDir, `hooks-merge-${attempt.id}`);
+    mkdirSync(emptyHooksDir, { recursive: true });
+    try {
+      await this.git.run(attempt.worktreePath, [
+        "-c",
+        `core.hooksPath=${emptyHooksDir.replace(/\\/g, "/")}`,
+        "merge",
+        "--no-edit",
+        attempt.sourceBranch,
+      ]);
+    } finally {
+      rmSync(emptyHooksDir, { recursive: true, force: true });
+    }
     const mergedSha = (await this.git.run(attempt.worktreePath, ["rev-parse", "HEAD"])).stdout.trim();
     if (!mergedSha || mergedSha === attempt.expectedTargetSha) {
       throw new Error("INTEGRATION_SOURCE_NOT_MERGED: prepared worktree does not contain the source commit");
