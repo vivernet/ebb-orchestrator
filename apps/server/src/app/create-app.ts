@@ -185,7 +185,7 @@ export function createApp(deps: AppDeps): OrchestratorApp {
     await projectRoutes(instance, { db: deps.db, scheduler, projectService });
     await workRoutes(instance, { db: deps.db, workService, scheduler });
     await dependencyRoutes(instance, { db: deps.db, dependencyService });
-    await finalMergeRoutes(instance, { db: deps.db, mergeServiceFactory: deps.finalMergeServiceFactory });
+    await finalMergeRoutes(instance, { db: deps.db, mergeServiceFactory: deps.finalMergeServiceFactory, workflow });
     await approvalRoutes(instance, { db: deps.db, approvalService });
     await runRoutes(instance, { db: deps.db, runService, scheduler, workflow });
     await onboardingRoutes(instance, {

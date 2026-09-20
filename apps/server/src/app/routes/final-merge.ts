@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { Database } from "../../platform/database/database.js";
 import { MergeService, type MergeResult } from "../../modules/git/merge-service.js";
+import type { WorkflowEngine } from "../../modules/workflow/workflow-engine.js";
 
 /** Минимальный authority-bound контракт финального merge. */
 export interface FinalMergeCommandService {
@@ -16,6 +17,7 @@ export type FinalMergeServiceFactory = (database: Database, repositoryPath: stri
 export interface FinalMergeRouteDeps {
   db?: Database | undefined;
   mergeServiceFactory?: FinalMergeServiceFactory | undefined;
+  workflow?: WorkflowEngine | undefined;
 }
 
 interface FinalMergeBody {
@@ -65,6 +67,23 @@ export async function finalMergeRoutes(app: FastifyInstance, deps: FinalMergeRou
       const service = factory(deps.db, repository.repository_path);
       try {
         const result = await service.mergeApprovedForIntegration(subjectId, body.approvalId, body.integrationRunId);
+        if (deps.workflow) {
+          const task = deps.db.get<{ status: string }>("SELECT status FROM tasks WHERE id=$id", { id: subjectId });
+          if (task?.status === "READY_FOR_MERGE") {
+            deps.workflow.transition(subjectId, "MERGING", {
+              hasReviewPassed: true,
+              hasSuccessfulIntegration: true,
+              hasFinalMergeApproval: true,
+              parentEpicReleased: false,
+            });
+            deps.workflow.transition(subjectId, "DONE", {
+              hasReviewPassed: true,
+              hasSuccessfulIntegration: true,
+              hasFinalMergeApproval: true,
+              parentEpicReleased: false,
+            });
+          }
+        }
         return reply.code(200).send({ merge: result });
       } catch {
         // Do not expose repository paths, SHA values, or provenance details.
