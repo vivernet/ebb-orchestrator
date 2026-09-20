@@ -1,7 +1,7 @@
 import { GitCli } from "./git-cli.js";
 import { tmpdir } from "os";
 import { join } from "path";
-import { rmSync, mkdirSync } from "fs";
+import { mkdtempSync, rmSync } from "fs";
 import { getIntegrationProvenance } from "./integration-service.js";
 import type { IntegrationAttempt } from "./integration-service.js";
 import type { Database } from "../../platform/database/database.js";
@@ -356,7 +356,6 @@ export class MergeService {
     // Perform merge with hooks disabled
     const emptyHooksDir = this.createEmptyHooksDir();
     try {
-      mkdirSync(emptyHooksDir, { recursive: true });
       const mergeArgs = [
         "-c",
         `core.hooksPath=${emptyHooksDir.replace(/\\/g, "/")}`,
@@ -365,7 +364,12 @@ export class MergeService {
         integration.sourceSha,
       ];
       if (currentBranch !== target) {
-        await this.git.run(integration.repoPath, ["checkout", target]);
+        await this.git.run(integration.repoPath, [
+          "-c",
+          `core.hooksPath=${emptyHooksDir.replace(/\\/g, "/")}`,
+          "checkout",
+          target,
+        ]);
       }
       const targetImmediatelyBeforeMerge = (await this.git.run(integration.repoPath, ["rev-parse", target])).stdout.trim();
       if (targetImmediatelyBeforeMerge !== targetBefore) {
@@ -394,7 +398,6 @@ export class MergeService {
   }
 
   private createEmptyHooksDir(): string {
-    const hooksDir = join(tmpdir(), `orchestrator-merge-hooks-${Date.now()}`);
-    return hooksDir;
+    return mkdtempSync(join(tmpdir(), "orchestrator-merge-hooks-"));
   }
 }

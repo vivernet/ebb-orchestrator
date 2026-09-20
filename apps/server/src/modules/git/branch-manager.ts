@@ -2,7 +2,7 @@ import { GitCli, assertSafeGitRef } from "./git-cli.js";
 import type { Database } from "../../platform/database/database.js";
 import { BranchRepository } from "./branch-repository.js";
 
-import { rmSync } from "fs";
+import { mkdtempSync, rmSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 
@@ -88,7 +88,6 @@ export class BranchManager {
    * Creates an empty directory for disabling git hooks.
    */
   private createEmptyHooksDir(): string {
-    const hooksDir = join(tmpdir(), `orchestrator-hooks-${Date.now()}`);
-    return hooksDir;
+    return mkdtempSync(join(tmpdir(), "orchestrator-hooks-"));
   }
 }

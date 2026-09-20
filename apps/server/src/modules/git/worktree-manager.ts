@@ -1,4 +1,4 @@
-import { rmSync, mkdirSync } from "fs";
+import { mkdtempSync, rmSync, mkdirSync } from "fs";
 import { isAbsolute, join, relative, resolve } from "path";
 import { tmpdir } from "os";
 import { GitCli } from "./git-cli.js";
@@ -146,7 +146,6 @@ export class WorktreeManager {
    * Создаёт пустую директорию для отключения git hooks.
    */
   private createEmptyHooksDir(): string {
-    const hooksDir = join(tmpdir(), `orchestrator-hooks-${Date.now()}`);
-    return hooksDir;
+    return mkdtempSync(join(tmpdir(), "orchestrator-hooks-"));
   }
 }

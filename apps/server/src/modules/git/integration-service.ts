@@ -1,7 +1,7 @@
 import { GitCli } from "./git-cli.js";
 import { tmpdir } from "os";
 import { isAbsolute, join, relative, resolve } from "path";
-import { rmSync, mkdirSync } from "fs";
+import { mkdtempSync, rmSync, mkdirSync } from "fs";
 import type { Database } from "../../platform/database/database.js";
 import { createSqliteDatabase } from "../../platform/database/sqlite-database.js";
 import { readFileSync } from "node:fs";
@@ -113,8 +113,7 @@ export class IntegrationService {
     const sourceSha = (await this.git.run(repoPath, ["rev-parse", sourceBranch])).stdout.trim();
 
     // Создаёт пустую директорию hooks для отключения hooks
-    const emptyHooksDir = join(this.worktreeDir, `hooks-${Date.now()}`);
-    mkdirSync(emptyHooksDir, { recursive: true });
+    const emptyHooksDir = mkdtempSync(join(this.worktreeDir, "hooks-"));
 
     try {
       // Создаёт worktree с интеграционным branch напрямую из target branch
@@ -287,8 +286,7 @@ export class IntegrationService {
     if (targetSha !== attempt.expectedTargetSha) {
       throw new Error(`TARGET_MOVED: expected ${attempt.expectedTargetSha ?? "a verified target"}, found ${targetSha}; restart integration`);
     }
-    const emptyHooksDir = join(this.worktreeDir, `hooks-merge-${attempt.id}`);
-    mkdirSync(emptyHooksDir, { recursive: true });
+    const emptyHooksDir = mkdtempSync(join(this.worktreeDir, "hooks-merge-"));
     try {
       await this.git.run(attempt.worktreePath, [
         "-c",
