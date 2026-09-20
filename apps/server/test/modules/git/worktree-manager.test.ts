@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { tmpdir } from "os";
 import { join } from "path";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "fs";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, readFileSync } from "fs";
 
 import { GitCli } from "../../../src/modules/git/git-cli.js";
 import { WorktreeManager } from "../../../src/modules/git/worktree-manager.js";
 import { BranchManager } from "../../../src/modules/git/branch-manager.js";
+import { createSqliteDatabase } from "../../../src/platform/database/sqlite-database.js";
 
 function createTempDir(): string {
   return mkdtempSync(join(tmpdir(), "git-wt-"));
@@ -49,6 +50,26 @@ describe("WorktreeManager", () => {
   });
 
   describe("removeWorkspace", () => {
+    it("keeps a dirty managed worktree when removal is rejected", async () => {
+      const repoPath = createTempDir();
+      await initGitRepo(repoPath);
+      const worktreeDir = createTempDir();
+      const db = createSqliteDatabase(join(createTempDir(), "worktrees.sqlite"));
+      db.exec(readFileSync(new URL("../../../src/platform/database/migrations/007_git.sql", import.meta.url), "utf8"));
+      const manager = new WorktreeManager({ db, worktreeDir });
+      const worktree = await manager.createTaskWorkspace("dirty", repoPath, "master");
+
+      writeFileSync(join(worktree.path, "uncommitted.txt"), "keep me");
+
+      await expect(manager.removeWorkspace(worktree.id)).rejects.toThrow("Cannot remove dirty worktree");
+      expect(readFileSync(join(worktree.path, "uncommitted.txt"), "utf8")).toBe("keep me");
+      expect(existsSync(worktree.path)).toBe(true);
+
+      await new GitCli().run(repoPath, ["worktree", "remove", "--force", worktree.path]);
+      db.close();
+      rmSync(worktreeDir, { recursive: true, force: true });
+    });
+
     it("removes a worktree", async () => {
       const repoPath = createTempDir();
       await initGitRepo(repoPath);

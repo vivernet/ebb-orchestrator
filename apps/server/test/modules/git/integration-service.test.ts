@@ -33,6 +33,24 @@ function boundService(git: GitCli): { service: IntegrationService; database: Ret
 }
 
 describe("IntegrationService", () => {
+  describe("cleanupIntegration", () => {
+    it("keeps a dirty integration worktree when cleanup is rejected", async () => {
+      const repoPath = createTempDir();
+      const git = await initGitRepo(repoPath);
+      const worktreeDir = createTempDir();
+      const service = new IntegrationService({ git, worktreeDir });
+      const attempt = await service.prepareIntegration("master", "master", repoPath);
+
+      writeFileSync(join(attempt.worktreePath, "uncommitted.txt"), "keep me");
+
+      await expect(service.cleanupIntegration(attempt)).rejects.toThrow("Cannot remove dirty integration worktree");
+      expect(readFileSync(join(attempt.worktreePath, "uncommitted.txt"), "utf8")).toBe("keep me");
+
+      await git.run(repoPath, ["worktree", "remove", "--force", attempt.worktreePath]);
+      rmSync(worktreeDir, { recursive: true, force: true });
+    });
+  });
+
   describe("prepareIntegration", () => {
     it("creates integration worktree from current target branch", async () => {
       const repoPath = createTempDir();

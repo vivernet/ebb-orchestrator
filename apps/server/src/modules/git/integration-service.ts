@@ -1,6 +1,6 @@
 import { GitCli } from "./git-cli.js";
 import { tmpdir } from "os";
-import { join } from "path";
+import { isAbsolute, join, relative, resolve } from "path";
 import { rmSync, mkdirSync } from "fs";
 import type { Database } from "../../platform/database/database.js";
 import { createSqliteDatabase } from "../../platform/database/sqlite-database.js";
@@ -298,23 +298,24 @@ export class IntegrationService {
    * Очищает попытку интеграции удаляя её worktree.
    */
   async cleanupIntegration(attempt: IntegrationAttempt): Promise<void> {
-    for (let attemptNo = 0; attemptNo < 10; attemptNo += 1) {
-      try {
-        // Check if worktree has uncommitted changes (dirty)
-        const status = await this.git.run(attempt.repoPath, ["status", "--porcelain"]);
-        if (status.stdout.trim() !== "") {
-          throw new Error(
-            `Cannot remove dirty integration worktree: ${attempt.worktreePath}. ` +
-            `The worktree has uncommitted changes. Commit or stash changes before cleanup.`
-          );
-        }
+    this.assertManagedWorktreePath(attempt.worktreePath);
+    const status = await this.git.run(attempt.worktreePath, ["status", "--porcelain"]);
+    if (status.stdout.trim() !== "") {
+      throw new Error(
+        `Cannot remove dirty integration worktree: ${attempt.worktreePath}. ` +
+        `The worktree has uncommitted changes. Commit or stash changes before cleanup.`
+      );
+    }
+    await this.git.run(attempt.repoPath, ["worktree", "remove", attempt.worktreePath]);
+  }
 
-        await this.git.run(attempt.repoPath, ["worktree", "remove", attempt.worktreePath]);
-        return;
-      } catch {
-        try { rmSync(attempt.worktreePath, { recursive: true, force: true }); } catch { /* retry after a process releases the handle */ }
-        if (attemptNo < 9) await new Promise((resolve) => setTimeout(resolve, 100 * (attemptNo + 1)));
-      }
+  /** Не позволяет cleanup удалить произвольный путь из недоверенной попытки. */
+  private assertManagedWorktreePath(worktreePath: string): void {
+    const root = resolve(this.worktreeDir);
+    const candidate = resolve(worktreePath);
+    const relativePath = relative(root, candidate);
+    if (!relativePath || relativePath.startsWith("..") || isAbsolute(relativePath)) {
+      throw new Error(`Integration worktree path is outside the managed root: ${worktreePath}`);
     }
   }
 }

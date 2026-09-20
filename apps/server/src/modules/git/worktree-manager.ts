@@ -1,5 +1,5 @@
 import { rmSync, mkdirSync } from "fs";
-import { join } from "path";
+import { isAbsolute, join, relative, resolve } from "path";
 import { tmpdir } from "os";
 import { GitCli } from "./git-cli.js";
 import type { Database } from "../../platform/database/database.js";
@@ -112,35 +112,33 @@ export class WorktreeManager {
       throw new Error(`Worktree not found: ${worktreeId}`);
     }
 
-    try {
-      // Проверяет наличие неоткоммиченных изменений (dirty)
-      const status = await this.git.run(worktree.repoPath, ["status", "--porcelain"]);
-      if (status.stdout.trim() !== "") {
-        throw new Error(
-          `Cannot remove dirty worktree: ${worktree.path}. ` +
-          `The worktree has uncommitted changes. Commit or stash changes before removal.`
-        );
-      }
+    this.assertManagedWorktreePath(worktree.path);
+    const status = await this.git.run(worktree.path, ["status", "--porcelain"]);
+    if (status.stdout.trim() !== "") {
+      throw new Error(
+        `Cannot remove dirty worktree: ${worktree.path}. ` +
+        `The worktree has uncommitted changes. Commit or stash changes before removal.`
+      );
+    }
 
-      // Удаляет worktree через git
-      await this.git.run(worktree.repoPath, [
-        "worktree",
-        "remove",
-        worktree.path,
-      ]);
+    await this.git.run(worktree.repoPath, [
+      "worktree",
+      "remove",
+      worktree.path,
+    ]);
 
-      // Обновляет запись в базе данных
-      if (this.worktreeRepo) {
-        this.worktreeRepo.remove(worktreeId);
-      }
-    } catch (error) {
-      // Если git-команда не удалась, всё равно очищаем локальную директорию
-      try {
-        rmSync(worktree.path, { recursive: true, force: true });
-      } catch {
-        // Пропускаем ошибки очистки
-      }
-      throw error;
+    if (this.worktreeRepo) {
+      this.worktreeRepo.remove(worktreeId);
+    }
+  }
+
+  /** Проверяет, что managed cleanup не выйдет за пределы назначенного корня. */
+  private assertManagedWorktreePath(worktreePath: string): void {
+    const root = resolve(this.worktreeDir);
+    const candidate = resolve(worktreePath);
+    const relativePath = relative(root, candidate);
+    if (!relativePath || relativePath.startsWith("..") || isAbsolute(relativePath)) {
+      throw new Error(`Worktree path is outside the managed root: ${worktreePath}`);
     }
   }
 
