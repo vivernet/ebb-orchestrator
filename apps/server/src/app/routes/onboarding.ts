@@ -110,11 +110,29 @@ export async function onboardingRoutes(app: FastifyInstance, deps: OnboardingRou
 }
 
 function parseDiscoveryBody(value: unknown): { repositoryPath: string } | null { if (!isPlainObject(value) || Object.keys(value).length !== 1 || typeof value.repositoryPath !== "string") return null; return { repositoryPath: value.repositoryPath }; }
-function parseApprovalBody(value: unknown): { repositoryPath: string; proposed?: Record<string, unknown> } | null { if (!isPlainObject(value) || typeof value.repositoryPath !== "string") return null; if (Object.keys(value).some((key) => !["repositoryPath", "proposed"].includes(key))) return null; if (value.proposed !== undefined && !isPlainObject(value.proposed)) return null; return { repositoryPath: value.repositoryPath, ...(value.proposed ? { proposed: value.proposed } : {}) }; }
+function parseApprovalBody(value: unknown): { repositoryPath: string; proposed?: Record<string, unknown> } | null {
+  if (!isPlainObject(value) || typeof value.repositoryPath !== "string") return null;
+  if (Object.keys(value).some((key) => !["repositoryPath", "proposed"].includes(key))) return null;
+  if (value.proposed === undefined) return { repositoryPath: value.repositoryPath };
+  const proposed = parseProposal(value.proposed);
+  return proposed ? { repositoryPath: value.repositoryPath, proposed } : null;
+}
+function parseProposal(value: unknown): Record<string, unknown> | null {
+  if (!isPlainObject(value)) return null;
+  const allowed = ["defaultBranch", "workflow", "roles", "guidelines"] as const;
+  if (Object.keys(value).some((key) => !allowed.includes(key as typeof allowed[number]))) return null;
+  if (value.defaultBranch !== undefined && !isNonEmptyString(value.defaultBranch)) return null;
+  if (value.workflow !== undefined && !isNonEmptyString(value.workflow)) return null;
+  for (const key of ["roles", "guidelines"] as const) {
+    if (value[key] !== undefined && (!Array.isArray(value[key]) || !value[key].every(isNonEmptyString))) return null;
+  }
+  return { ...value };
+}
 function isPlainObject(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
+function isNonEmptyString(value: unknown): value is string { return typeof value === "string" && value.trim().length > 0; }
 function validateRepositoryPath(value: string): string | null { if (!isAbsolute(value) || value.includes("\0")) return null; try { const real = realpathSync(value); return statSync(real).isDirectory() ? real : null; } catch { return null; } }
 function redactRemotes(remotes: readonly { name: string; url: string }[]): { name: string; url: string }[] { return remotes.map((remote) => ({ name: remote.name, url: redactRemote(remote.url) })); }
-function redactRemote(url: string): string { try { const parsed = new URL(url); if (parsed.username || parsed.password) { parsed.username = "***"; parsed.password = "***"; } return parsed.toString(); } catch { return "[redacted]"; } }
+function redactRemote(url: string): string { try { const parsed = new URL(url); if (parsed.username || parsed.password) { parsed.username = "***"; parsed.password = "***"; } parsed.search = ""; parsed.hash = ""; return parsed.toString(); } catch { return "[redacted]"; } }
 function sanitizeFacts(facts: { root: string; defaultBranch: string; remotes: readonly { name: string; url: string }[]; packageManager: string; languageHints: readonly string[]; testCommands: readonly string[]; untrustedExistingConfig: boolean }) { return { root: facts.root, defaultBranch: facts.defaultBranch, remotes: redactRemotes(facts.remotes), packageManager: facts.packageManager, languageHints: [...facts.languageHints], testCommands: [...facts.testCommands], untrustedExistingConfig: facts.untrustedExistingConfig }; }
 function defaultProposal(defaultBranch: string): Record<string, unknown> { return { defaultBranch, workflow: "standard", roles: ["Developer", "Reviewer", "QA"], guidelines: [] }; }
 function safeApproval(approval: Approval): Omit<Approval, "metadata"> { const { metadata: _metadata, ...safe } = approval; return safe; }
