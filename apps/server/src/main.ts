@@ -35,6 +35,7 @@ import {
 import { RuntimeOrchestrator } from "./modules/runtime/run-orchestrator.js";
 import { EventBus } from "./platform/events/event-bus.js";
 import { EventDispatcher } from "./platform/events/event-dispatcher.js";
+import { OutboxWorker } from "./platform/events/outbox-worker.js";
 import { WorkflowEngine } from "./modules/workflow/workflow-engine.js";
 import { WorkflowRegistry } from "./modules/workflow/workflow-registry.js";
 import { templates } from "./modules/workflow/templates.js";
@@ -133,7 +134,8 @@ const schedulerWorker: BackgroundWorker = {
   start: async () => { schedulerSafetyWorker.start(); },
   stop: async () => { schedulerSafetyWorker.stop(); },
 };
-const workers = [schedulerWorker];
+const outboxWorker = new OutboxWorker(eventDispatcher);
+const workers = [schedulerWorker, outboxWorker];
 
 async function gracefulShutdown(signal: string): Promise<void> {
    console.log(`\n[orchestrator] received ${signal}, shutting down…`);
