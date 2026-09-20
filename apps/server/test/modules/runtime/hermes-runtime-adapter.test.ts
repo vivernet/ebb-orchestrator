@@ -88,6 +88,21 @@ describe("HermesRuntimeAdapter", () => {
     adapter = new HermesRuntimeAdapter(mockExecutor, mockArtifactStore);
   });
 
+  it("uses the configured checkpoint directory instead of the OS home", () => {
+    const configuredDirectory = path.join(os.tmpdir(), "orchestrator-home", "runtime", "checkpoints");
+    const AdapterWithCheckpointDirectory = HermesRuntimeAdapter as unknown as new (
+      executor: ProcessExecutor,
+      artifactStore: MockArtifactStore,
+      config: { checkpointDirectory: string },
+    ) => HermesRuntimeAdapter;
+    const configured = new AdapterWithCheckpointDirectory(mockExecutor, mockArtifactStore, {
+      checkpointDirectory: configuredDirectory,
+    });
+
+    expect((configured as unknown as { checkpointDirectory: string }).checkpointDirectory)
+      .toBe(configuredDirectory);
+  });
+
   describe("startRun", () => {
     it("wires the exact run result path into the authenticated MCP config", async () => {
       const resultDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-result-wiring-"));

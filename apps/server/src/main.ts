@@ -16,7 +16,7 @@
  */
 import { createApp } from "./app/create-app.js";
 import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { createSqliteDatabase } from "./platform/database/sqlite-database.js";
@@ -68,7 +68,11 @@ runMigrations(database, migrations);
 
 // Создаёт единственный production экземпляр SchedulerService общий везде.
 const scheduler = new SchedulerService(database);
-const runtime = new HermesRuntimeAdapter(new ProcessExecutor(), undefined, { databasePath: home.database });
+const runtime = new HermesRuntimeAdapter(new ProcessExecutor(), undefined, {
+  databasePath: home.database,
+  resultDirectory: join(home.runtime, "hermes", "results"),
+  checkpointDirectory: join(home.runtime, "checkpoints"),
+});
 const workflowRegistry = new WorkflowRegistry();
 for (const template of Object.values(templates)) workflowRegistry.register(template);
 const workflowEngine = new WorkflowEngine(database, workflowRegistry);

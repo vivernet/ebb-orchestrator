@@ -82,6 +82,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
   private readonly managedWorktreeForRun: ((run: AgentRun) => string) | undefined;
   private readonly environment: Record<string, string> | undefined;
   private readonly resultDirectory: string;
+  private readonly checkpointDirectory: string;
   private readonly exitCodes = new Map<string, number>();
   private readonly databasePath: string | undefined;
   private readonly mcpCommand: string;
@@ -99,6 +100,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
       managedWorktreeForRun?: (run: AgentRun) => string;
       environment?: Record<string, string>;
       resultDirectory?: string;
+      checkpointDirectory?: string;
       databasePath?: string;
       mcpCommand?: string;
       mcpArgs?: string[];
@@ -114,6 +116,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
     this.managedWorktreeForRun = config?.managedWorktreeForRun;
     this.environment = config?.environment;
     this.resultDirectory = config?.resultDirectory ?? path.join(os.tmpdir(), "orchestrator-hermes-results");
+    this.checkpointDirectory = config?.checkpointDirectory ?? path.join(os.homedir(), ".orchestrator", "checkpoints");
     this.databasePath = config?.databasePath;
     this.mcpCommand = config?.mcpCommand ?? "ebb-orchestrator-mcp";
     this.mcpArgs = config?.mcpArgs ?? [];
@@ -488,7 +491,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
    * Get checkpoint path for a run.
    */
   private async getCheckpointPath(runId: string): Promise<string> {
-    const checkpointDir = path.join(os.homedir(), ".orchestrator", "checkpoints");
+    const checkpointDir = this.checkpointDirectory;
     await fs.mkdir(checkpointDir, { recursive: true });
     return path.join(checkpointDir, `${runId}.checkpoint`);
   }
