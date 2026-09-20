@@ -7,6 +7,9 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/main.ts",
+    "prebuild": "node scripts/clean-dist.mjs",
+    "build": "pnpm --filter @ebb-orchestrator/contracts build && tsc -p tsconfig.build.json && node scripts/build.mjs",
+    "start": "node dist/main.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"
   },

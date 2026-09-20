@@ -218,6 +218,22 @@ Runtime использует `HERMES_HOME`, `HERMES_CONFIG` и разрешён�
 Не добавляйте обычные настройки в `.env` вместо конфигурации и не передавайте
 секреты через публичные примеры.
 
+### Production build и запуск
+
+Собирайте server и его runtime-зависимость contracts одной командой. Результат
+сервера — `apps/server/dist/main.js`; migrations копируются в artifact, поэтому
+запуск не требует `tsx` или TypeScript-исходников.
+
+```bash
+pnpm server:build
+pnpm --filter @ebb-orchestrator/web build
+pnpm --filter @ebb-orchestrator/server start
+```
+
+Перед запуском задайте отдельный доступный для записи `EBB_ORCHESTRATOR_HOME`.
+Проверить готовность после запуска можно запросом
+`GET /api/v1/health`, который возвращает `{ "status": "ok" }`.
+
 ### SecretStore
 
 По умолчанию backend использует локальный OS keyring (`@napi-rs/keyring`): на
@@ -278,6 +294,7 @@ pnpm install --frozen-lockfile
 pnpm lint
 pnpm typecheck
 pnpm test
+pnpm server:build
 pnpm --filter @ebb-orchestrator/web build
 git diff --check
 ```
