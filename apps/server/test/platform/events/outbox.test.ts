@@ -181,13 +181,14 @@ describe("transactional outbox", () => {
     expect(dispatched).toBe(0);
 
     // The event should still be pending with attempts incremented
-    const row = db.get<{ attempts: number; processed_at: string | null }>(
-      "SELECT attempts, processed_at FROM outbox_events WHERE id = $id",
+    const row = db.get<{ attempts: number; processed_at: string | null; available_at: string }>(
+      "SELECT attempts, processed_at, available_at FROM outbox_events WHERE id = $id",
       { id: event.id },
     );
     expect(row).toBeDefined();
     expect(row!.attempts).toBe(1);
     expect(row!.processed_at).toBeNull();
+    expect(Date.parse(row!.available_at)).toBeGreaterThan(Date.now());
 
     // No processed_events row for this consumer
     const processed = db.all<{ consumer_name: string }>(

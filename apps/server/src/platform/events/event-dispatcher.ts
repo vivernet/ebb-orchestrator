@@ -14,6 +14,7 @@ interface PendingEventRow {
   payload_json: string;
   created_at: string;
   available_at: string;
+  attempts: number;
 }
 
 interface ProcessedRow {
@@ -35,7 +36,7 @@ export class EventDispatcher {
    */
   async dispatchBatch(limit: number): Promise<number> {
     const pendingEvents = this.db.all<PendingEventRow>(
-      "SELECT id, type, aggregate_type, aggregate_id, payload_json, created_at, available_at FROM outbox_events WHERE processed_at IS NULL AND available_at <= $now ORDER BY created_at LIMIT $limit",
+      "SELECT id, type, aggregate_type, aggregate_id, payload_json, created_at, available_at, attempts FROM outbox_events WHERE processed_at IS NULL AND available_at <= $now ORDER BY created_at LIMIT $limit",
       { now: new Date().toISOString(), limit },
     );
 
@@ -72,11 +73,12 @@ export class EventDispatcher {
             { consumer: subscription.name, event_id: event.id, processed_at: new Date().toISOString() },
           );
         } catch {
-          // Handler failed – leave event pending, increment attempts
+          // Handler failed — leave event pending and apply bounded backoff.
           allConsumersHandled = false;
+          const retryAt = new Date(Date.now() + Math.min(30_000, 250 * 2 ** Math.min(7, row.attempts))).toISOString();
           this.db.run(
-            "UPDATE outbox_events SET attempts = attempts + 1, last_error = $error WHERE id = $id",
-            { id: event.id, error: "handler failed" },
+            "UPDATE outbox_events SET attempts = attempts + 1, available_at = $available_at, last_error = $error WHERE id = $id",
+            { id: event.id, available_at: retryAt, error: "handler failed" },
           );
           // Do not mark other consumers as unprocessed – break out of the subscription loop
           break;
