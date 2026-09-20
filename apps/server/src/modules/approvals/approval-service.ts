@@ -25,10 +25,23 @@ interface ApprovalRow {
   resolution_note: string | null;
   created_at: string;
   resolved_at: string | null;
+  metadata_json?: string | null;
+}
+
+function parseMetadata(value: string | null | undefined): Readonly<Record<string, unknown>> | undefined {
+  if (!value) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined;
+    return parsed as Readonly<Record<string, unknown>>;
+  } catch {
+    return undefined;
+  }
 }
 
 function rowToApproval(row: ApprovalRow): Approval {
-  return {
+  const metadata = parseMetadata(row.metadata_json);
+  const approval: Approval = {
     id: row.id,
     type: row.type as ApprovalType,
     subjectId: row.subject_id,
@@ -40,6 +53,17 @@ function rowToApproval(row: ApprovalRow): Approval {
     createdAt: row.created_at,
     resolvedAt: row.resolved_at,
   };
+  return metadata ? { ...approval, metadata } : approval;
+}
+
+function readMetadata(db: Database, approvalId: string): Readonly<Record<string, unknown>> | undefined {
+  try {
+    const row = db.get<{ metadata_json: string }>("SELECT metadata_json FROM approval_metadata WHERE approval_id=$approvalId", { approvalId });
+    return parseMetadata(row?.metadata_json);
+  } catch {
+    // Older callers may intentionally use only migrations 001–003.
+    return undefined;
+  }
 }
 
 /**
@@ -69,6 +93,13 @@ export class ApprovalService {
           created_at: now,
         },
       );
+      if (input.metadata) {
+        try {
+          tx.run("INSERT OR REPLACE INTO approval_metadata(approval_id,metadata_json) VALUES($approvalId,$metadata)", { approvalId: id, metadata: JSON.stringify(input.metadata) });
+        } catch {
+          // Keep compatibility with pre-onboarding schemas; the approval itself remains valid.
+        }
+      }
 
       const event = DomainEvent.create({
         type: "ApprovalRequested",
@@ -84,7 +115,7 @@ export class ApprovalService {
       });
       appendOutboxEvent(tx, event);
 
-      return {
+      const approval: Approval = {
         id,
         type: input.type,
         subjectId: input.subjectId,
@@ -96,6 +127,7 @@ export class ApprovalService {
         createdAt: now,
         resolvedAt: null,
       };
+      return input.metadata ? { ...approval, metadata: input.metadata } : approval;
     });
   }
 
@@ -128,7 +160,10 @@ export class ApprovalService {
       "SELECT * FROM approvals WHERE id = $id",
       { id: approvalId },
     );
-    return row ? rowToApproval(row) : undefined;
+    if (!row) return undefined;
+    const approval = rowToApproval(row);
+    const metadata = readMetadata(this.db, approvalId);
+    return metadata ? { ...approval, metadata } : approval;
   }
 
   /**

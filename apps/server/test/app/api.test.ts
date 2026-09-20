@@ -173,6 +173,36 @@ describe("orchestrator read API", () => {
     db.close();
   });
 
+  it("persists semantic onboarding approval and activates only after backend approval", async () => {
+    const { app, db } = makeAppWithDatabase();
+    db.run(
+      "INSERT INTO projects (id, name, display_name, status, created_at, updated_at) VALUES ($id, $name, $displayName, 'ACTIVE', $now, $now)",
+      { id: "project-onboarding", name: "project", displayName: "Project", now: new Date().toISOString() },
+    );
+    const headers = mutationHeaders(app);
+    const invalid = await app.inject({ method: "POST", url: "/api/v1/onboarding/project-onboarding/approval", headers, payload: { repositoryPath: "relative/path" } });
+    expect(invalid.statusCode).toBe(400);
+
+    const proposal = await app.inject({ method: "POST", url: "/api/v1/onboarding/project-onboarding/approval", headers, payload: { repositoryPath: process.cwd() } });
+    expect(proposal.statusCode).toBe(201);
+    const approval = JSON.parse(proposal.body).approval;
+    expect(approval).not.toHaveProperty("metadata");
+    expect(db.get<{ metadata_json: string }>("SELECT metadata_json FROM approval_metadata WHERE approval_id=$id", { id: approval.id })?.metadata_json).toContain("semantic-config");
+
+    const beforeApproval = await app.inject({ method: "POST", url: "/api/v1/onboarding/project-onboarding/activate", headers });
+    expect(beforeApproval.statusCode).toBe(409);
+    const approved = await app.inject({ method: "POST", url: "/api/v1/onboarding/project-onboarding/approve", headers, payload: {} });
+    expect(approved.statusCode).toBe(200);
+    const activated = await app.inject({ method: "POST", url: "/api/v1/onboarding/project-onboarding/activate", headers });
+    expect(activated.statusCode).toBe(200);
+    expect(JSON.parse(activated.body)).toMatchObject({ projectId: "project-onboarding", semanticConfigApproved: true, localModeEnabled: true });
+    const view = await app.inject({ method: "GET", url: "/api/v1/onboarding/project-onboarding", headers: { authorization: `Bearer ${app.sessionToken}` } });
+    expect(view.statusCode).toBe(200);
+    expect(JSON.parse(view.body).semanticConfigApproved).toBe(true);
+    await app.close();
+    db.close();
+  });
+
   it("exposes a safe Agent Run detail projection without prompt or capability data", async () => {
     const { app, db } = makeAppWithDatabase();
     db.run(

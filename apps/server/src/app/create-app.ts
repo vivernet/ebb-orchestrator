@@ -17,7 +17,7 @@ import {
 } from "../platform/security/local-session.js";
 import { healthRoutes } from "./routes/health.js";
 import { eventRoutes } from "./routes/events.js";
-import { onboardingRoutes } from "./routes/onboarding.js";
+import { onboardingRoutes, type OnboardingApprovalService, type OnboardingCommandService } from "./routes/onboarding.js";
 import { settingsRoutes } from "./routes/settings.js";
 import { usageRoutes } from "./routes/usage.js";
 import type { Database } from "../platform/database/database.js";
@@ -42,6 +42,7 @@ import { secretsRoutes } from "./routes/secrets.js";
 import type { GitHubSyncWorker } from "../modules/github/github-sync-worker.js";
 import type { DiagnosticsService } from "../platform/diagnostics/diagnostics-service.js";
 import type { SecretStore } from "../platform/security/secret-store.js";
+import { OnboardingService } from "../modules/projects/onboarding-service.js";
 
 const LOCAL_SESSION_COOKIE = "ebb_local_session";
 
@@ -54,6 +55,7 @@ export interface AppDeps {
   projectService?: ProjectCommandService;
   workService?: WorkCommandService;
   approvalService?: ApprovalCommandService;
+  onboardingService?: OnboardingCommandService;
   runService?: RunCommandService;
   /** Production must provide the single shared SchedulerService instance. */
   scheduler: SchedulerService;
@@ -95,6 +97,7 @@ export function createApp(deps: AppDeps): OrchestratorApp {
   const workService = deps.workService ?? (deps.db ? new WorkService(deps.db, workflow) : undefined);
   const projectService = deps.projectService ?? (deps.db ? new ProjectService(deps.db) : undefined);
   const approvalService = deps.approvalService ?? (deps.db ? new ApprovalService(deps.db) : undefined);
+  const onboardingService = deps.onboardingService ?? (deps.db ? new OnboardingService() : undefined);
   if (deps.db && !deps.runtime && !deps.runService) throw new Error("production runtime is required");
   const runService = deps.runService ?? (deps.db && deps.runtime ? new RunService(deps.db, deps.runtime) : undefined);
 
@@ -175,8 +178,14 @@ export function createApp(deps: AppDeps): OrchestratorApp {
     await projectRoutes(instance, { db: deps.db, scheduler, projectService });
     await workRoutes(instance, { db: deps.db, workService, scheduler });
     await approvalRoutes(instance, { db: deps.db, approvalService });
-    await runRoutes(instance, { db: deps.db, runService, scheduler });
-    await onboardingRoutes(instance, { db: deps.db });
+    await runRoutes(instance, { db: deps.db, runService, scheduler, workflow });
+    await onboardingRoutes(instance, {
+      db: deps.db,
+      onboardingService,
+      approvalService: approvalService && "request" in approvalService
+        ? approvalService as OnboardingApprovalService
+        : undefined,
+    });
     await settingsRoutes(instance, { db: deps.db });
     await usageRoutes(instance, { db: deps.db });
     await secretsRoutes(instance, {

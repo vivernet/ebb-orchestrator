@@ -24,6 +24,8 @@ export interface Approval {
   readonly resolutionNote: string | null;
   readonly createdAt: string;
   readonly resolvedAt: string | null;
+  /** Deterministic proposal metadata; never contains secret values. */
+  readonly metadata?: Readonly<Record<string, unknown>>;
 }
 
 export interface ApprovalRequestInput {
@@ -31,4 +33,5 @@ export interface ApprovalRequestInput {
   readonly subjectId: string;
   readonly subjectType: ApprovalSubjectType;
   readonly requestedBy: string;
+  readonly metadata?: Readonly<Record<string, unknown>>;
 }
