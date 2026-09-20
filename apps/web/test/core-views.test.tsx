@@ -1,5 +1,6 @@
 import { describe, test, expect, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { createElement } from 'react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import DashboardPage from '../src/features/dashboard/DashboardPage.js';
 import ProjectPage from '../src/features/projects/ProjectPage.js';
 import EpicPage from '../src/features/epics/EpicPage.js';
@@ -162,6 +163,20 @@ describe('Task', () => {
 });
 
 describe('Project', () => {
+  test.each([
+    [ProjectPage, 'project-1', 'Unable to load project: network unavailable'],
+    [EpicPage, 'epic-1', 'Unable to load epic: network unavailable'],
+    [TaskPage, 'task-1', 'Unable to load task: network unavailable'],
+  ])('shows a retryable error instead of an indefinite loading view', async (Component, id, message) => {
+    const get = vi.spyOn(apiClient, 'get').mockRejectedValue(new Error('network unavailable'));
+    render(createElement(Component, { id }));
+
+    expect(await screen.findByText(message)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+    vi.restoreAllMocks();
+  });
+
   test('renders project details', () => {
     render(<ProjectPage id="1" />);
     expect(screen.getByText(/Project:/)).toBeInTheDocument();

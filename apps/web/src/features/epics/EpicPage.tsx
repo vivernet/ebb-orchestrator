@@ -11,11 +11,19 @@ interface EpicPageProps {
  */
 export default function EpicPage({ id }: EpicPageProps) {
   const [projection, setProjection] = useState<EpicOverviewProjection | null>(null);
-  useEffect(() => { void apiClient.get<EpicOverviewProjection>(`/epics/${encodeURIComponent(id)}`).then(setProjection).catch(() => undefined); }, [id]);
+  const [error, setError] = useState<string | null>(null);
+  const [retry, setRetry] = useState(0);
+  useEffect(() => {
+    setError(null);
+    void apiClient.get<EpicOverviewProjection>(`/epics/${encodeURIComponent(id)}`).then(setProjection).catch((cause: unknown) => {
+      setError(cause instanceof Error ? cause.message : 'unknown error');
+    });
+  }, [id, retry]);
   const epic = projection?.epic as { title?: string; display_id?: string; status?: string } | undefined;
   return (
     <div className="epic-page">
       <h1>Epic: {epic?.title ?? epic?.display_id ?? id}</h1>
+      {error && <p className="inline-alert" role="alert">Unable to load epic: {error} <button type="button" onClick={() => setRetry((value) => value + 1)}>Retry</button></p>}
       <section aria-label="Epic details">
         <h2>Details</h2>
         <p>{epic ? `${epic.status ?? 'Unknown'} · ${projection?.tasks.length ?? 0} tasks` : 'Loading epic projection…'}</p>

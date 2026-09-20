@@ -35,12 +35,54 @@ function makeApp() {
 }
 
 describe("local-session security", () => {
-  it("bootstraps a distinct CSRF token without persisting it", async () => {
+  it("requires a one-time bootstrap token before disclosing session credentials", async () => {
     const app = makeApp();
-    const response = await app.inject({ method: "GET", url: "/api/v1/session/bootstrap" });
+    const rejected = await app.inject({ method: "GET", url: "/api/v1/session/bootstrap" });
+    expect(rejected.statusCode).toBe(401);
+
+    const bootstrapToken = app.bootstrapToken;
+    expect(bootstrapToken).not.toBeNull();
+    if (bootstrapToken === null) throw new Error("Expected a bootstrap token");
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/v1/session/bootstrap",
+      headers: { "x-ebb-bootstrap-token": bootstrapToken },
+    });
     expect(response.statusCode).toBe(200);
     expect(JSON.parse(response.body)).toMatchObject({ sessionToken: app.sessionToken, csrfToken: app.csrfToken });
     expect(app.csrfToken).not.toBe(app.sessionToken);
+
+    const setCookie = response.headers["set-cookie"];
+    expect(typeof setCookie).toBe("string");
+    if (typeof setCookie !== "string") throw new Error("Expected local session cookie");
+    expect(setCookie).toContain("HttpOnly");
+    expect(setCookie).toContain("SameSite=Strict");
+
+    const restored = await app.inject({
+      method: "GET",
+      url: "/api/v1/session",
+      headers: { cookie: setCookie },
+    });
+    expect(restored.statusCode).toBe(200);
+    expect(JSON.parse(restored.body)).toEqual({ csrfToken: app.csrfToken, origin: "http://127.0.0.1:3000" });
+
+    const mutationWithRestoredSession = await app.inject({
+      method: "POST",
+      url: "/api/v1/protected-test",
+      headers: {
+        cookie: setCookie,
+        origin: "http://127.0.0.1:3000",
+        "x-csrf-token": app.csrfToken,
+      },
+    });
+    expect(mutationWithRestoredSession.statusCode).toBe(200);
+
+    const reused = await app.inject({
+      method: "GET",
+      url: "/api/v1/session/bootstrap",
+      headers: { "x-ebb-bootstrap-token": bootstrapToken },
+    });
+    expect(reused.statusCode).toBe(401);
     await app.close();
   });
 

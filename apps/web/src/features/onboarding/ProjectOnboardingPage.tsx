@@ -27,24 +27,37 @@ interface OnboardingProject {
 export default function ProjectOnboardingPage({ id }: { id: string }) {
   const [data, setData] = useState<OnboardingProject | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => Boolean(id));
 
   useEffect(() => {
+    if (!id) {
+      return;
+    }
+
     void apiClient.get<OnboardingProject>(`/onboarding/${encodeURIComponent(id)}`)
       .then(setData)
       .catch((e) => setError(e.message || 'Failed to load onboarding data'))
       .finally(() => setLoading(false));
   }, [id]);
 
+  if (!id) {
+    return (
+      <main className="project-onboarding-page">
+        <h1>Project onboarding</h1>
+        <div className="page-state page-state-empty" role="status">
+          Select a project before opening its onboarding review. The current local API does not expose a project-discovery action, so this page never guesses an identifier or sends an invalid request.
+        </div>
+      </main>
+    );
+  }
+
   if (loading) {
-    return <div>Loading onboarding data...</div>;
+    return <div className="page-state" role="status">Loading onboarding data...</div>;
   }
 
   if (error || !data) {
-    return <div>Error: {error ?? 'Data not available'}</div>;
+    return <div className="page-state page-state-error" role="alert">Error: {error ?? 'Data not available'}</div>;
   }
-
-  const canActivate = data.semanticConfigApproved;
 
   return (
     <div className="project-onboarding-page">
@@ -84,18 +97,9 @@ export default function ProjectOnboardingPage({ id }: { id: string }) {
 
       <section aria-label="Actions">
         <h2>Actions</h2>
-        <button
-          type="button"
-          onClick={() => void apiClient.post(`/onboarding/${data.projectId}/activate`)}
-          disabled={!canActivate}
-        >
-          Activate Project
-        </button>
-        {!canActivate && (
-          <p>
-            Cannot activate until semantic configuration is approved. Review the DETECTED vs PROPOSED findings above.
-          </p>
-        )}
+        <p>
+          Project activation is unavailable until the backend has a persisted semantic-approval authority. This view does not expose a client-side bypass for that policy.
+        </p>
       </section>
     </div>
   );

@@ -130,6 +130,32 @@ describe("startup lifecycle", () => {
     expect(steps).toEqual(["custom reconciler 1", "custom reconciler 2"]);
   });
 
+  it("does not reacquire a lock that the entry point already holds before migrations", async () => {
+    const steps: string[] = [];
+    const deps: SystemLifecycleDeps = {
+      instanceLock: {
+        acquire: async (): Promise<LockHandle> => {
+          steps.push("unexpected acquire");
+          throw new Error("lock must not be reacquired");
+        },
+        release: async () => {},
+      },
+      lockAlreadyAcquired: true,
+      database: { open: async () => { steps.push("open DB"); }, close: async () => {} },
+      migrator: { run: async () => { steps.push("migrations"); } },
+      status: { get: () => "STARTING" as SystemStatus, set: async (status) => { steps.push(`status ${status}`); } },
+      reconcileOutbox: async () => {},
+      reconcileJobs: async () => {},
+      reconcileArtifacts: async () => {},
+      additionalReconcilers: [],
+      workers: [],
+    };
+
+    await startSystem(deps);
+
+    expect(steps).toEqual(["open DB", "migrations", "status RECOVERING", "status READY"]);
+  });
+
   it("prevents second instance from acquiring lock", async () => {
     const lockPath = join(tmpDir, "orchestrator.lock");
     const lock1 = new SingleInstanceLock(lockPath);

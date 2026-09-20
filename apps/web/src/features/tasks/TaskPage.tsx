@@ -9,12 +9,21 @@ interface TaskPageProps { id?: string; }
  */
 export default function TaskPage({ id = '' }: TaskPageProps) {
   const [projection, setProjection] = useState<TaskOverviewProjection | null>(null);
-  useEffect(() => { if (id) void apiClient.get<TaskOverviewProjection>(`/tasks/${encodeURIComponent(id)}`).then(setProjection).catch(() => undefined); }, [id]);
+  const [error, setError] = useState<string | null>(null);
+  const [retry, setRetry] = useState(0);
+  useEffect(() => {
+    if (!id) return;
+    setError(null);
+    void apiClient.get<TaskOverviewProjection>(`/tasks/${encodeURIComponent(id)}`).then(setProjection).catch((cause: unknown) => {
+      setError(cause instanceof Error ? cause.message : 'unknown error');
+    });
+  }, [id, retry]);
   const task = projection?.task as { title?: string; display_id?: string; status?: string } | undefined;
   const contract = projection?.contract ? JSON.stringify(projection.contract) : 'No contract recorded.';
   return (
     <div className="task-page">
       <h1>Task: {(task?.title ?? task?.display_id ?? id) || 'Loading'}</h1>
+      {error && <p className="inline-alert" role="alert">Unable to load task: {error} <button type="button" onClick={() => setRetry((value) => value + 1)}>Retry</button></p>}
       <section aria-label="Contract">
         <h2>Contract</h2>
         <p>{contract}</p>

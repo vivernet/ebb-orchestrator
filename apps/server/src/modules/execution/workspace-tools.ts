@@ -22,8 +22,8 @@ export class WorkspaceTools {
    * Read a file from the workspace.
    */
   async readFile(relPath: string): Promise<WorkspaceReadResult> {
-    const fullPath = path.join(this.workspace, relPath);
-    const result = await this.resolver.resolveSafePath(this.workspace, fullPath);
+    const fullPath = path.resolve(this.workspace, relPath);
+    const result = this.resolver.resolveSafePathSync(this.workspace, fullPath);
 
     if (!result.success) {
       return { success: false, ...(result.error && { error: result.error }) };
@@ -41,8 +41,8 @@ export class WorkspaceTools {
    * Write a file to the workspace.
    */
   async writeFile(relPath: string, content: string): Promise<WorkspaceWriteResult> {
-    const fullPath = path.join(this.workspace, relPath);
-    const result = await this.resolver.resolveSafePath(this.workspace, fullPath);
+    const fullPath = path.resolve(this.workspace, relPath);
+    const result = this.resolver.resolveSafePathSync(this.workspace, fullPath);
 
     if (!result.success) {
       return { success: false, ...(result.error && { error: result.error }) };
@@ -62,8 +62,8 @@ export class WorkspaceTools {
    * List files in a directory within the workspace.
    */
   async listDir(relPath: string): Promise<string[]> {
-    const fullPath = path.join(this.workspace, relPath);
-    const result = await this.resolver.resolveSafePath(this.workspace, fullPath);
+    const fullPath = path.resolve(this.workspace, relPath);
+    const result = this.resolver.resolveSafePathSync(this.workspace, fullPath);
 
     if (!result.success) {
       return [];
@@ -80,8 +80,8 @@ export class WorkspaceTools {
    * Check if a path exists in the workspace.
    */
   async exists(relPath: string): Promise<boolean> {
-    const fullPath = path.join(this.workspace, relPath);
-    const result = await this.resolver.resolveSafePath(this.workspace, fullPath);
+    const fullPath = path.resolve(this.workspace, relPath);
+    const result = this.resolver.resolveSafePathSync(this.workspace, fullPath);
 
     if (!result.success) {
       return false;

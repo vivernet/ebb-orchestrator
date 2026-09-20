@@ -489,8 +489,8 @@ tsconfig*.json
 eslint configuration
 vitest configuration
 CI workflows
-docs/superpowers/specs/*
-docs/superpowers/plans/*
+docs/architecture/specs/*
+docs/architecture/plans/*
 ```
 
 Read repository-specific agent instructions before changing anything.

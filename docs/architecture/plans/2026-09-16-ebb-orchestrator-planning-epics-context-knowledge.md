@@ -8,7 +8,7 @@
 
 **Технологический стек:** существующий runtime Hermes; Zod; SQLite; знания проекта в Markdown/YAML; native Git.
 
-**Спецификация:** `docs/superpowers/specs/2026-09-16-ebb-orchestrator-design.md`
+**Спецификация:** `docs/architecture/specs/2026-09-16-ebb-orchestrator-design.md`
 
 ## Глобальные ограничения
 

@@ -1,39 +1,48 @@
-# Hermes Development Workflow Migration Implementation Plan
+# План миграции процесса разработки Ebb Orchestrator с OpenCode на Hermes
 
-> **For agentic workers:** execute this plan task-by-task. Do not merely summarize it.
+> **Для агентного исполнителя:** выполняй этот план последовательно, задача за задачей. Не ограничивайся пересказом плана.
 >
-> **Goal:** completely replace OpenCode as the external development executor used to develop Ebb Orchestrator, while preserving the existing repository plans, Git/worktree discipline, review gates, Russian JSDoc policy, and a hard limit of two concurrent subagents.
+> **Цель:** полностью заменить OpenCode как внешнюю среду, через которую разрабатывается сам Ebb Orchestrator, на Hermes, сохранив существующий формат планов, дисциплину Git/worktree, независимые review-гейты, правила русского JSDoc и жёсткое ограничение не более двух одновременно работающих субагентов.
 >
-> **Architecture:** Ebb Orchestrator production runtime is NOT being migrated here. The product already uses `AgentRuntime` / `HermesRuntimeAdapter`. This plan changes only the developer workflow used by maintainers to execute `docs/superpowers/plans/*.md`. Repository-owned Hermes instructions live in `.hermes.md`; repository-owned skill sources live under `tools/hermes/skills/`; `scripts/hermes-dev.mjs` synchronizes those skills into the active Hermes profile and provides setup/check/execute commands.
+> **Архитектура:** production-runtime Ebb Orchestrator в этом плане не переносится. Сам продукт уже использует `AgentRuntime` / `HermesRuntimeAdapter`. Этот план изменяет только внешний процесс разработки, через который разработчики исполняют `docs/architecture/plans/*.md`. Репозиторные инструкции Hermes хранятся в `.hermes.md`, исходные версии skills — в `tools/hermes/skills/`, а `scripts/hermes-dev.mjs` синхронизирует их с активным профилем Hermes и предоставляет команды настройки, проверки и запуска планов.
 >
-> **Tech Stack:** Node.js 24+, pnpm, Git, Hermes Agent CLI/Desktop, Markdown `SKILL.md`, existing TypeScript/React/Vitest project.
+> **Технологии:** Node.js 24+, pnpm, Git, Hermes Agent CLI/Desktop, Markdown `SKILL.md`, существующий проект TypeScript/React/Vitest.
 >
-> **Spec:** `docs/superpowers/specs/2026-09-16-ebb-orchestrator-design.md`
+> **Спецификация:** `docs/architecture/specs/2026-09-16-ebb-orchestrator-design.md`
 >
-> **Important distinction:** this plan does not modify the production `HermesRuntimeAdapter` unless a test reveals a pre-existing defect. It replaces the *external coding workflow* `OpenCode → /execute-plan` with `Hermes → Ebb development skills`.
+> **Ключевое различие:** этот план не должен изменять production `HermesRuntimeAdapter`, если только тесты не докажут уже существующий дефект. Заменяется именно внешний workflow разработки:
 >
-> **Primary branch:** `master`.
-
-## Global Constraints
-
-- Never run more than **2 subagents concurrently**.
-- Nested delegation is forbidden for this project-development workflow.
-- Do not let Hermes create nested worktrees. The human/coordinator opens the intended worktree before execution.
-- All new or modified production-code comments are in Russian.
-- Public/contractual production APIs use Russian JSDoc according to the repository JSDoc guide.
-- Do not weaken lint, typecheck, tests, JSDoc rules, security checks, approvals, or Git safeguards.
-- Do not merge into `master`, push, tag, release, `reset --hard`, or `git clean`.
-- Existing `docs/superpowers/plans/*.md` remain the canonical implementation-plan format.
-- Do not remove `.opencode` until Hermes parity verification has passed.
-- Do not change provider/model credentials in this migration.
-- Do not modify the Ebb Orchestrator production runtime architecture merely to make the development workflow easier.
-- Preserve unrelated pre-existing working-tree changes.
+> `OpenCode → /execute-plan`
+>
+> на:
+>
+> `Hermes → skills разработки Ebb Orchestrator`.
+>
+> **Основная ветка:** `master`.
 
 ---
 
-# Desired end state
+# Глобальные ограничения
 
-After this plan the repository must have the following development-tooling shape:
+- Одновременно разрешено запускать **не более 2 субагентов**.
+- Nested delegation в этом development-workflow запрещён.
+- Hermes не должен самостоятельно создавать дополнительные вложенные worktree для субагентов.
+- Нужный worktree заранее выбирает пользователь или Coordinator.
+- Все новые или изменяемые комментарии production-кода должны быть на русском языке.
+- Публичные и контрактные production API документируются русским JSDoc согласно действующему руководству проекта.
+- Нельзя ослаблять lint, typecheck, tests, JSDoc rules, security checks, approvals или Git safeguards.
+- Нельзя выполнять merge в `master`, push, tag, release, `reset --hard` или `git clean`.
+- Существующие `docs/architecture/plans/*.md` остаются каноническим форматом implementation plans.
+- Нельзя удалять `.opencode`, пока не пройдена реальная parity-проверка Hermes.
+- В рамках миграции нельзя менять provider/model/API credentials.
+- Нельзя менять production-архитектуру Ebb Orchestrator только ради удобства нового development-workflow.
+- Необходимо сохранять все посторонние pre-existing изменения рабочего дерева.
+
+---
+
+# Ожидаемое конечное состояние
+
+После выполнения плана структура development-tooling должна выглядеть примерно так:
 
 ```text
 repo/
@@ -60,40 +69,43 @@ repo/
         └── hermes.md
 ```
 
-The user-facing workflow must become:
+Workflow пользователя должен стать таким:
 
 ```text
-create/switch to intended worktree
+создать/открыть нужный worktree
 → pnpm hermes:setup
 → pnpm hermes:check
-→ pnpm hermes:execute -- docs/superpowers/plans/<plan>.md
-→ Hermes executes plan
-→ max 2 subagents
-→ implementation/review/tests/final review
-→ commits only in current feature branch
+→ pnpm hermes:execute -- docs/architecture/plans/<plan>.md
+→ Hermes исполняет план
+→ максимум 2 субагента
+→ implementation
+→ task review
+→ tests
+→ final review
+→ commit только в текущей feature-ветке
 ```
 
-The migration is incomplete until a real Hermes parity run succeeds.
+Миграция не считается завершённой, пока реальный plan не будет успешно выполнен через Hermes без участия OpenCode.
 
 ---
 
-# Task 1 — Establish baseline and inventory every OpenCode dependency
+# Задача 1 — Зафиксировать baseline и провести инвентаризацию OpenCode
 
-**Files:**
-- Read: `.opencode/**` if present
-- Read: `package.json`
-- Read: `README.md`
-- Read: `.gitignore`
-- Read: `AGENTS.md` if present
-- Read: `.hermes.md` / `HERMES.md` if already present
-- Read: `docs/superpowers/plans/**`
-- Create: `docs/audit/opencode-to-hermes-inventory.md`
+**Файлы:**
+- Читать: `.opencode/**`, если каталог существует.
+- Читать: `package.json`.
+- Читать: `README.md`.
+- Читать: `.gitignore`.
+- Читать: `AGENTS.md`, если существует.
+- Читать: `.hermes.md` / `HERMES.md`, если уже существуют.
+- Читать: `docs/architecture/plans/**`.
+- Создать: `docs/audit/opencode-to-hermes-inventory.md`.
 
-**Purpose:** determine what OpenCode currently contributes to repository development so no behavior is accidentally lost.
+**Назначение:** точно определить, какие функции текущего development-workflow предоставляет OpenCode, чтобы при миграции не потерять ни одного важного правила.
 
-- [ ] **Step 1: Record Git baseline**
+- [ ] **Шаг 1. Зафиксировать Git baseline**
 
-Run:
+Выполнить:
 
 ```bash
 git branch --show-current
@@ -102,11 +114,16 @@ git log -1 --oneline
 git worktree list
 ```
 
-Write the current branch, HEAD, and pre-existing changes into the inventory.
+В inventory записать:
 
-- [ ] **Step 2: Find active OpenCode references**
+- текущую ветку;
+- текущий HEAD;
+- существующие до начала работы незакоммиченные изменения;
+- текущие worktree.
 
-Search repository-wide for:
+- [ ] **Шаг 2. Найти все активные ссылки на OpenCode**
+
+Выполнить поиск по репозиторию:
 
 ```text
 .opencode
@@ -118,7 +135,7 @@ reviewer
 final-reviewer
 ```
 
-Classify each result:
+Каждое найденное упоминание классифицировать:
 
 ```text
 ACTIVE_CONFIG
@@ -128,200 +145,212 @@ TEST_FIXTURE
 UNRELATED
 ```
 
-Do not delete historical audit/plan text simply because it mentions OpenCode.
+Исторические audit/plans нельзя удалять только потому, что в них упомянут OpenCode.
 
-- [ ] **Step 3: Read all active OpenCode agents/commands**
+- [ ] **Шаг 3. Прочитать активные OpenCode agents/commands**
 
-For every active `.opencode` file, record:
+Для каждого активного файла `.opencode` зафиксировать:
 
 ```text
-file
-purpose
-inputs
-allowed actions
+файл
+назначение
+входные данные
+разрешённые действия
 Git rules
-subagent rules
+правила субагентов
 review rules
 test gates
 commit rules
-special project knowledge
+специальный project context
 ```
 
-- [ ] **Step 4: Write inventory**
+- [ ] **Шаг 4. Создать inventory-документ**
 
-Create `docs/audit/opencode-to-hermes-inventory.md` with:
+Создать `docs/audit/opencode-to-hermes-inventory.md` со структурой:
 
 ```markdown
-# OpenCode → Hermes Development Workflow Inventory
+# Инвентаризация миграции OpenCode → Hermes
 
 ## Baseline
-## Active OpenCode Files
-## Behaviors To Preserve
-## Behaviors To Drop
-## Repository Instructions To Move To .hermes.md
-## Behaviors To Move To Hermes Skills
-## Package/Script References
-## Documentation References
-## Removal Preconditions
+## Активные файлы OpenCode
+## Поведение, которое необходимо сохранить
+## Поведение, от которого можно отказаться
+## Инструкции репозитория, которые переходят в .hermes.md
+## Поведение, которое переходит в Hermes skills
+## Ссылки из package/scripts
+## Ссылки из документации
+## Условия, при которых можно удалить OpenCode
 ```
 
-- [ ] **Step 5: Verify no changes outside inventory**
+- [ ] **Шаг 5. Проверить, что других изменений нет**
 
-Run:
+Выполнить:
 
 ```bash
 git diff --check
 git status --short
 ```
 
-Do not commit yet.
+На этом этапе commit не выполнять.
 
 ---
 
-# Task 2 — Add authoritative Hermes project context
+# Задача 2 — Создать authoritative project-context для Hermes
 
-**Files:**
-- Create or replace: `.hermes.md`
-- Read: `docs/superpowers/specs/2026-09-16-ebb-orchestrator-design.md`
-- Read: repository JSDoc guide
+**Файлы:**
+- Создать или актуализировать: `.hermes.md`.
+- Читать: `docs/architecture/specs/2026-09-16-ebb-orchestrator-design.md`.
+- Читать: действующее руководство проекта по JSDoc.
 
-**Produces:** project instructions automatically loaded by Hermes from the repository root.
+**Результат:** Hermes получает единый versioned контекст разработки прямо из корня репозитория.
 
-- [ ] **Step 1: Create `.hermes.md`**
+- [ ] **Шаг 1. Создать `.hermes.md`**
 
-Use this content, adjusting only paths that are proven different in the repository:
+Использовать следующий смысл и структуру. Пути можно корректировать только если текущий репозиторий доказывает, что они отличаются.
 
 ```markdown
-# Ebb Orchestrator — Hermes Development Instructions
+# Ebb Orchestrator — инструкции разработки через Hermes
 
-## Scope
+## Область действия
 
-These instructions govern development OF Ebb Orchestrator by Hermes.
-They do not replace the product's internal AgentRuntime/HermesRuntimeAdapter architecture.
+Эти инструкции управляют разработкой САМОГО Ebb Orchestrator через Hermes.
+
+Они не заменяют внутреннюю production-архитектуру `AgentRuntime` / `HermesRuntimeAdapter`.
 
 ## Git
 
-- Primary branch is `master`.
-- Work only in the worktree/branch supplied by the user.
-- Never merge to `master` without explicit human approval.
-- Never push, force-push, tag, release, `reset --hard`, or `git clean` unless explicitly requested.
-- Preserve unrelated pre-existing changes.
-- Before edits run `git branch --show-current`, `git status --short`, and `git log -1 --oneline`.
+- Основная ветка проекта — `master`.
+- Работать только в worktree/ветке, переданной пользователем.
+- Никогда не выполнять merge в `master` без явного подтверждения пользователя.
+- Никогда не выполнять push, force-push, tag, release, `reset --hard` или `git clean`, если пользователь явно этого не запросил.
+- Сохранять посторонние pre-existing изменения.
+- До редактирования выполнять:
+  - `git branch --show-current`;
+  - `git status --short`;
+  - `git log -1 --oneline`.
 
-## Plans
+## Планы
 
-- Canonical implementation plans live in `docs/superpowers/plans/`.
-- When executing a plan, read the whole plan before editing.
-- Execute tasks in dependency order.
-- Do not silently reinterpret requirements.
-- If current code disproves an assumption in the plan, record the evidence and choose the smallest correction that preserves the approved architecture.
+- Канонические implementation plans находятся в `docs/architecture/plans/`.
+- Перед изменением кода читать plan полностью.
+- Выполнять задачи с учётом зависимостей.
+- Не менять требования плана молча.
+- Если текущий код опровергает предположение плана, сначала зафиксировать доказательство, затем выбрать минимальную корректировку, сохраняющую утверждённую архитектуру.
 
-## Subagents
+## Субагенты
 
-- HARD LIMIT: at most 2 subagents may run concurrently.
-- If 2 are active, all others wait.
-- Do not use nested subagents.
-- Do not bypass the limit through child orchestrators.
-- If tasks overlap in files or subsystem ownership, execute them sequentially.
-- Review agents are read-only unless explicitly assigned an implementation task.
+- ЖЁСТКИЙ ЛИМИТ: одновременно может работать не более 2 субагентов.
+- Если активны два — остальные ждут.
+- Nested subagents запрещены.
+- Нельзя обходить лимит через дочерних orchestrator-агентов.
+- Если задачи затрагивают одни файлы или один subsystem, выполнять их последовательно.
+- Review-субагенты работают read-only, если им отдельно не назначена implementation-задача.
 
-## Development discipline
+## Дисциплина разработки
 
-Use:
+Использовать цикл:
 
-inspect → prove → test → fix → focused verify → full verify → review.
+inspect → prove → test → fix → focused verify → full verify → review
 
-For defects:
-1. reproduce or prove;
-2. add a failing regression test when practical;
-3. implement the smallest root-cause fix;
-4. run focused tests;
-5. run related tests;
-6. run repository gates.
+Для дефектов:
+1. воспроизвести или доказать;
+2. добавить regression test, если это практически возможно;
+3. внести минимальное root-cause исправление;
+4. запустить focused tests;
+5. запустить соседние проверки;
+6. запустить repository gates.
 
-Do not weaken tests or rules to obtain green status.
+Запрещено ослаблять проверки ради зелёного результата.
 
-## Architecture invariants
+## Архитектурные инварианты
 
-Preserve the approved Ebb Orchestrator architecture:
+Сохранять утверждённую архитектуру Ebb Orchestrator:
 - deterministic-first;
 - modular monolith + Ports & Adapters;
-- Git is source of truth for code;
-- SQLite is source of truth for orchestration state;
-- Workflow Engine owns state transitions;
-- Scheduler is authoritative for dispatch/capacity/reservations;
-- durable runtime path goes through RunService before AgentRuntime;
-- permissions/action execution go through the approved ActionGateway/PermissionEngine boundary;
-- final merge is a real verified Git operation after required approval;
-- recovery must reconcile before new AI work;
-- historical migrations are forward-only/append-only.
+- Git — source of truth для кода;
+- SQLite — source of truth для orchestration state;
+- Workflow Engine владеет state transitions;
+- Scheduler — authority для dispatch/capacity/reservations;
+- durable runtime path проходит через RunService до AgentRuntime;
+- permissions/executable actions проходят через утверждённую ActionGateway/PermissionEngine boundary;
+- final merge — реальная проверяемая Git operation после required approval;
+- после restart сначала reconciliation, затем новая AI-работа;
+- migration history append-only/forward-only.
 
-Do not introduce post-v1 scope without an approved plan.
+Не добавлять post-v1 scope без отдельного утверждённого плана.
 
-## Comments and JSDoc
+## Комментарии и JSDoc
 
-- All newly created or modified production-code comments must be written in correct Russian.
-- Technical identifiers are not translated.
-- Exported/public/contractual production APIs require useful Russian JSDoc.
-- Describe purpose, invariants, trust boundaries, side effects, preconditions, transaction/idempotency semantics, and meaningful errors where applicable.
-- Do not add fake `@returns`, `@throws`, or `@example` tags.
-- Do not weaken JSDoc ESLint rules.
+- Все новые или изменяемые комментарии production-кода пишутся на грамотном русском языке.
+- Технические идентификаторы не переводятся.
+- Экспортируемые, публичные и контрактные production API получают полезный русский JSDoc.
+- В JSDoc описывать назначение, invariants, trust boundaries, side effects, preconditions, transaction/idempotency semantics и значимые ошибки, когда это применимо.
+- Не добавлять фиктивные `@returns`, `@throws` или `@example`.
+- Не ослаблять JSDoc ESLint rules.
 
-## Verification
+## Проверки
 
-Discover real scripts from `package.json`; do not invent them.
+Реальные команды определять по `package.json`; ничего не придумывать.
 
-Minimum final gates when defined:
+Минимальные финальные gates, когда они определены:
 
-```text
 pnpm lint
 pnpm typecheck
 pnpm test
 git diff --check
+
+Дополнительно запускать затронутые canonical build/integration/e2e/security/migration/smoke gates.
+
+## Завершение
+
+Перед отчётом о завершении:
+- проверить полный diff;
+- убедиться, что нет secrets и посторонних изменений;
+- убедиться, что заявленные проверки реально запускались;
+- для значимых изменений выполнить independent final review;
+- явно перечислить ограничения.
+
+Зелёный test suite сам по себе не является доказательством архитектурной корректности.
 ```
 
-Also run canonical build/integration/e2e/security/migration/smoke gates affected by the work.
+- [ ] **Шаг 2. Не создавать дублирующий контекст**
 
-## Completion
+Если `.hermes.md` выбран как канонический repository context, не создавать второй независимый `HERMES.md` с теми же правилами.
 
-Before reporting completion:
-- inspect full diff;
-- confirm no secrets or unrelated changes;
-- confirm required tests actually ran;
-- run an independent final review for substantial changes;
-- report limitations explicitly.
+- [ ] **Шаг 3. Проверить согласованность**
 
-A green test suite alone is not proof of architectural correctness.
-```
+Сверить `.hermes.md` с:
 
-- [ ] **Step 2: Do not create duplicate context files**
-
-If an existing `.hermes.md` already contains unrelated valid rules, merge carefully rather than discarding them. Do not also create `HERMES.md` with duplicated policy.
+- design specification;
+- текущим `AGENTS.md`;
+- JSDoc guide;
+- Git policy;
+- текущими audit findings.
 
 ---
 
-# Task 3 — Add repository-owned Hermes skills
+# Задача 3 — Добавить repository-owned Hermes skills
 
-**Files:**
-- Create: `tools/hermes/skills/ebb-execute-plan/SKILL.md`
-- Create: `tools/hermes/skills/ebb-implement-task/SKILL.md`
-- Create: `tools/hermes/skills/ebb-review-task/SKILL.md`
-- Create: `tools/hermes/skills/ebb-final-review/SKILL.md`
+**Файлы:**
+- Создать: `tools/hermes/skills/ebb-execute-plan/SKILL.md`.
+- Создать: `tools/hermes/skills/ebb-implement-task/SKILL.md`.
+- Создать: `tools/hermes/skills/ebb-review-task/SKILL.md`.
+- Создать: `tools/hermes/skills/ebb-final-review/SKILL.md`.
 
-**Interfaces:**
-- `ebb-execute-plan` orchestrates a whole plan.
-- `ebb-implement-task` performs exactly one task/finding cluster.
-- `ebb-review-task` reviews one completed task read-only.
-- `ebb-final-review` reviews the complete current diff read-only.
+**Контракты:**
+- `ebb-execute-plan` — оркестрация полного implementation plan.
+- `ebb-implement-task` — выполнение одной изолированной задачи/finding cluster.
+- `ebb-review-task` — независимый read-only review завершённой задачи.
+- `ebb-final-review` — независимый read-only review полного diff перед завершением.
 
-## Step 1: Create `ebb-execute-plan/SKILL.md`
+## Шаг 1 — `ebb-execute-plan/SKILL.md`
 
-Use:
+Создать skill со следующим поведением:
 
 ```markdown
 ---
 name: ebb-execute-plan
-description: Execute an Ebb Orchestrator implementation plan safely.
+description: Безопасно исполняет implementation plan проекта Ebb Orchestrator.
 version: 1.0.0
 platforms: [windows, linux, macos]
 metadata:
@@ -329,60 +358,90 @@ metadata:
     tags: [ebb-orchestrator, development, implementation-plan]
 ---
 
-# Ebb Execute Plan
+# Выполнение плана Ebb Orchestrator
 
-Use this skill only while developing Ebb Orchestrator.
+Используй этот skill только при разработке Ebb Orchestrator.
 
-## Input
+## Вход
 
-A repository-relative implementation-plan path, normally under `docs/superpowers/plans/`.
+Repository-relative путь к implementation plan, обычно внутри:
 
-## Hard rules
+`docs/architecture/plans/`
 
-- Read `.hermes.md` first.
-- Read the complete plan before editing.
-- Work only in the current worktree/branch.
-- Never run more than 2 subagents concurrently.
-- Never create nested subagents.
-- Never enable automatic child worktree isolation for this workflow.
-- Preserve unrelated changes.
-- Never merge/push/tag/release unless the human explicitly requests it.
-- All changed/new production comments are Russian and use JSDoc where required.
+## Жёсткие правила
 
-## Procedure
+- Сначала прочитать `.hermes.md`.
+- Прочитать plan полностью до редактирования.
+- Работать только в текущем worktree/branch.
+- Никогда не запускать более 2 субагентов одновременно.
+- Не создавать nested subagents.
+- Не включать автоматическое child-worktree isolation.
+- Сохранять посторонние изменения.
+- Не выполнять merge/push/tag/release без явного указания пользователя.
+- Все новые/изменяемые production-комментарии — русский JSDoc там, где он требуется.
 
-1. Record branch, HEAD and working-tree status.
-2. Read the plan completely.
-3. Read files/specs referenced by the plan.
-4. Build a task ledger: WAITING / READY / RUNNING / REVIEW / DONE / BLOCKED.
-5. Determine dependencies and overlapping file ownership.
-6. Dispatch no more than two independent tasks at once.
-7. For each implementation task:
-   - use the `ebb-implement-task` procedure;
-   - collect result;
-   - inspect diff;
-   - run focused verification;
-   - invoke `ebb-review-task` on the completed task before accepting it.
-8. Do not let two agents edit overlapping files concurrently.
-9. After all tasks, run plan gates, repository gates, and inspect the whole diff.
-10. Invoke `ebb-final-review` with the current diff and plan.
-11. If final review finds a confirmed blocker: reproduce, fix root cause, rerun focused/full gates, repeat final review with a fresh reviewer.
-12. Commit only when the plan requires a commit and all applicable gates pass.
-13. Return branch, HEAD/commit, tasks completed, tests/builds, reviewer verdict, limitations and working-tree state.
+## Процедура
 
-## Forbidden shortcuts
+1. Зафиксировать branch, HEAD и working-tree status.
+2. Прочитать весь plan.
+3. Прочитать specs/files, на которые он ссылается.
+4. Сформировать task ledger:
+   - WAITING;
+   - READY;
+   - RUNNING;
+   - REVIEW;
+   - DONE;
+   - BLOCKED.
+5. Определить зависимости и пересекающееся владение файлами.
+6. Запускать максимум две независимые задачи одновременно.
+7. Для каждой implementation-задачи:
+   - использовать процедуру `ebb-implement-task`;
+   - получить результат;
+   - проверить diff;
+   - выполнить focused verification;
+   - до принятия результата провести `ebb-review-task`.
+8. Не разрешать двум агентам одновременно менять пересекающиеся файлы.
+9. После всех задач:
+   - выполнить gates плана;
+   - выполнить repository gates;
+   - проверить полный diff.
+10. Выполнить `ebb-final-review`.
+11. Если final review находит подтверждённый blocker:
+   - воспроизвести;
+   - исправить root cause;
+   - повторить focused tests;
+   - повторить полный verification;
+   - запустить нового final reviewer.
+12. Делать commit только если plan этого требует и все применимые gates прошли.
+13. Вернуть отчёт:
+   - branch;
+   - HEAD/commit;
+   - выполненные задачи;
+   - tests/builds;
+   - reviewer verdict;
+   - ограничения;
+   - состояние рабочего дерева.
 
-Do not skip failing tests, weaken assertions, disable lint/type/JSDoc/security rules, hide errors, invent PASS results, rewrite historical migrations, or broaden scope beyond the plan.
+## Запрещённые сокращения
+
+Нельзя:
+- skip'ать падающие тесты;
+- ослаблять assertions;
+- отключать lint/type/JSDoc/security rules;
+- скрывать ошибки;
+- придумывать PASS;
+- переписывать historical migrations;
+- расширять scope за пределы plan.
 ```
 
-## Step 2: Create `ebb-implement-task/SKILL.md`
+## Шаг 2 — `ebb-implement-task/SKILL.md`
 
-Use:
+Создать skill со следующим смыслом:
 
 ```markdown
 ---
 name: ebb-implement-task
-description: Implement one isolated Ebb Orchestrator plan task.
+description: Выполняет одну изолированную задачу implementation plan Ebb Orchestrator.
 version: 1.0.0
 platforms: [windows, linux, macos]
 metadata:
@@ -390,50 +449,55 @@ metadata:
     tags: [ebb-orchestrator, implementation, tdd]
 ---
 
-# Ebb Implement Task
+# Реализация одной задачи Ebb Orchestrator
 
-Implement exactly one assigned plan task or one confirmed finding cluster.
+Выполняй только одну назначенную задачу plan или один подтверждённый finding cluster.
 
-## Before editing
+## До редактирования
 
-1. Read `.hermes.md`.
-2. Read the assigned task.
-3. Read referenced spec/code/tests.
-4. Confirm the allowed file set.
-5. Run focused baseline tests when available.
+1. Прочитать `.hermes.md`.
+2. Прочитать назначенную задачу.
+3. Прочитать связанные spec/code/tests.
+4. Подтвердить набор разрешённых файлов.
+5. Выполнить focused baseline tests, если они существуют.
 
-## Implementation loop
+## Цикл реализации
 
-For each behavior change:
-1. prove/reproduce;
-2. write/update a regression test;
-3. run it and confirm expected failure when practical;
-4. implement the smallest correct change;
-5. update Russian JSDoc when a public contract/invariant changed;
-6. run the focused test;
-7. run neighboring tests;
-8. run `git diff --check`;
-9. inspect your diff.
+Для каждого изменения поведения:
 
-## Boundaries
+1. доказать или воспроизвести проблему;
+2. написать/обновить regression test;
+3. по возможности подтвердить ожидаемый failure;
+4. внести минимальное корректное исправление;
+5. обновить русский JSDoc, если изменился публичный contract/invariant;
+6. выполнить focused test;
+7. выполнить соседние tests;
+8. выполнить `git diff --check`;
+9. проверить собственный diff.
 
-- Do not change unrelated files.
-- Do not change another task's owned files without escalation.
-- Do not merge/push/tag/release.
-- Do not start subagents.
-- Do not claim completion without test evidence.
+## Ограничения
 
-Return files changed, tests run, result and remaining risks.
+- Не менять посторонние файлы.
+- Не менять файлы другой задачи без эскалации Coordinator.
+- Не выполнять merge/push/tag/release.
+- Не запускать собственных субагентов.
+- Не объявлять completion без доказательств тестами.
+
+Вернуть:
+- изменённые файлы;
+- запущенные тесты;
+- результат;
+- оставшиеся риски.
 ```
 
-## Step 3: Create `ebb-review-task/SKILL.md`
+## Шаг 3 — `ebb-review-task/SKILL.md`
 
-Use:
+Создать read-only reviewer:
 
 ```markdown
 ---
 name: ebb-review-task
-description: Independently review one Ebb Orchestrator task diff.
+description: Независимо проверяет diff одной задачи Ebb Orchestrator.
 version: 1.0.0
 platforms: [windows, linux, macos]
 metadata:
@@ -441,27 +505,48 @@ metadata:
     tags: [ebb-orchestrator, review]
 ---
 
-# Ebb Review Task
+# Review одной задачи
 
-Review only. Do not edit files unless the coordinator explicitly reassigns you as implementer.
+Работай read-only.
 
-Check task/spec compliance, architecture invariants, correctness, error handling, persistence/restart semantics, security boundaries, tests/negative cases, Russian JSDoc policy, scope creep and accidental migration-history edits.
+Не редактируй файлы, если Coordinator отдельно не переназначил тебя как implementer.
 
-Classify findings: BLOCKER / IMPORTANT / MINOR / FALSE_POSITIVE.
+Проверяй:
+- соответствие plan/spec;
+- архитектурные invariants;
+- correctness;
+- error handling;
+- persistence/restart semantics;
+- security boundaries;
+- tests и negative cases;
+- русскую JSDoc/comment policy;
+- scope creep;
+- случайные изменения migration history.
 
-Every non-trivial finding needs file/symbol, evidence, expected behavior, actual behavior and concrete impact.
+Классификация:
+- BLOCKER;
+- IMPORTANT;
+- MINOR;
+- FALSE_POSITIVE.
 
-Return `PASS` only when no blocker/important correctness issue remains.
+Каждый существенный finding должен содержать:
+- file/symbol;
+- evidence;
+- expected behavior;
+- actual behavior;
+- concrete impact.
+
+`PASS` допускается только при отсутствии blocker/important correctness findings.
 ```
 
-## Step 4: Create `ebb-final-review/SKILL.md`
+## Шаг 4 — `ebb-final-review/SKILL.md`
 
-Use:
+Создать независимый final reviewer:
 
 ```markdown
 ---
 name: ebb-final-review
-description: Perform an independent final Ebb Orchestrator review.
+description: Выполняет независимый финальный review изменений Ebb Orchestrator.
 version: 1.0.0
 platforms: [windows, linux, macos]
 metadata:
@@ -469,27 +554,54 @@ metadata:
     tags: [ebb-orchestrator, final-review]
 ---
 
-# Ebb Final Review
+# Финальный review
 
-You are an independent, read-only final reviewer.
+Ты независимый read-only reviewer.
 
-Read `.hermes.md`, implementation plan, relevant approved spec, complete current diff, and test/build results.
+Прочитай:
+- `.hermes.md`;
+- implementation plan;
+- соответствующий approved spec;
+- полный current diff;
+- результаты tests/builds.
 
-Try to disprove readiness.
+Твоя задача — попытаться опровергнуть готовность изменений.
 
-Inspect especially architecture authority boundaries, state transitions, Scheduler/RunService/runtime path, permissions, persistence/migrations/recovery, Git/worktree safety, integration/merge verification, security, startup/shutdown, tests, Russian JSDoc policy and documentation consistency.
+Особенно проверяй:
+- architecture authority boundaries;
+- state transitions;
+- Scheduler/RunService/runtime path;
+- permissions;
+- persistence/migrations/recovery;
+- Git/worktree safety;
+- integration/merge verification;
+- security;
+- startup/shutdown;
+- tests;
+- Russian JSDoc policy;
+- consistency документации.
 
-Do not perform cosmetic review churn.
+Не создавай cosmetic review churn.
 
-Verdict: `PASS` or `CHANGES_REQUESTED`.
-For `CHANGES_REQUESTED`, provide only evidence-backed load-bearing findings.
+Verdict:
+- `PASS`;
+- `CHANGES_REQUESTED`.
+
+При `CHANGES_REQUESTED` перечисляй только доказанные load-bearing findings.
 ```
 
-- [ ] **Step 5: Validate skill files structurally**
+- [ ] **Шаг 5. Проверить skills**
 
-Check YAML frontmatter, unique `name`, no placeholders, no instruction permitting >2 subagents, and no child delegation from implementer/reviewer.
+Проверить:
 
-Run:
+- YAML frontmatter корректен;
+- `name` уникальны;
+- отсутствуют placeholders;
+- нигде не разрешено более двух параллельных субагентов;
+- implementer/reviewer не могут создавать children;
+- комментарии/instructions согласованы с `.hermes.md`.
+
+Выполнить:
 
 ```bash
 git diff --check
@@ -497,20 +609,31 @@ git diff --check
 
 ---
 
-# Task 4 — Add a reproducible Hermes development setup/runner
+# Задача 4 — Создать воспроизводимый setup/check/execute runner для Hermes
 
-**Files:**
-- Create: `scripts/hermes-dev.mjs`
-- Modify: `package.json`
+**Файлы:**
+- Создать: `scripts/hermes-dev.mjs`.
+- Изменить: `package.json`.
 
-**Produces:**
-- `pnpm hermes:setup`
-- `pnpm hermes:check`
-- `pnpm hermes:execute -- <plan>`
+**Результат:**
 
-## Step 1: Implement `scripts/hermes-dev.mjs`
+```text
+pnpm hermes:setup
+pnpm hermes:check
+pnpm hermes:execute -- <plan>
+```
 
-Use only Node built-ins:
+## Шаг 1 — Реализовать `scripts/hermes-dev.mjs`
+
+Скрипт должен поддерживать три команды:
+
+```text
+setup
+check
+execute
+```
+
+Использовать только Node built-ins:
 
 ```text
 node:child_process
@@ -520,188 +643,239 @@ node:os
 node:path
 ```
 
-Implement commands:
+Не добавлять новую npm dependency.
+
+### Команда `setup`
+
+Должна:
+
+1. определить текущий Git worktree root;
+2. определить `HERMES_HOME`:
+   - сначала `process.env.HERMES_HOME`;
+   - иначе `~/.hermes`;
+3. взять repository-owned skills из:
+   - `tools/hermes/skills/`;
+4. синхронизировать их в отдельный namespace активного Hermes home;
+5. не трогать пользовательские skills, не относящиеся к Ebb Orchestrator;
+6. настроить delegation:
 
 ```text
-setup
-check
-execute <plan>
+delegation.max_concurrent_children = 2
+delegation.max_spawn_depth = 1
+delegation.orchestrator_enabled = false
+delegation.worktree_isolation = false
 ```
 
-Required `setup` behavior:
+7. не изменять:
+   - provider;
+   - model;
+   - API keys;
+   - unrelated Hermes settings.
+
+При настройке использовать Hermes CLI:
+
+```bash
+hermes config set delegation.max_concurrent_children 2
+hermes config set delegation.max_spawn_depth 1
+hermes config set delegation.orchestrator_enabled false
+hermes config set delegation.worktree_isolation false
+```
+
+### Команда `check`
+
+Должна проверить:
 
 ```text
-1. Determine current Git worktree root with `git rev-parse --show-toplevel`.
-2. Resolve HERMES_HOME:
-   - process.env.HERMES_HOME if set;
-   - otherwise path.join(os.homedir(), ".hermes").
-3. Source skills = <repo>/tools/hermes/skills/.
-4. Target root = <HERMES_HOME>/skills/ebb-orchestrator/.
-5. Remove/recreate ONLY that target root.
-6. Copy all repository Ebb skill directories recursively.
-7. Run:
-   hermes config set delegation.max_concurrent_children 2
-   hermes config set delegation.max_spawn_depth 1
-   hermes config set delegation.orchestrator_enabled false
-   hermes config set delegation.worktree_isolation false
-8. Never touch provider, model, API keys or unrelated Hermes config.
+hermes --version
+.hermes.md exists
+source skills exist
+installed skill copies exist
+source/installed hashes match
+delegation.max_concurrent_children == 2
+delegation.max_spawn_depth == 1
+delegation.orchestrator_enabled == false
+delegation.worktree_isolation == false
 ```
 
-Required `check` behavior:
+Для config использовать:
 
-```text
-1. `hermes --version` must succeed.
-2. `.hermes.md` must exist in repo root.
-3. Four source skill files must exist.
-4. Four installed skill files must exist in HERMES_HOME.
-5. SHA-256 of source and installed SKILL.md files must match.
-6. Read/verify:
-   delegation.max_concurrent_children == 2
-   delegation.max_spawn_depth == 1
-   delegation.orchestrator_enabled == false
-   delegation.worktree_isolation == false
-7. Print a per-check PASS/FAIL table.
-8. Exit non-zero if any required check fails.
+```bash
+hermes config get delegation.max_concurrent_children
+hermes config get delegation.max_spawn_depth
+hermes config get delegation.orchestrator_enabled
+hermes config get delegation.worktree_isolation
 ```
 
-Required `execute <plan>` behavior:
+При ошибке вернуть non-zero exit code.
 
-```text
-1. Require exactly one plan path argument.
-2. Resolve current Git worktree root.
-3. Resolve plan path relative to worktree unless absolute.
-4. Reject a plan path escaping current worktree.
-5. Reject missing/non-file plan.
-6. Create a temporary UTF-8 prompt file in OS temp directory.
-7. Prompt content:
-   - state that this is trusted Ebb Orchestrator development work;
-   - tell Hermes to read `.hermes.md`;
-   - tell Hermes to use `ebb-execute-plan`;
-   - provide the repository-relative plan path;
-   - explicitly say EXECUTE, do not only summarize;
-   - remind max 2 concurrent subagents and no nested delegation.
-8. Spawn with inherited stdio:
-   hermes --in <worktree-root> chat --query-file <temp-prompt>
-9. Always remove temp prompt in `finally`.
-10. Propagate Hermes exit status.
+### Команда `execute <plan>`
+
+Должна:
+
+1. требовать путь к plan;
+2. определить current Git worktree root;
+3. разрешать только файл внутри этого worktree;
+4. отклонять path traversal;
+5. отклонять отсутствующий файл;
+6. создавать временный prompt file;
+7. prompt должен явно потребовать:
+   - прочитать `.hermes.md`;
+   - использовать `ebb-execute-plan`;
+   - именно выполнить plan, а не пересказать его;
+8. запускать Hermes примерно так:
+
+```bash
+hermes --in <current-worktree-root> chat --query-file <temp-file>
 ```
 
-Implementation safety:
-- use `spawnSync`/`execFileSync`, not shell interpolation;
-- pass argv arrays;
-- never run with `shell: true`;
-- quote handling belongs to argv, not concatenated command strings.
+9. передавать stdin/stdout/stderr пользователю;
+10. удалять временный prompt в `finally`;
+11. возвращать exit code Hermes.
 
-## Step 2: Add root package scripts
+## Шаг 2 — Добавить package scripts
 
-Merge these into the existing root `scripts` object:
+В существующий root `package.json` добавить, не удаляя другие scripts:
 
 ```json
 {
-  "hermes:setup": "node scripts/hermes-dev.mjs setup",
-  "hermes:check": "node scripts/hermes-dev.mjs check",
-  "hermes:execute": "node scripts/hermes-dev.mjs execute"
+  "scripts": {
+    "hermes:setup": "node scripts/hermes-dev.mjs setup",
+    "hermes:check": "node scripts/hermes-dev.mjs check",
+    "hermes:execute": "node scripts/hermes-dev.mjs execute"
+  }
 }
 ```
 
-Do not replace unrelated scripts.
+## Шаг 3 — Проверить валидацию путей
 
-## Step 3: Test runner validation
-
-Run:
+Выполнить:
 
 ```bash
 pnpm hermes:execute
 ```
 
-Expected: non-zero usage error.
+Ожидание: non-zero + сообщение об использовании.
 
-Run:
+Выполнить:
 
 ```bash
 pnpm hermes:execute -- does-not-exist.md
 ```
 
-Expected: non-zero missing-file error.
+Ожидание: non-zero.
 
-Run an escaping path check appropriate for the current OS; it must be rejected.
+Выполнить:
 
-Do not launch a real plan yet.
+```bash
+pnpm hermes:execute -- ../outside.md
+```
+
+Ожидание: non-zero.
+
+На этом этапе реальный implementation plan ещё не запускать.
 
 ---
 
-# Task 5 — Add developer documentation
+# Задача 5 — Документировать новый процесс разработки
 
-**Files:**
-- Create: `tools/hermes/README.md`
-- Create: `docs/development/hermes.md`
-- Modify: `README.md` only to add a short link if appropriate
+**Файлы:**
+- Создать: `tools/hermes/README.md`.
+- Создать: `docs/development/hermes.md`.
+- При необходимости дополнить `README.md` короткой ссылкой на development guide.
 
-## Step 1: `tools/hermes/README.md`
+## Шаг 1 — `tools/hermes/README.md`
 
-Document:
-- this directory is canonical repository source for Ebb development skills;
-- installed HERMES_HOME copies are generated/synchronized copies;
-- do not manually edit installed copies;
-- run `pnpm hermes:setup` after changing skills;
-- list the four skills and responsibilities.
+Документ должен объяснять:
 
-## Step 2: `docs/development/hermes.md`
+- `tools/hermes/skills/` — канонический repository source;
+- копии в `HERMES_HOME` считаются генерируемыми;
+- installed copy нельзя редактировать вручную;
+- после изменения skill выполнять:
 
-Required sections:
+```bash
+pnpm hermes:setup
+pnpm hermes:check
+```
+
+Перечислить четыре skill и их роли.
+
+## Шаг 2 — `docs/development/hermes.md`
+
+Обязательные разделы:
 
 ```markdown
 # Разработка Ebb Orchestrator через Hermes
 
 ## Что именно заменяет Hermes
-OpenCode only as the external development executor.
+OpenCode как внешний development executor.
 
-## Что НЕ меняется
-Production AgentRuntime/HermesRuntimeAdapter architecture.
+## Что не меняется
+Production `AgentRuntime` / `HermesRuntimeAdapter`.
 
 ## Первоначальная настройка
 pnpm hermes:setup
 pnpm hermes:check
 
 ## Запуск implementation plan
-pnpm hermes:execute -- docs/superpowers/plans/<file>.md
+pnpm hermes:execute -- docs/architecture/plans/<file>.md
 
-## Интерактивный запуск
+## Интерактивная сессия
 hermes --in "<worktree>" --tui
+или
+hermes --in "<worktree>" chat
 
-## Ограничение субагентов
-2 concurrent, depth 1, no nested delegation.
+## Субагенты
+Максимум 2 одновременно.
+Depth = 1.
+Nested delegation запрещён.
 
 ## Worktrees
-Human/coordinator selects the worktree.
-Hermes child worktree isolation stays disabled.
+Worktree выбирает пользователь/Coordinator.
+Child worktree isolation отключён.
 
 ## Обновление skills
-edit tools/hermes/skills
-pnpm hermes:setup
-pnpm hermes:check
+Редактировать tools/hermes/skills/
+Затем hermes:setup + hermes:check.
 
 ## Русский JSDoc
+
 ## Git safety
-## Troubleshooting
+
+## Диагностика
+hermes --version
+hermes config get ...
+pnpm hermes:check
 ```
 
-Do not present OpenCode as the current preferred development workflow.
+Current docs больше не должны рекомендовать OpenCode как основной способ исполнения планов после успешной миграции.
 
 ---
 
-# Task 6 — Run setup and verify Hermes configuration
+# Задача 6 — Выполнить setup и проверить Hermes
 
-- [ ] Run:
+На этом этапе repository edits не ожидаются.
+
+- [ ] **Шаг 1. Выполнить setup**
 
 ```bash
 pnpm hermes:setup
+```
+
+Проверить:
+
+- skills синхронизированы;
+- delegation settings установлены;
+- provider/model/API credentials не изменились.
+
+- [ ] **Шаг 2. Выполнить check**
+
+```bash
 pnpm hermes:check
 ```
 
-Expected `hermes:check`: PASS.
+Ожидание: PASS.
 
-- [ ] Verify manually:
+- [ ] **Шаг 3. Проверить вручную**
 
 ```bash
 hermes --version
@@ -712,7 +886,7 @@ hermes config get delegation.worktree_isolation
 hermes skills list
 ```
 
-Expected semantic values:
+Ожидаемые значения:
 
 ```text
 2
@@ -721,210 +895,289 @@ false
 false
 ```
 
-Confirm all four `ebb-*` skills are visible.
+Убедиться, что Ebb skills доступны Hermes.
 
 ---
 
-# Task 7 — Add a real parity plan
+# Задача 7 — Создать parity-plan для реальной проверки нового workflow
 
-**Files:**
-- Create: `tools/hermes/fixtures/parity-plan.md`
+**Файл:**
+- Создать: `tools/hermes/fixtures/parity-plan.md`.
 
-Use this content:
+Содержание:
 
 ```markdown
-# Hermes Development Workflow Parity Plan
+# План parity-проверки Hermes development workflow
 
-## Goal
+## Цель
 
-Prove that Hermes can execute an Ebb repository plan end-to-end without OpenCode.
+Доказать, что Hermes способен исполнить Ebb repository plan от начала до конца без OpenCode.
 
-## Hard rules
+## Жёсткие правила
 
-- Read `.hermes.md`.
-- Use no more than two concurrent subagents.
-- No nested delegation.
-- Do not modify production code.
-- Do not merge/push/tag/release.
+- Прочитать `.hermes.md`.
+- Использовать не более 2 субагентов одновременно.
+- Nested delegation запрещён.
+- Production-код не изменять.
+- Не выполнять merge/push/tag/release.
 
-## Task 1 — Independent context checks
+## Задача 1 — Независимые context checks
 
-Launch exactly two read-only subagents concurrently.
+Запустить ровно два read-only субагента одновременно.
 
-Subagent A verifies:
-- `.hermes.md` is loaded/consistent;
-- `master` is documented as primary branch;
-- Russian JSDoc rule is present;
-- no-more-than-two rule is present.
+Subagent A проверяет:
+- `.hermes.md` доступен и непротиворечив;
+- `master` указан основной веткой;
+- есть правило русского JSDoc;
+- есть лимит максимум 2 субагента.
 
-Subagent B verifies:
-- `tools/hermes/skills/` has the expected four source skills;
-- active Hermes config has concurrency=2, depth=1, orchestrator disabled, child worktree isolation disabled.
+Subagent B проверяет:
+- `tools/hermes/skills/` содержит ожидаемые skills;
+- active Hermes config содержит:
+  - concurrency=2;
+  - depth=1;
+  - orchestrator disabled;
+  - child worktree isolation disabled.
 
-Both return evidence only.
+Оба возвращают только evidence.
 
-## Task 2 — Repository verification
+## Задача 2 — Repository verification
 
-Run:
-- `pnpm lint`
-- `pnpm typecheck`
-- `pnpm test`
-- `git diff --check`
+Выполнить:
+- `pnpm lint`;
+- `pnpm typecheck`;
+- `pnpm test`;
+- `git diff --check`.
 
-Do not modify code to make failures disappear.
-If a baseline project failure exists, report it precisely.
+Не изменять код только ради устранения baseline failure.
+Если есть pre-existing failure — точно описать его.
 
-## Task 3 — Write parity report
+## Задача 3 — Создать parity report
 
-Create/update `docs/audit/hermes-development-workflow-parity.md`.
+Создать/обновить:
 
-Include date, branch, HEAD, context verification, subagent concurrency evidence, delegation config, commands/results, final verdict `PASS` or `FAIL`.
+`docs/audit/hermes-development-workflow-parity.md`
 
-Do not commit unless all project-controlled gates pass.
+Включить:
+- дату;
+- branch;
+- HEAD;
+- context verification;
+- подтверждение concurrency;
+- delegation config;
+- commands/results;
+- verdict `PASS` или `FAIL`.
 
-## Task 4 — Commit
+## Задача 4 — Commit
 
-If and only if verdict is PASS:
+Только если verdict = PASS:
 
 `git add docs/audit/hermes-development-workflow-parity.md`
 
-Inspect staged diff.
+Проверить staged diff.
 
 Commit:
 
 `docs: verify Hermes development workflow parity`
 
-Do not include unrelated files.
+Не включать посторонние файлы.
 ```
 
 ---
 
-# Task 8 — Commit migration infrastructure before parity run
+# Задача 8 — Зафиксировать инфраструктуру миграции до parity-run
 
-Run:
+**Важно:** `.opencode` пока не удалять.
+
+- [ ] **Шаг 1. Выполнить gates**
 
 ```bash
 pnpm lint
 pnpm typecheck
 pnpm test
 git diff --check
+```
+
+- [ ] **Шаг 2. Проверить diff**
+
+```bash
 git status --short
 git diff --stat
 git diff
 ```
 
-Confirm:
-- no provider/model credentials;
-- no secrets;
-- no production runtime changes;
-- no `.opencode` deletion yet.
+Убедиться:
 
-Commit migration infrastructure:
+- нет credentials;
+- нет secrets;
+- production runtime не менялся без причины;
+- `.opencode` ещё не удалён.
+
+- [ ] **Шаг 3. Commit**
+
+Закоммитить только migration infrastructure:
 
 ```bash
 git commit -m "build: add Hermes development workflow"
 ```
 
-Stage only intended files before the commit.
-
 ---
 
-# Task 9 — Execute the parity plan through Hermes itself
+# Задача 9 — Выполнить parity-plan через Hermes
 
-Run:
+Это главный acceptance test миграции.
+
+- [ ] **Шаг 1. Запустить новый runner**
 
 ```bash
 pnpm hermes:execute -- tools/hermes/fixtures/parity-plan.md
 ```
 
-This is the acceptance test for the migration.
+- [ ] **Шаг 2. Проверить результат**
 
-After Hermes returns:
+После возврата Hermes:
 
 ```bash
 git status --short
 git log -3 --oneline
 ```
 
-Read `docs/audit/hermes-development-workflow-parity.md`.
+Прочитать:
 
-Acceptance criteria:
-- verdict PASS;
-- exactly two read-only subagents used in the parallel check;
-- no evidence of >2 simultaneous children;
-- no nested delegation;
-- project gates passed;
-- parity report committed separately;
-- no production code changed.
-
-If FAIL:
-- do not delete `.opencode`;
-- fix migration tooling;
-- rerun `pnpm hermes:setup` and `pnpm hermes:check`;
-- rerun parity plan.
-
----
-
-# Task 10 — Remove active OpenCode development configuration only after parity PASS
-
-**Files:**
-- Delete: active `.opencode/**` development configuration identified in Task 1
-- Modify: active development docs/scripts/package entries that still require OpenCode
-- Preserve: historical audit/plan evidence unless it is falsely presented as current instructions
-
-- [ ] Re-read `docs/audit/opencode-to-hermes-inventory.md`.
-- [ ] Delete only `ACTIVE_CONFIG`.
-- [ ] Remove an OpenCode-only dependency/script only if repository search proves it has no remaining current use.
-- [ ] Update current docs to use:
-
-```bash
-pnpm hermes:setup
-pnpm hermes:check
-pnpm hermes:execute -- docs/superpowers/plans/<plan>.md
+```text
+docs/audit/hermes-development-workflow-parity.md
 ```
 
-- [ ] Search again for `.opencode`, `opencode`, `/execute-plan`.
-- [ ] Classify remaining references; no `ACTIVE_CONFIG` or current-development instruction may remain.
+Acceptance criteria:
+
+- verdict = PASS;
+- использовано ровно два параллельных read-only субагента;
+- нет признаков >2 одновременных children;
+- nested delegation отсутствует;
+- repository gates прошли;
+- parity report создан и закоммичен отдельно;
+- production-код не изменён.
+
+Если verdict = FAIL:
+
+- `.opencode` не удалять;
+- исправить migration tooling;
+- повторить `hermes:setup`;
+- повторить `hermes:check`;
+- снова выполнить parity-plan.
 
 ---
 
-# Task 11 — Final verification and independent review
+# Задача 10 — Удалить активный OpenCode workflow только после parity PASS
 
-Run:
+**Файлы:**
+- Удалить: только активную `.opencode/**` конфигурацию, выявленную в Task 1.
+- Изменить: текущие development docs/scripts/package references, которые требуют OpenCode.
+- Сохранить: исторические audit/plan документы.
+
+- [ ] **Шаг 1. Повторно прочитать inventory**
+
+Использовать:
+
+```text
+docs/audit/opencode-to-hermes-inventory.md
+```
+
+Удалять только элементы категории:
+
+```text
+ACTIVE_CONFIG
+```
+
+- [ ] **Шаг 2. Удалить OpenCode-only dependencies/scripts**
+
+Если `package.json` или другие active tooling files содержат зависимости, нужные исключительно старому executor:
+
+1. доказать отсутствие других consumers;
+2. удалить dependency/script;
+3. обновить lockfile нормальной pnpm-командой.
+
+Не удалять сущность с названием OpenCode, если она используется реальной функцией продукта.
+
+- [ ] **Шаг 3. Обновить текущую документацию**
+
+Current workflow должен показывать:
 
 ```bash
 pnpm hermes:setup
 pnpm hermes:check
+pnpm hermes:execute -- docs/architecture/plans/<plan>.md
+```
+
+Исторические документы сохраняют историческую правду.
+
+- [ ] **Шаг 4. Повторить поиск stale instructions**
+
+Искать:
+
+```text
+.opencode
+opencode
+/execute-plan
+```
+
+В актуальной документации/конфигурации не должно остаться OpenCode как обязательного development executor.
+
+---
+
+# Задача 11 — Финальная проверка и независимый review
+
+- [ ] **Шаг 1. Повторно синхронизировать skills**
+
+```bash
+pnpm hermes:setup
+pnpm hermes:check
+```
+
+- [ ] **Шаг 2. Полные gates**
+
+```bash
 pnpm lint
 pnpm typecheck
 pnpm test
 git diff --check
 ```
 
-Also run canonical build gates defined by current `package.json`.
+Также выполнить реальные canonical build gates из `package.json`.
 
-Launch one fresh read-only `ebb-final-review` reviewer.
+- [ ] **Шаг 3. Независимый read-only final review**
 
-It must verify:
-- OpenCode is no longer required for current development;
-- `.hermes.md` is sufficient and correct;
-- setup cannot overwrite unrelated Hermes skills;
-- setup does not change provider/model credentials;
-- execute rejects path escape;
-- max concurrency is 2;
-- nested delegation is disabled;
-- child worktree isolation is disabled;
-- Russian JSDoc rule is preserved;
-- production HermesRuntimeAdapter is not coupled to developer tooling;
-- docs describe the real workflow.
+Использовать `ebb-final-review`.
 
-If `CHANGES_REQUESTED`, fix confirmed blockers, rerun gates, and use a fresh reviewer.
+Reviewer должен отдельно проверить:
+
+- OpenCode больше не требуется текущему development workflow;
+- `.hermes.md` достаточно для project context;
+- setup не удаляет посторонние Hermes skills;
+- setup не меняет provider/model credentials;
+- execute защищён от path traversal;
+- concurrency = 2;
+- nested delegation запрещён;
+- child worktree isolation disabled;
+- русский JSDoc policy сохранён;
+- production `HermesRuntimeAdapter` не стал зависеть от development tooling;
+- документация описывает фактический workflow.
+
+- [ ] **Шаг 4. Исправить только подтверждённые blockers**
+
+Если verdict = `CHANGES_REQUESTED`:
+
+1. подтвердить finding;
+2. исправить root cause;
+3. повторить tests;
+4. повторить `hermes:check`;
+5. запустить нового final reviewer.
 
 ---
 
-# Task 12 — Final migration commit
+# Задача 12 — Финальный commit миграции
 
-Inspect:
+- [ ] **Шаг 1. Проверить diff**
 
 ```bash
 git status --short
@@ -932,15 +1185,17 @@ git diff --stat
 git diff
 ```
 
-Stage only migration cleanup.
+- [ ] **Шаг 2. Stage только cleanup миграции**
 
-Commit:
+Не включать pre-existing unrelated changes.
+
+- [ ] **Шаг 3. Commit**
 
 ```bash
 git commit -m "chore: retire OpenCode development workflow"
 ```
 
-Final checks:
+- [ ] **Шаг 4. Финальная проверка**
 
 ```bash
 git status --short
@@ -948,46 +1203,54 @@ git log -3 --oneline
 pnpm hermes:check
 ```
 
-Do not merge, push, tag or release.
+Ожидание:
+
+- OpenCode больше не является active development dependency;
+- parity report = PASS;
+- Hermes setup/check = PASS;
+- branch остаётся feature-веткой;
+- merge/push/tag/release не выполнялись.
 
 ---
 
-# User workflow after migration
+# Workflow пользователя после миграции
 
-From any dedicated Ebb Orchestrator worktree:
+Из любого отдельного Ebb Orchestrator worktree:
 
 ```powershell
 pnpm hermes:setup
 pnpm hermes:check
-pnpm hermes:execute -- docs/superpowers/plans/2026-09-XX-example.md
+pnpm hermes:execute -- docs/architecture/plans/2026-09-XX-example.md
 ```
 
-For an interactive Hermes session:
+Для интерактивной Hermes-сессии:
 
 ```powershell
 hermes --in "C:\path\to\worktree" --tui
 ```
 
-The project rules come from `.hermes.md`; reusable execution procedures come from the installed `ebb-*` skills.
+Project rules загружаются из `.hermes.md`.
+
+Повторно используемые development procedures берутся из Ebb Hermes skills.
 
 ---
 
-# Completion criteria
+# Критерии полного завершения
 
-This plan is complete only when ALL are true:
+План считается завершённым только если одновременно выполнены все условия:
 
-- `.hermes.md` exists and is auto-loadable project context;
-- source skills are versioned in the repository;
-- skills synchronize reproducibly to active `HERMES_HOME`;
-- provider/model/secrets are untouched;
-- concurrency is exactly 2;
-- nested delegation is disabled;
-- child worktree isolation is disabled;
-- `pnpm hermes:check` passes;
-- a real plan was executed through `pnpm hermes:execute`;
-- parity report is PASS;
-- OpenCode active development configuration is removed only after parity;
-- full project gates pass;
-- independent final review passes;
-- documentation describes Hermes as the current development executor;
-- no production-runtime architecture was unnecessarily changed.
+- `.hermes.md` существует и является project context;
+- repository-owned skills находятся под version control;
+- skills воспроизводимо синхронизируются в active `HERMES_HOME`;
+- provider/model/secrets не изменялись;
+- concurrency строго равен 2;
+- nested delegation отключён;
+- child worktree isolation отключён;
+- `pnpm hermes:check` проходит;
+- реальный plan выполнен через `pnpm hermes:execute`;
+- parity report = PASS;
+- OpenCode удалён из active workflow только после parity PASS;
+- полные project gates проходят;
+- independent final review = PASS;
+- current documentation описывает Hermes как development executor;
+- production-runtime архитектура не была необоснованно изменена.

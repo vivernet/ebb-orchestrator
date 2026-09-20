@@ -73,10 +73,11 @@ export async function onboardingRoutes(app: FastifyInstance, deps: OnboardingRou
     if (!project) {
       return reply.code(404).send({ error: "project not found" });
     }
-    deps.db.run(
-      "UPDATE projects SET status = 'READY' WHERE id = $id",
-      { id: request.params.id }
-    );
-    return { success: true, projectId: request.params.id };
+
+    // There is no persisted semantic-approval authority in the v1 schema.
+    // A UI disabled state cannot substitute for this deterministic boundary.
+    return reply.code(409).send({
+      error: "onboarding activation requires persisted semantic approval",
+    });
   });
 }

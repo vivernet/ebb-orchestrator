@@ -1,6 +1,7 @@
 /**
  * Authenticated HTTP client for the orchestrator API.
- * Maintains local session token in memory (never localStorage).
+ * Bootstrap bearer is memory-only; after reload the browser uses HttpOnly
+ * local-session cookie and restores only the CSRF token in memory.
  */
 
 const API_BASE = '/api/v1';
@@ -17,14 +18,16 @@ function createApiClient(): ApiClient {
     path: string,
     options: RequestInit = {}
   ): Promise<T> {
+    const { headers: requestHeaders, ...requestOptions } = options;
     const response = await fetch(path, {
+      credentials: 'same-origin',
       headers: {
         'Content-Type': 'application/json',
         ...(apiClient.sessionToken ? { Authorization: `Bearer ${apiClient.sessionToken}` } : {}),
         ...(apiClient.csrfToken ? { 'X-CSRF-Token': apiClient.csrfToken } : {}),
-        ...options.headers,
+        ...requestHeaders,
       },
-      ...options,
+      ...requestOptions,
     });
 
     if (!response.ok) {
@@ -62,12 +65,38 @@ function createApiClient(): ApiClient {
 
 export const apiClient = createApiClient();
 
+/** Возвращает bearer-заголовок для потокового API, если bootstrap ещё хранит его в памяти. */
+export function authenticatedHeaders(): Record<string, string> {
+  return apiClient.sessionToken ? { Authorization: `Bearer ${apiClient.sessionToken}` } : {};
+}
+
 /**
  * Представляет пользовательский экран client; авторитетные проверки выполняются backend.
  */
-export function bootstrap(): Promise<void> {
-  return apiClient.get<{ sessionToken: string; csrfToken: string }>('/session/bootstrap').then(({ sessionToken, csrfToken }) => {
+export function bootstrap(launchToken: string): Promise<void> {
+  if (!launchToken) return Promise.reject(new Error('A one-time local launch token is required.'));
+  return fetch('/api/v1/session/bootstrap', {
+    credentials: 'same-origin',
+    headers: { 'X-EBB-Bootstrap-Token': launchToken },
+  }).then(async (response) => {
+    if (!response.ok) throw new Error(`Local session bootstrap failed: ${response.status}`);
+    return response.json() as Promise<{ sessionToken: string; csrfToken: string }>;
+  }).then(({ sessionToken, csrfToken }) => {
     apiClient.sessionToken = sessionToken;
+    apiClient.csrfToken = csrfToken;
+  });
+}
+
+/**
+ * Восстанавливает CSRF state после reload через HttpOnly local-session cookie.
+ * Bearer-токен намеренно не возвращается и не сохраняется в JavaScript storage.
+ */
+export function restoreSession(): Promise<void> {
+  return fetch('/api/v1/session', { credentials: 'same-origin' }).then(async (response) => {
+    if (!response.ok) throw new Error(`Local session restore failed: ${response.status}`);
+    return response.json() as Promise<{ csrfToken: string }>;
+  }).then(({ csrfToken }) => {
+    apiClient.sessionToken = null;
     apiClient.csrfToken = csrfToken;
   });
 }

@@ -1,248 +1,97 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { apiClient } from '../../api/client.js';
-import SanitizedTerminal from '../../components/SanitizedTerminal.js';
 
 interface AgentRun {
   id: string;
   role: string;
+  runtime: string;
   model: string;
-  status: 'running' | 'completed' | 'failed' | 'cancelled' | 'pausing';
-  triggerReason: string;
-  taskId?: string;
-  epicId?: string;
-  startTime: string;
-  endTime?: string;
-}
-
-interface UsageRecord {
-  inputTokens: number;
-  cachedTokens: number;
-  outputTokens: number;
-  totalTokens: number;
-  cost: number;
-}
-
-interface ContextManifest {
-  taskContractVersion?: string;
-  guidelines: string[];
-  decisions: string[];
-  findings: string[];
-  contextBuilderVersion: string;
-  initialTokenSize: number;
-}
-
-interface RecoverySignal {
-  type: 'resume' | 'retry' | 'escalate' | 'diagnosis';
-  fromRunId?: string;
-  reason: string;
-}
-
-interface Artifact {
-  id: string;
-  name: string;
-  path: string;
-  type: 'log' | 'diff' | 'result' | 'other';
+  status: string;
+  triggerReason: string | null;
+  taskId: string | null;
+  epicId: string | null;
+  startedAt: string | null;
+  endedAt: string | null;
+  usage: { inputTokens: number; cachedTokens: number; outputTokens: number; cost: number };
 }
 
 interface AgentRunPageProps {
   id: string;
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'unknown error';
+}
+
 /**
- * Представляет пользовательский экран AgentRunPage; авторитетные проверки выполняются backend.
+ * Показывает безопасную проекцию Agent Run. Prompt, capability, необработанный
+ * output и служебные artifacts намеренно не запрашиваются browser-клиентом.
  */
 export default function AgentRunPage({ id }: AgentRunPageProps) {
   const [run, setRun] = useState<AgentRun | null>(null);
-  const [usage, setUsage] = useState<UsageRecord | null>(null);
-  const [contextManifest, setContextManifest] = useState<ContextManifest | null>(null);
-  const [recoverySignals, setRecoverySignals] = useState<RecoverySignal[]>([]);
-  const [artifacts, setArtifacts] = useState<Artifact[]>([]);
-  const [terminalLogs, setTerminalLogs] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
-  const [permissions, setPermissions] = useState<string[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [mutationError, setMutationError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const load = useCallback(async () => {
     setLoading(true);
-    const fetchRunDetails = async () => {
-      try {
-        const [runData, usageData, contextData, recoveryData, artifactsData, logsData] = await Promise.all([
-          apiClient.get<AgentRun>(`/runs/${encodeURIComponent(id)}`),
-          apiClient.get<UsageRecord>(`/runs/${encodeURIComponent(id)}/usage`),
-          apiClient.get<ContextManifest>(`/runs/${encodeURIComponent(id)}/context`),
-          apiClient.get<RecoverySignal[]>(`/runs/${encodeURIComponent(id)}/recovery`),
-          apiClient.get<Artifact[]>(`/runs/${encodeURIComponent(id)}/artifacts`),
-          apiClient.get<string[]>(`/runs/${encodeURIComponent(id)}/logs`),
-        ]);
-        setRun(runData);
-        setUsage(usageData);
-        setContextManifest(contextData);
-        setRecoverySignals(recoveryData);
-        setArtifacts(artifactsData);
-        setTerminalLogs(logsData);
-
-        const permissionResponse = await apiClient.get<string[]>(`/runs/${encodeURIComponent(id)}/permissions`);
-        setPermissions(permissionResponse);
-      } catch (e) {
-        console.error('Failed to fetch run details:', e);
-      } finally {
-        setLoading(false);
-      }
-    };
-    void fetchRunDetails();
+    setLoadError(null);
+    try {
+      setRun(await apiClient.get<AgentRun>(`/runs/${encodeURIComponent(id)}`));
+    } catch (error) {
+      setLoadError(errorMessage(error));
+    } finally {
+      setLoading(false);
+    }
   }, [id]);
 
-  const handleCancel = async () => {
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const cancel = async () => {
+    setMutationError(null);
     try {
       await apiClient.post(`/runs/${encodeURIComponent(id)}/cancel`, {});
-      setRun((prev) => (prev ? { ...prev, status: 'pausing' } : null));
-    } catch (e) {
-      console.error('Failed to cancel run:', e);
+      await load();
+    } catch (error) {
+      setMutationError(errorMessage(error));
     }
   };
 
-  if (loading) {
-    return <div>Loading run details...</div>;
-  }
+  if (loading) return <div className="page-state">Loading Agent Run…</div>;
+  if (loadError || !run) return <div className="page-state" role="alert"><p>Unable to load Agent Run: {loadError ?? 'not found'}</p><button type="button" onClick={() => void load()}>Retry</button></div>;
 
-  if (!run) {
-    return <div>Run not found.</div>;
-  }
+  const isActive = ['STARTED', 'IN_PROGRESS', 'COMPLETING'].includes(run.status);
 
   return (
-    <div className="agent-run-page">
-      <header className="run-header">
-        <h1>Agent Run: {run.id}</h1>
-        <div className="run-meta">
-          <span className="run-role">{run.role}</span>
-          <span className="run-model">{run.model}</span>
-          <span className={`run-status status-${run.status}`}>{run.status.toUpperCase()}</span>
-        </div>
+    <div className="agent-run-page page-stack">
+      <header className="page-header">
+        <div><p className="eyebrow">Agent activity</p><h1>Agent Run: {run.id}</h1></div>
+        <span className="status-chip">{run.status}</span>
       </header>
 
-      <section className="run-triggers">
-        <h2>Trigger</h2>
-        <p>{run.triggerReason}</p>
+      {mutationError && <p className="inline-alert" role="alert">Unable to cancel run: {mutationError}</p>}
+
+      <section className="detail-grid" aria-label="Run details">
+        <div><span>Role</span><strong>{run.role}</strong></div>
+        <div><span>Runtime</span><strong>{run.runtime}</strong></div>
+        <div><span>Model</span><strong>{run.model}</strong></div>
+        <div><span>Trigger</span><strong>{run.triggerReason ?? 'Not recorded'}</strong></div>
+        <div><span>Task</span><strong>{run.taskId ?? 'System run'}</strong></div>
+        <div><span>Epic</span><strong>{run.epicId ?? '—'}</strong></div>
       </section>
 
-      {run.taskId && (
-        <section className="run-context">
-          <h2>Context</h2>
-          <p>Task: {run.taskId}</p>
-          {run.epicId && <p>Epic: {run.epicId}</p>}
-        </section>
-      )}
+      <section aria-label="Run timing"><h2>Timing</h2><p>Started: {run.startedAt ? new Date(run.startedAt).toLocaleString() : 'Not recorded'}</p><p>Ended: {run.endedAt ? new Date(run.endedAt).toLocaleString() : 'In progress'}</p></section>
 
-      {contextManifest && (
-        <section className="context-manifest">
-          <h2>Context Manifest</h2>
-          <div className="manifest-content">
-            <p><strong>Context Builder:</strong> {contextManifest.contextBuilderVersion}</p>
-            <p><strong>Initial Token Size:</strong> {contextManifest.initialTokenSize}</p>
-            <div className="manifest-section">
-              <strong>Guidelines:</strong>
-              <ul>
-                {contextManifest.guidelines.map((g) => (
-                  <li key={g}>{g}</li>
-                ))}
-              </ul>
-            </div>
-            <div className="manifest-section">
-              <strong>Decisions:</strong>
-              <ul>
-                {contextManifest.decisions.map((d) => (
-                  <li key={d}>{d}</li>
-                ))}
-              </ul>
-            </div>
-            <div className="manifest-section">
-              <strong>Findings:</strong>
-              <ul>
-                {contextManifest.findings.map((f) => (
-                  <li key={f}>{f}</li>
-                ))}
-              </ul>
-            </div>
-          </div>
-        </section>
-      )}
-
-      <section className="run-permissions">
-        <h2>Permissions</h2>
-        <ul>
-          {permissions.map((perm) => (
-            <li key={perm}>{perm}</li>
-          ))}
-        </ul>
+      <section aria-label="Run usage" className="metric-grid">
+        <div><span className="metric-value">{run.usage.inputTokens}</span><span className="metric-label">Input tokens</span></div>
+        <div><span className="metric-value">{run.usage.cachedTokens}</span><span className="metric-label">Cached tokens</span></div>
+        <div><span className="metric-value">{run.usage.outputTokens}</span><span className="metric-label">Output tokens</span></div>
+        <div><span className="metric-value">${run.usage.cost.toFixed(4)}</span><span className="metric-label">Cost</span></div>
       </section>
 
-      {usage && (
-        <section className="run-usage">
-          <h2>Usage</h2>
-          <div className="usage-stats">
-            <div className="usage-item">
-              <span>Input Tokens:</span>
-              <span>{usage.inputTokens}</span>
-            </div>
-            <div className="usage-item">
-              <span>Cached Tokens:</span>
-              <span>{usage.cachedTokens}</span>
-            </div>
-            <div className="usage-item">
-              <span>Output Tokens:</span>
-              <span>{usage.outputTokens}</span>
-            </div>
-            <div className="usage-item">
-              <span>Total Tokens:</span>
-              <span>{usage.totalTokens}</span>
-            </div>
-            <div className="usage-item">
-              <span>Cost:</span>
-              <span>${usage.cost.toFixed(4)}</span>
-            </div>
-          </div>
-        </section>
-      )}
-
-      {recoverySignals.length > 0 && (
-        <section className="run-recovery">
-          <h2>Recovery Signals</h2>
-          <ul>
-            {recoverySignals.map((signal, idx) => (
-              <li key={idx}>
-                <strong>{signal.type.toUpperCase()}</strong>: {signal.reason}
-                {signal.fromRunId && <span> (from {signal.fromRunId})</span>}
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      {artifacts.length > 0 && (
-        <section className="run-artifacts">
-          <h2>Artifacts</h2>
-          <ul>
-            {artifacts.map((artifact) => (
-              <li key={artifact.id}>
-                <span className="artifact-type">{artifact.type}</span>: {artifact.name}
-                <span className="artifact-path"> ({artifact.path})</span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      {terminalLogs.length > 0 && (
-        <section className="run-terminal">
-          <h2>Terminal Output</h2>
-          <SanitizedTerminal logs={terminalLogs} />
-        </section>
-      )}
-
-      {run.status === 'running' && (
-        <footer className="run-actions">
-          <button onClick={handleCancel}>Cancel Run</button>
-        </footer>
-      )}
+      {isActive && <footer className="page-actions"><button type="button" className="danger-button" onClick={() => void cancel()}>Cancel Run</button></footer>}
     </div>
   );
 }

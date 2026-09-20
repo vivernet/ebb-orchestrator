@@ -8,7 +8,7 @@
 
 **Технологический стек:** Node.js 24 LTS; TypeScript 7; pnpm 11.27; Fastify 5.12; Vitest 5; Zod 4; ESLint 10.10 + typescript-eslint 8.70; `node:sqlite`.
 
-**Спецификация:** `docs/superpowers/specs/2026-09-16-ebb-orchestrator-design.md`
+**Спецификация:** `docs/architecture/specs/2026-09-16-ebb-orchestrator-design.md`
 
 ## Глобальные ограничения
 

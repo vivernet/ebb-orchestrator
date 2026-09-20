@@ -15,9 +15,10 @@
  * 7. Start HTTP server
  */
 import { createApp } from "./app/create-app.js";
-import { mkdirSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { spawn } from "node:child_process";
 import { createSqliteDatabase } from "./platform/database/sqlite-database.js";
 import { runMigrations, type Migration } from "./platform/database/migrator.js";
 import { resolveOrchestratorHome } from "./platform/home/orchestrator-home.js";
@@ -47,6 +48,7 @@ const home = resolveOrchestratorHome(process.env, process.platform === "win32" ?
 mkdirSync(home.root, { recursive: true });
 const database = createSqliteDatabase(home.database);
 const migrationDir = fileURLToPath(new URL("./platform/database/migrations/", import.meta.url));
+const webRoot = fileURLToPath(new URL("../../web/dist/", import.meta.url));
 const migrations: Migration[] = readdirSync(migrationDir).filter((file) => file.endsWith(".sql")).map((file) => {
   const match = /^(\d+)_([^.]*)\.sql$/.exec(file);
   if (!match) throw new Error(`Invalid migration filename: ${file}`);
@@ -75,7 +77,7 @@ const eventDispatcher = new EventDispatcher(database, eventBus);
 const runtimeOrchestrator = new RuntimeOrchestrator(database, workflowEngine, eventBus, eventDispatcher, scheduler);
 runtimeOrchestrator.initialize();
 
-const app = createApp({ host, port, db: database, scheduler, runtime });
+const app = createApp({ host, port, db: database, scheduler, runtime, ...(existsSync(webRoot) ? { webRoot } : {}) });
 
 // Регистрирует шаги reconciliation которые будут запущены после migrations.
 const reconciler = {
@@ -142,6 +144,7 @@ process.on("SIGTERM", () => void gracefulShutdown("SIGTERM"));
 // Полный production startup: STARTING → RECOVERING → reconciliation → READY.
 await startSystem({
   instanceLock: lock,
+  lockAlreadyAcquired: true,
   database: { open: async () => {}, close: () => database.close() },
   migrator: { run: async () => { runMigrations(database, migrations); } },
   status,
@@ -167,7 +170,15 @@ await startSystem({
 
 await app.listen({ host, port });
 
-// Распечатывает токен чтобы он был доступен для curl / API client usage.
 console.log(`[orchestrator] listening on http://${host}:${port}`);
-console.log(`[orchestrator] session token: ${app.sessionToken}`);
 console.log(`[orchestrator] status: ${status.get()}`);
+if (existsSync(webRoot) && app.bootstrapToken) openLocalUi(`http://${host}:${port}/#ebb-bootstrap=${encodeURIComponent(app.bootstrapToken)}`);
+
+function openLocalUi(url: string): void {
+  const command = process.platform === "win32" ? "explorer.exe" : process.platform === "darwin" ? "open" : "xdg-open";
+  const child = spawn(command, [url], { detached: true, stdio: "ignore", windowsHide: true, shell: false });
+  child.once("error", () => {
+    console.error("[orchestrator] unable to open the local web UI automatically");
+  });
+  child.unref();
+}

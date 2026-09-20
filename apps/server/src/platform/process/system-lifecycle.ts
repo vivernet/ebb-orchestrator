@@ -58,6 +58,11 @@ export interface SystemLifecycleDeps {
     acquire(): Promise<LockHandle>;
     release(): Promise<void>;
   };
+  /**
+   * Указывает, что entry point захватил lock до миграций. Это сохраняет
+   * порядок startup без повторного acquire того же экземпляра lock.
+   */
+  lockAlreadyAcquired?: boolean;
   database: LifecycleDatabase;
   migrator: LifecycleMigrator;
   status: StatusTrackerInterface;
@@ -74,7 +79,7 @@ export interface SystemLifecycleDeps {
  * The order is intentional and must not be reordered.
  */
 export async function startSystem(deps: SystemLifecycleDeps): Promise<void> {
-  await deps.instanceLock.acquire();
+  if (!deps.lockAlreadyAcquired) await deps.instanceLock.acquire();
   await deps.database.open();
   await deps.migrator.run();
   await deps.status.set("RECOVERING");

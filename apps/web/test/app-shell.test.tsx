@@ -1,69 +1,43 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
-
-// Mock EventSource for testing
-class MockEventSource {
-  public onmessage: ((event: MessageEvent) => void) | null = null;
-  public onerror: (() => void) | null = null;
-
-  constructor(public url: string) {
-    // Simulate connection
-  }
-
-  close(): void {
-    // Simulate close
-  }
-}
+import { waitFor } from '@testing-library/react';
+import { apiClient } from '../src/api/client.js';
 
 describe('SSE EventClient integration', () => {
-  let eventSourceSpy: ReturnType<typeof vi.spyOn>;
-
   beforeEach(() => {
     vi.clearAllMocks();
-    (globalThis as unknown as { EventSource: typeof EventSource }).EventSource = MockEventSource as unknown as typeof EventSource;
-    eventSourceSpy = vi.spyOn(globalThis as unknown as { EventSource: typeof EventSource }, 'EventSource');
+    apiClient.sessionToken = 'session-token';
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(''));
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    apiClient.sessionToken = null;
   });
 
-  test('initializes SSE connection on app startup', async () => {
-    // Dynamically import after mock is set up
+  test('initializes an authenticated stream at the server SSE route', async () => {
     const { eventClient } = await import('../src/api/events.js');
-    
     eventClient.connect();
 
-    // EventSource should be created to connect to /events
-    expect(eventSourceSpy).toHaveBeenCalledWith('/events');
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/v1/events', expect.objectContaining({
+      headers: { Authorization: 'Bearer session-token' },
+    })));
+    eventClient.disconnect();
   });
 
   test('sets up refetch callback for SSE reconnects', async () => {
     const { eventClient } = await import('../src/api/events.js');
-    
     const refetchSpy = vi.fn();
     eventClient.setRefetchCallback(refetchSpy);
-    
-    // Verify callback was set (it's stored internally)
+
     expect(() => eventClient.setRefetchCallback(refetchSpy)).not.toThrow();
   });
 
-  test('disconnects SSE connection', async () => {
+  test('disconnects an active authenticated stream', async () => {
     const { eventClient } = await import('../src/api/events.js');
-    
-    // Spy on close method before connecting
-    const closeSpy = vi.fn();
-    const originalClose = MockEventSource.prototype.close;
-    MockEventSource.prototype.close = closeSpy;
-
     eventClient.connect();
-    expect(eventSourceSpy).toHaveBeenCalledWith('/events');
-    
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+
     eventClient.disconnect();
-    
-    // Verify connection was closed
-    expect(closeSpy).toHaveBeenCalled();
-    
-    // Restore original
-    MockEventSource.prototype.close = originalClose;
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 });

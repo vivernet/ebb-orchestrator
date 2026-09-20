@@ -12,9 +12,9 @@
 TypeScript, Node.js, pnpm, Fastify, React/Vite, Vitest, SQLite, Git worktrees, Hermes runtime, GitHub adapter.
 
 ## Авторитетные источники
-- `docs/superpowers/specs/2026-09-16-local-ai-development-orchestrator-design.md`
-- `docs/superpowers/plans/2026-09-16-orchestrator-v1-roadmap.md`
-- канонические планы реализации 1–6 под `docs/superpowers/plans/`
+- `docs/architecture/specs/2026-09-16-ebb-orchestrator-design.md`
+- `docs/architecture/plans/2026-09-16-ebb-orchestrator-v1-roadmap.md`
+- канонические планы реализации 1–6 под `docs/architecture/plans/`
 
 ---
 

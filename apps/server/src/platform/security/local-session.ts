@@ -1,9 +1,10 @@
 /**
  * Local session authentication for the orchestrator server.
  *
- * Generates a random bearer token at startup. Every mutating / protected
- * API request must include `Authorization: Bearer <token>`. The health
- * endpoint is exempt from authentication.
+ * Generates a random local session at startup. Programmatic callers may use
+ * `Authorization: Bearer <token>`; the browser receives an equivalent HttpOnly
+ * session cookie after one-time bootstrap. The health endpoint is exempt from
+ * authentication.
  *
  * Also enforces origin validation on mutating (POST/PUT/PATCH/DELETE)
  * requests to prevent CSRF-style attacks. When an `Origin` header is
@@ -27,6 +28,8 @@ export interface LocalSession {
   allowedOrigin: string;
   /** Separate synchronizer token required on every state-changing request. */
   csrfToken: string;
+  /** Одноразовый launch capability для первичной выдачи browser session. */
+  bootstrapToken: string | null;
 }
 
 /**
@@ -36,5 +39,6 @@ export function createLocalSession(config: LocalSessionConfig): LocalSession {
   const token = crypto.randomBytes(32).toString("hex");
   const allowedOrigin = `http://${config.host}:${config.port}`;
   const csrfToken = crypto.randomBytes(32).toString("hex");
-  return { token, allowedOrigin, csrfToken };
+  const bootstrapToken = crypto.randomBytes(32).toString("hex");
+  return { token, allowedOrigin, csrfToken, bootstrapToken };
 }

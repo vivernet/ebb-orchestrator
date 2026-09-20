@@ -1,137 +1,101 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { apiClient } from '../../api/client.js';
 
-interface ExecutionQueueEntry {
-  id: string;
-  role: string;
-  taskId?: string;
-  epicId?: string;
-  status: 'queued' | 'waiting' | 'running' | 'blocked';
-  waitReason?: {
-    type: 'dependency' | 'role_slot' | 'global_limit' | 'approval' | 'budget' | 'resource_lock';
-    message: string;
-  };
-  createdAt: string;
-  priority: 'critical' | 'high' | 'normal' | 'low';
+interface WaitReason {
+  code: string;
+  message: string;
 }
 
-interface ExecutionPageProps {
-  projectId?: string;
+interface ExecutionProjection {
+  running: Array<{ runId: string; role: string; taskId: string | null; status: string }>;
+  waiting: Array<{ taskId: string; reason: WaitReason }>;
+  blocked: Array<{ taskId: string; reason: WaitReason }>;
+}
+
+interface ExecutionRow {
+  id: string;
+  kind: 'run' | 'waiting' | 'blocked';
+  role: string;
+  target: string;
+  status: string;
+  reason: WaitReason | null;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'unknown error';
 }
 
 /**
- * Предоставляет execution-контракт ExecutionPage с проверкой capability перед побочным эффектом.
+ * Отображает авторитетную проекцию scheduler: активные runs, ожидающие и
+ * заблокированные задачи. UI не выводит действия, для которых backend не
+ * предоставляет endpoint или policy-проверку.
  */
-export default function ExecutionPage({ projectId }: ExecutionPageProps) {
-  const [queue, setQueue] = useState<ExecutionQueueEntry[]>([]);
+export default function ExecutionPage() {
+  const [projection, setProjection] = useState<ExecutionProjection | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [mutationError, setMutationError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setLoadError(null);
+    try {
+      setProjection(await apiClient.get<ExecutionProjection>('/execution'));
+    } catch (error) {
+      setLoadError(errorMessage(error));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    setLoading(true);
-    const fetchQueue = async () => {
-      try {
-        const data = await apiClient.get<ExecutionQueueEntry[]>('/execution/queue');
-        setQueue(data);
-      } catch (e) {
-        console.error('Failed to fetch execution queue:', e);
-      } finally {
-        setLoading(false);
-      }
-    };
-    void fetchQueue();
-  }, [projectId]);
+    void load();
+  }, [load]);
 
-  const handleCancel = async (id: string) => {
+  const cancelRun = async (runId: string) => {
+    setMutationError(null);
     try {
-      await apiClient.post(`/execution/${encodeURIComponent(id)}/cancel`, {});
-      setQueue((prev) => prev.filter((e) => e.id !== id));
-    } catch (e) {
-      console.error('Failed to cancel execution:', e);
+      await apiClient.post(`/runs/${encodeURIComponent(runId)}/cancel`, {});
+      await load();
+    } catch (error) {
+      setMutationError(errorMessage(error));
     }
   };
 
-  const handlePause = async (id: string) => {
-    try {
-      await apiClient.post(`/execution/${encodeURIComponent(id)}/pause`, {});
-      setQueue((prev) =>
-        prev.map((e) =>
-          e.id === id ? { ...e, status: 'blocked' as const } : e
-        )
-      );
-    } catch (e) {
-      console.error('Failed to pause execution:', e);
-    }
-  };
-
-  if (loading) {
-    return <div>Loading execution queue...</div>;
+  if (loading) return <div className="page-state">Loading execution queue…</div>;
+  if (loadError) {
+    return <div className="page-state" role="alert"><p>Unable to load execution queue: {loadError}</p><button type="button" onClick={() => void load()}>Retry</button></div>;
   }
 
+  const data = projection ?? { running: [], waiting: [], blocked: [] };
+  const rows: ExecutionRow[] = [
+    ...data.running.map((run) => ({ id: run.runId, kind: 'run' as const, role: run.role, target: run.taskId ?? 'System', status: run.status, reason: null })),
+    ...data.waiting.map((task) => ({ id: task.taskId, kind: 'waiting' as const, role: 'Scheduler', target: task.taskId, status: 'WAITING', reason: task.reason })),
+    ...data.blocked.map((task) => ({ id: task.taskId, kind: 'blocked' as const, role: 'Scheduler', target: task.taskId, status: 'BLOCKED', reason: task.reason })),
+  ];
+
   return (
-    <div className="execution-page">
-      <h1>Execution Monitor</h1>
+    <div className="execution-page page-stack">
+      <header className="page-header">
+        <div><p className="eyebrow">Operations</p><h1>Execution monitor</h1></div>
+        <button type="button" onClick={() => void load()}>Refresh</button>
+      </header>
 
-      {queue.length === 0 ? (
-        <p>No items in execution queue.</p>
-      ) : (
-        <table className="execution-queue-table">
-          <thead>
-            <tr>
-              <th>Role</th>
-              <th>Target</th>
-              <th>Status</th>
-              <th>Wait Reason</th>
-              <th>Priority</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {queue.map((entry) => (
-              <tr key={entry.id} className={`entry-status-${entry.status}`}>
-                <td>{entry.role}</td>
-                <td>
-                  {entry.taskId && <span className="entry-task">Task: {entry.taskId}</span>}
-                  {entry.epicId && <span className="entry-epic">Epic: {entry.epicId}</span>}
-                </td>
-                <td>{entry.status.toUpperCase()}</td>
-                <td className="wait-reason">
-                  {entry.waitReason ? (
-                    <span title={entry.waitReason.message}>{entry.waitReason.type}</span>
-                  ) : (
-                    '-'
-                  )}
-                </td>
-                <td className={`priority-${entry.priority}`}>{entry.priority.toUpperCase()}</td>
-                <td className="entry-actions">
-                  {entry.status !== 'blocked' && (
-                    <button onClick={() => handlePause(entry.id)}>
-                      Pause
-                    </button>
-                  )}
-                  <button onClick={() => handleCancel(entry.id)}>Cancel</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+      {mutationError && <p className="inline-alert" role="alert">Unable to cancel run: {mutationError}</p>}
 
-      <section className="execution-summary">
-        <h2>Summary</h2>
-        <div className="summary-stats">
-          <div className="stat">
-            <span className="stat-value">{queue.filter((e) => e.status === 'running').length}</span>
-            <span className="stat-label">Running</span>
-          </div>
-          <div className="stat">
-            <span className="stat-value">{queue.filter((e) => e.status === 'queued' || e.status === 'waiting').length}</span>
-            <span className="stat-label">Queued</span>
-          </div>
-          <div className="stat">
-            <span className="stat-value">{queue.filter((e) => e.status === 'blocked').length}</span>
-            <span className="stat-label">Blocked</span>
-          </div>
-        </div>
+      <section aria-label="Execution summary" className="metric-grid">
+        <div><span className="metric-value">{data.running.length}</span><span className="metric-label">Running</span></div>
+        <div><span className="metric-value">{data.waiting.length}</span><span className="metric-label">Waiting</span></div>
+        <div><span className="metric-value">{data.blocked.length}</span><span className="metric-label">Blocked</span></div>
+      </section>
+
+      <section aria-label="Execution queue" className="table-card">
+        <div className="section-heading"><h2>Queue</h2><p>Reasons come from the scheduler projection.</p></div>
+        {rows.length === 0 ? <p className="empty-state">No active, waiting, or blocked work.</p> : (
+          <div className="table-scroll"><table className="execution-queue-table"><thead><tr><th>Role</th><th>Target</th><th>Status</th><th>Wait reason</th><th aria-label="Actions" /></tr></thead><tbody>
+            {rows.map((entry) => <tr key={`${entry.kind}-${entry.id}`}><td>{entry.role}</td><td>{entry.target}</td><td><span className="status-chip">{entry.status}</span></td><td>{entry.reason ? <><strong>{entry.reason.code}</strong><span className="reason-message">{entry.reason.message}</span></> : '—'}</td><td>{entry.kind === 'run' && <button type="button" className="danger-button" onClick={() => void cancelRun(entry.id)}>Cancel</button>}</td></tr>)}
+          </tbody></table></div>
+        )}
       </section>
     </div>
   );

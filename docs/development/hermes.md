@@ -18,7 +18,7 @@ pnpm hermes:check
 ## Запуск implementation plan
 
 ```bash
-pnpm hermes:execute -- docs/superpowers/plans/<file>.md
+pnpm hermes:execute -- docs/architecture/plans/<file>.md
 ```
 
 ## Интерактивный запуск

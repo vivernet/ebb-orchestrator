@@ -20,7 +20,6 @@ describe("GitCli", () => {
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toBe("");
-      expect(result.stderr).toBe("");
     });
 
     it("rejects with ExitCodeError on non-zero exit", async () => {

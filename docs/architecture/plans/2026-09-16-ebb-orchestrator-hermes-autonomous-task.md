@@ -8,7 +8,7 @@
 
 **Технологический стек:** Hermes CLI; stdio MCP; TypeScript/Zod контракты; Node process adapter; существующие модули Action Gateway/Git/Workflow.
 
-**Спецификация:** `docs/superpowers/specs/2026-09-16-ebb-orchestrator-design.md`
+**Спецификация:** `docs/architecture/specs/2026-09-16-ebb-orchestrator-design.md`
 
 ## Глобальные ограничения
 

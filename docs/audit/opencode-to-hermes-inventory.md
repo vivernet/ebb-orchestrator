@@ -60,7 +60,7 @@ Type: ACTIVE_CONFIG (gitignored)
 
 ## Behaviors To Preserve
 
-1. **Plan execution flow**: Execute tasks in order from docs/superpowers/plans/
+1. **Plan execution flow**: Execute tasks in order from docs/architecture/plans/
 2. **Subagent limit**: Max 2 concurrent subagents (enforced by policy)
 3. **Review discipline**: implementer → reviewer → fix → re-review loop
 4. **Final review**: Whole-branch review after all tasks complete
@@ -100,6 +100,6 @@ From package.json:
 
 ## Documentation References
 
-- docs/superpowers/specs/2026-09-16-ebb-orchestrator-design.md
+- docs/architecture/specs/2026-09-16-ebb-orchestrator-design.md
 - AGENTS.md
 - README.md

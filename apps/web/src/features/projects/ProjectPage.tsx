@@ -11,11 +11,19 @@ interface ProjectPageProps {
  */
 export default function ProjectPage({ id }: ProjectPageProps) {
   const [projection, setProjection] = useState<ProjectOverviewProjection | null>(null);
-  useEffect(() => { void apiClient.get<ProjectOverviewProjection>(`/projects/${encodeURIComponent(id)}`).then(setProjection).catch(() => undefined); }, [id]);
+  const [error, setError] = useState<string | null>(null);
+  const [retry, setRetry] = useState(0);
+  useEffect(() => {
+    setError(null);
+    void apiClient.get<ProjectOverviewProjection>(`/projects/${encodeURIComponent(id)}`).then(setProjection).catch((cause: unknown) => {
+      setError(cause instanceof Error ? cause.message : 'unknown error');
+    });
+  }, [id, retry]);
   const project = projection?.project;
   return (
     <div className="project-page">
       <h1>Project: {project?.displayName ?? project?.name ?? id}</h1>
+      {error && <p className="inline-alert" role="alert">Unable to load project: {error} <button type="button" onClick={() => setRetry((value) => value + 1)}>Retry</button></p>}
       <section aria-label="Project details">
         <h2>Details</h2>
         <p>{project ? `${project.status} · ${project.name}` : 'Loading project projection…'}</p>

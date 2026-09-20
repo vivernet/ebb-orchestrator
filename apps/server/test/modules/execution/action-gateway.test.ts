@@ -17,7 +17,7 @@ describe('ActionGateway', () => {
     workspaceDir = path.join(testDir, 'workspace');
     fs.mkdirSync(workspaceDir, { recursive: true });
     resolver = new PathResolver();
-    gateway = new ActionGateway(resolver, workspaceDir, ['workspace.read', 'workspace.patch', 'project.test']);
+    gateway = new ActionGateway(resolver, workspaceDir, ['workspace.read', 'workspace.search', 'workspace.patch', 'project.test']);
   });
 
    afterEach(() => {
@@ -34,9 +34,18 @@ describe('ActionGateway', () => {
       fs.writeFileSync(file, 'content');
       
       const result = await gateway.readFile('test.txt');
-      console.log('debug result:', result);
       expect(result.success).toBe(true);
       expect(result.content).toBe('content');
+    });
+
+    it('denies reads when the run capability excludes workspace.read', async () => {
+      fs.writeFileSync(path.join(workspaceDir, 'test.txt'), 'content');
+      const readOnlyByName = new ActionGateway(resolver, workspaceDir, []);
+
+      await expect(readOnlyByName.readFile('test.txt')).resolves.toMatchObject({
+        success: false,
+        error: expect.stringContaining('workspace.read'),
+      });
     });
 
     it('should deny read outside workspace', async () => {
@@ -59,6 +68,21 @@ describe('ActionGateway', () => {
       expect(results.length).toBeGreaterThan(0);
     });
 
+    it('treats the supplied pattern as literal text and caps the result count', async () => {
+      for (let index = 0; index < 110; index += 1) {
+        fs.writeFileSync(path.join(workspaceDir, `result-${index}.txt`), 'literal [needle]');
+      }
+
+      await expect(gateway.search('[needle]', '*.txt')).resolves.toHaveLength(100);
+    });
+
+    it('denies searches when the run capability excludes workspace.search', async () => {
+      fs.writeFileSync(path.join(workspaceDir, 'test.txt'), 'content');
+      const withoutSearch = new ActionGateway(resolver, workspaceDir, ['workspace.read']);
+
+      await expect(withoutSearch.search('content', '*.txt')).resolves.toEqual([]);
+    });
+
     it('should not search outside workspace', async () => {
       const fileOutside = path.join(testDir, 'outside.txt');
       fs.writeFileSync(fileOutside, 'outside content');
@@ -74,9 +98,50 @@ describe('ActionGateway', () => {
       fs.writeFileSync(file, 'initial');
       
       const result = await gateway.patch('test.txt', [
-        { start: 0, end: 8, content: 'modified' }
+        { start: 0, end: 7, content: 'modified' }
       ]);
       expect(result.success).toBe(true);
+    });
+
+    it('rejects invalid patch ranges without changing the file', async () => {
+      const file = path.join(workspaceDir, 'test.txt');
+      fs.writeFileSync(file, 'initial');
+
+      const result = await gateway.patch('test.txt', [
+        { start: -1, end: 1, content: 'modified' },
+      ]);
+
+      expect(result.success).toBe(false);
+      expect(fs.readFileSync(file, 'utf8')).toBe('initial');
+    });
+
+    it('rejects a file replaced between verification and descriptor acquisition', async () => {
+      const file = path.join(workspaceDir, 'test.txt');
+      const replacement = path.join(testDir, 'replacement.txt');
+      fs.writeFileSync(file, 'initial');
+      fs.writeFileSync(replacement, 'replacement');
+
+      let replaced = false;
+      const swappingGateway = new ActionGateway(
+        resolver,
+        workspaceDir,
+        ['workspace.read', 'workspace.search', 'workspace.patch', 'project.test'],
+        undefined,
+        (filePath, flags) => {
+          if (!replaced && filePath === file) {
+            fs.renameSync(replacement, file);
+            replaced = true;
+          }
+          return fs.openSync(filePath, flags);
+        },
+      );
+
+      const result = await swappingGateway.patch('test.txt', [
+        { start: 0, end: 7, content: 'modified' },
+      ]);
+
+      expect(result.success).toBe(false);
+      expect(fs.readFileSync(file, 'utf8')).toBe('replacement');
     });
 
     it('should deny patch outside workspace', async () => {

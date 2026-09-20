@@ -34,7 +34,67 @@ function makeApp() {
   return createApp({ db, scheduler, runtime: mockRuntime });
 }
 
+function makeAppWithDatabase() {
+  const db = createSqliteDatabase(":memory:");
+  runMigrations(db, migrations);
+  const scheduler = new SchedulerService(db);
+  return { app: createApp({ db, scheduler, runtime: mockRuntime }), db };
+}
+
 describe("orchestrator read API", () => {
+  it("fails closed when onboarding activation has no persisted semantic approval authority", async () => {
+    const { app, db } = makeAppWithDatabase();
+    const now = "2026-09-20T00:00:00.000Z";
+    db.run(
+      "INSERT INTO projects (id, name, display_name, status, created_at, updated_at) VALUES ($id, $name, $displayName, 'ACTIVE', $now, $now)",
+      { id: "project-1", name: "project", displayName: "Project", now },
+    );
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/onboarding/project-1/activate",
+      headers: {
+        authorization: `Bearer ${app.sessionToken}`,
+        origin: "http://127.0.0.1:3000",
+        "x-csrf-token": app.csrfToken,
+      },
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(JSON.parse(response.body)).toMatchObject({ error: expect.stringContaining("semantic approval") });
+    expect(db.get<{ status: string }>("SELECT status FROM projects WHERE id = $id", { id: "project-1" })?.status).toBe("ACTIVE");
+    await app.close();
+    db.close();
+  });
+
+  it("exposes a safe Agent Run detail projection without prompt or capability data", async () => {
+    const { app, db } = makeAppWithDatabase();
+    db.run(
+      `INSERT INTO agent_runs (id, role, runtime, model, status, task_id, trigger_reason, started_at, input_tokens, cached_input_tokens, output_tokens, cost, prompt, capability_ref)
+       VALUES ($id, $role, $runtime, $model, $status, $task_id, $trigger_reason, $started_at, $input_tokens, $cached_input_tokens, $output_tokens, $cost, $prompt, $capability_ref)`,
+      {
+        id: "run-1", role: "Developer", runtime: "hermes", model: "model", status: "IN_PROGRESS", task_id: "task-1",
+        trigger_reason: "DEVELOPMENT", started_at: "2026-09-20T00:00:00.000Z", input_tokens: 10, cached_input_tokens: 2,
+        output_tokens: 3, cost: 0.42, prompt: "sensitive prompt", capability_ref: "sensitive-capability",
+      },
+    );
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/v1/runs/run-1",
+      headers: { authorization: `Bearer ${app.sessionToken}` },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body)).toEqual({
+      id: "run-1", role: "Developer", runtime: "hermes", model: "model", status: "IN_PROGRESS", taskId: "task-1", epicId: null,
+      triggerReason: "DEVELOPMENT", startedAt: "2026-09-20T00:00:00.000Z", endedAt: null,
+      usage: { inputTokens: 10, cachedTokens: 2, outputTokens: 3, cost: 0.42 },
+    });
+    await app.close();
+    db.close();
+  });
+
   it.each([
     "/api/v1/dashboard",
     "/api/v1/projects/project-1",

@@ -6,6 +6,17 @@ import UsagePage from '../src/features/usage/UsagePage.js';
 import { apiClient } from '../src/api/client.js';
 
 describe('Onboarding DETECTED vs PROPOSED separation', () => {
+  test('does not request an invalid onboarding endpoint when no project is selected', () => {
+    const get = vi.spyOn(apiClient, 'get');
+
+    render(<ProjectOnboardingPage id="" />);
+
+    expect(screen.getByRole('heading', { name: 'Project onboarding' })).toBeInTheDocument();
+    expect(screen.getByText(/select a project/i)).toBeInTheDocument();
+    expect(get).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
+
   test('renders detected branch/package manager separately from Coordinator proposals', async () => {
     vi.spyOn(apiClient, 'get').mockResolvedValue({
       projectId: '1',
@@ -35,7 +46,8 @@ describe('Onboarding DETECTED vs PROPOSED separation', () => {
     expect(screen.getByText(/Workflow: standard/)).toBeInTheDocument();
     expect(screen.getByText(/Roles: Developer, Reviewer, QA/)).toBeInTheDocument();
 
-    expect(screen.getByRole('button', { name: /Activate/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Activate/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/activation is unavailable/i)).toBeInTheDocument();
     vi.restoreAllMocks();
   });
 
@@ -53,12 +65,12 @@ describe('Onboarding DETECTED vs PROPOSED separation', () => {
     render(<ProjectOnboardingPage id="1" />);
 
     await waitFor(() => expect(screen.getAllByText('DETECTED')).toHaveLength(1));
-    const activateButton = screen.getByRole('button', { name: /Activate/i });
-    expect(activateButton).toBeDisabled();
+    expect(screen.queryByRole('button', { name: /Activate/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/does not expose a client-side bypass/i)).toBeInTheDocument();
     vi.restoreAllMocks();
   });
 
-  test('activation can proceed when semantic config is approved', async () => {
+  test('does not fabricate an activation action without backend authority', async () => {
     vi.spyOn(apiClient, 'get').mockResolvedValue({
       projectId: '1',
       repository: { path: '/repo', remoteUrl: 'https://github.com/test/repo.git' },
@@ -72,8 +84,8 @@ describe('Onboarding DETECTED vs PROPOSED separation', () => {
     render(<ProjectOnboardingPage id="1" />);
 
     await waitFor(() => expect(screen.getAllByText('DETECTED')).toHaveLength(1));
-    const activateButton = screen.getByRole('button', { name: /Activate/i });
-    expect(activateButton).toBeEnabled();
+    expect(screen.queryByRole('button', { name: /Activate/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/activation is unavailable/i)).toBeInTheDocument();
     vi.restoreAllMocks();
   });
 });

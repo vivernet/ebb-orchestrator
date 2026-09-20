@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { PathResolver } from '../../../src/platform/security/path-resolver.js';
 
 describe('PathResolver', () => {
@@ -25,12 +28,22 @@ describe('PathResolver', () => {
   });
 
   describe('resolveSafePath', () => {
+    it('returns a canonical absolute path for an existing workspace', async () => {
+      const workspace = mkdtempSync(join(tmpdir(), 'path-resolver-'));
+      try {
+        const result = await resolver.resolveSafePath(workspace, 'nested/file.txt');
+        expect(result).toEqual({ success: true, path: resolve(workspace, 'nested/file.txt') });
+      } finally {
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    });
+
     it('should resolve valid paths within workspace', async () => {
       const workspace = '/workspace/project';
       const target = '/workspace/project/src/file.ts';
       const result = await resolver.resolveSafePath(workspace, target);
       expect(result.success).toBe(true);
-      expect(result.path).toBe('workspace/project/src/file.ts');
+      expect(result.path).toBe(resolve(workspace, target));
     });
 
     it('should reject path traversal', async () => {

@@ -8,6 +8,9 @@
  *                    CSRF protection, closed CORS, SSE for live updates.
  */
 import Fastify, { type FastifyInstance } from "fastify";
+import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
+import { extname, isAbsolute, relative, resolve, sep } from "node:path";
+import { timingSafeEqual } from "node:crypto";
 import {
   createLocalSession,
   type LocalSession,
@@ -38,6 +41,8 @@ import { secretsRoutes } from "./routes/secrets.js";
 import type { GitHubSyncWorker } from "../modules/github/github-sync-worker.js";
 import type { DiagnosticsService } from "../platform/diagnostics/diagnostics-service.js";
 
+const LOCAL_SESSION_COOKIE = "ebb_local_session";
+
 export interface AppDeps {
   /** Loopback host (default "127.0.0.1"). */
   host?: string;
@@ -53,12 +58,16 @@ export interface AppDeps {
   runtime?: AgentRuntime;
   github?: { worker: GitHubSyncWorker; repository: string };
   diagnostics?: DiagnosticsService;
+  /** Абсолютный путь к собранному Vite bundle для same-origin production UI. */
+  webRoot?: string;
 }
 
 export interface OrchestratorApp extends FastifyInstance {
-  /** The bearer token required for protected routes. */
+  /** Bearer-токен для programmatic callers; browser использует HttpOnly cookie. */
   sessionToken: string;
   csrfToken: string;
+  /** Одноразовый capability, который trusted launcher передаёт UI через URL fragment. */
+  bootstrapToken: string | null;
 }
 
 /**
@@ -88,20 +97,26 @@ export function createApp(deps: AppDeps): OrchestratorApp {
   // Expose the token on the instance so callers (tests, main) can read it.
   app.sessionToken = session.token;
   app.csrfToken = session.csrfToken;
+  app.bootstrapToken = session.bootstrapToken;
 
   // ── Global security hook ───────────────────────────────────────────
   // Skip authentication for the health endpoint; everything else requires
-  // a valid bearer token.  Mutating methods (POST/PUT/PATCH/DELETE) also
+  // a valid bearer token or the HttpOnly browser session cookie. Mutating methods also
   // require a matching Origin header to prevent CSRF.
   app.addHook("preHandler", async (request, reply) => {
-    const url: string = request.url;
+    const url = new URL(request.url, session.allowedOrigin).pathname;
+
+    // Built Web UI assets do not carry authority. Every API route remains
+    // behind the local session boundary below.
+    if (!url.startsWith("/api/v1/")) return;
 
     // Health is public – no auth, no origin check.
     if (url === "/api/v1/health" || url === "/api/v1/session/bootstrap") return;
 
     // ── 1. Authentication ────────────────────────────────────────────
     const auth = request.headers.authorization;
-    if (auth !== `Bearer ${session.token}`) {
+    const sessionCookie = readCookie(request.headers.cookie, LOCAL_SESSION_COOKIE);
+    if (auth !== `Bearer ${session.token}` && sessionCookie !== session.token) {
       reply.code(401).send({ error: "unauthorized" });
       return reply;
     }
@@ -126,8 +141,22 @@ export function createApp(deps: AppDeps): OrchestratorApp {
   // ── Routes ─────────────────────────────────────────────────────────
   // Public
   app.register(healthRoutes);
-  app.get("/api/v1/session/bootstrap", async () => ({
-    sessionToken: session.token,
+  app.get("/api/v1/session/bootstrap", async (request, reply) => {
+    const supplied = request.headers["x-ebb-bootstrap-token"];
+    if (typeof supplied !== "string" || !session.bootstrapToken || !safeEquals(supplied, session.bootstrapToken)) {
+      return reply.code(401).send({ error: "unauthorized" });
+    }
+
+    session.bootstrapToken = null;
+    app.bootstrapToken = null;
+    reply.header("set-cookie", createSessionCookie(session.token));
+    return {
+      sessionToken: session.token,
+      csrfToken: session.csrfToken,
+      origin: session.allowedOrigin,
+    };
+  });
+  app.get("/api/v1/session", async () => ({
     csrfToken: session.csrfToken,
     origin: session.allowedOrigin,
   }));
@@ -154,5 +183,92 @@ export function createApp(deps: AppDeps): OrchestratorApp {
     return { ok: true };
   });
 
+  if (deps.webRoot) registerWebUiRoutes(app, deps.webRoot);
+
   return app;
+}
+
+function safeEquals(actual: string, expected: string): boolean {
+  const actualBuffer = Buffer.from(actual);
+  const expectedBuffer = Buffer.from(expected);
+  return actualBuffer.length === expectedBuffer.length && timingSafeEqual(actualBuffer, expectedBuffer);
+}
+
+/** Создаёт неперсистентную browser-session cookie, недоступную JavaScript. */
+function createSessionCookie(token: string): string {
+  return `${LOCAL_SESSION_COOKIE}=${token}; HttpOnly; SameSite=Strict; Path=/api/v1`;
+}
+
+/** Извлекает известную cookie без интерпретации остальных недоверенных значений. */
+function readCookie(header: string | undefined, name: string): string | null {
+  if (!header) return null;
+  for (const part of header.split(";")) {
+    const separator = part.indexOf("=");
+    if (separator < 1) continue;
+    if (part.slice(0, separator).trim() === name) return part.slice(separator + 1).trim();
+  }
+  return null;
+}
+
+function registerWebUiRoutes(app: FastifyInstance, webRoot: string): void {
+  if (!existsSync(webRoot)) return;
+  let root: string;
+  try {
+    if (!lstatSync(webRoot).isDirectory()) return;
+    root = realpathSync(webRoot);
+  } catch {
+    return;
+  }
+
+  const serveIndex = (reply: { type(contentType: string): { send(value: string | Buffer): unknown } }) =>
+    reply.type("text/html; charset=utf-8").send(readFileSync(resolve(root, "index.html")));
+
+  app.get("/", async (_request, reply) => serveIndex(reply));
+  app.get<{ Params: { "*": string } }>("/*", async (request, reply) => {
+    const rawPath = request.params["*"];
+    if (rawPath.startsWith("api/")) return reply.code(404).send({ error: "not found" });
+
+    let requested: string;
+    try {
+      requested = decodeURIComponent(rawPath);
+    } catch {
+      return reply.code(400).send({ error: "invalid path" });
+    }
+    const candidate = resolve(root, requested);
+    if (!isWithinRoot(root, candidate)) return reply.code(404).send({ error: "not found" });
+
+    try {
+      const canonicalCandidate = realpathSync(candidate);
+      if (!isWithinRoot(root, canonicalCandidate) || !lstatSync(canonicalCandidate).isFile()) {
+        return reply.code(404).send({ error: "not found" });
+      }
+      return reply.type(contentTypeFor(canonicalCandidate)).send(readFileSync(canonicalCandidate));
+    } catch {
+      if (extname(requested)) return reply.code(404).send({ error: "not found" });
+      return serveIndex(reply);
+    }
+  });
+}
+
+function isWithinRoot(root: string, candidate: string): boolean {
+  const pathFromRoot = relative(root, candidate);
+  return pathFromRoot === "" || (
+    pathFromRoot !== ".."
+    && !pathFromRoot.startsWith(`..${sep}`)
+    && !isAbsolute(pathFromRoot)
+  );
+}
+
+function contentTypeFor(filePath: string): string {
+  switch (extname(filePath).toLowerCase()) {
+    case ".css": return "text/css; charset=utf-8";
+    case ".js": return "text/javascript; charset=utf-8";
+    case ".svg": return "image/svg+xml";
+    case ".json": return "application/json; charset=utf-8";
+    case ".png": return "image/png";
+    case ".jpg":
+    case ".jpeg": return "image/jpeg";
+    case ".ico": return "image/x-icon";
+    default: return "application/octet-stream";
+  }
 }
