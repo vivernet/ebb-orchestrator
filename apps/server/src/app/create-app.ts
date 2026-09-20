@@ -46,6 +46,8 @@ import { OnboardingService } from "../modules/projects/onboarding-service.js";
 import { DependencyService } from "../modules/work/dependency-service.js";
 import { dependencyRoutes, type DependencyCommandService } from "./routes/dependencies.js";
 import { finalMergeRoutes, type FinalMergeServiceFactory } from "./routes/final-merge.js";
+import { epicRoutes } from "./routes/epics.js";
+import type { EpicOrchestrator } from "../modules/planning/epic-orchestrator.js";
 
 const LOCAL_SESSION_COOKIE = "ebb_local_session";
 
@@ -63,6 +65,8 @@ export interface AppDeps {
   dependencyService?: DependencyCommandService;
   /** Optional authority-bound factory; production default uses MergeService. */
   finalMergeServiceFactory?: FinalMergeServiceFactory;
+  /** Production Epic planning/orchestration facade. */
+  epicOrchestrator?: Pick<EpicOrchestrator, "start" | "approveAndRun">;
   /** Production must provide the single shared SchedulerService instance. */
   scheduler: SchedulerService;
   /** Production must provide the real runtime. Test doubles belong in test deps. */
@@ -186,6 +190,7 @@ export function createApp(deps: AppDeps): OrchestratorApp {
     await workRoutes(instance, { db: deps.db, workService, scheduler });
     await dependencyRoutes(instance, { db: deps.db, dependencyService });
     await finalMergeRoutes(instance, { db: deps.db, mergeServiceFactory: deps.finalMergeServiceFactory, workflow });
+    await epicRoutes(instance, { db: deps.db, epicOrchestrator: deps.epicOrchestrator });
     await approvalRoutes(instance, { db: deps.db, approvalService });
     await runRoutes(instance, { db: deps.db, runService, scheduler, workflow });
     await onboardingRoutes(instance, {

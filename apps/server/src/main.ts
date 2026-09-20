@@ -42,6 +42,10 @@ import { WorkflowRegistry } from "./modules/workflow/workflow-registry.js";
 import { templates } from "./modules/workflow/templates.js";
 import { KeyringSecretStore } from "./platform/security/keyring-secret-store.js";
 import { createInfisicalSecretStore, resolveInfisicalSecretStoreOptions } from "./platform/security/infisical-secret-store.js";
+import { PlanningService } from "./modules/planning/planning-service.js";
+import { EpicOrchestrator, type IntegrationServiceFactory } from "./modules/planning/epic-orchestrator.js";
+import { IntegrationService } from "./modules/git/integration-service.js";
+import { MergeService, type MergeResult } from "./modules/git/merge-service.js";
 
 const host = "127.0.0.1";
 const port = Number(process.env["PORT"] ?? 3000);
@@ -85,12 +89,27 @@ const eventDispatcher = new EventDispatcher(database, eventBus);
 const runService = new RunService(database, runtime);
 const runtimeOrchestrator = new RuntimeOrchestrator(database, workflowEngine, eventBus, eventDispatcher, scheduler, runService);
 runtimeOrchestrator.initialize();
+const planningService = new PlanningService(database);
+const integrationServiceFactory: IntegrationServiceFactory = ({ worktreeRoot, epicId, taskId }) => new IntegrationService({
+  database,
+  worktreeDir: join(worktreeRoot, epicId, taskId),
+});
+const epicMergeAuthority = createEpicMergeAuthority(database);
+const epicOrchestrator = new EpicOrchestrator(
+  database,
+  workflowEngine,
+  planningService,
+  runService,
+  epicMergeAuthority,
+  scheduler,
+  { integrationServiceFactory, integrationWorktreeRoot: join(home.worktrees, "epic-integration") },
+);
 const infisicalOptions = resolveInfisicalSecretStoreOptions(process.env);
 const secretStore = infisicalOptions
   ? createInfisicalSecretStore(database, infisicalOptions)
   : new KeyringSecretStore(database);
 
-const app = createApp({ host, port, db: database, scheduler, runtime, runService, secretStore, ...(existsSync(webRoot) ? { webRoot } : {}) });
+const app = createApp({ host, port, db: database, scheduler, runtime, runService, secretStore, epicOrchestrator, ...(existsSync(webRoot) ? { webRoot } : {}) });
 
 // Регистрирует шаги reconciliation которые будут запущены после migrations.
 const reconciler = {
@@ -195,4 +214,36 @@ function openLocalUi(url: string): void {
     console.error("[orchestrator] unable to open the local web UI automatically");
   });
   child.unref();
+}
+
+/**
+ * Возвращает только authority-bound Epic merge facade. Репозиторий выбирается
+ * из активного onboarding по Epic; клиентские refs и paths в этот слой не попадают.
+ */
+function createEpicMergeAuthority(db: typeof database): {
+  mergeApproved(subjectId: string, approvalId: string): Promise<MergeResult>;
+  mergeApprovedForIntegration(subjectId: string, approvalId: string, integrationRunId: string): Promise<MergeResult>;
+} {
+  const resolveRepository = (epicId: string): string => {
+    const row = db.get<{ repository_path: string }>(
+      `SELECT oc.repository_path
+         FROM onboarding_configs oc
+         JOIN approvals a ON a.id=oc.approval_id
+         JOIN epics e ON e.project_id=oc.project_id
+        WHERE e.id=$epicId AND oc.status='ACTIVE'
+          AND a.type='WORKFLOW_CHANGE' AND a.status='APPROVED'`,
+      { epicId },
+    );
+    if (!row?.repository_path) throw new Error("active onboarding repository is required");
+    return row.repository_path;
+  };
+  return {
+    async mergeApproved(subjectId, approvalId) {
+      throw new Error(`Epic merge requires exact Integration provenance: ${subjectId}:${approvalId}`);
+    },
+    async mergeApprovedForIntegration(subjectId, approvalId, integrationRunId) {
+      const service = new MergeService({ database: db, repoPath: resolveRepository(subjectId) });
+      return service.mergeApprovedForIntegration(subjectId, approvalId, integrationRunId);
+    },
+  };
 }
