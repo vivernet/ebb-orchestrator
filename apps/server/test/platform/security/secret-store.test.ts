@@ -8,6 +8,8 @@ import { createSqliteDatabase } from '../../../src/platform/database/sqlite-data
 import { runMigrations, type Migration } from '../../../src/platform/database/migrator.js';
 import { InMemorySecretStore } from '../../../src/platform/security/secret-store.js';
 import { SecretRedactor } from '../../../src/platform/security/secret-redactor.js';
+import { KeyringSecretStore } from '../../../src/platform/security/keyring-secret-store.js';
+import type { Database } from '../../../src/platform/database/database.js';
 
 const migrationsDir = join(import.meta.dirname, '../../../src/platform/database/migrations');
 const migrations: Migration[] = readdirSync(migrationsDir)
@@ -23,11 +25,12 @@ const migrations: Migration[] = readdirSync(migrationsDir)
 describe('SecretStore no-plaintext', () => {
   let tempDir: string;
   let db: InMemorySecretStore;
+  let sqliteDb: Database;
 
   beforeEach(async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'orchestrator-test-'));
     const dbPath = join(tempDir, `test-${randomUUID()}.db`);
-    const sqliteDb = createSqliteDatabase(dbPath);
+    sqliteDb = createSqliteDatabase(dbPath);
     runMigrations(sqliteDb, migrations);
     db = new InMemorySecretStore(sqliteDb);
   });
@@ -47,6 +50,39 @@ describe('SecretStore no-plaintext', () => {
       expect(metadata).toBeDefined();
       expect(metadata?.referenceId).toBe(refId);
       expect(metadata?.value).toBeUndefined();
+    });
+  });
+
+  describe('KeyringSecretStore availability', () => {
+    it('rejects store when the keyring backend is unavailable', async () => {
+      const StoreWithBackend = KeyringSecretStore as unknown as new (
+        database: Database,
+        options: { backend: undefined },
+      ) => KeyringSecretStore;
+      const store = new StoreWithBackend(sqliteDb, { backend: undefined });
+
+      await expect(store.store('service', 'name', 'secret-value')).rejects.toThrow('Secret storage is unavailable');
+      expect(await store.listMetadata('service')).toEqual([]);
+    });
+
+    it('compensates keyring storage when metadata persistence fails', async () => {
+      const calls: string[] = [];
+      const backend = {
+        async setPassword(): Promise<void> { calls.push('set'); },
+        async getPassword(): Promise<string | undefined> { return undefined; },
+        async deletePassword(): Promise<void> { calls.push('delete'); },
+      };
+      const failingDb = {
+        run(): never { throw new Error('metadata write failed'); },
+      } as unknown as Database;
+      const StoreWithBackend = KeyringSecretStore as unknown as new (
+        database: Database,
+        options: { backend: typeof backend },
+      ) => KeyringSecretStore;
+      const store = new StoreWithBackend(failingDb, { backend });
+
+      await expect(store.store('service', 'name', 'secret-value')).rejects.toThrow('metadata write failed');
+      expect(calls).toEqual(['set', 'delete']);
     });
   });
 

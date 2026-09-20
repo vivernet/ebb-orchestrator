@@ -3,13 +3,14 @@
  * Note: No endpoint returns secret plaintext after storage.
  */
 import type { FastifyInstance } from "fastify";
-import { InMemorySecretStore } from '../../platform/security/secret-store.js';
+import { InMemorySecretStore, isSecretStoreUnavailableError, type SecretStore } from '../../platform/security/secret-store.js';
 import { KeyringSecretStore } from '../../platform/security/keyring-secret-store.js';
 import type { Database } from '../../platform/database/database.js';
 
 export interface SecretsRouteDeps {
   db?: Database | undefined;
   useKeyring?: boolean;
+  store?: SecretStore;
 }
 
 /**
@@ -19,9 +20,9 @@ export async function secretsRoutes(
   app: FastifyInstance,
   deps: SecretsRouteDeps = {}
 ): Promise<void> {
-  const store = deps.useKeyring !== false && deps.db
+  const store = deps.store ?? (deps.useKeyring !== false && deps.db
     ? new KeyringSecretStore(deps.db)
-    : new InMemorySecretStore(deps.db);
+    : new InMemorySecretStore(deps.db));
 
   // Store a secret
   app.post<{ Body: { service: string; name: string; value: string } }>(
@@ -41,7 +42,15 @@ export async function secretsRoutes(
     },
     async (request, reply) => {
       const { service, name, value } = request.body;
-      const result = await store.store(service, name, value);
+      let result;
+      try {
+        result = await store.store(service, name, value);
+      } catch (error) {
+        if (isSecretStoreUnavailableError(error)) {
+          return reply.code(503).send({ error: "secret storage unavailable" });
+        }
+        throw error;
+      }
       // Return metadata only - never the plaintext value
       return reply.code(201).send({
         id: result.id,

@@ -7,6 +7,7 @@ import { createSqliteDatabase } from "../../src/platform/database/sqlite-databas
 import { SchedulerService } from "../../src/modules/scheduler/scheduler-service.js";
 import { runMigrations, type Migration } from "../../src/platform/database/migrator.js";
 import type { AgentRuntime } from "../../src/modules/runtime/agent-runtime.js";
+import type { SecretStore } from "../../src/platform/security/secret-store.js";
 
 const migrationDir = fileURLToPath(new URL("../../src/platform/database/migrations/", import.meta.url));
 const migrations: Migration[] = readdirSync(migrationDir).filter((file) => file.endsWith(".sql")).map((file) => {
@@ -35,6 +36,43 @@ function makeApp() {
 }
 
 describe("local-session security", () => {
+  it("returns 503 without persisting metadata when secret storage is unavailable", async () => {
+    const unavailableStore: SecretStore = {
+      async store() {
+        const error = new Error("Secret storage is unavailable");
+        error.name = "SecretStoreUnavailableError";
+        throw error;
+      },
+      async resolveForService() { return undefined; },
+      async revoke() {},
+      async listMetadata() { return []; },
+    };
+    const db = createSqliteDatabase(":memory:");
+    runMigrations(db, migrations);
+    const app = createApp({
+      db,
+      scheduler: new SchedulerService(db),
+      runtime: mockRuntime,
+      secretStore: unavailableStore,
+    } as Parameters<typeof createApp>[0]);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/secrets",
+      payload: { service: "test", name: "token", value: "must-not-leak" },
+      headers: {
+        authorization: `Bearer ${app.sessionToken}`,
+        origin: "http://127.0.0.1:3000",
+        "x-csrf-token": app.csrfToken,
+      },
+    });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.body).not.toContain("must-not-leak");
+    expect(db.all("SELECT * FROM secrets")).toEqual([]);
+    await app.close();
+  });
+
   it("requires a one-time bootstrap token before disclosing session credentials", async () => {
     const app = makeApp();
     const rejected = await app.inject({ method: "GET", url: "/api/v1/session/bootstrap" });

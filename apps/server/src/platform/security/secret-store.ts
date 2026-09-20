@@ -6,6 +6,20 @@
 
 import type { Database } from '../database/database.js';
 
+/** Сигнализирует, что production SecretStore не может безопасно выполнить операцию. */
+export class SecretStoreUnavailableError extends Error {
+  constructor() {
+    super('Secret storage is unavailable');
+    this.name = 'SecretStoreUnavailableError';
+  }
+}
+
+/** Проверяет typed error без включения secret value в диагностическое сообщение. */
+export function isSecretStoreUnavailableError(error: unknown): boolean {
+  return error instanceof SecretStoreUnavailableError ||
+    (error instanceof Error && error.name === 'SecretStoreUnavailableError');
+}
+
 /**
  * Result of storing a secret.
  */

@@ -40,6 +40,7 @@ import { diagnosticsRoutes } from "./routes/diagnostics.js";
 import { secretsRoutes } from "./routes/secrets.js";
 import type { GitHubSyncWorker } from "../modules/github/github-sync-worker.js";
 import type { DiagnosticsService } from "../platform/diagnostics/diagnostics-service.js";
+import type { SecretStore } from "../platform/security/secret-store.js";
 
 const LOCAL_SESSION_COOKIE = "ebb_local_session";
 
@@ -58,6 +59,8 @@ export interface AppDeps {
   runtime?: AgentRuntime;
   github?: { worker: GitHubSyncWorker; repository: string };
   diagnostics?: DiagnosticsService;
+  /** Production SecretStore; tests may inject an explicit deterministic backend. */
+  secretStore?: SecretStore;
   /** Абсолютный путь к собранному Vite bundle для same-origin production UI. */
   webRoot?: string;
 }
@@ -173,7 +176,10 @@ export function createApp(deps: AppDeps): OrchestratorApp {
     await onboardingRoutes(instance, { db: deps.db });
     await settingsRoutes(instance, { db: deps.db });
     await usageRoutes(instance, { db: deps.db });
-    await secretsRoutes(instance, { db: deps.db });
+    await secretsRoutes(instance, {
+      db: deps.db,
+      ...(deps.secretStore ? { store: deps.secretStore } : {}),
+    });
     if (deps.github) await githubRoutes(instance, deps.github);
     if (deps.diagnostics) await diagnosticsRoutes(instance, deps.diagnostics);
   });
