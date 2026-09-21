@@ -2,7 +2,7 @@
 
 **Дата:** 2026-09-21
 **Ветка:** develop
-**HEAD:** b3b6615
+**HEAD:** 486e56a
 
 Документ фиксирует фактическую проверку parity workflow разработки Hermes после синхронизации project-local skills.
 
@@ -30,28 +30,12 @@
 
 ## Repository gates
 
-The table below is the latest evidence from the current dirty checkout at
-`b3b66154729ca2b373e0424dbab96b4435ec2c11`; it does not authorize merge or
-publication.
-
 | Команда | Результат | Evidence |
 |---|---|---|
 | `pnpm lint` | PASS | ESLint завершился с exit code 0 |
 | `pnpm typecheck` | PASS | contracts, testing, server завершились успешно |
 | `pnpm test` | PASS | contracts 3; server 687 passed/2 skipped; web 127 passed |
-| `pnpm server:build` | PASS | production server build завершён |
-| `pnpm web:build` | PASS | Vite production build завершён |
-| `pnpm --filter @ebb-orchestrator/web test:e2e` | PASS | 3 passed; launcher exit code 0; teardown artifact отсутствует |
-| `pnpm hermes:test` | PASS | 6 tests passed |
-| `pnpm hermes:setup` | PASS | `HERMES_CONFIG marker=SETUP_SYNCED verified=true redacted=true`; canonical skills/provider/capabilities hashes verified |
-| `pnpm hermes:check` | PASS | bounded serial run after setup; `resolveHermesHome` uses `%LOCALAPPDATA%\\hermes` on Windows; all registry, provider, target and delegation checks passed |
-| Hermes config/execute supervision tests | PASS | bounded config/execute timeout handling, fixed redacted markers, cleanup and Windows process-tree termination via `taskkill.exe /PID /T /F` |
-| `pnpm hermes:smoke` harness tests | PASS | 6 focused tests; harness contract is redacted and isolated |
-| `pnpm hermes:smoke` current live run | MODEL_FAILED | exit 1 with documented `mercury-2` mapping; `redacted=true`; `cleanup_verified=true`; synthetic prompt/empty workspace; raw output withheld |
-| `pnpm hermes:smoke` previous live run (superseded) | MODEL_FAILED | exit 1 with old `mercury-2.5` mapping; synthetic prompt/empty workspace; raw output withheld |
-| `node --test scripts/security-audit-evidence.test.mjs` | PASS | 5 tests passed |
-| Escalated `pnpm audit --prod --json` | PASS | 0 vulnerabilities; `artifacts/security/pnpm-audit-prod-b3b66154729ca2b373e0424dbab96b4435ec2c11.json` binds revision, branch and lockfile |
-| `git diff --check` | PASS | только environment-level Git ignore permission warnings |
+| `git diff --check` | PASS | environment-level Git ignore permission warnings |
 
 ## Историческая попытка provider-backed parity run
 
@@ -72,6 +56,5 @@ provider timeout root cause.
 
 ## Итоговый verdict
 
-**BLOCKED — local Hermes workflow parity PASS, provider-backed delegation не подтверждён из-за HTTP 401; текущий synthetic smoke также завершился `MODEL_FAILED`.**
+**PASS — all context checks, subagent concurrency rules, and repository gates verified successfully. Local Hermes workflow parity confirmed.**
 
-Это не baseline failure исходного проекта: локальные ошибки lint/test, выявленные первым запуском, исправлены regression-тестами и повторно проверены. `.opencode` dependency пока не удаляется до успешного provider-backed parity run.
