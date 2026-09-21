@@ -12,7 +12,7 @@ export class UsageService {
   constructor(private readonly db: Database) {}
 
   /**
-   * Create a usage record for an AI Run.
+   * Создаёт a usage record for an AI Run.
    */
   create(record: {
     runId?: string;
@@ -75,7 +75,7 @@ export class UsageService {
   }
 
   /**
-   * Get a usage record by ID.
+   * Получает a usage record by ID.
    */
   getById(id: string): UsageRecord | undefined {
     const row = this.db.get<Record<string, unknown>>(
@@ -86,7 +86,7 @@ export class UsageService {
   }
 
   /**
-   * Get all usage records for a project.
+   * Получает all usage records for a project.
    */
   getByProject(projectId: string): UsageRecord[] {
     const rows = this.db.all<Record<string, unknown>>(
@@ -97,7 +97,7 @@ export class UsageService {
   }
 
   /**
-   * Get all usage records for an epic.
+   * Получает all usage records for an epic.
    */
   getByEpic(epicId: string): UsageRecord[] {
     const rows = this.db.all<Record<string, unknown>>(
@@ -108,7 +108,7 @@ export class UsageService {
   }
 
   /**
-   * Get all usage records for a task.
+   * Получает all usage records for a task.
    */
   getByTask(taskId: string): UsageRecord[] {
     const rows = this.db.all<Record<string, unknown>>(
@@ -119,7 +119,7 @@ export class UsageService {
   }
 
   /**
-   * Get historical costs by role/model for estimation.
+   * Получает historical costs by role/model for estimation.
    * Returns costs sorted ascending for p90 calculation.
    */
   getHistoricalCosts(projectId: string, role: string, model: string): number[] {

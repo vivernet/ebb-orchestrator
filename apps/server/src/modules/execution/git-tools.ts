@@ -1,6 +1,6 @@
 /**
  * GitTools provides git operations scoped to the capability-assigned worktree.
- * Git operations always resolve from RunCapability's workspace, not from model input.
+ * Операции Git always resolve from RunCapability's workspace, not from model input.
  */
 import { GitCli } from '../../modules/git/git-cli.js';
 

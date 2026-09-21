@@ -35,7 +35,7 @@ function rowToTask(row: TaskRow): Task {
 
 export const WorkRepository = {
   /**
-   * Get the next task display number for a project.
+   * Получает the next task display number for a project.
    */
   nextTaskNumber(tx: DatabaseTx, projectId: string): number {
     const row = tx.get<{ max_num: number | null }>(
@@ -48,7 +48,7 @@ export const WorkRepository = {
   },
 
   /**
-   * Get the next epic display number for a project.
+   * Получает the next epic display number for a project.
    */
   nextEpicNumber(tx: DatabaseTx, projectId: string): number {
     const row = tx.get<{ max_num: number | null }>(
@@ -108,7 +108,7 @@ export const WorkRepository = {
   },
 
   /**
-   * Update a task contract after all task IDs in a plan are known.
+   * Обновляет a task contract after all task IDs in a plan are known.
    */
   updateTaskContract(tx: DatabaseTx, taskId: string, contract: TaskContract): void {
     tx.run(
@@ -159,7 +159,7 @@ export const WorkRepository = {
   },
 
   /**
-   * Get a task by ID.
+   * Получает a task by ID.
    */
   getTaskById(tx: DatabaseTx, taskId: string): Task | undefined {
     const row = tx.get<TaskRow>(
@@ -170,7 +170,7 @@ export const WorkRepository = {
   },
 
   /**
-   * Update a task's epic_id.
+   * Обновляет a task's epic_id.
    */
   setTaskEpicId(tx: DatabaseTx, taskId: string, epicId: string | null): void {
     const now = new Date().toISOString();
@@ -181,7 +181,7 @@ export const WorkRepository = {
   },
 
   /**
-   * Update a task's status.
+   * Обновляет a task's status.
    */
   setTaskStatus(tx: DatabaseTx, taskId: string, status: TaskStatus): Task {
     const now = new Date().toISOString();

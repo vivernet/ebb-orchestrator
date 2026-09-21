@@ -1,5 +1,5 @@
 /**
- * Context Budget для Orchestrator Hermes.
+ * Контекст Budget для Orchestrator Hermes.
  * Реализует детерминированное сокращение контекста при превышении бюджета.
  * Сначала удаляет P3, затем P2 и никогда не удаляет P0.
  */
@@ -10,7 +10,7 @@ import type { Priority } from "./context-types.js";
 const TOKENS_PER_ITEM = 100;
 
 /**
- * Context Budget — детерминированное сокращение при превышении бюджета контекста.
+ * Контекст Budget — детерминированное сокращение при превышении бюджета контекста.
  * LLM summarization не используется.
  */
 export class ContextBudget {

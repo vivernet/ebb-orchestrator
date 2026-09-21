@@ -1,20 +1,20 @@
 /**
- * Built-in workflow templates.
+ * Встроенные workflow templates.
  *
- * Each template defines the allowed stages and transitions for a particular
- * workflow type. The `standard` template covers the full standalone task
+ * Каждый template defines the allowed stages and transitions for a particular
+ * workflow type. Этот `standard` template covers the full standalone task
  * lifecycle; others provide simplified flows for common patterns.
  */
 
 import type { WorkflowTemplate } from "./workflow-types.js";
 
 /**
- * Standard standalone task workflow.
+ * Стандартный standalone task workflow.
  *
- * Covers: DRAFT → READY → DEVELOPMENT → REVIEW → QA → INTEGRATION →
+ * Охватывает: DRAFT → READY → DEVELOPMENT → REVIEW → QA → INTEGRATION →
  * READY_FOR_MERGE → MERGING → DONE → RELEASED
  *
- * Also includes BLOCKED, WAITING_FOR_DEPENDENCY, WAITING_FOR_APPROVAL,
+ * Также includes BLOCKED, WAITING_FOR_DEPENDENCY, WAITING_FOR_APPROVAL,
  * PAUSED, FAILED, and CANCELLED from any non-terminal state.
  */
 export const standard: WorkflowTemplate = {
@@ -40,7 +40,7 @@ export const standard: WorkflowTemplate = {
     "CANCELLED",
   ],
    transitions: [
-     // Progression
+     // Продвижение
      { from: "DRAFT", to: "READY" },
      { from: "READY", to: "DEVELOPMENT" },
      { from: "DEVELOPMENT", to: "REVIEW" },
@@ -60,10 +60,10 @@ export const standard: WorkflowTemplate = {
      { from: "MERGING", to: "DONE" },
      { from: "DONE", to: "RELEASED" },
 
-    // Integration skip (for tasks that don't need integration)
+    // Пропуск skip (for tasks that don't need integration)
     { from: "READY_FOR_INTEGRATION", to: "READY_FOR_MERGE" },
 
-    // Approval gates
+    // Ограничения gates
     {
       from: "READY_FOR_MERGE",
       to: "MERGING",
@@ -74,7 +74,7 @@ export const standard: WorkflowTemplate = {
       to: "RELEASED",
     },
 
-    // Flow-control states
+    // Управление states
     { from: "DRAFT", to: "BLOCKED" },
     { from: "READY", to: "BLOCKED" },
     { from: "DEVELOPMENT", to: "BLOCKED" },
@@ -98,13 +98,13 @@ export const standard: WorkflowTemplate = {
     { from: "REVIEW", to: "FAILED" },
     { from: "QA", to: "FAILED" },
 
-    // Resume from flow-control states
+    // Возобновление from flow-control states
     { from: "BLOCKED", to: "READY" },
     { from: "WAITING_FOR_DEPENDENCY", to: "READY" },
     { from: "WAITING_FOR_APPROVAL", to: "READY" },
     { from: "PAUSED", to: "READY" },
 
-    // Cancel from any non-terminal state
+    // Отмена from any non-terminal state
     { from: "DRAFT", to: "CANCELLED" },
     { from: "READY", to: "CANCELLED" },
     { from: "DEVELOPMENT", to: "CANCELLED" },
@@ -123,10 +123,10 @@ export const standard: WorkflowTemplate = {
 };
 
 /**
- * Bugfix workflow – simplified lifecycle for hotfixes.
+ * Исправление workflow – simplified lifecycle for hotfixes.
  *
- * Skips READY_FOR_INTEGRATION and INTEGRATION steps.
- * Goes QA → DONE → RELEASED directly.
+ * Пропускает READY_FOR_INTEGRATION and INTEGRATION steps.
+ * Переходит QA → DONE → RELEASED directly.
  */
 export const bugfix: WorkflowTemplate = {
   name: "bugfix",
@@ -165,9 +165,9 @@ export const bugfix: WorkflowTemplate = {
 };
 
 /**
- * Architecture change workflow.
+ * Изменение change workflow.
  *
- * Used for epic-child tasks. Includes INTEGRATED_INTO_EPIC stage
+ * Используется for epic-child tasks. Включает INTEGRATED_INTO_EPIC stage
  * and requires integration + parent epic release for certain transitions.
  */
 export const architecture_change: WorkflowTemplate = {
@@ -194,7 +194,7 @@ export const architecture_change: WorkflowTemplate = {
     "CANCELLED",
   ],
   transitions: [
-    // Progression
+    // Продвижение
     { from: "DRAFT", to: "READY" },
     { from: "READY", to: "DEVELOPMENT" },
     { from: "DEVELOPMENT", to: "REVIEW" },
@@ -219,7 +219,7 @@ export const architecture_change: WorkflowTemplate = {
       requires: ["parentEpicReleased"],
     },
 
-    // Flow-control
+    // Управление
     { from: "DRAFT", to: "BLOCKED" },
     { from: "READY", to: "BLOCKED" },
     { from: "DEVELOPMENT", to: "BLOCKED" },
@@ -243,13 +243,13 @@ export const architecture_change: WorkflowTemplate = {
     { from: "REVIEW", to: "FAILED" },
     { from: "QA", to: "FAILED" },
 
-    // Resume
+    // Возобновление
     { from: "BLOCKED", to: "READY" },
     { from: "WAITING_FOR_DEPENDENCY", to: "READY" },
     { from: "WAITING_FOR_APPROVAL", to: "READY" },
     { from: "PAUSED", to: "READY" },
 
-    // Cancel
+    // Отмена
     { from: "DRAFT", to: "CANCELLED" },
     { from: "READY", to: "CANCELLED" },
     { from: "DEVELOPMENT", to: "CANCELLED" },
@@ -269,7 +269,7 @@ export const architecture_change: WorkflowTemplate = {
 };
 
 /**
- * Documentation workflow – lightweight lifecycle for doc-only tasks.
+ * Документационный workflow – lightweight lifecycle for doc-only tasks.
  */
 export const documentation: WorkflowTemplate = {
   name: "documentation",
@@ -315,7 +315,7 @@ export const documentation: WorkflowTemplate = {
 /**
  * DevOps workflow – lifecycle for infrastructure and deployment tasks.
  *
- * Includes QA and integration steps with approval gates.
+ * Включает QA and integration steps with approval gates.
  */
 export const devops: WorkflowTemplate = {
   name: "devops",
@@ -377,7 +377,7 @@ export const devops: WorkflowTemplate = {
 };
 
 /**
- * All built-in templates keyed by name.
+ * Все built-in templates keyed by name.
  */
 export const templates = {
   standard,

@@ -197,7 +197,7 @@ export class IntegrationService {
     this.database.run("UPDATE integration_attempts SET status = 'MERGING' WHERE id = $id AND status = 'PREPARED'", { id: attempt.id });
     const snapshot = Object.freeze({ ...attempt });
     try {
-      // Do not give the runner the live attempt record. In addition to the
+      // Не give the runner the live attempt record. In addition to the
       // immutable check below, this prevents an in-process runner from
       // changing the object used by the final verification.
       const runnerAttempt = Object.freeze({ ...attempt });

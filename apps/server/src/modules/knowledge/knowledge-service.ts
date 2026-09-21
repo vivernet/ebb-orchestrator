@@ -3,7 +3,7 @@
  * Markdown files into the database, manages lifecycle transitions, and
  * queries active items by scope.
  *
- * Canonical text stays in the Markdown files; the DB stores searchable
+ * Канонический text stays in the Markdown files; the DB stores searchable
  * metadata, version, hash, and provenance.
  */
 
@@ -34,10 +34,10 @@ export class KnowledgeService {
   // ── Repository indexing ──────────────────────────────────────────
 
   /**
-   * Scan a repository directory for guideline and decision Markdown files
+   * Сканирует a repository directory for guideline and decision Markdown files
    * and index them into the database.
    *
-   * Expected directory layout:
+   * Ожидаемая directory layout:
    *   <repoDir>/guidelines/*.md   – guideline files
    *   <repoDir>/decisions/*.md    – decision files
    */
@@ -53,7 +53,7 @@ export class KnowledgeService {
     let decisionsIndexed = 0;
 
     this.db.transaction((tx) => {
-      // Track IDs seen in this batch to detect duplicates
+      // Отслеживает IDs seen in this batch to detect duplicates
       const seenGlIds = new Set<string>();
       const seenDecIds = new Set<string>();
 
@@ -61,7 +61,7 @@ export class KnowledgeService {
         const parsed = parseGuideline(file.content);
         validateGuideline(parsed);
 
-        // Duplicate detection within this batch
+        // Дубликаты detection within this batch
         if (seenGlIds.has(parsed.id)) {
           throw new Error(`Duplicate guideline ID "${parsed.id}" in index batch.`);
         }
@@ -91,9 +91,9 @@ export class KnowledgeService {
   // ── Active scope queries ─────────────────────────────────────────
 
   /**
-   * Return active knowledge items for the given scope filter.
-   * For guidelines: ACTIVE status only.
-   * For decisions: ACCEPTED or PROPOSED status (per spec, proposed decisions
+   * Возвращает active knowledge items for the given scope filter.
+   * Для guidelines: ACTIVE status only.
+   * Для decisions: ACCEPTED or PROPOSED status (per spec, proposed decisions
    * are still visible as they may be in-progress choices).
    */
   activeForScope(
@@ -102,7 +102,7 @@ export class KnowledgeService {
   ): Array<{ displayId: string; type: "guideline" | "decision"; status: string; [key: string]: unknown }> {
     const results: Array<{ displayId: string; type: "guideline" | "decision"; status: string; [key: string]: unknown }> = [];
 
-    // Active guidelines
+    // Активные guidelines
     let glSql = "SELECT * FROM knowledge_guidelines WHERE project_id=$projectId AND status='ACTIVE'";
     const glParams: Record<string, string> = { $projectId: projectId };
 
@@ -133,7 +133,7 @@ export class KnowledgeService {
       });
     }
 
-    // Decisions: ACCEPTED and PROPOSED are considered "active" (visible in context)
+    // Решения: ACCEPTED and PROPOSED are considered "active" (visible in context)
     let decSql = "SELECT * FROM knowledge_decisions WHERE project_id=$projectId AND status IN ('ACCEPTED','PROPOSED')";
     const decParams: Record<string, string> = { $projectId: projectId };
 
@@ -142,7 +142,7 @@ export class KnowledgeService {
       decParams.$scope = filter.scope;
     }
     if (filter.role) {
-      // Decisions don't have roles, but filter is no-op
+      // Решения don't have roles, but filter is no-op
     }
 
     const decRows = this.db.all<DecisionRow>(decSql, decParams);
@@ -163,12 +163,12 @@ export class KnowledgeService {
   // ── Proposal approval ────────────────────────────────────────────
 
   /**
-   * Apply an approved proposal by transitioning the item to ACTIVE
+   * Применяет an approved proposal by transitioning the item to ACTIVE
    * and superseding the previous version if applicable.
    */
   applyApprovedProposal(itemId: string): void {
     this.db.transaction((tx) => {
-      // Try guideline first
+      // Пробует guideline first
       const glRow = tx.get<GuidelineRow>(
         "SELECT * FROM knowledge_guidelines WHERE id=$id",
         { $id: itemId },
@@ -178,7 +178,7 @@ export class KnowledgeService {
         return;
       }
 
-      // Try decision
+      // Пробует decision
       const decRow = tx.get<DecisionRow>(
         "SELECT * FROM knowledge_decisions WHERE id=$id",
         { $id: itemId },
@@ -195,11 +195,11 @@ export class KnowledgeService {
   // ── Status transitions ───────────────────────────────────────────
 
   /**
-   * Update the status of a knowledge item with transition validation.
+   * Обновляет the status of a knowledge item with transition validation.
    */
   updateStatus(itemId: string, newStatus: GuidelineStatus | DecisionStatus): void {
     this.db.transaction((tx) => {
-      // Try guideline
+      // Пробует guideline
       const glRow = tx.get<GuidelineRow>(
         "SELECT * FROM knowledge_guidelines WHERE id=$id",
         { $id: itemId },
@@ -225,7 +225,7 @@ export class KnowledgeService {
         return;
       }
 
-      // Try decision
+      // Пробует decision
       const decRow = tx.get<DecisionRow>(
         "SELECT * FROM knowledge_decisions WHERE id=$id",
         { $id: itemId },
@@ -270,7 +270,7 @@ export class KnowledgeService {
     );
 
     if (!existing) {
-      // Brand new guideline
+      // Новая new guideline
       const id = crypto.randomUUID();
       tx.run(
         `INSERT INTO knowledge_guidelines
@@ -306,9 +306,9 @@ export class KnowledgeService {
       return;
     }
 
-    // Existing guideline with same display ID – check for changes
+    // Существующая guideline with same display ID – check for changes
     if (existing.content_hash !== parsed.contentHash) {
-      // Content changed externally → PENDING_EXTERNAL_CHANGE (not automatically active)
+      // Содержимое changed externally → PENDING_EXTERNAL_CHANGE (not automatically active)
       const newId = crypto.randomUUID();
       tx.run(
         `INSERT INTO knowledge_guidelines
@@ -342,7 +342,7 @@ export class KnowledgeService {
         payload: { guidelineId: newId, displayId: parsed.id, version: parsed.version, oldHash: existing.content_hash, newHash: parsed.contentHash },
       }));
     }
-    // If content hash is the same, no update needed
+    // Если content hash is the same, no update needed
   }
 
   private upsertDecision(
@@ -358,7 +358,7 @@ export class KnowledgeService {
     );
 
     if (existing) {
-      // Update existing decision
+      // Обновляет existing decision
       tx.run(
         `UPDATE knowledge_decisions
          SET status=$status, scope=$scope, title=$title, rationale=$rationale,
@@ -385,7 +385,7 @@ export class KnowledgeService {
       return;
     }
 
-    // Brand new decision
+    // Новая new decision
     const id = crypto.randomUUID();
     tx.run(
       `INSERT INTO knowledge_decisions
@@ -422,13 +422,13 @@ export class KnowledgeService {
       );
     }
 
-    // Set this version to ACTIVE
+    // Устанавливает this version to ACTIVE
     tx.run(
       "UPDATE knowledge_guidelines SET status='ACTIVE', updated_at=$now WHERE id=$id",
       { $now: now, $id: row.id },
     );
 
-    // Supersede previous versions of the same guideline
+    // Заменяет previous versions of the same guideline
     tx.run(
       `UPDATE knowledge_guidelines SET status='SUPERSEDED', superseded_by=$supersededBy, updated_at=$now
        WHERE display_id=$displayId AND project_id=$projectId AND id != $id AND status='ACTIVE'`,
@@ -530,7 +530,7 @@ async function readMarkdownFiles(dir: string): Promise<MarkdownFile[]> {
     }
     return files;
   } catch {
-    // Directory doesn't exist yet – return empty
+    // Каталог doesn't exist yet – return empty
     return [];
   }
 }

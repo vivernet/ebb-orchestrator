@@ -74,7 +74,7 @@ export class RuntimeOrchestrator {
   }
 
   /**
-   * Handle runtime completion from external sources.
+   * Обрабатывает runtime completion from external sources.
    */
   handleRuntimeCompletion(
     runId: string,
@@ -84,7 +84,7 @@ export class RuntimeOrchestrator {
   }
 
   /**
-   * Handle run interruption.
+   * Обрабатывает run interruption.
    */
   handleRunInterrupted(taskId: string): void {
     this.eventHandlers.handleRunInterrupted(taskId);

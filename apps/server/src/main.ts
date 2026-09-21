@@ -2,10 +2,10 @@
  * Server entry point.
  *
  * Bootstraps the Fastify application and starts listening on loopback.
- * A random session token is generated at startup and printed to the
+ * Экземпляр random session token is generated at startup and printed to the
  * console so the developer can authenticate API requests.
  *
- * The startup lifecycle follows the spec (§19.5):
+ * Этот startup lifecycle follows the spec (§19.5):
  * 1. Acquire single-instance lock
  * 2. Open database & run migrations
  * 3. Set RECOVERING

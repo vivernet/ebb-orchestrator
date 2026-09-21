@@ -7,7 +7,7 @@ export interface SyncState { get(key: string): SyncRecord | undefined; set(recor
  */
 export class InMemorySyncState implements SyncState { private records = new Map<string, SyncRecord>(); get(key: string) { return this.records.get(key); } set(record: SyncRecord) { this.records.set(record.key, record); } }
 
-/** Coordinates idempotent outbound GitHub operations and offline pending state. */
+/** Координирует idempotent outbound GitHub operations and offline pending state. */
 export class GitHubSyncService {
   constructor(private readonly hosting: GitHosting, private readonly state: SyncState = new InMemorySyncState()) {}
   async ensurePullRequest(repository: string, key: string, input: { head: string; base: string; title: string; body?: string }): Promise<SyncRecord> {

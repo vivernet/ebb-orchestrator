@@ -1,14 +1,14 @@
 /**
- * Default role configurations for Orchestrator Hermes.
+ * Конфигурации ролей по умолчанию for Orchestrator Hermes.
  *
- * Based on specification Section 3.2 and 3.3.
+ * Основано на разделе спецификации 3.2 and 3.3.
  *
  * 9 roles in v1:
  * Management / Design: Coordinator, Product Manager, Architect
  * Implementation: Middle Developer, Senior Developer, DevOps Agent
  * Quality / Integration: Reviewer, QA Agent, Integration Agent
  *
- * Note: For this plan, only Developer/Reviewer/QA/Integration are executed.
+ * Примечание: в этом плане выполняются только Developer/Reviewer/QA/Integration are executed.
  * - Reviewer must NOT have: workspace.patch, git.commit, command.shell
  * - Developer must NOT have: git.push, merge.default, permission/config mutation
  * - Session policy: fresh_per_task for Reviewer/QA/Integration; shared for Developer
@@ -18,33 +18,33 @@ import { ActionId } from '../permissions/permission-types.js';
 import type { RoleContract } from './role-contract.js';
 
 /**
- * All available tools in the system.
- * Used to build role-specific tool allowlists.
+ * Все доступные инструменты системы.
+ * Используется для построения allowlist инструментов ролей.
  */
 export const AllTools: ActionId[] = [
-  // Workspace operations
+  // Операции workspace
   ActionId.WorkspaceRead,
   ActionId.WorkspaceSearch,
   ActionId.WorkspacePatch,
-  // Project operations
+  // Операции project
   ActionId.ProjectTest,
   ActionId.ProjectLint,
   ActionId.ProjectTypecheck,
   ActionId.ProjectBuild,
-  // Command execution
+  // Выполнение команд
   ActionId.CommandExec,
   ActionId.CommandShell,
-  // Git operations
+  // Операции Git
   ActionId.GitStatus,
   ActionId.GitDiff,
   ActionId.GitCommit,
-  // Artifact operations
+  // Операции с artifacts
   ActionId.ArtifactWrite,
   ActionId.SubmitResult,
 ];
 
 /**
- * Default model configuration for standard LLM backends.
+ * Конфигурация модели по умолчанию for standard LLM backends.
  */
 export const DefaultModels = {
   fast: {
@@ -68,7 +68,7 @@ export const DefaultModels = {
 } as const;
 
 /**
- * Base schema paths in the contracts package.
+ * Базовые пути к схемам in the contracts package.
  */
 export const SchemaPaths = {
   base: '@ebb-orchestrator/contracts#BaseOutputSchema',
@@ -83,7 +83,7 @@ export const SchemaPaths = {
 } as const;
 
 /**
- * Shared input schema path for all roles.
+ * Общий путь к входной схеме for all roles.
  */
 const DefaultInputSchema = {
   path: '@ebb-orchestrator/contracts#BaseOutputSchema',
@@ -91,7 +91,7 @@ const DefaultInputSchema = {
 };
 
 /**
- * Creates a base RoleContract with common settings.
+ * Создаёт базовый RoleContract with common settings.
  */
 function baseRole(name: string, displayName: string): Omit<RoleContract, 'allowedWorkflows' | 'inputSchema' | 'outputSchema' | 'permissionProfile' | 'defaultModel' | 'allowedTools' | 'sessionPolicy' | 'escalationPolicy'> {
   return {
@@ -103,7 +103,7 @@ function baseRole(name: string, displayName: string): Omit<RoleContract, 'allowe
 }
 
 /**
- * Coordinator role configuration.
+ * Конфигурация роли Coordinator.
  *
  * Specification Section 3.3:
  * "Coordinator классифицирует запрос, выбирает Task vs Epic, предлагает план,
@@ -138,7 +138,7 @@ export const CoordinatorContract: RoleContract = {
 };
 
 /**
- * Product Manager role configuration.
+ * Конфигурация роли Product Manager.
  *
  * Specification Section 3.3:
  * "Product Manager определяет goal, user behavior, scope, non-goals, requirements и acceptance criteria.
@@ -162,7 +162,7 @@ export const ProductManagerContract: RoleContract = {
 };
 
 /**
- * Architect role configuration.
+ * Конфигурация роли Architect.
  *
  * Specification Section 3.3:
  * "Architect определяет компоненты, interfaces, data flow, migrations, Decisions, guideline proposals и architecture review.
@@ -197,7 +197,7 @@ export const ArchitectContract: RoleContract = {
 };
 
 /**
- * Middle Developer role configuration.
+ * Конфигурация роли Middle Developer.
  *
  * Specification Section 3.3:
  * "Middle Developer выполняет обычную реализацию."
@@ -229,7 +229,7 @@ export const MiddleDevContract: RoleContract = {
 };
 
 /**
- * Senior Developer role configuration.
+ * Конфигурация роли Senior Developer.
  *
  * Specification Section 3.3:
  * "Senior Developer выполняет сложную/core/architecture-sensitive реализацию и escalation после Middle."
@@ -261,7 +261,7 @@ export const SeniorDevContract: RoleContract = {
 };
 
 /**
- * DevOps Agent role configuration.
+ * Конфигурация роли DevOps Agent.
  *
  * Specification Section 3.3:
  * "DevOps Agent отвечает за CI/CD, Docker, deployment/env/build/release/IaC.
@@ -294,13 +294,13 @@ export const DevOpsContract: RoleContract = {
 };
 
 /**
- * Reviewer role configuration.
+ * Конфигурация роли Reviewer.
  *
  * Specification Section 3.3:
  * "Reviewer независимо проверяет correctness, architecture, maintainability, security, edge cases, tests,
  * Guidelines, acceptance criteria и scope creep. Обычно не исправляет собственные findings."
  *
- * SECURITY CONSTRAINT: Must NOT have workspace.patch, git.commit, command.shell
+ * SECURITY CONSTRAINT: Должен NOT have workspace.patch, git.commit, command.shell
  * SESSION POLICY: fresh_per_task
  */
 export const ReviewerContract: RoleContract = {
@@ -331,7 +331,7 @@ export const ReviewerContract: RoleContract = {
 };
 
 /**
- * QA Agent role configuration.
+ * Конфигурация роли QA Agent.
  *
  * Specification Section 3.3:
  * "QA Agent проверяет поведение, acceptance criteria, regression и edge cases.
@@ -361,7 +361,7 @@ export const QAContract: RoleContract = {
 };
 
 /**
- * Integration Agent role configuration.
+ * Конфигурация роли Integration Agent.
  *
  * Specification Section 3.3:
  * "Integration Agent подготавливает интеграцию с текущим target, разрешает только однозначные конфликты
@@ -394,7 +394,7 @@ export const IntegrationContract: RoleContract = {
 };
 
 /**
- * All role contracts indexed by role name.
+ * Все role contracts, индексированные по имени роли.
  */
 export const AllContracts: Record<string, RoleContract> = {
   coordinator: CoordinatorContract,
@@ -409,12 +409,12 @@ export const AllContracts: Record<string, RoleContract> = {
 };
 
 /**
- * Roles executed in this plan.
+ * Роли, выполняемые в этом плане.
  */
 export const ExecutedRoles = ['developer', 'reviewer', 'qa', 'integration'] as const;
 
 /**
- * Gets a contract by role name (handles 'developer' alias for middle_dev/senior_dev).
+ * Получает contract по имени роли (handles 'developer' alias for middle_dev/senior_dev).
  */
 export function getContract(roleName: string): RoleContract | undefined {
   // Developer is an alias that can map to middle_dev or senior_dev
@@ -425,7 +425,7 @@ export function getContract(roleName: string): RoleContract | undefined {
 }
 
 /**
- * Gets all contracts for executed roles.
+ * Получает все contracts для выполняемых ролей.
  */
 export function getExecutedContracts(): RoleContract[] {
   return ExecutedRoles.map(getContract).filter((c): c is RoleContract => c !== undefined);

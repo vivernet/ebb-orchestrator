@@ -60,7 +60,7 @@ export class DecisionService {
   constructor(private readonly db: Database) {}
 
   /**
-   * Create a new decision with FINAL status.
+   * Создаёт a new decision with FINAL status.
    */
   create(input: DecisionCreateInput): Decision {
     return this.db.transaction((tx) => {
@@ -98,7 +98,7 @@ export class DecisionService {
   }
 
   /**
-   * Get a decision by ID.
+   * Получает a decision by ID.
    */
   getById(decisionId: string): Decision | undefined {
     const row = this.db.get<DecisionRow>(
@@ -122,7 +122,7 @@ export class DecisionService {
   }
 
   /**
-   * Supersede a FINAL decision, replacing it with a new one.
+   * Заменяет a FINAL decision, replacing it with a new one.
    */
   supersede(decisionId: string): Decision {
     return this.db.transaction((tx) => {

@@ -11,7 +11,7 @@ import type {
 import { composeDecisions, getMatchingRules } from './permission-policy.js';
 
 /**
- * Permission Engine — оценивает действия на основе композитных политик из нескольких scopes.
+ * Типы решений Permission Engine — оценивает действия на основе композитных политик из нескольких scopes.
  * Использует композицию «самое строгое решение побеждает».
  * — Нераспознанные Action ID отвергаются (возвращается ABSOLUTE_DENY)
  * — ABSOLUTE_DENY не может быть ослаблено более специфичными scopes
@@ -20,7 +20,7 @@ export class PermissionEngine {
   private readonly canonicalActions: Set<string>;
 
   constructor() {
-    // Build set of known/canonical action IDs
+    // Формирует set of known/canonical action IDs
     this.canonicalActions = new Set(Object.values(ActionId));
   }
 
@@ -42,7 +42,7 @@ export class PermissionEngine {
   evaluate(input: EvaluationInput): EvaluationResult {
     const { action, capability, globalPolicy, projectPolicy, rolePolicy, taskPolicy } = input;
 
-    // Unknown/unregistered Action IDs must fail closed
+    // Неизвестные/unregistered Action IDs must fail closed
     if (!this.isRegisteredAction(action)) {
       return {
         decision: PermissionDecision.ABSOLUTE_DENY,
@@ -51,12 +51,12 @@ export class PermissionEngine {
       };
     }
 
-    // Get all matching rules from all policy scopes
+    // Получает all matching rules from all policy scopes
     const allMatchingRules = getMatchingRules(action, globalPolicy, projectPolicy, rolePolicy, taskPolicy);
 
-    // If no policy rules match, fall back to capability check
+    // Если no policy rules match, fall back to capability check
     if (allMatchingRules.length === 0) {
-      // Check if action is in capability list (for ActionGateway compatibility)
+      // Проверяет if action is in capability list (for ActionGateway compatibility)
       if (capability && capability.includes(action)) {
         return {
           decision: PermissionDecision.ALLOW,
@@ -71,7 +71,7 @@ export class PermissionEngine {
       };
     }
 
-    // Convert matching rules to decisions with scope info
+    // Преобразует matching rules to decisions with scope info
     const decisions = allMatchingRules.map((rule: { scope: PolicyScope; scopeRef?: string; type: PolicyRuleType; actions: string[] }) => {
       const res: { decision: PermissionDecision; scope: PolicyScope; scopeRef?: string; type: PolicyRuleType } = {
         decision: this.policyTypeToDecision(rule.type),
@@ -84,10 +84,10 @@ export class PermissionEngine {
       return res;
     });
 
-    // Compose decisions using most-restrictive-wins
+    // Объединяет decisions using most-restrictive-wins
     const { decision, matchedRefs } = composeDecisions(decisions);
 
-    // Generate human-readable reason
+    // Формирует human-readable reason
     const reason = this.generateReason(decision, matchedRefs, action);
 
     return {
@@ -176,5 +176,5 @@ export class PermissionEngine {
   }
 }
 
-// Export singleton instance for convenience
+// Экспортирует singleton instance for convenience
 export const permissionEngine = new PermissionEngine();

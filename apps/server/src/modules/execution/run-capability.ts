@@ -46,7 +46,7 @@ export class RunCapability {
     this.gitTools = capability.workspace ? new GitTools(capability.workspace) : null;
   }
 
-  /** Create a reference; the caller supplies the already-authorized binding. */
+  /** Создаёт a reference; the caller supplies the already-authorized binding. */
   static issue(def: Omit<RunCapabilityDef, 'id' | 'capabilityRef'> & { runId: string }): RunCapability {
     const ref = crypto.randomUUID();
     return new RunCapability({ ...def, id: ref, capabilityRef: ref });
@@ -56,24 +56,24 @@ export class RunCapability {
 
   get reference(): string { return this.capability.capabilityRef ?? this.capability.id; }
 
-  /** Check if a tool is allowed for this capability */
+  /** Проверяет if a tool is allowed for this capability */
   isToolAllowed(toolId: ToolId): boolean {
     return this.capability.allowedTools.includes(toolId);
   }
 
   revalidateAccess(): void { this.revalidate?.(); }
 
-  /** Get workspace read utility */
+  /** Получает workspace read utility */
   getReadTool() {
     return this.workspaceTools;
   }
 
-  /** Get git utilities */
+  /** Получает git utilities */
   getGitTools() {
     return this.gitTools;
   }
 
-  /** Get action gateway */
+  /** Получает action gateway */
   getActionGateway() {
     return this.gateway;
   }

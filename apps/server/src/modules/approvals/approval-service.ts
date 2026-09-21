@@ -1,5 +1,5 @@
 /**
- * Approval service – request, approve, reject, and cancel approvals
+ * Ограничения service – request, approve, reject, and cancel approvals
  * with single-transition enforcement and outbox events.
  */
 
@@ -146,14 +146,14 @@ export class ApprovalService {
   }
 
   /**
-   * Cancel a pending approval. Throws if already resolved.
+   * Отмена a pending approval. Throws if already resolved.
    */
   cancel(approvalId: string, actor: string): Approval {
     return this.resolve(approvalId, "CANCELLED", actor, null, "ApprovalCancelled");
   }
 
   /**
-   * Get an approval by ID.
+   * Получает an approval by ID.
    */
   getById(approvalId: string): Approval | undefined {
     const row = this.db.get<ApprovalRow>(
@@ -230,7 +230,7 @@ export class ApprovalService {
       });
       appendOutboxEvent(tx, event);
 
-      // Write audit_log entry atomically with state + outbox.
+      // Записывает audit_log entry atomically with state + outbox.
       tx.run(
         `INSERT INTO audit_log(id,action,actor,aggregate_type,aggregate_id,details_json,created_at) VALUES($id,$action,$actor,$aggregate_type,$aggregate_id,$details,$created_at)`,
         {

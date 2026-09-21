@@ -15,22 +15,22 @@ const execFileAsync = promisify(execFile);
 // ── Types ───────────────────────────────────────────────────────────
 
 export interface KnowledgeChange {
-  /** Type of knowledge item. */
+  /** Тип of knowledge item. */
   type: "guideline" | "decision";
-  /** Display ID (e.g. GL-ARCH-014, DEC-0001). */
+  /** Отображаемый ID (e.g. GL-ARCH-014, DEC-0001). */
   displayId: string;
-  /** Full Markdown content (front matter + body). */
+  /** Полное Markdown content (front matter + body). */
   markdown: string;
-  /** Relative path within the repo (e.g. guidelines/GL-ARCH-014.md). */
+  /** Относительный path within the repo (e.g. guidelines/GL-ARCH-014.md). */
   filePath: string;
 }
 
 export interface CommitResult {
-  /** The git commit SHA. */
+  /** Этот git commit SHA. */
   commitSha: string;
-  /** The commit message used. */
+  /** Этот commit message used. */
   commitMessage: string;
-  /** Files that were written and committed. */
+  /** Файлы that were written and committed. */
   filesChanged: string[];
 }
 
@@ -41,9 +41,9 @@ export interface CommitResult {
  */
 export class KnowledgeGitService {
   /**
-   * Write approved knowledge changes to disk and commit them atomically.
+   * Записывает approved knowledge changes to disk and commit them atomically.
    *
-   * All changes in a batch are committed together in a single Git commit
+   * Все changes in a batch are committed together in a single Git commit
    * with the standard orchestrator commit message format.
    */
   async commitChanges(repoDir: string, changes: KnowledgeChange[]): Promise<CommitResult> {
@@ -51,18 +51,18 @@ export class KnowledgeGitService {
       throw new Error("No changes to commit.");
     }
 
-    // Write all files atomically
+    // Записывает all files atomically
     const filesChanged: string[] = [];
     for (const change of changes) {
       const fullPath = join(repoDir, change.filePath);
-      // Ensure parent directory exists
+      // Обеспечивает parent directory exists
       const dir = dirname(fullPath);
       await mkdir(dir, { recursive: true });
       await writeFile(fullPath, change.markdown, "utf8");
       filesChanged.push(change.filePath);
     }
 
-    // Generate commit message
+    // Формирует commit message
     const commitMessage = this.buildCommitMessage(changes);
 
     // Git add + commit
@@ -73,10 +73,10 @@ export class KnowledgeGitService {
   }
 
   /**
-   * Build the commit message following the orchestrator convention.
+   * Формирует the commit message following the orchestrator convention.
    *
-   * Single change: `orchestrator: update guideline GL-ARCH-014`
-   * Multiple changes: `orchestrator: update 3 knowledge items`
+   * Одиночное change: `orchestrator: update guideline GL-ARCH-014`
+   * Несколько changes: `orchestrator: update 3 knowledge items`
    */
   buildCommitMessage(changes: KnowledgeChange[]): string {
     if (changes.length === 1) {
@@ -86,7 +86,7 @@ export class KnowledgeGitService {
     return `orchestrator: update ${changes.length} knowledge items`;
   }
 
-  // ── Git operations ────────────────────────────────────────────────
+  // ── Операции Git ────────────────────────────────────────────────
 
   private async gitAdd(repoDir: string, files: string[]): Promise<void> {
     await execFileAsync("git", ["add", ...files], { cwd: repoDir });
@@ -98,10 +98,10 @@ export class KnowledgeGitService {
       ["commit", "-m", message, "--allow-empty"],
       { cwd: repoDir },
     );
-    // Extract commit SHA from output: "[main abc1234] message"
+    // Извлекает commit SHA from output: "[main abc1234] message"
     const match = stdout.match(/\b([0-9a-f]{7,40})\b/);
     if (!match) {
-      // Fallback: use git rev-parse HEAD
+      // Резервный: use git rev-parse HEAD
       const { stdout: sha } = await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: repoDir });
       return sha.trim();
     }

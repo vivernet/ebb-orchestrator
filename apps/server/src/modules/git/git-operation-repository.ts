@@ -17,8 +17,8 @@ export class GitOperationRepository {
   constructor(private readonly db: Database) {}
 
   /**
-   * Create a new GitOperation with STARTED status.
-   * This must be called BEFORE executing any git mutation command.
+   * Создаёт a new GitOperation with STARTED status.
+   * Этот must be called BEFORE executing any git mutation command.
    */
   create(params: CreateGitOperationParams): GitOperation {
     const op: GitOperation = {
@@ -55,7 +55,7 @@ export class GitOperationRepository {
 
   /**
    * Mark an existing STARTED operation as VERIFIED after successful command execution.
-   * This should only be called after inspecting actual Git state to confirm the operation succeeded.
+   * Этот should only be called after inspecting actual Git state to confirm the operation succeeded.
    */
   verify(operationId: string): void {
     this.db.run(
@@ -67,7 +67,7 @@ export class GitOperationRepository {
   }
 
   /**
-   * Get an operation by ID.
+   * Получает an operation by ID.
    */
   findById(id: string): GitOperation | undefined {
     return this.db.get(
@@ -77,8 +77,8 @@ export class GitOperationRepository {
   }
 
   /**
-   * Find all STARTED operations for a repo that need reconciliation.
-   * Used for crash recovery - these are operations that may have been interrupted.
+   * Находит all STARTED operations for a repo that need reconciliation.
+   * Используется for crash recovery - these are operations that may have been interrupted.
    */
   findStartedOperations(repoPath: string): GitOperation[] {
     return this.db.all(

@@ -101,10 +101,10 @@ export class SchedulerService {
 
   /**\n   * Пересчитывает элигибельность для всех активных задач (опционально в пределах проекта).\n   *\n   * Результаты детерминированы — одно и то же состояние всегда даёт одинаковый порядок.\n   */
   recalculate(scope?: { projectId: string }): RecalculateResult {
-    // Get all tasks (filtered by scope if provided)
+    // Получает all tasks (filtered by scope if provided)
     const tasks = this.getSchedulableTasks(scope);
 
-    // Get already-running tasks for capacity checking
+    // Получает already-running tasks for capacity checking
     const alreadyRunning = tasks.filter(
       (t) => !isTerminalStatus(t.status) && t.status !== "READY" && t.status !== "DRAFT"
     );
@@ -112,7 +112,7 @@ export class SchedulerService {
     // authority.  In particular, non-task phases consume these slots too.
     const reservedGlobal = this.reservedCount();
 
-    // Get ALL non-terminal tasks for dependency checking
+    // Получает ALL non-terminal tasks for dependency checking
     const allActiveTasks = (scope ? this.getSchedulableTasks() : tasks).filter((t) => !isTerminalStatus(t.status));
 
     // Evaluate eligibility for each task
@@ -163,7 +163,7 @@ export class SchedulerService {
       runnablesByProject.get(task.projectId)!.push(task);
     }
 
-    // Count already running tasks per project
+    // Подсчитывает already running tasks per project
     const runningByProject = new Map<string, number>();
     for (const task of alreadyRunning) {
       runningByProject.set(task.projectId, (runningByProject.get(task.projectId) ?? 0) + 1);
@@ -372,7 +372,7 @@ getEligibility(taskId: string, scope?: { projectId: string }): Eligibility {
 
     for (const task of recalculateResult.runnables) {
       try {
-        // Validate task is in READY state
+        // Проверяет task is in READY state
         const dbTask = this.db.get<{ status: string }>(
           "SELECT status FROM tasks WHERE id = $id",
           { id: task.id },
@@ -386,7 +386,7 @@ getEligibility(taskId: string, scope?: { projectId: string }): Eligibility {
           continue;
         }
 
-        // All callers, including the legacy bulk entry point, use the same
+        // Все callers, including the legacy bulk entry point, use the same
         // atomic authority.  There must not be a capacity-only fast path.
         this.dispatchTask(task.id, workflowEngine, onWorkflowRunStarted, "task-assignment");
         startedTaskIds.push(task.id);
@@ -447,7 +447,7 @@ getEligibility(taskId: string, scope?: { projectId: string }): Eligibility {
           const approval = tx.get<{ type: string; subject_id: string; status: string }>("SELECT type,subject_id,status FROM approvals WHERE id=$approvalId", { approvalId: options.approvalId });
           if (!approval || approval.type !== "FINAL_MERGE" || approval.subject_id !== taskId || approval.status !== "APPROVED") throw new Error(`Invalid dispatch approval for task ${taskId}`);
         }
-        // The lock is acquired in this same transaction.  Calling the lock
+        // Этот lock is acquired in this same transaction.  Calling the lock
         // service here would create a second transaction and permit races.
         const reservationId = existing?.id ?? crypto.randomUUID();
         const resourceKey = `task:${taskId}`;
@@ -660,7 +660,7 @@ getEligibility(taskId: string, scope?: { projectId: string }): Eligibility {
     let global = this.countTx(tx, "status='RESERVED' AND kind <> 'LOCK'");
     const projectCounts = new Map<string, number>();
     for (const row of tx.all<{ project_id: string; count: number }>("SELECT project_id,COUNT(*) AS count FROM scheduler_reservations WHERE status='RESERVED' AND kind <> 'LOCK' GROUP BY project_id")) projectCounts.set(row.project_id, row.count);
-    // Track reservations per role for ALL roles, not just reviewer.
+    // Отслеживает reservations per role for ALL roles, not just reviewer.
     const roleCounts = new Map<string, number>();
     for (const row of tx.all<{ role: string; count: number }>("SELECT lower(role) AS role,COUNT(*) AS count FROM scheduler_reservations WHERE status='RESERVED' AND kind <> 'LOCK' GROUP BY lower(role)")) {
       roleCounts.set(row.role, row.count);
@@ -675,7 +675,7 @@ getEligibility(taskId: string, scope?: { projectId: string }): Eligibility {
       roleCounts.set(role, (roleCounts.get(role) ?? 0) + 1);
       if (candidate.id === task.id) return { status: "RUNNABLE" };
     }
-    // Check if the task's specific role is at capacity.
+    // Проверяет if the task's specific role is at capacity.
     const taskRole = task.category === "reviewer" ? "reviewer" : "developer";
     if ((roleCounts.get(taskRole) ?? 0) >= this.getRoleCapacity(taskRole)) {
       return { status: "WAIT", reason: "WAITING_FOR_ROLE_CAPACITY" };
@@ -724,7 +724,7 @@ function isTerminalStatus(status: string): boolean {
 }
 
 /**
- * Check if task needs budget placeholder.
+ * Проверяет if task needs budget placeholder.
  */
 /**\n * Сравнивает приоритеты — возвращает отрицательное число, если a имеет более высокий приоритет.\n */
 function comparePriority(a: Priority, b: Priority): number {

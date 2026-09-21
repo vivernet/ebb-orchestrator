@@ -127,7 +127,7 @@ export function createApp(deps: AppDeps): OrchestratorApp {
 
   // ── Глобальный security hook ───────────────────────────────────────
   // Пропускает аутентификацию для health endpoint; все остальные маршруты требуют
-  // корректный bearer token или HttpOnly cookie браузерной сессии. Изменяющие методы также
+      // корректный bearer token или HttpOnly cookie браузерной сессии. Изменяющие методы также
   // требуют совпадающий Origin header для предотвращения CSRF.
   app.addHook("preHandler", async (request, reply) => {
     const url = new URL(request.url, session.allowedOrigin).pathname;

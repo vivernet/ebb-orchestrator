@@ -1,5 +1,5 @@
 /**
- * Approval domain types.
+ * Ограничения domain types.
  */
 
 export type ApprovalType =

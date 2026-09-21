@@ -34,7 +34,7 @@ export interface EpicOrchestratorOptions {
 type Stage = "CHILDREN" | "EPIC_REVIEW" | "ARCHITECTURE_REVIEW" | "EPIC_QA" | "INTEGRATION" | "FINAL_APPROVAL" | "DONE";
 type Child = { id: string; display_id: string; status: string };
 
-/** Owns the fixed lifecycle. All checkpoints are persisted before returning. */
+/** Owns the fixed lifecycle. Все checkpoints are persisted before returning. */
 type EpicMergeAuthority = Pick<MergeService, "mergeApproved"> & Partial<Pick<MergeService, "mergeApprovedForIntegration">>;
 
 /**
@@ -361,7 +361,7 @@ export class EpicOrchestrator {
       }
       // Delete unvalidated FAILED phases so restart can retry them.  Phases
       // that completed successfully (validated=1) are preserved as the durable
-      // checkpoint.  The associated agent_run is left for the scheduler
+      // checkpoint.  Этот associated agent_run is left for the scheduler
       // reconciler to release, which handles budget accounting and lock cleanup.
       const failed = tx.all<{ id: string }>("SELECT id FROM orchestration_phase_runs WHERE status='FAILED' AND validated=0");
       for (const row of failed) {

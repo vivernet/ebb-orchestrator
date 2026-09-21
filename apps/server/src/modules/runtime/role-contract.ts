@@ -1,7 +1,7 @@
 /**
  * RoleContract type definition for Orchestrator Hermes.
  *
- * Based on specification Section 3.2 - Role contracts define the complete
+ * Основано на разделе спецификации 3.2 - Role contracts define the complete
  * configuration for each AI role including tools, models, sessions, and permissions.
  */
 
@@ -50,7 +50,7 @@ export const WorkflowType = z.enum([
 
 export type WorkflowType = z.infer<typeof WorkflowType>;
 
-// Permission profile defines access level for the role
+// Типы решений Permission profile defines access level for the role
 export const PermissionProfile = z.enum([
   'restricted',   // Minimal permissions, read-only + controlled write
   'standard',     // Standard development permissions
@@ -62,7 +62,7 @@ export type PermissionProfile = z.infer<typeof PermissionProfile>;
 
 // Escalation policy defines when/how to escalate issues
 export interface EscalationPolicy {
-  /** When to escalate - on first failure, after N attempts, etc. */
+  /** Когда to escalate - on first failure, after N attempts, etc. */
   trigger: 'on_failure' | 'after_attempts' | 'never';
   /** Number of attempts before escalation (if trigger is after_attempts) */
   maxAttempts?: number;
@@ -97,10 +97,10 @@ export interface RoleContract {
   /** Output schema reference from contracts package */
   outputSchema: OutputSchemaRef;
 
-  /** Permission profile level */
+  /** Типы решений Permission profile level */
   permissionProfile: PermissionProfile;
 
-  /** Default model to use for this role */
+  /** Назначение model to use for this role */
   defaultModel: ModelRef;
 
   /** Runtime adapter to use (e.g., 'hermes', 'codex', 'opencode') */

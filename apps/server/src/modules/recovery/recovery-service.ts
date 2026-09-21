@@ -1,6 +1,6 @@
 /**
  * Recovery service - manages recovery decisions and creates scheduler requests.
- * Never calls runtime directly; always creates new scheduler requests.
+ * Никогда calls runtime directly; always creates new scheduler requests.
  */
 
 import { createHash } from "node:crypto";
@@ -49,7 +49,7 @@ export class RecoveryService {
     const failureType = context.failureType;
     const roleLevel = context.currentRoleLevel;
 
-    // Count existing attempts for this role/failure combo
+    // Подсчитывает existing attempts for this role/failure combo
     const existingAttempts = context.attempts.filter(
       (a) => a.roleLevel === roleLevel && a.failureType === failureType,
     ).length;
@@ -85,14 +85,14 @@ export class RecoveryService {
 
   /**
    * Creates a scheduler request for recovery.
-   * Never calls runtime directly.
+   * Никогда calls runtime directly.
    */
   createSchedulerRequest(
     taskId: string,
     roleLevel: RoleLevel,
     failureType: string,
   ): RecoverySchedulerRequest {
-    // Count existing recovery requests for this task
+    // Подсчитывает existing recovery requests for this task
     const existingCount = this.db.get(
       `SELECT COUNT(*) as count FROM recovery_scheduler_requests 
        WHERE task_id = $task_id AND resolved_at IS NULL`,

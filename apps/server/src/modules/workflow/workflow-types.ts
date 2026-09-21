@@ -21,7 +21,7 @@ export interface TransitionContext {
 export interface TransitionRule {
   from: TaskStatus;
   to: TaskStatus;
-  /** Keys of TransitionContext that must be truthy for this transition to be allowed. */
+  /** Ключи of TransitionContext that must be truthy for this transition to be allowed. */
   requires?: readonly (keyof TransitionContext)[];
 }
 
@@ -32,9 +32,9 @@ export interface TransitionRule {
 export interface WorkflowTemplate {
   readonly name: string;
   readonly description: string;
-  /** All statuses that are valid stages in this workflow. */
+  /** Все statuses that are valid stages in this workflow. */
   readonly stages: readonly TaskStatus[];
-  /** Allowed transitions with optional context requirements. */
+  /** Разрешённые transitions with optional context requirements. */
   readonly transitions: readonly TransitionRule[];
 }
 

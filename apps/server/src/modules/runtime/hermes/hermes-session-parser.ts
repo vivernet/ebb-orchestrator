@@ -5,7 +5,7 @@
 /**
  * Extracts session ID from hermes stdout output.
  *
- * The session ID appears in the format "session: <id>" in the output.
+ * Этот session ID appears in the format "session: <id>" in the output.
  * Returns null if no valid session ID is found.
  */
 export function parseSessionId(stdout: string): string | null {

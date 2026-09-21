@@ -60,7 +60,7 @@ export interface SecretStore {
 }
 
 /**
- * In-memory реализация хранилища секретов для тестов.
+ * В памяти реализация хранилища секретов для тестов.
  * Секреты хранятся только в памяти и не сохраняются.
  */
 export class InMemorySecretStore implements SecretStore {

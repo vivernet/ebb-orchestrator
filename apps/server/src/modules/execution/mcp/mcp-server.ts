@@ -3,7 +3,7 @@ import { ToolRegistry, type SchemaDefinition, type ToolDefinition } from './tool
 import type { CompletionStore } from './submit-result-tool.js';
 
 /**
- * Result of a tool call.
+ * Результат of a tool call.
  */
 export interface ToolCallResult {
   success: boolean;
@@ -108,7 +108,7 @@ export class McpServer {
   }
 
   /**
-   * Get available tools for this capability.
+   * Получает available tools for this capability.
    */
   getAvailableTools(): Array<Pick<ToolDefinition, 'name' | 'description' | 'inputSchema'>> {
     return this.registry.getAvailableTools().map(tool => ({
@@ -119,7 +119,7 @@ export class McpServer {
   }
 
   /**
-   * Get the tool registry for testing purposes.
+   * Получает the tool registry for testing purposes.
    */
   getRegistry(): ToolRegistry {
     return this.registry;
@@ -127,11 +127,11 @@ export class McpServer {
 
   /**
    * Call a tool by name with arguments.
-   * Never trusts task/workspace IDs from model payload - resolves server-side.
+   * Никогда trusts task/workspace IDs from model payload - resolves server-side.
    */
   async callTool(name: string, args: unknown): Promise<ToolCallResult> {
     try { this.capability.revalidateAccess(); } catch (error) { return { success: false, error: error instanceof Error ? error.message : 'capability revoked' }; }
-    // Get the tool definition
+    // Получает the tool definition
     const tool = this.registry.getTool(name);
     if (!tool) {
       return { success: false, error: `tool not found: ${name}` };
@@ -140,7 +140,7 @@ export class McpServer {
     const validatedArgs = validateToolArguments(tool.inputSchema, args);
     if (typeof validatedArgs === 'string') return { success: false, error: `invalid tool arguments: ${validatedArgs}` };
 
-    // Check if submit_result has already been called - blocks all write-capable tools
+    // Проверяет if submit_result has already been called - blocks all write-capable tools
     if (this.hasSubmittedResult || this.submittingResult) {
       return {
         success: false,
@@ -152,7 +152,7 @@ export class McpServer {
     if (name === 'submit_result') this.submittingResult = true;
     const result = await tool.handler(validatedArgs);
 
-    // Track successful submit_result call
+    // Отслеживает successful submit_result call
     if (name === 'submit_result' && result.success) {
       this.hasSubmittedResult = true;
     }
@@ -162,7 +162,7 @@ export class McpServer {
   }
 
   /**
-   * Get the run ID for this server instance.
+   * Получает the run ID for this server instance.
    */
   getRunId(): string {
     return this.runId;

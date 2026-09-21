@@ -1,5 +1,5 @@
 /**
- * Run service for managing agent run lifecycle.
+ * Выполняет service for managing agent run lifecycle.
  */
 
 import type { Database, DatabaseTx } from "../../platform/database/database.js";
@@ -41,7 +41,7 @@ export class RunService {
     }
   }
 
-  /** Adapter used by MCP. The UPDATE predicate makes acceptance atomic and one-shot. */
+  /** Adapter used by MCP. Этот UPDATE predicate makes acceptance atomic and one-shot. */
   completionStore(): CompletionStore {
     return new DatabaseCompletionStore(this.db);
   }
@@ -176,7 +176,7 @@ export class RunService {
   }
 
   /**
-   * Execute an already persisted run. This never creates another AgentRun.
+   * Execute an already persisted run. Этот never creates another AgentRun.
    */
   async executePreparedRun(runId: string): Promise<{ run: AgentRun; outcome: RunOutcome }> {
     const run = this.getRun(this.db, runId);
@@ -211,7 +211,7 @@ export class RunService {
   }
 
   /**
-   * Resume a run with session info.
+   * Возобновление a run with session info.
    */
   async resumeRun(runId: string, options: ResumeRunOptions): Promise<AgentRun> {
     this.db.transaction((tx) => {
@@ -245,7 +245,7 @@ export class RunService {
   }
 
   /**
-   * Cancel a run atomically with state, outbox event, and audit log.
+   * Отмена a run atomically with state, outbox event, and audit log.
    */
   async cancelRun(runId: string): Promise<void> {
     return this.db.transaction((tx) => {
@@ -261,7 +261,7 @@ export class RunService {
         `UPDATE agent_runs SET status = 'CANCELLED', ended_at = $ended_at WHERE id = $id AND status IN ('STARTED','IN_PROGRESS','COMPLETING')`,
         { id: runId, ended_at: now },
       );
-      // Append durable outbox event.
+      // Добавляет durable outbox event.
       const event = DomainEvent.create({
         type: "RunCancelled",
         aggregateType: "AgentRun",
@@ -269,7 +269,7 @@ export class RunService {
         payload: { runId, previousStatus: stored.status, taskId: stored.task_id, cancelledAt: now },
       });
       appendOutboxEvent(tx, event);
-      // Append audit log entry.
+      // Добавляет audit log entry.
       tx.run(
         `INSERT INTO audit_log(id,action,actor,aggregate_type,aggregate_id,details_json,created_at) VALUES($id,$action,$actor,$aggregate_type,$aggregate_id,$details,$created_at)`,
         { id: crypto.randomUUID(), action: "RUN_CANCELLED", actor: "local-user", aggregate_type: "AgentRun", aggregate_id: runId, details: JSON.stringify({ runId, status: "CANCELLED", previousStatus: stored.status }), created_at: now },
@@ -316,7 +316,7 @@ export class RunService {
   }
 
   /**
-   * Update run with collected usage.
+   * Обновляет run with collected usage.
    */
   async collectUsage(runId: string, usage: {
     inputTokens: number;
@@ -340,7 +340,7 @@ export class RunService {
   }
 
   /**
-   * Get a run by ID.
+   * Получает a run by ID.
    */
    private getRun(tx: DatabaseTx, runId: string): AgentRun {
     const row = tx.get(

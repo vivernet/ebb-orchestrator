@@ -1,16 +1,16 @@
 /**
- * Context Delta for Orchestrator Hermes.
- * Compares old manifest with current knowledge state.
- * Reports NEW|UPDATED|REMOVED items.
- * Determines if resume is safe or requires fresh session.
+ * Контекст Delta for Orchestrator Hermes.
+ * Сравнивает old manifest with current knowledge state.
+ * Сообщает о NEW|UPDATED|REMOVED items.
+ * Определяет if resume is safe or requires fresh session.
  */
 
 import type { ContextManifest, ContextDelta as ContextDeltaResult } from "./context-types.js";
 
-/** Material fields that make resume unsafe when changed */
+/** Значимые fields that make resume unsafe when changed */
 const MATERIAL_FIELDS = ["taskContractVersion", "taskId", "role"] as const;
 
-/** Resume safety check result */
+/** Возобновление safety check result */
 export interface ResumeSafetyResult {
   safe: boolean;
   reason?: "RESUME_NOT_SAFE";
@@ -18,12 +18,12 @@ export interface ResumeSafetyResult {
 }
 
 /**
- * Context Delta — compares manifests and determines resume safety.
+ * Контекст Delta — compares manifests and determines resume safety.
  */
 export class ContextDelta {
   /**
-   * Compare old and current manifests to compute delta.
-   * Reports which items were added, updated, or removed.
+   * Сравнивает old and current manifests to compute delta.
+   * Сообщает о which items were added, updated, or removed.
    */
   compare(
     oldManifest: ContextManifest,
@@ -33,16 +33,16 @@ export class ContextDelta {
     const updated: string[] = [];
     const removed: string[] = [];
 
-    // Compare guideline IDs
+    // Сравнивает guideline IDs
     this.compareIdArrays(oldManifest.guidelineIds, currentManifest.guidelineIds, added, removed);
 
-    // Compare decision IDs
+    // Сравнивает decision IDs
     this.compareIdArrays(oldManifest.decisionIds, currentManifest.decisionIds, added, removed);
 
-    // Compare finding IDs
+    // Сравнивает finding IDs
     this.compareIdArrays(oldManifest.findingIds, currentManifest.findingIds, added, removed);
 
-    // Compare defect IDs
+    // Сравнивает defect IDs
     this.compareIdArrays(oldManifest.defectIds, currentManifest.defectIds, added, removed);
 
     // Detect task contract version change
@@ -61,7 +61,7 @@ export class ContextDelta {
     oldManifest: ContextManifest,
     currentManifest: ContextManifest,
   ): ResumeSafetyResult {
-    // Check material field changes
+    // Проверяет material field changes
     for (const field of MATERIAL_FIELDS) {
       const oldVal = oldManifest[field];
       const newVal = currentManifest[field];
@@ -80,7 +80,7 @@ export class ContextDelta {
   }
 
   /**
-   * Compare two ID arrays and populate added/removed lists.
+   * Сравнивает two ID arrays and populate added/removed lists.
    */
   private compareIdArrays(
     oldIds: string[],

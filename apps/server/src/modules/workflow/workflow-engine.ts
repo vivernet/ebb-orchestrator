@@ -111,14 +111,14 @@ export class WorkflowEngine {
         );
       }
 
-      // Persist the status change
+      // Сохраняет status change
       const now = new Date().toISOString();
       tx.run(
         "UPDATE tasks SET status = $status, updated_at = $updated_at WHERE id = $id",
         { id: taskId, status: toStatus, updated_at: now },
       );
 
-      // Append the outbox event in the same transaction
+      // Добавляет the outbox event in the same transaction
       const event = DomainEvent.create({
         type: "TaskStateChanged",
         aggregateType: "Task",
@@ -172,16 +172,16 @@ export class WorkflowEngine {
     template: WorkflowTemplate,
     context?: TransitionContext,
   ): boolean {
-    // Self-transitions are never allowed
+    // Самопереходы are never allowed
     if (fromStatus === toStatus) return false;
 
-    // Child Tasks are already integrated into the Epic branch at this point;
+    // Дочерние Tasks are already integrated into the Epic branch at this point;
     // their release is a release marker, not a second child merge.
     if (fromStatus === "INTEGRATED_INTO_EPIC" && toStatus === "RELEASED") {
       return context?.parentEpicReleased === true;
     }
 
-    // Check if the statuses are valid stages in this template
+    // Проверяет if the statuses are valid stages in this template
     if (
       !template.stages.includes(fromStatus) ||
       !template.stages.includes(toStatus)
@@ -189,13 +189,13 @@ export class WorkflowEngine {
       return false;
     }
 
-    // Find a matching transition rule
+    // Находит a matching transition rule
     const rule = template.transitions.find(
       (r) => r.from === fromStatus && r.to === toStatus,
     );
     if (!rule) return false;
 
-    // Check context requirements
+    // Проверяет context requirements
     if (rule.requires && rule.requires.length > 0) {
       if (!context) return false;
       for (const key of rule.requires) {

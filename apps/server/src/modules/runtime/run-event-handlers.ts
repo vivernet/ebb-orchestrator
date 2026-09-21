@@ -28,7 +28,7 @@ export class RuntimeEventHandlers {
   }
 
   /**
-   * Handle AgentRunRequested event.
+   * Обрабатывает AgentRunRequested event.
    * Transitions task to DEVELOPMENT and starts the runtime.
    */
   handleAgentRunRequested(event: {
@@ -46,7 +46,7 @@ export class RuntimeEventHandlers {
       model?: string;
     };
 
-    // Validate task exists and is in READY state
+    // Проверяет task exists and is in READY state
     const task = this.db.get<{ id: string; status: string }>(
       "SELECT id, status FROM tasks WHERE id = $id",
       { id: taskId },
@@ -62,7 +62,7 @@ export class RuntimeEventHandlers {
       );
     }
 
-    // The run identity is persisted before scheduling. The scheduler then
+    // Этот run identity is persisted before scheduling. Этот scheduler then
     // stores that exact identity in its reservation, preventing a later
     // runtime from being attached to a different reservation/run.
     if (!this.runService) {
@@ -119,14 +119,14 @@ export class RuntimeEventHandlers {
   }
 
   /**
-   * Handle runtime completion.
+   * Обрабатывает runtime completion.
    * Validates current workflow stage before applying outcome.
    */
   handleRuntimeCompletion(
     runId: string,
     outcome: RunOutcome,
   ): void {
-    // The run is the authorization boundary. Never select a latest run for a
+    // Этот run is the authorization boundary. Never select a latest run for a
     // task: that permits a stale/foreign completion to advance the workflow.
     const run = this.db.get<{ id: string; task_id: string | null; role: string; status: string; output: string | null; cost: number | null }>(
       "SELECT id, task_id, role, status, output, cost FROM agent_runs WHERE id = $id",
@@ -148,7 +148,7 @@ export class RuntimeEventHandlers {
     if (!validation.valid) throw new Error(`Run ${runId} result rejected: ${validation.error}`);
 
     const taskId = run.task_id;
-    // Validate current workflow stage
+    // Проверяет current workflow stage
     const currentStage = this.db.get<{ status: string }>(
       "SELECT status FROM tasks WHERE id = $id",
       { id: taskId },
@@ -158,14 +158,14 @@ export class RuntimeEventHandlers {
       throw new Error(`Task ${taskId} not found`);
     }
 
-    // Only allow completion from DEVELOPMENT stage
+    // Только allow completion from DEVELOPMENT stage
     if (currentStage.status !== "DEVELOPMENT") {
       throw new Error(
         `Invalid workflow stage for completion: ${currentStage.status}. Expected: DEVELOPMENT`,
       );
     }
 
-    // Apply outcome based on success/failure
+    // Применяет outcome based on success/failure
     const successfulOutcome = !["BLOCKED", "FAIL", "CHANGES_REQUESTED"].includes(validation.outcome ?? "");
     const targetStatus = successfulOutcome ? "REVIEW" : "FAILED";
     this.workflowEngine.transition(taskId, targetStatus);
@@ -180,7 +180,7 @@ export class RuntimeEventHandlers {
   }
 
   /**
-   * Handle interrupted run.
+   * Обрабатывает interrupted run.
    */
   handleRunInterrupted(taskId: string): void {
     const currentStage = this.db.get<{ status: string }>(
@@ -192,7 +192,7 @@ export class RuntimeEventHandlers {
       throw new Error(`Task ${taskId} not found`);
     }
 
-    // Only allow interrupt from non-terminal stages
+    // Только allow interrupt from non-terminal stages
     const terminalStates = ["FAILED", "CANCELLED", "DONE", "RELEASED"];
     if (terminalStates.includes(currentStage.status)) {
       throw new Error(
@@ -207,7 +207,7 @@ export class RuntimeEventHandlers {
   }
 
   /**
-   * Handle ApprovalApproved event with FINAL_MERGE.
+   * Обрабатывает ApprovalApproved event with FINAL_MERGE.
    * Validates transition to MERGING after approval.
    */
   handleApprovalApproved(event: {
@@ -305,7 +305,7 @@ export class RuntimeEventHandlers {
     model: string,
   ): void {
     // In production, this would append to outbox
-    // For now, we log it
+    // Для now, we log it
     console.log(`[AgentRunStarted] taskId=${taskId} role=${role} model=${model}`);
   }
 

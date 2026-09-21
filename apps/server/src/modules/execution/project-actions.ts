@@ -96,7 +96,7 @@ export class ProjectActions {
   }
 
   /**
-   * Get the configured options for a specific action.
+   * Получает the configured options for a specific action.
    * Falls back to default commands if not configured.
    */
   private getConfiguredOptions(action: ProjectAction): ExecOptions {

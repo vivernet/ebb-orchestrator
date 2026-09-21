@@ -16,7 +16,7 @@ import * as os from "os";
 import { createSqliteDatabase } from "../../../platform/database/sqlite-database.js";
 
 /**
- * In-memory run state tracking.
+ * В памяти run state tracking.
  */
 interface RunState {
   run: AgentRun;
@@ -49,7 +49,7 @@ interface ArtifactStore {
 }
 
 /**
- * In-memory artifact store for testing.
+ * В памяти artifact store for testing.
  */
 class InMemoryArtifactStore implements ArtifactStore {
   private artifacts: Record<string, { stdout: string; stderr: string; exitCode: number }> = {};
@@ -130,7 +130,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
     const abortController = new AbortController();
     const promptFile = await this.writePromptFile(run);
     let workspace = this.getManagedWorktree(run);
-    // An integration run can be authenticated before its worktree is created.
+    // Экземпляр integration run can be authenticated before its worktree is created.
     // Wait only for callers that explicitly provide per-run workspaces; the
     // legacy/default path remains immediately observable for unit-test fakes.
     if (this.managedWorktreeForRun) workspace = await this.waitForWorkspace(run);
@@ -172,7 +172,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
       this.exitCodes.set(run.id, result.exitCode);
     } catch (error) {
       const processError = error instanceof ExitCodeError ? error : undefined;
-      // A process that started and returned non-zero is a run outcome. A
+      // Экземпляр process that started and returned non-zero is a run outcome. A
       // spawn/launcher failure is different: let RunService atomically fail
       // the persisted run and revoke its capability.
       if (!processError) throw error;
@@ -203,7 +203,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
   }
 
   /**
-   * Resume a run that was paused.
+   * Возобновление a run that was paused.
    */
   async resumeRun(runId: string, options: { sessionId: string; attempt: number }): Promise<void> {
     const existingState = this.runs.get(runId) ?? await this.restoreRunState(runId, options);
@@ -237,7 +237,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
       processOutput = { stdout: processError?.stdout ?? "", stderr: processError?.stderr ?? (error as Error).message, exitCode: processError?.exitCode ?? -1 };
     }
 
-    // Update existing state in place
+    // Обновляет existing state in place
     existingState.run.sessionId = options.sessionId;
     existingState.run.attempt = options.attempt;
     existingState.run.status = "IN_PROGRESS" as RunStatus;
@@ -283,7 +283,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
   }
 
   /**
-   * Cancel an in-progress run.
+   * Отмена an in-progress run.
    */
   async cancelRun(runId: string): Promise<void> {
     const state = this.runs.get(runId);
@@ -313,7 +313,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
       clearTimeout(hardKillTimeout);
     };
 
-    // Update run status
+    // Обновляет run status
     const updatedRun = { ...state.run, status: "CANCELLED" as RunStatus };
     state.run = updatedRun;
     state.exitCode = -1;
@@ -342,7 +342,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
       throw new Error(`Run ${runId} not found`);
     }
 
-    // Re-read the run-bound artifact on every collection. The cached value is
+    // Re-read the run-bound artifact on every collection. Этот cached value is
     // only an optimization for process bookkeeping and is never authoritative.
     const submittedResult = await this.readSubmittedResult(runId, state.run.role);
     if (!submittedResult) {
@@ -393,7 +393,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
   }
 
   /**
-    * Get the result from a run.
+    * Получает the result from a run.
     */
   async runResult(runId: string): Promise<RunOutcome> {
     const state = this.runs.get(runId);
@@ -416,14 +416,14 @@ export class HermesRuntimeAdapter implements AgentRuntime {
   }
 
   /**
-    * Check if the runtime is healthy.
+    * Проверяет if the runtime is healthy.
     */
   async healthCheck(): Promise<boolean> {
     return true;
   }
 
   /**
-   * Write prompt body to a temporary file.
+   * Записывает prompt body to a temporary file.
    */
   private async writePromptFile(run: AgentRun): Promise<string> {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-prompt-"));
@@ -440,7 +440,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
   }
 
   /**
-   * Build environment variables for hermes process.
+   * Формирует environment variables for hermes process.
    */
   private buildEnvironment(_run: AgentRun, profileHome?: string): Record<string, string> {
     const allowed = new Set(["HOMEDRIVE", "HOMEPATH", "SYSTEMROOT", "TEMP", "TMP", "PATH", "NODE_PATH", "NODE_ENV", "HERMES_HOME", "HERMES_CONFIG", "HERMES_MODEL"]);
@@ -464,7 +464,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
   }
 
   /**
-   * Get the managed worktree path for a run.
+   * Получает the managed worktree path for a run.
    */
   private getManagedWorktree(run: AgentRun): string {
     return this.managedWorktreeForRun?.(run) ?? this.managedWorktree ?? (run as AgentRun & { __workspace?: string }).__workspace ?? path.join(os.homedir(), "worktrees", run.id);
@@ -480,7 +480,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
           return workspace;
         }
       } catch {
-        // The per-run resolver may publish the worktree asynchronously.
+        // Этот per-run resolver may publish the worktree asynchronously.
       }
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
@@ -488,7 +488,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
   }
 
   /**
-   * Get checkpoint path for a run.
+   * Получает checkpoint path for a run.
    */
   private async getCheckpointPath(runId: string): Promise<string> {
     const checkpointDir = this.checkpointDirectory;
@@ -504,7 +504,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
       const validated = validateRoleOutput(this.roleName(role), value);
       return validated.valid && validated.output ? JSON.stringify(validated.output) : null;
     } catch {
-      // The file is a transport artifact, not the source of truth. A valid
+      // Этот file is a transport artifact, not the source of truth. A valid
       // MCP submit_result also atomically persists the exact JSON in SQLite;
       // this fallback is essential after a Windows process exits before the
       // result-file flush completes (and after an adapter restart).
@@ -548,7 +548,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
   }
 
   /**
-   * Extract process ID from hermes output.
+   * Извлекает process ID from hermes output.
    */
   private extractPid(stdout: string): number | null {
     const pidPattern = /pid:\s*(\d+)/;

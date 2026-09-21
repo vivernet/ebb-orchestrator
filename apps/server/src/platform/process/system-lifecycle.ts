@@ -1,10 +1,10 @@
 /**
- * System lifecycle – orchestrates the startup sequence and exposes
- * the runtime status state machine.
+ * Жизненный цикл системы — координирует запуск и предоставляет
+ * конечный автомат состояния runtime.
  *
- * States: STARTING → RECOVERING → READY → (PAUSED | DEGRADED) → SHUTTING_DOWN
+ * Состояния: STARTING → RECOVERING → READY → (PAUSED | DEGRADED) → SHUTTING_DOWN
  *
- * The startup order is explicit in {@link startSystem}:
+ * Порядок запуска явно задан в {@link startSystem}:
  * 1. Acquire single-instance lock
  * 2. Open database
  * 3. Run migrations
@@ -22,12 +22,12 @@ export type SystemStatus =
   | "DEGRADED"
   | "SHUTTING_DOWN";
 
-/** Handle returned by `InstanceLock.acquire()`. */
+/** Обрабатывает returned by `InstanceLock.acquire()`. */
 export interface LockHandle {
   pid: number;
 }
 
-/** Subset of the Database interface required by the lifecycle. */
+/** Подмножество of the Database interface required by the lifecycle. */
 export interface LifecycleDatabase {
   open(): Promise<void>;
   close(): void;
@@ -38,20 +38,20 @@ export interface LifecycleMigrator {
   run(): Promise<void>;
 }
 
-/** Status tracker that holds the current system status. */
+/** Состояние tracker that holds the current system status. */
 export interface StatusTrackerInterface {
   get(): SystemStatus;
   set(status: SystemStatus): Promise<void>;
 }
 
-/** Simple worker interface for background processing. */
+/** Простой worker interface for background processing. */
 export interface BackgroundWorker {
   start(): Promise<void>;
   stop(): Promise<void>;
 }
 
 /**
- * All dependencies needed to bring the system online.
+ * Все dependencies needed to bring the system online.
  */
 export interface SystemLifecycleDeps {
   instanceLock: {
@@ -74,9 +74,9 @@ export interface SystemLifecycleDeps {
 }
 
 /**
- * Run the startup sequence with the given dependencies.
+ * Выполняет the startup sequence with the given dependencies.
  *
- * The order is intentional and must not be reordered.
+ * Порядок выбран намеренно и не должен изменяться.
  */
 export async function startSystem(deps: SystemLifecycleDeps): Promise<void> {
   if (!deps.lockAlreadyAcquired) await deps.instanceLock.acquire();
@@ -96,8 +96,8 @@ export async function startSystem(deps: SystemLifecycleDeps): Promise<void> {
       startedWorkers.push(worker);
     }
   } catch (error) {
-    // Do not leave partially started workers running when startup cannot
-    // establish a fully operational system.  The status must also remain
+    // Не leave partially started workers running when startup cannot
+    // establish a fully operational system.  Этот status must also remain
     // non-ready so readiness probes cannot report a false positive.
     await Promise.allSettled(
       startedWorkers.map(async (worker) => {
@@ -111,7 +111,7 @@ export async function startSystem(deps: SystemLifecycleDeps): Promise<void> {
 }
 
 /**
- * In-memory status tracker.
+ * В памяти status tracker.
  */
 export class StatusTracker implements StatusTrackerInterface {
   private status: SystemStatus = "STARTING";
@@ -126,9 +126,9 @@ export class StatusTracker implements StatusTrackerInterface {
 }
 
 /**
- * Graceful shutdown orchestration.
+ * Корректное shutdown orchestration.
  *
- * Steps:
+ * Шаги:
  * 1. Set status to SHUTTING_DOWN
  * 2. Stop all workers (prevent new dispatch)
  * 3. Wait up to `timeoutMs` for in-flight work to flush

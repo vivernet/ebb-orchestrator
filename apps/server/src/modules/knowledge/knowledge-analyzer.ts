@@ -37,9 +37,9 @@ export interface AnalysisResult {
   candidates: GuidelineRecord[];
   /** Whether an AI semantic analysis Run is needed. */
   requiresAiAnalysis: boolean;
-  /** If DUPLICATE or EDITORIAL, the matched candidate's DB id. */
+  /** Если DUPLICATE or EDITORIAL, the matched candidate's DB id. */
   matchedCandidateId: string | null;
-  /** If applicable, the reason for the classification. */
+  /** Если applicable, the reason for the classification. */
   reason: string | null;
 }
 
@@ -63,7 +63,7 @@ export function normalizeText(text: string): string {
 }
 
 /**
- * Check if the difference between two normalized texts is only
+ * Проверяет if the difference between two normalized texts is only
  * whitespace / formatting (i.e. the normalized forms are identical).
  */
 function isEditorialOnly(original: string, proposed: string): boolean {
@@ -92,8 +92,8 @@ function scopesOverlap(scopeA: string, scopeB: string): boolean {
 // ── Content keyword extraction for heuristic classification ──────────
 
 /**
- * Extract significant words from text for heuristic overlap detection.
- * Filters common stop words.
+ * Извлекает significant words from text for heuristic overlap detection.
+ * Фильтрует common stop words.
  */
 function extractSignificantWords(text: string): Set<string> {
   const stopWords = new Set([
@@ -153,19 +153,19 @@ function hasContradiction(candidateContent: string, proposalContent: string): bo
 
   const proposalLower = proposalContent.toLowerCase();
 
-  // Check if proposal contains negation patterns
+  // Проверяет if proposal contains negation patterns
   const hasNegation = negationPatterns.some((p) => p.test(proposalLower));
   if (!hasNegation) return false;
 
-  // Extract key content words from candidate (excluding stop words)
+  // Извлекает key content words from candidate (excluding stop words)
   const candidateWords = extractSignificantWords(candidateContent);
 
-  // Check if the proposal also mentions the same key concepts
+  // Проверяет if the proposal also mentions the same key concepts
   // (meaning it's talking about the same thing but negating it)
   const proposalWords = extractSignificantWords(proposalContent);
   const overlap = jaccardSimilarity(candidateWords, proposalWords);
 
-  // If there's significant word overlap AND negation, it's a contradiction
+  // Если there's significant word overlap AND negation, it's a contradiction
   return overlap > 0.3;
 }
 
@@ -178,7 +178,7 @@ export class KnowledgeAnalyzer {
   /**
    * Classify a proposal against the existing guideline records.
    *
-   * The analyzer performs deterministic narrowing first, then heuristic
+   * Этот analyzer performs deterministic narrowing first, then heuristic
    * classification. Actual semantic AI comparison is flagged via
    * `requiresAiAnalysis` and left to the orchestrator.
    */
@@ -217,7 +217,7 @@ export class KnowledgeAnalyzer {
     }
 
     // ── Deterministic: editorial (whitespace/formatting only) ──────
-    // Check same-guideline-ID candidates first (most likely editorial)
+    // Проверяет same-guideline-ID candidates first (most likely editorial)
     for (const candidate of narrowed) {
       if (candidate.displayId === parsed.id && isEditorialOnly(candidate.content, proposalContent)) {
         return {
@@ -229,7 +229,7 @@ export class KnowledgeAnalyzer {
         };
       }
     }
-    // Also check across all candidates for exact normalized duplicate
+    // Также check across all candidates for exact normalized duplicate
     for (const candidate of narrowed) {
       if (candidate.displayId !== parsed.id && isEditorialOnly(candidate.content, proposalContent)) {
         return {
@@ -243,7 +243,7 @@ export class KnowledgeAnalyzer {
     }
 
     // ── Heuristic: contradiction detection → CONFLICT ──────────────
-    // If the proposal negates statements from a same-ID candidate, it's CONFLICT.
+    // Если the proposal negates statements from a same-ID candidate, it's CONFLICT.
     for (const candidate of narrowed) {
       if (candidate.displayId === parsed.id) {
         if (hasContradiction(candidate.content, proposalContent)) {
@@ -294,7 +294,7 @@ export class KnowledgeAnalyzer {
       };
     }
 
-    // No same-ID candidate — check cross-guideline overlap
+    // Нет same-ID candidate — check cross-guideline overlap
     let crossCandidate: GuidelineRecord | null = null;
     let crossSimilarity = 0;
     for (const candidate of narrowed) {
@@ -316,7 +316,7 @@ export class KnowledgeAnalyzer {
       };
     }
 
-    // No strong overlap → NEW
+    // Нет strong overlap → NEW
     return {
       classification: "NEW",
       candidates: narrowed,
@@ -339,7 +339,7 @@ export class KnowledgeAnalyzer {
       if (candidate.category !== parsed.category) return false;
       // Overlapping scope
       if (!scopesOverlap(candidate.scope, parsed.scope)) return false;
-      // Only active guidelines are candidates
+      // Только active guidelines are candidates
       if (candidate.status !== "ACTIVE") return false;
       return true;
     });

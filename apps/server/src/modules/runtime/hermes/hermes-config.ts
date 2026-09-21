@@ -3,7 +3,7 @@
  */
 
 /**
- * Run capability - defines what the run is authorized to do.
+ * Выполняет capability - defines what the run is authorized to do.
  */
 export interface RunCapability {
   /** Role name. */
@@ -18,7 +18,7 @@ export interface RunCapability {
 export interface McpServer {
   /** Unique server name/key. */
   name: string;
-  /** The command to run. */
+  /** Этот command to run. */
   command: string;
   /** Arguments to pass to the command. */
   args?: string[];
@@ -52,12 +52,12 @@ export interface HermesLaunchProfile {
   hermesHome: string;
   /** Environment variables for the Hermes process. */
   env: Record<string, string>;
-  /** Set of tools/capabilities enabled. */
+  /** Устанавливает of tools/capabilities enabled. */
   toolsetName: string[];
 }
 
 /**
- * Build configuration for a run capability.
+ * Формирует configuration for a run capability.
  */
 export interface HermesRunBuildConfig {
   capability: RunCapability;

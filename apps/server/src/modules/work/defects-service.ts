@@ -84,8 +84,8 @@ export class DefectsService {
   }
 
   /**
-   * Update an existing defect (e.g., on re-test).
-   * Only updates status, evidence signature, and source run.
+   * Обновляет an existing defect (e.g., on re-test).
+   * Только updates status, evidence signature, and source run.
    */
   updateDefect(
     defectId: string,
@@ -133,7 +133,7 @@ export class DefectsService {
   }
 
   /**
-   * Get defect by stable display ID.
+   * Получает defect by stable display ID.
    */
   getDefectByDisplayId(tx: DatabaseTx, projectId: string, displayId: string): Defect | null {
     const row = tx.get(
@@ -144,7 +144,7 @@ export class DefectsService {
   }
 
   /**
-   * Get defect by internal ID.
+   * Получает defect by internal ID.
    */
   getDefectById(tx: DatabaseTx, id: string): Defect | null {
     const row = tx.get("SELECT * FROM defects WHERE id = $id", { id });
@@ -152,7 +152,7 @@ export class DefectsService {
   }
 
   /**
-   * Get all defects for a task.
+   * Получает all defects for a task.
    */
   getDefectsByTaskId(tx: DatabaseTx, taskId: string): Defect[] {
     const rows = tx.all("SELECT * FROM defects WHERE task_id = $taskId ORDER BY display_id", { taskId });
@@ -160,7 +160,7 @@ export class DefectsService {
   }
 
   /**
-   * Get open defects for a task.
+   * Получает open defects for a task.
    */
   getOpenDefectsByTaskId(tx: DatabaseTx, taskId: string): Defect[] {
     const rows = tx.all(
@@ -171,7 +171,7 @@ export class DefectsService {
   }
 
   private nextDefectNumber(tx: DatabaseTx, projectId: string): number {
-    // Extract the numeric part by removing "DEFECT-" prefix
+    // Извлекает the numeric part by removing "DEFECT-" prefix
     const row = tx.get<{ max_num: number }>(
       "SELECT MAX(CAST(REPLACE(display_id, 'DEFECT-', '') AS INTEGER)) as max_num FROM defects WHERE project_id = $projectId",
       { projectId },

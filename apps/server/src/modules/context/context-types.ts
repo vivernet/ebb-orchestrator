@@ -1,6 +1,6 @@
 /**
- * Context Package and Manifest types for Orchestrator Hermes.
- * Defines the structure for context packages sent to Agent roles.
+ * Контекст Package and Manifest types for Orchestrator Hermes.
+ * Определяет the structure for context packages sent to Agent roles.
  */
 
 /** Priority level for context items */
@@ -19,16 +19,16 @@ export interface TaskContract {
   priority: Priority;
 }
 
-/** Status for findings */
+/** Состояние for findings */
 export type FindingStatus = 'open' | 'in_progress' | 'resolved' | 'closed';
 
-/** Status for defects */
+/** Состояние for defects */
 export type DefectStatus = 'open' | 'in_progress' | 'resolved' | 'closed';
 
-/** Status for guidelines */
+/** Состояние for guidelines */
 export type GuidelineStatus = 'active' | 'inactive' | 'deprecated';
 
-/** Status for decisions */
+/** Состояние for decisions */
 export type DecisionStatus = 'accepted' | 'rejected' | 'superseded';
 
 /** Severity for findings */
@@ -94,7 +94,7 @@ export interface BudgetConfig {
 
 /**
  * Developer Context Package
- * Contains all context needed by Developer role.
+ * Содержит all context needed by Developer role.
  */
 export interface DeveloperContextPackage {
   taskContract: TaskContract;
@@ -109,7 +109,7 @@ export interface DeveloperContextPackage {
 
 /**
  * Reviewer Context Package
- * Contains all context needed by Reviewer role.
+ * Содержит all context needed by Reviewer role.
  * Does NOT include Developer conversation.
  */
 export interface ReviewerContextPackage {
@@ -123,8 +123,8 @@ export interface ReviewerContextPackage {
 }
 
 /**
- * Context Manifest - tracks what went into a context package
- * Persists IDs and versions, NOT secrets.
+ * Контекст Manifest - tracks what went into a context package
+ * Сохраняет IDs and versions, NOT secrets.
  */
 export interface ContextManifest {
   runId: string;
@@ -141,7 +141,7 @@ export interface ContextManifest {
 }
 
 /**
- * Context Delta - changes from previous context
+ * Контекст Delta - changes from previous context
  */
 export interface ContextDelta {
   added: string[];

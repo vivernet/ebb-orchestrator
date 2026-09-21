@@ -22,7 +22,7 @@ export type MergeConflictStatus = "OPEN" | "RESOLVED";
  * MergeConflictRepository persists merge conflicts as first-class records.
  * 
  * Key properties:
- * - Each conflict is stored as a separate row
+ * - Каждый conflict is stored as a separate row
  * - Tracks classification and status for lifecycle management
  * - Supports querying by source/target branches
  */

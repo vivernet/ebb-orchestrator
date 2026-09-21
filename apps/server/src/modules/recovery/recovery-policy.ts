@@ -50,10 +50,10 @@ export function hasExcessiveNoProgress(
 export function evaluateRecovery(context: RecoveryContext, policy: RecoveryPolicy = DEFAULT_POLICY): RecoveryResult {
   const { attempts, currentRoleLevel, failureType, stage, evidenceHash } = context;
   
-  // Count attempts at current level
+  // Подсчитывает attempts at current level
   const attemptsAtLevel = countAttempts(attempts, currentRoleLevel, failureType);
 
-  // Handle TOOL_ERROR - always retry, never escalate
+  // Обрабатывает TOOL_ERROR - always retry, never escalate
   if (failureType === "TOOL_ERROR") {
     return {
       decision: "RETRY",
@@ -62,7 +62,7 @@ export function evaluateRecovery(context: RecoveryContext, policy: RecoveryPolic
     };
   }
 
-  // Handle no-progress detection
+  // Обрабатывает no-progress detection
   if (failureType === "NO_PROGRESS" && stage) {
     const noProgressCount = attempts.filter(
       (a) => a.fingerprint?.stage === stage && a.fingerprint?.evidenceHash === "no_progress",
@@ -87,7 +87,7 @@ export function evaluateRecovery(context: RecoveryContext, policy: RecoveryPolic
     }
   }
 
-  // Handle loop detection for review/QA findings
+  // Обрабатывает loop detection for review/QA findings
   if (stage && evidenceHash) {
     if (stage === "review" && hasLoopInEvidence(attempts, stage, evidenceHash, policy.maxReviewReworkCycles)) {
       if (currentRoleLevel === "middle") {
@@ -124,7 +124,7 @@ export function evaluateRecovery(context: RecoveryContext, policy: RecoveryPolic
     }
   }
 
-  // Handle integration failures
+  // Обрабатывает integration failures
   if (failureType === "INTEGRATION_FAILURE") {
     const integrationAttempts = attempts.filter(
       (a) => a.failureType === "INTEGRATION_FAILURE",
@@ -145,7 +145,7 @@ export function evaluateRecovery(context: RecoveryContext, policy: RecoveryPolic
     };
   }
 
-  // Handle TASK_FAILURE
+  // Обрабатывает TASK_FAILURE
   if (failureType === "TASK_FAILURE") {
     if (currentRoleLevel === "middle") {
       if (attemptsAtLevel < policy.middleAttempts) {
@@ -180,7 +180,7 @@ export function evaluateRecovery(context: RecoveryContext, policy: RecoveryPolic
     }
   }
 
-  // Default: block
+  // Назначение: block
   return {
     decision: "BLOCK",
     reason: "No recovery path available",

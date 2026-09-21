@@ -34,7 +34,7 @@ export class BranchManager {
 
   /**
    * Creates an epic branch from a base reference.
-   * Uses disabled hooks to prevent arbitrary code execution.
+   * Использует disabled hooks to prevent arbitrary code execution.
    */
   async createEpicBranch(
     epicId: string,
@@ -45,11 +45,11 @@ export class BranchManager {
     const branchName = `epic/${epicId}`;
     assertSafeGitRef(branchName);
     
-    // Create empty hooks directory to disable hooks
+    // Создаёт empty hooks directory to disable hooks
     const emptyHooksDir = this.createEmptyHooksDir();
 
     try {
-      // Create branch with hooks disabled using -c option before command
+      // Создаёт branch with hooks disabled using -c option before command
       await this.git.run(repoPath, [
         "-c",
         `core.hooksPath=${emptyHooksDir.replace(/\\/g, "/")}`,

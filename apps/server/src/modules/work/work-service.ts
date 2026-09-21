@@ -117,7 +117,7 @@ export class WorkService {
         throw new Error(`Task already belongs to epic ${existing.epicId}`);
       }
 
-      // Verify the epic exists and is in the same project
+      // Проверяет the epic exists and is in the same project
       const epicRow = tx.get<{ project_id: string }>(
         "SELECT project_id FROM epics WHERE id = $id",
         { id: epicId },
@@ -131,7 +131,7 @@ export class WorkService {
 
       WorkRepository.setTaskEpicId(tx, taskId, epicId);
 
-      // Return the updated task
+      // Возвращает the updated task
       return WorkRepository.getTaskById(tx, taskId)!;
     });
   }

@@ -15,7 +15,7 @@ export interface AgentRuntime {
     */
   maxActive: number;
   /**
-    * Record of runtime calls.
+    * Записывает of runtime calls.
     */
   calls: Array<{ phase: string; role: string; taskId?: string; targetBranch?: string }>;
 
@@ -25,12 +25,12 @@ export interface AgentRuntime {
   startRun(run: AgentRun): Promise<void>;
 
   /**
-   * Resume a run that was paused.
+   * Возобновление a run that was paused.
    */
   resumeRun(runId: string, options: { sessionId: string; attempt: number }): Promise<void>;
 
   /**
-   * Cancel an in-progress run.
+   * Отмена an in-progress run.
    */
   cancelRun(runId: string): Promise<void>;
 
@@ -55,12 +55,12 @@ export interface AgentRuntime {
   }>;
 
   /**
-    * Get the result from a run.
+    * Получает the result from a run.
     */
   runResult(runId: string): Promise<RunOutcome>;
 
   /**
-    * Check if the runtime is healthy.
+    * Проверяет if the runtime is healthy.
     */
   healthCheck(): Promise<boolean>;
 }

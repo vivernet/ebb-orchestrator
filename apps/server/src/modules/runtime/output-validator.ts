@@ -70,8 +70,8 @@ function validateCoordinatorPlan(value: CoordinatorOutput): string | undefined {
 
 /**
  * Validates role output against schema and semantic rules.
- * @param role - The role name (developer, reviewer, qa, integration)
- * @param value - The raw output from the model
+ * @param role - Этот role name (developer, reviewer, qa, integration)
+ * @param value - Этот raw output from the model
  * @returns ValidatedRoleOutput with validation result
  */
 export function validateRoleOutput(role: string, value: unknown): ValidatedRoleOutput {
@@ -136,7 +136,7 @@ export function validateRoleOutput(role: string, value: unknown): ValidatedRoleO
     }
   }
 
-  // All validations passed
+  // Все validations passed
     return {
       valid: true,
       output: data,

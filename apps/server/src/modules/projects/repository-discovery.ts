@@ -51,7 +51,7 @@ export class RepositoryDiscovery {
         if (branch.startsWith("refs/remotes/origin/")) return branch.slice("refs/remotes/origin/".length);
       }
     } catch {
-      // Fallback if no origin HEAD exists.
+      // Резервный if no origin HEAD exists.
     }
 
     try {
@@ -61,7 +61,7 @@ export class RepositoryDiscovery {
         if (branch) return branch;
       }
     } catch {
-      // Fallback to main.
+      // Резервный to main.
     }
 
     try {
@@ -71,7 +71,7 @@ export class RepositoryDiscovery {
         if (match?.[1]) return match[1];
       }
     } catch {
-      // Fallback to main.
+      // Резервный to main.
     }
 
     return "main";

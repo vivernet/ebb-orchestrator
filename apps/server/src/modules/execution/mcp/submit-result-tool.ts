@@ -9,7 +9,7 @@ export class SubmitResultTool {
   constructor(private capability: RunCapability, private readonly completion?: CompletionStore) {}
 
   /**
-   * Validate and submit result. Returns success/error with atomic state transition.
+   * Проверяет and submit result. Returns success/error with atomic state transition.
    */
   async validateAndSubmit(payload: unknown): Promise<{ success: boolean; error?: string; result?: unknown }> {
     const validated = validateRoleOutput(this.capability.capability.role, payload);
@@ -30,7 +30,7 @@ export class SubmitResultTool {
     }
 
     // At this point, payload is validated.
-    // The actual state transition to COMPLETING is handled by the MCP server,
+    // Этот actual state transition to COMPLETING is handled by the MCP server,
     // which maintains run-specific state to prevent duplicate submissions.
 
     return {
@@ -41,9 +41,9 @@ export class SubmitResultTool {
 }
 
 export interface CompletionStore {
-  /** Must be implemented as one server-side conditional transaction. */
+  /** Должен be implemented as one server-side conditional transaction. */
   accept(reference: string, value: { runId: string; role: string; output: unknown }): Promise<boolean>;
-  /** Return only the authenticated submission currently completing this run. */
+  /** Возвращает only the authenticated submission currently completing this run. */
   getSubmission?(runId: string): { runId: string; role: string; output: string } | undefined;
 }
 

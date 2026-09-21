@@ -47,7 +47,7 @@ export class DependencyService {
         throw new Error("Task cannot depend on itself");
       }
 
-      // Check for duplicate
+      // Проверяет for duplicate
       const existing = tx.get<{ id: string }>(
         "SELECT id FROM dependencies WHERE task_id = $task_id AND depends_on_task_id = $depends_on_task_id",
         { task_id: taskId, depends_on_task_id: dependsOnTaskId },
@@ -56,7 +56,7 @@ export class DependencyService {
         throw new Error("Dependency already exists");
       }
 
-      // Check for cycle by walking the dependency graph from dependsOnTaskId
+      // Проверяет for cycle by walking the dependency graph from dependsOnTaskId
       if (this.wouldCreateCycle(tx, taskId, dependsOnTaskId)) {
         throw new Error("Adding this dependency would create a cycle");
       }
@@ -117,7 +117,7 @@ export class DependencyService {
    * Detect whether adding an edge from `newDependentId` → `dependencyId`
    * (i.e., newDependentId depends on dependencyId) would create a cycle.
    *
-   * A cycle exists iff dependencyId can already reach newDependentId
+   * Экземпляр cycle exists iff dependencyId can already reach newDependentId
    * via the existing dependency graph.
    */
   private wouldCreateCycle(
@@ -126,7 +126,7 @@ export class DependencyService {
     dependencyId: string,
   ): boolean {
     // BFS/DFS from dependencyId following "depends_on" edges.
-    // If we reach newDependentId, adding the edge would close a cycle.
+    // Если we reach newDependentId, adding the edge would close a cycle.
     const visited = new Set<string>();
     const stack = [dependencyId];
 

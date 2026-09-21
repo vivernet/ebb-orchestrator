@@ -166,7 +166,7 @@ export class ToolRegistry {
   }
 
   /**
-   * Get all tools available for this capability.
+   * Получает all tools available for this capability.
    */
   getAvailableTools(): ToolDefinition[] {
     const allowedTools = this.capability.capability.allowedTools;
@@ -183,7 +183,7 @@ export class ToolRegistry {
   }
 
   /**
-   * Get a tool by name.
+   * Получает a tool by name.
    */
   getTool(name: string): ToolDefinition | undefined {
     for (const [toolId, definition] of this.toolDefinitions.entries()) {

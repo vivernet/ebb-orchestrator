@@ -12,7 +12,7 @@ export class ProjectService {
   constructor(private readonly db: Database) {}
 
   /**
-   * Create a new project.
+   * Создаёт a new project.
    */
   create(name: string, displayName: string): Project {
     return this.db.transaction((tx) => {

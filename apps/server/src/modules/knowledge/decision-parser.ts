@@ -40,7 +40,7 @@ export function parseDecision(markdown: string): ParsedDecision {
 }
 
 /**
- * Validate a parsed decision for consistency.
+ * Проверяет a parsed decision for consistency.
  */
 export function validateDecision(parsed: ParsedDecision): void {
   if (parsed.relatedGuideline && !/^GL-[A-Z][A-Z0-9]*-\d{3,}$/.test(parsed.relatedGuideline)) {

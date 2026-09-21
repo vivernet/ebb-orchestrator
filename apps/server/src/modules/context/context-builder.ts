@@ -1,5 +1,5 @@
 /**
- * Context Builder для Orchestrator Hermes.
+ * Контекст Builder для Orchestrator Hermes.
  * Формирует пакеты контекста для разных ролей агентов.
  */
 

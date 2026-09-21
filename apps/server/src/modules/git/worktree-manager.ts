@@ -89,8 +89,8 @@ export class WorktreeManager {
         removedAt: null,
       };
 
-      // Verify the branch through Git before making the journal entry durable.
-      // A successful process exit alone is not authoritative Git state.
+      // Проверяет the branch through Git before making the journal entry durable.
+      // Экземпляр successful process exit alone is not authoritative Git state.
       await this.git.run(repoPath, ["rev-parse", "--verify", "--end-of-options", record.branch]);
       // Сохраняет worktree только после проверки фактического Git state.
       if (this.worktreeRepo) {

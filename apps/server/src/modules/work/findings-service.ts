@@ -83,8 +83,8 @@ export class FindingsService {
   }
 
   /**
-   * Update an existing finding (e.g., on re-review).
-   * Only updates status, evidence signature, and source run.
+   * Обновляет an existing finding (e.g., on re-review).
+   * Только updates status, evidence signature, and source run.
    */
   updateFinding(
     findingId: string,
@@ -132,7 +132,7 @@ export class FindingsService {
   }
 
   /**
-   * Get finding by stable display ID.
+   * Получает finding by stable display ID.
    */
   getFindingByDisplayId(tx: DatabaseTx, projectId: string, displayId: string): Finding | null {
     const row = tx.get(
@@ -143,7 +143,7 @@ export class FindingsService {
   }
 
   /**
-   * Get finding by internal ID.
+   * Получает finding by internal ID.
    */
   getFindingById(tx: DatabaseTx, id: string): Finding | null {
     const row = tx.get("SELECT * FROM findings WHERE id = $id", { id });
@@ -151,7 +151,7 @@ export class FindingsService {
   }
 
   /**
-   * Get all findings for a task.
+   * Получает all findings for a task.
    */
   getFindingsByTaskId(tx: DatabaseTx, taskId: string): Finding[] {
     const rows = tx.all("SELECT * FROM findings WHERE task_id = $taskId ORDER BY display_id", { taskId });
@@ -159,7 +159,7 @@ export class FindingsService {
   }
 
   /**
-   * Get open findings for a task.
+   * Получает open findings for a task.
    */
   getOpenFindingsByTaskId(tx: DatabaseTx, taskId: string): Finding[] {
     const rows = tx.all(
@@ -170,7 +170,7 @@ export class FindingsService {
   }
 
   private nextFindingNumber(tx: DatabaseTx, projectId: string): number {
-    // Extract the numeric part by removing "FINDING-" prefix
+    // Извлекает the numeric part by removing "FINDING-" prefix
     const row = tx.get<{ max_num: number }>(
       "SELECT MAX(CAST(REPLACE(display_id, 'FINDING-', '') AS INTEGER)) as max_num FROM findings WHERE project_id = $projectId",
       { projectId },

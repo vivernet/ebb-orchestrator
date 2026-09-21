@@ -37,7 +37,7 @@ export class PromptBuilder {
     lines.push('');
   }
   /**
-   * Build Developer prompt.
+   * Формирует Developer prompt.
    * Does NOT bulk-load source code (read on demand via tools).
    */
   buildDeveloperPrompt(input: {
@@ -108,7 +108,7 @@ export class PromptBuilder {
       lines.push('');
     }
 
-    // Decisions
+    // Решения
     if (input.decisions && input.decisions.length > 0) {
       lines.push('=== DECISIONS ===');
       input.decisions.forEach((d) => {
@@ -130,7 +130,7 @@ export class PromptBuilder {
   }
 
   /**
-   * Build Reviewer prompt.
+   * Формирует Reviewer prompt.
    * Does NOT include Developer conversation.
    */
   buildReviewerPrompt(input: {
@@ -182,7 +182,7 @@ export class PromptBuilder {
       lines.push('');
     }
 
-    // Decisions
+    // Решения
     if (input.decisions && input.decisions.length > 0) {
       lines.push('=== DECISIONS ===');
       input.decisions.forEach((d) => {
@@ -221,7 +221,7 @@ export class PromptBuilder {
   }
 
   /**
-   * Build QA prompt.
+   * Формирует QA prompt.
    */
   buildQAPrompt(input: {
     taskContract: TaskContract;
@@ -277,7 +277,7 @@ export class PromptBuilder {
     return lines.join('\n');
   }
 
-  /** Build the independent Integration prompt. */
+  /** Формирует the independent Integration prompt. */
   buildIntegrationPrompt(input: {
     taskContract: TaskContract;
     workspace?: string;

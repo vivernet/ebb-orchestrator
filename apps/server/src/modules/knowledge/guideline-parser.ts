@@ -2,7 +2,7 @@
  * Guideline Markdown parser – extracts YAML front matter metadata
  * from `.md` files stored in the repository.
  *
- * The canonical text lives in the Markdown file; the DB stores
+ * Этот canonical text lives in the Markdown file; the DB stores
  * searchable metadata, version, hash, and provenance.
  */
 
@@ -62,7 +62,7 @@ export function parseGuideline(markdown: string): ParsedGuideline {
 }
 
 /**
- * Validate a parsed guideline for consistency.
+ * Проверяет a parsed guideline for consistency.
  * Throws on invalid state (e.g. broken superseded_by reference).
  */
 export function validateGuideline(parsed: ParsedGuideline): void {

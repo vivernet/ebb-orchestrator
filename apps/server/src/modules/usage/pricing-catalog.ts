@@ -10,7 +10,7 @@ export interface PricingTier {
   cachedPerToken: number;
 }
 
-/** Default pricing tiers for known role/model combinations. */
+/** Назначение pricing tiers for known role/model combinations. */
 const DEFAULT_TIERS: PricingTier[] = [
   { role: "developer", model: "default", inputPerToken: 0.000003, outputPerToken: 0.000015, cachedPerToken: 0.0000003 },
   { role: "reviewer", model: "default", inputPerToken: 0.000003, outputPerToken: 0.000015, cachedPerToken: 0.0000003 },
@@ -38,12 +38,12 @@ export class PricingCatalog {
     return `${role}:${model}`;
   }
 
-  /** Get the pricing tier for a role/model combination. */
+  /** Получает the pricing tier for a role/model combination. */
   getTier(role: string, model: string): PricingTier | undefined {
     return this.tiers.get(this.key(role, model));
   }
 
-  /** Calculate cost from token counts. */
+  /** Вычисляет cost from token counts. */
   calculateCost(
     role: string,
     model: string,

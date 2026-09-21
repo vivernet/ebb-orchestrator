@@ -27,28 +27,28 @@ export class BudgetService {
 
   /**
    * Reserve budget for an AI Run. Returns ALLOW, ASK, or DENY.
-   * Uses a database transaction to prevent oversubscription races.
+   * Использует a database transaction to prevent oversubscription races.
    */
   reserve(options: ReserveOptions): ReserveResult {
     return this.db.transaction((tx) => {
-      // Resolve effective budget limits across all applicable scopes.
+      // Разрешает effective budget limits across all applicable scopes.
       const scopes = this.resolveScopes(tx, options);
       if (scopes.length === 0) {
-        // No budget config at all — allow unconditionally.
+        // Нет budget config at all — allow unconditionally.
         const reservationId = this.createReservation(tx, options);
         return { decision: "ALLOW" as BudgetDecision, reservationId };
       }
 
-      // Find the most restrictive scope.
+      // Находит most restrictive scope.
       const mostRestrictive = scopes.reduce((worst, current) => {
         if (current.limitCost < worst.limitCost) return current;
         return worst;
       });
 
-      // Calculate total committed cost (spent + reserved + new estimate).
+      // Вычисляет total committed cost (spent + reserved + new estimate).
       const totalCommitted = mostRestrictive.spentCost + mostRestrictive.reservedCost + options.estimateCost;
 
-      // Check hard limit first.
+      // Проверяет hard limit first.
       if (totalCommitted > mostRestrictive.limitCost) {
         if (mostRestrictive.policy === "hard") {
           return {
@@ -65,7 +65,7 @@ export class BudgetService {
         };
       }
 
-      // Check soft limit.
+      // Проверяет soft limit.
       if (mostRestrictive.softLimitCost > 0 && totalCommitted > mostRestrictive.softLimitCost) {
         // Reserve anyway but signal ASK for approval.
         const reservationId = this.createReservation(tx, options);
@@ -115,13 +115,13 @@ export class BudgetService {
 
       const actual = Math.max(0, actualCost);
 
-      // Update reservation status.
+      // Обновляет reservation status.
       tx.run(
         "UPDATE budget_reservations SET status = 'RECONCILED', actual_cost = $actual, reconciled_at = $at WHERE id = $id AND status = 'RESERVED'",
         { id: reservationId, actual, at: new Date().toISOString() },
       );
 
-      // Update budget config: subtract reserved, add spent.
+      // Обновляет budget config: subtract reserved, add spent.
       // Include epic/task configs when those IDs are available.
       const configs = this.getApplicableConfigs(tx, reservation.project_id, reservation.epic_id, reservation.task_id);
       for (const config of configs) {
@@ -131,7 +131,7 @@ export class BudgetService {
         );
       }
 
-      // Create usage record if token details provided.
+      // Создаёт usage record if token details provided.
       if (tokens) {
         const usageId = crypto.randomUUID();
         const inputTokens = tokens.inputTokens ?? 0;
@@ -174,11 +174,11 @@ export class BudgetService {
 
   /**
    * Release stale RESERVED reservations that are not in the set of active reservation IDs.
-   * For each stale reservation, decrements reserved_cost on all applicable budget configs.
+   * Для each stale reservation, decrements reserved_cost on all applicable budget configs.
    */
   cleanupStaleReservations(activeReservationIds: string[]): { released: number } {
     return this.db.transaction((tx) => {
-      // Find all RESERVED reservations not in the active set.
+      // Находит all RESERVED reservations not in the active set.
       let staleRows: { id: string; project_id: string; epic_id: string | null; task_id: string | null; estimate_cost: number }[];
       if (activeReservationIds.length > 0) {
         const placeholders = activeReservationIds.map((_, i) => `$active${i}`).join(", ");
@@ -230,7 +230,7 @@ export class BudgetService {
   }
 
   /**
-   * Resolve all applicable budget configs for the given scopes.
+   * Разрешает all applicable budget configs for the given scopes.
    */
   private resolveScopes(tx: DatabaseTx, options: ReserveOptions): BudgetConfig[] {
     const configs: BudgetConfig[] = [];
@@ -270,8 +270,8 @@ export class BudgetService {
   }
 
   /**
-   * Get all applicable configs for reconciliation.
-   * Includes epic/task configs when those IDs are available.
+   * Получает all applicable configs for reconciliation.
+   * Включает epic/task configs when those IDs are available.
    */
   private getApplicableConfigs(
     tx: DatabaseTx,

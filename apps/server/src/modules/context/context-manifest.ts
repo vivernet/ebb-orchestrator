@@ -1,6 +1,6 @@
 /**
  * Manifest Builder for Orchestrator Hermes.
- * Persists manifest IDs and versions, NOT secrets.
+ * Сохраняет manifest IDs and versions, NOT secrets.
  */
 
 import type { ContextManifest } from './context-types.js';

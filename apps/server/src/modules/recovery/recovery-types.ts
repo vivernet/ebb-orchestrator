@@ -1,9 +1,9 @@
 /**
- * Recovery domain types - recovery decisions and fingerprints.
+ * Типы домена recovery — recovery decisions and fingerprints.
  */
 
 /**
- * Recovery decision indicating the next action to take.
+ * Решение recovery, определяющее the next action to take.
  */
 export type RecoveryDecision =
   | "RESUME_SAME_SESSION"
@@ -13,7 +13,7 @@ export type RecoveryDecision =
   | "BLOCK";
 
 /**
- * Stage-specific evidence for tracking progress and detecting loops.
+ * Доказательство для конкретного stage, используемое для tracking progress and detecting loops.
  */
 export interface ProgressFingerprint {
   /** Stage identifier (e.g., "review", "qa", "integration"). */
@@ -25,7 +25,7 @@ export interface ProgressFingerprint {
 }
 
 /**
- * Recovery policy configuration with exact counters.
+ * Конфигурация политики recovery with exact counters.
  */
 export interface RecoveryPolicy {
   /** Maximum attempts allowed at middle tier before escalation. */
@@ -43,7 +43,7 @@ export interface RecoveryPolicy {
 }
 
 /**
- * Default recovery policy configuration.
+ * Конфигурация политики recovery по умолчанию.
  */
 export const DEFAULT_POLICY: RecoveryPolicy = {
   middleAttempts: 2,
@@ -55,12 +55,12 @@ export const DEFAULT_POLICY: RecoveryPolicy = {
 } as const;
 
 /**
- * Role level for task execution.
+ * Уровень роли для выполнения задачи.
  */
 export type RoleLevel = "middle" | "senior";
 
 /**
- * Failure type for categorizing recovery needs.
+ * Тип ошибки для классификации потребности в recovery.
  */
 export type FailureType =
   | "TASK_FAILURE"
@@ -71,14 +71,14 @@ export type FailureType =
   | "NO_PROGRESS";
 
 /**
- * Recovery attempt record.
+ * Запись попытки recovery.
  */
 export interface RecoveryAttempt {
   /** Task ID being recovered. */
   taskId: string;
   /** Role level that attempted the recovery. */
   roleLevel: RoleLevel;
-  /** Type of failure that triggered recovery. */
+  /** Тип of failure that triggered recovery. */
   failureType: FailureType;
   /** Attempt number for this failure type and role. */
   attemptCount: number;
@@ -89,33 +89,33 @@ export interface RecoveryAttempt {
 }
 
 /**
- * Context needed to evaluate recovery decisions.
+ * Контекст, необходимый для оценки решений recovery.
  */
 export interface RecoveryContext {
   /** Task ID being evaluated. */
   taskId: string;
-  /** Current role level. */
+  /** Текущий role level. */
   currentRoleLevel: RoleLevel;
   /** List of recovery attempts for this task. */
   attempts: RecoveryAttempt[];
-  /** Current failure type. */
+  /** Текущий failure type. */
   failureType: FailureType;
-  /** Current stage if applicable. */
+  /** Текущий stage if applicable. */
   stage?: string;
   /** Evidence hash for finding tracking. */
   evidenceHash?: string;
 }
 
 /**
- * Result of recovery evaluation.
+ * Результат оценки recovery.
  */
 export interface RecoveryResult {
-  /** The recovery decision to make. */
+  /** Решение recovery, которое следует принять. */
   decision: RecoveryDecision;
-  /** Recommended role level for next attempt. */
+  /** Рекомендуемый уровень роли для следующей попытки. */
   nextRoleLevel?: RoleLevel;
-  /** Reason for the decision. */
+  /** Причина решения. */
   reason: string;
-  /** If a new scheduler request should be created. */
+  /** Нужно ли создавать новый запрос планировщика. */
   createSchedulerRequest: boolean;
 }

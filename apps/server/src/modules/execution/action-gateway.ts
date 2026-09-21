@@ -45,7 +45,7 @@ export class ActionGateway {
    * @returns true если действие разрешено, иначе false.
    */
   private checkPermission(actionId: ActionId): boolean {
-    // Use PermissionEngine for policy evaluation
+    // Использует PermissionEngine for policy evaluation
     const input: EvaluationInput = {
       capability: (this.capabilities || []) as ActionId[],
       action: actionId,

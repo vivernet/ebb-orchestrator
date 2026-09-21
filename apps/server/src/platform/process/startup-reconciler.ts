@@ -1,9 +1,9 @@
 import { GitReconciler } from "../../modules/git/git-reconciler.js";
 
 /**
- * Startup reconciler – collects and runs reconciliation functions at boot.
+ * Запуск reconciler – collects and runs reconciliation functions at boot.
  *
- * Each reconciler is called in registration order.  Errors are captured
+ * Каждый reconciler is called in registration order.  Errors are captured
  * чтобы ошибка одного reconciler не препятствовала запуску следующих.
  */
 

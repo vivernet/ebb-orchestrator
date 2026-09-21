@@ -13,7 +13,7 @@ export type GitDriftState =
   | "UNCOMMITTED_CHANGES";
 
 /**
- * Result of a git reconciliation operation.
+ * Результат of a git reconciliation operation.
  */
 export interface GitDriftResult {
   state: GitDriftState;
@@ -25,7 +25,7 @@ export interface GitDriftResult {
 /**
  * Git reconciler that checks for drift between local and remote.
  *
- * IMPORTANT: This reconciler is local-only. It inspects existing
+ * IMPORTANT: Этот reconciler is local-only. It inspects existing
  * remote-tracking refs but must not implicitly fetch, push,
  * authenticate, or contact a remote.
  */
@@ -45,7 +45,7 @@ export class GitReconciler {
   }
 
   /**
-   * Check if the reconciler is initialized.
+   * Проверяет if the reconciler is initialized.
    */
   isInitialized(): boolean {
     return this.repoPath !== null;
@@ -54,7 +54,7 @@ export class GitReconciler {
   /**
    * Reconcile the given branch and return its drift state.
    *
-   * This operation is local-only and does not perform network operations.
+   * Этот operation is local-only and does not perform network operations.
    */
   async reconcile(branch: string, worktreePath?: string): Promise<GitDriftResult> {
     if (!this.repoPath) {
@@ -69,7 +69,7 @@ export class GitReconciler {
 
     const path = worktreePath ?? this.repoPath;
 
-    // Check if worktree exists
+    // Проверяет if worktree exists
     try {
       await this.git.run(path, ["rev-parse", "--is-inside-work-tree"]);
     } catch {
@@ -79,7 +79,7 @@ export class GitReconciler {
       };
     }
 
-    // Check if branch exists locally
+    // Проверяет if branch exists locally
     try {
       await this.git.run(path, ["rev-parse", "--verify", "--end-of-options", branch]);
     } catch {
@@ -89,7 +89,7 @@ export class GitReconciler {
       };
     }
 
-    // Check for uncommitted changes
+    // Проверяет for uncommitted changes
     const status = await this.git.run(path, ["status", "--porcelain"]);
     if (status.stdout.trim() !== "") {
       return {
@@ -99,22 +99,22 @@ export class GitReconciler {
       };
     }
 
-    // Get local HEAD
+    // Получает local HEAD
     const localRef = await this.getHeadRef(path);
 
-    // Get remote tracking ref
+    // Получает remote tracking ref
     const remoteTrackingBranch = `refs/remotes/origin/${branch}`;
     let remoteRef: string | undefined;
 
     try {
       remoteRef = await this.getRef(path, remoteTrackingBranch);
     } catch {
-      // No remote tracking ref exists
+      // Нет remote tracking ref exists
     }
 
-    // Compare local and remote
+    // Сравнивает local and remote
     if (!remoteRef) {
-      // No remote tracking - consider in sync
+      // Нет remote tracking - consider in sync
       return {
         state: "IN_SYNC",
         localRef,
@@ -123,7 +123,7 @@ export class GitReconciler {
     }
 
     try {
-      // Check if local is ahead of remote
+      // Проверяет if local is ahead of remote
       const aheadCount = await this.getAheadCount(path, remoteRef, localRef);
       if (aheadCount > 0) {
         return {
@@ -134,7 +134,7 @@ export class GitReconciler {
         };
       }
 
-      // Check if remote is ahead of local
+      // Проверяет if remote is ahead of local
       const behindCount = await this.getAheadCount(path, localRef, remoteRef);
       if (behindCount > 0) {
         return {
@@ -152,7 +152,7 @@ export class GitReconciler {
         message: "Local and remote are in sync",
       };
     } catch {
-      // If comparison fails, they may have diverged
+      // Если comparison fails, they may have diverged
       return {
         state: "DIVERGED",
         localRef,

@@ -7,7 +7,7 @@ import * as path from "path";
 import * as os from "os";
 import { fileURLToPath } from "node:url";
 
-/** The launcher is deliberately independent of pnpm bin shims and cwd. */
+/** Этот launcher is deliberately independent of pnpm bin shims and cwd. */
 function defaultMcpLauncher(): { command: string; args: string[] } {
   const entrypoint = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../bin/ebb-orchestrator-mcp.js");
   return { command: process.execPath, args: [entrypoint] };
@@ -21,13 +21,13 @@ export function getOrchestratorHome(): string {
 }
 
 /**
- * Build Hermes profile for a run.
+ * Формирует Hermes profile for a run.
  *
- * This creates an isolated profile:
+ * Этот creates an isolated profile:
  * - Sets HERMES_HOME under orchestrator runtime
  * - Sets HOME inside HERMES_HOME for subprocess isolation
  * - Removes sensitive credentials (GITHUB_TOKEN, SSH_AUTH_SOCK)
- * - Excludes inherited personal Hermes profiles
+ * - Исключает inherited personal Hermes profiles
  */
 export function prepareHermesProfile(run: HermesRunBuildConfig): HermesLaunchProfile {
   const orchestratorHome = run.orchestratorHome;
@@ -54,12 +54,12 @@ export function prepareHermesProfile(run: HermesRunBuildConfig): HermesLaunchPro
   // Override critical environment variables for isolation
   baseEnv.HERMES_HOME = hermesHome;
   baseEnv.HOME = hermesHomePath;
-  // Apply the boundary after all overlays so inherited or supplied credentials cannot win.
+  // Применяет the boundary after all overlays so inherited or supplied credentials cannot win.
   delete baseEnv.GITHUB_TOKEN;
   delete baseEnv.SSH_AUTH_SOCK;
   delete baseEnv.HERMES_PROFILE;
 
-  // Build toolset reference
+  // Формирует toolset reference
   const toolsetName = [run.toolsetPath];
 
   return {
@@ -70,14 +70,14 @@ export function prepareHermesProfile(run: HermesRunBuildConfig): HermesLaunchPro
 }
 
 /**
- * Get config path within Hermes home.
+ * Получает config path within Hermes home.
  */
 export function getConfigPath(hermesHome: string): string {
   return path.join(hermesHome, "config.yaml");
 }
 
 /**
- * Get MCP socket path.
+ * Получает MCP socket path.
  */
 export function getMcpSocketPath(hermesHome: string): string {
   return path.join(hermesHome, "mcp.sock");
@@ -96,9 +96,9 @@ export interface GenerateConfigOptions {
 }
 
 /**
- * Generate config.yaml content for Hermes runtime.
+ * Формирует config.yaml content for Hermes runtime.
  *
- * This creates a minimal config with only Orchestrator-managed settings:
+ * Этот creates a minimal config with only Orchestrator-managed settings:
  * - MCP server definition referencing ebb-orchestrator-mcp
  * - Terminal configuration with home_mode: profile
  */

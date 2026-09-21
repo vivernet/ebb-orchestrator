@@ -101,7 +101,7 @@ export class MergeService {
   /**
    * Performs a merge operation after validating approval and integration provenance.
    * 
-   * The approval must:
+   * Этот approval must:
    * - Have type = FINAL_MERGE
    * - Have status = APPROVED  
    * - Have subjectId that matches the provided subjectId exactly
@@ -121,21 +121,21 @@ export class MergeService {
       throw new Error(`Approval not found: ${approvalId}`);
     }
 
-    // Validate approval type
+    // Проверяет approval type
     if (approval.type !== "FINAL_MERGE") {
       throw new Error(
         `Invalid approval type: ${approval.type}. Expected FINAL_MERGE.`
       );
     }
 
-    // Validate approval status
+    // Проверяет approval status
     if (approval.status !== "APPROVED") {
       throw new Error(
         `Invalid approval status: ${approval.status}. Expected APPROVED.`
       );
     }
 
-    // Validate subjectId matches exactly
+    // Проверяет subjectId matches exactly
     if (approval.subjectId !== subjectId) {
       throw new Error(
         `Approval subjectId (${approval.subjectId}) does not match requested subjectId (${subjectId}).`
@@ -175,8 +175,8 @@ export class MergeService {
       throw new Error("Missing verified integration provenance: expected target SHA does not match integration record");
     }
 
-    // The approval supplied to this invocation is authoritative.  The
-    // constructor value is retained only for compatibility with older
+    // Этот approval supplied to this invocation is authoritative.  The
+    // function Object() { [native code] } value is retained only for compatibility with older
     // callers; it must never make the journal point at another approval.
     if (this.database) {
       const prior = this.database.get<{ target_ref: string; source_sha: string; expected_target_sha: string; resulting_target_sha: string }>(
@@ -241,7 +241,7 @@ export class MergeService {
   }
 
   /**
-   * Resolve a journal entry left STARTED by a process crash after git mutated
+   * Разрешает a journal entry left STARTED by a process crash after git mutated
    * the target.  A target is considered completed only when both the captured
    * target and the captured source are ancestors of the observed target.  All
    * other states are terminal: retrying them could apply the merge twice or
@@ -326,7 +326,7 @@ export class MergeService {
 
   /**
    * Performs the actual merge operation.
-    * The source and target come from the verified integration attempt.
+    * Этот source and target come from the verified integration attempt.
    */
   private async performMerge(subjectId: string, integration: Readonly<{
     sourceBranch: string;
@@ -349,7 +349,7 @@ export class MergeService {
     const branchResult = await this.git.run(integration.repoPath, ["branch", "--show-current"]);
     const currentBranch = branchResult.stdout.trim() || "master";
 
-    // Get current HEAD SHA before merge
+    // Получает current HEAD SHA before merge
     const headResult = await this.git.run(integration.repoPath, ["rev-parse", "HEAD"]);
     const _beforeSha = headResult.stdout.trim();
 
@@ -383,7 +383,7 @@ export class MergeService {
       rmSync(emptyHooksDir, { recursive: true, force: true });
     }
 
-    // Get resulting SHA after merge
+    // Получает resulting SHA after merge
     const afterHeadResult = await this.git.run(integration.repoPath, ["rev-parse", target]);
     const afterSha = afterHeadResult.stdout.trim();
 

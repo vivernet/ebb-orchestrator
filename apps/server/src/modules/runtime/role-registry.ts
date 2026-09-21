@@ -22,10 +22,10 @@ export class RoleRegistry {
   }
 
   /**
-   * Get a contract by role name.
+   * Получает a contract by role name.
    */
   get(roleName: string): RoleContract | undefined {
-    // Handle 'developer' alias
+    // Обрабатывает 'developer' alias
     if (roleName === 'developer') {
       return this.contracts.get('middle_dev');
     }
@@ -33,7 +33,7 @@ export class RoleRegistry {
   }
 
   /**
-   * Check if a role exists in the registry.
+   * Проверяет if a role exists in the registry.
    */
   has(roleName: string): boolean {
     if (roleName === 'developer') {
@@ -43,21 +43,21 @@ export class RoleRegistry {
   }
 
   /**
-   * Get all registered contracts.
+   * Получает all registered contracts.
    */
   getAll(): RoleContract[] {
     return Array.from(this.contracts.values());
   }
 
   /**
-   * Get all role names.
+   * Получает all role names.
    */
   getNames(): string[] {
     return Array.from(this.contracts.keys());
   }
 
   /**
-   * Get contracts filtered by role names.
+   * Получает contracts filtered by role names.
    */
   filter(names: string[]): RoleContract[] {
     return names
@@ -66,7 +66,7 @@ export class RoleRegistry {
   }
 
   /**
-   * Get contracts for roles with a specific session policy.
+   * Получает contracts for roles with a specific session policy.
    */
   filterBySessionPolicy(policy: 'fresh_per_task' | 'shared' | 'task_lifetime'): RoleContract[] {
     return Array.from(this.contracts.values()).filter(
@@ -75,7 +75,7 @@ export class RoleRegistry {
   }
 
   /**
-   * Get contracts for roles with a specific permission profile.
+   * Получает contracts for roles with a specific permission profile.
    */
   filterByPermissionProfile(profile: string): RoleContract[] {
     return Array.from(this.contracts.values()).filter(
@@ -84,7 +84,7 @@ export class RoleRegistry {
   }
 
   /**
-   * Get contracts for roles that have a specific tool.
+   * Получает contracts for roles that have a specific tool.
    */
   filterByTool(tool: string): RoleContract[] {
     return Array.from(this.contracts.values()).filter(
@@ -93,7 +93,7 @@ export class RoleRegistry {
   }
 
   /**
-   * Get contracts for roles that do NOT have a specific tool.
+   * Получает contracts for roles that do NOT have a specific tool.
    */
   filterWithoutTool(tool: string): RoleContract[] {
     return Array.from(this.contracts.values()).filter(
@@ -116,7 +116,7 @@ export class RoleRegistry {
   }
 
   /**
-   * Get the count of registered contracts.
+   * Получает the count of registered contracts.
    */
   count(): number {
     return this.contracts.size;

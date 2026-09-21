@@ -1,7 +1,7 @@
 import { PermissionDecision, PolicyScope, PolicyRuleType } from './permission-types.js';
 import type { PolicyRule, ActionId } from './permission-types.js';
 
-// Most-restrictive ordering: ALLOW < ASK < DENY < ABSOLUTE_DENY
+// Наиболее ограничительный ordering: ALLOW < ASK < DENY < ABSOLUTE_DENY
 function decisionToRank(decision: PermissionDecision): number {
   switch (decision) {
     case PermissionDecision.ALLOW:
@@ -17,7 +17,7 @@ function decisionToRank(decision: PermissionDecision): number {
   }
 }
 
-// Convert policy rule type to decision
+// Преобразует policy rule type to decision
 /**
  * Предоставляет публичный контракт модуля permission-policy для взаимодействия слоёв приложения.
  */
@@ -37,7 +37,7 @@ export function ruleTypeToDecision(type: PolicyRuleType): PermissionDecision {
 }
 
 /**
- * Compose multiple policy decisions using most-restrictive-wins.
+ * Объединяет multiple policy decisions using most-restrictive-wins.
  * ABSOLUTE_DENY cannot be weakened by more specific scopes.
  */
 export function composeDecisions(
@@ -47,7 +47,7 @@ export function composeDecisions(
     return { decision: PermissionDecision.ABSOLUTE_DENY, matchedRefs: [] };
   }
 
-  // Find most restrictive decision
+  // Находит most restrictive decision
   let maxRank = -1;
   let maxDecision: PermissionDecision = PermissionDecision.ABSOLUTE_DENY;
 
@@ -74,14 +74,14 @@ export function composeDecisions(
 }
 
 /**
- * Check if action is in policy rule
+ * Проверяет if action is in policy rule
  */
 export function actionMatchesRule(action: string, rule: PolicyRule): boolean {
   return rule.actions.includes(action as never);
 }
 
 /**
- * Get all rules that apply to the given action across all policy scopes
+ * Получает all rules that apply to the given action across all policy scopes
  */
 export function getMatchingRules(
   action: string,

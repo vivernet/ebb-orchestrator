@@ -66,7 +66,7 @@ export class ProposalService {
   constructor(private readonly db: Database) {}
 
   /**
-   * Create a new proposal with OPEN status.
+   * Создаёт a new proposal with OPEN status.
    */
   create(input: ProposalCreateInput): Proposal {
     return this.db.transaction((tx) => {
@@ -104,7 +104,7 @@ export class ProposalService {
   }
 
   /**
-   * Get a proposal by ID.
+   * Получает a proposal by ID.
    */
   getById(proposalId: string): Proposal | undefined {
     const row = this.db.get<ProposalRow>(
@@ -126,7 +126,7 @@ export class ProposalService {
   }
 
   /**
-   * Update a proposal's status. Only OPEN proposals can be transitioned.
+   * Обновляет a proposal's status. Только OPEN proposals can be transitioned.
    */
   updateStatus(proposalId: string, status: ProposalStatus): Proposal {
     return this.db.transaction((tx) => {
