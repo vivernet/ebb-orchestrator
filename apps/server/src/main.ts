@@ -49,8 +49,6 @@ import { MergeService, type MergeResult } from "./modules/git/merge-service.js";
 import { GitReconciler } from "./modules/git/git-reconciler.js";
 import { ArtifactRepository } from "./platform/artifacts/artifact-repository.js";
 import { ArtifactStore } from "./platform/artifacts/artifact-store.js";
-import { JobRunner } from "./platform/jobs/job-runner.js";
-import { JobWorker } from "./platform/jobs/job-worker.js";
 import { WorktreeManager } from "./modules/git/worktree-manager.js";
 import { TaskWorkspaceProvisioner } from "./modules/git/task-workspace-provisioner.js";
 
@@ -191,10 +189,12 @@ const schedulerWorker: BackgroundWorker = {
   stop: async () => { schedulerSafetyWorker.stop(); },
 };
 const outboxWorker = new OutboxWorker(eventDispatcher);
-// Registry намеренно пуст: production handlers добавляются только явным
-// модулем-владельцем. Неизвестные типы безопасно завершаются JobRunner.
-const jobWorker = new JobWorker(new JobRunner(database, {}));
-const workers = [schedulerWorker, outboxWorker, jobWorker];
+// В утверждённом v1 нет production producer/handler для background_jobs.
+// Не запускаем worker с пустым registry: иначе любая случайная или оставшаяся
+// запись была бы ложно обработана как FAILED, хотя production operation для
+// её типа не существует. JobRunner подключается только вместе с typed
+// handler registry владельца соответствующего модуля.
+const workers = [schedulerWorker, outboxWorker];
 
 async function gracefulShutdown(signal: string): Promise<void> {
    console.log(`\n[orchestrator] received ${signal}, shutting down…`);
