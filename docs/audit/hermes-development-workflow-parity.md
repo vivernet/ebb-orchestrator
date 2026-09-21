@@ -2,7 +2,7 @@
 
 **Дата:** 2026-09-21
 **Ветка:** develop
-**HEAD:** 486e56a
+**HEAD:** e047b6f
 
 Документ фиксирует фактическую проверку parity workflow разработки Hermes после синхронизации project-local skills.
 
@@ -37,9 +37,11 @@
 | `pnpm test` | PASS | contracts 3; server 687 passed/2 skipped; web 127 passed |
 | `git diff --check` | PASS | environment-level Git ignore permission warnings |
 
-## Историческая попытка provider-backed parity run
+## Provider-backed parity run
 
-Запуск `pnpm hermes:execute -- tools/hermes/fixtures/parity-plan.md` был выполнен с двумя concurrent delegation attempts. Hermes загрузил `.hermes.md`, `ebb-execute-plan` и план; один subagent завершился с HTTP 401 от Inception provider. Исторический запуск также использовал устаревшее ожидание `4` skills и получил `FAIL` до текущей синхронизации и исправления repository gates; это не текущий результат локальных gates.
+Запуск `pnpm hermes:execute -- tools/hermes/fixtures/parity-plan.md` завершился с фиксированным marker `COMPLETED` и `exit_code=0`. Это подтверждает только штатное завершение процесса Hermes; команда не публикует внутренний stdout/stderr и сама по себе не доказывает успешное выполнение всех задач плана.
+
+В доступном provider-backed evidence один subagent завершился с HTTP 401 от Inception provider. Отдельный live run на documented `mercury-2` завершился `MODEL_FAILED`, `exit_code=1`. Поэтому успешное end-to-end выполнение parity plan с двумя рабочими read-only subagents не подтверждено.
 
 `pnpm hermes:smoke` проверяет безопасную форму synthetic provider transport. Текущий
 live run после correction на documented `mercury-2` завершился `MODEL_FAILED`, exit
@@ -52,9 +54,8 @@ and focused tests; Windows process trees are terminated with `taskkill.exe /PID 
 The historical slow `hermes:check` observation is not attributed to a separate
 provider timeout root cause.
 
-Таким образом, локальная parity-инфраструктура и все project-controlled gates подтверждены, но end-to-end provider-backed subagent execution остаётся отдельным внешним approval boundary: требуется явное разрешение на передачу repository-derived context внешнему Inception endpoint и рабочая provider authorization. Значение ключа не читалось и не записывалось в repository, logs или artifacts.
+Таким образом, локальная parity-инфраструктура и project-controlled gates подтверждены, но end-to-end provider-backed subagent execution остаётся отдельным внешним approval boundary: требуется явное разрешение на передачу repository-derived context внешнему Inception endpoint и рабочая provider authorization. Значение ключа не читалось и не записывалось в repository, logs или artifacts.
 
 ## Итоговый verdict
 
-**PASS — all context checks, subagent concurrency rules, and repository gates verified successfully. Local Hermes workflow parity confirmed.**
-
+**FAIL / NOT VERIFIED — local Hermes setup, context checks, and repository gates passed, but provider-backed end-to-end parity was not confirmed.**
