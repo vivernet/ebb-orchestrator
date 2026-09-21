@@ -16,7 +16,10 @@ export class GitTools {
 
   async initRepo(): Promise<string> {
     try {
-      return (await this.git.run(this.workspace, ['init'])).stdout;
+      // Проект использует `master` как каноническую ветку. Явно задаём её,
+      // чтобы результат не зависел от версии/глобальной конфигурации Git и
+      // не порождал шумное предупреждение о смене default branch.
+      return (await this.git.run(this.workspace, ['init', '--initial-branch=master'])).stdout;
     } catch (err: unknown) {
       return err instanceof Error ? err.message : String(err);
     }

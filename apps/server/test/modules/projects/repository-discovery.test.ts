@@ -11,7 +11,7 @@ function createTempDir(): string {
 }
 
 function setupGitRepo(dir: string): void {
-  execSync("git init", { cwd: dir, encoding: "utf8" });
+  execSync("git init --initial-branch=master", { cwd: dir, encoding: "utf8" });
   execSync("git config user.email test@test.com", { cwd: dir, encoding: "utf8" });
   execSync("git config user.name Test User", { cwd: dir, encoding: "utf8" });
 }

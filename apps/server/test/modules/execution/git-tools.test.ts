@@ -24,6 +24,14 @@ describe('GitTools', () => {
   });
 
   describe('git.status', () => {
+    it('should initialize repositories on the canonical master branch', async () => {
+      const gitTools = new GitTools(workspaceDir);
+
+      await gitTools.initRepo();
+
+      expect(await gitTools.branch()).toBe('master');
+    });
+
     it('should return status for workspace repository', async () => {
       const gitTools = new GitTools(workspaceDir);
       await gitTools.initRepo();
