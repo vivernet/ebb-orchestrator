@@ -61,6 +61,33 @@ function mutationHeaders(app: ReturnType<typeof makeApp>) {
 }
 
 describe("orchestrator read API", () => {
+  it("closes the application while an SSE client is connected", async () => {
+    const { app, db } = makeAppWithDatabase();
+    await app.listen({ host: "127.0.0.1", port: 0 });
+    const address = app.server.address();
+    if (!address || typeof address === "string") throw new Error("test server did not expose an address");
+
+    const controller = new AbortController();
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/v1/events`, {
+      headers: { authorization: `Bearer ${app.sessionToken}` },
+      signal: controller.signal,
+    });
+    expect(response.status).toBe(200);
+
+    const closePromise = app.close();
+    try {
+      const result = await Promise.race([
+        closePromise.then(() => "closed"),
+        new Promise<string>((resolve) => setTimeout(() => resolve("timeout"), 500)),
+      ]);
+      expect(result).toBe("closed");
+    } finally {
+      controller.abort();
+      await closePromise;
+      db.close();
+    }
+  });
+
   it("creates projects, epics, and tasks through strict command routes", async () => {
     const { app, db } = makeAppWithDatabase();
     const projectResponse = await app.inject({

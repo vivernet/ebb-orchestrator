@@ -15,6 +15,15 @@ import type { DomainEvent } from "../../platform/events/domain-event.js";
  * Регистрирует HTTP-маршруты events и передаёт изменяющие состояние действия backend policy.
  */
 export async function eventRoutes(app: FastifyInstance, eventBus?: EventBus): Promise<void> {
+  const activeStreams = new Set<FastifyReply["raw"]>();
+
+  // Hijacked SSE replies are outside Fastify's normal response lifecycle.
+  // Destroy them explicitly so app.close() cannot wait forever during shutdown.
+  app.addHook("preClose", async () => {
+    for (const response of activeStreams) response.destroy();
+    activeStreams.clear();
+  });
+
   app.get(
     "/api/v1/events",
     async (request: FastifyRequest, reply: FastifyReply) => {
@@ -26,6 +35,7 @@ export async function eventRoutes(app: FastifyInstance, eventBus?: EventBus): Pr
 
       // Send an initial comment to confirm the connection is open.
       reply.raw.write(":ok\n\n");
+      activeStreams.add(reply.raw);
 
       const writeEvent = (event: DomainEvent) => {
         if (!reply.raw.destroyed) reply.raw.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
@@ -38,6 +48,7 @@ export async function eventRoutes(app: FastifyInstance, eventBus?: EventBus): Pr
       }, 15_000);
 
       request.raw.on("close", () => {
+        activeStreams.delete(reply.raw);
         clearInterval(heartbeat);
         unsubscribe?.();
       });
