@@ -13,14 +13,21 @@ describe('security Git remediation', () => {
     try {
       const tools = new GitTools(repo);
       await tools.initRepo();
+      // Clean CI runners do not provide a global Git identity. Keep the fixture
+      // self-contained so the commit (and the hook bypass it verifies) is
+      // exercised instead of being skipped by Git's author validation.
+      const git = new GitCli();
+      await git.run(repo, ['config', 'user.name', 'Ebb Orchestrator Tests']);
+      await git.run(repo, ['config', 'user.email', 'tests@ebb-orchestrator.invalid']);
       const marker = path.join(repo, 'hook-ran');
       fs.writeFileSync(path.join(repo, '.git', 'hooks', 'pre-commit'), `#!/bin/sh\nprintf ran > "${marker.replace(/\\/g, '/')}"\nexit 1\n`);
       if (process.platform !== 'win32') fs.chmodSync(path.join(repo, '.git', 'hooks', 'pre-commit'), 0o755);
       fs.writeFileSync(path.join(repo, 'safe.txt'), 'content');
       await tools.add(['safe.txt']);
       const message = 'safe; touch SHOULD_NOT_EXIST && echo "$HOME"';
-      await tools.commit(message);
-      const log = (await new GitCli().run(repo, ['log', '-1', '--format=%B'])).stdout;
+      const commitOutput = await tools.commit(message);
+      expect(commitOutput).toContain(message);
+      const log = (await git.run(repo, ['log', '-1', '--format=%B'])).stdout;
       expect(log).toContain(message);
       expect(fs.existsSync(marker)).toBe(false);
       expect(fs.existsSync(path.join(repo, 'SHOULD_NOT_EXIST'))).toBe(false);

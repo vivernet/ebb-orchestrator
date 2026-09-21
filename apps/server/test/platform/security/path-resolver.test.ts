@@ -67,6 +67,11 @@ describe('PathResolver', () => {
       const result = await resolver.resolveSafePath(workspace, target);
       expect(result.success).toBe(false);
     });
+
+    it('should reject a Windows absolute target when the workspace uses POSIX paths', async () => {
+      const result = await resolver.resolveSafePath('/workspace/project', 'C:\\workspace\\project\\..\\..\\etc\\passwd');
+      expect(result.success).toBe(false);
+    });
   });
 
   describe('Windows junction handling', () => {

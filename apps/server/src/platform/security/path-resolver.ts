@@ -16,25 +16,31 @@ export class PathResolver {
    * исходного недоверенного значения.
    */
   resolveSafePathSync(workspace: string, target: string): { success: boolean; path?: string; error?: string } {
+    const pathApi = this.pathApiFor(workspace);
     try {
-      const root = path.resolve(workspace);
-      const requested = path.resolve(root, target);
+      if (this.isForeignAbsolutePath(workspace, target)) {
+        return { success: false, error: 'Path is outside workspace' };
+      }
+      const root = pathApi.resolve(workspace);
+      const requested = pathApi.resolve(root, target);
       const realRoot = fs.realpathSync(root);
-      const realTarget = this.resolveExistingAncestor(requested);
-      if (!this.isWithinWorkspace(realRoot, realTarget)) return { success: false, error: 'Path is outside workspace' };
+      const realTarget = this.resolveExistingAncestor(requested, pathApi);
+      if (!this.isWithinWorkspace(realRoot, realTarget, pathApi)) return { success: false, error: 'Path is outside workspace' };
       return { success: true, path: realTarget };
     } catch (err) {
       // Preserve purely lexical validation for virtual/nonexistent roots used by callers,
       // but never use it once an existing workspace can expose symlinked ancestors.
       try {
-        const root = path.resolve(workspace);
-        const requested = path.resolve(root, target);
-        if (!this.isWithinWorkspace(root, requested)) return { success: false, error: 'Path is outside workspace' };
+        const root = pathApi.resolve(workspace);
+        const requested = pathApi.resolve(root, target);
+        if (!this.isWithinWorkspace(root, requested, pathApi)) return { success: false, error: 'Path is outside workspace' };
         if (!this.hasExistingRoot(root)) {
           return { success: true, path: requested };
         }
-        // When root exists but target doesn't, still allow if target is within workspace
-        return { success: true, path: requested };
+        // An existing root means realpath/ancestor resolution failed because
+        // of a dangling symlink, junction, permission error, or non-directory
+        // ancestor. Falling back lexically would bypass that security check.
+        return { success: false, error: 'Path resolution failed' };
       } catch { /* fail closed below */ }
       return { success: false, error: err instanceof Error ? err.message : 'Path resolution failed' };
     }
@@ -42,11 +48,28 @@ export class PathResolver {
 
   isPathContained(workspace: string, target: string): boolean {
     try {
-      const root = path.resolve(workspace);
-      const requested = path.resolve(root, target);
-      if (!this.hasExistingRoot(root)) return this.isWithinWorkspace(root, requested);
-      return this.isWithinWorkspace(fs.realpathSync(root), this.resolveExistingAncestor(requested));
+      if (this.isForeignAbsolutePath(workspace, target)) return false;
+      const pathApi = this.pathApiFor(workspace);
+      const root = pathApi.resolve(workspace);
+      const requested = pathApi.resolve(root, target);
+      if (!this.hasExistingRoot(root)) return this.isWithinWorkspace(root, requested, pathApi);
+      return this.isWithinWorkspace(fs.realpathSync(root), this.resolveExistingAncestor(requested, pathApi), pathApi);
     } catch { return false; }
+  }
+
+  private pathApiFor(workspace: string): typeof path.posix | typeof path.win32 {
+    // Keep the host's native semantics for real paths. On non-Windows hosts,
+    // also understand explicit Windows paths so cross-platform validation does
+    // not accidentally treat `C:\\...` as a relative filename.
+    return process.platform === 'win32' || this.isWindowsPath(workspace) ? path.win32 : path.posix;
+  }
+
+  private isWindowsPath(value: string): boolean {
+    return /^[A-Za-z]:[\\/]/.test(value) || value.startsWith('\\\\');
+  }
+
+  private isForeignAbsolutePath(workspace: string, target: string): boolean {
+    return !this.isWindowsPath(workspace) && (/^[A-Za-z]:/.test(target) || target.startsWith('\\\\'));
   }
 
   private hasExistingRoot(root: string): boolean {
@@ -60,7 +83,7 @@ export class PathResolver {
     }
   }
 
-  private resolveExistingAncestor(target: string): string {
+  private resolveExistingAncestor(target: string, pathApi: typeof path.posix | typeof path.win32): string {
     const suffix: string[] = [];
     let current = target;
     while (true) {
@@ -68,27 +91,27 @@ export class PathResolver {
       try {
         stat = fs.lstatSync(current);
       } catch (err: unknown) {
-        if (!(err instanceof Error) || !('code' in err) || err.code !== 'ENOENT') {
+        if (!err || typeof err !== 'object' || !('code' in err) || err.code !== 'ENOENT') {
           throw new Error('Unable to inspect path', { cause: err });
         }
-        const parent = path.dirname(current);
+        const parent = pathApi.dirname(current);
         if (parent === current) throw new Error('No existing ancestor', { cause: err });
-        suffix.unshift(path.basename(current));
+        suffix.unshift(pathApi.basename(current));
         current = parent;
         continue;
       }
       // lstat deliberately sees dangling symlinks as existing. realpath must
       // succeed before any suffix is appended, otherwise fail closed.
-      if (stat.isSymbolicLink()) return path.resolve(fs.realpathSync(current), ...suffix);
+      if (stat.isSymbolicLink()) return pathApi.resolve(fs.realpathSync(current), ...suffix);
       if (!stat.isDirectory() && suffix.length > 0) {
         throw new Error('Existing ancestor is not a directory', { cause: stat });
       }
-      return path.resolve(fs.realpathSync(current), ...suffix);
+      return pathApi.resolve(fs.realpathSync(current), ...suffix);
     }
   }
 
-  private isWithinWorkspace(workspace: string, target: string): boolean {
-    const relative = path.relative(workspace, target);
-    return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+  private isWithinWorkspace(workspace: string, target: string, pathApi: typeof path.posix | typeof path.win32): boolean {
+    const relative = pathApi.relative(workspace, target);
+    return relative === '' || (relative !== '..' && !relative.startsWith(`..${pathApi.sep}`) && !pathApi.isAbsolute(relative));
   }
 }

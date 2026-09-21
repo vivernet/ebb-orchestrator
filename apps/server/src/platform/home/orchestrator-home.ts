@@ -6,7 +6,7 @@
  * 2. `~/.ebb-orchestrator/` (platform-appropriate default)
  */
 
-import { join, posix } from "node:path";
+import { posix, win32 } from "node:path";
 import type { Platform } from "../config/app-config.js";
 
 /** All well-known paths inside the orchestrator home directory. */
@@ -44,7 +44,7 @@ export interface HomeEnv {
  * posix.join always uses forward slashes; path.join uses OS-native separators.
  */
 function platformJoin(platform: Platform): (a: string, b: string) => string {
-  return platform === "win32" ? join : posix.join;
+  return platform === "win32" ? win32.join : posix.join;
 }
 
 function resolveHomeRoot(
