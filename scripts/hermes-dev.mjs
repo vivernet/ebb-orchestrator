@@ -51,7 +51,7 @@ function main() {
 function doSetup() {
   console.log('Setting up Hermes development environment...');
 
-  // 1. Get Git worktree root
+  // 1. Получаем корень Git worktree.
   const gitResult = spawnSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' });
   if (gitResult.status !== 0) {
     console.error('Not in a Git repository');
@@ -59,20 +59,20 @@ function doSetup() {
   }
   const worktreeRoot = gitResult.stdout.trim();
 
-  // 2. Resolve HERMES_HOME
+  // 2. Определяем HERMES_HOME.
   const hermesHome = process.env.HERMES_HOME || join(homedir(), '.hermes');
 
-  // 3. Source and target paths
+  // 3. Пути источника и назначения.
   const sourceSkills = join(worktreeRoot, 'tools', 'hermes', 'skills');
   const targetRoot = join(hermesHome, 'skills', 'ebb-orchestrator');
 
-  // 4. Remove and recreate target
+  // 4. Удаляем и создаём target заново.
   if (statSync(targetRoot, { throwIfNoEntry: false })) {
     rmSync(targetRoot, { recursive: true, force: true });
   }
   mkdirSync(targetRoot, { recursive: true });
 
-  // 5. Copy skills
+  // 5. Копируем skills.
   const skillDirs = readdirSync(sourceSkills);
   for (const dir of skillDirs) {
     const sourceDir = join(sourceSkills, dir);
@@ -86,7 +86,7 @@ function doSetup() {
     }
   }
 
-  // 6. Configure Hermes
+  // 6. Настраиваем Hermes.
   console.log('Configuring Hermes...');
   hermesConfigSet('delegation.max_concurrent_children', '2');
   hermesConfigSet('delegation.max_spawn_depth', '1');
@@ -102,7 +102,7 @@ function doCheck() {
   const checks = [];
   let allPass = true;
 
-  // 1. hermes --version
+  // 1. Проверяем hermes --version.
   try {
     execFileSync('hermes', ['--version'], { stdio: 'pipe' });
     checks.push({ name: 'hermes --version', pass: true });
@@ -111,7 +111,7 @@ function doCheck() {
     allPass = false;
   }
 
-  // 2. .hermes.md exists
+  // 2. Проверяем наличие .hermes.md.
   const hermesMdPath = join(process.cwd(), '.hermes.md');
   checks.push({
     name: '.hermes.md exists',
@@ -119,7 +119,7 @@ function doCheck() {
   });
   if (!checks[1].pass) allPass = false;
 
-  // 3-6. Source skill files exist
+  // 3-6. Проверяем наличие исходных skill-файлов.
   const sourceSkills = join(process.cwd(), 'tools', 'hermes', 'skills');
   const skills = ['ebb-execute-plan', 'ebb-implement-task', 'ebb-review-task', 'ebb-final-review'];
   for (const skill of skills) {
@@ -129,7 +129,7 @@ function doCheck() {
     if (!pass) allPass = false;
   }
 
-  // 7-10. Target skill files exist and match hash
+  // 7-10. Проверяем наличие target skill-файлов и совпадение hash.
   const hermesHome = process.env.HERMES_HOME || join(homedir(), '.hermes');
   const targetRoot = join(hermesHome, 'skills', 'ebb-orchestrator');
   for (const skill of skills) {
@@ -142,7 +142,7 @@ function doCheck() {
     if (!hashMatch) allPass = false;
   }
 
-  // 11-14. Hermes config
+  // 11-14. Проверяем конфигурацию Hermes.
   const configChecks = [
     ['delegation.max_concurrent_children', '2'],
     ['delegation.max_spawn_depth', '1'],
@@ -155,7 +155,7 @@ function doCheck() {
     if (value !== expected) allPass = false;
   }
 
-  // Print results
+  // Выводим результаты.
   console.log('');
   console.log('Check results:');
   for (const check of checks) {
@@ -172,7 +172,7 @@ function doCheck() {
 }
 
 function doExecute(args) {
-  // Handle -- separator that may be passed by package managers
+  // Обрабатываем разделитель --, который могут передавать package managers.
   args = args.filter(a => a !== '--');
   if (args.length === 0) {
     console.error('Usage: hermes-dev.js execute <plan-path>');
@@ -182,38 +182,38 @@ function doExecute(args) {
   const planPath = args[0];
   const worktreeRoot = spawnSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).stdout.trim();
 
-  // Normalize paths - convert to Windows native format for comparison
+  // Нормализуем пути: переводим их в native-формат Windows для сравнения.
   const normalizePath = (p) => {
-    // Handle MSYS-style paths (/c/Users/...) -> Windows (C:\Users\...)
+    // Обрабатываем пути MSYS (/c/Users/...) -> Windows (C:\Users\...).
     if (p.startsWith('/') && p.match(/^\/[a-z]\//i)) {
       p = p.replace(/^\/([a-z])\//i, '$1:\\')
         .replace(/\//g, '\\');
     }
-    // Normalize backslashes to forward slashes for comparison
+    // Нормализуем обратные слеши в прямые для сравнения.
     return p.replace(/\\/g, '/');
   };
 
   const resolvedPlan = normalizePath(planPath);
   const normalizedWorktree = normalizePath(worktreeRoot);
 
-  // Resolve plan path relative to worktree unless absolute
+  // Определяем путь плана относительно worktree, если он не абсолютный.
   const finalPlan = resolvedPlan.match(/^([a-z]:|[\\/])/i)
     ? resolvedPlan
     : `${normalizedWorktree}/${resolvedPlan}`;
 
-  // Validate path doesn't escape worktree
+  // Проверяем, что путь не выходит за пределы worktree.
   if (!finalPlan.startsWith(normalizedWorktree.replace(/\\/g, '/'))) {
     console.error('Error: plan path escapes current worktree');
     process.exit(1);
   }
 
-  // Validate plan file exists
+  // Проверяем существование файла плана.
   if (!statSync(resolvedPlan, { throwIfNoEntry: false })) {
     console.error(`Error: plan file not found: ${resolvedPlan}`);
     process.exit(1);
   }
 
-  // Create temporary prompt file
+  // Создаём временный файл prompt.
   const tmpDir = process.env.TEMP || process.env.TMPDIR || join(homedir(), 'tmp');
   const tmpFile = join(tmpDir, `hermes-prompt-${Date.now()}.txt`);
 
@@ -230,7 +230,7 @@ No nested delegation.
 
     writeFileSync(tmpFile, promptContent);
 
-    // Spawn hermes in one-shot mode
+  // Запускаем hermes в одноразовом режиме.
     const result = spawnSync('hermes', [
       '-z', promptContent,
       '--in', worktreeRoot

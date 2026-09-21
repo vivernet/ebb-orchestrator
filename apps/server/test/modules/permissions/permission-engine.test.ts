@@ -11,7 +11,7 @@ import { composeDecisions } from '../../../src/modules/permissions/permission-po
 
 const engine = new PermissionEngine();
 
-// Test cases for Permission Engine evaluation
+// Тестовые случаи для проверки Permission Engine.
 interface TestCase {
   name: string;
   input: EvaluationInput;
@@ -21,7 +21,7 @@ interface TestCase {
 }
 
 const testCases: TestCase[] = [
-  // Test 1: No policies, action is in capability -> should ALLOW (capability-based access control)
+  // Тест 1: политик нет, действие есть в capability -> ALLOW (доступ на основе capability).
   {
     name: 'should allow when action is in capability list',
     input: {
@@ -33,7 +33,7 @@ const testCases: TestCase[] = [
     expectedMatchedRefsCount: 0,
   },
 
-  // Test 2: Global ALLOW -> should ALLOW
+  // Тест 2: глобальный ALLOW -> ALLOW.
   {
     name: 'should allow when global policy allows',
     input: {
@@ -51,7 +51,7 @@ const testCases: TestCase[] = [
     expectedMatchedRefsCount: 1,
   },
 
-  // Test 3: Global ABSOLUTE_DENY -> should ABSOLUTE_DENY (cannot be weakened)
+  // Тест 3: глобальный ABSOLUTE_DENY -> ABSOLUTE_DENY (его нельзя ослабить).
   {
     name: 'should absolute deny when global policy has absolute deny',
     input: {
@@ -77,7 +77,7 @@ const testCases: TestCase[] = [
     expectedMatchedRefsCount: 1,
   },
 
-  // Test 4: Task DENY overrides Project ALLOW (most restrictive wins)
+  // Тест 4: DENY задачи перекрывает ALLOW проекта (побеждает самое строгое правило).
   {
     name: 'should deny when task denies even if project allows',
     input: {
@@ -104,7 +104,7 @@ const testCases: TestCase[] = [
     expectedMatchedRefsCount: 1,
   },
 
-  // Test 5: Multiple same-restriction policies -> return all refs
+  // Тест 5: несколько политик одинаковой строгости -> возвращаются все refs.
   {
     name: 'should return all matched refs when multiple policies have same decision',
     input: {
@@ -130,7 +130,7 @@ const testCases: TestCase[] = [
     expectedMatchedRefsCount: 2,
   },
 
-  // Test 6: Unknown action -> ABSOLUTE_DENY (fail closed)
+  // Тест 6: неизвестное действие -> ABSOLUTE_DENY (fail closed).
   {
     name: 'should absolute deny unknown action IDs (fail closed)',
     input: {
@@ -142,7 +142,7 @@ const testCases: TestCase[] = [
     expectedMatchedRefsCount: 0,
   },
 
-  // Test 7: ASK from role policy -> ASK
+  // Тест 7: ASK из политики роли -> ASK.
   {
     name: 'should ask when role policy requires approval',
     input: {
@@ -161,7 +161,7 @@ const testCases: TestCase[] = [
     expectedMatchedRefsCount: 1,
   },
 
-  // Test 8: DENY (more restrictive) beats ASK
+  // Тест 8: DENY (более строгое правило) побеждает ASK.
   {
     name: 'should deny when one policy denies and another asks',
     input: {
@@ -188,7 +188,7 @@ const testCases: TestCase[] = [
     expectedMatchedRefsCount: 1,
   },
 
-  // Test 9: ABSOLUTE_DENY from task policy -> ABSOLUTE_DENY
+  // Тест 9: ABSOLUTE_DENY из политики задачи -> ABSOLUTE_DENY.
   {
     name: 'should absolute deny when task policy has absolute deny',
     input: {
@@ -207,7 +207,7 @@ const testCases: TestCase[] = [
     expectedMatchedRefsCount: 1,
   },
 
-  // Test 10: Role ALLOW + Task ALLOW -> ALLOW
+  // Тест 10: ALLOW роли + ALLOW задачи -> ALLOW.
   {
     name: 'should allow when both role and task allow',
     input: {
@@ -234,7 +234,7 @@ const testCases: TestCase[] = [
     expectedMatchedRefsCount: 2,
   },
 
-  // Test 11: ASK from task + ALLOW from project -> ASK
+  // Тест 11: ASK задачи + ALLOW проекта -> ASK.
   {
     name: 'should ask when task asks even if project allows',
     input: {

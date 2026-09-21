@@ -69,7 +69,7 @@ describe("FindingsService", () => {
     tmpDir = dir;
     findingsService = new FindingsService(db);
 
-    // Seed project and tasks
+    // Заполняем project и tasks начальными данными.
     const now = new Date().toISOString();
     db.transaction((tx) => {
       tx.run(

@@ -46,7 +46,7 @@ describe("resolveOrchestratorHome", () => {
       { EBB_ORCHESTRATOR_HOME: "/x" },
       "linux",
     );
-    // Verify all expected keys are present
+    // Проверяем наличие всех ожидаемых ключей.
     const keys: Array<keyof typeof paths> = [
       "root",
       "database",

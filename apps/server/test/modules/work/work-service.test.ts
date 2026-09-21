@@ -68,7 +68,7 @@ describe("WorkService", () => {
 
   async function setupWithProjects(): Promise<void> {
     db = await setupDb();
-    // Seed projects
+    // Заполняем projects начальными данными.
     db.transaction((tx) => {
       const now = new Date().toISOString();
       tx.run(

@@ -55,12 +55,12 @@ describe("ArtifactStore", () => {
     // storagePath must be relative (never start with "/")
     expect(record.storagePath.startsWith("/")).toBe(false);
 
-    // File should exist at the resolved absolute path
+    // Файл должен существовать по разрешённому абсолютному пути.
     const absolutePath = join(artifactsDir, record.storagePath);
     const content = await readFile(absolutePath, "utf8");
     expect(content).toBe("hello");
 
-    // Record should be ACTIVE in the database
+    // Запись в базе должна иметь статус ACTIVE.
     expect(record.status).toBe("ACTIVE");
   });
 
@@ -104,10 +104,10 @@ describe("ArtifactStore", () => {
   });
 
   it("does not create a final file or DB row when write fails before rename", async () => {
-    // We test this by having the store fail on the rename step.
-    // We create a broken store that simulates a failure after temp file creation.
+    // Проверяем это, заставляя store завершиться ошибкой на шаге rename.
+    // Создаём сломанный store, имитирующий сбой после создания временного файла.
     const brokenStore = new ArtifactStore(artifactsDir, repository, {
-      // Force a failure after temp file creation but before rename
+    // Принудительно завершаем работу после создания временного файла, но до rename.
       _failBeforeRename: true,
     });
 
@@ -119,34 +119,34 @@ describe("ArtifactStore", () => {
       }),
     ).rejects.toThrow();
 
-    // No artifact rows should be in the database (STAGING rows rolled back)
+    // В базе не должно быть строк artifacts (строки STAGING откатились).
     const rows = db!.all<{ id: string }>(
       "SELECT id FROM artifacts",
     );
     expect(rows).toEqual([]);
 
-    // No temp files should be left behind (cleaned up)
+    // Временных файлов не должно остаться (они очищены).
   });
 
   it("reconciles staging artifacts on startup", async () => {
-    // Write a normal artifact first
+    // Сначала записываем обычный artifact.
     const record = await store.writeArtifact({
       type: "build-output",
       contentType: "text/plain",
       bytes: Buffer.from("healthy"),
     });
 
-    // Simulate a crash: manually set the row back to STAGING
+    // Имитируем сбой: вручную возвращаем строку в STAGING.
     db!.run("UPDATE artifacts SET status = 'STAGING' WHERE id = $id", {
       $id: record.id,
     });
 
-    // The final file exists and hash matches, so reconcile should promote to ACTIVE
+    // Финальный файл существует и hash совпадает, поэтому reconcile должен перевести запись в ACTIVE.
     const result = await store.reconcileStagingArtifacts();
     expect(result.promoted).toBe(1);
     expect(result.cleaned).toBe(0);
 
-    // Verify it's ACTIVE now
+    // Проверяем, что теперь запись ACTIVE.
     const row = db!.get<{ status: string }>(
       "SELECT status FROM artifacts WHERE id = $id",
       { $id: record.id },
@@ -155,14 +155,14 @@ describe("ArtifactStore", () => {
   });
 
   it("reconcile cleans up stale DB rows with missing files", async () => {
-    // Write an artifact
+    // Записываем artifact.
     const record = await store.writeArtifact({
       type: "build-output",
       contentType: "text/plain",
       bytes: Buffer.from("will be deleted"),
     });
 
-    // Simulate crash: set to STAGING and delete the file
+    // Имитируем сбой: переводим запись в STAGING и удаляем файл.
     db!.run("UPDATE artifacts SET status = 'STAGING' WHERE id = $id", {
       $id: record.id,
     });
@@ -174,7 +174,7 @@ describe("ArtifactStore", () => {
     expect(result.promoted).toBe(0);
     expect(result.cleaned).toBe(1);
 
-    // Row should be gone
+    // Строка должна исчезнуть.
     const row = db!.get<{ id: string }>(
       "SELECT id FROM artifacts WHERE id = $id",
       { $id: record.id },

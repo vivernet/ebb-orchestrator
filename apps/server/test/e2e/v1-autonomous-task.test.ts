@@ -1,8 +1,8 @@
 /**
- * Plan 4 infrastructure coverage and opt-in real Hermes acceptance.
+ * План 4: покрытие инфраструктуры и opt-in-приёмка с реальным Hermes.
  *
- * The deterministic fallback is always runnable. The real Hermes subprocess
- * scenario is opt-in because Hermes is not a CI dependency.
+ * Детерминированный fallback всегда запускается. Сценарий с реальным
+ * subprocess Hermes включается отдельно, поскольку Hermes не является CI-зависимостью.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -190,9 +190,9 @@ describe("Autonomous Task End-to-End Workflow", () => {
     tmpDir = await mkdtemp(join(tmpdir(), "orch-e2e-"));
     db = createSqliteDatabase(join(tmpDir, "acceptance.db"));
     runMigrations(db, migrations);
-    // The current sqlite adapter rejects the expression-based UNIQUE clauses
-    // in migration 007.  The managed-worktree repository only needs this
-    // concrete table for the acceptance's cleanup assertion.
+  // Текущий sqlite-адаптер отклоняет UNIQUE-условия с выражениями в migration 007.
+  // Для проверки очистки acceptance-теста репозиторию managed worktree нужна
+  // только эта конкретная таблица.
     db.exec(`CREATE TABLE IF NOT EXISTS worktrees (
       id TEXT PRIMARY KEY, repo_path TEXT NOT NULL, path TEXT NOT NULL,
       branch TEXT NOT NULL, created_at TEXT NOT NULL, removed_at TEXT
@@ -325,7 +325,7 @@ describe("Autonomous Task End-to-End Workflow", () => {
       let inspected: AgentRun | undefined;
       for (let attempt = 0; attempt < 120 && !inspected; attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 1000));
-        try { inspected = await runtime.inspectRun(run.id); } catch { /* process still running */ }
+try { inspected = await runtime.inspectRun(run.id); } catch { /* процесс ещё выполняется */ }
       }
       expect(inspected, `${role} run did not finish`).toBeDefined();
        if (role === "Integration") return;

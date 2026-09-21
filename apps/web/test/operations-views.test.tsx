@@ -15,7 +15,7 @@ describe('SanitizedTerminal', () => {
     const maliciousText = 'Agent response: <img onerror="alert(1)" src="x">';
     render(<SanitizedTerminal logs={[maliciousText]} />);
     
-    // Should render the text content, not as an img element
+    // Должен отображаться текст, а не элемент img.
     expect(screen.getByText(maliciousText)).toBeInTheDocument();
     expect(screen.queryByRole('img')).not.toBeInTheDocument();
   });
@@ -24,7 +24,7 @@ describe('SanitizedTerminal', () => {
     const rawOutput = '\x1b[31mRed text\x1b[0m and \x1b]0;Title\x07title';
     render(<SanitizedTerminal logs={[rawOutput]} />);
     
-    // Should strip ANSI/OSC sequences and show plain text
+    // ANSI/OSC-последовательности должны удаляться, остаётся обычный текст.
     expect(screen.getByText('Red text and title')).toBeInTheDocument();
   });
 
@@ -32,7 +32,7 @@ describe('SanitizedTerminal', () => {
     const coloredOutput = '\x1b[32mSuccess\x1b[0m';
     render(<SanitizedTerminal logs={[coloredOutput]} />);
     
-    // Should strip ANSI and show the text
+    // ANSI-последовательности должны удаляться, текст должен отображаться.
     expect(screen.getByText('Success')).toBeInTheDocument();
   });
 });

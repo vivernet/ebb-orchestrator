@@ -1,12 +1,12 @@
 /**
- * Request-to-Epic acceptance scenario.
+ * Acceptance-сценарий от пользовательского запроса до Epic.
  *
- * Proves the full lifecycle from a user request through Coordinator classification,
- * plan approval, temporary ref validation, dependency-aware child execution, and
- * final Epic merge approval.
+ * Проверяет полный lifecycle: классификация запроса Coordinator,
+ * approval плана, валидация временных ref, выполнение дочерних задач с учётом
+ * зависимостей и финальный approval merge Epic.
  *
- * Deterministic fallback (FakeAgentRuntime) is always runnable.
- * Real Hermes subprocess scenario is opt-in with RUN_HERMES_E2E=1.
+ * Детерминированный fallback (FakeAgentRuntime) всегда запускается.
+ * Сценарий с реальным subprocess Hermes включается через RUN_HERMES_E2E=1.
  */
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -31,7 +31,7 @@ import { SchedulerService } from "../../src/modules/scheduler/scheduler-service.
 import { DatabaseCompletionStore } from "../../src/modules/execution/mcp/submit-result-tool.js";
 import { MergeService } from "../../src/modules/git/merge-service.js";
 
-// ── Migration setup ──
+// ── Настройка migration ──
 
 const migrationFiles = [
   "001_system", "002_work_domain", "003_work_control", "004_agent_runs",
@@ -59,7 +59,7 @@ class FakeAgentRuntime implements AgentRuntime {
 
   private readonly runs = new Map<string, { request: { phase: string; role: string; taskId?: string; targetBranch?: string }; run: AgentRun }>();
   private readonly completion: DatabaseCompletionStore;
-  /** Tracks which phase runs have been executed, for restart-resilience tests. */
+/** Отслеживает выполненные phase runs для тестов устойчивости к перезапуску. */
   readonly executedPhases: string[] = [];
 
   constructor(db: Database) {
@@ -120,9 +120,9 @@ class FakeAgentRuntime implements AgentRuntime {
 }
 
 // ── PausableFakeAgentRuntime ──
-// Simulates a mid-epic crash by throwing after a configured number of startRun
-// calls.  Used to prove that restart picks up from the persisted checkpoint
-// rather than re-executing completed phases.
+// Имитирует сбой в середине Epic, выбрасывая ошибку после заданного числа
+// вызовов startRun. Проверяет, что после перезапуска работа продолжается с
+// сохранённой контрольной точки, а завершённые фазы не выполняются повторно.
 
 class PausableFakeAgentRuntime extends FakeAgentRuntime {
   private readonly pauseAfter: number;
@@ -142,7 +142,7 @@ class PausableFakeAgentRuntime extends FakeAgentRuntime {
   }
 }
 
-// ── Test suite ──
+// ── Набор тестов ──
 
 describe("Request to Epic acceptance", () => {
   let db: Database | undefined;
@@ -156,7 +156,7 @@ describe("Request to Epic acceptance", () => {
     if (directory) await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
-  /** Shared setup: creates a temp dir, database, project, and workflow engine. */
+/** Общая настройка: создаёт временную папку, базу, project и workflow engine. */
   async function setupDatabase(): Promise<{ registry: WorkflowRegistry; runtime: FakeAgentRuntime; merge: MergeService }> {
     directory = await mkdtemp(join(tmpdir(), "orch-req-to-epic-"));
     db = createSqliteDatabase(join(directory, "test.db"));
@@ -171,7 +171,7 @@ describe("Request to Epic acceptance", () => {
   }
 
   // ──────────────────────────────────────────────────────────────────
-  // Test 1: Validates plan structure before approval
+  // Тест 1: проверка структуры плана до approval.
   // ──────────────────────────────────────────────────────────────────
 
   it("validates plan structure before approval", async () => {
@@ -179,7 +179,7 @@ describe("Request to Epic acceptance", () => {
     const orchestrator = new EpicOrchestrator(db!, new WorkflowEngine(db!, registry), new PlanningService(db!), new RunService(db!, runtime), merge, new SchedulerService(db!));
     db!.run("INSERT INTO scheduler_budgets (project_id,limit_cost,spent_cost,reserved_cost) VALUES ($projectId,100,0,0)", { projectId });
 
-    // Coordinator classifies the request as EPIC
+    // Coordinator классифицирует запрос как EPIC.
     const plan = await orchestrator.start({
       projectId,
       requestedBy: "user",
@@ -193,40 +193,40 @@ describe("Request to Epic acceptance", () => {
       epic: { title: "Build REST API", goal: "Complete REST API with auth, data, and frontend" },
     });
 
-    // Plan is created with PENDING status (requires approval for epic)
+    // План создаётся со статусом PENDING (для Epic требуется approval).
     expect(plan.status).toBe("PENDING");
     expect(plan.approvalRequired).toBe(true);
 
-    // Temporary refs are validated: no duplicate refs, no unknown deps, no cycles
-    // (validatePlan in PlanningService.preparePlan already throws on these)
+    // Временные ref проверяются: нет дубликатов, неизвестных зависимостей и циклов.
+    // (validatePlan в PlanningService.preparePlan уже выбрасывает ошибку в этих случаях.)
 
-    // No work has started before approval — no agent runs should exist
+    // До approval работа не начинается — agent runs отсутствуют.
     const runsBeforeApproval = db!.get<{ count: number }>(
       "SELECT COUNT(*) AS count FROM agent_runs WHERE epic_id IS NOT NULL",
     );
     expect(runsBeforeApproval?.count).toBe(0);
 
-    // Orchestrations should show PENDING state
+    // Orchestrations должны иметь статус PENDING.
     const pending = db!.get<{ status: string; plan_json: string } | undefined>(
       "SELECT status, plan_json FROM planning_plans WHERE id=$id",
       { id: plan.id },
     );
     expect(pending?.status).toBe("PENDING");
 
-    // Plan contains three tasks
+    // План содержит три задачи.
     expect(plan.tasks).toHaveLength(3);
     expect(plan.tasks.map((t) => t.ref)).toEqual(["task_1", "task_2", "task_3"]);
 
-    // Dependency graph: task_2 depends on task_1, task_3 depends on task_1
+    // Граф зависимостей: task_2 и task_3 зависят от task_1.
     expect(plan.tasks.find((t) => t.ref === "task_2")?.dependsOn).toEqual(["task_1"]);
     expect(plan.tasks.find((t) => t.ref === "task_3")?.dependsOn).toEqual(["task_1"]);
 
-    // No runtime calls were made — plan approval gates all execution
+    // Вызовов runtime не было — approval плана блокирует всё выполнение.
     expect(runtime.calls.length).toBe(0);
   });
 
   // ──────────────────────────────────────────────────────────────────
-  // Test 2: Executes epic lifecycle after approval
+  // Тест 2: выполняет lifecycle Epic после approval.
   // ──────────────────────────────────────────────────────────────────
 
   it("executes epic lifecycle after approval", async () => {
@@ -247,10 +247,10 @@ describe("Request to Epic acceptance", () => {
 
     expect(plan.status).toBe("PENDING");
 
-    // Approve and run — tasks execute according to dependency graph
+    // Approve и запуск — задачи выполняются согласно графу зависимостей.
     const result = await orchestrator.approveAndRun(plan.id, "user");
 
-    // Plan should now be APPROVED
+    // Теперь план должен иметь статус APPROVED.
     const approved = db!.get<{ status: string }>("SELECT status FROM planning_plans WHERE id=$id", { id: plan.id });
     expect(approved?.status).toBe("APPROVED");
 
@@ -265,57 +265,57 @@ describe("Request to Epic acceptance", () => {
     expect(result.sequence).toContain("integration");
     expect(result.sequence).toContain("final_approval");
 
-    // task_1 appears before task_2 and task_3 in execution sequence
+    // task_1 появляется в последовательности выполнения раньше task_2 и task_3.
     const idx1 = result.sequence.indexOf("task_1");
     const idx2 = result.sequence.indexOf("task_2");
     const idx3 = result.sequence.indexOf("task_3");
     expect(idx1).toBeLessThan(idx2);
     expect(idx1).toBeLessThan(idx3);
 
-    // All child tasks reached INTEGRATED_INTO_EPIC status
+    // Все дочерние задачи достигли статуса INTEGRATED_INTO_EPIC.
     expect(result.childStatuses.every((status) => status === "INTEGRATED_INTO_EPIC")).toBe(true);
 
-    // Final approval is required and pending
+    // Требуется финальный approval, он ожидает выполнения.
     expect(result.finalApprovalRequired).toBe(true);
     expect(result.pendingFinalApproval).toBe(true);
     expect(result.finalApprovalId).toBeDefined();
 
-    // Final approval record exists in approvals table
+    // Запись финального approval существует в таблице approvals.
     const approval = db!.get<{ type: string; subject_type: string; status: string }>(
       "SELECT type, subject_type, status FROM approvals WHERE id=$id",
       { id: result.finalApprovalId! },
     );
     expect(approval).toMatchObject({ type: "FINAL_MERGE", subject_type: "EPIC", status: "PENDING" });
 
-    // Epic is IN_PROGRESS (not yet DONE — awaiting final merge)
+    // Epic находится в IN_PROGRESS (ещё не DONE — ожидается финальный merge).
     const epic = db!.get<{ status: string }>("SELECT status FROM epics LIMIT 1");
     expect(epic?.status).toBe("IN_PROGRESS");
 
-    // All phase runs are validated
+    // Все phase runs прошли валидацию.
     const validatedPhases = db!.get<{ count: number }>(
       "SELECT COUNT(*) AS count FROM orchestration_phase_runs WHERE epic_id=$epicId AND validated=1",
       { epicId: result.epicId },
     );
     expect(validatedPhases?.count).toBe(runtime.calls.length);
 
-    // All agent runs are completed with output
+    // Все agent runs завершены с output.
     const completedRuns = db!.get<{ count: number }>(
       "SELECT COUNT(*) AS count FROM agent_runs WHERE epic_id=$epicId AND status='COMPLETED' AND output IS NOT NULL",
       { epicId: result.epicId },
     );
     expect(completedRuns?.count).toBe(runtime.calls.length);
 
-    // No orphan scheduler reservations remain
+    // Осиротевших scheduler reservations не осталось.
     const reservedCount = db!.get<{ count: number }>(
       "SELECT COUNT(*) AS count FROM scheduler_reservations WHERE status='RESERVED'",
     );
     expect(reservedCount?.count).toBe(0);
 
-    // Architect was NOT included — none of the calls should be architect phase
+    // Architect НЕ включён — ни один вызов не должен относиться к фазе architect.
     const architectCalls = runtime.calls.filter((c) => c.role === "architect");
     expect(architectCalls.length).toBe(0);
 
-    // Calling approveAndRun again is idempotent (no duplicate work)
+    // Повторный вызов approveAndRun идемпотентен (дубликатов работы нет).
     const beforeCount = runtime.calls.length;
     const resumed = await orchestrator.approveAndRun(plan.id, "user");
     expect(runtime.calls.length).toBe(beforeCount);
@@ -323,7 +323,7 @@ describe("Request to Epic acceptance", () => {
   });
 
   // ──────────────────────────────────────────────────────────────────
-  // Test 3: Resumes after restart mid-epic
+  // Тест 3: продолжает работу после перезапуска в середине Epic.
   // ──────────────────────────────────────────────────────────────────
 
   it("resumes after restart mid-epic", async () => {
@@ -365,14 +365,14 @@ describe("Request to Epic acceptance", () => {
     const callsBeforeRestart = runtime.calls.length;
     expect(callsBeforeRestart).toBe(5); // plan + 4 phases of task_1
 
-    // task_1 should be fully integrated
+    // task_1 должна быть полностью интегрирована.
     const task1Status = db!.get<{ status: string }>(
       "SELECT status FROM tasks WHERE epic_id=$epicId AND display_id='TASK-1'",
       { epicId },
     );
     expect(task1Status?.status).toBe("INTEGRATED_INTO_EPIC");
 
-    // task_2 and task_3 should NOT be integrated yet
+    // task_2 и task_3 пока НЕ должны быть интегрированы.
     const task2Status = db!.get<{ status: string }>(
       "SELECT status FROM tasks WHERE epic_id=$epicId AND display_id='TASK-2'",
       { epicId },
@@ -385,7 +385,7 @@ describe("Request to Epic acceptance", () => {
     );
     expect(task3Status?.status).not.toBe("INTEGRATED_INTO_EPIC");
 
-    // Stage should still be CHILDREN (epic_review/qa/integration not reached).
+    // Stage должен оставаться CHILDREN (epic_review/qa/integration ещё не достигнуты).
     const orchestrationBefore = db!.get<{ stage: string }>(
       "SELECT stage FROM epic_orchestrations WHERE epic_id=$epicId",
       { epicId },
@@ -451,16 +451,16 @@ describe("Request to Epic acceptance", () => {
   });
 
   // ──────────────────────────────────────────────────────────────────
-  // Test 4: Runs real Hermes request to epic (opt-in)
+  // Тест 4: выполняет реальный запрос Hermes к Epic (opt-in).
   // ──────────────────────────────────────────────────────────────────
 
   it("runs real Hermes request to epic", async ({ skip }) => {
     if (process.env.RUN_HERMES_E2E !== "1") skip("opt in with RUN_HERMES_E2E=1");
 
-    // This test requires a real Hermes binary and model to be available.
-    // It verifies the same lifecycle as the deterministic tests but through
-    // an actual Hermes subprocess, proving the integration works end-to-end.
-    // When RUN_HERMES_E2E=1 is not set, this test is skipped.
+    // Для теста должны быть доступны бинарник Hermes и модель.
+    // Он проверяет тот же lifecycle, что и детерминированные тесты, но через
+    // настоящий subprocess Hermes, подтверждая сквозную интеграцию.
+    // Если RUN_HERMES_E2E=1 не задан, тест пропускается.
 
     const { registry, merge } = await setupDatabase();
     const runtime = new FakeAgentRuntime(db!);

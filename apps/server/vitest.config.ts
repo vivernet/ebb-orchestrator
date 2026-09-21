@@ -2,11 +2,11 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    // Run tests with vmThreads for isolation
+  // Запускаем тесты с vmThreads для изоляции.
     pool: "vmThreads",
-    // Test timeout
+  // Тайм-аут теста.
     testTimeout: 60000,
-    // Disable isolation to avoid parallel file locking issues
+  // Отключаем изоляцию, чтобы избежать параллельных блокировок файлов.
     isolate: false,
   },
 });

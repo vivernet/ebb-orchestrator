@@ -21,7 +21,7 @@ describe('CommandTools', () => {
     try {
       fs.rmSync(testDir, { recursive: true, force: true });
      } catch {
-       // Ignore cleanup errors
+       // Игнорируем ошибки очистки.
      }
   });
 
@@ -40,7 +40,7 @@ describe('CommandTools', () => {
         executable: 'node',
         args: ['-e', 'console.log(process.argv[1])', 'hello | grep hello']
       }, workspaceDir);
-      // Without shell, this is just the argument passed directly
+      // Без shell это просто аргумент, переданный напрямую.
       expect(result.success).toBe(true);
       expect(result.stdout).toContain('hello | grep hello');
     });
@@ -65,8 +65,8 @@ describe('CommandTools', () => {
 
   describe('environment isolation', () => {
     it('should not inherit process.env by default', async () => {
-      // When using custom PATH, node may not be found on Windows
-      // This test verifies the mechanism works by checking the environment is built
+      // При использовании собственного PATH node может быть не найден в Windows.
+      // Тест проверяет механизм по сформированному окружению.
       const result = await commandTools.exec({
         executable: 'node',
         args: ['-e', 'process.stdout.write(process.env.MY_CUSTOM_VAR || "undefined")']
@@ -76,7 +76,7 @@ describe('CommandTools', () => {
     });
 
     it('should only include allowlisted env variables', async () => {
-      // Test that custom injected variables are passed correctly
+      // Проверяем корректную передачу добавленных переменных.
       const result = await commandTools.exec({
         executable: 'node',
         args: ['-e', 'process.stdout.write(process.env.TOKEN || "not set")']

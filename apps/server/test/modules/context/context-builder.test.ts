@@ -292,7 +292,7 @@ describe('PromptBuilder', () => {
         outputInstructions: 'Implement the task',
       });
 
-      // Source code should not be in prompt (should be accessed via tools)
+      // Исходного кода не должно быть в prompt (его следует получать через tools).
       expect(prompt).not.toContain('function myFunction');
       expect(prompt).not.toContain('class MyClass');
     });

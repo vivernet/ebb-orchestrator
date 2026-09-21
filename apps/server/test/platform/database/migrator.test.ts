@@ -34,21 +34,21 @@ describe("migrator", () => {
     const dbPath = join(tmpDir, `test-${randomUUID()}.db`);
     db = createSqliteDatabase(dbPath);
 
-    // Run migrations twice
+    // Запускаем migrations дважды.
     const first = runMigrations(db, goodMigrations);
     const second = runMigrations(db, goodMigrations);
 
-    // First run should apply 1 migration
+    // Первый запуск должен применить одну migration.
     expect(first.applied).toBe(1);
-    // Second run should apply 0 (idempotent)
+    // Второй запуск должен применить 0 migrations (идемпотентность).
     expect(second.applied).toBe(0);
 
-    // Exactly one migration record
+    // Должна быть ровно одна запись migration.
     expect(db.all<{ version: number }>("SELECT version FROM schema_migrations")).toEqual([
       { version: 1 },
     ]);
 
-    // WAL journal mode
+    // Режим WAL journal.
     expect(
       db.get<{ journal_mode: string }>("PRAGMA journal_mode")?.journal_mode.toLowerCase(),
     ).toBe("wal");
@@ -68,16 +68,16 @@ describe("migrator", () => {
       { version: 2, name: "002_fail", sql: failingSql },
     ];
 
-    // Should throw on the failing migration
+    // При ошибочной migration должна возникнуть ошибка.
     expect(() => runMigrations(db!, failingMigration)).toThrow();
 
-    // First migration should have been applied
+    // Первая migration должна быть применена.
     const migrations = db.all<{ version: number; name: string }>(
       "SELECT version, name FROM schema_migrations ORDER BY version",
     );
     expect(migrations).toEqual([{ version: 1, name: "001_system" }]);
 
-    // Partial table from failed migration must NOT exist
+    // Неполной таблицы ошибочной migration быть НЕ должно.
     const tables = db.all<{ name: string }>(
       "SELECT name FROM sqlite_master WHERE type='table' AND name='should_not_exist'",
     );

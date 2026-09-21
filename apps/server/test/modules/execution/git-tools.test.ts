@@ -19,7 +19,7 @@ describe('GitTools', () => {
     try {
       fs.rmSync(testDir, { recursive: true, force: true });
      } catch {
-       // Ignore cleanup errors
+       // Игнорируем ошибки очистки.
      }
   });
 
@@ -72,7 +72,7 @@ describe('GitTools', () => {
       fs.writeFileSync(file, 'modified');
       
       const diff = await gitTools.diffStaged();
-      // Staged diff may be empty if only working directory is modified
+      // Staged diff может быть пустым, если изменена только рабочая директория.
       expect(diff).toBeDefined();
     });
   });
@@ -93,7 +93,7 @@ describe('GitTools', () => {
     it('should fail for non-existent workspace', async () => {
       const gitTools = new GitTools('/nonexistent/path');
       const result = await gitTools.commit('Test');
-      // Error message should indicate something went wrong
+      // Сообщение об ошибке должно указывать на проблему.
       expect(result?.length).toBeGreaterThan(0);
     });
   });
@@ -103,7 +103,7 @@ describe('GitTools', () => {
       const gitTools = new GitTools(workspaceDir);
       await gitTools.initRepo();
       
-      // Attempt to access files outside workspace
+      // Пытаемся обратиться к файлам за пределами workspace.
       const fileOutside = path.join(testDir, 'outside.txt');
       fs.writeFileSync(fileOutside, 'external');
       

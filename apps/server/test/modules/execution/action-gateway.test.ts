@@ -24,7 +24,7 @@ describe('ActionGateway', () => {
      try {
        fs.rmSync(testDir, { recursive: true, force: true });
      } catch {
-       // Ignore cleanup errors
+  // Игнорируем ошибки очистки.
      }
    });
 
@@ -62,7 +62,7 @@ describe('ActionGateway', () => {
     it('should search within workspace only', async () => {
       const file = path.join(workspaceDir, 'test.txt');
       fs.writeFileSync(file, 'searchable content');
-      // Verify file exists
+  // Проверяем существование файла.
       expect(fs.existsSync(file)).toBe(true);
       const results = await gateway.search('searchable', '*.txt');
       expect(results.length).toBeGreaterThan(0);
@@ -162,14 +162,14 @@ describe('ActionGateway', () => {
     });
 
     it('should handle symlink paths safely', async () => {
-      // Create symlink pointing outside workspace
+  // Создаём symlink, указывающий за пределы workspace.
       const link = path.join(workspaceDir, 'escape');
       const outside = path.join(testDir, 'outside.txt');
       fs.writeFileSync(outside, 'external');
        try {
          fs.symlinkSync(outside, link);
        } catch {
-         // Symlinks may not be supported on all platforms
+    // Symlink может не поддерживаться на всех платформах.
        }
       
       const result = await gateway.readFile('escape');

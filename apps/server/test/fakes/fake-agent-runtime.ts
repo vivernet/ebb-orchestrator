@@ -1,6 +1,6 @@
 /**
- * Fake agent runtime for testing.
- * Never sleeps or uses the network.
+ * Имитация agent runtime для тестов.
+ * Не выполняет ожидание и не использует сеть.
  */
 
 import type { AgentRun } from "@ebb-orchestrator/contracts";
@@ -13,7 +13,7 @@ interface ScriptedOutcome {
 }
 
 /**
- * A fake runtime that supports scripted outcomes for testing.
+ * Имитация runtime с заданными результатами для тестирования.
  */
 export class FakeAgentRuntime implements AgentRuntime {
   active = 0;
@@ -24,7 +24,7 @@ export class FakeAgentRuntime implements AgentRuntime {
   readonly resumeCalls: Array<{ runId: string; options: { sessionId: string; attempt: number } }> = [];
 
   /**
-   * Script an outcome for a specific role.
+ * Задаёт результат для конкретной роли.
    */
   script(role: string, outcomes: RunOutcome[]): void {
     const scripted: ScriptedOutcome[] = outcomes.map((o) => ({
@@ -35,14 +35,14 @@ export class FakeAgentRuntime implements AgentRuntime {
   }
 
   /**
-   * Start a new run.
+ * Запускает новый run.
    */
   async startRun(_run: AgentRun): Promise<void> {
-    // Record run started
+    // Записываем начало run.
   }
 
   /**
-   * Resume a run.
+ * Возобновляет run.
    */
   async resumeRun(
     runId: string,
@@ -52,21 +52,21 @@ export class FakeAgentRuntime implements AgentRuntime {
   }
 
   /**
-   * Cancel a run.
+ * Отменяет run.
    */
   async cancelRun(_runId: string): Promise<void> {
-    // Record cancelled
+    // Записываем отмену.
   }
 
   /**
-   * Inspect a run.
+ * Проверяет состояние run.
    */
   async inspectRun(_runId: string): Promise<AgentRun> {
     throw new Error("Inspect not implemented");
   }
 
   /**
-   * Collect result from a run using scripted outcomes.
+ * Получает результат run с учётом заданных результатов.
    */
   async collectResult(_runId: string): Promise<RunOutcome> {
     const roles = Array.from(this.scripts.keys());
@@ -84,7 +84,7 @@ export class FakeAgentRuntime implements AgentRuntime {
   }
 
   /**
-   * Collect usage from a run.
+ * Получает usage run.
    */
   async collectUsage(_runId: string): Promise<{
     inputTokens: number;
@@ -96,14 +96,14 @@ export class FakeAgentRuntime implements AgentRuntime {
   }
 
   /**
-    * Get the result from a run.
+ * Возвращает результат run.
     */
   async runResult(_runId: string): Promise<RunOutcome> {
     throw new Error("runResult not implemented");
   }
 
   /**
-    * Health check.
+ * Проверка состояния.
     */
   async healthCheck(): Promise<boolean> {
     return true;

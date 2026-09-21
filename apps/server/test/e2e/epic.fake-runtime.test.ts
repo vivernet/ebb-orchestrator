@@ -151,8 +151,8 @@ describe("full epic orchestration with FakeAgentRuntime", () => {
     const registry = new WorkflowRegistry();
     for (const template of Object.values(templates)) registry.register(template);
 const runtime = new FakeAgentRuntime(db);
-     // The E2E uses the production MergeService.  IntegrationService owns the
-     // provenance schema; no synthetic VERIFIED journal row is inserted here.
+  // E2E использует production MergeService. IntegrationService владеет схемой
+  // provenance; синтетическая запись журнала VERIFIED здесь не добавляется.
      new IntegrationService({ database: db, worktreeDir: directory });
      const merge = new MergeService({ database: db, repoPath: directory, targetBranch: "master" });
      const orchestrator = new EpicOrchestrator(db, new WorkflowEngine(db, registry), new PlanningService(db), new RunService(db, runtime), merge, new SchedulerService(db));
