@@ -1,5 +1,5 @@
 /**
- * File-based single-instance lock.
+ * Файловая блокировка единственного экземпляра.
  *
  * Uses a lock file with the current PID to prevent duplicate backend
  * processes.  On acquire, the lock checks whether an existing lock
@@ -33,7 +33,7 @@ export class SingleInstanceLock {
    * - If a lock file exists and its PID is dead → overwrite → success.
    */
   async acquire(): Promise<LockHandle> {
-    // Try to read an existing lock file.
+    // Пытается прочитать существующий lock-файл.
     let existing: LockHandle | undefined;
     try {
       const content = await readFile(this.lockPath, "utf-8");
@@ -42,7 +42,7 @@ export class SingleInstanceLock {
         existing = { pid };
       }
     } catch {
-      // No lock file – we can proceed.
+      // Lock-файл отсутствует, можно продолжить.
     }
 
     if (existing) {
@@ -52,7 +52,7 @@ export class SingleInstanceLock {
             `Lock file: ${this.lockPath}`,
         );
       }
-      // Stale lock – delete it before re-creating.
+      // Lock-файл устарел, удаляем его перед созданием нового.
       await unlink(this.lockPath).catch(() => {});
     }
 
@@ -83,14 +83,14 @@ export class SingleInstanceLock {
         await unlink(this.lockPath);
       }
     } catch {
-      // Lock file already gone – ignore.
+      // Lock-файл уже удалён, ничего не делает.
     }
 
     this.held = false;
   }
 
   /**
-   * Check whether a process with the given PID is still running.
+   * Проверяет, работает ли процесс с указанным PID.
    * Uses `process.kill(pid, 0)` which sends no signal but checks
    * whether the process exists.
    */

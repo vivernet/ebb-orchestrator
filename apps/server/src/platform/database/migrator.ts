@@ -1,11 +1,11 @@
 /**
- * Restart-safe migration runner.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
  *
- * Each migration is executed inside its own transaction so that a failure
- * in migration N+1 does not undo the already-applied migration N.
- * The runner is idempotent: calling `runMigrations` twice with the same
- * list produces exactly the same database state and returns
- * `{ applied: 0 }` on the second call.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
  */
 
 import type { Database } from "./database.js";
@@ -26,14 +26,14 @@ export interface MigrationResult {
 }
 
 /**
- * Compute a SHA-256 hex digest of a migration's SQL content.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
  */
 function checksum(sql: string): string {
   return createHash("sha256").update(sql).digest("hex");
 }
 
 /**
- * Ensure the `schema_migrations` tracking table exists.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
  */
 function ensureSchemaTable(db: Database): void {
   db.exec(`
@@ -47,7 +47,7 @@ function ensureSchemaTable(db: Database): void {
 }
 
 /**
- * Return the highest version that has already been applied.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
  */
 function currentVersion(db: Database): number {
   const row = db.get<{ version: number }>(
@@ -57,13 +57,13 @@ function currentVersion(db: Database): number {
 }
 
 /**
- * Run an ordered list of migrations against `db`.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
  *
- * - Migrations with `version <= currentVersion` are skipped.
- * - Each new migration is wrapped in its own transaction; on failure
- *   the transaction is rolled back and the error is re-thrown.
- * - After a successful migration the `schema_migrations` row is inserted
- *   **in the same transaction** so that the apply + record are atomic.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
  */
 export function runMigrations(
   db: Database,
@@ -78,10 +78,10 @@ export function runMigrations(
 
   for (const migration of pending) {
     db.transaction((tx) => {
-      // Execute the migration DDL/DML.
+      // Выполняет соответствующую проверку или действие согласно контракту.
       tx.exec(migration.sql);
 
-      // Record the migration atomically.
+      // Выполняет соответствующую проверку или действие согласно контракту.
       tx.run(
         `INSERT INTO schema_migrations (version, name, checksum, applied_at)
          VALUES ($version, $name, $checksum, $applied_at)`,

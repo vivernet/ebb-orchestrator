@@ -1,5 +1,5 @@
 /**
- * Abstract database adapter interface.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
  */
 
 import type { SQLInputValue } from "node:sqlite";

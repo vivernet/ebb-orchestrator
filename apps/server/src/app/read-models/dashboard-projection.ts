@@ -40,7 +40,7 @@ export function waitReason(status: string): { code: string; message: string } | 
   return null;
 }
 
-/** Read the scheduler's durable evidence, rather than inferring from status. */
+/** Читает durable evidence scheduler, а не выводит его из status. */
 export function schedulerWaitReason(db: Database, task: SchedulerTaskRow, scheduler?: SchedulerService): WaitReason | null {
    const authoritativeScheduler = scheduler;
    if (!authoritativeScheduler) return waitReason(task.status);

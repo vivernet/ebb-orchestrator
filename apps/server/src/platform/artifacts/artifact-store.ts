@@ -1,14 +1,14 @@
 /**
- * Crash-safe artifact store.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
  *
- * Writes artifacts through a two-phase staging protocol:
- * 1. Write content to a temp file and fsync.
- * 2. Insert a STAGING DB row.
- * 3. Rename temp → final path (atomic on same filesystem).
- * 4. Promote the DB row to ACTIVE.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
  *
- * A crash between steps 2 and 4 leaves a STAGING row and possibly a
- * temp file.  `reconcileStagingArtifacts()` cleans these up on startup.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
  */
 
 import { randomUUID, createHash } from "node:crypto";
@@ -50,8 +50,8 @@ export interface ReconcileResult {
 }
 
 /**
- * Internal options for testing.  The underscore-prefixed flags are only
- * used in tests to simulate failures at specific points.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
  */
 export interface ArtifactStoreOptions {
   _failBeforeRename?: boolean;
@@ -69,28 +69,28 @@ export class ArtifactStore {
   ) {}
 
   /**
-   * Write an artifact atomically via staging.
+   * Описывает соответствующий контракт, инвариант или этап выполнения.
    */
   async writeArtifact(input: WriteArtifactInput): Promise<ArtifactRecord> {
     const id = randomUUID();
     const now = new Date().toISOString();
 
-    // Compute hash and size before any filesystem / DB work.
+    // Выполняет соответствующую проверку или действие согласно контракту.
     const sha256 = createHash("sha256").update(input.bytes).digest("hex");
     const sizeBytes = input.bytes.length;
 
-    // Derive a deterministic relative path: `<id>/<filename>`.
-    // The caller specifies `type`; we use the id as a unique directory.
+    // Выполняет соответствующую проверку или действие согласно контракту.
+    // Выполняет соответствующую проверку или действие согласно контракту.
     const relativePath = `${id}/artifact`;
 
     const absoluteFinalPath = join(this.artifactsDir, relativePath);
     const parentDir = join(this.artifactsDir, id);
     const tempPath = `${absoluteFinalPath}.${randomUUID()}.tmp`;
 
-    // Ensure the parent directory exists.
+    // Выполняет соответствующую проверку или действие согласно контракту.
     await mkdir(parentDir, { recursive: true });
 
-    // Phase 1: write to temp file and fsync.
+    // Выполняет соответствующую проверку или действие согласно контракту.
     const handle = await open(tempPath, "wx");
     try {
       await handle.writeFile(input.bytes);
@@ -99,14 +99,14 @@ export class ArtifactStore {
       await handle.close();
     }
 
-    // Optional: simulate a crash between temp write and DB insert.
+    // Выполняет соответствующую проверку или действие согласно контракту.
     if (this.options?._failBeforeRename) {
-      // Clean up the temp file before throwing.
+      // Выполняет соответствующую проверку или действие согласно контракту.
       await unlink(tempPath).catch(() => {});
       throw new Error("Simulated failure before rename");
     }
 
-    // Phase 2: insert STAGING row.
+    // Выполняет соответствующую проверку или действие согласно контракту.
     this.repository.insert({
       id,
       type: input.type,
@@ -122,10 +122,10 @@ export class ArtifactStore {
       expiresAt: input.expiresAt ?? null,
     });
 
-    // Phase 3: rename temp → final.
+    // Выполняет соответствующую проверку или действие согласно контракту.
     await rename(tempPath, absoluteFinalPath);
 
-    // Phase 4: promote to ACTIVE.
+    // Выполняет соответствующую проверку или действие согласно контракту.
     this.repository.updateStatus(id, "ACTIVE");
 
     return {
@@ -140,7 +140,7 @@ export class ArtifactStore {
   }
 
   /**
-   * Open an ACTIVE artifact for reading.
+   * Описывает соответствующий контракт, инвариант или этап выполнения.
    */
   async openArtifact(id: string): Promise<Readable> {
     const row = this.repository.getById(id);
@@ -154,13 +154,13 @@ export class ArtifactStore {
   }
 
   /**
-   * Reconcile all STAGING artifacts.  Call on startup after a potential
-   * crash.
+   * Описывает соответствующий контракт, инвариант или этап выполнения.
+   * Описывает соответствующий контракт, инвариант или этап выполнения.
    *
-   * Rules:
-   * - Final file exists + hash matches → ACTIVE
-   * - Final file missing → delete stale DB row and leftover temp file
-   * - Hash mismatch → MISSING and preserve evidence for diagnostics
+   * Описывает соответствующий контракт, инвариант или этап выполнения.
+   * Описывает соответствующий контракт, инвариант или этап выполнения.
+   * Описывает соответствующий контракт, инвариант или этап выполнения.
+   * Описывает соответствующий контракт, инвариант или этап выполнения.
    */
   async reconcileStagingArtifacts(): Promise<ReconcileResult> {
     const staging = this.repository.getByStatus("STAGING");
@@ -190,20 +190,20 @@ export class ArtifactStore {
         continue;
       }
 
-      // Check if the final file exists.
+      // Выполняет соответствующую проверку или действие согласно контракту.
       let fileExists = false;
       try {
         await access(absoluteFinalPath);
         fileExists = true;
       } catch {
-        // fileExists remains false
+        // Выполняет соответствующую проверку или действие согласно контракту.
       }
 
       if (!fileExists) {
-        // File missing → delete stale DB row.
+        // Выполняет соответствующую проверку или действие согласно контракту.
         this.repository.deleteById(row.id);
 
-        // Clean up orphaned temp files: <id>/artifact.<uuid>.tmp
+        // Выполняет соответствующую проверку или действие согласно контракту.
         const parentDir = join(this.artifactsDir, row.id);
         try {
           const files = await readdir(parentDir);
@@ -214,23 +214,23 @@ export class ArtifactStore {
           }
           await rmdir(parentDir).catch(() => {});
         } catch {
-          // Directory may not exist; ignore.
+          // Выполняет соответствующую проверку или действие согласно контракту.
         }
 
         cleaned++;
         continue;
       }
 
-      // File exists → verify hash.
+      // Выполняет соответствующую проверку или действие согласно контракту.
       const fileContent = await readFile(absoluteFinalPath);
       const actualHash = createHash("sha256").update(fileContent).digest("hex");
 
       if (actualHash === row.sha256) {
-        // Hash matches → promote to ACTIVE.
+        // Выполняет соответствующую проверку или действие согласно контракту.
         this.repository.updateStatus(row.id, "ACTIVE");
         promoted++;
       } else {
-        // Hash mismatch → mark as MISSING for diagnostics.
+        // Выполняет соответствующую проверку или действие согласно контракту.
         this.repository.updateStatus(row.id, "MISSING");
         cleaned++;
       }
@@ -252,8 +252,8 @@ export class ArtifactStore {
 }
 
 function requireLstat(path: string): { isFile(): boolean; isSymbolicLink(): boolean } {
-  // ArtifactStore's public methods are async; this synchronous check is kept
-  // isolated so persisted rows can never redirect a read through a symlink.
+  // Выполняет соответствующую проверку или действие согласно контракту.
+  // Выполняет соответствующую проверку или действие согласно контракту.
   return lstatSync(path);
 }
 

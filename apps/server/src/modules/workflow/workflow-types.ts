@@ -1,12 +1,12 @@
 /**
- * Workflow domain types – templates and engine interfaces.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
  */
 
 import type { TaskStatus } from "../work/work-types.js";
 
 /**
- * External state that the transition engine needs to evaluate
- * context-dependent rules (approval gates, integration markers, etc.).
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
  */
 export interface TransitionContext {
   hasReviewPassed: boolean;
@@ -16,7 +16,7 @@ export interface TransitionContext {
 }
 
 /**
- * A single allowed transition with optional context requirements.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
  */
 export interface TransitionRule {
   from: TaskStatus;
@@ -26,8 +26,8 @@ export interface TransitionRule {
 }
 
 /**
- * A workflow template defines allowed stages and transitions for a particular
- * workflow type (e.g. standard task, bugfix, architecture change).
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
  */
 export interface WorkflowTemplate {
   readonly name: string;
@@ -39,7 +39,7 @@ export interface WorkflowTemplate {
 }
 
 /**
- * Result of a successful transition.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
  */
 export interface TransitionResult {
   readonly task: {

@@ -23,7 +23,7 @@ export class EnvironmentBuilder {
   private getBaseEnv(): Record<string, string> {
     const base: Record<string, string> = {};
 
-    // Always include PATH for executable resolution
+    // Всегда включает PATH для поиска executable
     if (process.env.PATH) {
       base.PATH = process.env.PATH;
     }
@@ -32,7 +32,7 @@ export class EnvironmentBuilder {
   }
 
   /**
-   * Build an isolated environment for subprocess execution.
+   * Строит изолированное окружение для запуска subprocess.
    * 
    * @param options - Configuration for environment building
    * @returns A minimal, isolated environment object
@@ -40,17 +40,17 @@ export class EnvironmentBuilder {
   build(options: BuildEnvOptions): Record<string, string> {
     const env: Record<string, string> = {};
 
-    // Start with platform baseline variables
+    // Начинает с platform baseline variables
     const baseEnv = this.getBaseEnv();
     
-    // Only include allowlisted base variables (unless overridden by injected)
+    // Включает только allowlisted base variables, если их не переопределяет injected
     for (const key of options.allowlist) {
       if (baseEnv[key] && !options.injected[key]) {
         env[key] = baseEnv[key];
       }
     }
 
-    // Add explicitly injected variables (scoped injection) - these take precedence
+    // Добавляет явно injected variables (scoped injection); они имеют приоритет
     for (const [key, value] of Object.entries(options.injected)) {
       env[key] = value;
     }

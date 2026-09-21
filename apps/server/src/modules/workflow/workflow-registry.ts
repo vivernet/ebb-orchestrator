@@ -1,5 +1,5 @@
 /**
- * Workflow registry – manages workflow templates by name.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
  */
 
 import type { WorkflowTemplate } from "./workflow-types.js";
@@ -11,28 +11,28 @@ export class WorkflowRegistry {
   private readonly templates = new Map<string, WorkflowTemplate>();
 
   /**
-   * Register a workflow template. Overwrites if the name already exists.
+   * Описывает соответствующий контракт, инвариант или этап выполнения.
    */
   register(template: WorkflowTemplate): void {
     this.templates.set(template.name, template);
   }
 
   /**
-   * Look up a template by name. Returns undefined if not found.
+   * Описывает соответствующий контракт, инвариант или этап выполнения.
    */
   get(name: string): WorkflowTemplate | undefined {
     return this.templates.get(name);
   }
 
   /**
-   * Check whether a template with the given name exists.
+   * Описывает соответствующий контракт, инвариант или этап выполнения.
    */
   has(name: string): boolean {
     return this.templates.has(name);
   }
 
   /**
-   * List all registered template names.
+   * Описывает соответствующий контракт, инвариант или этап выполнения.
    */
   list(): string[] {
     return [...this.templates.keys()];

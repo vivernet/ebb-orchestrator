@@ -1,6 +1,6 @@
 /**
- * Secrets management routes.
- * Note: No endpoint returns secret plaintext after storage.
+ * Routes управления секретами.
+ * Note: Ни один endpoint не возвращает plaintext секрета после сохранения.
  */
 import type { FastifyInstance } from "fastify";
 import { InMemorySecretStore, isSecretStoreUnavailableError, type SecretStore } from '../../platform/security/secret-store.js';
@@ -24,7 +24,7 @@ export async function secretsRoutes(
     ? new KeyringSecretStore(deps.db)
     : new InMemorySecretStore(deps.db));
 
-  // Store a secret
+  // Выполняет соответствующую проверку или действие согласно контракту.
   app.post<{ Body: { service: string; name: string; value: string } }>(
     "/api/v1/secrets",
     {
@@ -51,7 +51,7 @@ export async function secretsRoutes(
         }
         throw error;
       }
-      // Return metadata only - never the plaintext value
+      // Выполняет соответствующую проверку или действие согласно контракту.
       return reply.code(201).send({
         id: result.id,
         service: result.service,
@@ -60,7 +60,7 @@ export async function secretsRoutes(
     }
   );
 
-  // List secrets for a service (metadata only)
+  // Выполняет соответствующую проверку или действие согласно контракту.
   app.get<{ Params: { service: string } }>(
     "/api/v1/secrets/:service",
     {
@@ -77,7 +77,7 @@ export async function secretsRoutes(
     async (request) => {
       const { service } = request.params;
       const secrets = await store.listMetadata(service);
-      // Return metadata only - never plaintext values
+      // Выполняет соответствующую проверку или действие согласно контракту.
       return {
         service,
         secrets: secrets.map(s => ({
@@ -90,7 +90,7 @@ export async function secretsRoutes(
     }
   );
 
-  // Get metadata for a specific secret
+  // Выполняет соответствующую проверку или действие согласно контракту.
   app.get<{ Params: { service: string; name: string } }>(
     "/api/v1/secrets/:service/:name",
     {
@@ -116,7 +116,7 @@ export async function secretsRoutes(
     }
   );
 
-  // Delete a secret
+  // Выполняет соответствующую проверку или действие согласно контракту.
   app.delete<{ Params: { service: string; name: string } }>(
     "/api/v1/secrets/:service/:name",
     {

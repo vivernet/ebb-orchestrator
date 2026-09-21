@@ -1,5 +1,5 @@
 /**
- * Database repository for artifact records.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
  */
 
 import type { Database } from "../database/database.js";

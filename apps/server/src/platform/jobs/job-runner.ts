@@ -1,5 +1,5 @@
 /**
- * Background job runner – claims, executes and updates jobs.
+ * Worker фоновых job: захватывает, выполняет и обновляет job.
  */
 
 import { randomUUID } from "node:crypto";
@@ -11,7 +11,7 @@ import type {
 } from "./job-types.js";
 import { BACKOFF_SCHEDULE } from "./job-types.js";
 
-/** Lease duration in milliseconds (5 minutes). */
+/** Длительность lease в миллисекундах (5 минут). */
 const LEASE_DURATION_MS = 5 * 60 * 1000;
 
 /**
@@ -26,8 +26,8 @@ export class JobRunner {
   /**
    * Pick up to one runnable job, execute its handler, and update status.
    *
-   * A job is "runnable" when:
-   * - status is QUEUED or RETRY_WAIT
+   * Job является runnable, когда:
+   * - status равен QUEUED или RETRY_WAIT
    * - run_after <= now
    *
    * The runner claims the job inside a transaction by setting lease_owner and
@@ -47,7 +47,7 @@ export class JobRunner {
     const handler = this.handlers[job.type];
 
     if (!handler) {
-      // No handler registered – mark as FAILED
+      // Handler не зарегистрирован — пометить как FAILED
       this.db.run(
         `UPDATE background_jobs
          SET status = $status, last_error = $error, updated_at = $updated_at
@@ -77,7 +77,7 @@ export class JobRunner {
       const attempts = job.attempts + 1;
 
       if (attempts >= job.max_attempts) {
-        // Dead-letter
+        // Переводит job в dead-letter
         this.db.run(
           `UPDATE background_jobs
            SET status = 'DEAD_LETTER', attempts = $attempts, last_error = $error,
@@ -87,7 +87,7 @@ export class JobRunner {
         );
         summary.failed = 1;
       } else {
-        // Retry with backoff
+        // Повторяет с backoff
         const backoffIndex = Math.min(attempts - 1, BACKOFF_SCHEDULE.length - 1);
         const baseDelay = BACKOFF_SCHEDULE[backoffIndex]!;
         // Add bounded jitter: ±10% of base delay
@@ -145,7 +145,7 @@ export class JobRunner {
 
       if (!row) return undefined;
 
-      // Claim it
+      // Захватывает её
       tx.run(
         `UPDATE background_jobs
          SET status = 'RUNNING', lease_owner = $owner, lease_expires_at = $expires, updated_at = $updated

@@ -1,7 +1,7 @@
 /**
- * Secure secret store implementation.
- * Secrets are stored in OS keyring when available, with SQLite only storing
- * metadata and reference IDs. No plaintext secrets are persisted in SQLite.
+ * Реализует безопасное хранилище секретов.
+ * Если доступен OS keyring, секреты хранятся в нём, а SQLite сохраняет только
+ * метаданные и reference ID; plaintext-секреты в SQLite не сохраняются.
  */
 
 import type { Database } from '../database/database.js';
@@ -21,7 +21,7 @@ export function isSecretStoreUnavailableError(error: unknown): boolean {
 }
 
 /**
- * Result of storing a secret.
+ * Результат сохранения секрета.
  */
 export interface StoreResult {
   id: string;
@@ -30,7 +30,7 @@ export interface StoreResult {
 }
 
 /**
- * Metadata about a stored secret (no plaintext value).
+ * Метаданные сохранённого секрета без plaintext-значения.
  */
 export interface SecretMetadata {
   referenceId: string;
@@ -38,30 +38,30 @@ export interface SecretMetadata {
   name: string;
   createdAt: number;
   updatedAt: number;
-  /** Always absent from metadata; retained as an optional type guard for callers. */
+  /** Всегда отсутствует в метаданных; поле оставлено для optional type guard вызывающего кода. */
   value?: never;
 }
 
 /**
- * Interface for secret storage backends.
+ * Интерфейс backend-реализаций хранилища секретов.
  */
 export interface SecretStore {
-  /** Store a secret and return its reference ID. */
+  /** Сохраняет секрет и возвращает его reference ID. */
   store(service: string, name: string, value: string): Promise<StoreResult>;
   
-  /** Resolve secrets for a specific service by name. */
+  /** Находит секрет для указанного service и name. */
   resolveForService(service: string, name: string): Promise<string | undefined>;
   
-  /** Revoke (delete) a stored secret. */
+  /** Отзывает и удаляет сохранённый секрет. */
   revoke(service: string, name: string): Promise<void>;
   
-  /** List all secrets for a service (metadata only). */
+  /** Возвращает все секреты service только в виде метаданных. */
   listMetadata(service: string): Promise<SecretMetadata[]>;
 }
 
 /**
- * In-memory secret store implementation for testing.
- * Secrets are kept in memory only - no persistence.
+ * In-memory реализация хранилища секретов для тестов.
+ * Секреты хранятся только в памяти и не сохраняются.
  */
 export class InMemorySecretStore implements SecretStore {
   private values: Map<string, string> = new Map();
@@ -87,7 +87,7 @@ export class InMemorySecretStore implements SecretStore {
       updatedAt: now,
     });
 
-    // If database is available, store metadata only (not value)
+    // Если доступна database, сохраняем только метаданные, не значение
     if (this.db) {
       this.db.run(
         `INSERT OR REPLACE INTO secrets (reference_id, service, name, created_at, updated_at)
@@ -135,7 +135,7 @@ export class InMemorySecretStore implements SecretStore {
   }
 
   private generateId(): string {
-    // Simple ID generation for testing
+    // Простая генерация ID для тестов
     return `sec_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   }
 }

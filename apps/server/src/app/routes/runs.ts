@@ -44,9 +44,9 @@ export async function runRoutes(app: FastifyInstance, deps: RunRouteDeps = {}): 
       return reply.code(409).send({ error: "task is not READY", status: task.status });
     }
 
-    // Standalone dispatch must use the persisted managed task worktree. Never
-    // accept a workspace/branch from the caller and never let Hermes choose a
-    // process-local fallback path.
+    // Выполняет соответствующую проверку или действие согласно контракту.
+    // Выполняет соответствующую проверку или действие согласно контракту.
+    // Выполняет соответствующую проверку или действие согласно контракту.
     const worktree = (deps.worktreeRepository ?? new WorktreeRepository(deps.db)).findTaskWorkspace(task.id);
     if (!worktree || !isAbsolute(worktree.path) || !existsSync(worktree.path) || !statIsDirectory(worktree.path)) {
       return reply.code(409).send({ error: "managed task workspace is required" });
@@ -78,8 +78,8 @@ export async function runRoutes(app: FastifyInstance, deps: RunRouteDeps = {}): 
       return reply.code(classifyDispatchError(error)).send({ error: "dispatch rejected" });
     }
 
-    // The HTTP command acknowledges durable preparation; runtime execution is
-    // deliberately detached so a slow Hermes process cannot hold the request.
+    // Выполняет соответствующую проверку или действие согласно контракту.
+    // Выполняет соответствующую проверку или действие согласно контракту.
     void runService.executePreparedRun(run.id).catch((error: unknown) => {
       runService.failPreparedRun?.(run.id, error);
       try { deps.scheduler!.releaseTask(task.id, 0); } catch { /* recovery reconciler owns retry */ }

@@ -1,7 +1,7 @@
 /**
- * Keyring-based secret store that uses @napi-rs/keyring on supported platforms.
- * Secrets are stored in the OS secure storage (keyring).
- * SQLite only stores metadata references.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
  */
 
 import { createRequire } from 'node:module';

@@ -1,5 +1,5 @@
 /**
- * Server-Sent Events stream for live backend → browser updates.
+ * Поток Server-Sent Events для live-обновлений backend → browser.
  *
  * The SSE endpoint is authenticated (requires a valid bearer token) but
  * the stream only carries ephemeral UI events. Reconnecting clients

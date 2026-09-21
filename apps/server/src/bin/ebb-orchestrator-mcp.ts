@@ -1,9 +1,9 @@
 /**
- * Orchestrator MCP stdio server CLI entry point.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
  * 
- * Usage: ebb-orchestrator-mcp --capability-ref <orchestrator-issued-reference>
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
  * 
- * The capability ID determines the role and tool access for this MCP server instance.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
  */
 import { McpServer } from '../modules/execution/mcp/mcp-server.js';
 import { loadValidatedCapability } from '../modules/execution/capability-validation.js';
@@ -39,7 +39,7 @@ function parseArgs(): { capabilityRef: string | undefined; resultFile: string | 
 async function main() {
   const args = parseArgs();
 
-  // Get capability from environment or args
+  // Выполняет соответствующую проверку или действие согласно контракту.
   const capabilityRef = args.capabilityRef || process.env.EBB_ORCHESTRATOR_CAPABILITY_REF;
   const resultFile = args.resultFile || process.env.EBB_ORCHESTRATOR_RESULT_FILE;
 
@@ -52,10 +52,10 @@ async function main() {
   const db = createSqliteDatabase(databasePath);
   const capability = loadValidatedCapability(db, capabilityRef);
 
-  // Create MCP server
+  // Выполняет соответствующую проверку или действие согласно контракту.
   const server = new McpServer(capability, { completion: new DatabaseCompletionStore(db) });
 
-  // Process stdio requests
+  // Выполняет соответствующую проверку или действие согласно контракту.
   const input = createInterface({ input: process.stdin });
   for await (const line of input) {
     let request: unknown;

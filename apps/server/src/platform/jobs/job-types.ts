@@ -1,5 +1,5 @@
 /**
- * Background job type definitions and status enum.
+ * Определения типов фоновых задач и enum статуса.
  */
 
 export type JobStatus =
@@ -12,17 +12,17 @@ export type JobStatus =
   | "DEAD_LETTER";
 
 export interface EnqueueJobInput {
-  /** The job type key used to look up the handler. */
+  /** Ключ типа задачи для поиска handler. */
   type: string;
-  /** Arbitrary JSON payload passed to the handler. */
+  /** Произвольный JSON payload, передаваемый handler. */
   payload: Record<string, unknown>;
-  /** Higher values are picked up first (default 0). */
+  /** Сначала выбираются значения выше (по умолчанию 0). */
   priority?: number;
-  /** Earliest time the job should run (default: now). */
+  /** Самое раннее время запуска job (по умолчанию: now). */
   runAfter?: Date;
-  /** Optional deduplication key – only one active job may share a key. */
+  /** Необязательный deduplication key; только одна активная job может использовать такой ключ. */
   dedupeKey?: string;
-  /** Maximum attempts before dead-letter (default 5). */
+  /** Максимальное число попыток до dead-letter (по умолчанию 5). */
   maxAttempts?: number;
 }
 
@@ -46,13 +46,13 @@ export interface BackgroundJobRow {
 export type JobHandler = (job: BackgroundJobRow) => Promise<void>;
 
 export interface JobRunSummary {
-  /** Number of jobs that were claimed this tick. */
+  /** Количество job, захваченных на этом tick. */
   claimed: number;
-  /** Number of jobs that transitioned to SUCCEEDED. */
+  /** Количество job, переведённых в SUCCEEDED. */
   succeeded: number;
-  /** Number of jobs that transitioned to FAILED or DEAD_LETTER. */
+  /** Количество job, переведённых в FAILED или DEAD_LETTER. */
   failed: number;
 }
 
-/** Deterministic backoff schedule in seconds. */
+/** Детерминированное расписание backoff в секундах. */
 export const BACKOFF_SCHEDULE: readonly number[] = [60, 120, 300, 900, 1800] as const;

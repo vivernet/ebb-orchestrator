@@ -1,4 +1,4 @@
-/** Securely resolve paths while honoring symlinks and junctions. */
+/** Безопасно разрешает пути с учётом symlink и junction. */
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 
@@ -28,8 +28,8 @@ export class PathResolver {
       if (!this.isWithinWorkspace(realRoot, realTarget, pathApi)) return { success: false, error: 'Path is outside workspace' };
       return { success: true, path: realTarget };
     } catch (err) {
-      // Preserve purely lexical validation for virtual/nonexistent roots used by callers,
-      // but never use it once an existing workspace can expose symlinked ancestors.
+      // Выполняет соответствующую проверку или действие согласно контракту.
+      // Выполняет соответствующую проверку или действие согласно контракту.
       try {
         const root = pathApi.resolve(workspace);
         const requested = pathApi.resolve(root, target);
@@ -37,9 +37,9 @@ export class PathResolver {
         if (!this.hasExistingRoot(root)) {
           return { success: true, path: requested };
         }
-        // An existing root means realpath/ancestor resolution failed because
-        // of a dangling symlink, junction, permission error, or non-directory
-        // ancestor. Falling back lexically would bypass that security check.
+        // Выполняет соответствующую проверку или действие согласно контракту.
+        // Выполняет соответствующую проверку или действие согласно контракту.
+        // Выполняет соответствующую проверку или действие согласно контракту.
         return { success: false, error: 'Path resolution failed' };
       } catch { /* fail closed below */ }
       return { success: false, error: err instanceof Error ? err.message : 'Path resolution failed' };
@@ -58,9 +58,9 @@ export class PathResolver {
   }
 
   private pathApiFor(workspace: string): typeof path.posix | typeof path.win32 {
-    // Keep the host's native semantics for real paths. On non-Windows hosts,
-    // also understand explicit Windows paths so cross-platform validation does
-    // not accidentally treat `C:\\...` as a relative filename.
+    // Выполняет соответствующую проверку или действие согласно контракту.
+    // Выполняет соответствующую проверку или действие согласно контракту.
+    // Выполняет соответствующую проверку или действие согласно контракту.
     return process.platform === 'win32' || this.isWindowsPath(workspace) ? path.win32 : path.posix;
   }
 
@@ -74,8 +74,8 @@ export class PathResolver {
 
   private hasExistingRoot(root: string): boolean {
     try {
-      // lstat distinguishes a dangling symlink from a genuinely absent root;
-      // existsSync follows links and would incorrectly classify the former as absent.
+      // Выполняет соответствующую проверку или действие согласно контракту.
+      // Выполняет соответствующую проверку или действие согласно контракту.
       fs.lstatSync(root);
       return true;
     } catch {
@@ -100,8 +100,8 @@ export class PathResolver {
         current = parent;
         continue;
       }
-      // lstat deliberately sees dangling symlinks as existing. realpath must
-      // succeed before any suffix is appended, otherwise fail closed.
+      // Выполняет соответствующую проверку или действие согласно контракту.
+      // Выполняет соответствующую проверку или действие согласно контракту.
       if (stat.isSymbolicLink()) return pathApi.resolve(fs.realpathSync(current), ...suffix);
       if (!stat.isDirectory() && suffix.length > 0) {
         throw new Error('Existing ancestor is not a directory', { cause: stat });

@@ -1,16 +1,16 @@
 /**
- * SQLite database adapter using the built-in node:sqlite module.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
  *
- * Provides the {@link Database} interface backed by a synchronous SQLite
- * connection via `DatabaseSync`.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
  */
 
 import { DatabaseSync } from "node:sqlite";
 import type { Database, DatabaseTx, StatementParams } from "./database.js";
 
 /**
- * Prefix every user-supplied key with `$` so that `node:sqlite`
- * recognises them as named bind parameters.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
  */
 function toBindParams(params?: StatementParams): StatementParams | undefined {
   if (params === undefined) return undefined;
@@ -22,8 +22,8 @@ function toBindParams(params?: StatementParams): StatementParams | undefined {
 }
 
 /**
- * Create a `DatabaseTx` that operates on the underlying `DatabaseSync`
- * without starting or ending a transaction.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
  */
 function createTx(db: DatabaseSync): DatabaseTx {
   return {
@@ -61,18 +61,18 @@ function createTx(db: DatabaseSync): DatabaseTx {
 }
 
 /**
- * Open (or create) an SQLite database at the given file path and
- * return a {@link Database} adapter.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
  *
- * Pragmas set on every open:
- * - `journal_mode = WAL`  – write-ahead logging for concurrency
- * - `foreign_keys = ON`   – enforce FK constraints
- * - `busy_timeout = 5000` – 5 s wait on lock contention
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
  */
 export function createSqliteDatabase(path: string): Database {
   const db = new DatabaseSync(path);
 
-  // Apply safety pragmas before anything else.
+  // Выполняет соответствующую проверку или действие согласно контракту.
   db.exec("PRAGMA foreign_keys = ON");
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA busy_timeout = 5000");

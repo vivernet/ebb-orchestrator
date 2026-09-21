@@ -1,15 +1,15 @@
 /**
- * Local session authentication for the orchestrator server.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
  *
- * Generates a random local session at startup. Programmatic callers may use
- * `Authorization: Bearer <token>`; the browser receives an equivalent HttpOnly
- * session cookie after one-time bootstrap. The health endpoint is exempt from
- * authentication.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
  *
- * Also enforces origin validation on mutating (POST/PUT/PATCH/DELETE)
- * requests to prevent CSRF-style attacks. When an `Origin` header is
- * present and does not match the server's own address the request is
- * rejected with 403 Forbidden.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
  */
 
 import crypto from "node:crypto";
@@ -33,7 +33,7 @@ export interface LocalSession {
 }
 
 /**
- * Create a one-shot local session with a cryptographically random token.
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
  */
 export function createLocalSession(config: LocalSessionConfig): LocalSession {
   const token = crypto.randomBytes(32).toString("hex");

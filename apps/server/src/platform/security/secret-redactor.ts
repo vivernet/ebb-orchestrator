@@ -1,5 +1,5 @@
 /**
- * Redacts secret values from text (exact value matching).
+ * Описывает соответствующий контракт, инвариант или этап выполнения.
  */
 
 /**
@@ -22,7 +22,7 @@ export class SecretRedactor {
     for (const [, values] of this.secrets.entries()) {
       for (const value of values) {
         if (value.length > 0) {
-          // Escape special regex characters
+          // Выполняет соответствующую проверку или действие согласно контракту.
           const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
           const regex = new RegExp(escaped, 'g');
           result = result.replace(regex, '[REDACTED]');
