@@ -2,11 +2,11 @@
 
 ## Status
 - Current branch: `develop`.
-- Current HEAD: `b3b66154729ca2b373e0424dbab96b4435ec2c11`.
-- `master` остаётся на `3bd2452976d6f3f8d3445150bdec386264866482`; текущие изменения находятся в `develop` и не опубликованы.
+- Current HEAD: `c18264e` (`Устранить зависания Hermes и завершить v1 hardening`).
+- `master` и `develop` указывают на один локальный commit `c18264e`; `origin/master` также указывает на эту ревизию, а `origin/develop` удалена.
 - Audit date: 2026-09-21.
 - Overall state: **V1 production-readiness hardening in progress**.
-- Рабочее дерево содержит intended changes; commit и push в рамках этого прохода не выполнялись.
+- Рабочее дерево чистое; новых commit или push в рамках этого прохода не выполнялось.
 
 ## Purpose
 Ebb Orchestrator — local-first система оркестрации AI-разработки. V1 scope:
@@ -111,8 +111,8 @@ pnpm test
 ```
 
 ## Verification Results
-These are the latest verification results for the current dirty `develop`
-checkout at `b3b66154729ca2b373e0424dbab96b4435ec2c11`; they are not a claim
+These are the latest verification results for the clean `develop`
+checkout at `c18264e`; they are not a claim
 that the branch is ready for merge or publication.
 
 - `pnpm lint`: PASS.
