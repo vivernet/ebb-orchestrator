@@ -18,7 +18,7 @@ async function initGitRepo(path: string): Promise<GitCli> {
   await git.run(path, ["config", "user.email", "test@example.com"]);
   await git.run(path, ["config", "user.name", "Test User"]);
   
-  // Create initial commit on master
+  // Создаём начальный commit в master.
   writeFileSync(join(path, "README.md"), "# Test");
   await git.run(path, ["add", "README.md"]);
   await git.run(path, ["commit", "-m", "initial"]);
@@ -39,12 +39,12 @@ describe("WorktreeManager", () => {
       expect(worktree.repoPath).toBe(repoPath);
       expect(worktree.branch).toBe("task/task-123");
       
-       // Verify the worktree exists and has the correct branch
+       // Проверяем наличие worktree и правильность его ветки.
        const git = new GitCli();
       const status = await git.run(worktree.path, ["branch", "--show-current"]);
       expect(status.stdout.trim()).toBe("task/task-123");
       
-      // Cleanup
+  // Очищаем ресурсы.
       rmSync(worktree.path, { recursive: true, force: true });
     });
   });
@@ -77,15 +77,15 @@ describe("WorktreeManager", () => {
       const manager = new WorktreeManager();
       const worktree = await manager.createTaskWorkspace("task-456", repoPath, "master");
 
-       // Verify worktree exists
+  // Проверяем наличие worktree.
        const git = new GitCli();
        const listBefore = await git.run(repoPath, ["worktree", "list"]);
       expect(listBefore.stdout).toContain("task/task-456");
 
-      // Remove the worktree directly using git
+  // Удаляем worktree напрямую через git.
       await git.run(repoPath, ["worktree", "remove", "--force", worktree.path]);
 
-      // Verify worktree is gone
+  // Проверяем, что worktree удалён.
       const listAfter = await git.run(repoPath, ["worktree", "list"]);
       expect(listAfter.stdout).not.toContain("task/task-456");
     });
@@ -96,18 +96,18 @@ describe("WorktreeManager", () => {
         const repoPath = createTempDir();
         await initGitRepo(repoPath);
 
-      // Create a pre-commit hook that would fail
+      // Создаём pre-commit hook, который завершился бы ошибкой.
       const hooksPath = join(repoPath, ".git", "hooks");
       mkdirSync(hooksPath, { recursive: true });
       writeFileSync(join(hooksPath, "pre-commit"), "#!/bin/bash\nexit 1", "utf8");
       
-      // Try to create a worktree - should succeed despite the failing hook
+      // Пытаемся создать worktree — операция должна пройти несмотря на ошибочный hook.
       const manager = new WorktreeManager();
       const worktree = await manager.createTaskWorkspace("task-789", repoPath, "master");
 
       expect(worktree.id).toBe("task-789");
       
-      // Cleanup
+  // Очищаем ресурсы.
       rmSync(worktree.path, { recursive: true, force: true });
     });
   });
@@ -134,7 +134,7 @@ describe("BranchManager", () => {
       expect(branch.name).toBe("epic/epic-123");
       expect(branch.targetRef).toBe("master");
       
-       // Verify the branch exists
+       // Проверяем наличие ветки.
        const git = new GitCli();
        const branches = await git.run(repoPath, ["branch"]);
        expect(branches.stdout).toContain("epic/epic-123");
@@ -146,18 +146,18 @@ describe("BranchManager", () => {
         const repoPath = createTempDir();
         await initGitRepo(repoPath);
 
-      // Create a pre-commit hook that would fail
+      // Создаём pre-commit hook, который завершился бы ошибкой.
       const hooksPath = join(repoPath, ".git", "hooks");
       mkdirSync(hooksPath, { recursive: true });
       writeFileSync(join(hooksPath, "pre-commit"), "#!/bin/bash\nexit 1", "utf8");
 
-      // Try to create an epic branch - should succeed despite the failing hook
+      // Пытаемся создать epic branch — операция должна пройти несмотря на ошибочный hook.
       const manager = new BranchManager();
       const branch = await manager.createEpicBranch("epic-456", repoPath, "master");
 
       expect(branch.id).toBe("epic-epic-456");
       
-       // Verify the branch exists
+       // Проверяем наличие ветки.
        const git = new GitCli();
        const branches = await git.run(repoPath, ["branch"]);
        expect(branches.stdout).toContain("epic/epic-456");

@@ -103,7 +103,7 @@ describe('SecretRedactor', () => {
       const text = 'No secrets here';
       const result = redactor.redact(text);
       
-      // 'secret' is a substring of 'secrets', so it gets redacted
+    // 'secret' является подстрокой 'secrets', поэтому оно заменяется.
       expect(result).toBe('No [REDACTED]s here');
     });
 

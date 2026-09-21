@@ -131,7 +131,7 @@ describe("FindingsService", () => {
       guidelineRef: null,
       evidenceSignature: "sig2",
     });
-    // IDs are sequential per project across all tasks
+// ID идут последовательно для project среди всех tasks.
     expect(f1.displayId).toBe("FINDING-1");
     expect(f2.displayId).toBe("FINDING-2");
   });
@@ -168,7 +168,7 @@ describe("FindingsService", () => {
     });
     expect(f1.status).toBe("OPEN");
 
-    // Re-review: update to RESOLVED
+    // Повторная проверка: переводим в RESOLVED.
     const f2 = findingsService.updateFinding(f1.id, {
       status: "RESOLVED",
       evidenceSignature: "updated-sig",
@@ -177,7 +177,7 @@ describe("FindingsService", () => {
     expect(f2.displayId).toBe("FINDING-1");
     expect(f2.evidenceSignature).toBe("updated-sig");
 
-    // Count findings - still only one
+    // Считаем findings — по-прежнему только один.
     const count = db?.get<{ c: number }>("SELECT COUNT(*) as c FROM findings WHERE task_id = $taskId", { taskId: taskA.id });
     expect(count?.c).toBe(1);
   });
@@ -331,7 +331,7 @@ describe("DefectsService", () => {
     });
     expect(d1.status).toBe("OPEN");
 
-    // Re-test: update to RESOLVED
+    // Повторный тест: переводим в RESOLVED.
     const d2 = defectsService.updateDefect(d1.id, {
       status: "RESOLVED",
       evidenceSignature: "new-test-sig",
@@ -340,7 +340,7 @@ describe("DefectsService", () => {
     expect(d2.displayId).toBe("DEFECT-1");
     expect(d2.evidenceSignature).toBe("new-test-sig");
 
-    // Count defects - still only one
+    // Считаем defects — по-прежнему только один.
     const count = db?.get<{ c: number }>("SELECT COUNT(*) as c FROM defects WHERE task_id = $taskId", { taskId: taskA.id });
     expect(count?.c).toBe(1);
   });

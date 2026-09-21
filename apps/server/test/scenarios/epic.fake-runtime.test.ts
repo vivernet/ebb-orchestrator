@@ -127,7 +127,7 @@ function insertEpic(
 }
 
 /**
- * Orchestrates between Workflow, Scheduler, and Runtime.
+ * Координирует взаимодействие Workflow, Scheduler и Runtime.
  */
 class Orchestrator {
   constructor(
@@ -138,7 +138,7 @@ class Orchestrator {
   ) {}
 
   /**
-   * Start a workflow run for a task.
+   * Запускает workflow run для задачи.
    */
   startWorkflowRun(taskId: string, triggerReason: string): void {
     const task = this.db.get<{ id: string; status: string; epic_id: string | null }>(
@@ -149,7 +149,7 @@ class Orchestrator {
       throw new Error(`Task ${taskId} not found`);
     }
 
-    // Emit AgentRunRequested event
+// Создаём событие AgentRunRequested.
     const event = DomainEvent.create({
       type: "AgentRunRequested",
       aggregateType: "Task",
@@ -166,7 +166,7 @@ class Orchestrator {
   }
 
   /**
-   * Handle AgentRunRequested event by the runtime handlers.
+   * Обрабатывает событие AgentRunRequested обработчиками runtime.
    */
   handleAgentRunRequested(event: {
     readonly type: string;
@@ -177,7 +177,7 @@ class Orchestrator {
   }
 
   /**
-   * Handle runtime completion.
+   * Обрабатывает завершение runtime.
    */
   handleRuntimeCompletion(taskId: string, outcome: RunOutcome): void {
     const now = new Date().toISOString();
@@ -192,7 +192,7 @@ class Orchestrator {
   }
 
   /**
-   * Handle approval events.
+   * Обрабатывает события approval.
    */
   handleApprovalApproved(event: {
     readonly type: string;
@@ -203,7 +203,7 @@ class Orchestrator {
   }
 
   /**
-   * Dispatch pending events.
+   * Отправляет ожидающие события.
    */
   async dispatchEvents(limit: number): Promise<number> {
     const dispatcher = new EventDispatcher(this.db, this.bus);
@@ -273,13 +273,13 @@ describe("Epic child lifecycle fake runtime scenario", () => {
   it("should simulate epic child lifecycle: child integration → epic review → epic qa → epic done → child released", async () => {
     await setupOrchestrator();
 
-    // Create Epic and child tasks
+// Создаём Epic и дочерние задачи.
     const epic = insertEpic(db!, projectId, { status: "OPEN" });
     const childTask1 = insertTask(db!, projectId, { epicId: epic.id, status: "READY" });
     const childTask2 = insertTask(db!, projectId, { epicId: epic.id, status: "READY" });
 
-    // Simulate development and completion of both child tasks
-    // Task 1: DEVELOPMENT → REVIEW → QA → INTEGRATION → INTEGRATED_INTO_EPIC
+// Имитируем разработку и завершение обеих дочерних задач.
+// Задача Task 1: DEVELOPMENT → REVIEW → QA → INTEGRATION → INTEGRATED_INTO_EPIC.
     workflowEngine.transition(childTask1.id, "DEVELOPMENT");
     const outcome1: RunOutcome = { success: true, exitCode: 0, output: "Done" };
     orchestrator.handleRuntimeCompletion(childTask1.id, outcome1); // → REVIEW
@@ -300,7 +300,7 @@ describe("Epic child lifecycle fake runtime scenario", () => {
       parentEpicReleased: false,
     });
 
-    // Task 2: Same lifecycle
+// Task 2: тот же жизненный цикл.
     workflowEngine.transition(childTask2.id, "DEVELOPMENT");
     const outcome2: RunOutcome = { success: true, exitCode: 0, output: "Done" };
     orchestrator.handleRuntimeCompletion(childTask2.id, outcome2); // → REVIEW
@@ -321,11 +321,11 @@ describe("Epic child lifecycle fake runtime scenario", () => {
       parentEpicReleased: false,
     });
 
-    // All required child tasks are now INTEGRATED_INTO_EPIC
-    // Epic Review/QA: simulate as scripted run types using direct status updates
-    // (Epics are not managed by WorkflowEngine, they use their own status lifecycle)
+// Все обязательные дочерние задачи теперь INTEGRATED_INTO_EPIC.
+// Review/QA Epic: имитируем как scripted run types с прямым обновлением статусов.
+// Epic не управляется WorkflowEngine и использует собственный жизненный цикл статусов.
 
-    // Epic moves through IN_PROGRESS as tasks complete integration
+// Epic проходит через IN_PROGRESS по мере завершения интеграции задач.
     db!.run(
       "UPDATE epics SET status = $status, updated_at = $updated_at WHERE id = $id",
       {
@@ -335,8 +335,8 @@ describe("Epic child lifecycle fake runtime scenario", () => {
       },
     );
 
-    // Epic Review/QA simulation - treat as scripted runtime completion
-    // Epic reaches DONE after all children are integrated and reviewed
+// Имитируем Review/QA Epic как scripted runtime completion.
+// Epic достигает DONE после интеграции и проверки всех дочерних задач.
     db!.run(
       "UPDATE epics SET status = $status, updated_at = $updated_at WHERE id = $id",
       {
@@ -346,8 +346,8 @@ describe("Epic child lifecycle fake runtime scenario", () => {
       },
     );
 
-    // Epic DONE acts as the release marker
-    // This enables child tasks to be RELEASED (parentEpicReleased = true)
+// Epic DONE служит маркером release.
+// Это позволяет перевести дочерние задачи в RELEASED (parentEpicReleased = true).
 
     workflowEngine.transition(childTask1.id, "READY_FOR_MERGE", {
       hasReviewPassed: true,
@@ -405,7 +405,7 @@ describe("Epic child lifecycle fake runtime scenario", () => {
       parentEpicReleased: true,
     });
 
-    // Verify final states
+// Проверяем финальные состояния.
     const finalChild1 = db!.get<{ status: string }>(
       "SELECT status FROM tasks WHERE id = $id",
       { id: childTask1.id },
@@ -431,7 +431,7 @@ describe("Epic child lifecycle fake runtime scenario", () => {
     const epic = insertEpic(db!, projectId, { status: "OPEN" });
     const childTask = insertTask(db!, projectId, { epicId: epic.id, status: "READY" });
 
-    // Complete child task lifecycle up to DONE
+// Завершаем жизненный цикл дочерней задачи до DONE.
     workflowEngine.transition(childTask.id, "DEVELOPMENT");
     workflowEngine.transition(childTask.id, "REVIEW");
     workflowEngine.transition(childTask.id, "QA", {
@@ -457,7 +457,7 @@ describe("Epic child lifecycle fake runtime scenario", () => {
     });
     workflowEngine.transition(childTask.id, "DONE");
 
-    // Should fail to transition to RELEASED without parentEpicReleased
+// Без parentEpicReleased переход в RELEASED должен завершиться ошибкой.
     expect(() =>
       workflowEngine.transition(childTask.id, "RELEASED", {
         hasReviewPassed: true,

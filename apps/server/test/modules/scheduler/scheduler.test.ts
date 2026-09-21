@@ -51,7 +51,7 @@ function contract(goal: string, deps: string[] = []): TaskContract {
 }
 
 /**
- * Insert a task directly into the DB for testing.
+ * Напрямую добавляет задачу в БД для теста.
  */
 function insertTask(
   db: Database,
@@ -125,7 +125,7 @@ describe("SchedulerService", () => {
 
   async function setup(): Promise<void> {
     db = await setupDb();
-    // Seed project
+// Заполняем project.
     const now = new Date().toISOString();
     db.transaction((tx) => {
       tx.run(
@@ -161,18 +161,18 @@ describe("SchedulerService", () => {
       insertTask(db!, projectId, { id: `task-${i}`, status: "READY" });
     }
     const result = scheduler.recalculate();
-    // Should still be limited to 4 runnables
+// Число доступных задач по-прежнему должно быть ограничено четырьмя.
     expect(result.runnables.length).toBeLessThanOrEqual(4);
   });
 
   it("respects project max of 3", async () => {
     await setup();
-    // Add 4 tasks to same project
+// Добавляем четыре задачи в один project.
     for (let i = 0; i < 4; i++) {
       insertTask(db!, projectId, { id: `task-${i}`, status: "READY" });
     }
     const result = scheduler.recalculate();
-    // Even though global allows 4, project allows only 3
+// Хотя глобальный лимит равен 4, для project разрешены только 3.
     expect(result.runnables.length).toBeLessThanOrEqual(3);
   });
 
@@ -574,7 +574,7 @@ describe("SchedulerService", () => {
   it("filters by project scope", async () => {
     await setup();
     const projectB = randomUUID();
-    // Seed projectB for FK constraint
+// Заполняем projectB для ограничения FK.
     db!.transaction((tx) => {
       const now = new Date().toISOString();
       tx.run(

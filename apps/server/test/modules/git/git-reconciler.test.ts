@@ -6,7 +6,7 @@ import * as GitCli from "../../../src/modules/git/git-cli.js";
 
 const GitCliClass = GitCli.GitCli;
 
-// Mock ProcessExecutor with configurable responses
+// Имитация ProcessExecutor с настраиваемыми ответами.
 class MockProcessExecutor {
   private commands: Array<{
     command: string;
@@ -14,14 +14,14 @@ class MockProcessExecutor {
     cwd: string;
   }> = [];
 
-  // Configurable return values for different scenarios
+  // Настраиваемые возвращаемые значения для разных сценариев.
   mockReturn: {
     status: { stdout: string; stderr: string; exitCode: number };
     revList: { stdout: string; stderr: string; exitCode: number; shouldThrow?: boolean };
     branchList: { stdout: string; stderr: string; exitCode: number };
     remoteUrl: { stdout: string; stderr: string; exitCode: number };
     fetch: { stdout: string; stderr: string; exitCode: number };
-    // Configurable responses for specific rev-parse commands
+  // Настраиваемые ответы для конкретных команд rev-parse.
     isInsideWorkTree: { stdout: string; stderr: string; exitCode: number; shouldThrow?: boolean };
     verifyBranch: { stdout: string; stderr: string; exitCode: number; shouldThrow?: boolean };
     getHead: { stdout: string; stderr: string; exitCode: number };
@@ -53,7 +53,7 @@ class MockProcessExecutor {
         return this.mockReturn.branchList;
       }
       if (args.includes("rev-parse")) {
-        // Handle different rev-parse subcommands
+  // Обрабатываем разные подкоманды rev-parse.
         if (args.includes("--is-inside-work-tree")) {
           if (this.mockReturn.isInsideWorkTree.shouldThrow) {
             throw new Error(this.mockReturn.isInsideWorkTree.stderr);
@@ -75,7 +75,7 @@ class MockProcessExecutor {
           }
           return this.mockReturn.getRemoteRef;
         }
-        // Default rev-parse
+  // rev-parse по умолчанию.
         return this.mockReturn.getHead;
       }
       if (args.includes("rev-list") && args.includes("--count")) {
@@ -125,7 +125,7 @@ class MockProcessExecutor {
   }
 }
 
-// Import types
+// Импортируем типы.
 import type { GitDriftState } from "../../../src/modules/git/git-reconciler.js";
 
 describe("GitReconciler", () => {
@@ -161,7 +161,7 @@ describe("GitReconciler", () => {
       const reconciler = new GitReconciler(new GitCliClass(mockExecutor));
       await reconciler.initialize(tempDir);
 
-      // Setup: no uncommitted changes, both refs exist and match
+// Подготовка: незакоммиченных изменений нет, обе refs существуют и совпадают.
       mockExecutor.mockReturn.status = { stdout: "", stderr: "", exitCode: 0 };
       mockExecutor.mockReturn.getHead = { stdout: "abc123\n", stderr: "", exitCode: 0 };
       mockExecutor.mockReturn.getRemoteRef = { stdout: "abc123\n", stderr: "", exitCode: 0 };
@@ -180,7 +180,7 @@ describe("GitReconciler", () => {
       const reconciler = new GitReconciler(new GitCliClass(mockExecutor));
       await reconciler.initialize(tempDir);
 
-      // Setup: local at abc123, remote at abc122, local ahead by 1
+// Подготовка: local указывает на abc123, remote — на abc122, local опережает на 1.
       mockExecutor.mockReturn.status = { stdout: "", stderr: "", exitCode: 0 };
       mockExecutor.mockReturn.getHead = { stdout: "abc123\n", stderr: "", exitCode: 0 };
       mockExecutor.mockReturn.getRemoteRef = { stdout: "abc122\n", stderr: "", exitCode: 0 };
@@ -200,7 +200,7 @@ describe("GitReconciler", () => {
       const reconciler = new GitReconciler(new GitCliClass(mockExecutor));
       await reconciler.initialize(tempDir);
 
-      // Setup: local at abc122, remote at abc123
+// Подготовка: local указывает на abc122, remote — на abc123.
       mockExecutor.mockReturn.status = { stdout: "", stderr: "", exitCode: 0 };
       mockExecutor.mockReturn.getHead = { stdout: "abc122\n", stderr: "", exitCode: 0 };
       mockExecutor.mockReturn.getRemoteRef = { stdout: "abc123\n", stderr: "", exitCode: 0 };
@@ -219,7 +219,7 @@ describe("GitReconciler", () => {
       const reconciler = new GitReconciler(new GitCliClass(mockExecutor));
       await reconciler.initialize(tempDir);
 
-      // Setup: rev-parse succeeds but rev-list fails (divergence)
+// Подготовка: rev-parse успешен, но rev-list завершается ошибкой (расхождение).
       mockExecutor.mockReturn.status = { stdout: "", stderr: "", exitCode: 0 };
       mockExecutor.mockReturn.getHead = { stdout: "abc123\n", stderr: "", exitCode: 0 };
       mockExecutor.mockReturn.getRemoteRef = { stdout: "abc122\n", stderr: "", exitCode: 0 };
@@ -239,7 +239,7 @@ describe("GitReconciler", () => {
       const reconciler = new GitReconciler(new GitCliClass(mockExecutor));
       await reconciler.initialize(tempDir);
 
-      // Setup: isInsideWorkTree succeeds but verifyBranch fails for branch verification
+// Подготовка: isInsideWorkTree успешен, но verifyBranch не проходит проверку ветки.
       mockExecutor.mockReturn.status = { stdout: "", stderr: "", exitCode: 0 };
       mockExecutor.mockReturn.isInsideWorkTree = { stdout: "true\n", stderr: "", exitCode: 0 };
       mockExecutor.mockReturn.verifyBranch = { stdout: "", stderr: "fatal: Needed a single revision\n", exitCode: 128, shouldThrow: true };
@@ -256,10 +256,10 @@ describe("GitReconciler", () => {
       const reconciler = new GitReconciler(new GitCliClass(mockExecutor));
       await reconciler.initialize(tempDir);
 
-      // Setup: isInsideWorkTree fails for non-existent worktree
+// Подготовка: isInsideWorkTree завершается ошибкой для несуществующего worktree.
       mockExecutor.mockReturn.isInsideWorkTree = { stdout: "", stderr: "fatal: not a git repository\n", exitCode: 128, shouldThrow: true };
 
-      // Try to reconcile with non-existent worktree
+// Пытаемся выполнить reconciliation для несуществующего worktree.
       const result = await reconciler.reconcile("main", "/nonexistent/worktree");
       expect(result.state).toBe("WORKTREE_MISSING");
       expect(result.message).toContain("does not exist or is not a git repository");
@@ -272,7 +272,7 @@ describe("GitReconciler", () => {
       const reconciler = new GitReconciler(new GitCliClass(mockExecutor));
       await reconciler.initialize(tempDir);
 
-      // Setup: status shows uncommitted changes
+// Подготовка: status показывает незакоммиченные изменения.
       mockExecutor.mockReturn.status = { stdout: " M test.txt\n", stderr: "", exitCode: 0 };
       mockExecutor.mockReturn.getHead = { stdout: "abc123\n", stderr: "", exitCode: 0 };
 
@@ -290,7 +290,7 @@ describe("GitReconciler", () => {
       const reconciler = new GitReconciler(new GitCliClass(mockExecutor));
       await reconciler.initialize(tempDir);
 
-      // Test all states with distinct mock configurations
+// Проверяем все состояния с отдельными конфигурациями имитации.
       const testCases: Array<{
         name: string;
         setup: () => void;
@@ -384,17 +384,17 @@ describe("GitReconciler", () => {
       const reconciler = new GitReconciler(new GitCliClass(mockExecutor));
       await reconciler.initialize(tempDir);
 
-      // Case 1: Remote ref doesn't exist (no refs/remotes/origin/main)
+// Случай 1: remote ref не существует (нет refs/remotes/origin/main).
       mockExecutor.mockReturn.status = { stdout: "", stderr: "", exitCode: 0 };
       mockExecutor.mockReturn.getHead = { stdout: "abc123\n", stderr: "", exitCode: 0 };
       mockExecutor.mockReturn.revList = { stdout: "0\n", stderr: "", exitCode: 0 };
-      // Simulate no remote tracking ref by making getRemoteRef fail
+// Имитируем отсутствие remote tracking ref, заставляя getRemoteRef завершаться ошибкой.
       mockExecutor.mockReturn.getRemoteRef = { stdout: "", stderr: "fatal: Needed a single revision\n", exitCode: 128 };
       const resultNoRemote = await reconciler.reconcile("main");
       expect(resultNoRemote.state).toBe("IN_SYNC");
       expect(resultNoRemote.message).toContain("No remote tracking ref found");
 
-      // Case 2: Remote ref exists but differs (remote is ahead)
+// Случай 2: remote ref существует, но отличается (remote опережает).
       mockExecutor.resetMockReturn();
       mockExecutor.mockReturn.status = { stdout: "", stderr: "", exitCode: 0 };
       mockExecutor.mockReturn.getHead = { stdout: "abc122\n", stderr: "", exitCode: 0 };
@@ -431,7 +431,7 @@ describe("GitReconciler", () => {
 
       await reconciler.reconcile("main");
 
-      // Check that fetch was not called
+// Проверяем, что fetch не вызывался.
       const commands = mockExecutor.getCommands();
       const fetchCommands = commands.filter((c) => c.args.includes("fetch"));
       expect(fetchCommands.length).toBe(0);

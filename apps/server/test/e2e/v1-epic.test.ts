@@ -254,8 +254,8 @@ describe("Request to Epic acceptance", () => {
     const approved = db!.get<{ status: string }>("SELECT status FROM planning_plans WHERE id=$id", { id: plan.id });
     expect(approved?.status).toBe("APPROVED");
 
-    // Sequence contains plan (coordinator), then foundation, then parallel api+ui,
-    // then epic_review, epic_qa, integration, final_approval
+// Последовательность содержит plan (coordinator), затем foundation, параллельные api+ui,
+// а затем epic_review, epic_qa, integration, final_approval.
     expect(result.sequence).toContain("plan");
     expect(result.sequence).toContain("task_1");
     expect(result.sequence).toContain("task_2");
@@ -329,8 +329,8 @@ describe("Request to Epic acceptance", () => {
   it("resumes after restart mid-epic", async () => {
     const { registry, merge } = await setupDatabase();
     // Execution order: plan(1), task_1 child_task(2), task_1 review(3),
-    // task_1 qa(4), task_1 integration(5) — then task_2/task_3 start.
-    // Pausing after 5 calls lets task_1 finish but crashes before task_2/task_3.
+// task_1 qa(4), task_1 integration(5) — затем запускаются task_2/task_3.
+// Пауза после 5 вызовов позволяет завершить task_1, но вызывает сбой до task_2/task_3.
     const runtime = new PausableFakeAgentRuntime(db!, 5);
     const orchestrator = new EpicOrchestrator(db!, new WorkflowEngine(db!, registry), new PlanningService(db!), new RunService(db!, runtime), merge, new SchedulerService(db!));
     db!.run("INSERT INTO scheduler_budgets (project_id,limit_cost,spent_cost,reserved_cost) VALUES ($projectId,100,0,0)", { projectId });
@@ -346,11 +346,11 @@ describe("Request to Epic acceptance", () => {
       epic: { title: "Restart Epic", goal: "Verify restart resilience" },
     });
 
-    // First run crashes mid-epic (after task_1 completes, before task_2/task_3).
+// Первый запуск завершается сбоем в середине Epic (после task_1 и до task_2/task_3).
     await expect(orchestrator.approveAndRun(plan.id, "user")).rejects.toThrow("SIMULATED_CRASH");
 
-    // The crash left the plan approved and an epic + orchestration persisted.
-    // Retrieve the epic ID from the plan row (set during approvePlan).
+// После сбоя plan остался approved, а epic и orchestration сохранены.
+// Получаем epic ID из строки plan (установлен во время approvePlan).
     const epicRow = db!.get<{ epic_id: string }>(
       "SELECT epic_id FROM planning_plans WHERE id=$id",
       { id: plan.id },
@@ -358,10 +358,10 @@ describe("Request to Epic acceptance", () => {
     expect(epicRow).toBeDefined();
     const epicId = epicRow!.epic_id;
 
-    // Verify the crash left things in a mid-epic state:
-    //   - plan phase completed
-    //   - task_1 fully integrated
-    //   - task_2/task_3 not yet completed
+// Проверяем, что после сбоя сохранено промежуточное состояние Epic:
+//   - фаза plan завершена
+//   - task_1 полностью интегрирована
+//   - task_2/task_3 ещё не завершены
     const callsBeforeRestart = runtime.calls.length;
     expect(callsBeforeRestart).toBe(5); // plan + 4 phases of task_1
 
@@ -392,18 +392,18 @@ describe("Request to Epic acceptance", () => {
     );
     expect(orchestrationBefore?.stage).toBe("CHILDREN");
 
-    // Simulate restart: create a NEW orchestrator instance pointing at same DB.
-    // The constructor runs reconcileStaleRuns which cleans up the crashed phase,
-    // then approveAndRun picks up the persisted orchestration and resumes.
+// Имитируем перезапуск: создаём НОВЫЙ экземпляр orchestrator с той же БД.
+// Конструктор запускает reconcileStaleRuns, очищающий аварийную фазу,
+// затем approveAndRun находит сохранённую orchestration и продолжает работу.
     const runtime2 = new FakeAgentRuntime(db!);
     const orchestrator2 = new EpicOrchestrator(db!, new WorkflowEngine(db!, registry), new PlanningService(db!), new RunService(db!, runtime2), merge, new SchedulerService(db!));
 
     const secondResult = await orchestrator2.approveAndRun(plan.id, "user");
 
-    // task_2 and task_3 completed without duplicate tasks/runs/phase-runs
+// task_2 и task_3 завершены без дубликатов tasks/runs/phase-runs.
     expect(secondResult.childStatuses.every((status) => status === "INTEGRATED_INTO_EPIC")).toBe(true);
 
-    // No duplicate agent_runs entries (completed runs = validated phase runs)
+// Нет дубликатов agent_runs (завершённые runs = проверенные phase runs).
     const completedRunCount = db!.get<{ count: number }>(
       "SELECT COUNT(*) AS count FROM agent_runs WHERE epic_id=$epicId AND status='COMPLETED'",
       { epicId },
@@ -411,39 +411,39 @@ describe("Request to Epic acceptance", () => {
     // plan(1) + task_1(4) + task_2(4) + task_3(4) + epic_review(1) + epic_qa(1) + integration(1) = 16
     expect(completedRunCount?.count).toBe(16);
 
-    // No duplicate orchestration_phase_runs entries
+// Нет дубликатов записей orchestration_phase_runs.
     const phaseRunCount = db!.get<{ count: number }>(
       "SELECT COUNT(*) AS count FROM orchestration_phase_runs WHERE epic_id=$epicId",
       { epicId },
     );
     expect(phaseRunCount?.count).toBe(16);
 
-    // All phase runs are validated
+// Все phase runs проверены.
     const validatedCount = db!.get<{ count: number }>(
       "SELECT COUNT(*) AS count FROM orchestration_phase_runs WHERE epic_id=$epicId AND validated=1",
       { epicId },
     );
     expect(validatedCount?.count).toBe(16);
 
-    // No duplicate tasks were created during restart
+// Во время перезапуска дубликаты tasks не созданы.
     const taskCount = db!.get<{ count: number }>(
       "SELECT COUNT(*) AS count FROM tasks WHERE epic_id=$epicId",
       { epicId },
     );
     expect(taskCount?.count).toBe(3);
 
-    // Stage progressed through all phases to FINAL_APPROVAL
+// Stage прошёл все фазы до FINAL_APPROVAL.
     const orchestrationAfter = db!.get<{ stage: string }>(
       "SELECT stage FROM epic_orchestrations WHERE epic_id=$epicId",
       { epicId },
     );
     expect(orchestrationAfter?.stage).toBe("FINAL_APPROVAL");
 
-    // Final approval is the same (not duplicated)
+// Final approval тот же самый и не продублирован.
     expect(secondResult.pendingFinalApproval).toBe(true);
     expect(secondResult.finalApprovalId).toBeDefined();
 
-    // No orphan scheduler reservations remain
+// Осиротевших scheduler reservations не осталось.
     const reservedCount = db!.get<{ count: number }>(
       "SELECT COUNT(*) AS count FROM scheduler_reservations WHERE status='RESERVED'",
     );

@@ -28,8 +28,8 @@ const baseMigrations: Migration[] = baseMigrationNames.map((name) => ({
 const legacyMigration012: Migration = {
   version: 12,
   name: "012_epic_runtime_authority",
-  // This is the immutable SQL applied by deployed v12 databases.  It is kept
-  // here deliberately so the upgrade test does not mask that historical shape.
+  // Это неизменяемый SQL, применённый в развернутых базах v12. Мы намеренно
+  // сохраняем его здесь, чтобы тест обновления не скрывал историческую форму.
   sql: `CREATE TABLE IF NOT EXISTS orchestration_phase_runs (
     id TEXT PRIMARY KEY, epic_id TEXT, task_id TEXT, phase TEXT NOT NULL,
     role TEXT NOT NULL, agent_run_id TEXT NOT NULL UNIQUE,
@@ -68,8 +68,8 @@ const forwardMigrations: Migration[] = [13, 14].map((version) => {
 });
 
 function createV12Prerequisites(db: Database): void {
-  // The scheduler upgrade only depends on the git operation columns added by
-  // v12; keep this test focused on the scheduler migration chain.
+  // Обновление scheduler зависит только от столбцов git-операций, добавленных
+  // в v12; оставляем этот тест сфокусированным на цепочке миграций scheduler.
   db.exec("CREATE TABLE git_operations (id TEXT PRIMARY KEY, target_ref TEXT, status TEXT)");
 }
 
@@ -94,9 +94,9 @@ describe("scheduler lock compatibility migration", () => {
     const taskId = randomUUID();
     const secondTaskId = randomUUID();
     const lockedAt = "2026-09-17T12:00:00.000Z";
-    // Some deployed legacy databases accepted one row per resource key for a
-    // task even though the original bootstrap schema later documented a
-    // task-level uniqueness constraint. Reproduce that persisted state here.
+  // Некоторые развернутые legacy-базы принимали по одной строке на ключ ресурса
+  // задачи, хотя позднее исходная bootstrap-схема документировала ограничение
+  // уникальности на уровне task. Воспроизводим здесь такое сохранённое состояние.
     db.exec("DROP TABLE resource_locks");
     db.exec(`CREATE TABLE resource_locks (
       id TEXT PRIMARY KEY, task_id TEXT NOT NULL, locked_at TEXT NOT NULL,
@@ -266,48 +266,48 @@ describe("scheduler lock compatibility migration", () => {
       { id: taskId, project: projectId, at },
     );
 
-    // Legacy resource lock: global → task-1, owner-A
+  // Legacy-блокировка ресурса: global → task-1, owner-A.
     db.run(
       "INSERT INTO resource_locks(id,task_id,locked_at,owner_id) VALUES('global',$task,$at,'owner-A')",
       { task: taskId, at },
     );
 
-    // Apply migration 013 (creates empty destination tables)
+  // Применяем миграцию 013 (создаёт пустые целевые таблицы).
     runMigrations(db, [forwardMigrations[0]!]);
 
-    // Insert an UNRELATED pre-existing reservation where subject_id = task_id.
-    // This is NOT the expected legacy lock reservation (id = 'legacy-lock:<task_id>',
-    // subject_id = 'lock:<task_id>').  The migration must reject, not reuse it.
+  // Добавляем НЕСВЯЗАННОЕ существующее резервирование, где subject_id = task_id.
+  // Это НЕ ожидаемое legacy-резервирование блокировки (id = 'legacy-lock:<task_id>',
+  // subject_id = 'lock:<task_id>'). Миграция должна отклонить его, а не использовать повторно.
     db.run(
       "INSERT INTO scheduler_reservations(id,kind,subject_id,project_id,owner_id,reserved_at,role,model)" +
         " VALUES('unrelated','TASK',$task,$project,'other-owner',$at,'developer','default')",
       { task: taskId, project: projectId, at },
     );
 
-    // Migration 014 must abort — CHECK constraint violation from completeness guard
+  // Миграция 014 должна прерваться из-за нарушения CHECK-ограничения completeness guard.
     expect(() => runMigrations(db!, [forwardMigrations[1]!])).toThrow(/CHECK constraint failed/);
 
-    // 1. source resource_locks table still exists
+  // 1. Исходная таблица resource_locks всё ещё существует.
     expect(
       db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='resource_locks'"),
     ).toBeDefined();
 
-    // 2. legacy lock row 'global' still exists in resource_locks
+  // 2. Строка legacy-блокировки 'global' всё ещё существует в resource_locks.
     expect(db.get<{ id: string }>("SELECT id FROM resource_locks WHERE id='global'")).toEqual({
       id: "global",
     });
 
-    // 3. NO scheduler_resource_lock was attached to the unrelated reservation
+  // 3. К НЕСВЯЗАННОМУ резервированию не прикреплён scheduler_resource_lock.
     expect(
       db.get("SELECT resource_key FROM scheduler_resource_locks WHERE resource_key='global'"),
     ).toBeUndefined();
 
-    // 4. NO partial synthetic reservation was created (no 'legacy-lock:' row)
+  // 4. Частичное синтетическое резервирование НЕ создано (нет строки 'legacy-lock:').
     expect(
       db.get("SELECT id FROM scheduler_reservations WHERE id LIKE 'legacy-lock:%'"),
     ).toBeUndefined();
 
-    // 5. the unrelated reservation is untouched
+  // 5. Несвязанное резервирование не изменилось.
     expect(
       db.get<{ id: string }>(
         "SELECT id FROM scheduler_reservations WHERE id='unrelated' AND subject_id=$task",
@@ -315,7 +315,7 @@ describe("scheduler lock compatibility migration", () => {
       ),
     ).toEqual({ id: "unrelated" });
 
-    // 6. source tables were NOT dropped
+  // 6. Исходные таблицы НЕ удалены.
     expect(
       db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='resource_locks'"),
     ).toBeDefined();
@@ -325,10 +325,10 @@ describe("scheduler lock compatibility migration", () => {
       ),
     ).toBeDefined();
 
-    // 7. migration was not recorded
+  // 7. Миграция не записана.
     expect(db.get("SELECT version FROM schema_migrations WHERE version=14")).toBeUndefined();
 
-    // 8. completeness guard table was cleaned up (rolled back)
+  // 8. Таблица completeness guard очищена (изменения откатились).
     expect(
       db.get(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='scheduler_014_completeness_guard'",

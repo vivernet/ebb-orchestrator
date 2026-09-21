@@ -175,7 +175,7 @@ describe("local-session security", () => {
       method: "POST",
       url: "/api/v1/protected-test",
       headers: { authorization: `Bearer ${token}` },
-      // No origin header – should succeed (same-origin / non-CORS).
+      // Заголовка origin нет — запрос должен пройти (same-origin / non-CORS).
     });
     expect(res.statusCode).toBe(403);
     await app.close();

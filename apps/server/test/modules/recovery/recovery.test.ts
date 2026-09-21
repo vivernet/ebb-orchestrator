@@ -41,7 +41,7 @@ const migrations: Migration[] = [
 ];
 
 /**
- * Creates a recovery context for testing.
+ * Создаёт контекст восстановления для тестов.
  */
 function createContext(
   taskId: string = randomUUID(),
@@ -91,7 +91,7 @@ describe("RecoveryService", () => {
   async function setup(): Promise<void> {
     db = await setupDb();
     service = new RecoveryService(db, DEFAULT_POLICY);
-    // Create a project and task for FK constraint compliance
+    // Создаём project и task для соблюдения ограничения FK.
     const projectId = randomUUID();
     const now = new Date().toISOString();
     db.transaction((tx) => {
@@ -144,7 +144,7 @@ describe("RecoveryService", () => {
     });
 
     it("escalates to senior after middle tier exhausted on task failure", () => {
-      // Middle tier exhausted after 2 attempts (max is 2)
+    // Уровень middle исчерпан после 2 попыток (максимум — 2).
       const attempts = [
         {
           taskId: "task1",
@@ -178,7 +178,7 @@ describe("RecoveryService", () => {
     });
 
     it("escalates to coordinator after senior tier exhausted on task failure", () => {
-      // Senior tier exhausted after 2 attempts (max is 2)
+    // Уровень senior исчерпан после 2 попыток (максимум — 2).
       const attempts = [
         {
           taskId: "task1",
@@ -383,7 +383,7 @@ describe("RecoveryService", () => {
       expect(attempt.roleLevel).toBe("middle");
       expect(attempt.failureType).toBe("TASK_FAILURE");
 
-      // Verify it was persisted
+    // Проверяем, что запись сохранена.
       const history = service.getHistory(taskId);
       expect(history.length).toBe(1);
       expect(history[0]!.taskId).toBe(taskId);
@@ -401,7 +401,7 @@ describe("RecoveryService", () => {
       expect(request.failureType).toBe("TASK_FAILURE");
       expect(request.attemptCount).toBe(1);
 
-      // Verify it was persisted (via history check since recovery scheduler is separate)
+    // Проверяем сохранение через историю, поскольку scheduler восстановления отделён.
       const existingRequests = db!.all(
         `SELECT * FROM recovery_scheduler_requests WHERE task_id = $task_id`,
         { task_id: taskId },
@@ -440,4 +440,3 @@ describe("RecoveryService", () => {
     });
   });
 });
-

@@ -10,9 +10,9 @@ import type {
   Priority,
 } from "../../../src/modules/context/context-types.js";
 
-// ─── Test fixtures ─────────────────────────────────────────────────────────
+// ─── Тестовые фикстуры ─────────────────────────────────────────────────────
 
-/** Guideline matching the 'provider' area and 'developer' role */
+/** Правило, соответствующее области 'provider' и роли 'developer'. */
 const providerArchGuideline: Guideline = {
   id: "GL-ARCH-001",
   category: "ARCH",
@@ -23,7 +23,7 @@ const providerArchGuideline: Guideline = {
   applicableRoles: ["developer"],
 };
 
-/** Guideline for database scope — should NOT be selected for provider Task */
+/** Правило для области базы данных — НЕ должно выбираться для задачи provider. */
 const databaseGuideline: Guideline = {
   id: "GL-DB-001",
   category: "DB",
@@ -34,7 +34,7 @@ const databaseGuideline: Guideline = {
   applicableRoles: ["developer"],
 };
 
-/** Guideline for general developer role — should be included as P1 (cross-cutting) */
+/** Общее правило для роли developer — должно включаться как P1 (сквозное). */
 const generalDevGuideline: Guideline = {
   id: "GL-DEV-001",
   category: "DEV",
@@ -45,7 +45,7 @@ const generalDevGuideline: Guideline = {
   applicableRoles: ["developer"],
 };
 
-/** Guideline with no applicable role — should be excluded */
+/** Правило без применимой роли — должно исключаться. */
 const irrelevantRoleGuideline: Guideline = {
   id: "GL-OPS-001",
   category: "OPS",
@@ -56,7 +56,7 @@ const irrelevantRoleGuideline: Guideline = {
   applicableRoles: ["devops"],
 };
 
-/** Accepted decision at EPIC scope — should be included */
+/** Принятое решение уровня EPIC — должно включаться. */
 const acceptedEpicDecision: Decision = {
   id: "DEC-001",
   status: "accepted",
@@ -65,7 +65,7 @@ const acceptedEpicDecision: Decision = {
   rationale: "Standard API convention",
 };
 
-/** Superseded decision — should be excluded */
+/** Устаревшее решение — должно исключаться. */
 const supersededDecision: Decision = {
   id: "DEC-002",
   status: "superseded",
@@ -74,7 +74,7 @@ const supersededDecision: Decision = {
   rationale: "Superseded by REST decision",
 };
 
-/** Active open finding — should be included */
+/** Активное открытое finding — должно включаться. */
 const openFinding: Finding = {
   id: "FIND-001",
   status: "open",
@@ -82,7 +82,7 @@ const openFinding: Finding = {
   severity: "high",
 };
 
-/** Resolved finding — should be excluded */
+/** Закрытое finding — должно исключаться. */
 const resolvedFinding: Finding = {
   id: "FIND-002",
   status: "resolved",
@@ -90,21 +90,21 @@ const resolvedFinding: Finding = {
   severity: "low",
 };
 
-/** Open defect — should be included */
+/** Открытый defect — должен включаться. */
 const openDefect: Defect = {
   id: "DEF-001",
   status: "open",
   title: "Provider returns 500 on timeout",
 };
 
-/** Resolved defect — should be excluded */
+/** Закрытый defect — должен исключаться. */
 const resolvedDefect: Defect = {
   id: "DEF-002",
   status: "resolved",
   title: "Old provider bug",
 };
 
-// ─── ContextSelector tests ─────────────────────────────────────────────────
+// ─── Тесты ContextSelector ──────────────────────────────────────────────────
 
 describe("ContextSelector - Structural Selection", () => {
   const selector = new ContextSelector();
@@ -266,7 +266,7 @@ describe("ContextSelector - Structural Selection", () => {
         findings: [openFinding],
         defects: [],
       });
-      // P0 guideline should have priority p0
+      // Правило P0 должно иметь приоритет p0.
       const gl = result.guidelines.find((g) => g.id === "GL-ARCH-001");
       expect(gl?.priority).toBe("p0");
     });
@@ -310,7 +310,7 @@ describe("ContextSelector - Structural Selection", () => {
   });
 });
 
-// ─── ContextBudget tests ───────────────────────────────────────────────────
+// ─── Тесты ContextBudget ────────────────────────────────────────────────────
 
 describe("ContextBudget - Over-budget Pruning", () => {
   const budget = new ContextBudget();
@@ -363,7 +363,7 @@ describe("ContextBudget - Over-budget Pruning", () => {
       const ids = result.map((g) => g.id);
       expect(ids).toContain("GL-P0");
       expect(ids).toContain("GL-P1");
-      // P2 items are removed/compacted under severe pressure
+// При сильной нехватке бюджета элементы P2 удаляются или сжимаются.
       expect(ids).not.toContain("GL-P2-1");
       expect(ids).not.toContain("GL-P2-2");
       expect(ids).not.toContain("GL-P3");
@@ -407,7 +407,7 @@ describe("ContextBudget - Over-budget Pruning", () => {
   });
 });
 
-// ─── ContextDelta tests ────────────────────────────────────────────────────
+// ─── Тесты ContextDelta ─────────────────────────────────────────────────────
 
 describe("ContextDelta - Resume Delta", () => {
   const delta = new ContextDelta();
@@ -649,7 +649,7 @@ describe("ContextDelta - Resume Delta", () => {
         contextBuilderVersion: "1.0.0",
         createdAt: "2026-01-02T00:00:00Z",
       });
-      // Task contract didn't change, just guidelines/findings — safe to resume
+// Контракт task не изменился, изменились только guidelines/findings — можно безопасно продолжить.
       expect(result.safe).toBe(true);
     });
   });

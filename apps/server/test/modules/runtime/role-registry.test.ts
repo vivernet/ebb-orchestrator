@@ -136,7 +136,7 @@ describe('RoleRegistry', () => {
         'artifact.write',
         'submit_result',
       ]);
-      // Verify constraints
+      // Проверяем ограничения.
       expect(contract?.allowedTools).not.toContain('workspace.patch');
       expect(contract?.allowedTools).not.toContain('git.commit');
       expect(contract?.allowedTools).not.toContain('command.shell');
@@ -189,7 +189,7 @@ describe('RoleRegistry', () => {
         'artifact.write',
         'submit_result',
       ]);
-      // Verify constraints (no git.push, merge.default, or permission config mutations)
+      // Проверяем ограничения: без изменений git.push, merge.default и конфигурации permissions.
       expect(contract?.allowedTools).not.toContain('git.push');
       expect(contract?.allowedTools).not.toContain('permission.config.mutate');
     });

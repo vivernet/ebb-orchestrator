@@ -92,7 +92,7 @@ describe("BudgetService", () => {
     budgetService = new BudgetService(db);
   }
 
-  // ─── Parallel reservation tests ─────────────────────────────────────────
+// ─── Тесты параллельного резервирования ────────────────────────────────────
 
   it("allows reservations within budget", async () => {
     await setup(10);
@@ -125,7 +125,7 @@ describe("BudgetService", () => {
       triggerReason: "DEVELOPMENT",
     });
     expect(d2.decision).toBe("ALLOW");
-    // Third: 2+2+2=6 > 5
+// Третья попытка: 2+2+2=6 > 5.
     const d3 = budgetService.reserve({
       projectId,
       estimateCost: 2,
@@ -173,7 +173,7 @@ describe("BudgetService", () => {
       triggerReason: "DEVELOPMENT",
     });
     expect(d1.decision).toBe("ALLOW");
-    // $2 + $2 = $4 > soft limit $3
+// $2 + $2 = $4 > мягкий лимит $3.
     const d2 = budgetService.reserve({
       projectId,
       estimateCost: 2,
@@ -312,7 +312,7 @@ describe("BudgetService", () => {
     });
     expect(d1.decision).toBe("ALLOW");
 
-    // Verify reserved_cost was incremented on all scopes
+// Проверяем увеличение reserved_cost во всех областях.
     const epicConfig = db!.get<{ reserved_cost: number }>(
       "SELECT reserved_cost FROM budget_configs WHERE scope = 'epic' AND scope_id = $scopeId",
       { scopeId: epicId },
@@ -324,11 +324,11 @@ describe("BudgetService", () => {
     );
     expect(taskConfig?.reserved_cost).toBe(3);
 
-    // Reconcile with actual cost
+// Сверяем с фактической стоимостью.
     const recResult = budgetService.reconcile(d1.reservationId!, 2.5);
     expect(recResult.status).toBe("RECONCILED");
 
-    // Verify reserved_cost decremented and spent_cost incremented on all scopes
+// Проверяем уменьшение reserved_cost и увеличение spent_cost во всех областях.
     const epicAfter = db!.get<{ reserved_cost: number; spent_cost: number }>(
       "SELECT reserved_cost, spent_cost FROM budget_configs WHERE scope = 'epic' AND scope_id = $scopeId",
       { scopeId: epicId },
@@ -368,7 +368,7 @@ describe("BudgetService", () => {
     expect(config?.spent_cost).toBe(2);
   });
 
-  // ─── No oversubscription race ───────────────────────────────────────────
+// ─── Гонка без превышения подписки ─────────────────────────────────────────
 
   it("prevents oversubscription under concurrent access", async () => {
     await setup(5);
@@ -420,8 +420,8 @@ describe("BudgetService", () => {
 
     budgetService = new BudgetService(db!);
     const estimate = budgetService.estimateCost(projectId, "developer", "default");
-    // p90 of [1,1,1,1,1,1,1,1,5,5] → 10 values, p90 index = ceil(10*0.9)-1 = 8 → value = 5
-    // With 1.25 safety floor: 5 * 1.25 = 6.25
+// p90 для [1,1,1,1,1,1,1,1,5,5] → 10 значений, индекс p90 = ceil(10*0.9)-1 = 8 → значение = 5.
+// С коэффициентом запаса 1.25: 5 * 1.25 = 6.25.
     expect(estimate).toBe(6.25);
   });
 
@@ -498,11 +498,11 @@ describe("BudgetService", () => {
     expect(record?.input_tokens).toBe(1000);
   });
 
-  // ─── Cleanup stale reservations ─────────────────────────────────────────
+// ─── Очистка устаревших резервирований ──────────────────────────────────────
 
   it("cleans up stale reservations for dead runs", async () => {
     await setup(20);
-    // Create two reservations
+// Создаём два резервирования.
     const d1 = budgetService.reserve({
       projectId,
       estimateCost: 5,
@@ -520,25 +520,25 @@ describe("BudgetService", () => {
     expect(d1.decision).toBe("ALLOW");
     expect(d2.decision).toBe("ALLOW");
 
-    // d1 is active, d2 is stale (dead run)
+// d1 активно, d2 устарело (завершившийся run).
     const result = budgetService.cleanupStaleReservations([d1.reservationId!]);
     expect(result.released).toBe(1);
 
-    // d1 should still be RESERVED
+// d1 по-прежнему должно иметь статус RESERVED.
     const r1 = db!.get<{ status: string }>(
       "SELECT status FROM budget_reservations WHERE id = $id",
       { id: d1.reservationId! },
     );
     expect(r1?.status).toBe("RESERVED");
 
-    // d2 should be RELEASED
+// d2 должно иметь статус RELEASED.
     const r2 = db!.get<{ status: string }>(
       "SELECT status FROM budget_reservations WHERE id = $id",
       { id: d2.reservationId! },
     );
     expect(r2?.status).toBe("RELEASED");
 
-    // d2's estimate cost should be decremented from reserved_cost
+// Оценочная стоимость d2 должна вычесться из reserved_cost.
     const config = db!.get<{ reserved_cost: number }>(
       "SELECT reserved_cost FROM budget_configs WHERE scope = 'project' AND scope_id = $scopeId",
       { scopeId: projectId },

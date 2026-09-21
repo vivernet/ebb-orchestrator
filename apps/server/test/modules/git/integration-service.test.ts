@@ -17,7 +17,7 @@ async function initGitRepo(path: string, commitMessage: string = "initial"): Pro
   await git.run(path, ["config", "user.email", "test@example.com"]);
   await git.run(path, ["config", "user.name", "Test User"]);
 
-  // Create initial commit on master
+  // Создаём начальный commit в master.
   writeFileSync(join(path, "README.md"), "# Test");
   await git.run(path, ["add", "README.md"]);
   await git.run(path, ["commit", "-m", commitMessage]);
@@ -56,7 +56,7 @@ describe("IntegrationService", () => {
       const repoPath = createTempDir();
       const git = await initGitRepo(repoPath);
 
-      // Create source branch with changes
+      // Создаём исходную ветку с изменениями.
       await git.run(repoPath, ["checkout", "-b", "feature-branch"]);
       writeFileSync(join(repoPath, "feature.txt"), "feature content");
       await git.run(repoPath, ["add", "feature.txt"]);
@@ -72,12 +72,12 @@ describe("IntegrationService", () => {
       expect(attempt.worktreePath).toBeDefined();
       expect(attempt.status).toBe("PREPARED");
 
-      // Verify worktree exists on correct branch
+      // Проверяем наличие worktree на правильной ветке.
       const worktreeGit = new GitCli();
       const branchStatus = await worktreeGit.run(attempt.worktreePath, ["branch", "--show-current"]);
       expect(branchStatus.stdout.trim()).toContain("integration/");
 
-      // Cleanup
+      // Очищаем ресурсы.
       rmSync(attempt.worktreePath, { recursive: true, force: true });
     });
 
@@ -85,18 +85,18 @@ describe("IntegrationService", () => {
       const repoPath = createTempDir();
       const git = await initGitRepo(repoPath);
 
-      // Create source branch
+      // Создаём исходную ветку.
       await git.run(repoPath, ["checkout", "-b", "source-branch"]);
       writeFileSync(join(repoPath, "source.txt"), "source content");
       await git.run(repoPath, ["add", "source.txt"]);
       await git.run(repoPath, ["commit", "-m", "source commit"]);
       await git.run(repoPath, ["checkout", "master"]);
 
-      // Get initial master SHA
+      // Получаем исходный SHA ветки master.
       const initialResult = await git.run(repoPath, ["rev-parse", "master"]);
       const initialSha = initialResult.stdout.trim();
 
-      // Simulate target moving (another task merged)
+      // Имитируем перемещение target после merge другой задачи.
       writeFileSync(join(repoPath, "target-update.txt"), "target update");
       await git.run(repoPath, ["add", "target-update.txt"]);
       await git.run(repoPath, ["commit", "-m", "target update"]);
@@ -105,16 +105,16 @@ describe("IntegrationService", () => {
 
       expect(initialSha).not.toBe(finalSha);
 
-      // Prepare integration - should use current target SHA
+      // Подготавливаем интеграцию — должен использоваться текущий target SHA.
       const integrationService = new IntegrationService();
       const attempt = await integrationService.prepareIntegration("source-branch", "master", repoPath);
 
-      // Verify worktree was created from final (moved) target
+      // Проверяем, что worktree создан от итогового перемещённого target.
       const worktreeGit = new GitCli();
       const worktreeHead = await worktreeGit.run(attempt.worktreePath, ["rev-parse", "HEAD"]);
       expect(worktreeHead.stdout.trim()).toBe(finalSha);
 
-      // Cleanup
+      // Очищаем ресурсы.
       rmSync(attempt.worktreePath, { recursive: true, force: true });
     });
 
@@ -122,24 +122,24 @@ describe("IntegrationService", () => {
       const repoPath = createTempDir();
       const git = await initGitRepo(repoPath);
 
-      // Create feature branch as source
+      // Создаём feature branch как источник.
       await git.run(repoPath, ["checkout", "-b", "task-123"]);
       writeFileSync(join(repoPath, "task.txt"), "task content");
       await git.run(repoPath, ["add", "task.txt"]);
       await git.run(repoPath, ["commit", "-m", "task changes"]);
       await git.run(repoPath, ["checkout", "master"]);
 
-      // Capture master state before integration
+      // Сохраняем состояние master до интеграции.
       const masterBefore = await git.run(repoPath, ["rev-parse", "master"]);
 
       const integrationService = new IntegrationService();
       const attempt = await integrationService.prepareIntegration("task-123", "master", repoPath);
 
-      // Verify master is unchanged
+      // Проверяем, что master не изменился.
       const masterAfter = await git.run(repoPath, ["rev-parse", "master"]);
       expect(masterBefore.stdout.trim()).toBe(masterAfter.stdout.trim());
 
-      // Cleanup
+      // Очищаем ресурсы.
       rmSync(attempt.worktreePath, { recursive: true, force: true });
     });
   });
@@ -168,7 +168,7 @@ describe("IntegrationService", () => {
       const repoPath = createTempDir();
       const git = await initGitRepo(repoPath);
 
-      // Create source branch with changes
+      // Создаём исходную ветку с изменениями.
       await git.run(repoPath, ["checkout", "-b", "merge-source"]);
       writeFileSync(join(repoPath, "merge-file.txt"), "merge content");
       await git.run(repoPath, ["add", "merge-file.txt"]);
@@ -178,10 +178,10 @@ describe("IntegrationService", () => {
       const integrationService = new IntegrationService();
       const attempt = await integrationService.prepareIntegration("merge-source", "master", repoPath);
 
-      // The integration attempt should track the expected target
+      // Попытка интеграции должна отслеживать ожидаемый target.
       expect(attempt.expectedTargetBranch).toBe("master");
 
-      // Cleanup
+      // Очищаем ресурсы.
       rmSync(attempt.worktreePath, { recursive: true, force: true });
     });
 

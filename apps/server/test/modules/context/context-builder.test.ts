@@ -144,9 +144,9 @@ describe('ContextBuilder - Role Separation', () => {
       const pkg = contextBuilder.buildReviewerPackage({
         taskContract: mockTaskContract,
       });
-      // Reviewer package doesn't include findings/defects by default
+// Пакет Reviewer по умолчанию не включает findings/defects.
       expect(pkg.findings).toEqual([]);
-      // @ts-expect-error - check that defects field doesn't exist on ReviewerContextPackage
+// @ts-expect-error — проверяем отсутствие поля defects в ReviewerContextPackage.
       expect(pkg.defects).toBeUndefined();
     });
   });
@@ -210,7 +210,7 @@ describe('ContextBuilder - Budget Pruning', () => {
         guidelines: [guideline],
         budgetLimit: 100,
       });
-      // P3 guidelines should be pruned under budget pressure
+// При нехватке бюджета правила P3 должны отбрасываться.
       expect(pkg.guidelines).not.toContain(guideline);
     });
 
@@ -228,7 +228,7 @@ describe('ContextBuilder - Budget Pruning', () => {
         guidelines: [guideline],
         budgetLimit: 100,
       });
-      // P0 guidelines should always be included
+// Правила P0 должны включаться всегда.
       expect(pkg.guidelines).toContain(guideline);
     });
   });
@@ -257,7 +257,7 @@ describe('ManifestBuilder', () => {
       taskContractVersion: '1.0.0',
     });
 
-     // Secret fields should not exist
+// Секретных полей быть не должно.
      expect((manifest as { secrets?: unknown, apiKey?: unknown }).secrets).toBeUndefined();
      expect((manifest as { secrets?: unknown, apiKey?: unknown }).apiKey).toBeUndefined();
   });

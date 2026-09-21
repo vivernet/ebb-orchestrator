@@ -36,7 +36,7 @@ describe("GitCli", () => {
 
       await git.run(tmpDir, ["init"]);
 
-      // Test with a filename containing spaces and special chars that would be interpreted incorrectly if args are joined as string
+      // Проверяем имя файла с пробелами и специальными символами, которое было бы неверно обработано при объединении аргументов в строку.
       const filename = "test file with spaces.txt";
       writeFileSync(join(tmpDir, filename), "test");
       await git.run(tmpDir, ["add", filename]);

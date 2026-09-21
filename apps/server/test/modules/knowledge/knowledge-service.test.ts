@@ -83,8 +83,8 @@ describe("KnowledgeService", () => {
   async function setup(): Promise<{ service: KnowledgeService; projectId: string; repoDir: string }> {
     dir = await mkdtemp(join(tmpdir(), "orch-knowledge-test-"));
     db = createSqliteDatabase(join(dir, "test.db"));
-    // Only migrations needed: 001 (outbox_events, schema_migrations),
-    // 002 (projects), 015 (knowledge tables).
+  // Нужны только миграции: 001 (outbox_events, schema_migrations),
+  // 002 (projects), 015 (таблицы knowledge).
     const names = ["001_system", "002_work_domain", "015_knowledge"];
     const migrations: Migration[] = names.map((name, i) => ({
       version: i === 2 ? 15 : i + 1,
@@ -102,7 +102,7 @@ describe("KnowledgeService", () => {
     return { service: new KnowledgeService(db), projectId, repoDir };
   }
 
-  // ── Guideline parsing ──────────────────────────────────────────────
+  // ── Разбор guideline ───────────────────────────────────────────────
 
   describe("parseGuideline", () => {
     it("parses a valid guideline markdown with YAML front matter", () => {
@@ -147,7 +147,7 @@ describe("KnowledgeService", () => {
     });
   });
 
-  // ── Decision parsing ───────────────────────────────────────────────
+  // ── Разбор decision ────────────────────────────────────────────────
 
   describe("parseDecision", () => {
     it("parses a valid decision markdown", () => {
@@ -176,7 +176,7 @@ describe("KnowledgeService", () => {
     });
   });
 
-  // ── KnowledgeService – index and lifecycle ──────────────────────────
+  // ── KnowledgeService — индексация и жизненный цикл ──────────────────
 
   describe("indexRepository", () => {
     it("indexes guideline and decision markdown files from the repo", async () => {
@@ -222,11 +222,11 @@ describe("KnowledgeService", () => {
       const glDir = join(repoDir, "guidelines");
       await mkdir(glDir, { recursive: true });
 
-      // Index v1 first
+  // Сначала индексируем v1.
       await writeFile(join(glDir, "GL-ARCH-014.md"), GUIDELINE_MARKDOWN);
       await service.indexRepository(projectId, repoDir);
 
-      // Now change content hash (simulating external edit)
+  // Меняем content hash, имитируя внешнее редактирование.
       await writeFile(join(glDir, "GL-ARCH-014.md"), GUIDELINE_V2_MARKDOWN);
       const result = await service.indexRepository(projectId, repoDir);
 
@@ -234,7 +234,7 @@ describe("KnowledgeService", () => {
       const rows = db?.all<{ status: string; version: number; content_hash: string }>(
         "SELECT status, version, content_hash FROM knowledge_guidelines WHERE display_id='GL-ARCH-014' ORDER BY version",
       );
-      // v1 remains ACTIVE (unchanged), v2 is PENDING_EXTERNAL_CHANGE
+  // v1 остаётся ACTIVE (без изменений), v2 получает PENDING_EXTERNAL_CHANGE.
       expect(rows).toHaveLength(2);
       expect(rows![0]!.status).toBe("ACTIVE");
       expect(rows![0]!.version).toBe(1);
@@ -262,21 +262,21 @@ describe("KnowledgeService", () => {
       const glDir = join(repoDir, "guidelines");
       await mkdir(glDir, { recursive: true });
 
-      // Index v1 as ACTIVE
+  // Индексируем v1 как ACTIVE.
       await writeFile(join(glDir, "GL-ARCH-014.md"), GUIDELINE_MARKDOWN);
       await service.indexRepository(projectId, repoDir);
 
-      // Index v2 with different content hash → PENDING_EXTERNAL_CHANGE
+  // Индексируем v2 с другим content hash → PENDING_EXTERNAL_CHANGE.
       await writeFile(join(glDir, "GL-ARCH-014.md"), GUIDELINE_V2_MARKDOWN);
       await service.indexRepository(projectId, repoDir);
 
-      // Approve v2 → v2 becomes ACTIVE, v1 becomes SUPERSEDED
+  // Одобряем v2 → v2 становится ACTIVE, v1 — SUPERSEDED.
       const v2Row = db?.get<{ id: string }>(
         "SELECT id FROM knowledge_guidelines WHERE display_id='GL-ARCH-014' AND version=2",
       );
       service.applyApprovedProposal(v2Row!.id);
 
-      // Only v2 should be active
+  // Активной должна оставаться только v2.
       const active = service.activeForScope(projectId, { scope: "project" });
       expect(active).toHaveLength(1);
       expect(active[0]!.displayId).toBe("GL-ARCH-014");
@@ -287,21 +287,21 @@ describe("KnowledgeService", () => {
       const glDir = join(repoDir, "guidelines");
       await mkdir(glDir, { recursive: true });
 
-      // Index v1 as ACTIVE
+  // Индексируем v1 как ACTIVE.
       await writeFile(join(glDir, "GL-ARCH-014.md"), GUIDELINE_MARKDOWN);
       await service.indexRepository(projectId, repoDir);
 
-      // Index v2 with different content hash → PENDING_EXTERNAL_CHANGE
+  // Индексируем v2 с другим content hash → PENDING_EXTERNAL_CHANGE.
       await writeFile(join(glDir, "GL-ARCH-014.md"), GUIDELINE_V2_MARKDOWN);
       await service.indexRepository(projectId, repoDir);
 
-      // Approve v2 → v2 becomes ACTIVE, v1 becomes SUPERSEDED
+  // Одобряем v2 → v2 становится ACTIVE, v1 — SUPERSEDED.
       const v2Row = db?.get<{ id: string }>(
         "SELECT id FROM knowledge_guidelines WHERE display_id='GL-ARCH-014' AND version=2",
       );
       service.applyApprovedProposal(v2Row!.id);
 
-      // Both versions remain in the database as historical records
+  // Обе версии остаются в базе как исторические записи.
       const all = db?.all<{ display_id: string; status: string; version: number }>(
         "SELECT display_id, status, version FROM knowledge_guidelines WHERE display_id='GL-ARCH-014' ORDER BY version",
       );
@@ -321,7 +321,7 @@ describe("KnowledgeService", () => {
       await service.indexRepository(projectId, repoDir);
 
       const active = service.activeForScope(projectId, { scope: "project" });
-      // DEC-0001 is ACCEPTED EPIC scope, DEC-0002 is PROPOSED PROJECT scope
+  // DEC-0001 имеет статус ACCEPTED и область EPIC, DEC-0002 — PROPOSED и область PROJECT.
       expect(active).toHaveLength(1);
       expect(active[0]!.displayId).toBe("DEC-0002");
       expect(active[0]!.status).toBe("PROPOSED");
@@ -350,7 +350,7 @@ describe("KnowledgeService", () => {
       await writeFile(join(glDir, "GL-ARCH-014.md"), GUIDELINE_MARKDOWN);
       await service.indexRepository(projectId, repoDir);
 
-      // Propose a new version as PENDING_EXTERNAL_CHANGE
+  // Предлагаем новую версию как PENDING_EXTERNAL_CHANGE.
       await writeFile(join(glDir, "GL-ARCH-014.md"), GUIDELINE_V2_MARKDOWN);
       await service.indexRepository(projectId, repoDir);
 
@@ -359,7 +359,7 @@ describe("KnowledgeService", () => {
       );
       expect(row?.status).toBe("PENDING_EXTERNAL_CHANGE");
 
-      // Approve it
+  // Одобряем её.
       service.applyApprovedProposal(row!.id);
 
       const approved = db?.get<{ status: string }>(
@@ -368,7 +368,7 @@ describe("KnowledgeService", () => {
       );
       expect(approved?.status).toBe("ACTIVE");
 
-      // The old version should now be SUPERSEDED
+  // Старая версия теперь должна иметь статус SUPERSEDED.
       const old = db?.get<{ status: string; version: number }>(
         "SELECT status, version FROM knowledge_guidelines WHERE display_id='GL-ARCH-014' AND version=1",
       );
@@ -396,7 +396,7 @@ describe("KnowledgeService", () => {
       );
       expect(row?.status).toBe("PROPOSED");
 
-      // Transition to UNDER_REVIEW
+  // Переходим в UNDER_REVIEW.
       service.updateStatus(row!.id, "UNDER_REVIEW");
       const review = db?.get<{ status: string }>(
         "SELECT status FROM knowledge_guidelines WHERE id=$id",
@@ -404,7 +404,7 @@ describe("KnowledgeService", () => {
       );
       expect(review?.status).toBe("UNDER_REVIEW");
 
-      // Transition to ACTIVE
+  // Переходим в ACTIVE.
       service.updateStatus(row!.id, "ACTIVE");
       const active = db?.get<{ status: string }>(
         "SELECT status FROM knowledge_guidelines WHERE id=$id",
@@ -423,7 +423,7 @@ describe("KnowledgeService", () => {
       const row = db?.get<{ id: string }>(
         "SELECT id FROM knowledge_guidelines WHERE display_id='GL-ARCH-014' AND status='ACTIVE'",
       );
-      // Cannot go from ACTIVE back to PROPOSED
+  // Из ACTIVE нельзя вернуться в PROPOSED.
       expect(() => service.updateStatus(row!.id, "PROPOSED")).toThrow(/invalid.*transition/i);
     });
   });

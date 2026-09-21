@@ -11,21 +11,21 @@ describe('EnvironmentBuilder', () => {
         injected: {}
       });
       
-      // Should not contain arbitrary process.env variables
+      // Не должно содержать произвольные переменные process.env.
       expect(env.GITHUB_TOKEN).toBeUndefined();
       expect(env.SSH_AUTH_SOCK).toBeUndefined();
       expect(env.AWS_SECRET_ACCESS_KEY).toBeUndefined();
     });
 
     it('should not inherit sensitive variables even if they exist in process.env', () => {
-      // Test that sensitive vars are explicitly excluded
+      // Проверяем, что чувствительные переменные явно исключены.
       const builder = new EnvironmentBuilder();
       const env = builder.build({
         allowlist: ['PATH'],
         injected: {}
       });
 
-      // These sensitive variables should never be present
+      // Эти чувствительные переменные никогда не должны присутствовать.
       expect(env.HOME).toBeUndefined();
       expect(env.HOMEPATH).toBeUndefined();
       expect(env.TOKEN).toBeUndefined();
@@ -63,7 +63,7 @@ describe('EnvironmentBuilder', () => {
         injected: {}
       });
 
-      // Should have platform-appropriate PATH
+      // Должен использоваться PATH, соответствующий платформе.
       expect(env.PATH).toBeDefined();
       expect(typeof env.PATH!).toBe('string');
       expect(env.PATH!.length).toBeGreaterThan(0);
@@ -130,13 +130,13 @@ describe('EnvironmentBuilder', () => {
 
     it('should prevent cloning full environment', () => {
       const builder = new EnvironmentBuilder();
-      // Explicitly test that we're not copying process.env
+    // Явно проверяем, что process.env не копируется.
       const env = builder.build({
         allowlist: ['PATH'],
         injected: {}
       });
 
-      // Count should be minimal, not thousands like process.env
+    // Количество должно быть минимальным, а не исчисляться тысячами, как process.env.
       expect(Object.keys(env).length).toBeLessThan(10);
     });
   });

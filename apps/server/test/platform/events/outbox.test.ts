@@ -111,22 +111,22 @@ describe("transactional outbox", () => {
     const dispatcher = new EventDispatcher(db, bus);
     const event = createTestEvent();
 
-    // Write the event into outbox
+    // Записываем событие в outbox.
     db.transaction((tx) => {
       appendOutboxEvent(tx, event);
     });
 
-    // Dispatch once - should call handler
+    // Отправляем один раз — обработчик должен быть вызван.
     const dispatched1 = await dispatcher.dispatchBatch(100);
     expect(dispatched1).toBe(1);
     expect(handlerCallCount).toBe(1);
 
-    // Dispatch again for the same event - handler should NOT be called again
+    // Отправляем то же событие повторно — обработчик НЕ должен вызываться снова.
     const dispatched2 = await dispatcher.dispatchBatch(100);
     expect(dispatched2).toBe(0);
     expect(handlerCallCount).toBe(1);
 
-    // Verify exactly one row in processed_events
+    // Проверяем, что в processed_events ровно одна строка.
     const rows = db.all<{ consumer_name: string; event_id: string }>(
       "SELECT consumer_name, event_id FROM processed_events WHERE consumer_name = $consumer AND event_id = $event_id",
       { consumer: "audit", event_id: event.id },
@@ -159,7 +159,7 @@ describe("transactional outbox", () => {
     expect(auditCalls).toHaveLength(1);
     expect(indexCalls).toHaveLength(1);
 
-    // Verify processed_events has two rows
+    // Проверяем, что в processed_events две строки.
     const rows = db.all<{ consumer_name: string }>(
       "SELECT consumer_name FROM processed_events WHERE event_id = $event_id",
       { event_id: event.id },
@@ -185,7 +185,7 @@ describe("transactional outbox", () => {
     const dispatched = await dispatcher.dispatchBatch(100);
     expect(dispatched).toBe(0);
 
-    // The event should still be pending with attempts incremented
+    // Событие должно оставаться ожидающим, а число попыток — увеличиться.
     const row = db.get<{ attempts: number; processed_at: string | null; available_at: string }>(
       "SELECT attempts, processed_at, available_at FROM outbox_events WHERE id = $id",
       { id: event.id },
@@ -195,7 +195,7 @@ describe("transactional outbox", () => {
     expect(row!.processed_at).toBeNull();
     expect(Date.parse(row!.available_at)).toBeGreaterThan(Date.now());
 
-    // No processed_events row for this consumer
+    // Для этого потребителя строки в processed_events быть не должно.
     const processed = db.all<{ consumer_name: string }>(
       "SELECT consumer_name FROM processed_events WHERE event_id = $event_id",
       { event_id: event.id },
@@ -221,7 +221,7 @@ describe("transactional outbox", () => {
       }
     });
 
-    // Dispatch only 2 at a time
+    // Отправляем не более двух событий одновременно.
     const batch1 = await dispatcher.dispatchBatch(2);
     expect(batch1).toBe(2);
     expect(dispatchedIds).toHaveLength(2);

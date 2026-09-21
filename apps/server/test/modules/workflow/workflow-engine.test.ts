@@ -47,7 +47,7 @@ function contract(goal: string): TaskContract {
 }
 
 /**
- * Insert a task directly into the DB for testing workflow transitions.
+ * Напрямую добавляет задачу в БД для проверки переходов workflow.
  */
 function insertTask(
   db: Database,
@@ -87,7 +87,7 @@ function insertTask(
 }
 
 /**
- * Insert an epic directly into the DB.
+ * Напрямую добавляет epic в БД.
  */
 function insertEpic(
   db: Database,
@@ -151,7 +151,7 @@ describe("WorkflowEngine", () => {
 
   async function setupEngine(): Promise<void> {
     db = await setupDb();
-    // Seed a project so that FK constraints on tasks/epics are satisfied.
+  // Заполняем project, чтобы ограничения FK для tasks/epics выполнялись.
     const now = new Date().toISOString();
     db.transaction((tx) => {
       tx.run(
@@ -174,7 +174,7 @@ describe("WorkflowEngine", () => {
     engine = new WorkflowEngine(db, registry);
   }
 
-  // ── Required transition rules ──
+  // ── Обязательные правила переходов ──
 
   it("allows READY → DEVELOPMENT (no context required)", async () => {
     await setupEngine();
@@ -266,7 +266,7 @@ describe("WorkflowEngine", () => {
     expect(engine.currentStage(randomUUID())).toBeUndefined();
   });
 
-  // ── canTransition edge cases ──
+  // ── Граничные случаи canTransition ──
 
   it("returns false for non-existent task", async () => {
     await setupEngine();
@@ -282,17 +282,17 @@ describe("WorkflowEngine", () => {
   it("returns false for transition not in template", async () => {
     await setupEngine();
     const { id } = insertTask(db!, projectId, { status: "DRAFT" });
-    // DRAFT can only go to READY or CANCELLED, not to QA
+  // Из DRAFT можно перейти только в READY или CANCELLED, но не в QA.
     expect(engine.canTransition(id, "QA")).toBe(false);
   });
 
-  // ── Transition persistence and outbox event ──
+  // ── Сохранение перехода и событие outbox ──
 
   it("persists state change via transition", async () => {
     await setupEngine();
     const { id } = insertTask(db!, projectId, { status: "READY" });
     engine.transition(id, "DEVELOPMENT");
-    // Verify by reading directly from DB
+  // Проверяем, читая данные напрямую из БД.
     const row = db!.get<{ status: string }>(
       "SELECT status FROM tasks WHERE id = $id",
       { id },
@@ -317,16 +317,16 @@ describe("WorkflowEngine", () => {
     expect(payload.toStatus).toBe("DEVELOPMENT");
   });
 
-  // ── Template system ──
+  // ── Система шаблонов ──
 
   it("bugfix template allows QA → DONE directly", async () => {
     await setupEngine();
     const { id } = insertTask(db!, projectId, { status: "QA" });
-    // Standard template: QA → READY_FOR_INTEGRATION. Should fail for standard.
-    // For bugfix template, we need a task that uses bugfix workflow.
-    // But current implementation picks template by epic_id.
-    // Bugfix is a standalone workflow, so we need another mechanism.
-    // For now, let's just verify the standard template QA → DONE is not allowed.
+  // Стандартный шаблон: QA → READY_FOR_INTEGRATION. Для standard переход должен завершиться ошибкой.
+  // Для шаблона bugfix нужна задача, использующая workflow bugfix.
+  // Однако текущая реализация выбирает шаблон по epic_id.
+  // Bugfix — самостоятельный workflow, поэтому нужен другой механизм.
+  // Пока проверяем, что стандартный шаблон не разрешает переход QA → DONE.
     expect(engine.canTransition(id, "DONE")).toBe(false);
   });
 

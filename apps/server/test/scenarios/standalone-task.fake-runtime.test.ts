@@ -93,7 +93,7 @@ function insertTask(
 }
 
 /**
- * Orchestrates between Workflow, Scheduler, and Runtime.
+ * Координирует взаимодействие Workflow, Scheduler и Runtime.
  */
 class Orchestrator {
   constructor(
@@ -104,7 +104,7 @@ class Orchestrator {
   ) {}
 
   /**
-   * Start a workflow run for a task.
+   * Запускает workflow run для задачи.
    */
   startWorkflowRun(taskId: string, triggerReason: string): void {
     const task = this.db.get<{ id: string; status: string; epic_id: string | null }>(
@@ -115,7 +115,7 @@ class Orchestrator {
       throw new Error(`Task ${taskId} not found`);
     }
 
-    // Emit AgentRunRequested event
+// Создаём событие AgentRunRequested.
     const _event = DomainEvent.create({
       type: "AgentRunRequested",
       aggregateType: "Task",
@@ -132,7 +132,7 @@ class Orchestrator {
   }
 
   /**
-   * Handle AgentRunRequested event by the runtime handlers.
+   * Обрабатывает событие AgentRunRequested обработчиками runtime.
    */
   handleAgentRunRequested(event: {
     readonly type: string;
@@ -143,7 +143,7 @@ class Orchestrator {
   }
 
   /**
-   * Handle runtime completion.
+   * Обрабатывает завершение runtime.
    */
   handleRuntimeCompletion(taskId: string, outcome: RunOutcome): void {
     const now = new Date().toISOString();
@@ -155,7 +155,7 @@ class Orchestrator {
   }
 
   /**
-   * Handle approval events.
+   * Обрабатывает события approval.
    */
   handleApprovalApproved(event: {
     readonly type: string;
@@ -166,7 +166,7 @@ class Orchestrator {
   }
 
   /**
-   * Dispatch pending events.
+   * Отправляет ожидающие события.
    */
   async dispatchEvents(limit: number): Promise<number> {
     const dispatcher = new EventDispatcher(this.db, this.bus);
@@ -236,7 +236,7 @@ describe("Standalone task fake runtime scenario", () => {
   it("should handle AgentRunRequested and transition task to DEVELOPMENT", async () => {
     await setupOrchestrator();
 
-    // Register event handler
+// Регистрируем обработчик события.
     bus.subscribe("AgentRunRequested", "runtime-handler", (event) => {
       const { aggregateId } = event as { readonly aggregateId: string | undefined };
       if (aggregateId) {
@@ -251,10 +251,10 @@ describe("Standalone task fake runtime scenario", () => {
     const { id: taskId } = insertTask(db!, projectId, { status: "READY" });
     orchestrator.startWorkflowRun(taskId, "task-assignment");
 
-    // Dispatch events - should call handler
+// Отправляем события — обработчик должен быть вызван.
     await orchestrator.dispatchEvents(10);
 
-    // Task should be transitioned to DEVELOPMENT by workflow engine
+// Workflow engine должен перевести задачу в DEVELOPMENT.
     const task = db!.get<{ status: string }>(
       "SELECT status FROM tasks WHERE id = $id",
       { id: taskId },
@@ -267,13 +267,13 @@ describe("Standalone task fake runtime scenario", () => {
 
     const { id: taskId } = insertTask(db!, projectId, { status: "READY" });
 
-    // First transition to DEVELOPMENT to simulate a started run
+// Сначала переводим в DEVELOPMENT, имитируя начатый run.
     workflowEngine.transition(taskId, "DEVELOPMENT");
 
-    // Simulate runtime completion - should validate current stage
+// Имитируем завершение runtime — текущий этап должен быть проверен.
     const outcome: RunOutcome = { success: true, exitCode: 0, output: "Done" };
 
-    // This should succeed because stage is DEVELOPMENT
+// Операция должна пройти, поскольку этап — DEVELOPMENT.
     orchestrator.handleRuntimeCompletion(taskId, outcome);
 
     const updatedStage = db!.get<{ status: string }>(
@@ -290,7 +290,7 @@ describe("Standalone task fake runtime scenario", () => {
 
     const outcome: RunOutcome = { success: true, exitCode: 0, output: "Done" };
 
-    // Should throw because stage is READY, not DEVELOPMENT
+// Должна возникнуть ошибка, поскольку этап — READY, а не DEVELOPMENT.
     expect(() =>
       orchestrator.handleRuntimeCompletion(taskId, outcome),
     ).toThrow(/Invalid workflow stage/);
@@ -307,10 +307,10 @@ describe("Standalone task fake runtime scenario", () => {
 
     const { id: taskId } = insertTask(db!, projectId, { status: "READY" });
 
-    // First transition to DEVELOPMENT
+// Сначала переводим в DEVELOPMENT.
     workflowEngine.transition(taskId, "DEVELOPMENT");
 
-    // Simulate runtime failure
+// Имитируем ошибку runtime.
     const outcome: RunOutcome = { success: false, exitCode: 1, output: "Error" };
 
     orchestrator.handleRuntimeCompletion(taskId, outcome);
@@ -327,13 +327,13 @@ describe("Standalone task fake runtime scenario", () => {
 
     const { id: taskId } = insertTask(db!, projectId, { status: "DRAFT" });
 
-    // Transition through workflow stages
+// Переходим через этапы workflow.
     workflowEngine.transition(taskId, "READY");
 
-    // Simulate runtime start
+// Имитируем запуск runtime.
     workflowEngine.transition(taskId, "DEVELOPMENT");
 
-    // Simulate runtime completion
+// Имитируем завершение runtime.
     const outcome: RunOutcome = { success: true, exitCode: 0, output: "Done" };
     orchestrator.handleRuntimeCompletion(taskId, outcome);
 
@@ -342,7 +342,7 @@ describe("Standalone task fake runtime scenario", () => {
       { id: taskId },
     )?.status).toBe("REVIEW");
 
-    // Continue workflow
+// Продолжаем workflow.
     workflowEngine.transition(taskId, "QA", {
       hasReviewPassed: true,
       hasSuccessfulIntegration: false,
@@ -354,7 +354,7 @@ describe("Standalone task fake runtime scenario", () => {
     workflowEngine.transition(taskId, "INTEGRATION");
     workflowEngine.transition(taskId, "READY_FOR_MERGE");
 
-    // Approve final merge
+// Одобряем финальный merge.
     const mergeApproval = DomainEvent.create({
       type: "ApprovalApproved",
       aggregateType: "Task",
@@ -366,7 +366,7 @@ describe("Standalone task fake runtime scenario", () => {
     });
     appendOutboxEvent(db!, mergeApproval);
 
-    // Register handler for approval
+// Регистрируем обработчик approval.
     bus.subscribe("ApprovalApproved", "runtime-handler", (event) => {
       const { aggregateId } = event as { readonly aggregateId: string | undefined };
       if (aggregateId) {
@@ -380,7 +380,7 @@ describe("Standalone task fake runtime scenario", () => {
 
     await orchestrator.dispatchEvents(10);
 
-    // Should be in MERGING now
+// Теперь должен быть этап MERGING.
     expect(db!.get<{ status: string }>(
       "SELECT status FROM tasks WHERE id = $id",
       { id: taskId },
@@ -415,7 +415,7 @@ describe("Standalone task fake runtime scenario", () => {
     const { id: taskId } = insertTask(db!, projectId, { status: "READY" });
     orchestrator.startWorkflowRun(taskId, "task-assignment");
 
-    // Dispatch multiple times - handler should only execute once due to idempotency
+// Отправляем несколько раз — из-за идемпотентности обработчик должен выполниться только один раз.
     await orchestrator.dispatchEvents(10);
     const firstDispatch = handlerCalls;
 

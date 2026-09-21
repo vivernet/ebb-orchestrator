@@ -13,8 +13,8 @@ describe('security Git remediation', () => {
     try {
       const tools = new GitTools(repo);
       await tools.initRepo();
-      // Clean CI runners do not provide a global Git identity. Keep the fixture
-      // self-contained so the commit (and the hook bypass it verifies) is
+      // Чистые CI runners не предоставляют глобальную Git identity. Делаем фикстуру
+      // самодостаточной, чтобы commit и проверяемый обход hook выполнялись
       // exercised instead of being skipped by Git's author validation.
       const git = new GitCli();
       await git.run(repo, ['config', 'user.name', 'Ebb Orchestrator Tests']);

@@ -20,7 +20,7 @@ async function initGitRepo(path: string, commitMessage: string = "initial"): Pro
   await git.run(path, ["config", "user.email", "test@example.com"]);
   await git.run(path, ["config", "user.name", "Test User"]);
   
-  // Create initial commit on master
+// Создаём начальный commit в master.
   writeFileSync(join(path, "README.md"), "# Test");
   await git.run(path, ["add", "README.md"]);
   await git.run(path, ["commit", "-m", commitMessage]);
@@ -272,7 +272,7 @@ describe("MergeService", () => {
       const repoPath = createTempDir();
       const git = await initGitRepo(repoPath);
       
-      // Add a file to master first (since merge is a no-op in test)
+      // Сначала добавляем файл в master, поскольку в тесте merge ничего не меняет.
       writeFileSync(join(repoPath, "readme.txt"), "readme content");
       await git.run(repoPath, ["add", "readme.txt"]);
       await git.run(repoPath, ["commit", "-m", "add readme"]);
@@ -287,14 +287,14 @@ describe("MergeService", () => {
       
       const mergeService = new MergeService({ approvalStore, repoPath, integrationAttempt: await successfulIntegration(repoPath, git) });
       
-      // Should succeed with valid approval
+      // Операция должна пройти при корректном approval.
       const result = await mergeService.mergeApproved("subject-123", "approval-456");
       
       expect(result.success).toBe(true);
       expect(result.subjectId).toBe("subject-123");
       expect(result.mergeCommitSha).toBeDefined();
       
-      // Verify file exists in master after merge
+      // Проверяем наличие файла в master после merge.
       const content = await git.run(repoPath, ["show", "master:readme.txt"]);
       expect(content.stdout.trim()).toBe("readme content");
     });
@@ -303,7 +303,7 @@ describe("MergeService", () => {
       const repoPath = createTempDir();
       const git = await initGitRepo(repoPath);
       
-      // Add a file to master first
+      // Сначала добавляем файл в master.
       writeFileSync(join(repoPath, "readme.txt"), "readme content");
       await git.run(repoPath, ["add", "readme.txt"]);
       await git.run(repoPath, ["commit", "-m", "add readme"]);
@@ -319,11 +319,11 @@ describe("MergeService", () => {
       const mergeService = new MergeService({ approvalStore, repoPath, integrationAttempt: await successfulIntegration(repoPath, git) });
       const result = await mergeService.mergeApproved("subject-123", "approval-456");
       
-      // Verify resulting SHA is recorded
+      // Проверяем, что итоговый SHA записан.
       expect(result.resultingTargetSha).toBeDefined();
       expect(result.resultingTargetSha).toBeTruthy();
       
-      // Verify SHA matches what git reports
+      // Проверяем соответствие SHA значению, которое сообщает git.
       const actualHead = await git.run(repoPath, ["rev-parse", "HEAD"]);
       expect(actualHead.stdout.trim()).toBe(result.resultingTargetSha);
     });
@@ -369,12 +369,12 @@ describe("MergeService", () => {
       const repoPath = createTempDir();
       const git = await initGitRepo(repoPath);
       
-      // Add a file to master first
+      // Сначала добавляем файл в master.
       writeFileSync(join(repoPath, "readme.txt"), "readme content");
       await git.run(repoPath, ["add", "readme.txt"]);
       await git.run(repoPath, ["commit", "-m", "add readme"]);
       
-      // Add a pre-commit hook that would fail
+      // Добавляем pre-commit hook, который завершился бы ошибкой.
       const hooksPath = join(repoPath, ".git", "hooks");
       mkdirSync(hooksPath, { recursive: true });
       writeFileSync(join(hooksPath, "pre-commit"), "#!/bin/bash\nexit 1", "utf8");
@@ -389,7 +389,7 @@ describe("MergeService", () => {
       
       const mergeService = new MergeService({ approvalStore, repoPath, integrationAttempt: await successfulIntegration(repoPath, await new GitCli()) });
       
-      // Should succeed despite failing hook (hooks are disabled)
+      // Операция должна пройти несмотря на ошибочный hook, поскольку hooks отключены.
       const result = await mergeService.mergeApproved("subject-123", "approval-456");
       
       expect(result.success).toBe(true);

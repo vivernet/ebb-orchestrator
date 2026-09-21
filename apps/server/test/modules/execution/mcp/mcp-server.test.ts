@@ -18,7 +18,7 @@ describe('MCP Server', () => {
     try {
       fs.rmSync(testDir, { recursive: true, force: true });
     } catch {
-      // Ignore cleanup errors
+// Игнорируем ошибки очистки.
     }
   });
 
@@ -147,14 +147,14 @@ describe('MCP Server', () => {
     });
 
     it('should instantiate MCP server for Reviewer capability and filter tools correctly', async () => {
-      // Import modules
+// Импортируем модули.
       const mcpModule = await import('../../../../src/modules/execution/mcp/mcp-server.js');
       const capabilityModule = await import('../../../../src/modules/execution/run-capability.js');
 
       const McpServer = mcpModule.McpServer;
       const RunCapability = capabilityModule.RunCapability;
 
-      // Create a Reviewer capability with allowed tools
+// Создаём capability Reviewer с разрешёнными инструментами.
       const capability = new RunCapability({
         id: 'test-capability',
         role: 'reviewer',
@@ -171,7 +171,7 @@ describe('MCP Server', () => {
       const mcpServer = new McpServer(capability);
       const tools = mcpServer.getAvailableTools();
 
-      // Should contain only read/search/diff/test/submit
+// Должны присутствовать только read/search/diff/test/submit.
       expect(tools.map(t => t.name)).toEqual([
         'workspace.read',
         'workspace.search',
@@ -205,7 +205,7 @@ describe('MCP Server', () => {
       const tools = mcpServer.getAvailableTools();
       const toolNames = tools.map(t => t.name);
 
-      // Reviewer should NOT have write-capable tools
+// Reviewer НЕ должен иметь инструментов, выполняющих запись.
       expect(toolNames).not.toContain('workspace.patch');
       expect(toolNames).not.toContain('git.commit');
       expect(toolNames).not.toContain('git.status');
@@ -266,7 +266,7 @@ describe('MCP Server', () => {
 
       const mcpServer = new McpServer(capability);
       
-      // First call should succeed
+// Первый вызов должен быть успешным.
       const firstResult = await mcpServer.callTool('submit_result', {
         payload: {
           version: '1.0',
@@ -276,7 +276,7 @@ describe('MCP Server', () => {
 
       expect(firstResult.success).toBe(true);
 
-      // Second call should fail with RUN_ALREADY_COMPLETING
+// Второй вызов должен завершиться ошибкой RUN_ALREADY_COMPLETING.
       const secondResult = await mcpServer.callTool('submit_result', {
         payload: {
           version: '1.0',
@@ -306,7 +306,7 @@ describe('MCP Server', () => {
 
       const mcpServer = new McpServer(capability);
       
-      // Invalid payload should fail
+// Некорректный payload должен отклоняться.
       const result = await mcpServer.callTool('submit_result', {
         payload: {
           invalidField: 'test',
@@ -337,7 +337,7 @@ describe('MCP Server', () => {
 
       const mcpServer = new McpServer(capability);
       
-      // First submit_result should succeed
+// Первый submit_result должен быть успешным.
       const submitResult = await mcpServer.callTool('submit_result', {
         payload: {
           version: '1.0',
@@ -347,7 +347,7 @@ describe('MCP Server', () => {
 
       expect(submitResult.success).toBe(true);
 
-      // write-capable tool should be blocked after submit_result
+// После submit_result инструмент записи должен быть заблокирован.
       const patchResult = await mcpServer.callTool('workspace.patch', {
         path: 'test.txt',
         patches: [],
@@ -402,7 +402,7 @@ describe('MCP Server', () => {
 
       const mcpServer = new McpServer(capability);
       
-      // Should not use task/workspace IDs from payload
+// Нельзя использовать task/workspace IDs из payload.
       const result = await mcpServer.callTool('submit_result', {
         payload: {
           version: '1.0',
@@ -412,7 +412,7 @@ describe('MCP Server', () => {
         },
       });
 
-      // If schema validation passes, workspace ID should be ignored
+// Если проверка схемы успешна, workspace ID должен игнорироваться.
       expect(result.success).toBe(false); // Invalid schema
     });
   });

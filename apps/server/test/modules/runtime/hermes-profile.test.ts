@@ -1,5 +1,5 @@
 /**
- * Tests for Hermes profile isolation.
+ * Проверяет изоляцию профиля Hermes.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
@@ -14,10 +14,10 @@ describe("Hermes profile isolation", () => {
   const mockToolsetPath = "/mock/toolset";
 
   beforeEach(() => {
-    // Save original environment
+    // Сохраняем исходное окружение.
     originalEnv = { ...process.env };
     
-    // Set up test environment
+    // Настраиваем тестовое окружение.
     process.env.EBB_ORCHESTRATOR_HOME = "/test/orchestrator";
     process.env.GITHUB_TOKEN = "ghp_sensitive_token";
     process.env.SSH_AUTH_SOCK = "/tmp/ssh-agent";
@@ -25,7 +25,7 @@ describe("Hermes profile isolation", () => {
   });
 
   afterEach(() => {
-    // Restore original environment
+    // Восстанавливаем исходное окружение.
     process.env = originalEnv;
   });
 
@@ -174,10 +174,10 @@ describe("Hermes profile isolation", () => {
         toolsetPath: "/test/toolset",
       });
 
-      // Should contain mcp_servers and terminal
+      // Должны присутствовать mcp_servers и terminal.
       expect(config).toContain("mcp_servers:");
       expect(config).toContain("terminal:");
-      // Should not contain arbitrary user settings
+      // Произвольные пользовательские настройки присутствовать не должны.
       expect(config).not.toContain("user_");
     });
   });

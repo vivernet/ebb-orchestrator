@@ -1,5 +1,5 @@
 /**
- * Tests for Hermes runtime adapter.
+ * Проверяет адаптер среды выполнения Hermes.
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
@@ -14,7 +14,7 @@ import {
   type ProcessResult,
 } from "../../../src/platform/process/process-executor.js";
 
-// Mock process executor for testing
+// Имитация исполнителя процессов для тестов.
 class MockProcessExecutor extends ProcessExecutor {
   private execCalls: Array<{ file: string; args: string[]; options?: ProcessOptions }> = [];
   private nextResult: ProcessResult | Error | null = null;
@@ -59,7 +59,7 @@ class MockProcessExecutor extends ProcessExecutor {
   }
 }
 
-// Mock artifact store
+// Имитация хранилища артефактов.
 class MockArtifactStore {
   private artifacts: Record<string, { stdout: string; stderr: string; exitCode: number }> = {};
 
@@ -331,7 +331,7 @@ describe("HermesRuntimeAdapter", () => {
 
   describe("resumeRun", () => {
     it("updates run state with session info", async () => {
-      // First start the run
+    // Сначала запускаем выполнение.
       const startRun = {
         id: "resume-run-id",
         role: "Developer",
@@ -357,7 +357,7 @@ describe("HermesRuntimeAdapter", () => {
       mockExecutor.setNextResult({ exitCode: 0, stdout: "session: test", stderr: "" });
       await adapter.startRun(startRun);
 
-      // Now resume
+    // Теперь возобновляем выполнение.
       mockExecutor.setNextResult({ exitCode: 0, stdout: "resumed", stderr: "" });
       await adapter.resumeRun(startRun.id, { sessionId: "existing-session-456", attempt: 1 });
 
@@ -403,7 +403,7 @@ describe("HermesRuntimeAdapter", () => {
 
   describe("cancelRun", () => {
     it("sends graceful signal first", async () => {
-      // First start the run
+    // Сначала запускаем выполнение.
       const startRun = {
         id: "cancel-run-id",
         role: "Developer",
@@ -438,7 +438,7 @@ describe("HermesRuntimeAdapter", () => {
 
   describe("collectResult", () => {
     it("returns AGENT_OUTPUT_MISSING when process exits without valid submitted result", async () => {
-      // First start the run
+    // Сначала запускаем выполнение.
       const startRun = {
         id: "missing-result-run",
         role: "Developer",
@@ -464,7 +464,7 @@ describe("HermesRuntimeAdapter", () => {
       mockExecutor.setNextResult({ exitCode: 0, stdout: "session: test", stderr: "" });
       await adapter.startRun(startRun);
 
-       // Manually update the run state to indicate failure
+       // Вручную обновляем состояние выполнения, чтобы обозначить ошибку.
        const state = (adapter as unknown as { runs: Map<string, { exitCode?: number }> }).runs.get(startRun.id);
        if (state) {
          state.exitCode = 1;

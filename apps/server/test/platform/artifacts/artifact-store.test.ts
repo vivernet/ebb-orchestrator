@@ -52,7 +52,7 @@ describe("ArtifactStore", () => {
       bytes: Buffer.from("hello"),
     });
 
-    // storagePath must be relative (never start with "/")
+    // storagePath должен быть относительным и никогда не начинаться с "/".
     expect(record.storagePath.startsWith("/")).toBe(false);
 
     // Файл должен существовать по разрешённому абсолютному пути.

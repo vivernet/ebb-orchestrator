@@ -31,7 +31,7 @@ describe("RepositoryDiscovery", () => {
     it("detects default branch from git", async () => {
       const tmpDir = createTempDir();
       setupGitRepo(tmpDir);
-      // Create initial commit to have a HEAD on main
+      // Создаём начальный commit, чтобы в main появился HEAD.
       execSync("git checkout -b main", { cwd: tmpDir });
       writeFileSync(join(tmpDir, "README.md"), "# Test");
       execSync("git add README.md", { cwd: tmpDir });
@@ -135,7 +135,7 @@ describe("RepositoryDiscovery", () => {
     it("detects languageHints from file extensions", async () => {
       const tmpDir = createTempDir();
       setupGitRepo(tmpDir);
-      // Create tsconfig.json to trigger TypeScript detection
+      // Создаём tsconfig.json, чтобы запустить обнаружение TypeScript.
       writeFileSync(join(tmpDir, "tsconfig.json"), "{}");
 
       const discovery = new RepositoryDiscovery();

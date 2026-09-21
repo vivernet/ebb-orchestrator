@@ -36,7 +36,7 @@ describe('SecretStore no-plaintext', () => {
   });
 
   afterEach(async () => {
-    // Database connection is closed by Node.js garbage collection
+    // Соединение с базой данных закрывается сборщиком мусора Node.js.
   });
 
   describe('SQLite dump does not contain plaintext secrets', () => {
@@ -45,7 +45,7 @@ describe('SecretStore no-plaintext', () => {
       const result = await db.store('test-service', 'test-secret', secretValue);
       const refId = result.id;
 
-      // Check that metadata was stored (not value)
+      // Проверяем, что сохранены метаданные, а не значение.
       const metadata = await db.getMetadata('test-service', 'test-secret');
       expect(metadata).toBeDefined();
       expect(metadata?.referenceId).toBe(refId);
@@ -92,8 +92,8 @@ describe('SecretStore no-plaintext', () => {
       
        await db.store('logging-service', 'api-key', secretValue);
 
-      // In a real implementation, you would check actual logs
-      // For now, verify the store doesn't expose values through toString/inspect
+    // В реальной реализации здесь проверялись бы фактические журналы.
+    // Пока проверяем, что хранилище не раскрывает значения через toString/inspect.
       const metadata = await db.getMetadata('logging-service', 'api-key');
       expect(metadata).toBeDefined();
       expect(metadata?.value).toBeUndefined();
@@ -107,10 +107,10 @@ describe('SecretStore no-plaintext', () => {
       
        await db.store('deploy-service', 'token', secretValue);
 
-      // Get metadata that would be stored with artifacts
+      // Получаем метаданные, которые сохранялись бы вместе с артефактами.
       const metadata = await db.listMetadata('deploy-service');
       
-      // Should have reference, not value
+      // Должна быть ссылка, а не значение.
       expect(metadata[0]?.referenceId).toBeDefined();
       expect(metadata[0]?.value).toBeUndefined();
     });
@@ -122,7 +122,7 @@ describe('SecretStore no-plaintext', () => {
       
       await db.store('diag-service', 'test', secretValue);
 
-      // Simulate diagnostics export
+      // Имитируем экспорт диагностики.
       const diagnostics: Record<string, unknown> = {
         secrets: await db.list('diag-service'),
         timestamp: Date.now()
@@ -139,11 +139,11 @@ describe('SecretStore no-plaintext', () => {
       
        await db.store('agent-service', 'env-secret', secretValue);
 
-      // By default, secrets should not be in agent environment
-      // (The execution layer would inject secrets only for specific operations)
+      // По умолчанию секретов не должно быть в окружении агента.
+      // Слой выполнения добавлял бы секреты только для конкретных операций.
       const env: Record<string, string> = {
         PATH: '/usr/bin'
-        // Secrets would only be injected here when explicitly needed for operations
+        // Секреты добавлялись бы сюда только при явной необходимости операции.
       };
 
       expect(env.AGENT_TEST_ENV_SECRET).toBeUndefined();

@@ -57,7 +57,7 @@ describe("background job runner", () => {
       dedupeKey: "unique-1",
     });
 
-    // Both calls return a UUID but only one row should exist
+    // Оба вызова возвращают UUID, но строка должна быть только одна.
     expect(job1Id).toBeDefined();
     expect(job2Id).toBeDefined();
 
@@ -88,7 +88,7 @@ describe("background job runner", () => {
 
     expect(result.claimed).toBe(1);
     expect(result.succeeded).toBe(0);
-    // A retry is not a terminal failure – only DEAD_LETTER / FAILED count
+    // Повторная попытка не является окончательной ошибкой — учитываются только DEAD_LETTER / FAILED.
     expect(result.failed).toBe(0);
 
     const row = db.get<{ status: string; run_after: string; attempts: number }>(
@@ -98,7 +98,7 @@ describe("background job runner", () => {
     expect(row).toBeDefined();
     expect(row!.status).toBe("RETRY_WAIT");
     expect(row!.attempts).toBe(1);
-    // run_after should be in the future (at least ~54 seconds from now accounting for ±10% jitter)
+    // run_after должен быть в будущем, минимум примерно через 54 секунды с учётом дрожания ±10%.
     const runAfter = new Date(row!.run_after);
     expect(runAfter.getTime()).toBeGreaterThan(now.getTime() + 53_000);
   });
@@ -118,9 +118,9 @@ describe("background job runner", () => {
       maxAttempts: 3,
     });
 
-    // Run 3 times, advancing enough time past the backoff each iteration.
-    // Backoff schedule: [60, 120, …] seconds.
-    // Each iteration advances 300 s which exceeds the previous backoff.
+    // Выполняем три раза, каждый раз перемещая время за пределы backoff.
+    // Расписание backoff: [60, 120, …] секунд.
+    // Каждая итерация продвигает время на 300 s, что превышает предыдущую задержку.
     for (let i = 0; i < 3; i++) {
       const futureNow = new Date(Date.now() + (i + 1) * 300_000);
       const result = await jobRunner.runOnce(futureNow);
@@ -140,7 +140,7 @@ describe("background job runner", () => {
 
     const jobRunner = new JobRunner(db, {
       testTask: async () => {
-        // success
+        // успех
       },
     });
 
@@ -149,8 +149,8 @@ describe("background job runner", () => {
       payload: {},
     });
 
-    // Simulate a crash: put the job directly into RUNNING with an expired lease
-    // (as if a worker claimed it and then died before completing).
+    // Имитируем сбой: переводим задачу непосредственно в RUNNING с истёкшей арендой
+    // (как если бы worker захватил её и завершился до окончания работы).
     const pastLeaseExpiry = new Date(Date.now() - 60_000).toISOString();
     db.run(
       `UPDATE background_jobs
@@ -166,7 +166,7 @@ describe("background job runner", () => {
     expect(stuck!.status).toBe("RUNNING");
     expect(stuck!.lease_owner).toBe("dead-worker");
 
-    // A subsequent runOnce should recover the expired-lease job and re-execute it
+    // Следующий runOnce должен восстановить задачу с истёкшей арендой и выполнить её снова.
     const futureNow = new Date(Date.now() + 1_000);
     const result = await jobRunner.runOnce(futureNow);
     expect(result.claimed).toBe(1);
@@ -195,7 +195,7 @@ describe("background job runner", () => {
 
     const jobRunner = new JobRunner(db, {
       testTask: async () => {
-        // success
+        // успех
       },
     });
 
@@ -247,7 +247,7 @@ describe("background job runner", () => {
       },
     });
 
-    // Low priority first, then high
+    // Сначала низкий приоритет, затем высокий.
     const lowId = enqueueJob(db, {
       type: "testTask",
       payload: {},
@@ -259,13 +259,13 @@ describe("background job runner", () => {
       priority: 10,
     });
 
-    // runOnce claims one job per call – call twice
+    // runOnce захватывает одну задачу за вызов — вызываем дважды.
     const r1 = await jobRunner.runOnce(new Date());
     expect(r1.claimed).toBe(1);
     const r2 = await jobRunner.runOnce(new Date());
     expect(r2.claimed).toBe(1);
 
-    // High priority should have been processed first
+    // Сначала должна быть обработана задача с высоким приоритетом.
     expect(executedOrder[0]).toBe(highId);
     expect(executedOrder[1]).toBe(lowId);
   });
@@ -275,7 +275,7 @@ describe("background job runner", () => {
 
     const jobRunner = new JobRunner(db, {
       testTask: async () => {
-        // success
+        // успех
       },
     });
 
@@ -285,7 +285,7 @@ describe("background job runner", () => {
       dedupeKey: "re-usable-key",
     });
 
-    // First run succeeds
+    // Первый запуск успешен.
     await jobRunner.runOnce(new Date());
     const row1 = db.get<{ status: string }>(
       "SELECT status FROM background_jobs WHERE id = $id",
@@ -293,7 +293,7 @@ describe("background job runner", () => {
     );
     expect(row1!.status).toBe("SUCCEEDED");
 
-    // Now we can enqueue again with the same dedupe key
+    // Теперь можно снова поставить задачу в очередь с тем же dedupe key.
     const id2 = enqueueJob(db, {
       type: "testTask",
       payload: {},

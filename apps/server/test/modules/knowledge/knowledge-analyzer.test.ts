@@ -4,7 +4,7 @@ import { rm } from "node:fs/promises";
 import { KnowledgeAnalyzer } from "../../../src/modules/knowledge/knowledge-analyzer.js";
 import type { GuidelineRecord } from "../../../src/modules/knowledge/knowledge-types.js";
 
-// ── Helper to build a GuidelineRecord ──────────────────────────────
+// ── Вспомогательная функция для создания GuidelineRecord ───────────
 
 function makeGuideline(overrides: Partial<GuidelineRecord> & { id: string; displayId: string; projectId: string }): GuidelineRecord {
   return {
@@ -26,7 +26,7 @@ function makeGuideline(overrides: Partial<GuidelineRecord> & { id: string; displ
   };
 }
 
-// ── Sample guideline markdown (full file content) ───────────────────
+// ── Пример markdown правила (полное содержимое файла) ──────────────
 
 const GUIDELINE_MD = `---
 id: GL-ARCH-014
@@ -136,7 +136,7 @@ superseded_by:
 All secrets must be encrypted at rest.
 `;
 
-// ── Tests ──────────────────────────────────────────────────────────
+// ── Тесты ───────────────────────────────────────────────────────────
 
 describe("KnowledgeAnalyzer", () => {
   let dir = "";
@@ -170,7 +170,7 @@ describe("KnowledgeAnalyzer", () => {
       ];
       const proposal = { projectId, markdown: GUIDELINE_MD };
       const result = analyzer.classify(proposal, existing);
-      // Should narrow to only GL-ARCH-014 (same category), not GL-SEC-001
+// Должен остаться только GL-ARCH-014 (та же категория), но не GL-SEC-001.
       expect(result.candidates).toHaveLength(1);
       expect(result.candidates[0]!.displayId).toBe("GL-ARCH-014");
     });
@@ -211,7 +211,7 @@ describe("KnowledgeAnalyzer", () => {
       ];
       const proposal = { projectId, markdown: GUIDELINE_SAME_TEXT };
       const result = analyzer.classify(proposal, existing);
-      // DUPLICATE should be deterministic – no aiAnalysisRequired flag
+// DUPLICATE должен быть детерминированным — без флага aiAnalysisRequired.
       expect(result.classification).toBe("DUPLICATE");
       expect(result.requiresAiAnalysis).toBe(false);
     });
@@ -279,7 +279,7 @@ describe("KnowledgeAnalyzer", () => {
       const existing: GuidelineRecord[] = [
         makeGuideline({ id: "db-gl-1", displayId: "GL-ARCH-020", projectId, category: "ARCH", scope: "area" }),
       ];
-      // GL-ARCH-014 (project scope) should match an area-scoped existing guideline
+// GL-ARCH-014 (область project) должен совпасть с существующим правилом области.
       const proposal = { projectId, markdown: GUIDELINE_MD };
       const result = analyzer.classify(proposal, existing);
       expect(result.candidates).toHaveLength(1);
@@ -291,7 +291,7 @@ describe("KnowledgeAnalyzer", () => {
       const existing: GuidelineRecord[] = [
         makeGuideline({ id: "db-gl-1", displayId: "GL-ARCH-020", projectId, category: "ARCH", scope: "area" }),
       ];
-      // GL-SEC-001 has different category, so no candidates
+// У GL-SEC-001 другая категория, поэтому кандидатов нет.
       const proposal = { projectId, markdown: GUIDELINE_DIFFERENT_CATEGORY };
       const result = analyzer.classify(proposal, existing);
       expect(result.classification).toBe("NEW");
@@ -374,7 +374,7 @@ describe("KnowledgeAnalyzer", () => {
       ];
       const proposal = { projectId, markdown: GUIDELINE_MD };
       const result = analyzer.classify(proposal, existing);
-      // Both are ARCH category with project scope → both are candidates
+// Оба имеют категорию ARCH и область project → оба являются кандидатами.
       expect(result.candidates).toHaveLength(2);
     });
 
@@ -391,7 +391,7 @@ describe("KnowledgeAnalyzer", () => {
           content: "All API endpoints must use versioned paths.",
         }),
       ];
-      // Build a proposal with tab and multiple spaces that normalize to the same text
+// Создаём proposal с tab и несколькими пробелами, нормализующимися в одинаковый текст.
       const tabMd = GUIDELINE_MD.replace(
         "All API endpoints must use versioned paths (e.g. /v1/...).",
         "All\tAPI  endpoints   must\t\tuse  versioned  paths  (e.g.  /v1/...).",

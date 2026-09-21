@@ -232,7 +232,7 @@ describe("startup lifecycle", () => {
       await lock2.acquire();
       secondAcquired = true;
     } catch {
-      // secondAcquired remains false
+    // secondAcquired остаётся равным false.
     }
 
     expect(secondAcquired).toBe(false);
@@ -251,24 +251,23 @@ describe("startup lifecycle", () => {
     await lock2.acquire();
     await lock2.release();
 
-    // Should not throw
+  // Ошибка не должна выбрасываться.
   });
 
   it("recovers from stale lock file left by a dead process", async () => {
     const lockPath = join(tmpDir, "stale.lock");
 
-    // Simulate a crashed process by writing a lock file with a PID that
-    // is guaranteed not to exist (use 1 which is always init on Unix,
-    // but on Windows we pick a very large PID that almost certainly
-    // does not exist).
+  // Имитируем аварийно завершившийся процесс, записав файл блокировки с PID,
+  // который гарантированно не существует: на Unix используется 1, всегда занятый
+  // init, а в Windows выбирается очень большой PID, которого почти наверняка нет.
     const stalePid = process.platform === "win32" ? 99999999 : 1;
     await writeFile(lockPath, String(stalePid), "utf-8");
 
-    // If the PID is alive (unlikely but possible for 1 on some Unix
-    // systems), use a PID that is certainly dead.
+  // Если PID занят (маловероятно, но возможно для 1 в некоторых Unix-системах),
+  // используем PID, который точно не существует.
     const lock = new SingleInstanceLock(lockPath);
 
-    // acquire() should succeed by detecting the stale lock and removing it.
+  // acquire() должен успешно обнаружить устаревшую блокировку и удалить её.
     const handle = await lock.acquire();
     expect(handle.pid).toBe(process.pid);
 
