@@ -1,5 +1,5 @@
 /**
- * Domain event value object.
+ * Value object доменного события.
  */
 
 export interface DomainEventInput {

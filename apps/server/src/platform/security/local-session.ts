@@ -15,18 +15,18 @@
 import crypto from "node:crypto";
 
 export interface LocalSessionConfig {
-  /** The loopback host the server binds to (default 127.0.0.1). */
+  /** Loopback host, к которому привязывается сервер; по умолчанию 127.0.0.1. */
   host: string;
-  /** The port the server listens on. */
+  /** Порт, на котором сервер принимает соединения. */
   port: number;
 }
 
 export interface LocalSession {
-  /** The bearer token clients must send. */
+  /** Bearer-токен, который должны передавать клиенты. */
   token: string;
-  /** Fully-qualified origin used for validation, e.g. "http://127.0.0.1:3000". */
+  /** Полный origin для валидации, например "http://127.0.0.1:3000". */
   allowedOrigin: string;
-  /** Separate synchronizer token required on every state-changing request. */
+  /** Отдельный synchronizer token, обязательный для каждого запроса, меняющего состояние. */
   csrfToken: string;
   /** Одноразовый launch capability для первичной выдачи browser session. */
   bootstrapToken: string | null;

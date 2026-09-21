@@ -12,16 +12,16 @@ import type { Database } from "./database.js";
 import { createHash } from "node:crypto";
 
 export interface Migration {
-  /** Monotonically increasing version number (start at 1). */
+  /** Монотонно возрастающий номер версии, начиная с 1. */
   version: number;
-  /** Human-readable name (e.g. `001_system`). */
+  /** Человекочитаемое имя, например `001_system`. */
   name: string;
-  /** Raw SQL to execute. */
+  /** Исходный SQL-код для выполнения. */
   sql: string;
 }
 
 export interface MigrationResult {
-  /** Number of migrations applied in this call. */
+  /** Количество миграций, применённых в этом вызове. */
   applied: number;
 }
 

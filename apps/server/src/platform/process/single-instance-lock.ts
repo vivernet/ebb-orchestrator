@@ -1,19 +1,18 @@
 /**
  * Файловая блокировка единственного экземпляра.
  *
- * Uses a lock file with the current PID to prevent duplicate backend
- * processes.  On acquire, the lock checks whether an existing lock
- * file points to a still-running process.  If the process is dead the
- * stale lock is overwritten.  If the process is alive, the acquisition
- * throws.
+ * Использует lock-файл с текущим PID, чтобы не допустить запуска дублирующих
+ * backend-процессов. При захвате проверяет, указывает ли существующий lock-файл
+ * на работающий процесс. Если процесс завершён, устаревший lock перезаписывается.
+ * Если процесс работает, захват завершается ошибкой.
  *
- * Calling `release()` removes the lock file.
+ * Вызов `release()` удаляет lock-файл.
  */
 
 import { open, readFile, unlink, writeFile } from "node:fs/promises";
 
 export interface LockHandle {
-  /** PID recorded in the lock file. */
+  /** PID, записанный в lock-файле. */
   pid: number;
 }
 
@@ -26,11 +25,11 @@ export class SingleInstanceLock {
   constructor(private readonly lockPath: string) {}
 
   /**
-   * Attempt to acquire the single-instance lock.
+   * Пытается захватить single-instance lock.
    *
-   * - If no lock file exists, create it with the current PID → success.
-   * - If a lock file exists and its PID is still running → throw.
-   * - If a lock file exists and its PID is dead → overwrite → success.
+   * - Если lock-файла нет, создаёт его с текущим PID — успех.
+   * - Если lock-файл есть и его PID ещё работает — выбрасывает ошибку.
+   * - Если lock-файл есть, но его PID завершён — перезаписывает файл — успех.
    */
   async acquire(): Promise<LockHandle> {
     // Пытается прочитать существующий lock-файл.
@@ -68,15 +67,15 @@ export class SingleInstanceLock {
   }
 
   /**
-   * Release the single-instance lock by removing the lock file.
+   * Освобождает single-instance lock удалением lock-файла.
    *
-   * Only removes the file if the current process owns it.
+   * Удаляет файл только если им владеет текущий процесс.
    */
   async release(): Promise<void> {
     if (!this.held) return;
 
     try {
-      // Verify we still own the lock before deleting.
+      // Проверяет владение lock перед удалением.
       const content = await readFile(this.lockPath, "utf-8");
       const pid = Number(content.trim());
       if (pid === process.pid) {
@@ -91,8 +90,8 @@ export class SingleInstanceLock {
 
   /**
    * Проверяет, работает ли процесс с указанным PID.
-   * Uses `process.kill(pid, 0)` which sends no signal but checks
-   * whether the process exists.
+   * Использует `process.kill(pid, 0)`: сигнал не отправляется, проверяется только
+   * существование процесса.
    */
   private isProcessAlive(pid: number): boolean {
     try {

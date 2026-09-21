@@ -1,7 +1,7 @@
 import type { Database } from "../../platform/database/database.js";
 import type { GitProjection } from "@ebb-orchestrator/contracts";
 
-/** Reads optional project-owned integration state; absent keys remain absent. */
+/** Читает необязательное integration state проекта; отсутствующие ключи сохраняются отсутствующими. */
 export function persistedGitState(db: Database, projectId: string): Pick<GitProjection, "repositoryPath" | "defaultBranch" | "github"> {
   const rows = db.all<{ key: string; value_json: string }>(
     "SELECT key,value_json FROM system_state WHERE key IN ($github,$git,$config,$projectConfig)",

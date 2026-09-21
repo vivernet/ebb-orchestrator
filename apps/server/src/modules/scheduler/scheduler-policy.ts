@@ -1,5 +1,5 @@
 /**
- * Scheduler policy - determines eligibility based on capacity and constraints.
+ * Политика планировщика, определяющая элигибельность по capacity и ограничениям.
  */
 
 import type {
@@ -9,10 +9,10 @@ import type {
 } from "./scheduler-types.js";
 
 /**
- * Check if a task status is terminal (completed).
+ * Проверяет, является ли статус задачи terminal (завершённым).
  */
 /**
- * Compare priorities - returns true if a has higher priority than b.
+ * Сравнивает приоритеты и возвращает true, если a имеет более высокий приоритет, чем b.
  */
 export function hasHigherPriority(a: Priority, b: Priority): boolean {
   const order: Record<Priority, number> = {
@@ -25,7 +25,7 @@ export function hasHigherPriority(a: Priority, b: Priority): boolean {
 }
 
 /**
- * Compare categories - returns true if a is earlier (more important) than b.
+ * Сравнивает категории и возвращает true, если a расположена раньше (важнее), чем b.
  */
 export function hasHigherCategory(a: Category, b: Category): boolean {
   const order: Record<Category, number> = {
@@ -40,19 +40,19 @@ export function hasHigherCategory(a: Category, b: Category): boolean {
 }
 
 /**
- * Compare two tasks for deterministic ordering.
- * Returns negative if a should come before b, positive if after, 0 if equal.
+ * Сравнивает две задачи для детерминированного порядка.
+ * Возвращает отрицательное число, если a должна быть раньше b, положительное — если позже, и 0 при равенстве.
  */
 export function compareTasks(a: SchedulableTask, b: SchedulableTask): number {
-  // First, compare by category
+  // Сначала сравнивает категории.
   const catDiff = getCategoryOrder(a.category) - getCategoryOrder(b.category);
   if (catDiff !== 0) return catDiff;
 
-  // Then by priority
+  // Затем сравнивает приоритет.
   const prioDiff = getPriorityOrder(a.priority) - getPriorityOrder(b.priority);
   if (prioDiff !== 0) return prioDiff;
 
-  // Finally by creation time (older first)
+  // В конце сравнивает время создания (сначала более старые).
   return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
 }
 

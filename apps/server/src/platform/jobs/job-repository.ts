@@ -1,5 +1,5 @@
 /**
- * Enqueues a background job with deduplication support.
+ * Добавляет фоновую job в очередь с поддержкой дедупликации.
  */
 
 import { randomUUID } from "node:crypto";
@@ -7,13 +7,13 @@ import type { Database } from "../database/database.js";
 import type { EnqueueJobInput } from "./job-types.js";
 
 /**
- * Insert a new background job.
+ * Вставляет новую фоновую job.
  *
- * If a `dedupeKey` is provided and an active (QUEUED | RUNNING | RETRY_WAIT)
- * job already exists with the same key, the new job is silently dropped and
- * the existing job's id is returned (allowing callers to poll for completion).
+ * Если задан `dedupeKey` и уже существует активная (QUEUED | RUNNING | RETRY_WAIT)
+ * job с тем же ключом, новая job молча отбрасывается, а вызывающему коду
+ * возвращается идентификатор существующей job для опроса завершения.
  *
- * Returns the job id.
+ * Возвращает идентификатор job.
  */
 export function enqueueJob(db: Database, input: EnqueueJobInput): string {
   const id = randomUUID();

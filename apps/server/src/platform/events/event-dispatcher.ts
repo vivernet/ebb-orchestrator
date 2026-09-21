@@ -1,5 +1,5 @@
 /**
- * Dispatches pending outbox events to subscribers via the EventBus.
+ * Передаёт ожидающие события outbox подписчикам через EventBus.
  */
 
 import type { Database } from "../database/database.js";
@@ -33,17 +33,17 @@ export class EventDispatcher {
     private readonly db: Database,
     private readonly bus: EventBus,
   ) {
-    // A few embedders still open a v1-only database in tests/recovery tools.
-    // Production migrations always install these columns, but keeping the
-    // dispatcher readable against the old schema preserves restart safety.
+    // Некоторые встраиваемые сценарии всё ещё открывают базу только со схемой v1
+    // в тестах и recovery-инструментах. Production-миграции всегда добавляют эти
+    // столбцы, но совместимость dispatcher со старой схемой сохраняет безопасность перезапуска.
     this.supportsDeadLetterColumns = this.db
       .all<{ name: string }>("PRAGMA table_info(outbox_events)")
       .some((column) => column.name === "dead_lettered_at");
   }
 
   /**
-   * Dispatch up to `limit` pending events to their subscribers.
-   * Returns the number of successfully dispatched events.
+   * Передаёт подписчикам не более `limit` ожидающих событий.
+   * Возвращает количество успешно переданных событий.
    */
   async dispatchBatch(limit: number): Promise<number> {
     const pendingEvents = this.db.all<PendingEventRow>(
@@ -70,7 +70,7 @@ export class EventDispatcher {
       let allConsumersHandled = true;
 
       for (const subscription of subscriptions) {
-        // Check idempotency
+        // Проверяет idempotency.
         const alreadyProcessed = this.db.get<ProcessedRow>(
           "SELECT event_id FROM processed_events WHERE consumer_name = $consumer AND event_id = $event_id",
           { consumer: subscription.name, event_id: event.id },
@@ -80,13 +80,13 @@ export class EventDispatcher {
 
         try {
           await subscription.handler(event);
-          // Record idempotency
+          // Фиксирует idempotency.
           this.db.run(
             "INSERT INTO processed_events (consumer_name, event_id, processed_at) VALUES ($consumer, $event_id, $processed_at)",
             { consumer: subscription.name, event_id: event.id, processed_at: new Date().toISOString() },
           );
         } catch {
-          // Handler failed — leave event pending and apply bounded backoff.
+          // Handler завершился ошибкой: оставляет событие ожидающим и применяет ограниченный backoff.
           allConsumersHandled = false;
           const nextAttempts = row.attempts + 1;
           if (this.supportsDeadLetterColumns && nextAttempts >= DEFAULT_MAX_ATTEMPTS) {
@@ -101,20 +101,20 @@ export class EventDispatcher {
               { id: event.id, attempts: nextAttempts, available_at: retryAt, error: "handler failed" },
             );
           }
-          // Do not mark other consumers as unprocessed – break out of the subscription loop
+          // Не помечает других consumers как необработанных — выходит из цикла подписок.
           break;
         }
       }
 
       if (allConsumersHandled && subscriptions.length > 0) {
-        // Mark event as processed
+        // Помечает событие обработанным.
         this.db.run(
           "UPDATE outbox_events SET processed_at = $now WHERE id = $id",
           { now: new Date().toISOString(), id: event.id },
         );
         dispatchedCount++;
       } else if (subscriptions.length === 0) {
-        // No subscribers – mark as processed
+        // Подписчиков нет — помечает событие обработанным.
         this.db.run(
           "UPDATE outbox_events SET processed_at = $now WHERE id = $id",
           { now: new Date().toISOString(), id: event.id },

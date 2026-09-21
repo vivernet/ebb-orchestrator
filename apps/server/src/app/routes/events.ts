@@ -1,11 +1,11 @@
 /**
  * Поток Server-Sent Events для live-обновлений backend → browser.
  *
- * The SSE endpoint is authenticated (requires a valid bearer token) but
- * the stream only carries ephemeral UI events. Reconnecting clients
- * should re-fetch projections for authoritative state.
+ * Конечная точка SSE аутентифицирована (требует корректный bearer token),
+ * но поток содержит только эфемерные события UI. После переподключения клиенты
+ * должны заново запросить projections для получения авторитетного состояния.
  *
- * @see spec §13.2 – SSE for live updates
+ * @see spec §13.2 — SSE для live-обновлений
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { EventBus } from "../../platform/events/event-bus.js";
@@ -17,8 +17,8 @@ import type { DomainEvent } from "../../platform/events/domain-event.js";
 export async function eventRoutes(app: FastifyInstance, eventBus?: EventBus): Promise<void> {
   const activeStreams = new Set<FastifyReply["raw"]>();
 
-  // Hijacked SSE replies are outside Fastify's normal response lifecycle.
-  // Destroy them explicitly so app.close() cannot wait forever during shutdown.
+  // Перехваченные SSE-ответы находятся вне обычного жизненного цикла Fastify.
+  // Явно уничтожает их, чтобы app.close() не ожидал бесконечно при остановке.
   app.addHook("preClose", async () => {
     for (const response of activeStreams) response.destroy();
     activeStreams.clear();
@@ -33,7 +33,7 @@ export async function eventRoutes(app: FastifyInstance, eventBus?: EventBus): Pr
         Connection: "keep-alive",
       });
 
-      // Send an initial comment to confirm the connection is open.
+      // Отправляет начальный комментарий, подтверждающий открытое соединение.
       reply.raw.write(":ok\n\n");
       activeStreams.add(reply.raw);
 
@@ -42,7 +42,7 @@ export async function eventRoutes(app: FastifyInstance, eventBus?: EventBus): Pr
       };
       const unsubscribe = eventBus?.observe(writeEvent);
 
-      // Keep the connection alive with periodic heartbeats.
+      // Поддерживает соединение периодическими heartbeat.
       const heartbeat = setInterval(() => {
         reply.raw.write(":heartbeat\n\n");
       }, 15_000);
@@ -53,7 +53,7 @@ export async function eventRoutes(app: FastifyInstance, eventBus?: EventBus): Pr
         unsubscribe?.();
       });
 
-      // Prevent Fastify from closing the response – we own it.
+      // Не позволяет Fastify закрыть ответ: управляет им этот обработчик.
       reply.hijack();
     },
   );

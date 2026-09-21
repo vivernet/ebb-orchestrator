@@ -4,7 +4,7 @@ import { SecretRedactor } from '../security/secret-redactor.js';
 export interface DiagnosticsOptions { appVersion: string; schemaVersion: number; redactor?: SecretRedactor; recentErrors?: string[]; }
 export interface DiagnosticsSnapshot { appVersion: string; schemaVersion: number; migrationHistory: unknown[]; workerHealth: unknown[]; pendingOutbox: number; deadLetter: number; staleLocks: number; recentErrors: string[]; }
 
-/** Produces a JSON-safe operational snapshot with exact-value redaction. */
+/** Формирует безопасный для JSON operational snapshot с точной redaction значений. */
 export class DiagnosticsService {
   constructor(private readonly db: Database, private readonly options: DiagnosticsOptions) {}
   snapshot(): DiagnosticsSnapshot {

@@ -10,8 +10,8 @@ import type { ContextManifest } from './context-types.js';
  */
 export class ManifestBuilder {
   /**
-   * Build a context manifest.
-   * Only persists IDs and versions, NOT secrets.
+   * Формирует manifest контекста.
+   * Сохраняет только ID и версии, но не секреты.
    */
   build(input: {
     runId?: string;
@@ -52,7 +52,7 @@ export class ManifestBuilder {
   }
 
   /**
-   * Build manifest for a developer context package.
+   * Формирует manifest для пакета контекста Developer.
    */
   buildForDeveloper(input: {
     runId: string;
@@ -86,7 +86,7 @@ export class ManifestBuilder {
   }
 
   /**
-   * Build manifest for a reviewer context package.
+   * Формирует manifest для пакета контекста Reviewer.
    */
   buildForReviewer(input: {
     runId: string;
@@ -118,7 +118,7 @@ export class ManifestBuilder {
   }
 
   /**
-   * Build manifest for a QA context package.
+   * Формирует manifest для пакета контекста QA.
    */
   buildForQA(input: {
     runId: string;

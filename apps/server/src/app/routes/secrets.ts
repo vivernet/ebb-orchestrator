@@ -1,6 +1,6 @@
 /**
  * Routes управления секретами.
- * Note: Ни один endpoint не возвращает plaintext секрета после сохранения.
+ * Примечание: ни одна endpoint не возвращает plaintext секрета после сохранения.
  */
 import type { FastifyInstance } from "fastify";
 import { InMemorySecretStore, isSecretStoreUnavailableError, type SecretStore } from '../../platform/security/secret-store.js';

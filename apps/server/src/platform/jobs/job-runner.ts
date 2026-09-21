@@ -24,20 +24,20 @@ export class JobRunner {
   ) {}
 
   /**
-   * Pick up to one runnable job, execute its handler, and update status.
+   * Выбирает не более одной runnable job, выполняет её handler и обновляет статус.
    *
    * Job является runnable, когда:
    * - status равен QUEUED или RETRY_WAIT
    * - run_after <= now
    *
-   * The runner claims the job inside a transaction by setting lease_owner and
-   * lease_expires_at, then executes the handler outside the transaction.
+   * Runner захватывает job внутри транзакции, устанавливая lease_owner и
+   * lease_expires_at, а затем выполняет handler вне транзакции.
    */
   async runOnce(now: Date): Promise<JobRunSummary> {
     const summary: JobRunSummary = { claimed: 0, succeeded: 0, failed: 0 };
 
-    // Try to claim one runnable job at a time – the DB transaction
-    // guarantees no other worker picks the same row.
+    // Захватывает одновременно не более одной runnable job: транзакция DB
+    // гарантирует, что другой worker не выберет ту же строку.
     const job = this.claimJob(now);
 
     if (!job) return summary;
@@ -90,7 +90,7 @@ export class JobRunner {
         // Повторяет с backoff
         const backoffIndex = Math.min(attempts - 1, BACKOFF_SCHEDULE.length - 1);
         const baseDelay = BACKOFF_SCHEDULE[backoffIndex]!;
-        // Add bounded jitter: ±10% of base delay
+        // Добавляет ограниченный jitter: ±10% базовой задержки.
         const jitterMs = (Math.random() * 0.2 - 0.1) * baseDelay * 1000;
         const retryAfter = new Date(now.getTime() + baseDelay * 1000 + jitterMs);
 
@@ -115,8 +115,8 @@ export class JobRunner {
   }
 
   /**
-   * Claim one runnable job inside a transaction.
-   * Returns the claimed row or undefined if nothing is available.
+   * Захватывает одну runnable job внутри транзакции.
+   * Возвращает захваченную строку или undefined, если доступных job нет.
    */
   private claimJob(now: Date): BackgroundJobRow | undefined {
     const leaseOwner = randomUUID();
@@ -124,8 +124,8 @@ export class JobRunner {
     const nowIso = now.toISOString();
 
     return this.db.transaction<BackgroundJobRow | undefined>((tx) => {
-      // Recover jobs whose lease has expired (worker crashed/hung).
-      // Promote them back to QUEUED so the SELECT below can pick them up.
+      // Восстанавливает job с истёкшим lease (worker завершился или завис).
+      // Возвращает их в QUEUED, чтобы следующий SELECT мог их выбрать.
       tx.run(
         `UPDATE background_jobs
          SET status = 'QUEUED', lease_owner = NULL, lease_expires_at = NULL
@@ -133,7 +133,7 @@ export class JobRunner {
         { now: nowIso },
       );
 
-      // Find the highest-priority runnable job that hasn't been claimed
+      // Находит наиболее приоритетную runnable job, которую ещё не захватили.
       const row = tx.get<BackgroundJobRow>(
         `SELECT * FROM background_jobs
          WHERE status IN ('QUEUED', 'RETRY_WAIT')

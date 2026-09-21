@@ -2,7 +2,7 @@ export type ConfigMigrationStatus = 'SUPPORTED' | 'USER_DECISION_REQUIRED' | 'UN
 export interface ConfigMigrationResult<T = unknown> { status: ConfigMigrationStatus; config?: T; reason?: string; }
 export interface VersionedConfig { schemaVersion: number; [key: string]: unknown; }
 
-/** Fails closed for newer configs and refuses ambiguous semantic changes. */
+/** Безопасно отказывает для новых конфигураций и отклоняет неоднозначные семантические изменения. */
 export class ConfigMigrator {
   constructor(private readonly supportedVersion: number) {}
   migrate<T extends VersionedConfig>(input: T): ConfigMigrationResult<T> {

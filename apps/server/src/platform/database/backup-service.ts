@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import type { Database } from './database.js';
 
 export interface BackupResult { path: string; createdAt: string; }
-/** Creates a point-in-time SQLite backup before migrations. */
+/** Создаёт моментальный backup SQLite перед применением миграций. */
 export class BackupService {
   constructor(private readonly db: Database, private readonly databasePath?: string) {}
   createBackup(destinationDir: string): BackupResult {

@@ -2,7 +2,7 @@ import type { BackgroundWorker } from "../process/system-lifecycle.js";
 import type { JobRunner } from "./job-runner.js";
 
 /**
- * Постоянно обрабатывает ограниченную пачку фоновых jobs.
+ * Постоянно обрабатывает ограниченную пачку фоновых job.
  *
  * Worker не регистрирует handlers самостоятельно: registry передаётся в
  * {@link JobRunner}. Поэтому неизвестный тип проходит через существующую

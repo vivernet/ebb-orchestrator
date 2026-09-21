@@ -8,7 +8,7 @@
 export class SecretRedactor {
   private secrets: Map<string, Set<string>> = new Map();
 
-  /** Add a secret value for redaction by service. */
+  /** Добавляет значение секрета для redaction в пределах service. */
   addSecret(service: string, value: string): void {
     if (!this.secrets.has(service)) {
       this.secrets.set(service, new Set());
@@ -16,7 +16,7 @@ export class SecretRedactor {
     this.secrets.get(service)!.add(value);
   }
 
-  /** Redact all known secrets from text. */
+  /** Удаляет из текста все известные секреты. */
   redact(text: string): string {
     let result = text;
     for (const [, values] of this.secrets.entries()) {
@@ -32,12 +32,12 @@ export class SecretRedactor {
     return result;
   }
 
-  /** Get the number of secrets tracked for a service. */
+  /** Возвращает количество отслеживаемых секретов для service. */
   getSecretCount(service: string): number {
     return this.secrets.get(service)?.size ?? 0;
   }
 
-  /** Get all tracked secrets. */
+  /** Возвращает все отслеживаемые секреты. */
   getAllSecrets(): Map<string, Set<string>> {
     return new Map(this.secrets);
   }

@@ -34,8 +34,8 @@ export class ExitCodeError extends Error {
  */
 export class ProcessExecutor {
   /**
-   * Executes a process safely with shell: false to prevent shell injection.
-   * Uses bounded output buffers and supports explicit cancellation via AbortSignal.
+   * Безопасно запускает процесс с shell: false, предотвращая shell injection.
+   * Использует ограниченные буферы вывода и поддерживает явную отмену через AbortSignal.
    */
   async exec(
     file: string,

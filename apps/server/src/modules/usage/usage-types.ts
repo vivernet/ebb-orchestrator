@@ -1,8 +1,8 @@
 /**
- * Usage domain types — UsageRecord, BudgetDecision, BudgetConfig, TriggerReason.
+ * Доменные типы usage: UsageRecord, BudgetDecision, BudgetConfig, TriggerReason.
  */
 
-/** Trigger reasons for AI Runs. */
+/** Причины запуска AI Runs. */
 export type TriggerReason =
   | "PLANNING"
   | "PRODUCT_DEFINITION"
@@ -19,16 +19,16 @@ export type TriggerReason =
   | "EPIC_REVIEW"
   | "ARCHITECTURE_REVIEW";
 
-/** Budget decision after evaluating a reservation request. */
+/** Решение по бюджету после оценки запроса на резервирование. */
 export type BudgetDecision = "ALLOW" | "ASK" | "DENY";
 
-/** Budget scope levels. */
+/** Уровни области действия бюджета. */
 export type BudgetScope = "global" | "project" | "epic" | "task";
 
-/** Budget limit policy. */
+/** Политика ограничения бюджета. */
 export type BudgetPolicy = "soft" | "hard";
 
-/** Budget config entry for a specific scope. */
+/** Запись конфигурации бюджета для конкретной области. */
 export interface BudgetConfig {
   id: string;
   scope: BudgetScope;
@@ -42,7 +42,7 @@ export interface BudgetConfig {
   updatedAt: string;
 }
 
-/** Usage record for an AI Run. */
+/** Запись использования для AI Run. */
 export interface UsageRecord {
   id: string;
   runId: string | null;
@@ -64,22 +64,22 @@ export interface UsageRecord {
   createdAt: string;
 }
 
-/** Result of a budget reservation attempt. */
+/** Результат попытки резервирования бюджета. */
 export interface ReserveResult {
   decision: BudgetDecision;
   reservationId: string | null;
-  /** Explanation for ASK or DENY decisions. */
+  /** Объяснение решения ASK или DENY. */
   reason?: string;
 }
 
-/** Result of a reservation reconciliation. */
+/** Результат reconciliation резервирования. */
 export interface ReconcileResult {
   status: "RECONCILED" | "ALREADY_RECONCILED";
   actualCost: number;
   reservationId: string;
 }
 
-/** Options for creating a reservation. */
+/** Параметры создания резервирования. */
 export interface ReserveOptions {
   projectId: string;
   epicId?: string;
@@ -91,7 +91,7 @@ export interface ReserveOptions {
   reworkCategory?: string;
 }
 
-/** Options for reconciliation token details. */
+/** Параметры token details для reconciliation. */
 export interface ReconcileTokenDetails {
   inputTokens?: number;
   cachedTokens?: number;

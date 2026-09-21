@@ -1,63 +1,63 @@
 /**
- * Context Budget for Orchestrator Hermes.
- * Implements deterministic over-budget pruning.
- * Removes P3 first, then P2, never removes P0.
+ * Context Budget для Orchestrator Hermes.
+ * Реализует детерминированное сокращение контекста при превышении бюджета.
+ * Сначала удаляет P3, затем P2 и никогда не удаляет P0.
  */
 
 import type { Priority } from "./context-types.js";
 
-/** Token estimate for a single context item */
+/** Оценка количества token для одного элемента контекста. */
 const TOKENS_PER_ITEM = 100;
 
 /**
- * Context Budget — deterministic pruning when context exceeds budget.
- * No LLM summarization used.
+ * Context Budget — детерминированное сокращение при превышении бюджета контекста.
+ * LLM summarization не используется.
  */
 export class ContextBudget {
   /**
-   * Prune items by budget pressure.
-   * Deterministic ordering: P3 removed first, then P2, P0 never removed.
+   * Сокращает элементы под давлением бюджета.
+   * Детерминированный порядок: сначала удаляет P3, затем P2; P0 не удаляет.
    *
-   * @param items - Items with optional priority
-   * @param budgetLimit - Token budget limit. Lower = more aggressive pruning.
-   * @returns Pruned items
+   * @param items Элементы с необязательным приоритетом.
+   * @param budgetLimit Лимит token-бюджета; меньшее значение означает более агрессивное сокращение.
+   * @returns Сокращённые элементы.
    */
   pruneByBudget<T extends { priority?: Priority }>(items: T[], budgetLimit: number): T[] {
-    // No budget pressure — return all items
+    // Давления бюджета нет — возвращает все элементы.
     if (budgetLimit >= 10000) {
       return items;
     }
 
-    // P0 items are NEVER pruned
+    // Элементы P0 НИКОГДА не сокращаются.
     const p0 = items.filter((item) => item.priority === "p0");
 
-    // P1 items — always included
+    // Элементы P1 всегда включаются.
     const p1 = items.filter((item) => item.priority === "p1");
 
-    // P2 items — compact/remove under severe pressure
+    // Элементы P2 сокращаются или удаляются при сильном давлении.
     const p2 = items.filter((item) => item.priority === "p2");
 
-    // Budget pressure levels:
+    // Уровни давления бюджета:
     // < 10000: remove P3
     // < 500: remove P3 + P2 (severe)
     // < 100:  remove P3 + P2, keep only P0 (critical)
     if (budgetLimit < 100) {
-      // Critical: only P0 survives
+      // Критический: сохраняются только P0.
       return p0;
     }
 
     if (budgetLimit < 500) {
-      // Severe: P0 + P1 only
+      // Сильный: только P0 + P1.
       return [...p0, ...p1];
     }
 
-    // Moderate: P0 + P1 + P2 (P3 removed)
+    // Умеренный: P0 + P1 + P2 (P3 удаляется).
     return [...p0, ...p1, ...p2];
   }
 
   /**
-   * Estimate token count for a set of items.
-   * Simplified heuristic: 100 tokens per item.
+   * Оценивает количество token для набора элементов.
+   * Упрощённая эвристика: 100 token на элемент.
    */
   estimateTokens<T>(items: T[]): number {
     return items.length * TOKENS_PER_ITEM;

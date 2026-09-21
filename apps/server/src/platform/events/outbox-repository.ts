@@ -1,12 +1,12 @@
 /**
- * Outbox repository – append domain events inside an existing transaction.
+ * Репозиторий outbox: добавляет доменные события в существующей транзакции.
  */
 
 import type { DatabaseTx } from "../database/database.js";
 import type { DomainEvent } from "./domain-event.js";
 
 /**
- * Write a domain event into the outbox within the given transaction.
+ * Записывает доменное событие в outbox внутри указанной транзакции.
  */
 export function appendOutboxEvent(tx: DatabaseTx, event: DomainEvent): void {
   tx.run(

@@ -1,5 +1,5 @@
 /**
- * Error types for configuration validation.
+ * Типы ошибок валидации конфигурации.
  */
 
 /**

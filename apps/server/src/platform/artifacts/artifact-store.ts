@@ -19,7 +19,7 @@ import { join } from "node:path";
 import { ArtifactRepository } from "./artifact-repository.js";
 import { PathResolver } from "../security/path-resolver.js";
 
-/** Public interface returned to callers. */
+/** Публичный интерфейс, возвращаемый вызывающему коду. */
 export interface ArtifactRecord {
   id: string;
   type: string;
@@ -30,7 +30,7 @@ export interface ArtifactRecord {
   status: string;
 }
 
-/** Input for writing a new artifact. */
+/** Входные данные для записи нового артефакта. */
 export interface WriteArtifactInput {
   type: string;
   contentType?: string | null;
@@ -41,11 +41,11 @@ export interface WriteArtifactInput {
   expiresAt?: string | null;
 }
 
-/** Result of a reconciliation pass. */
+/** Результат прохода reconciliation. */
 export interface ReconcileResult {
-  /** Number of staging rows promoted to ACTIVE. */
+  /** Количество staging-строк, переведённых в ACTIVE. */
   promoted: number;
-  /** Number of stale rows deleted. */
+  /** Количество удалённых устаревших строк. */
   cleaned: number;
 }
 

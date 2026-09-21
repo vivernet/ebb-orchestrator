@@ -4,10 +4,10 @@
 
 import type { Database } from "../database/database.js";
 
-/** Status values matching the DB CHECK constraint. */
+/** Значения статуса, соответствующие ограничению DB CHECK. */
 export type ArtifactStatus = "STAGING" | "ACTIVE" | "EXPIRED" | "MISSING";
 
-/** Row shape returned by the `artifacts` table. */
+/** Форма строки, возвращаемой таблицей `artifacts`. */
 export interface ArtifactRow {
   id: string;
   type: string;
@@ -23,7 +23,7 @@ export interface ArtifactRow {
   expires_at: string | null;
 }
 
-/** Parameters for inserting a new artifact row. */
+/** Параметры для вставки новой строки артефакта. */
 export interface InsertArtifactParams {
   id: string;
   type: string;
@@ -45,7 +45,7 @@ export interface InsertArtifactParams {
 export class ArtifactRepository {
   constructor(private readonly db: Database) {}
 
-  /** Insert a new artifact row. */
+  /** Вставляет новую строку артефакта. */
   insert(params: InsertArtifactParams): void {
     this.db.run(
       `INSERT INTO artifacts (id, type, relative_path, content_type, size_bytes, sha256, status, project_id, task_id, run_id, created_at, expires_at)
@@ -67,7 +67,7 @@ export class ArtifactRepository {
     );
   }
 
-  /** Update an artifact's status by id. */
+  /** Обновляет статус артефакта по идентификатору. */
   updateStatus(id: string, status: ArtifactStatus): void {
     this.db.run("UPDATE artifacts SET status = $status WHERE id = $id", {
       $id: id,
@@ -75,7 +75,7 @@ export class ArtifactRepository {
     });
   }
 
-  /** Get an artifact row by id. */
+  /** Возвращает строку артефакта по идентификатору. */
   getById(id: string): ArtifactRow | undefined {
     return this.db.get<ArtifactRow>(
       "SELECT * FROM artifacts WHERE id = $id",
@@ -83,7 +83,7 @@ export class ArtifactRepository {
     );
   }
 
-  /** Get all artifacts with a given status. */
+  /** Возвращает все артефакты с указанным статусом. */
   getByStatus(status: ArtifactStatus): ArtifactRow[] {
     return this.db.all<ArtifactRow>(
       "SELECT * FROM artifacts WHERE status = $status",
@@ -91,7 +91,7 @@ export class ArtifactRepository {
     );
   }
 
-  /** Delete an artifact row by id. */
+  /** Удаляет строку артефакта по идентификатору. */
   deleteById(id: string): void {
     this.db.run("DELETE FROM artifacts WHERE id = $id", { $id: id });
   }

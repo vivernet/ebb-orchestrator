@@ -1,6 +1,6 @@
 /**
- * Context Builder for Orchestrator Hermes.
- * Builds context packages for different agent roles.
+ * Context Builder для Orchestrator Hermes.
+ * Формирует пакеты контекста для разных ролей агентов.
  */
 
 import type {
@@ -23,9 +23,9 @@ import { ContextBudget } from './context-budget.js';
  */
 export class ContextBuilder {
   /**
-   * Build Developer Context Package.
-   * Includes: Task Contract, active findings/defects, workspace metadata,
-   * role contract summary, output instructions.
+   * Формирует пакет контекста Developer.
+   * Включает Task Contract, активные findings/defects, metadata workspace,
+   * сводку role contract и инструкции вывода.
    */
   buildDeveloperPackage(input: {
     taskContract: TaskContract;
@@ -39,17 +39,17 @@ export class ContextBuilder {
     roleContractSummary?: string;
     budgetLimit?: number;
   }): DeveloperContextPackage {
-    // Filter out resolved findings
+    // Исключает закрытые findings.
     const activeFindings = (input.findings ?? []).filter(
       (f) => f.status !== 'resolved' && f.status !== 'closed'
     );
 
-    // Filter out resolved defects
+    // Исключает закрытые defects.
     const activeDefects = (input.defects ?? []).filter(
       (d) => d.status !== 'resolved' && d.status !== 'closed'
     );
 
-    // Apply budget pruning to guidelines
+    // Сокращает guidelines по бюджету.
     const prunedGuidelines = this.pruneByBudget(
       input.guidelines ?? [],
       input.budgetLimit
@@ -74,9 +74,9 @@ export class ContextBuilder {
   }
 
   /**
-   * Build Reviewer Context Package.
-   * Includes: Task Contract, Git diff, checks, relevant constraints.
-   * Does NOT include Developer conversation.
+   * Формирует пакет контекста Reviewer.
+   * Включает Task Contract, Git diff, проверки и относящиеся к делу ограничения.
+   * Не включает разговор Developer.
    */
   buildReviewerPackage(input: {
     taskContract: TaskContract;
@@ -88,7 +88,7 @@ export class ContextBuilder {
     developerSession?: Message[];
     budgetLimit?: number;
   }): ReviewerContextPackage {
-    // Apply budget pruning to guidelines
+    // Сокращает guidelines по бюджету.
     const prunedGuidelines = this.pruneByBudget(
       input.guidelines ?? [],
       input.budgetLimit
@@ -110,8 +110,8 @@ export class ContextBuilder {
   }
 
   /**
-   * Build QA Context Package.
-   * Includes: Acceptance Criteria, behavior, environment, defects to retest.
+   * Формирует пакет контекста QA.
+   * Включает Acceptance Criteria, поведение, окружение и defects для повторной проверки.
    */
   buildQAPackage(input: {
     taskContract: TaskContract;
@@ -143,15 +143,15 @@ export class ContextBuilder {
   }
 
   /**
-   * Apply P0-P3 budget pruning without LLM summarization.
-   * Delegates to ContextBudget for deterministic priority-based pruning.
+   * Применяет сокращение бюджета P0-P3 без LLM summarization.
+   * Делегирует детерминированное сокращение по приоритету ContextBudget.
    */
   private pruneByBudget<T extends { priority?: Priority }>(
     items: T[],
     budgetLimit?: number
   ): T[] {
     if (budgetLimit === undefined) {
-      // No budget pressure - return all items
+      // Давления бюджета нет — возвращает все элементы.
       return items;
     }
 
@@ -160,15 +160,15 @@ export class ContextBuilder {
   }
 
   /**
-   * Estimate size of items (simplified).
+   * Оценивает размер элементов упрощённым способом.
    */
   private estimateSize<T>(items: T[]): number {
-    // Simple heuristic: 100 tokens per item as baseline
+    // Простая эвристика: 100 token на элемент в качестве baseline.
     return items.length * 100;
   }
 
   /**
-   * Build Integration Context Package.
+   * Формирует пакет контекста Integration.
    */
   buildIntegrationPackage(input: {
     taskContract: TaskContract;

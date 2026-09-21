@@ -100,7 +100,7 @@ export async function finalMergeRoutes(app: FastifyInstance, deps: FinalMergeRou
         }
         return reply.code(200).send({ merge: result });
       } catch {
-        // Do not expose repository paths, SHA values, or provenance details.
+        // Не раскрывает пути репозитория, значения SHA или сведения о provenance.
         return reply.code(409).send({ error: "final merge provenance validation failed" });
       }
     },

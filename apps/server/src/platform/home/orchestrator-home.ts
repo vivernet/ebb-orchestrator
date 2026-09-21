@@ -1,47 +1,47 @@
 /**
- * Resolves the orchestrator home directory and its well-known subpaths.
+ * Определяет домашний каталог оркестратора и известные подпути.
  *
- * Precedence:
- * 1. `EBB_ORCHESTRATOR_HOME` env var (explicit override)
+ * Приоритет источников:
+ * 1. Переменная окружения `EBB_ORCHESTRATOR_HOME` (явное переопределение).
  * 2. `~/.ebb-orchestrator/` (platform-appropriate default)
  */
 
 import { posix, win32 } from "node:path";
 import type { Platform } from "../config/app-config.js";
 
-/** All well-known paths inside the orchestrator home directory. */
+/** Все известные пути внутри домашнего каталога оркестратора. */
 export interface OrchestratorHomePaths {
-  /** Root of the orchestrator home. */
+  /** Корень домашнего каталога оркестратора. */
   root: string;
-  /** Path to the SQLite database file. */
+  /** Путь к файлу базы данных SQLite. */
   database: string;
-  /** Directory for build artifacts. */
+  /** Каталог артефактов сборки. */
   artifacts: string;
-  /** Directory for runtime state. */
+  /** Каталог состояния runtime. */
   runtime: string;
-  /** Directory for log files. */
+  /** Каталог файлов журналов. */
   logs: string;
-  /** Directory for backup snapshots. */
+  /** Каталог резервных snapshots. */
   backups: string;
-  /** Directory for git worktrees. */
+  /** Каталог Git worktrees. */
   worktrees: string;
 }
 
 /**
- * Environment variables required for home resolution.
- * Only the relevant keys are accessed.
+ * Переменные окружения, необходимые для определения домашнего каталога.
+ * Читаются только относящиеся к делу ключи.
  */
 export interface HomeEnv {
   EBB_ORCHESTRATOR_HOME?: string;
-  /** Used as fallback on Windows when EBB_ORCHESTRATOR_HOME is not set. */
+  /** Используется как fallback в Windows, если EBB_ORCHESTRATOR_HOME не задана. */
   USERPROFILE?: string;
-  /** Used as fallback on POSIX when EBB_ORCHESTRATOR_HOME is not set. */
+  /** Используется как fallback в POSIX, если EBB_ORCHESTRATOR_HOME не задана. */
   HOME?: string;
 }
 
 /**
- * Select the appropriate `join` implementation for the target platform.
- * posix.join always uses forward slashes; path.join uses OS-native separators.
+ * Выбирает подходящую реализацию `join` для целевой платформы.
+ * posix.join всегда использует прямые слеши, а path.join — разделители ОС.
  */
 function platformJoin(platform: Platform): (a: string, b: string) => string {
   return platform === "win32" ? win32.join : posix.join;
@@ -69,7 +69,7 @@ function resolveHomeRoot(
 }
 
 /**
- * Resolve all well-known orchestrator home paths for the given environment and platform.
+ * Определяет все известные пути домашнего каталога оркестратора для указанного окружения и платформы.
  */
 export function resolveOrchestratorHome(
   env: HomeEnv,

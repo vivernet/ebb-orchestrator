@@ -25,8 +25,8 @@ export class TaskProjection {
      const contract = parseJson(task.contract_json ?? "{}");
      const usage = this.db.get<UsageRow>("SELECT COALESCE(SUM(input_tokens),0) inputTokens,COALESCE(SUM(cached_tokens),0) cachedTokens,COALESCE(SUM(output_tokens),0) outputTokens,COALESCE(SUM(total_tokens),0) totalTokens,COALESCE(SUM(actual_cost),0) cost FROM usage_records WHERE task_id=$id", { id }) ?? { inputTokens: 0, cachedTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 };
      const persistedGit = persistedGitState(this.db, String(task.project_id));
-     // The workflow status is the authoritative, persisted stage.  Do not
-     // infer a stage from runs or from the presence of a git operation.
+     // Статус workflow — авторитетный сохранённый этап. Не выводить этап
+     // из runs или наличия Git-операции.
      return { task, contract, lifecycle: { status: task.status, stage: task.status, updatedAt: String(task.updated_at ?? "") || null }, git: { repositoryPath: git?.repository_path ?? persistedGit.repositoryPath, branch: git?.branch_name ?? null, defaultBranch: git?.target_ref ?? persistedGit.defaultBranch, github: persistedGit.github, worktreePath: git?.worktree_path ?? null }, runs, findings, defects, dependencies, approvals, events, usage, waitReason: schedulerWaitReason(this.db, task, this.scheduler) };
   }
 }

@@ -4,13 +4,13 @@ import { GitReconciler } from "../../modules/git/git-reconciler.js";
  * Startup reconciler – collects and runs reconciliation functions at boot.
  *
  * Each reconciler is called in registration order.  Errors are captured
- * so that a failing reconciler does not prevent later ones from running.
+ * чтобы ошибка одного reconciler не препятствовала запуску следующих.
  */
 
 export interface StartupReport {
-  /** Number of reconcilers that were invoked (including failures). */
+  /** Количество вызванных reconcilers, включая завершившиеся ошибкой. */
   reconcilersRun: number;
-  /** Errors thrown by individual reconcilers. */
+  /** Ошибки, выброшенные отдельными reconcilers. */
   errors: Error[];
 }
 
@@ -22,14 +22,14 @@ export class StartupReconciler {
   private gitReconciler: GitReconciler | null = null;
 
   /**
-   * Register a reconciliation function to run at startup.
+   * Регистрирует функцию reconciliation для запуска при старте.
    */
   register(fn: () => Promise<void>): void {
     this.reconcilers.push(fn);
   }
 
   /**
-   * Register the git reconciler to check for drift at startup.
+   * Регистрирует Git reconciler для проверки расхождений при старте.
    */
   registerGitReconciler(reconciler: GitReconciler): void {
     this.gitReconciler = reconciler;
@@ -37,17 +37,16 @@ export class StartupReconciler {
   }
 
   /**
-   * Get the registered git reconciler.
+   * Возвращает зарегистрированный Git reconciler.
    */
   getGitReconciler(): GitReconciler | null {
     return this.gitReconciler;
   }
 
   /**
-   * Execute all registered reconcilers in order.
+   * Выполняет все зарегистрированные reconcilers по порядку.
    *
-   * Returns a {@link StartupReport} summarising how many ran and
-   * any errors that occurred.
+   * Возвращает {@link StartupReport} с количеством запусков и возникшими ошибками.
    */
   async run(): Promise<StartupReport> {
     const errors: Error[] = [];

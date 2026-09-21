@@ -1,29 +1,29 @@
 /**
- * Resource lock service - manages resource locks for tasks.
+ * Сервис resource locks, управляющий блокировками ресурсов задач.
  */
 
 import type { Database } from "../../platform/database/database.js";
 import type { ReservationReleaseResult, SchedulerReconciliationResult } from "./scheduler-types.js";
 
 /**
- * Service for acquiring and releasing resource locks.
+ * Сервис захвата и освобождения resource locks.
  */
 export class ResourceLockService {
   constructor(private readonly db: Database) {}
 
   /**
-   * Attempt to acquire a resource lock for a task.
-   * Returns true if the lock was acquired, false if already held by another task.
+   * Пытается захватить resource lock для задачи.
+   * Возвращает true при успешном захвате и false, если lock уже удерживает другая задача.
    */
   acquire(taskId: string, _ownerId: string): boolean {
     return this.db.transaction((tx) => {
-      // Check if any task currently holds the lock
+      // Проверяет, удерживает ли какая-либо задача lock.
       const existing = tx.get<{ reservation_id: string; owner_id: string }>(
         "SELECT reservation_id, owner_id FROM scheduler_resource_locks WHERE resource_key = 'global'",
       );
 
       if (existing) {
-        // Lock already exists - check if it's for the same task
+        // Lock уже существует — проверяет, принадлежит ли он той же задаче.
         if (existing.owner_id === `task:${taskId}`) {
           return true; // Same task already holds it
         }
@@ -41,7 +41,7 @@ export class ResourceLockService {
   }
 
   /**
-   * Release a resource lock held by a task.
+   * Освобождает resource lock, удерживаемый задачей.
    */
   release(taskId: string): ReservationReleaseResult {
     return this.db.transaction((tx) => {
@@ -61,7 +61,7 @@ export class ResourceLockService {
   }
 
   /**
-   * Check if a task currently holds a resource lock.
+   * Проверяет, удерживает ли задача resource lock.
    */
   isLocked(taskId: string): boolean {
     const lock = this.db.get(
@@ -72,8 +72,8 @@ export class ResourceLockService {
   }
 
   /**
-   * Find and release locks owned by stale/dead owners.
-   * Dead owners are those whose tasks have been cancelled/completed/deleted.
+   * Находит и освобождает locks устаревших или завершившихся владельцев.
+   * Завершившимися считаются владельцы, чьи задачи отменены, завершены или удалены.
    */
   reconcileDeadOwners(): SchedulerReconciliationResult {
     return this.db.transaction((tx) => {
@@ -89,8 +89,8 @@ export class ResourceLockService {
           { id: reservation_id },
         );
         if (!reservation || reservation.status !== "RESERVED") {
-          // An orphaned or already-released reservation cannot establish the
-          // lock's owner. Preserve it for authoritative reconciliation.
+          // Осиротевшее или уже освобождённое резервирование не может определить
+          // владельца lock. Сохраняет его для authoritative reconciliation.
           result.blockedReservationIds.push(reservation_id);
           continue;
         }
@@ -105,8 +105,8 @@ export class ResourceLockService {
 
         let dead: boolean;
         if (reservation.kind === "LOCK" && reservation.subject_id.startsWith("lock:")) {
-          // Legacy locks retain their recorded owner, which may not be a task
-          // identifier. Their authoritative task association is the subject.
+          // Legacy locks сохраняют записанного владельца, который может не быть
+          // идентификатором задачи. Их authoritative-связь с задачей — это subject.
           const taskId = reservation.subject_id.slice("lock:".length);
           const task = tx.get<{ status: string }>("SELECT status FROM tasks WHERE id=$id", { id: taskId });
           dead = !task || ["CANCELLED", "DONE", "FAILED", "INTEGRATED_INTO_EPIC", "RELEASED"].includes(task.status);
@@ -117,19 +117,19 @@ export class ResourceLockService {
         } else if (reservation.owner_id.startsWith("run:")) {
           if (!hasAgentRuns) continue;
           const runId = reservation.owner_id.slice("run:".length);
-          // Run-owned locks are governed by the AgentRun and its reservation,
-          // not by the task-shaped owner convention.
+          // Locks, принадлежащие run, определяются AgentRun и его резервированием,
+          // а не соглашением о владельце в форме task.
           const run = tx.get<{ status: string }>("SELECT status FROM agent_runs WHERE id=$runId", { runId });
           const ownsReservation = reservation.run_id === runId || reservation.subject_id === runId;
           if (!ownsReservation) {
-            // A mismatched owner is evidence of drift, not proof that either
-            // side is stale. Preserve both durable authorities until the
-            // owner can be established authoritatively.
+            // Несовпадение владельца — свидетельство расхождения, но не доказательство,
+            // что одна из сторон устарела. Сохраняет обе долговечные authority,
+            // пока владелец не будет определён авторитетно.
             continue;
           }
           dead = !run || ["FAILED", "CANCELLED", "COMPLETED"].includes(run.status);
         } else {
-          // Unknown owner formats are not task owners. Leave them intact until
+          // Неизвестные форматы владельца не являются владельцами задач. Оставляет их без изменений до
           // their reservation authority can reconcile them safely.
           continue;
         }

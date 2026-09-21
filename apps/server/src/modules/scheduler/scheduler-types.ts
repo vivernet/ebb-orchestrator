@@ -1,8 +1,8 @@
 /**
- * Scheduler types - eligibility, capacity constraints, and resource locks.
+ * Типы планировщика: элигибельность, ограничения capacity и resource locks.
  */
 
-/** Safe defaults used only when no persisted scheduler configuration exists. */
+/** Безопасные значения по умолчанию, используемые только при отсутствии сохранённой конфигурации. */
 export const DEFAULT_SCHEDULER_LIMITS = {
   globalMax: 4,
   projectMax: 3,
@@ -16,12 +16,12 @@ export interface SchedulerLimits {
 }
 
 /**
- * Priority levels - higher priority tasks run first.
+ * Уровни приоритета: задачи с более высоким приоритетом запускаются первыми.
  */
 export type Priority = "Critical" | "High" | "Normal" | "Low";
 
 /**
- * Reasons a task may be waiting for resources.
+ * Причины, по которым задача может ожидать ресурсы.
  */
 export type WaitReason =
   | "WAITING_FOR_DEPENDENCY"
@@ -32,14 +32,14 @@ export type WaitReason =
   | "WAITING_FOR_ROLE_CAPACITY";
 
 /**
- * Reasons a task may be blocked (hard constraints).
+ * Причины блокировки задачи (жёсткие ограничения).
  */
 export type BlockReason =
   | "BLOCKED_BY_WORKFLOW"
   | "BLOCKED_BY_PROJECT_STATE";
 
 /**
- * Eligibility status of a task for scheduling.
+ * Статус элигибельности задачи для планирования.
  */
 export type Eligibility =
   | { status: "RUNNABLE" }
@@ -47,7 +47,7 @@ export type Eligibility =
   | { status: "BLOCK"; reason: BlockReason };
 
 /**
- * Deterministic category ordering - tasks in earlier categories run first.
+ * Детерминированный порядок категорий: задачи в более ранних категориях запускаются первыми.
  */
 export type Category =
   | "integration"        // integration/unblock
@@ -58,7 +58,7 @@ export type Category =
   | "optional";          // optional/docs
 
 /**
- * Task data needed for scheduler evaluation.
+ * Данные задачи, необходимые для оценки планировщиком.
  */
 export interface SchedulableTask {
   id: string;
@@ -75,26 +75,26 @@ export interface SchedulableTask {
 }
 
 /**
- * Result of recalculate call.
+ * Результат вызова recalculate.
  */
 export interface RecalculateResult {
-  /** Tasks that are eligible to run now. */
+  /** Задачи, которые можно запустить сейчас. */
   runnables: SchedulableTask[];
-  /** Tasks that are waiting for something. */
+  /** Задачи, ожидающие внешнего условия. */
   waiting: { task: SchedulableTask; reason: WaitReason }[];
-  /** Tasks that are blocked. */
+  /** Заблокированные задачи. */
   blocked: { task: SchedulableTask; reason: BlockReason }[];
-  /** Count of currently running tasks (for capacity). */
+  /** Количество выполняющихся задач для расчёта capacity. */
   currentRunningCount: number;
 }
 
-/** Result of a reservation cleanup request. */
+/** Результат запроса очистки резервирований. */
 export type ReservationReleaseResult =
   | { status: "RELEASED"; reservationId: string }
   | { status: "ALREADY_RELEASED" }
   | { status: "BLOCKED_OWNERSHIP_DRIFT"; reservationId: string };
 
-/** Durable scheduler reconciliation outcome. */
+/** Результат долговечной reconciliation планировщика. */
 export interface SchedulerReconciliationResult {
   releasedReservationIds: string[];
   blockedReservationIds: string[];

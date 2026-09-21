@@ -1,14 +1,14 @@
 /**
- * EnvironmentBuilder creates isolated environment variables for subprocess execution.
- * It builds child environments from a small platform baseline plus explicitly scoped injected variables.
- * Unlike the traditional approach of cloning process.env and blacklisting known names,
- * this implementation only preserves variables required to locate/launch approved executables.
+ * EnvironmentBuilder создаёт изолированные переменные окружения для запуска subprocess.
+ * Он строит окружение дочернего процесса из небольшого platform baseline и явно ограниченных injected variables.
+ * В отличие от традиционного копирования process.env с последующим исключением известных имён,
+ * эта реализация сохраняет только переменные, необходимые для поиска и запуска разрешённых executable.
  */
 
 export type BuildEnvOptions = {
-  /** List of environment variables to preserve from the base platform */
+  /** Список переменных окружения, сохраняемых из базовой платформы. */
   allowlist: string[];
-  /** Explicitly scoped variables to inject into the execution environment */
+  /** Явно ограниченные переменные для добавления в окружение выполнения. */
   injected: Record<string, string>;
 };
 
@@ -17,8 +17,8 @@ export type BuildEnvOptions = {
  */
 export class EnvironmentBuilder {
   /**
-   * Get the base platform environment. Only minimal variables required for
-   * launching approved executables are included (PATH and platform-specific base variables).
+   * Возвращает базовое окружение платформы. В него входят только минимальные переменные,
+   * необходимые для запуска разрешённых executable (PATH и базовые переменные платформы).
    */
   private getBaseEnv(): Record<string, string> {
     const base: Record<string, string> = {};
@@ -34,8 +34,8 @@ export class EnvironmentBuilder {
   /**
    * Строит изолированное окружение для запуска subprocess.
    * 
-   * @param options - Configuration for environment building
-   * @returns A minimal, isolated environment object
+   * @param options Конфигурация построения окружения.
+   * @returns Минимальный изолированный объект окружения.
    */
   build(options: BuildEnvOptions): Record<string, string> {
     const env: Record<string, string> = {};

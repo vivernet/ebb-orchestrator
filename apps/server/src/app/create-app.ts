@@ -1,11 +1,11 @@
 /**
- * Application factory for the orchestrator server.
+ * Фабрика приложения сервера оркестратора.
  *
- * Creates a Fastify instance with local-session authentication, origin
- * validation, closed CORS, and all top-level routes registered.
+ * Создаёт экземпляр Fastify с аутентификацией local-session, валидацией origin,
+ * закрытым CORS и зарегистрированными маршрутами верхнего уровня.
  *
- * @see spec §13.2 – loopback-only, local session auth, origin validation,
- *                    CSRF protection, closed CORS, SSE for live updates.
+ * @see spec §13.2 — режим только loopback, аутентификация local session,
+ *                    валидация origin, защита CSRF, закрытый CORS и SSE для live-обновлений.
  */
 import Fastify, { type FastifyInstance } from "fastify";
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
@@ -54,9 +54,9 @@ import type { EventBus } from "../platform/events/event-bus.js";
 const LOCAL_SESSION_COOKIE = "ebb_local_session";
 
 export interface AppDeps {
-  /** Loopback host (default "127.0.0.1"). */
+  /** Loopback host; по умолчанию "127.0.0.1". */
   host?: string;
-  /** Port the server will listen on (default 3000). */
+  /** Порт, на котором сервер принимает соединения; по умолчанию 3000. */
   port?: number;
   db?: Database;
   projectService?: ProjectCommandService;
@@ -65,21 +65,21 @@ export interface AppDeps {
   onboardingService?: OnboardingCommandService;
   runService?: RunCommandService;
   dependencyService?: DependencyCommandService;
-  /** Optional authority-bound factory; production default uses MergeService. */
+  /** Необязательная authority-bound factory; production по умолчанию использует MergeService. */
   finalMergeServiceFactory?: FinalMergeServiceFactory;
-  /** Production Epic planning/orchestration facade. */
+  /** Production facade для Epic planning/orchestration. */
   epicOrchestrator?: Pick<EpicOrchestrator, "start" | "approveAndRun"> & Partial<Pick<EpicOrchestrator, "approveFinalMergeAsync">>;
-  /** Production must provide the single shared SchedulerService instance. */
+  /** Production должен передать единственный общий экземпляр SchedulerService. */
   scheduler: SchedulerService;
-  /** Production must provide the real runtime. Test doubles belong in test deps. */
+  /** Production должен передать настоящий runtime; test doubles относятся к test deps. */
   runtime?: AgentRuntime;
   github?: { worker: GitHubSyncWorker; repository: string };
   diagnostics?: DiagnosticsService;
-  /** Production SecretStore; tests may inject an explicit deterministic backend. */
+  /** Production SecretStore; тесты могут передать явный deterministic backend. */
   secretStore?: SecretStore;
-  /** Lifecycle status exposed by the public readiness probe. */
+  /** Статус lifecycle, публикуемый в открытом readiness probe. */
   status?: StatusTrackerInterface;
-  /** Read-only event stream source for authenticated SSE clients. */
+  /** Источник потока событий только для чтения для аутентифицированных SSE-клиентов. */
   eventBus?: EventBus;
   /** Абсолютный путь к собранному Vite bundle для same-origin production UI. */
   webRoot?: string;
@@ -94,12 +94,12 @@ export interface OrchestratorApp extends FastifyInstance {
 }
 
 /**
- * Build and return a Fastify instance ready to listen.
+ * Создаёт и возвращает экземпляр Fastify, готовый принимать соединения.
  *
- * - Registers a global preHandler that enforces local-session auth and
- *   origin validation on every route except `GET /api/v1/health`.
- * - Attaches `sessionToken` on the returned instance for programmatic
- *   access (used by tests and by main.ts for startup logging).
+ * - Регистрирует глобальный preHandler, обеспечивающий аутентификацию local-session и
+ *   валидацию origin на всех маршрутах, кроме `GET /api/v1/health`.
+ * - Добавляет `sessionToken` к возвращённому экземпляру для programmatic-доступа
+ *   (используется тестами и main.ts для startup logging).
  */
 export function createApp(deps: AppDeps): OrchestratorApp {
   const host = deps.host ?? "127.0.0.1";
@@ -120,26 +120,26 @@ export function createApp(deps: AppDeps): OrchestratorApp {
 
   const app = Fastify({ logger: false }) as unknown as OrchestratorApp;
 
-  // Expose the token on the instance so callers (tests, main) can read it.
+  // Публикует token в экземпляре, чтобы вызывающий код (тесты, main) мог его прочитать.
   app.sessionToken = session.token;
   app.csrfToken = session.csrfToken;
   app.bootstrapToken = session.bootstrapToken;
 
-  // ── Global security hook ───────────────────────────────────────────
-  // Skip authentication for the health endpoint; everything else requires
-  // a valid bearer token or the HttpOnly browser session cookie. Mutating methods also
-  // require a matching Origin header to prevent CSRF.
+  // ── Глобальный security hook ───────────────────────────────────────
+  // Пропускает аутентификацию для health endpoint; все остальные маршруты требуют
+  // корректный bearer token или HttpOnly cookie браузерной сессии. Изменяющие методы также
+  // требуют совпадающий Origin header для предотвращения CSRF.
   app.addHook("preHandler", async (request, reply) => {
     const url = new URL(request.url, session.allowedOrigin).pathname;
 
-    // Built Web UI assets do not carry authority. Every API route remains
-    // behind the local session boundary below.
+    // Собранные assets Web UI не несут authority. Каждый API-маршрут остаётся
+    // за границей local session ниже.
     if (!url.startsWith("/api/v1/")) return;
 
-    // Health is public – no auth, no origin check.
+    // Health открыт: auth и проверка origin не требуются.
     if (url === "/api/v1/health" || url === "/api/v1/session/bootstrap") return;
 
-    // ── 1. Authentication ────────────────────────────────────────────
+    // ── 1. Аутентификация ─────────────────────────────────────────────
     const auth = request.headers.authorization;
     const sessionCookie = readCookie(request.headers.cookie, LOCAL_SESSION_COOKIE);
     if (auth !== `Bearer ${session.token}` && sessionCookie !== session.token) {
@@ -147,12 +147,12 @@ export function createApp(deps: AppDeps): OrchestratorApp {
       return reply;
     }
 
-    // ── 2. Origin validation (mutating methods only) ─────────────────
+    // ── 2. Валидация origin (только для изменяющих методов) ───────────
     const mutating = request.method !== "GET" && request.method !== "HEAD";
     if (mutating) {
       const origin = request.headers.origin;
-      // A bearer token is not a CSRF token by itself: browser requests must
-      // also prove they originated from this local application.
+      // Bearer token сам по себе не является CSRF token: браузерные запросы также
+      // должны подтвердить происхождение из этого локального приложения.
       if (origin !== session.allowedOrigin) {
         reply.code(403).send({ error: "forbidden" });
         return reply;
@@ -164,8 +164,8 @@ export function createApp(deps: AppDeps): OrchestratorApp {
     }
   });
 
-  // ── Routes ─────────────────────────────────────────────────────────
-  // Public
+  // ── Маршруты ───────────────────────────────────────────────────────
+  // Открытые
   app.register(async (instance) => healthRoutes(instance, deps.status));
   app.get("/api/v1/session/bootstrap", async (request, reply) => {
     const supplied = request.headers["x-ebb-bootstrap-token"];
@@ -187,7 +187,7 @@ export function createApp(deps: AppDeps): OrchestratorApp {
     origin: session.allowedOrigin,
   }));
 
-  // Authenticated
+  // Аутентифицированные
   app.register(async (instance) => eventRoutes(instance, deps.eventBus));
   app.register(async (instance) => schedulerRoutes(instance, scheduler));
   app.register(async (instance) => {
@@ -216,7 +216,7 @@ export function createApp(deps: AppDeps): OrchestratorApp {
     if (deps.diagnostics) await diagnosticsRoutes(instance, deps.diagnostics);
   });
 
-  // Protected test route (used by security tests)
+  // Защищённый тестовый маршрут (используется security-тестами).
   app.post("/api/v1/protected-test", async () => {
     return { ok: true };
   });

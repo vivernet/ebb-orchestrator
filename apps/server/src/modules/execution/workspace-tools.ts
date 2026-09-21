@@ -1,6 +1,6 @@
 /**
  * WorkspaceTools provides general workspace utilities.
- * All operations are confined to the capability-assigned workspace.
+ * Все операции ограничены workspace, назначенным capability.
  */
 import { PathResolver } from '../../platform/security/path-resolver.js';
 import * as fs from 'node:fs';
@@ -19,7 +19,7 @@ export class WorkspaceTools {
   ) {}
 
   /**
-   * Read a file from the workspace.
+   * Читает файл из workspace.
    */
   async readFile(relPath: string): Promise<WorkspaceReadResult> {
     const fullPath = path.resolve(this.workspace, relPath);
@@ -38,7 +38,7 @@ export class WorkspaceTools {
   }
 
   /**
-   * Write a file to the workspace.
+   * Записывает файл в workspace.
    */
   async writeFile(relPath: string, content: string): Promise<WorkspaceWriteResult> {
     const fullPath = path.resolve(this.workspace, relPath);
@@ -59,7 +59,7 @@ export class WorkspaceTools {
   }
 
   /**
-   * List files in a directory within the workspace.
+   * Возвращает список файлов в каталоге внутри workspace.
    */
   async listDir(relPath: string): Promise<string[]> {
     const fullPath = path.resolve(this.workspace, relPath);
@@ -77,7 +77,7 @@ export class WorkspaceTools {
   }
 
   /**
-   * Check if a path exists in the workspace.
+   * Проверяет существование пути в workspace.
    */
   async exists(relPath: string): Promise<boolean> {
     const fullPath = path.resolve(this.workspace, relPath);

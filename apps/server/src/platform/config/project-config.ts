@@ -1,8 +1,8 @@
 /**
- * Versioned project configuration schema.
+ * Версионируемая схема конфигурации проекта.
  *
- * Uses Zod strict objects so that unknown fields are rejected at parse time
- * (see design spec §20 — unknown fields in versioned config are validation errors).
+ * Использует строгие объекты Zod, поэтому неизвестные поля отклоняются при разборе
+ * (см. design spec §20: неизвестные поля версионируемой конфигурации являются ошибками валидации).
  */
 
 import { z } from "zod";
@@ -24,9 +24,9 @@ export const ProjectConfigV1Schema = z.strictObject({
 export type ProjectConfigV1 = z.infer<typeof ProjectConfigV1Schema>;
 
 /**
- * Parse and validate raw input as a ProjectConfigV1.
+ * Разбирает и валидирует исходные данные как ProjectConfigV1.
  *
- * @throws {ConfigValidationError} if the input does not match the schema.
+ * @throws {ConfigValidationError} Если входные данные не соответствуют схеме.
  */
 export function parseProjectConfig(input: unknown): ProjectConfigV1 {
   const result = ProjectConfigV1Schema.safeParse(input);
