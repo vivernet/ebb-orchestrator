@@ -15,6 +15,47 @@ pnpm hermes:setup
 pnpm hermes:check
 ```
 
+## Skills, capabilities и provider
+
+Канонический список и exact source/installed paths находится в
+[`hermes-capabilities.md`](hermes-capabilities.md). Для explicit Inception Labs
+development profile:
+
+```bash
+pnpm hermes:provider -- inception
+```
+
+Команда настраивает `custom:inception`, endpoint
+`https://api.inceptionlabs.ai/v1`, alias `mercury-2` и `key_env:
+INCEPTION_API_KEY`; значение ключа остаётся во внешнем окружении.
+
+## Bounded provider smoke
+
+Для ограниченной проверки provider transport используется:
+
+```bash
+pnpm hermes:smoke
+```
+
+Источник команды —
+[`scripts/hermes-provider-smoke.mjs`](../../scripts/hermes-provider-smoke.mjs).
+Smoke не запускает repository plan. Он создаёт disposable `HERMES_HOME`, пустой
+workspace и synthetic prompt `Reply with exactly: SMOKE_OK` во временном каталоге.
+В Hermes передаётся только явный environment allowlist: platform process keys,
+temporary/home paths, `HERMES_MODEL` и `INCEPTION_API_KEY`; произвольные keys и
+repository secrets не передаются. Запуск выполняется с `shell:false` и bounded
+timeout.
+
+Child stdout/stderr не публикуются. Результат ограничен fixed marker, exit code,
+`redacted=true` и `cleanup_verified`; temporary workspace, profile и prompt
+удаляются после завершения. Для smoke не подключаются реальный worktree, plan,
+MCP toolset или repository-derived context.
+
+Smoke подтверждает только provider reachability/auth и безопасную обработку
+ответа. Он не заменяет provider-backed parity run: не проверяет выполнение
+реального plan, delegation subagents, repository context transport или условие
+удаления `.opencode`.
+
 ## Запуск implementation plan
 
 ```bash

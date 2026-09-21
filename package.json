@@ -15,6 +15,9 @@
     "web:build": "pnpm --filter @ebb-orchestrator/web build",
     "hermes:setup": "node scripts/hermes-dev.mjs setup",
     "hermes:check": "node scripts/hermes-dev.mjs check",
+    "hermes:provider": "node scripts/hermes-dev.mjs provider",
+    "hermes:smoke": "node scripts/hermes-provider-smoke.mjs",
+    "hermes:test": "node --test scripts/hermes-dev.test.mjs",
     "hermes:execute": "node scripts/hermes-dev.mjs execute"
   },
   "devDependencies": {

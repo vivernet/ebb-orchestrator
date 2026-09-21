@@ -1,6 +1,9 @@
-import { useEffect, useState } from 'react';
-import type { ProjectOverviewProjection } from '@ebb-orchestrator/contracts';
-import { apiClient } from '../../api/client.js';
+import { useCallback, useMemo } from 'react';
+import { apiPaths, type ProjectOverviewProjection } from '@ebb-orchestrator/contracts';
+import { Link } from 'react-router';
+import { apiClient, toClientPath } from '../../api/client.js';
+import { createQueryStore } from '../../state/query-store.js';
+import { useQuery } from '../../state/use-query.js';
 
 interface ProjectPageProps {
   id: string;
@@ -10,36 +13,33 @@ interface ProjectPageProps {
  * Представляет пользовательский экран ProjectPage; авторитетные проверки выполняются backend.
  */
 export default function ProjectPage({ id }: ProjectPageProps) {
-  const [projection, setProjection] = useState<ProjectOverviewProjection | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [retry, setRetry] = useState(0);
-  useEffect(() => {
-    setError(null);
-    void apiClient.get<ProjectOverviewProjection>(`/projects/${encodeURIComponent(id)}`).then(setProjection).catch((cause: unknown) => {
-      setError(cause instanceof Error ? cause.message : 'unknown error');
-    });
-  }, [id, retry]);
+  const store = useMemo(() => createQueryStore(), []);
+  const projectPath = toClientPath(apiPaths.project(id));
+  const fetcher = useCallback((signal: AbortSignal) => apiClient.get<ProjectOverviewProjection>(projectPath, { signal }), [projectPath]);
+  const query = useQuery(store, projectPath, undefined, fetcher);
+  const projection = query.data;
   const project = projection?.project;
+  const retry = useCallback(() => { void query.refetch().catch(() => undefined); }, [query.refetch]);
+  const notFound = query.status === 'success' && projection?.project === null;
   return (
     <div className="project-page">
       <h1>Project: {project?.displayName ?? project?.name ?? id}</h1>
-      {error && <p className="inline-alert" role="alert">Unable to load project: {error} <button type="button" onClick={() => setRetry((value) => value + 1)}>Retry</button></p>}
+      {query.status === 'error' && <p className="inline-alert" role="alert">Unable to load project: {query.error instanceof Error ? query.error.message : 'unknown error'} <button type="button" onClick={retry}>Retry</button></p>}
+      {notFound && <p className="inline-alert" role="alert">Project not found. <button type="button" onClick={retry}>Retry</button></p>}
       <section aria-label="Project details">
         <h2>Details</h2>
-        <p>{project ? `${project.status} · ${project.name}` : 'Loading project projection…'}</p>
-        {projection && <p>{projection.tasks.length} tasks · {projection.epics.length} epics · ${projection.usage.cost.toFixed(2)} used</p>}
+        <p>{query.status === 'loading' || query.status === 'idle' ? 'Loading project projection…' : notFound ? 'No project projection is available.' : project ? `${project.status} · ${project.name}` : 'No project projection is available.'}</p>
+        {projection && !notFound && <p>{projection.tasks.length} tasks · {projection.epics.length} epics · ${projection.usage.cost.toFixed(2)} used</p>}
       </section>
       <section aria-label="Repository and GitHub">
         <h2>Repository / path / branch / GitHub</h2>
-        <p>{projection?.git.repositoryPath ?? 'No repository recorded'} · {projection?.git.defaultBranch ?? 'No default branch recorded'} · {projection?.git.github?.status ?? 'GitHub not connected'}</p>
+        <p>{projection && !notFound ? `${projection.git.repositoryPath ?? 'No repository recorded'} · ${projection.git.defaultBranch ?? 'No default branch recorded'} · ${projection.git.github?.status ?? 'GitHub not connected'}` : notFound ? 'Project not found.' : 'Loading project repository details…'}</p>
       </section>
-      <nav aria-label="Project tabs"><h2>Project tabs</h2><p>Overview · Epics · Tasks · Runs · Git · Guidelines · Usage</p></nav>
-       <section aria-label="Dependency and runtime settings"><h2>Dependency / runtime settings</h2><p>{projection?.blockers.length ?? 0} blockers · {projection?.approvals.length ?? 0} approvals</p></section>
-       <section aria-label="Activity and budget"><h2>Activity / budget</h2><p>{projection?.events.length ?? 0} events · {projection?.usage.totalTokens ?? 0} tokens</p></section>
+       <section aria-label="Dependency and runtime settings"><h2>Dependency / runtime settings</h2><p>{projection && !notFound ? `${projection.blockers.length} blockers · ${projection.approvals.length} approvals` : notFound ? 'Project dependencies unavailable.' : 'Loading project dependencies…'}</p></section>
+       <section aria-label="Activity and budget"><h2>Activity / budget</h2><p>{projection && !notFound ? `${projection.events.length} events · ${projection.usage.totalTokens} tokens` : notFound ? 'Project activity unavailable.' : 'Loading project activity…'}</p></section>
       <section aria-label="Epics and tasks">
         <h2>Epics and Tasks</h2>
-        <ul>{projection?.epics.map((epic) => <li key={String((epic as { id?: string }).id)}>{String((epic as { title?: string; display_id?: string }).title ?? (epic as { display_id?: string }).display_id ?? 'Epic')}</li>)}</ul>
-        <ul>{projection?.tasks.map((task) => <li key={String((task as { id?: string }).id)}>{String((task as { title?: string; display_id?: string }).title ?? (task as { display_id?: string }).display_id ?? 'Task')}</li>)}</ul>
+        {projection && !notFound ? <><ul>{projection.epics.length === 0 ? <li>No epics.</li> : projection.epics.map((epic) => <li key={epic.id}><Link to={`/epics/${encodeURIComponent(epic.id)}`}>{epic.title || epic.display_id}</Link></li>)}</ul><ul>{projection.tasks.length === 0 ? <li>No tasks.</li> : projection.tasks.map((task) => <li key={task.id}><Link to={`/tasks/${encodeURIComponent(task.id)}`}>{task.title || task.display_id}</Link></li>)}</ul></> : notFound ? <p>Project work items unavailable.</p> : null}
       </section>
     </div>
   );

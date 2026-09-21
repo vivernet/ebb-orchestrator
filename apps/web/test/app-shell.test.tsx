@@ -1,6 +1,8 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
-import { waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
+import { MemoryRouter, Route, Routes } from 'react-router';
 import { apiClient } from '../src/api/client.js';
+import AppShell from '../src/components/AppShell.js';
 
 describe('SSE EventClient integration', () => {
   beforeEach(() => {
@@ -39,5 +41,37 @@ describe('SSE EventClient integration', () => {
 
     eventClient.disconnect();
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  test('renders route context breadcrumbs with a safe detail link', () => {
+    render(
+      <MemoryRouter initialEntries={['/tasks/task-7']}>
+        <Routes>
+          <Route element={<AppShell />}>
+            <Route path="tasks/:id" element={<div>Task body</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole('navigation', { name: 'Breadcrumb' })).toBeInTheDocument();
+    expect(within(screen.getByRole('navigation', { name: 'Breadcrumb' })).getByRole('link', { name: 'Dashboard' })).toHaveAttribute('href', '/');
+    expect(screen.getByText('Task task-7')).toBeInTheDocument();
+    expect(screen.getByText('Task body')).toBeInTheDocument();
+    expect(within(screen.getByRole('navigation', { name: 'Primary navigation' })).getByRole('link', { name: 'Dashboard' })).not.toHaveAttribute('aria-current', 'page');
+  });
+
+  test('keeps malformed route IDs visible without throwing during breadcrumb rendering', () => {
+    render(
+      <MemoryRouter initialEntries={['/tasks/%E0%A4%A']}>
+        <Routes>
+          <Route element={<AppShell />}>
+            <Route path="tasks/:id" element={<div>Task body</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText('Task %E0%A4%A')).toBeInTheDocument();
   });
 });

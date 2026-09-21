@@ -18,6 +18,8 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .left-nav a.active { background: #192b4a; border-color: #2c5085; color: #eff5ff; }
 .nav-footnote { color: #71809a; font-size: 12px; margin: auto 8px 0; }
 .main-content { min-width: 0; padding: 40px clamp(20px, 4vw, 64px); }
+.route-breadcrumbs { align-items: center; color: #8fa0bb; display: flex; gap: 8px; margin: 0 auto 18px; max-width: 1240px; }
+.route-breadcrumbs a { color: #a9c7ff; }
 .dashboard-page, .project-page, .epic-page, .task-page, .execution-page, .agent-run-page, .approval-inbox-page, .project-onboarding-page, .settings-page, .usage-page { margin: 0 auto; max-width: 1240px; }
 .page-stack { display: grid; gap: 20px; }
 .page-header { align-items: end; display: flex; gap: 16px; justify-content: space-between; }

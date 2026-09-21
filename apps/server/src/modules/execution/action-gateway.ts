@@ -5,7 +5,8 @@
 import { PathResolver } from '../../platform/security/path-resolver.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { ProjectActions, type ProjectConfig, type ActionResult } from './project-actions.js';
+import { ProjectActions, type ProjectAction, type ProjectConfig, type ActionResult } from './project-actions.js';
+import { CommandTools, type ExecOptions, type ExecResult } from './command-tools.js';
 import { PermissionEngine } from '../permissions/permission-engine.js';
 import { ActionId, PermissionDecision, type EvaluationInput } from '../permissions/permission-types.js';
 
@@ -38,6 +39,7 @@ export class ActionGateway {
   }
 
   private readonly projectActions: ProjectActions | null;
+  private readonly commandTools = new CommandTools();
 
   /**
    * Проверяет разрешение на выполнение действия через PermissionEngine.
@@ -55,17 +57,59 @@ export class ActionGateway {
   }
 
   async test(): Promise<ActionResult> {
-    if (!this.checkPermission(ActionId.ProjectTest)) {
-      return { action: 'test', success: false, stdout: '', stderr: 'Permission denied: project.test action not allowed', exitCode: null };
+    return this.runProjectAction('test', ActionId.ProjectTest);
+  }
+
+  /** Выполняет настроенную проверку lint внутри capability-bound workspace. */
+  async lint(): Promise<ActionResult> {
+    return this.runProjectAction('lint', ActionId.ProjectLint);
+  }
+
+  /** Выполняет настроенную проверку типов внутри capability-bound workspace. */
+  async typecheck(): Promise<ActionResult> {
+    return this.runProjectAction('typecheck', ActionId.ProjectTypecheck);
+  }
+
+  /** Выполняет настроенную сборку внутри capability-bound workspace. */
+  async build(): Promise<ActionResult> {
+    return this.runProjectAction('build', ActionId.ProjectBuild);
+  }
+
+  /**
+   * Выполняет одну из типизированных project actions.
+   * @param action Тип проектной проверки.
+   * @param actionId Capability action, который должен быть разрешён.
+   */
+  private async runProjectAction(action: ProjectAction, actionId: ActionId): Promise<ActionResult> {
+    if (!this.checkPermission(actionId)) {
+      return { action, success: false, stdout: '', stderr: `Permission denied: ${actionId} action not allowed`, exitCode: null };
     }
     if (!this.projectActions) {
-      return { action: 'test', success: false, stdout: '', stderr: 'project test is not configured', exitCode: null };
+      return { action, success: false, stdout: '', stderr: `project ${action} is not configured`, exitCode: null };
     }
     try {
-      return await this.projectActions.test(this.workspace);
+      return await this.projectActions[action](this.workspace);
     } catch (error) {
-      return { action: 'test', success: false, stdout: '', stderr: error instanceof Error ? error.message : String(error), exitCode: null };
+      return { action, success: false, stdout: '', stderr: error instanceof Error ? error.message : String(error), exitCode: null };
     }
+  }
+
+  /**
+   * Выполняет явный executable с аргументами без shell-интерпретации.
+   * @param options Команда и безопасные параметры запуска.
+   * @returns Результат процесса.
+   */
+  async exec(options: ExecOptions): Promise<ExecResult> {
+    if (!this.checkPermission(ActionId.CommandExec)) {
+      return { success: false, stdout: '', stderr: 'Permission denied: command.exec action not allowed', exitCode: null };
+    }
+    if (!options.executable || !Array.isArray(options.args) || options.args.some((arg) => typeof arg !== 'string')) {
+      return { success: false, stdout: '', stderr: 'invalid command.exec arguments', exitCode: null };
+    }
+    if (this.commandTools.isShellExecutable(options.executable)) {
+      return { success: false, stdout: '', stderr: 'command.shell is not available through command.exec', exitCode: null };
+    }
+    return this.commandTools.exec(options, this.workspace);
   }
 
   /**

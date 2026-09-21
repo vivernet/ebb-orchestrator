@@ -1,0 +1,27 @@
+{
+  "command": "pnpm audit --prod --json",
+  "tool": "pnpm",
+  "toolVersion": "12.4.2",
+  "nodeVersion": "v24.19.0",
+  "runAt": "2026-09-21T14:26:43.899Z",
+  "revision": "b3b66154729ca2b373e0424dbab96b4435ec2c11",
+  "branch": "develop",
+  "lockfileSha256": "7fa9ec028ada5fc6458299ac42e8a44cd3bdd39fc51757c201070e91661aabbb",
+  "exitCode": 0,
+  "raw": {
+    "advisories": {},
+    "metadata": {
+      "vulnerabilities": {
+        "info": 0,
+        "low": 0,
+        "moderate": 0,
+        "high": 0,
+        "critical": 0
+      },
+      "dependencies": 124,
+      "devDependencies": 0,
+      "optionalDependencies": 26,
+      "totalDependencies": 150
+    }
+  }
+}

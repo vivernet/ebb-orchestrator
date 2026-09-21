@@ -6,6 +6,7 @@ function bootstrapToken(): string {
   const path = resolve(import.meta.dirname, '.playwright', 'bootstrap.json');
   return JSON.parse(readFileSync(path, 'utf8')).bootstrapToken as string;
 }
+
 test('v1 UI exposes the persistent navigation shell', async ({ page }) => {
   await page.route('**/api/v1/session/bootstrap', async (route) => {
     await route.fulfill({ json: { sessionToken: 'session', csrfToken: 'csrf' } });
@@ -44,4 +45,46 @@ test('v1 UI bootstraps against the launched backend', async ({ page, request }) 
   await page.goto(`/#ebb-bootstrap=${encodeURIComponent(bootstrapToken())}`);
   await expect(page.getByRole('link', { name: 'Dashboard' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
+  await expect(page.getByText('No running agents.')).toBeVisible();
+
+  await page.goto('/projects/missing-project');
+  await expect(page.getByRole('heading', { name: 'Project: missing-project' })).toBeVisible();
+  await expect(page.getByText('Project not found.', { exact: true })).toBeVisible();
+
+  await page.goto('/epics/missing-epic');
+  await expect(page.getByRole('heading', { name: 'Epic: missing-epic' })).toBeVisible();
+  await expect(page.getByText('Epic not found.', { exact: true })).toBeVisible();
+
+  await page.goto('/tasks/missing-task');
+  await expect(page.getByRole('heading', { name: 'Task: missing-task' })).toBeVisible();
+  await expect(page.getByRole('alert').filter({ hasText: 'Task not found.' })).toBeVisible();
+
+  await page.goto('/approvals');
+  await expect(page.getByRole('heading', { name: 'Approval Inbox' })).toBeVisible();
+  await expect(page.getByText('No pending approvals.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Reject' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Request Changes' })).toHaveCount(0);
+
+  await page.goto('/execution');
+  await expect(page.getByRole('heading', { name: 'Execution monitor' })).toBeVisible();
+  await expect(page.getByText('No active, waiting, or blocked work.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Pause All' })).toHaveCount(0);
+
+  await page.goto('/runs/missing-run');
+  await expect(page.getByText('Unable to load Agent Run:')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Retry' })).toBeVisible();
+
+  await page.goto('/usage');
+  await expect(page.getByRole('heading', { name: 'Usage' })).toBeVisible();
+  await expect(page.getByText('No usage records are available.')).toBeVisible();
+
+  await page.goto('/settings');
+  await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Global' })).toBeVisible();
+  await expect(page.getByText(/Unavailable/).first()).toBeVisible();
+  await expect(page.getByRole('button', { name: /Save|Edit|Update/ })).toHaveCount(0);
+
+  await page.goto('/projects/new');
+  await expect(page.getByRole('heading', { name: 'Project onboarding' })).toBeVisible();
+  await expect(page.getByText(/Select a project before opening its onboarding review/)).toBeVisible();
 });

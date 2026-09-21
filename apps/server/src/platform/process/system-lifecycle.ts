@@ -73,6 +73,18 @@ export interface SystemLifecycleDeps {
   workers: BackgroundWorker[];
 }
 
+async function runRecoveryStep(step: string, reconcile: () => Promise<void>): Promise<void> {
+  try {
+    await reconcile();
+  } catch (error) {
+    // Не выводим message/error object: reconciliation может содержать secrets
+    // или raw repository/model output. Диагностика ограничена фиксированным шагом.
+    const errorKind = error instanceof Error ? "error" : "non_error";
+    console.error(`[orchestrator] startup reconciliation failed: step=${step}; error_kind=${errorKind}`);
+    throw error;
+  }
+}
+
 /**
  * Выполняет the startup sequence with the given dependencies.
  *
@@ -83,12 +95,26 @@ export async function startSystem(deps: SystemLifecycleDeps): Promise<void> {
   await deps.database.open();
   await deps.migrator.run();
   await deps.status.set("RECOVERING");
-  await deps.reconcileOutbox();
-  await deps.reconcileJobs();
-  await deps.reconcileArtifacts();
-  for (const reconcile of deps.additionalReconcilers) {
-    await reconcile();
+  try {
+    await runRecoveryStep("reconcile_outbox", deps.reconcileOutbox);
+    await runRecoveryStep("reconcile_jobs", deps.reconcileJobs);
+    await runRecoveryStep("reconcile_artifacts", deps.reconcileArtifacts);
+    for (const reconcile of deps.additionalReconcilers) {
+      await reconcile();
+    }
+  } catch {
+    // HTTP server должен оставаться доступным для health/readiness диагностики,
+    // но workers нельзя запускать после неполного recovery.
+    await deps.status.set("DEGRADED");
+    return;
   }
+
+  // Reconciliation может явно перевести lifecycle в DEGRADED без throw.
+  // В этом состоянии caller может поднять HTTP server, но система не готова.
+  if (deps.status.get() === "DEGRADED") {
+    return;
+  }
+
   const startedWorkers: BackgroundWorker[] = [];
   try {
     for (const worker of deps.workers) {

@@ -26,9 +26,13 @@ Ebb Orchestrator — локально запускаемый modular monolith д
 Ядро доменных workflow, Git, scheduler, outbox, SecretStore/Infisical и
 production artifact подключены в локальную production-композицию. HTTP-срез
 включает создание Project/Task/Epic, onboarding discovery и persisted approval,
-task dispatch, зависимости и authority-safe final merge. Реальный production
-server проверяется через собранный `dist`, readiness health и browser E2E;
-полный набор gate-команд зафиксирован в `scan-manifest.json` и CI workflow.
+task dispatch, зависимости и authority-safe final merge. Production server и
+Web UI собираются отдельными gates; текущий browser E2E запускает собранный
+`apps/server/dist/main.js` и Vite frontend с изолированным временным
+`EBB_ORCHESTRATOR_HOME`, проверяя реальный HTTP transport/session и bootstrap
+flow. Это ещё не является полным покрытием всех UI flows, Hermes live runtime,
+Git/worktree recovery и SecretStore-провижининга. Полный набор gate-команд зафиксирован в
+`scan-manifest.json` и CI workflow.
 Внешние deployment-провайдеры и GitHub-синхронизация остаются опциональными
 адаптерами v1 и не являются обязательными для local-first запуска.
 
@@ -191,6 +195,61 @@ MCP-инструменты проверяют capability и аргументы. 
 предусмотрены ограниченные попытки исправления, после чего запуск должен
 перейти в обработку ошибки или recovery.
 
+### Hermes development skills и capabilities
+
+Канонические project-local skills, capabilities и provider templates находятся
+в [`tools/hermes`](tools/hermes). Полный каталог каждого skill, назначение,
+source/installed path и секретную границу см. в
+[`docs/development/hermes-capabilities.md`](docs/development/hermes-capabilities.md).
+
+В проекте установлены и проверяются следующие 9 skills:
+
+- `ebb-execute-plan` — исполняет repository plan с ограниченным делегированием;
+- `ebb-final-review` — проводит финальную проверку результата и gates;
+- `ebb-implement-task` — реализует одну изолированную задачу;
+- `ebb-provider-integration` — подключает и проверяет explicit AI provider;
+- `ebb-quality-gates` — запускает обязательные lint/typecheck/test/build gates;
+- `ebb-repository-context` — собирает доверенный контекст репозитория;
+- `ebb-review-task` — выполняет независимый read-only review;
+- `ebb-security-review` — проверяет security boundary, secrets и recovery;
+- `ebb-web-e2e` — запускает и проверяет browser E2E.
+
+Установить или обновить skills и templates:
+
+```bash
+pnpm hermes:setup
+pnpm hermes:check
+```
+
+Явно включить development provider Inception Labs:
+
+```bash
+pnpm hermes:provider -- inception
+```
+
+Профиль использует OpenAI-compatible endpoint
+[`https://api.inceptionlabs.ai/v1`](https://api.inceptionlabs.ai/v1), alias
+`mercury-2` и имя secret environment variable `INCEPTION_API_KEY`. Значение
+ключа не хранится в репозитории и не передаётся через README, prompts, logs или
+artifacts. Provider не становится неявным production fallback; текущий
+production `HermesRuntimeAdapter` сохраняет свой explicit isolated profile.
+
+Для bounded проверки provider transport предусмотрен `pnpm hermes:smoke`
+([`scripts/hermes-provider-smoke.mjs`](scripts/hermes-provider-smoke.mjs)). Smoke
+создаёт disposable `HERMES_HOME` и пустой workspace во временном каталоге,
+использует synthetic prompt `Reply with exactly: SMOKE_OK` и не подключает
+repository plan, MCP toolset или реальные файлы worktree. В subprocess передаётся
+явный environment allowlist с `INCEPTION_API_KEY`; произвольные keys, включая
+repository secrets и `NODE_OPTIONS`, отбрасываются. Запуск использует
+`shell:false` и bounded timeout.
+
+Raw stdout/stderr provider не возвращаются и не сохраняются: команда печатает
+только fixed marker, exit code, `redacted=true` и `cleanup_verified`. Временные
+файлы удаляются после запуска. Это smoke provider reachability/auth и redacted
+response handling, а не provider-backed Hermes parity: он не доказывает выполнение
+реального plan, delegation двух subagents, передачу repository context или право
+удалить `.opencode`.
+
 ## Модель безопасности
 
 Недоверенными считаются ввод пользователя, repo config, пути, команды,
@@ -277,7 +336,6 @@ remote backend возвращает `503` и не переключается н�
 ```text
 .ebb-orchestrator/
 ├── ebb-orchestrator.db
-```
 ├── artifacts/
 ├── runtime/
 ├── logs/

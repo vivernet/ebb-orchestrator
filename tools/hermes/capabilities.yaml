@@ -1,0 +1,38 @@
+version: 1
+capabilities:
+  - name: ebb-execute-plan
+    kind: skill
+    purpose: Координация implementation plan с ограниченным делегированием.
+    allowed_scope: repository-development
+  - name: ebb-implement-task
+    kind: skill
+    purpose: Реализация одной изолированной задачи с TDD и focused verification.
+    allowed_scope: repository-development
+  - name: ebb-review-task
+    kind: skill
+    purpose: Read-only review результата отдельной задачи до его принятия.
+    allowed_scope: repository-review
+  - name: ebb-final-review
+    kind: skill
+    purpose: Итоговая проверка ветки, diff, gates и ограничений scope.
+    allowed_scope: repository-review
+  - name: ebb-security-review
+    kind: skill
+    purpose: Проверка trust boundaries, secrets, permissions и Action Gateway.
+    allowed_scope: security-review
+  - name: ebb-web-e2e
+    kind: skill
+    purpose: Проверка реального browser/API transport для Web UI.
+    allowed_scope: repository-e2e
+  - name: ebb-provider-integration
+    kind: skill
+    purpose: Проверка provider profile и OpenAI-compatible boundary без secrets.
+    allowed_scope: provider-development
+  - name: ebb-repository-context
+    kind: skill
+    purpose: Последовательное чтение canonical specs, AGENTS и implementation plans.
+    allowed_scope: repository-development
+  - name: ebb-quality-gates
+    kind: skill
+    purpose: Evidence-first запуск обязательных lint, typecheck, test, build и diff gates.
+    allowed_scope: repository-verification

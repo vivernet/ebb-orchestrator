@@ -8,7 +8,7 @@ import type { AgentRun, RunStatus, RunTrigger } from "@ebb-orchestrator/contract
 import type { StartRunOptions, ResumeRunOptions, RunOutcome } from "./run-types.js";
 import { validateRoleOutput } from "./output-validator.js";
 import { DatabaseCompletionStore, type CompletionStore } from "../execution/mcp/submit-result-tool.js";
-import type { RoleName, ToolId } from "../execution/run-capability.js";
+import { SUPPORTED_TOOL_IDS, type RoleName, type ToolId } from "../execution/run-capability.js";
 import { RoleRegistry } from './role-registry.js';
 import { appendOutboxEvent } from "../../platform/events/outbox-repository.js";
 import { DomainEvent } from "../../platform/events/domain-event.js";
@@ -87,10 +87,15 @@ export class RunService {
       // Legacy/internal runtime fixtures may использовать Объект роль without Объект публичный contract.
       // Such runs получать Объект smallest безопасный capability rather thОбъект caller инструменты.
       const requested = options.capability?.allowedTools;
-      const roleTools = new Set<string>(contract?.allowedTools as string[] ?? ['submit_result']);
-      const allowedTools = (requested
-        ? requested.filter((tool) => roleTools.has(tool))
-        : Array.from(roleTools)) as ToolId[];
+      const supportedTools = new Set<string>(SUPPORTED_TOOL_IDS);
+      const isSupportedToolId = (tool: string): tool is ToolId => supportedTools.has(tool);
+      const roleTools: ToolId[] = Array.from(
+        contract?.allowedTools ?? ['submit_result'],
+        (tool) => String(tool),
+      ).filter(isSupportedToolId);
+      const allowedTools: ToolId[] = requested
+        ? requested.filter((tool) => roleTools.includes(tool))
+        : roleTools;
       if (requested && allowedTools.length === 0) throw new Error(`requested tools are not allowed for role: ${options.role}`);
       const capability = { id: capabilityRef, capabilityRef, runId: id,
         role: role as RoleName, workspace: options.capability?.workspace ?? "",

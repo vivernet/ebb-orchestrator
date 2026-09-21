@@ -1,6 +1,6 @@
 ---
 name: ebb-implement-task
-description: Implement one isolated Ebb Orchestrator plan task.
+description: Use when implementing one isolated Ebb Orchestrator plan task.
 version: 1.0.0
 platforms: [windows, linux, macos]
 metadata:

@@ -10,7 +10,7 @@ import UsagePage from '../features/usage/UsagePage.js';
 import ApprovalInboxPage from '../features/approvals/ApprovalInboxPage.js';
 import ExecutionPage from '../features/execution/ExecutionPage.js';
 import AgentRunPage from '../features/runs/AgentRunPage.js';
-import { useParams } from 'react-router';
+import { isRouteErrorResponse, Link, useParams, useRevalidator, useRouteError } from 'react-router';
 
 const ProjectRoute = () => <ProjectPage id={useParams().id ?? ''} />;
 const EpicRoute = () => <EpicPage id={useParams().id ?? ''} />;
@@ -22,10 +22,48 @@ const ApprovalRoute = () => <ApprovalInboxPage />;
 const ExecutionRoute = () => <ExecutionPage />;
 const RunRoute = () => <AgentRunPage id={useParams().id ?? ''} />;
 
+/**
+ * Представляет безопасное состояние для маршрута, которого нет в текущем V1 control plane.
+ */
+export function NotFoundPage() {
+  return (
+    <div className="page-state">
+      <p className="eyebrow">404</p>
+      <h1>Page not found</h1>
+      <p>The requested route does not exist in this control plane.</p>
+      <Link to="/">Back to Dashboard</Link>
+    </div>
+  );
+}
+
+/**
+ * Представляет безопасную границу ошибки маршрута без раскрытия внутренних деталей исключения.
+ */
+export function RouteErrorPage() {
+  const error = useRouteError();
+  const revalidator = useRevalidator();
+  const detail = isRouteErrorResponse(error)
+    ? `${error.status}: ${error.statusText}`
+    : 'The route could not be rendered safely.';
+
+  return (
+    <div className="page-state">
+      <p className="eyebrow">Route error</p>
+      <h1>Unable to render this page</h1>
+      <p role="alert">{detail}</p>
+      <div className="page-actions">
+        <button type="button" onClick={() => revalidator.revalidate()} disabled={revalidator.state === 'loading'}>Retry</button>
+        <Link to="/">Back to Dashboard</Link>
+      </div>
+    </div>
+  );
+}
+
 export const router = createBrowserRouter([
   {
     path: '/',
     Component: AppShell,
+    errorElement: <RouteErrorPage />,
     children: [
       {
         id: 'dashboard',
@@ -70,6 +108,11 @@ export const router = createBrowserRouter([
       {
         path: 'projects/new',
         Component: OnboardingRoute,
+      },
+      {
+        id: 'not-found',
+        path: '*',
+        Component: NotFoundPage,
       },
     ],
   },

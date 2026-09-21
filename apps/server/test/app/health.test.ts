@@ -55,4 +55,15 @@ describe("GET /api/v1/health", () => {
     expect(res.json()).toEqual({ status: "unavailable", lifecycle });
     await app.close();
   });
+
+  it("returns 503 when startup reconciliation has degraded the lifecycle", async () => {
+    const status = new StatusTracker();
+    await status.set("DEGRADED");
+    const app = makeApp(status);
+    const res = await app.inject({ method: "GET", url: "/api/v1/health" });
+
+    expect(res.statusCode).toBe(503);
+    expect(res.json()).toEqual({ status: "unavailable", lifecycle: "DEGRADED" });
+    await app.close();
+  });
 });

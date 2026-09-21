@@ -1,5 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
-import { apiClient } from '../../api/client.js';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { apiPaths } from '@ebb-orchestrator/contracts';
+import { apiClient, toClientPath } from '../../api/client.js';
+import { useOnSSEReconnect } from '../../hooks/useEventClient.js';
+import { createMutationStore, type MutationState } from '../../state/mutation-store.js';
+import { createQueryStore } from '../../state/query-store.js';
+import { useQuery } from '../../state/use-query.js';
 
 interface ApprovalRow {
   id: string;
@@ -16,7 +21,7 @@ interface ApprovalRow {
 
 interface Approval {
   id: string;
-  scope: 'once' | 'run' | 'task' | 'project';
+  scope: 'once' | 'run' | 'task' | 'epic' | 'project';
   action: string;
   description: string;
   requestedBy: string;
@@ -38,7 +43,7 @@ const statusMap: Record<string, Approval['status']> = {
 
 const scopeMap: Record<string, Approval['scope']> = {
   TASK: 'task',
-  EPIC: 'project',
+  EPIC: 'epic',
   PROJECT: 'project',
   RUN: 'run',
 };
@@ -67,50 +72,34 @@ function errorMessage(error: unknown): string {
  * Представляет пользовательский экран ApprovalInboxPage; авторитетные проверки выполняются backend.
  */
 export default function ApprovalInboxPage({ projectId }: ApprovalInboxProps) {
-  const [approvals, setApprovals] = useState<Approval[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [mutationError, setMutationError] = useState<string | null>(null);
-
-  const fetchApprovals = useCallback(async () => {
-    setLoading(true);
-    setLoadError(null);
-    try {
-      const data = await apiClient.get<{ approvals: ApprovalRow[] }>('/approvals');
-      setApprovals(data.approvals.map(mapApprovalRow));
-    } catch (error) {
-      setLoadError(errorMessage(error));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void fetchApprovals();
-  }, [fetchApprovals, projectId]);
+  void projectId;
+  const queryStore = useMemo(() => createQueryStore(), []);
+  const approvalsPath = toClientPath(apiPaths.approvals);
+  const fetcher = useCallback((signal: AbortSignal) => apiClient.get<{ approvals: ApprovalRow[] }>(approvalsPath, { signal }), [approvalsPath]);
+  const query = useQuery(queryStore, approvalsPath, undefined, fetcher);
+  const mutationStore = useMemo(() => createMutationStore(), []);
+  const [mutationState, setMutationState] = useState<MutationState<unknown>>(() => mutationStore.get('approve'));
+  useEffect(() => mutationStore.subscribe('approve', setMutationState), [mutationStore]);
+  const retry = useCallback(() => { void query.refetch().catch(() => undefined); }, [query.refetch]);
+  useOnSSEReconnect(retry);
 
   const handleApprove = async (id: string) => {
-    setMutationError(null);
-    try {
-      await apiClient.post(`/approvals/${encodeURIComponent(id)}/approve`, {});
-      setApprovals((prev) => prev.map((approval) => approval.id === id ? { ...approval, status: 'approved' } : approval));
-    } catch (error) {
-      setMutationError(errorMessage(error));
-    }
+    await mutationStore.execute('approve', () => apiClient.post(toClientPath(apiPaths.approvalApprove(id)), {}), query.refetch).catch(() => undefined);
   };
 
+  const approvals = query.data?.approvals.map(mapApprovalRow) ?? [];
   const pendingApprovals = approvals.filter((approval) => approval.status === 'pending');
 
-  if (loading) return <div>Loading approvals...</div>;
+  if (query.status === 'loading' || query.status === 'idle') return <div>Loading approvals...</div>;
 
-  if (loadError) {
-    return <div className="approval-inbox-page"><h1>Approval Inbox</h1><p role="alert">Unable to load approvals: {loadError}</p><button type="button" onClick={() => void fetchApprovals()}>Retry</button></div>;
+  if (query.status === 'error' || !query.data) {
+    return <div className="approval-inbox-page"><h1>Approval Inbox</h1><p role="alert">Unable to load approvals: {errorMessage(query.error)}</p><button type="button" onClick={retry}>Retry</button></div>;
   }
 
   return (
     <div className="approval-inbox-page">
       <h1>Approval Inbox</h1>
-      {mutationError && <p role="alert">Unable to update approval: {mutationError} <button type="button" onClick={() => { setMutationError(null); void fetchApprovals(); }}>Retry</button></p>}
+      {mutationState.status === 'error' && <p role="alert">Unable to update approval: {errorMessage(mutationState.error)} <button type="button" onClick={retry}>Retry</button></p>}
       {pendingApprovals.length === 0 ? <p>No pending approvals.</p> : (
         <ul className="approval-list">
           {pendingApprovals.map((approval) => (
@@ -118,18 +107,11 @@ export default function ApprovalInboxPage({ projectId }: ApprovalInboxProps) {
               <div className="approval-header"><strong>{approval.action}</strong><span className="approval-scope">{approval.scope}</span></div>
               <p className="approval-description">{approval.description}</p>
               <div className="approval-context"><small>Requested by: {approval.requestedBy}</small></div>
-              <div className="approval-actions"><button type="button" onClick={() => void handleApprove(approval.id)}>Approve</button></div>
+              <div className="approval-actions"><button type="button" disabled={mutationState.status === 'pending'} onClick={() => void handleApprove(approval.id)}>Approve</button></div>
               <div className="approval-meta"><small>Created: {new Date(approval.createdAt).toLocaleString()}</small></div>
             </li>
           ))}
         </ul>
-      )}
-      {approvals.some((approval) => approval.status !== 'pending') && (
-        <section><h2>Previous Approvals</h2><ul className="approval-list">
-          {approvals.filter((approval) => approval.status !== 'pending').map((approval) => (
-            <li key={approval.id} className="approval-item"><div className="approval-header"><strong>{approval.action}</strong><span className={`approval-status status-${approval.status}`}>{approval.status}</span></div><p className="approval-description">{approval.description}</p><div className="approval-meta"><small>Created: {new Date(approval.createdAt).toLocaleString()}</small></div></li>
-          ))}
-        </ul></section>
       )}
     </div>
   );

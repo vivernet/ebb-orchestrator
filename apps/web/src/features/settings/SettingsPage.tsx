@@ -1,48 +1,28 @@
-import { useEffect, useState } from 'react';
-import { apiClient } from '../../api/client.js';
+import { useCallback, useMemo } from 'react';
+import { apiPaths, type SettingsProjection } from '@ebb-orchestrator/contracts';
+import { apiClient, toClientPath } from '../../api/client.js';
+import { createQueryStore } from '../../state/query-store.js';
+import { useQuery } from '../../state/use-query.js';
 
-interface EffectiveHierarchy {
-  global: Record<string, unknown>;
-  project: Record<string, unknown>;
-  role: Record<string, Record<string, unknown>>;
-  taskEpic: Record<string, unknown>;
+function valueOrUnavailable(value: unknown): string {
+  return value === null || value === undefined ? 'Unavailable' : String(value);
 }
 
-interface SecuritySettings {
-  mostRestrictiveWins: boolean;
-  localModeEnabled: boolean;
-}
-
-interface SettingsData {
-  effectiveHierarchy: EffectiveHierarchy;
-  securitySettings: SecuritySettings;
-}
-
-/**
- * Представляет пользовательский экран SettingsPage; авторитетные проверки выполняются backend.
- */
+/** Представляет read-only Settings projection; unsupported policy не выводится как факт. */
 export default function SettingsPage() {
-  const [data, setData] = useState<SettingsData | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const store = useMemo(() => createQueryStore(), []);
+  const settingsPath = toClientPath(apiPaths.settings);
+  const fetcher = useCallback((signal: AbortSignal) => apiClient.get<SettingsProjection>(settingsPath, { signal }), [settingsPath]);
+  const query = useQuery(store, settingsPath, undefined, fetcher);
+  const retry = useCallback(() => { void query.refetch().catch(() => undefined); }, [query.refetch]);
 
-  useEffect(() => {
-    void apiClient.get<SettingsData>('/settings')
-      .then(setData)
-      .catch((e) => setError(e.message || 'Failed to load settings'))
-      .finally(() => setLoading(false));
-  }, []);
-
-  if (loading) {
-    return <div>Loading settings...</div>;
+  if (query.status === 'loading' || query.status === 'idle') return <div>Loading settings...</div>;
+  if (query.status === 'error' || !query.data) {
+    return <div className="settings-page"><h1>Settings</h1><p role="alert">Unable to load settings: {query.error instanceof Error ? query.error.message : 'Data not available'}</p><button type="button" onClick={retry}>Retry</button></div>;
   }
 
-  if (error || !data) {
-    return <div>Error: {error ?? 'Data not available'}</div>;
-  }
-
-  const hierarchy = data.effectiveHierarchy;
-  const security = data.securitySettings;
+  const { global } = query.data.effectiveHierarchy;
+  const security = query.data.securitySettings;
 
   return (
     <div className="settings-page">
@@ -51,38 +31,26 @@ export default function SettingsPage() {
       <section aria-label="Configuration hierarchy">
         <h2>Effective Hierarchy</h2>
         <h3>Global</h3>
-        <pre>{JSON.stringify(hierarchy.global, null, 2)}</pre>
+        <p>Schema version: {valueOrUnavailable(global.schemaVersion)}</p>
+        <p>Global max: {valueOrUnavailable(global.globalMax)}</p>
+        <p>Project max: {valueOrUnavailable(global.projectMax)}</p>
+        <p>Role capacity: {global.roleCapacity ? JSON.stringify(global.roleCapacity) : 'Unavailable'}</p>
 
         <h3>Project</h3>
-        <pre>{JSON.stringify(hierarchy.project, null, 2)}</pre>
+        <p>Unavailable: project overrides are not exposed by this read-only endpoint.</p>
 
         <h3>Role</h3>
-        <pre>{JSON.stringify(hierarchy.role, null, 2)}</pre>
+        <p>Unavailable: role overrides are not exposed by this read-only endpoint.</p>
 
         <h3>Task/Epic</h3>
-        <pre>{JSON.stringify(hierarchy.taskEpic, null, 2)}</pre>
+        <p>Unavailable: task/epic overrides are not exposed by this read-only endpoint.</p>
       </section>
 
       <section aria-label="Security settings">
         <h2>Security</h2>
-        <p>
-          <strong>Most-restrictive-wins:</strong> {security.mostRestrictiveWins ? 'Enabled' : 'Disabled'}
-        </p>
-        <p>
-          <strong>Local Mode:</strong> {security.localModeEnabled ? 'Enabled' : 'Disabled'}
-        </p>
-        {security.localModeEnabled && (
-          <div className="local-mode-warning" style={{ border: '1px solid red', padding: '8px', margin: '8px 0' }}>
-            <p><strong>Warning: Local Mode</strong></p>
-            <p>
-              Local Mode allows untrusted code execution from repository scripts, tests, and package managers.
-              The Orchestrator provides policy, tool, and credential isolation, but this is NOT OS-level sandboxing.
-            </p>
-            <p>
-              Consider using Container Mode for stronger isolation when working with untrusted repositories.
-            </p>
-          </div>
-        )}
+        <p><strong>Most-restrictive-wins:</strong> {valueOrUnavailable(security.mostRestrictiveWins)}</p>
+        <p><strong>Local Mode:</strong> {valueOrUnavailable(security.localModeEnabled)}</p>
+        <p>Security policy details are unavailable in this read-only Settings projection.</p>
       </section>
     </div>
   );

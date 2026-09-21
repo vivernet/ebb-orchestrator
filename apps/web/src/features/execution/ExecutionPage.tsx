@@ -1,5 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
-import { apiClient } from '../../api/client.js';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { apiPaths } from '@ebb-orchestrator/contracts';
+import { Link } from 'react-router';
+import { apiClient, toClientPath } from '../../api/client.js';
+import { useOnSSEReconnect } from '../../hooks/useEventClient.js';
+import { createQueryStore } from '../../state/query-store.js';
+import { useQuery } from '../../state/use-query.js';
+import { createMutationStore, type MutationState } from '../../state/mutation-store.js';
 
 interface WaitReason {
   code: string;
@@ -31,43 +37,27 @@ function errorMessage(error: unknown): string {
  * предоставляет endpoint или policy-проверку.
  */
 export default function ExecutionPage() {
-  const [projection, setProjection] = useState<ExecutionProjection | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [mutationError, setMutationError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setLoadError(null);
-    try {
-      setProjection(await apiClient.get<ExecutionProjection>('/execution'));
-    } catch (error) {
-      setLoadError(errorMessage(error));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+  const store = useMemo(() => createQueryStore(), []);
+  const mutationStore = useMemo(() => createMutationStore(), []);
+  const [cancelState, setCancelState] = useState<MutationState<unknown>>(() => mutationStore.get('cancel-run'));
+  useEffect(() => mutationStore.subscribe('cancel-run', setCancelState), [mutationStore]);
+  const executionPath = toClientPath(apiPaths.execution);
+  const fetcher = useCallback((signal: AbortSignal) => apiClient.get<ExecutionProjection>(executionPath, { signal }), [executionPath]);
+  const query = useQuery(store, executionPath, undefined, fetcher);
+  const projection = query.data;
+  const retry = useCallback(() => { void query.refetch().catch(() => undefined); }, [query.refetch]);
+  useOnSSEReconnect(retry);
 
   const cancelRun = async (runId: string) => {
-    setMutationError(null);
-    try {
-      await apiClient.post(`/runs/${encodeURIComponent(runId)}/cancel`, {});
-      await load();
-    } catch (error) {
-      setMutationError(errorMessage(error));
-    }
+    await mutationStore.execute('cancel-run', () => apiClient.post(toClientPath(apiPaths.runCancel(runId)), {}), query.refetch).catch(() => undefined);
   };
 
-  if (loading) return <div className="page-state">Loading execution queue…</div>;
-  if (loadError) {
-    return <div className="page-state" role="alert"><p>Unable to load execution queue: {loadError}</p><button type="button" onClick={() => void load()}>Retry</button></div>;
+  if (query.status === 'loading' || query.status === 'idle') return <div className="page-state">Loading execution queue…</div>;
+  if (query.status === 'error' || !projection) {
+    return <div className="page-state" role="alert"><p>Unable to load execution queue: {errorMessage(query.error)}</p><button type="button" onClick={retry}>Retry</button></div>;
   }
 
-  const data = projection ?? { running: [], waiting: [], blocked: [] };
+  const data = projection;
   const rows: ExecutionRow[] = [
     ...data.running.map((run) => ({ id: run.runId, kind: 'run' as const, role: run.role, target: run.taskId ?? 'System', status: run.status, reason: null })),
     ...data.waiting.map((task) => ({ id: task.taskId, kind: 'waiting' as const, role: 'Scheduler', target: task.taskId, status: 'WAITING', reason: task.reason })),
@@ -78,10 +68,10 @@ export default function ExecutionPage() {
     <div className="execution-page page-stack">
       <header className="page-header">
         <div><p className="eyebrow">Operations</p><h1>Execution monitor</h1></div>
-        <button type="button" onClick={() => void load()}>Refresh</button>
+        <button type="button" onClick={retry}>Refresh</button>
       </header>
 
-      {mutationError && <p className="inline-alert" role="alert">Unable to cancel run: {mutationError}</p>}
+      {cancelState.status === 'error' && <p className="inline-alert" role="alert">Unable to cancel run: {errorMessage(cancelState.error)}</p>}
 
       <section aria-label="Execution summary" className="metric-grid">
         <div><span className="metric-value">{data.running.length}</span><span className="metric-label">Running</span></div>
@@ -93,7 +83,7 @@ export default function ExecutionPage() {
         <div className="section-heading"><h2>Queue</h2><p>Reasons come from the scheduler projection.</p></div>
         {rows.length === 0 ? <p className="empty-state">No active, waiting, or blocked work.</p> : (
           <div className="table-scroll"><table className="execution-queue-table"><thead><tr><th>Role</th><th>Target</th><th>Status</th><th>Wait reason</th><th aria-label="Actions" /></tr></thead><tbody>
-            {rows.map((entry) => <tr key={`${entry.kind}-${entry.id}`}><td>{entry.role}</td><td>{entry.target}</td><td><span className="status-chip">{entry.status}</span></td><td>{entry.reason ? <><strong>{entry.reason.code}</strong><span className="reason-message">{entry.reason.message}</span></> : '—'}</td><td>{entry.kind === 'run' && <button type="button" className="danger-button" onClick={() => void cancelRun(entry.id)}>Cancel</button>}</td></tr>)}
+            {rows.map((entry) => <tr key={`${entry.kind}-${entry.id}`}><td>{entry.kind === 'run' ? <Link to={`/runs/${encodeURIComponent(entry.id)}`}>{entry.role}</Link> : entry.role}</td><td>{entry.kind === 'run' && data.running.find((run) => run.runId === entry.id)?.taskId ? <Link to={`/tasks/${encodeURIComponent(data.running.find((run) => run.runId === entry.id)?.taskId ?? '')}`}>{entry.target}</Link> : entry.kind !== 'run' ? <Link to={`/tasks/${encodeURIComponent(entry.id)}`}>{entry.target}</Link> : entry.target}</td><td><span className="status-chip">{entry.status}</span></td><td>{entry.reason ? <><strong>{entry.reason.code}</strong><span className="reason-message">{entry.reason.message}</span></> : '—'}</td><td>{entry.kind === 'run' && <button type="button" className="danger-button" disabled={cancelState.status === 'pending'} onClick={() => void cancelRun(entry.id)}>Cancel</button>}</td></tr>)}
           </tbody></table></div>
         )}
       </section>

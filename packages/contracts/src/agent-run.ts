@@ -6,6 +6,7 @@
 export type RunStatus =
   | "STARTED"
   | "IN_PROGRESS"
+  | "COMPLETING"
   | "COMPLETED"
   | "FAILED"
   | "CANCELLED";

@@ -51,10 +51,14 @@
   "scanner": {
     "provider": "pnpm",
     "tool": "pnpm audit --prod --json",
-    "version": "12.4.2",
-    "lastRun": "2026-09-21T02:48:42.3517756+03:00",
-    "artifact": "artifacts/security/pnpm-audit-prod-2026-09-21.json",
-    "result": "passed"
+    "version": null,
+    "lastRun": null,
+    "artifactPattern": "artifacts/security/pnpm-audit-prod-{revision}.json",
+    "result": "requires-ci-run",
+    "revision": null,
+    "lockfileSha256": null,
+    "exitCode": null,
+    "provenanceFields": ["revision", "branch", "lockfileSha256", "runAt", "exitCode"]
   },
   "secretPolicy": {
     "failOnTrackedEnvFiles": true,

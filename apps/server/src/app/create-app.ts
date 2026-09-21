@@ -206,7 +206,7 @@ export function createApp(deps: AppDeps): OrchestratorApp {
         ? approvalService as OnboardingApprovalService
         : undefined,
     });
-    await settingsRoutes(instance, { db: deps.db });
+    await settingsRoutes(instance, { scheduler: deps.scheduler });
     await usageRoutes(instance, { db: deps.db });
     await secretsRoutes(instance, {
       db: deps.db,

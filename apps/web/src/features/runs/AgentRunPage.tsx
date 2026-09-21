@@ -1,5 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
-import { apiClient } from '../../api/client.js';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { apiPaths } from '@ebb-orchestrator/contracts';
+import { Link } from 'react-router';
+import { apiClient, toClientPath } from '../../api/client.js';
+import { useOnSSEReconnect } from '../../hooks/useEventClient.js';
+import { createQueryStore } from '../../state/query-store.js';
+import { useQuery } from '../../state/use-query.js';
+import { createMutationStore, type MutationState } from '../../state/mutation-store.js';
 
 interface AgentRun {
   id: string;
@@ -28,39 +34,24 @@ function errorMessage(error: unknown): string {
  * результат и служебные artifacts намеренно не запрашиваются браузер-клиентом.
  */
 export default function AgentRunPage({ id }: AgentRunPageProps) {
-  const [run, setRun] = useState<AgentRun | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [mutationError, setMutationError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setLoadError(null);
-    try {
-      setRun(await apiClient.get<AgentRun>(`/runs/${encodeURIComponent(id)}`));
-    } catch (error) {
-      setLoadError(errorMessage(error));
-    } finally {
-      setLoading(false);
-    }
-  }, [id]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+  const store = useMemo(() => createQueryStore(), []);
+  const mutationStore = useMemo(() => createMutationStore(), []);
+  const [cancelState, setCancelState] = useState<MutationState<unknown>>(() => mutationStore.get('cancel-run'));
+  useEffect(() => mutationStore.subscribe('cancel-run', setCancelState), [mutationStore]);
+  const runPath = toClientPath(apiPaths.run(id));
+  const cancelPath = toClientPath(apiPaths.runCancel(id));
+  const fetcher = useCallback((signal: AbortSignal) => apiClient.get<AgentRun>(runPath, { signal }), [runPath]);
+  const query = useQuery(store, runPath, undefined, fetcher);
+  const run = query.data;
+  const retry = useCallback(() => { void query.refetch().catch(() => undefined); }, [query.refetch]);
+  useOnSSEReconnect(retry);
 
   const cancel = async () => {
-    setMutationError(null);
-    try {
-      await apiClient.post(`/runs/${encodeURIComponent(id)}/cancel`, {});
-      await load();
-    } catch (error) {
-      setMutationError(errorMessage(error));
-    }
+    await mutationStore.execute('cancel-run', () => apiClient.post(cancelPath, {}), query.refetch).catch(() => undefined);
   };
 
-  if (loading) return <div className="page-state">Loading Agent Run…</div>;
-  if (loadError || !run) return <div className="page-state" role="alert"><p>Unable to load Agent Run: {loadError ?? 'not found'}</p><button type="button" onClick={() => void load()}>Retry</button></div>;
+  if (query.status === 'loading' || query.status === 'idle') return <div className="page-state">Loading Agent Run…</div>;
+  if (query.status === 'error' || !run) return <div className="page-state" role="alert"><p>Unable to load Agent Run: {query.status === 'error' ? errorMessage(query.error) : 'not found'}</p><button type="button" onClick={retry}>Retry</button></div>;
 
   const isActive = ['STARTED', 'IN_PROGRESS', 'COMPLETING'].includes(run.status);
 
@@ -71,15 +62,15 @@ export default function AgentRunPage({ id }: AgentRunPageProps) {
         <span className="status-chip">{run.status}</span>
       </header>
 
-      {mutationError && <p className="inline-alert" role="alert">Unable to cancel run: {mutationError}</p>}
+      {cancelState.status === 'error' && <p className="inline-alert" role="alert">Unable to cancel run: {errorMessage(cancelState.error)}</p>}
 
       <section className="detail-grid" aria-label="Run details">
         <div><span>Role</span><strong>{run.role}</strong></div>
         <div><span>Runtime</span><strong>{run.runtime}</strong></div>
         <div><span>Model</span><strong>{run.model}</strong></div>
         <div><span>Trigger</span><strong>{run.triggerReason ?? 'Not recorded'}</strong></div>
-        <div><span>Task</span><strong>{run.taskId ?? 'System run'}</strong></div>
-        <div><span>Epic</span><strong>{run.epicId ?? '—'}</strong></div>
+        <div><span>Task</span><strong>{run.taskId ? <Link to={`/tasks/${encodeURIComponent(run.taskId)}`}>{run.taskId}</Link> : 'System run'}</strong></div>
+        <div><span>Epic</span><strong>{run.epicId ? <Link to={`/epics/${encodeURIComponent(run.epicId)}`}>{run.epicId}</Link> : '—'}</strong></div>
       </section>
 
       <section aria-label="Run timing"><h2>Timing</h2><p>Started: {run.startedAt ? new Date(run.startedAt).toLocaleString() : 'Not recorded'}</p><p>Ended: {run.endedAt ? new Date(run.endedAt).toLocaleString() : 'In progress'}</p></section>
@@ -91,7 +82,7 @@ export default function AgentRunPage({ id }: AgentRunPageProps) {
         <div><span className="metric-value">${run.usage.cost.toFixed(4)}</span><span className="metric-label">Cost</span></div>
       </section>
 
-      {isActive && <footer className="page-actions"><button type="button" className="danger-button" onClick={() => void cancel()}>Cancel Run</button></footer>}
+      {isActive && <footer className="page-actions"><button type="button" className="danger-button" disabled={cancelState.status === 'pending'} onClick={() => void cancel()}>Cancel Run</button></footer>}
     </div>
   );
 }

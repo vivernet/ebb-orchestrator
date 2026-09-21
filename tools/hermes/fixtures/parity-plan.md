@@ -23,7 +23,7 @@ Subagent A verifies:
 - no-more-than-two rule is present.
 
 Subagent B verifies:
-- `tools/hermes/skills/` has the expected four source skills;
+- `tools/hermes/skills/` has the expected nine source skills;
 - active Hermes config has concurrency=2, depth=1, orchestrator disabled, child worktree isolation disabled.
 
 Both return evidence only.

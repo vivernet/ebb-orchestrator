@@ -8,6 +8,7 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { HermesRuntimeAdapter } from "../../../src/modules/runtime/hermes/hermes-runtime-adapter.js";
 import { HermesCliBuilder } from "../../../src/modules/runtime/hermes/hermes-cli.js";
+import { createSqliteDatabase } from "../../../src/platform/database/sqlite-database.js";
 import {
   ProcessExecutor,
   type ProcessOptions,
@@ -85,7 +86,9 @@ describe("HermesRuntimeAdapter", () => {
   beforeEach(() => {
     mockExecutor = new MockProcessExecutor();
     mockArtifactStore = new MockArtifactStore();
-    adapter = new HermesRuntimeAdapter(mockExecutor, mockArtifactStore);
+    adapter = new HermesRuntimeAdapter(mockExecutor, mockArtifactStore, {
+      managedWorktree: path.join(os.tmpdir(), "hermes-test-workspace"),
+    });
   });
 
   it("uses the configured checkpoint directory instead of the OS home", () => {
@@ -104,9 +107,125 @@ describe("HermesRuntimeAdapter", () => {
   });
 
   describe("startRun", () => {
+    it("uses the persisted capability workspace as the Hermes process cwd", async () => {
+      const root = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-persisted-workspace-"));
+      const workspace = path.join(root, "managed-worktree");
+      const databasePath = path.join(root, "state.sqlite");
+      const resultDirectory = path.join(root, "results");
+      const checkpointDirectory = path.join(root, "checkpoints");
+      await fs.mkdir(workspace);
+      const database = createSqliteDatabase(databasePath);
+      database.exec(`
+        CREATE TABLE agent_runs (
+          id TEXT PRIMARY KEY,
+          role TEXT NOT NULL,
+          runtime TEXT NOT NULL,
+          model TEXT NOT NULL,
+          status TEXT NOT NULL,
+          task_id TEXT,
+          epic_id TEXT,
+          capability_ref TEXT UNIQUE,
+          capability_json TEXT
+        )
+      `);
+      database.exec('CREATE TABLE worktrees (id TEXT PRIMARY KEY, path TEXT, branch TEXT, removed_at TEXT)');
+      database.run(
+        "INSERT INTO agent_runs (id, role, runtime, model, status, task_id, epic_id, capability_ref, capability_json) VALUES ($id, $role, $runtime, $model, $status, $task_id, $epic_id, $capability_ref, $capability_json)",
+        {
+          id: "persisted-workspace-run",
+          role: "Developer",
+          runtime: "hermes",
+          model: "default",
+          status: "STARTED",
+          task_id: "persisted-task",
+          epic_id: null,
+          capability_ref: "persisted-capability",
+          capability_json: JSON.stringify({
+            runId: "persisted-workspace-run",
+            capabilityRef: "persisted-capability",
+            role: "developer",
+            workspace,
+            allowedTools: ["submit_result"],
+          }),
+        },
+      );
+      database.run(
+        "INSERT INTO worktrees (id, path, branch, removed_at) VALUES ($id, $path, $branch, NULL)",
+        { id: "persisted-task", path: workspace, branch: "task/persisted-task" },
+      );
+      const run = {
+        id: "persisted-workspace-run", role: "Developer", runtime: "hermes", model: "default",
+        taskId: "persisted-task", epicId: null, status: "STARTED" as const, sessionId: null, attempt: null,
+        triggerReason: null, contextVersion: "v1", outputSchemaVersion: "v1", startedAt: new Date(),
+        endedAt: null, exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
+        capabilityRef: "persisted-capability",
+      };
+
+      try {
+        adapter = new HermesRuntimeAdapter(mockExecutor, mockArtifactStore, {
+          databasePath,
+          resultDirectory,
+          checkpointDirectory,
+        });
+        mockExecutor.setNextResult({ exitCode: 0, stdout: "session: persisted", stderr: "" });
+
+        await adapter.startRun(run);
+
+        expect(mockExecutor.getCalls()[0]?.options?.cwd).toBe(workspace);
+      } finally {
+        database.close();
+        await fs.rm(root, { recursive: true, force: true });
+      }
+    });
+
+    it("fails closed when the run has no persisted capability workspace", async () => {
+      const root = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-missing-workspace-"));
+      const databasePath = path.join(root, "state.sqlite");
+      const resultDirectory = path.join(root, "results");
+      const checkpointDirectory = path.join(root, "checkpoints");
+      const database = createSqliteDatabase(databasePath);
+      database.exec(`
+        CREATE TABLE agent_runs (
+          id TEXT PRIMARY KEY,
+          role TEXT NOT NULL,
+          runtime TEXT NOT NULL,
+          model TEXT NOT NULL,
+          status TEXT NOT NULL,
+          task_id TEXT,
+          epic_id TEXT,
+          capability_ref TEXT UNIQUE,
+          capability_json TEXT
+        )
+      `);
+      const run = {
+        id: "missing-workspace-run", role: "Developer", runtime: "hermes", model: "default",
+        taskId: null, epicId: null, status: "STARTED" as const, sessionId: null, attempt: null,
+        triggerReason: null, contextVersion: "v1", outputSchemaVersion: "v1", startedAt: new Date(),
+        endedAt: null, exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
+        capabilityRef: "missing-capability",
+      };
+
+      try {
+        adapter = new HermesRuntimeAdapter(mockExecutor, mockArtifactStore, {
+          databasePath,
+          resultDirectory,
+          checkpointDirectory,
+        });
+
+        await expect(adapter.startRun(run)).rejects.toThrow(/workspace.*capability|capability.*workspace/i);
+        expect(mockExecutor.getCalls()).toHaveLength(0);
+      } finally {
+        database.close();
+        await fs.rm(root, { recursive: true, force: true });
+      }
+    });
+
     it("wires the exact run result path into the authenticated MCP config", async () => {
       const resultDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-result-wiring-"));
-      adapter = new HermesRuntimeAdapter(mockExecutor, mockArtifactStore, { resultDirectory });
+      adapter = new HermesRuntimeAdapter(mockExecutor, mockArtifactStore, {
+        resultDirectory,
+        managedWorktree: path.join(os.tmpdir(), "hermes-test-workspace"),
+      });
       const run = {
         id: "wired-run-id", role: "Developer", runtime: "hermes", model: "default",
         taskId: null, epicId: null, status: "STARTED" as const, sessionId: null, attempt: null,
@@ -485,7 +604,10 @@ describe("HermesRuntimeAdapter", () => {
         exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
       };
       mockExecutor.setNextResult({ exitCode: 7, stdout: "session: exact-session", stderr: "agent failed" });
-      const exactAdapter = new HermesRuntimeAdapter(mockExecutor, mockArtifactStore, { resultDirectory });
+      const exactAdapter = new HermesRuntimeAdapter(mockExecutor, mockArtifactStore, {
+        resultDirectory,
+        managedWorktree: path.join(os.tmpdir(), "hermes-test-workspace"),
+      });
       await exactAdapter.startRun(run);
 
       const outcome = await exactAdapter.collectResult(run.id);
@@ -509,7 +631,10 @@ describe("HermesRuntimeAdapter", () => {
         exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
       };
       mockExecutor.setNextResult({ exitCode: 0, stdout: "session: recheck", stderr: "" });
-      const exactAdapter = new HermesRuntimeAdapter(mockExecutor, mockArtifactStore, { resultDirectory });
+      const exactAdapter = new HermesRuntimeAdapter(mockExecutor, mockArtifactStore, {
+        resultDirectory,
+        managedWorktree: path.join(os.tmpdir(), "hermes-test-workspace"),
+      });
       await exactAdapter.startRun(run);
       await fs.writeFile(path.join(resultDirectory, `${run.id}.json`), JSON.stringify({ version: "1", outcome: "COMPLETED" }));
       expect((await exactAdapter.collectResult(run.id)).validatedSubmission).toBe(true);
@@ -522,6 +647,7 @@ describe("HermesRuntimeAdapter", () => {
 
     it("rejects forbidden credentials in supplied runtime overlays", async () => {
       const restricted = new HermesRuntimeAdapter(mockExecutor, mockArtifactStore, {
+        managedWorktree: path.join(os.tmpdir(), "hermes-test-workspace"),
         environment: { GITHUB_TOKEN: "secret" },
       });
       await expect(restricted.startRun({

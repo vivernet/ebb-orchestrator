@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { globalRegistry } from '../../../src/modules/runtime/role-registry.js';
-import { getContract } from '../../../src/modules/runtime/default-roles.js';
+import { AllContracts, getContract } from '../../../src/modules/runtime/default-roles.js';
+import { SUPPORTED_TOOL_IDS } from '../../../src/modules/execution/run-capability.js';
 
 describe('RoleRegistry', () => {
   describe('initialization', () => {
@@ -87,9 +88,9 @@ describe('RoleRegistry', () => {
       expect(roles.map(r => r.name)).not.toContain('integration');
     });
 
-    it('should return roles with command.shell', () => {
+    it('should not expose the unsupported command.shell tool', () => {
       const roles = globalRegistry.filterByTool('command.shell');
-      expect(roles.map(r => r.name)).toContain('devops');
+      expect(roles).toHaveLength(0);
     });
 
     it('should NOT return reviewer with command.shell', () => {
@@ -122,6 +123,15 @@ describe('RoleRegistry', () => {
   });
 
   describe('tool surfaces per role (snapshot tests)', () => {
+    it('keeps every role tool in the typed supported MCP surface', () => {
+      const supported = new Set<string>(SUPPORTED_TOOL_IDS);
+      for (const contract of Object.values(AllContracts)) {
+        for (const tool of contract.allowedTools) {
+          expect(supported.has(tool), `${contract.name} exposes unsupported ${tool}`).toBe(true);
+        }
+      }
+    });
+
     it('should have correct tools for reviewer', () => {
       const contract = getContract('reviewer');
       expect(contract).toBeDefined();
@@ -133,7 +143,6 @@ describe('RoleRegistry', () => {
         'project.typecheck',
         'git.status',
         'git.diff',
-        'artifact.write',
         'submit_result',
       ]);
       // Проверяем ограничения.
@@ -152,7 +161,6 @@ describe('RoleRegistry', () => {
         'project.lint',
         'git.status',
         'git.diff',
-        'artifact.write',
         'submit_result',
       ]);
     });
@@ -166,7 +174,6 @@ describe('RoleRegistry', () => {
         'git.status',
         'git.diff',
         'project.test',
-        'artifact.write',
         'submit_result',
       ]);
     });
@@ -186,7 +193,6 @@ describe('RoleRegistry', () => {
         'git.status',
         'git.diff',
         'git.commit',
-        'artifact.write',
         'submit_result',
       ]);
       // Проверяем ограничения: без изменений git.push, merge.default и конфигурации permissions.

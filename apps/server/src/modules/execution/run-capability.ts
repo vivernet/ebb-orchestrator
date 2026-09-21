@@ -17,7 +17,18 @@ export type ToolId =
   | 'git.diff'
   | 'git.commit'
   | 'project.test'
+  | 'project.lint'
+  | 'project.typecheck'
+  | 'project.build'
+  | 'command.exec'
   | 'submit_result';
+
+export const SUPPORTED_TOOL_IDS = [
+  'workspace.read', 'workspace.search', 'workspace.patch',
+  'git.status', 'git.diff', 'git.commit',
+  'project.test', 'project.lint', 'project.typecheck', 'project.build',
+  'command.exec', 'submit_result',
+] as const satisfies readonly ToolId[];
 
 export interface RunCapabilityDef {
   id: string;

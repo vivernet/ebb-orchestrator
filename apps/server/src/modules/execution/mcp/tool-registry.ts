@@ -152,6 +152,49 @@ export class ToolRegistry {
       },
     });
 
+    const projectTools = [
+      ['project.lint', 'lint'],
+      ['project.typecheck', 'typecheck'],
+      ['project.build', 'build'],
+    ] as const;
+    for (const [toolId, action] of projectTools) {
+      this.toolDefinitions.set(toolId, {
+        name: toolId,
+        description: `Run project ${action}`,
+        inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+        handler: async (args) => {
+          if (Object.keys(args).length !== 0) return { success: false, error: `invalid ${toolId} arguments` };
+          const result = await capability.getActionGateway()[action]();
+          return { success: result.success, result, ...(result.success ? {} : { error: result.stderr }) };
+        },
+      });
+    }
+
+    this.toolDefinitions.set('command.exec', {
+      name: 'command.exec',
+      description: 'Run an explicit executable without shell interpretation',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          executable: { type: 'string' },
+          args: { type: 'array', items: { type: 'string' } },
+          timeout: { type: 'number' },
+          maxOutput: { type: 'number' },
+        },
+        required: ['executable', 'args'],
+        additionalProperties: false,
+      },
+      handler: async (args) => {
+        const result = await capability.getActionGateway().exec({
+          executable: args.executable as string,
+          args: args.args as string[],
+          ...(typeof args.timeout === 'number' ? { timeout: args.timeout } : {}),
+          ...(typeof args.maxOutput === 'number' ? { maxOutput: args.maxOutput } : {}),
+        });
+        return { success: result.success, result, ...(result.success ? {} : { error: result.stderr }) };
+      },
+    });
+
     // Регистрирует submit_result.
     const submitTool = new SubmitResultTool(capability, completion);
     this.toolDefinitions.set('submit_result' as ToolId, {

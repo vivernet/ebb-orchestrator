@@ -33,13 +33,11 @@ export const AllTools: ActionId[] = [
   ActionId.ProjectBuild,
   // Выполнение команд
   ActionId.CommandExec,
-  ActionId.CommandShell,
   // Операции Git
   ActionId.GitStatus,
   ActionId.GitDiff,
   ActionId.GitCommit,
   // Операции с artifacts
-  ActionId.ArtifactWrite,
   ActionId.SubmitResult,
 ];
 
@@ -127,7 +125,6 @@ export const CoordinatorContract: RoleContract = {
     ActionId.ProjectBuild,
     ActionId.GitStatus,
     ActionId.GitDiff,
-    ActionId.ArtifactWrite,
     ActionId.SubmitResult,
   ],
   sessionPolicy: 'task_lifetime',
@@ -155,7 +152,6 @@ export const ProductManagerContract: RoleContract = {
   allowedTools: [
     ActionId.WorkspaceRead,
     ActionId.WorkspaceSearch,
-    ActionId.ArtifactWrite,
     ActionId.SubmitResult,
   ],
   sessionPolicy: 'task_lifetime',
@@ -186,7 +182,6 @@ export const ArchitectContract: RoleContract = {
     ActionId.ProjectBuild,
     ActionId.GitStatus,
     ActionId.GitDiff,
-    ActionId.ArtifactWrite,
     ActionId.SubmitResult,
   ],
   sessionPolicy: 'shared',
@@ -222,7 +217,6 @@ export const MiddleDevContract: RoleContract = {
     ActionId.GitStatus,
     ActionId.GitDiff,
     ActionId.GitCommit,
-    ActionId.ArtifactWrite,
     ActionId.SubmitResult,
   ],
   sessionPolicy: 'shared',
@@ -254,7 +248,6 @@ export const SeniorDevContract: RoleContract = {
     ActionId.GitStatus,
     ActionId.GitDiff,
     ActionId.GitCommit,
-    ActionId.ArtifactWrite,
     ActionId.SubmitResult,
   ],
   sessionPolicy: 'shared',
@@ -284,10 +277,8 @@ export const DevOpsContract: RoleContract = {
     ActionId.ProjectTypecheck,
     ActionId.ProjectBuild,
     ActionId.CommandExec,
-    ActionId.CommandShell,
     ActionId.GitStatus,
     ActionId.GitDiff,
-    ActionId.ArtifactWrite,
     ActionId.SubmitResult,
   ],
   sessionPolicy: 'task_lifetime',
@@ -319,7 +310,6 @@ export const ReviewerContract: RoleContract = {
     ActionId.ProjectTypecheck,
     ActionId.GitStatus,
     ActionId.GitDiff,
-    ActionId.ArtifactWrite,
     ActionId.SubmitResult,
     // Явно НЕ включено: workspace.patch, git.commit, команда.shell
   ],
@@ -354,7 +344,6 @@ export const QAContract: RoleContract = {
     ActionId.ProjectLint,
     ActionId.GitStatus,
     ActionId.GitDiff,
-    ActionId.ArtifactWrite,
     ActionId.SubmitResult,
   ],
   sessionPolicy: 'fresh_per_task',
@@ -383,7 +372,6 @@ export const IntegrationContract: RoleContract = {
     ActionId.GitStatus,
     ActionId.GitDiff,
     ActionId.ProjectTest,
-    ActionId.ArtifactWrite,
     ActionId.SubmitResult,
   ],
   sessionPolicy: 'fresh_per_task',

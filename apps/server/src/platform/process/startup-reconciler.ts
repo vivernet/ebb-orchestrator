@@ -14,6 +14,26 @@ export interface StartupReport {
   errors: Error[];
 }
 
+export interface StartupDegradationStatus {
+  set(status: "DEGRADED"): Promise<void>;
+}
+
+/**
+ * Переводит lifecycle в fail-closed состояние, если reconciliation завершился
+ * ошибками. После этого ошибка пробрасывается, чтобы startup не дошёл до READY.
+ */
+export async function failClosedStartupReconciliation(
+  report: StartupReport,
+  status: StartupDegradationStatus,
+): Promise<void> {
+  if (report.errors.length === 0) return;
+
+  await status.set("DEGRADED");
+  throw new Error(
+    `Startup reconciliation failed: ${report.errors.map((error) => error.message).join("; ")}`,
+  );
+}
+
 /**
  * Предоставляет публичный контракт модуля startup-reconciler для взаимодействия слоёв приложения.
  */

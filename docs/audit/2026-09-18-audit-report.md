@@ -4,6 +4,10 @@
 **Branch:** develop  
 **HEAD:** 4e82f9f docs: add comprehensive audit report
 
+> **Historical snapshot:** этот отчёт отражает состояние repository на указанную
+> дату и `HEAD`; он не является текущим status/evidence и не заменяет более
+> поздние audit-документы.
+
 ---
 
 ## Verdict

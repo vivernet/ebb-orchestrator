@@ -11,11 +11,11 @@ describe('approval UI/API remediation', () => {
 
   test('maps the server envelope fields and uppercase values to the UI model', () => {
     expect(mapApprovalRow({
-      id: 'approval-1', type: 'FINAL_MERGE', subject_id: 'task-1', subject_type: 'TASK',
+      id: 'approval-1', type: 'FINAL_MERGE', subject_id: 'epic-1', subject_type: 'EPIC',
       status: 'PENDING', requested_by: 'orchestrator', resolved_by: null,
       resolution_note: null, created_at: '2026-09-17T00:00:00Z', resolved_at: null,
     })).toEqual({
-      id: 'approval-1', scope: 'task', action: 'FINAL_MERGE', description: 'TASK task-1',
+      id: 'approval-1', scope: 'epic', action: 'FINAL_MERGE', description: 'EPIC epic-1',
       requestedBy: 'orchestrator', context: '', status: 'pending', createdAt: '2026-09-17T00:00:00Z',
     });
   });
@@ -33,6 +33,48 @@ describe('approval UI/API remediation', () => {
     expect(screen.queryByRole('button', { name: 'Request Changes' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
     await waitFor(() => expect(post).toHaveBeenCalledWith('/approvals/approval-1/approve', {}));
+  });
+
+  test('loads the inbox through the canonical query path with AbortSignal', async () => {
+    const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ approvals: [] });
+    render(<ApprovalInboxPage />);
+
+    expect(await screen.findByText('No pending approvals.')).toBeInTheDocument();
+    expect(get).toHaveBeenCalledWith('/approvals', expect.objectContaining({ signal: expect.any(AbortSignal) }));
+  });
+
+  test('refetches the inbox after SSE reconnect and keeps the empty state explicit', async () => {
+    const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ approvals: [] });
+    render(<ApprovalInboxPage />);
+
+    await screen.findByText('No pending approvals.');
+    window.dispatchEvent(new CustomEvent('sse-reconnect'));
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+    expect(screen.getByText('No pending approvals.')).toBeInTheDocument();
+  });
+
+  test('deduplicates pending approve and refetches the authoritative approvals list', async () => {
+    let resolveApprove!: (value: unknown) => void;
+    const approve = new Promise((resolve) => { resolveApprove = resolve; });
+    const get = vi.spyOn(apiClient, 'get')
+      .mockResolvedValueOnce({ approvals: [{
+        id: 'approval-1', type: 'FINAL_MERGE', subject_id: 'task-1', subject_type: 'TASK',
+        status: 'PENDING', requested_by: 'orchestrator', resolved_by: null,
+        resolution_note: null, created_at: '2026-09-17T00:00:00Z', resolved_at: null,
+      }] })
+      .mockResolvedValueOnce({ approvals: [] });
+    const post = vi.spyOn(apiClient, 'post').mockReturnValue(approve);
+    render(<ApprovalInboxPage />);
+
+    const button = await screen.findByRole('button', { name: 'Approve' });
+    fireEvent.click(button);
+    fireEvent.click(button);
+
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    expect(button).toBeDisabled();
+    resolveApprove({});
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByText('No pending approvals.')).toBeInTheDocument());
   });
 
   test('renders approval load failures with a retry affordance', async () => {
@@ -54,6 +96,7 @@ describe('approval UI/API remediation', () => {
     render(<ApprovalInboxPage />);
     fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));
     expect(await screen.findByText('Unable to update approval: approval unavailable')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Approve' })).not.toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
   });

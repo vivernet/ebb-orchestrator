@@ -7,58 +7,99 @@
 
 const API_BASE = '/api/v1';
 
+/**
+ * Переводит canonical API path из shared contracts в relative path клиента.
+ * Префикс проверяется здесь, чтобы страницы не дублировали знание о base path.
+ */
+export function toClientPath(canonicalPath: string): string {
+  if (canonicalPath === API_BASE) return '/';
+  if (!canonicalPath.startsWith(`${API_BASE}/`)) {
+    throw new Error(`API base path is required: ${API_BASE}`);
+  }
+  return canonicalPath.slice(API_BASE.length);
+}
+
 interface ApiClient {
-  get<T>(path: string): Promise<T>;
-  post<T>(path: string, body?: unknown): Promise<T>;
+  get<T>(path: string, options?: RequestOptions): Promise<T>;
+  post<T>(path: string, body?: unknown, options?: RequestOptions): Promise<T>;
   sessionToken: string | null;
   csrfToken: string | null;
+}
+
+export interface RequestOptions {
+  signal?: AbortSignal;
+  headers?: HeadersInit;
+}
+
+/**
+ * Представляет безопасную ошибку API с HTTP status и optional machine-readable code.
+ * Не содержит bearer, CSRF, launch token или сырые секретные payloads.
+ */
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly code?: string,
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
 }
 
 function createApiClient(): ApiClient {
   async function fetchJson<T>(
     path: string,
-    options: RequestInit = {}
+    options: RequestOptions & { method?: string; body?: BodyInit | null | undefined } = {},
   ): Promise<T> {
-    const { headers: requestHeaders, ...requestOptions } = options;
+    const { headers: requestHeaders, signal, body, ...requestOptions } = options;
     const response = await fetch(path, {
       credentials: 'same-origin',
       headers: {
         'Content-Type': 'application/json',
+        ...requestHeaders,
         ...(apiClient.sessionToken ? { Authorization: `Bearer ${apiClient.sessionToken}` } : {}),
         ...(apiClient.csrfToken ? { 'X-CSRF-Token': apiClient.csrfToken } : {}),
-        ...requestHeaders,
       },
+      ...(signal ? { signal } : {}),
+      ...(body !== undefined ? { body } : {}),
       ...requestOptions,
     });
 
     if (!response.ok) {
       let serverMessage: string | null = null;
+      let serverCode: string | undefined;
       try {
         const payload: unknown = await response.clone().json();
         if (typeof payload === 'object' && payload !== null && 'error' in payload && typeof payload.error === 'string') {
           serverMessage = payload.error;
         }
+        if (typeof payload === 'object' && payload !== null && 'code' in payload && typeof payload.code === 'string') {
+          serverCode = payload.code;
+        }
       } catch {
         // Для не-JSON ответа используем безопасное сообщение со статусом ниже.
       }
-      throw new Error(serverMessage ?? `API error: ${response.status} ${response.statusText}`);
+      throw new ApiError(serverMessage ?? `API error: ${response.status} ${response.statusText}`, response.status, serverCode);
     }
 
-    return response.json();
+    if (response.status === 204) return undefined as T;
+    const responseText = await response.text();
+    return responseText.length === 0 ? undefined as T : JSON.parse(responseText) as T;
   }
 
   return {
     sessionToken: null as string | null,
     csrfToken: null as string | null,
 
-    async get<T>(path: string): Promise<T> {
-      return fetchJson<T>(`${API_BASE}${path}`);
+    async get<T>(path: string, options?: RequestOptions): Promise<T> {
+      return fetchJson<T>(`${API_BASE}${path}`, options);
     },
 
-    async post<T>(path: string, body?: unknown): Promise<T> {
+    async post<T>(path: string, body?: unknown, options?: RequestOptions): Promise<T> {
       return fetchJson<T>(`${API_BASE}${path}`, {
+        ...options,
         method: 'POST',
-        body: body ? JSON.stringify(body) : null,
+        body: body === undefined ? undefined : JSON.stringify(body),
       });
     },
   };

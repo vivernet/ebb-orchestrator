@@ -15,8 +15,8 @@
  * 7. Start HTTP server
  */
 import { createApp } from "./app/create-app.js";
-import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { createSqliteDatabase } from "./platform/database/sqlite-database.js";
@@ -51,6 +51,7 @@ import { ArtifactRepository } from "./platform/artifacts/artifact-repository.js"
 import { ArtifactStore } from "./platform/artifacts/artifact-store.js";
 import { WorktreeManager } from "./modules/git/worktree-manager.js";
 import { TaskWorkspaceProvisioner } from "./modules/git/task-workspace-provisioner.js";
+import { StartupReconciler, failClosedStartupReconciliation } from "./platform/process/startup-reconciler.js";
 
 const host = "127.0.0.1";
 const port = Number(process.env["PORT"] ?? 3000);
@@ -130,22 +131,11 @@ const artifactStore = new ArtifactStore(home.artifacts, new ArtifactRepository(d
 const app = createApp({ host, port, db: database, scheduler, runtime, runService, secretStore, epicOrchestrator, status, eventBus, ...(existsSync(webRoot) ? { webRoot } : {}) });
 
 // Регистрирует шаги reconciliation которые будут запущены после migrations.
-const reconciler = {
-  steps: [] as Array<() => Promise<void>>,
-  register(fn: () => Promise<void>) {
-    this.steps.push(fn);
-  },
-  async run() {
-    const errors: string[] = [];
-    for (const step of this.steps) {
-      try { await step(); } catch (e) { errors.push(e instanceof Error ? e.message : String(e)); }
-    }
-    return { errors };
-  },
-};
+const reconciler = new StartupReconciler();
 reconciler.register(async () => {
   // Reconcile runs, Git/worktrees, budgets, outbox/jobs для активных проектов.
   // Этот запрос выполняется ПОСЛЕ завершения migrations, избегая доступа до migrations.
+  const errors: string[] = [];
   const onboarding = database.all<{ repository_path: string; proposed_json: string }>(
     `SELECT repository_path, proposed_json FROM onboarding_configs WHERE status='ACTIVE'`,
   );
@@ -158,9 +148,12 @@ reconciler.register(async () => {
       const result = await git.reconcile(branch);
       if (result.state !== "IN_SYNC") console.warn(`[orchestrator] Git drift: ${result.state}`);
     } catch (error) {
-      console.warn(`[orchestrator] Git reconciliation skipped: ${error instanceof Error ? error.message : String(error)}`);
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[orchestrator] Git reconciliation failed: ${message}`);
+      errors.push(message);
     }
   }
+  if (errors.length > 0) throw new Error(`Git reconciliation failed: ${errors.join("; ")}`);
 });
 reconciler.register(async () => {
   const interrupted = runService.reconcileInterruptedRuns();
@@ -235,12 +228,14 @@ await startSystem({
   reconcileArtifacts: async () => {
     await artifactStore.reconcileStagingArtifacts();
   },
-  additionalReconcilers: [async () => reconciler.run().then((report) => {
+  additionalReconcilers: [async () => {
+    const report = await reconciler.run();
     if (report.errors.length) {
       console.error(`[orchestrator] reconciliation errors: ${report.errors.length}`);
-      for (const e of report.errors) console.error(`  ${e}`);
+      for (const error of report.errors) console.error(`  ${error.message}`);
     }
-  })],
+    await failClosedStartupReconciliation(report, status);
+  }],
   workers,
 });
 
@@ -248,7 +243,14 @@ await app.listen({ host, port });
 
 console.log(`[orchestrator] listening on http://${host}:${port}`);
 console.log(`[orchestrator] status: ${status.get()}`);
-if (existsSync(webRoot) && app.bootstrapToken) openLocalUi(`http://${host}:${port}/#ebb-bootstrap=${encodeURIComponent(app.bootstrapToken)}`);
+const bootstrapFile = process.env["EBB_ORCHESTRATOR_BOOTSTRAP_FILE"];
+if (bootstrapFile && app.bootstrapToken) {
+  mkdirSync(dirname(bootstrapFile), { recursive: true });
+  writeFileSync(bootstrapFile, JSON.stringify({ bootstrapToken: app.bootstrapToken }), { encoding: "utf8", mode: 0o600 });
+}
+if (existsSync(webRoot) && app.bootstrapToken && process.env["EBB_ORCHESTRATOR_NO_OPEN_UI"] !== "1") {
+  openLocalUi(`http://${host}:${port}/#ebb-bootstrap=${encodeURIComponent(app.bootstrapToken)}`);
+}
 
 function openLocalUi(url: string): void {
   const command = process.platform === "win32" ? "explorer.exe" : process.platform === "darwin" ? "open" : "xdg-open";

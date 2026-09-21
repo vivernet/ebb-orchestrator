@@ -14,6 +14,7 @@ import * as path from "path";
 import * as fs from "fs/promises";
 import * as os from "os";
 import { createSqliteDatabase } from "../../../platform/database/sqlite-database.js";
+import { loadValidatedCapability } from "../../execution/capability-validation.js";
 
 /**
  * В памяти run state tracking.
@@ -467,7 +468,31 @@ export class HermesRuntimeAdapter implements AgentRuntime {
    * Получает the managed worktree path for a run.
    */
   private getManagedWorktree(run: AgentRun): string {
-    return this.managedWorktreeForRun?.(run) ?? this.managedWorktree ?? (run as AgentRun & { __workspace?: string }).__workspace ?? path.join(os.homedir(), "worktrees", run.id);
+    if (this.databasePath) {
+      if (!run.capabilityRef) {
+        throw new Error(`Hermes workspace is unavailable for run ${run.id}: capability reference is missing`);
+      }
+      const database = createSqliteDatabase(this.databasePath);
+      try {
+        const capability = loadValidatedCapability(database, run.capabilityRef);
+        const workspace = capability.capability.workspace.trim();
+        if (!workspace) {
+          throw new Error("authoritative capability.workspace is empty");
+        }
+        return capability.capability.workspace;
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        throw new Error(`Hermes workspace is unavailable for run ${run.id}: ${reason}`, { cause: error });
+      } finally {
+        database.close();
+      }
+    }
+
+    const configuredWorkspace = this.managedWorktreeForRun?.(run)
+      ?? this.managedWorktree
+      ?? (run as AgentRun & { __workspace?: string }).__workspace;
+    if (configuredWorkspace) return configuredWorkspace;
+    throw new Error(`Hermes workspace is unavailable for run ${run.id}: authoritative capability.workspace is missing`);
   }
 
   private async waitForWorkspace(run: AgentRun): Promise<string> {

@@ -3,9 +3,9 @@
 ## Baseline
 
 - Branch: develop
-- HEAD: 91c27aa docs: ренировать структуру документации
+- HEAD: 3761edaa1ae6cd87116627b4397383333c0a8a3c
 - Worktrees: 2 (master, develop)
-- Untracked: 1 (docs/architecture/plans/2026-09-18-hermes-development-workflow-migration.md)
+- Current worktree includes the documented security/E2E hardening changes and the Hermes runner fix; no OpenCode cleanup has been authorized.
 
 ## Active OpenCode Files
 
@@ -96,7 +96,8 @@ From AGENTS.md and README.md:
 
 From package.json:
 - scripts: lint, test, typecheck, build
-- No hermes:setup/execute/check scripts yet
+- `hermes:setup`, `hermes:check`, and `hermes:execute` are present in `package.json`.
+- `scripts/hermes-dev.mjs` uses the current `hermes --in <worktree> chat --query-file <prompt>` invocation.
 
 ## Documentation References
 

@@ -146,6 +146,40 @@ describe('MCP Server', () => {
       expect(result.result).toMatchObject({ action: 'test', stdout: 'real test', exitCode: 0 });
     });
 
+    it.each([
+      ['project.lint', 'lint'],
+      ['project.typecheck', 'typecheck'],
+      ['project.build', 'build'],
+    ] as const)('runs %s through the configured controlled executor', async (toolName, action) => {
+      const { McpServer } = await import('../../../../src/modules/execution/mcp/mcp-server.js');
+      const { RunCapability } = await import('../../../../src/modules/execution/run-capability.js');
+      const server = new McpServer(new RunCapability({
+        id: `project-${action}`, role: 'developer', workspace: workspaceDir,
+        allowedTools: [toolName],
+        projectConfig: { commands: { [action]: { executable: process.execPath, args: ['-e', `process.stdout.write("${action}")`] } } },
+      }));
+
+      const result = await server.callTool(toolName, {});
+      expect(result.success).toBe(true);
+      expect(result.result).toMatchObject({ action, stdout: action, exitCode: 0 });
+    });
+
+    it('runs command.exec without shell interpretation through the controlled executor', async () => {
+      const { McpServer } = await import('../../../../src/modules/execution/mcp/mcp-server.js');
+      const { RunCapability } = await import('../../../../src/modules/execution/run-capability.js');
+      const server = new McpServer(new RunCapability({
+        id: 'command-exec', role: 'developer', workspace: workspaceDir,
+        allowedTools: ['command.exec'],
+      }));
+
+      const result = await server.callTool('command.exec', {
+        executable: process.execPath,
+        args: ['-e', 'process.stdout.write("command")'],
+      });
+      expect(result.success).toBe(true);
+      expect(result.result).toMatchObject({ stdout: 'command', exitCode: 0 });
+    });
+
     it('should instantiate MCP server for Reviewer capability and filter tools correctly', async () => {
 // Импортируем модули.
       const mcpModule = await import('../../../../src/modules/execution/mcp/mcp-server.js');

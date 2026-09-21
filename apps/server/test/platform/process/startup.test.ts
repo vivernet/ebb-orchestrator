@@ -9,9 +9,10 @@ import {
   type SystemLifecycleDeps,
   type SystemStatus,
   type LockHandle,
+  StatusTracker,
 } from "../../../src/platform/process/system-lifecycle.js";
 import { SingleInstanceLock } from "../../../src/platform/process/single-instance-lock.js";
-import { StartupReconciler } from "../../../src/platform/process/startup-reconciler.js";
+import { failClosedStartupReconciliation, StartupReconciler } from "../../../src/platform/process/startup-reconciler.js";
 
 describe("startup lifecycle", () => {
   let tmpDir: string;
@@ -189,6 +190,64 @@ describe("startup lifecycle", () => {
     expect(stopped).toEqual(["first"]);
   });
 
+  it("keeps the server recoverable in degraded mode when startup reconciliation fails", async () => {
+    const status = new StatusTracker();
+    const workerStart = vi.fn(async () => {});
+    const deps: SystemLifecycleDeps = {
+      instanceLock: { acquire: async () => ({ pid: 1 }), release: async () => {} },
+      database: { open: async () => {}, close: () => {} },
+      migrator: { run: async () => {} },
+      status,
+      reconcileOutbox: async () => {},
+      reconcileJobs: async () => {},
+      reconcileArtifacts: async () => {},
+      additionalReconcilers: [async () => {
+        await failClosedStartupReconciliation(
+          { reconcilersRun: 1, errors: [new Error("reconciliation failed")] },
+          status,
+        );
+      }],
+      workers: [{ start: workerStart, stop: async () => {} }],
+    };
+
+    await startSystem(deps);
+
+    expect(status.get()).toBe("DEGRADED");
+    expect(workerStart).not.toHaveBeenCalled();
+  });
+
+  it("logs only a safe recovery step diagnostic for built-in reconciliation failures", async () => {
+    const status = new StatusTracker();
+    const workerStart = vi.fn(async () => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const secretLikeMessage = "repository-token=secret-model-output";
+    const deps: SystemLifecycleDeps = {
+      instanceLock: { acquire: async () => ({ pid: 1 }), release: async () => {} },
+      database: { open: async () => {}, close: () => {} },
+      migrator: { run: async () => {} },
+      status,
+      reconcileOutbox: async () => {},
+      reconcileJobs: async () => {
+        throw new Error(secretLikeMessage);
+      },
+      reconcileArtifacts: async () => {},
+      additionalReconcilers: [],
+      workers: [{ start: workerStart, stop: async () => {} }],
+    };
+
+    try {
+      await startSystem(deps);
+
+      expect(status.get()).toBe("DEGRADED");
+      expect(workerStart).not.toHaveBeenCalled();
+      const diagnostics = errorSpy.mock.calls.flat().join(" ");
+      expect(diagnostics).toContain("step=reconcile_jobs");
+      expect(diagnostics).not.toContain(secretLikeMessage);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
   it("uses one shutdown deadline for all workers", async () => {
     vi.useFakeTimers();
     try {
@@ -312,6 +371,14 @@ describe("startup lifecycle", () => {
     expect(report.reconcilersRun).toBe(3);
     expect(report.errors).toHaveLength(1);
     expect(report.errors[0]!.message).toBe("boom");
+  });
+
+  it("marks lifecycle degraded and rejects a failed startup reconciliation", async () => {
+    const status = new StatusTracker();
+    const report = { reconcilersRun: 1, errors: [new Error("boom")] };
+
+    await expect(failClosedStartupReconciliation(report, status)).rejects.toThrow("Startup reconciliation failed: boom");
+    expect(status.get()).toBe("DEGRADED");
   });
 
   it("SingleInstanceLock throws if lock file is held", async () => {

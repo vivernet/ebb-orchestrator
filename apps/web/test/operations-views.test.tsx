@@ -1,5 +1,6 @@
 import { describe, test, expect, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router';
 import SanitizedTerminal from '../src/components/SanitizedTerminal.js';
 import ExecutionPage from '../src/features/execution/ExecutionPage.js';
 import AgentRunPage from '../src/features/runs/AgentRunPage.js';
@@ -45,11 +46,49 @@ describe('Queue row wait reason', () => {
       blocked: [],
     });
 
-    render(<ExecutionPage />);
+    render(<MemoryRouter><ExecutionPage /></MemoryRouter>);
 
     expect(await screen.findByText('Waiting for final merge approval')).toBeInTheDocument();
     expect(screen.getByText('WAITING_FOR_APPROVAL')).toBeInTheDocument();
-    await waitFor(() => expect(apiClient.get).toHaveBeenCalledWith('/execution'));
+    await waitFor(() => expect(apiClient.get).toHaveBeenCalledWith('/execution', expect.objectContaining({ signal: expect.any(AbortSignal) })));
+    vi.restoreAllMocks();
+  });
+
+  test('refresh button refetches execution through the query store', async () => {
+    const get = vi.spyOn(apiClient, 'get').mockRejectedValueOnce(new Error('temporary outage')).mockResolvedValueOnce({ running: [], waiting: [], blocked: [] });
+    render(<ExecutionPage />);
+
+    expect(await screen.findByText('Unable to load execution queue: temporary outage')).toBeInTheDocument();
+    get.mockResolvedValueOnce({ running: [], waiting: [], blocked: [] });
+    // Refresh is rendered only in the successful page shell, so retry first restores it.
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(3));
+    vi.restoreAllMocks();
+  });
+
+  test('cancel uses one pending mutation and refetches the authoritative projection', async () => {
+    let resolveCancel!: (value: unknown) => void;
+    const cancel = new Promise((resolve) => { resolveCancel = resolve; });
+    const get = vi.spyOn(apiClient, 'get').mockResolvedValue({
+      running: [{ runId: 'run-1', role: 'Developer', taskId: 'task-1', status: 'IN_PROGRESS' }],
+      waiting: [],
+      blocked: [],
+    });
+    const post = vi.spyOn(apiClient, 'post').mockReturnValue(cancel);
+
+    render(<MemoryRouter><ExecutionPage /></MemoryRouter>);
+
+    const button = await screen.findByRole('button', { name: 'Cancel' });
+    fireEvent.click(button);
+    fireEvent.click(button);
+
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    expect(button).toBeDisabled();
+    resolveCancel({});
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Cancel' })).not.toBeDisabled());
     vi.restoreAllMocks();
   });
 });
@@ -62,13 +101,61 @@ describe('Agent Run detail', () => {
       usage: { inputTokens: 1, cachedTokens: 2, outputTokens: 3, cost: 0.42 },
     });
 
-    render(<AgentRunPage id="run-1" />);
+    render(<MemoryRouter><AgentRunPage id="run-1" /></MemoryRouter>);
 
     expect(await screen.findByRole('heading', { name: 'Agent Run: run-1' })).toBeInTheDocument();
     expect(screen.getByText('DEVELOPMENT')).toBeInTheDocument();
     expect(screen.getByText('$0.4200')).toBeInTheDocument();
     expect(get).toHaveBeenCalledTimes(1);
-    expect(get).toHaveBeenCalledWith('/runs/run-1');
+    expect(get).toHaveBeenCalledWith('/runs/run-1', expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    vi.restoreAllMocks();
+  });
+
+  test('links present run task and epic IDs with encoded routes', async () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue({
+      id: 'run/1', role: 'Developer', runtime: 'hermes', model: 'gpt', status: 'IN_PROGRESS', taskId: 'task/1', epicId: 'epic/1',
+      triggerReason: 'DEVELOPMENT', startedAt: null, endedAt: null,
+      usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, cost: 0 },
+    });
+    render(<MemoryRouter><AgentRunPage id="run/1" /></MemoryRouter>);
+
+    expect(await screen.findByRole('link', { name: 'task/1' })).toHaveAttribute('href', '/tasks/task%2F1');
+    expect(screen.getByRole('link', { name: 'epic/1' })).toHaveAttribute('href', '/epics/epic%2F1');
+    vi.restoreAllMocks();
+  });
+
+  test('refetches execution and run projections after SSE reconnect', async () => {
+    const get = vi.spyOn(apiClient, 'get').mockImplementation(async (path) => path === '/execution'
+      ? { running: [], waiting: [], blocked: [] }
+      : { id: 'run-1', role: 'Developer', runtime: 'hermes', model: 'gpt', status: 'DONE', taskId: null, epicId: null, triggerReason: null, startedAt: null, endedAt: null, usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, cost: 0 } });
+    render(<MemoryRouter><><ExecutionPage /><AgentRunPage id="run-1" /></></MemoryRouter>);
+
+    await waitFor(() => {
+      expect(get.mock.calls.filter(([path]) => path === '/execution')).toHaveLength(1);
+      expect(get.mock.calls.filter(([path]) => path === '/runs/run-1')).toHaveLength(1);
+    });
+    window.dispatchEvent(new CustomEvent('sse-reconnect'));
+    await waitFor(() => {
+      expect(get.mock.calls.filter(([path]) => path === '/execution')).toHaveLength(2);
+      expect(get.mock.calls.filter(([path]) => path === '/runs/run-1')).toHaveLength(2);
+    });
+    vi.restoreAllMocks();
+  });
+
+  test('renders cancel failure and re-enables the mutation', async () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue({
+      id: 'run-1', role: 'Developer', runtime: 'hermes', model: 'gpt', status: 'IN_PROGRESS', taskId: null, epicId: null,
+      triggerReason: null, startedAt: null, endedAt: null,
+      usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, cost: 0 },
+    });
+    const post = vi.spyOn(apiClient, 'post').mockRejectedValue(new Error('cancel rejected'));
+    render(<MemoryRouter><AgentRunPage id="run-1" /></MemoryRouter>);
+
+    const button = await screen.findByRole('button', { name: 'Cancel Run' });
+    fireEvent.click(button);
+    expect(await screen.findByText('Unable to cancel run: cancel rejected')).toBeInTheDocument();
+    expect(button).not.toBeDisabled();
+    expect(post).toHaveBeenCalledTimes(1);
     vi.restoreAllMocks();
   });
 });
