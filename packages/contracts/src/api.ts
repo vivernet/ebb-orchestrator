@@ -34,10 +34,15 @@ export interface GitProjection {
 }
 /** Ссылка на approval в read model проекта или работы. */
 export interface ApprovalProjection { id: string; type: string; status: string; createdAt: string; }
+/** Событие из audit/read model, отображаемое без права изменить состояние. */
 export interface EventProjection { id: string; type: string; createdAt: string; payload: unknown; }
+/** Связь зависимости Task и её текущий статус. */
 export interface DependencyProjection { id: string; taskId: string; dependsOnTaskId: string; type: string; status: string | null; }
+/** Состояние одного отображаемого этапа lifecycle. */
 export interface LifecycleStageProjection { id: string; label: string; status: "COMPLETED" | "CURRENT" | "PENDING"; updatedAt: string | null; }
+/** Read model lifecycle с текущим этапом и историей отображаемых stages. */
 export interface LifecycleProjection { status: string; stage: string | null; updatedAt: string | null; stages?: LifecycleStageProjection[]; }
+/** Авторитетная read model страницы проекта. */
 export interface ProjectOverviewProjection {
   project: { id: string; name: string; displayName: string; status: string } | null;
   git: GitProjection;
@@ -48,10 +53,14 @@ export interface ProjectOverviewProjection {
   events: EventProjection[];
   usage: UsageSummary;
 }
+/** Авторитетная read model страницы Epic. */
 export interface EpicOverviewProjection { epic: unknown; contract: unknown; lifecycle: LifecycleProjection; git: GitProjection; tasks: unknown[]; approvals: ApprovalProjection[]; blockers: Array<{ id: string; status: string; reason: string | null }>; events: EventProjection[]; usage: UsageSummary; }
+/** Авторитетная read model страницы Task, включая причины ожидания. */
 export interface TaskOverviewProjection { task: unknown; contract: unknown; lifecycle: LifecycleProjection; git: GitProjection; runs: unknown[]; findings: unknown[]; defects: unknown[]; dependencies: DependencyProjection[]; approvals: ApprovalProjection[]; events: EventProjection[]; usage: UsageSummary; waitReason: WaitReason | null; }
+/** Снимок очереди Scheduler с активными, ожидающими и заблокированными Task. */
 export interface ExecutionQueueProjection { running: ActiveAgent[]; waiting: Array<{ taskId: string; reason: WaitReason }>; blocked: Array<{ taskId: string; reason: WaitReason }>; }
 
+/** Канонические API paths, используемые web-клиентом и backend-контрактами. */
 export const apiPaths = {
   dashboard: "/api/v1/dashboard",
   projects: "/api/v1/projects/:id",

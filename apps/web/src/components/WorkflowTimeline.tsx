@@ -3,6 +3,7 @@ interface WorkflowTimelineProps {
   currentStage?: string;
 }
 
+/** Полный набор состояний lifecycle, которые UI может показать в timeline. */
 export const TASK_LIFECYCLE_STAGES = [
   'DRAFT', 'READY', 'DEVELOPMENT', 'REVIEW', 'QA',
   'READY_FOR_INTEGRATION', 'INTEGRATION', 'INTEGRATED_INTO_EPIC',
@@ -14,6 +15,14 @@ const EXCEPTIONAL_LIFECYCLE_STAGES = new Set([
   'WAITING_FOR_DEPENDENCY', 'WAITING_FOR_APPROVAL', 'BLOCKED', 'PAUSED', 'FAILED', 'CANCELLED',
 ]);
 
+/**
+ * Преобразует доменное состояние lifecycle в отображаемый этап workflow.
+ * Исключительные состояния не подменяются обычным этапом, чтобы UI сохранил
+ * точную причину ожидания или блокировки.
+ *
+ * @param lifecycle Состояние lifecycle, полученное из авторитетной projection.
+ * @returns Код этапа для timeline или `null`, если состояние не относится к этапу.
+ */
 export const displayStageForLifecycle = (lifecycle: string): string | null => {
   const state = lifecycle.toUpperCase();
   if (state === 'DRAFT') return null;
@@ -27,7 +36,8 @@ export const displayStageForLifecycle = (lifecycle: string): string | null => {
 };
 
 /**
- * Представляет пользовательский экран WorkflowTimeline; авторитетные проверки выполняются backend.
+ * Отображает авторитетные этапы workflow и текущее состояние Task.
+ * Компонент не вычисляет переходы и не принимает решений о состоянии работы.
  */
 export default function WorkflowTimeline({ stages, currentStage }: WorkflowTimelineProps) {
   const rawStage = currentStage?.toUpperCase();

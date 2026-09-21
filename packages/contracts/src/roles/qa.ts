@@ -1,5 +1,5 @@
 /**
- * QA output schema.
+ * Схема структурированного результата роли QA.
  */
 
 import { z } from "zod";

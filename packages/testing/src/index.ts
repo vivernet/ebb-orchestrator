@@ -1,2 +1,1 @@
-// Empty shared testing package for future cross-package helpers.
-
+// Пустой общий testing-пакет для будущих helpers, используемых несколькими пакетами.

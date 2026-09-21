@@ -1,5 +1,5 @@
 /**
- * Reviewer output schema.
+ * Схема структурированного результата роли Reviewer.
  */
 
 import { z } from "zod";

@@ -1,7 +1,8 @@
 /**
- * Authenticated HTTP client for the orchestrator API.
- * Bootstrap bearer is memory-only; after reload the browser uses HttpOnly
- * local-session cookie and restores only the CSRF token in memory.
+ * Аутентифицированный HTTP-клиент API оркестратора.
+ * Bootstrap bearer хранится только в памяти; после перезагрузки браузер
+ * использует HttpOnly-cookie локальной сессии и восстанавливает в памяти
+ * только CSRF-токен.
  */
 
 const API_BASE = '/api/v1';
@@ -38,7 +39,7 @@ function createApiClient(): ApiClient {
           serverMessage = payload.error;
         }
       } catch {
-        // Non-JSON error responses use the safe status fallback below.
+        // Для не-JSON ответа используем безопасное сообщение со статусом ниже.
       }
       throw new Error(serverMessage ?? `API error: ${response.status} ${response.statusText}`);
     }
@@ -71,7 +72,7 @@ export function authenticatedHeaders(): Record<string, string> {
 }
 
 /**
- * Представляет пользовательский экран client; авторитетные проверки выполняются backend.
+ * Выполняет bootstrap локальной сессии через одноразовый launch token.
  */
 export function bootstrap(launchToken: string): Promise<void> {
   if (!launchToken) return Promise.reject(new Error('A one-time local launch token is required.'));
@@ -88,7 +89,7 @@ export function bootstrap(launchToken: string): Promise<void> {
 }
 
 /**
- * Восстанавливает CSRF state после reload через HttpOnly local-session cookie.
+ * Восстанавливает CSRF-состояние после reload через HttpOnly-cookie локальной сессии.
  * Bearer-токен намеренно не возвращается и не сохраняется в JavaScript storage.
  */
 export function restoreSession(): Promise<void> {

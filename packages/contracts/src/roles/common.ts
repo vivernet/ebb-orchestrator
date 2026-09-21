@@ -1,10 +1,10 @@
 /**
- * Shared types and base schema for role contracts.
+ * Общие типы и базовая схема контрактов ролей.
  */
 
 import { z } from "zod";
 
-// Base output schema that all roles extend
+/** Базовая схема результата, общая для всех role contracts. */
 export const BaseOutputSchema = z.object({
   version: z.string().describe("Schema version for backward compatibility"),
   summary: z.string().optional().describe("High-level summary of the outcome"),
@@ -21,26 +21,30 @@ export const BaseOutputSchema = z.object({
     .describe("List of findings (optional)"),
 }).strict();
 
-// Common outcome types for developers
+/** Допустимые исходы Developer. */
 export const DeveloperOutcome = z.enum(["COMPLETED", "BLOCKED"]);
 
-// Common outcome types for reviewers
+/** Допустимые исходы Reviewer. */
 export const ReviewerOutcome = z.enum(["PASS", "CHANGES_REQUESTED", "BLOCKED"]);
 
-// Common outcome types for QA
+/** Допустимые исходы QA. */
 export const QaOutcome = z.enum(["PASS", "FAIL", "BLOCKED"]);
 
-// Common outcome types for integration
+/** Допустимые исходы Integration. */
 export const IntegrationOutcome = z.enum(["PASS", "BLOCKED"]);
 
-// Type exports
+/** Общий тип результата после проверки базовой схемой. */
 export type BaseOutput = z.infer<typeof BaseOutputSchema>;
+/** Тип исхода Developer. */
 export type DeveloperOutcome = z.infer<typeof DeveloperOutcome>;
+/** Тип исхода Reviewer. */
 export type ReviewerOutcome = z.infer<typeof ReviewerOutcome>;
+/** Тип исхода QA. */
 export type QaOutcome = z.infer<typeof QaOutcome>;
+/** Тип исхода Integration. */
 export type IntegrationOutcome = z.infer<typeof IntegrationOutcome>;
 
-// Common output structure
+/** Общий структурированный результат любой роли до domain application. */
 export interface RoleOutput {
   version: string;
   outcome: string;
@@ -64,10 +68,10 @@ export interface RoleOutput {
   provenance?: string[];
 }
 
-// Output validation result
+/** Результат schema validation перед применением результата к domain state. */
 export interface ValidatedRoleOutput {
   valid: boolean;
-  /** The schema-parsed value. It is present only when valid is true. */
+  /** Значение после разбора схемой; присутствует только при `valid === true`. */
   output?: RoleOutput;
   outcome?: string;
   findings?: Array<{

@@ -24,7 +24,7 @@ function App({ bootstrapError }: AppProps) {
     );
   }
 
-  // Initialize SSE connection on app startup
+  // Инициализируем SSE-соединение после успешного запуска локальной сессии.
   useEventClient();
 
   return <RouterProvider router={router} />;

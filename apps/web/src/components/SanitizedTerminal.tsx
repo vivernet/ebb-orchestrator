@@ -6,20 +6,20 @@ interface SanitizedTerminalProps {
 }
 
 /**
- * Sanitizes terminal output by stripping ANSI/OSC escape sequences.
- * This prevents XSS via malicious terminal output.
+ * Очищает вывод терминала от ANSI/OSC escape-последовательностей.
+ * Это не позволяет вредоносному выводу терминала использоваться как XSS.
  */
 function sanitizeTerminalOutput(text: string): string {
-  // Strip ANSI escape sequences (colors, formatting, etc.)
-  // Pattern matches: ESC [ ... (m (SGR), ESC [ ... H (cursor), etc.
+  // Удаляем ANSI-последовательности цветов, форматирования и управления курсором.
+  // Шаблон покрывает, в частности, ESC [ ... m (SGR) и ESC [ ... H.
   // eslint-disable-next-line no-control-regex
   const ansiPattern = /\u001b\[[0-9;]*[a-zA-Z]/g;
   
-  // Strip OSC (Operating System Command) sequences like ESC ] 0 ; title BEL
+  // Удаляем OSC-последовательности, например ESC ] 0 ; title BEL.
   // eslint-disable-next-line no-control-regex
   const oscPattern = /\u001b\][^\u0007]*\u0007/g;
   
-  // Also strip other control characters (except newlines and tabs for formatting)
+  // Удаляем остальные управляющие символы, сохраняя переводы строк и табуляцию.
   // eslint-disable-next-line no-control-regex
   const controlPattern = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
   
@@ -35,7 +35,7 @@ function sanitizeTerminalOutput(text: string): string {
 export default function SanitizedTerminal({ logs, maxHeight = '400px' }: SanitizedTerminalProps) {
   const [scrollRef, setScrollRef] = useState<HTMLPreElement | null>(null);
 
-  // Auto-scroll to bottom on new logs
+  // Прокручиваем область к последней записи после поступления новых логов.
   useEffect(() => {
     if (scrollRef) {
       scrollRef.scrollTop = scrollRef.scrollHeight;

@@ -1,5 +1,5 @@
 /**
- * AgentRun model - records execution metadata and results.
+ * Модель AgentRun, сохраняющая метаданные выполнения и результат запуска.
  */
 
 /** Состояние выполнения агентского запуска в его сохраняемом lifecycle. */
@@ -40,6 +40,6 @@ export interface AgentRun {
   outputTokens: number | null;
   cost: number | null;
   capabilityRef?: string;
-  /** Fully rendered, role-specific prompt supplied by the orchestrator. */
+  /** Полностью отрендеренный prompt роли, переданный оркестратором. */
   prompt?: string;
 }

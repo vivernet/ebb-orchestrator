@@ -1,10 +1,11 @@
 /**
- * SSE event client with automatic reconnection and refetch capability.
+ * Клиент SSE с автоматическим переподключением и обновлением read model.
  */
 import { authenticatedHeaders } from './client.js';
 
 type EventHandler = (data: unknown) => void;
 
+/** Порт браузерного клиента SSE для подписки и управления соединением. */
 export interface EventClient {
   on(event: string, handler: EventHandler): void;
   connect(): void;
@@ -39,7 +40,7 @@ function createEventClient(): EventClient {
       if (!response.ok || !response.body) throw new Error(`SSE connection failed: ${response.status}`);
       await consumeEventStream(response.body, handlers);
     }).catch(() => {
-      // Reconnect is deliberate; the authoritative state is re-fetched on reconnect.
+      // При переподключении намеренно перечитываем авторитетное состояние.
     }).finally(() => {
       if (controller !== nextController) return;
       controller = null;
@@ -104,7 +105,7 @@ function dispatchEvent(packet: string, handlers: Map<string, Set<EventHandler>>)
     const parsed: unknown = JSON.parse(data.join('\n'));
     for (const handler of handlers.get(eventName) ?? []) handler(parsed);
   } catch {
-    // Malformed ephemeral events are ignored; projections are authoritative.
+    // Некорректное временное событие не меняет состояние: авторитетны projections.
   }
 }
 

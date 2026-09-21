@@ -2,21 +2,22 @@ import { useEffect } from 'react';
 import { eventClient } from '../api/events.js';
 
 /**
- * Hook to initialize and manage SSE EventClient connection.
- * Connects to /events on mount and triggers refetch callback on reconnect.
+ * Инициализирует и управляет подключением `EventClient` к SSE.
+ * Подключается к `/events` при монтировании и запускает обновление данных
+ * после восстановления соединения.
  */
 export function useEventClient() {
   useEffect(() => {
-    // Set up refetch callback before connecting
+    // Сначала регистрируем обновление данных, затем устанавливаем соединение.
     eventClient.setRefetchCallback(() => {
-      // Dispatch a custom event that components can listen to
+      // Компоненты получают уведомление через локальное событие браузера.
       window.dispatchEvent(new CustomEvent('sse-reconnect'));
     });
 
-    // Connect to SSE events
+    // Подключаемся к потоку SSE.
     eventClient.connect();
 
-    // Cleanup on unmount
+    // Освобождаем соединение при размонтировании.
     return () => {
       eventClient.disconnect();
     };
@@ -24,8 +25,8 @@ export function useEventClient() {
 }
 
 /**
- * Hook to listen for SSE reconnect events.
- * Calls the provided callback when the SSE connection reconnects.
+ * Подписывается на уведомления о восстановлении SSE-соединения.
+ * Вызывает переданный callback после переподключения клиента.
  */
 export function useOnSSEReconnect(callback: () => void) {
   useEffect(() => {

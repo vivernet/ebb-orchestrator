@@ -4,7 +4,8 @@ interface StatusBadgeProps {
 }
 
 /**
- * Представляет пользовательский экран StatusBadge; авторитетные проверки выполняются backend.
+ * Отображает переданный статус с визуальным вариантом, выбранным вызывающим кодом.
+ * Компонент не нормализует статус и не выполняет policy-проверки.
  */
 export default function StatusBadge({ status, variant = 'default' }: StatusBadgeProps) {
   const variants = {

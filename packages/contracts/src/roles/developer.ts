@@ -1,5 +1,5 @@
 /**
- * Developer output schema.
+ * Схема структурированного результата роли Developer.
  */
 
 import { z } from "zod";
