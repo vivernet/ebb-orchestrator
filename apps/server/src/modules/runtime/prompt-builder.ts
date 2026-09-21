@@ -1,6 +1,6 @@
 /**
- * Prompt Builder for Orchestrator Hermes.
- * Builds prompts for different agent roles.
+ * Prompt Builder для Orchestrator Hermes.
+ * Формирует prompts для разный agent роли.
  */
 
 import type {
@@ -11,7 +11,7 @@ import type {
 } from '../context/context-types.js';
 
 /**
- * Builds prompts for agent roles.
+ * Формирует prompts для agent роли.
  */
 export class PromptBuilder {
   private addTaskContract(lines: string[], contract: TaskContract): void {
@@ -38,7 +38,7 @@ export class PromptBuilder {
   }
   /**
    * Формирует Developer prompt.
-   * Does NOT bulk-load source code (read on demand via tools).
+   * Не загружает исходный код целиком (читает on demand viОбъект инструменты).
    */
   buildDeveloperPrompt(input: {
     taskContract: TaskContract;
@@ -54,7 +54,7 @@ export class PromptBuilder {
   }): string {
     const lines: string[] = [];
 
-    // Role contract summary (if provided)
+    // роль contract summary (если provided)
     if (input.roleContractSummary) {
       lines.push(input.roleContractSummary);
       lines.push('');
@@ -68,13 +68,13 @@ export class PromptBuilder {
     lines.push('Do not change or reinterpret these boundaries.');
     lines.push('');
 
-    // Source code instruction - do NOT bulk-load
+    // Инструкция по исходному коду - не bulk-load
     lines.push('=== SOURCE CODE ACCESS ===');
     lines.push('You can read source code files using workspace.read and workspace.search tools.');
     lines.push('Do not assume any file contents - read files on demand as needed.');
     lines.push('');
 
-    // Workspace info
+    // Информация о workspace.
     if (input.workspaceMeta) {
       lines.push('=== WORKSPACE ===');
       if (input.workspaceMeta.repoPath) {
@@ -90,7 +90,7 @@ export class PromptBuilder {
     lines.push('');
     this.addSubmissionContract(lines, 'Developer', 'For COMPLETED, include the exact commitSha from git rev-parse HEAD in this managed worktree.');
 
-    // Findings (relevant active ones)
+    // Findings (relevant активный ones)
     if (input.findings && input.findings.length > 0) {
       lines.push('=== ACTIVE FINDINGS ===');
       input.findings.forEach((f) => {
@@ -99,7 +99,7 @@ export class PromptBuilder {
       lines.push('');
     }
 
-    // Guidelines
+    // Руководства.
     if (input.guidelines && input.guidelines.length > 0) {
       lines.push('=== GUIDELINES ===');
       input.guidelines.forEach((g) => {
@@ -117,7 +117,7 @@ export class PromptBuilder {
       lines.push('');
     }
 
-    // Output instructions
+    // результат instructions
     if (input.outputInstructions) {
       lines.push('=== OUTPUT INSTRUCTIONS ===');
       lines.push(input.outputInstructions);
@@ -131,7 +131,7 @@ export class PromptBuilder {
 
   /**
    * Формирует Reviewer prompt.
-   * Does NOT include Developer conversation.
+   * не include Developer conversation.
    */
   buildReviewerPrompt(input: {
     taskContract: TaskContract;
@@ -143,7 +143,7 @@ export class PromptBuilder {
   }): string {
     const lines: string[] = [];
 
-    // Role identity
+    // роль identity
     lines.push('You are a Reviewer.');
     lines.push('Independently verify the implementation against the task contract.');
     lines.push('Do not rely on Developer reasoning or session history.');
@@ -157,14 +157,14 @@ export class PromptBuilder {
     lines.push('Do not review or request unrelated changes.');
     lines.push('');
 
-    // Git Diff
+    // Различия Git.
     if (input.gitDiff) {
       lines.push('=== CHANGES TO REVIEW ===');
       lines.push(input.gitDiff);
       lines.push('');
     }
 
-    // Checks
+    // Проверки.
     if (input.checks && input.checks.length > 0) {
       lines.push('=== AUTOMATED CHECKS ===');
       input.checks.forEach((check) => {
@@ -173,7 +173,7 @@ export class PromptBuilder {
       lines.push('');
     }
 
-    // Guidelines
+    // Руководства.
     if (input.guidelines && input.guidelines.length > 0) {
       lines.push('=== GUIDELINES ===');
       input.guidelines.forEach((g) => {
@@ -191,7 +191,7 @@ export class PromptBuilder {
       lines.push('');
     }
 
-    // Findings (for re-review)
+    // Findings (для re-review)
     if (input.findings && input.findings.length > 0) {
       lines.push('=== PREVIOUS FINDINGS ===');
       input.findings.forEach((f) => {
@@ -200,7 +200,7 @@ export class PromptBuilder {
       lines.push('');
     }
 
-    // Output instructions
+    // результат instructions
     lines.push('=== STAGE ===');
     lines.push('REVIEW: independently inspect the committed implementation and report concrete evidence.');
     lines.push('');
@@ -243,14 +243,14 @@ export class PromptBuilder {
     lines.push(input.taskContract.nonGoals.join('; ') || 'none');
     lines.push('');
 
-    // Environment
+    // окружение
     if (input.environment) {
       lines.push('=== ENVIRONMENT ===');
       lines.push(input.environment);
       lines.push('');
     }
 
-    // Defects to retest
+    // Дефекты для повторной проверки.
     if (input.defects && input.defects.length > 0) {
       lines.push('=== DEFECTS TO RETEST ===');
       input.defects.forEach((d) => {
@@ -264,7 +264,7 @@ export class PromptBuilder {
     lines.push('');
     this.addSubmissionContract(lines, 'QA', 'For PASS, evidence must contain one non-empty entry for every AC-N, naming the criterion, command, and observed result.');
 
-    // Output instructions
+    // результат instructions
     lines.push('=== REVIEW PROCESS ===');
     lines.push('1. Execute acceptance criteria tests');
     lines.push('2. Verify behavior matches requirements');

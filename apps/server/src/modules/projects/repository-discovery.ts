@@ -118,7 +118,7 @@ export class RepositoryDiscovery {
         }
       }
     } catch {
-      // Fall through to file-based detection
+      // Перейти к обнаружению на основе файлов.
     }
 
     const lockFiles = [
@@ -189,7 +189,7 @@ export class RepositoryDiscovery {
         }
       }
     } catch {
-      // Ignore errors in file detection
+      // Ignore errors in файл detection
     }
 
     return Array.from(hints);
@@ -234,7 +234,7 @@ export class RepositoryDiscovery {
         }
       }
     } catch {
-      // Ignore errors
+      // Игнорировать ошибки.
     }
 
     return commands;

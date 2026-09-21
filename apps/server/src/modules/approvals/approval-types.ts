@@ -24,7 +24,7 @@ export interface Approval {
   readonly resolutionNote: string | null;
   readonly createdAt: string;
   readonly resolvedAt: string | null;
-  /** Deterministic proposal metadata; never contains secret values. */
+  /** Детерминированные метаданные предложения; never содержит секрет значения. */
   readonly metadata?: Readonly<Record<string, unknown>>;
 }
 

@@ -3,7 +3,7 @@ import type { ToolId } from '../run-capability.js';
 import { SubmitResultTool, type CompletionStore } from './submit-result-tool.js';
 
 /**
- * Tool definition for MCP.
+ * инструмент definition для MCP.
  */
 export interface SchemaDefinition {
   type: 'object' | 'array' | 'string' | 'number' | 'boolean';
@@ -29,7 +29,7 @@ const isFilePatch = (value: unknown): value is FilePatch => {
 };
 
 /**
- * ToolRegistry maps capability tools to MCP tool definitions and filters by allowed tools.
+ * ToolRegistry maps capability инструменты to MCP инструмент definitions и фильтрует by allowed инструменты.
  */
 export class ToolRegistry {
   private toolDefinitions: Map<ToolId, ToolDefinition> = new Map();
@@ -37,7 +37,7 @@ export class ToolRegistry {
 
   constructor(capability: RunCapability, completion?: CompletionStore) {
     this.capability = capability;
-    // Register workspace.read
+    // Register workspace.читает
     this.toolDefinitions.set('workspace.read', {
       name: 'workspace.read',
       description: 'Read a file from the workspace',
@@ -48,7 +48,7 @@ export class ToolRegistry {
       },
     });
 
-    // Register workspace.search
+    // Регистрирует workspace.search.
     this.toolDefinitions.set('workspace.search', {
       name: 'workspace.search',
       description: 'Search for patterns in the workspace',
@@ -62,7 +62,7 @@ export class ToolRegistry {
       },
     });
 
-    // Register workspace.patch (write-capable)
+    // Регистрирует workspace.patch (с возможностью записи).
     this.toolDefinitions.set('workspace.patch', {
       name: 'workspace.patch',
       description: 'Patch a file in the workspace',
@@ -92,7 +92,7 @@ export class ToolRegistry {
       },
     });
 
-    // Register git.diff
+    // Регистрирует git.diff.
     this.toolDefinitions.set('git.diff', {
       name: 'git.diff',
       description: 'Get git diff',
@@ -107,7 +107,7 @@ export class ToolRegistry {
       },
     });
 
-    // Register git.status
+    // Register git.статус
     this.toolDefinitions.set('git.status', {
       name: 'git.status',
       description: 'Get git status',
@@ -122,7 +122,7 @@ export class ToolRegistry {
       },
     });
 
-    // Register git.commit
+    // Регистрирует git.commit.
     this.toolDefinitions.set('git.commit', {
       name: 'git.commit',
       description: 'Commit changes',
@@ -138,7 +138,7 @@ export class ToolRegistry {
       },
     });
 
-    // Register project.test
+    // Регистрирует проект.test
     this.toolDefinitions.set('project.test', {
       name: 'project.test',
       description: 'Run project tests',
@@ -152,7 +152,7 @@ export class ToolRegistry {
       },
     });
 
-    // Register submit_result
+    // Регистрирует submit_result.
     const submitTool = new SubmitResultTool(capability, completion);
     this.toolDefinitions.set('submit_result' as ToolId, {
       name: 'submit_result',

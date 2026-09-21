@@ -1,5 +1,5 @@
 /**
- * Decision service – records decisions with rationale.
+ * Сервис решений – записывает решения с обоснованием.
  */
 
 import type { Database } from "../../platform/database/database.js";
@@ -109,7 +109,7 @@ export class DecisionService {
   }
 
   /**
-   * List decisions for a scope.
+   * Перечисляет решения для Объект область.
    */
   listByScope(scope: DecisionScope, scopeId?: string): Decision[] {
     const rows = this.db.all<DecisionRow>(

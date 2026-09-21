@@ -33,7 +33,7 @@ export class BranchManager {
   }
 
   /**
-   * Creates an epic branch from a base reference.
+   * создаёт Объект epic ветка из Объект базовой ссылкой.
    * Использует disabled hooks to prevent arbitrary code execution.
    */
   async createEpicBranch(
@@ -68,24 +68,24 @@ export class BranchManager {
         removedAt: null,
       };
 
-      // Persist to database if available
+      // Сохраняет в базе данных, если она доступна
       if (this.branchRepo) {
         this.branchRepo.create(record);
       }
 
       return record;
     } finally {
-      // Clean up empty hooks directory
+      // CleОбъект up empty hooks directory
       try {
         rmSync(emptyHooksDir, { recursive: true, force: true });
       } catch {
-        // Ignore cleanup errors
+        // Игнорировать ошибки очистки.
       }
     }
   }
 
   /**
-   * Creates an empty directory for disabling git hooks.
+   * создаёт Объект empty directory для disabling git hooks.
    */
   private createEmptyHooksDir(): string {
     return mkdtempSync(join(tmpdir(), "orchestrator-hooks-"));

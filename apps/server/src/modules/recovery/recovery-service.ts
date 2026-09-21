@@ -1,5 +1,5 @@
 /**
- * Recovery service - manages recovery decisions and creates scheduler requests.
+ * Сервис восстановления - управляет решениями восстановления и создаёт scheduler requests.
  * Никогда calls runtime directly; always creates new scheduler requests.
  */
 
@@ -17,7 +17,7 @@ import type {
 import { evaluateRecovery, getRemainingAttempts } from "./recovery-policy.js";
 
 /**
- * Scheduler request for recovery work.
+ * Scheduler запрос для recovery работа.
  */
 export interface RecoverySchedulerRequest {
   taskId: string;
@@ -27,7 +27,7 @@ export interface RecoverySchedulerRequest {
 }
 
 /**
- * Recovery service for managing task recovery decisions.
+ * Сервис восстановления для managing задача recovery decisions.
  */
 export class RecoveryService {
   constructor(
@@ -36,14 +36,14 @@ export class RecoveryService {
   ) {}
 
   /**
-   * Evaluates recovery decision for a task.
+   * Вычисляет решение восстановления для Объект задача.
    */
   evaluate(context: RecoveryContext): RecoveryResult {
     return evaluateRecovery(context, this.policy);
   }
 
   /**
-   * Records a recovery attempt.
+   * записи Объект recovery попытка.
    */
   recordAttempt(context: RecoveryContext, fingerprint?: ProgressFingerprint): RecoveryAttempt {
     const failureType = context.failureType;
@@ -63,7 +63,7 @@ export class RecoveryService {
       ...(fingerprint !== undefined && { fingerprint }),
     };
 
-    // Persist to database
+    // Persist to база данных
     this.db.transaction((tx) => {
       tx.run(
         `INSERT INTO recovery_attempts (id, task_id, role_level, failure_type, attempt_count, recorded_at, fingerprint)
@@ -84,7 +84,7 @@ export class RecoveryService {
   }
 
   /**
-   * Creates a scheduler request for recovery.
+   * создаёт Объект scheduler запрос для recovery.
    * Никогда calls runtime directly.
    */
   createSchedulerRequest(
@@ -106,7 +106,7 @@ export class RecoveryService {
       attemptCount: (existingCount?.count ?? 0) + 1,
     };
 
-    // Persist to database
+    // Persist to база данных
     this.db.transaction((tx) => {
       tx.run(
         `INSERT INTO recovery_scheduler_requests (id, task_id, role_level, failure_type, attempt_count, created_at)
@@ -126,7 +126,7 @@ export class RecoveryService {
   }
 
   /**
-   * Gets recovery history for a task.
+   * Получает историю восстановления для Объект задача.
    */
   getHistory(taskId: string): RecoveryAttempt[] {
     const rows = this.db.all(
@@ -155,7 +155,7 @@ export class RecoveryService {
   }
 
   /**
-   * Gets remaining attempts for a task at a given role level.
+   * Получает оставшиеся попытки для Объект задача at Объект указанного роль уровень.
    */
   getRemainingAttempts(
     taskId: string,
@@ -167,7 +167,7 @@ export class RecoveryService {
   }
 
   /**
-   * Checks if a task is blocked from recovery.
+   * Проверяет, Объект задача является blocked из recovery.
    */
   isBlocked(taskId: string): boolean {
     const row = this.db.get(
@@ -179,7 +179,7 @@ export class RecoveryService {
   }
 
   /**
-   * Blocks a task from further recovery attempts.
+   * Blocks Объект задача из дальнейших recovery попытки.
    */
   blockTask(taskId: string, reason: string): void {
     this.db.transaction((tx) => {
@@ -215,7 +215,7 @@ export class RecoveryService {
   }
 
   /**
-   * Generates a unique ID.
+   * Generates Объект unique ID.
    */
   private generateId(): string {
     return createHash("sha256")

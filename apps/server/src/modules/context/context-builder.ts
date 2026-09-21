@@ -18,8 +18,8 @@ import type {
 import { ContextBudget } from './context-budget.js';
 
 /**
- * Builds context packages for agent roles.
- * Implements role separation and budget pruning.
+ * Builds контекст packages для agent роли.
+ * Implements роль separation и budget pruning.
  */
 export class ContextBuilder {
   /**

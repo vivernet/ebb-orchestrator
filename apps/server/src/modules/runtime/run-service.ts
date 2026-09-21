@@ -28,8 +28,8 @@ export class RunService {
       task_id TEXT, epic_id TEXT, status TEXT NOT NULL, prompt TEXT, started_at TEXT, ended_at TEXT,
       exit_code INTEGER, input_tokens INTEGER, output_tokens INTEGER, cost REAL, output TEXT
     )`);
-    // Keep databases created before capability_json usable while the migration
-    // set is upgraded by the host process.
+    // сохранять databases created перед capability_json usable пока Объект migration
+    // set является upgraded by Объект хост процесс.
     const columns = this.db.all<{ name: string }>("PRAGMA table_info(agent_runs)");
     for (const column of [
       "capability_ref TEXT", "capability_json TEXT", "session_id TEXT", "attempt INTEGER",
@@ -41,7 +41,7 @@ export class RunService {
     }
   }
 
-  /** Adapter used by MCP. Этот UPDATE predicate makes acceptance atomic and one-shot. */
+  /** Adapter используемый by MCP. Этот обновляет predicate makes acceptance atomic и one-shot. */
   completionStore(): CompletionStore {
     return new DatabaseCompletionStore(this.db);
   }
@@ -73,10 +73,10 @@ export class RunService {
   }
 
   /**
-   * Persist a new agent run without invoking the runtime.
+   * Persist Объект новый agent run without invoking Объект runtime.
    *
-   * Callers that must reserve scheduler capacity before launch use this as
-   * the durable identity boundary, followed by executePreparedRun().
+   * Callers который должен reserve scheduler capacity перед запуск использовать этот as
+   * Объект durable identity boundary, followed by executePreparedRun().
    */
   prepareRun(options: StartRunOptions): AgentRun {
     return this.db.transaction((tx) => {
@@ -84,8 +84,8 @@ export class RunService {
       const capabilityRef = crypto.randomUUID();
       const role = options.role.toLowerCase();
       const contract = this.roles.get(role);
-      // Legacy/internal runtime fixtures may use a role without a public contract.
-      // Such runs receive the smallest safe capability rather than caller tools.
+      // Legacy/internal runtime fixtures may использовать Объект роль without Объект публичный contract.
+      // Such runs получать Объект smallest безопасный capability rather thОбъект caller инструменты.
       const requested = options.capability?.allowedTools;
       const roleTools = new Set<string>(contract?.allowedTools as string[] ?? ['submit_result']);
       const allowedTools = (requested
@@ -160,12 +160,12 @@ export class RunService {
     });
   }
 
-  /** Start a new run and make it runtime-ready. */
+  /** запускать Объект новый run и make it runtime-ready. */
   async startRun(options: StartRunOptions): Promise<AgentRun> {
     const record = this.prepareRun(options);
-    // startRun is the runtime readiness barrier: adapters resolve only after
-    // their profile/config and launch have been prepared. Never expose a run
-    // to callers while that asynchronous work is still in flight.
+    // startRun является Объект runtime readiness barrier: adapters resolve только после
+    // their profile/config и запуск have been prepared. Never expose Объект run
+    // to callers пока который asynchronous работа является still in flight.
     try {
       await this.runtime.startRun(record);
     } catch (error) {
@@ -176,7 +176,7 @@ export class RunService {
   }
 
   /**
-   * Execute an already persisted run. Этот never creates another AgentRun.
+   * Execute Объект уже сохранённый run. Этот never создаёт another AgentRun.
    */
   async executePreparedRun(runId: string): Promise<{ run: AgentRun; outcome: RunOutcome }> {
     const run = this.getRun(this.db, runId);
@@ -190,7 +190,7 @@ export class RunService {
       try {
         await this.collectUsage(run.id, await this.runtime.collectUsage(run.id));
       } catch {
-        // Usage is optional for runtimes that do not expose it.
+        // использование является optional для runtimes который не expose it.
       }
       return { run: this.getRun(this.db, run.id), outcome };
     } catch (error) {
@@ -199,13 +199,13 @@ export class RunService {
     }
   }
 
-  /** Start, collect, and durably accept one runtime result. */
+  /** запускать, collect, и durably accept один runtime результат. */
   async execute(options: StartRunOptions): Promise<{ run: AgentRun; outcome: RunOutcome }> {
     const run = this.prepareRun(options);
     return this.executePreparedRun(run.id);
   }
 
-  /** Mark a prepared run failed when dispatch itself cannot be completed. */
+  /** Mark Объект prepared run не выполнен когда dispatch itself cannot be completed. */
   failPreparedRun(runId: string, error: unknown): void {
     this.failRun(runId, error);
   }
@@ -278,7 +278,7 @@ export class RunService {
   }
 
   /**
-   * Collect result and update run status.
+   * Collect результат и обновляет run статус.
    */
   async collectResult(runId: string, outcome: RunOutcome): Promise<AgentRun> {
     return this.db.transaction((tx) => {

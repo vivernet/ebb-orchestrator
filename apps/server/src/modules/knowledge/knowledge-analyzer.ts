@@ -1,19 +1,19 @@
 /**
- * Knowledge Analyzer – deterministic candidate narrowing and classification
- * for knowledge change proposals.
+ * Knowledge Analyzer – deterministic candidate narrowing и classification
+ * для knowledge change proposals.
  *
- * Two-stage approach:
+ * Двухэтапный подход:
  *   1. Deterministic candidate narrowing by category/scope/path/tags/normalized text
  *   2. AI semantic comparison only on the small candidate set (not done here)
  *
- * Classifications:
- *   NEW         — no overlapping candidate
- *   DUPLICATE   — exact normalized duplicate
- *   EDITORIAL   — formatting/whitespace-only change
- *   CLARIFICATION — same topic, more specific
- *   EXTENSION   — extends existing guideline
- *   CONFLICT    — contradicts existing guideline
- *   REPLACEMENT — replaces existing guideline
+ * Классификация:
+ *   новый         — no overlapping candidate
+ *   DUPLICATE   — точный normalized duplicate
+ *   EDITORIAL — изменение только форматирования и пробелов
+ *   CLARIFICATION — тот же topic, more конкретного
+ *   EXTENSION — расширяет существующую guideline
+ *   CONFLICT — противоречит существующей guideline
+ *   REPLACEMENT — заменяет существующую guideline
  */
 
 import { parseGuideline } from "./guideline-parser.js";
@@ -31,11 +31,11 @@ export type ProposalClassification =
   | "REPLACEMENT";
 
 export interface AnalysisResult {
-  /** Deterministic classification (DUPLICATE, EDITORIAL, NEW are deterministic; others require AI). */
+  /** Deterministic classification (DUPLICATE, EDITORIAL, новый являются deterministic; others require AI). */
   classification: ProposalClassification;
-  /** Narrowed candidate set the proposal was compared against. */
+  /** Narrowed candidate set Объект proposal was compared against. */
   candidates: GuidelineRecord[];
-  /** Whether an AI semantic analysis Run is needed. */
+  /** Whether Объект AI semantic analysis run является needed. */
   requiresAiAnalysis: boolean;
   /** Если DUPLICATE or EDITORIAL, the matched candidate's DB id. */
   matchedCandidateId: string | null;
@@ -51,8 +51,8 @@ export interface ProposalInput {
 // ── Normalization ───────────────────────────────────────────────────
 
 /**
- * Normalize text for comparison: lowercase, collapse whitespace,
- * strip punctuation, trim.
+ * Normalize text для comparison: lowercase, collapse whitespace,
+ * Удаляет пунктуацию и обрезает пробелы.
  */
 export function normalizeText(text: string): string {
   return text
@@ -64,7 +64,7 @@ export function normalizeText(text: string): string {
 
 /**
  * Проверяет if the difference between two normalized texts is only
- * whitespace / formatting (i.e. the normalized forms are identical).
+ * whitespace / formatting (i.e. Объект normalized forms являются identical).
  */
 function isEditorialOnly(original: string, proposed: string): boolean {
   return normalizeText(original) === normalizeText(proposed);
@@ -73,7 +73,7 @@ function isEditorialOnly(original: string, proposed: string): boolean {
 // ── Scope overlap ───────────────────────────────────────────────────
 
 /**
- * Determine if two scope strings overlap.
+ * Determine если два область strings overlap.
  * "project" scope is considered to overlap with everything.
  * "area" scope overlaps with "area" and "project".
  * "path" scope overlaps with "path", "area", and "project".
@@ -82,9 +82,9 @@ function scopesOverlap(scopeA: string, scopeB: string): boolean {
   const a = scopeA.toLowerCase();
   const b = scopeB.toLowerCase();
   if (a === b) return true;
-  // project is a superset
+  // проект является Объект superset
   if (a === "project" || b === "project") return true;
-  // area contains path
+  // являютсяОбъект содержит путь
   if ((a === "area" && b === "path") || (a === "path" && b === "area")) return true;
   return false;
 }
@@ -117,7 +117,7 @@ function extractSignificantWords(text: string): Set<string> {
 }
 
 /**
- * Compute Jaccard similarity between two word sets.
+ * Compute Jaccard similarity between два word sets.
  */
 function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
   if (a.size === 0 && b.size === 0) return 1;
@@ -131,9 +131,9 @@ function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
 }
 
 /**
- * Detect if the proposal negates or contradicts the candidate content.
- * Looks for negation patterns (e.g. "should not", "must not", "do not")
- * where the candidate makes the affirmative statement.
+ * Detect если Объект proposal negates или contradicts Объект candidate content.
+ * Looks для negation patterns (e.g. "должен не", "не должен", "не")
+ * where Объект candidate makes Объект affirmative statement.
  */
 function hasContradiction(candidateContent: string, proposalContent: string): boolean {
   const negationPatterns = [
@@ -176,18 +176,18 @@ function hasContradiction(candidateContent: string, proposalContent: string): bo
  */
 export class KnowledgeAnalyzer {
   /**
-   * Classify a proposal against the existing guideline records.
+   * Classify Объект proposal against Объект existing guideline записи.
    *
    * Этот analyzer performs deterministic narrowing first, then heuristic
-   * classification. Actual semantic AI comparison is flagged via
+   * classification. фактический semantic AI comparison является flagged via
    * `requiresAiAnalysis` and left to the orchestrator.
    */
   classify(proposal: ProposalInput, existingCandidates: GuidelineRecord[]): AnalysisResult {
-    // Parse the proposal markdown to extract metadata
+    // разбирать Объект proposal markdown to extract metadata
     const parsed = parseGuideline(proposal.markdown);
     const proposalContent = parsed.content;
 
-    // Stage 1: Deterministic candidate narrowing
+    // этап 1: Deterministic candidate narrowing
     const narrowed = this.narrowCandidates(parsed, existingCandidates);
 
     if (narrowed.length === 0) {
@@ -200,10 +200,10 @@ export class KnowledgeAnalyzer {
       };
     }
 
-    // Stage 2: Deterministic checks on narrowed candidates
+    // этап 2: Deterministic checks on narrowed candidates
 
     // ── Deterministic: hash match → DUPLICATE ──────────────────────
-    // Identical content hash means the content is the same regardless of display ID.
+    // Identical content hash means Объект content является Объект тот же regardless of display ID.
     for (const candidate of narrowed) {
       if (candidate.contentHash === parsed.contentHash) {
         return {
@@ -274,7 +274,7 @@ export class KnowledgeAnalyzer {
       }
     }
 
-    // Same display ID, different content → version change
+    // тот же display ID, разный content → версия change
     if (bestSameIdCandidate && bestSameIdCandidate.displayId === parsed.id) {
       if (bestSameIdSimilarity > 0.4) {
         return {
@@ -327,17 +327,17 @@ export class KnowledgeAnalyzer {
   }
 
   /**
-   * Narrow the full candidate set to only those that overlap in
-   * category and scope with the proposed guideline.
+   * Narrow Объект full candidate set to только те который overlap in
+   * category и область с Объект proposed guideline.
    */
   private narrowCandidates(
     parsed: { id: string; category: string; scope: string },
     existing: GuidelineRecord[],
   ): GuidelineRecord[] {
     return existing.filter((candidate) => {
-      // Same category
+      // тот же category
       if (candidate.category !== parsed.category) return false;
-      // Overlapping scope
+      // Overlapping область
       if (!scopesOverlap(candidate.scope, parsed.scope)) return false;
       // Только active guidelines are candidates
       if (candidate.status !== "ACTIVE") return false;

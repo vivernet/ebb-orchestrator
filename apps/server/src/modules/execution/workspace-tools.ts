@@ -1,5 +1,5 @@
 /**
- * WorkspaceTools provides general workspace utilities.
+ * WorkspaceTools предоставляет общие утилиты workspace.
  * Все операции ограничены workspace, назначенным capability.
  */
 import { PathResolver } from '../../platform/security/path-resolver.js';

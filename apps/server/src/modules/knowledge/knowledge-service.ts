@@ -1,10 +1,10 @@
 /**
- * Knowledge Service – indexes Guidelines and Decisions from repository
- * Markdown files into the database, manages lifecycle transitions, and
- * queries active items by scope.
+ * Knowledge сервис – indexes Guidelines и Decisions из repository
+ * Markdown files into Объект база данных, manages lifecycle transitions, и
+ * queries активный элементы by область.
  *
  * Канонический text stays in the Markdown files; the DB stores searchable
- * metadata, version, hash, and provenance.
+ * metadata, версия, hash, и provenance.
  */
 
 import { readdir, readFile, stat } from "node:fs/promises";
@@ -35,7 +35,7 @@ export class KnowledgeService {
 
   /**
    * Сканирует a repository directory for guideline and decision Markdown files
-   * and index them into the database.
+   * и индекс them into Объект база данных.
    *
    * Ожидаемая directory layout:
    *   <repoDir>/guidelines/*.md   – guideline files
@@ -94,7 +94,7 @@ export class KnowledgeService {
    * Возвращает active knowledge items for the given scope filter.
    * Для guidelines: ACTIVE status only.
    * Для decisions: ACCEPTED or PROPOSED status (per spec, proposed decisions
-   * are still visible as they may be in-progress choices).
+   * являются still visible as they may be in-progress choices).
    */
   activeForScope(
     projectId: string,
@@ -164,7 +164,7 @@ export class KnowledgeService {
 
   /**
    * Применяет an approved proposal by transitioning the item to ACTIVE
-   * and superseding the previous version if applicable.
+   * и superseding Объект previous версия если applicable.
    */
   applyApprovedProposal(itemId: string): void {
     this.db.transaction((tx) => {

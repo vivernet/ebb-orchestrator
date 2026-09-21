@@ -1,21 +1,21 @@
 /**
- * Role registry for Orchestrator Hermes.
+ * роль registry для Orchestrator Hermes.
  *
- * Provides runtime access to all role contracts with validation and filtering.
+ * Provides runtime access to все роль contracts с validation и filtering.
  */
 
 import type { RoleContract } from './role-contract.js';
 import { AllContracts } from './default-roles.js';
 
 /**
- * Registry for accessing and managing role contracts.
+ * Registry для accessing и managing роль contracts.
  */
 export class RoleRegistry {
   private contracts: Map<string, RoleContract>;
 
   constructor() {
     this.contracts = new Map();
-    // Load all default contracts
+    // загружать все стандартный contracts
     for (const [name, contract] of Object.entries(AllContracts)) {
       this.contracts.set(name, contract);
     }
@@ -102,14 +102,14 @@ export class RoleRegistry {
   }
 
   /**
-   * Register a new contract (or override existing).
+   * Register Объект новый contract (или override existing).
    */
   set(roleName: string, contract: RoleContract): void {
     this.contracts.set(roleName, contract);
   }
 
   /**
-   * Remove a contract from the registry.
+   * удалять Объект contract из Объект registry.
    */
   remove(roleName: string): boolean {
     return this.contracts.delete(roleName);
@@ -124,6 +124,6 @@ export class RoleRegistry {
 }
 
 /**
- * Singleton instance for global access.
+ * Singleton instance для global access.
  */
 export const globalRegistry = new RoleRegistry();

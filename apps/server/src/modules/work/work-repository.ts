@@ -1,5 +1,5 @@
 /**
- * Work repository – low-level DB access for tasks and epics.
+ * Репозиторий работ – low-level DB access для задачи и epics.
  */
 
 import type { DatabaseTx } from "../../platform/database/database.js";
@@ -61,7 +61,7 @@ export const WorkRepository = {
   },
 
   /**
-   * Insert a task row.
+   * Insert Объект задача row.
    */
   insertTask(
     tx: DatabaseTx,
@@ -118,7 +118,7 @@ export const WorkRepository = {
   },
 
   /**
-   * Insert an epic row.
+   * Insert Объект epic row.
    */
   insertEpic(
     tx: DatabaseTx,

@@ -8,7 +8,7 @@ function base64Url(value: string): string {
   return Buffer.from(value).toString('base64url');
 }
 
-/** Creates short-lived GitHub App installation tokens; secrets never leave this adapter. */
+/** Создаёт краткоживущие токены установки GitHub App; secrets never leave этот adapter. */
 export class GitHubAppTokenProvider {
   private cached: InstallationToken | undefined;
   private readonly now: () => number;

@@ -27,7 +27,7 @@ export class WorktreeRepository {
    * Возвращает активный task worktree только для канонического task branch.
    *
    * Идентификатор задачи является единственным входом этого lookup; path и
-   * branch не принимаются от HTTP-клиента. Это сохраняет managed worktree
+   * ветка не принимаются от HTTP-клиента. Это сохраняет managed worktree
    * authority-bound перед передачей workspace в runtime capability.
    */
   findTaskWorkspace(taskId: string): WorktreeRecord | undefined {

@@ -1,5 +1,5 @@
 /**
- * Hermes CLI builder - constructs hermes command-line arguments.
+ * Hermes CLI builder - constructs hermes command-line аргументы.
  */
 
 export interface LaunchArgs {
@@ -22,11 +22,11 @@ export interface ResumeArgs {
 }
 
 /**
- * Builder for constructing hermes CLI arguments.
+ * Builder для constructing hermes CLI аргументы.
  */
 export class HermesCliBuilder {
   /**
-   * Builds launch arguments for a new hermes run.
+   * Формирует аргументы запуска для Объект новый hermes run.
    */
   buildLaunchArgs(args: LaunchArgs): string[] {
     const result: string[] = ["chat"];
@@ -58,7 +58,7 @@ export class HermesCliBuilder {
   }
 
   /**
-   * Builds resume arguments for continuing a hermes session.
+   * Формирует аргументы возобновления для continuing Объект hermes сессия.
    */
   buildResumeArgs(args: ResumeArgs): string[] {
     const result: string[] = ["chat"];

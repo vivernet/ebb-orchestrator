@@ -40,7 +40,7 @@ export interface EventProjection { id: string; type: string; createdAt: string; 
 export interface DependencyProjection { id: string; taskId: string; dependsOnTaskId: string; type: string; status: string | null; }
 /** Состояние одного отображаемого этапа lifecycle. */
 export interface LifecycleStageProjection { id: string; label: string; status: "COMPLETED" | "CURRENT" | "PENDING"; updatedAt: string | null; }
-/** Read model lifecycle с текущим этапом и историей отображаемых stages. */
+/** читает модель lifecycle с текущим этапом и историей отображаемых stages. */
 export interface LifecycleProjection { status: string; stage: string | null; updatedAt: string | null; stages?: LifecycleStageProjection[]; }
 /** Авторитетная read model страницы проекта. */
 export interface ProjectOverviewProjection {

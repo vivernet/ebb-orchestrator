@@ -1,5 +1,5 @@
 /**
- * Dependency service – manages task dependencies with cycle detection.
+ * Сервис зависимостей – управляет зависимостями задач с обнаружением циклов.
  */
 
 import type { Database } from "../../platform/database/database.js";
@@ -38,8 +38,8 @@ export class DependencyService {
   constructor(private readonly db: Database) {}
 
   /**
-   * Add a blocking dependency: `taskId` depends on `dependsOnTaskId`.
-   * Throws on self-dependency, duplicates, or cycles.
+   * добавлять Объект blocking зависимость: `taskId` depends on `dependsOnTaskId`.
+   * Throws on self-dependency, duplicates, или циклы.
    */
   addBlockingDependency(taskId: string, dependsOnTaskId: string): TaskDependency {
     return this.db.transaction((tx) => {
@@ -80,7 +80,7 @@ export class DependencyService {
   }
 
   /**
-   * Remove a dependency between two tasks.
+   * удалять Объект зависимость between два задачи.
    */
   removeDependency(taskId: string, dependsOnTaskId: string): void {
     this.db.transaction((tx) => {
@@ -92,7 +92,7 @@ export class DependencyService {
   }
 
   /**
-   * List all dependencies for a task (tasks it depends on).
+   * Перечисляет все зависимости для Объект задача (задачи it depends on).
    */
   listDependencies(taskId: string): TaskDependency[] {
     const rows = this.db.all<DependencyRow>(
@@ -103,7 +103,7 @@ export class DependencyService {
   }
 
   /**
-   * List all dependents (tasks that depend on the given task).
+   * Перечисляет все dependents (задачи который depend on Объект указанного задача).
    */
   listDependents(taskId: string): TaskDependency[] {
     const rows = this.db.all<DependencyRow>(
@@ -114,18 +114,18 @@ export class DependencyService {
   }
 
   /**
-   * Detect whether adding an edge from `newDependentId` → `dependencyId`
+   * Определяет, adding Объект edge из `newDependentId` → `dependencyId`
    * (i.e., newDependentId depends on dependencyId) would create a cycle.
    *
    * Экземпляр cycle exists iff dependencyId can already reach newDependentId
-   * via the existing dependency graph.
+   * viОбъект Объект existing зависимость graph.
    */
   private wouldCreateCycle(
     tx: DatabaseTx,
     newDependentId: string,
     dependencyId: string,
   ): boolean {
-    // BFS/DFS from dependencyId following "depends_on" edges.
+    // BFS/DFS из dependencyId following "depends_on" edges.
     // Если we reach newDependentId, adding the edge would close a cycle.
     const visited = new Set<string>();
     const stack = [dependencyId];

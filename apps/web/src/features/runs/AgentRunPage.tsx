@@ -25,7 +25,7 @@ function errorMessage(error: unknown): string {
 
 /**
  * Показывает безопасную проекцию Agent Run. Prompt, capability, необработанный
- * output и служебные artifacts намеренно не запрашиваются browser-клиентом.
+ * результат и служебные artifacts намеренно не запрашиваются браузер-клиентом.
  */
 export default function AgentRunPage({ id }: AgentRunPageProps) {
   const [run, setRun] = useState<AgentRun | null>(null);

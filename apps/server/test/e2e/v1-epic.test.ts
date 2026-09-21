@@ -206,7 +206,7 @@ describe("Request to Epic acceptance", () => {
     );
     expect(runsBeforeApproval?.count).toBe(0);
 
-    // Orchestrations должны иметь статус PENDING.
+    // Orchestrations должны иметь статус ожидающий.
     const pending = db!.get<{ status: string; plan_json: string } | undefined>(
       "SELECT status, plan_json FROM planning_plans WHERE id=$id",
       { id: plan.id },
@@ -328,7 +328,7 @@ describe("Request to Epic acceptance", () => {
 
   it("resumes after restart mid-epic", async () => {
     const { registry, merge } = await setupDatabase();
-    // Execution order: plan(1), task_1 child_task(2), task_1 review(3),
+    // Порядок выполнения: plan(1), task_1 child_task(2), task_1 review(3),
 // task_1 qa(4), task_1 integration(5) — затем запускаются task_2/task_3.
 // Пауза после 5 вызовов позволяет завершить task_1, но вызывает сбой до task_2/task_3.
     const runtime = new PausableFakeAgentRuntime(db!, 5);
@@ -385,7 +385,7 @@ describe("Request to Epic acceptance", () => {
     );
     expect(task3Status?.status).not.toBe("INTEGRATED_INTO_EPIC");
 
-    // Stage должен оставаться CHILDREN (epic_review/qa/integration ещё не достигнуты).
+    // этап должен оставаться CHILDREN (epic_review/qa/integration ещё не достигнуты).
     const orchestrationBefore = db!.get<{ stage: string }>(
       "SELECT stage FROM epic_orchestrations WHERE epic_id=$epicId",
       { epicId },
@@ -400,7 +400,7 @@ describe("Request to Epic acceptance", () => {
 
     const secondResult = await orchestrator2.approveAndRun(plan.id, "user");
 
-// task_2 и task_3 завершены без дубликатов tasks/runs/phase-runs.
+// task_2 и task_3 завершены без дубликатов задачи/runs/phase-runs.
     expect(secondResult.childStatuses.every((status) => status === "INTEGRATED_INTO_EPIC")).toBe(true);
 
 // Нет дубликатов agent_runs (завершённые runs = проверенные phase runs).
@@ -408,7 +408,7 @@ describe("Request to Epic acceptance", () => {
       "SELECT COUNT(*) AS count FROM agent_runs WHERE epic_id=$epicId AND status='COMPLETED'",
       { epicId },
     );
-    // plan(1) + task_1(4) + task_2(4) + task_3(4) + epic_review(1) + epic_qa(1) + integration(1) = 16
+    // Расчёт: plan(1) + task_1(4) + task_2(4) + task_3(4) + epic_review(1) + epic_qa(1) + integration(1) = 16.
     expect(completedRunCount?.count).toBe(16);
 
 // Нет дубликатов записей orchestration_phase_runs.
@@ -432,7 +432,7 @@ describe("Request to Epic acceptance", () => {
     );
     expect(taskCount?.count).toBe(3);
 
-// Stage прошёл все фазы до FINAL_APPROVAL.
+// этап прошёл все фазы до FINAL_APPROVAL.
     const orchestrationAfter = db!.get<{ stage: string }>(
       "SELECT stage FROM epic_orchestrations WHERE epic_id=$epicId",
       { epicId },

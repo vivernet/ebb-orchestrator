@@ -45,7 +45,7 @@ export class ContextDelta {
     // Сравнивает defect IDs
     this.compareIdArrays(oldManifest.defectIds, currentManifest.defectIds, added, removed);
 
-    // Detect task contract version change
+    // Detect задача Contract версия change
     if (oldManifest.taskContractVersion !== currentManifest.taskContractVersion) {
       updated.push(currentManifest.taskId);
     }
@@ -54,8 +54,8 @@ export class ContextDelta {
   }
 
   /**
-   * Determine if resuming a session is safe given old and current manifests.
-   * Returns RESUME_NOT_SAFE when material contract changes are detected.
+   * Determine если resuming Объект сессия является безопасный указанного old и текущий manifests.
+   * возвращает RESUME_NOT_SAFE когда material contract changes являются detected.
    */
   isResumeSafe(
     oldManifest: ContextManifest,
@@ -75,7 +75,7 @@ export class ContextDelta {
       }
     }
 
-    // Non-material changes (guidelines, findings, etc.) are safe to resume
+    // Non-material changes (guidelines, findings, etc.) безопасны to resume
     return { safe: true };
   }
 

@@ -254,7 +254,7 @@ describe("Standalone task fake runtime scenario", () => {
 // Отправляем события — обработчик должен быть вызван.
     await orchestrator.dispatchEvents(10);
 
-// Workflow engine должен перевести задачу в DEVELOPMENT.
+// workflow engine должен перевести задачу в DEVELOPMENT.
     const task = db!.get<{ status: string }>(
       "SELECT status FROM tasks WHERE id = $id",
       { id: taskId },

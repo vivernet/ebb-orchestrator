@@ -1,6 +1,6 @@
 /**
- * ProjectActions provides typed mappings for project operations (test, lint, typecheck, build)
- * based on approved project configuration.
+ * ProjectActions предоставляет типизированные соответствия для проект operations (test, lint, typecheck, сборка)
+ * based on approved проект конфигурация.
  */
 import { CommandTools } from './command-tools.js';
 import type { ExecOptions } from './command-tools.js';
@@ -8,7 +8,7 @@ import type { ExecOptions } from './command-tools.js';
 export type ProjectAction = 'test' | 'lint' | 'typecheck' | 'build';
 
 export type ProjectConfig = {
-  /** Commands to run for each action type */
+  /** команды to run для каждого действие тип */
   commands: {
     test?: ExecOptions;
     lint?: ExecOptions;
@@ -36,7 +36,7 @@ export class ProjectActions {
   }
 
   /**
-   * Execute the project test action using the configured command.
+   * Execute Объект проект test действие using Объект настроенную команду.
    */
   async test(cwd: string, injectedEnv?: Record<string, string>): Promise<ActionResult> {
     const options = this.getConfiguredOptions('test');
@@ -51,7 +51,7 @@ export class ProjectActions {
   }
 
   /**
-   * Execute the project lint action using the configured command.
+   * Execute Объект проект lint действие using Объект настроенную команду.
    */
   async lint(cwd: string, injectedEnv?: Record<string, string>): Promise<ActionResult> {
     const options = this.getConfiguredOptions('lint');
@@ -66,7 +66,7 @@ export class ProjectActions {
   }
 
   /**
-   * Execute the project typecheck action using the configured command.
+   * Execute Объект проект typecheck действие using Объект настроенную команду.
    */
   async typecheck(cwd: string, injectedEnv?: Record<string, string>): Promise<ActionResult> {
     const options = this.getConfiguredOptions('typecheck');
@@ -81,7 +81,7 @@ export class ProjectActions {
   }
 
   /**
-   * Execute the project build action using the configured command.
+   * Execute Объект проект сборка действие using Объект настроенную команду.
    */
   async build(cwd: string, injectedEnv?: Record<string, string>): Promise<ActionResult> {
     const options = this.getConfiguredOptions('build');
@@ -97,7 +97,7 @@ export class ProjectActions {
 
   /**
    * Получает the configured options for a specific action.
-   * Falls back to default commands if not configured.
+   * Falls back to стандартные команды если не настроено.
    */
   private getConfiguredOptions(action: ProjectAction): ExecOptions {
     const configured = this.projectConfig.commands[action];

@@ -1,6 +1,6 @@
 /**
- * Event handlers for runtime orchestration.
- * Handles AgentRunRequested events and runtime completion events.
+ * событие handlers для runtime orchestration.
+ * Handles AgentRunRequested события и runtime completion события.
  */
 
 import type { Database } from "../../platform/database/database.js";
@@ -11,7 +11,7 @@ import { SchedulerService } from "../scheduler/scheduler-service.js";
 import { RunService } from "./run-service.js";
 
 /**
- * Orchestrates runtime events and workflow transitions.
+ * Orchestrates runtime события и workflow transitions.
  */
 export class RuntimeEventHandlers {
   constructor(
@@ -20,8 +20,8 @@ export class RuntimeEventHandlers {
     private readonly scheduler: SchedulerService,
     private readonly runService?: RunService,
   ) {
-    // Final merge provenance is authoritative even for databases created
-    // before the provenance migration was installed.
+    // Final merge provenance является authoritative even для databases created
+    // перед Объект provenance migration was installed.
     for (const column of ["approval_id TEXT", "source_sha TEXT", "expected_target_sha TEXT", "resulting_target_sha TEXT"]) {
       try { this.db.exec(`ALTER TABLE git_operations ADD COLUMN ${column}`); } catch { /* already present */ }
     }
@@ -29,7 +29,7 @@ export class RuntimeEventHandlers {
 
   /**
    * Обрабатывает AgentRunRequested event.
-   * Transitions task to DEVELOPMENT and starts the runtime.
+   * Transitions задача to DEVELOPMENT и запускает Объект runtime.
    */
   handleAgentRunRequested(event: {
     readonly type: string;
@@ -63,11 +63,11 @@ export class RuntimeEventHandlers {
     }
 
     // Этот run identity is persisted before scheduling. Этот scheduler then
-    // stores that exact identity in its reservation, preventing a later
-    // runtime from being attached to a different reservation/run.
+    // stores который точный identity in its резервирование, preventing Объект later
+    // runtime из being attached to Объект разный резервирование/run.
     if (!this.runService) {
-      // Keep direct legacy scenario fixtures usable until their composition
-      // is migrated. Production RuntimeOrchestrator always supplies RunService.
+      // сохранять direct legacy scenario fixtures usable until their composition
+      // является migrated. Production RuntimeOrchestrator always supplies RunService.
       this.scheduler.dispatchTask(taskId, this.workflowEngine, () => undefined, {
         triggerReason: "runtime-request",
         role,
@@ -88,8 +88,8 @@ export class RuntimeEventHandlers {
     });
 
     try {
-      // Scheduler is the only dispatch authority: it atomically reserves
-      // capacity/budget/resource lock before advancing the workflow.
+      // Scheduler является Объект только dispatch authority: it atomically reserves
+      // capacity/budget/resource lock перед advancing Объект workflow.
       this.scheduler.dispatchTask(taskId, this.workflowEngine, () => undefined, {
         triggerReason: "runtime-request",
         role,
@@ -106,7 +106,7 @@ export class RuntimeEventHandlers {
     return this.executePreparedRun(taskId, run.id);
   }
 
-  /** Executes a scheduler-bound run and applies only its persisted outcome. */
+  /** Executes Объект scheduler-bound run и applies только its persisted outcome. */
   private async executePreparedRun(taskId: string, runId: string): Promise<void> {
     try {
       const execution = await this.runService!.executePreparedRun(runId);
@@ -120,14 +120,14 @@ export class RuntimeEventHandlers {
 
   /**
    * Обрабатывает runtime completion.
-   * Validates current workflow stage before applying outcome.
+   * Validates текущий workflow этап перед applying outcome.
    */
   handleRuntimeCompletion(
     runId: string,
     outcome: RunOutcome,
   ): void {
     // Этот run is the authorization boundary. Never select a latest run for a
-    // task: that permits a stale/foreign completion to advance the workflow.
+    // задача: который permits Объект stale/foreign completion to advance Объект workflow.
     const run = this.db.get<{ id: string; task_id: string | null; role: string; status: string; output: string | null; cost: number | null }>(
       "SELECT id, task_id, role, status, output, cost FROM agent_runs WHERE id = $id",
       { id: runId },
@@ -170,7 +170,7 @@ export class RuntimeEventHandlers {
     const targetStatus = successfulOutcome ? "REVIEW" : "FAILED";
     this.workflowEngine.transition(taskId, targetStatus);
 
-    // Emit appropriate event
+    // Emit appropriate событие
     if (successfulOutcome) {
       this.emitAgentRunCompleted(taskId, outcome);
     } else {
@@ -200,7 +200,7 @@ export class RuntimeEventHandlers {
       );
     }
 
-    // Transition to CANCELLED
+    // Переход к CANCELLED.
     this.workflowEngine.transition(taskId, "CANCELLED");
     this.scheduler.releaseTask(taskId);
     this.emitAgentRunInterrupted(taskId);
@@ -208,7 +208,7 @@ export class RuntimeEventHandlers {
 
   /**
    * Обрабатывает ApprovalApproved event with FINAL_MERGE.
-   * Validates transition to MERGING after approval.
+   * Validates transition to MERGING после approval.
    */
   handleApprovalApproved(event: {
     readonly type: string;
@@ -226,7 +226,7 @@ export class RuntimeEventHandlers {
       return;
     }
 
-    // Task should be in READY_FOR_MERGE stage
+    // задача должен be in READY_FOR_MERGE этап
     const task = this.db.get<{ status: string }>(
       "SELECT status FROM tasks WHERE id = $id",
       { id: taskId },
@@ -238,7 +238,7 @@ export class RuntimeEventHandlers {
       );
     }
 
-    // Transition to MERGING
+    // Переход к MERGING.
     this.workflowEngine.transition(taskId, "MERGING", {
       hasReviewPassed: false,
       hasSuccessfulIntegration: false,
@@ -249,7 +249,7 @@ export class RuntimeEventHandlers {
     this.emitTaskTransitioned(taskId, "READY_FOR_MERGE", "MERGING");
   }
 
-  /** Complete the Epic merge and only then release its integrated children. */
+  /** Complete Объект Epic merge и только then release its integrated children. */
   handleEpicMergeCompleted(epicId: string, approvalId: string): void {
     for (const column of ["approval_id TEXT", "source_sha TEXT", "expected_target_sha TEXT", "resulting_target_sha TEXT"]) {
       try { this.db.exec(`ALTER TABLE git_operations ADD COLUMN ${column}`); } catch { /* table/column is installed by migration */ }
@@ -297,14 +297,14 @@ export class RuntimeEventHandlers {
   }
 
   /**
-   * Private helper methods for emitting events.
+   * приватный helper methods для emitting события.
    */
   private emitAgentRunStarted(
     taskId: string,
     role: string,
     model: string,
   ): void {
-    // In production, this would append to outbox
+    // в production, этот would append to outbox
     // Для now, we log it
     console.log(`[AgentRunStarted] taskId=${taskId} role=${role} model=${model}`);
   }

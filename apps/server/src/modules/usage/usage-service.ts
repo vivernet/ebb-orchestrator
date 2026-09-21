@@ -1,12 +1,12 @@
 /**
- * Usage service — records usage for each AI Run.
+ * Сервис использования — записывает использование для каждого AI run.
  */
 
 import type { Database } from "../../platform/database/database.js";
 import type { TriggerReason, UsageRecord } from "./usage-types.js";
 
 /**
- * Service for recording and querying AI Run usage.
+ * сервис для recording и querying AI run использование.
  */
 export class UsageService {
   constructor(private readonly db: Database) {}
@@ -120,7 +120,7 @@ export class UsageService {
 
   /**
    * Получает historical costs by role/model for estimation.
-   * Returns costs sorted ascending for p90 calculation.
+   * возвращает стоимости sorted ascending для p90 calculation.
    */
   getHistoricalCosts(projectId: string, role: string, model: string): number[] {
     const rows = this.db.all<{ actual_cost: number }>(

@@ -137,7 +137,7 @@ export class ActionGateway {
           }
         }
         } catch {
-          // Ignore errors during directory traversal
+          // Ignore errors во время directory traversal
         }
     };
 

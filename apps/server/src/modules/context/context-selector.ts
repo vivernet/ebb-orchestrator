@@ -140,7 +140,7 @@ export class ContextSelector {
   }
 
   /**
-   * Assign priority to a guideline based on its metadata and task context.
+   * Assign priority to Объект guideline based on its metadatОбъект и задача контекст.
    * Правила:
    * - Guidelines with explicit priority keep it
    * - Cross-cutting guidelines matching task area → P1

@@ -1,4 +1,4 @@
-/** Supported config schema versions (contiguous range). */
+/** Supported config schemОбъект versions (contiguous range). */
 const SUPPORTED_SCHEME_VERSIONS = new Set([1]);
 const DEFAULT_SCHEME_VERSION = 1;
 const ALL_ROLES = [
@@ -57,7 +57,7 @@ export class SchedulerService {
       project_id TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'developer', model TEXT NOT NULL DEFAULT 'default',
       cost REAL NOT NULL, recorded_at TEXT NOT NULL
     )`);
-    // One physical reservation/lock authority for both tasks and agent runs.
+    // Единый физический источник истины для резервирование/lock для both задачи и agent runs.
     this.db.exec(`CREATE TABLE IF NOT EXISTS scheduler_reservations (
       id TEXT PRIMARY KEY, kind TEXT NOT NULL, subject_id TEXT NOT NULL UNIQUE,
       project_id TEXT NOT NULL, owner_id TEXT NOT NULL, reserved_at TEXT NOT NULL,
@@ -70,7 +70,7 @@ export class SchedulerService {
       project_id TEXT NOT NULL, owner_id TEXT NOT NULL, locked_at TEXT NOT NULL
     )`);
     this.db.exec(`CREATE TABLE IF NOT EXISTS scheduler_config (id INTEGER PRIMARY KEY CHECK (id=1), schema_version INTEGER NOT NULL, config_json TEXT NOT NULL, updated_at TEXT NOT NULL)`);
-    // Initialize with defaults only if no config exists yet.
+    // Initialize с defaults только если no config exists yet.
     const existing = this.db.get<{ id: string }>("SELECT id FROM scheduler_config WHERE id=1");
     if (!existing) {
       this.db.run("INSERT INTO scheduler_config(id,schema_version,config_json,updated_at) VALUES(1,$v,$config,$at)", {
@@ -79,7 +79,7 @@ export class SchedulerService {
         at: new Date().toISOString(),
       });
     }
-    // Migrate legacy system_state limits into the versioned config.
+    // Migrate legacy system_state лимиты into Объект versioned config.
     const legacy = this.db.get<{ value_json: string }>("SELECT value_json FROM system_state WHERE key IN ('scheduler_limits','scheduler.limits') ORDER BY CASE key WHEN 'scheduler_limits' THEN 0 ELSE 1 END LIMIT 1");
     if (legacy) {
       try {
@@ -108,14 +108,14 @@ export class SchedulerService {
     const alreadyRunning = tasks.filter(
       (t) => !isTerminalStatus(t.status) && t.status !== "READY" && t.status !== "DRAFT"
     );
-    // Eligibility projection and dispatch use the same durable reservation
-    // authority.  In particular, non-task phases consume these slots too.
+    // Eligibility projection и dispatch использовать Объект тот же durable резервирование
+    // Источник истины. В частности, эти слоты расходуют также фазы, не связанные с задачами.
     const reservedGlobal = this.reservedCount();
 
     // Получает ALL non-terminal tasks for dependency checking
     const allActiveTasks = (scope ? this.getSchedulableTasks() : tasks).filter((t) => !isTerminalStatus(t.status));
 
-    // Evaluate eligibility for each task
+    // Evaluate eligibility для каждого задача
     const runnables: SchedulableTask[] = [];
     const waiting: { task: SchedulableTask; reason: WaitReason }[] = [];
     const blocked: { task: SchedulableTask; reason: BlockReason }[] = [];
@@ -136,9 +136,9 @@ export class SchedulerService {
       }
     }
 
-    // Role capacity is evaluated from the same durable reservations used by
-    // dispatch, so a reviewer task cannot appear runnable while its role slot
-    // is already occupied.
+    // роль capacity является evaluated из Объект тот же durable резервирования используемый by
+    // dispatch, so Объект reviewer задача cannot appear runnable пока its роль slot
+    // является уже occupied.
     const limits = this.getLimits();
     const reservedReviewers = this.db.get<{ count: number }>(
       "SELECT COUNT(*) AS count FROM scheduler_reservations WHERE status='RESERVED' AND kind <> 'LOCK' AND lower(role)='reviewer'",
@@ -150,11 +150,11 @@ export class SchedulerService {
       waiting.push(...roleLimited.map((task) => ({ task, reason: "WAITING_FOR_ROLE_CAPACITY" as const })));
     }
 
-    // Sort runnables deterministically
+    // сортировать runnables deterministically
     runnables.sort((a, b) => compareTasks(a, b));
 
-    // Limit runnables based on capacity constraints
-    // First, limit by project max
+    // лимит runnables based on capacity constraints
+    // первый, лимит by проект max
     const runnablesByProject = new Map<string, SchedulableTask[]>();
     for (const task of runnables) {
       if (!runnablesByProject.has(task.projectId)) {
@@ -172,7 +172,7 @@ export class SchedulerService {
       runningByProject.set(row.project_id, Math.max(runningByProject.get(row.project_id) ?? 0, row.count));
     }
 
-    // Limit each project's runnables
+    // лимит каждый проект's runnables
     const limitedByProject: SchedulableTask[] = [];
     const capacityWaiting: { task: SchedulableTask; reason: WaitReason }[] = [];
     for (const [projectId, tasks] of runnablesByProject) {
@@ -182,7 +182,7 @@ export class SchedulerService {
       capacityWaiting.push(...tasks.slice(available).map((task) => ({ task, reason: "WAITING_FOR_CAPACITY" as const })));
     }
 
-    // Then limit globally
+    // Then лимит globally
     const globalAvailable = Math.max(0, limits.globalMax - reservedGlobal);
     const globallyLimited = limitedByProject.splice(globalAvailable);
     capacityWaiting.push(...globallyLimited.map((task) => ({ task, reason: "WAITING_FOR_CAPACITY" as const })));
@@ -190,7 +190,7 @@ export class SchedulerService {
     runnables.push(...limitedByProject);
     waiting.push(...capacityWaiting);
 
-    // Sort waiting and blocked by priority (most important first)
+    // сортировать ожидающие и заблокированные by priority (сначала наиболее важные)
     waiting.sort((a, b) =>
       comparePriority(a.task.priority, b.task.priority)
     );
@@ -387,7 +387,7 @@ getEligibility(taskId: string, scope?: { projectId: string }): Eligibility {
         }
 
         // Все callers, including the legacy bulk entry point, use the same
-        // atomic authority.  There must not be a capacity-only fast path.
+        // atomic authority.  There не должен be Объект capacity-only fast путь.
         this.dispatchTask(task.id, workflowEngine, onWorkflowRunStarted, "task-assignment");
         startedTaskIds.push(task.id);
       } catch (error) {
@@ -448,7 +448,7 @@ getEligibility(taskId: string, scope?: { projectId: string }): Eligibility {
           if (!approval || approval.type !== "FINAL_MERGE" || approval.subject_id !== taskId || approval.status !== "APPROVED") throw new Error(`Invalid dispatch approval for task ${taskId}`);
         }
         // Этот lock is acquired in this same transaction.  Calling the lock
-        // service here would create a second transaction and permit races.
+        // сервис here would создаёт Объект second transaction и permit races.
         const reservationId = existing?.id ?? crypto.randomUUID();
         const resourceKey = `task:${taskId}`;
         const externalLock = tx.get<{ owner_id: string }>("SELECT owner_id FROM scheduler_resource_locks WHERE resource_key='global'");
@@ -547,9 +547,9 @@ getEligibility(taskId: string, scope?: { projectId: string }): Eligibility {
           result.blockedReservationIds.push(row.id);
           continue;
         }
-        // LOCK reservations are owned by the task/resource lock authority,
-        // not by an AgentRun with a task-shaped subject id.  In particular,
-        // an active task must keep its lock across a restart.
+        // LOCK резервирования являются owned by Объект задача/resource lock authority,
+        // не by Объект AgentRun с Объект task-shaped subject id.  In particular,
+        // Объект активный задача должен сохранять its lock across Объект restart.
         if (row.kind === "LOCK") {
           if (!row.subject_id.startsWith("lock:")) continue;
           const task = tx.get<{ status: string }>("SELECT status FROM tasks WHERE id=$taskId", { taskId: row.subject_id.slice("lock:".length) });

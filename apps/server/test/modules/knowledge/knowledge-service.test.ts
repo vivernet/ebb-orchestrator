@@ -234,7 +234,7 @@ describe("KnowledgeService", () => {
       const rows = db?.all<{ status: string; version: number; content_hash: string }>(
         "SELECT status, version, content_hash FROM knowledge_guidelines WHERE display_id='GL-ARCH-014' ORDER BY version",
       );
-  // v1 остаётся ACTIVE (без изменений), v2 получает PENDING_EXTERNAL_CHANGE.
+  // v1 остаётся активный (без изменений), v2 получает PENDING_EXTERNAL_CHANGE.
       expect(rows).toHaveLength(2);
       expect(rows![0]!.status).toBe("ACTIVE");
       expect(rows![0]!.version).toBe(1);
@@ -321,7 +321,7 @@ describe("KnowledgeService", () => {
       await service.indexRepository(projectId, repoDir);
 
       const active = service.activeForScope(projectId, { scope: "project" });
-  // DEC-0001 имеет статус ACCEPTED и область EPIC, DEC-0002 — PROPOSED и область PROJECT.
+  // DEC-0001 имеет статус ACCEPTED и область EPIC, DEC-0002 — PROPOSED и область проект.
       expect(active).toHaveLength(1);
       expect(active[0]!.displayId).toBe("DEC-0002");
       expect(active[0]!.status).toBe("PROPOSED");

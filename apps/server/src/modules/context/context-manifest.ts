@@ -1,12 +1,12 @@
 /**
- * Manifest Builder for Orchestrator Hermes.
+ * Сборщик манифеста для Orchestrator Hermes.
  * Сохраняет manifest IDs and versions, NOT secrets.
  */
 
 import type { ContextManifest } from './context-types.js';
 
 /**
- * Builds ContextManifest for tracking what went into a context package.
+ * Builds ContextManifest для tracking what went into Объект контекст package.
  */
 export class ManifestBuilder {
   /**

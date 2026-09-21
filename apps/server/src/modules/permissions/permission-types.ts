@@ -1,5 +1,5 @@
 // Типы решений Permission Decision types - ordered by restrictiveness
-// ALLOW < ASK < DENY < ABSOLUTE_DENY
+// Порядок решений: ALLOW < ASK < DENY < ABSOLUTE_DENY.
 export enum PermissionDecision {
   ALLOW = 'ALLOW',
   ASK = 'ASK',

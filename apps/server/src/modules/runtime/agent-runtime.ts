@@ -1,5 +1,5 @@
 /**
- * Agent runtime port - interface for interacting with an LLM runtime.
+ * Порт runtime агента - интерфейс для interacting с Объект LLM runtime.
  */
 
 import type { AgentRun } from "@ebb-orchestrator/contracts";
@@ -7,11 +7,11 @@ import type { RunOutcome } from "./run-types.js";
 
 export interface AgentRuntime {
   /**
-    * Number of currently active runs.
+    * число of currently активные runs.
     */
   active: number;
   /**
-    * Maximum number of concurrent active runs.
+    * максимальный число of concurrent активные runs.
     */
   maxActive: number;
   /**
@@ -20,7 +20,7 @@ export interface AgentRuntime {
   calls: Array<{ phase: string; role: string; taskId?: string; targetBranch?: string }>;
 
   /**
-    * Start a new run with the given options.
+    * запускать Объект новый run с Объект указанного options.
     */
   startRun(run: AgentRun): Promise<void>;
 
@@ -35,17 +35,17 @@ export interface AgentRuntime {
   cancelRun(runId: string): Promise<void>;
 
   /**
-   * Inspect the current state of a run.
+   * Inspect Объект текущее состояние of Объект run.
    */
   inspectRun(runId: string): Promise<AgentRun>;
 
   /**
-   * Collect the result from a run.
+   * Collect Объект результат из Объект run.
    */
   collectResult(runId: string): Promise<RunOutcome>;
 
   /**
-   * Collect token usage from a run.
+   * Получает токен использование из Объект run.
    */
   collectUsage(runId: string): Promise<{
     inputTokens: number;

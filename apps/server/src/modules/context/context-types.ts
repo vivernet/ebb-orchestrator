@@ -3,10 +3,10 @@
  * Определяет the structure for context packages sent to Agent roles.
  */
 
-/** Priority level for context items */
+/** Уровень приоритета для контекст элементы */
 export type Priority = 'p0' | 'p1' | 'p2' | 'p3';
 
-/** Task Contract - core requirements and constraints */
+/** задача Contract - основные требования и ограничения */
 export interface TaskContract {
   id: string;
   goal: string;
@@ -31,10 +31,10 @@ export type GuidelineStatus = 'active' | 'inactive' | 'deprecated';
 /** Состояние for decisions */
 export type DecisionStatus = 'accepted' | 'rejected' | 'superseded';
 
-/** Severity for findings */
+/** Severity для findings */
 export type FindingSeverity = 'low' | 'medium' | 'high' | 'critical';
 
-/** Finding from Review/QA */
+/** Finding из Review/QОбъект */
 export interface Finding {
   id: string;
   status: FindingStatus;
@@ -44,7 +44,7 @@ export interface Finding {
   location?: string;
 }
 
-/** Defect from QA */
+/** Defect из QОбъект */
 export interface Defect {
   id: string;
   status: DefectStatus;
@@ -53,7 +53,7 @@ export interface Defect {
   stepsToReproduce?: string;
 }
 
-/** Guideline - project rule */
+/** Guideline - проект rule */
 export interface Guideline {
   id: string;
   category: string;
@@ -64,7 +64,7 @@ export interface Guideline {
   applicableRoles?: string[];
 }
 
-/** Decision - architectural choice */
+/** Решение — архитектурный выбор. */
 export interface Decision {
   id: string;
   status: DecisionStatus;
@@ -73,27 +73,27 @@ export interface Decision {
   rationale?: string;
 }
 
-/** Developer session transcript */
+/** Developer сессия transcript */
 export type Message = {
   role: 'user' | 'assistant';
   content: string;
 };
 
-/** Workspace metadata */
+/** Workspace metadatОбъект */
 export interface WorkspaceMeta {
   repoPath: string;
   branch: string;
   commitHash: string;
 }
 
-/** Budget configuration */
+/** Budget конфигурация */
 export interface BudgetConfig {
   limit: number;
   priority: Priority;
 }
 
 /**
- * Developer Context Package
+ * Developer контекст Package
  * Содержит all context needed by Developer role.
  */
 export interface DeveloperContextPackage {
@@ -108,9 +108,9 @@ export interface DeveloperContextPackage {
 }
 
 /**
- * Reviewer Context Package
+ * Reviewer контекст Package
  * Содержит all context needed by Reviewer role.
- * Does NOT include Developer conversation.
+ * не include Developer conversation.
  */
 export interface ReviewerContextPackage {
   taskContract: TaskContract;

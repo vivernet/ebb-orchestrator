@@ -54,7 +54,7 @@ import type { EventBus } from "../platform/events/event-bus.js";
 const LOCAL_SESSION_COOKIE = "ebb_local_session";
 
 export interface AppDeps {
-  /** Loopback host; по умолчанию "127.0.0.1". */
+  /** Loopback хост; по умолчанию "127.0.0.1". */
   host?: string;
   /** Порт, на котором сервер принимает соединения; по умолчанию 3000. */
   port?: number;
@@ -86,7 +86,7 @@ export interface AppDeps {
 }
 
 export interface OrchestratorApp extends FastifyInstance {
-  /** Bearer-токен для programmatic callers; browser использует HttpOnly cookie. */
+  /** Bearer-токен для programmatic callers; браузер использует HttpOnly cookie. */
   sessionToken: string;
   csrfToken: string;
   /** Одноразовый capability, который trusted launcher передаёт UI через URL fragment. */
@@ -151,7 +151,7 @@ export function createApp(deps: AppDeps): OrchestratorApp {
     const mutating = request.method !== "GET" && request.method !== "HEAD";
     if (mutating) {
       const origin = request.headers.origin;
-      // Bearer token сам по себе не является CSRF token: браузерные запросы также
+      // Bearer токен сам по себе не является CSRF токен: браузерные запросы также
       // должны подтвердить происхождение из этого локального приложения.
       if (origin !== session.allowedOrigin) {
         reply.code(403).send({ error: "forbidden" });

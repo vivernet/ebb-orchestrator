@@ -3,7 +3,7 @@ import { GitHubAppTokenProvider } from './github-app-token-provider.js';
 
 export interface GitHubAdapterOptions { fetch?: typeof globalThis.fetch; apiBase?: string; sleep?: (ms: number) => Promise<void>; maxRetries?: number; }
 
-/** GitHub REST adapter with status-aware errors and bounded transient retries. */
+/** REST-адаптер GitHub с status-aware errors и bounded transient retries. */
 export class GitHubAdapter implements GitHosting {
   private readonly request: typeof globalThis.fetch;
   private readonly apiBase: string;

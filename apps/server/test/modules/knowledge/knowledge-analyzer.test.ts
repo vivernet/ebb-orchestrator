@@ -279,7 +279,7 @@ describe("KnowledgeAnalyzer", () => {
       const existing: GuidelineRecord[] = [
         makeGuideline({ id: "db-gl-1", displayId: "GL-ARCH-020", projectId, category: "ARCH", scope: "area" }),
       ];
-// GL-ARCH-014 (область project) должен совпасть с существующим правилом области.
+// GL-ARCH-014 (область проект) должен совпасть с существующим правилом области.
       const proposal = { projectId, markdown: GUIDELINE_MD };
       const result = analyzer.classify(proposal, existing);
       expect(result.candidates).toHaveLength(1);

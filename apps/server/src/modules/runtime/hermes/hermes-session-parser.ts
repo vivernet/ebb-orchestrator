@@ -1,12 +1,12 @@
 /**
- * Hermes session ID parser - extracts session IDs from hermes output.
+ * Hermes парсер сессия ID - извлекает сессия ID из hermes результат.
  */
 
 /**
- * Extracts session ID from hermes stdout output.
+ * Extracts сессия ID из hermes stdout результат.
  *
  * Этот session ID appears in the format "session: <id>" in the output.
- * Returns null if no valid session ID is found.
+ * Возвращает null, если no корректный сессия ID является found.
  */
 export function parseSessionId(stdout: string): string | null {
   const sessionPattern = /session:\s*([a-zA-Z0-9_-]+)/;
@@ -15,7 +15,7 @@ export function parseSessionId(stdout: string): string | null {
 }
 
 /**
- * Checks if stdout indicates a successful session start.
+ * Проверяет, stdout indicates Объект успешный запуск сессия.
  */
 export function hasValidSessionStart(stdout: string): boolean {
   return parseSessionId(stdout) !== null;

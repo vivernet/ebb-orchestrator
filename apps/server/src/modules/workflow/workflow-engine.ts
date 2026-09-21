@@ -1,5 +1,5 @@
 /**
- * Workflow engine — детерминированный state machine для transitions задач.
+ * workflow engine — детерминированный состояние machine для transitions задач.
  *
  * Методы `canTransition` без side effects и транзакционный `transition`,
  * который атомарно сохраняет состояние + событие outbox TaskStateChanged.
@@ -12,10 +12,10 @@ import { appendOutboxEvent } from "../../platform/events/outbox-repository.js";
 import type { WorkflowRegistry } from "./workflow-registry.js";
 import type { TransitionContext, WorkflowTemplate } from "./workflow-types.js";
 
-/** Template name for standalone (non-epic) tasks. */
+/** Имя шаблона для самостоятельных задач без Epic. */
 const STANDALONE_TEMPLATE = "standard";
 
-/** Template name for tasks that belong to an epic. */
+/** Имя шаблона для задачи который belong to Объект epic. */
 const EPIC_CHILD_TEMPLATE = "architecture_change";
 
 interface TaskRow {
@@ -176,7 +176,7 @@ export class WorkflowEngine {
     if (fromStatus === toStatus) return false;
 
     // Дочерние Tasks are already integrated into the Epic branch at this point;
-    // their release is a release marker, not a second child merge.
+    // their release является Объект release marker, не Объект second дочерний merge.
     if (fromStatus === "INTEGRATED_INTO_EPIC" && toStatus === "RELEASED") {
       return context?.parentEpicReleased === true;
     }

@@ -47,7 +47,7 @@ export class JobRunner {
     const handler = this.handlers[job.type];
 
     if (!handler) {
-      // Handler не зарегистрирован — пометить как FAILED
+      // Handler не зарегистрирован — пометить как не выполнен
       this.db.run(
         `UPDATE background_jobs
          SET status = $status, last_error = $error, updated_at = $updated_at

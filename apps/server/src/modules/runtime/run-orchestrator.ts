@@ -1,7 +1,7 @@
 /**
- * Orchestrator module - coordinates Workflow, Scheduler, and Runtime.
+ * Orchestrator module - coordinates workflow, Scheduler, и runtime.
  *
- * Provides:
+ * Предоставляет:
  * - Event subscription and dispatch
  * - Runtime lifecycle management
  * - Integration with workflow transitions
@@ -16,13 +16,13 @@ import { SchedulerService } from "../scheduler/scheduler-service.js";
 import { RunService } from "./run-service.js";
 
 /**
- * Orchestrator for runtime events.
+ * Orchestrator для runtime события.
  *
- * Consumes:
+ * Использует:
  * - AgentRunRequested: Starts runtime workflow
  * - ApprovalApproved (FINAL_MERGE): Advances workflow stage
  *
- * Produces:
+ * Формирует:
  * - AgentRunStarted
  * - AgentRunCompleted
  * - AgentRunFailed
@@ -44,10 +44,10 @@ export class RuntimeOrchestrator {
   }
 
   /**
-   * Initialize event subscriptions.
+   * Initialize событие subscriptions.
    */
   initialize(): void {
-    // Subscribe to AgentRunRequested events
+    // Subscribe to AgentRunRequested события
     this.bus.subscribe(
       "AgentRunRequested",
       "runtime-orchestrator",
@@ -56,7 +56,7 @@ export class RuntimeOrchestrator {
       },
     );
 
-    // Subscribe to ApprovalApproved events
+    // Subscribe to ApprovalApproved события
     this.bus.subscribe(
       "ApprovalApproved",
       "runtime-orchestrator",
@@ -67,7 +67,7 @@ export class RuntimeOrchestrator {
   }
 
   /**
-   * Dispatch pending events with idempotency.
+   * Dispatch ожидающий события с idempotency.
    */
   async dispatchPendingEvents(limit: number): Promise<number> {
     return this.dispatcher.dispatchBatch(limit);
@@ -92,7 +92,7 @@ export class RuntimeOrchestrator {
 }
 
 /**
- * Register the runtime orchestrator with the event bus.
+ * Register Объект runtime orchestrator с Объект событие bus.
  */
 export function registerRuntimeOrchestrator(
   db: Database,

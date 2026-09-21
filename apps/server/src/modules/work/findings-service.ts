@@ -1,5 +1,5 @@
 /**
- * Findings service – stable IDs for Reviewer findings.
+ * Сервис findings – stable IDs для Reviewer findings.
  */
 
 import type { Database, DatabaseTx } from "../../platform/database/database.js";
@@ -31,8 +31,8 @@ export class FindingsService {
   constructor(private readonly db: Database) {}
 
   /**
-   * Assign and persist a stable finding ID for a review output.
-   * First call for a task creates FINDING-1, next calls get FINDING-2, etc.
+   * Назначает и сохраняет Объект stable finding ID для Объект review результат.
+   * первый call для Объект задача создаёт FINDING-1, следующий calls получать FINDING-2, etc.
    */
   createFinding(
     projectId: string,

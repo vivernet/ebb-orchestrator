@@ -1,5 +1,5 @@
 /**
- * Agent runtime types for the runtime service.
+ * Agent runtime типы для Объект runtime сервис.
  */
 
 import type { ToolId } from "../execution/run-capability.js";

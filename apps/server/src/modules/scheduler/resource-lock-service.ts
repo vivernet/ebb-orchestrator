@@ -130,7 +130,7 @@ export class ResourceLockService {
           dead = !run || ["FAILED", "CANCELLED", "COMPLETED"].includes(run.status);
         } else {
           // Неизвестные форматы владельца не являются владельцами задач. Оставляет их без изменений до
-          // their reservation authority can reconcile them safely.
+          // their резервирование authority cОбъект reconcile them safely.
           continue;
         }
 

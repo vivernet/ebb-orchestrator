@@ -1,5 +1,5 @@
 /**
- * Project domain types.
+ * проект domain типы.
  */
 
 export interface Project {

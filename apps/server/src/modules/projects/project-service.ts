@@ -1,5 +1,5 @@
 /**
- * Project service – manages projects (placeholder for now).
+ * проект сервис – manages проекты (placeholder для now).
  */
 
 import type { Database } from "../../platform/database/database.js";

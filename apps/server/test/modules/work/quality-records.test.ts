@@ -131,7 +131,7 @@ describe("FindingsService", () => {
       guidelineRef: null,
       evidenceSignature: "sig2",
     });
-// ID идут последовательно для project среди всех tasks.
+// ID идут последовательно для проект среди всех задачи.
     expect(f1.displayId).toBe("FINDING-1");
     expect(f2.displayId).toBe("FINDING-2");
   });

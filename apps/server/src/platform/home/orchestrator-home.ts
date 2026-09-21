@@ -41,7 +41,7 @@ export interface HomeEnv {
 
 /**
  * Выбирает подходящую реализацию `join` для целевой платформы.
- * posix.join всегда использует прямые слеши, а path.join — разделители ОС.
+ * posix.join всегда использует прямые слеши, а путь.join — разделители ОС.
  */
 function platformJoin(platform: Platform): (a: string, b: string) => string {
   return platform === "win32" ? win32.join : posix.join;

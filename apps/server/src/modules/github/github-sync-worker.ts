@@ -2,7 +2,7 @@ import type { GitHosting } from './git-hosting.js';
 import { GitHubSyncService } from './github-sync-service.js';
 
 export interface GitHubSyncWorkerOptions { intervalMs?: number; onFeedback?: (feedback: { issueId: number; title: string; body?: string | undefined }) => Promise<void>; }
-/** Polling-only v1 worker. GitHub availability never blocks local work. */
+/** Worker v1 только с polling. GitHub availability never blocks локальную работу. */
 export class GitHubSyncWorker {
   private timer: ReturnType<typeof setInterval> | undefined;
   constructor(private readonly hosting: GitHosting, private readonly sync: GitHubSyncService, private readonly options: GitHubSyncWorkerOptions = {}) {}

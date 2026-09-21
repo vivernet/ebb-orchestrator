@@ -1,6 +1,6 @@
 /**
  * Ограничения service – request, approve, reject, and cancel approvals
- * with single-transition enforcement and outbox events.
+ * с single-transition enforcement и outbox события.
  */
 
 import type { Database } from "../../platform/database/database.js";
@@ -61,7 +61,7 @@ function readMetadata(db: Database, approvalId: string): Readonly<Record<string,
     const row = db.get<{ metadata_json: string }>("SELECT metadata_json FROM approval_metadata WHERE approval_id=$approvalId", { approvalId });
     return parseMetadata(row?.metadata_json);
   } catch {
-    // Older callers may intentionally use only migrations 001–003.
+    // Older callers may intentionally использовать только migrations 001–003.
     return undefined;
   }
 }
@@ -73,7 +73,7 @@ export class ApprovalService {
   constructor(private readonly db: Database) {}
 
   /**
-   * Request a new approval. Status is PENDING. Appends ApprovalRequested to outbox.
+   * запрос Объект новый approval. статус равен ожидающий. Appends ApprovalRequested to outbox.
    */
   request(input: ApprovalRequestInput): Approval {
     return this.db.transaction((tx) => {
@@ -97,7 +97,7 @@ export class ApprovalService {
         try {
           tx.run("INSERT OR REPLACE INTO approval_metadata(approval_id,metadata_json) VALUES($approvalId,$metadata)", { approvalId: id, metadata: JSON.stringify(input.metadata) });
         } catch {
-          // Keep compatibility with pre-onboarding schemas; the approval itself remains valid.
+          // сохранять compatibility с pre-onboarding schemas; Объект approval itself remains корректный.
         }
       }
 
@@ -132,14 +132,14 @@ export class ApprovalService {
   }
 
   /**
-   * Approve a pending approval. Throws if already resolved.
+   * Approve Объект ожидающий approval. Throws если уже разрешённый.
    */
   approve(approvalId: string, actor: string, note?: string): Approval {
     return this.resolve(approvalId, "APPROVED", actor, note ?? null, "ApprovalApproved");
   }
 
   /**
-   * Reject a pending approval. Throws if already resolved.
+   * Reject Объект ожидающий approval. Throws если уже разрешённый.
    */
   reject(approvalId: string, actor: string, note?: string): Approval {
     return this.resolve(approvalId, "REJECTED", actor, note ?? null, "ApprovalRejected");
@@ -167,7 +167,7 @@ export class ApprovalService {
   }
 
   /**
-   * List pending approvals for a given subject.
+   * Перечисляет ожидающие approvals для Объект указанного subject.
    */
   listPendingBySubject(subjectId: string): Approval[] {
     const rows = this.db.all<ApprovalRow>(
@@ -178,8 +178,8 @@ export class ApprovalService {
   }
 
     /**
-    * Core resolution logic – enforces single-transition, appends outbox
-    * event, and writes audit_log entry atomically.
+    * Основная логика разрешения – enforces single-transition, appends outbox
+    * событие, и writes audit_log entry atomically.
     */
   private resolve(
     approvalId: string,

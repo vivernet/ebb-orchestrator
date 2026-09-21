@@ -198,8 +198,8 @@ export class IntegrationService {
     const snapshot = Object.freeze({ ...attempt });
     try {
       // Не give the runner the live attempt record. In addition to the
-      // immutable check below, this prevents an in-process runner from
-      // changing the object used by the final verification.
+      // immutable проверка ниже, этот prevents Объект in-process runner из
+      // changing Объект object используемый by Объект final verification.
       const runnerAttempt = Object.freeze({ ...attempt });
       let result: T;
       try {

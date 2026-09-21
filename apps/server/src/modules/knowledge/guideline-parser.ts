@@ -1,9 +1,9 @@
 /**
- * Guideline Markdown parser – extracts YAML front matter metadata
- * from `.md` files stored in the repository.
+ * Парсер Markdown-guideline — извлекает метаданные YAML front matter.
+ * из `.md` files stored in Объект repository.
  *
  * Этот canonical text lives in the Markdown file; the DB stores
- * searchable metadata, version, hash, and provenance.
+ * searchable metadata, версия, hash, и provenance.
  */
 
 import { createHash } from "node:crypto";
@@ -17,7 +17,7 @@ const VALID_STATUSES: readonly GuidelineStatus[] = [
 const GL_ID_RE = /^GL-[A-Z][A-Z0-9]*-\d{3,}$/;
 
 /**
- * Parse YAML front matter from a guideline Markdown file.
+ * разбирать YAML front matter из Объект guideline Markdown файл.
  */
 export function parseGuideline(markdown: string): ParsedGuideline {
   const fm = extractFrontMatter(markdown);
@@ -63,7 +63,7 @@ export function parseGuideline(markdown: string): ParsedGuideline {
 
 /**
  * Проверяет a parsed guideline for consistency.
- * Throws on invalid state (e.g. broken superseded_by reference).
+ * Throws on некорректный состояние (e.g. broken superseded_by reference).
  */
 export function validateGuideline(parsed: ParsedGuideline): void {
   if (parsed.supersededBy && !GL_ID_RE.test(parsed.supersededBy)) {

@@ -1,5 +1,5 @@
 /**
- * Defects service – stable IDs for QA defects.
+ * Сервис дефектов – stable IDs для QОбъект defects.
  */
 
 import type { Database, DatabaseTx } from "../../platform/database/database.js";
@@ -32,8 +32,8 @@ export class DefectsService {
   constructor(private readonly db: Database) {}
 
   /**
-   * Assign and persist a stable defect ID for a QA output.
-   * First call for a task creates DEFECT-1, next calls get DEFECT-2, etc.
+   * Назначает и сохраняет Объект stable defect ID для Объект QОбъект результат.
+   * первый call для Объект задача создаёт DEFECT-1, следующий calls получать DEFECT-2, etc.
    */
   createDefect(
     projectId: string,

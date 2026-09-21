@@ -1,22 +1,22 @@
 /**
- * Progress fingerprinting - extracts stage-specific evidence for loop detection.
+ * прогресс fingerprinting - extracts evidence конкретного этапа для обнаружением циклов.
  */
 
 import { createHash } from "node:crypto";
 import type { ProgressFingerprint } from "./recovery-types.js";
 
 /**
- * Generates a hash from evidence content.
+ * Generates Объект hash из evidence content.
  */
 export function createEvidenceHash(content: string): string {
   return createHash("sha256").update(content).digest("hex").slice(0, 16);
 }
 
 /**
- * Extracts evidence from review output for fingerprinting.
+ * Извлекает evidence из review результат для fingerprinting.
  */
 export function extractReviewEvidence(reviewOutput: string): string {
-  // Normalize and extract key findings
+  // Normalize и extract key findings
   return reviewOutput
     .toLowerCase()
     .replace(/\s+/g, " ")
@@ -25,10 +25,10 @@ export function extractReviewEvidence(reviewOutput: string): string {
 }
 
 /**
- * Extracts evidence from QA output for fingerprinting.
+ * Извлекает evidence из QОбъект результат для fingerprinting.
  */
 export function extractQAEvidence(qaOutput: string): string {
-  // Normalize and extract key findings
+  // Normalize и extract key findings
   return qaOutput
     .toLowerCase()
     .replace(/\s+/g, " ")
@@ -37,10 +37,10 @@ export function extractQAEvidence(qaOutput: string): string {
 }
 
 /**
- * Extracts evidence from integration output for fingerprinting.
+ * Извлекает evidence из integration результат для fingerprinting.
  */
 export function extractIntegrationEvidence(integrationOutput: string): string {
-  // Normalize and extract key findings
+  // Normalize и extract key findings
   return integrationOutput
     .toLowerCase()
     .replace(/\s+/g, " ")
@@ -49,7 +49,7 @@ export function extractIntegrationEvidence(integrationOutput: string): string {
 }
 
 /**
- * Creates a progress fingerprint for review stage.
+ * создаёт Объект прогресс fingerprint для review этап.
  */
 export function createReviewFingerprint(
   reviewOutput: string,
@@ -63,7 +63,7 @@ export function createReviewFingerprint(
 }
 
 /**
- * Creates a progress fingerprint for QA stage.
+ * создаёт Объект прогресс fingerprint для QОбъект этап.
  */
 export function createQAFingerprint(
   qaOutput: string,
@@ -77,7 +77,7 @@ export function createQAFingerprint(
 }
 
 /**
- * Creates a progress fingerprint for integration stage.
+ * создаёт Объект прогресс fingerprint для integration этап.
  */
 export function createIntegrationFingerprint(
   integrationOutput: string,
@@ -91,7 +91,7 @@ export function createIntegrationFingerprint(
 }
 
 /**
- * Creates a generic progress fingerprint for any stage.
+ * создаёт Объект generic прогресс fingerprint для любой этап.
  */
 export function createFingerprint(
   stage: string,
@@ -106,7 +106,7 @@ export function createFingerprint(
 }
 
 /**
- * Creates a no-progress fingerprint when no meaningful output is generated.
+ * создаёт Объект no-progress fingerprint когда no содержательный результат является generated.
  */
 export function createNoProgressFingerprint(
   stage: string,

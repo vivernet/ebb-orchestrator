@@ -1,5 +1,5 @@
 /**
- * Pricing catalog — maps role/model combinations to per-token pricing.
+ * Каталог цен — сопоставляет комбинации роль/модель to per-token ценообразование.
  */
 
 export interface PricingTier {
@@ -60,7 +60,7 @@ export class PricingCatalog {
     );
   }
 
-  /** Register a custom pricing tier. */
+  /** Register Объект custom ценообразование tier. */
   addTier(tier: PricingTier): void {
     this.tiers.set(this.key(tier.role, tier.model), tier);
   }

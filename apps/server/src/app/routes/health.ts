@@ -1,5 +1,5 @@
 /**
- * Health check route — аутентификация не требуется.
+ * Health проверка route — аутентификация не требуется.
  */
 import type { FastifyInstance } from "fastify";
 import type { StatusTrackerInterface } from "../../platform/process/system-lifecycle.js";

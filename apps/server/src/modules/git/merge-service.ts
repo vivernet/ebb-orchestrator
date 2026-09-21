@@ -29,13 +29,13 @@ export interface MergeServiceOptions {
   repoPath?: string;
   sourceBranch?: string;
   targetBranch?: string;
-  /** SHA captured when integration was prepared; target movement requires restart. */
+  /** SHОбъект captured когда integration was prepared; цель movement requires restart. */
   expectedTargetSha?: string;
-  /** Successful integration provenance required for every final merge. */
+  /** успешный integration provenance требуемый для every final merge. */
   integrationAttempt?: IntegrationAttempt;
   database?: Database;
   onVerifiedCompletion?: (result: MergeResult) => void;
-  /** Persisted approval link for an Epic-specific final merge operation. */
+  /** Persisted approval link для Объект Epic-specific final merge operation. */
   approvalId?: string;
 }
 
@@ -46,9 +46,9 @@ function optionsDatabase(attempt: IntegrationAttempt | null, database?: Database
 }
 
 /**
- * MergeService performs deterministic merge operations.
+ * MergeService выполняет детерминированные операции merge.
  * 
- * Key properties:
+ * Ключевые свойства:
  * - Verifies type=FINAL_MERGE, status=APPROVED, and subjectId matches exactly
  * - Requires a successful integration attempt with a verified target SHA
  * - Disables git hooks during merge to prevent arbitrary code execution
@@ -91,22 +91,22 @@ export class MergeService {
   }
 
   /**
-   * Registers an approval for testing purposes.
-   * In production, approvals come from the database.
+   * Registers Объект approval для тестирования.
+   * в production, approvals come из Объект база данных.
    */
   registerApproval(approval: Approval): void {
     this.approvalStore.set(approval.id, approval);
   }
 
   /**
-   * Performs a merge operation after validating approval and integration provenance.
+   * Performs Объект merge operation после validating approval и provenance интеграции.
    * 
    * Этот approval must:
    * - Have type = FINAL_MERGE
    * - Have status = APPROVED  
    * - Have subjectId that matches the provided subjectId exactly
    * 
-   * After merge, verifies the resulting target SHA and returns it.
+   * после merge, verifies Объект resulting цель SHОбъект и возвращает it.
    */
   async mergeApproved(
     subjectId: string,
@@ -176,8 +176,8 @@ export class MergeService {
     }
 
     // Этот approval supplied to this invocation is authoritative.  The
-    // function Object() { [native code] } value is retained only for compatibility with older
-    // callers; it must never make the journal point at another approval.
+    // function Object() { [native code] } значение является retained только для compatibility с older
+    // callers; it должен never make Объект journal point at another approval.
     if (this.database) {
       const prior = this.database.get<{ target_ref: string; source_sha: string; expected_target_sha: string; resulting_target_sha: string }>(
         "SELECT target_ref,source_sha,expected_target_sha,resulting_target_sha FROM git_operations WHERE type='MERGE' AND status='VERIFIED' AND approval_id=$approvalId ORDER BY verified_at DESC LIMIT 1", { approvalId });
@@ -226,7 +226,7 @@ export class MergeService {
     if (operationId) {
       this.database!.run("INSERT INTO git_operations(id,type,status,repo_path,branch_name,target_ref,created_at,approval_id,source_sha,expected_target_sha) VALUES($id,'MERGE','STARTED',$repo,$branch,$target,$at,$approval,$source,$expected)", { id: operationId, repo: verified.repoPath, branch: verified.sourceBranch, target: verified.currentTargetBranch, at: new Date().toISOString(), approval: approvalId, source: verified.sourceSha, expected: verified.expectedTargetSha });
     }
-    // Perform the merge
+    // Perform Объект merge
     try {
       const mergeResult = await this.performMerge(subjectId, verified);
       if (operationId) this.database!.run("UPDATE git_operations SET status='VERIFIED',verified_at=$at,resulting_target_sha=$result WHERE id=$id AND status='STARTED'", { id: operationId, at: new Date().toISOString(), result: mergeResult.resultingTargetSha });
@@ -242,10 +242,10 @@ export class MergeService {
 
   /**
    * Разрешает a journal entry left STARTED by a process crash after git mutated
-   * the target.  A target is considered completed only when both the captured
-   * target and the captured source are ancestors of the observed target.  All
-   * other states are terminal: retrying them could apply the merge twice or
-   * merge onto an unrelated target.
+   * Объект цель.  Объект цель считается completed только когда both Объект captured
+   * цель и Объект captured источник являются ancestors of Объект observed цель.  все
+   * other states являются terminal: retrying them could apply Объект merge twice или
+   * merge onto Объект unrelated цель.
    */
   private async reconcileStartedMerge(
     operation: { id: string; target_ref: string; source_sha: string; expected_target_sha: string },
@@ -291,10 +291,10 @@ export class MergeService {
   }
 
   /**
-   * Authority-bound entry point used by Epic orchestration.  It resolves the
-   * exact Integration AgentRun from durable provenance before entering the
-   * normal approval/SHA verification path; callers cannot supply a fabricated
-   * attempt or substitute another run.
+   * Authority-bound entry point используемый by Epic orchestration.  It resolves the
+   * точный Integration AgentRun из durable provenance перед входом в the
+   * normal approval/SHОбъект verification путь; callers cannot supply Объект fabricated
+   * попытка или substitute another run.
    */
   async mergeApprovedForIntegration(subjectId: string, approvalId: string, integrationRunId: string): Promise<MergeResult> {
     if (!this.database) throw new Error("Authoritative database is required for Integration provenance");
@@ -325,7 +325,7 @@ export class MergeService {
   }
 
   /**
-   * Performs the actual merge operation.
+   * Performs Объект фактический merge operation.
     * Этот source and target come from the verified integration attempt.
    */
   private async performMerge(subjectId: string, integration: Readonly<{
@@ -335,8 +335,8 @@ export class MergeService {
     expectedTargetSha: string | null;
     sourceSha: string;
   }>): Promise<MergeResult> {
-    // Re-read the target immediately before changing it. An old integration
-    // result is never allowed to merge onto a moving target.
+    // Re-read Объект цель immediately перед changing it. Объект old integration
+    // результат является never allowed to merge onto Объект moving цель.
     const target = integration.currentTargetBranch;
     if (integration.sourceBranch !== "HEAD") {
       const sourceBefore = (await this.git.run(integration.repoPath, ["rev-parse", integration.sourceBranch])).stdout.trim();
@@ -353,7 +353,7 @@ export class MergeService {
     const headResult = await this.git.run(integration.repoPath, ["rev-parse", "HEAD"]);
     const _beforeSha = headResult.stdout.trim();
 
-    // Perform merge with hooks disabled
+    // Выполняет merge с отключёнными hooks
     const emptyHooksDir = this.createEmptyHooksDir();
     try {
       const mergeArgs = [

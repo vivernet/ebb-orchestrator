@@ -1,5 +1,5 @@
 /**
- * Work domain types – Tasks, Epics, and Task Contracts.
+ * работа domain типы – задачи, Epics, и задача Contracts.
  */
 
 export type TaskStatus =

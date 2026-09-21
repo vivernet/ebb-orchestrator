@@ -1,11 +1,11 @@
 /**
- * Recovery policy - deterministic recovery engine with exact counters.
+ * Политика восстановления - детерминированный recovery engine с точный counters.
  */
 
 import { DEFAULT_POLICY, type RecoveryPolicy, type RecoveryContext, type RecoveryResult, type RoleLevel, type FailureType } from "./recovery-types.js";
 
 /**
- * Counts attempts for a specific role and failure type.
+ * Counts попытки для Объект конкретного роль и ошибка тип.
  */
 export function countAttempts(
   attempts: RecoveryContext["attempts"],
@@ -18,7 +18,7 @@ export function countAttempts(
 }
 
 /**
- * Checks if the same evidence fingerprint appears repeatedly (loop detection).
+ * Проверяет, Объект тот же fingerprint evidence appears repeatedly (обнаружением циклов).
  */
 export function hasLoopInEvidence(
   attempts: RecoveryContext["attempts"],
@@ -32,7 +32,7 @@ export function hasLoopInEvidence(
 }
 
 /**
- * Checks if there have been too many consecutive no-progress runs.
+ * Проверяет, there have been too many последовательных запусков без прогресса.
  */
 export function hasExcessiveNoProgress(
   attempts: RecoveryContext["attempts"],
@@ -45,7 +45,7 @@ export function hasExcessiveNoProgress(
 }
 
 /**
- * Evaluates recovery decision based on policy and context.
+ * Вычисляет решение восстановления based on политика и контекст.
  */
 export function evaluateRecovery(context: RecoveryContext, policy: RecoveryPolicy = DEFAULT_POLICY): RecoveryResult {
   const { attempts, currentRoleLevel, failureType, stage, evidenceHash } = context;
@@ -77,7 +77,7 @@ export function evaluateRecovery(context: RecoveryContext, policy: RecoveryPolic
           createSchedulerRequest: true,
         };
       } else {
-        // Senior exhausted
+        // Senior исчерпал попытки.
         return {
           decision: "COORDINATOR_DIAGNOSIS",
           reason: "Senior tier exhausted on no-progress issue",
@@ -155,7 +155,7 @@ export function evaluateRecovery(context: RecoveryContext, policy: RecoveryPolic
           createSchedulerRequest: false,
         };
       }
-      // Middle exhausted, escalate to senior
+      // Middle исчерпал попытки, эскалация к senior.
       return {
         decision: "ESCALATE_ROLE",
         nextRoleLevel: "senior",
@@ -163,7 +163,7 @@ export function evaluateRecovery(context: RecoveryContext, policy: RecoveryPolic
         createSchedulerRequest: true,
       };
     } else {
-      // Senior tier
+      // Уровень senior.
       if (attemptsAtLevel < policy.seniorAttempts) {
         return {
           decision: "RETRY",
@@ -171,7 +171,7 @@ export function evaluateRecovery(context: RecoveryContext, policy: RecoveryPolic
           createSchedulerRequest: true,
         };
       }
-      // Senior exhausted
+      // Senior исчерпал попытки.
       return {
         decision: "COORDINATOR_DIAGNOSIS",
         reason: "Senior tier exhausted on task failure",
@@ -189,7 +189,7 @@ export function evaluateRecovery(context: RecoveryContext, policy: RecoveryPolic
 }
 
 /**
- * Calculates remaining attempts at a given role level.
+ * Calculates оставшиеся попытки at Объект указанного роль уровень.
  */
 export function getRemainingAttempts(
   attempts: RecoveryContext["attempts"],

@@ -144,7 +144,7 @@ describe("SchedulerService", () => {
     scheduler = new SchedulerService(db);
   }
 
-  //  Capacity tests ��
+  //  Тесты capacity ��
 
   it("allows up to 3 project concurrent tasks", async () => {
     await setup();

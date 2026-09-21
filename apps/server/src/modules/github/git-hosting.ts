@@ -1,4 +1,4 @@
-/** Provider-neutral Git hosting port. GitHub is an optional adapter, never workflow authority. */
+/** Независимый от провайдера Порт Git-хостинга. GitHub является Объект необязательный adapter, никогда не является authority workflow. */
 export type GitHostingStatus = 'OK' | 'BLOCKED_AUTH' | 'BLOCKED_PERMISSION' | 'TRANSIENT_ERROR';
 
 export interface IssueInput { title: string; body?: string; labels?: string[]; }

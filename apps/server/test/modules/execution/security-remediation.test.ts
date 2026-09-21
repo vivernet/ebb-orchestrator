@@ -15,7 +15,7 @@ describe('security Git remediation', () => {
       await tools.initRepo();
       // Чистые CI runners не предоставляют глобальную Git identity. Делаем фикстуру
       // самодостаточной, чтобы commit и проверяемый обход hook выполнялись
-      // exercised instead of being skipped by Git's author validation.
+      // Проверялся вместо пропуска из-за проверки автора Git.
       const git = new GitCli();
       await git.run(repo, ['config', 'user.name', 'Ebb Orchestrator Tests']);
       await git.run(repo, ['config', 'user.email', 'tests@ebb-orchestrator.invalid']);

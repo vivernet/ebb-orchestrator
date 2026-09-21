@@ -3,7 +3,7 @@ import { validateRoleOutput } from '../../runtime/output-validator.js';
 import type { Database } from '../../../platform/database/database.js';
 
 /**
- * SubmitResultTool validates role output schema and atomically sets run to COMPLETING.
+ * SubmitResultTool validates роль результат schemОбъект и atomically sets run to COMPLETING.
  */
 export class SubmitResultTool {
   constructor(private capability: RunCapability, private readonly completion?: CompletionStore) {}
@@ -29,9 +29,9 @@ export class SubmitResultTool {
       if (!accepted) return { success: false, error: 'RUN_ALREADY_COMPLETING or unauthorized capability' };
     }
 
-    // At this point, payload is validated.
+    // на этом этапе, payload является validated.
     // Этот actual state transition to COMPLETING is handled by the MCP server,
-    // which maintains run-specific state to prevent duplicate submissions.
+    // which maintains run-specific состояние to предотвращать duplicate submissions.
 
     return {
       success: true,
@@ -47,7 +47,7 @@ export interface CompletionStore {
   getSubmission?(runId: string): { runId: string; role: string; output: string } | undefined;
 }
 
-/** Atomic completion store usable by both the server and the MCP subprocess. */
+/** Atomic completion хранилище usable by both Объект сервер и Объект MCP subprocess. */
 export class DatabaseCompletionStore implements CompletionStore {
   constructor(private readonly db: Database) {}
   async accept(reference: string, value: { runId: string; role: string; output: unknown }): Promise<boolean> {

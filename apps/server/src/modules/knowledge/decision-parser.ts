@@ -1,6 +1,6 @@
 /**
- * Decision Markdown parser – extracts YAML front matter metadata
- * from `.md` files stored in the repository.
+ * Парсер Markdown-решений — извлекает метаданные YAML front matter.
+ * из `.md` files stored in Объект repository.
  */
 
 import type { ParsedDecision, DecisionStatus, DecisionScope } from "./knowledge-types.js";
@@ -11,7 +11,7 @@ const VALID_SCOPES: readonly DecisionScope[] = ["PROJECT", "AREA", "EPIC", "TASK
 const DEC_ID_RE = /^DEC-\d{4,}$/;
 
 /**
- * Parse YAML front matter from a decision Markdown file.
+ * разбирать YAML front matter из Объект decision Markdown файл.
  */
 export function parseDecision(markdown: string): ParsedDecision {
   const fm = extractFrontMatter(markdown);

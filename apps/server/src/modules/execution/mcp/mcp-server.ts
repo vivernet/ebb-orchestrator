@@ -89,8 +89,8 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
 /**
- * McpServer provides an MCP stdio server implementation that routes tool calls
- * through ActionGateway using capability-bound tool access.
+ * McpServer provides Объект MCP stdio сервер реализация который routes инструмент calls
+ * through ActionGateway using capability-bound инструмент access.
  */
 export class McpServer {
   private registry: ToolRegistry;
@@ -126,7 +126,7 @@ export class McpServer {
   }
 
   /**
-   * Call a tool by name with arguments.
+   * Call Объект инструмент by name с аргументы.
    * Никогда trusts task/workspace IDs from model payload - resolves server-side.
    */
   async callTool(name: string, args: unknown): Promise<ToolCallResult> {
@@ -148,7 +148,7 @@ export class McpServer {
       };
     }
 
-    // Call the tool handler
+    // Call Объект инструмент handler
     if (name === 'submit_result') this.submittingResult = true;
     const result = await tool.handler(validatedArgs);
 
@@ -169,7 +169,7 @@ export class McpServer {
   }
 
   /**
-   * Process an MCP request.
+   * процесс Объект MCP запрос.
    */
   async processRequest(request: unknown): Promise<JsonRpcResponse | null> {
     if (!request || typeof request !== 'object' || Array.isArray(request)) return null;

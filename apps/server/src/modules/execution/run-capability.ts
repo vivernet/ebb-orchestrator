@@ -1,6 +1,6 @@
 /**
- * RunCapability defines the security boundary for an agent run.
- * It binds a run to a specific role, workspace, and permitted tools.
+ * RunCapability определяет Объект security boundary для Объект agent run.
+ * It binds Объект run to Объект конкретного роль, workspace, и разрешённые инструменты.
  */
 import { PathResolver } from '../../platform/security/path-resolver.js';
 import { ActionGateway } from './action-gateway.js';
@@ -21,7 +21,7 @@ export type ToolId =
 
 export interface RunCapabilityDef {
   id: string;
-  /** Opaque reference issued by the orchestrator for exactly one run. */
+  /** непрозрачная ссылка issued by Объект orchestrator для ровно один run. */
   capabilityRef?: string;
   runId?: string;
   role: RoleName;

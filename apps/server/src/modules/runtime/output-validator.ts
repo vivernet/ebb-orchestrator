@@ -1,6 +1,6 @@
 /**
- * Output validator for role outputs.
- * Performs schema validation and semantic invariants checks.
+ * Валидатор результата для результаты роль.
+ * Performs schemОбъект validation и проверки семантических инвариантов.
  */
 
 import { z } from "zod";
@@ -69,7 +69,7 @@ function validateCoordinatorPlan(value: CoordinatorOutput): string | undefined {
 }
 
 /**
- * Validates role output against schema and semantic rules.
+ * Validates роль результат against schemОбъект и semantic rules.
  * @param role - Этот role name (developer, reviewer, qa, integration)
  * @param value - Этот raw output from the model
  * @returns ValidatedRoleOutput with validation result
@@ -84,7 +84,7 @@ export function validateRoleOutput(role: string, value: unknown): ValidatedRoleO
     };
   }
 
-  // First pass: schema validation
+  // первый pass: schemОбъект validation
   const schemaResult = schema.safeParse(value);
   if (!schemaResult.success) {
     const errors = schemaResult.error.issues.map((e) => e.message).join("; ");
@@ -98,7 +98,7 @@ export function validateRoleOutput(role: string, value: unknown): ValidatedRoleO
   const findings = data.findings ?? [];
   const failedCriteria = data.failedCriteria ?? [];
 
-  // Semantic validation based on outcome
+  // Семантическая проверка на основе результата.
   const outcome = data.outcome;
 
   if (role === "coordinator") {
@@ -106,7 +106,7 @@ export function validateRoleOutput(role: string, value: unknown): ValidatedRoleO
     if (planError) return { valid: false, outcome, findings, error: planError };
   }
 
-  // Reviewer semantic rules
+  // Семантические правила Reviewer.
   if (role === "reviewer") {
     if (outcome === "PASS") {
       const blockingFindings = findings.filter((f) => f.type === "BLOCKING");
@@ -121,7 +121,7 @@ export function validateRoleOutput(role: string, value: unknown): ValidatedRoleO
     }
   }
 
-  // QA semantic rules
+  // QОбъект semantic rules
   if (role === "qa") {
     if (outcome === "PASS") {
       const requiredFailed = failedCriteria.filter((c) => c.required);

@@ -38,7 +38,7 @@ export function ruleTypeToDecision(type: PolicyRuleType): PermissionDecision {
 
 /**
  * Объединяет multiple policy decisions using most-restrictive-wins.
- * ABSOLUTE_DENY cannot be weakened by more specific scopes.
+ * ABSOLUTE_DENY cannot be weakened by more конкретного scopes.
  */
 export function composeDecisions(
   decisions: { decision: PermissionDecision; scope: PolicyScope; scopeRef?: string; type: PolicyRuleType }[]
@@ -59,7 +59,7 @@ export function composeDecisions(
     }
   }
 
-  // Collect all refs that match the most restrictive decision
+  // Collect все refs который match Объект most restrictive decision
   const matchedRefs = decisions
     .filter(({ decision }) => decision === maxDecision)
     .map(({ scope, scopeRef, type }) => {

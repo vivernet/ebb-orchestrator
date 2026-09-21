@@ -2,8 +2,8 @@
  * Встроенные workflow templates.
  *
  * Каждый template defines the allowed stages and transitions for a particular
- * workflow type. Этот `standard` template covers the full standalone task
- * lifecycle; others provide simplified flows for common patterns.
+ * workflow тип. Этот `standard` template covers Объект full standalone задача
+ * lifecycle; others provide simplified flows для common patterns.
  */
 
 import type { WorkflowTemplate } from "./workflow-types.js";
@@ -12,10 +12,10 @@ import type { WorkflowTemplate } from "./workflow-types.js";
  * Стандартный standalone task workflow.
  *
  * Охватывает: DRAFT → READY → DEVELOPMENT → REVIEW → QA → INTEGRATION →
- * READY_FOR_MERGE → MERGING → DONE → RELEASED
+ * Этапы: READY_FOR_MERGE → MERGING → DONE → RELEASED.
  *
  * Также includes BLOCKED, WAITING_FOR_DEPENDENCY, WAITING_FOR_APPROVAL,
- * PAUSED, FAILED, and CANCELLED from any non-terminal state.
+ * PAUSED, не выполнен, и CANCELLED изny non-terminal состояние.
  */
 export const standard: WorkflowTemplate = {
   name: "standard",
@@ -168,7 +168,7 @@ export const bugfix: WorkflowTemplate = {
  * Изменение change workflow.
  *
  * Используется for epic-child tasks. Включает INTEGRATED_INTO_EPIC stage
- * and requires integration + parent epic release for certain transitions.
+ * и требует integration + parent epic release для certain transitions.
  */
 export const architecture_change: WorkflowTemplate = {
   name: "architecture_change",
@@ -313,7 +313,7 @@ export const documentation: WorkflowTemplate = {
 };
 
 /**
- * DevOps workflow – lifecycle for infrastructure and deployment tasks.
+ * DevOps workflow – lifecycle для infrastructure и deployment задачи.
  *
  * Включает QA and integration steps with approval gates.
  */

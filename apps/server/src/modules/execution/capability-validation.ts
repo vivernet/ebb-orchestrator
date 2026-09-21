@@ -20,7 +20,7 @@ function isProjectConfig(value: unknown): value is NonNullable<import('./project
   });
 }
 
-/** Load a capability only after checking its authoritative, active run row. */
+/** загружать Объект capability только после checking its authoritative, активный run row. */
 export function loadValidatedCapability(db: Database, capabilityRef: string): RunCapability {
   const validate = (): void => {
     const active = db.get<{ status: string; capability_ref: string | null; capability_json: string | null }>(

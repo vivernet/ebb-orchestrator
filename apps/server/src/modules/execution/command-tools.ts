@@ -1,6 +1,6 @@
 /**
- * CommandTools provides controlled command execution with environment isolation.
- * It executes commands without shell syntax, preferring explicit executable + args.
+ * CommandTools provides controlled команда execution с окружение isolation.
+ * It executes команды without shell syntax, preferring explicit executable + args.
  */
 import { EnvironmentBuilder } from '../../platform/security/environment-builder.js';
 import { ProcessExecutor } from '../../platform/process/process-executor.js';

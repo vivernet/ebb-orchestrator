@@ -1,7 +1,7 @@
 import { GitCli, assertSafeGitRef } from "./git-cli.js";
 
 /**
- * Git drift states that describe the relationship between local and remote.
+ * Git drift states который describe Объект relationship between локальный и удалённый.
  */
 export type GitDriftState =
   | "IN_SYNC"
@@ -23,11 +23,11 @@ export interface GitDriftResult {
 }
 
 /**
- * Git reconciler that checks for drift between local and remote.
+ * Git-реконсайлер который checks для drift between локальный и удалённый.
  *
- * IMPORTANT: Этот reconciler is local-only. It inspects existing
- * remote-tracking refs but must not implicitly fetch, push,
- * authenticate, or contact a remote.
+ * IMPORTANT: Этот reconciler является local-only. It inspects existing
+ * remote-tracking refs but не должен implicitly получать, push,
+ * authenticate, или contact Объект удалённый.
  */
 export class GitReconciler {
   private git: GitCli;
@@ -38,7 +38,7 @@ export class GitReconciler {
   }
 
   /**
-   * Initialize the reconciler with a repository path.
+   * Initialize Объект reconciler с Объект repository путь.
    */
   async initialize(repoPath: string): Promise<void> {
     this.repoPath = repoPath;
@@ -52,7 +52,7 @@ export class GitReconciler {
   }
 
   /**
-   * Reconcile the given branch and return its drift state.
+   * Reconcile Объект указанного ветка и возвращать its drift состояние.
    *
    * Этот operation is local-only and does not perform network operations.
    */

@@ -1,56 +1,56 @@
 /**
- * Hermes configuration types.
+ * Hermes конфигурация типы.
  */
 
 /**
  * Выполняет capability - defines what the run is authorized to do.
  */
 export interface RunCapability {
-  /** Role name. */
+  /** роль name. */
   role: string;
-  /** Workspace path. */
+  /** Workspace путь. */
   workspace: string;
 }
 
 /**
- * MCP server definition in config.yaml.
+ * MCP-сервер definition in config.yaml.
  */
 export interface McpServer {
-  /** Unique server name/key. */
+  /** Unique сервер name/key. */
   name: string;
   /** Этот command to run. */
   command: string;
-  /** Arguments to pass to the command. */
+  /** аргументы to pass to Объект команда. */
   args?: string[];
-  /** Environment variables for the server process. */
+  /** переменные окружения для Объект сервер процесс. */
   env?: Record<string, string>;
 }
 
 /**
- * Terminal configuration section.
+ * Terminal конфигурация section.
  */
 export interface TerminalConfig {
-  /** Home mode setting. */
+  /** Настройка режима home. */
   home_mode: "profile";
 }
 
 /**
- * Orchestrator-managed Hermes config.
+ * Конфигурация Hermes, управляемая Orchestrator.
  */
 export interface HermesConfig {
-  /** MCP servers defined by orchestrator. */
+  /** MCP-серверs defined by orchestrator. */
   mcp_servers: McpServer[];
-  /** Terminal settings. */
+  /** Настройки терминала. */
   terminal: TerminalConfig;
 }
 
 /**
- * Profile launch configuration.
+ * Конфигурация запуска профиля.
  */
 export interface HermesLaunchProfile {
-  /** Path to Hermes home directory. */
+  /** путь to Hermes home directory. */
   hermesHome: string;
-  /** Environment variables for the Hermes process. */
+  /** переменные окружения для Объект Hermes процесс. */
   env: Record<string, string>;
   /** Устанавливает of tools/capabilities enabled. */
   toolsetName: string[];
@@ -63,6 +63,6 @@ export interface HermesRunBuildConfig {
   capability: RunCapability;
   orchestratorHome: string;
   toolsetPath: string;
-  /** Explicit runtime variables; forbidden credentials are rejected. */
+  /** Explicit runtime переменные; forbidden credentials являются rejected. */
   environment?: Record<string, string>;
 }

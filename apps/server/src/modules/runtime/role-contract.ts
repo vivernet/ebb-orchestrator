@@ -1,14 +1,14 @@
 /**
- * RoleContract type definition for Orchestrator Hermes.
+ * RoleContract тип definition для Orchestrator Hermes.
  *
  * Основано на разделе спецификации 3.2 - Role contracts define the complete
- * configuration for each AI role including tools, models, sessions, and permissions.
+ * конфигурация для каждого AI роль including инструменты, модели, sessions, и permissions.
  */
 
 import { z } from 'zod';
 import type { ActionId } from '../permissions/permission-types.js';
 
-// Session policy defines how Hermes sessions are managed per role
+// Политика сессия defines how Hermes sessions являются managed per роль
 export const SessionPolicy = z.enum([
   'fresh_per_task',  // New session for each task
   'shared',           // Shared session across multiple tasks
@@ -17,7 +17,7 @@ export const SessionPolicy = z.enum([
 
 export type SessionPolicy = z.infer<typeof SessionPolicy>;
 
-// Model reference for role-specific model selection
+// модель reference для role-specific модель selection
 export interface ModelRef {
   provider: string;
   model: string;
@@ -25,21 +25,21 @@ export interface ModelRef {
   maxTokens?: number;
 }
 
-// Output schema reference (path to schema in contracts package)
+// результат schemОбъект reference (путь to schemОбъект in contracts package)
 export interface OutputSchemaRef {
-  /** Path to the output schema in the contracts package, e.g., '@ebb-orchestrator/contracts#DeveloperOutputSchema' */
+  /** путь to Объект результат schemОбъект in Объект contracts package, e.g., '@ebb-orchestrator/contracts#DeveloperOutputSchema' */
   path: string;
-  /** Schema version for backward compatibility */
+  /** SchemОбъект версия для обратной совместимости */
   version: string;
 }
 
-// Input schema reference
+// вход schemОбъект reference
 export interface InputSchemaRef {
   path: string;
   version: string;
 }
 
-// Workflow types available to the role
+// workflow типы доступный to Объект роль
 export const WorkflowType = z.enum([
   'standard',
   'bugfix',
@@ -60,41 +60,41 @@ export const PermissionProfile = z.enum([
 
 export type PermissionProfile = z.infer<typeof PermissionProfile>;
 
-// Escalation policy defines when/how to escalate issues
+// Политика эскалации defines когда/how to escalate issues
 export interface EscalationPolicy {
   /** Когда to escalate - on first failure, after N attempts, etc. */
   trigger: 'on_failure' | 'after_attempts' | 'never';
-  /** Number of attempts before escalation (if trigger is after_attempts) */
+  /** Количество попыток перед escalation (если trigger является after_attempts) */
   maxAttempts?: number;
-  /** Which role(s) to escalate to */
+  /** Which роль(s) to escalate to */
   escalateTo: string[];
 }
 
 /**
- * RoleContract defines the complete configuration for an AI role.
+ * RoleContract defines Объект complete конфигурация для Объект AI роль.
  *
- * Per specification Section 3.2:
+ * Согласно разделу 3.2 спецификации:
  * "Роль — это не просто prompt. RoleContract содержит: purpose, allowed_workflows,
- * input_schema, output_schema, permission_profile, default_model, runtime,
- * allowed_tools, session_policy, escalation_policy"
+ * Поля контракта: input_schema, output_schema, permission_profile, default_model, runtime,
+ * Разрешённые инструменты, политика сессии и политика эскалации: allowed_tools, session_policy, escalation_policy.
  */
 export interface RoleContract {
-  /** Unique identifier for the role */
+  /** Уникальный идентификатор для Объект роль */
   name: string;
 
-  /** Human-readable display name */
+  /** Отображаемое имя, предназначенное для человека. */
   displayName: string;
 
-  /** Description of the role's purpose and responsibilities */
+  /** описание of Объект роль's назначение и обязанности */
   purpose: string;
 
-  /** List of workflows this role is allowed to execute */
+  /** Список workflow этот роль разрешён to execute */
   allowedWorkflows: WorkflowType[];
 
-  /** Input schema reference from contracts package */
+  /** вход schemОбъект reference из contracts package */
   inputSchema: InputSchemaRef;
 
-  /** Output schema reference from contracts package */
+  /** результат schemОбъект reference из contracts package */
   outputSchema: OutputSchemaRef;
 
   /** Типы решений Permission profile level */
@@ -103,20 +103,20 @@ export interface RoleContract {
   /** Назначение model to use for this role */
   defaultModel: ModelRef;
 
-  /** Runtime adapter to use (e.g., 'hermes', 'codex', 'opencode') */
+  /** Используемый runtime adapter (e.g., 'hermes', 'codex', 'opencode') */
   runtime: string;
 
-  /** List of tool IDs this role is allowed to use */
+  /** Список ID инструментов этот роль разрешён to использовать */
   allowedTools: ActionId[];
 
-  /** Session policy for this role */
+  /** Политика сессия для этот роль */
   sessionPolicy: SessionPolicy;
 
-  /** Escalation policy for this role */
+  /** Политика эскалации для этот роль */
   escalationPolicy?: EscalationPolicy;
 }
 
-// Role names matching specification Section 3.2
+// роль names соответствующий specification Section 3.2
 export const RoleNames = {
   COORDINATOR: 'coordinator' as const,
   PRODUCT_MANAGER: 'product_manager' as const,

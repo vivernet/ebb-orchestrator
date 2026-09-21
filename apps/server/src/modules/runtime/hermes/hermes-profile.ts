@@ -1,5 +1,5 @@
 /**
- * Hermes profile builder - creates isolated launch profiles.
+ * Hermes profile builder - создаёт isolated запуск profiles.
  */
 
 import type { HermesLaunchProfile, HermesRunBuildConfig } from "./hermes-config.js";
@@ -14,7 +14,7 @@ function defaultMcpLauncher(): { command: string; args: string[] } {
 }
 
 /**
- * Orchestrator home directory.
+ * Домашний каталог Orchestrator.
  */
 export function getOrchestratorHome(): string {
   return process.env.EBB_ORCHESTRATOR_HOME ?? path.join(os.homedir(), ".ebb-orchestrator");
@@ -34,7 +34,7 @@ export function prepareHermesProfile(run: HermesRunBuildConfig): HermesLaunchPro
   const hermesHome = path.join(orchestratorHome, "runtime", "hermes");
   const hermesHomePath = path.join(hermesHome, "home");
 
-  // Start with an explicit runtime/Hermes allowlist; never clone process.env.
+  // запускать с Объект explicit runtime/Hermes allowlist; никогда не клонирует процесс.env.
   const baseEnv: Record<string, string> = {};
   const allowed = ["PATH", "HOME", "HOMEDRIVE", "HOMEPATH", "SYSTEMROOT", "TEMP", "TMP", "NODE_PATH", "NODE_ENV"];
   for (const key of allowed) {
@@ -51,7 +51,7 @@ export function prepareHermesProfile(run: HermesRunBuildConfig): HermesLaunchPro
     baseEnv[key] = value;
   }
 
-  // Override critical environment variables for isolation
+  // Override critical переменные окружения для isolation
   baseEnv.HERMES_HOME = hermesHome;
   baseEnv.HOME = hermesHomePath;
   // Применяет the boundary after all overlays so inherited or supplied credentials cannot win.
@@ -84,7 +84,7 @@ export function getMcpSocketPath(hermesHome: string): string {
 }
 
 /**
- * Configuration for generating hermes config.yaml.
+ * Конфигурация генерации hermes config.yaml.
  */
 export interface GenerateConfigOptions {
   capability: { role: string; workspace: string };

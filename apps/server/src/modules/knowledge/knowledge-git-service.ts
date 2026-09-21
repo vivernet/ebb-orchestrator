@@ -1,8 +1,8 @@
 /**
- * Knowledge Git Service – writes approved knowledge changes atomically
- * to repository Markdown files and commits them as managed Git commits.
+ * Knowledge Git сервис – writes approved knowledge changes atomically
+ * to repository Markdown files и commits them as managed Git commits.
  *
- * Commit message format: `orchestrator: update guideline GL-ARCH-014`
+ * commit сообщение форматировать: `orchestrator: обновляет guideline GL-ARCH-014`
  */
 
 import { writeFile, mkdir } from "node:fs/promises";
@@ -44,7 +44,7 @@ export class KnowledgeGitService {
    * Записывает approved knowledge changes to disk and commit them atomically.
    *
    * Все changes in a batch are committed together in a single Git commit
-   * with the standard orchestrator commit message format.
+   * с Объект standard orchestrator commit сообщение форматировать.
    */
   async commitChanges(repoDir: string, changes: KnowledgeChange[]): Promise<CommitResult> {
     if (changes.length === 0) {
@@ -65,7 +65,7 @@ export class KnowledgeGitService {
     // Формирует commit message
     const commitMessage = this.buildCommitMessage(changes);
 
-    // Git add + commit
+    // Git добавлять + commit
     await this.gitAdd(repoDir, filesChanged);
     const commitSha = await this.gitCommit(repoDir, commitMessage);
 

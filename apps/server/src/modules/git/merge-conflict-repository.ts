@@ -19,9 +19,9 @@ export type MergeConflictClassification =
 export type MergeConflictStatus = "OPEN" | "RESOLVED";
 
 /**
- * MergeConflictRepository persists merge conflicts as first-class records.
+ * MergeConflictRepository persists конфликт merges as first-class записи.
  * 
- * Key properties:
+ * Ключевые свойства:
  * - Каждый conflict is stored as a separate row
  * - Tracks classification and status for lifecycle management
  * - Supports querying by source/target branches
@@ -34,7 +34,7 @@ export class MergeConflictRepository {
   }
 
   /**
-   * Creates a new merge conflict record.
+   * создаёт Объект новый конфликт merge запись.
    */
   create(record: MergeConflictRecord): void {
     this.db.run(
@@ -55,7 +55,7 @@ export class MergeConflictRepository {
   }
 
   /**
-   * Finds a merge conflict by ID.
+   * Finds Объект конфликт merge by ID.
    */
   findById(id: string): MergeConflictRecord | undefined {
     const result = this.db.get<{
@@ -87,7 +87,7 @@ export class MergeConflictRepository {
   }
 
   /**
-   * Finds all open merge conflicts for a given source branch.
+   * Находит все открытый конфликт merges для Объект указанного исходной веткой.
    */
   findBySourceBranch(sourceBranch: string): MergeConflictRecord[] {
     const results = this.db.all<{
@@ -118,7 +118,7 @@ export class MergeConflictRepository {
   }
 
   /**
-   * Marks a merge conflict as resolved.
+   * Marks Объект конфликт merge as разрешённый.
    */
   resolve(id: string): void {
     this.db.run(
@@ -128,7 +128,7 @@ export class MergeConflictRepository {
   }
 
   /**
-   * Gets all merge conflicts for a source/target branch pair.
+   * Получает все конфликт merges для Объект источник/целевой веткой pair.
    */
   findByBranchPair(sourceBranch: string, targetBranch: string): MergeConflictRecord[] {
     const results = this.db.all<{
@@ -159,7 +159,7 @@ export class MergeConflictRepository {
   }
 
   /**
-   * Counts open merge conflicts for a source branch.
+   * Подсчитывает открытые конфликт merges для Объект исходной веткой.
    */
   countOpenForSource(sourceBranch: string): number {
     const result = this.db.get<{ count: number }>(

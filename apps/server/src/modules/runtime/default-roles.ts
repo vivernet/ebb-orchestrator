@@ -4,9 +4,9 @@
  * Основано на разделе спецификации 3.2 and 3.3.
  *
  * 9 roles in v1:
- * Management / Design: Coordinator, Product Manager, Architect
- * Implementation: Middle Developer, Senior Developer, DevOps Agent
- * Quality / Integration: Reviewer, QA Agent, Integration Agent
+ * Управление / проектирование: Coordinator, Product Manager, Architect.
+ * реализация: Middle Developer, Senior Developer, DevOps Agent
+ * Quality / Integration: Reviewer, QОбъект Agent, Integration Agent
  *
  * Примечание: в этом плане выполняются только Developer/Reviewer/QA/Integration are executed.
  * - Reviewer must NOT have: workspace.patch, git.commit, command.shell
@@ -105,7 +105,7 @@ function baseRole(name: string, displayName: string): Omit<RoleContract, 'allowe
 /**
  * Конфигурация роли Coordinator.
  *
- * Specification Section 3.3:
+ * Раздел 3.3 спецификации:
  * "Coordinator классифицирует запрос, выбирает Task vs Epic, предлагает план,
  * зависимости, роли и workflow, выполняет replan и сложную диагностику.
  * Не редактирует production-код и не делает финальный merge."
@@ -140,7 +140,7 @@ export const CoordinatorContract: RoleContract = {
 /**
  * Конфигурация роли Product Manager.
  *
- * Specification Section 3.3:
+ * Раздел 3.3 спецификации:
  * "Product Manager определяет goal, user behavior, scope, non-goals, requirements и acceptance criteria.
  * Не выбирает техническую реализацию."
  */
@@ -164,7 +164,7 @@ export const ProductManagerContract: RoleContract = {
 /**
  * Конфигурация роли Architect.
  *
- * Specification Section 3.3:
+ * Раздел 3.3 спецификации:
  * "Architect определяет компоненты, interfaces, data flow, migrations, Decisions, guideline proposals и architecture review.
  * Обычно не реализует production-код."
  */
@@ -199,7 +199,7 @@ export const ArchitectContract: RoleContract = {
 /**
  * Конфигурация роли Middle Developer.
  *
- * Specification Section 3.3:
+ * Раздел 3.3 спецификации:
  * "Middle Developer выполняет обычную реализацию."
  */
 export const MiddleDevContract: RoleContract = {
@@ -231,7 +231,7 @@ export const MiddleDevContract: RoleContract = {
 /**
  * Конфигурация роли Senior Developer.
  *
- * Specification Section 3.3:
+ * Раздел 3.3 спецификации:
  * "Senior Developer выполняет сложную/core/architecture-sensitive реализацию и escalation после Middle."
  */
 export const SeniorDevContract: RoleContract = {
@@ -263,7 +263,7 @@ export const SeniorDevContract: RoleContract = {
 /**
  * Конфигурация роли DevOps Agent.
  *
- * Specification Section 3.3:
+ * Раздел 3.3 спецификации:
  * "DevOps Agent отвечает за CI/CD, Docker, deployment/env/build/release/IaC.
  * Чувствительные publish/deploy действия проходят Permission Engine и approval."
  */
@@ -296,12 +296,12 @@ export const DevOpsContract: RoleContract = {
 /**
  * Конфигурация роли Reviewer.
  *
- * Specification Section 3.3:
+ * Раздел 3.3 спецификации:
  * "Reviewer независимо проверяет correctness, architecture, maintainability, security, edge cases, tests,
- * Guidelines, acceptance criteria и scope creep. Обычно не исправляет собственные findings."
+ * Guidelines, acceptance criteriОбъект и область creep. Обычно не исправляет собственные findings."
  *
- * SECURITY CONSTRAINT: Должен NOT have workspace.patch, git.commit, command.shell
- * SESSION POLICY: fresh_per_task
+ * SECURITY CONSTRAINT: Должен не have workspace.patch, git.commit, команда.shell
+ * Политика сессия: fresh_per_task
  */
 export const ReviewerContract: RoleContract = {
   ...baseRole('reviewer', 'Reviewer'),
@@ -321,7 +321,7 @@ export const ReviewerContract: RoleContract = {
     ActionId.GitDiff,
     ActionId.ArtifactWrite,
     ActionId.SubmitResult,
-    // Explicitly NOT included: workspace.patch, git.commit, command.shell
+    // Явно НЕ включено: workspace.patch, git.commit, команда.shell
   ],
   sessionPolicy: 'fresh_per_task',
   escalationPolicy: {
@@ -333,11 +333,11 @@ export const ReviewerContract: RoleContract = {
 /**
  * Конфигурация роли QA Agent.
  *
- * Specification Section 3.3:
+ * Раздел 3.3 спецификации:
  * "QA Agent проверяет поведение, acceptance criteria, regression и edge cases.
  * Он создаёт defects, а не 'чинит по ходу'."
  *
- * SESSION POLICY: fresh_per_task
+ * Политика сессия: fresh_per_task
  */
 export const QAContract: RoleContract = {
   ...baseRole('qa', 'QA Agent'),
@@ -363,11 +363,11 @@ export const QAContract: RoleContract = {
 /**
  * Конфигурация роли Integration Agent.
  *
- * Specification Section 3.3:
+ * Раздел 3.3 спецификации:
  * "Integration Agent подготавливает интеграцию с текущим target, разрешает только однозначные конфликты
  * и блокирует архитектурную неоднозначность. Не даёт себе финальное разрешение на merge."
  *
- * SESSION POLICY: fresh_per_task
+ * Политика сессия: fresh_per_task
  */
 export const IntegrationContract: RoleContract = {
   ...baseRole('integration', 'Integration Agent'),
@@ -417,7 +417,7 @@ export const ExecutedRoles = ['developer', 'reviewer', 'qa', 'integration'] as c
  * Получает contract по имени роли (handles 'developer' alias for middle_dev/senior_dev).
  */
 export function getContract(roleName: string): RoleContract | undefined {
-  // Developer is an alias that can map to middle_dev or senior_dev
+  // Developer является Объект alias который cОбъект map to middle_dev или senior_dev
   if (roleName === 'developer') {
     return MiddleDevContract;
   }

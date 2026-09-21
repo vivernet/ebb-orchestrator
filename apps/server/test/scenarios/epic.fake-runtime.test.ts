@@ -300,7 +300,7 @@ describe("Epic child lifecycle fake runtime scenario", () => {
       parentEpicReleased: false,
     });
 
-// Task 2: тот же жизненный цикл.
+// задача 2: тот же жизненный цикл.
     workflowEngine.transition(childTask2.id, "DEVELOPMENT");
     const outcome2: RunOutcome = { success: true, exitCode: 0, output: "Done" };
     orchestrator.handleRuntimeCompletion(childTask2.id, outcome2); // → REVIEW
@@ -322,7 +322,7 @@ describe("Epic child lifecycle fake runtime scenario", () => {
     });
 
 // Все обязательные дочерние задачи теперь INTEGRATED_INTO_EPIC.
-// Review/QA Epic: имитируем как scripted run types с прямым обновлением статусов.
+// Review/QОбъект Epic: имитируем как scripted run типы с прямым обновлением статусов.
 // Epic не управляется WorkflowEngine и использует собственный жизненный цикл статусов.
 
 // Epic проходит через IN_PROGRESS по мере завершения интеграции задач.

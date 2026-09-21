@@ -1,5 +1,5 @@
 /**
- * GitTools provides git operations scoped to the capability-assigned worktree.
+ * GitTools provides git operations scoped to Объект capability-assigned worktree.
  * Операции Git always resolve from RunCapability's workspace, not from model input.
  */
 import { GitCli } from '../../modules/git/git-cli.js';
@@ -44,7 +44,7 @@ export class GitTools {
 
   async commit(message: string): Promise<string> {
     try {
-      // Managed commits must never run repository hooks, and the message is one argv item.
+      // Managed commits должен never run repository hooks, и Объект сообщение является один argv item.
       return (await this.git.run(this.workspace, ['commit', '--no-verify', '-m', message])).stdout;
     } catch (err: unknown) {
       return err instanceof Error ? err.message : String(err);

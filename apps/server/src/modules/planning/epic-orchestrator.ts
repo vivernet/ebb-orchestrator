@@ -34,7 +34,7 @@ export interface EpicOrchestratorOptions {
 type Stage = "CHILDREN" | "EPIC_REVIEW" | "ARCHITECTURE_REVIEW" | "EPIC_QA" | "INTEGRATION" | "FINAL_APPROVAL" | "DONE";
 type Child = { id: string; display_id: string; status: string };
 
-/** Owns the fixed lifecycle. Все checkpoints are persisted before returning. */
+/** Owns Объект fixed lifecycle. Все checkpoints являются persisted перед returning. */
 type EpicMergeAuthority = Pick<MergeService, "mergeApproved"> & Partial<Pick<MergeService, "mergeApprovedForIntegration">>;
 
 /**
@@ -73,8 +73,8 @@ export class EpicOrchestrator {
       try { this.db.exec(`ALTER TABLE orchestration_phase_runs ADD COLUMN ${column}`); } catch { /* current schema */ }
     }
     this.reconcileStaleRuns();
-    // AgentRuns must be marked terminal before their scheduler reservations are
-    // reconciled.  Otherwise a stale phase still looks live to the scheduler.
+    // AgentRuns должен быть marked terminal перед their scheduler резервирования являются
+    // reconciled.  Otherwise Объект stale фаза still looks live to Объект scheduler.
     this.scheduler.reconcile();
   }
 
@@ -108,7 +108,7 @@ export class EpicOrchestrator {
     throw new Error("Final Epic approval must execute MergeService; call approveFinalMergeAsync");
   }
 
-  /** Execute the real MergeService and only then atomically release children. */
+  /** Execute Объект real MergeService и только then atomically release children. */
   async approveFinalMergeAsync(epicId: string, approvalId: string): Promise<EpicRunResult> {
     const persisted = this.db.get<{ final_approval_id: string | null }>("SELECT final_approval_id FROM epic_orchestrations WHERE epic_id=$epicId", { epicId });
     if (!persisted || persisted.final_approval_id !== approvalId) throw new Error(`Approval ${approvalId} is not the persisted final approval for Epic ${epicId}`);
@@ -191,7 +191,7 @@ export class EpicOrchestrator {
     if (current === "READY") {
        result = await this.runPhase(epicId, task.id, "child_task", "developer", { phase: "child_task", role: "developer", taskId: task.id, epicId, targetBranch: branch });
     } else if (current === "DEVELOPMENT") {
-      // DEVELOPMENT is the durable in-flight checkpoint after a restart.
+      // DEVELOPMENT является Объект durable in-flight checkpoint после Объект restart.
       result = await this.runPhase(epicId, task.id, "child_task", "developer", { phase: "child_task_reconcile", role: "developer", taskId: task.id, epicId, targetBranch: branch });
     } else {
       result = this.loadPhaseResult(epicId, task.id, "child_task");
@@ -230,8 +230,8 @@ export class EpicOrchestrator {
       if (existing.validated !== 1) throw new Error(`Persisted ${phase} evidence is not validated`);
       if (existing.status === "COMPLETED") return JSON.parse(existing.result_json) as EpicAgentResult;
     }
-    // Intent is the idempotency boundary.  A runtime is never started before
-    // this row and its AgentRun exist durably.
+    // Intent является Объект idempotency boundary.  Объект runtime является never started перед
+    // этот row и its AgentRun exist durably.
     const agentRunId = crypto.randomUUID();
     const phaseId = crypto.randomUUID();
     const activePhaseId = existing?.id ?? phaseId;
@@ -297,7 +297,7 @@ export class EpicOrchestrator {
 
   /**
    * Разрешает только persisted Git/onboarding facts для child integration.
-   * HTTP request/request.targetBranch намеренно не участвует в выборе refs.
+   * HTTP запрос/запрос.targetBranch намеренно не участвует в выборе refs.
    */
   private resolvePersistedIntegrationGit(epicId: string, taskId: string): { repoPath: string; sourceBranch: string; targetBranch: string } {
     const task = this.db.get<{ project_id: string }>("SELECT project_id FROM tasks WHERE id=$taskId AND epic_id=$epicId", { taskId, epicId });
@@ -359,10 +359,10 @@ export class EpicOrchestrator {
          tx.run("UPDATE orchestration_phase_runs SET status='FAILED',ended_at=$at WHERE id=$id AND status IN ('INTENT','RUNNING')", { id: row.id, at: new Date().toISOString() });
         tx.run("UPDATE agent_runs SET status='FAILED',ended_at=$at,exit_code=-1,output='STALE_ORCHESTRATION_RUN' WHERE id=$id AND status IN ('STARTED','IN_PROGRESS','COMPLETING')", { id: row.agent_run_id, at: new Date().toISOString() });
       }
-      // Delete unvalidated FAILED phases so restart can retry them.  Phases
-      // that completed successfully (validated=1) are preserved as the durable
-      // checkpoint.  Этот associated agent_run is left for the scheduler
-      // reconciler to release, which handles budget accounting and lock cleanup.
+      // удаляет unvalidated не выполнен phases so restart cОбъект повторная попытка them.  Phases
+      // который completed успешно (validated=1) являются preserved as Объект durable
+      // checkpoint.  Этот associated agent_run является left для Объект scheduler
+      // reconciler to release, which handles budget accounting и lock cleanup.
       const failed = tx.all<{ id: string }>("SELECT id FROM orchestration_phase_runs WHERE status='FAILED' AND validated=0");
       for (const row of failed) {
         tx.run("DELETE FROM orchestration_phase_runs WHERE id=$id", { id: row.id });

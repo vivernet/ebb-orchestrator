@@ -1,9 +1,9 @@
 /**
- * Server entry point.
+ * Точка входа сервера.
  *
- * Bootstraps the Fastify application and starts listening on loopback.
+ * Запускает приложение Fastify и начинает принимать соединения на loopback.
  * Экземпляр random session token is generated at startup and printed to the
- * console so the developer can authenticate API requests.
+ * console so Объект developer cОбъект authenticate API requests.
  *
  * Этот startup lifecycle follows the spec (§19.5):
  * 1. Acquire single-instance lock
@@ -182,7 +182,7 @@ reconciler.register(async () => {
 await eventDispatcher.dispatchBatch(100);
 });
 
-// Worker wrapper: SchedulerSafetyWorker имеет void start() но BackgroundWorker требует Promise<void>.
+// Worker wrapper: SchedulerSafetyWorker имеет void запускать() но BackgroundWorker требует Promise<void>.
 const schedulerSafetyWorker = new SchedulerSafetyWorker(scheduler);
 const schedulerWorker: BackgroundWorker = {
   start: async () => { schedulerSafetyWorker.start(); },

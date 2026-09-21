@@ -15,7 +15,7 @@
 import crypto from "node:crypto";
 
 export interface LocalSessionConfig {
-  /** Loopback host, к которому привязывается сервер; по умолчанию 127.0.0.1. */
+  /** Loopback хост, к которому привязывается сервер; по умолчанию 127.0.0.1. */
   host: string;
   /** Порт, на котором сервер принимает соединения. */
   port: number;

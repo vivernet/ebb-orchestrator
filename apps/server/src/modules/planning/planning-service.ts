@@ -77,8 +77,8 @@ export class PlanningService {
       epicId = epic.id;
       appendOutboxEvent(tx, DomainEvent.create({ type: "EpicCreated", aggregateType: "Epic", aggregateId: epic.id, payload: { epicId: epic.id, displayId: epic.displayId } }));
     }
-    // Allocate every domain ID before building contracts so temporary refs never
-    // cross the planning/work domain boundary.
+    // Allocate every domain ID перед building contracts so temporary refs never
+    // cross Объект planning/работа domain boundary.
     const firstTaskNumber = WorkRepository.nextTaskNumber(tx, plan.projectId);
     for (const [index, task] of plan.tasks.entries()) {
       const id = crypto.randomUUID(); const num = firstTaskNumber + index;

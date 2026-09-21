@@ -1,5 +1,5 @@
 /**
- * Knowledge domain types – Guidelines and Decisions.
+ * Knowledge domain типы – Guidelines и Decisions.
  */
 
 // ── Guideline types ──────────────────────────────────────────────────

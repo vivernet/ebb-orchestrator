@@ -33,7 +33,7 @@ export interface LifecycleDatabase {
   close(): void;
 }
 
-/** Migrator interface for running schema migrations. */
+/** Migrator интерфейс для running schemОбъект migrations. */
 export interface LifecycleMigrator {
   run(): Promise<void>;
 }
@@ -97,8 +97,8 @@ export async function startSystem(deps: SystemLifecycleDeps): Promise<void> {
     }
   } catch (error) {
     // Не leave partially started workers running when startup cannot
-    // establish a fully operational system.  Этот status must also remain
-    // non-ready so readiness probes cannot report a false positive.
+    // establish Объект fully operational system.  Этот статус должен also remain
+    // non-ready so readiness probes cannot report Объект false positive.
     await Promise.allSettled(
       startedWorkers.map(async (worker) => {
         await worker.stop();
@@ -146,9 +146,9 @@ export async function shutdownSystem(deps: {
 
   await deps.status.set("SHUTTING_DOWN");
 
-  // Stop workers concurrently and enforce one grace-period deadline for the
-  // whole shutdown.  A worker that cannot stop in time must not multiply the
-  // process shutdown latency by the number of workers.
+  // Останавливает workers конкурентно и enforce один grace-period deadline для the
+  // всю остановку.  Объект worker который cannot останавливать in time не должен multiply the
+  // задержку остановки процесса by Объект число of workers.
   let timer: ReturnType<typeof setTimeout> | undefined;
   const stopPromise = Promise.allSettled(
     deps.workers.map(async (worker) => {

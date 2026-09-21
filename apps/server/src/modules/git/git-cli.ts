@@ -1,6 +1,6 @@
 import { ProcessExecutor } from "../../platform/process/process-executor.js";
 
-/** Git's refname rules relevant to untrusted branch/ref inputs. */
+/** Git's refname rules relevant to недоверенный ветка/ref inputs. */
 export function assertSafeGitRef(ref: string): void {
   const hasControl = [...ref].some((character) => character.charCodeAt(0) < 0x20 || character.charCodeAt(0) === 0x7f);
   const components = ref.split('/');

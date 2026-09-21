@@ -1,5 +1,5 @@
 /**
- * Proposal service – manages change proposals.
+ * Сервис предложений – управляет предложениями изменений.
  */
 
 import type { Database } from "../../platform/database/database.js";
@@ -115,7 +115,7 @@ export class ProposalService {
   }
 
   /**
-   * List all proposals for a given subject.
+   * Перечисляет все proposals для Объект указанного subject.
    */
   listBySubject(subjectId: string): Proposal[] {
     const rows = this.db.all<ProposalRow>(

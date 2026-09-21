@@ -16,11 +16,11 @@ export type RecoveryDecision =
  * Доказательство для конкретного stage, используемое для tracking progress and detecting loops.
  */
 export interface ProgressFingerprint {
-  /** Stage identifier (e.g., "review", "qa", "integration"). */
+  /** этап идентификатор (e.g., "review", "qa", "integration"). */
   stage: string;
-  /** Hash or identifier of the evidence (e.g., review finding). */
+  /** Хэш или идентификатор of Объект evidence (e.g., review finding). */
   evidenceHash: string;
-  /** Timestamp when this evidence was recorded. */
+  /** Момент времени, когда этот evidence was recorded. */
   recordedAt: string;
 }
 
@@ -28,17 +28,17 @@ export interface ProgressFingerprint {
  * Конфигурация политики recovery with exact counters.
  */
 export interface RecoveryPolicy {
-  /** Maximum attempts allowed at middle tier before escalation. */
+  /** максимальный попытки allowed at middle tier перед escalation. */
   middleAttempts: number;
-  /** Maximum attempts allowed at senior tier before escalation. */
+  /** максимальный попытки allowed at senior tier перед escalation. */
   seniorAttempts: number;
-  /** Maximum rework cycles for the same review finding. */
+  /** Максимальное число циклов доработки для Объект тот же review finding. */
   maxReviewReworkCycles: number;
-  /** Maximum rework cycles for the same QA finding. */
+  /** Максимальное число циклов доработки для Объект тот же QОбъект finding. */
   maxQaReworkCycles: number;
-  /** Maximum resolution attempts for integration failures. */
+  /** максимальный resolution попытки для integration failures. */
   maxIntegrationResolutionAttempts: number;
-  /** Maximum consecutive runs without progress before escalation. */
+  /** Максимальное число последовательных запусков without прогресс перед escalation. */
   maxConsecutiveNoProgressRuns: number;
 }
 
@@ -74,17 +74,17 @@ export type FailureType =
  * Запись попытки recovery.
  */
 export interface RecoveryAttempt {
-  /** Task ID being recovered. */
+  /** задача ID being recovered. */
   taskId: string;
-  /** Role level that attempted the recovery. */
+  /** Уровень роли, выполнившей Объект recovery. */
   roleLevel: RoleLevel;
   /** Тип of failure that triggered recovery. */
   failureType: FailureType;
-  /** Attempt number for this failure type and role. */
+  /** Номер попытки для этот ошибка тип и роль. */
   attemptCount: number;
-  /** Timestamp of the attempt. */
+  /** временная отметка of Объект попытка. */
   timestamp: string;
-  /** Progress fingerprint if applicable. */
+  /** прогресс fingerprint если applicable. */
   fingerprint?: ProgressFingerprint;
 }
 
@@ -92,17 +92,17 @@ export interface RecoveryAttempt {
  * Контекст, необходимый для оценки решений recovery.
  */
 export interface RecoveryContext {
-  /** Task ID being evaluated. */
+  /** задача ID being evaluated. */
   taskId: string;
   /** Текущий role level. */
   currentRoleLevel: RoleLevel;
-  /** List of recovery attempts for this task. */
+  /** Список попыток восстановления для этот задача. */
   attempts: RecoveryAttempt[];
   /** Текущий failure type. */
   failureType: FailureType;
   /** Текущий stage if applicable. */
   stage?: string;
-  /** Evidence hash for finding tracking. */
+  /** evidence hash для finding tracking. */
   evidenceHash?: string;
 }
 

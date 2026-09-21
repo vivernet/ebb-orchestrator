@@ -54,7 +54,7 @@ export class GitOperationRepository {
   }
 
   /**
-   * Mark an existing STARTED operation as VERIFIED after successful command execution.
+   * Mark Объект existing STARTED operation as VERIFIED после успешного команда execution.
    * Этот should only be called after inspecting actual Git state to confirm the operation succeeded.
    */
   verify(operationId: string): void {
@@ -88,7 +88,7 @@ export class GitOperationRepository {
   }
 
   /**
-   * Delete an operation after successful verification.
+   * удаляет Объект operation после успешного verification.
    */
   delete(operationId: string): void {
     this.db.run(`DELETE FROM git_operations WHERE id = $id`, { id: operationId } as StatementParams);

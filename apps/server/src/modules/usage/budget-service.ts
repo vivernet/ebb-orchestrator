@@ -1,10 +1,10 @@
 /**
- * Budget service — hierarchical budget resolution with atomic reservations.
+ * Сервис бюджетов — иерархическое разрешение budget с атомарными резервированиями.
  *
- * Budget hierarchy: global → project → epic → task
- * Effective limit = most restrictive available limit.
- * soft limit → ASK, hard limit → DENY.
- * Atomic transactions prevent oversubscription races.
+ * Иерархия budget: global → проект → epic → задача
+ * Итоговый лимит = most restrictive доступный лимит.
+ * мягкий лимит → ASK, жёсткий лимит → DENY.
+ * Атомарные транзакции предотвращать oversubscription races.
  */
 
 import type { Database, DatabaseTx } from "../../platform/database/database.js";
@@ -20,13 +20,13 @@ import type {
 } from "./usage-types.js";
 
 /**
- * Hierarchical budget resolution service.
+ * иерархическое разрешение budget сервис.
  */
 export class BudgetService {
   constructor(private readonly db: Database) {}
 
   /**
-   * Reserve budget for an AI Run. Returns ALLOW, ASK, or DENY.
+   * Reserve budget для Объект AI run. возвращает ALLOW, ASK, или DENY.
    * Использует a database transaction to prevent oversubscription races.
    */
   reserve(options: ReserveOptions): ReserveResult {
@@ -57,7 +57,7 @@ export class BudgetService {
             reason: `Budget exceeded at ${mostRestrictive.scope} scope: ${totalCommitted} > ${mostRestrictive.limitCost} (hard limit)`,
           };
         }
-        // Soft policy: even hard limit becomes ASK
+        // Soft политика: even жёсткий лимит becomes ASK
         return {
           decision: "ASK" as BudgetDecision,
           reservationId: null,
@@ -67,7 +67,7 @@ export class BudgetService {
 
       // Проверяет soft limit.
       if (mostRestrictive.softLimitCost > 0 && totalCommitted > mostRestrictive.softLimitCost) {
-        // Reserve anyway but signal ASK for approval.
+        // Reserve anyway but сигнал ASK для approval.
         const reservationId = this.createReservation(tx, options);
         this.addToReservedCosts(tx, options, scopes);
         return {
@@ -77,7 +77,7 @@ export class BudgetService {
         };
       }
 
-      // Within all limits — reserve and allow.
+      // Within все лимиты — reserve и allow.
       const reservationId = this.createReservation(tx, options);
       this.addToReservedCosts(tx, options, scopes);
       return { decision: "ALLOW" as BudgetDecision, reservationId };
@@ -85,7 +85,7 @@ export class BudgetService {
   }
 
   /**
-   * Reconcile a reservation with actual cost after Run completes.
+   * Reconcile Объект резервирование с фактическую стоимость после run completes.
    */
   reconcile(
     reservationId: string,
@@ -122,7 +122,7 @@ export class BudgetService {
       );
 
       // Обновляет budget config: subtract reserved, add spent.
-      // Include epic/task configs when those IDs are available.
+      // Include epic/задача configs если эти ID доступны.
       const configs = this.getApplicableConfigs(tx, reservation.project_id, reservation.epic_id, reservation.task_id);
       for (const config of configs) {
         tx.run(
@@ -173,7 +173,7 @@ export class BudgetService {
   }
 
   /**
-   * Release stale RESERVED reservations that are not in the set of active reservation IDs.
+   * Release stale RESERVED резервирования который являются не in Объект set of активный резервирование IDs.
    * Для each stale reservation, decrements reserved_cost on all applicable budget configs.
    */
   cleanupStaleReservations(activeReservationIds: string[]): { released: number } {
@@ -195,13 +195,13 @@ export class BudgetService {
       }
 
       for (const row of staleRows) {
-        // Release the reservation.
+        // Release Объект резервирование.
         tx.run(
           "UPDATE budget_reservations SET status = 'RELEASED' WHERE id = $id AND status = 'RESERVED'",
           { id: row.id },
         );
 
-        // Decrement reserved_cost on all applicable configs.
+        // Decrement reserved_cost on все применимые configs.
         const configs = this.getApplicableConfigs(tx, row.project_id, row.epic_id, row.task_id);
         for (const config of configs) {
           tx.run(
@@ -216,7 +216,7 @@ export class BudgetService {
   }
 
   /**
-   * Estimate cost from rolling historical p90 by role/model with safety floor.
+   * Estimate стоимость из скользящий исторический p90 by роль/модель с безопасным нижним пределом.
    */
   estimateCost(projectId: string, role: string, model: string): number {
     const values = this.db.all<{ actual_cost: number }>(
@@ -224,7 +224,7 @@ export class BudgetService {
       { projectId, role, model },
     );
     if (!values.length) return 1; // default floor
-    // p90: index at ceil(n * 0.9) - 1
+    // p90: индекс at ceil(n * 0.9) - 1
     const index = Math.min(values.length - 1, Math.ceil(values.length * 0.9) - 1);
     return Math.max(0, values[index]!.actual_cost * 1.25);
   }
@@ -235,20 +235,20 @@ export class BudgetService {
   private resolveScopes(tx: DatabaseTx, options: ReserveOptions): BudgetConfig[] {
     const configs: BudgetConfig[] = [];
 
-    // Global scope
+    // Глобальная область
     const global = tx.get<Record<string, unknown>>(
       "SELECT * FROM budget_configs WHERE scope = 'global' AND scope_id = 'global'",
     );
     if (global) configs.push(this.mapConfig(global));
 
-    // Project scope
+    // Область проекта
     const project = tx.get<Record<string, unknown>>(
       "SELECT * FROM budget_configs WHERE scope = 'project' AND scope_id = $scopeId",
       { scopeId: options.projectId },
     );
     if (project) configs.push(this.mapConfig(project));
 
-    // Epic scope
+    // Область Epic
     if (options.epicId) {
       const epic = tx.get<Record<string, unknown>>(
         "SELECT * FROM budget_configs WHERE scope = 'epic' AND scope_id = $scopeId",
@@ -257,7 +257,7 @@ export class BudgetService {
       if (epic) configs.push(this.mapConfig(epic));
     }
 
-    // Task scope
+    // Область задачи
     if (options.taskId) {
       const task = tx.get<Record<string, unknown>>(
         "SELECT * FROM budget_configs WHERE scope = 'task' AND scope_id = $scopeId",
