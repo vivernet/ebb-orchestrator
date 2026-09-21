@@ -2,13 +2,33 @@
 
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { loadProjectEnv } from './project-env.mjs';
 
 export const SMOKE_MARKER = 'HERMES_PROVIDER_SMOKE';
 const SUCCESS_TOKEN = 'SMOKE_OK';
-const DEFAULT_TIMEOUT_MS = 15_000;
+const DEFAULT_TIMEOUT_MS = 60_000;
+const INCEPTION_API = 'https://api.inceptionlabs.ai/v1';
+const INCEPTION_MODEL = 'mercury-2.5';
+
+export function buildProviderConfiguration(secretEnvName = 'INCEPTION_API_KEY') {
+  return [
+    ['providers.inception.api', INCEPTION_API],
+    ['providers.inception.base_url', INCEPTION_API],
+    ['providers.inception.key_env', secretEnvName],
+    ['providers.inception.model', INCEPTION_MODEL],
+    ['model.default', INCEPTION_MODEL],
+    ['model.provider', 'inception'],
+    ['model.api_mode', 'chat_completions'],
+  ];
+}
+
+export function parseProviderSmokeTimeout(value = process.env.HERMES_PROVIDER_SMOKE_TIMEOUT_MS) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : DEFAULT_TIMEOUT_MS;
+}
 
 /**
  * Возвращает только environment keys, необходимые для disposable provider run.
@@ -81,6 +101,23 @@ function fixedResult(exitCode, marker, cleanupVerified) {
   return { exitCode, marker, redacted: true, cleanupVerified };
 }
 
+function waitForCleanupRetry() {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+}
+
+function removeDisposableRoot(root, remove, exists, wait = waitForCleanupRetry) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    try {
+      remove(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 250 });
+      if (!exists(root)) return true;
+    } catch {
+      // Windows child runtimes can release their last file handle shortly after exit.
+    }
+    if (attempt < 19) wait();
+  }
+  return false;
+}
+
 /**
  * Запускает provider smoke в пустом worktree и disposable HERMES_HOME.
  * Функция не выводит child stdout/stderr и не возвращает raw provider output.
@@ -89,8 +126,11 @@ export function runProviderSmoke({
   sourceEnv = process.env,
   secretEnvName = 'INCEPTION_API_KEY',
   command = 'hermes',
-  timeoutMs = DEFAULT_TIMEOUT_MS,
+  timeoutMs = parseProviderSmokeTimeout(),
   spawn = spawnSync,
+  remove = rmSync,
+  exists = existsSync,
+  wait = waitForCleanupRetry,
 } = {}) {
   if (!sourceEnv[secretEnvName]) return fixedResult(2, 'SMOKE_CONFIG_ERROR', true);
 
@@ -110,13 +150,8 @@ export function runProviderSmoke({
   let result = fixedResult(1, 'SMOKE_ERROR', false);
 
   try {
-    const configuration = [
-      ['config', 'set', 'providers.inception.api', 'https://api.inceptionlabs.ai/v1'],
-      ['config', 'set', 'providers.inception.key_env', secretEnvName],
-      ['config', 'set', 'model_aliases.inception.model', 'mercury-2'],
-      ['config', 'set', 'model_aliases.inception.provider', 'custom:inception'],
-    ];
-    for (const args of configuration) {
+    for (const [key, value] of buildProviderConfiguration(secretEnvName)) {
+      const args = ['config', 'set', key, value];
       const setup = runChild(spawn, command, args, options);
       if (setup.kind === 'timeout') {
         result = fixedResult(124, 'SMOKE_TIMEOUT', false);
@@ -132,7 +167,7 @@ export function runProviderSmoke({
     const smoke = runChild(
       spawn,
       command,
-      ['--in', workspace, 'chat', '--query-file', promptFile],
+      ['--in', workspace, 'chat', '--query-file', promptFile, '--toolsets', 'skills', '-Q'],
       options,
     );
     if (smoke.kind === 'timeout') {
@@ -149,8 +184,7 @@ export function runProviderSmoke({
     return result;
   } finally {
     try {
-      rmSync(tempRoot, { recursive: true, force: true });
-      result.cleanupVerified = !existsSync(tempRoot);
+      result.cleanupVerified = removeDisposableRoot(tempRoot, remove, exists, wait);
       if (!result.cleanupVerified) {
         result.exitCode = 1;
         result.marker = 'SMOKE_CLEANUP_FAILED';
@@ -164,7 +198,10 @@ export function runProviderSmoke({
 }
 
 function main() {
-  const result = runProviderSmoke();
+  const projectEnv = loadProjectEnv({
+    envFilePath: join(dirname(fileURLToPath(import.meta.url)), '..', '.env'),
+  });
+  const result = runProviderSmoke({ sourceEnv: projectEnv });
   process.stdout.write(
     `${SMOKE_MARKER} marker=${result.marker} exit_code=${result.exitCode} redacted=${result.redacted} cleanup_verified=${result.cleanupVerified}\n`,
   );

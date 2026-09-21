@@ -25,9 +25,29 @@ development profile:
 pnpm hermes:provider -- inception
 ```
 
-Команда настраивает `custom:inception`, endpoint
-`https://api.inceptionlabs.ai/v1`, alias `mercury-2` и `key_env:
+Команда настраивает provider profile с endpoint
+`https://api.inceptionlabs.ai/v1`, моделью `mercury-2.5` и `key_env:
 INCEPTION_API_KEY`; значение ключа остаётся во внешнем окружении.
+
+Для локального запуска создайте `.env` в корне репозитория по шаблону
+`.env.example`:
+
+```dotenv
+INCEPTION_API_KEY=ваш_ключ
+```
+
+`.env` загружается локальными Hermes-командами, не отслеживается Git и имеет
+приоритет над устаревшим унаследованным environment процесса. При отсутствии
+`.env` используется заданный deployment environment/SecretStore. Значение ключа не печатается
+и не записывается в Hermes config. В deployment используйте SecretStore или
+секреты среды, которые инжектируют тот же `INCEPTION_API_KEY`.
+
+Provider smoke использует bounded timeout 60 секунд для retry-цикла Hermes;
+его можно изменить через `HERMES_PROVIDER_SMOKE_TIMEOUT_MS`. Недоступность
+endpoint остаётся честным `TRANSPORT_FAILED`, а не превращается в успешный
+smoke. Для smoke явно включён только `skills` toolset: terminal и code
+execution не поднимаются, поэтому provider-проверка не создаёт Python runtime
+в disposable workspace.
 
 ## Bounded provider smoke
 

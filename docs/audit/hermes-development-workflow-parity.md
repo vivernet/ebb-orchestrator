@@ -41,13 +41,13 @@
 
 Запуск `pnpm hermes:execute -- tools/hermes/fixtures/parity-plan.md` завершился с фиксированным marker `COMPLETED` и `exit_code=0`. Это подтверждает только штатное завершение процесса Hermes; команда не публикует внутренний stdout/stderr и сама по себе не доказывает успешное выполнение всех задач плана.
 
-В доступном provider-backed evidence один subagent завершился с HTTP 401 от Inception provider. Отдельный live run на documented `mercury-2` завершился `MODEL_FAILED`, `exit_code=1`. Поэтому успешное end-to-end выполнение parity plan с двумя рабочими read-only subagents не подтверждено.
+В доступном provider-backed evidence один subagent завершился с HTTP 401 от Inception provider. Поэтому успешное end-to-end выполнение parity plan с двумя рабочими read-only subagents не подтверждено; это отдельная историческая проверка и не текущий synthetic smoke.
 
 `pnpm hermes:smoke` проверяет безопасную форму synthetic provider transport. Текущий
-live run после correction на documented `mercury-2` завершился `MODEL_FAILED`, exit
-code `1`, с `redacted=true` и `cleanup_verified=true`; raw provider/Hermes output
-намеренно не сохраняется. Предыдущий live run с `mercury-2.5` остаётся явно
-superseded. Smoke не доказывает parity.
+live run на `mercury-2.5` и credentials из `.env` завершился `SMOKE_OK`, exit code
+`0`, с `redacted=true` и `cleanup_verified=true`; terminal/Python toolset не
+поднимается, raw provider/Hermes output намеренно не сохраняется. Smoke не
+доказывает parity.
 
 Config/execute timeout handling: **IMPLEMENTED/VERIFIED** by the bounded runners
 and focused tests; Windows process trees are terminated with `taskkill.exe /PID /T /F`.

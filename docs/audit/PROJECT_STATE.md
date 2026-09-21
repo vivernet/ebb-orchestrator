@@ -125,15 +125,15 @@ that the branch is ready for merge or publication.
 - `pnpm hermes:setup`: PASS with `HERMES_CONFIG marker=SETUP_SYNCED verified=true redacted=true`; canonical skills, provider and capabilities hashes were verified after synchronization.
 - `pnpm hermes:check`: PASS in a bounded serial run after setup; Windows `resolveHermesHome` resolves to `%LOCALAPPDATA%\\hermes`; all registry/provider/target/delegation checks passed.
 - Hermes config/execute supervision tests: PASS for bounded timeouts, fixed redacted markers, cleanup and Windows process-tree termination via `taskkill.exe /PID /T /F`.
-- `pnpm hermes:smoke`: the current live redacted smoke reached the Hermes/provider
-  path with the documented `mercury-2` mapping and returned `MODEL_FAILED`, exit
-  code 1, `redacted=true`, `cleanup_verified=true`. No repository context or raw
-  provider output was exposed.
-- The previous live smoke with `mercury-2.5` is explicitly superseded and is not
-  current model/authorization evidence. Smoke does not replace provider-backed
-  parity. Config/execute timeout handling is implemented and covered by focused
-  tests; the historical slow `hermes:check` observation is not attributed to a
-  separate provider timeout root cause.
+- `pnpm hermes:smoke`: fresh live redacted smoke with `mercury-2.5` and the local
+  `.env` credential returned `SMOKE_OK`, exit code 0, `redacted=true`,
+  `cleanup_verified=true`. The smoke uses only the `skills` toolset and does not
+  start the terminal/Python runtime. No repository context or raw provider output
+  was exposed.
+- Provider smoke is not provider-backed parity: the historical parity attempt
+  still requires a separate run with two authorized read-only subagents. The
+  smoke harness config, `.env` loading, bounded retry and cleanup behavior are
+  covered by 26 focused tests.
 - `node --test scripts/security-audit-evidence.test.mjs`: PASS (5 passed).
 - Fresh Escalated dependency audit: PASS (0 info/low/moderate/high/critical),
    recorded in `artifacts/security/pnpm-audit-prod-b3b66154729ca2b373e0424dbab96b4435ec2c11.json`
@@ -199,11 +199,10 @@ Stage B status: **FOUNDATION PASS / READ-ONLY PILOT + APPROVE-ONLY MUTATION PASS
 1. Browser E2E уже запускает собранный `apps/server/dist/main.js` и Vite frontend с изолированным временным `EBB_ORCHESTRATOR_HOME`; полный набор продуктовых UI flows, Hermes live runtime, Git/worktree recovery и SecretStore-провижининга ещё не покрыт.
 2. Hermes live E2E остаётся opt-in и пропускается без установленного Hermes/model runtime.
  3. `.opencode` всё ещё присутствует; локальный Hermes setup/check и repository gates
-    проходят, но реальный Stage 9 provider-backed parity-run получил `HTTP 401` от
-    Inception. Current synthetic smoke with documented `mercury-2` reached the
-    provider path but returned `MODEL_FAILED`; cleanup остаётся отложенным до
-    успешного provider-backed parity-run. Redacted smoke не заменяет parity и не
-    доказывает authorization.
+    проходят. Исторический Stage 9 provider-backed parity-run получил `HTTP 401`
+    от Inception и требует отдельного повторения с двумя authorized read-only
+    subagents. Текущий synthetic smoke на `mercury-2.5` проходит, но не заменяет
+    parity и не доказывает выполнение полного plan.
 4. Stage 10 audit artifacts созданы: `docs/audit/web-ui-code-map.md`,
    `docs/audit/web-ui-gap-analysis.md` и
    `docs/architecture/specs/2026-09-18-web-ui-recovery-design.md`; Stage A1
@@ -212,8 +211,9 @@ Stage B status: **FOUNDATION PASS / READ-ONLY PILOT + APPROVE-ONLY MUTATION PASS
    миграция оставшихся страниц и browser acceptance для всех flows ещё не выполнены.
 5. Production-readiness plan содержит незакрытые checkbox-инструкции и требует синхронизации после review.
 6. Local Mode остаётся policy isolation, а не OS sandbox.
-7. Inception provider template/setup проверен локально в Hermes profile; dependency
-   audit и Playwright E2E прошли, но live model E2E не подтверждён из-за `HTTP 401`.
+7. Inception provider template/setup и live synthetic smoke проверены в Hermes
+   profile; dependency audit и Playwright E2E прошли. Полный live model E2E
+   parity остаётся отдельной проверкой.
 
 ## Changes Made During This Audit
 - SEC-003 FIXED: Integrated PermissionEngine with ActionGateway
@@ -224,7 +224,7 @@ Stage B status: **FOUNDATION PASS / READ-ONLY PILOT + APPROVE-ONLY MUTATION PASS
 
 ## Next Required Sequence
 1. Завершить независимый security/architecture/recovery review после последних изменений и обновить evidence.
-2. Исправить/подтвердить доступ configured Hermes provider, повторить Stage 9 parity-plan с двумя успешными read-only subagents и только после PASS удалить `.opencode`.
+2. Повторить Stage 9 parity-plan с двумя успешными read-only subagents и только после PASS удалить `.opencode`.
 3. Завершить Stage B migration: перевести operational/config pages на query store, затем подключить mutation lifecycle к approval/cancel UI и SSE key invalidation без изменения security/session semantics. Перед Usage/Settings UI changes сначала зафиксировать scoped usage/limit semantics, authoritative settings fields и COMPLETING status contract.
 4. Реализовывать Web UI по стадиям C–E из `docs/audit/web-ui-gap-analysis.md`, не добавляя неподтверждённые backend actions; отдельно зафиксировать решения по onboarding, approval reject/request-changes, run observability и settings mutations.
 5. Выполнить browser evidence по всем 10 экранам и основным flows, затем провести final v1 productization.

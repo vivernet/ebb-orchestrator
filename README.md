@@ -228,8 +228,10 @@ pnpm hermes:provider -- inception
 ```
 
 Профиль использует OpenAI-compatible endpoint
-[`https://api.inceptionlabs.ai/v1`](https://api.inceptionlabs.ai/v1), alias
-`mercury-2` и имя secret environment variable `INCEPTION_API_KEY`. Значение
+[`https://api.inceptionlabs.ai/v1`](https://api.inceptionlabs.ai/v1), модель
+`mercury-2.5` и имя secret environment variable `INCEPTION_API_KEY`. Для
+локального запуска скопируйте `.env.example` в `.env`; в deployment значение
+должно поступать из SecretStore или environment injection. Значение
 ключа не хранится в репозитории и не передаётся через README, prompts, logs или
 artifacts. Provider не становится неявным production fallback; текущий
 production `HermesRuntimeAdapter` сохраняет свой explicit isolated profile.
@@ -241,7 +243,8 @@ production `HermesRuntimeAdapter` сохраняет свой explicit isolated 
 repository plan, MCP toolset или реальные файлы worktree. В subprocess передаётся
 явный environment allowlist с `INCEPTION_API_KEY`; произвольные keys, включая
 repository secrets и `NODE_OPTIONS`, отбрасываются. Запуск использует
-`shell:false` и bounded timeout.
+`shell:false`, только `skills` toolset и bounded timeout без запуска terminal/
+Python runtime.
 
 Raw stdout/stderr provider не возвращаются и не сохраняются: команда печатает
 только fixed marker, exit code, `redacted=true` и `cleanup_verified`. Временные

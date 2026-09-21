@@ -46,7 +46,7 @@ test('Inception provider template is explicit and non-secret', () => {
   assert.match(provider, /^name: inception$/m);
   assert.match(provider, /^provider: custom:inception$/m);
   assert.match(provider, /^api: https:\/\/api\.inceptionlabs\.ai\/v1$/m);
-  assert.match(provider, /^model: mercury-2$/m);
+  assert.match(provider, /^model: mercury-2\.5$/m);
   assert.match(provider, /^key_env: INCEPTION_API_KEY$/m);
   assert.doesNotMatch(provider, /INCEPTION_API_KEY\s*[:=]\s*[^\s{`]/);
 });
@@ -57,6 +57,7 @@ test('README documents every skill, provider and setup boundary', () => {
   assert.match(readme, /pnpm hermes:check/);
   assert.match(readme, /pnpm hermes:provider -- inception/);
   assert.match(readme, /INCEPTION_API_KEY/);
+  assert.match(readme, /\.env\.example/);
   assert.match(catalog, /tools\/hermes\/providers\/inception\.yaml/);
 });
 

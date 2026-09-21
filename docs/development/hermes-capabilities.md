@@ -36,7 +36,7 @@ Source profile: `tools/hermes/providers/inception.yaml`. Установленн�
 | Name | `inception` |
 | Provider | `custom:inception` |
 | Base URL | `https://api.inceptionlabs.ai/v1` |
-| Model alias | `mercury-2` |
+| Model alias | `mercury-2.5` |
 | Secret env name | `INCEPTION_API_KEY` |
 
 ```bash
@@ -45,7 +45,9 @@ pnpm hermes:provider -- inception
 ```
 
 Команда записывает только имя environment variable и non-secret config keys.
-Значение `INCEPTION_API_KEY` задаётся локально и не появляется в Git, prompt,
+Для локального запуска используйте `.env.example` → `.env`; в deployment
+используйте SecretStore или environment injection. Значение
+`INCEPTION_API_KEY` не появляется в Git, prompt,
 logs, UI, artifacts или выводе setup. Provider не является неявным production
 fallback.
 

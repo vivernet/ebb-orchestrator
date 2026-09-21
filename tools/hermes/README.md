@@ -48,3 +48,6 @@ and delegation checks, followed by a separate decision about `.opencode`.
 The complete Russian catalog and installation locations are documented in
 `docs/development/hermes-capabilities.md`. Provider credentials are always
 external (`INCEPTION_API_KEY`) and are never copied into this repository.
+For local development, copy `.env.example` to `.env` and set
+`INCEPTION_API_KEY`; deployment environments should inject the same variable
+from a SecretStore.

@@ -3,11 +3,12 @@
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { existsSync, rmSync, mkdirSync, copyFileSync, readdirSync, statSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
-import { join, posix, win32 } from 'node:path';
+import { dirname, join, posix, win32 } from 'node:path';
 import { createHash } from 'node:crypto';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { clearTimeout, setTimeout } from 'node:timers';
 import { resolvePlanPath } from './hermes-dev-paths.mjs';
+import { loadProjectEnv } from './project-env.mjs';
 
 export const HERMES_EXECUTE_MARKER = 'HERMES_EXECUTE';
 export const HERMES_CONFIG_MARKER = 'HERMES_CONFIG';
@@ -297,6 +298,9 @@ No nested delegation.
 }
 
 async function main() {
+  Object.assign(process.env, loadProjectEnv({
+    envFilePath: join(dirname(fileURLToPath(import.meta.url)), '..', '.env'),
+  }));
   const command = process.argv[2];
   if (!command) {
     console.error('Usage: hermes-dev.js <setup|check|provider|execute> [args...]');
@@ -458,9 +462,12 @@ async function doProvider(args) {
 
   // Hermes получает secret по имени env key; значение API key не читается и не печатается.
   await hermesConfigSet('providers.inception.api', 'https://api.inceptionlabs.ai/v1');
+  await hermesConfigSet('providers.inception.base_url', 'https://api.inceptionlabs.ai/v1');
   await hermesConfigSet('providers.inception.key_env', 'INCEPTION_API_KEY');
-  await hermesConfigSet('model_aliases.inception.model', 'mercury-2');
-  await hermesConfigSet('model_aliases.inception.provider', 'custom:inception');
+  await hermesConfigSet('providers.inception.model', 'mercury-2.5');
+  await hermesConfigSet('model.default', 'mercury-2.5');
+  await hermesConfigSet('model.provider', 'inception');
+  await hermesConfigSet('model.api_mode', 'chat_completions');
   console.log('Provider profile inception configured. Set INCEPTION_API_KEY in the local environment.');
   console.log('Use HERMES_MODEL=inception for an explicit Hermes development run.');
 }

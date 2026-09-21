@@ -3,8 +3,10 @@ import assert from 'node:assert/strict';
 
 import {
   buildAllowlistedEnv,
+  buildProviderConfiguration,
   buildSmokePrompt,
   classifyProviderFailure,
+  parseProviderSmokeTimeout,
   runProviderSmoke,
 } from './hermes-provider-smoke.mjs';
 
@@ -22,6 +24,25 @@ test('provider smoke environment is explicitly allowlisted', () => {
   assert.equal(env.HERMES_MODEL, 'inception');
   assert.equal(env.NODE_OPTIONS, undefined);
   assert.equal(env.REPOSITORY_SECRET, undefined);
+});
+
+test('provider smoke configures the active Inception model and provider profile', () => {
+  assert.deepEqual(buildProviderConfiguration(), [
+    ['providers.inception.api', 'https://api.inceptionlabs.ai/v1'],
+    ['providers.inception.base_url', 'https://api.inceptionlabs.ai/v1'],
+    ['providers.inception.key_env', 'INCEPTION_API_KEY'],
+    ['providers.inception.model', 'mercury-2.5'],
+    ['model.default', 'mercury-2.5'],
+    ['model.provider', 'inception'],
+    ['model.api_mode', 'chat_completions'],
+  ]);
+});
+
+test('provider smoke allows a bounded retry window without accepting invalid timeouts', () => {
+  assert.equal(parseProviderSmokeTimeout(), 60_000);
+  assert.equal(parseProviderSmokeTimeout('120000'), 120_000);
+  assert.equal(parseProviderSmokeTimeout('0'), 60_000);
+  assert.equal(parseProviderSmokeTimeout('not-a-number'), 60_000);
 });
 
 test('smoke prompt is synthetic and contains no repository context handle', () => {
@@ -53,22 +74,27 @@ test('provider smoke uses an empty disposable workspace and cleans it up', () =>
   assert.equal(result.marker, 'SMOKE_OK');
   assert.equal(result.redacted, true);
   assert.equal(result.cleanupVerified, true);
-  assert.equal(calls.length, 5);
-  assert.deepEqual(calls[2].args, [
-    'config',
-    'set',
-    'model_aliases.inception.model',
-    'mercury-2',
+  assert.equal(calls.length, 8);
+  assert.deepEqual(calls.slice(0, 7).map(({ args }) => args), [
+    ['config', 'set', 'providers.inception.api', 'https://api.inceptionlabs.ai/v1'],
+    ['config', 'set', 'providers.inception.base_url', 'https://api.inceptionlabs.ai/v1'],
+    ['config', 'set', 'providers.inception.key_env', 'INCEPTION_API_KEY'],
+    ['config', 'set', 'providers.inception.model', 'mercury-2.5'],
+    ['config', 'set', 'model.default', 'mercury-2.5'],
+    ['config', 'set', 'model.provider', 'inception'],
+    ['config', 'set', 'model.api_mode', 'chat_completions'],
   ]);
 
   const smokeCall = calls.at(-1);
   assert.equal(smokeCall.command, 'hermes');
   assert.deepEqual(smokeCall.args.slice(0, 3), ['--in', smokeCall.args[1], 'chat']);
+  assert.deepEqual(smokeCall.args.slice(-3), ['--toolsets', 'skills', '-Q']);
   assert.equal(smokeCall.options.shell, false);
   assert.equal(smokeCall.options.timeout, 100);
   assert.equal(smokeCall.options.env.INCEPTION_API_KEY, 'secret');
   assert.equal(smokeCall.options.env.REPOSITORY_SECRET, undefined);
-  assert.match(smokeCall.args.at(-1), /hermes-provider-smoke-/);
+  const promptIndex = smokeCall.args.indexOf('--query-file');
+  assert.match(smokeCall.args[promptIndex + 1], /hermes-provider-smoke-/);
 });
 
 test('provider smoke converts hard timeout to fixed redacted result', () => {
@@ -87,6 +113,30 @@ test('provider smoke converts hard timeout to fixed redacted result', () => {
   assert.equal(result.marker, 'TRANSPORT_FAILED');
   assert.equal(result.redacted, true);
   assert.equal(result.cleanupVerified, true);
+});
+
+test('provider smoke retries transient disposable workspace cleanup', () => {
+  const removeCalls = [];
+  let exists = true;
+  const result = runProviderSmoke({
+    sourceEnv: { PATH: 'path', INCEPTION_API_KEY: 'secret' },
+    spawn: (_command, args) => ({
+      status: args.includes('--query-file') ? 1 : 0,
+      stdout: args.includes('--query-file') ? 'connection error' : '',
+      stderr: '',
+    }),
+    remove: (_path, options) => {
+      removeCalls.push(options);
+      if (removeCalls.length === 1) throw new Error('transient lock');
+      exists = false;
+    },
+    exists: () => exists,
+    wait: () => {},
+  });
+
+  assert.equal(result.cleanupVerified, true);
+  assert.equal(result.marker, 'TRANSPORT_FAILED');
+  assert.equal(removeCalls.length, 2);
 });
 
 test('provider auth failure exposes no raw child output', () => {
