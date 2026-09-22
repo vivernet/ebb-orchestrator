@@ -12,12 +12,13 @@ test('v1 UI exposes the persistent navigation shell', async ({ page }) => {
     await route.fulfill({ json: { sessionToken: 'session', csrfToken: 'csrf' } });
   });
   await page.goto('/#ebb-bootstrap=session-bootstrap');
-  await expect(page.getByRole('link', { name: 'Dashboard' })).toBeVisible();
-  await expect(page.getByRole('link', { name: 'Projects' })).toBeVisible();
-  await expect(page.getByRole('link', { name: 'Approvals' })).toBeVisible();
-  await expect(page.getByRole('link', { name: 'Execution' })).toBeVisible();
-  await expect(page.getByRole('link', { name: 'Usage' })).toBeVisible();
-  await expect(page.getByRole('link', { name: 'Settings' })).toBeVisible();
+  const primaryNavigation = page.getByRole('navigation', { name: 'Primary navigation' });
+  await expect(primaryNavigation.getByRole('link', { name: 'Dashboard' })).toBeVisible();
+  await expect(primaryNavigation.getByRole('link', { name: 'Projects' })).toBeVisible();
+  await expect(primaryNavigation.getByRole('link', { name: 'Approvals' })).toBeVisible();
+  await expect(primaryNavigation.getByRole('link', { name: 'Execution' })).toBeVisible();
+  await expect(primaryNavigation.getByRole('link', { name: 'Usage' })).toBeVisible();
+  await expect(primaryNavigation.getByRole('link', { name: 'Settings' })).toBeVisible();
 });
 
 test('v1 UI restores its local session after a browser reload', async ({ page }) => {
@@ -31,10 +32,11 @@ test('v1 UI restores its local session after a browser reload', async ({ page })
   });
 
   await page.goto('/#ebb-bootstrap=session-bootstrap');
-  await expect(page.getByRole('link', { name: 'Dashboard' })).toBeVisible();
+  const primaryNavigation = page.getByRole('navigation', { name: 'Primary navigation' });
+  await expect(primaryNavigation.getByRole('link', { name: 'Dashboard' })).toBeVisible();
   await page.reload();
 
-  await expect(page.getByRole('link', { name: 'Dashboard' })).toBeVisible();
+  await expect(primaryNavigation.getByRole('link', { name: 'Dashboard' })).toBeVisible();
   expect(restores).toBe(1);
 });
 
@@ -42,18 +44,31 @@ test('v1 UI bootstraps against the launched backend', async ({ page, request }) 
   const health = await request.get('http://127.0.0.1:3001/api/v1/health');
   expect(health.ok()).toBe(true);
 
-  await page.goto(`/#ebb-bootstrap=${encodeURIComponent(bootstrapToken())}`);
-  await expect(page.getByRole('link', { name: 'Dashboard' })).toBeVisible();
+  await page.goto(`/tasks/missing-task#ebb-bootstrap=${encodeURIComponent(bootstrapToken())}`);
+  const primaryNavigation = page.getByRole('navigation', { name: 'Primary navigation' });
+  const breadcrumbs = page.getByRole('navigation', { name: 'Breadcrumb' });
+  await expect(primaryNavigation.getByRole('link', { name: 'Dashboard' })).toBeVisible();
+  await expect(breadcrumbs).toContainText('Task missing-task');
+  await expect(page.getByRole('heading', { name: 'Task: missing-task' })).toBeVisible();
+
+  await page.reload();
+
+  await expect(primaryNavigation.getByRole('link', { name: 'Dashboard' })).toBeVisible();
+  await expect(breadcrumbs).toContainText('Task missing-task');
+  await expect(page.getByRole('heading', { name: 'Task: missing-task' })).toBeVisible();
+
+  await page.goto('/');
+  await expect(primaryNavigation.getByRole('link', { name: 'Dashboard' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
   await expect(page.getByText('No running agents.')).toBeVisible();
 
   await page.goto('/projects/missing-project');
   await expect(page.getByRole('heading', { name: 'Project: missing-project' })).toBeVisible();
-  await expect(page.getByText('Project not found.', { exact: true })).toBeVisible();
+  await expect(page.getByRole('alert').filter({ hasText: 'Project not found.' })).toBeVisible();
 
   await page.goto('/epics/missing-epic');
   await expect(page.getByRole('heading', { name: 'Epic: missing-epic' })).toBeVisible();
-  await expect(page.getByText('Epic not found.', { exact: true })).toBeVisible();
+  await expect(page.getByRole('alert').filter({ hasText: 'Epic not found.' })).toBeVisible();
 
   await page.goto('/tasks/missing-task');
   await expect(page.getByRole('heading', { name: 'Task: missing-task' })).toBeVisible();
@@ -87,4 +102,22 @@ test('v1 UI bootstraps against the launched backend', async ({ page, request }) 
   await page.goto('/projects/new');
   await expect(page.getByRole('heading', { name: 'Project onboarding' })).toBeVisible();
   await expect(page.getByText(/Select a project before opening its onboarding review/)).toBeVisible();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+
+  const dashboard = primaryNavigation.getByRole('link', { name: 'Dashboard' });
+  const projects = primaryNavigation.getByRole('link', { name: 'Projects' });
+  await expect(primaryNavigation).toBeVisible();
+  await dashboard.focus();
+  await expect(dashboard).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(projects).toBeFocused();
+  await expect(projects).toBeVisible();
+
+  await page.keyboard.press('Enter');
+
+  await expect(page.getByRole('heading', { name: 'Project onboarding' })).toBeVisible();
+  await expect(primaryNavigation).toBeVisible();
+  await expect(projects).toHaveAttribute('aria-current', 'page');
 });
