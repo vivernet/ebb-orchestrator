@@ -46,7 +46,7 @@ LLM/Agent Runtime выполняет интеллектуальную работ
 
 Перед архитектурными изменениями обязательно прочитать:
 
-`docs/superpowers/specs/2026-09-16-ebb-orchestrator-design.md`
+`docs/architecture/specs/2026-09-16-ebb-orchestrator-design.md`
 
 Утверждённая design specification является архитектурным source of truth.
 
@@ -265,10 +265,10 @@ JSDoc должен объяснять:
 
 Перед релевантной работой использовать:
 
-- Architecture: `docs/superpowers/specs/2026-09-16-ebb-orchestrator-design.md`
-- V1 roadmap: `docs/superpowers/plans/2026-09-16-ebb-orchestrator-v1-roadmap.md`
+- Architecture: `docs/architecture/specs/2026-09-16-ebb-orchestrator-design.md`
+- V1 roadmap: `docs/architecture/plans/2026-09-16-ebb-orchestrator-v1-roadmap.md`
 - Post-v1 roadmap: `docs/roadmap/post-v1.md`
-- Implementation plans: `docs/superpowers/plans/`
+- Implementation plans: `docs/architecture/plans/`
 - JSDoc policy: `docs/development/jsdoc-style-guide.md`
 - Human-facing project documentation: `README.md`
 

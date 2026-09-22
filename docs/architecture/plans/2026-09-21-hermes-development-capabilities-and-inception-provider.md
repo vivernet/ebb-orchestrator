@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node.js ESM, pnpm, Hermes CLI, YAML/Markdown, Vitest, ESLint, TypeScript.
 
-**Spec:** `docs/superpowers/specs/2026-09-21-hermes-development-capabilities-and-inception-provider.md`
+**Spec:** `docs/architecture/specs/2026-09-21-hermes-development-capabilities-and-inception-provider.md`
 
 ## Global Constraints
 

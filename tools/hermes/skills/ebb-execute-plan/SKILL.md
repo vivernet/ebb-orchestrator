@@ -14,7 +14,7 @@ Use this skill only while developing Ebb Orchestrator.
 
 ## Input
 
-A repository-relative implementation-plan path, normally under `docs/superpowers/plans/`.
+A repository-relative implementation-plan path, normally under `docs/architecture/plans/`.
 
 ## Hard rules
 
