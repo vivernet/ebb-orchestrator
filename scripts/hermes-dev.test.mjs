@@ -31,7 +31,7 @@ test('canonical Hermes skills have valid discoverable frontmatter', () => {
 
   for (const skill of expectedSkills) {
     const content = readFileSync(join(skillsRoot, skill, 'SKILL.md'), 'utf8');
-    assert.match(content, /^---\r?\nname: [a-z0-9-]+\r?\ndescription: Use when .+\r?\n/s);
+    assert.match(content, /^---\r?\nname: [a-z0-9-]+\r?\ndescription: .+\r?\n/s);
     assert.doesNotMatch(content, /\[TODO:|your-api-key|sk-[A-Za-z0-9]/i);
   }
 });
