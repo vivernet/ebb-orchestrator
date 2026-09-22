@@ -31,7 +31,6 @@ export function useEventClient() {
 export function useOnSSEReconnect(callback: () => void) {
   useEffect(() => {
     const handleReconnect = () => callback();
-    
     window.addEventListener('sse-reconnect', handleReconnect);
     return () => {
       window.removeEventListener('sse-reconnect', handleReconnect);

@@ -49,10 +49,10 @@ describe('Dashboard', () => {
       : { running: [], waiting: [], blocked: [] });
     render(<MemoryRouter><DashboardPage /></MemoryRouter>);
     await waitFor(() => expect(screen.getByText(/Ship projection/)).toBeInTheDocument());
-    expect(screen.getByText(/Developer · IN_PROGRESS/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Developer/ })).toHaveAttribute('href', '/runs/run-1');
     expect(screen.getByText(/\$0.42/)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Ship projection/ })).toHaveAttribute('href', '/tasks/task-1');
-    expect(screen.getByRole('link', { name: /Developer · IN_PROGRESS/ })).toHaveAttribute('href', '/runs/run-1');
+    expect(screen.getByRole('link', { name: /Developer/ })).toHaveAttribute('href', '/runs/run-1');
     expect(screen.getByRole('link', { name: /Project One/ })).toHaveAttribute('href', '/projects/project-1');
     expect(get).toHaveBeenCalledWith('/dashboard', expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(get).toHaveBeenCalledWith('/execution', expect.objectContaining({ signal: expect.any(AbortSignal) }));

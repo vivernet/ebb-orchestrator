@@ -1,9 +1,13 @@
 /**
  * Клиент SSE с автоматическим переподключением и обновлением read model.
  */
-import { authenticatedHeaders } from './client.js';
+import { apiClient } from './client.js';
 
 type EventHandler = (data: unknown) => void;
+
+interface InvalidationListener {
+  (event: string, data: unknown): void;
+}
 
 /** Порт браузерного клиента SSE для подписки и управления соединением. */
 export interface EventClient {
@@ -11,10 +15,12 @@ export interface EventClient {
   connect(): void;
   disconnect(): void;
   setRefetchCallback(callback: () => void): void;
+  onInvalidate(listener: InvalidationListener): void;
 }
 
 function createEventClient(): EventClient {
   const handlers = new Map<string, Set<EventHandler>>();
+  const invalidationListeners = new Set<InvalidationListener>();
   let controller: AbortController | null = null;
   let retryTimer: number | null = null;
   let onRefetch: (() => void) | null = null;
@@ -34,13 +40,17 @@ function createEventClient(): EventClient {
     controller = nextController;
     void fetch('/api/v1/events', {
       credentials: 'same-origin',
-      headers: authenticatedHeaders(),
+      headers: {
+        ...(apiClient.sessionToken ? { Authorization: `Bearer ${apiClient.sessionToken}` } : {}),
+        ...(apiClient.csrfToken ? { 'X-CSRF-Token': apiClient.csrfToken } : {}),
+      },
       signal: nextController.signal,
     }).then(async (response) => {
       if (!response.ok || !response.body) throw new Error(`SSE connection failed: ${response.status}`);
-      await consumeEventStream(response.body, handlers);
+      await consumeEventStream(response.body, handlers, invalidationListeners);
     }).catch(() => {
       // При переподключении намеренно перечитываем авторитетное состояние.
+      window.dispatchEvent(new CustomEvent('sse-reconnect'));
     }).finally(() => {
       if (controller !== nextController) return;
       controller = null;
@@ -67,12 +77,20 @@ function createEventClient(): EventClient {
       onRefetch = callback;
     },
 
+    onInvalidate(listener: InvalidationListener) {
+      invalidationListeners.add(listener);
+    },
+
     connect,
     disconnect,
   };
 }
 
-async function consumeEventStream(stream: ReadableStream<Uint8Array>, handlers: Map<string, Set<EventHandler>>): Promise<void> {
+async function consumeEventStream(
+  stream: ReadableStream<Uint8Array>,
+  handlers: Map<string, Set<EventHandler>>,
+  invalidationListeners: Set<InvalidationListener>,
+): Promise<void> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
@@ -83,7 +101,9 @@ async function consumeEventStream(stream: ReadableStream<Uint8Array>, handlers: 
       buffer += decoder.decode(value, { stream: true });
       let boundary = buffer.indexOf('\n\n');
       while (boundary !== -1) {
-        dispatchEvent(buffer.slice(0, boundary), handlers);
+        const packet = buffer.slice(0, boundary);
+        dispatchEvent(packet, handlers);
+        notifyInvalidation(packet, invalidationListeners);
         buffer = buffer.slice(boundary + 2);
         boundary = buffer.indexOf('\n\n');
       }
@@ -106,6 +126,22 @@ function dispatchEvent(packet: string, handlers: Map<string, Set<EventHandler>>)
     for (const handler of handlers.get(eventName) ?? []) handler(parsed);
   } catch {
     // Некорректное временное событие не меняет состояние: авторитетны projections.
+  }
+}
+
+function notifyInvalidation(packet: string, invalidationListeners: Set<InvalidationListener>): void {
+  let eventName = 'message';
+  const data: string[] = [];
+  for (const line of packet.split('\n')) {
+    if (line.startsWith('event:')) eventName = line.slice('event:'.length).trim();
+    if (line.startsWith('data:')) data.push(line.slice('data:'.length).trimStart());
+  }
+  if (data.length === 0) return;
+  try {
+    const parsed: unknown = JSON.parse(data.join('\n'));
+    for (const listener of invalidationListeners) listener(eventName, parsed);
+  } catch {
+    // Некорректное временное событие не меняет состояние.
   }
 }
 
