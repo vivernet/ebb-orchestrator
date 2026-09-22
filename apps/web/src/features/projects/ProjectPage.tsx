@@ -2,6 +2,7 @@ import { useCallback, useMemo } from 'react';
 import { apiPaths, type ProjectOverviewProjection } from '@ebb-orchestrator/contracts';
 import { Link } from 'react-router';
 import { apiClient, toClientPath } from '../../api/client.js';
+import { ErrorAlert } from '../../components/PageState.js';
 import { createQueryStore } from '../../state/query-store.js';
 import { useQuery } from '../../state/use-query.js';
 
@@ -24,8 +25,8 @@ export default function ProjectPage({ id }: ProjectPageProps) {
   return (
     <div className="project-page">
       <h1>Project: {project?.displayName ?? project?.name ?? id}</h1>
-      {query.status === 'error' && <p className="inline-alert" role="alert">Unable to load project: {query.error instanceof Error ? query.error.message : 'unknown error'} <button type="button" onClick={retry}>Retry</button></p>}
-      {notFound && <p className="inline-alert" role="alert">Project not found. <button type="button" onClick={retry}>Retry</button></p>}
+      {query.status === 'error' && <ErrorAlert message={`Unable to load project: ${query.error instanceof Error ? query.error.message : 'unknown error'}`} onRetry={retry} />}
+      {notFound && <ErrorAlert message="Project not found." onRetry={retry} />}
       <section aria-label="Project details">
         <h2>Details</h2>
         <p>{query.status === 'loading' || query.status === 'idle' ? 'Loading project projection…' : notFound ? 'No project projection is available.' : project ? `${project.status} · ${project.name}` : 'No project projection is available.'}</p>

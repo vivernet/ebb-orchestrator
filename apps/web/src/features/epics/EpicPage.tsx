@@ -2,6 +2,7 @@ import { useCallback, useMemo } from 'react';
 import { apiPaths, type EpicOverviewProjection } from '@ebb-orchestrator/contracts';
 import { Link } from 'react-router';
 import { apiClient, toClientPath } from '../../api/client.js';
+import { ErrorAlert } from '../../components/PageState.js';
 import { useOnSSEReconnect } from '../../hooks/useEventClient.js';
 import { createQueryStore } from '../../state/query-store.js';
 import { useQuery } from '../../state/use-query.js';
@@ -28,8 +29,8 @@ export default function EpicPage({ id }: EpicPageProps) {
   return (
     <div className="epic-page">
       <h1>Epic: {epic?.title ?? epic?.display_id ?? id}</h1>
-      {query.status === 'error' && <p className="inline-alert" role="alert">Unable to load epic: {errorMessage(query.error)} <button type="button" onClick={retry}>Retry</button></p>}
-      {notFound && <p className="inline-alert" role="alert">Epic not found. <button type="button" onClick={retry}>Retry</button></p>}
+      {query.status === 'error' && <ErrorAlert message={`Unable to load epic: ${errorMessage(query.error)}`} onRetry={retry} />}
+      {notFound && <ErrorAlert message="Epic not found." onRetry={retry} />}
       <section aria-label="Epic details"><h2>Details</h2><p>{query.status === 'loading' || query.status === 'idle' ? 'Loading epic projection…' : notFound ? 'Epic not found.' : epic ? `${epic.status ?? 'Unknown'} · ${projection?.tasks?.length ?? 0} tasks` : 'No epic projection is available.'}</p>{projection && !notFound && <p>Usage: {projection.usage.totalTokens} tokens · ${projection.usage.cost.toFixed(2)}</p>}</section>
       <section aria-label="Epic lifecycle and parallel work graph"><h2>Lifecycle / parallel work graph</h2><p>{notFound ? 'Epic lifecycle unavailable.' : projection ? `${projection.lifecycle.stage ?? epic?.status ?? 'No lifecycle stage recorded'} · ${projection.tasks?.length ?? 0} tasks` : 'Loading epic lifecycle…'}</p><ol aria-label="Epic lifecycle stages">{projection && !notFound ? projection.lifecycle.stages?.map((stage) => <li key={stage.id} data-status={stage.status}>{stage.label}: {stage.status}</li>) : null}</ol></section>
       <section aria-label="Epic Contract"><h2>Epic Contract</h2><p>{notFound ? 'Epic contract unavailable.' : projection?.contract ? JSON.stringify(projection.contract) : query.status === 'success' ? 'No contract recorded.' : 'Loading epic contract…'}</p></section>

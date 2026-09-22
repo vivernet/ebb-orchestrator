@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiPaths } from '@ebb-orchestrator/contracts';
 import { apiClient, toClientPath } from '../../api/client.js';
+import { EmptyState, ErrorAlert, PageState } from '../../components/PageState.js';
+import StatusBadge from '../../components/StatusBadge.js';
 import { useOnSSEReconnect } from '../../hooks/useEventClient.js';
 import { createMutationStore, type MutationState } from '../../state/mutation-store.js';
 import { createQueryStore } from '../../state/query-store.js';
@@ -90,21 +92,21 @@ export default function ApprovalInboxPage({ projectId }: ApprovalInboxProps) {
   const approvals = query.data?.approvals.map(mapApprovalRow) ?? [];
   const pendingApprovals = approvals.filter((approval) => approval.status === 'pending');
 
-  if (query.status === 'loading' || query.status === 'idle') return <div>Loading approvals...</div>;
+  if (query.status === 'loading' || query.status === 'idle') return <PageState status="loading" message="Loading approvals..." />;
 
   if (query.status === 'error' || !query.data) {
-    return <div className="approval-inbox-page"><h1>Approval Inbox</h1><p role="alert">Unable to load approvals: {errorMessage(query.error)}</p><button type="button" onClick={retry}>Retry</button></div>;
+    return <PageState status="error" title="Approval Inbox" message={`Unable to load approvals: ${errorMessage(query.error)}`} onRetry={retry} />;
   }
 
   return (
     <div className="approval-inbox-page">
       <h1>Approval Inbox</h1>
-      {mutationState.status === 'error' && <p role="alert">Unable to update approval: {errorMessage(mutationState.error)} <button type="button" onClick={retry}>Retry</button></p>}
-      {pendingApprovals.length === 0 ? <p>No pending approvals.</p> : (
+      {mutationState.status === 'error' && <ErrorAlert message={`Unable to update approval: ${errorMessage(mutationState.error)}`} onRetry={retry} />}
+      {pendingApprovals.length === 0 ? <EmptyState message="No pending approvals." /> : (
         <ul className="approval-list">
           {pendingApprovals.map((approval) => (
             <li key={approval.id} className="approval-item">
-              <div className="approval-header"><strong>{approval.action}</strong><span className="approval-scope">{approval.scope}</span></div>
+              <div className="approval-header"><strong>{approval.action}</strong><StatusBadge status={approval.scope} label={approval.scope} /></div>
               <p className="approval-description">{approval.description}</p>
               <div className="approval-context"><small>Requested by: {approval.requestedBy}</small></div>
               <div className="approval-actions"><button type="button" disabled={mutationState.status === 'pending'} onClick={() => void handleApprove(approval.id)}>Approve</button></div>

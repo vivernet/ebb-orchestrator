@@ -155,6 +155,15 @@ describe('Settings page configuration hierarchy', () => {
 });
 
 describe('Usage page budget tracking', () => {
+  test('renders loading usage data as a canonical status region', () => {
+    vi.spyOn(apiClient, 'get').mockReturnValue(new Promise(() => undefined));
+
+    render(<UsagePage />);
+
+    expect(screen.getByRole('status')).toHaveTextContent('Loading usage data…');
+    vi.restoreAllMocks();
+  });
+
   test('shows corrected token metrics with honest aggregate labels', async () => {
     const get = vi.spyOn(apiClient, 'get').mockResolvedValue(usageFixture({
       global: { inputTokens: 100, cachedTokens: 20, outputTokens: 30, totalTokens: 150, tokens: 150, cost: 10 },

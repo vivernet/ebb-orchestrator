@@ -2,6 +2,7 @@ import { useCallback, useMemo } from 'react';
 import { apiPaths, type TaskOverviewProjection } from '@ebb-orchestrator/contracts';
 import { Link } from 'react-router';
 import { apiClient, toClientPath } from '../../api/client.js';
+import { ErrorAlert } from '../../components/PageState.js';
 import WorkflowTimeline, { TASK_LIFECYCLE_STAGES } from '../../components/WorkflowTimeline.js';
 import { useOnSSEReconnect } from '../../hooks/useEventClient.js';
 import { createQueryStore } from '../../state/query-store.js';
@@ -30,8 +31,8 @@ export default function TaskPage({ id = '' }: TaskPageProps) {
   return (
     <div className="task-page">
       <h1>Task: {(task?.title ?? task?.display_id ?? id) || 'Loading'}</h1>
-      {query.status === 'error' && <p className="inline-alert" role="alert">Unable to load task: {errorMessage(query.error)} <button type="button" onClick={retry}>Retry</button></p>}
-      {notFound && <p className="inline-alert" role="alert">Task not found. <button type="button" onClick={retry}>Retry</button></p>}
+      {query.status === 'error' && <ErrorAlert message={`Unable to load task: ${errorMessage(query.error)}`} onRetry={retry} />}
+      {notFound && <ErrorAlert message="Task not found." onRetry={retry} />}
       <section aria-label="Contract"><h2>Contract</h2><p>{contract}</p></section>
       <section aria-label="Workflow"><h2>Workflow</h2><p>{notFound ? 'Task workflow unavailable.' : projection ? `Status: ${projection.lifecycle.status ?? task?.status ?? 'Unknown'}` : `Status: ${query.status === 'error' ? 'Unavailable' : 'Loading task projection…'}`}</p>{projection && !notFound && <WorkflowTimeline stages={TASK_LIFECYCLE_STAGES} currentStage={projection.lifecycle.stage ?? projection.lifecycle.status} />}</section>
       <section aria-label="Related work"><h2>Related work</h2>{notFound ? <p>Related work unavailable.</p> : <p>{task?.project_id ? <Link to={`/projects/${encodeURIComponent(task.project_id)}`}>Project</Link> : null}{task?.project_id && task.epic_id ? ' · ' : ''}{task?.epic_id ? <Link to={`/epics/${encodeURIComponent(task.epic_id)}`}>Epic</Link> : null}</p>}</section>

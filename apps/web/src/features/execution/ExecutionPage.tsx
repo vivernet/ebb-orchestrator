@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiPaths } from '@ebb-orchestrator/contracts';
 import { Link } from 'react-router';
 import { apiClient, toClientPath } from '../../api/client.js';
+import { EmptyState, ErrorAlert, PageState } from '../../components/PageState.js';
+import StatusBadge from '../../components/StatusBadge.js';
 import { useOnSSEReconnect } from '../../hooks/useEventClient.js';
 import { createQueryStore } from '../../state/query-store.js';
 import { useQuery } from '../../state/use-query.js';
@@ -52,9 +54,9 @@ export default function ExecutionPage() {
     await mutationStore.execute('cancel-run', () => apiClient.post(toClientPath(apiPaths.runCancel(runId)), {}), query.refetch).catch(() => undefined);
   };
 
-  if (query.status === 'loading' || query.status === 'idle') return <div className="page-state">Loading execution queue…</div>;
+  if (query.status === 'loading' || query.status === 'idle') return <PageState status="loading" message="Loading execution queue…" />;
   if (query.status === 'error' || !projection) {
-    return <div className="page-state" role="alert"><p>Unable to load execution queue: {errorMessage(query.error)}</p><button type="button" onClick={retry}>Retry</button></div>;
+    return <PageState status="error" message={`Unable to load execution queue: ${errorMessage(query.error)}`} onRetry={retry} />;
   }
 
   const data = projection;
@@ -71,7 +73,7 @@ export default function ExecutionPage() {
         <button type="button" onClick={retry}>Refresh</button>
       </header>
 
-      {cancelState.status === 'error' && <p className="inline-alert" role="alert">Unable to cancel run: {errorMessage(cancelState.error)}</p>}
+      {cancelState.status === 'error' && <ErrorAlert message={`Unable to cancel run: ${errorMessage(cancelState.error)}`} />}
 
       <section aria-label="Execution summary" className="metric-grid">
         <div><span className="metric-value">{data.running.length}</span><span className="metric-label">Running</span></div>
@@ -81,9 +83,9 @@ export default function ExecutionPage() {
 
       <section aria-label="Execution queue" className="table-card">
         <div className="section-heading"><h2>Queue</h2><p>Reasons come from the scheduler projection.</p></div>
-        {rows.length === 0 ? <p className="empty-state">No active, waiting, or blocked work.</p> : (
+        {rows.length === 0 ? <EmptyState message="No active, waiting, or blocked work." /> : (
           <div className="table-scroll"><table className="execution-queue-table"><thead><tr><th>Role</th><th>Target</th><th>Status</th><th>Wait reason</th><th aria-label="Actions" /></tr></thead><tbody>
-            {rows.map((entry) => <tr key={`${entry.kind}-${entry.id}`}><td>{entry.kind === 'run' ? <Link to={`/runs/${encodeURIComponent(entry.id)}`}>{entry.role}</Link> : entry.role}</td><td>{entry.kind === 'run' && data.running.find((run) => run.runId === entry.id)?.taskId ? <Link to={`/tasks/${encodeURIComponent(data.running.find((run) => run.runId === entry.id)?.taskId ?? '')}`}>{entry.target}</Link> : entry.kind !== 'run' ? <Link to={`/tasks/${encodeURIComponent(entry.id)}`}>{entry.target}</Link> : entry.target}</td><td><span className="status-chip">{entry.status}</span></td><td>{entry.reason ? <><strong>{entry.reason.code}</strong><span className="reason-message">{entry.reason.message}</span></> : '—'}</td><td>{entry.kind === 'run' && <button type="button" className="danger-button" disabled={cancelState.status === 'pending'} onClick={() => void cancelRun(entry.id)}>Cancel</button>}</td></tr>)}
+            {rows.map((entry) => <tr key={`${entry.kind}-${entry.id}`}><td>{entry.kind === 'run' ? <Link to={`/runs/${encodeURIComponent(entry.id)}`}>{entry.role}</Link> : entry.role}</td><td>{entry.kind === 'run' && data.running.find((run) => run.runId === entry.id)?.taskId ? <Link to={`/tasks/${encodeURIComponent(data.running.find((run) => run.runId === entry.id)?.taskId ?? '')}`}>{entry.target}</Link> : entry.kind !== 'run' ? <Link to={`/tasks/${encodeURIComponent(entry.id)}`}>{entry.target}</Link> : entry.target}</td><td><StatusBadge status={entry.status} /></td><td>{entry.reason ? <><strong>{entry.reason.code}</strong><span className="reason-message">{entry.reason.message}</span></> : '—'}</td><td>{entry.kind === 'run' && <button type="button" className="danger-button" disabled={cancelState.status === 'pending'} onClick={() => void cancelRun(entry.id)}>Cancel</button>}</td></tr>)}
           </tbody></table></div>
         )}
       </section>

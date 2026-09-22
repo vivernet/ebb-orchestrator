@@ -1,6 +1,7 @@
 import { useCallback, useMemo } from 'react';
 import { apiPaths, type SettingsProjection } from '@ebb-orchestrator/contracts';
 import { apiClient, toClientPath } from '../../api/client.js';
+import { PageState } from '../../components/PageState.js';
 import { createQueryStore } from '../../state/query-store.js';
 import { useQuery } from '../../state/use-query.js';
 
@@ -16,9 +17,9 @@ export default function SettingsPage() {
   const query = useQuery(store, settingsPath, undefined, fetcher);
   const retry = useCallback(() => { void query.refetch().catch(() => undefined); }, [query.refetch]);
 
-  if (query.status === 'loading' || query.status === 'idle') return <div>Loading settings...</div>;
+  if (query.status === 'loading' || query.status === 'idle') return <PageState status="loading" message="Loading settings..." />;
   if (query.status === 'error' || !query.data) {
-    return <div className="settings-page"><h1>Settings</h1><p role="alert">Unable to load settings: {query.error instanceof Error ? query.error.message : 'Data not available'}</p><button type="button" onClick={retry}>Retry</button></div>;
+    return <PageState status="error" title="Settings" message={`Unable to load settings: ${query.error instanceof Error ? query.error.message : 'Data not available'}`} onRetry={retry} />;
   }
 
   const { global } = query.data.effectiveHierarchy;

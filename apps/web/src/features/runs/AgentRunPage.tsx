@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiPaths } from '@ebb-orchestrator/contracts';
 import { Link } from 'react-router';
 import { apiClient, toClientPath } from '../../api/client.js';
+import { ErrorAlert, PageState } from '../../components/PageState.js';
+import StatusBadge from '../../components/StatusBadge.js';
 import { useOnSSEReconnect } from '../../hooks/useEventClient.js';
 import { createQueryStore } from '../../state/query-store.js';
 import { useQuery } from '../../state/use-query.js';
@@ -50,8 +52,9 @@ export default function AgentRunPage({ id }: AgentRunPageProps) {
     await mutationStore.execute('cancel-run', () => apiClient.post(cancelPath, {}), query.refetch).catch(() => undefined);
   };
 
-  if (query.status === 'loading' || query.status === 'idle') return <div className="page-state">Loading Agent Run…</div>;
-  if (query.status === 'error' || !run) return <div className="page-state" role="alert"><p>Unable to load Agent Run: {query.status === 'error' ? errorMessage(query.error) : 'not found'}</p><button type="button" onClick={retry}>Retry</button></div>;
+  if (query.status === 'loading' || query.status === 'idle') return <PageState status="loading" message="Loading Agent Run…" />;
+  if (query.status === 'error') return <PageState status="error" message={`Unable to load Agent Run: ${errorMessage(query.error)}`} onRetry={retry} />;
+  if (!run) return <ErrorAlert message="Unable to load Agent Run: not found" onRetry={retry} />;
 
   const isActive = ['STARTED', 'IN_PROGRESS', 'COMPLETING'].includes(run.status);
 
@@ -59,10 +62,10 @@ export default function AgentRunPage({ id }: AgentRunPageProps) {
     <div className="agent-run-page page-stack">
       <header className="page-header">
         <div><p className="eyebrow">Agent activity</p><h1>Agent Run: {run.id}</h1></div>
-        <span className="status-chip">{run.status}</span>
+        <StatusBadge status={run.status} />
       </header>
 
-      {cancelState.status === 'error' && <p className="inline-alert" role="alert">Unable to cancel run: {errorMessage(cancelState.error)}</p>}
+      {cancelState.status === 'error' && <ErrorAlert message={`Unable to cancel run: ${errorMessage(cancelState.error)}`} />}
 
       <section className="detail-grid" aria-label="Run details">
         <div><span>Role</span><strong>{run.role}</strong></div>

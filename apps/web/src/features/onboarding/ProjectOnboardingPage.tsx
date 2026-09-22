@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { apiClient } from '../../api/client.js';
+import { EmptyState, PageState } from '../../components/PageState.js';
+import StatusBadge from '../../components/StatusBadge.js';
 
 interface OnboardingProject {
   projectId: string;
@@ -44,19 +46,17 @@ export default function ProjectOnboardingPage({ id }: { id: string }) {
     return (
       <main className="project-onboarding-page">
         <h1>Project onboarding</h1>
-        <div className="page-state page-state-empty" role="status">
-          Select a project before opening its onboarding review. The current local API does not expose a project-discovery action, so this page never guesses an identifier or sends an invalid request.
-        </div>
+        <EmptyState message="Select a project before opening its onboarding review. The current local API does not expose a project-discovery action, so this page never guesses an identifier or sends an invalid request." />
       </main>
     );
   }
 
   if (loading) {
-    return <div className="page-state" role="status">Loading onboarding data...</div>;
+    return <PageState status="loading" message="Loading onboarding data..." />;
   }
 
   if (error || !data) {
-    return <div className="page-state page-state-error" role="alert">Error: {error ?? 'Data not available'}</div>;
+    return <PageState status="error" message={`Error: ${error ?? 'Data not available'}`} />;
   }
 
   return (
@@ -86,7 +86,7 @@ export default function ProjectOnboardingPage({ id }: { id: string }) {
 
       <section aria-label="Approval status">
         <h2>Approval Status</h2>
-        <p>Status: {data.approvalStatus}</p>
+        <p>Status: <StatusBadge status={data.approvalStatus} label={data.approvalStatus} /></p>
         <p>Semantic config approved: {data.semanticConfigApproved ? 'Yes' : 'No'}</p>
       </section>
 

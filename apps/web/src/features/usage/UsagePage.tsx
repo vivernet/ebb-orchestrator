@@ -1,6 +1,7 @@
 import { useCallback, useMemo } from 'react';
 import { apiPaths } from '@ebb-orchestrator/contracts';
 import { apiClient, toClientPath } from '../../api/client.js';
+import { EmptyState, PageState } from '../../components/PageState.js';
 import { useOnSSEReconnect } from '../../hooks/useEventClient.js';
 import { createQueryStore } from '../../state/query-store.js';
 import { useQuery } from '../../state/use-query.js';
@@ -54,20 +55,20 @@ export default function UsagePage() {
   useOnSSEReconnect(refresh);
 
   if (!query.data && (query.status === 'idle' || query.status === 'loading')) {
-    return <div className="page-state">Loading usage data…</div>;
+    return <PageState status="loading" message="Loading usage data…" />;
   }
 
   if (query.status === 'error') {
-    return <div className="page-state" role="alert"><p>Unable to load usage: {errorMessage(query.error)}</p><button type="button" onClick={retry}>Retry</button></div>;
+    return <PageState status="error" message={`Unable to load usage: ${errorMessage(query.error)}`} onRetry={retry} />;
   }
 
   if (!query.data) {
-    return <div className="page-state" role="alert"><p>Usage data is unavailable.</p><button type="button" onClick={retry}>Retry</button></div>;
+    return <PageState status="error" message="Usage data is unavailable." onRetry={retry} />;
   }
 
   const data = query.data;
   if (!hasUsage(data)) {
-    return <div className="usage-page"><h1>Usage</h1><p className="empty-state">No usage records are available.</p></div>;
+    return <div className="usage-page"><h1>Usage</h1><EmptyState message="No usage records are available." /></div>;
   }
 
   return (
