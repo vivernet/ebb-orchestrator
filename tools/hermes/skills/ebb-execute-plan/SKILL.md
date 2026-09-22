@@ -1,6 +1,6 @@
 ---
 name: ebb-execute-plan
-description: Use when executing an Ebb Orchestrator implementation plan safely.
+description: Выполнение плана реализации Ebb Orchestrator с соблюдением всех правил и проверок.
 version: 1.0.0
 platforms: [windows, linux, macos]
 metadata:

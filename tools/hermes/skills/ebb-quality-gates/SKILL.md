@@ -1,6 +1,6 @@
 ---
 name: ebb-quality-gates
-description: Use when claiming an Ebb implementation, audit, recovery fix, provider integration, or documentation change is complete.
+description: Завершение работы Ebb Orchestrator: прогонка quality gates (lint, typecheck, тесты, build, security checks).
 version: 1.0.0
 platforms: [windows, linux, macos]
 metadata:

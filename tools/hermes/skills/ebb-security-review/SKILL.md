@@ -1,6 +1,6 @@
 ---
 name: ebb-security-review
-description: Use when reviewing Ebb changes that cross trust boundaries, secrets, permissions, process execution, Git, MCP, or recovery.
+description: Ревью изменений Ebb Orchestrator в областях: границы доверия, секреты, разрешения, выполнение процессов, Git, MCP, восстановление.
 version: 1.0.0
 platforms: [windows, linux, macos]
 metadata:

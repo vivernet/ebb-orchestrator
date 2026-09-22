@@ -1,6 +1,6 @@
 ---
 name: ebb-review-task
-description: Use when independently reviewing one Ebb Orchestrator task diff.
+description: Независимое ревью диффа отдельной задачи Ebb Orchestrator на соответствие плану и архитектуре.
 version: 1.0.0
 platforms: [windows, linux, macos]
 metadata:

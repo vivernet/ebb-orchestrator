@@ -1,6 +1,6 @@
 ---
 name: ebb-implement-task
-description: Use when implementing one isolated Ebb Orchestrator plan task.
+description: Реализация отдельной задачи из плана Ebb Orchestrator по принципу TDD с проверками.
 version: 1.0.0
 platforms: [windows, linux, macos]
 metadata:

@@ -1,6 +1,6 @@
 ---
 name: ebb-provider-integration
-description: Use when adding or verifying an OpenAI-compatible AI provider, model alias, base URL, API-key boundary, or Hermes provider profile in Ebb.
+description: Добавление/проверка провайдера AI (OpenAI-compatible) для Ebb Orchestrator: endpoint, алиасы моделей, URL, ключи, профили Hermes.
 version: 1.0.0
 platforms: [windows, linux, macos]
 metadata:
