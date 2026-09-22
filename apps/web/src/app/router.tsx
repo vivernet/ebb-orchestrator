@@ -4,7 +4,7 @@ import DashboardPage from '../features/dashboard/DashboardPage.js';
 import ProjectPage from '../features/projects/ProjectPage.js';
 import EpicPage from '../features/epics/EpicPage.js';
 import TaskPage from '../features/tasks/TaskPage.js';
-import ProjectOnboardingPage from '../features/onboarding/ProjectOnboardingPage.js';
+import OnboardingPage from '../features/onboarding/OnboardingPage.js';
 import SettingsPage from '../features/settings/SettingsPage.js';
 import UsagePage from '../features/usage/UsagePage.js';
 import ApprovalInboxPage from '../features/approvals/ApprovalInboxPage.js';
@@ -15,7 +15,7 @@ import { isRouteErrorResponse, Link, useParams, useRevalidator, useRouteError } 
 const ProjectRoute = () => <ProjectPage id={useParams().id ?? ''} />;
 const EpicRoute = () => <EpicPage id={useParams().id ?? ''} />;
 const TaskRoute = () => <TaskPage id={useParams().id ?? ''} />;
-const OnboardingRoute = () => <ProjectOnboardingPage id={useParams().id ?? ''} />;
+const OnboardingRoute = () => <OnboardingPage />;
 const SettingsRoute = () => <SettingsPage />;
 const UsageRoute = () => <UsagePage />;
 const ApprovalRoute = () => <ApprovalInboxPage />;
