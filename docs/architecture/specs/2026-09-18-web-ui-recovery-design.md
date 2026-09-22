@@ -1,248 +1,290 @@
 # Ebb Orchestrator — Web UI Recovery Design
 
-> Recovery design produced from the bounded Stage 10 audit on 2026-09-21. This document defines the next implementation boundary; it does not authorize production-code changes, new backend capabilities, or post-v1 scope.
+## Status and scope
 
-## Design decisions
+Это recovery design по результатам factual audit в [`docs/audit/web-ui-gap-analysis.md`](../../audit/web-ui-gap-analysis.md). Он сохраняет утверждённую V1 information architecture и текущий React/Vite stack. Это не implementation plan и не разрешение менять backend contracts или добавлять post-v1 scope.
 
-1. Keep React + Vite + TypeScript + React Router 7. The audit found incomplete composition and contract wiring, not evidence that the current framework cannot implement the approved V1 information architecture.
-2. Keep the backend/read-model boundary authoritative. UI state may render, cache, retry, and optimistically mark pending mutation state, but it must not invent lifecycle transitions, approval authority, scheduler reasons, Git state, budgets, or persistent IDs.
-3. Add UI only for evidenced endpoints. Where the approved screen requires an unsupported action or projection, record a contract decision and keep the control absent until the backend contract is approved and implemented.
-4. Keep local-session security: bearer remains memory-only, reload uses same-origin HttpOnly session plus CSRF token, and untrusted terminal content is sanitized before display.
+Current recovery verdict: shell and projection foundation are usable; onboarding, approval decisions, run evidence, editable configuration and complete primary navigation require staged recovery. Backend remains the authority for permissions, transitions, approvals, scheduling, budgets, Git and recovery.
 
 ## Application shell
 
-`AppShell` remains the root layout and gains:
+- `AppShell` owns the persistent shell, global navigation, project context and outlet.
+- Primary navigation: Dashboard, Projects (project index + New Project), Approvals, Execution, Usage, Settings.
+- Project-scoped navigation is rendered from a resolved project context: Overview, Epics, Tasks, Runs, Git, Guidelines, Usage, Settings. It must not guess IDs or expose actions the backend did not provide. A project index/read endpoint is a prerequisite for an honest Projects entry; it is a backend contract gap, not a client-side workaround.
+- Breadcrumbs use route metadata and stable display labels, not raw untrusted path segments as the only label.
+- Shell owns global session bootstrap/restore, connection indicator, accessible live-region announcements and a compact notification outlet.
+- No client-side security boundary: visible actions come from backend capability/approval state and are revalidated by backend.
 
-- primary navigation to Dashboard, projects, approvals, execution, usage, settings;
-- context links from project/work/run records, breadcrumb/back navigation, and an explicit `/404`/route error surface;
-- consistent page header, status, action, loading, error, empty, and inline-confirmation primitives;
-- responsive navigation that remains keyboard reachable at the existing 700px/960px breakpoints.
+## Routing/navigation
 
-The shell must not add a fake Projects list or a fake Coordinator Chat. It may link to a real project list/create contract once one is available. `/projects/new` must either become a real onboarding entry form using `POST /onboarding/discover` or be replaced by a route that has a real contract; it must not silently fabricate an identifier.
+Retain React Router `createBrowserRouter` and direct URL support. Add only V1 routes required by the approved screens:
 
-## Routing and navigation
+| Route | Purpose |
+|---|---|
+| `/` | Dashboard |
+| `/projects` | project index and onboarding entry |
+| `/projects/new` | discovery input and onboarding start |
+| `/projects/:projectId` | Project View |
+| `/projects/:projectId/epics/:epicId` | project-scoped Epic View alias, if backend IDs resolve |
+| `/projects/:projectId/tasks/:taskId` | project-scoped Task View alias |
+| `/projects/:projectId/runs/:runId` | project-scoped Run Detail alias |
+| `/approvals` | Approval Inbox |
+| `/execution` | Execution Queue / Agents Monitor |
+| `/runs/:id` | canonical Run Detail deep link |
+| `/usage` | global Usage & Budget |
+| `/settings` | effective global configuration |
 
-Retain the current route identities and add route-level error/404 handling:
-
-| Route | Page | Required navigation |
-|---|---|---|
-| `/` | Dashboard | links to real project, epic, task, approval, execution, and run IDs present in returned projections |
-| `/projects/:id` | Project | real internal links for epics/tasks/runs/usage where IDs/data exist |
-| `/epics/:id` | Epic | child task links and project back link |
-| `/tasks/:id` | Task | run, dependency, approval, project/epic links |
-| `/approvals` | Approval Inbox | approval detail context; no unsupported reject/change buttons |
-| `/execution` | Execution monitor | task/run links; cancel only for rows and statuses accepted by backend |
-| `/runs/:id` | Agent Run | task/epic links; supported observable sections only |
-| `/usage` | Usage & Budget | scope links/drill-down only for returned IDs |
-| `/settings` | Settings | project/config context once a real editable scope is selected |
-| `/projects/new` | Onboarding entry | repository path → discovery → review; never requires a guessed project ID |
-
-No browser route is allowed to treat a 200 empty fallback projection as proof that an entity exists; the page must distinguish not-found/empty/error according to the backend response contract.
+Existing `/epics/:id`, `/tasks/:id`, `/projects/:id`, `/runs/:id` deep links remain compatible during migration. Direct navigation and reload must serve the SPA through the existing backend fallback.
 
 ## Frontend module boundaries
 
-```text
-apps/web/src/app/              router, providers, route boundaries
-apps/web/src/components/       shell and reusable visual/state primitives
-apps/web/src/api/              typed transport, endpoint paths, SSE/refetch events
-apps/web/src/state/            query cache, invalidation, mutation lifecycle
-apps/web/src/features/         one page module per approved screen
-apps/web/test/                 contract, state, route and accessibility-oriented tests
-```
+- `app/`: router, route metadata, session/application bootstrap only.
+- `components/shell/`: AppShell, project switcher, breadcrumbs, nav, connection/notification regions.
+- `components/ui/`: PageState, EmptyState, ErrorAlert, StatusBadge, ActionButton, DataTable, FormField, MetricCard, Timeline.
+- `api/`: client, typed endpoint adapters, SSE subscription port; no domain decisions.
+- `state/`: query cache, mutation state, invalidation and session-scoped lifecycle.
+- `features/dashboard`, `projects`, `onboarding`, `epics`, `tasks`, `approvals`, `execution`, `runs`, `usage`, `settings`: route composition and feature-specific view models.
+- `features/*/api.ts`: feature adapter from shared contract/read model to view data; no direct persistence details.
+- `test/`: component/contract tests; `test/e2e/`: browser and persistence tests.
 
-Feature modules own page composition and view-specific mapping. They do not reach into server persistence or duplicate policy. Shared state owns request lifecycle and invalidation, not domain transitions.
+Feature modules may depend on `api`, `state` and `components/ui`; they must not import another feature's internal state or backend implementation. Cross-feature navigation uses route builders.
 
 ## Shared UI primitives / design system
 
-Create or refactor the following within the existing CSS approach:
+Retain and consolidate `PageState`, `StatusBadge`, `WorkflowTimeline`, `SanitizedTerminal`. Add:
 
-- `PageState`: loading, error with retry, empty, and not-found variants;
-- `PageHeader` and `Breadcrumbs`;
-- `StatusBadge` with deterministic status-to-variant mapping, while preserving raw canonical status text;
-- `ActionButton`/`ActionGroup` with pending/disabled and confirmation support;
-- `MetricCard`, `DataList`, `DataTable`, `Timeline`, `EventList`, and `InlineAlert`;
-- `SensitiveText`/`SanitizedTerminal` for untrusted tool output only when the backend supplies an approved log projection.
-
-Avoid a new major component framework. Keep semantic headings, table headers, keyboard focus, visible focus, and `aria-live` only for transient status updates that are safe to expose.
+- `AsyncBoundary`: loading/error/empty/unavailable/stale states with consistent accessible semantics.
+- `CapabilityAction`: renders an action only when backend capability allows it, shows blocked reason when appropriate, and reports mutation state.
+- `MetricCard`, `DataTable`, `EvidencePanel`, `ReasonCallout`, `FormField`, `NotificationRegion`.
+- Canonical status map from backend code to label, variant and explanation; never use color alone.
+- All actions expose keyboard focus, disabled pending state, safe error text and a post-mutation announcement.
 
 ## API client
 
-Refactor `apps/web/src/api/client.ts` into a typed endpoint catalog while preserving its security behavior. Include actual paths for session, dashboard, projects, epics, tasks, approvals, execution, runs, usage, settings, onboarding, and events. Align or extend `packages/contracts/src/api.ts:63-71` rather than maintaining a second undocumented path list.
-
-Each request must support:
-
-- same-origin credentials and current CSRF/bearer headers;
-- structured server error parsing with status and safe message;
-- abort/cancellation on route change;
-- typed response validation at the boundary for new/changed contracts;
-- no logging of launch tokens, bearer tokens, secrets, prompts, or raw untrusted artifacts.
+- Retain `apiClient`, `ApiError`, in-memory bearer and same-origin HttpOnly session/CSRF behavior.
+- Use `packages/contracts/src/api.ts` path builders everywhere, including onboarding; no string-concatenated endpoint paths in feature components.
+- Add typed endpoint adapters per feature. Adapters may normalize `null`/empty projections but may not invent missing data or silently convert errors to success.
+- Normalize errors into `{ status, code, message, retryable, fieldErrors? }`; preserve machine code and safe server message.
+- Mutations refetch or invalidate authoritative query keys after success. No optimistic workflow transition unless backend returns the authoritative updated projection.
 
 ## Query/cache/state strategy
 
-Use a small project-local query store rather than introducing a major dependency in this recovery stage. A query key is the canonical endpoint plus normalized parameters. The store owns `idle/loading/success/error`, data timestamp, retry, and invalidation. SSE events cause invalidation/refetch of affected keys; SSE payloads are hints, not authoritative state. Detail pages must refetch after mutations and after reconnect when their key is invalidated.
+- Replace per-component isolated stores with one app-scoped query cache keyed by canonical endpoint plus normalized params.
+- Each query has `idle | loading | success | empty | error | stale` state and an AbortSignal.
+- Mutations are keyed by resource/action and expose pending/success/error; they never own domain state.
+- SSE remains invalidation/presentation only. It marks matching query keys stale and triggers bounded refetch. On reconnect, always refetch authoritative state.
+- SSE subscription API must return an unsubscribe function; mounted hooks must remove listeners on cleanup.
+- No secrets in browser storage, prompts, UI state or logs.
 
-Mutation state must include pending, structured failure, and confirmed success. Avoid optimistic domain-state transitions for approvals, lifecycle, Git, scheduler, or activation; show “pending” until the authoritative read model confirms the result.
+## Mutation/error strategy
 
-## Loading, error, and empty states
+- Use `CapabilityAction` and feature adapters for all mutations.
+- Backend response is the source of truth; display updated projection after mutation.
+- 401/403: session/permission boundary message and safe recovery path. 404: resource not found. 409: state conflict with backend reason. 422: field/domain validation. 429/503: retryable state. Unknown errors: safe generic message with correlation/request ID only if backend provides one.
+- Never render repository paths, tokens, raw stack traces or privileged payloads in generic error UI.
 
-Every page has explicit states:
+## Loading/error/empty states
 
-- loading: stable skeleton/label and no destructive controls;
-- error: safe server message, retry, and preserved route context;
-- not found: distinguish missing entity from empty collection;
-- empty: explain what is empty and provide a real next action only if an endpoint supports it;
-- mutation failure: preserve current data, identify the action, and offer retry/reload without hiding the server status.
+Every approved screen must define all four states:
 
-## Forms and validation
+- loading: skeleton or scoped progress without implying data exists;
+- empty: explain why empty and provide an allowed next action;
+- error: safe message, retry when retryable, back/context link where relevant;
+- unavailable/blocked: backend reason and required approval/configuration, with no client bypass.
 
-Forms are allowed only for evidenced commands:
+Stale data is labeled and remains readable while refetching. Empty is not conflated with error or unavailable.
 
-- onboarding repository path → `POST /onboarding/discover`;
-- onboarding semantic approval request/approve/activate → existing routes and exact backend policy;
-- project/task/epic creation → existing `POST` routes with their current schemas;
-- task dependencies → existing dependency routes;
-- run cancel → existing cancel route.
+## Forms/validation
 
-Use field-level validation for request shape and backend error rendering for policy/conflict decisions. Never implement client-only activation, approval, lifecycle, budget, or Git transitions.
+- Onboarding form validates repository path/input locally only for shape, then calls `onboardingDiscover`; backend validates repository trust and semantics.
+- Settings form edits only fields exposed as mutable by backend capability/read model; submit uses the scheduler/config contract and then refetches.
+- Future task/epic forms use contracts and backend validation; they do not duplicate workflow rules.
+- Field errors are associated with labels and announced; invalid submit does not clear user input.
 
 ## Notifications and status presentation
 
-Inline alerts remain the primary durable error channel. Add a non-blocking success/status region for confirmed mutations, with accessible announcements and no sensitive payload. Raw domain status remains visible; human labels may be layered on top but must not replace canonical codes. Wait reasons must show both code and message from the Scheduler projection.
+- NotificationRegion announces mutation success/failure and stale/reconnect state.
+- StatusBadge uses canonical status + text explanation; actionable blocked/waiting reasons come from backend projections.
+- Live updates never claim a transition until the refetch confirms it.
 
-## Page composition and acceptance criteria
+## Page composition
 
-### Dashboard `/`
+Pages compose `AsyncBoundary`, feature adapter, summary header, primary action bar, and sections. A page does not create its own API client, invent endpoint strings, or repeat generic error markup.
 
-- Purpose: global active work, running agents, pending approvals, AI spend, active projects, queue and agent pool summary.
-- Data: `GET /api/v1/dashboard` and `GET /api/v1/execution`.
-- Actions: links to real records; Pause All/New Request only after an evidenced, policy-checked contract exists.
-- States: independent loading/error/empty for dashboard and queue.
-- Acceptance: every displayed project/work/run/approval identifier navigates to a real route; no static “Coordinator Chat” action; reconnect invalidates the dashboard keys.
+## Approved V1 screen contracts and acceptance criteria
 
-### Project View `/projects/:id`
+### Dashboard — `/`
 
-- Purpose: project identity, repository/GitHub state, epics/tasks, blockers, activity, budget and scoped configuration context.
-- Data: `ProjectOverviewProjection` from `GET /projects/:id`.
-- Actions: links to child records; create controls only for `POST /projects/:id/tasks`, `POST /projects/:id/epics`, or separately approved project creation.
-- States: loading, not-found, error, and empty child collections.
-- Acceptance: “tabs” are navigable links or are removed; every visible count has a corresponding list/detail or clear empty explanation.
+- Purpose: overview of running agents, active work, approvals, AI spend, active projects, queue, agent pool and coordinator entry.
+- Data: `DashboardProjection` + `ExecutionQueueProjection`.
+- Actions: navigate to New Request/project/task/run/approvals; Pause All only if backend exposes capability.
+- States: loading per projection; empty copy for no agents/work/queue/projects; error with independent retry; blocked action with backend reason.
+- Backend: `/api/v1/dashboard`, `/api/v1/execution`; no invented Pause All endpoint.
+- Reusable: MetricCard, StatusBadge, ReasonCallout, ActionButton.
+- Acceptance: direct/reload works; all links resolve; independent projection failure is visible; action persistence is confirmed by refetch.
 
-### Epic View `/epics/:id`
+### Project View — `/projects/:id`
 
-- Purpose: lifecycle/stages, contract, child-task graph/list, blockers, approvals, events, Git and usage.
-- Data: `EpicOverviewProjection` from `GET /epics/:id`.
-- Actions: child task navigation; planning/approve-run controls only against `epics.ts` contracts.
-- States: lifecycle loading/error/empty and explicit blocked/waiting reason.
-- Acceptance: stage status comes from projection; no UI computes or mutates lifecycle transitions.
+- Purpose: repository/GitHub, overview, epics/tasks/runs/Git/guidelines/usage, dependencies, runtime/isolation/parallel/merge settings, activity and budget.
+- Data: `ProjectOverviewProjection`.
+- Actions: links to child work; create/config actions only when backend capability exists.
+- States: loading, no project, empty work, backend error/blocked.
+- Backend: `/api/v1/projects/:id` plus separately verified child routes.
+- Acceptance: project context navigation and direct/reload preserve ID; no client-side transition/merge decision.
 
-### Task View `/tasks/:id`
+### Epic View — `/epics/:id`
 
-- Purpose: contract, lifecycle, runs, findings/defects, dependencies, approvals/events, Git, recovery reason and usage.
-- Data: `TaskOverviewProjection` from `GET /tasks/:id`.
-- Actions: supported pause, dispatch, dependency mutations and links; final merge only through exact approved authority contract.
-- States: projection loading/error/not-found, empty findings/dependencies/runs, explicit wait reason.
-- Acceptance: `WorkflowTimeline` preserves exceptional states; controls are disabled/pending while mutation is unresolved and refetch after confirmation.
+- Purpose: lifecycle, contract, child tasks, review/QA/integration/merge, approvals, blockers, events and usage.
+- Data: `EpicOverviewProjection`.
+- Actions: child task navigation and approved planning actions where endpoint/capability exists.
+- States: projection loading, missing epic, no tasks, blocked lifecycle, error.
+- Backend: `/api/v1/epics/:id`, planning/final-merge routes; UI must not bypass approval.
+- Acceptance: every stage shows backend status/reason; merge action requires backend-provided approval capability and authoritative result.
 
-### Approval Inbox `/approvals`
+### Task View — `/tasks/:id`
 
-- Purpose: pending decisions with subject, scope, evidence and resolution history.
-- Data: `GET /approvals` plus a future approved detail contract if required.
-- Actions: current contract proves approve only. Reject/request-changes must not be rendered until backend routes and schemas are approved.
-- States: pending list, no pending approvals, load/mutation conflict error.
-- Acceptance: server envelope mapping remains covered; resolution is confirmed by refetch rather than local-only status.
+- Purpose: contract, workflow, runs, findings/defects, QA, Git/worktree, recovery, usage, dependencies/events.
+- Data: `TaskOverviewProjection` plus dependency route when needed.
+- Actions: dispatch/pause/dependency actions only from capabilities.
+- States: loading, missing, empty findings/runs, wait reason, error.
+- Backend: `/api/v1/tasks/:id`, dispatch/pause/dependencies.
+- Acceptance: workflow timeline reflects projection, not local guessed transitions; wait/block reason is visible; mutation refetches.
 
-### Execution Queue `/execution`
+### Approval Inbox — `/approvals`
 
-- Purpose: running/queued/blocked work, scheduler capacity, exact wait reason, and supported stop/cancel controls.
-- Data: `GET /execution`; current projection has running/waiting/blocked and `WaitReason`.
-- Actions: run cancel; future pause/stop-all/resource-lock controls only when contracts exist.
-- States: loading/error/empty and mutation failure.
-- Acceptance: each row links to its Task/Run; code and message are both shown; no reason is inferred in the browser.
+- Purpose: pending decisions with evidence, scope and action history.
+- Data: approval projection from `/api/v1/approvals`.
+- Actions: approve/reject/request changes only when contract and capability exist.
+- States: loading, no pending approvals, conflict/error, unavailable evidence.
+- Backend: current GET + approve; reject/request-changes require an approved contract change before implementation. The domain service alone is not sufficient evidence of an HTTP/UI contract.
+- Acceptance: decision result persists after reload; no action appears without authority; evidence is inspectable before decision.
 
-### Agent Run Detail `/runs/:id`
+### Execution Queue / Agents Monitor — `/execution`
 
-- Purpose: observable run metadata, usage, logs/events, permission decisions and recovery signals without hidden chain-of-thought.
-- Data: current `GET /runs/:id` safe metadata/usage; additional sections require an explicit backend contract.
-- Actions: current cancel only when active; checkpoint/resume/recovery controls require approved routes.
-- States: loading/not-found/error, active/inactive, and unavailable-observability sections clearly separated.
-- Acceptance: no raw prompt, hidden reasoning, secret, capability artifact, or unsupported subresource is requested; `SanitizedTerminal` is used only for an approved sanitized log field.
+- Purpose: running/waiting/blocked queue, capacity, reasons and supported pause/cancel.
+- Data: `ExecutionProjection`.
+- Actions: refresh, cancel run; pause only if backend route exists.
+- States: loading, empty, backend error, stale/reconnecting, blocked reason.
+- Backend: `/api/v1/execution`, `/api/v1/runs/:id/cancel`, scheduler capabilities.
+- Acceptance: cancel result is confirmed by refreshed projection; reason code/message is visible; no fake Pause All.
 
-### Usage & Budget `/usage`
+### Agent Run Detail / Live Logs — `/runs/:id`
 
-- Purpose: global/project/epic/task spend, effective limits, reservations and attributable run usage.
-- Data: current `GET /usage` hierarchy response; extend only through an explicit contract.
-- Actions: scope navigation and read-only drill-down; budget edits only when a server mutation is approved.
-- States: loading/error/empty/no-budget-data.
-- Acceptance: totals identify their scope and units; hard-limit/wait state is not conflated with zero spend.
+- Purpose: lifecycle, events, tool calls, sanitized logs, permission decisions, usage and recovery.
+- Data: run projection + SSE invalidation/event projection + sanitized output. Current HTTP projection does not yet expose all required events/tools/permissions/recovery/log fields; those are explicit backend contract prerequisites.
+- Actions: cancel active run; navigate task/epic; inspect evidence.
+- States: loading, missing, active/stale, terminal, log unavailable, error.
+- Backend: `/api/v1/runs/:id`, `/api/v1/events`; permission/recovery fields only if read model exposes them.
+- Acceptance: no raw secrets/log payloads; reconnect refetches; cancel is persisted; active/terminal distinctions are clear.
 
-### Settings `/settings`
+### Usage & Budget — `/usage`
 
-- Purpose: effective hierarchy and security posture, plus validated editable project configuration when supported.
-- Data: current `GET /settings`; scheduler config remains a distinct contract.
-- Actions: current page is read-only. Add edit/save only after a backend validation/persistence contract is approved.
-- States: loading/error and explicit read-only/unsupported state.
-- Acceptance: no JSON dump is the only representation of a user-editable setting; Local Mode warning remains accurate and visible.
+- Purpose: tokens, cache, cost, context size, recovery/rework share, effective cost and budget state.
+- Data: usage projection and backend budget fields.
+- Actions: navigation to settings; budget edits only where supported.
+- States: loading, no records, unavailable metric, error.
+- Backend: `/api/v1/usage` and approved budget/config route.
+- Acceptance: concrete units and scope are labeled; no invented quality score; negative/debt/blocking state follows backend projection.
 
-### Project Onboarding `/projects/new`
+### Settings / Project Configuration — `/settings`
 
-- Purpose: repository input, discovery, DETECTED facts, PROPOSED config, semantic approval, activation.
-- Data/actions: `POST /onboarding/discover`, `GET /onboarding/:id`, `POST /onboarding/:id/approval`, `POST /onboarding/:id/approve`, `POST /onboarding/:id/activate`.
-- States: initial input, discovery loading/error, review, approval pending/approved/conflict, activation success/failure.
-- Acceptance: DETECTED and PROPOSED remain visually distinct; activation only follows persisted approved semantic authority; secrets/runtime state are never rendered.
+- Purpose: effective hierarchy and supported global/project settings.
+- Data: `SettingsProjection`, mutable scheduler config where authorized.
+- Actions: edit/validate/save only exposed fields.
+- States: loading, read-only/unavailable scope, validation error, conflict, saved confirmation.
+- Backend: `/api/v1/settings`; scheduler config mutation only after contract/capability mapping.
+- Acceptance: refresh shows persisted server value; unavailable scopes are explicit; no client-side policy override.
 
-## Existing modules: retain / refactor / rewrite / delete
+### Project Onboarding — `/projects/new` and `/onboarding/:id`
 
-### RETAIN
+- Purpose: Repository → Discovery → Review Findings → Approve Config → Activate.
+- Data: discovery result and `OnboardingProject` projection.
+- Actions: discover, request approval, approve, activate according to backend authority.
+- States: initial form, discovery loading, findings/empty, approval pending/rejected, activation blocked/success, error.
+- Backend: `/api/v1/onboarding/discover`, `/onboarding/:id`, `/approval`, `/approve`, `/activate`.
+- Acceptance: no guessed identifier; each step persists and is reloadable; activation is impossible until backend-approved semantic config.
 
-- `apps/web/src/app/router.tsx` route identities as the starting point.
-- `apps/web/src/app/App.tsx`, `main.tsx`, and `api/client.ts` session security behavior.
-- `apps/web/src/api/events.ts` SSE transport principle.
-- `apps/web/src/components/WorkflowTimeline.tsx` lifecycle display semantics.
-- `apps/web/src/components/SanitizedTerminal.tsx` sanitization utility and tests, conditional on a supported log projection.
-- `apps/server/src/app/read-models/*` and `packages/contracts/src/api.ts` as authoritative projection boundary.
+## Existing modules classification
 
-### REFACTOR
-
-- `apps/web/src/components/AppShell.tsx` for navigation, breadcrumbs, route boundaries and shared states.
-- `apps/web/src/api/client.ts` and `apps/web/src/api/events.ts` around typed paths/query invalidation.
-- All ten `apps/web/src/features/*Page.tsx` files for page composition and shared state usage.
-- `apps/web/src/styles/base.css` only for shared primitives/responsive/accessibility needs; no framework replacement.
-
-### REWRITE
-
-- The onboarding entry/action surface, because the current `/projects/new` empty-id page cannot represent the backend flow.
-- Approval decision detail only after the approve-only vs full decision contract is resolved.
-- Agent Run observability sections only after backend exposes explicit safe projections.
-
-### DELETE
-
-- No immediate deletion in Stage 10. After implementation evidence, candidates are unused `StatusBadge`, unused `projectId` prop, and any `SanitizedTerminal` path proven to have no supported consumer. Deletion requires a separate consumer/test check.
+| Path/module | Decision | Boundary |
+|---|---|---|
+| `apps/web/src/api/client.ts` | RETAIN | Preserve session/CSRF/error semantics; add adapters around it |
+| `packages/contracts/src/api.ts` | RETAIN | Source of canonical paths/types; change only with contract decision |
+| `apps/web/src/api/events.ts` | REFACTOR | unsubscribe, typed invalidation, reconnect/refetch semantics |
+| `apps/web/src/state/*` | REFACTOR | app-scoped query cache and mutation lifecycle |
+| `apps/web/src/app/router.tsx` | REFACTOR | route metadata, project index, aliases, direct/reload tests |
+| `apps/web/src/components/AppShell.tsx` | REFACTOR | shell/nav/context/notifications/accessibility |
+| `apps/web/src/components/PageState.tsx`, `StatusBadge.tsx`, `WorkflowTimeline.tsx`, `SanitizedTerminal.tsx` | RETAIN then REFACTOR | consolidate shared design primitives |
+| `features/dashboard`, `projects`, `epics`, `tasks` | REFACTOR | compose adapters and capability actions |
+| `features/onboarding` | REWRITE | discovery/select/form and full persisted flow |
+| `features/approvals` | REWRITE | evidence and contract-approved decision actions |
+| `features/runs` | REWRITE | events/tools/logs/permissions/recovery composition |
+| `features/execution`, `usage`, `settings` | REFACTOR | capabilities, forms/metrics and state semantics |
+| `apps/web/test/e2e/*` | RETAIN then EXTEND | add populated/mutation/reload/viewport coverage |
+| `authenticatedHeaders` and discarded `projectId` prop | DELETE later | only after pre-existing diff and consumers are reconciled |
 
 ## Browser/E2E testing
 
-The next implementation must add a matrix-driven Playwright suite using the existing `apps/web/test/e2e/run-e2e.mjs` harness. For all 10 routes it must test normal navigation, direct load, reload/session restore, loading, empty, error/retry, and supported primary actions. It must assert network/API shape for mutations, authoritative refetch after mutation, no console errors, and no unsupported controls. The current Stage 10 audit did not run this suite because the request required a bounded read-only pass and no long-running browser tests.
+Playwright must run the real repository harness. For every route test normal navigation, direct URL, reload, loading, empty, error where possible, network request/result, primary action, refetch/persistence and console errors. Use seeded deterministic backend fixtures for populated flows, and separate contract tests for 403/409/422/503. Test desktop and narrow viewport. No screenshot-only acceptance.
 
-## Accessibility and responsive baseline
+## Accessibility baseline
 
-- All actions have accessible names and keyboard focus; status and mutation results use appropriate `role`/`aria-live` without leaking sensitive data.
-- Tables keep semantic headers; mobile layouts provide reachable horizontal scroll or card alternatives.
-- Focus-visible styling remains visible against the dark theme.
-- 320px minimum width and existing 700px/960px breakpoints are acceptance inputs, not assumptions.
+Semantic headings/landmarks, labeled navigation/forms/tables, keyboard-complete actions, visible focus, `aria-live` for async result/error, `role=alert` only for actionable errors, no color-only status, sufficient text contrast, and focus restoration after dialogs/route transitions.
+
+## Responsive behavior
+
+Desktop keeps persistent nav; narrow viewport collapses it to an accessible menu. Tables become stacked labeled rows or horizontal scroll with headers. Primary action remains reachable without hover. E2E covers 1280px desktop and 390px narrow viewport for shell, dashboard, approvals and run detail.
 
 ## Independently testable implementation stages
 
-| Stage | Files/modules | Acceptance criteria | Tests | Dependencies / non-goals |
-|---|---|---|---|---|
-| A. Shell + primitives | `app/router.tsx`, `AppShell.tsx`, `styles/base.css`, new shared state primitives | 404/error boundary, breadcrumbs, accessible shared states, real links from known IDs | shell/router/component tests at desktop/mobile widths | Depends on current routes; no backend changes |
-| B. API/query foundation | `api/client.ts`, `api/events.ts`, `packages/contracts/src/api.ts`, new web state module | typed path catalog, abort, cache/refetch/invalidation, mutation lifecycle, SSE key invalidation | client/query/mutation tests and API error tests | Preserve session/CSRF; no new capability inference |
-| C. Onboarding + Dashboard + Project | `features/onboarding`, `dashboard`, `projects` | repository discovery through persisted activation; linked dashboard/project data; no fake controls | route/API flow tests and targeted browser tests | Depends A/B; use existing onboarding/project routes only |
-| D. Task + Epic + Approval | `features/tasks`, `epics`, `approvals`, `WorkflowTimeline` | linked lifecycle/detail surfaces; supported mutations; approval contract decision recorded | projection mapping, mutation/refetch, decision-state tests | Depends C; do not invent reject/change routes |
-| E. Queue + Run + Usage + Settings | `features/execution`, `runs`, `usage`, `settings`, `SanitizedTerminal` | exact queue reasons, supported cancel, safe run observability, scoped usage, explicit settings read-only/edit contract | operations/configuration tests and route matrix browser checks | Depends B; backend contract gaps must remain explicit |
-| F. Browser E2E + cleanup | `apps/web/test/e2e/*`, dead-code candidates | all 10 routes verified direct/reload/action/error/empty; only then remove proven unused code | full web test/build/E2E relevant gate | Final verification; no post-v1 scope |
+### A. Application shell + shared primitives
 
-## Explicit non-goals
+- Modules: `app/router.tsx`, `components/AppShell.tsx`, `components/PageState.tsx`, `StatusBadge.tsx`, `styles/base.css`, new `components/shell/*`, `components/ui/*`.
+- Acceptance: project index/nav/breadcrumb, accessible states, responsive shell, direct/reload routes.
+- Tests: app-shell, router, primitive accessibility, Playwright shell viewport.
+- Depends on: none.
+- Must not change: backend routes, auth/session contract, domain transitions.
 
-- No new major frontend framework, global state platform, or backend persistence technology.
-- No hidden chain-of-thought, raw prompt, secret, or untrusted artifact exposure.
-- No invented Pause All, New Request, reject/request-changes, checkpoint, resume, settings-save, or log endpoints.
-- No production implementation, commit, merge, push, or browser E2E execution as part of this bounded audit.
+### B. API/query/mutation foundation
+
+- Modules: `api/client.ts`, new `api/adapters/*`, `api/events.ts`, `hooks/useEventClient.ts`, `state/*`.
+- Acceptance: canonical path builders, typed errors, app-scoped cache, invalidation unsubscribe, refetch after reconnect/mutation.
+- Tests: client contract, query/mutation lifecycle, SSE unsubscribe/reconnect, 401/403/409/422 handling.
+- Depends on: A primitives for state display.
+- Must not change: backend authority/security semantics or browser token storage policy.
+
+### C. Onboarding + Dashboard + Project
+
+- Modules: `features/onboarding/*`, `features/dashboard/*`, `features/projects/*`, route metadata and relevant adapters.
+- Acceptance: discovery→review→approval→activation UI uses existing endpoints; dashboard/project actions and projections are connected.
+- Tests: seeded backend component/API tests; browser populated onboarding/dashboard/project persistence.
+- Depends on: A, B.
+- Must not change: onboarding service validation or add client-side repository trust decisions.
+
+### D. Task + Epic + Approval
+
+- Modules: `features/tasks/*`, `features/epics/*`, `features/approvals/*`, workflow/timeline components.
+- Acceptance: projection-driven lifecycle and evidence; task/epic actions appear only from capabilities; approval decisions match approved backend contract.
+- Tests: projection states, 409/conflict, action refetch; browser task/epic/approval flows.
+- Depends on: A, B, C project context.
+- Must not change: workflow engine transitions or approval authority in frontend.
+
+### E. Queue + Agent Run + Usage + Settings
+
+- Modules: `features/execution/*`, `runs/*`, `usage/*`, `settings/*`, notification/status primitives.
+- Acceptance: queue reasons/cancel, run evidence/live invalidation, concrete usage/budget, supported settings edit/persistence.
+- Tests: event reconnect, sanitized output, cancel persistence, config validation; browser responsive run/settings/usage.
+- Depends on: A, B, and D for task/run/approval links.
+- Must not change: scheduler/recovery/budget policy; do not implement unsupported controls.
+
+### F. Browser E2E + cleanup
+
+- Modules: `apps/web/test/e2e/*`, all touched web modules, confirmed dead-code sites.
+- Acceptance: all V1 route matrix cases, populated flows, direct/reload/viewport/persistence, console/network assertions; full lint/typecheck/test/build green.
+- Tests: Playwright and all workspace gates.
+- Depends on: A–E.
+- Must not change: unrelated pre-existing working-tree changes, backend contracts without separate approval.
+
+## Approval gate
+
+Этот design останавливает работу перед implementation. Следующий этап требует подтверждения пользователя, потому что он меняет frontend architecture and feature composition. До такого подтверждения не начинать stages A–F.
