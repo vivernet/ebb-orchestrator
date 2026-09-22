@@ -1,5 +1,6 @@
 interface StatusBadgeProps {
   status: string;
+  label?: string;
   variant?: 'default' | 'success' | 'warning' | 'error';
 }
 
@@ -7,7 +8,7 @@ interface StatusBadgeProps {
  * Отображает переданный статус с визуальным вариантом, выбранным вызывающим кодом.
  * Компонент не нормализует статус и не выполняет policy-проверки.
  */
-export default function StatusBadge({ status, variant = 'default' }: StatusBadgeProps) {
+export default function StatusBadge({ status, label, variant = 'default' }: StatusBadgeProps) {
   const variants = {
     default: { bg: '#404040', text: '#e5e5e5' },
     success: { bg: '#2d6a4f', text: '#d8f3dc' },
@@ -25,5 +26,5 @@ export default function StatusBadge({ status, variant = 'default' }: StatusBadge
     fontWeight: '500',
   };
 
-  return <span style={style}>{status}</span>;
+  return <span style={style} title={status}>{label ?? status}</span>;
 }
