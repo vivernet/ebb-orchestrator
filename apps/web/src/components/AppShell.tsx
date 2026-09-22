@@ -51,8 +51,10 @@ function AppShell() {
         <p className="nav-footnote">Local-first control plane</p>
       </aside>
       <main className="main-content">
-        <RouteBreadcrumbs />
-        <Outlet />
+        <div className="route-breadcrumbs">
+          <RouteBreadcrumbs />
+          <Outlet />
+        </div>
       </main>
     </div>
   );
