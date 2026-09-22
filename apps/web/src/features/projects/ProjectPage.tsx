@@ -1,9 +1,8 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback } from 'react';
 import { apiPaths, type ProjectOverviewProjection } from '@ebb-orchestrator/contracts';
 import { Link } from 'react-router';
 import { apiClient, toClientPath } from '../../api/client.js';
 import { ErrorAlert } from '../../components/PageState.js';
-import { createQueryStore } from '../../state/query-store.js';
 import { useQuery } from '../../state/use-query.js';
 
 interface ProjectPageProps {
@@ -14,10 +13,9 @@ interface ProjectPageProps {
  * Представляет пользовательский экран ProjectPage; авторитетные проверки выполняются backend.
  */
 export default function ProjectPage({ id }: ProjectPageProps) {
-  const store = useMemo(() => createQueryStore(), []);
   const projectPath = toClientPath(apiPaths.project(id));
   const fetcher = useCallback((signal: AbortSignal) => apiClient.get<ProjectOverviewProjection>(projectPath, { signal }), [projectPath]);
-  const query = useQuery(store, projectPath, undefined, fetcher);
+  const query = useQuery(null, projectPath, undefined, fetcher);
   const projection = query.data;
   const project = projection?.project;
   const retry = useCallback(() => { void query.refetch().catch(() => undefined); }, [query.refetch]);

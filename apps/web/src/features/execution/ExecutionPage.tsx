@@ -5,7 +5,6 @@ import { apiClient, toClientPath } from '../../api/client.js';
 import { EmptyState, ErrorAlert, PageState } from '../../components/PageState.js';
 import StatusBadge from '../../components/StatusBadge.js';
 import { useOnSSEReconnect } from '../../hooks/useEventClient.js';
-import { createQueryStore } from '../../state/query-store.js';
 import { useQuery } from '../../state/use-query.js';
 import { createMutationStore, type MutationState } from '../../state/mutation-store.js';
 
@@ -39,13 +38,12 @@ function errorMessage(error: unknown): string {
  * предоставляет endpoint или policy-проверку.
  */
 export default function ExecutionPage() {
-  const store = useMemo(() => createQueryStore(), []);
   const mutationStore = useMemo(() => createMutationStore(), []);
   const [cancelState, setCancelState] = useState<MutationState<unknown>>(() => mutationStore.get('cancel-run'));
   useEffect(() => mutationStore.subscribe('cancel-run', setCancelState), [mutationStore]);
   const executionPath = toClientPath(apiPaths.execution);
   const fetcher = useCallback((signal: AbortSignal) => apiClient.get<ExecutionProjection>(executionPath, { signal }), [executionPath]);
-  const query = useQuery(store, executionPath, undefined, fetcher);
+  const query = useQuery(null, executionPath, undefined, fetcher);
   const projection = query.data;
   const retry = useCallback(() => { void query.refetch().catch(() => undefined); }, [query.refetch]);
   useOnSSEReconnect(retry);

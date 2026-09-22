@@ -5,7 +5,6 @@ import { apiClient, toClientPath } from '../../api/client.js';
 import { ErrorAlert, PageState } from '../../components/PageState.js';
 import StatusBadge from '../../components/StatusBadge.js';
 import { useOnSSEReconnect } from '../../hooks/useEventClient.js';
-import { createQueryStore } from '../../state/query-store.js';
 import { useQuery } from '../../state/use-query.js';
 import { createMutationStore, type MutationState } from '../../state/mutation-store.js';
 
@@ -36,14 +35,13 @@ function errorMessage(error: unknown): string {
  * результат и служебные artifacts намеренно не запрашиваются браузер-клиентом.
  */
 export default function AgentRunPage({ id }: AgentRunPageProps) {
-  const store = useMemo(() => createQueryStore(), []);
   const mutationStore = useMemo(() => createMutationStore(), []);
   const [cancelState, setCancelState] = useState<MutationState<unknown>>(() => mutationStore.get('cancel-run'));
   useEffect(() => mutationStore.subscribe('cancel-run', setCancelState), [mutationStore]);
   const runPath = toClientPath(apiPaths.run(id));
   const cancelPath = toClientPath(apiPaths.runCancel(id));
   const fetcher = useCallback((signal: AbortSignal) => apiClient.get<AgentRun>(runPath, { signal }), [runPath]);
-  const query = useQuery(store, runPath, undefined, fetcher);
+  const query = useQuery(null, runPath, undefined, fetcher);
   const run = query.data;
   const retry = useCallback(() => { void query.refetch().catch(() => undefined); }, [query.refetch]);
   useOnSSEReconnect(retry);

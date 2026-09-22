@@ -1,16 +1,14 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
-import { createQueryStore } from '../src/state/query-store.js';
 import { useQuery } from '../src/state/use-query.js';
 
 describe('useQuery', () => {
   test('subscribes to loading and success state without optimistic data', async () => {
     let resolve: ((value: { value: string }) => void) | undefined;
     const fetcher = vi.fn(() => new Promise<{ value: string }>((done) => { resolve = done; }));
-    const store = createQueryStore();
 
     function Probe() {
-      const result = useQuery(store, '/dashboard', undefined, fetcher);
+      const result = useQuery(null, '/dashboard', undefined, fetcher);
       return <output>{result.status}:{result.data?.value ?? ''}</output>;
     }
 
@@ -23,11 +21,10 @@ describe('useQuery', () => {
   });
 
   test('renders query errors from the shared store', async () => {
-    const store = createQueryStore();
     const fetcher = vi.fn().mockRejectedValue(new Error('load failed'));
 
     function Probe() {
-      const result = useQuery(store, '/settings', undefined, fetcher);
+      const result = useQuery(null, '/settings', undefined, fetcher);
       const message = result.error instanceof Error ? result.error.message : '';
       return <output>{result.status}:{message}</output>;
     }
@@ -37,7 +34,6 @@ describe('useQuery', () => {
   });
 
   test('keeps a shared request alive when one consumer unmounts', async () => {
-    const store = createQueryStore();
     let signal: AbortSignal | undefined;
     let resolve: ((value: { value: string }) => void) | undefined;
     const fetcher = vi.fn((requestSignal: AbortSignal) => {
@@ -46,7 +42,7 @@ describe('useQuery', () => {
     });
 
     function Probe({ label }: { label: string }) {
-      const result = useQuery(store, '/events', undefined, fetcher);
+      const result = useQuery(null, '/events', undefined, fetcher);
       return <output data-testid={label}>{result.status}:{result.data?.value ?? ''}</output>;
     }
 
@@ -59,12 +55,11 @@ describe('useQuery', () => {
   });
 
   test('does not refetch when only the fetcher function identity changes', async () => {
-    const store = createQueryStore();
     const firstFetcher = vi.fn<(signal: AbortSignal) => Promise<{ value: string }>>().mockResolvedValue({ value: 'first' });
     const secondFetcher = vi.fn<(signal: AbortSignal) => Promise<{ value: string }>>().mockResolvedValue({ value: 'second' });
 
     function Probe({ fetcher }: { fetcher: typeof firstFetcher }) {
-      const result = useQuery(store, '/dashboard', undefined, fetcher);
+      const result = useQuery(null, '/dashboard', undefined, fetcher);
       return <output>{result.status}:{result.data?.value ?? ''}</output>;
     }
 
@@ -76,11 +71,10 @@ describe('useQuery', () => {
   });
 
   test('stays idle when disabled and supports explicit manual refetch', async () => {
-    const store = createQueryStore();
     const fetcher = vi.fn<(signal: AbortSignal) => Promise<{ value: string }>>().mockResolvedValue({ value: 'manual' });
 
     function Probe() {
-      const result = useQuery(store, '/settings', undefined, fetcher, { enabled: false });
+      const result = useQuery(null, '/settings', undefined, fetcher, { enabled: false });
       return <><output>{result.status}:{result.data?.value ?? ''}</output><button type="button" onClick={() => void result.refetch()}>Refetch</button></>;
     }
 
@@ -93,13 +87,12 @@ describe('useQuery', () => {
   });
 
   test('refetches after an error and publishes the recovered result', async () => {
-    const store = createQueryStore();
     const fetcher = vi.fn<(signal: AbortSignal) => Promise<{ value: string }>>()
       .mockRejectedValueOnce(new Error('temporary failure'))
       .mockResolvedValueOnce({ value: 'recovered' });
 
     function Probe() {
-      const result = useQuery(store, '/usage', undefined, fetcher);
+      const result = useQuery(null, '/usage', undefined, fetcher);
       return <><output>{result.status}:{result.error instanceof Error ? result.error.message : result.data?.value ?? ''}</output><button type="button" onClick={() => void result.refetch()}>Retry query</button></>;
     }
 

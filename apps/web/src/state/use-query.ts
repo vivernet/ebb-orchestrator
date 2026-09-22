@@ -1,13 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
-import {
-  canonicalQueryKey,
-  type QueryFetcher,
-  type QueryParams,
-  type QueryState,
-  type QueryStore,
-} from './query-store.js';
+import { useCallback, useEffect, useSyncExternalStore } from 'react';
+import { queryCache } from './query-cache.js';
+import type { QueryFetcher, QueryParams, QueryState } from './query-store.js';
+import { canonicalQueryKey } from './query-store.js';
 
-/** Настройки React-адаптера query store. */
+/** Настройки React-адаптера query cache. */
 export interface UseQueryOptions {
   enabled?: boolean;
 }
@@ -19,52 +15,44 @@ export interface UseQueryResult<TData> extends QueryState<TData> {
 }
 
 /**
- * Подключает React consumer к существующему query store.
+ * Подключает React consumer к app-scoped query cache.
+ * Для обратной совместимости принимает store как первый аргумент (игнорируется).
  *
  * Hook не хранит копию domain state и не создаёт optimistic data. При unmount
  * consumer только отписывается: shared request может использоваться другими
  * consumers, поэтому cancellation принадлежит explicit refetch/invalidate.
  */
 export function useQuery<TData>(
-  store: QueryStore,
+  _store: unknown,
   path: string,
   params: QueryParams | undefined,
   fetcher: QueryFetcher<TData>,
   options: UseQueryOptions = {},
 ): UseQueryResult<TData> {
   const key = canonicalQueryKey(path, params);
-  const fetcherRef = useRef(fetcher);
-  fetcherRef.current = fetcher;
-  const subscription = useMemo(() => {
-    let last = store.get<TData>(key);
-    const getSnapshot = (): QueryState<TData> => {
-      const next = store.get<TData>(key);
-      if (
-        next.status === last.status
-        && next.data === last.data
-        && next.error === last.error
-        && next.updatedAt === last.updatedAt
-        && next.isStale === last.isStale
-      ) return last;
-      last = next;
-      return next;
-    };
-    const subscribe = (onStoreChange: () => void): (() => void) => store.subscribe<TData>(key, (state) => {
-      last = state;
-      onStoreChange();
-    });
-    return { getSnapshot, subscribe };
-  }, [key, store]);
-  const state = useSyncExternalStore(subscription.subscribe, subscription.getSnapshot, subscription.getSnapshot);
+  const fetcherRef = fetcher;
   const enabled = options.enabled ?? true;
 
-  useEffect(() => {
-    if (!enabled) return undefined;
-    const request = store.fetch(path, params, fetcherRef.current);
-    request.catch(() => undefined);
-    return undefined;
-  }, [enabled, key, path, store]);
+  // Подписка всегда нужна чтобы получать обновления (включая refetch)
+  const subscription = useCallback(
+    (onStoreChange: () => void): (() => void) => {
+      return queryCache.subscribe(key, onStoreChange);
+    },
+    [key],
+  );
 
-  const refetch = useCallback(() => store.refetch(path, params, fetcherRef.current), [key, path, store]);
+  const state = useSyncExternalStore(
+    subscription,
+    () => queryCache.get<TData>(key),
+    () => queryCache.get<TData>(key),
+  );
+
+  useEffect(() => {
+    if (!enabled) return;
+    const request = queryCache.fetch(path, params, fetcherRef);
+    request.catch(() => undefined);
+  }, [enabled, key, path, params, fetcherRef]);
+
+  const refetch = useCallback(() => queryCache.refetch(path, params, fetcherRef), [key, path, params, fetcherRef]);
   return { ...state, key, refetch };
 }

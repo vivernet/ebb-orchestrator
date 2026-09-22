@@ -9,13 +9,13 @@ interface InvalidationListener {
   (event: string, data: unknown): void;
 }
 
-/** Порт браузерного клиента SSE для подписки и управления соединением. */
+/** Порт браузерного клиента SSE с unsubscribe support. */
 export interface EventClient {
-  on(event: string, handler: EventHandler): void;
+  on(event: string, handler: EventHandler): () => void;
   connect(): void;
   disconnect(): void;
   setRefetchCallback(callback: () => void): void;
-  onInvalidate(listener: InvalidationListener): void;
+  onInvalidate(listener: InvalidationListener): () => void;
 }
 
 function createEventClient(): EventClient {
@@ -70,7 +70,12 @@ function createEventClient(): EventClient {
       if (!handlers.has(event)) {
         handlers.set(event, new Set());
       }
-      handlers.get(event)!.add(handler);
+      const set = handlers.get(event)!;
+      set.add(handler);
+      return () => {
+        set.delete(handler);
+        if (set.size === 0) handlers.delete(event);
+      };
     },
 
     setRefetchCallback(callback: () => void) {
@@ -79,6 +84,9 @@ function createEventClient(): EventClient {
 
     onInvalidate(listener: InvalidationListener) {
       invalidationListeners.add(listener);
+      return () => {
+        invalidationListeners.delete(listener);
+      };
     },
 
     connect,

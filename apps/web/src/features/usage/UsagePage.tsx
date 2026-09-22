@@ -1,9 +1,8 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback } from 'react';
 import { apiPaths } from '@ebb-orchestrator/contracts';
 import { apiClient, toClientPath } from '../../api/client.js';
 import { EmptyState, PageState } from '../../components/PageState.js';
 import { useOnSSEReconnect } from '../../hooks/useEventClient.js';
-import { createQueryStore } from '../../state/query-store.js';
 import { useQuery } from '../../state/use-query.js';
 
 interface UsageBucket {
@@ -45,10 +44,9 @@ function hasUsage(data: UsageData): boolean {
  * reservations или effective budget decisions.
  */
 export default function UsagePage() {
-  const store = useMemo(() => createQueryStore(), []);
   const usagePath = toClientPath(apiPaths.usage);
   const fetcher = useCallback((signal: AbortSignal) => apiClient.get<UsageData>(usagePath, { signal }), [usagePath]);
-  const query = useQuery(store, usagePath, undefined, fetcher);
+  const query = useQuery(null, usagePath, undefined, fetcher);
   const retry = useCallback(() => { void query.refetch().catch(() => undefined); }, [query.refetch]);
   const refresh = useCallback(() => { void query.refetch().catch(() => undefined); }, [query.refetch]);
 

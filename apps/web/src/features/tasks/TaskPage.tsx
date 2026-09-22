@@ -1,11 +1,10 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback } from 'react';
 import { apiPaths, type TaskOverviewProjection } from '@ebb-orchestrator/contracts';
 import { Link } from 'react-router';
 import { apiClient, toClientPath } from '../../api/client.js';
 import { ErrorAlert } from '../../components/PageState.js';
 import WorkflowTimeline, { TASK_LIFECYCLE_STAGES } from '../../components/WorkflowTimeline.js';
 import { useOnSSEReconnect } from '../../hooks/useEventClient.js';
-import { createQueryStore } from '../../state/query-store.js';
 import { useQuery } from '../../state/use-query.js';
 
 interface TaskPageProps { id?: string; }
@@ -16,10 +15,9 @@ function errorMessage(error: unknown): string {
 
 /** Представляет пользовательский экран TaskPage; авторитетные проверки выполняются backend. */
 export default function TaskPage({ id = '' }: TaskPageProps) {
-  const store = useMemo(() => createQueryStore(), []);
   const taskPath = toClientPath(apiPaths.task(id));
   const fetcher = useCallback((signal: AbortSignal) => apiClient.get<TaskOverviewProjection>(taskPath, { signal }), [taskPath]);
-  const query = useQuery(store, taskPath, undefined, fetcher, { enabled: Boolean(id) });
+  const query = useQuery(null, taskPath, undefined, fetcher, { enabled: Boolean(id) });
   const projection = query.data;
   const task = projection?.task as { title?: string; display_id?: string; status?: string; project_id?: string; epic_id?: string | null } | null | undefined;
   const notFound = query.status === 'success' && projection?.task === null;

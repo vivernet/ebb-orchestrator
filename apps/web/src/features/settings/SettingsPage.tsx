@@ -1,8 +1,7 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback } from 'react';
 import { apiPaths, type SettingsProjection } from '@ebb-orchestrator/contracts';
 import { apiClient, toClientPath } from '../../api/client.js';
 import { PageState } from '../../components/PageState.js';
-import { createQueryStore } from '../../state/query-store.js';
 import { useQuery } from '../../state/use-query.js';
 
 function valueOrUnavailable(value: unknown): string {
@@ -11,10 +10,9 @@ function valueOrUnavailable(value: unknown): string {
 
 /** Представляет read-only Settings projection; unsupported policy не выводится как факт. */
 export default function SettingsPage() {
-  const store = useMemo(() => createQueryStore(), []);
   const settingsPath = toClientPath(apiPaths.settings);
   const fetcher = useCallback((signal: AbortSignal) => apiClient.get<SettingsProjection>(settingsPath, { signal }), [settingsPath]);
-  const query = useQuery(store, settingsPath, undefined, fetcher);
+  const query = useQuery(null, settingsPath, undefined, fetcher);
   const retry = useCallback(() => { void query.refetch().catch(() => undefined); }, [query.refetch]);
 
   if (query.status === 'loading' || query.status === 'idle') return <PageState status="loading" message="Loading settings..." />;

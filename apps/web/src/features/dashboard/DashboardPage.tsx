@@ -1,11 +1,10 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback } from 'react';
 import { apiPaths, type DashboardProjection, type ExecutionQueueProjection } from '@ebb-orchestrator/contracts';
 import { Link } from 'react-router';
 import { apiClient, toClientPath } from '../../api/client.js';
 import { EmptyState, ErrorAlert, PageState } from '../../components/PageState.js';
 import StatusBadge from '../../components/StatusBadge.js';
 import { useOnSSEReconnect } from '../../hooks/useEventClient.js';
-import { createQueryStore } from '../../state/query-store.js';
 import { useQuery } from '../../state/use-query.js';
 
 function message(error: unknown): string {
@@ -16,13 +15,12 @@ function message(error: unknown): string {
  * Представляет пользовательский экран DashboardPage; авторитетные проверки выполняются backend.
  */
 export default function DashboardPage() {
-  const store = useMemo(() => createQueryStore(), []);
   const dashboardPath = toClientPath(apiPaths.dashboard);
   const executionPath = toClientPath(apiPaths.execution);
   const projectionFetcher = useCallback((signal: AbortSignal) => apiClient.get<DashboardProjection>(dashboardPath, { signal }), [dashboardPath]);
   const queueFetcher = useCallback((signal: AbortSignal) => apiClient.get<ExecutionQueueProjection>(executionPath, { signal }), [executionPath]);
-  const projectionQuery = useQuery(store, dashboardPath, undefined, projectionFetcher);
-  const queueQuery = useQuery(store, executionPath, undefined, queueFetcher);
+  const projectionQuery = useQuery(null, dashboardPath, undefined, projectionFetcher);
+  const queueQuery = useQuery(null, executionPath, undefined, queueFetcher);
   const projection = projectionQuery.data;
   const queue = queueQuery.data;
   const retryProjection = useCallback(() => { void projectionQuery.refetch().catch(() => undefined); }, [projectionQuery.refetch]);

@@ -1,10 +1,9 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback } from 'react';
 import { apiPaths, type EpicOverviewProjection } from '@ebb-orchestrator/contracts';
 import { Link } from 'react-router';
 import { apiClient, toClientPath } from '../../api/client.js';
 import { ErrorAlert } from '../../components/PageState.js';
 import { useOnSSEReconnect } from '../../hooks/useEventClient.js';
-import { createQueryStore } from '../../state/query-store.js';
 import { useQuery } from '../../state/use-query.js';
 
 interface EpicPageProps { id: string; }
@@ -15,10 +14,9 @@ function errorMessage(error: unknown): string {
 
 /** Представляет пользовательский экран EpicPage; авторитетные проверки выполняются backend. */
 export default function EpicPage({ id }: EpicPageProps) {
-  const store = useMemo(() => createQueryStore(), []);
   const epicPath = toClientPath(apiPaths.epic(id));
   const fetcher = useCallback((signal: AbortSignal) => apiClient.get<EpicOverviewProjection>(epicPath, { signal }), [epicPath]);
-  const query = useQuery(store, epicPath, undefined, fetcher);
+  const query = useQuery(null, epicPath, undefined, fetcher);
   const projection = query.data;
   const epic = projection?.epic as { title?: string; display_id?: string; status?: string } | null | undefined;
   const notFound = query.status === 'success' && projection?.epic === null;

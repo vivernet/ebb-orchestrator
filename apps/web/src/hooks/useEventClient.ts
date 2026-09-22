@@ -10,14 +10,11 @@ export function useEventClient() {
   useEffect(() => {
     // Сначала регистрируем обновление данных, затем устанавливаем соединение.
     eventClient.setRefetchCallback(() => {
-      // Компоненты получают уведомление через локальное событие браузера.
       window.dispatchEvent(new CustomEvent('sse-reconnect'));
     });
 
-    // Подключаемся к потоку SSE.
     eventClient.connect();
 
-    // Освобождаем соединение при размонтировании.
     return () => {
       eventClient.disconnect();
     };
