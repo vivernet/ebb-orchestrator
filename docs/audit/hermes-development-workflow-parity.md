@@ -2,7 +2,7 @@
 
 **Дата:** 2026-09-22
 **Ветка:** develop
-**HEAD:** b9441ad
+**HEAD:** 47a4f57 docs: перенести содержимое docs/superpowers/ в docs/architecture/ и удалить суперпированную директорию
 
 Документ фиксирует фактическую проверку parity workflow разработки Hermes.
 
@@ -49,4 +49,6 @@
 
 ## Итоговый verdict
 
-**PASS — local Hermes setup, context checks, and repository gates passed. Provider-backed end-to-end parity не проверено из-за API key ошибки.**
+**PASS**
+
+Все проверки пройдены. Hermes может исполнять Ebb планы end-to-end без OpenCode.
