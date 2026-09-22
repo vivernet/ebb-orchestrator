@@ -29,6 +29,17 @@ describe('routing and session bootstrap', () => {
     expect(router.routes[0]?.errorElement).toBeDefined();
   });
 
+  test('attaches stable breadcrumb labels to every named route', () => {
+    const routes = router.routes[0]?.children ?? [];
+
+    expect(routes.map((route) => route.handle)).toEqual([
+      { breadcrumbLabel: 'Dashboard' }, { breadcrumbLabel: 'Project' }, { breadcrumbLabel: 'Epic' },
+      { breadcrumbLabel: 'Task' }, { breadcrumbLabel: 'Approvals' }, { breadcrumbLabel: 'Execution' },
+      { breadcrumbLabel: 'Run' }, { breadcrumbLabel: 'Usage' }, { breadcrumbLabel: 'Settings' },
+      { breadcrumbLabel: 'Project onboarding' }, { breadcrumbLabel: 'Page not found' },
+    ]);
+  });
+
   test('renders the not-found page for an unmatched route', async () => {
     const memoryRouter = createMemoryRouter(router.routes, { initialEntries: ['/does-not-exist'] });
 

@@ -1,27 +1,18 @@
-import { Link, NavLink, Outlet, useLocation } from 'react-router';
+import { Link, NavLink, Outlet, useMatches } from 'react-router';
 
-function safeDecodeSegment(segment: string): string {
-  try {
-    return decodeURIComponent(segment);
-  } catch {
-    return segment;
-  }
+function getBreadcrumbLabel(handle: unknown): string | null {
+  if (typeof handle !== 'object' || handle === null || !('breadcrumbLabel' in handle)) return null;
+  const { breadcrumbLabel } = handle as { breadcrumbLabel?: unknown };
+  return typeof breadcrumbLabel === 'string' ? breadcrumbLabel : null;
 }
 
 function RouteBreadcrumbs() {
-  const { pathname } = useLocation();
-  const segments = pathname.split('/').filter(Boolean);
-  if (segments.length === 0) return null;
+  const matchedRoute = [...useMatches()].reverse().find((match) => getBreadcrumbLabel(match.handle) !== null);
+  const label = getBreadcrumbLabel(matchedRoute?.handle);
+  if (label === null) return null;
 
-  const section = segments[0] ?? '';
-  const id = segments[1];
-  const labels: Record<string, string> = {
-    projects: 'Project', epics: 'Epic', tasks: 'Task', runs: 'Run',
-    approvals: 'Approvals', execution: 'Execution', usage: 'Usage', settings: 'Settings',
-  };
-  const current = section === 'projects' && id === 'new'
-    ? 'Project onboarding'
-    : id ? `${labels[section] ?? section} ${safeDecodeSegment(id)}` : labels[section] ?? section;
+  const id = matchedRoute?.params.id;
+  const current = id === undefined ? label : `${label} ${id}`;
 
   return (
     <nav className="route-breadcrumbs" aria-label="Breadcrumb">
@@ -51,8 +42,8 @@ function AppShell() {
         <p className="nav-footnote">Local-first control plane</p>
       </aside>
       <main className="main-content">
-        <div className="route-breadcrumbs">
-          <RouteBreadcrumbs />
+        <RouteBreadcrumbs />
+        <div className="route-outlet">
           <Outlet />
         </div>
       </main>

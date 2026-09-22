@@ -68,50 +68,61 @@ export const router = createBrowserRouter([
       {
         id: 'dashboard',
         path: '',
+        handle: { breadcrumbLabel: 'Dashboard' },
         Component: DashboardPage,
       },
       {
         id: 'project',
         path: 'projects/:id',
+        handle: { breadcrumbLabel: 'Project' },
         Component: ProjectRoute,
       },
       {
         id: 'epic',
         path: 'epics/:id',
+        handle: { breadcrumbLabel: 'Epic' },
         Component: EpicRoute,
       },
       {
         id: 'task',
         path: 'tasks/:id',
+        handle: { breadcrumbLabel: 'Task' },
         Component: TaskRoute,
       },
       {
         path: 'approvals',
+        handle: { breadcrumbLabel: 'Approvals' },
         Component: ApprovalRoute,
       },
       {
         path: 'execution',
+        handle: { breadcrumbLabel: 'Execution' },
         Component: ExecutionRoute,
       },
       {
         path: 'runs/:id',
+        handle: { breadcrumbLabel: 'Run' },
         Component: RunRoute,
       },
       {
         path: 'usage',
+        handle: { breadcrumbLabel: 'Usage' },
         Component: UsageRoute,
       },
       {
         path: 'settings',
+        handle: { breadcrumbLabel: 'Settings' },
         Component: SettingsRoute,
       },
       {
         path: 'projects/new',
+        handle: { breadcrumbLabel: 'Project onboarding' },
         Component: OnboardingRoute,
       },
       {
         id: 'not-found',
         path: '*',
+        handle: { breadcrumbLabel: 'Page not found' },
         Component: NotFoundPage,
       },
     ],
