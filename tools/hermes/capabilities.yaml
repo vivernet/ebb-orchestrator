@@ -1,0 +1,19 @@
+# Ebb Orchestrator Hermes Capabilities Registry
+# This file defines the capability references available to Hermes runtime
+
+version: 1
+
+# Capability references used by the orchestrator
+capabilities:
+  - name: orchestrator
+    ref: ebb-orchestrator-orchestrator
+  - name: developer
+    ref: ebb-orchestrator-developer
+  - name: architect
+    ref: ebb-orchestrator-architect
+  - name: reviewer
+    ref: ebb-orchestrator-reviewer
+  - name: qa
+    ref: ebb-orchestrator-qa
+  - name: integration
+    ref: ebb-orchestrator-integration

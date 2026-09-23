@@ -19,10 +19,10 @@ const DOCS_ROOT = join(ROOT, 'docs');
  * Parse YAML frontmatter from markdown content
  */
 function parseFrontMatter(text) {
-  const match = text.match(/^---\n([\s\S]*?)\n---/);
+  const match = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (!match) return null;
   
-  const yamlLines = match[1].split('\n');
+  const yamlLines = match[1].split('\n').map(line => line.replace(/\r$/, ''));
   const data = {};
   
   for (const line of yamlLines) {

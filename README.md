@@ -1,3 +1,10 @@
+---
+id: readme-root
+kind: documentation
+status: completed
+title: Ebb Orchestrator
+---
+
 # Ebb Orchestrator
 
 Ebb Orchestrator — локально запускаемый modular monolith для
