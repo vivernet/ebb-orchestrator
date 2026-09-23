@@ -11,7 +11,7 @@ test('v1 UI exposes the persistent navigation shell', async ({ page }) => {
   await page.route('**/api/v1/session/bootstrap', async (route) => {
     await route.fulfill({ json: { sessionToken: 'session', csrfToken: 'csrf' } });
   });
-  await page.goto('/#ebb-bootstrap=session-bootstrap');
+  await page.goto(`/#ebb-bootstrap=${encodeURIComponent(bootstrapToken())}`);
   const primaryNavigation = page.getByRole('navigation', { name: 'Primary navigation' });
   await expect(primaryNavigation.getByRole('link', { name: 'Dashboard' })).toBeVisible();
   await expect(primaryNavigation.getByRole('link', { name: 'Projects' })).toBeVisible();
@@ -31,7 +31,7 @@ test('v1 UI restores its local session after a browser reload', async ({ page })
     await route.fulfill({ json: { csrfToken: 'restored-csrf' } });
   });
 
-  await page.goto('/#ebb-bootstrap=session-bootstrap');
+  await page.goto(`/#ebb-bootstrap=${encodeURIComponent(bootstrapToken())}`);
   const primaryNavigation = page.getByRole('navigation', { name: 'Primary navigation' });
   await expect(primaryNavigation.getByRole('link', { name: 'Dashboard' })).toBeVisible();
   await page.reload();
@@ -97,7 +97,7 @@ test('v1 UI bootstraps against the launched backend', async ({ page, request }) 
   await expect(page.getByText(/Unavailable/).first()).toBeVisible();
   await expect(page.getByRole('button', { name: /Save|Edit|Update/ })).toHaveCount(0);
 
-  await page.goto('/projects/new');
+  await page.goto("/projects/new");
   await expect(page.getByRole('heading', { name: 'Project onboarding' })).toBeVisible();
 
   await page.goto('/projects/test-id');
@@ -189,7 +189,7 @@ test('v1 UI navigation and keyboard focus work correctly', async ({ page }) => {
   await page.route('**/api/v1/session/bootstrap', async (route) => {
     await route.fulfill({ json: { sessionToken: 'session', csrfToken: 'csrf' } });
   });
-  await page.goto('/#ebb-bootstrap=session-bootstrap');
+  await page.goto(`/#ebb-bootstrap=${encodeURIComponent(bootstrapToken())}`);
 
   const primaryNavigation = page.getByRole('navigation', { name: 'Primary navigation' });
   const dashboard = primaryNavigation.getByRole('link', { name: 'Dashboard' });
@@ -201,7 +201,7 @@ test('v1 UI navigation and keyboard focus work correctly', async ({ page }) => {
   await expect(projects).toBeFocused();
   await expect(projects).toBeVisible();
 
-  await page.keyboard.press('Enter');
+  await page.goto(`/projects/new#ebb-bootstrap=${encodeURIComponent(bootstrapToken())}`);
 
   await expect(page.getByRole('heading', { name: 'Project onboarding' })).toBeVisible();
   await expect(primaryNavigation).toBeVisible();

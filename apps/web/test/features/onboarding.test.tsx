@@ -42,7 +42,7 @@ afterEach(() => server.close());
 describe('OnboardingPage', () => {
   test('renderует форму discovery в начальном состоянии', () => {
     render(<OnboardingPage />);
-    expect(screen.getByRole('heading', { name: 'Project Onboarding' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Project onboarding' })).toBeVisible();
     expect(screen.getByRole('textbox', { name: 'Путь к репозиторию' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'Начать анализ' })).toBeVisible();
   });

@@ -74,7 +74,7 @@ export default function OnboardingPage() {
 
   return (
     <main className="onboarding-page">
-      <h1>Project Onboarding</h1>
+      <h1>Project onboarding</h1>
 
       {!result ? (
         <section aria-label="Discover project">
