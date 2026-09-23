@@ -39,6 +39,7 @@
 | T1: Onboarding flow (discover → review → approve → activate) | ✅ DONE | Полный flow реализован, тесты проходят |
 | T2: Dashboard projection wiring | ✅ DONE | DashboardPage подключает /api/v1/dashboard |
 | T3: Project View wiring | ✅ DONE | ProjectPage подключает /api/v1/projects/:id |
+| T4: Approval reject/request-changes | ✅ DONE | Backend endpoints + UI кнопки добавлены |
 
 ## Stage D — Task + Epic + Approval
 
