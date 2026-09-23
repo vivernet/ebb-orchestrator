@@ -1,7 +1,7 @@
 import { describe, expect, test, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
-import { PageState } from '../src/components/PageState.js';
-import StatusBadge from '../src/components/StatusBadge.js';
+import { PageState } from '../src/components/ui/PageState.js';
+import StatusBadge from '../src/components/ui/StatusBadge.js';
 
 describe('shared presentation primitives', () => {
   test('renders loading as a status region', () => {

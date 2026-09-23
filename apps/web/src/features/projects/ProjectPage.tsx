@@ -2,7 +2,7 @@ import { useCallback } from 'react';
 import { apiPaths } from '@ebb-orchestrator/contracts';
 import { Link } from 'react-router';
 import { toClientPath } from '../../api/client.js';
-import { ErrorAlert } from '../../components/PageState.js';
+import { ErrorAlert } from '../../components/ui/PageState.js';
 import { useQuery } from '../../state/use-query.js';
 import { getProjectOverview } from './api.js';
 

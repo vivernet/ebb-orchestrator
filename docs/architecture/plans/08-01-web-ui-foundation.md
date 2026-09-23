@@ -1,7 +1,7 @@
 ---
 id: plan-08-01
 title: Plan Document
-status: superseded
+status: completed
 created: 2026-09-23
 ---
 
@@ -88,3 +88,11 @@ created: 2026-09-23
 - Commit locally with Russian message: `feat: укрепить foundation Web UI`.
 - Do not push or merge.
 - Stage B (API/query/mutation foundation) remains separate and starts only after Stage A review.
+
+---
+
+## Completion Note
+
+Status updated to **completed**. Implementation executed per plan stages A-D with shared primitives (PageState, StatusBadge), shell/routing repairs, and feature page state consumption. All tests passing and E2E routes verified.
+
+See implementation: `apps/web/src/components/PageState.tsx`, `StatusBadge.tsx`, `AppShell.tsx`, `apps/web/src/app/router.tsx`. Design reference: `docs/architecture/specs/02-web-ui-recovery-design.md`.

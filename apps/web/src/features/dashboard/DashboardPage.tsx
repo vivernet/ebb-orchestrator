@@ -1,8 +1,8 @@
 import { useCallback } from 'react';
 import { apiPaths } from '@ebb-orchestrator/contracts';
 import { Link } from 'react-router';
-import { EmptyState, ErrorAlert, PageState } from '../../components/PageState.js';
-import StatusBadge from '../../components/StatusBadge.js';
+import { EmptyState, ErrorAlert, PageState } from '../../components/ui/PageState.js';
+import StatusBadge from '../../components/ui/StatusBadge.js';
 import { useOnSSEReconnect } from '../../hooks/useEventClient.js';
 import { useQuery } from '../../state/use-query.js';
 import { getDashboard, getExecutionQueue } from './api.js';

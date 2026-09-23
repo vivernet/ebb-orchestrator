@@ -16,5 +16,8 @@ export default defineConfig(({ mode }) => ({
     environment: "jsdom",
     setupFiles: ["./test/setup.ts"],
     exclude: ["test/e2e/**", "node_modules/**"],
+    resolve: {
+      extensions: [".tsx", ".ts", ".js", ".jsx"],
+    },
   },
 }));

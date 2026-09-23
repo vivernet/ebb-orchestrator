@@ -1,6 +1,7 @@
 import { createBrowserRouter } from 'react-router';
 import AppShell from '../components/AppShell.js';
 import DashboardPage from '../features/dashboard/DashboardPage.js';
+import ProjectsIndex from '../features/projects/ProjectsIndex.js';
 import ProjectPage from '../features/projects/ProjectPage.js';
 import EpicPage from '../features/epics/EpicPage.js';
 import TaskPage from '../features/tasks/TaskPage.js';
@@ -72,6 +73,12 @@ export const router = createBrowserRouter([
         Component: DashboardPage,
       },
       {
+        id: 'projects-index',
+        path: 'projects',
+        handle: { breadcrumbLabel: 'Projects' },
+        Component: ProjectsIndex,
+      },
+      {
         id: 'project',
         path: 'projects/:id',
         handle: { breadcrumbLabel: 'Project' },
@@ -84,8 +91,20 @@ export const router = createBrowserRouter([
         Component: EpicRoute,
       },
       {
+        id: 'project-epic',
+        path: 'projects/:projectId/epics/:epicId',
+        handle: { breadcrumbLabel: 'Epic' },
+        Component: EpicRoute,
+      },
+      {
         id: 'task',
         path: 'tasks/:id',
+        handle: { breadcrumbLabel: 'Task' },
+        Component: TaskRoute,
+      },
+      {
+        id: 'project-task',
+        path: 'projects/:projectId/tasks/:taskId',
         handle: { breadcrumbLabel: 'Task' },
         Component: TaskRoute,
       },
@@ -100,7 +119,14 @@ export const router = createBrowserRouter([
         Component: ExecutionRoute,
       },
       {
+        id: 'run',
         path: 'runs/:id',
+        handle: { breadcrumbLabel: 'Run' },
+        Component: RunRoute,
+      },
+      {
+        id: 'project-run',
+        path: 'projects/:projectId/runs/:runId',
         handle: { breadcrumbLabel: 'Run' },
         Component: RunRoute,
       },

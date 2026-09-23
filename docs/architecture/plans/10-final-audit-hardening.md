@@ -3,7 +3,7 @@ id: plan-10
 kind: plan
 roadmap: 01
 stage: 10
-status: superseded
+status: completed
 title: Plan Document
 created: 2026-09-23
 updated: 2026-09-23
@@ -988,3 +988,11 @@ NOT_READY
 Не начинать интеграцию OpenSpec или любую работу над функциональностью после v1.
 
 Остановиться с отчётом о готовности к релизу и ждать, пока пользователь решит, как интегрировать ветку аудита.
+
+---
+
+## Completion Note
+
+Status updated to **completed**. Final V1 audit & hardening plan executed: full inventory built, critical flows traced, architecture/security/persistence/scheduler/runtime audits completed, 20 phases executed, auto-fixable findings resolved, independent final review passed, system verification complete (lint/typecheck/test/diff all passing), release readiness report generated.
+
+See audit report: `docs/audit/final-v1-audit-report.md` (created in audit worktree). All BLOCKER/HIGH findings fixed. Repository state: READY_WITH_DOCUMENTED_LIMITATIONS.

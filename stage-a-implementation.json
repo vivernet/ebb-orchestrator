@@ -1,0 +1,92 @@
+{
+  "implementations": [
+    {
+      "file": "apps/web/src/features/projects/ProjectsIndex.tsx",
+      "changes": ["Created new page component to display list of all projects"]
+    },
+    {
+      "file": "apps/web/src/app/router.tsx",
+      "changes": ["Added /projects index route", "Added project-scoped aliases: projects/:projectId/epics/:epicId, projects/:projectId/tasks/:taskId, projects/:projectId/runs/:runId"]
+    },
+    {
+      "file": "apps/web/src/components/ui/index.ts",
+      "changes": ["Created index file exporting all UI primitives"]
+    },
+    {
+      "file": "apps/web/src/components/ui/PageState.tsx",
+      "changes": ["Moved PageState component from components/PageState.tsx"]
+    },
+    {
+      "file": "apps/web/src/components/ui/StatusBadge.tsx",
+      "changes": ["Moved StatusBadge component from components/StatusBadge.tsx"]
+    },
+    {
+      "file": "apps/web/src/components/ui/ConnectionIndicator.tsx",
+      "changes": ["Created new component showing online/offline status"]
+    },
+    {
+      "file": "apps/web/src/components/ui/NotificationIndicator.tsx",
+      "changes": ["Created new component showing notification count badge"]
+    },
+    {
+      "file": "apps/web/src/components/AppShell.tsx",
+      "changes": ["Added imports from components/ui/", "Added ConnectionIndicator and NotificationIndicator to nav status area", "Changed Projects link to point to /projects"]
+    },
+    {
+      "file": "apps/web/src/styles/base.css",
+      "changes": ["Added styles for .nav-status, .connection-indicator, .notification-indicator, .notification-badge"]
+    },
+    {
+      "file": "apps/web/src/features/dashboard/DashboardPage.tsx",
+      "changes": ["Updated imports to use components/ui/"]
+    },
+    {
+      "file": "apps/web/src/features/execution/ExecutionPage.tsx",
+      "changes": ["Updated imports to use components/ui/"]
+    },
+    {
+      "file": "apps/web/src/features/approvals/ApprovalInboxPage.tsx",
+      "changes": ["Updated imports to use components/ui/"]
+    },
+    {
+      "file": "apps/web/src/features/onboarding/ProjectOnboardingPage.tsx",
+      "changes": ["Updated imports to use components/ui/"]
+    },
+    {
+      "file": "apps/web/src/features/onboarding/OnboardingPage.tsx",
+      "changes": ["Updated imports to use components/ui/"]
+    },
+    {
+      "file": "apps/web/src/features/usage/UsagePage.tsx",
+      "changes": ["Updated imports to use components/ui/"]
+    },
+    {
+      "file": "apps/web/src/features/epics/EpicPage.tsx",
+      "changes": ["Updated imports to use components/ui/"]
+    },
+    {
+      "file": "apps/web/src/features/tasks/TaskPage.tsx",
+      "changes": ["Updated imports to use components/ui/"]
+    },
+    {
+      "file": "apps/web/src/features/runs/AgentRunPage.tsx",
+      "changes": ["Updated imports to use components/ui/"]
+    },
+    {
+      "file": "apps/web/src/features/settings/SettingsPage.tsx",
+      "changes": ["Updated imports to use components/ui/"]
+    },
+    {
+      "file": "apps/web/src/features/projects/ProjectPage.tsx",
+      "changes": ["Updated imports to use components/ui/"]
+    },
+    {
+      "file": "apps/web/src/components/PageState.tsx",
+      "changes": ["Deleted - moved to components/ui/"]
+    },
+    {
+      "file": "apps/web/src/components/StatusBadge.tsx",
+      "changes": ["Deleted - moved to components/ui/"]
+    }
+  ]
+}

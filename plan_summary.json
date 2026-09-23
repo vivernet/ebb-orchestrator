@@ -1,0 +1,62 @@
+{
+  "plans": [
+    {
+      "id": "08-01",
+      "status": "in_progress",
+      "missing": [
+        "Shell/AppShell composition fix",
+        "PageState canonical primitives",
+        "StatusBadge accessible semantics",
+        "Route metadata and breadcrumb structure",
+        "Shared primitives tests"
+      ],
+      "verified": true
+    },
+    {
+      "id": "08-02",
+      "status": "pending",
+      "missing": [
+        "Onboarding flow implementation",
+        "Dashboard project connections",
+        "Project View projection",
+        "Core views integration"
+      ],
+      "verified": false
+    },
+    {
+      "id": "08-03",
+      "status": "pending",
+      "missing": [
+        "Onboarding approve/activate flow",
+        "Dashboard retry mechanisms",
+        "Project navigation"
+      ],
+      "verified": false
+    },
+    {
+      "id": "08-04",
+      "status": "completed",
+      "missing": [],
+      "verified": true
+    },
+    {
+      "id": "10",
+      "status": "pending",
+      "missing": [
+        "Full implementation inventory",
+        "Critical flow tracing",
+        "Architecture compliance",
+        "Security audit",
+        "Web UI API audit",
+        "Code/test quality audit"
+      ],
+      "verified": false
+    },
+    {
+      "id": "11",
+      "status": "completed",
+      "missing": [],
+      "verified": true
+    }
+  ]
+}

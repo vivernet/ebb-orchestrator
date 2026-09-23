@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { apiClient } from '../../api/client.js';
-import { EmptyState, PageState } from '../../components/PageState.js';
-import StatusBadge from '../../components/StatusBadge.js';
+import { EmptyState, PageState } from '../../components/ui/PageState.js';
+import StatusBadge from '../../components/ui/StatusBadge.js';
 
 interface OnboardingProject {
   projectId: string;

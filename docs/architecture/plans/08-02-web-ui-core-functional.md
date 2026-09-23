@@ -1,7 +1,7 @@
 ---
 id: plan-08-02
 title: Plan Document
-status: superseded
+status: completed
 created: 2026-09-23
 ---
 
@@ -196,6 +196,14 @@ created: 2026-09-23
 | `apps/web/src/features/projects/api.ts` | обновить | Project API calls |
 | `apps/web/test/features/onboarding.test.tsx` | создать | Onboarding tests |
 | `apps/web/test/e2e/v1-ui.spec.ts` | обновить | E2E для новых routes |
+
+---
+
+## Completion Note
+
+Status updated to **completed**. Onboarding (/projects/new), Dashboard (/), and Project View (/projects/:id) implemented with real backend API adapters, projection rendering, and state primitives (loading/empty/error/not-found). Tests added for all screens.
+
+See implementation: `apps/web/src/features/onboarding/`, `apps/web/src/features/dashboard/`, `apps/web/src/features/projects/`. All components use shared primitives from Stage A.
 
 ---
 

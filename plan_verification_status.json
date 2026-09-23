@@ -1,0 +1,85 @@
+{
+  "plans": [
+    {
+      "id": "01",
+      "status": "completed",
+      "verified": true
+    },
+    {
+      "id": "02",
+      "status": "completed",
+      "verified": true
+    },
+    {
+      "id": "03",
+      "status": "completed",
+      "verified": true
+    },
+    {
+      "id": "04",
+      "status": "completed",
+      "verified": true
+    },
+    {
+      "id": "05",
+      "status": "completed",
+      "verified": true
+    },
+    {
+      "id": "06",
+      "status": "completed",
+      "verified": true
+    },
+    {
+      "id": "07",
+      "status": "completed",
+      "verified": true
+    },
+    {
+      "id": "08-01",
+      "status": "completed",
+      "verified": true,
+      "notes": "Web UI Stage A implemented: /projects route, project aliases, primitives moved to components/ui/, connection/notification indicators added"
+    },
+    {
+      "id": "08-02",
+      "status": "completed",
+      "verified": true,
+      "notes": "Web UI core features implemented with backend connections"
+    },
+    {
+      "id": "08-03",
+      "status": "completed",
+      "verified": true,
+      "notes": "Onboarding full flow implemented with approve/activate steps"
+    },
+    {
+      "id": "08-04",
+      "status": "completed",
+      "verified": true,
+      "notes": "Audit and recovery design completed"
+    },
+    {
+      "id": "09",
+      "status": "completed",
+      "verified": true
+    },
+    {
+      "id": "10",
+      "status": "completed",
+      "verified": true,
+      "notes": "Final audit and hardening completed"
+    },
+    {
+      "id": "11",
+      "status": "completed",
+      "verified": true
+    }
+  ],
+  "verification": {
+    "lint": "pass",
+    "typecheck": "pass",
+    "test": "pass",
+    "build": "pass"
+  }
+}

@@ -14,16 +14,16 @@ describe('routing and session bootstrap', () => {
 
   test('uses stable IDs for core projection routes', () => {
     const routes = router.routes[0]?.children ?? [];
-    expect(routes.slice(0, 4).map((route) => route.id)).toEqual([
-      'dashboard', 'project', 'epic', 'task',
+    expect(routes.slice(0, 6).map((route) => route.id)).toEqual([
+      'dashboard', 'projects-index', 'project', 'epic', 'project-epic', 'task',
     ]);
   });
 
   test('keeps every V1 route and exposes an explicit not-found boundary', () => {
     const routes = router.routes[0]?.children ?? [];
     expect(routes.map((route) => route.path)).toEqual([
-      '', 'projects/:id', 'epics/:id', 'tasks/:id', 'approvals', 'execution',
-      'runs/:id', 'usage', 'settings', 'projects/new', '*',
+      '', 'projects', 'projects/:id', 'epics/:id', 'projects/:projectId/epics/:epicId', 'tasks/:id', 'projects/:projectId/tasks/:taskId', 'approvals', 'execution',
+      'runs/:id', 'projects/:projectId/runs/:runId', 'usage', 'settings', 'projects/new', '*',
     ]);
     expect(routes.find((route) => route.path === '*')?.id).toBe('not-found');
     expect(router.routes[0]?.errorElement).toBeDefined();
@@ -33,10 +33,10 @@ describe('routing and session bootstrap', () => {
     const routes = router.routes[0]?.children ?? [];
 
     expect(routes.map((route) => route.handle)).toEqual([
-      { breadcrumbLabel: 'Dashboard' }, { breadcrumbLabel: 'Project' }, { breadcrumbLabel: 'Epic' },
-      { breadcrumbLabel: 'Task' }, { breadcrumbLabel: 'Approvals' }, { breadcrumbLabel: 'Execution' },
-      { breadcrumbLabel: 'Run' }, { breadcrumbLabel: 'Usage' }, { breadcrumbLabel: 'Settings' },
-      { breadcrumbLabel: 'Project onboarding' }, { breadcrumbLabel: 'Page not found' },
+      { breadcrumbLabel: 'Dashboard' }, { breadcrumbLabel: 'Projects' }, { breadcrumbLabel: 'Project' }, { breadcrumbLabel: 'Epic' },
+      { breadcrumbLabel: 'Epic' }, { breadcrumbLabel: 'Task' }, { breadcrumbLabel: 'Task' }, { breadcrumbLabel: 'Approvals' },
+      { breadcrumbLabel: 'Execution' }, { breadcrumbLabel: 'Run' }, { breadcrumbLabel: 'Run' }, { breadcrumbLabel: 'Usage' },
+      { breadcrumbLabel: 'Settings' }, { breadcrumbLabel: 'Project onboarding' }, { breadcrumbLabel: 'Page not found' },
     ]);
   });
 

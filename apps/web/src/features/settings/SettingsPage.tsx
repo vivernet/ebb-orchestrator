@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 import { apiPaths, type SettingsProjection } from '@ebb-orchestrator/contracts';
 import { apiClient, toClientPath } from '../../api/client.js';
-import { PageState } from '../../components/PageState.js';
+import { PageState } from '../../components/ui/PageState.js';
 import { useQuery } from '../../state/use-query.js';
 
 function valueOrUnavailable(value: unknown): string {

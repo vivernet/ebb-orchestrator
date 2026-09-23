@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiPaths } from '@ebb-orchestrator/contracts';
 import { apiClient, toClientPath } from '../../api/client.js';
-import { EmptyState, ErrorAlert, PageState } from '../../components/PageState.js';
-import StatusBadge from '../../components/StatusBadge.js';
+import { EmptyState, ErrorAlert, PageState } from '../../components/ui/PageState.js';
+import StatusBadge from '../../components/ui/StatusBadge.js';
 import { useOnSSEReconnect } from '../../hooks/useEventClient.js';
 import { createMutationStore, type MutationState } from '../../state/mutation-store.js';
 import { createQueryStore } from '../../state/query-store.js';

@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 import { apiPaths } from '@ebb-orchestrator/contracts';
 import { apiClient, toClientPath } from '../../api/client.js';
-import { EmptyState, PageState } from '../../components/PageState.js';
+import { EmptyState, PageState } from '../../components/ui/PageState.js';
 import { useOnSSEReconnect } from '../../hooks/useEventClient.js';
 import { useQuery } from '../../state/use-query.js';
 

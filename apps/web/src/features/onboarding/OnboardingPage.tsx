@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { onboardingApi, type OnboardingDiscoveryResult } from './api.js';
-import StatusBadge from '../../components/StatusBadge.js';
+import StatusBadge from '../../components/ui/StatusBadge.js';
 
 /**
  * Представляет экран онбординга проекта с полным flow: discovery → review → approve → activate.

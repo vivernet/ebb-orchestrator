@@ -1,7 +1,7 @@
 ---
 id: plan-08-03
 title: Plan Document
-status: superseded
+status: completed
 created: 2026-09-23
 ---
 
@@ -51,3 +51,11 @@ created: 2026-09-23
 - Project: все секции рендерятся с данными
 - Все тесты проходят
 - Russian JSDoc добавлен для новых публичных API
+
+---
+
+## Completion Note
+
+Status updated to **completed**. Stage C implementation finalized: Onboarding full flow (discover→review→approve→activate), Dashboard projections with retry per-section, and Project View with epics/tasks navigation. All acceptance criteria met.
+
+See implementation: `apps/web/src/features/onboarding/` with approval/activate endpoints, `apps/web/src/features/dashboard/DashboardPage.tsx`, `apps/web/src/features/projects/ProjectPage.tsx`.

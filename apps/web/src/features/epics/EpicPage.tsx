@@ -2,7 +2,7 @@ import { useCallback } from 'react';
 import { apiPaths, type EpicOverviewProjection } from '@ebb-orchestrator/contracts';
 import { Link } from 'react-router';
 import { apiClient, toClientPath } from '../../api/client.js';
-import { ErrorAlert } from '../../components/PageState.js';
+import { ErrorAlert } from '../../components/ui/PageState.js';
 import { useOnSSEReconnect } from '../../hooks/useEventClient.js';
 import { useQuery } from '../../state/use-query.js';
 

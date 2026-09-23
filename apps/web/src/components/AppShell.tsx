@@ -1,4 +1,6 @@
 import { Link, NavLink, Outlet, useMatches } from 'react-router';
+import { ConnectionIndicator } from './ui/ConnectionIndicator.js';
+import { NotificationIndicator } from './ui/NotificationIndicator.js';
 
 function getBreadcrumbLabel(handle: unknown): string | null {
   if (typeof handle !== 'object' || handle === null || !('breadcrumbLabel' in handle)) return null;
@@ -33,12 +35,16 @@ function AppShell() {
         <div className="brand"><span className="brand-mark" aria-hidden="true">E</span><div><strong>Ebb</strong><span>Orchestrator</span></div></div>
         <nav aria-label="Primary navigation">
           <NavLink to="/" end>Dashboard</NavLink>
-          <NavLink to="/projects/new">Projects</NavLink>
+          <NavLink to="/projects">Projects</NavLink>
           <NavLink to="/approvals">Approvals</NavLink>
           <NavLink to="/execution">Execution</NavLink>
           <NavLink to="/usage">Usage</NavLink>
           <NavLink to="/settings">Settings</NavLink>
         </nav>
+        <div className="nav-status">
+          <ConnectionIndicator />
+          <NotificationIndicator count={0} />
+        </div>
         <p className="nav-footnote">Local-first control plane</p>
       </aside>
       <main className="main-content">

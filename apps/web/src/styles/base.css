@@ -17,6 +17,9 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .left-nav a:hover { background: #151f31; color: #f4f7fb; }
 .left-nav a.active { background: #192b4a; border-color: #2c5085; color: #eff5ff; }
 .nav-footnote { color: #71809a; font-size: 12px; margin: auto 8px 0; }
+.nav-status { display: flex; gap: 8px; padding: 0 8px; }
+.connection-indicator, .notification-indicator { font-size: 12px; }
+.notification-badge { background: #c1121f; border-radius: 999px; color: #fff; font-size: 10px; font-weight: 700; padding: 1px 5px; }
 .main-content { min-width: 0; padding: 40px clamp(20px, 4vw, 64px); }
 .route-breadcrumbs { align-items: center; color: #8fa0bb; display: flex; gap: 8px; margin: 0 auto 18px; max-width: 1240px; }
 .route-breadcrumbs a { color: #a9c7ff; }

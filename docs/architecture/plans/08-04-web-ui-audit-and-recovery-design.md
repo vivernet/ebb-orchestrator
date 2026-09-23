@@ -1,7 +1,7 @@
 ---
 id: plan-08-04
 title: Plan Document
-status: superseded
+status: completed
 created: 2026-09-23
 ---
 
@@ -479,3 +479,11 @@ git commit -m "docs: define Web UI recovery design"
 - явное указание, что implementation ждёт подтверждения пользователя.
 
 Approval gate обязателен, потому что следующий этап меняет frontend architecture.
+
+---
+
+## Completion Note
+
+Status updated to **completed**. Audit/design phase concluded with full Web UI baseline capture, contract matrix, browser verification, gap analysis (`docs/audit/web-ui-gap-analysis.md`), and recovery design (`docs/architecture/specs/02-web-ui-recovery-design.md`). Implementation stages A-F defined.
+
+See artifacts: `docs/audit/web-ui-code-map.md`, `docs/audit/web-ui-gap-analysis.md`, `docs/architecture/specs/02-web-ui-recovery-design.md`.
