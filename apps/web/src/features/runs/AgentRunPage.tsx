@@ -7,6 +7,12 @@ import StatusBadge from '../../components/StatusBadge.js';
 import { useOnSSEReconnect } from '../../hooks/useEventClient.js';
 import { useQuery } from '../../state/use-query.js';
 import { createMutationStore, type MutationState } from '../../state/mutation-store.js';
+import {
+  getRunEvents,
+  getRunTools,
+  getRunPermissions,
+  getRunRecovery,
+} from './api.js';
 
 interface AgentRun {
   id: string;
@@ -46,9 +52,68 @@ export default function AgentRunPage({ id }: AgentRunPageProps) {
   const retry = useCallback(() => { void query.refetch().catch(() => undefined); }, [query.refetch]);
   useOnSSEReconnect(retry);
 
+  // State for new sections
+  interface EventItem { id: string; type: string; createdAt: string; payload?: unknown; }
+  interface ToolResponse { tools: string[]; }
+  interface AuditEntry { id: string; action: string; actor: string; aggregateType: string; aggregateId: string; details?: unknown; createdAt: string; }
+  interface RecoveryAttempt { id: string; roleLevel: string; failureType: string; attemptCount: number; timestamp: string; fingerprint?: unknown; }
+  interface RecoveryState { id: string; status: string; reason: string; createdAt: string; updatedAt: string; }
+  interface RecoveryResponse {
+    runId: string;
+    taskId: string | null;
+    runStatus: string;
+    recovery: {
+      attempts: RecoveryAttempt[];
+      schedulerRequests: unknown[];
+      state: RecoveryState | null;
+    } | null;
+  }
+
+  const [eventsQuery, setEventsQuery] = useState<{ status: 'idle' | 'loading' | 'success' | 'error'; data: EventItem[] | null; error: unknown | null }>({
+    status: 'idle', data: null, error: null,
+  });
+  const [toolsQuery, setToolsQuery] = useState<{ status: 'idle' | 'loading' | 'success' | 'error'; data: ToolResponse | null; error: unknown | null }>({
+    status: 'idle', data: null, error: null,
+  });
+  const [permissionsQuery, setPermissionsQuery] = useState<{ status: 'idle' | 'loading' | 'success' | 'error'; data: AuditEntry[] | null; error: unknown | null }>({
+    status: 'idle', data: null, error: null,
+  });
+  const [recoveryQuery, setRecoveryQuery] = useState<{ status: 'idle' | 'loading' | 'success' | 'error'; data: RecoveryResponse | null; error: unknown | null }>({
+    status: 'idle', data: null, error: null,
+  });
+
   const cancel = async () => {
     await mutationStore.execute('cancel-run', () => apiClient.post(cancelPath, {}), query.refetch).catch(() => undefined);
   };
+
+  // Fetch related data when run is loaded
+  useEffect(() => {
+    if (!run) return;
+
+    // Load events
+    setEventsQuery((prev) => ({ ...prev, status: 'loading' }));
+    getRunEvents(id)
+      .then((data) => setEventsQuery({ status: 'success', data, error: null }))
+      .catch((err) => setEventsQuery({ status: 'error', data: null, error: err }));
+
+    // Load tools
+    setToolsQuery((prev) => ({ ...prev, status: 'loading' }));
+    getRunTools(id)
+      .then((data) => setToolsQuery({ status: 'success', data, error: null }))
+      .catch((err) => setToolsQuery({ status: 'error', data: null, error: err }));
+
+    // Load permissions
+    setPermissionsQuery((prev) => ({ ...prev, status: 'loading' }));
+    getRunPermissions(id)
+      .then((data) => setPermissionsQuery({ status: 'success', data, error: null }))
+      .catch((err) => setPermissionsQuery({ status: 'error', data: null, error: err }));
+
+    // Load recovery
+    setRecoveryQuery((prev) => ({ ...prev, status: 'loading' }));
+    getRunRecovery(id)
+      .then((data) => setRecoveryQuery({ status: 'success', data, error: null }))
+      .catch((err) => setRecoveryQuery({ status: 'error', data: null, error: err }));
+  }, [run, id]);
 
   if (query.status === 'loading' || query.status === 'idle') return <PageState status="loading" message="Loading Agent Run…" />;
   if (query.status === 'error') return <PageState status="error" message={`Unable to load Agent Run: ${errorMessage(query.error)}`} onRetry={retry} />;
@@ -81,6 +146,87 @@ export default function AgentRunPage({ id }: AgentRunPageProps) {
         <div><span className="metric-value">{run.usage.cachedTokens}</span><span className="metric-label">Cached tokens</span></div>
         <div><span className="metric-value">{run.usage.outputTokens}</span><span className="metric-label">Output tokens</span></div>
         <div><span className="metric-value">${run.usage.cost.toFixed(4)}</span><span className="metric-label">Cost</span></div>
+      </section>
+
+      {/* Events section */}
+      <section aria-label="Events">
+        <h2>Events</h2>
+        {eventsQuery.status === 'loading' && <p>Loading events…</p>}
+        {eventsQuery.status === 'error' && <p className="error">Unable to load events: {errorMessage(eventsQuery.error)}</p>}
+        {eventsQuery.status === 'success' && eventsQuery.data && eventsQuery.data.length === 0 && <p>No events recorded.</p>}
+        {eventsQuery.status === 'success' && eventsQuery.data && eventsQuery.data.length > 0 && (
+          <ul>
+            {eventsQuery.data.map((event) => (
+              <li key={event.id}>
+                <strong>{event.type}</strong> at {new Date(event.createdAt).toLocaleString()}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {/* Tools section */}
+      <section aria-label="Tools">
+        <h2>Allowed Tools</h2>
+        {toolsQuery.status === 'loading' && <p>Loading tools…</p>}
+        {toolsQuery.status === 'error' && <p className="error">Unable to load tools: {errorMessage(toolsQuery.error)}</p>}
+        {toolsQuery.status === 'success' && toolsQuery.data && toolsQuery.data.tools && toolsQuery.data.tools.length === 0 && <p>No tools allowed.</p>}
+        {toolsQuery.status === 'success' && toolsQuery.data && toolsQuery.data.tools && toolsQuery.data.tools.length > 0 && (
+          <ul>
+            {toolsQuery.data.tools.map((tool: string, idx: number) => (
+              <li key={idx}>{tool}</li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {/* Permissions/Audit section */}
+      <section aria-label="Permissions">
+        <h2>Permissions & Audit Log</h2>
+        {permissionsQuery.status === 'loading' && <p>Loading permissions…</p>}
+        {permissionsQuery.status === 'error' && <p className="error">Unable to load permissions: {errorMessage(permissionsQuery.error)}</p>}
+        {permissionsQuery.status === 'success' && permissionsQuery.data && permissionsQuery.data.length === 0 && <p>No audit entries.</p>}
+        {permissionsQuery.status === 'success' && permissionsQuery.data && permissionsQuery.data.length > 0 && (
+          <ul>
+            {permissionsQuery.data.map((entry) => (
+              <li key={entry.id}>
+                <strong>{entry.action}</strong> by {entry.actor} at {new Date(entry.createdAt).toLocaleString()}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {/* Recovery section */}
+      <section aria-label="Recovery">
+        <h2>Recovery</h2>
+        {recoveryQuery.status === 'loading' && <p>Loading recovery data…</p>}
+        {recoveryQuery.status === 'error' && <p className="error">Unable to load recovery: {errorMessage(recoveryQuery.error)}</p>}
+        {recoveryQuery.status === 'success' && recoveryQuery.data && recoveryQuery.data.recovery === null && <p>No recovery data available.</p>}
+        {recoveryQuery.status === 'success' && recoveryQuery.data && recoveryQuery.data.recovery && (
+          <div>
+            <p>Task: {recoveryQuery.data.taskId ?? '—'}</p>
+            <p>Run Status: {recoveryQuery.data.runStatus}</p>
+            <h3>Recovery Attempts</h3>
+            {recoveryQuery.data.recovery.attempts.length === 0 && <p>No recovery attempts.</p>}
+            {recoveryQuery.data.recovery.attempts.length > 0 && (
+              <ul>
+                {recoveryQuery.data.recovery.attempts.map((attempt) => (
+                  <li key={attempt.id}>
+                    {attempt.roleLevel} — {attempt.failureType} (attempt {attempt.attemptCount}) at {new Date(attempt.timestamp).toLocaleString()}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <h3>State</h3>
+            {recoveryQuery.data.recovery.state === null && <p>No recovery state.</p>}
+            {recoveryQuery.data.recovery.state !== null && (
+              <p>
+                <strong>Status:</strong> {recoveryQuery.data.recovery.state.status} — {recoveryQuery.data.recovery.state.reason}
+              </p>
+            )}
+          </div>
+        )}
       </section>
 
       {isActive && <footer className="page-actions"><button type="button" className="danger-button" disabled={cancelState.status === 'pending'} onClick={() => void cancel()}>Cancel Run</button></footer>}

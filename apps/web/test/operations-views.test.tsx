@@ -106,7 +106,8 @@ describe('Agent Run detail', () => {
     expect(await screen.findByRole('heading', { name: 'Agent Run: run-1' })).toBeInTheDocument();
     expect(screen.getByText('DEVELOPMENT')).toBeInTheDocument();
     expect(screen.getByText('$0.4200')).toBeInTheDocument();
-    expect(get).toHaveBeenCalledTimes(1);
+    // Page makes multiple calls: run, events, tools, permissions, recovery
+    expect(get.mock.calls.filter(([path]) => path.startsWith('/runs/run-1'))).toHaveLength(5);
     expect(get).toHaveBeenCalledWith('/runs/run-1', expect.objectContaining({ signal: expect.any(AbortSignal) }));
     vi.restoreAllMocks();
   });
