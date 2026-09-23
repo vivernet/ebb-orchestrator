@@ -107,6 +107,7 @@ See [Stage 01 Merge Decisions](../architecture/plans/governance/08-stage-01-merg
 
 #### Stage 09: Production Readiness
 - **Plan:** `../architecture/plans/09-production-readiness.md`
+- **Plan:** `../architecture/plans/13-roadmap-generator.md`
 - **Status:** proposed
 - **Evidence:** N/A (pending approval)
 
@@ -141,6 +142,8 @@ See [Stage 01 Merge Decisions](../architecture/plans/governance/08-stage-01-merg
 | `09` | `09` | `proposed` | Production Readiness | [docs](../architecture/plans/09-production-readiness.md) |
 | `10` | `10` | `planned` | Final V1 Audit Hardening | [docs](../architecture/plans/10-final-v1-audit-hardening.md) |
 | `11` | `11` | `planned` | Hermes Development Capabilities | [docs](../architecture/plans/11-hermes-development-capabilities.md) |
+| `12` | `08` | `proposed` | Web 401 и завершение проекта | [docs](../architecture/plans/12-401-web-completion.md) |
+| `13` | `09` | `proposed` | Автоматическая генерация роадмапа | [docs](../architecture/plans/13-roadmap-generator.md) |
 
 ### Governance Plans (Stage 00)
 
