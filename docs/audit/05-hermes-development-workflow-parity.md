@@ -29,11 +29,10 @@ date: 2026-09-23
 
 ## Project-local installation
 
-9 skills в `tools/hermes/skills/`:
+8 skills в `tools/hermes/skills/`:
 - ebb-execute-plan
 - ebb-final-review
 - ebb-implement-task
-- ebb-provider-integration
 - ebb-quality-gates
 - ebb-repository-context
 - ebb-review-task

@@ -1,28 +1,28 @@
-# Hermes Development Tools
+# Инструменты разработки Hermes
 
-This directory contains canonical repository source for Ebb development skills.
+Этот каталог содержит канонические исходные репозитории для навыков разработки Ebb.
 
-## Structure
+## Структура
 
-- `skills/` — Source SKILL.md files for Hermes Agent
-  - `ebb-execute-plan/` — Coordinates plan execution with subagents
-  - `ebb-implement-task/` — Implements single plan task
-  - `ebb-review-task/` — Reviews completed task diff
-  - `ebb-final-review/` — Performs final branch review
-- `fixtures/` — Test fixtures and parity plans
+- `skills/` — Исходные файлы SKILL.md для Hermes Agent
+  - `ebb-execute-plan/` — Координирует выполнение плана через субагентов
+  - `ebb-implement-task/` — Реализует отдельную задачу из плана
+  - `ebb-review-task/` — Рецензирует завершённый дифф задачи
+  - `ebb-final-review/` — Выполняет финальную рецензию ветки
+- `fixtures/` — Тестовые фикстуры и планы проверки соответствия
 
-## Usage
+## Использование
 
-Installed copies in HERMES_HOME are generated/synchronized from these sources. Do not manually edit installed copies.
+Установленные копии в HERMES_HOME генерируются/синхронизируются из этих источников. Не редактируйте установленные копии вручную.
 
-After changing skills, run:
+После изменения навыков выполните:
 ```bash
 pnpm hermes:setup
 pnpm hermes:check
 ```
 
-## Workflow
+## Рабочий процесс
 
-1. `pnpm hermes:setup` — Sync skills to HERMES_HOME
-2. `pnpm hermes:check` — Verify setup is correct
-3. `pnpm hermes:execute -- <plan>` — Execute a development plan
+1. `pnpm hermes:setup` — Синхронизация навыков в HERMES_HOME
+2. `pnpm hermes:check` — Проверка корректности установки
+3. `pnpm hermes:execute -- <plan>` — Выполнение плана разработки

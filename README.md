@@ -38,7 +38,7 @@ Web UI собираются отдельными gates; текущий browser E
 `apps/server/dist/main.js` и Vite frontend с изолированным временным
 `EBB_ORCHESTRATOR_HOME`, проверяя реальный HTTP transport/session и bootstrap
 flow. Это ещё не является полным покрытием всех UI flows, Hermes live runtime,
-Git/worktree recovery и SecretStore-провижининга. Полный набор gate-команд зафиксирован в
+Git/worktree recovery и SecretStore-провайжининга. Полный набор gate-команд зафиксирован в
 `scan-manifest.json` и CI workflow.
 Внешние deployment-провайдеры и GitHub-синхронизация остаются опциональными
 адаптерами v1 и не являются обязательными для local-first запуска.
