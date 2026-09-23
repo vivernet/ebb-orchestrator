@@ -86,9 +86,9 @@ function checkDocs(files) {
       });
     }
     
-    // Check filename pattern
+    // Check filename pattern (allow README.md)
     const fileName = file.path.split('/').pop();
-    if (!fileName.match(/^\d\d-/)) {
+    if (fileName !== 'README.md' && !fileName.match(/^\d\d-/)) {
       issues.push({
         file: file.path,
         severity: 'warning',

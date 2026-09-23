@@ -45,7 +45,7 @@ export class SingleInstanceLock {
     }
 
     if (existing) {
-      if (this.isProcessAlive(existing.pid)) {
+      if (await this.isProcessAlive(existing.pid)) {
         throw new Error(
           `Cannot acquire lock: another instance is running (PID ${existing.pid}). ` +
             `Lock file: ${this.lockPath}`,
@@ -91,12 +91,13 @@ export class SingleInstanceLock {
   /**
    * Проверяет, работает ли процесс с указанным PID.
    * Использует `process.kill(pid, 0)`: сигнал не отправляется, проверяется только
-   * существование процесса.
+   * существование процесса. На Unix PID 1 (init) считается устаревшим lock'ом.
    */
-  private isProcessAlive(pid: number): boolean {
+  private async isProcessAlive(pid: number): Promise<boolean> {
     try {
       process.kill(pid, 0);
-      return true;
+      // На Unix PID 1 — это init, который не может быть экземпляром нашего приложения.
+      return !(process.platform !== "win32" && pid === 1);
     } catch {
       return false;
     }

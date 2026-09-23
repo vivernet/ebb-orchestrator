@@ -337,8 +337,6 @@ async function doSetup() {
     console.error('Documentation checks failed:');
     console.error(docsInventory.stdout || docsInventory.stderr);
     console.error(docsCheck.stdout || docsCheck.stderr);
-    console.error(docsLinkSync.stdout || docsLinkSync.stderr);
-    console.error(docsRenameCheck.stdout || docsRenameCheck.stderr);
     process.exit(1);
   }
 
