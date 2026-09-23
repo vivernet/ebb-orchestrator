@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { apiPaths } from '@ebb-orchestrator/contracts';
+import { apiPaths, type DashboardProjection } from '@ebb-orchestrator/contracts';
 import { Link } from 'react-router';
 import { toClientPath } from '../../api/client.js';
 import { EmptyState, PageState } from '../../components/ui/PageState.js';
@@ -10,10 +10,10 @@ import { listProjects } from '../projects/api.js';
  * Представляет пользовательский экран ProjectsIndex; авторитетные проверки выполняются backend.
  */
 export default function ProjectsIndex() {
-  const projectsPath = toClientPath(apiPaths.projects());
+  const projectsPath = toClientPath(apiPaths.projectsCollection);
   const fetcher = useCallback((_signal: AbortSignal) => listProjects(), []);
-  const query = useQuery(null, projectsPath, undefined, fetcher);
-  const projects = query.data?.projects ?? [];
+  const query = useQuery<DashboardProjection['projects']>(null, projectsPath, undefined, fetcher);
+  const projects = query.data ?? [];
 
   const retry = useCallback(() => { void query.refetch().catch(() => undefined); }, [query.refetch]);
 
