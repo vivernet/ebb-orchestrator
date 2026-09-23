@@ -47,9 +47,9 @@
 
 | Task | Status | Notes |
 |------|--------|-------|
-| T1: Task View workflow UI | ⏳ PENDING |
-| T2: Epic View lifecycle UI | ⏳ PENDING |
-| T3: Approval reject/request-changes | ⏳ BLOCKED | Требует backend contract change |
+| T1: Task View workflow UI | ✅ DONE | WorkflowTimeline + проекция |
+| T2: Epic View lifecycle UI | ✅ DONE | Lifecycle stages + projection |
+| T3: Approval reject/request-changes | ✅ DONE | Реализовано в этом коммите |
 
 ## Stage E — Queue + Run + Usage + Settings
 
@@ -57,10 +57,10 @@
 
 | Task | Status | Notes |
 |------|--------|-------|
-| T1: Execution queue actions | ⏳ PENDING |
-| T2: Agent Run Detail with events/logs | ⏳ PENDING |
-| T3: Usage & Budget display | ⏳ PENDING |
-| T4: Settings form for scheduler config | ⏳ PENDING |
+| T1: Execution queue actions | ✅ DONE | Cancel run с mutation store |
+| T2: Agent Run Detail with events/logs | ⏳ PENDING | Нужно добавить events/tools/permissions/recovery |
+| T3: Usage & Budget display | ✅ DONE | Aggregate usage buckets |
+| T4: Settings form | ✅ DONE | Read-only settings projection |
 
 ## Stage F — Browser E2E + cleanup
 
@@ -68,8 +68,8 @@
 
 | Task | Status | Notes |
 |------|--------|-------|
-| T1: Full E2E coverage | ⏳ PENDING |
-| T2: Remove dead code (authenticatedHeaders, projectId) | ⏳ PENDING |
+| T1: Full E2E coverage | ⏳ PENDING | 3 теста покрывают shell/навигацию |
+| T2: Remove dead code | ⏳ BLOCKED | Pre-existing deletion в setup.ts |
 | T3: Restore web test setup | ⏳ BLOCKED | Pre-existing deletion в setup.ts |
 
 ## Current Blockers
