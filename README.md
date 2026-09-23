@@ -217,6 +217,23 @@ pnpm hermes:setup
 pnpm hermes:check
 ```
 
+## Документация и governance
+
+Скрипты для управления и проверкой документации в `docs/`:
+
+```bash
+# Список всех файлов с метаданными
+pnpm docs:inventory
+
+# Проверка YAML frontmatter и правила именования
+pnpm docs:check
+
+# Unit-тесты скриптов
+pnpm docs:test
+```
+
+Перед коммитом выполняйте `pnpm docs:check` и `pnpm docs:test`.
+
 ## Модель безопасности
 
 Недоверенными считаются ввод пользователя, repo config, пути, команды,
