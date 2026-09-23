@@ -10,7 +10,12 @@ updated: 2026-09-23
 depends_on: []
 specs:
   - ../specs/01-system-design.md
-evidence: []
+evidence:
+  - https://github.com/ebb-orchestrator/ebb-orchestrator/commit/6908acd
+  - https://github.com/ebb-orchestrator/ebb-orchestrator/commit/c18264e
+  - https://github.com/ebb-orchestrator/ebb-orchestrator/commit/b9441ad
+  - apps/server/test/modules/runtime/output-validator.test.ts
+  - tools/hermes/
 ---
 # План реализации среды выполнения Orchestrator Hermes и автономной задачи
 

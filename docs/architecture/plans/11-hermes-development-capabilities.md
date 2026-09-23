@@ -10,7 +10,13 @@ updated: 2026-09-23
 depends_on: []
 specs:
   - ../specs/01-system-design.md
-evidence: []
+evidence:
+  - https://github.com/ebb-orchestrator/ebb-orchestrator/commit/2117e86
+  - https://github.com/ebb-orchestrator/ebb-orchestrator/commit/b5441ad
+  - https://github.com/ebb-orchestrator/ebb-orchestrator/commit/2b1e2dd
+  - tools/hermes/
+  - scripts/hermes-dev.mjs
+  - scripts/hermes-dev.test.mjs
 ---
 # Hermes Development Capabilities Implementation Plan
 

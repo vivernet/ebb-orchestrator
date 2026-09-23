@@ -9,6 +9,7 @@ import type { StartRunOptions, ResumeRunOptions, RunOutcome } from "./run-types.
 import { validateRoleOutput } from "./output-validator.js";
 import { DatabaseCompletionStore, type CompletionStore } from "../execution/mcp/submit-result-tool.js";
 import { SUPPORTED_TOOL_IDS, type RoleName, type ToolId } from "../execution/run-capability.js";
+import { schema, migrationColumns } from './migrations/schema.js';
 import { RoleRegistry } from './role-registry.js';
 import { appendOutboxEvent } from "../../platform/events/outbox-repository.js";
 import { DomainEvent } from "../../platform/events/domain-event.js";
@@ -23,19 +24,11 @@ export class RunService {
     private readonly db: Database,
     private readonly runtime: AgentRuntime
   ) {
-    this.db.exec(`CREATE TABLE IF NOT EXISTS agent_runs (
-      id TEXT PRIMARY KEY, role TEXT NOT NULL, runtime TEXT NOT NULL, model TEXT NOT NULL,
-      task_id TEXT, epic_id TEXT, status TEXT NOT NULL, prompt TEXT, started_at TEXT, ended_at TEXT,
-      exit_code INTEGER, input_tokens INTEGER, output_tokens INTEGER, cost REAL, output TEXT
-    )`);
+    this.db.exec(schema);
     // сохранять databases created перед capability_json usable пока Объект migration
     // set является upgraded by Объект хост процесс.
     const columns = this.db.all<{ name: string }>("PRAGMA table_info(agent_runs)");
-    for (const column of [
-      "capability_ref TEXT", "capability_json TEXT", "session_id TEXT", "attempt INTEGER",
-      "trigger_reason TEXT", "context_version TEXT", "output_schema_version TEXT", "prompt TEXT",
-      "cached_input_tokens INTEGER", "output TEXT",
-    ]) {
+    for (const column of migrationColumns) {
       const name = column.split(" ", 1)[0];
       if (!columns.some((existing) => existing.name === name)) this.db.exec(`ALTER TABLE agent_runs ADD COLUMN ${column}`);
     }

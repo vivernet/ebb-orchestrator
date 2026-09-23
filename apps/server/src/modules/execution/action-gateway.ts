@@ -176,7 +176,7 @@ export class ActionGateway {
             const content = this.readVerifiedFile(resolvedPath);
             bytesRead += stat.size;
             if (content.toLocaleLowerCase().includes(normalizedPattern)) {
-              results.push(resolvedPath);
+              results.push(path.relative(this.workspace, resolvedPath));
             }
           }
         }

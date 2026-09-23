@@ -1,0 +1,61 @@
+{
+  "findings": [
+    {
+      "severity": "BLOCKER",
+      "file_or_symbol": "docs/plan_verification_status.json",
+      "evidence": "File does not exist; required by AGENTS.md §12 for plan verification",
+      "expected": "Existence of docs/plan_verification_status.json with plan status verification data",
+      "actual": "File not found",
+      "impact": "Cannot verify plan status against actual implementation; violates documented verification process"
+    },
+    {
+      "severity": "IMPORTANT",
+      "file_or_symbol": "apps/server/src/modules/projects/project-service.ts",
+      "evidence": "ProjectService.create method has minimal JSDoc in Russian; only 2-line comment",
+      "expected": "Full JSDoc per docs/development/07-jsdoc-style-guide.md: purpose, invariants, side effects, failure semantics",
+      "actual": "Single-line English summary without Russian documentation",
+      "impact": "Public API lacks required Russian JSDoc per AGENTS.md §12"
+    },
+    {
+      "severity": "IMPORTANT",
+      "file_or_symbol": "apps/server/src/app/routes/*.ts",
+      "evidence": "Most route files (projects.ts, approvals.ts, epics.ts) export interfaces/functions without JSDoc",
+      "expected": "All exported public API functions and interfaces documented in Russian per jsdoc-style-guide.md",
+      "actual": "106+ exported functions/classes; most lack JSDoc or have incomplete comments",
+      "impact": "Public API documentation incomplete; violates AGENTS.md §12 policy"
+    },
+    {
+      "severity": "MINOR",
+      "file_or_symbol": "docs/architecture/plans/governance/00-01-documentation-governance.md",
+      "evidence": "Governance plan references migration evidence files that have status=superseded",
+      "expected": "Active governance documents should reference current evidence, not superseded ones",
+      "actual": "Evidence files (03-document-migration-map.md, 04-progress-ledger.md) have status=superseded",
+      "impact": "Documentation chain points to outdated evidence; may cause confusion"
+    },
+    {
+      "severity": "IMPORTANT",
+      "file_or_symbol": "docs/architecture/plans/07-hermes-development-workflow.md",
+      "evidence": "Plan contains explicit anti-scope-creep warnings but no enforcement mechanism",
+      "expected": "Scope creep prevention policy should have documented approval workflow",
+      "actual": "Policy warnings exist but no evidence of enforcement mechanism or approval workflow",
+      "impact": "Risk of unapproved scope expansion despite documented warnings"
+    },
+    {
+      "severity": "MINOR",
+      "file_or_symbol": "docs/architecture/plans/01-11.md",
+      "evidence": "All plans show status:completed in YAML frontmatter, but migration map shows files renamed on 2026-09-23",
+      "expected": "Plan status should reflect actual implementation completion, not just documentation state",
+      "actual": "Plans marked completed despite recent renaming/migration activity",
+      "impact": "Status may not match actual code implementation state"
+    },
+    {
+      "severity": "MINOR",
+      "file_or_symbol": "docs/architecture/plans/governance/evidence/",
+      "evidence": "Evidence directory contains files with status=superseded but no active replacement",
+      "expected": "Superseded evidence should have active successor or explicit deprecation note",
+      "actual": "Files like 01-baseline.md, 02-progress-ledger.md marked superseded without clear active replacement",
+      "impact": "Documentation chain broken; unclear what evidence is authoritative"
+    }
+  ],
+  "conclusion": "Выявлены 3 IMPORTANT и 4 MINOR нарушения. Критическая проблема: отсутствует требуемый plan_verification_status.json (BLOCKER). JSDoc на публичных API неполный. Статус планов может не соответствовать фактическому состоянию кода. Рекомендовано: 1) Создать plan_verification_status.json, 2) Дополнить JSDoc согласно стилю, 3) Привести статус планов в соответствие с реализацией."
+}

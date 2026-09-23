@@ -1,6 +1,6 @@
 ---
 id: guideline-05
-status: in_progress
+status: completed
 kind: development
 title: Руководство по русскому JSDoc
 created: 2026-09-18

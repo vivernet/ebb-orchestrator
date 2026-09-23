@@ -10,7 +10,10 @@ updated: 2026-09-23
 depends_on: []
 specs:
   - ../specs/01-system-design.md
-evidence: []
+evidence:
+  - https://github.com/ebb-orchestrator/ebb-orchestrator/commit/6908acd
+  - https://github.com/ebb-orchestrator/ebb-orchestrator/commit/c18264e
+  - apps/server/test/platform/scheduler/
 ---
 # План реализации домена Orchestrator, Workflow, Scheduler и Recovery
 

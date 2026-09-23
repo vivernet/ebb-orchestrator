@@ -10,7 +10,17 @@ updated: 2026-09-23
 depends_on: []
 specs:
   - ../specs/01-system-design.md
-evidence: []
+evidence:
+  - https://github.com/ebb-orchestrator/ebb-orchestrator/commit/86e1ab4
+  - https://github.com/ebb-orchestrator/ebb-orchestrator/commit/6908acd
+  - https://github.com/ebb-orchestrator/ebb-orchestrator/commit/1296292
+  - https://github.com/ebb-orchestrator/ebb-orchestrator/commit/068e12a
+  - apps/server/test/platform/database/migrator.test.ts
+  - apps/server/test/platform/events/outbox.test.ts
+  - apps/server/test/platform/jobs/job-runner.test.ts
+  - apps/server/test/platform/artifacts/artifact-store.test.ts
+  - apps/server/test/platform/security.test.ts
+  - apps/server/test/platform/process/startup.test.ts
 ---
 # План реализации Foundation и Persistence Orchestrator
 

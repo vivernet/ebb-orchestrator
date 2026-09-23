@@ -12,7 +12,13 @@ depends_on:
   - plan-03
 specs:
   - ../specs/03-production-readiness-design.md
-evidence: []
+evidence:
+  - https://github.com/ebb-orchestrator/ebb-orchestrator/commit/86e1ab4
+  - https://github.com/ebb-orchestrator/ebb-orchestrator/commit/c18264e
+  - https://github.com/ebb-orchestrator/ebb-orchestrator/commit/09ee755
+  - https://github.com/ebb-orchestrator/ebb-orchestrator/commit/f96a2ae
+  - apps/server/test/platform/
+  - apps/server/test/integration/
 ---
 
 # Production readiness hardening Implementation Plan

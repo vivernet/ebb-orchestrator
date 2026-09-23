@@ -10,7 +10,13 @@ updated: 2026-09-23
 depends_on: []
 specs:
   - ../specs/01-system-design.md
-evidence: []
+evidence:
+  - https://github.com/ebb-orchestrator/ebb-orchestrator/commit/25a7625
+  - https://github.com/ebb-orchestrator/ebb-orchestrator/commit/d8abbc4
+  - https://github.com/ebb-orchestrator/ebb-orchestrator/commit/7f6c1da
+  - apps/web/src/pages/Onboarding.tsx
+  - apps/web/src/pages/Dashboard.tsx
+  - apps/web/test/onboarding.test.tsx
 ---
 # План реализации Web UI, GitHub и выпуска v1 Orchestrator
 

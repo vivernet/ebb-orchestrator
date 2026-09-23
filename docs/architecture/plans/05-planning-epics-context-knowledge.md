@@ -10,7 +10,11 @@ updated: 2026-09-23
 depends_on: []
 specs:
   - ../specs/01-system-design.md
-evidence: []
+evidence:
+  - https://github.com/ebb-orchestrator/ebb-orchestrator/commit/6908acd
+  - https://github.com/ebb-orchestrator/ebb-orchestrator/commit/c18264e
+  - apps/server/test/planning/
+  - apps/server/test/knowledge/
 ---
 # План реализации планирования Orchestrator, эпиков, контекста, знаний и использования
 
