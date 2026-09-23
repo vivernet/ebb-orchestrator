@@ -4,6 +4,7 @@ kind: development
 title: Documentation Governance — Naming Policy & Glossary
 created: 2026-09-23
 updated: 2026-09-23
+status: in_progress
 ---
 
 # Documentation Governance — Naming Policy & Glossary

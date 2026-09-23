@@ -1,8 +1,10 @@
 ---
+id: plan-08-02
 title: Plan Document
-status: active
+status: superseded
 created: 2026-09-23
 ---
+
 # План реализации Web UI Core Functional (Onboarding + Dashboard + Project)
 
 > **Для агентного исполнителя:** используй `ebb-execute-plan` и `ebb-implement-task` для последовательного выполнения. Не начинай до подтверждения Stage A/B завершённости.

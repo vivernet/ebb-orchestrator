@@ -1,8 +1,11 @@
 ---
+id: audit-02
+status: superseded
 kind: audit
 title: Audit Report — Ebb Orchestrator
 date: 2026-09-23
 ---
+
 
 # Audit Report — Ebb Orchestrator
 

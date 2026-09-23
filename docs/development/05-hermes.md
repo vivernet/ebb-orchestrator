@@ -1,5 +1,6 @@
 ---
 id: guideline-03
+status: in_progress
 kind: development
 title: Разработка Ebb Orchestrator через Hermes
 created: 2026-09-23

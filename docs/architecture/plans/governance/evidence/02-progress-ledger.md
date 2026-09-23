@@ -1,5 +1,6 @@
 ---
 id: ledger-01
+status: superseded
 kind: ledger
 title: 02-progress-ledger.md
 created: 2026-09-23

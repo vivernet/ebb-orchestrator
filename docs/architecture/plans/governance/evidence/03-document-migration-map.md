@@ -1,5 +1,6 @@
 ---
 id: reference-02
+status: superseded
 kind: reference
 title: document-migration-map.md
 created: 2026-09-23

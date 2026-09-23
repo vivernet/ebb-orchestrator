@@ -1,8 +1,10 @@
 ---
+id: plan-08-01
 title: Plan Document
-status: active
+status: superseded
 created: 2026-09-23
 ---
+
 # Web UI Recovery Stage A Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` or `superpowers:executing-plans` to implement this plan task-by-task.

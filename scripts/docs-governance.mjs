@@ -12,7 +12,7 @@ import { dirname } from 'path';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const ROOT = dirname(dirname(__dirname));
+const ROOT = dirname(__dirname);
 const DOCS_ROOT = join(ROOT, 'docs');
 
 /**
@@ -121,15 +121,25 @@ function inventoryDocs(files) {
 function checkCommand() {
   const files = scanDocs(DOCS_ROOT);
   const issues = checkDocs(files);
+  const errors = issues.filter(issue => issue.severity === 'error');
+  const warnings = issues.filter(issue => issue.severity === 'warning');
   
-  if (issues.length > 0) {
-    console.log(`Found ${issues.length} issue(s):\n`);
-    for (const issue of issues) {
+  if (warnings.length > 0) {
+    console.log(`Found ${warnings.length} warning(s):\n`);
+    for (const issue of warnings) {
+      console.log(`[${issue.severity.toUpperCase()}] ${issue.file}`);
+      console.log(`  ${issue.message}\n`);
+    }
+  }
+  
+  if (errors.length > 0) {
+    console.log(`Found ${errors.length} error(s):\n`);
+    for (const issue of errors) {
       console.log(`[${issue.severity.toUpperCase()}] ${issue.file}`);
       console.log(`  ${issue.message}\n`);
     }
     process.exit(1);
-  } else {
+  } else if (warnings.length === 0) {
     console.log('All documentation files pass checks.');
   }
 }

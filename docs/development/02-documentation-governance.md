@@ -1,5 +1,6 @@
 ---
 id: guideline-01
+status: in_progress
 kind: development
 title: Documentation Governance — Checklist & Implementation
 created: 2026-09-23
@@ -74,6 +75,7 @@ updated: 2026-09-23
 ```yaml
 ---
 id: <уникальный идентификатор>
+status: in_progress
 kind: <тип документа: Plan|Spec|Audit|Guideline|Ledger|Reference>
 title: <описательный заголовок>
 created: YYYY-MM-DD

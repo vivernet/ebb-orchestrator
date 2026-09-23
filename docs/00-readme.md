@@ -1,10 +1,13 @@
 ---
+id: index-01
+status: completed
 title: Ebb Orchestrator Documentation
 description: Central navigation and index for all documentation
 type: documentation-index
 version: 1.0
 last_updated: 2026-09-23
 ---
+
 
 # Ebb Orchestrator Documentation
 

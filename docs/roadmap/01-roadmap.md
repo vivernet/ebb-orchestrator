@@ -1,5 +1,6 @@
 ---
 id: roadmap-01
+status: completed
 kind: roadmap
 title: Ebb Orchestrator Roadmap
 summary: Unified roadmap consolidating all stages and plans

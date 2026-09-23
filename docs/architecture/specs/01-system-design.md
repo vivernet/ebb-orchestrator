@@ -1,10 +1,13 @@
 ---
+id: spec-01
+status: superseded
 title: System Design
 date: 2026-09-16
 stage: 01
 type: spec
 tags: [architecture, design, system]
 ---
+
 
 # Local-first оркестратор разработки ПО с помощью ИИ — спецификация дизайна
 

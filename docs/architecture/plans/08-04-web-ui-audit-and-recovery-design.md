@@ -1,8 +1,10 @@
 ---
+id: plan-08-04
 title: Plan Document
-status: active
+status: superseded
 created: 2026-09-23
 ---
+
 # План аудита и проектирования восстановления Web UI Ebb Orchestrator
 
 > **Для агентного исполнителя:** этот этап является audit/design stage. Не начинай широкое переписывание frontend до завершения аудита и утверждения recovery design.

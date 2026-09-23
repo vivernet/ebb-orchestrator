@@ -1,8 +1,10 @@
 ---
+id: plan-07-ledger
 title: Plan Document
-status: active
+status: superseded
 created: 2026-09-23
 ---
+
 # Ebb Orchestrator Web UI Recovery — Task Ledger
 
 План A-F стадий для восстановления Web UI до V1 functional state.

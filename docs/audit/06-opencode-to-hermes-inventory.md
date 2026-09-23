@@ -1,4 +1,6 @@
 ---
+id: audit-06
+status: superseded
 kind: audit
 title: OpenCode → Hermes Development Workflow Inventory
 date: 2026-09-23

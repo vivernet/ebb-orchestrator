@@ -1,8 +1,10 @@
 ---
+id: plan-08-03
 title: Plan Document
-status: active
+status: superseded
 created: 2026-09-23
 ---
+
 # Stage C: Onboarding + Dashboard + Project Implementation
 
 **Цель:** Реализовать три утверждённых экрана V1 с реальными backend-подключениями и полным onboarding flow.

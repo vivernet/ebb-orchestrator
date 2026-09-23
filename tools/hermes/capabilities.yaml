@@ -1,0 +1,15 @@
+# Ebb Orchestrator Capabilities
+
+provider: inception
+models:
+  - mercury-2.5
+
+capabilities:
+  - ebb-execute-plan
+  - ebb-final-review
+  - ebb-implement-task
+  - ebb-quality-gates
+  - ebb-repository-context
+  - ebb-review-task
+  - ebb-security-review
+  - ebb-web-e2e

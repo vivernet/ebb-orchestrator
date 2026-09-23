@@ -1,8 +1,11 @@
 ---
+id: audit-01
+status: superseded
 kind: audit
 title: Full Project Audit, Repair, Verification and Commit Plan
 date: 2026-09-23
 ---
+
 
 # Ebb Orchestrator — Full Project Audit, Repair, Verification and Commit Plan
 

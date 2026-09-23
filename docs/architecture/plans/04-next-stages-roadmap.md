@@ -1,8 +1,10 @@
 ---
+id: plan-04-next
 title: Plan Document
-status: active
+status: superseded
 created: 2026-09-23
 ---
+
 # Следующие этапы разработки Ebb Orchestrator
 
 > Этот roadmap продолжает работу после текущего V1 hardening.

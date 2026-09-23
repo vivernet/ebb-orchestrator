@@ -1,10 +1,13 @@
 ---
+id: spec-04
+status: superseded
 title: Hermes Development Capabilities
 date: 2026-09-21
 stage: 11
 type: spec
 tags: [hermes, development, capabilities]
 ---
+
 
 # Hermes Development Capabilities
 

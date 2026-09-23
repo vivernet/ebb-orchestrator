@@ -1,8 +1,10 @@
 ---
+id: plan-02-v1
 title: Plan Document
-status: active
+status: superseded
 created: 2026-09-23
 ---
+
 # Дорожная карта реализации Local AI Development Orchestrator v1
 
 > **Для агентных исполнителей:** ОБЯЗАТЕЛЬНЫЙ SUB-SKILL: используйте superpowers:subagent-driven-development (рекомендуется) или superpowers:executing-plans для реализации этого плана по задачам. Для отслеживания шаги используют синтаксис флажков (`- [ ]`).

@@ -1,8 +1,10 @@
 ---
+id: plan-03-jsdoc
 title: Plan Document
-status: active
+status: superseded
 created: 2026-09-23
 ---
+
 # Ebb Orchestrator — переход на русский JSDoc и документацию README
 
 > **Для агентов:** ОБЯЗАТЕЛЬНО использовать `superpowers:subagent-driven-development`. Для независимых непересекающихся модулей допускается `superpowers:dispatching-parallel-agents`. Каждый субагент получает эксклюзивный набор файлов. Финальную проверку выполняет отдельный агент, который не писал документацию.

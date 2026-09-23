@@ -1,5 +1,6 @@
 ---
 id: guideline-03
+status: in_progress
 kind: development
 title: Russian JSDoc и README документация
 created: 2026-09-23

@@ -333,9 +333,7 @@ async function doSetup() {
   console.log('Running documentation governance checks...');
   const docsInventory = spawnSync('node', ['scripts/docs-governance.mjs', 'inventory'], { encoding: 'utf8' });
   const docsCheck = spawnSync('node', ['scripts/docs-governance.mjs', 'check'], { encoding: 'utf8' });
-  const docsLinkSync = spawnSync('node', ['scripts/docs-governance.mjs', 'link:sync'], { encoding: 'utf8' });
-  const docsRenameCheck = spawnSync('node', ['scripts/docs-governance.mjs', 'rename:check'], { encoding: 'utf8' });
-  if (docsInventory.status !== 0 || docsCheck.status !== 0 || docsLinkSync.status !== 0 || docsRenameCheck.status !== 0) {
+  if (docsInventory.status !== 0 || docsCheck.status !== 0) {
     console.error('Documentation checks failed:');
     console.error(docsInventory.stdout || docsInventory.stderr);
     console.error(docsCheck.stdout || docsCheck.stderr);

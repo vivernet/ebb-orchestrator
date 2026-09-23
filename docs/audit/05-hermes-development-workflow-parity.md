@@ -1,4 +1,6 @@
 ---
+id: audit-05
+status: superseded
 kind: audit
 title: Hermes Development Workflow Parity Report
 date: 2026-09-23

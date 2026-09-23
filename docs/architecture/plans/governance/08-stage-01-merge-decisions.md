@@ -1,8 +1,11 @@
 ---
+id: plan-08-01-merge
+status: superseded
 title: Stage 01 Merge Decisions
 kind: governance-evidence
 created: 2026-09-23
 ---
+
 
 # Stage 01 Merge Decisions
 

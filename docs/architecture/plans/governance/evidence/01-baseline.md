@@ -1,5 +1,6 @@
 ---
 id: reference-01
+status: superseded
 kind: reference
 title: 01-baseline.md
 created: 2026-09-23

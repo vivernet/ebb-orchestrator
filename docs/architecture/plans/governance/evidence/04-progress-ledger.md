@@ -1,3 +1,10 @@
+---
+id: plan-00-progress-ledger
+status: superseded
+title: Progress Ledger
+type: evidence
+---
+
 # Progress Ledger: Documentation Governance Refactoring
 - Plan: docs/architecture/plans/governance/00-01-documentation-governance.md
 

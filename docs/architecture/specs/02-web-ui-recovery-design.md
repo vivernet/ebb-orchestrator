@@ -1,10 +1,13 @@
 ---
+id: spec-02
+status: superseded
 title: Web UI Recovery Design
 date: 2026-09-18
 stage: 08
 type: spec
 tags: [web, ui, recovery, design]
 ---
+
 
 # Ebb Orchestrator — Web UI Recovery Design
 

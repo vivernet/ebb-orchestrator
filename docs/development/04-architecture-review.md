@@ -1,5 +1,6 @@
 ---
 id: ledger-01
+status: in_progress
 kind: development
 title: Отчёт по проверке архитектуры EBB Orchestrator
 created: 2026-09-18

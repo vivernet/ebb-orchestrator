@@ -1,4 +1,6 @@
 ---
+id: audit-07
+status: superseded
 kind: audit
 title: Project State
 date: 2026-09-23

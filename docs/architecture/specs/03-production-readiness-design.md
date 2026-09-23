@@ -1,10 +1,13 @@
 ---
+id: spec-03
+status: superseded
 title: Production Readiness Design
 date: 2026-09-20
 stage: 09
 type: spec
 tags: [production, readiness, security]
 ---
+
 
 # Ebb Orchestrator — дизайн доведения v1 до production readiness
 

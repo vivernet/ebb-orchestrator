@@ -1,5 +1,6 @@
 ---
 id: ledger-04
+status: in_progress
 kind: development
 title: Execution ledger: русский JSDoc и README
 created: 2026-09-18
