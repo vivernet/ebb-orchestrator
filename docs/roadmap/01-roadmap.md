@@ -101,6 +101,7 @@ See [Stage 01 Merge Decisions](../architecture/plans/governance/08-stage-01-merg
   - `../architecture/plans/08-02-web-ui-core-functional.md`
   - `../architecture/plans/08-03-web-ui-operational-and-e2e.md`
   - `../architecture/plans/08-04-web-ui-audit-and-recovery-design.md`
+  - `../architecture/plans/12-401-web-completion.md`
 - **Status:** in_progress
 - **Evidence:** `docs/audit/08-web-ui-code-map.md`, `docs/audit/09-web-ui-gap-analysis.md`
 
@@ -136,6 +137,7 @@ See [Stage 01 Merge Decisions](../architecture/plans/governance/08-stage-01-merg
 | `08-02` | `08` | `in_progress` | Web UI Core Functional | [docs](../architecture/plans/08-02-web-ui-core-functional.md) |
 | `08-03` | `08` | `in_progress` | Web UI Operational & E2E | [docs](../architecture/plans/08-03-web-ui-operational-and-e2e.md) |
 | `08-04` | `08` | `in_progress` | Web UI Audit & Recovery Design | [docs](../architecture/plans/08-04-web-ui-audit-and-recovery-design.md) |
+| `12` | `08` | `proposed` | Web 401 и завершение проекта | [docs](../architecture/plans/12-401-web-completion.md) |
 | `09` | `09` | `proposed` | Production Readiness | [docs](../architecture/plans/09-production-readiness.md) |
 | `10` | `10` | `planned` | Final V1 Audit Hardening | [docs](../architecture/plans/10-final-v1-audit-hardening.md) |
 | `11` | `11` | `planned` | Hermes Development Capabilities | [docs](../architecture/plans/11-hermes-development-capabilities.md) |

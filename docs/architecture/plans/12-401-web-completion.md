@@ -1,3 +1,19 @@
+---
+id: plan-12
+kind: plan
+roadmap: 01
+stage: 08
+status: proposed
+title: Web 401 и завершение проекта
+created: 2026-09-23
+updated: 2026-09-23
+depends_on:
+  - plan-08-01
+specs:
+  - ../specs/01-system-design.md
+evidence: []
+---
+
 # Web 401 и завершение проекта — Implementation Plan
 
 > **Для agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (рекомендуется) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Этот документ является планом реализации; сам по себе он ничего не реализует.
