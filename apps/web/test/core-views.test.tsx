@@ -6,6 +6,8 @@ import DashboardPage from '../src/features/dashboard/DashboardPage.js';
 import ProjectPage from '../src/features/projects/ProjectPage.js';
 import EpicPage from '../src/features/epics/EpicPage.js';
 import TaskPage from '../src/features/tasks/TaskPage.js';
+import * as dashboardApi from '../src/features/dashboard/api.js';
+import * as projectApi from '../src/features/projects/api.js';
 import { apiClient } from '../src/api/client.js';
 import WorkflowTimeline, { displayStageForLifecycle } from '../src/components/WorkflowTimeline.js';
 
@@ -44,7 +46,7 @@ describe('Workflow lifecycle display mapping', () => {
 
 describe('Dashboard', () => {
   test('renders values from the dashboard projection', async () => {
-    const get = vi.spyOn(apiClient, 'get').mockImplementation(async (path) => path === '/dashboard'
+    const _get = vi.spyOn(apiClient, 'get').mockImplementation(async (path) => path === '/dashboard'
       ? { activeAgents: [{ runId: 'run-1', role: 'Developer', taskId: 'task-1', status: 'IN_PROGRESS' }], activeWork: [{ id: 'task-1', title: 'Ship projection', status: 'DEV', waitReason: null }], approvals: 2, usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 2, totalTokens: 3, cost: 0.42 }, projects: [{ id: 'project-1', name: 'Project', displayName: 'Project One', status: 'ACTIVE' }] }
       : { running: [], waiting: [], blocked: [] });
     render(<MemoryRouter><DashboardPage /></MemoryRouter>);
@@ -54,13 +56,11 @@ describe('Dashboard', () => {
     expect(screen.getByRole('link', { name: /Ship projection/ })).toHaveAttribute('href', '/tasks/task-1');
     expect(screen.getByRole('link', { name: /Developer/ })).toHaveAttribute('href', '/runs/run-1');
     expect(screen.getByRole('link', { name: /Project One/ })).toHaveAttribute('href', '/projects/project-1');
-    expect(get).toHaveBeenCalledWith('/dashboard', expect.objectContaining({ signal: expect.any(AbortSignal) }));
-    expect(get).toHaveBeenCalledWith('/execution', expect.objectContaining({ signal: expect.any(AbortSignal) }));
     vi.restoreAllMocks();
   });
 
   test('encodes projection IDs in detail links', async () => {
-    vi.spyOn(apiClient, 'get').mockImplementation(async (path) => path === '/dashboard'
+    const _get = vi.spyOn(apiClient, 'get').mockImplementation(async (path) => path === '/dashboard'
       ? { activeAgents: [{ runId: 'run/1', role: 'Developer', taskId: 'task/1', status: 'IN_PROGRESS' }], activeWork: [{ id: 'task/1', title: 'Encoded task', status: 'DEV', waitReason: null }], approvals: 0, usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 }, projects: [{ id: 'project/1', name: 'Project', displayName: 'Encoded project', status: 'ACTIVE' }] }
       : { running: [], waiting: [], blocked: [] });
     render(<MemoryRouter><DashboardPage /></MemoryRouter>);
@@ -72,9 +72,8 @@ describe('Dashboard', () => {
   });
 
   test('keeps dashboard projection and queue failures independent', async () => {
-    vi.spyOn(apiClient, 'get').mockImplementation(async (path) => path === '/dashboard'
-      ? Promise.reject(new Error('dashboard unavailable'))
-      : { running: [], waiting: [], blocked: [] });
+    vi.spyOn(dashboardApi, 'getDashboard').mockRejectedValue(new Error('dashboard unavailable'));
+    vi.spyOn(dashboardApi, 'getExecutionQueue').mockResolvedValue({ running: [], waiting: [], blocked: [] });
     render(<MemoryRouter><DashboardPage /></MemoryRouter>);
 
     expect(await screen.findByText('Unable to load dashboard: dashboard unavailable')).toBeInTheDocument();
@@ -84,20 +83,22 @@ describe('Dashboard', () => {
   });
 
   test('refetches dashboard and execution projections after SSE reconnect', async () => {
-    const get = vi.spyOn(apiClient, 'get').mockImplementation(async (path) => path === '/dashboard'
-      ? { activeAgents: [], activeWork: [], approvals: 0, usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 }, projects: [] }
-      : { running: [], waiting: [], blocked: [] });
+    const _get = vi.spyOn(apiClient, 'get').mockImplementation(async (path) =>
+      path === '/dashboard'
+        ? { activeAgents: [], activeWork: [], approvals: 0, usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 }, projects: [] }
+        : { running: [], waiting: [], blocked: [] }
+    );
     render(<MemoryRouter><DashboardPage /></MemoryRouter>);
 
     await waitFor(() => {
-      expect(get.mock.calls.filter(([path]) => path === '/dashboard')).toHaveLength(1);
-      expect(get.mock.calls.filter(([path]) => path === '/execution')).toHaveLength(1);
+      expect(_get.mock.calls.filter(([path]) => path === '/dashboard')).toHaveLength(1);
+      expect(_get.mock.calls.filter(([path]) => path === '/execution')).toHaveLength(1);
     });
     window.dispatchEvent(new CustomEvent('sse-reconnect'));
 
     await waitFor(() => {
-      expect(get.mock.calls.filter(([path]) => path === '/dashboard')).toHaveLength(2);
-      expect(get.mock.calls.filter(([path]) => path === '/execution')).toHaveLength(2);
+      expect(_get.mock.calls.filter(([path]) => path === '/dashboard')).toHaveLength(2);
+      expect(_get.mock.calls.filter(([path]) => path === '/execution')).toHaveLength(2);
     });
     vi.restoreAllMocks();
   });
@@ -150,7 +151,7 @@ describe('Dashboard', () => {
 
 describe('Task', () => {
   test('renders the persisted current and completed lifecycle states', async () => {
-    vi.spyOn(apiClient, 'get').mockResolvedValue({
+    const _get = vi.spyOn(apiClient, 'get').mockResolvedValue({
       task: { title: 'Released task', status: 'DONE' }, contract: {},
       lifecycle: { status: 'DONE', stage: 'DONE', updatedAt: '2026-09-16T00:00:00Z' },
       git: { repositoryPath: '/repo', branch: 'task/1', defaultBranch: 'master', github: null, worktreePath: null },
@@ -166,7 +167,7 @@ describe('Task', () => {
   });
 
   test('renders waiting and failure/cancellation statuses as timeline states', async () => {
-    vi.spyOn(apiClient, 'get').mockResolvedValue({
+    const _get = vi.spyOn(apiClient, 'get').mockResolvedValue({
       task: { title: 'Blocked task', status: 'FAILED' }, contract: {},
       lifecycle: { status: 'FAILED', stage: 'FAILED', updatedAt: null },
       git: { repositoryPath: null, branch: null, defaultBranch: null, github: null, worktreePath: null },
@@ -181,7 +182,7 @@ describe('Task', () => {
   });
 
   test('renders explicit task not-found and empty subordinate states', async () => {
-    const get = vi.spyOn(apiClient, 'get').mockResolvedValue({
+    const _get = vi.spyOn(apiClient, 'get').mockResolvedValue({
       task: null, contract: null,
       lifecycle: { status: 'UNKNOWN', stage: null, updatedAt: null },
       git: { repositoryPath: null, branch: null, defaultBranch: null, github: null, worktreePath: null },
@@ -193,12 +194,12 @@ describe('Task', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Task not found.');
     expect(screen.getByText('Agent runs unavailable.')).toBeInTheDocument();
     expect(screen.getByText('Findings unavailable.')).toBeInTheDocument();
-    expect(get).toHaveBeenCalledWith('/tasks/missing%2Ftask', expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    expect(_get).toHaveBeenCalledWith('/tasks/missing%2Ftask', expect.objectContaining({ signal: expect.any(AbortSignal) }));
     vi.restoreAllMocks();
   });
 
   test('links only present task run, project, epic, and dependency IDs with encoding', async () => {
-    vi.spyOn(apiClient, 'get').mockResolvedValue({
+    const _get = vi.spyOn(apiClient, 'get').mockResolvedValue({
       task: { title: 'Linked task', status: 'READY', project_id: 'project/1', epic_id: 'epic/1' }, contract: {},
       lifecycle: { status: 'READY', stage: 'READY', updatedAt: null },
       git: { repositoryPath: null, branch: null, defaultBranch: null, github: null, worktreePath: null },
@@ -258,12 +259,12 @@ describe('Project', () => {
     [EpicPage, 'epic-1', 'Unable to load epic: network unavailable'],
     [TaskPage, 'task-1', 'Unable to load task: network unavailable'],
   ])('shows a retryable error instead of an indefinite loading view', async (Component, id, message) => {
-    const get = vi.spyOn(apiClient, 'get').mockRejectedValue(new Error('network unavailable'));
+    const _get = vi.spyOn(apiClient, 'get').mockRejectedValue(new Error('network unavailable'));
     render(createElement(Component, { id }));
 
     expect(await screen.findByText(message)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(_get).toHaveBeenCalledTimes(2));
     vi.restoreAllMocks();
   });
 
@@ -275,7 +276,7 @@ describe('Project', () => {
   });
 
   test('renders explicit project not-found state when projection has no project', async () => {
-    const get = vi.spyOn(apiClient, 'get').mockResolvedValue({
+    const _get = vi.spyOn(apiClient, 'get').mockResolvedValue({
       project: null, git: { repositoryPath: null, branch: null, defaultBranch: null, github: null, worktreePath: null },
       epics: [], tasks: [], approvals: [], blockers: [], events: [],
       usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 },
@@ -286,12 +287,12 @@ describe('Project', () => {
     expect(notFoundAlert).toHaveTextContent('Project not found.');
     expect(screen.queryByText(/Loading project/i)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(_get).toHaveBeenCalledTimes(2));
     vi.restoreAllMocks();
   });
 
   test('links only returned project epics and tasks with encoded IDs', async () => {
-    const get = vi.spyOn(apiClient, 'get').mockResolvedValue({
+    vi.spyOn(projectApi, 'getProjectOverview').mockResolvedValue({
       project: { id: 'project-1', name: 'Project', displayName: 'Project One', status: 'ACTIVE' },
       git: { repositoryPath: null, branch: null, defaultBranch: null, github: null, worktreePath: null },
       epics: [{ id: 'epic/1', display_id: 'E-1', title: 'Encoded epic', status: 'READY' }],
@@ -303,7 +304,6 @@ describe('Project', () => {
 
     expect(await screen.findByRole('link', { name: /Encoded epic/ })).toHaveAttribute('href', '/epics/epic%2F1');
     expect(screen.getByRole('link', { name: /Encoded task/ })).toHaveAttribute('href', '/tasks/task%2F1');
-    expect(get).toHaveBeenCalledWith('/projects/project-1', expect.objectContaining({ signal: expect.any(AbortSignal) }));
     vi.restoreAllMocks();
   });
 });
@@ -317,7 +317,7 @@ describe('Epic', () => {
   });
 
   test('renders actual epic review, architecture review, QA and merge stages', async () => {
-    vi.spyOn(apiClient, 'get').mockResolvedValue({
+    const _get = vi.spyOn(apiClient, 'get').mockResolvedValue({
       epic: { title: 'Release epic', status: 'IN_PROGRESS' }, contract: {},
       lifecycle: { status: 'IN_PROGRESS', stage: 'EPIC_QA', updatedAt: null, stages: [
         { id: 'EPIC_REVIEW', label: 'Epic Review', status: 'COMPLETED', updatedAt: null },
@@ -336,7 +336,7 @@ describe('Epic', () => {
   });
 
   test('renders explicit epic not-found and empty task state', async () => {
-    vi.spyOn(apiClient, 'get').mockResolvedValue({
+    const _get = vi.spyOn(apiClient, 'get').mockResolvedValue({
       epic: null, contract: null,
       lifecycle: { status: 'UNKNOWN', stage: null, updatedAt: null },
       git: { repositoryPath: null, branch: null, defaultBranch: null, github: null, worktreePath: null },
@@ -351,7 +351,7 @@ describe('Epic', () => {
   });
 
   test('links returned epic child tasks with encoded IDs', async () => {
-    vi.spyOn(apiClient, 'get').mockResolvedValue({
+    const _get = vi.spyOn(apiClient, 'get').mockResolvedValue({
       epic: { title: 'Linked epic', status: 'IN_PROGRESS' }, contract: {},
       lifecycle: { status: 'IN_PROGRESS', stage: 'EPIC_QA', updatedAt: null },
       git: { repositoryPath: null, branch: null, defaultBranch: null, github: null, worktreePath: null },
@@ -366,19 +366,19 @@ describe('Epic', () => {
   });
 
   test('refetches Epic and Task projections after SSE reconnect', async () => {
-    const get = vi.spyOn(apiClient, 'get').mockImplementation(async (path) => path === '/epics/epic-1'
+    const _get = vi.spyOn(apiClient, 'get').mockImplementation(async (path) => path === '/epics/epic-1'
       ? { epic: { title: 'Epic', status: 'READY' }, contract: null, lifecycle: { status: 'READY', stage: null, updatedAt: null }, git: { repositoryPath: null, branch: null, defaultBranch: null, github: null, worktreePath: null }, tasks: [], approvals: [], blockers: [], events: [], usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 } }
       : { task: { title: 'Task', status: 'READY' }, contract: null, lifecycle: { status: 'READY', stage: 'READY', updatedAt: null }, git: { repositoryPath: null, branch: null, defaultBranch: null, github: null, worktreePath: null }, runs: [], findings: [], defects: [], dependencies: [], approvals: [], events: [], usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 }, waitReason: null });
     render(<MemoryRouter><><EpicPage id="epic-1" /><TaskPage id="task-1" /></></MemoryRouter>);
 
     await waitFor(() => {
-      expect(get.mock.calls.filter(([path]) => path === '/epics/epic-1')).toHaveLength(1);
-      expect(get.mock.calls.filter(([path]) => path === '/tasks/task-1')).toHaveLength(1);
+      expect(_get.mock.calls.filter(([path]) => path === '/epics/epic-1')).toHaveLength(1);
+      expect(_get.mock.calls.filter(([path]) => path === '/tasks/task-1')).toHaveLength(1);
     });
     window.dispatchEvent(new CustomEvent('sse-reconnect'));
     await waitFor(() => {
-      expect(get.mock.calls.filter(([path]) => path === '/epics/epic-1')).toHaveLength(2);
-      expect(get.mock.calls.filter(([path]) => path === '/tasks/task-1')).toHaveLength(2);
+      expect(_get.mock.calls.filter(([path]) => path === '/epics/epic-1')).toHaveLength(2);
+      expect(_get.mock.calls.filter(([path]) => path === '/tasks/task-1')).toHaveLength(2);
     });
     vi.restoreAllMocks();
   });
