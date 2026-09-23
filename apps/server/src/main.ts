@@ -200,9 +200,15 @@ async function gracefulShutdown(signal: string): Promise<void> {
   process.exit(0);
 }
 
-process.on("SIGINT", () => void gracefulShutdown("SIGINT"));
-process.on("SIGTERM", () => void gracefulShutdown("SIGTERM"));
+// Игнорируем SIGINT/SIGTERM пока сервер не готов (для запуска через pnpm)
+process.on("SIGINT", () => {
+  if (serverReady) void gracefulShutdown("SIGINT");
+});
+process.on("SIGTERM", () => {
+  if (serverReady) void gracefulShutdown("SIGTERM");
+});
 
+let serverReady = false;
 // Полный production startup: STARTING → RECOVERING → reconciliation → READY.
 await startSystem({
   instanceLock: lock,
@@ -239,6 +245,7 @@ await startSystem({
 
 await app.listen({ host, port });
 
+serverReady = true;
 console.log(`[ebb-orchestrator] listening on http://${host}:${port}`);
 console.log(`[ebb-orchestrator] status: ${status.get()}`);
 const bootstrapFile = process.env["EBB_ORCHESTRATOR_BOOTSTRAP_FILE"];

@@ -22,7 +22,8 @@
     "docs:roadmap": "node scripts/docs-governance.mjs roadmap",
     "docs:rename:check": "node scripts/docs-governance.mjs rename:check",
     "docs:link:sync": "node scripts/docs-governance.mjs link:sync",
-    "docs:test": "node --test scripts/docs-governance.test.mjs"
+    "docs:test": "node --test scripts/docs-governance.test.mjs",
+    "start": "node scripts/run-server.js"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
