@@ -30,7 +30,7 @@ test('validateDocument returns issues for invalid id', () => {
 });
 
 test('loadMigrationMap parses migration document', async () => {
-  const map = await loadMigrationMap('./docs/architecture/plans/governance/evidence/document-migration-map.md');
+  const map = await loadMigrationMap('./docs/architecture/plans/governance/evidence/03-document-migration-map.md');
   assert.ok(map.entries.length > 0);
   assert.ok(map.entries[0].oldPath);
   assert.ok(map.entries[0].newPath);
@@ -39,7 +39,7 @@ test('loadMigrationMap parses migration document', async () => {
 
 test('validateMigrationMap checks source paths exist', async () => {
   const inventory = [{ filePath: 'docs/README.md', id: 'index-00', kind: 'index', title: 'Docs', status: 'approved', created: '2026-01-01', updated: '2026-01-01', depends_on: [], specs: [], evidence: [], body: '' }];
-  const map = await loadMigrationMap('./docs/architecture/plans/governance/evidence/document-migration-map.md');
+  const map = await loadMigrationMap('./docs/architecture/plans/governance/evidence/03-document-migration-map.md');
   const issues = await validateMigrationMap(map, inventory);
   assert.ok(issues.some(i => i.field === 'incomplete_mapping'));
 });

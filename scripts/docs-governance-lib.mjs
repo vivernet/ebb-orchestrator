@@ -172,7 +172,7 @@ async function resolveCanonicalDocument(oldPath) {
   const { dirname } = await import('path');
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = dirname(__filename);
-  const text = readFileSync(path.join(__dirname, '../docs/architecture/plans/governance/evidence/document-migration-map.md'), 'utf-8');
+  const text = readFileSync(path.join(__dirname, '../docs/architecture/plans/governance/evidence/03-document-migration-map.md'), 'utf-8');
   const lines = text.split('\n');
   let inTable = false;
   
