@@ -1,11 +1,12 @@
 import { useCallback } from 'react';
-import { apiPaths, type DashboardProjection, type ExecutionQueueProjection } from '@ebb-orchestrator/contracts';
+import { apiPaths } from '@ebb-orchestrator/contracts';
 import { Link } from 'react-router';
-import { apiClient, toClientPath } from '../../api/client.js';
 import { EmptyState, ErrorAlert, PageState } from '../../components/PageState.js';
 import StatusBadge from '../../components/StatusBadge.js';
 import { useOnSSEReconnect } from '../../hooks/useEventClient.js';
 import { useQuery } from '../../state/use-query.js';
+import { getDashboard, getExecutionQueue } from './api.js';
+import { toClientPath } from '../../api/client.js';
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : 'unknown error';
@@ -17,8 +18,8 @@ function message(error: unknown): string {
 export default function DashboardPage() {
   const dashboardPath = toClientPath(apiPaths.dashboard);
   const executionPath = toClientPath(apiPaths.execution);
-  const projectionFetcher = useCallback((signal: AbortSignal) => apiClient.get<DashboardProjection>(dashboardPath, { signal }), [dashboardPath]);
-  const queueFetcher = useCallback((signal: AbortSignal) => apiClient.get<ExecutionQueueProjection>(executionPath, { signal }), [executionPath]);
+  const projectionFetcher = useCallback((_signal: AbortSignal) => getDashboard(), []);
+  const queueFetcher = useCallback((_signal: AbortSignal) => getExecutionQueue(), []);
   const projectionQuery = useQuery(null, dashboardPath, undefined, projectionFetcher);
   const queueQuery = useQuery(null, executionPath, undefined, queueFetcher);
   const projection = projectionQuery.data;

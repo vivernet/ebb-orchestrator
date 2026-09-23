@@ -1,9 +1,10 @@
 import { useCallback } from 'react';
-import { apiPaths, type ProjectOverviewProjection } from '@ebb-orchestrator/contracts';
+import { apiPaths } from '@ebb-orchestrator/contracts';
 import { Link } from 'react-router';
-import { apiClient, toClientPath } from '../../api/client.js';
+import { toClientPath } from '../../api/client.js';
 import { ErrorAlert } from '../../components/PageState.js';
 import { useQuery } from '../../state/use-query.js';
+import { getProjectOverview } from './api.js';
 
 interface ProjectPageProps {
   id: string;
@@ -14,7 +15,7 @@ interface ProjectPageProps {
  */
 export default function ProjectPage({ id }: ProjectPageProps) {
   const projectPath = toClientPath(apiPaths.project(id));
-  const fetcher = useCallback((signal: AbortSignal) => apiClient.get<ProjectOverviewProjection>(projectPath, { signal }), [projectPath]);
+  const fetcher = useCallback((_signal: AbortSignal) => getProjectOverview(id), []);
   const query = useQuery(null, projectPath, undefined, fetcher);
   const projection = query.data;
   const project = projection?.project;
