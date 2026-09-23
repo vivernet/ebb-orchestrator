@@ -101,7 +101,6 @@ test('v1 UI bootstraps against the launched backend', async ({ page, request }) 
 
   await page.goto('/projects/new');
   await expect(page.getByRole('heading', { name: 'Project onboarding' })).toBeVisible();
-  await expect(page.getByText(/URL репозитория/)).toBeVisible();
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');

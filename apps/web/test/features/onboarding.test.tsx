@@ -6,13 +6,13 @@ import OnboardingPage from '../../src/features/onboarding/OnboardingPage.js';
 
 const server = setupServer(
   http.post('/api/v1/onboarding/discover', async ({ request }) => {
-    const body = (await request.json()) as { repositoryUrl: string };
-    if (!body.repositoryUrl || typeof body.repositoryUrl !== 'string') {
-      return HttpResponse.json({ error: 'repositoryUrl is required' }, { status: 400 });
+    const body = (await request.json()) as { repositoryPath: string };
+    if (!body.repositoryPath || typeof body.repositoryPath !== 'string') {
+      return HttpResponse.json({ error: 'repositoryPath is required' }, { status: 400 });
     }
     return HttpResponse.json({
       projectId: 'test-project-123',
-      repository: { path: 'user/repo', remoteUrl: body.repositoryUrl },
+      repository: { path: 'user/repo', remoteUrl: null },
       detected: {
         defaultBranch: 'main',
         packageManager: 'pnpm',
@@ -43,13 +43,13 @@ describe('OnboardingPage', () => {
   test('renderует форму discovery в начальном состоянии', () => {
     render(<OnboardingPage />);
     expect(screen.getByRole('heading', { name: 'Project Onboarding' })).toBeVisible();
-    expect(screen.getByRole('textbox', { name: 'URL репозитория' })).toBeVisible();
+    expect(screen.getByRole('textbox', { name: 'Путь к репозиторию' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'Начать анализ' })).toBeVisible();
   });
 
   test('вызывает API при submit формы', async () => {
     render(<OnboardingPage />);
-    const input = screen.getByRole('textbox', { name: 'URL репозитория' });
+    const input = screen.getByRole('textbox', { name: 'Путь к репозиторию' });
     const button = screen.getByRole('button', { name: 'Начать анализ' });
 
     fireEvent.change(input, { target: { value: 'https://github.com/user/repo' } });
@@ -64,7 +64,7 @@ describe('OnboardingPage', () => {
 
   test('показывает состояние загрузки', async () => {
     render(<OnboardingPage />);
-    const input = screen.getByRole('textbox', { name: 'URL репозитория' });
+    const input = screen.getByRole('textbox', { name: 'Путь к репозиторию' });
     const button = screen.getByRole('button', { name: 'Начать анализ' });
 
     fireEvent.change(input, { target: { value: 'https://github.com/user/repo' } });
@@ -85,7 +85,7 @@ describe('OnboardingPage', () => {
     );
 
     render(<OnboardingPage />);
-    const input = screen.getByRole('textbox', { name: 'URL репозитория' });
+    const input = screen.getByRole('textbox', { name: 'Путь к репозиторию' });
     const button = screen.getByRole('button', { name: 'Начать анализ' });
 
     fireEvent.change(input, { target: { value: 'https://github.com/user/repo' } });
@@ -100,6 +100,6 @@ describe('OnboardingPage', () => {
     render(<OnboardingPage />);
     const button = screen.getByRole('button', { name: 'Начать анализ' });
     fireEvent.click(button);
-    expect(screen.getByRole('textbox', { name: 'URL репозитория' })).toHaveAttribute('value', '');
+    expect(screen.getByRole('textbox', { name: 'Путь к репозиторию' })).toHaveAttribute('value', '');
   });
 });

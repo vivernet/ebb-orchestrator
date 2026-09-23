@@ -6,40 +6,73 @@ import { apiPaths } from '@ebb-orchestrator/contracts';
 const onboardingDiscoverPath = toClientPath(apiPaths.onboardingDiscover);
 
 interface OnboardingDiscoveryResult {
-  projectId: string;
-  repository: { path: string; remoteUrl: string };
+  repository: { path: string | null; remoteUrl: string | null };
   detected: {
-    defaultBranch: string;
+    defaultBranch: string | null;
     packageManager: string | null;
     testFramework: string | null;
     orchestratorConfigFound: boolean;
   };
   proposed: {
-    defaultBranch: string;
-    workflow: string;
+    defaultBranch: string | null;
+    workflow: string | null;
     roles: string[];
     guidelines: string[];
   };
   approvalStatus: 'PENDING' | 'APPROVED';
   semanticConfigApproved: boolean;
   localModeEnabled: boolean;
+  projectId?: string;
 }
 
 /**
- * Инициализирует discovery по URL репозитория и возвращает предварительный анализ.
- * @param repositoryUrl URL репозитория (например, https://github.com/user/repo)
- * @returns Promise с результатом discovery
+ * Инициализирует discovery по пути к репозиторию.
+ * @param repositoryPath Абсолютный путь к локальному репозиторию
  */
-async function initiateDiscovery(repositoryUrl: string): Promise<OnboardingDiscoveryResult> {
-  const response = await apiClient.post<OnboardingDiscoveryResult>(onboardingDiscoverPath, { repositoryUrl });
+async function initiateDiscovery(repositoryPath: string): Promise<OnboardingDiscoveryResult> {
+  const response = await apiClient.post<OnboardingDiscoveryResult>(onboardingDiscoverPath, { repositoryPath });
   return response;
 }
 
 /**
- * Представляет экран онбординга проекта с формой discovery репозитория.
+ * Получает статус onboarding project.
+ * @param id ID project
+ */
+async function getOnboarding(id: string): Promise<OnboardingDiscoveryResult> {
+  const response = await apiClient.get<OnboardingDiscoveryResult>(toClientPath(apiPaths.onboarding(id)));
+  return response;
+}
+
+/**
+ * Запрашивает approval для onboarding project.
+ * @param id ID project
+ * @param repositoryPath Путь к репозиторию
+ */
+async function requestApproval(id: string, repositoryPath: string): Promise<void> {
+  await apiClient.post(toClientPath(apiPaths.onboardingApproval(id)), { repositoryPath });
+}
+
+/**
+ * Утверждает onboarding project.
+ * @param id ID project
+ */
+async function approveOnboarding(id: string): Promise<void> {
+  await apiClient.post(toClientPath(apiPaths.onboardingApprove(id)), {});
+}
+
+/**
+ * Активирует onboarding project.
+ * @param id ID project
+ */
+async function activateOnboarding(id: string): Promise<void> {
+  await apiClient.post(toClientPath(apiPaths.onboardingActivate(id)), {});
+}
+
+/**
+ * Представляет экран онбординга проекта с полным flow: discovery → review → approve → activate.
  */
 export default function OnboardingPage() {
-  const [repositoryUrl, setRepositoryUrl] = useState('');
+  const [repositoryPath, setRepositoryPath] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<OnboardingDiscoveryResult | null>(null);
@@ -51,10 +84,55 @@ export default function OnboardingPage() {
     setLoading(true);
 
     try {
-      const discovery = await initiateDiscovery(repositoryUrl.trim());
+      const discovery = await initiateDiscovery(repositoryPath.trim());
       setResult(discovery);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Ошибка discovery');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRequestApproval = async () => {
+    if (!result?.projectId) return;
+    setLoading(true);
+    setError(null);
+    try {
+      await requestApproval(result.projectId, repositoryPath.trim());
+      const refreshed = await getOnboarding(result.projectId);
+      setResult(refreshed);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Ошибка запроса approval');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleApprove = async () => {
+    if (!result?.projectId) return;
+    setLoading(true);
+    setError(null);
+    try {
+      await approveOnboarding(result.projectId);
+      const refreshed = await getOnboarding(result.projectId);
+      setResult(refreshed);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Ошибка утверждения');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleActivate = async () => {
+    if (!result?.projectId) return;
+    setLoading(true);
+    setError(null);
+    try {
+      await activateOnboarding(result.projectId);
+      const refreshed = await getOnboarding(result.projectId);
+      setResult(refreshed);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Ошибка активации');
     } finally {
       setLoading(false);
     }
@@ -69,16 +147,16 @@ export default function OnboardingPage() {
           <h2>Discover project</h2>
           <form onSubmit={handleSubmit} aria-describedby="onboarding-instructions">
             <p id="onboarding-instructions">
-              Введите URL репозитория для анализа и инициации наboarding.
+              Введите абсолютный путь к локальному репозиторию для анализа.
             </p>
             <div>
-              <label htmlFor="repository-url">URL репозитория</label>
+              <label htmlFor="repository-path">Путь к репозиторию</label>
               <input
-                id="repository-url"
-                type="url"
-                value={repositoryUrl}
-                onChange={(e) => setRepositoryUrl(e.target.value)}
-                placeholder="https://github.com/user/repo"
+                id="repository-path"
+                type="text"
+                value={repositoryPath}
+                onChange={(e) => setRepositoryPath(e.target.value)}
+                placeholder="/path/to/repo"
                 required
                 aria-required="true"
               />
@@ -92,7 +170,7 @@ export default function OnboardingPage() {
             <section aria-label="Error">
               <h2>Ошибка</h2>
               <p>{error}</p>
-              <button type="button" onClick={() => setError(null)}>Попытаться снова</button>
+              <button type="button" onClick={() => setError(null)}>Очистить</button>
             </section>
           )}
         </section>
@@ -102,23 +180,20 @@ export default function OnboardingPage() {
 
           <section aria-label="Repository">
             <h3>Репозиторий</h3>
-            <p>{result.repository.path} ({result.repository.remoteUrl})</p>
+            <p>{result.repository.path ?? 'Не обнаружен'}</p>
           </section>
 
           <section aria-label="Detected">
             <h3>Обнаружено</h3>
-            <p>Default branch: {result.detected.defaultBranch}</p>
+            <p>Default branch: {result.detected.defaultBranch ?? 'Не обнаружен'}</p>
             <p>Package manager: {result.detected.packageManager ?? 'Не обнаружен'}</p>
-            <p>Test framework: {result.detected.testFramework ?? 'Не обнаружен'}</p>
             <p>Orchestrator config found: {result.detected.orchestratorConfigFound ? 'Да' : 'Нет'}</p>
           </section>
 
           <section aria-label="Proposed">
             <h3>Предложение</h3>
-            <p>Default branch: {result.proposed.defaultBranch}</p>
-            <p>Workflow: {result.proposed.workflow}</p>
-            <p>Roles: {result.proposed.roles.join(', ')}</p>
-            <p>Guidelines: {result.proposed.guidelines.length}</p>
+            <p>Workflow: {result.proposed.workflow ?? 'Не указано'}</p>
+            <p>Roles: {result.proposed.roles.join(', ') || 'Не указано'}</p>
           </section>
 
           <section aria-label="Approval status">
@@ -126,6 +201,40 @@ export default function OnboardingPage() {
             <p>Status: <StatusBadge status={result.approvalStatus} label={result.approvalStatus} /></p>
             <p>Semantic config approved: {result.semanticConfigApproved ? 'Да' : 'Нет'}</p>
           </section>
+
+          {result.approvalStatus === 'PENDING' && !result.semanticConfigApproved && (
+            <section aria-label="Actions">
+              <h3>Действия</h3>
+              <button type="button" onClick={handleRequestApproval} disabled={loading}>
+                Запросить approval
+              </button>
+            </section>
+          )}
+
+          {result.approvalStatus === 'APPROVED' && !result.semanticConfigApproved && (
+            <section aria-label="Actions">
+              <h3>Действия</h3>
+              <button type="button" onClick={handleApprove} disabled={loading}>
+                Утвердить
+              </button>
+            </section>
+          )}
+
+          {result.semanticConfigApproved && (
+            <section aria-label="Actions">
+              <h3>Действия</h3>
+              <button type="button" onClick={handleActivate} disabled={loading}>
+                Активировать
+              </button>
+            </section>
+          )}
+
+          {error && (
+            <section aria-label="Error">
+              <h2>Ошибка</h2>
+              <p>{error}</p>
+            </section>
+          )}
         </section>
       )}
     </main>
