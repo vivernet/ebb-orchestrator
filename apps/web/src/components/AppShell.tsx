@@ -32,7 +32,7 @@ function AppShell() {
   return (
     <div className="app-shell">
       <aside className="left-nav">
-        <div className="brand"><span className="brand-mark" aria-hidden="true">E</span><div><strong>Ebb</strong><span>Orchestrator</span></div></div>
+        <div className="brand"><span className="brand-mark" aria-hidden="true">E</span><div><strong>Ebb</strong><span>Ebb Orchestrator</span></div></div>
         <nav aria-label="Primary navigation">
           <NavLink to="/" end>Dashboard</NavLink>
           <NavLink to="/projects">Projects</NavLink>

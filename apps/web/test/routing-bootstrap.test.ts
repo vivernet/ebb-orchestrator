@@ -86,7 +86,7 @@ describe('routing and session bootstrap', () => {
     await bootstrap('one-time-launch-token');
 
     expect(fetchMock).toHaveBeenCalledWith('/api/v1/session/bootstrap', expect.objectContaining({
-      headers: expect.objectContaining({ 'X-EBB-Bootstrap-Token': 'one-time-launch-token' }),
+      headers: expect.objectContaining({ 'x-ebb-bootstrap-token': 'one-time-launch-token' }),
     }));
     expect(apiClient.sessionToken).toBe('memory-session');
     expect(apiClient.csrfToken).toBe('memory-csrf');

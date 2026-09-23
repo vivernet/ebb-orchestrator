@@ -119,7 +119,7 @@ export function bootstrap(launchToken: string): Promise<void> {
   if (!launchToken) return Promise.reject(new Error('Требуется одноразовый токен локального запуска.'));
   return fetch('/api/v1/session/bootstrap', {
     credentials: 'same-origin',
-    headers: { 'X-EBB-Bootstrap-Token': launchToken },
+    headers: { 'x-ebb-bootstrap-token': launchToken },
   }).then(async (response) => {
     if (!response.ok) throw new Error(`Local session bootstrap failed: ${response.status}`);
     return response.json() as Promise<{ sessionToken: string; csrfToken: string }>;
