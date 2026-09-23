@@ -22,7 +22,7 @@
 **Исходные материалы:**
 - `docs/architecture/specs/2026-09-18-web-ui-recovery-design.md`
 - `docs/architecture/plans/2026-09-22-web-ui-recovery-stage-a.md`
-- `docs/architecture/plans/2026-09-16-ebb-orchestrator-foundation-persistence.md`
+- `docs/architecture/plans/2026-09-16-foundation-persistence.md`
 - `apps/web/src/features/` текущая структура
 
 **Backend контракты (из read models):**

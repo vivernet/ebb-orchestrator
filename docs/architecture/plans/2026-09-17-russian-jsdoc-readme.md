@@ -9,7 +9,7 @@
 **Технологический стек:** TypeScript, JavaScript, ESLint flat config, `eslint-plugin-jsdoc`, pnpm, Markdown.
 
 **Основные источники истины:**
-- `docs/architecture/specs/2026-09-16-ebb-orchestrator-design.md`
+- `docs/architecture/specs/2026-09-16-design.md`
 - `docs/architecture/plans/2026-09-16-ebb-orchestrator-v1-roadmap.md`
 - канонические Plans 1–6;
 - итоговый Final V1 Audit & Hardening report;

@@ -8,7 +8,7 @@
 >
 > **Технологии:** Node.js 24+, pnpm, Git, Hermes Agent CLI/Desktop, Markdown `SKILL.md`, существующий проект TypeScript/React/Vitest.
 >
-> **Спецификация:** `docs/architecture/specs/2026-09-16-ebb-orchestrator-design.md`
+> **Спецификация:** `docs/architecture/specs/2026-09-16-design.md`
 >
 > **Ключевое различие:** этот план не должен изменять production `HermesRuntimeAdapter`, если только тесты не докажут уже существующий дефект. Заменяется именно внешний workflow разработки:
 >

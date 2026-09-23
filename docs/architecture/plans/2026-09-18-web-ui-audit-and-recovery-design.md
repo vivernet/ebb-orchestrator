@@ -10,7 +10,7 @@
 >
 > **Технологии:** использовать фактический frontend stack проекта. На этапе аудита нельзя вводить новый framework.
 >
-> **Спецификация:** `docs/architecture/specs/2026-09-16-ebb-orchestrator-design.md`
+> **Спецификация:** `docs/architecture/specs/2026-09-16-design.md`
 >
 > **Результаты этапа:**
 > - `docs/audit/web-ui-gap-analysis.md`;

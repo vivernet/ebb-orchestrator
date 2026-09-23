@@ -8,7 +8,7 @@
 
 **Технологический стек:** TypeScript 7; Vitest 5; Zod 4; SQLite adapter из Plan 1.
 
-**Спецификация:** `docs/architecture/specs/2026-09-16-ebb-orchestrator-design.md`
+**Спецификация:** `docs/architecture/specs/2026-09-16-design.md`
 
 ## Глобальные ограничения
 

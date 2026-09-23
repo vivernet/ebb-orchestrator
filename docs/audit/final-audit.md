@@ -331,7 +331,7 @@ stdout/stderr — diagnostic output.
 AGENTS.md
 README.md
 docs/PROJECT_STATE.md
-docs/architecture/specs/2026-09-16-ebb-orchestrator-design.md
+docs/architecture/specs/2026-09-16-design.md
 docs/architecture/plans/*
 docs/**/audit-report*.md
 docs/**/architecture-review*.md

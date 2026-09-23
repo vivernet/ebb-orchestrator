@@ -8,7 +8,7 @@
 
 **Технологический стек:** Node.js 24 `child_process.spawn`; native Git CLI; TypeScript; Vitest; SQLite.
 
-**Спецификация:** `docs/architecture/specs/2026-09-16-ebb-orchestrator-design.md`
+**Спецификация:** `docs/architecture/specs/2026-09-16-design.md`
 
 ## Глобальные ограничения
 

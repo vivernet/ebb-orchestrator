@@ -101,6 +101,6 @@ From package.json:
 
 ## Documentation References
 
-- docs/architecture/specs/2026-09-16-ebb-orchestrator-design.md
+- docs/architecture/specs/2026-09-16-design.md
 - AGENTS.md
 - README.md

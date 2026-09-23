@@ -12,7 +12,7 @@
 TypeScript, Node.js, pnpm, Fastify, React/Vite, Vitest, SQLite, Git worktrees, Hermes runtime, GitHub adapter.
 
 ## Авторитетные источники
-- `docs/architecture/specs/2026-09-16-ebb-orchestrator-design.md`
+- `docs/architecture/specs/2026-09-16-design.md`
 - `docs/architecture/plans/2026-09-16-ebb-orchestrator-v1-roadmap.md`
 - канонические планы реализации 1–6 под `docs/architecture/plans/`
 

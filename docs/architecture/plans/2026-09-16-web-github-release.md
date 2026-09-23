@@ -8,7 +8,7 @@
 
 **Технологический стек:** React 19.3; React Router 7.18; Vite 8.1 + `@vitejs/plugin-react` 6.1; TypeScript 7; Fastify; SSE; Zod; `@napi-rs/keyring`; GitHub REST/GitHub App installation auth; Vitest; Testing Library; Playwright 1.63 для UI smoke/E2E.
 
-**Спецификация:** `docs/architecture/specs/2026-09-16-ebb-orchestrator-design.md`
+**Спецификация:** `docs/architecture/specs/2026-09-16-design.md`
 
 ## Глобальные ограничения
 

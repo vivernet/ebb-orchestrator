@@ -3,7 +3,7 @@
 **Дата проверки:** 18 сентября 2026  
 **Репо:** C:/Users/alex1/Repos/NEW/DEV/ebb-orchestrator-russian-jsdoc-readme  
 **Ветка:** docs/russian-jsdoc-readme  
-**Документ дизайна:** docs/architecture/specs/2026-09-16-ebb-orchestrator-design.md
+**Документ дизайна:** docs/architecture/specs/2026-09-16-design.md
 
 ---
 
