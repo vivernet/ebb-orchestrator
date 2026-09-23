@@ -1,6 +1,6 @@
 ---
 id: audit-03
-status: superseded
+status: completed
 kind: audit
 title: Audit Guidelines
 date: 2026-09-23

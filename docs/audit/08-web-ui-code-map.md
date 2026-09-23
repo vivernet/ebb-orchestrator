@@ -1,6 +1,6 @@
 ---
 id: audit-08
-status: superseded
+status: completed
 kind: audit
 title: Карта кода Web UI
 date: 2026-09-23

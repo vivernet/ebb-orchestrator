@@ -1,6 +1,6 @@
 ---
 id: audit-04
-status: superseded
+status: completed
 kind: audit
 title: Final Audit, Remediation and Verification
 date: 2026-09-23

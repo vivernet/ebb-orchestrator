@@ -80,6 +80,29 @@ flowchart LR
   Modules --> GH[Optional GitHub adapter]
 ```
 
+## Планы реализации
+
+Реализация ведётся по каноническим планам в `docs/architecture/plans/`:
+
+| Ступень | План | Статус |
+|---------|------|--------|
+| 01 | Foundation & Persistence | completed |
+| 02 | Domain, Workflow, Scheduler | completed |
+| 03 | Git, Execution, Security | completed |
+| 04 | Hermes Autonomous Task | completed |
+| 05 | Planning, Epics, Context, Knowledge | completed |
+| 06 | Web, GitHub, Release | completed |
+| 07 | Hermes Development Workflow | completed |
+| 08-01 | Web UI Foundation | superseded |
+| 08-02 | Web UI Core Functional | superseded |
+| 08-03 | Web UI Operational & E2E | superseded |
+| 08-04 | Web UI Audit & Recovery Design | superseded |
+| 09 | Production Readiness | completed |
+| 10 | Final Audit Hardening | superseded |
+| 11 | Hermes Development Capabilities | completed |
+
+Планы 08-* и 10 заменены новой архитектурой Web UI recovery.
+
 ## Роли агентов
 
 Роли и их контракты определены в `packages/contracts/src/roles/` и runtime-
@@ -161,13 +184,9 @@ apps/server/src/       Fastify API, platform и доменные модули
 apps/server/test/      unit, scenario и e2e tests
 apps/web/src/           React Web UI
 packages/contracts/     общие доменные контракты и role contracts
-packages/testing/       повторно используемые test helpers
 ```
 
-Внутри `apps/server/src/modules/` находятся `work`, `workflow`, `planning`,
-`scheduler`, `recovery`, `git`, `execution`, `permissions`, `runtime`,
-`projects`, `github`, `usage`, `context` и связанные подсистемы. Platform-
-слой содержит database, events, jobs, process, security и home.
+Внутри `apps/server/src/modules/` находятся `approvals`, `context`, `execution`, `git`, `github`, `knowledge`, `permissions`, `planning`, `projects`, `recovery`, `runtime`, `scheduler`, `usage`, `work`, `workflow`. Platform-слой содержит `artifacts`, `config`, `database`, `diagnostics`, `events`, `home`, `jobs`, `process`, `security`.
 
 ## Жизненный цикл standalone Task
 

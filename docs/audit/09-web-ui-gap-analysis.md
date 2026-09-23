@@ -1,6 +1,6 @@
 ---
 id: audit-09
-status: superseded
+status: completed
 kind: audit
 title: Gap Analysis Web UI
 date: 2026-09-23
