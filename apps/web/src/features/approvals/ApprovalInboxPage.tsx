@@ -89,6 +89,14 @@ export default function ApprovalInboxPage({ projectId }: ApprovalInboxProps) {
     await mutationStore.execute('approve', () => apiClient.post(toClientPath(apiPaths.approvalApprove(id)), {}), query.refetch).catch(() => undefined);
   };
 
+  const handleReject = async (id: string) => {
+    await mutationStore.execute('reject', () => apiClient.post(toClientPath(apiPaths.approvals + '/' + id + '/reject'), {}), query.refetch).catch(() => undefined);
+  };
+
+  const handleRequestChanges = async (id: string) => {
+    await mutationStore.execute('request-changes', () => apiClient.post(toClientPath(apiPaths.approvals + '/' + id + '/request-changes'), {}), query.refetch).catch(() => undefined);
+  };
+
   const approvals = query.data?.approvals.map(mapApprovalRow) ?? [];
   const pendingApprovals = approvals.filter((approval) => approval.status === 'pending');
 
@@ -109,7 +117,11 @@ export default function ApprovalInboxPage({ projectId }: ApprovalInboxProps) {
               <div className="approval-header"><strong>{approval.action}</strong><StatusBadge status={approval.scope} label={approval.scope} /></div>
               <p className="approval-description">{approval.description}</p>
               <div className="approval-context"><small>Requested by: {approval.requestedBy}</small></div>
-              <div className="approval-actions"><button type="button" disabled={mutationState.status === 'pending'} onClick={() => void handleApprove(approval.id)}>Approve</button></div>
+              <div className="approval-actions">
+                <button type="button" disabled={mutationState.status === 'pending'} onClick={() => void handleApprove(approval.id)}>Approve</button>
+                <button type="button" disabled={mutationState.status === 'pending'} onClick={() => void handleReject(approval.id)} style={{ marginLeft: '8px' }}>Reject</button>
+                <button type="button" disabled={mutationState.status === 'pending'} onClick={() => void handleRequestChanges(approval.id)} style={{ marginLeft: '8px' }}>Request Changes</button>
+              </div>
               <div className="approval-meta"><small>Created: {new Date(approval.createdAt).toLocaleString()}</small></div>
             </li>
           ))}

@@ -29,8 +29,8 @@ describe('approval UI/API remediation', () => {
     const post = vi.spyOn(apiClient, 'post').mockResolvedValue({});
     render(<ApprovalInboxPage />);
     expect(await screen.findByRole('button', { name: 'Approve' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Reject' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Request Changes' })).not.toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Reject' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Request Changes' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
     await waitFor(() => expect(post).toHaveBeenCalledWith('/approvals/approval-1/approve', {}));
   });

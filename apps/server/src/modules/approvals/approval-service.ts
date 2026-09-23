@@ -146,6 +146,13 @@ export class ApprovalService {
   }
 
   /**
+   * Request changes для pending approval. Throws если уже разрешённый.
+   */
+  requestChanges(approvalId: string, actor: string, note?: string): Approval {
+    return this.resolve(approvalId, "CHANGES_REQUESTED", actor, note ?? null, "ApprovalChangesRequested");
+  }
+
+  /**
    * Отмена a pending approval. Throws if already resolved.
    */
   cancel(approvalId: string, actor: string): Approval {

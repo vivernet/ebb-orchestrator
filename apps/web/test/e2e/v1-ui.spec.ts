@@ -77,8 +77,6 @@ test('v1 UI bootstraps against the launched backend', async ({ page, request }) 
   await page.goto('/approvals');
   await expect(page.getByRole('heading', { name: 'Approval Inbox' })).toBeVisible();
   await expect(page.getByText('No pending approvals.')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Reject' })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Request Changes' })).toHaveCount(0);
 
   await page.goto('/execution');
   await expect(page.getByRole('heading', { name: 'Execution monitor' })).toBeVisible();

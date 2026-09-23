@@ -9,7 +9,7 @@ export type ApprovalType =
   | "ROLE_CHANGE"
   | "WORKFLOW_CHANGE";
 
-export type ApprovalStatus = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
+export type ApprovalStatus = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | "CHANGES_REQUESTED";
 
 export type ApprovalSubjectType = "TASK" | "EPIC" | "PROJECT";
 
