@@ -116,7 +116,7 @@ export function authenticatedHeaders(): Record<string, string> {
  * Выполняет bootstrap локальной сессии через одноразовый launch token.
  */
 export function bootstrap(launchToken: string): Promise<void> {
-  if (!launchToken) return Promise.reject(new Error('A one-time local launch token is required.'));
+  if (!launchToken) return Promise.reject(new Error('Требуется одноразовый токен локального запуска.'));
   return fetch('/api/v1/session/bootstrap', {
     credentials: 'same-origin',
     headers: { 'X-EBB-Bootstrap-Token': launchToken },

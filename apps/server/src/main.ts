@@ -71,9 +71,7 @@ const migrations: Migration[] = readdirSync(migrationDir).filter((file) => file.
 try {
    await lock.acquire();
 } catch (err) {
-  console.error(
-    `[orchestrator] ${err instanceof Error ? err.message : String(err)}`,
-  );
+  console.error(`[Ebb Orchestrator] ${err instanceof Error ? err.message : String(err)}`);
   process.exit(1);
 }
 
@@ -146,10 +144,10 @@ reconciler.register(async () => {
       const git = new GitReconciler();
       await git.initialize(project.repository_path);
       const result = await git.reconcile(branch);
-      if (result.state !== "IN_SYNC") console.warn(`[orchestrator] Git drift: ${result.state}`);
+      if (result.state !== "IN_SYNC") console.warn(`[ebb-orchestrator] Git drift: ${result.state}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      console.warn(`[orchestrator] Git reconciliation failed: ${message}`);
+      console.warn(`[ebb-orchestrator] Git reconciliation failed: ${message}`);
       errors.push(message);
     }
   }
@@ -157,7 +155,7 @@ reconciler.register(async () => {
 });
 reconciler.register(async () => {
   const interrupted = runService.reconcileInterruptedRuns();
-  if (interrupted > 0) console.warn(`[orchestrator] Recovered interrupted runs: ${interrupted}`);
+  console.warn(`[ebb-orchestrator] Recovered interrupted runs: ${interrupted}`);
 });
 reconciler.register(async () => {
 // Reconcile budgets: гарантирует что бюджетные строки существуют для активных проектов.
@@ -190,7 +188,7 @@ const outboxWorker = new OutboxWorker(eventDispatcher);
 const workers = [schedulerWorker, outboxWorker];
 
 async function gracefulShutdown(signal: string): Promise<void> {
-   console.log(`\n[orchestrator] received ${signal}, shutting down…`);
+   console.log(`\n[ebb-orchestrator] received ${signal}, shutting down…`);
    await shutdownSystem({
     status,
     workers,
@@ -198,7 +196,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
     instanceLock: lock,
     timeoutMs: 5_000,
   });
-  console.log("[orchestrator] shutdown complete");
+  console.log("[ebb-orchestrator] shutdown complete");
   process.exit(0);
 }
 
@@ -231,7 +229,7 @@ await startSystem({
   additionalReconcilers: [async () => {
     const report = await reconciler.run();
     if (report.errors.length) {
-      console.error(`[orchestrator] reconciliation errors: ${report.errors.length}`);
+      console.error(`[ebb-orchestrator] reconciliation errors: ${report.errors.length}`);
       for (const error of report.errors) console.error(`  ${error.message}`);
     }
     await failClosedStartupReconciliation(report, status);
@@ -241,8 +239,8 @@ await startSystem({
 
 await app.listen({ host, port });
 
-console.log(`[orchestrator] listening on http://${host}:${port}`);
-console.log(`[orchestrator] status: ${status.get()}`);
+console.log(`[ebb-orchestrator] listening on http://${host}:${port}`);
+console.log(`[ebb-orchestrator] status: ${status.get()}`);
 const bootstrapFile = process.env["EBB_ORCHESTRATOR_BOOTSTRAP_FILE"];
 if (bootstrapFile && app.bootstrapToken) {
   mkdirSync(dirname(bootstrapFile), { recursive: true });
@@ -256,7 +254,7 @@ function openLocalUi(url: string): void {
   const command = process.platform === "win32" ? "explorer.exe" : process.platform === "darwin" ? "open" : "xdg-open";
   const child = spawn(command, [url], { detached: true, stdio: "ignore", windowsHide: true, shell: false });
   child.once("error", () => {
-    console.error("[orchestrator] unable to open the local web UI automatically");
+    console.error("[ebb-orchestrator] unable to open the local web UI automatically");
   });
   child.unref();
 }
