@@ -34,6 +34,12 @@ function renderWithRouter(component: React.ReactElement) {
   return render(<MemoryRouter>{component}</MemoryRouter>);
 }
 
+const queryMeta = {
+  key: '/api/v1/runs/test-run-123',
+  updatedAt: null,
+  isStale: false,
+};
+
 beforeEach(() => {
   server.listen({ onUnhandledRequest: 'error' });
   vi.clearAllMocks();
@@ -50,6 +56,7 @@ describe('AgentRunPage', () => {
       status: 'loading',
       data: undefined,
       error: null,
+      ...queryMeta,
       refetch: vi.fn(),
     });
 
@@ -62,6 +69,7 @@ describe('AgentRunPage', () => {
       status: 'error',
       data: undefined,
       error: new Error('Failed to fetch'),
+      ...queryMeta,
       refetch: vi.fn(),
     });
 
@@ -91,6 +99,7 @@ describe('AgentRunPage', () => {
         },
       },
       error: null,
+      ...queryMeta,
       refetch: vi.fn(),
     });
 
@@ -106,11 +115,11 @@ describe('AgentRunPage', () => {
 
   test('показывает Events section с данными', async () => {
     vi.spyOn(runApi, 'getRunEvents').mockResolvedValue([
-      { id: 'evt-1', type: 'run_started', createdAt: '2026-01-15T10:00:00Z', aggregateType: 'Run', aggregateId: 'test-run-123', availableAt: '2026-01-15T10:00:00Z', processedAt: null, attempts: 1 },
-      { id: 'evt-2', type: 'tool_used', createdAt: '2026-01-15T10:15:00Z', aggregateType: 'Run', aggregateId: 'test-run-123', availableAt: '2026-01-15T10:15:00Z', processedAt: null, attempts: 1 },
-      { id: 'evt-3', type: 'run_completed', createdAt: '2026-01-15T10:45:00Z', aggregateType: 'Run', aggregateId: 'test-run-123', availableAt: '2026-01-15T10:45:00Z', processedAt: null, attempts: 1 },
+      { id: 'evt-1', type: 'run_started', payload: {}, createdAt: '2026-01-15T10:00:00Z', aggregateType: 'Run', aggregateId: 'test-run-123', availableAt: '2026-01-15T10:00:00Z', processedAt: null, attempts: 1 },
+      { id: 'evt-2', type: 'tool_used', payload: {}, createdAt: '2026-01-15T10:15:00Z', aggregateType: 'Run', aggregateId: 'test-run-123', availableAt: '2026-01-15T10:15:00Z', processedAt: null, attempts: 1 },
+      { id: 'evt-3', type: 'run_completed', payload: {}, createdAt: '2026-01-15T10:45:00Z', aggregateType: 'Run', aggregateId: 'test-run-123', availableAt: '2026-01-15T10:45:00Z', processedAt: null, attempts: 1 },
     ]);
-    vi.spyOn(runApi, 'getRunTools').mockResolvedValue({ tools: ['git', 'file_read'] });
+    vi.spyOn(runApi, 'getRunTools').mockResolvedValue({ runId: 'test-run-123', tools: ['git', 'file_read'] });
     vi.spyOn(runApi, 'getRunPermissions').mockResolvedValue([]);
     vi.spyOn(runApi, 'getRunRecovery').mockResolvedValue({ runId: 'test-run-123', taskId: null, runStatus: 'COMPLETED', recovery: null });
 
@@ -130,6 +139,7 @@ describe('AgentRunPage', () => {
         usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, cost: 0 },
       },
       error: null,
+      ...queryMeta,
       refetch: vi.fn(),
     });
 
@@ -145,7 +155,7 @@ describe('AgentRunPage', () => {
 
   test('показывает Tools section с данными', async () => {
     vi.spyOn(runApi, 'getRunEvents').mockResolvedValue([]);
-    vi.spyOn(runApi, 'getRunTools').mockResolvedValue({ tools: ['git', 'file_read', 'file_write', 'code_review'] });
+    vi.spyOn(runApi, 'getRunTools').mockResolvedValue({ runId: 'test-run-123', tools: ['git', 'file_read', 'file_write', 'code_review'] });
     vi.spyOn(runApi, 'getRunPermissions').mockResolvedValue([]);
     vi.spyOn(runApi, 'getRunRecovery').mockResolvedValue({ runId: 'test-run-123', taskId: null, runStatus: 'COMPLETED', recovery: null });
 
@@ -165,6 +175,7 @@ describe('AgentRunPage', () => {
         usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, cost: 0 },
       },
       error: null,
+      ...queryMeta,
       refetch: vi.fn(),
     });
 
@@ -181,7 +192,7 @@ describe('AgentRunPage', () => {
 
   test('показывает Permissions section с данными', async () => {
     vi.spyOn(runApi, 'getRunEvents').mockResolvedValue([]);
-    vi.spyOn(runApi, 'getRunTools').mockResolvedValue({ tools: [] });
+    vi.spyOn(runApi, 'getRunTools').mockResolvedValue({ runId: 'test-run-123', tools: [] });
     vi.spyOn(runApi, 'getRunPermissions').mockResolvedValue([
       { id: 'aud-1', action: 'read_code', actor: 'system', aggregateType: 'PR', aggregateId: 'pr-789', details: {}, createdAt: '2026-01-15T10:10:00Z' },
       { id: 'aud-2', action: 'write_comment', actor: 'system', aggregateType: 'PR', aggregateId: 'pr-789', details: {}, createdAt: '2026-01-15T10:30:00Z' },
@@ -204,6 +215,7 @@ describe('AgentRunPage', () => {
         usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, cost: 0 },
       },
       error: null,
+      ...queryMeta,
       refetch: vi.fn(),
     });
 
@@ -219,7 +231,7 @@ describe('AgentRunPage', () => {
 
   test('показывает Recovery section с данными', async () => {
     vi.spyOn(runApi, 'getRunEvents').mockResolvedValue([]);
-    vi.spyOn(runApi, 'getRunTools').mockResolvedValue({ tools: [] });
+    vi.spyOn(runApi, 'getRunTools').mockResolvedValue({ runId: 'test-run-123', tools: [] });
     vi.spyOn(runApi, 'getRunPermissions').mockResolvedValue([]);
     vi.spyOn(runApi, 'getRunRecovery').mockResolvedValue({
       runId: 'test-run-123',
@@ -248,6 +260,7 @@ describe('AgentRunPage', () => {
         usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, cost: 0 },
       },
       error: null,
+      ...queryMeta,
       refetch: vi.fn(),
     });
 

@@ -45,7 +45,7 @@ describe("WorktreeManager", () => {
       expect(status.stdout.trim()).toBe("task/task-123");
       
   // Очищаем ресурсы.
-      rmSync(worktree.path, { recursive: true, force: true });
+      await new GitCli().run(repoPath, ["worktree", "remove", "--force", worktree.path]);
     });
   });
 
@@ -108,7 +108,7 @@ describe("WorktreeManager", () => {
       expect(worktree.id).toBe("task-789");
       
   // Очищаем ресурсы.
-      rmSync(worktree.path, { recursive: true, force: true });
+      await new GitCli().run(repoPath, ["worktree", "remove", "--force", worktree.path]);
     });
   });
 });
