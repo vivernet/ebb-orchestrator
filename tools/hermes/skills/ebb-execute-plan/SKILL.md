@@ -1,54 +1,74 @@
 ---
 name: ebb-execute-plan
-description: Выполнение плана реализации Ebb Orchestrator с соблюдением всех правил и проверок.
-version: 1.0.0
+description: Использовать при выполнении существующего плана реализации Ebb Orchestrator в текущем worktree.
+version: 2.0.0
 platforms: [windows, linux, macos]
 metadata:
   hermes:
-    tags: [ebb-orchestrator, development, implementation-plan]
+    tags: [ebb-orchestrator, development, implementation-plan, subagents]
 ---
 
 # Ebb Execute Plan
 
-Use this skill only while developing Ebb Orchestrator.
+Использовать этот скилл только при разработке Ebb Orchestrator.
 
-## Input
+Основной принцип: родительский агент выполняет исключительно роль оркестратора. Реализация плана выполняется только субагентами с изолированным контекстом, ограниченным конкретной задачей. Большие diff, логи, исходные файлы и подробности расследований не должны попадать в контекст родительского агента, если их можно передать между субагентами через файлы.
 
-A repository-relative implementation-plan path, normally under `docs/architecture/plans/`.
+## Входные данные
 
-## Hard rules
+Путь к плану реализации относительно корня репозитория, обычно внутри `docs/architecture/plans/`.
 
-- Read `.hermes.md` first.
-- Read the complete plan before editing.
-- Work only in the current worktree/branch.
-- Never run more than 2 subagents concurrently.
-- Never create nested subagents.
-- Never enable automatic child worktree isolation for this workflow.
-- Preserve unrelated changes.
-- Never merge/push/tag/release unless the human explicitly requests it.
-- All changed/new production comments are Russian and use JSDoc where required.
+## Жёсткие правила
 
-## Procedure
+- Сначала прочитать `.hermes.md`, затем один раз полностью прочитать план до запуска любых субагентов.
+- Работать только в текущем worktree/ветке. Никогда не включать автоматическую изоляцию дочерних worktree для этого workflow.
+- Родительский агент НЕ ИМЕЕТ ПРАВА самостоятельно реализовывать, исправлять, рефакторить или редактировать production/test/docs-файлы, а также создавать коммиты. Все изменения в рамках плана выполняются исключительно субагентами.
+- Родительский агент может только координировать работу: читать управляющие инструкции и план, вести ledger задач, определять зависимости, запускать субагентов, читать краткие отчёты и проверять минимально необходимую Git-метаинформацию для координации.
+- Никогда не запускать более 2 субагентов одновременно.
+- Никогда не создавать вложенных субагентов. В каждом prompt дочернего агента необходимо явно запрещать запуск дополнительных агентов.
+- Выполнять задачи параллельно только если они независимы и гарантированно не изменяют пересекающиеся файлы или интерфейсы.
+- Для каждой задачи или независимого пакета однотипных задач использовать свежего implementation-субагента.
+- Для review использовать отдельных субагентов. Self-review implementer-а никогда не заменяет `ebb-review-task` или `ebb-final-review`.
+- Сохранять все посторонние изменения в рабочем дереве.
+- Никогда не выполнять merge/push/tag/release без явного запроса пользователя.
+- Все новые или изменённые production-комментарии должны быть на русском языке и использовать JSDoc там, где это требуется.
+- Никогда не вставлять большие diff, логи или накопленную историю сессии в контекст родительского агента. Сохранять их в task artifacts/files и передавать субагентам пути к ним; от субагентов требовать только краткий итоговый статус.
 
-1. Record branch, HEAD and working-tree status.
-2. Read the plan completely.
-3. Read files/specs referenced by the plan.
-4. Build a task ledger: WAITING / READY / RUNNING / REVIEW / DONE / BLOCKED.
-5. Determine dependencies and overlapping file ownership.
-6. Dispatch no more than two independent tasks at once.
-7. For each implementation task:
-   - use the `ebb-implement-task` procedure;
-   - collect result;
-   - inspect diff;
-   - run focused verification;
-   - invoke `ebb-review-task` on the completed task before accepting it.
-8. Do not let two agents edit overlapping files concurrently.
-9. After all tasks, run plan gates, repository gates, and inspect the whole diff.
-10. Invoke `ebb-final-review` with the current diff and plan.
-11. If final review finds a confirmed blocker: reproduce, fix root cause, rerun focused/full gates, repeat final review with a fresh reviewer.
-12. Commit only when the plan requires a commit and all applicable gates pass.
-13. Return branch, HEAD/commit, tasks completed, tests/builds, reviewer verdict, limitations and working-tree state.
+## Ledger задач родительского агента
 
-## Forbidden shortcuts
+Для каждой задачи отслеживать состояние `WAITING / READY / RUNNING / REVIEW / FIX / DONE / BLOCKED` и как минимум сохранять: id задачи, зависимости, назначенного агента, номер попытки, затрагиваемые файлы, путь к result/report, статус проверки, статус review и принятые решения.
 
-Do not skip failing tests, weaken assertions, disable lint/type/JSDoc/security rules, hide errors, invent PASS results, rewrite historical migrations, or broaden scope beyond the plan.
+Ledger является главным источником истины для восстановления работы. Никогда не запускать повторно задачу со статусом `DONE`, если только последующая подтверждённая проблема не делает её результат недействительным.
+
+## Процедура выполнения
+
+1. Зафиксировать текущую ветку, HEAD и состояние working tree.
+2. Полностью прочитать план и определить связанные спецификации, зависимости, порядок задач, общие интерфейсы и пересечения по изменяемым файлам.
+3. Создать ledger. Разделять только действительно независимые задачи; небольшие однотипные изменения объединять в один пакет, если это уменьшает количество субагентов и расход контекста.
+4. Для каждой задачи со статусом `READY` подготовить минимальный task brief, содержащий только требования этой задачи, относящиеся к ней ограничения, необходимые интерфейсы из предыдущих задач, ожидаемые проверки и путь для итогового отчёта. Не заставлять субагента читать не относящуюся к задаче историю плана.
+5. Запустить свежего implementation-субагента через `ebb-implement-task`. Субагент обязан выполнить реализацию, запустить целевые проверки, провести self-review и сохранить полный результат в task report/artifact; ответ в чат должен быть кратким.
+6. После успешной реализации запустить отдельного review-субагента через `ebb-review-task`, передав ему task brief и пути к diff/report. Родительский агент должен получать только verdict и краткий список findings, а не полный diff.
+7. Если review обнаружил подтверждённые проблемы, перевести задачу в `FIX` и запустить свежего fix-субагента, передав только task brief, относящийся к проблеме finding report и необходимые пути к artifacts. После исправления запустить свежего scoped reviewer. Повторять до принятия результата или срабатывания breaker, описанного ниже.
+8. Автоматически продолжать выполнение всех задач с соблюдением зависимостей, владения файлами и лимита в два одновременно работающих субагента. Не спрашивать пользователя о продолжении между обычными задачами.
+9. После перевода всех задач в `DONE` запустить отдельного verification-субагента, который выполнит все plan gates и repository gates и сохранит полный вывод в artifact. Родительский агент читает только краткий verdict/summary, если дополнительное расследование не требуется.
+10. Запустить свежего `ebb-final-review` субагента, передав план, текущие branch/HEAD, путь к verification report и путь к artifact с полным diff.
+11. Если final review обнаружил подтверждённый blocker, запустить свежего fix-субагента, затем свежих verification- и final-review-субагентов. Родительский агент никогда не исправляет blocker самостоятельно.
+12. Создавать commit только если это требуется планом и все применимые gates пройдены; commit должен создавать ответственный субагент, а не родительский агент.
+13. В финальном результате вернуть: branch, HEAD/commit, выполненные задачи, результаты tests/builds, verdict reviewer-а, историю retry/escalation, ограничения и итоговое состояние working tree.
+
+## Политика ошибок и восстановления субагентов
+
+Ошибку субагента необходимо отличать от ошибки кода.
+
+- **Падение агента / timeout / ошибка инструмента / потерянный ответ:** отметить попытку как неуспешную и повторно запустить ту же задачу на свежем субагенте. Использовать существующие artifact paths и состояние ledger вместо повторного восстановления контекста через чат.
+- **Недостаток контекста:** добавить в task brief только недостающую информацию и перезапустить задачу на свежем субагенте.
+- **Ошибка реализации или тестов:** запустить свежего fix-субагента, передав task brief и artifact с отчётом/логом ошибки.
+- **Повторяющаяся ошибка рассуждения:** после 2 неуспешных implementation/fix-попыток следующего свежего субагента запускать на более мощной настроенной модели и, если возможно, дополнительно сузить задачу.
+- **Ошибка reviewer-а:** повторить review на свежем reviewer-е. Отсутствие verdict никогда не считается одобрением.
+- **Breaker:** после 5 implementation/fix-попыток для одной и той же подтверждённой проблемы перевести её в `BLOCKED`, сохранить все reports/logs и продолжать только те задачи, которые действительно независимы. Никогда не придумывать PASS и не ослаблять требования молча.
+
+Перезапущенный субагент не должен получать полный контекст текущей беседы. Ему необходимо передавать только task brief, актуальные пути к artifacts, минимально необходимые сведения о зависимостях/интерфейсах и отчёт о предыдущей неудачной попытке.
+
+## Запрещённые сокращения процесса
+
+Не выполнять реализацию плана родительским агентом. Не пропускать падающие тесты, не ослаблять assertions, не отключать lint/type/JSDoc/security-правила, не скрывать ошибки, не придумывать PASS-результаты, не переписывать исторические migrations, не обходить обязательные review, не принимать отсутствие verdict reviewer-а за одобрение и не расширять scope за пределы плана.
