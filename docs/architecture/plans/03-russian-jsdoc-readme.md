@@ -1,9 +1,15 @@
 ---
 id: plan-03-jsdoc
-title: Plan Document
+kind: plan
+roadmap: 01
+stage: 03
 status: superseded
+title: Plan Document
 created: 2026-09-23
+updated: 2026-09-23
 ---
+
+-
 
 # Ebb Orchestrator — переход на русский JSDoc и документацию README
 
@@ -17,7 +23,6 @@ created: 2026-09-23
 
 **Основные источники истины:**
 - `docs/architecture/specs/01-system-design.md`
-- `docs/architecture/plans/2026-09-16-ebb-orchestrator-v1-roadmap.md`
 - канонические Plans 1–6;
 - итоговый Final V1 Audit & Hardening report;
 - текущий код после всех исправлений аудита.

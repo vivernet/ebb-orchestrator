@@ -3,15 +3,13 @@ id: plan-10
 kind: plan
 roadmap: 01
 stage: 10
-status: in_progress
+status: superseded
 title: Plan Document
 created: 2026-09-23
 updated: 2026-09-23
-depends_on: []
-specs:
-  - ../specs/01-system-design.md
-evidence: []
 ---
+
+-
 # Ebb Orchestrator — Final V1 Audit & Hardening Plan (Перевод)
 
 > **Для агентов-исполнителей:** ОБЯЗАТЕЛЬНЫЙ ПОДСКILL: Используйте `superpowers:subagent-driven-development`, где полезны независимые проходы ревью. Этот план — план аудита и устранения недостатков, а не план обычной реализации функциональности. Не объявляйте завершение, пока не пройдут все финальные ворота в этом документе.
@@ -27,7 +25,6 @@ TypeScript, Node.js, pnpm, Fastify, React/Vite, Vitest, SQLite, Git worktrees, H
 
 ## Авторитетные источники
 - `docs/architecture/specs/01-system-design.md`
-- `docs/architecture/plans/2026-09-16-ebb-orchestrator-v1-roadmap.md`
 - канонические планы реализации 1–6 под `docs/architecture/plans/`
 
 ---

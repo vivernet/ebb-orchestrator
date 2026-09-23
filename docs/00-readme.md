@@ -8,6 +8,8 @@ version: 1.0
 last_updated: 2026-09-23
 ---
 
+-
+
 
 # Ebb Orchestrator Documentation
 
@@ -47,14 +49,12 @@ Official specifications serving as source of truth:
 Implementation plans aligned with specs:
 
 - `01-documentation-governance.md` — Governance implementation
-- `02-v1-roadmap.md` — V1 implementation roadmap
 - `02-domain-workflow-scheduler.md` — Domain workflows
 - `02-foundation-persistence.md` — Data persistence
 - `02-git-execution-security.md` — Security policies
 - `02-hermes-autonomous-task.md` — Autonomous task handling
 - `02-planning-epics-context-knowledge.md` — Planning structure
 - `02-web-github-release.md` — Release process
-- `02-final-v1-audit-hardening.md` — Audit hardening
 - `03-agents-policy-review.md` — Agent policies
 - `03-russian-jsdoc-readme.md` — JSDoc standards
 
@@ -95,7 +95,6 @@ See the [Unified Roadmap](roadmap/01-roadmap.md) for all phases:
 
 - `01-roadmap.md` — Main roadmap
 - `2026-09-21-ecosystem-skills-and-plugins.md` — Ecosystem integration
-- `post-v1.md` — Post-V1 planning
 
 ## Reference
 
