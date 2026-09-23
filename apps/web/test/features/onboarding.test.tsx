@@ -6,9 +6,9 @@ import OnboardingPage from '../../src/features/onboarding/OnboardingPage.js';
 
 const server = setupServer(
   http.post('/api/v1/onboarding/discover', async ({ request }) => {
-    const body = (await request.json()) as { repositoryUrl: string };
-    if (!body.repositoryUrl || typeof body.repositoryUrl !== 'string') {
-      return HttpResponse.json({ error: 'repositoryUrl is required' }, { status: 400 });
+    const body = (await request.json()) as { repositoryPath: string };
+    if (!body.repositoryPath || typeof body.repositoryPath !== 'string') {
+      return HttpResponse.json({ error: 'repositoryPath is required' }, { status: 400 });
     }
     return HttpResponse.json({
       projectId: 'test-project-123',

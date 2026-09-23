@@ -6,16 +6,12 @@ import { resolvePlanPath } from './hermes-dev-paths.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const skillsRoot = join(root, 'tools', 'hermes', 'skills');
-const capabilities = readFileSync(join(root, 'tools', 'hermes', 'capabilities.yaml'), 'utf8');
-const provider = readFileSync(join(root, 'tools', 'hermes', 'providers', 'inception.yaml'), 'utf8');
 const readme = readFileSync(join(root, 'README.md'), 'utf8');
-const catalog = readFileSync(join(root, 'docs', 'development', 'hermes-capabilities.md'), 'utf8');
 
 const expectedSkills = [
   'ebb-execute-plan',
   'ebb-final-review',
   'ebb-implement-task',
-  'ebb-provider-integration',
   'ebb-quality-gates',
   'ebb-repository-context',
   'ebb-review-task',
@@ -36,29 +32,10 @@ test('canonical Hermes skills have valid discoverable frontmatter', () => {
   }
 });
 
-test('capability registry covers every canonical skill without secrets', () => {
-  for (const skill of expectedSkills) assert.match(capabilities, new RegExp(`name: ${skill}`));
-  assert.match(capabilities, /allowed_scope:/);
-  assert.doesNotMatch(capabilities, /(?:api[_-]?key|token)\s*[:=]\s*[^\s]+/i);
-});
-
-test('Inception provider template is explicit and non-secret', () => {
-  assert.match(provider, /^name: inception$/m);
-  assert.match(provider, /^provider: custom:inception$/m);
-  assert.match(provider, /^api: https:\/\/api\.inceptionlabs\.ai\/v1$/m);
-  assert.match(provider, /^model: mercury-2\.5$/m);
-  assert.match(provider, /^key_env: INCEPTION_API_KEY$/m);
-  assert.doesNotMatch(provider, /INCEPTION_API_KEY\s*[:=]\s*[^\s{`]/);
-});
-
-test('README documents every skill, provider and setup boundary', () => {
-  for (const skill of expectedSkills) assert.match(catalog, new RegExp(`\\\`${skill}\\\``));
+test('README documents every skill and setup commands', () => {
+  for (const skill of expectedSkills) assert.match(readme, new RegExp(skill));
   assert.match(readme, /pnpm hermes:setup/);
   assert.match(readme, /pnpm hermes:check/);
-  assert.match(readme, /pnpm hermes:provider -- inception/);
-  assert.match(readme, /INCEPTION_API_KEY/);
-  assert.match(readme, /\.env\.example/);
-  assert.match(catalog, /tools\/hermes\/providers\/inception\.yaml/);
 });
 
 test('plan path resolution rejects traversal and sibling-prefix escapes', () => {

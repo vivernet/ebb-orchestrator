@@ -1,5 +1,0 @@
-name: inception
-provider: custom:inception
-api: https://api.inceptionlabs.ai/v1
-model: mercury-2.5
-key_env: INCEPTION_API_KEY

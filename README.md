@@ -195,19 +195,15 @@ MCP-инструменты проверяют capability и аргументы. 
 предусмотрены ограниченные попытки исправления, после чего запуск должен
 перейти в обработку ошибки или recovery.
 
-### Hermes development skills и capabilities
+### Hermes development skills
 
-Канонические project-local skills, capabilities и provider templates находятся
-в [`tools/hermes`](tools/hermes). Полный каталог каждого skill, назначение,
-source/installed path и секретную границу см. в
-[`docs/development/hermes-capabilities.md`](docs/development/hermes-capabilities.md).
+Канонические project-local skills находятся в [`tools/hermes`](tools/hermes). Полный каталог каждого skill, назначение и source/installed path см. в README.
 
-В проекте установлены и проверяются следующие 9 skills:
+В проекте установлены и проверяются следующие 8 skills:
 
 - `ebb-execute-plan` — исполняет repository plan с ограниченным делегированием;
 - `ebb-final-review` — проводит финальную проверку результата и gates;
 - `ebb-implement-task` — реализует одну изолированную задачу;
-- `ebb-provider-integration` — подключает и проверяет explicit AI provider;
 - `ebb-quality-gates` — запускает обязательные lint/typecheck/test/build gates;
 - `ebb-repository-context` — собирает доверенный контекст репозитория;
 - `ebb-review-task` — выполняет независимый read-only review;
@@ -220,38 +216,6 @@ source/installed path и секретную границу см. в
 pnpm hermes:setup
 pnpm hermes:check
 ```
-
-Явно включить development provider Inception Labs:
-
-```bash
-pnpm hermes:provider -- inception
-```
-
-Профиль использует OpenAI-compatible endpoint
-[`https://api.inceptionlabs.ai/v1`](https://api.inceptionlabs.ai/v1), модель
-`mercury-2.5` и имя secret environment variable `INCEPTION_API_KEY`. Для
-локального запуска скопируйте `.env.example` в `.env`; в deployment значение
-должно поступать из SecretStore или environment injection. Значение
-ключа не хранится в репозитории и не передаётся через README, prompts, logs или
-artifacts. Provider не становится неявным production fallback; текущий
-production `HermesRuntimeAdapter` сохраняет свой explicit isolated profile.
-
-Для bounded проверки provider transport предусмотрен `pnpm hermes:smoke`
-([`scripts/hermes-provider-smoke.mjs`](scripts/hermes-provider-smoke.mjs)). Smoke
-создаёт disposable `HERMES_HOME` и пустой workspace во временном каталоге,
-использует synthetic prompt `Reply with exactly: SMOKE_OK` и не подключает
-repository plan, MCP toolset или реальные файлы worktree. В subprocess передаётся
-явный environment allowlist с `INCEPTION_API_KEY`; произвольные keys, включая
-repository secrets и `NODE_OPTIONS`, отбрасываются. Запуск использует
-`shell:false`, только `skills` toolset и bounded timeout без запуска terminal/
-Python runtime.
-
-Raw stdout/stderr provider не возвращаются и не сохраняются: команда печатает
-только fixed marker, exit code, `redacted=true` и `cleanup_verified`. Временные
-файлы удаляются после запуска. Это smoke provider reachability/auth и redacted
-response handling, а не provider-backed Hermes parity: он не доказывает выполнение
-реального plan, delegation двух subagents, передачу repository context или право
-удалить `.opencode`.
 
 ## Модель безопасности
 

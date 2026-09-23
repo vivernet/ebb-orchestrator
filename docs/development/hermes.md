@@ -15,67 +15,6 @@ pnpm hermes:setup
 pnpm hermes:check
 ```
 
-## Skills, capabilities и provider
-
-Канонический список и exact source/installed paths находится в
-[`hermes-capabilities.md`](hermes-capabilities.md). Для explicit Inception Labs
-development profile:
-
-```bash
-pnpm hermes:provider -- inception
-```
-
-Команда настраивает provider profile с endpoint
-`https://api.inceptionlabs.ai/v1`, моделью `mercury-2.5` и `key_env:
-INCEPTION_API_KEY`; значение ключа остаётся во внешнем окружении.
-
-Для локального запуска создайте `.env` в корне репозитория по шаблону
-`.env.example`:
-
-```dotenv
-INCEPTION_API_KEY=ваш_ключ
-```
-
-`.env` загружается локальными Hermes-командами, не отслеживается Git и имеет
-приоритет над устаревшим унаследованным environment процесса. При отсутствии
-`.env` используется заданный deployment environment/SecretStore. Значение ключа не печатается
-и не записывается в Hermes config. В deployment используйте SecretStore или
-секреты среды, которые инжектируют тот же `INCEPTION_API_KEY`.
-
-Provider smoke использует bounded timeout 60 секунд для retry-цикла Hermes;
-его можно изменить через `HERMES_PROVIDER_SMOKE_TIMEOUT_MS`. Недоступность
-endpoint остаётся честным `TRANSPORT_FAILED`, а не превращается в успешный
-smoke. Для smoke явно включён только `skills` toolset: terminal и code
-execution не поднимаются, поэтому provider-проверка не создаёт Python runtime
-в disposable workspace.
-
-## Bounded provider smoke
-
-Для ограниченной проверки provider transport используется:
-
-```bash
-pnpm hermes:smoke
-```
-
-Источник команды —
-[`scripts/hermes-provider-smoke.mjs`](../../scripts/hermes-provider-smoke.mjs).
-Smoke не запускает repository plan. Он создаёт disposable `HERMES_HOME`, пустой
-workspace и synthetic prompt `Reply with exactly: SMOKE_OK` во временном каталоге.
-В Hermes передаётся только явный environment allowlist: platform process keys,
-temporary/home paths, `HERMES_MODEL` и `INCEPTION_API_KEY`; произвольные keys и
-repository secrets не передаются. Запуск выполняется с `shell:false` и bounded
-timeout.
-
-Child stdout/stderr не публикуются. Результат ограничен fixed marker, exit code,
-`redacted=true` и `cleanup_verified`; temporary workspace, profile и prompt
-удаляются после завершения. Для smoke не подключаются реальный worktree, plan,
-MCP toolset или repository-derived context.
-
-Smoke подтверждает только provider reachability/auth и безопасную обработку
-ответа. Он не заменяет provider-backed parity run: не проверяет выполнение
-реального plan, delegation subagents, repository context transport или условие
-удаления `.opencode`.
-
 ## Запуск implementation plan
 
 ```bash

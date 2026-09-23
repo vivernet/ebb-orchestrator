@@ -27,13 +27,13 @@ export interface OnboardingDiscoveryResult {
 
 export const onboardingApi = {
   /**
-   * Инициализирует discovery по URL репозитория.
-   * @param repositoryUrl URL репозитория
+   * Инициализирует discovery по пути к репозиторию.
+   * @param repositoryPath Путь к репозиторию
    */
-  discover: async (repositoryUrl: string) => {
+  discover: async (repositoryPath: string) => {
     const response = await apiClient.post<OnboardingDiscoveryResult>(
       toClientPath(apiPaths.onboardingDiscover),
-      { repositoryUrl },
+      { repositoryPath },
     );
     return response;
   },
