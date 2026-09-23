@@ -5,13 +5,33 @@
 import { apiClient, toClientPath } from '../../api/client.js';
 import { apiPaths } from '@ebb-orchestrator/contracts';
 
+export interface OnboardingDiscoveryResult {
+  projectId?: string;
+  repository: { path: string | null; remoteUrl: string | null };
+  detected: {
+    defaultBranch: string | null;
+    packageManager: string | null;
+    testFramework: string | null;
+    orchestratorConfigFound: boolean;
+  };
+  proposed: {
+    defaultBranch: string | null;
+    workflow: string | null;
+    roles: string[];
+    guidelines: string[];
+  };
+  approvalStatus: 'PENDING' | 'APPROVED';
+  semanticConfigApproved: boolean;
+  localModeEnabled: boolean;
+}
+
 export const onboardingApi = {
   /**
    * Инициализирует discovery по URL репозитория.
    * @param repositoryUrl URL репозитория
    */
   discover: async (repositoryUrl: string) => {
-    const response = await apiClient.post<unknown>(
+    const response = await apiClient.post<OnboardingDiscoveryResult>(
       toClientPath(apiPaths.onboardingDiscover),
       { repositoryUrl },
     );
@@ -23,7 +43,7 @@ export const onboardingApi = {
    * @param id ID onboarding project
    */
   get: async (id: string) => {
-    const response = await apiClient.get<unknown>(toClientPath(apiPaths.onboarding(id)));
+    const response = await apiClient.get<OnboardingDiscoveryResult>(toClientPath(apiPaths.onboarding(id)));
     return response;
   },
 
@@ -32,7 +52,7 @@ export const onboardingApi = {
    * @param id ID onboarding project
    */
   requestApproval: async (id: string) => {
-    const response = await apiClient.post<unknown>(
+    const response = await apiClient.post<OnboardingDiscoveryResult>(
       toClientPath(apiPaths.onboardingApproval(id)),
       {},
     );
@@ -44,7 +64,7 @@ export const onboardingApi = {
    * @param id ID onboarding project
    */
   approve: async (id: string) => {
-    const response = await apiClient.post<unknown>(
+    const response = await apiClient.post<OnboardingDiscoveryResult>(
       toClientPath(apiPaths.onboardingApprove(id)),
       {},
     );
@@ -56,7 +76,7 @@ export const onboardingApi = {
    * @param id ID onboarding project
    */
   activate: async (id: string) => {
-    const response = await apiClient.post<unknown>(
+    const response = await apiClient.post<OnboardingDiscoveryResult>(
       toClientPath(apiPaths.onboardingActivate(id)),
       {},
     );

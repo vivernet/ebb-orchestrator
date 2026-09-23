@@ -100,6 +100,9 @@ test('v1 UI bootstraps against the launched backend', async ({ page, request }) 
   await page.goto('/projects/new');
   await expect(page.getByRole('heading', { name: 'Project onboarding' })).toBeVisible();
 
+  await page.goto('/projects/test-id');
+  await expect(page.getByRole('heading', { name: 'Project: test-id' })).toBeVisible();
+
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
 

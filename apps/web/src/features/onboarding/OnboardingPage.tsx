@@ -1,72 +1,6 @@
 import { useState } from 'react';
-import { apiClient, toClientPath } from '../../api/client.js';
+import { onboardingApi, type OnboardingDiscoveryResult } from './api.js';
 import StatusBadge from '../../components/StatusBadge.js';
-import { apiPaths } from '@ebb-orchestrator/contracts';
-
-const onboardingDiscoverPath = toClientPath(apiPaths.onboardingDiscover);
-
-interface OnboardingDiscoveryResult {
-  repository: { path: string | null; remoteUrl: string | null };
-  detected: {
-    defaultBranch: string | null;
-    packageManager: string | null;
-    testFramework: string | null;
-    orchestratorConfigFound: boolean;
-  };
-  proposed: {
-    defaultBranch: string | null;
-    workflow: string | null;
-    roles: string[];
-    guidelines: string[];
-  };
-  approvalStatus: 'PENDING' | 'APPROVED';
-  semanticConfigApproved: boolean;
-  localModeEnabled: boolean;
-  projectId?: string;
-}
-
-/**
- * Инициализирует discovery по пути к репозиторию.
- * @param repositoryPath Абсолютный путь к локальному репозиторию
- */
-async function initiateDiscovery(repositoryPath: string): Promise<OnboardingDiscoveryResult> {
-  const response = await apiClient.post<OnboardingDiscoveryResult>(onboardingDiscoverPath, { repositoryPath });
-  return response;
-}
-
-/**
- * Получает статус onboarding project.
- * @param id ID project
- */
-async function getOnboarding(id: string): Promise<OnboardingDiscoveryResult> {
-  const response = await apiClient.get<OnboardingDiscoveryResult>(toClientPath(apiPaths.onboarding(id)));
-  return response;
-}
-
-/**
- * Запрашивает approval для onboarding project.
- * @param id ID project
- * @param repositoryPath Путь к репозиторию
- */
-async function requestApproval(id: string, repositoryPath: string): Promise<void> {
-  await apiClient.post(toClientPath(apiPaths.onboardingApproval(id)), { repositoryPath });
-}
-
-/**
- * Утверждает onboarding project.
- * @param id ID project
- */
-async function approveOnboarding(id: string): Promise<void> {
-  await apiClient.post(toClientPath(apiPaths.onboardingApprove(id)), {});
-}
-
-/**
- * Активирует onboarding project.
- * @param id ID project
- */
-async function activateOnboarding(id: string): Promise<void> {
-  await apiClient.post(toClientPath(apiPaths.onboardingActivate(id)), {});
-}
 
 /**
  * Представляет экран онбординга проекта с полным flow: discovery → review → approve → activate.
@@ -84,7 +18,7 @@ export default function OnboardingPage() {
     setLoading(true);
 
     try {
-      const discovery = await initiateDiscovery(repositoryPath.trim());
+      const discovery = await onboardingApi.discover(repositoryPath.trim());
       setResult(discovery);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Ошибка discovery');
@@ -98,8 +32,8 @@ export default function OnboardingPage() {
     setLoading(true);
     setError(null);
     try {
-      await requestApproval(result.projectId, repositoryPath.trim());
-      const refreshed = await getOnboarding(result.projectId);
+      await onboardingApi.requestApproval(result.projectId);
+      const refreshed = await onboardingApi.get(result.projectId);
       setResult(refreshed);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Ошибка запроса approval');
@@ -113,8 +47,8 @@ export default function OnboardingPage() {
     setLoading(true);
     setError(null);
     try {
-      await approveOnboarding(result.projectId);
-      const refreshed = await getOnboarding(result.projectId);
+      await onboardingApi.approve(result.projectId);
+      const refreshed = await onboardingApi.get(result.projectId);
       setResult(refreshed);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Ошибка утверждения');
@@ -128,8 +62,8 @@ export default function OnboardingPage() {
     setLoading(true);
     setError(null);
     try {
-      await activateOnboarding(result.projectId);
-      const refreshed = await getOnboarding(result.projectId);
+      await onboardingApi.activate(result.projectId);
+      const refreshed = await onboardingApi.get(result.projectId);
       setResult(refreshed);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Ошибка активации');
