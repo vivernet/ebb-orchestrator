@@ -1,0 +1,13 @@
+{
+  "files_modified": [
+    "docs/audit/01-full-audit.md",
+    "docs/audit/02-audit-report.md",
+    "docs/audit/03-audit-guidelines.md",
+    "docs/audit/05-hermes-development-workflow-parity.md",
+    "docs/audit/08-web-ui-code-map.md",
+    "docs/audit/09-web-ui-gap-analysis.md",
+    "docs/development/01-documentation-governance.md",
+    "docs/development/03-russian-jsdoc-readme.md",
+    "docs/development/04-architecture-review.md"
+  ]
+}

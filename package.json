@@ -16,7 +16,13 @@
     "hermes:setup": "node scripts/hermes-dev.mjs setup",
     "hermes:check": "node scripts/hermes-dev.mjs check",
     "hermes:test": "node --test scripts/hermes-dev.test.mjs",
-    "hermes:execute": "node scripts/hermes-dev.mjs execute"
+    "hermes:execute": "node scripts/hermes-dev.mjs execute",
+    "docs:inventory": "node scripts/docs-governance.mjs inventory",
+    "docs:check": "node scripts/docs-governance.mjs check",
+    "docs:roadmap": "node scripts/docs-governance.mjs roadmap",
+    "docs:rename:check": "node scripts/docs-governance.mjs rename:check",
+    "docs:link:sync": "node scripts/docs-governance.mjs link:sync",
+    "docs:test": "node --test scripts/docs-governance.test.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

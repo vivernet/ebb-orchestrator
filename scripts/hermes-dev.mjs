@@ -329,6 +329,21 @@ async function main() {
 async function doSetup() {
   console.log('Setting up Hermes development environment...');
 
+  // 0. Run docs inventory and check for governance integration
+  console.log('Running documentation governance checks...');
+  const docsInventory = spawnSync('node', ['scripts/docs-governance.mjs', 'inventory'], { encoding: 'utf8' });
+  const docsCheck = spawnSync('node', ['scripts/docs-governance.mjs', 'check'], { encoding: 'utf8' });
+  const docsLinkSync = spawnSync('node', ['scripts/docs-governance.mjs', 'link:sync'], { encoding: 'utf8' });
+  const docsRenameCheck = spawnSync('node', ['scripts/docs-governance.mjs', 'rename:check'], { encoding: 'utf8' });
+  if (docsInventory.status !== 0 || docsCheck.status !== 0 || docsLinkSync.status !== 0 || docsRenameCheck.status !== 0) {
+    console.error('Documentation checks failed:');
+    console.error(docsInventory.stdout || docsInventory.stderr);
+    console.error(docsCheck.stdout || docsCheck.stderr);
+    console.error(docsLinkSync.stdout || docsLinkSync.stderr);
+    console.error(docsRenameCheck.stdout || docsRenameCheck.stderr);
+    process.exit(1);
+  }
+
   // 1. Получаем корень Git worktree.
   const gitResult = spawnSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' });
   if (gitResult.status !== 0) {

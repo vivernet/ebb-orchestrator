@@ -1,0 +1,229 @@
+{
+  "README.md": [
+    {
+      "text": "Documentation Governance Guide",
+      "target": "development/02-documentation-governance.md",
+      "line": 13
+    },
+    {
+      "text": "Audit Section",
+      "target": "audit/",
+      "line": 68
+    },
+    {
+      "text": "Development Section",
+      "target": "development/",
+      "line": 79
+    },
+    {
+      "text": "Unified Roadmap",
+      "target": "roadmap/01-roadmap.md",
+      "line": 89
+    },
+    {
+      "text": "Reference Section",
+      "target": "reference/",
+      "line": 97
+    },
+    {
+      "text": "Governance Guide",
+      "target": "development/02-documentation-governance.md",
+      "line": 107
+    },
+    {
+      "text": "System Design",
+      "target": "architecture/specs/01-system-design.md",
+      "line": 108
+    },
+    {
+      "text": "Unified Roadmap",
+      "target": "roadmap/01-roadmap.md",
+      "line": 109
+    },
+    {
+      "text": "Audit Report",
+      "target": "audit/02-opencode-to-hermes-inventory.md",
+      "line": 110
+    }
+  ],
+  "architecture\\specs\\02-web-ui-recovery-design.md": [
+    {
+      "text": "`docs/audit/web-ui-gap-analysis.md`",
+      "target": "../../audit/09-web-ui-gap-analysis.md",
+      "line": 13
+    }
+  ],
+  "audit\\09-web-ui-gap-analysis.md": [
+    {
+      "text": "`web-ui-code-map.md`",
+      "target": "./08-web-ui-code-map.md",
+      "line": 15
+    }
+  ],
+  "development\\02-documentation-governance.md": [
+    {
+      "text": "Documentation Governance — Naming Policy & Glossary",
+      "target": "./01-documentation-governance.md",
+      "line": 51
+    }
+  ],
+  "development\\03-russian-jsdoc-readme.md": [
+    {
+      "text": "Documentation Governance",
+      "target": "./01-documentation-governance.md",
+      "line": 68
+    }
+  ],
+  "roadmap\\01-roadmap.md": [
+    {
+      "text": "Governance Guide",
+      "target": "../architecture/plans/governance/00-01-documentation-governance.md",
+      "line": 16
+    },
+    {
+      "text": "Overview",
+      "target": "#overview",
+      "line": 22
+    },
+    {
+      "text": "Global Stage Register",
+      "target": "#global-stage-register",
+      "line": 23
+    },
+    {
+      "text": "Plan Register",
+      "target": "#plan-register",
+      "line": 24
+    },
+    {
+      "text": "Dependency Graph",
+      "target": "#dependency-graph",
+      "line": 25
+    },
+    {
+      "text": "Blockers and Evidence",
+      "target": "#blockers-and-evidence",
+      "line": 26
+    },
+    {
+      "text": "Proposals",
+      "target": "#proposals",
+      "line": 27
+    },
+    {
+      "text": "Stage 01 Merge Decisions",
+      "target": "#stage-01-merge-decisions",
+      "line": 28
+    },
+    {
+      "text": "Governance Guide",
+      "target": "#governance-guide",
+      "line": 29
+    },
+    {
+      "text": "Stage 01 Merge Decisions",
+      "target": "../architecture/plans/governance/08-stage-01-merge-decisions.md",
+      "line": 37
+    },
+    {
+      "text": "docs",
+      "target": "../architecture/plans/01-foundation-persistence.md",
+      "line": 127
+    },
+    {
+      "text": "docs",
+      "target": "../architecture/plans/02-domain-workflow-scheduler.md",
+      "line": 128
+    },
+    {
+      "text": "docs",
+      "target": "../architecture/plans/03-git-execution-security.md",
+      "line": 129
+    },
+    {
+      "text": "docs",
+      "target": "../architecture/plans/04-hermes-autonomous-task.md",
+      "line": 130
+    },
+    {
+      "text": "docs",
+      "target": "../architecture/plans/05-planning-epics-context-knowledge.md",
+      "line": 131
+    },
+    {
+      "text": "docs",
+      "target": "../architecture/plans/06-web-github-release.md",
+      "line": 132
+    },
+    {
+      "text": "docs",
+      "target": "../architecture/plans/07-hermes-development-workflow.md",
+      "line": 133
+    },
+    {
+      "text": "docs",
+      "target": "../architecture/plans/08-01-web-ui-foundation.md",
+      "line": 134
+    },
+    {
+      "text": "docs",
+      "target": "../architecture/plans/08-02-web-ui-core-functional.md",
+      "line": 135
+    },
+    {
+      "text": "docs",
+      "target": "../architecture/plans/08-03-web-ui-operational-and-e2e.md",
+      "line": 136
+    },
+    {
+      "text": "docs",
+      "target": "../architecture/plans/08-04-web-ui-audit-and-recovery-design.md",
+      "line": 137
+    },
+    {
+      "text": "docs",
+      "target": "../architecture/plans/09-production-readiness.md",
+      "line": 138
+    },
+    {
+      "text": "docs",
+      "target": "../architecture/plans/10-final-v1-audit-hardening.md",
+      "line": 139
+    },
+    {
+      "text": "docs",
+      "target": "../architecture/plans/11-hermes-development-capabilities.md",
+      "line": 140
+    },
+    {
+      "text": "docs",
+      "target": "../architecture/plans/governance/00-01-documentation-governance.md",
+      "line": 146
+    },
+    {
+      "text": "docs",
+      "target": "../architecture/plans/governance/00-02-agents-policy-review.md",
+      "line": 147
+    },
+    {
+      "text": "detailed merge decisions",
+      "target": "../architecture/plans/governance/08-stage-01-merge-decisions.md",
+      "line": 272
+    },
+    {
+      "text": "`../architecture/plans/governance/00-01-documentation-governance.md`",
+      "target": "../architecture/plans/governance/00-01-documentation-governance.md",
+      "line": 279
+    },
+    {
+      "text": "`../architecture/plans/governance/evidence/document-migration-map.md`",
+      "target": "../architecture/plans/governance/evidence/document-migration-map.md",
+      "line": 280
+    },
+    {
+      "text": "`../architecture/plans/governance/evidence/02-progress-ledger.md`",
+      "target": "../architecture/plans/governance/evidence/02-progress-ledger.md",
+      "line": 281
+    }
+  ]
+}

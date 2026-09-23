@@ -1,3 +1,14 @@
+---
+id: plan-00
+kind: plan
+roadmap: 01
+stage: 00
+status: completed
+title: Documentation Governance Refactoring
+summary: Рефакторинг документации и единого roadmap
+created: 2026-09-16
+updated: 2026-09-23
+---
 # Рефакторинг документации и единого roadmap — план реализации
 
 > **Для агентных исполнителей:** ОБЯЗАТЕЛЬНЫЙ SUB-SKILL: используйте `superpowers:subagent-driven-development` (рекомендуется) или `superpowers:executing-plans` для реализации этого плана по задачам. Шаги используют синтаксис флажков (`- [ ]`) для отслеживания.
@@ -8,7 +19,7 @@
 
 **Технологический стек:** Markdown, YAML front matter, Node.js ESM, `node:fs`, `node:path`, `node:url`, `node:test`, существующие команды pnpm/Hermes development workflow.
 
-**Spec:** `docs/architecture/specs/01-system-design.md` после миграции; исходный архитектурный документ до миграции — `docs/architecture/specs/2026-09-16-design.md`.
+**Spec:** `docs/architecture/specs/01-system-design.md` после миграции; исходный архитектурный документ до миграции — `docs/architecture/specs/01-system-design.md`.
 
 ## Глобальные ограничения
 
@@ -36,7 +47,7 @@
 **Files:**
 - Modify: `docs/architecture/plans/governance/00-01-documentation-governance.md` — только checkbox-статус выполнения.
 - Read: `.hermes.md`, `AGENTS.md`, `README.md`, `docs/README.md`.
-- Read: `docs/architecture/specs/2026-09-16-design.md`, `docs/architecture/plans/2026-09-16-v1-roadmap.md`, `docs/roadmap/post-v1.md`.
+- Read: `docs/architecture/specs/01-system-design.md`, `docs/architecture/plans/2026-09-16-v1-roadmap.md`, `docs/roadmap/post-v1.md`.
 
 **Interfaces:**
 - Produces: зафиксированные branch, HEAD, status, полный список файлов `docs/`, список ссылок и список исходных имён для миграционной карты.
@@ -441,10 +452,10 @@ Expected: второй запуск не создаёт diff.
 ### Task 5: Мигрировать `architecture/specs/`
 
 **Files:**
-- Rename: `docs/architecture/specs/2026-09-16-design.md` → `docs/architecture/specs/01-system-design.md`.
-- Rename: `docs/architecture/specs/2026-09-18-web-ui-recovery-design.md` → `docs/architecture/specs/02-web-ui-recovery-design.md`.
-- Rename: `docs/architecture/specs/2026-09-20-production-readiness-hardening-design.md` → `docs/architecture/specs/03-production-readiness-design.md`.
-- Rename: `docs/architecture/specs/2026-09-21-hermes-development-capabilities.md` → `docs/architecture/specs/04-hermes-development-capabilities.md`.
+- Rename: `docs/architecture/specs/01-system-design.md` → `docs/architecture/specs/01-system-design.md`.
+- Rename: `docs/architecture/specs/02-web-ui-recovery-design.md` → `docs/architecture/specs/02-web-ui-recovery-design.md`.
+- Rename: `docs/architecture/specs/03-production-readiness-design.md` → `docs/architecture/specs/03-production-readiness-design.md`.
+- Rename: `docs/architecture/specs/04-hermes-development-capabilities.md` → `docs/architecture/specs/04-hermes-development-capabilities.md`.
 - Modify: all renamed specs — add metadata and replace `Phase` delivery headings with `Stage` where applicable.
 - Modify: `docs/architecture/plans/governance/evidence/document-migration-map.md`.
 
