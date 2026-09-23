@@ -712,8 +712,13 @@ Russian prose, unchanged technical identifiers, consistent capitalization of `St
 - Modify: `scripts/hermes-dev.test.mjs`.
 - Modify: `tools/hermes/skills/ebb-execute-plan/SKILL.md`.
 - Modify: `tools/hermes/skills/ebb-implement-task/SKILL.md`.
+- Modify: `tools/hermes/skills/ebb-review-task/SKILL.md`.
+- Modify: `tools/hermes/skills/ebb-final-review/SKILL.md`.
+- Modify: every other repository-local `tools/hermes/skills/*/SKILL.md` that contains a documentation path, plan-path rule or roadmap/status instruction; skills without such references are still included in the scan report and remain unchanged.
 - Modify: `docs/development/<canonical-hermes-guide>.md`.
 - Modify: `package.json`.
+
+Установленные копии skills в активном Hermes profile не редактировать напрямую: после изменения `tools/hermes/skills/**` синхронизировать их только через `pnpm hermes:setup`, затем проверить `pnpm hermes:check`.
 
 **Interfaces:**
 - `resolvePlanPath(worktreeRoot: string, inputPath: string): string | null` must accept canonical `docs/architecture/plans/**` paths, including `governance/**`.
@@ -785,7 +790,7 @@ Expected: source and installed skills remain synchronized and all documentation 
 pnpm docs:rename:check -- --report
 ```
 
-Report every old path, old heading form and old command example with file and line.
+Report every old path, old heading form and old command example with file and line. Отдельно просканировать все `tools/hermes/skills/**/SKILL.md`, `tools/hermes/providers/`, `scripts/`, root policy files и CI configuration; report должен явно показать, какие файлы проверены и какие ссылки найдены.
 
 - [ ] **Step 2: Apply replacements from the migration map only**
 
