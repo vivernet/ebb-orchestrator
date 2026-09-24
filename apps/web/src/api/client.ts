@@ -131,14 +131,24 @@ export function bootstrap(launchToken: string): Promise<void> {
 
 /**
  * Восстанавливает CSRF-состояние после reload через HttpOnly-cookie локальной сессии.
- * Bearer-токен намеренно не возвращается и не сохраняется в JavaScript storage.
+ * Если сессия не найдена, создаёт новую сессию через POST /api/v1/session/new.
  */
 export function restoreSession(): Promise<void> {
   return fetch('/api/v1/session', { credentials: 'same-origin' }).then(async (response) => {
-    if (!response.ok) throw new Error(`Local session restore failed: ${response.status}`);
-    return response.json() as Promise<{ csrfToken: string }>;
-  }).then(({ csrfToken }) => {
+    if (response.ok) {
+      const json = await response.json() as { csrfToken: string };
+      apiClient.sessionToken = null;
+      apiClient.csrfToken = json.csrfToken;
+      return;
+    }
+    // Сессия не найдена или невалидна - создаём новую
+    const response2 = await fetch('/api/v1/session/new', {
+      credentials: 'same-origin',
+      method: 'POST',
+    });
+    if (!response2.ok) throw new Error(`Session creation failed: ${response2.status}`);
+    const json2 = await response2.json() as { csrfToken: string };
     apiClient.sessionToken = null;
-    apiClient.csrfToken = csrfToken;
+    apiClient.csrfToken = json2.csrfToken;
   });
 }

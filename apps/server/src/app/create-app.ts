@@ -182,10 +182,23 @@ export function createApp(deps: AppDeps): OrchestratorApp {
       origin: session.allowedOrigin,
     };
   });
-  app.get("/api/v1/session", async () => ({
-    csrfToken: session.csrfToken,
-    origin: session.allowedOrigin,
-  }));
+  app.get("/api/v1/session", async (request, reply) => {
+    const sessionCookie = readCookie(request.headers.cookie, LOCAL_SESSION_COOKIE);
+    if (sessionCookie === session.token) {
+      return {
+        csrfToken: session.csrfToken,
+        origin: session.allowedOrigin,
+      };
+    }
+    reply.code(401).send({ error: "unauthorized" });
+  });
+  app.post("/api/v1/session/new", async (request, reply) => {
+    reply.header("set-cookie", createSessionCookie(session.token));
+    return {
+      csrfToken: session.csrfToken,
+      origin: session.allowedOrigin,
+    };
+  });
 
   // Аутентифицированные
   app.register(async (instance) => eventRoutes(instance, deps.eventBus));
