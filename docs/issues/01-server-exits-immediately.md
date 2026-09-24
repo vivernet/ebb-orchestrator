@@ -1,3 +1,19 @@
+---
+id: issue-01
+kind: issue
+roadmap: 01
+stage: 04
+status: completed
+title: Сервер немедленно завершается после запуска
+created: 2026-09-22
+updated: 2026-09-24
+depends_on:
+specs:
+  - ../specs/01-system-design.md
+evidence:
+  - ../audit/08-web-401-and-project-completion-evidence.md
+---
+
 # Проблема: Сервер немедленно завершается после запуска
 
 ## Описание

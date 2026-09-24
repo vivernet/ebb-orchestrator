@@ -73,4 +73,16 @@ export default tseslint.config(
       },
     },
   },
+  {
+    files: ["apps/server/test-env.test.mjs", "apps/server/test-path.mjs"],
+    languageOptions: {
+      globals: {
+        process: "readonly",
+        console: "readonly",
+      },
+    },
+    rules: {
+      "@typescript-eslint/no-unused-vars": "off",
+    },
+  },
 );

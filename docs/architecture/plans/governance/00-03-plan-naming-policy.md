@@ -1,3 +1,18 @@
+---
+id: plan-00-03
+kind: plan
+roadmap: 01
+stage: 00
+status: completed
+title: Naming Convention for Implementation Plans
+created: 2026-09-18
+updated: 2026-09-24
+depends_on:
+specs:
+  - ../specs/01-system-design.md
+evidence: []
+---
+
 # Policy: Naming Convention for Implementation Plans
 
 ## Purpose

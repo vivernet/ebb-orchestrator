@@ -1,3 +1,18 @@
+---
+id: roadmap-02
+kind: roadmap
+roadmap: 01
+stage: 09
+status: completed
+title: Автоматический роадмап
+created: 2026-09-24
+updated: 2026-09-24
+depends_on:
+  - plan-13
+specs:
+evidence: []
+---
+
 # Автоматический роадмап
 
 Этот роадмап автоматически сгенерирован из метаданных планов.

@@ -50,6 +50,8 @@ export class ProcessExecutor {
       maxBuffer = 10 * 1024 * 1024, // 10MB default
     } = options;
 
+    // На Windows добавляем .exe если расширение отсутствует
+    const resolvedFile = process.platform === 'win32' && !file.includes('.') ? `${file}.exe` : file;
     const childEnv = env ?? buildMinimalEnvironment();
 
     if (signal?.aborted) {
@@ -57,7 +59,7 @@ export class ProcessExecutor {
     }
 
     return new Promise<ProcessResult>((resolve, reject) => {
-      const child = spawn(file, args, {
+      const child = spawn(resolvedFile, args, {
         shell: false,
         cwd,
         env: childEnv,
