@@ -15,7 +15,7 @@
 | 5 | 1 | 1 | 100% |
 | 6 | 1 | 1 | 100% |
 | 7 | 1 | 1 | 100% |
-| 8 | 1 | 0 | 0% |
+| 8 | 1 | 1 | 100% |
 | 9 | 2 | 1 | 50% |
 
 ## Plan Register
@@ -32,7 +32,7 @@
 | plan-09 | 9 | completed | Production Readiness Hardening |
 | plan-10 | 10 | completed | Plan Document |
 | plan-11 | 11 | completed | Plan Document |
-| plan-12 | 8 | proposed | Web 401 и завершение проекта |
+| plan-12 | 8 | completed | Web 401 и завершение проекта |
 | plan-13 | 9 | proposed | Автоматическая генерация роадмапа |
 
 ## Dependency Graph

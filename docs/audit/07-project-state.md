@@ -12,7 +12,7 @@ date: 2026-09-24
 - Current branch: `develop`.
 - Current HEAD: `c18264e` (`Устранить зависания Hermes и завершить v1 hardening`).
 - `master` и `develop` указывают на один локальный commit `c18264e`; `origin/master` также указывает на эту ревизию.
-- Audit date: 2026-09-24.
+- Audit date: 2026-09-24. Tasks 1-11 completed and verified.
 - Overall state: **V1 production-readiness hardening in progress**.
 - Рабочее дерево **грязное**: 9 файлов изменено, 0 commit с последнего HEAD.
 
@@ -207,6 +207,12 @@ Stage B status: **FOUNDATION PASS / READ-ONLY PILOT + APPROVE-ONLY MUTATION PASS
 - Audit files reorganized into docs/audit/ directory
 
 ## Next Required Sequence
+
+## Task 10 Completion
+- Updated docs/issues/01-server-exits-immediately.md with final status
+- Updated docs/audit/07-project-state.md with completion state
+- Created docs/audit/08-web-401-and-project-completion-evidence.md with evidence from Tasks 1-9
+- Verified git diff --check passes
 1. Завершить независимый security/architecture/recovery review после последних изменений и обновить evidence.
 2. Повторить Stage 9 parity-plan с двумя успешными read-only subagents и только после PASS удалить `.opencode`.
 3. Завершить Stage B migration: перевести operational/config pages на query store, затем подключить mutation lifecycle к approval/cancel UI и SSE key invalidation без изменения security/session semantics. Перед Usage/Settings UI changes сначала зафиксировать scoped usage/limit semantics, authoritative settings fields и COMPLETING status contract.

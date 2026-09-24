@@ -10,7 +10,7 @@ env.EBB_ORCHESTRATOR_BOOTSTRAP_FILE =
 const child = spawn('node', ['apps/server/dist/main.js'], {
   stdio: 'inherit',
   env,
-  detached: true
+  detached: true,
 });
 
 child.on('exit', (code) => {
