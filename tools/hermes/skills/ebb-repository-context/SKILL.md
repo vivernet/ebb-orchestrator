@@ -1,6 +1,6 @@
 ---
 name: ebb-repository-context
-description: Старт работы над Ebb Orchestrator: архитектура, scope v1, политика Git, границы рантайма, планы реализации.
+description: Старт работы над Ebb Orchestrator, архитектура, scope v1, политика Git, границы рантайма, планы реализации.
 version: 1.0.0
 platforms: [windows, linux, macos]
 metadata:

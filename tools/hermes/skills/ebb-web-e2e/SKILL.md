@@ -1,6 +1,6 @@
 ---
 name: ebb-web-e2e
-description: E2E-тестирование UI Ebb Orchestrator: реальный браузер, HTTP API, сессии, SSE, сборка продакшена.
+description: E2E-тестирование UI Ebb Orchestrator, реальный браузер, HTTP API, сессии, SSE, сборка продакшена.
 version: 1.0.0
 platforms: [windows, linux, macos]
 metadata:

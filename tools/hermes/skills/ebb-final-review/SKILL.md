@@ -1,6 +1,6 @@
 ---
 name: ebb-final-review
-description: Финальное независимое ревью готовности Ebb Orchestrator к мержу: архитектура, тесты, документация, границы ответственности.
+description: Финальное независимое ревью готовности Ebb Orchestrator к мержу, архитектура, тесты, документация, границы ответственности.
 version: 1.0.0
 platforms: [windows, linux, macos]
 metadata:

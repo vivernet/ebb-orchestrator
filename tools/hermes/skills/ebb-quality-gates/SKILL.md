@@ -1,6 +1,6 @@
 ---
 name: ebb-quality-gates
-description: Завершение работы Ebb Orchestrator: прогонка quality gates (lint, typecheck, тесты, build, security checks).
+description: Завершение работы Ebb Orchestrator, прогонка quality gates (lint, typecheck, тесты, build, security checks).
 version: 1.0.0
 platforms: [windows, linux, macos]
 metadata:
