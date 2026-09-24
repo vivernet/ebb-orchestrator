@@ -141,8 +141,8 @@ export function restoreSession(): Promise<void> {
       apiClient.csrfToken = json.csrfToken;
       return;
     }
-    // Сессия не найдена или невалидна - создаём новую
-    const response2 = await fetch('/api/v1/session/new', {
+    // Сессия не найдена или невалидна - создаём новую через локальный режим
+    const response2 = await fetch('/api/v1/session/new?local=true', {
       credentials: 'same-origin',
       method: 'POST',
     });
