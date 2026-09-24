@@ -3,10 +3,10 @@ id: plan-13
 kind: plan
 roadmap: 01
 stage: 09
-status: proposed
+status: completed
 title: Автоматическая генерация роадмапа
 created: 2026-09-23
-updated: 2026-09-23
+updated: 2026-09-24
 depends_on:
   - plan-09
 specs:

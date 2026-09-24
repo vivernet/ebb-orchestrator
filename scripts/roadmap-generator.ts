@@ -27,18 +27,24 @@ export function generateRoadmap(plans: PlanMetadata[]): string {
   const stages = groupIntoStages(plans);
   
   const sections = [
-    '# Автоматический роадмап',
-    '',
-    generateIntroduction(plans),
-    '',
-    '## Stage Register',
-    renderStageRegister(stages),
-    '',
-    '## Plan Register',
-    renderPlanRegister(plans),
-    '',
-    '## Dependency Graph',
-    renderDependencyGraph(plans),
+  '# Автоматический роадмап',
+  '',
+  generateIntroduction(plans),
+  '',
+  '## Stage Register',
+  renderStageRegister(stages),
+  '',
+  '## Plan Register',
+  renderPlanRegister(plans),
+  '',
+  '## Dependency Graph',
+  renderDependencyGraph(plans),
+  '',
+  '## Blockers and Evidence',
+  renderBlockersAndEvidence(plans),
+  '',
+  '## Proposals',
+  renderProposals(plans),
   ];
 
   return sections.join('\n');
@@ -174,4 +180,52 @@ export function renderDependencyGraph(plans: PlanMetadata[]): string {
   }
 
   return dependencies.join('\n');
+}
+
+/**
+ * Рендерит секцию Blockers and Evidence
+ */
+export function renderBlockersAndEvidence(plans: PlanMetadata[]): string {
+  const blockers: string[] = [];
+  const evidence: string[] = [];
+
+  for (const plan of plans) {
+    if (plan.status === 'blocked' || plan.status === 'pending') {
+      blockers.push(`- ${plan.id}: ${plan.title}`);
+    }
+    if (plan.evidence && plan.evidence.length > 0) {
+      for (const item of plan.evidence) {
+        evidence.push(`- ${plan.id}: ${item}`);
+      }
+    }
+  }
+
+  const lines: string[] = [];
+  lines.push('### Blockers');
+  lines.push(blockers.length > 0 ? blockers.join('\n') : 'No blockers.');
+  lines.push('');
+  lines.push('### Evidence');
+  lines.push(evidence.length > 0 ? evidence.join('\n') : 'No evidence.');
+  
+  return lines.join('\n');
+}
+
+/**
+ * Рендерит секцию Proposals
+ */
+export function renderProposals(plans: PlanMetadata[]): string {
+  const proposals: PlanMetadata[] = plans.filter(p => p.status === 'proposed');
+
+  if (proposals.length === 0) {
+    return 'No proposals.';
+  }
+
+  const lines: string[] = ['| ID | Stage | Title |'];
+  lines.push('|----|-------|-------|');
+
+  for (const plan of proposals) {
+    lines.push(`| ${plan.id} | ${plan.stage} | ${plan.title} |`);
+  }
+
+  return lines.join('\n');
 }

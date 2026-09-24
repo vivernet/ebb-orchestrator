@@ -19,7 +19,7 @@
     "hermes:execute": "node scripts/hermes-dev.mjs execute",
     "docs:inventory": "node scripts/docs-governance.mjs inventory",
     "docs:check": "node scripts/docs-governance.mjs check",
-    "docs:roadmap": "node scripts/docs-governance.mjs roadmap",
+    "docs:roadmap": "node scripts/roadmap-generator-cli.mjs",
     "docs:rename:check": "node scripts/docs-governance.mjs rename:check",
     "docs:link:sync": "node scripts/docs-governance.mjs link:sync",
     "docs:test": "node --test scripts/docs-governance.test.mjs",
