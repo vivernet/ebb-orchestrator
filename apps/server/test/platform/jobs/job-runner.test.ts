@@ -7,6 +7,7 @@ import { runMigrations, type Migration } from "../../../src/platform/database/mi
 import type { Database } from "../../../src/platform/database/database.js";
 import { enqueueJob } from "../../../src/platform/jobs/job-repository.js";
 import { JobRunner } from "../../../src/platform/jobs/job-runner.js";
+import { BackgroundJobRegistry } from "../../../src/platform/jobs/background-job-registry.js";
 import { randomUUID } from "node:crypto";
 
 const migration001 = await readFile(
@@ -72,11 +73,12 @@ describe("background job runner", () => {
   it("transient error places job in RETRY_WAIT with later run_after", async () => {
     db = await setupDb();
 
-    const jobRunner = new JobRunner(db, {
-      testTask: async () => {
-        throw new Error("transient failure");
-      },
+    const registry = new BackgroundJobRegistry();
+    registry.register("testTask", async () => {
+      throw new Error("transient failure");
     });
+
+    const jobRunner = new JobRunner(db, registry);
 
     const job1Id = enqueueJob(db, {
       type: "testTask",
@@ -106,11 +108,12 @@ describe("background job runner", () => {
   it("permanent error after max attempts goes to DEAD_LETTER", async () => {
     db = await setupDb();
 
-    const jobRunner = new JobRunner(db, {
-      testTask: async () => {
-        throw new Error("permanent failure");
-      },
+    const registry = new BackgroundJobRegistry();
+    registry.register("testTask", async () => {
+      throw new Error("permanent failure");
     });
+
+    const jobRunner = new JobRunner(db, registry);
 
     enqueueJob(db, {
       type: "testTask",
@@ -138,11 +141,12 @@ describe("background job runner", () => {
   it("expired lease allows another runner to claim the job", async () => {
     db = await setupDb();
 
-    const jobRunner = new JobRunner(db, {
-      testTask: async () => {
-        // успех
-      },
+    const registry = new BackgroundJobRegistry();
+    registry.register("testTask", async () => {
+      // успех
     });
+
+    const jobRunner = new JobRunner(db, registry);
 
     const job1Id = enqueueJob(db, {
       type: "testTask",
@@ -182,7 +186,8 @@ describe("background job runner", () => {
   it("runOnce returns 0 claimed when no jobs are runnable", async () => {
     db = await setupDb();
 
-    const jobRunner = new JobRunner(db, {});
+    const registry = new BackgroundJobRegistry();
+    const jobRunner = new JobRunner(db, registry);
 
     const result = await jobRunner.runOnce(new Date());
     expect(result.claimed).toBe(0);
@@ -193,11 +198,12 @@ describe("background job runner", () => {
   it("successful job is marked SUCCEEDED", async () => {
     db = await setupDb();
 
-    const jobRunner = new JobRunner(db, {
-      testTask: async () => {
-        // успех
-      },
+    const registry = new BackgroundJobRegistry();
+    registry.register("testTask", async () => {
+      // успех
     });
+
+    const jobRunner = new JobRunner(db, registry);
 
     const job1Id = enqueueJob(db, {
       type: "testTask",
@@ -218,7 +224,8 @@ describe("background job runner", () => {
   it("no handler for job type marks job as FAILED", async () => {
     db = await setupDb();
 
-    const jobRunner = new JobRunner(db, {});
+    const registry = new BackgroundJobRegistry();
+    const jobRunner = new JobRunner(db, registry);
 
     const job1Id = enqueueJob(db, {
       type: "unknownType",
@@ -241,11 +248,12 @@ describe("background job runner", () => {
 
     const executedOrder: string[] = [];
 
-    const jobRunner = new JobRunner(db, {
-      testTask: async (job) => {
-        executedOrder.push(job.id);
-      },
+    const registry = new BackgroundJobRegistry();
+    registry.register("testTask", async (job) => {
+      executedOrder.push(job.id);
     });
+
+    const jobRunner = new JobRunner(db, registry);
 
     // Сначала низкий приоритет, затем высокий.
     const lowId = enqueueJob(db, {
@@ -273,11 +281,12 @@ describe("background job runner", () => {
   it("dedupe key allows re-enqueue after job succeeds", async () => {
     db = await setupDb();
 
-    const jobRunner = new JobRunner(db, {
-      testTask: async () => {
-        // успех
-      },
+    const registry = new BackgroundJobRegistry();
+    registry.register("testTask", async () => {
+      // успех
     });
+
+    const jobRunner = new JobRunner(db, registry);
 
     const id1 = enqueueJob(db, {
       type: "testTask",

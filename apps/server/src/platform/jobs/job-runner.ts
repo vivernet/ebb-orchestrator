@@ -6,10 +6,10 @@ import { randomUUID } from "node:crypto";
 import type { Database } from "../database/database.js";
 import type {
   BackgroundJobRow,
-  JobHandler,
   JobRunSummary,
 } from "./job-types.js";
 import { BACKOFF_SCHEDULE } from "./job-types.js";
+import type { BackgroundJobRegistry } from "./background-job-registry.js";
 
 /** Длительность lease в миллисекундах (5 минут). */
 const LEASE_DURATION_MS = 5 * 60 * 1000;
@@ -20,7 +20,7 @@ const LEASE_DURATION_MS = 5 * 60 * 1000;
 export class JobRunner {
   constructor(
     private readonly db: Database,
-    private readonly handlers: Record<string, JobHandler>,
+    private readonly registry: BackgroundJobRegistry,
   ) {}
 
   /**
@@ -44,7 +44,7 @@ export class JobRunner {
 
     summary.claimed = 1;
 
-    const handler = this.handlers[job.type];
+    const handler = this.registry.getHandler(job.type);
 
     if (!handler) {
       // Handler не зарегистрирован — пометить как не выполнен

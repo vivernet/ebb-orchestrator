@@ -1,9 +1,9 @@
 ---
 id: audit-07
-status: completed
+status: updated
 kind: audit
 title: Project State
-date: 2026-09-23
+date: 2026-09-24
 ---
 
 # Ebb Orchestrator — Project State
@@ -11,10 +11,10 @@ date: 2026-09-23
 ## Status
 - Current branch: `develop`.
 - Current HEAD: `c18264e` (`Устранить зависания Hermes и завершить v1 hardening`).
-- `master` и `develop` указывают на один локальный commit `c18264e`; `origin/master` также указывает на эту ревизию, а `origin/develop` удалена.
-- Audit date: 2026-09-21.
+- `master` и `develop` указывают на один локальный commit `c18264e`; `origin/master` также указывает на эту ревизию.
+- Audit date: 2026-09-24.
 - Overall state: **V1 production-readiness hardening in progress**.
-- Рабочее дерево чистое; новых commit или push в рамках этого прохода не выполнялось.
+- Рабочее дерево **грязное**: 9 файлов изменено, 0 commit с последнего HEAD.
 
 ## Purpose
 Ebb Orchestrator — local-first система оркестрации AI-разработки. V1 scope:
@@ -118,38 +118,25 @@ pnpm typecheck
 pnpm test
 ```
 
-## Verification Results
-These are the latest verification results for the clean `develop`
-checkout at `c18264e`; they are not a claim
-that the branch is ready for merge or publication.
+## Verification Results (Current State)
 
-- `pnpm lint`: PASS.
-- `pnpm typecheck`: PASS.
-- `pnpm test`: PASS (contracts: 3 passed; server: 687 passed, 2 skipped; web: 127 passed).
-- `pnpm server:build`: PASS.
-- `pnpm web:build`: PASS.
-- `pnpm --filter @ebb-orchestrator/web test:e2e`: PASS (3 passed; launcher exit code 0; teardown artifact absent).
-- `pnpm hermes:test`: PASS (6 passed).
-- `pnpm hermes:setup`: PASS with `HERMES_CONFIG marker=SETUP_SYNCED verified=true redacted=true`; canonical skills, provider and capabilities hashes were verified after synchronization.
-- `pnpm hermes:check`: PASS in a bounded serial run after setup; Windows `resolveHermesHome` resolves to `%LOCALAPPDATA%\\hermes`; all registry/provider/target/delegation checks passed.
-- Hermes config/execute supervision tests: PASS for bounded timeouts, fixed redacted markers, cleanup and Windows process-tree termination via `taskkill.exe /PID /T /F`.
-- `pnpm hermes:smoke`: fresh live redacted smoke with `mercury-2.5` and the local
-  `.env` credential returned `SMOKE_OK`, exit code 0, `redacted=true`,
-  `cleanup_verified=true`. The smoke uses only the `skills` toolset and does not
-  start the terminal/Python runtime. No repository context or raw provider output
-  was exposed.
-- Provider smoke is not provider-backed parity: the historical parity attempt
-  still requires a separate run with two authorized read-only subagents. The
-  smoke harness config, `.env` loading, bounded retry and cleanup behavior are
-  covered by 26 focused tests.
-- `node --test scripts/security-audit-evidence.test.mjs`: PASS (5 passed).
-- Fresh Escalated dependency audit: PASS (0 info/low/moderate/high/critical),
-   recorded in `artifacts/security/pnpm-audit-prod-b3b66154729ca2b373e0424dbab96b4435ec2c11.json`
-   with current revision, `develop` branch, lockfile SHA-256, timestamp and exit code 0.
-- `artifacts/security/pnpm-audit-prod-2026-09-21.json` is retained as an older
-  generated snapshot without revision/branch/lockfile provenance and is not current
-  evidence.
-- `git diff --check`: PASS (only environment-level Git ignore permission warnings).
+### Build Status
+- `pnpm server:build`: **FAIL**
+  - Error: `Property 'output' does not exist on type 'AgentRun'` in `run-service.ts:239`
+  - This is a blocking compilation error in the working tree.
+
+### Test Results
+- `pnpm test`: **PARTIAL FAIL**
+  - contracts: 3 passed ✓
+  - web: 148 passed ✓
+  - server: **4 failed** (of 88 total)
+    - `test/e2e/transport-origin.test.ts`: 1 failed (expected bootstrap URL format)
+    - `test/modules/execution/mcp/mcp-server.test.ts`: 3 failed (submit_result lifecycle & security)
+
+### Migration Integrity
+- 25 migration files present in `apps/server/src/platform/database/migrations/`
+- Migration schema files: `023_runtime_schema.sql`, `024_scheduler_runtime_schema.sql`, `025_audit_log.sql` (untracked)
+- Transactional migration runner in place
 
 ## Web UI Stage A1 Result
 
@@ -204,24 +191,13 @@ Stage B status: **FOUNDATION PASS / READ-ONLY PILOT + APPROVE-ONLY MUTATION PASS
    `command.shell`/`artifact.write` удалены из default role surfaces.
 
 ## Known Limitations
-1. Browser E2E уже запускает собранный `apps/server/dist/main.js` и Vite frontend с изолированным временным `EBB_ORCHESTRATOR_HOME`; полный набор продуктовых UI flows, Hermes live runtime, Git/worktree recovery и SecretStore-провижининга ещё не покрыт.
-2. Hermes live E2E остаётся opt-in и пропускается без установленного Hermes/model runtime.
- 3. `.opencode` всё ещё присутствует; локальный Hermes setup/check и repository gates
-    проходят. Исторический Stage 9 provider-backed parity-run получил `HTTP 401`
-    от Inception и требует отдельного повторения с двумя authorized read-only
-    subagents. Текущий synthetic smoke на `mercury-2.5` проходит, но не заменяет
-    parity и не доказывает выполнение полного plan.
-4. Stage 10 audit artifacts созданы: `docs/audit/web-ui-code-map.md`,
-   `docs/audit/web-ui-gap-analysis.md` и
-   `docs/architecture/specs/02-web-ui-recovery-design.md`; Stage A1
-   реализован; Stage B Dashboard/Project/Epic/Task pilot проверен, но миграция
-   Usage/Settings contract freeze выполнен с explicit aggregate/unavailable semantics;
-   миграция оставшихся страниц и browser acceptance для всех flows ещё не выполнены.
-5. Production-readiness plan содержит незакрытые checkbox-инструкции и требует синхронизации после review.
-6. Local Mode остаётся policy isolation, а не OS sandbox.
-7. Inception provider template/setup и live synthetic smoke проверены в Hermes
-   profile; dependency audit и Playwright E2E прошли. Полный live model E2E
-   parity остаётся отдельной проверкой.
+1. **test-origin.test.ts failure**: HTTP transport contract test expects bootstrap link with `http://127.0.0.1:3000/#ebb-bootstrap=` but receives HTML page.
+2. **mcp-server.test.ts failures**: submit_result lifecycle tests fail with RUN_ALREADY_COMPLETING errors.
+3. **Build failure**: `AgentRun.output` property not defined in contracts; blocks release pipeline.
+4. Dirty working tree prevents clean verification; commits pending.
+5. Browser E2E уже запускает собранный `apps/server/dist/main.js` и Vite frontend с изолированным временным `EBB_ORCHESTRATOR_HOME`; полный набор продуктовых UI flows, Hermes live runtime, Git/worktree recovery и SecretStore-провижининга ещё не покрыт.
+6. Hermes live E2E остаётся opt-in и пропускается без установленного Hermes/model runtime.
+7. Stage 9 provider-backed parity-run требует INCEPTION_API_KEY и authorized read-only subagents.
 
 ## Changes Made During This Audit
 - SEC-003 FIXED: Integrated PermissionEngine with ActionGateway

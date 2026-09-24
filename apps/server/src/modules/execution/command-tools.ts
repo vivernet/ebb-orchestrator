@@ -2,9 +2,9 @@
  * CommandTools provides controlled команда execution с окружение isolation.
  * It executes команды without shell syntax, preferring explicit executable + args.
  */
+import * as path from 'node:path';
 import { EnvironmentBuilder } from '../../platform/security/environment-builder.js';
 import { ProcessExecutor } from '../../platform/process/process-executor.js';
-import * as path from 'node:path';
 
 export type ExecOptions = {
   executable: string;

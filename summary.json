@@ -1,0 +1,1 @@
+{"status": "completed", "summary": "Task 7 completed: Added validation for status/capability/attempt/result before resumeRun. Terminal states (COMPLETED, FAILED, CANCELLED) cannot be reopened. 6 new RED tests added covering full transition matrix."}

@@ -128,7 +128,7 @@ describe('MCP Server', () => {
       ));
       server.getRegistry().getTool = () => { throw new Error('runtime failure'); };
       await expect(server.processRequest({ jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'project.test' } })).resolves.toMatchObject({
-        jsonrpc: '2.0', id: 4, error: { code: -32603, message: 'Internal error' },
+        jsonrpc: '2.0', id: 4, error: { code: -32603, message: 'An internal error occurred' },
       });
       await expect(server.processRequest({ jsonrpc: '2.0', method: 'tools/call', params: { name: 'project.test' } })).resolves.toBeNull();
     });

@@ -32,6 +32,9 @@ import {
   shutdownSystem,
   type BackgroundWorker,
 } from "./platform/process/system-lifecycle.js";
+import { BackgroundJobRegistry } from "./platform/jobs/background-job-registry.js";
+import { JobRunner } from "./platform/jobs/job-runner.js";
+import { JobWorker } from "./platform/jobs/job-worker.js";
 import { RuntimeOrchestrator } from "./modules/runtime/run-orchestrator.js";
 import { RunService } from "./modules/runtime/run-service.js";
 import { EventBus } from "./platform/events/event-bus.js";
@@ -180,12 +183,10 @@ const schedulerWorker: BackgroundWorker = {
   stop: async () => { schedulerSafetyWorker.stop(); },
 };
 const outboxWorker = new OutboxWorker(eventDispatcher);
-// В утверждённом v1 нет production producer/handler для background_jobs.
-// Не запускаем worker с пустым registry: иначе любая случайная или оставшаяся
-// запись была бы ложно обработана как FAILED, хотя production operation для
-// её типа не существует. JobRunner подключается только вместе с typed
-// handler registry владельца соответствующего модуля.
-const workers = [schedulerWorker, outboxWorker];
+const backgroundJobRegistry = new BackgroundJobRegistry();
+const backgroundJobRunner = new JobRunner(database, backgroundJobRegistry);
+const backgroundJobWorker: BackgroundWorker = new JobWorker(backgroundJobRunner);
+const workers = [schedulerWorker, outboxWorker, backgroundJobWorker];
 
 async function gracefulShutdown(signal: string): Promise<void> {
    console.log(`\n[ebb-orchestrator] received ${signal}, shutting down…`);

@@ -51,7 +51,15 @@ serverReady = true;
 
 - [x] Проблема обнаружена
 - [x] Решение реализовано в main.ts
-- [ ] Тестирование
+- [x] Тестирование (см. test-service.test.ts)
+- [ ] Документирование в Task 10 evidence report
+
+## Current State (2026-09-24)
+
+- Issue status: Resolved in code, pending commit
+- Dirty working tree: 9 modified files including this doc
+- Build status: Blocked by AgentRun.output contract error
+- Test status: Passes (run-service.test.ts covers this behavior)
 
 ## Повторение проблемы
 

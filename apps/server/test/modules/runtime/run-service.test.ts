@@ -31,11 +31,17 @@ const migration004 = readFileSync(
   "utf-8",
 );
 
+const migration025 = readFileSync(
+  join(import.meta.dirname, "../../../src/platform/database/migrations/025_audit_log.sql"),
+  "utf-8",
+);
+
 const migrations: Migration[] = [
   { version: 1, name: "001_system", sql: migration001 },
   { version: 2, name: "002_work_domain", sql: migration002 },
   { version: 3, name: "003_work_control", sql: migration003 },
   { version: 4, name: "004_agent_runs", sql: migration004 },
+  { version: 25, name: "025_audit_log", sql: migration025 },
 ];
 
 describe("RunService with FakeAgentRuntime", () => {
@@ -306,6 +312,92 @@ describe("RunService with FakeAgentRuntime", () => {
     )).toEqual({ count: 1, id: runId, status: "FAILED" });
   });
 
+  it("rejects resuming runs in terminal state COMPLETED", async () => {
+    await setup();
+    const run = await runService.startRun({
+      role: "developer", model: "gpt-4", taskId, epicId,
+      triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
+    });
+    // Complete the run
+    const output = JSON.stringify({ version: "1.0.0", outcome: "COMPLETED" });
+    await runService.completionStore().accept(run.capabilityRef!, {
+      runId: run.id, role: run.role, output: JSON.parse(output),
+    });
+    await runService.collectResult(run.id, {
+      success: true, exitCode: 0, output, validatedSubmission: true,
+      diagnostics: { runId: run.id, sessionId: null, stderr: "", exitCode: 0, artifactReferences: [] },
+    });
+    // Try to resume - should fail
+    await expect(runService.resumeRun(run.id, { sessionId: "session-123", attempt: 2 }))
+      .rejects.toThrow(/terminal state/);
+  });
+
+  it("rejects resuming runs in terminal state FAILED", async () => {
+    await setup();
+    const run = await runService.startRun({
+      role: "developer", model: "gpt-4", taskId, epicId,
+      triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
+    });
+    // Fail the run
+    fakeRuntime.resumeRun = async () => { throw new Error("forced failure"); };
+    await expect(runService.resumeRun(run.id, { sessionId: "session", attempt: 1 }))
+      .rejects.toThrow("forced failure");
+    // Now try to reopen the failed run - should fail
+    await expect(runService.resumeRun(run.id, { sessionId: "session-456", attempt: 2 }))
+      .rejects.toThrow(/terminal state/);
+  });
+
+  it("rejects resuming runs in terminal state CANCELLED", async () => {
+    await setup();
+    const run = await runService.startRun({
+      role: "developer", model: "gpt-4", taskId, epicId,
+      triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
+    });
+    // Cancel the run
+    await runService.cancelRun(run.id);
+    // Try to reopen - should fail
+    await expect(runService.resumeRun(run.id, { sessionId: "session-789", attempt: 1 }))
+      .rejects.toThrow(/terminal state/);
+  });
+
+  it("rejects resuming runs with invalid attempt (<=0)", async () => {
+    await setup();
+    const run = await runService.startRun({
+      role: "developer", model: "gpt-4", taskId, epicId,
+      triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
+    });
+    await expect(runService.resumeRun(run.id, { sessionId: "session", attempt: 0 }))
+      .rejects.toThrow(/Attempt must be a positive integer/);
+    await expect(runService.resumeRun(run.id, { sessionId: "session", attempt: -1 }))
+      .rejects.toThrow(/Attempt must be a positive integer/);
+  });
+
+  it("allows resuming runs in STARTED state", async () => {
+    await setup();
+    const run = await runService.startRun({
+      role: "developer", model: "gpt-4", taskId, epicId,
+      triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
+    });
+    const resumed = await runService.resumeRun(run.id, { sessionId: "session-123", attempt: 1 });
+    expect(resumed.status).toBe("IN_PROGRESS");
+    expect(resumed.sessionId).toBe("session-123");
+    expect(resumed.attempt).toBe(1);
+  });
+
+  it("allows resuming runs in IN_PROGRESS state", async () => {
+    await setup();
+    const run = await runService.startRun({
+      role: "developer", model: "gpt-4", taskId, epicId,
+      triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
+    });
+    await runService.resumeRun(run.id, { sessionId: "session-1", attempt: 1 });
+    // Resume again - should work
+    const resumed = await runService.resumeRun(run.id, { sessionId: "session-2", attempt: 2 });
+    expect(resumed.status).toBe("IN_PROGRESS");
+    expect(resumed.sessionId).toBe("session-2");
+    expect(resumed.attempt).toBe(2);
+  });
+
   it("executes a prepared run without creating a second AgentRun", async () => {
     await setup();
     const output = JSON.stringify({ version: "1.0.0", outcome: "COMPLETED" });
@@ -334,5 +426,114 @@ describe("RunService with FakeAgentRuntime", () => {
       "SELECT status, capability_ref, output FROM agent_runs WHERE id=$id", { id: run.id },
     )).toEqual({ status: "FAILED", capability_ref: null, output: "Run interrupted by orchestrator restart" });
     expect(runService.reconcileInterruptedRuns()).toBe(0);
+  });
+
+  // RED Tests for State Transition Matrix
+  it("transition matrix: STARTED -> IN_PROGRESS via resume", async () => {
+    await setup();
+    const run = await runService.startRun({
+      role: "developer", model: "gpt-4", taskId, epicId,
+      triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
+    });
+    expect(run.status).toBe("STARTED");
+
+    const resumed = await runService.resumeRun(run.id, { sessionId: "s1", attempt: 1 });
+    expect(resumed.status).toBe("IN_PROGRESS");
+  });
+
+  it("transition matrix: IN_PROGRESS -> IN_PROGRESS via resume (retry)", async () => {
+    await setup();
+    const run = await runService.startRun({
+      role: "developer", model: "gpt-4", taskId, epicId,
+      triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
+    });
+    await runService.resumeRun(run.id, { sessionId: "s1", attempt: 1 });
+
+    const resumed = await runService.resumeRun(run.id, { sessionId: "s2", attempt: 2 });
+    expect(resumed.status).toBe("IN_PROGRESS");
+    expect(resumed.attempt).toBe(2);
+  });
+
+  it("transition matrix: COMPLETING -> COMPLETED via collectResult", async () => {
+    await setup();
+    const run = await runService.startRun({
+      role: "developer", model: "gpt-4", taskId, epicId,
+      triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
+    });
+    const output = JSON.stringify({ version: "1.0.0", outcome: "COMPLETED" });
+    await runService.completionStore().accept(run.capabilityRef!, {
+      runId: run.id, role: run.role, output: JSON.parse(output),
+    });
+    expect(db!.get<{ status: string }>("SELECT status FROM agent_runs WHERE id=$id", { id: run.id })!.status)
+      .toBe("COMPLETING");
+
+    await runService.collectResult(run.id, {
+      success: true, exitCode: 0, output, validatedSubmission: true,
+      diagnostics: { runId: run.id, sessionId: null, stderr: "", exitCode: 0, artifactReferences: [] },
+    });
+    expect(db!.get<{ status: string }>("SELECT status FROM agent_runs WHERE id=$id", { id: run.id })!.status)
+      .toBe("COMPLETED");
+  });
+
+  it("transition matrix: any non-terminal -> FAILED on runtime error", async () => {
+    await setup();
+    fakeRuntime.startRun = async () => { throw new Error("crash"); };
+    await expect(runService.startRun({
+      role: "developer", model: "gpt-4", taskId, epicId,
+      triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
+    })).rejects.toThrow("crash");
+    expect(db!.get<{ status: string }>("SELECT status FROM agent_runs ORDER BY started_at DESC LIMIT 1")?.status)
+      .toBe("FAILED");
+  });
+
+  it("transition matrix: any non-terminal -> CANCELLED via cancelRun", async () => {
+    await setup();
+    const run = await runService.startRun({
+      role: "developer", model: "gpt-4", taskId, epicId,
+      triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
+    });
+    await runService.cancelRun(run.id);
+    expect(db!.get<{ status: string }>("SELECT status FROM agent_runs WHERE id=$id", { id: run.id })!.status)
+      .toBe("CANCELLED");
+  });
+
+  it("transition matrix: CANCELLED is immutable (cannot resume)", async () => {
+    await setup();
+    const run = await runService.startRun({
+      role: "developer", model: "gpt-4", taskId, epicId,
+      triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
+    });
+    await runService.cancelRun(run.id);
+    await expect(runService.resumeRun(run.id, { sessionId: "s1", attempt: 1 }))
+      .rejects.toThrow(/terminal state/);
+  });
+
+  it("transition matrix: COMPLETED is immutable (cannot resume)", async () => {
+    await setup();
+    const run = await runService.startRun({
+      role: "developer", model: "gpt-4", taskId, epicId,
+      triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
+    });
+    const output = JSON.stringify({ version: "1.0.0", outcome: "COMPLETED" });
+    await runService.completionStore().accept(run.capabilityRef!, {
+      runId: run.id, role: run.role, output: JSON.parse(output),
+    });
+    await runService.collectResult(run.id, {
+      success: true, exitCode: 0, output, validatedSubmission: true,
+      diagnostics: { runId: run.id, sessionId: null, stderr: "", exitCode: 0, artifactReferences: [] },
+    });
+    await expect(runService.resumeRun(run.id, { sessionId: "s1", attempt: 1 }))
+      .rejects.toThrow(/terminal state/);
+  });
+
+  it("transition matrix: FAILED is immutable (cannot resume)", async () => {
+    await setup();
+    fakeRuntime.startRun = async () => { throw new Error("crash"); };
+    await expect(runService.startRun({
+      role: "developer", model: "gpt-4", taskId, epicId,
+      triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
+    })).rejects.toThrow("crash");
+    await expect(runService.resumeRun(db!.get<{ id: string }>("SELECT id FROM agent_runs ORDER BY started_at DESC LIMIT 1")!.id, { sessionId: "s1", attempt: 1 }))
+      .rejects.toThrow(/terminal state/);
   });
 });

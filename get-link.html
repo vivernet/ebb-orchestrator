@@ -40,7 +40,7 @@
                 alert('Вставь токен');
                 return;
             }
-            const link = 'http://localhost:3000/#ebb-bootstrap=' + encodeURIComponent(token);
+            const link = 'http://127.0.0.1:3000/#ebb-bootstrap=' + encodeURIComponent(token);
             document.getElementById('link').value = link;
             document.getElementById('result').style.display = 'block';
         }

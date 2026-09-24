@@ -51,7 +51,8 @@ describe('issued capability validation', () => {
     db.run("UPDATE agent_runs SET status = 'CANCELLED' WHERE id = 'run-1'");
     const result = await server.callTool('submit_result', { payload: { version: '1.0', outcome: 'PASS' } });
     expect(result.success).toBe(false);
-    expect(result.error).toMatch(/inactive/);
+    // Error message should be a safe public-facing message, not expose internal details like "inactive"
+    expect(result.error).toBe('An internal error occurred');
     db.close();
   });
 

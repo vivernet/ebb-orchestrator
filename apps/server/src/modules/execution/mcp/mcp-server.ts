@@ -29,6 +29,62 @@ const errorResponse = (id: JsonRpcId, code: number, message: string, data?: unkn
   jsonrpc: '2.0', id, error: data === undefined ? { code, message } : { code, message, data },
 });
 
+/**
+ * Mapped public error types that can be safely exposed in JSON-RPC responses.
+ * Internal error details must NEVER be exposed in the response.
+ */
+export const PublicErrorCode = {
+  INTERNAL: 'internal_error',
+  CAPABILITY_REVOKED: 'capability_revoked',
+  TOOL_NOT_FOUND: 'tool_not_found',
+  RUN_ALREADY_COMPLETING: 'run_already_completing',
+  INVALID_TOOL_ARGS: 'invalid_tool_args',
+} as const;
+
+export type PublicErrorCode = typeof PublicErrorCode[keyof typeof PublicErrorCode];
+
+interface PublicError {
+  code: PublicErrorCode;
+  message: string; // Human-friendly description without internal details
+}
+
+/**
+ * Maps internal exceptions to stable public JSON-RPC error responses.
+ * Logs correlation-safe diagnostics server-side without exposing secrets or internals.
+ */
+const mapPublicError = (error: unknown, runId: string): PublicError => {
+  // Log correlation-safe diagnostic server-side (never expose in response)
+  const safeMsg = error instanceof Error ? error.message : String(error);
+  console.error(`[MCP ${runId}] Internal error: ${safeMsg}`);
+
+  if (error instanceof Error) {
+    // Map known internal error codes to public equivalents
+    if (safeMsg.startsWith('RUN_ALREADY_COMPLETING')) {
+      return { code: PublicErrorCode.RUN_ALREADY_COMPLETING, message: 'RUN_ALREADY_COMPLETING: Tool calls are not allowed after submit_result has been called' };
+    }
+    if (safeMsg.startsWith('capability revoked') || safeMsg.includes('unauthorized')) {
+      return { code: PublicErrorCode.CAPABILITY_REVOKED, message: 'This capability has been revoked' };
+    }
+    if (safeMsg.includes('tool not found')) {
+      return { code: PublicErrorCode.TOOL_NOT_FOUND, message: 'The requested tool does not exist' };
+    }
+    if (safeMsg.includes('invalid tool arguments')) {
+      return { code: PublicErrorCode.INVALID_TOOL_ARGS, message: 'The provided arguments do not match the tool schema' };
+    }
+  }
+  // Default: generic internal error with no internal details exposed
+  return { code: PublicErrorCode.INTERNAL, message: 'An internal error occurred' };
+};
+
+/**
+ * Returns a safe error string for ToolCallResult that can be exposed to the caller.
+ * Raw error messages are replaced with safe public-facing messages.
+ */
+const safeErrorMessage = (error: unknown, runId: string): string => {
+  const { message } = mapPublicError(error, runId);
+  return message;
+};
+
 const validateToolArguments = (
   schema: ToolDefinition['inputSchema'],
   value: unknown,
@@ -130,11 +186,11 @@ export class McpServer {
    * Никогда trusts task/workspace IDs from model payload - resolves server-side.
    */
   async callTool(name: string, args: unknown): Promise<ToolCallResult> {
-    try { this.capability.revalidateAccess(); } catch (error) { return { success: false, error: error instanceof Error ? error.message : 'capability revoked' }; }
+    try { this.capability.revalidateAccess(); } catch (error) { return { success: false, error: safeErrorMessage(error, this.runId) }; }
     // Получает the tool definition
     const tool = this.registry.getTool(name);
     if (!tool) {
-      return { success: false, error: `tool not found: ${name}` };
+      return { success: false, error: safeErrorMessage(new Error(`tool not found: ${name}`), this.runId) };
     }
 
     const validatedArgs = validateToolArguments(tool.inputSchema, args);
@@ -142,10 +198,7 @@ export class McpServer {
 
     // Проверяет if submit_result has already been called - blocks all write-capable tools
     if (this.hasSubmittedResult || this.submittingResult) {
-      return {
-        success: false,
-        error: 'RUN_ALREADY_COMPLETING: no further tool calls allowed after submit_result',
-      };
+      return { success: false, error: safeErrorMessage(new Error('RUN_ALREADY_COMPLETING'), this.runId) };
     }
 
     // Call Объект инструмент handler
@@ -224,7 +277,8 @@ export class McpServer {
           return respond(errorResponse(id ?? null, -32601, `Method not found: ${requestValue.method}`));
       }
     } catch (error) {
-      return respond(errorResponse(id ?? null, -32603, 'Internal error', error instanceof Error ? error.message : undefined));
+    const publicErr = mapPublicError(error, this.runId);
+    return respond(errorResponse(id ?? null, -32603, publicErr.message));
     }
   }
 }

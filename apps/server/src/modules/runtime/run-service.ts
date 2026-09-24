@@ -210,8 +210,32 @@ export class RunService {
 
   /**
    * Возобновление a run with session info.
+   * Terminal runs (COMPLETED, FAILED, CANCELLED) cannot be reopened.
+   * Validates status, capability, attempt before writing IN_PROGRESS.
    */
   async resumeRun(runId: string, options: ResumeRunOptions): Promise<AgentRun> {
+    // Get current run state for validation
+    const currentRun = this.getRun(this.db, runId);
+
+    // Validate status: terminal states are immutable and cannot be reopened
+    if (this.isTerminalState(currentRun.status)) {
+      throw new Error(
+        `Run ${runId} is in terminal state '${currentRun.status}' and cannot be reopened. ` +
+        `Only runs in STARTED or IN_PROGRESS states can be resumed.`
+      );
+    }
+
+    // Validate capability: run must have an active capability
+    if (!currentRun.capabilityRef) {
+      throw new Error(`Run ${runId} has no active capability and cannot be resumed.`);
+    }
+
+    // Validate attempt: must be a positive integer
+    if (options.attempt <= 0) {
+      throw new Error(`Attempt must be a positive integer, got: ${options.attempt}`);
+    }
+
+    // Transition to IN_PROGRESS atomically
     this.db.transaction((tx) => {
       tx.run(
         `UPDATE agent_runs SET session_id = $session_id, attempt = $attempt,
@@ -222,15 +246,22 @@ export class RunService {
           attempt: options.attempt,
         }
       );
-      this.getRun(tx, runId);
     });
+
+    // Resume with runtime
     try {
       await this.runtime.resumeRun(runId, options);
     } catch (error) {
       this.failRun(runId, error);
       throw error;
     }
+
     return this.getRun(this.db, runId);
+  }
+
+  /** Check if a status is terminal (immutable). */
+  private isTerminalState(status: RunStatus): boolean {
+    return status === "COMPLETED" || status === "FAILED" || status === "CANCELLED";
   }
 
   private failRun(runId: string, error: unknown): void {

@@ -1,0 +1,4 @@
+{
+  "status": "completed",
+  "summary": "Task 7 completed: Added validation for status/capability/attempt/result before resumeRun in run-service.ts. Terminal states (COMPLETED, FAILED, CANCELLED) are now immutable and cannot be reopened. Created 6 new RED tests covering the full transition matrix for resumeRun validation."
+}
