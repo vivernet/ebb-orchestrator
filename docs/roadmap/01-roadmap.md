@@ -43,6 +43,7 @@ This roadmap consolidates all stages and plans into a single canonical document.
 | 4 | 1 | 1 | 100% |
 | 8 | 1 | 1 | 100% |
 | 9 | 1 | 1 | 100% |
+| 12 | 1 | 0 | 0% |
 | A | 1 | 1 | 100% |
 | B | 1 | 1 | 100% |
 | C | 1 | 1 | 100% |
@@ -55,16 +56,17 @@ This roadmap consolidates all stages and plans into a single canonical document.
 
 | ID | Stage | Status | Title |
 |----|-------|--------|-------|
-| plan-04 | 4 | completed | Plan Document |
-| plan-08-01 | A | completed | Web UI Recovery Stage A — Foundation & Shell |
-| plan-08-02 | B | completed | Web UI Core Functional — Onboarding, Dashboard, Project |
-| plan-08-03 | C | completed | Web UI Onboarding Flow & Projections |
-| plan-08-04 | D | completed | Web UI Audit & Recovery Design |
-| plan-10 | 10 | completed | Plan Document |
-| plan-12 | 8 | completed | Web 401 и завершение проекта |
-| plan-13 | 9 | completed | Автоматическая генерация роадмапа |
-| plan-00 | N/A | completed | Documentation Governance Refactoring |
-| plan-00-02 | N/A | superseded | Plan Document |
+|| plan-04 | 4 | completed | Plan Document |
+|| plan-08-01 | A | completed | Web UI Recovery Stage A — Foundation & Shell |
+|| plan-08-02 | B | completed | Web UI Core Functional — Onboarding, Dashboard, Project |
+|| plan-08-03 | C | completed | Web UI Onboarding Flow & Projections |
+|| plan-08-04 | D | completed | Web UI Audit & Recovery Design |
+|| plan-10 | 10 | completed | Plan Document |
+|| plan-12 | 8 | completed | Web 401 и завершение проекта |
+|| plan-13 | 9 | completed | Автоматическая генерация роадмапа |
+|| plan-14 | 12 | planned | Дополнительный Docker runtime для Ebb Orchestrator |
+|| plan-00 | N/A | completed | Documentation Governance Refactoring |
+|| plan-00-02 | N/A | superseded | Plan Document |
 | plan-08-01-merge | N/A | superseded | Stage 01 Merge Decisions |
 | reference-01 | N/A | superseded | 01-baseline.md |
 | ledger-01 | N/A | superseded | 02-progress-ledger.md |

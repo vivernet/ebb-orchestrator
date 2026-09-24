@@ -3,7 +3,7 @@ id: plan-14
 kind: plan
 roadmap: 01
 stage: 12
-status: proposed
+status: planned
 title: Дополнительный Docker runtime для Ebb Orchestrator
 summary: Добавить воспроизводимый Linux-контейнерный режим с одним контейнером Ebb Orchestrator, Git, Node.js 24 и Hermes, сохранив native Windows режим и fail-closed границы секретов, путей и восстановления.
 created: 2026-09-24

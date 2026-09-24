@@ -38,8 +38,9 @@ This roadmap consolidates all stages and plans into a single canonical document.
 
 | Stage | Total | Done | Progress |
 |-------|-------|------|----------|
-| 0 | 1 | 1 | 100% |
+| 0 | 2 | 2 | 100% |
 | 10 | 1 | 1 | 100% |
+| 12 | 1 | 0 | 0% |
 | 4 | 1 | 1 | 100% |
 | 8 | 1 | 1 | 100% |
 | 9 | 1 | 1 | 100% |
@@ -63,8 +64,10 @@ This roadmap consolidates all stages and plans into a single canonical document.
 | plan-10 | 10 | completed | Plan Document |
 | plan-12 | 8 | completed | Web 401 и завершение проекта |
 | plan-13 | 9 | completed | Автоматическая генерация роадмапа |
+| plan-14 | 12 | proposed | Дополнительный Docker runtime для Ebb Orchestrator |
 | plan-00 | N/A | completed | Documentation Governance Refactoring |
 | plan-00-02 | N/A | superseded | Plan Document |
+| plan-00-03 | N/A | completed | Naming Convention for Implementation Plans |
 | plan-08-01-merge | N/A | superseded | Stage 01 Merge Decisions |
 | reference-01 | N/A | superseded | 01-baseline.md |
 | ledger-01 | N/A | superseded | 02-progress-ledger.md |
@@ -79,6 +82,8 @@ plan-08-01 → plan-08-02
 plan-08-02 → plan-08-03
 plan-08-01 → plan-12
 plan-09 → plan-13
+plan-09 → plan-14
+plan-11 → plan-14
 
 ---
 
