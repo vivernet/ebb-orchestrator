@@ -1,0 +1,57 @@
+=== Verification Run at 2026-09-24T10:12:23.202112 ===
+Working directory: C:\Users\alex1\Repos\NEW\DEV\ebb-orchestrator-develop
+Node env: development
+
+--- Test ---
+Command: pnpm test
+Exit code: 0
+Stdout: Scope: 4 of 5 workspace projects
+packages/testing test$ vitest run --passWithNoTests
+packages/contracts test$ vitest run --passWithNoTests
+packages/testing test: 
+packages/testing test: [1m[30m[46m RUN [49m[39m[22m [36mv5.0.0 [39m[90mC:/Users/alex1/Repos/NEW/DEV/ebb-orchestrator-develop/packages/testing[39m
+packages/testing test: 
+packages/contracts test: 
+packages/contracts test: [1m[30m[46m RUN [49m[39m[22m [36mv5.0.0 [39m[90mC:/Users/alex1/Repos/NEW/DEV/ebb-orchestrator-dev
+Stderr: $ pnpm -r --if-present test
+
+
+--- TypeCheck ---
+Command: pnpm typecheck
+Exit code: 0
+Stdout: packages/testing typecheck$ tsc -p tsconfig.json --noEmit
+packages/contracts typecheck$ tsc -p tsconfig.json --noEmit
+packages/testing typecheck: Done
+packages/contracts typecheck: Done
+apps/server typecheck$ tsc -p tsconfig.json --noEmit
+apps/server typecheck: Done
+
+Stderr: $ pnpm -r --if-present typecheck
+
+
+--- Lint ---
+Command: pnpm lint
+Exit code: 0
+Stderr: $ eslint .
+
+
+--- Roadmap Dry-Run ---
+Command: pnpm run docs:roadmap
+Exit code: 1
+Stderr: $ node scripts/docs-governance.mjs roadmap
+file:///C:/Users/alex1/Repos/NEW/DEV/ebb-orchestrator-develop/scripts/docs-governance.mjs:170
+    (err as Error & { cause?: unknown }).cause = e;
+         ^^
+
+SyntaxError: Unexpected identifier 'as'
+    at compileSourceTextModule (node:internal/modules/esm/utils:318:16)
+    at ModuleLoader.moduleStrategy (node:internal/modules/esm/translators:89:18)
+    at #translate (node:internal/modules/esm/loader:434:20)
+    at afterLoad (node:internal/modules/esm/l
+
+=== FINAL STATUS ===
+status=FIX
+tests_passed=True
+typecheck_passed=True
+lint_passed=True
+dry_run_passed=False

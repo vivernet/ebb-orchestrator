@@ -1,0 +1,28 @@
+Task 5 Report: Integration Tests for Plan-Parser and Roadmap-Generator
+=========================================================================
+
+Status: DONE
+
+Files Created:
+- scripts/plan-parser.integration.test.ts
+- scripts/roadmap-generator.integration.test.ts
+
+Tests Summary:
+- Total tests: 6
+- Passed: 6
+- Failed: 0
+
+Test Coverage:
+1. plan-parser integration tests:
+   - Parsing real plan file from docs/architecture/plans/13-roadmap-generator.md
+   - Validating YAML frontmatter structure
+
+2. roadmap-generator integration tests:
+   - Generating complete roadmap from real plan data
+   - Handling empty plans array
+   - Testing roadmap updates when adding new plans
+   - Validating dependency graph generation
+
+All tests use RED test-first approach (write failing test first, then implementation).
+
+Tests passed successfully on 2026-09-24.
