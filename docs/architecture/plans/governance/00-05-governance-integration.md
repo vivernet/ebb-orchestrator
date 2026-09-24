@@ -4,8 +4,8 @@ kind: plan
 roadmap: 01
 stage: 00
 status: planned
-title: Интеграция политик управления навыками и планированием
-summary: Синхронизация governance policy, naming/lifecycle rules и skill suite по приложенным файлам
+title: Интеграция политик документации и governance
+summary: Синхронизация naming/lifecycle policy и cleanup roadmap по приложенным файлам
 created: 2026-09-24
 updated: 2026-09-24
 depends_on:
@@ -16,11 +16,11 @@ specs:
 evidence: []
 ---
 
-# Интеграция политик управления навыками и планированием — план реализации
+# Интеграция политик документации и governance — план реализации
 
 > **Для агентного исполнения:** REQUIRED SKILL: `ebb-execute-plan`.
 
-**Goal:** интегрировать обновлённые политики именования, lifecycle и governance из приложенных файлов в каноническую документацию Ebb Orchestrator, обеспечить machine-checkable валидацию и согласовать skill suite.
+**Goal:** интегрировать обновлённые политики именования и lifecycle из приложенных файлов в каноническую документацию Ebb Orchestrator, очистить roadmap от устаревших терминов и сделать policy machine-checkable.
 
 **Architecture:** 
 - `docs/development/02-documentation-governance.md` — канонический guide по naming/lifecycle/README
@@ -33,10 +33,10 @@ evidence: []
 
 ## Acceptance Criteria
 
-- Приложенные политики `plan-naming-and-lifecycle-policy.md` и `00-04-skills-and-plan-governance-migration.md` интегрированы в canonical docs
+- Приложенные политики `plan-naming-and-lifecycle-policy.md` интегрированы в canonical docs
 - `README.md` явно исключён из numeric-prefix/frontmatter requirements
 - Валидатор `pnpm docs:check` проверяет lifecycle enum и naming rules
-- Skill suite согласована с delegation invariant (max 2 subagents, plan-controller → task-controller → leaf)
+- Generated roadmap очищен от упоминаний Stage и использует только Stage
 - Generated roadmap регенерируется через `pnpm docs:roadmap`
 - Все repository gates проходят
 
@@ -55,6 +55,7 @@ evidence: []
 3. `completed` нельзя выставить только из-за успешного Hermes exit code
 4. Generated roadmap не должен становиться вторым writable source of truth
 5. Existing superseded/evidence docs не должны ошибочно превратиться в active implementation plans
+6. Stage в roadmap заменено на корректные номера
 
 ## Task Dependency Map
 
@@ -63,8 +64,7 @@ evidence: []
 | 1 | — | updated canonical governance guide | 2, 3 |
 | 2 | 1 | validator/roadmap support | 3, 4 |
 | 3 | 1, 2 | normalized existing governance docs | 4 |
-| 4 | 1, 2 | synchronized Ebb skill suite | 5 |
-| 5 | 3, 4 | full verification + final review | — |
+| 4 | 1, 2, 3 | full verification + final review | — |
 
 ### Task 1: Интегрировать политики в canonical governance guide
 
@@ -84,12 +84,14 @@ evidence: []
 - Lifecycle enum: `proposed|planned|in_progress|blocked|completed|superseded|cancelled`
 - `00` зарезервирован для governance/meta
 - README.md исключён из правил frontmatter/prefix
-- 00-03-plan-naming-policy.md переименован/объединён как dup
+- Числовой префикс нужен только для файлов ОДНОГО ТИПА, которых несколько (планы, аудиты и т.д.)
+- Уникальные файлы без префикса (README.md, generated.md и т.д.)
 
 - [ ] **Step 1:** Добавить section по README exception в governance guide
 - [ ] **Step 2:** Обновить lifecycle enum в документации
 - [ ] **Step 3:** Зафиксировать правила naming в YAML frontmatter schema
 - [ ] **Step 4:** Удалить дубликаты policy из `docs/architecture/plans/governance/00-03-plan-naming-policy.md`
+- [ ] **Step 5:** Добавить правило о числовом префиксе (только для множественных файлов одного типа)
 
 ### Task 2: Обновить валидатор и генератор roadmap
 
@@ -105,17 +107,17 @@ evidence: []
 - Produces: README exception, full lifecycle enum, generated registration
 
 **Acceptance for this task:**
-- Validator исключает только designated `README.md`
+- Validator исключает только designated `README.md` и другие уникальные файлы без префикса
 - Plan filename/id/stage согласованы
 - Full lifecycle enum accepted
 - Unknown kinds rejected
 
-- [ ] **Step 1:** Обновить regex для filename validation
+- [ ] **Step 1:** Обновить regex для filename validation (исключить README.md и уникальные файлы)
 - [ ] **Step 2:** Добавить проверки status enum
 - [ ] **Step 3:** Обновить тесты
 - [ ] **Step 4:** Проверить `pnpm docs:test`
 
-### Task 3: Нормализовать существующие governance docs
+### Task 3: Нормализовать существующие governance docs и cleanup roadmap
 
 **Purpose:** применить policy к реальным документам
 
@@ -123,6 +125,7 @@ evidence: []
 - Modify: `docs/architecture/plans/governance/00-01-documentation-governance.md`
 - Modify: `docs/architecture/plans/governance/00-02-agents-policy-review.md`
 - Remove/move: `docs/architecture/plans/governance/00-03-plan-naming-policy.md`
+- Modify: `docs/roadmap/01-roadmap.md` (удалить Stage A, B, C, D, undefined)
 
 **Interfaces:**
 - Produces: canonical IDs/kinds/metadata
@@ -132,34 +135,16 @@ evidence: []
 - completed/superseded statuses подтверждены evidence
 - historical claims не переписываются
 - no duplicate active plan IDs
+- Удалены упоминания Stage A, B, C, D, undefined из roadmap
+- Исправлены Stage номера (использовать только цифры)
 
 - [ ] **Step 1:** Пересмотреть 00-01 и подтвердить id
 - [ ] **Step 2:** Пересмотреть 00-02 и подтвердить status
 - [ ] **Step 3:** Переместить 00-03 в evidence или удалить
-- [ ] **Step 4:** Regenerate roadmap
+- [ ] **Step 4:** Regenerate roadmap без Stage
+- [ ] **Step 5:** Исправить manual roadmap от A/B/C/D к цифрам
 
-### Task 4: Синхронизировать skill suite
-
-**Purpose:** согласовать skills с delegation invariant
-
-**Files:**
-- Modify: `tools/hermes/skills/*/SKILL.md` при необходимости
-- Modify: `.hermes.md`, `AGENTS.md`
-
-**Interfaces:**
-- Produces: consistent delegation rules
-- Consumes: canonical plan governance
-
-**Acceptance for this task:**
-- No skill tells plan/task controller to edit implementation directly
-- Max 2 concurrently running subagents enforced
-- Specialist skills are reusable and read-only where appropriate
-
-- [ ] **Step 1:** Проверить `ebb-write-plan` и `ebb-execute-plan`
-- [ ] **Step 2:** Проверить `ebb-review-plan` и `ebb-final-review`
-- [ ] **Step 3:** Запустить `pnpm hermes:setup`
-
-### Task 5: Полная верификация и review
+### Task 4: Полная верификация и review
 
 **Purpose:** доказать отсутствие конфликтов
 
