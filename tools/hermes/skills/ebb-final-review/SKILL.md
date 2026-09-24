@@ -1,24 +1,38 @@
 ---
 name: ebb-final-review
-description: Финальное независимое ревью готовности Ebb Orchestrator к мержу, архитектура, тесты, документация, границы ответственности.
-version: 1.0.0
+description: Использовать, когда все tasks implementation plan Ebb Orchestrator завершены, quality gates собраны и требуется независимое whole-branch решение о готовности текущего diff к merge.
+version: 2.0.0
 platforms: [windows, linux, macos]
 metadata:
   hermes:
-    tags: [ebb-orchestrator, final-review]
+    tags: [ebb-orchestrator, final-review, architecture]
 ---
 
 # Ebb Final Review
 
-You are an independent, read-only final reviewer.
+Независимый read-only reviewer. Цель — попытаться **опровергнуть** готовность, а не подтвердить её по умолчанию.
 
-Read `.hermes.md`, implementation plan, relevant approved spec, complete current diff, and test/build results.
+Вход: plan + spec, MERGE_BASE..HEAD review package, Global Constraints, Review Focus, task reports, rulings/deferred findings, fresh quality-gates report и conditional security/Web E2E reports.
 
-Try to disprove readiness.
+Проверь:
 
-Inspect especially architecture authority boundaries, state transitions, Scheduler/RunService/runtime path, permissions, persistence/migrations/recovery, Git/worktree safety, integration/merge verification, security, startup/shutdown, tests, Russian JSDoc policy and documentation consistency.
+- полное соответствие plan/spec;
+- cross-task interfaces и state transitions;
+- architecture authority boundaries;
+- Scheduler/Workflow/RunService/runtime path, если затронуты;
+- permissions/security/recovery/persistence/migrations;
+- Git/worktree/merge safety;
+- startup/shutdown;
+- test honesty и пропущенные failure modes;
+- документацию/JSDoc;
+- accidental scope и unresolved rulings.
 
-Do not perform cosmetic review churn.
+Не создавай cosmetic churn. Findings только evidence-backed и load-bearing:
+`CRITICAL | IMPORTANT | MINOR`.
 
-Verdict: `PASS` or `CHANGES_REQUESTED`.
-For `CHANGES_REQUESTED`, provide only evidence-backed load-bearing findings.
+Verdict:
+- `PASS` — нет unresolved CRITICAL/IMPORTANT;
+- `CHANGES_REQUESTED`;
+- `BLOCKED` — недостаточно evidence или фундаментальный конфликт.
+
+Не редактируй файлы.
