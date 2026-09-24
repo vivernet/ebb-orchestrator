@@ -136,8 +136,8 @@ export function createApp(deps: AppDeps): OrchestratorApp {
     // за границей local session ниже.
     if (!url.startsWith("/api/v1/")) return;
 
-    // Health открыт: auth и проверка origin не требуются.
-    if (url === "/api/v1/health" || url === "/api/v1/session/bootstrap") return;
+    // Health и session открыты: auth и проверка origin не требуются.
+    if (url === "/api/v1/health" || url === "/api/v1/session/bootstrap" || url === "/api/v1/session") return;
 
     // ── 1. Аутентификация ─────────────────────────────────────────────
     const auth = request.headers.authorization;
