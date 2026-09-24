@@ -1,8 +1,20 @@
 ---
 id: plan-08-03
-title: Plan Document
+kind: implementation
+title: Web UI Onboarding Flow & Projections
 status: completed
 created: 2026-09-23
+updated: 2026-09-24
+roadmap: web-ui
+stage: C
+depends_on:
+  - plan-08-02
+specs:
+  - docs/architecture/specs/02-web-ui-recovery-design.md
+evidence:
+  - apps/web/src/features/onboarding/ (approval/activate)
+  - apps/web/src/features/dashboard/DashboardPage.tsx
+  - apps/web/src/features/projects/ProjectPage.tsx
 ---
 
 # Stage C: Onboarding + Dashboard + Project Implementation

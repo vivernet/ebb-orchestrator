@@ -1,8 +1,22 @@
 ---
 id: plan-08-01
-title: Plan Document
+kind: implementation
+title: Web UI Recovery Stage A — Foundation & Shell
 status: completed
 created: 2026-09-23
+updated: 2026-09-24
+roadmap: web-ui
+stage: A
+depends_on: []
+specs:
+  - docs/architecture/specs/02-web-ui-recovery-design.md
+evidence:
+  - apps/web/src/components/PageState.tsx
+  - apps/web/src/components/StatusBadge.tsx
+  - apps/web/src/components/AppShell.tsx
+  - apps/web/src/app/router.tsx
+  - apps/web/test/shared-primitives.test.tsx
+  - apps/web/test/app-shell.test.tsx
 ---
 
 # Web UI Recovery Stage A Implementation Plan

@@ -1,8 +1,21 @@
 ---
 id: plan-08-02
-title: Plan Document
+kind: implementation
+title: Web UI Core Functional — Onboarding, Dashboard, Project
 status: completed
 created: 2026-09-23
+updated: 2026-09-24
+roadmap: web-ui
+stage: B
+depends_on:
+  - plan-08-01
+specs:
+  - docs/architecture/specs/02-web-ui-recovery-design.md
+evidence:
+  - apps/web/src/features/onboarding/
+  - apps/web/src/features/dashboard/
+  - apps/web/src/features/projects/
+  - apps/web/test/features/onboarding.test.tsx
 ---
 
 # План реализации Web UI Core Functional (Onboarding + Dashboard + Project)

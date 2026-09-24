@@ -1,8 +1,19 @@
 ---
 id: plan-08-04
-title: Plan Document
+kind: audit
+title: Web UI Audit & Recovery Design
 status: completed
 created: 2026-09-23
+updated: 2026-09-24
+roadmap: web-ui
+stage: D
+depends_on: []
+specs:
+  - docs/architecture/specs/01-system-design.md
+evidence:
+  - docs/audit/web-ui-code-map.md
+  - docs/audit/web-ui-gap-analysis.md
+  - docs/architecture/specs/02-web-ui-recovery-design.md
 ---
 
 # План аудита и проектирования восстановления Web UI Ebb Orchestrator
