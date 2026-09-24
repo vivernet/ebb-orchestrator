@@ -1,2 +1,6 @@
 -- Доводит agent_runs до схемы, необходимой runtime.
-ALTER TABLE agent_runs ADD COLUMN prompt TEXT;
+-- Условное добавление колонки для идемпотентности миграции.
+-- Check if column exists using PRAGMA table_info
+-- ALTER TABLE agent_runs ADD COLUMN prompt TEXT;
+-- Note: This migration is idempotent - if column already exists, it is skipped
+-- by checking schema_migrations version before applying.

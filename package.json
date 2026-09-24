@@ -23,7 +23,9 @@
     "docs:rename:check": "node scripts/docs-governance.mjs rename:check",
     "docs:link:sync": "node scripts/docs-governance.mjs link:sync",
     "docs:test": "node --test scripts/docs-governance.test.mjs",
-    "start": "node scripts/run-server.js"
+    "start": "node scripts/run-server.js",
+    "server:dev": "pnpm --filter @ebb-orchestrator/server dev",
+    "web:dev": "pnpm --filter @ebb-orchestrator/web dev"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
