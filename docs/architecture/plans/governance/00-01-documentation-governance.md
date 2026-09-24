@@ -781,7 +781,52 @@ Expected: source and installed skills remain synchronized and all documentation 
 
 ---
 
-## 10. Full link and terminology migration
+## 10. Генерация роадмапа и CLI
+
+### Обзор
+
+`pnpm docs:roadmap` — команда для автоматической генерации канонического роадмапа (`docs/roadmap/01-roadmap.md`) из метаданных планов в `docs/architecture/plans/`.
+
+### CLI опции
+
+#### `--dry-run`
+
+Предварительный просмотр генерации без записи файла. Выводит сгенерированный контент в stdout.
+
+**Пример:**
+```bash
+pnpm docs:roadmap --dry-run
+```
+
+#### `--output`
+
+Запись генерации в указанный файл.
+
+**Пример:**
+```bash
+pnpm docs:roadmap --output docs/roadmap/01-roadmap.md
+```
+
+### Работа команды
+
+1. Сканирует `docs/architecture/plans/` на наличие `.md` файлов
+2. Парсит YAML frontmatter каждого плана
+3. Генерирует документ с:
+   - Global Stage Register
+   - Plan Register
+   - Dependency Graph
+   - Blockers and Evidence
+   - Proposals
+
+### Рекомендации
+
+- По умолчанию использовать `--dry-run` для проверки
+- Сравнить diff перед записью
+- Убедиться, что сгенерированный контент соответствует ожидаемой структуре
+
+---
+
+## 11. Full link and terminology migration
 
 ### Task 13: Replace all old paths, names and competing terminology
 
