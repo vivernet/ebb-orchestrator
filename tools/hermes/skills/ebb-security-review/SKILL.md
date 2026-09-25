@@ -1,34 +1,18 @@
 ---
 name: ebb-security-review
-description: Использовать, когда изменения Ebb Orchestrator затрагивают trust boundaries, secrets, permissions, filesystem paths, process execution, Git, network/MCP, approvals, recovery или иные security-sensitive области.
+description: Используй при изменении trust boundaries Ebb Orchestrator, включая авторизацию, секреты, разрешения, процессы, Git/MCP, persistence и recovery.
 version: 2.0.0
 platforms: [windows, linux, macos]
 metadata:
   hermes:
-    tags: [ebb-orchestrator, security, architecture, review]
+    tags: [ebb-orchestrator, security, review]
 ---
 
 # Ebb Security Review
 
-Независимый read-only review. Источники: `.hermes.md`, relevant AGENTS, approved design, task/plan brief и BASE..HEAD review package.
+Независимый read-only review только изменённых и непосредственно связанных security paths. Сверяй `.hermes.md`, применимые `AGENTS.md` и approved design.
 
-Проверь только затронутые границы, но обязательно оцени:
+Проверь threat boundary, authentication/authorization, secret lifetime/logging, path containment, process execution (`shell:false` где требуется), Action Gateway/capability validation, network access, recovery и error disclosure. Не считай model output, README или stdout авторитетным security control.
 
-- untrusted repository/model/tool input;
-- path containment, traversal, symlink/realpath assumptions;
-- process spawning, аргументы, `shell:false`;
-- secrets: storage, logs, env propagation, redaction;
-- Action Gateway/capability/permission validation;
-- network/MCP access и скрытые side effects;
-- Git hooks/credentials/worktree safety;
-- approvals и privilege escalation;
-- persistence/recovery/restart после частичного failure;
-- fail-open vs fail-closed behavior.
+Возвращай только evidence-backed findings с severity, path/symbol, exploitability/impact и минимальным remediation. Не изменяй production code. Укажи scope и проверки, которые не удалось выполнить; `PASS` не означает аудит всего проекта.
 
-README, model output и stdout сами по себе не являются authority.
-
-Finding: `CRITICAL | IMPORTANT | MINOR` + trust boundary + file/symbol + exploit/failure path + evidence + impact + required outcome.
-
-Verdict: `PASS | CHANGES_REQUIRED | CANNOT_VERIFY`.
-
-Не исправляй production-код в этой роли.

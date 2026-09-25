@@ -1,40 +1,30 @@
 ---
 name: ebb-implement-task
-description: Использовать, когда нужно выполнить одну конкретную task из implementation plan Ebb Orchestrator или один подтверждённый finding cluster в текущем worktree.
-version: 4.0.0
+description: Используй для реализации одной назначенной задачи Ebb Orchestrator или одного подтверждённого ограниченного finding cluster с регрессионными тестами.
+version: 3.0.0
 platforms: [windows, linux, macos]
 metadata:
   hermes:
-    tags: [ebb-orchestrator, implementation, tdd, subagents]
+    tags: [ebb-orchestrator, implementation, tdd]
 ---
 
 # Ebb Implement Task
 
-Task-controller не пишет код. Он запускает одного leaf-agent за раз; leaf не создаёт субагентов.
+Исполняй ровно одну задачу. Controller координирует; он может реализовать простой изолированный патч сам. Для объёмной или независимой реализации делегируй implementer, если это экономит контекст.
 
-## Loop
+## Контекст и делегирование
 
-1. Прочитай task brief и relevant Context Brief; зафиксируй BASE.
-2. Fresh Implementer выполняет behavior changes по RED → GREEN → REFACTOR:
-   - regression/behavior test;
-   - доказанный RED до production fix;
-   - минимальный implementation;
-   - focused + neighboring checks;
-   - `git diff --check`;
-   - self-review и report artifact.
-3. Создай BASE..HEAD review package.
-4. Обязательно вызови `ebb-review-task`.
-5. BLOCKER/IMPORTANT → fix-loop:
-   - rounds 1–3: resume исходного implementer, если возможно;
-   - rounds 4–5: fresh более сильный Fixer;
-   - каждый round заканчивается scoped `ebb-review-task`.
-6. Security-sensitive diff → обязательный `ebb-security-review`.
-7. Web/browser/API/SSE scope → обязательный `ebb-web-e2e`.
-8. После clean review вызови `ebb-quality-gates` для task-required gates, особенно после fix-loop/public interface/high-risk change.
-9. Верни `DONE` только при выполненном completion contract.
+Прими brief с разрешёнными файлами, контрактами, критериями и командами. Не перечитывай весь README/design, если актуальные выдержки есть в brief. Максимум два активных субагента в системе: task-controller запускает максимум одного leaf-agent; leaf не делегирует. Reviewer всегда независимый и read-only.
 
-После round 5 residual load-bearing finding → `BLOCKED`; MINOR можно defer только с `Ruling:`.
+## Цикл
 
-Crash/timeout/tool error → fresh same-role agent с brief + artifacts. После 2 reasoning failures повышай модель и сужай scope.
+1. Подтверди базовый branch/HEAD/status и scope; запусти релевантный baseline.
+2. Для нового поведения/регрессии сначала добавь тест или воспроизводимый сценарий и получи RED по ожидаемой assertion. Ненулевой exit сам по себе не доказывает RED.
+3. Сделай минимальный fix, затем GREEN; проверь соседние тесты, применимые typecheck/build и `git diff --check`.
+4. Выполни scoped review через `ebb-review-task`; передай diff и evidence отдельному свежему reviewer.
+5. Исправляй подтверждённые finding ограниченными раундами; для каждого фикса повтори затронутый тест и scoped re-review. После пяти безуспешных fix rounds остановись и эскалируй архитектурную причину.
+6. Для security scope вызови `ebb-security-review`; для browser/HTTP/SSE behavior — `ebb-web-e2e`. Используй только применимые проверки.
+7. Верни список изменённых файлов, команды/результаты, review verdict и ограничения. Не заявляй PASS без свежего evidence.
 
-Никаких merge/push/tag/release. Commit — только если task/plan требует.
+Применяй dependency gates: не начинай зависимую задачу, пока prerequisite не принят. Ошибки broader suite классифицируй по ownership; не ослабляй тесты и не называй всю работу завершённой при красной зависимости.
+

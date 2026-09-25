@@ -1,7 +1,7 @@
 ---
 name: ebb-review-plan
-description: Использовать, когда draft implementation plan Ebb Orchestrator готов и требуется независимая проверка его полноты, исполнимости, декомпозиции, интерфейсов, TDD-шагов и governance metadata до реализации.
-version: 1.0.0
+description: Используй для независимой проверки implementation plan Ebb Orchestrator перед началом реализации, особенно для многочастных и межкомпонентных изменений.
+version: 2.0.0
 platforms: [windows, linux, macos]
 metadata:
   hermes:
@@ -10,23 +10,11 @@ metadata:
 
 # Ebb Review Plan
 
-Независимый read-only review. Не исправляй plan в той же роли.
+Работай в свежем контексте и только как read-only reviewer. Проверь реальные требования и существующие файлы, затем попробуй доказать, что план нельзя выполнить безопасно или однозначно.
 
-Проверь draft против authoritative requirements/spec и repo evidence:
+Проверь: coverage требований; naming/frontmatter/evidence; ownership и точные Create/Modify paths; интерфейсы и producer/consumer совместимость; порядок зависимостей; тесты RED→GREEN; исполнимые `Run` и конкретные `Expected`; gates; выполнимость каждой задачи агентом без истории чата; scope и открытые решения.
 
-- **Coverage:** каждому acceptance criterion соответствует task.
-- **Naming/metadata:** filename, `id`, `roadmap`, `stage`, lifecycle status и dependencies соответствуют governance policy.
-- **Task size:** каждая task имеет самостоятельный проверяемый deliverable и meaningful review boundary.
-- **Files/Interfaces:** точные пути, реальные symbols, согласованные producer/consumer signatures.
-- **TDD:** behavior change имеет RED → GREEN; исключение обосновано.
-- **Commands:** каждый `Run` реален и имеет конкретный `Expected`.
-- **Review Focus:** конкретные failure modes закреплены тестами в owning tasks.
-- **Ordering:** dependency graph ацикличен и достаточен.
-- **Restraint:** нет YAGNI, placeholders, hidden architecture decisions и unrelated refactoring.
-- **Execution:** свежий task-controller сможет выполнить любую task без истории беседы.
+Для cross-component/load-bearing плана используй `references/plan-review-checklist.md`. Это условный reference, не глобальный список обязательных механизмов для каждой задачи.
 
-Finding: `BLOCKER | IMPORTANT | MINOR` + section/task + evidence + требуемый outcome.
+Вердикт: `APPROVED` либо `CHANGES_REQUIRED`. Каждый blocker/important finding содержит путь/символ, конкретный пробел, риск и минимально необходимое исправление. Не исправляй план сам. Не требуй тестов или матриц, не относящихся к изменённым контрактам.
 
-Verdict: `APPROVED | CHANGES_REQUIRED | REQUIREMENTS_BLOCKED`.
-
-`APPROVED` допустим только без BLOCKER/IMPORTANT findings.

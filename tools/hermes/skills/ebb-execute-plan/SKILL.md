@@ -1,28 +1,31 @@
 ---
 name: ebb-execute-plan
-description: Использовать, когда существует утверждённый implementation plan Ebb Orchestrator со статусом planned/in_progress и его нужно выполнить в текущем worktree.
-version: 4.0.0
+description: Используй для исполнения утверждённого implementation plan Ebb Orchestrator с учётом зависимостей, ledger, проверок и финального аудита.
+version: 3.0.0
 platforms: [windows, linux, macos]
 metadata:
   hermes:
-    tags: [ebb-orchestrator, execution, implementation-plan, subagents]
+    tags: [ebb-orchestrator, execution, implementation-plan]
 ---
 
 # Ebb Execute Plan
 
-Plan-controller координирует; production/test/docs implementation выполняется через `ebb-implement-task`.
+Вход: repo-relative path к `APPROVED` plan со статусом `planned` или `in_progress`.
 
-1. Используй `ebb-repository-context`; прочитай plan + authoritative spec.
-2. Проверь frontmatter/naming, dependency graph, Files/Interfaces и stale paths. Существенно stale/broken plan → `ebb-write-plan`, не импровизация.
-3. Если status `planned`, после валидного старта переведи в `in_progress`, обнови `updated`, запусти `pnpm docs:roadmap`.
-4. Веди persistent ledger. Каждая task: `WAITING/READY/RUNNING/DONE/BLOCKED`.
-5. Для READY task создай минимальный brief и запусти **один** task-controller `ebb-implement-task`. Пока он активен, plan-controller не запускает других субагентов.
-6. Не повторяй task review/gates, уже выполненные task-controller, без новой причины.
-7. После всех load-bearing tasks вызови fresh `ebb-quality-gates`.
-8. По изменённому scope дополнительно вызови `ebb-security-review` и/или `ebb-web-e2e`, если они ещё не дали plan-level evidence.
-9. Создай MERGE_BASE..HEAD review package и вызови `ebb-final-review`.
-10. `CHANGES_REQUESTED` → одна grouped final fix wave через `ebb-implement-task`, затем fresh gates + scoped final review.
-11. Только при final gates PASS + final review PASS + acceptance evidence переведи plan в `completed`, обнови roadmap и создай требуемый локальный completion commit.
-12. Верни branch, BASE/HEAD, tasks, gates, reviews, rulings и working-tree status.
+## Invariants
 
-Не merge/push/tag/release. Не считать child exit code доказательством completion.
+- Работай в текущем worktree/branch; проверь branch, HEAD, dirty files и сохранность unrelated changes.
+- Не более двух активных субагентов: запускай максимум одного task-controller одновременно; тот может запустить максимум одного leaf-agent. Leaf-agent не создаёт агентов. Для мелкой/сильно связанной задачи контроллер может выполнить работу сам.
+- Не включай auto worktree isolation. Не делай push/merge/tag/release. Commit только если план явно требует, либо на основании отдельного согласованного правила.
+- Следуй `.hermes.md`, применимым `AGENTS.md`, approved design и plan; при конфликте зафиксируй ruling/evidence до продолжения.
+
+## Procedure
+
+1. Проверь актуальность plan, его review verdict, prerequisites и status. Изменившийся контракт требует повторного review.
+2. Создай persistent ledger `WAITING / READY / RUNNING / REVIEW / DONE / BLOCKED`; планируй только READY tasks и не запускай конкурирующих владельцев файлов.
+3. Передавай каждому task-controller минимальный brief и нужные файлы. Большие отчёты храни как artifacts, в ledger держи статус и краткую ссылку.
+4. Исполняй задачу через `ebb-implement-task`. Task принимается после свежего `ebb-review-task` и применимых specialist checks.
+5. После всех задач обнови metadata/roadmap только по правилам governance, запусти применимые `ebb-quality-gates`, проверь полный diff и вызови `ebb-final-review`.
+6. На подтверждённый blocker вернись к root cause, исправь ограниченную область, повтори нужные проверки и вызови свежего final reviewer.
+7. Отчитайся о HEAD, задачах, командах/результатах, verdicts, ограничениях и состоянии worktree. Не называй частичную работу полной.
+

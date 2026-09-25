@@ -1,6 +1,6 @@
 ---
 name: ebb-quality-gates
-description: Использовать, когда изменения Ebb Orchestrator готовы к проверке и перед completion, commit acceptance или final review нужны свежие focused и repository-wide verification evidence.
+description: Используй для выбора и выполнения проверок качества Ebb Orchestrator по затронутому scope, риску и требованиям плана.
 version: 2.0.0
 platforms: [windows, linux, macos]
 metadata:
@@ -10,18 +10,9 @@ metadata:
 
 # Ebb Quality Gates
 
-Read-only verification: не исправляй код в этой роли.
+Выбери сначала самое узкое полезное подтверждение, затем соседние проверки и обязательные repository gates. Не запускай весь набор без необходимости, если scope локален; не опускай plan-required gate.
 
-1. Определи gates по изменённой области и plan.
-2. Сначала выполни focused checks.
-3. Затем применимые full gates: `pnpm lint`, `pnpm typecheck`, `pnpm test`, build, E2E/integration/security и `git diff --check`.
-4. Для каждого сохрани exact command, exit code, pass/fail count и skipped reason.
-5. Проверь `git status --short`: нет неожиданных generated artifacts, secrets или unrelated изменений.
-6. PASS допустим только по свежему output текущего HEAD.
+Для каждого запускай свежую команду на текущем HEAD и запиши точную команду, exit code, существенный результат и ограничения. Применяй `pnpm lint`, `pnpm typecheck`, `pnpm test`, build, docs и E2E/security checks согласно изменённому scope и repository policy. Заверши `git diff --check`.
 
-Verdict:
-- `PASS`
-- `FAIL` — перечисли реально упавшие commands и evidence.
-- `BLOCKED` — только если command невозможно выполнить из-за конкретного environment/tooling prerequisite.
+Не объявляй PASS по намерению, старому отчёту, неполному подпроцессу или summary агента. Разделяй дефект текущей задачи и подтверждённую внешнюю dependency failure; при внешнем блокере сохраняй evidence и не называй worktree полностью проверенным. Проверь diff на generated artifacts, secrets и unrelated changes.
 
-Старый отчёт, agent summary, частичный subprocess или «должно пройти» не являются evidence.

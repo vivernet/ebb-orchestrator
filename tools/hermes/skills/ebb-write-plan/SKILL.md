@@ -1,33 +1,27 @@
 ---
 name: ebb-write-plan
-description: Использовать, когда для Ebb Orchestrator есть утверждённые требования, spec/design или подтверждённый root cause и требуется новый многошаговый implementation plan до изменения кода.
-version: 2.0.0
+description: Используй для исследования требований и создания нового implementation plan Ebb Orchestrator с конкретными задачами, владельцами файлов, интерфейсами и проверками.
+version: 3.0.0
 platforms: [windows, linux, macos]
 metadata:
   hermes:
-    tags: [ebb-orchestrator, planning, implementation-plan, subagents]
+    tags: [ebb-orchestrator, planning, implementation-plan]
 ---
 
 # Ebb Write Plan
 
-Plan-controller не реализует код. Исследование выполняют read-only scouts; draft пишет свежий Plan Author; независимую проверку выполняет `ebb-review-plan`.
+Создай исполнимый план на основе текущего репозитория и утверждённых требований. Не начинай реализацию.
 
 ## Workflow
 
-1. Используй `ebb-repository-context` и зафиксируй authoritative requirements.
-2. Через 1–2 scouts собери только недостающие repo facts: exact files/symbols/interfaces, tests/tooling/CI, working patterns.
-3. До задач составь file/interface map и dependency graph.
-4. Определи имя:
-   - один plan в Stage → `XX-name.md`, `id: plan-XX`;
-   - Stage с несколькими частями → основной `XX-name.md` + части `XX-YY-name.md`, `id: plan-XX-YY`.
-   - governance → `00-YY-name.md`, `id: plan-00-YY`.
-5. Новый утверждённый plan получает `status: planned`.
-6. Plan Author создаёт draft по `references/plan-format.md`.
-7. Обязательно вызови `ebb-review-plan`; findings исправляет отдельный Plan Fixer, затем свежий re-review. Максимум 3 rounds.
-8. После `APPROVED` сохрани plan, запусти `pnpm docs:roadmap`, затем docs validation, `git diff --check`.
-9. Создай **локальный commit** `feat: add plan <id> <short-title>`. Не push/merge.
-10. Верни path, id, tasks, dependencies, reviewer verdict и commit SHA.
+1. Используй `ebb-repository-context` для краткого Context Brief; зафиксируй требования, ограничения, branch/HEAD/status.
+2. Для объёмного независимого исследования назначь до двух scouts (например, architecture/code и tests/tooling). Для простого плана исследуй сам. Каждый scout возвращает краткие выводы с путями/символами и evidence-файлом для подробностей.
+3. Зафиксируй открытые продуктовые/API/security решения. Не изобретай значения, меняющие публичный контракт или модель угроз: запроси решение пользователя либо пометь план `BLOCKED`/proposal согласно policy.
+4. Разбей работу на dependency-ordered tasks. Каждая должна выполняться свежим агентом без истории чата и содержать цель, точные `Create`/`Modify` файлы, владельца, интерфейсы, зависимости, RED→GREEN, `Run` и конкретный `Expected`, а также `Review Focus`.
+5. Проверь покрытие требований, единственность владельца новых файлов, межмодульные контракты, циклы зависимостей, реальные evidence paths и полноту gates. Формат — `references/plan-format.md`.
+6. Создай plan с canonical filename/metadata по governance policy; утверждённый и готовый к исполнению план получает `status: planned`. Generated registers вручную не правь: запусти `pnpm docs:roadmap`, затем `pnpm docs:check` и `git diff --check`, если эти команды существуют.
+7. Передай план независимому `ebb-review-plan`. При `CHANGES_REQUIRED` внеси только адресные изменения и запроси свежий review.
+8. После `APPROVED` создай обязательный локальный commit только для файлов плана и его generated outputs: `feat: add plan <plan-id> <short-title>`. Не включай unrelated/частичные изменения; если безопасно отделить scope нельзя, остановись и сообщи блокировку. Push/merge запрещены.
 
-README-файлы не создаются/переименовываются этим naming rule.
+Не создавай субагентов для форматирования, простого поиска или короткого плана. Максимум два активных агента; не пересылай большие логи в controller context.
 
-Если требования требуют нового фундаментального product/security/architecture решения, не выдумывай его: `REQUIREMENTS_BLOCKED`.

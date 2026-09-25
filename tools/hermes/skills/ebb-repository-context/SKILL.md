@@ -1,24 +1,24 @@
 ---
 name: ebb-repository-context
-description: Использовать, когда начинается работа в Ebb Orchestrator или требуется определить актуальный scope, authority hierarchy, Git/worktree-контекст и релевантные инструкции.
+description: Используй при начале новой работы над Ebb Orchestrator, когда нужно определить актуальные инструкции, границы scope, состояние Git и контекст для планирования или делегирования.
 version: 2.0.0
 platforms: [windows, linux, macos]
 metadata:
   hermes:
-    tags: [ebb-orchestrator, context, bootstrap]
+    tags: [ebb-orchestrator, context, planning]
 ---
 
 # Ebb Repository Context
 
-Короткий bootstrap, а не обязательная загрузка всей документации.
+Создай компактный Context Brief для контроллера. Это bootstrap, а не требование каждому leaf-agent перечитывать весь репозиторий.
 
-1. Прочитай `.hermes.md`.
-2. Прочитай root `AGENTS.md`; scoped `AGENTS.md` — только для реально затрагиваемой области.
-3. Зафиксируй branch, HEAD и `git status --short`.
-4. Определи source of truth только для текущей задачи: approved spec/design, implementation plan, roadmap или bug evidence.
-5. Сформируй компактный `Context Brief`: scope, запрещённый scope, обязательные invariants, релевантные пути и gates.
-6. Передавай leaf-субагентам `Context Brief`, а не весь README/spec/plan.
+## Процедура
 
-При конфликте: текущее явное требование пользователя → approved spec/design → `.hermes.md`/AGENTS → plan → код как evidence текущей реализации → исторические audit/roadmap records.
+1. Проверь branch, HEAD и `git status --short`; сохрани unrelated changes.
+2. Определи применимые `.hermes.md`, root и scoped `AGENTS.md`, approved design/spec, план и README. Прочитай только релевантные источники и зафиксируй authority order; не перечитывай уже переданный актуальный контекст без причины.
+3. Сформируй brief: цель/scope, исключённый scope, инварианты, релевантные пути и символы, зависимости, обязательные gates, известные ограничения и источник каждого существенного решения.
+4. Leaf-agent получает только свой brief и необходимые выдержки/файлы. Он запрашивает дополнительный контекст только при конкретном пробеле.
+5. Если код, утверждённый план и требования расходятся, зафиксируй evidence и останови незаметное изменение scope.
 
-Не расширяй scope скрыто. Не заставляй каждого субагента повторно читать весь repository context.
+Не запускай субагента для простой разведки. Используй его, когда независимое исследование существенно сократит объём контекста контроллера.
+
