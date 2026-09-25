@@ -78,8 +78,8 @@ function generateRoadmap(plans) {
   lines.push('');
   lines.push('# Ebb Orchestrator Roadmap');
   lines.push('');
-  lines.push('**Version:** Roadmap 01  ');
-  lines.push(`**Last Updated:** ${new Date().toISOString().split('T')[0]}  `);
+  lines.push('**Version:** Roadmap 01');
+  lines.push(`**Last Updated:** ${new Date().toISOString().split('T')[0]}`);
   lines.push('**Status:** Active');
   lines.push('');
   lines.push('> This document is auto-generated from plan metadata. For manual edits, see [Governance Guide](../architecture/plans/governance/00-01-documentation-governance.md).');
