@@ -3,7 +3,7 @@ id: plan-15
 kind: plan
 roadmap: 01
 stage: 13
-status: planned
+status: in_progress
 title: Устойчивые auth, onboarding и Russian Web UI
 summary: Устранить подтверждённые дефекты ephemeral auth/bootstrap и рассинхронизации onboarding, сохранив backend authority, loopback trust boundary и проверяемый real HTTP/browser flow.
 created: 2026-09-25
@@ -79,7 +79,8 @@ evidence:
 15-01 contract + crypto feasibility
   ├── 15-02 SQLite auth/repository + migration
   │     └── 15-03 wizard/startup composition
-  │           └── 15-04 server boundary/routes/CSRF
+  │           └── 15-09 atomic auth v2 remediation
+  │                 └── 15-04 server boundary/routes/CSRF
   │                 ├── 15-05 contracts + Web auth/SSE
   │                 └── 15-06 onboarding draft/approval/scheduler guard
   │                       └── 15-07 Russian UI/accessibility + README/artifact cleanup
@@ -87,9 +88,9 @@ evidence:
                                   15-08 focused/full/security/browser verification and review
 ```
 
-The parent plan and all eight child plans are explicitly in scope: `15-auth-onboarding-ui-hardening.md`, `15-01-auth-contract-and-crypto.md`, `15-02-auth-persistence-and-repository.md`, `15-03-auth-cli-and-startup.md`, `15-04-server-security-boundary.md`, `15-05-web-auth-and-sse.md`, `15-06-onboarding-draft-and-scheduler-guard.md`, `15-07-russian-ui-and-artifact-cleanup.md`, and `15-08-verification-and-review.md`. Parts are intentionally ordered so no Web or E2E fixture can encode an unapproved auth DTO. `15-01` is a hard contract gate: it lands the versioned auth/onboarding DTOs and the server-owned `apps/server/test/platform/security/auth-onboarding-contract.test.ts` before `15-02`–`15-08` implement consumers. `15-06` schema/service work starts after 15-01, its Web edits start after 15-05, and its scheduler guard is required before final E2E.
+The parent plan and all nine child plans are explicitly in scope: `15-auth-onboarding-ui-hardening.md`, `15-01-auth-contract-and-crypto.md`, `15-02-auth-persistence-and-repository.md`, `15-03-auth-cli-and-startup.md`, `15-09-atomic-auth-v2-remediation.md`, `15-04-server-security-boundary.md`, `15-05-web-auth-and-sse.md`, `15-06-onboarding-draft-and-scheduler-guard.md`, `15-07-russian-ui-and-artifact-cleanup.md`, and `15-08-verification-and-review.md`. Governance must therefore count exactly ten `plan-15` entries: this parent plus nine child plans. Status expectations are parent `in_progress`, historical `15-01`–`15-03` `completed`, and `15-09` plus `15-04`–`15-08` `planned`; IDs are unique and all are stage 13. Parts are intentionally ordered so no Web or E2E fixture can encode an unapproved auth DTO. `15-01` is a hard contract gate: it lands the versioned auth/onboarding DTOs and the server-owned `apps/server/test/platform/security/auth-onboarding-contract.test.ts` before downstream consumers. Completed 15-01–15-03 remain historical PASS tasks; `15-09` is the new executable prerequisite that remediates and verifies their still-missing atomic v2 internal seam before 15-04 starts route composition. `15-06` schema/service work starts after 15-01, its Web edits start after 15-05, and its scheduler guard is required before final E2E.
 
-The dependency order is also an ownership boundary: `15-03` owns only first-run wizard and startup gating. It must not construct `AuthService`, add `authService` to `createApp`, or otherwise wire the auth boundary. `15-04` owns the exact `AuthService` composition and the `createApp`/`AppDeps.authService` wiring in `create-app.ts` and `main.ts`; `15-06` owns only the separate onboarding composition seam in those files (`ApprovalService` → `ApprovalTransactionPort` → transaction-aware `OnboardingService` → `AppDeps.onboardingService`), with no route-level `db`/approval fallback. This is why `15-04` remains downstream of `15-03`, while `15-06` remains downstream of the auth boundary.
+The dependency order is also an ownership boundary: `15-03` owns only first-run wizard and startup gating. It must not construct `AuthService`, add `authService` to `createApp`, or otherwise wire the auth boundary. `15-09` owns the v2 internal `AuthService`/repository/fake contract remediation and its concurrency proof. Only after its PASS may `15-04` own `AuthService` composition and the `createApp`/`AppDeps.authService` route wiring in `create-app.ts` and `main.ts`; it consumes rather than changes the atomic port. `15-06` owns only the separate onboarding composition seam in those files (`ApprovalService` → `ApprovalTransactionPort` → transaction-aware `OnboardingService` → `AppDeps.onboardingService`), with no route-level `db`/approval fallback.
 
 ## Migration, rollback and recovery policy
 

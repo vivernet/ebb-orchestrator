@@ -7,6 +7,7 @@ import { createSqliteDatabase } from "../../src/platform/database/sqlite-databas
 import { SchedulerService } from "../../src/modules/scheduler/scheduler-service.js";
 import { runMigrations, type Migration } from "../../src/platform/database/migrator.js";
 import type { AgentRuntime } from "../../src/modules/runtime/agent-runtime.js";
+import { createTestAuthService, TEST_COOKIE, TEST_CSRF_TOKEN } from "../helpers/auth.js";
 
 const migrationDir = fileURLToPath(new URL("../../src/platform/database/migrations/", import.meta.url));
 const migrations: Migration[] = readdirSync(migrationDir).filter((file) => file.endsWith(".sql")).map((file) => {
@@ -31,14 +32,15 @@ function makeApp() {
   const db = createSqliteDatabase(":memory:");
   runMigrations(db, migrations);
   const scheduler = new SchedulerService(db);
-  return createApp({ db, scheduler, runtime: mockRuntime });
+  return createApp({ db, scheduler, runtime: mockRuntime, authService: createTestAuthService() });
 }
 
 function makeAppWithDatabase() {
   const db = createSqliteDatabase(":memory:");
   runMigrations(db, migrations);
   const scheduler = new SchedulerService(db);
-  return { app: createApp({ db, scheduler, runtime: mockRuntime }), db };
+  const authService = createTestAuthService();
+  return { app: createApp({ db, scheduler, runtime: mockRuntime, authService }), db, authService };
 }
 
 const validContract = {
@@ -52,11 +54,11 @@ const validContract = {
   definitionOfDone: ["Tests pass"],
 };
 
-function mutationHeaders(app: ReturnType<typeof makeApp>) {
+function mutationHeaders(_app: ReturnType<typeof makeApp>) {
   return {
-    authorization: `Bearer ${app.sessionToken}`,
+    cookie: TEST_COOKIE,
     origin: "http://127.0.0.1:3000",
-    "x-csrf-token": app.csrfToken,
+    "x-csrf-token": TEST_CSRF_TOKEN,
   };
 }
 
@@ -69,7 +71,7 @@ describe("orchestrator read API", () => {
 
     const controller = new AbortController();
     const response = await fetch(`http://127.0.0.1:${address.port}/api/v1/events`, {
-      headers: { authorization: `Bearer ${app.sessionToken}` },
+      headers: { cookie: TEST_COOKIE },
       signal: controller.signal,
     });
     expect(response.status).toBe(200);
@@ -163,7 +165,7 @@ describe("orchestrator read API", () => {
     const db = createSqliteDatabase(":memory:");
     runMigrations(db, migrations);
     const scheduler = new SchedulerService(db);
-    const app = createApp({ scheduler });
+    const app = createApp({ scheduler, authService: createTestAuthService() });
     const headers = mutationHeaders(app);
 
     const project = await app.inject({ method: "POST", url: "/api/v1/projects", headers, payload: { name: "x", displayName: "X" } });
@@ -187,9 +189,9 @@ describe("orchestrator read API", () => {
       method: "POST",
       url: "/api/v1/onboarding/project-1/activate",
       headers: {
-        authorization: `Bearer ${app.sessionToken}`,
+        cookie: TEST_COOKIE,
         origin: "http://127.0.0.1:3000",
-        "x-csrf-token": app.csrfToken,
+        "x-csrf-token": TEST_CSRF_TOKEN,
       },
     });
 
@@ -201,7 +203,7 @@ describe("orchestrator read API", () => {
   });
 
   it("persists semantic onboarding approval and activates only after backend approval", async () => {
-    const { app, db } = makeAppWithDatabase();
+    const { app, db, authService } = makeAppWithDatabase();
     db.run(
       "INSERT INTO projects (id, name, display_name, status, created_at, updated_at) VALUES ($id, $name, $displayName, 'ACTIVE', $now, $now)",
       { id: "project-onboarding", name: "project", displayName: "Project", now: new Date().toISOString() },
@@ -223,7 +225,8 @@ describe("orchestrator read API", () => {
     const activated = await app.inject({ method: "POST", url: "/api/v1/onboarding/project-onboarding/activate", headers });
     expect(activated.statusCode).toBe(200);
     expect(JSON.parse(activated.body)).toMatchObject({ projectId: "project-onboarding", semanticConfigApproved: true, localModeEnabled: true });
-    const view = await app.inject({ method: "GET", url: "/api/v1/onboarding/project-onboarding", headers: { authorization: `Bearer ${app.sessionToken}` } });
+    authService.resetAuthOperationCounts();
+    const view = await app.inject({ method: "GET", url: "/api/v1/onboarding/project-onboarding", headers: { cookie: TEST_COOKIE } });
     expect(view.statusCode).toBe(200);
     expect(JSON.parse(view.body).semanticConfigApproved).toBe(true);
     await app.close();
@@ -245,7 +248,7 @@ describe("orchestrator read API", () => {
     const response = await app.inject({
       method: "GET",
       url: "/api/v1/runs/run-1",
-      headers: { authorization: `Bearer ${app.sessionToken}` },
+      headers: { cookie: TEST_COOKIE },
     });
 
     expect(response.statusCode).toBe(200);
@@ -270,7 +273,7 @@ describe("orchestrator read API", () => {
     const response = await app.inject({
       method: "GET",
       url,
-      headers: { authorization: `Bearer ${app.sessionToken}` },
+      headers: { cookie: TEST_COOKIE },
     });
 
     expect(response.statusCode).toBe(200);
@@ -296,7 +299,7 @@ describe("orchestrator read API", () => {
       method: "POST",
       url: "/api/v1/approvals/approval-1/approve",
       headers: {
-        authorization: `Bearer ${app.sessionToken}`,
+        cookie: TEST_COOKIE,
         origin: "https://evil.example",
       },
     });
@@ -310,7 +313,7 @@ describe("orchestrator read API", () => {
     const response = await app.inject({
       method: "POST",
       url: "/api/v1/approvals/approval-1/approve",
-      headers: { authorization: `Bearer ${app.sessionToken}` },
+      headers: { cookie: TEST_COOKIE },
     });
 
     expect(response.statusCode).toBe(403);
@@ -323,9 +326,9 @@ describe("orchestrator read API", () => {
       method: "POST",
       url: "/api/v1/approvals/approval-1/approve",
       headers: {
-        authorization: `Bearer ${app.sessionToken}`,
+        cookie: TEST_COOKIE,
         origin: "http://127.0.0.1:3000",
-        "x-csrf-token": app.csrfToken,
+        "x-csrf-token": TEST_CSRF_TOKEN,
       },
       payload: { note: "x", unexpected: true },
     });

@@ -10,11 +10,8 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { extname, isAbsolute, relative, resolve, sep } from "node:path";
-import { timingSafeEqual } from "node:crypto";
-import {
-  createLocalSession,
-  type LocalSession,
-} from "../platform/security/local-session.js";
+import { AUTH_CONTRACT_VERSION, AUTH_COOKIE_CONTRACT, AUTH_TOKEN_BYTES, type AuthErrorCode } from "@ebb-orchestrator/contracts";
+import type { AuthService } from "../platform/security/auth-service.js";
 import { healthRoutes } from "./routes/health.js";
 import { eventRoutes } from "./routes/events.js";
 import { onboardingRoutes, type OnboardingApprovalService, type OnboardingCommandService } from "./routes/onboarding.js";
@@ -51,7 +48,7 @@ import type { EpicOrchestrator } from "../modules/planning/epic-orchestrator.js"
 import type { StatusTrackerInterface } from "../platform/process/system-lifecycle.js";
 import type { EventBus } from "../platform/events/event-bus.js";
 
-const LOCAL_SESSION_COOKIE = "ebb_local_session";
+const LOCAL_SESSION_COOKIE = AUTH_COOKIE_CONTRACT.name;
 
 export interface AppDeps {
   /** Loopback хост; по умолчанию "127.0.0.1". */
@@ -83,29 +80,23 @@ export interface AppDeps {
   eventBus?: EventBus;
   /** Абсолютный путь к собранному Vite bundle для same-origin production UI. */
   webRoot?: string;
+  /** Единственная auth authority; production не использует process-local session. */
+  authService: AuthService;
 }
 
-export interface OrchestratorApp extends FastifyInstance {
-  /** Bearer-токен для programmatic callers; браузер использует HttpOnly cookie. */
-  sessionToken: string;
-  csrfToken: string;
-  /** Одноразовый capability, который trusted launcher передаёт UI через URL fragment. */
-  bootstrapToken: string | null;
-}
+export type OrchestratorApp = FastifyInstance;
 
 /**
  * Создаёт и возвращает экземпляр Fastify, готовый принимать соединения.
  *
- * - Регистрирует глобальный preHandler, обеспечивающий аутентификацию local-session и
- *   валидацию origin на всех маршрутах, кроме `GET /api/v1/health`.
- * - Добавляет `sessionToken` к возвращённому экземпляру для programmatic-доступа
- *   (используется тестами и main.ts для startup logging).
+ * - Регистрирует глобальный preHandler, обеспечивающий durable cookie auth и
+ *   валидацию Origin/CSRF на всех API-маршрутах, кроме health и session adapters.
  */
 export function createApp(deps: AppDeps): OrchestratorApp {
   const host = deps.host ?? "127.0.0.1";
   const port = deps.port ?? 3000;
 
-  const session: LocalSession = createLocalSession({ host, port });
+  const allowedOrigin = `http://${host}:${port}`;
   const workflowRegistry = new WorkflowRegistry();
   for (const template of Object.values(templates)) workflowRegistry.register(template);
   const workflow = deps.db ? new WorkflowEngine(deps.db, workflowRegistry) : undefined;
@@ -120,100 +111,139 @@ export function createApp(deps: AppDeps): OrchestratorApp {
 
   const app = Fastify({ logger: false }) as unknown as OrchestratorApp;
 
-  // Публикует token в экземпляре, чтобы вызывающий код (тесты, main) мог его прочитать.
-  app.sessionToken = session.token;
-  app.csrfToken = session.csrfToken;
-  app.bootstrapToken = session.bootstrapToken;
+  // Невалидный JSON Fastify отклоняет до route handler; login всё равно обязан
+  // вернуть тот же versioned `AUTH_INVALID_REQUEST`, что и ручная валидация DTO.
+  app.setErrorHandler((error, request, reply) => {
+    const path = new URL(request.url, allowedOrigin).pathname;
+    const statusCode = error instanceof Error ? (error as Error & { statusCode?: number }).statusCode : undefined;
+    if (path === "/api/v1/session/login" && statusCode === 400) {
+      sendAuthError(reply, 400, "AUTH_INVALID_REQUEST");
+      return;
+    }
+    reply.send(error);
+  });
+
+  // Проверяем Origin login до разбора тела: parser не должен раскрывать формат
+  // запроса для cross-origin отправителя.
+  app.addHook("onRequest", async (request, reply) => {
+    const url = new URL(request.url, allowedOrigin).pathname;
+    if (url === "/api/v1/session/login" && request.headers.origin !== allowedOrigin) {
+      return sendAuthError(reply, 403, "AUTH_ORIGIN_INVALID");
+    }
+  });
 
   // ── Глобальный security hook ───────────────────────────────────────
   // Пропускает аутентификацию для health endpoint; все остальные маршруты требуют
-      // корректный bearer token или HttpOnly cookie браузерной сессии. Изменяющие методы также
+  // корректный bearer token или HttpOnly cookie браузерной сессии. Изменяющие методы также
   // требуют совпадающий Origin header для предотвращения CSRF.
   app.addHook("preHandler", async (request, reply) => {
-    const url = new URL(request.url, session.allowedOrigin).pathname;
+    const url = new URL(request.url, allowedOrigin).pathname;
 
     // Собранные assets Web UI не несут authority. Каждый API-маршрут остаётся
     // за границей local session ниже.
     if (!url.startsWith("/api/v1/")) return;
+    if (!request.routeOptions.url) return reply.code(404).send({ error: "not found" });
 
-    // Если отключена авторизация (разработка/локальный режим), пропускаем все запросы.
-    if (process.env.EBB_DISABLE_AUTH === "1") return;
-
-    // Health и session открыты: auth и проверка origin не требуются.
-    if (url === "/api/v1/health" || url === "/api/v1/session/bootstrap" || url === "/api/v1/session") return;
-    // API session/new с локальным режимом также открыт (с запросом ?local=true).
-    if (url === "/api/v1/session/new") return;
+    if (url === "/api/v1/health" || url === "/api/v1/session" || url === "/api/v1/session/login" || url === "/api/v1/session/logout") return;
 
     // ── 1. Аутентификация ─────────────────────────────────────────────
-    const auth = request.headers.authorization;
     const sessionCookie = readCookie(request.headers.cookie, LOCAL_SESSION_COOKIE);
-    if (auth !== `Bearer ${session.token}` && sessionCookie !== session.token) {
-      reply.code(401).send({ error: "unauthorized" });
+    const rawSessionToken = decodeToken(sessionCookie);
+    if (!rawSessionToken) {
+      sendAuthError(reply, 401, sessionCookie === null ? "AUTH_SESSION_REQUIRED" : "AUTH_SESSION_INVALID");
       return reply;
     }
 
-    // ── 2. Валидация origin (только для изменяющих методов) ───────────
-    const mutating = request.method !== "GET" && request.method !== "HEAD";
-    if (mutating) {
-      const origin = request.headers.origin;
-      // Bearer токен сам по себе не является CSRF токен: браузерные запросы также
-      // должны подтвердить происхождение из этого локального приложения.
-      if (origin !== session.allowedOrigin) {
-        reply.code(403).send({ error: "forbidden" });
+    let rawCsrfToken: Uint8Array | null = null;
+    try {
+      // ── 2. Валидация origin (только для изменяющих методов) ─────────
+      const mutating = request.method !== "GET" && request.method !== "HEAD";
+      if (mutating) {
+        // Bearer токен сам по себе не является CSRF токен: браузерные запросы также
+        // должны подтвердить происхождение из этого локального приложения.
+        if (request.headers.origin !== allowedOrigin) {
+          sendAuthError(reply, 403, "AUTH_ORIGIN_INVALID");
+          return reply;
+        }
+        rawCsrfToken = decodeToken(typeof request.headers["x-csrf-token"] === "string" ? request.headers["x-csrf-token"] : null);
+        const authenticated = await deps.authService.authenticateCsrfAndTouch(rawSessionToken, rawCsrfToken);
+        if (!authenticated.ok) {
+          sendAuthError(reply, authenticated.code === "UNAVAILABLE" ? 503 : authenticated.code === "SESSION_INVALID" ? 401 : 403, authenticated.code === "UNAVAILABLE" ? "AUTH_UNAVAILABLE" : authenticated.code === "SESSION_INVALID" ? "AUTH_SESSION_INVALID" : "AUTH_CSRF_INVALID");
+          return reply;
+        }
+        return;
+      }
+
+      const authenticated = await deps.authService.authenticateAndTouch(rawSessionToken);
+      if (!authenticated.ok) {
+        sendAuthError(reply, authenticated.code === "UNAVAILABLE" ? 503 : 401, authenticated.code === "UNAVAILABLE" ? "AUTH_UNAVAILABLE" : "AUTH_SESSION_INVALID");
         return reply;
       }
-      if (request.headers["x-csrf-token"] !== session.csrfToken) {
-        reply.code(403).send({ error: "invalid csrf token" });
-        return reply;
-      }
+    } finally {
+      rawCsrfToken?.fill(0);
+      rawSessionToken.fill(0);
     }
   });
 
   // ── Маршруты ───────────────────────────────────────────────────────
   // Открытые
   app.register(async (instance) => healthRoutes(instance, deps.status));
-  app.get("/api/v1/session/bootstrap", async (request, reply) => {
-    const supplied = request.headers["x-ebb-bootstrap-token"];
-    if (typeof supplied === "string" && session.bootstrapToken && safeEquals(supplied, session.bootstrapToken)) {
-      session.bootstrapToken = null;
-      app.bootstrapToken = null;
-      reply.header("set-cookie", createSessionCookie(session.token));
-      return {
-        sessionToken: session.token,
-        csrfToken: session.csrfToken,
-        origin: session.allowedOrigin,
-      };
+  app.post<{ Body: unknown }>("/api/v1/session/login", async (request, reply) => {
+    if (request.headers.origin !== allowedOrigin) return sendAuthError(reply, 403, "AUTH_ORIGIN_INVALID");
+    const body = request.body;
+    if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).length !== 1 || typeof (body as { password?: unknown }).password !== "string") {
+      return sendAuthError(reply, 400, "AUTH_INVALID_REQUEST");
     }
-    // Fallback: allow bootstrap via query param for dev tools (less secure, for local use only)
-    const { token } = request.query as { token?: string };
-    if (token) {
-      reply.header("set-cookie", createSessionCookie(session.token));
-      return {
-        sessionToken: session.token,
-        csrfToken: session.csrfToken,
-        origin: session.allowedOrigin,
-      };
+    const password = Buffer.from((body as { password: string }).password, "utf8");
+    let rawSessionToken: Uint8Array | undefined;
+    let rawCsrfToken: Uint8Array | undefined;
+    try {
+      const result = await deps.authService.login(password);
+      if (!result.ok) return sendAuthError(reply, result.code === "UNAVAILABLE" ? 503 : 401, result.code === "UNAVAILABLE" ? "AUTH_UNAVAILABLE" : "AUTH_INVALID_CREDENTIALS");
+      rawSessionToken = result.value.rawSessionToken;
+      rawCsrfToken = result.value.rawCsrfToken;
+      reply.header("set-cookie", createSessionCookie(rawSessionToken, result.value.session.absoluteExpiresAt));
+      return result.value.response;
+    } finally {
+      password.fill(0);
+      rawSessionToken?.fill(0);
+      rawCsrfToken?.fill(0);
     }
-    return reply.code(401).send({ error: "unauthorized" });
   });
+
   app.get("/api/v1/session", async (request, reply) => {
-    return {
-      csrfToken: session.csrfToken,
-      origin: session.allowedOrigin,
-    };
-  });
-  // Local mode fallback: allow session creation without bootstrap token
-  // when explicitly requested via query parameter (for browser dev tools/manual access)
-  app.post("/api/v1/session/new", async (request, reply) => {
-    const { local } = request.query as { local?: string };
-    if (local !== "true") {
-      return reply.code(401).send({ error: "session bootstrap required" });
+    const sessionCookie = readCookie(request.headers.cookie, LOCAL_SESSION_COOKIE);
+    const rawSessionToken = decodeToken(sessionCookie);
+    if (!rawSessionToken) return sendAuthError(reply, 401, sessionCookie === null ? "AUTH_SESSION_REQUIRED" : "AUTH_SESSION_INVALID");
+    let rawCsrfToken: Uint8Array | undefined;
+    try {
+      const result = await deps.authService.restoreAndRotateCsrf(rawSessionToken);
+      if (!result.ok) return sendAuthError(reply, result.code === "UNAVAILABLE" ? 503 : 401, result.code === "UNAVAILABLE" ? "AUTH_UNAVAILABLE" : "AUTH_SESSION_INVALID");
+      rawCsrfToken = result.value.rawCsrfToken;
+      return result.value.response;
+    } finally {
+      rawSessionToken.fill(0);
+      rawCsrfToken?.fill(0);
     }
-    reply.header("set-cookie", createSessionCookie(session.token));
-    return {
-      csrfToken: session.csrfToken,
-      origin: session.allowedOrigin,
-    };
+  });
+
+  app.post("/api/v1/session/logout", async (request, reply) => {
+    if (request.headers.origin !== allowedOrigin) return sendAuthError(reply, 403, "AUTH_ORIGIN_INVALID");
+    let rawSessionToken: Uint8Array | null = null;
+    let rawCsrfToken: Uint8Array | null = null;
+    try {
+      // Оба decode находятся под одной cleanup ownership boundary: второй decode
+      // не может оставить первый сырой токен необнулённым при исключении.
+      rawSessionToken = decodeToken(readCookie(request.headers.cookie, LOCAL_SESSION_COOKIE));
+      rawCsrfToken = decodeToken(typeof request.headers["x-csrf-token"] === "string" ? request.headers["x-csrf-token"] : null);
+      const result = await deps.authService.logout(rawSessionToken, rawCsrfToken);
+      if (!result.ok) return sendAuthError(reply, result.code === "UNAVAILABLE" ? 503 : 403, result.code === "UNAVAILABLE" ? "AUTH_UNAVAILABLE" : "AUTH_CSRF_INVALID");
+      reply.header("set-cookie", createClearingCookie());
+      return reply.code(204).send();
+    } finally {
+      rawSessionToken?.fill(0);
+      rawCsrfToken?.fill(0);
+    }
   });
 
   // Аутентифицированные
@@ -255,15 +285,33 @@ export function createApp(deps: AppDeps): OrchestratorApp {
   return app;
 }
 
-function safeEquals(actual: string, expected: string): boolean {
-  const actualBuffer = Buffer.from(actual);
-  const expectedBuffer = Buffer.from(expected);
-  return actualBuffer.length === expectedBuffer.length && timingSafeEqual(actualBuffer, expectedBuffer);
+function sendAuthError(reply: { code(status: number): { send(body: unknown): unknown }; send(body: unknown): unknown }, status: number, code: AuthErrorCode): unknown {
+  const messages: Record<AuthErrorCode, string> = {
+    AUTH_INVALID_REQUEST: "Некорректный запрос.",
+    AUTH_INVALID_CREDENTIALS: "Неверные учётные данные.",
+    AUTH_ORIGIN_INVALID: "Недопустимый Origin.",
+    AUTH_UNAVAILABLE: "Аутентификация временно недоступна.",
+    AUTH_SESSION_REQUIRED: "Требуется сессия.",
+    AUTH_SESSION_INVALID: "Сессия недействительна.",
+    AUTH_CSRF_INVALID: "Недействительный CSRF-токен.",
+  };
+  return reply.code(status).send({ contractVersion: AUTH_CONTRACT_VERSION, error: { code, message: messages[code] } });
 }
 
-/** Создаёт неперсистентную browser-session cookie, недоступную JavaScript. */
-function createSessionCookie(token: string): string {
-  return `${LOCAL_SESSION_COOKIE}=${token}; HttpOnly; SameSite=Strict; Path=/api/v1`;
+/** Создаёт cookie с immutable absolute expiry и locked browser flags. */
+function createSessionCookie(token: Readonly<Uint8Array>, expiresAt: string): string {
+  return `${LOCAL_SESSION_COOKIE}=${Buffer.from(token).toString("base64url")}; HttpOnly; SameSite=Strict; Path=/api/v1; Max-Age=${AUTH_COOKIE_CONTRACT.maxAgeSeconds}; Expires=${new Date(expiresAt).toUTCString()}`;
+}
+
+/** Создаёт clearing cookie с теми же защитными атрибутами. */
+function createClearingCookie(): string {
+  return `${LOCAL_SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Path=/api/v1; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT`;
+}
+
+function decodeToken(value: string | null): Uint8Array | null {
+  if (!value || !/^[A-Za-z0-9_-]{43}$/.test(value)) return null;
+  const decoded = Buffer.from(value, "base64url");
+  return decoded.length === AUTH_TOKEN_BYTES && decoded.toString("base64url") === value ? decoded : null;
 }
 
 /** Извлекает известную cookie без интерпретации остальных недоверенных значений. */

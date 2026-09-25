@@ -1,18 +1,14 @@
 #!/usr/bin/env node
-// Запуск сервера Ebb Orchestrator
-import { spawn } from 'node:child_process';
-import { join } from 'node:path';
+// Запуск сервера Ebb Orchestrator без bootstrap-файлов и shell-подстановок.
+import { spawn } from "node:child_process";
 
-const env = process.env;
-env.EBB_ORCHESTRATOR_BOOTSTRAP_FILE =
-  process.env.EBB_ORCHESTRATOR_BOOTSTRAP_FILE ||
-  join(process.env.USERPROFILE, '.ebb-orchestrator', 'bootstrap.json');
-
-const child = spawn('node', ['apps/server/dist/main.js'], {
-  stdio: 'inherit',
-  env,
+const child = spawn(process.execPath, ["apps/server/dist/main.js"], {
+  stdio: "inherit",
+  env: process.env,
+  shell: false,
 });
 
-child.on('exit', (code) => {
-  process.exit(code);
+child.on("exit", (code, signal) => {
+  if (signal) process.kill(process.pid, signal);
+  else process.exit(code ?? 1);
 });

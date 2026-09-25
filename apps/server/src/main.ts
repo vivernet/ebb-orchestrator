@@ -15,10 +15,9 @@
  * 7. Start HTTP server
  */
 import { createApp } from "./app/create-app.js";
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawn } from "node:child_process";
 import { createSqliteDatabase } from "./platform/database/sqlite-database.js";
 import { runMigrations, type Migration } from "./platform/database/migrator.js";
 import { resolveOrchestratorHome } from "./platform/home/orchestrator-home.js";
@@ -55,6 +54,12 @@ import { ArtifactStore } from "./platform/artifacts/artifact-store.js";
 import { WorktreeManager } from "./modules/git/worktree-manager.js";
 import { TaskWorkspaceProvisioner } from "./modules/git/task-workspace-provisioner.js";
 import { StartupReconciler, failClosedStartupReconciliation } from "./platform/process/startup-reconciler.js";
+import { runStartupBoundary } from "./platform/process/startup-boundary.js";
+import { createAuthRepository } from "./platform/security/auth-repository.js";
+import { createNodeDigestPort, createNodeRandomTokenPort } from "./platform/security/auth-ports.js";
+import { createArgon2PasswordHasher } from "./platform/security/password-hasher.js";
+import { createAuthService } from "./platform/security/auth-service.js";
+import { ensureLocalUser } from "./platform/security/local-user-wizard.js";
 
 const host = "127.0.0.1";
 const port = Number(process.env["PORT"] ?? 3000);
@@ -79,7 +84,23 @@ try {
 }
 
 // Запускает migrations ДО создания любых сервисов которые зависят от таблиц.
-runMigrations(database, migrations);
+try {
+  runMigrations(database, migrations);
+} catch {
+  await failClosedStartup("Database migration failed; server stopped before listener and workers.");
+}
+
+// Проверяет durable singleton user после migrations, но до listener, workers и READY.
+const authPasswordHasher = createArgon2PasswordHasher();
+const authRepository = createAuthRepository(
+  database,
+  authPasswordHasher,
+  createNodeRandomTokenPort(),
+  createNodeDigestPort(),
+);
+const authService = createAuthService(authRepository, authPasswordHasher, { now: () => new Date().toISOString() });
+// Проверка singleton выполняется границей запуска после полной composition,
+// но до lifecycle workers, listener и READY.
 
 // Создаёт единственный production экземпляр SchedulerService общий везде.
 const scheduler = new SchedulerService(database);
@@ -129,7 +150,7 @@ const secretStore = infisicalOptions
 mkdirSync(home.artifacts, { recursive: true });
 const artifactStore = new ArtifactStore(home.artifacts, new ArtifactRepository(database));
 
-const app = createApp({ host, port, db: database, scheduler, runtime, runService, secretStore, epicOrchestrator, status, eventBus, ...(existsSync(webRoot) ? { webRoot } : {}) });
+const app = createApp({ host, port, db: database, scheduler, runtime, runService, secretStore, epicOrchestrator, status, eventBus, authService, ...(existsSync(webRoot) ? { webRoot } : {}) });
 
 // Регистрирует шаги reconciliation которые будут запущены после migrations.
 const reconciler = new StartupReconciler();
@@ -210,8 +231,20 @@ process.on("SIGTERM", () => {
 });
 
 let serverReady = false;
+async function ensureLocalUserBeforeStartup(): Promise<void> {
+  try {
+    await ensureLocalUser(authRepository, process.stdin, process.stdout);
+  } catch (error) {
+    const message = error instanceof Error && /interactive TTY/i.test(error.message)
+      ? error.message
+      : "Local user initialization failed; server stopped before listener and workers.";
+    await failClosedStartup(message);
+  }
+}
+
 // Полный production startup: STARTING → RECOVERING → reconciliation → READY.
-await startSystem({
+async function startLifecycle(): Promise<void> {
+  await startSystem({
   instanceLock: lock,
   lockAlreadyAcquired: true,
   database: { open: async () => {}, close: () => database.close() },
@@ -242,29 +275,34 @@ await startSystem({
     await failClosedStartupReconciliation(report, status);
   }],
   workers,
-});
+  });
+}
 
-await app.listen({ host, port });
+await runStartupBoundary({
+  ensureLocalUser: ensureLocalUserBeforeStartup,
+  startSystem: startLifecycle,
+  listen: async () => app.listen({ host, port }),
+});
 
 serverReady = true;
 console.log(`[ebb-orchestrator] listening on http://${host}:${port}`);
 console.log(`[ebb-orchestrator] status: ${status.get()}`);
-const bootstrapFile = process.env["EBB_ORCHESTRATOR_BOOTSTRAP_FILE"];
-if (bootstrapFile && app.bootstrapToken) {
-  mkdirSync(dirname(bootstrapFile), { recursive: true });
-  writeFileSync(bootstrapFile, JSON.stringify({ bootstrapToken: app.bootstrapToken }), { encoding: "utf8", mode: 0o600 });
-}
-if (existsSync(webRoot) && app.bootstrapToken && process.env["EBB_ORCHESTRATOR_NO_OPEN_UI"] !== "1") {
-  openLocalUi(`http://${host}:${port}/#ebb-bootstrap=${encodeURIComponent(app.bootstrapToken)}`);
-}
 
-function openLocalUi(url: string): void {
-  const command = process.platform === "win32" ? "explorer.exe" : process.platform === "darwin" ? "open" : "xdg-open";
-  const child = spawn(command, [url], { detached: true, stdio: "ignore", windowsHide: true, shell: false });
-  child.once("error", () => {
-    console.error("[ebb-orchestrator] unable to open the local web UI automatically");
-  });
-  child.unref();
+/** Завершает startup до READY без вывода исходных storage/secret errors. */
+async function failClosedStartup(message: string): Promise<never> {
+  console.error(`[ebb-orchestrator] ${message}`);
+  try {
+    database.close();
+  } catch {
+    // Закрытие уже закрытого/неполного handle идемпотентно для startup cleanup.
+  }
+  try {
+    await lock.release();
+  } catch {
+    // Освобождение отсутствующего lock не должно скрывать исходный startup отказ.
+  }
+  process.exit(1);
+  throw new Error(message);
 }
 
 /**

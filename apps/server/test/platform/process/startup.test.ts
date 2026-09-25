@@ -13,6 +13,9 @@ import {
 } from "../../../src/platform/process/system-lifecycle.js";
 import { SingleInstanceLock } from "../../../src/platform/process/single-instance-lock.js";
 import { failClosedStartupReconciliation, StartupReconciler } from "../../../src/platform/process/startup-reconciler.js";
+import { ensureLocalUser } from "../../../src/platform/security/local-user-wizard.js";
+import type { AuthRepository } from "../../../src/platform/security/auth-repository.js";
+import { runStartupBoundary } from "../../../src/platform/process/startup-boundary.js";
 
 describe("startup lifecycle", () => {
   let tmpDir: string;
@@ -391,6 +394,59 @@ describe("startup lifecycle", () => {
     await expect(lock2.acquire()).rejects.toThrow();
 
     await lock.release();
+  });
+
+  it("does not start workers when migrations fail", async () => {
+    const workerStart = vi.fn(async () => {});
+    const deps: SystemLifecycleDeps = {
+      instanceLock: { acquire: async () => ({ pid: 1 }), release: async () => {} },
+      lockAlreadyAcquired: true,
+      database: { open: async () => {}, close: () => {} },
+      migrator: { run: async () => { throw new Error("migration failed"); } },
+      status: { get: () => "STARTING", set: async () => {} },
+      reconcileOutbox: async () => {},
+      reconcileJobs: async () => {},
+      reconcileArtifacts: async () => {},
+      additionalReconcilers: [],
+      workers: [{ start: workerStart, stop: async () => {} }],
+    };
+
+    await expect(startSystem(deps)).rejects.toThrow("migration failed");
+    expect(workerStart).not.toHaveBeenCalled();
+  });
+
+  it("checks the singleton after migrations and skips the prompt on a second startup", async () => {
+    const steps: string[] = ["migrations"];
+    const hasLocalUser = vi.fn(async () => {
+      steps.push("has local user");
+      return true;
+    });
+    const repository = { hasLocalUser } as unknown as AuthRepository;
+
+    await expect(ensureLocalUser(
+      repository,
+      {} as NodeJS.ReadStream,
+      {} as NodeJS.WriteStream,
+      { now: () => "2030-01-01T00:00:00.000Z" },
+    )).resolves.toBe("EXISTING");
+
+    expect(steps).toEqual(["migrations", "has local user"]);
+    expect(hasLocalUser).toHaveBeenCalledOnce();
+  });
+
+  it("does not start workers or listen when the local-user wizard fails", async () => {
+    const startWorkers = vi.fn(async () => {});
+    const listen = vi.fn(async () => {});
+    const wizardError = new Error("wizard failed");
+
+    await expect(runStartupBoundary({
+      ensureLocalUser: async () => { throw wizardError; },
+      startSystem: async () => { await startWorkers(); },
+      listen,
+    })).rejects.toThrow(wizardError);
+
+    expect(startWorkers).not.toHaveBeenCalled();
+    expect(listen).not.toHaveBeenCalled();
   });
 
   it("system-lifecycle StatusTracker exposes correct status", async () => {

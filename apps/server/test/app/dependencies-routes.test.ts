@@ -5,6 +5,7 @@ import { runMigrations, type Migration } from "../../src/platform/database/migra
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createTestAuthService, TEST_COOKIE, TEST_CSRF_TOKEN } from "../helpers/auth.js";
 
 const migrationDir = fileURLToPath(new URL("../../src/platform/database/migrations/", import.meta.url));
 const migrations: Migration[] = readdirSync(migrationDir).filter((file) => file.endsWith(".sql")).map((file) => ({
@@ -17,7 +18,8 @@ function setup() {
   const db = createSqliteDatabase(":memory:");
   runMigrations(db, migrations);
   const scheduler = { dispatchTask() {}, releaseTask() {}, projectProjection: () => ({ global: { active: 0, max: 1 }, projects: [] }) };
-  const app = createApp({ db, scheduler: scheduler as never, runService: {} as never });
+  const authService = createTestAuthService();
+  const app = createApp({ db, scheduler: scheduler as never, runService: {} as never, authService });
   const now = new Date().toISOString();
   db.run("INSERT INTO projects (id,name,display_name,status,created_at,updated_at) VALUES ('project-1','p','P','ACTIVE',$now,$now)", { now });
   for (const id of ["task-a", "task-b", "task-c"]) {
@@ -26,27 +28,30 @@ function setup() {
       { id, contract: JSON.stringify({ version: 1, goal: id, context: "test", requirements: [], acceptanceCriteria: [], dependencies: [], nonGoals: [], definitionOfDone: [] }), now },
     );
   }
-  return { app, db };
+  return { app, db, authService };
 }
 
-function headers(app: ReturnType<typeof createApp>) {
-  return { authorization: `Bearer ${app.sessionToken}`, origin: "http://127.0.0.1:3000", "x-csrf-token": app.csrfToken };
+function headers(_app: ReturnType<typeof createApp>) {
+  return { cookie: TEST_COOKIE, origin: "http://127.0.0.1:3000", "x-csrf-token": TEST_CSRF_TOKEN };
 }
 
 describe("task dependency routes", () => {
   it("lists, creates, and removes dependencies", async () => {
-    const { app, db } = setup();
+    const { app, db, authService } = setup();
     const auth = headers(app);
     const empty = await app.inject({ method: "GET", url: "/api/v1/tasks/task-b/dependencies", headers: auth });
     expect(empty.statusCode).toBe(200);
     expect(JSON.parse(empty.body).dependencies).toEqual([]);
 
+    authService.resetAuthOperationCounts();
     const created = await app.inject({ method: "POST", url: "/api/v1/tasks/task-b/dependencies", headers: auth, payload: { dependsOnTaskId: "task-a" } });
     expect(created.statusCode).toBe(201);
     expect(JSON.parse(created.body).dependency).toMatchObject({ taskId: "task-b", dependsOnTaskId: "task-a", type: "BLOCKING" });
 
+    authService.resetAuthOperationCounts();
     const listed = await app.inject({ method: "GET", url: "/api/v1/tasks/task-b/dependencies", headers: auth });
     expect(JSON.parse(listed.body).dependencies).toHaveLength(1);
+    authService.resetAuthOperationCounts();
     const removed = await app.inject({ method: "DELETE", url: "/api/v1/tasks/task-b/dependencies/task-a", headers: auth });
     expect(removed.statusCode).toBe(200);
     expect(JSON.parse(removed.body)).toEqual({ ok: true });
@@ -75,7 +80,7 @@ describe("task dependency routes", () => {
 
   it("returns 503 when dependency storage is unavailable", async () => {
     const scheduler = { dispatchTask() {}, releaseTask() {}, projectProjection: () => ({ global: { active: 0, max: 1 }, projects: [] }) };
-    const app = createApp({ scheduler: scheduler as never });
+    const app = createApp({ scheduler: scheduler as never, authService: createTestAuthService() });
     const response = await app.inject({ method: "GET", url: "/api/v1/tasks/task-a/dependencies", headers: headers(app) });
     expect(response.statusCode).toBe(503);
     await app.close();

@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { EpicStartInput } from "../../src/modules/planning/epic-orchestrator.js";
 import type { PlanningPlan } from "../../src/modules/planning/planning-types.js";
+import { createTestAuthService, TEST_COOKIE, TEST_CSRF_TOKEN } from "../helpers/auth.js";
 
 const migrationDir = fileURLToPath(new URL("../../src/platform/database/migrations/", import.meta.url));
 const migrations: Migration[] = readdirSync(migrationDir).filter((file) => file.endsWith(".sql")).map((file) => ({
@@ -24,12 +25,12 @@ function setup() {
   db.run("INSERT INTO onboarding_configs(project_id,repository_path,facts_json,proposed_json,status,approval_id,created_at,updated_at,activated_at) VALUES ('project-1','C:\\repo','{}','{\"defaultBranch\":\"master\"}','ACTIVE','onboarding-1',$now,$now,$now)", { now });
   const start = vi.fn(async (input: EpicStartInput): Promise<PlanningPlan> => ({ id: "plan-1", status: "PENDING", approvalRequired: true, temporaryIdMap: {}, createdAt: now, ...input }));
   const approveAndRun = vi.fn(async () => ({ epicId: "epic-1", sequence: ["plan"], childStatuses: ["DRAFT"], finalApprovalRequired: true, pendingFinalApproval: true, finalApprovalId: "approval-1" }));
-  const app = createApp({ db, scheduler: {} as never, runService: {} as never, epicOrchestrator: { start, approveAndRun } });
+  const app = createApp({ db, scheduler: {} as never, runService: {} as never, epicOrchestrator: { start, approveAndRun }, authService: createTestAuthService() });
   return { db, app, start, approveAndRun, now };
 }
 
-function headers(app: ReturnType<typeof createApp>) {
-  return { authorization: `Bearer ${app.sessionToken}`, origin: "http://127.0.0.1:3000", "x-csrf-token": app.csrfToken };
+function headers(_app: ReturnType<typeof createApp>) {
+  return { cookie: TEST_COOKIE, origin: "http://127.0.0.1:3000", "x-csrf-token": TEST_CSRF_TOKEN };
 }
 
 const validBody = {

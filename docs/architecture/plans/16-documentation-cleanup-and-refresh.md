@@ -3,7 +3,7 @@ id: plan-16
 kind: plan
 roadmap: 01
 stage: 16
-status: planned
+status: in_progress
 created: 2026-09-25
 updated: 2026-09-25
 title: Очистка и актуализация документации Ebb Orchestrator

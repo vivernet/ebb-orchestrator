@@ -3,7 +3,7 @@ id: plan-15-01
 kind: plan
 roadmap: 01
 stage: 13
-status: planned
+status: completed
 title: Контракт auth и bounded crypto feasibility
 created: 2026-09-25
 updated: 2026-09-25
@@ -21,7 +21,7 @@ evidence:
 
 # 15-01. Versioned auth/onboarding contract и crypto feasibility
 
-**Результат:** первым deliverable добавляются и проверяются exact `argon2@0.45.1` dependency/lockfile entries на Node `>=24.15 <25`/Windows; затем до начала `15-02`–`15-08` в `packages/contracts/src/api.ts` зафиксированы versioned public DTO/status/error/cookie/CSRF contracts и в server security plan зафиксированы versioned TypeScript ports, error mapping, transaction ownership и raw-secret lifetime rules. После этого downstream tasks не выбирают поля, коды или security semantics самостоятельно.
+**Результат:** первым deliverable добавляются и проверяются exact `argon2@0.45.1` dependency/lockfile entries на Node `>=24.15 <25`/Windows; затем до начала `15-02`–`15-08` в `packages/contracts/src/api.ts` зафиксированы versioned public DTO/status/error/cookie/CSRF contracts и в server security plan зафиксированы versioned TypeScript ports, error mapping, transaction ownership и raw-secret lifetime rules. `AUTH_PORT_CONTRACT_VERSION=2` утверждает атомарную авторизацию mutation; `validateCsrf` не является и не может стать частью контракта. После этого downstream tasks не выбирают поля, коды или security semantics самостоятельно.
 
 ## Deliverable 1 — pinned Argon2id dependency and feasibility gate
 
@@ -41,10 +41,12 @@ argon2@0.45.1:
 
 Its snapshot must resolve `@phc/format: 1.0.0`, `cross-env: 10.1.0`, `node-addon-api: 8.9.2` and `node-gyp-build: 4.8.4`; the command, not hand-edited YAML, is authoritative for those transitive entries. `--allow-build=argon2` is required by the repository's pnpm 12.4.2 build-script policy so the native addon install script is not silently skipped.
 
-Create `apps/server/test/platform/security/password-hash-feasibility.test.ts` before implementing the adapter. The test must run on the supported repository matrix (`node >=24.15 <25`); on Windows x64 it must import the native `argon2` binding, hash and verify a known test password, reject a wrong password, create two different salts for two hashes, and report only non-secret measurements. The observed feasibility command on this Windows checkout is:
+Create `apps/server/test/platform/security/password-hash-feasibility.test.ts` before implementing the adapter. The portable tests must run on the supported repository matrix (`node >=24.15 <25`); a conditional Windows x64 assertion must import the native `argon2` binding on that matrix. Across supported hosts it must hash and verify a known test password, reject a wrong password, create two different salts for two hashes, and report only non-secret measurements. The Windows x64 assertion additionally verifies the checked-in Node 24 runtime and native binding.
+
+The portable single-file feasibility command is:
 
 ```text
-pnpm --filter @ebb-orchestrator/server test -- password-hash-feasibility.test.ts
+pnpm --filter @ebb-orchestrator/server exec vitest run test/platform/security/password-hash-feasibility.test.ts
 ```
 
 The adapter is locked to Argon2id version 19 with these explicit parameters: `memoryCost=65536` KiB (64 MiB), `timeCost=3`, `parallelism=4`, `hashLength=32` bytes, `saltLength=16` bytes, `type=argon2.argon2id`. The stored value is the complete PHC string with the `argon2id`/`v=19` marker and encoded salt/digest, not raw derived bytes; the expected parameter serialization is `$argon2id$v=19$m=65536,p=4,t=3$<salt>$<digest>`.
@@ -69,7 +71,7 @@ Downstream usage is closed: `apps/server/src/platform/security/password-hasher.t
 
 `packages/contracts` remains a dependency-free shared-contract package: it may expose serializable DTOs, schemas, paths, status unions and error-code unions, but it must not import `apps/server` or publish `AuthRepository`, `AuthService`, `Database`, `RawSecretBytes` or other implementation ports. The only test that asserts the combined public DTO contract **and** the server-owned `AuthRepository`/`AuthService` signatures is `apps/server/test/platform/security/auth-onboarding-contract.test.ts`. That server-owned test may import shared serializable values from `@ebb-orchestrator/contracts` and implementation ports from `apps/server/src/platform/security/*`; no test under `packages/contracts/test/` may import server code or assert server-owned signatures. The contracts package gate is limited to its own typecheck/build/test surface, while the server contract gate owns the port-signature and transaction/raw-secret assertions described below.
 
-`15-01` contract gate test is exactly `apps/server/test/platform/security/auth-onboarding-contract.test.ts`. RED asserts that `AUTH_CONTRACT_VERSION`, `ONBOARDING_CONTRACT_VERSION`, `AUTH_COOKIE_CONTRACT`, `AUTH_IDLE_TTL_SECONDS`, `AUTH_ABSOLUTE_TTL_SECONDS`, `AUTH_TOKEN_BYTES`, `apiPaths.sessionLogin`, `apiPaths.session`, `apiPaths.sessionLogout`, all onboarding builders, Zod schemas/types and the two error-code unions are absent or incompatible before the contract edit; GREEN asserts exact key sets, literal versions, allowed statuses/codes, exact cookie directives/TTL constants, no `sessionBootstrap`, path-segment encoding, and the route/status table above. It also asserts `LogoutResult` is exactly `REVOKED | INVALID_SESSION | CSRF_INVALID`, that the server-owned repository/service method signatures carry both nullable raw session/CSRF inputs plus the injected timestamp, and that no `packages/contracts` test imports server implementation. This test is the first downstream dependency gate and must pass before any server/Web/E2E contract consumer is changed.
+`15-01` contract gate test is exactly `apps/server/test/platform/security/auth-onboarding-contract.test.ts`. RED asserts that `AUTH_CONTRACT_VERSION`, `ONBOARDING_CONTRACT_VERSION`, `AUTH_COOKIE_CONTRACT`, `AUTH_IDLE_TTL_SECONDS`, `AUTH_ABSOLUTE_TTL_SECONDS`, `AUTH_TOKEN_BYTES`, `apiPaths.sessionLogin`, `apiPaths.session`, `apiPaths.sessionLogout`, all onboarding builders, Zod schemas/types and the two error-code unions are absent or incompatible before the contract edit; GREEN asserts exact key sets, literal public versions, `AUTH_PORT_CONTRACT_VERSION=2`, allowed statuses/codes, exact cookie directives/TTL constants, no `sessionBootstrap`, path-segment encoding, and the route/status table above. It also asserts `LogoutResult` is exactly `REVOKED | INVALID_SESSION | CSRF_INVALID`, the exact `authenticateCsrfAndTouch(session, nullableCsrf, now)` repository/service signatures and atomic transaction requirement, absence of the forbidden standalone CSRF-validation symbol, and that no `packages/contracts` test imports server implementation. This test is the first downstream dependency gate and must pass before any server/Web/E2E contract consumer is changed.
 
 
 ## Auth contract v1 — exact public HTTP surface
@@ -88,10 +90,10 @@ Downstream usage is closed: `apps/server/src/platform/security/password-hasher.t
 
 ## Versioned TypeScript ports — contract gate for 15-02 and 15-04
 
-Before any downstream implementation, `15-01` locks `AUTH_PORT_CONTRACT_VERSION = 1` and the following TypeScript signatures. The symbols may be implemented in their owning files (`password-hasher.ts`, `auth-repository.ts`, `auth-service.ts`); consumers must not narrow, widen or rename them without a new contract version.
+Before any downstream implementation, `15-01` supersedes the earlier unimplemented port shape and locks `AUTH_PORT_CONTRACT_VERSION = 2`. The symbols may be implemented in their owning files (`password-hasher.ts`, `auth-repository.ts`, `auth-service.ts`); consumers must not narrow, widen or rename them without a new contract version. `validateCsrf` is deliberately absent: a separate validation followed by `authenticateAndTouch` permits a CSRF-rotation race and is forbidden.
 
 ```ts
-export const AUTH_PORT_CONTRACT_VERSION = 1 as const;
+export const AUTH_PORT_CONTRACT_VERSION = 2 as const;
 export type UtcTimestamp = string; // RFC3339 UTC, ...Z
 export type RawSecretBytes = Uint8Array; // mutable caller-owned bytes
 
@@ -117,6 +119,7 @@ export type AuthPortErrorCode =
   | "UNAVAILABLE";
 export type RevokeResult = "REVOKED" | "ALREADY_REVOKED";
 export type LogoutResult = "REVOKED" | "INVALID_SESSION" | "CSRF_INVALID";
+export type AuthenticatedMutationResult = AuthSessionRecord | "INVALID_SESSION" | "CSRF_INVALID";
 export interface LocalUserRecord {
   id: 1;
   passwordHash: string;
@@ -144,6 +147,7 @@ export interface AuthRepository {
   findLocalUser(): Promise<LocalUserRecord | null>;
   issueSession(now: UtcTimestamp): Promise<IssuedSession>;
   authenticateAndTouch(rawSessionToken: Readonly<RawSecretBytes>, now: UtcTimestamp): Promise<AuthSessionRecord | null>;
+  authenticateCsrfAndTouch(rawSessionToken: Readonly<RawSecretBytes>, rawCsrfToken: Readonly<RawSecretBytes> | null, now: UtcTimestamp): Promise<AuthenticatedMutationResult>;
   authenticateAndRotateCsrf(rawSessionToken: Readonly<RawSecretBytes>, now: UtcTimestamp): Promise<RotatedCsrf | null>;
   revokeByToken(rawSessionToken: Readonly<RawSecretBytes>, now: UtcTimestamp): Promise<RevokeResult>;
   logout(rawSessionToken: Readonly<RawSecretBytes> | null, rawCsrfToken: Readonly<RawSecretBytes> | null, now: UtcTimestamp): Promise<LogoutResult>;
@@ -163,6 +167,10 @@ export interface AuthService {
     { ok: true; value: AuthSessionRecord } |
     { ok: false; code: AuthPortErrorCode }
   >;
+  authenticateCsrfAndTouch(rawSessionToken: Readonly<RawSecretBytes>, rawCsrfToken: Readonly<RawSecretBytes> | null): Promise<
+    { ok: true; value: AuthSessionRecord } |
+    { ok: false; code: "SESSION_INVALID" | "CSRF_INVALID" | "UNAVAILABLE" }
+  >;
   logout(rawSessionToken: Readonly<RawSecretBytes> | null, rawCsrfToken: Readonly<RawSecretBytes> | null): Promise<
     { ok: true; value: "REVOKED" | "IDEMPOTENT_INVALID_SESSION" } |
     { ok: false; code: "CSRF_INVALID" | "UNAVAILABLE" }
@@ -173,11 +181,11 @@ export interface AuthService {
 
 The composition signatures are fixed. `SqliteAuthRepository` is constructed as `new SqliteAuthRepository(database: Database, passwordHasher: PasswordHasher, randomTokenPort: RandomTokenPort, digestPort: DigestPort)` and `createAuthRepository(database: Database, passwordHasher: PasswordHasher, randomTokenPort: RandomTokenPort, digestPort: DigestPort): AuthRepository` returns that implementation. The only production implementations are `createNodeRandomTokenPort(): RandomTokenPort` and `createNodeDigestPort(): DigestPort` from `apps/server/src/platform/security/auth-ports.ts`; they are composed in `main.ts` and passed to the repository, while tests inject deterministic fakes. `RandomTokenPort` and `DigestPort` belong to this repository boundary because `issueSession`, CSRF rotation and token-hash persistence are repository operations; they are not fields or constructor arguments of `AuthService`. `LocalAuthService` is constructed as `new LocalAuthService(repository: AuthRepository, passwordHasher: PasswordHasher, clock: AuthClock)` and `createAuthService(repository: AuthRepository, passwordHasher: PasswordHasher, clock: AuthClock): AuthService` returns it. No service or route may instantiate crypto ports or contain fallback randomness/digest logic.
 
-`AuthRepository.logout(rawSessionToken, rawCsrfToken, now)` has exactly three classifications: `REVOKED` means an active row matched the current CSRF and was revoked; `INVALID_SESSION` means null or a raw session buffer whose length is not `AUTH_TOKEN_BYTES`, unknown, revoked, idle-expired or absolute-expired session and ignores CSRF; `CSRF_INVALID` means an active row with null or a raw CSRF buffer whose length is not `AUTH_TOKEN_BYTES`, stale or wrong CSRF. Cookie/header decoding and base64url-without-padding validation happen at the HTTP boundary; the repository receives decoded raw bytes and treats any non-32-byte buffer as malformed. Origin is not a repository concern and is checked before this call by the route. Repository failures reject and map to `UNAVAILABLE`; they are not classifications.
+`AuthRepository.authenticateCsrfAndTouch(rawSessionToken, rawCsrfToken, now)` is the only authorized-mutation operation. In one `BEGIN IMMEDIATE` transaction it selects by session digest, evaluates the active predicate, checks the current CSRF digest for an active row, and conditionally updates `last_seen_at`/`idle_expires_at`; it returns `INVALID_SESSION` for null/malformed/unknown/revoked/idle-expired/absolute-expired session, `CSRF_INVALID` for missing/malformed/stale/wrong CSRF on an active row, or the touched `AuthSessionRecord`. Its service maps these exact classifications without a prior route read or second transaction. `AuthRepository.logout(rawSessionToken, rawCsrfToken, now)` has exactly three classifications: `REVOKED` means an active row matched the current CSRF and was revoked; `INVALID_SESSION` means null or a raw session buffer whose length is not `AUTH_TOKEN_BYTES`, unknown, revoked, idle-expired or absolute-expired session and ignores CSRF; `CSRF_INVALID` means an active row with null or a raw CSRF buffer whose length is not `AUTH_TOKEN_BYTES`, stale or wrong CSRF. Cookie/header decoding and base64url-without-padding validation happen at the HTTP boundary; the repository receives decoded raw bytes and treats any non-32-byte buffer as malformed. Origin is not a repository concern and is checked before this call by the route. Repository failures reject and map to `UNAVAILABLE`; they are not classifications.
 
 Port error mapping is fixed: wrong password and missing singleton user map to `AUTH_INVALID_CREDENTIALS`; malformed/unknown/revoked/idle-expired/absolute-expired session maps to `AUTH_SESSION_INVALID`; a missing or stale CSRF for an active session maps to `AUTH_CSRF_INVALID`; malformed JSON maps to `AUTH_INVALID_REQUEST`; missing or non-exact Origin maps to `AUTH_ORIGIN_INVALID`; database, migration, hasher or random/digest failure maps to `AUTH_UNAVAILABLE`. HTTP route checks own `Origin`/body precedence, maps only these codes, and never exposes `AuthPortErrorCode` or storage details.
 
-Raw-secret and transaction rules are part of version 1. The HTTP/TTY/E2E boundary creates one mutable `RawSecretBytes`, passes it by `Readonly` view, and zeroes the owning buffer in `finally` after the port call and cookie/response serialization; no port retains a reference or returns a raw password. `issueSession`/`login` raw session bytes are used only to set the HttpOnly cookie and are then zeroed; raw CSRF bytes may cross only the dedicated `csrfToken` response field and are zeroed after serialization. Passwords, raw session/CSRF values and derived bytes never enter logs, errors, DTOs, argv, env, files, SQLite or `SecretStore`; only PHC and lowercase SHA-256 digests persist. `AuthRepository` owns the `Database.transaction` for `createLocalUser`, `issueSession`, `authenticateAndTouch`, `authenticateAndRotateCsrf`, `revokeByToken`, `logout` and `revokeExpired`; the validity predicate and its write are one transaction, while `AuthService`, routes and fixtures must not open nested transactions or authorize from a read performed outside that transaction. `findLocalUser`/`hasLocalUser` are read-only and never authorize a request. A failed transaction changes neither auth row nor timestamp/digest. For `logout`, the repository begins one `BEGIN IMMEDIATE`, selects the row by session digest, evaluates the active predicate `revoked_at IS NULL AND $now < idle_expires_at AND $now < absolute_expires_at`, compares the CSRF digest only for an active row, and conditionally updates `revoked_at` only when both predicates match. Null/malformed/unknown/expired/revoked session and wrong CSRF return without any write or timestamp change.
+Raw-secret and transaction rules are part of version 1. The HTTP/TTY/E2E boundary creates one mutable `RawSecretBytes`, passes it by `Readonly` view, and zeroes the owning buffer in `finally` after the port call and cookie/response serialization; no port retains a reference or returns a raw password. `issueSession`/`login` raw session bytes are used only to set the HttpOnly cookie and are then zeroed; raw CSRF bytes may cross only the dedicated `csrfToken` response field and are zeroed after serialization. Passwords, raw session/CSRF values and derived bytes never enter logs, errors, DTOs, argv, env, files, SQLite or `SecretStore`; only PHC and lowercase SHA-256 digests persist. `AuthRepository` owns the `Database.transaction` for `createLocalUser`, `issueSession`, `authenticateAndTouch`, `authenticateCsrfAndTouch`, `authenticateAndRotateCsrf`, `revokeByToken`, `logout` and `revokeExpired`; the validity predicate and its write are one transaction, while `AuthService`, routes and fixtures must not open nested transactions or authorize from a read performed outside that transaction. No route may call a `validateCsrf` seam or compose separate validation/touch calls. `findLocalUser`/`hasLocalUser` are read-only and never authorize a request. A failed transaction changes neither auth row nor timestamp/digest. For `logout`, the repository begins one `BEGIN IMMEDIATE`, selects the row by session digest, evaluates the active predicate `revoked_at IS NULL AND $now < idle_expires_at AND $now < absolute_expires_at`, compares the CSRF digest only for an active row, and conditionally updates `revoked_at` only when both predicates match. Null/malformed/unknown/expired/revoked session and wrong CSRF return without any write or timestamp change.
 
 ## Auth contract v1 — exact public HTTP surface
 
@@ -212,9 +220,9 @@ Raw-secret and transaction rules are part of version 1. The HTTP/TTY/E2E boundar
 
 ## Acceptance and commands
 
-- `pnpm --filter @ebb-orchestrator/server test -- auth-onboarding-contract.test.ts password-hash-feasibility.test.ts` — GREEN only after the algorithm/format/parameters decision is recorded; the server-owned DTO/port contract and native feasibility assertions pass with no secret material in output.
+- `pnpm --filter @ebb-orchestrator/server test:auth-contract` — GREEN only after the algorithm/format/parameters decision is recorded; this package script invokes exactly `auth-onboarding-contract.test.ts` and `password-hash-feasibility.test.ts`, with no secret material in output.
 - `pnpm --filter @ebb-orchestrator/contracts typecheck && pnpm --filter @ebb-orchestrator/contracts test` — PASS for the shared serializable contract package only; no server-owned signature test is placed in this package.
 - `pnpm --filter @ebb-orchestrator/server typecheck` — PASS; the server-owned contract test compiles against the exact local repository/service ports.
-- `pnpm lint` — GREEN; existing `create-app.ts` errors are fixed by downstream implementation, not waived.
+- `pnpm lint` — run as a regression check; the known pre-existing `apps/server/src/app/create-app.ts:199` error remains out of scope and must stay tracked, not weakened.
 
 **Depends on:** none. **Unblocks:** 15-02, 15-03, 15-04, 15-05, 15-06 and the test-only onboarding/auth fixture.

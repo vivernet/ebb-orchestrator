@@ -41,7 +41,7 @@ This roadmap consolidates all stages and plans into a single canonical document.
 | 0 | 3 | 2 | 67% |
 | 10 | 1 | 1 | 100% |
 | 12 | 1 | 0 | 0% |
-| 13 | 9 | 0 | 0% |
+| 13 | 10 | 5 | 50% |
 | 4 | 1 | 1 | 100% |
 | 8 | 1 | 1 | 100% |
 | 9 | 1 | 1 | 100% |
@@ -66,15 +66,16 @@ This roadmap consolidates all stages and plans into a single canonical document.
 | plan-12 | 8 | completed | Web 401 и завершение проекта |
 | plan-13 | 9 | completed | Автоматическая генерация роадмапа |
 | plan-14 | 12 | planned | Дополнительный Docker runtime для Ebb Orchestrator |
-| plan-15-01 | 13 | planned | Контракт auth и bounded crypto feasibility |
-| plan-15-02 | 13 | planned | SQLite auth persistence и session repository |
-| plan-15-03 | 13 | planned | First-run CLI wizard и startup composition |
-| plan-15-04 | 13 | planned | Server auth routes, CSRF и security boundary |
+| plan-15-01 | 13 | completed | Контракт auth и bounded crypto feasibility |
+| plan-15-02 | 13 | completed | SQLite auth persistence и session repository |
+| plan-15-03 | 13 | completed | First-run CLI wizard и startup composition |
+| plan-15-04 | 13 | completed | Server auth routes, CSRF и security boundary |
 | plan-15-05 | 13 | planned | Shared auth contract, Web login/restore и SSE expiry |
 | plan-15-06 | 13 | planned | Atomic onboarding draft contract и scheduler guard |
 | plan-15-07 | 13 | planned | Russian UI, accessibility и bootstrap artifact cleanup |
 | plan-15-08 | 13 | planned | Verification, security evidence и independent plan review |
-| plan-15 | 13 | planned | Устойчивые auth, onboarding и Russian Web UI |
+| plan-15-09 | 13 | completed | Atomic auth v2 prerequisite remediation |
+| plan-15 | 13 | in_progress | Устойчивые auth, onboarding и Russian Web UI |
 | plan-00 | N/A | completed | Documentation Governance Refactoring |
 | plan-00-02 | N/A | superseded | Plan Document |
 | plan-00-03 | N/A | completed | Naming Convention for Implementation Plans |
@@ -101,6 +102,7 @@ plan-15-02 → plan-15-03
 plan-15-01 → plan-15-04
 plan-15-02 → plan-15-04
 plan-15-03 → plan-15-04
+plan-15-09 → plan-15-04
 plan-15-04 → plan-15-05
 plan-15-01 → plan-15-06
 plan-15-04 → plan-15-06
@@ -108,10 +110,14 @@ plan-15-05 → plan-15-06
 plan-15-05 → plan-15-07
 plan-15-06 → plan-15-07
 plan-15-03 → plan-15-08
+plan-15-09 → plan-15-08
 plan-15-04 → plan-15-08
 plan-15-05 → plan-15-08
 plan-15-06 → plan-15-08
 plan-15-07 → plan-15-08
+plan-15-01 → plan-15-09
+plan-15-02 → plan-15-09
+plan-15-03 → plan-15-09
 plan-12 → plan-15
 plan-13 → plan-15
 plan-00-01 → plan-00-05

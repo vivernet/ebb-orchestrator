@@ -5,6 +5,7 @@ import { runMigrations, type Migration } from "../../src/platform/database/migra
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createTestAuthService, TEST_COOKIE, TEST_CSRF_TOKEN } from "../helpers/auth.js";
 
 const migrationDir = fileURLToPath(new URL("../../src/platform/database/migrations/", import.meta.url));
 const migrations: Migration[] = readdirSync(migrationDir).filter((file) => file.endsWith(".sql")).map((file) => ({
@@ -26,12 +27,12 @@ function setup() {
   const merge = { mergeApprovedForIntegration: vi.fn(async () => ({ success: true, subjectId: "epic-1", targetBranch: "master", mergeCommitSha: "sha", resultingTargetSha: "sha", verifiedCompletion: true as const })) };
   const factory = vi.fn(() => merge);
   const epicOrchestrator = { approveFinalMergeAsync: vi.fn(async () => ({ epicId: "epic-1", status: "DONE" })) };
-  const app = createApp({ db, scheduler: scheduler as never, runService: {} as never, finalMergeServiceFactory: factory, epicOrchestrator: epicOrchestrator as never });
+  const app = createApp({ db, scheduler: scheduler as never, runService: {} as never, finalMergeServiceFactory: factory, epicOrchestrator: epicOrchestrator as never, authService: createTestAuthService() });
   return { db, app, factory, merge, epicOrchestrator };
 }
 
-function headers(app: ReturnType<typeof createApp>) {
-  return { authorization: `Bearer ${app.sessionToken}`, origin: "http://127.0.0.1:3000", "x-csrf-token": app.csrfToken };
+function headers(_app: ReturnType<typeof createApp>) {
+  return { cookie: TEST_COOKIE, origin: "http://127.0.0.1:3000", "x-csrf-token": TEST_CSRF_TOKEN };
 }
 
 describe("final merge route", () => {

@@ -8,6 +8,7 @@ import { SchedulerService } from "../../src/modules/scheduler/scheduler-service.
 import { runMigrations, type Migration } from "../../src/platform/database/migrator.js";
 import type { AgentRuntime } from "../../src/modules/runtime/agent-runtime.js";
 import { StatusTracker } from "../../src/platform/process/system-lifecycle.js";
+import { createTestAuthService } from "../helpers/auth.js";
 
 const migrationDir = fileURLToPath(new URL("../../src/platform/database/migrations/", import.meta.url));
 const migrations: Migration[] = readdirSync(migrationDir).filter((file) => file.endsWith(".sql")).map((file) => {
@@ -32,7 +33,7 @@ function makeApp(status = new StatusTracker()) {
   const db = createSqliteDatabase(":memory:");
   runMigrations(db, migrations);
   const scheduler = new SchedulerService(db);
-  return createApp({ db, scheduler, runtime: mockRuntime, status });
+  return createApp({ db, scheduler, runtime: mockRuntime, status, authService: createTestAuthService() });
 }
 
 describe("GET /api/v1/health", () => {

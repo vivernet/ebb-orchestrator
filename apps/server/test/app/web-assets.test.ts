@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { createApp } from '../../src/app/create-app.js';
 import { createSqliteDatabase } from '../../src/platform/database/sqlite-database.js';
 import type { SchedulerService } from '../../src/modules/scheduler/scheduler-service.js';
+import { createTestAuthService } from '../helpers/auth.js';
 
 describe('web UI assets', () => {
   it('serves the built UI and its SPA routes without exposing paths outside the bundle', async () => {
@@ -17,6 +18,7 @@ describe('web UI assets', () => {
         db,
         scheduler: {} as SchedulerService,
         runService: { cancelRun: async () => {} },
+        authService: createTestAuthService(),
         webRoot,
       });
 

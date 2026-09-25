@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { createTestAuthService, TEST_COOKIE, TEST_CSRF_TOKEN } from "../helpers/auth.js";
 
 const migrationDir = fileURLToPath(new URL("../../src/platform/database/migrations/", import.meta.url));
 const migrations: Migration[] = readdirSync(migrationDir).filter((file) => file.endsWith(".sql")).map((file) => ({
@@ -35,7 +36,7 @@ function setup() {
     releaseTask: vi.fn(),
     projectProjection: vi.fn(() => ({ global: { active: 0, max: 1 }, projects: [] })),
   };
-  const app = createApp({ db, scheduler: scheduler as never, runService });
+  const app = createApp({ db, scheduler: scheduler as never, runService, authService: createTestAuthService() });
   const now = new Date().toISOString();
   const workspace = mkdtempSync(join(tmpdir(), "dispatch-workspace-"));
   db.run(
@@ -52,8 +53,8 @@ function setup() {
   return { app, db, runService, scheduler, workspace };
 }
 
-function headers(app: ReturnType<typeof createApp>) {
-  return { authorization: `Bearer ${app.sessionToken}`, origin: "http://127.0.0.1:3000", "x-csrf-token": app.csrfToken };
+function headers(_app: ReturnType<typeof createApp>) {
+  return { cookie: TEST_COOKIE, origin: "http://127.0.0.1:3000", "x-csrf-token": TEST_CSRF_TOKEN };
 }
 
 describe("task dispatch route", () => {
