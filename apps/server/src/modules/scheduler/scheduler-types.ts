@@ -36,7 +36,9 @@ export type WaitReason =
  */
 export type BlockReason =
   | "BLOCKED_BY_WORKFLOW"
-  | "BLOCKED_BY_PROJECT_STATE";
+  | "BLOCKED_BY_PROJECT_STATE"
+  | "PROJECT_NOT_ACTIVE"
+  | "ONBOARDING_NOT_ACTIVE";
 
 /**
  * Статус элигибельности задачи для планирования.

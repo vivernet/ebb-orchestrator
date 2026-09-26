@@ -120,6 +120,8 @@ function findActiveOnboardingRepository(db: Database, subjectId: string, subject
        JOIN approvals onboarding_approval ON onboarding_approval.id = oc.approval_id
       WHERE oc.project_id=$projectId
         AND oc.status='ACTIVE'
+        AND onboarding_approval.subject_type='PROJECT'
+        AND onboarding_approval.subject_id=oc.project_id
         AND onboarding_approval.type='WORKFLOW_CHANGE'
         AND onboarding_approval.status='APPROVED'`,
     { projectId: project.project_id },

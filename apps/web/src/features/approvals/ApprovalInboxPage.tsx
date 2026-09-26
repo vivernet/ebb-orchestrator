@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiPaths } from '@ebb-orchestrator/contracts';
-import { apiClient, toClientPath } from '../../api/client.js';
+import { ApiError, apiClient, toClientPath } from '../../api/client.js';
 import { EmptyState, ErrorAlert, PageState } from '../../components/ui/PageState.js';
 import StatusBadge from '../../components/ui/StatusBadge.js';
 import { useOnSSEReconnect } from '../../hooks/useEventClient.js';
 import { createMutationStore, type MutationState } from '../../state/mutation-store.js';
 import { createQueryStore } from '../../state/query-store.js';
 import { useQuery } from '../../state/use-query.js';
+import { apiErrorMessage, approvalSubjectLabel, approvalTypeLabel } from '../../i18n/ru.js';
 
 interface ApprovalRow {
   id: string;
@@ -67,7 +68,7 @@ export function mapApprovalRow(row: ApprovalRow): Approval {
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : 'unknown error';
+  return apiErrorMessage(error instanceof ApiError ? error.code : undefined);
 }
 
 /**
@@ -97,32 +98,32 @@ export default function ApprovalInboxPage({ projectId }: ApprovalInboxProps) {
     await mutationStore.execute('request-changes', () => apiClient.post(toClientPath(apiPaths.approvals + '/' + id + '/request-changes'), {}), query.refetch).catch(() => undefined);
   };
 
-  const approvals = query.data?.approvals.map(mapApprovalRow) ?? [];
-  const pendingApprovals = approvals.filter((approval) => approval.status === 'pending');
+  const согласований = query.data?.approvals.map(mapApprovalRow) ?? [];
+  const pendingApprovals = согласований.filter((approval) => approval.status === 'pending');
 
-  if (query.status === 'loading' || query.status === 'idle') return <PageState status="loading" message="Loading approvals..." />;
+  if (query.status === 'loading' || query.status === 'idle') return <PageState status="loading" message="Загрузка согласований…" />;
 
   if (query.status === 'error' || !query.data) {
-    return <PageState status="error" title="Approval Inbox" message={`Unable to load approvals: ${errorMessage(query.error)}`} onRetry={retry} />;
+    return <PageState status="error" title="Входящие согласования" message={`Не удалось загрузить согласования: ${errorMessage(query.error)}`} onRetry={retry} />;
   }
 
   return (
     <div className="approval-inbox-page">
-      <h1>Approval Inbox</h1>
-      {mutationState.status === 'error' && <ErrorAlert message={`Unable to update approval: ${errorMessage(mutationState.error)}`} onRetry={retry} />}
-      {pendingApprovals.length === 0 ? <EmptyState message="No pending approvals." /> : (
+      <h1>Входящие согласования</h1>
+      {mutationState.status === 'error' && <ErrorAlert message={`Не удалось обновить согласование: ${errorMessage(mutationState.error)}`} onRetry={retry} />}
+      {pendingApprovals.length === 0 ? <EmptyState message="Нет согласований, ожидающих решения." /> : (
         <ul className="approval-list">
           {pendingApprovals.map((approval) => (
             <li key={approval.id} className="approval-item">
-              <div className="approval-header"><strong>{approval.action}</strong><StatusBadge status={approval.scope} label={approval.scope} /></div>
-              <p className="approval-description">{approval.description}</p>
-              <div className="approval-context"><small>Requested by: {approval.requestedBy}</small></div>
+              <div className="approval-header"><strong>{approvalTypeLabel(approval.action)}</strong><StatusBadge status={approval.scope} label={approval.scope} /></div>
+              <p className="approval-description">{approvalSubjectLabel(approval.description.split(' ')[0] ?? '')} {approval.description.slice(approval.description.indexOf(' ') + 1)}</p>
+              <div className="approval-context"><small>Запросил(а): {approval.requestedBy}</small></div>
               <div className="approval-actions">
-                <button type="button" disabled={mutationState.status === 'pending'} onClick={() => void handleApprove(approval.id)}>Approve</button>
-                <button type="button" disabled={mutationState.status === 'pending'} onClick={() => void handleReject(approval.id)} style={{ marginLeft: '8px' }}>Reject</button>
-                <button type="button" disabled={mutationState.status === 'pending'} onClick={() => void handleRequestChanges(approval.id)} style={{ marginLeft: '8px' }}>Request Changes</button>
+                <button type="button" disabled={mutationState.status === 'pending'} onClick={() => void handleApprove(approval.id)}>Согласовать</button>
+                <button type="button" disabled={mutationState.status === 'pending'} onClick={() => void handleReject(approval.id)} style={{ marginLeft: '8px' }}>Отклонить</button>
+                <button type="button" disabled={mutationState.status === 'pending'} onClick={() => void handleRequestChanges(approval.id)} style={{ marginLeft: '8px' }}>Запросить изменения</button>
               </div>
-              <div className="approval-meta"><small>Created: {new Date(approval.createdAt).toLocaleString()}</small></div>
+              <div className="approval-meta"><small>Создано: {new Date(approval.createdAt).toLocaleString()}</small></div>
             </li>
           ))}
         </ul>

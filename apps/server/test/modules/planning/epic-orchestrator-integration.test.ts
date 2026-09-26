@@ -56,11 +56,13 @@ describe("EpicOrchestrator child integration wiring", () => {
       const projectId = randomUUID();
       const epicId = randomUUID();
       const taskId = randomUUID();
+      const approvalId = randomUUID();
       const now = new Date().toISOString();
       db.run("INSERT INTO projects(id,name,display_name,status,created_at,updated_at) VALUES($id,'p','P','ACTIVE',$now,$now)", { id: projectId, now });
+      db.run("INSERT INTO approvals(id,type,subject_id,subject_type,status,requested_by,created_at) VALUES($approvalId,'WORKFLOW_CHANGE',$projectId,'PROJECT','APPROVED','test',$now)", { approvalId, projectId, now });
       db.run("INSERT INTO epics(id,project_id,display_id,title,status,contract_json,created_at,updated_at) VALUES($id,$projectId,'EPIC-1','E','IN_PROGRESS','{}',$now,$now)", { id: epicId, projectId, now });
       db.run("INSERT INTO tasks(id,project_id,epic_id,display_id,title,status,contract_json,created_at,updated_at) VALUES($id,$projectId,$epicId,'TASK-1','T','INTEGRATION','{}',$now,$now)", { id: taskId, projectId, epicId, now });
-      db.run("INSERT INTO onboarding_configs(project_id,repository_path,facts_json,proposed_json,status,created_at,updated_at) VALUES($projectId,$repo,'{}',$proposed,'ACTIVE',$now,$now)", { projectId, repo: join(root, "journal-repo"), proposed: JSON.stringify({ defaultBranch: "persisted-target" }), now });
+      db.run("INSERT INTO onboarding_configs(project_id,repository_path,facts_json,proposed_json,status,approval_id,created_at,updated_at) VALUES($projectId,$repo,'{}',$proposed,'ACTIVE',$approvalId,$now,$now)", { projectId, repo: join(root, "journal-repo"), proposed: JSON.stringify({ defaultBranch: "persisted-target" }), approvalId, now });
       db.run("INSERT INTO git_operations(id,type,status,repo_path,branch_name,target_ref,created_at) VALUES($id,'WORKTREE','VERIFIED',$repo,$branch,'persisted-target',$now)", { id: randomUUID(), repo: join(root, "journal-repo"), branch: `task/${taskId}`, now });
       db.run("INSERT INTO scheduler_budgets(project_id,limit_cost,spent_cost,reserved_cost) VALUES($projectId,10,0,0)", { projectId });
 

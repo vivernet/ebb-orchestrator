@@ -1,154 +1,26 @@
-/**
- * Аутентифицированный HTTP-клиент API оркестратора.
- * Bootstrap bearer хранится только в памяти; после перезагрузки браузер
- * использует HttpOnly-cookie локальной сессии и восстанавливает в памяти
- * только CSRF-токен.
- */
+import { apiPaths } from '@ebb-orchestrator/contracts';
 
 const API_BASE = '/api/v1';
-
-/**
- * Переводит canonical API path из shared contracts в relative path клиента.
- * Префикс проверяется здесь, чтобы страницы не дублировали знание о base path.
- */
-export function toClientPath(canonicalPath: string): string {
-  if (canonicalPath === API_BASE) return '/';
-  if (!canonicalPath.startsWith(`${API_BASE}/`)) {
-    throw new Error(`API base path is required: ${API_BASE}`);
-  }
-  return canonicalPath.slice(API_BASE.length);
-}
-
-interface ApiClient {
-  get<T>(path: string, options?: RequestOptions): Promise<T>;
-  post<T>(path: string, body?: unknown, options?: RequestOptions): Promise<T>;
-  sessionToken: string | null;
-  csrfToken: string | null;
-}
-
-export interface RequestOptions {
-  signal?: AbortSignal;
-  headers?: HeadersInit;
-}
-
-/**
- * Представляет безопасную ошибку API с HTTP status и optional machine-readable code.
- * Не содержит bearer, CSRF, launch token или сырые секретные payloads.
- */
-export class ApiError extends Error {
-  constructor(
-    message: string,
-    public readonly status: number,
-    public readonly code?: string,
-  ) {
-    super(message);
-    this.name = 'ApiError';
-  }
-}
-
-function createApiClient(): ApiClient {
-  async function fetchJson<T>(
-    path: string,
-    options: RequestOptions & { method?: string; body?: BodyInit | null | undefined } = {},
-  ): Promise<T> {
-    const { headers: requestHeaders, signal, body, ...requestOptions } = options;
-    const response = await fetch(path, {
-      credentials: 'same-origin',
-      headers: {
-        'Content-Type': 'application/json',
-        ...requestHeaders,
-        ...(apiClient.sessionToken ? { Authorization: `Bearer ${apiClient.sessionToken}` } : {}),
-        ...(apiClient.csrfToken ? { 'X-CSRF-Token': apiClient.csrfToken } : {}),
-      },
-      ...(signal ? { signal } : {}),
-      ...(body !== undefined ? { body } : {}),
-      ...requestOptions,
-    });
-
-    if (!response.ok) {
-      let serverMessage: string | null = null;
-      let serverCode: string | undefined;
-      try {
-        const payload: unknown = await response.clone().json();
-        if (typeof payload === 'object' && payload !== null && 'error' in payload && typeof payload.error === 'string') {
-          serverMessage = payload.error;
-        }
-        if (typeof payload === 'object' && payload !== null && 'code' in payload && typeof payload.code === 'string') {
-          serverCode = payload.code;
-        }
-      } catch {
-        // Для не-JSON ответа используем безопасное сообщение со статусом ниже.
-      }
-      throw new ApiError(serverMessage ?? `API error: ${response.status} ${response.statusText}`, response.status, serverCode);
-    }
-
-    if (response.status === 204) return undefined as T;
-    const responseText = await response.text();
-    return responseText.length === 0 ? undefined as T : JSON.parse(responseText) as T;
-  }
-
-  return {
-    sessionToken: null as string | null,
-    csrfToken: null as string | null,
-
-    async get<T>(path: string, options?: RequestOptions): Promise<T> {
-      return fetchJson<T>(`${API_BASE}${path}`, options);
-    },
-
-    async post<T>(path: string, body?: unknown, options?: RequestOptions): Promise<T> {
-      return fetchJson<T>(`${API_BASE}${path}`, {
-        ...options,
-        method: 'POST',
-        body: body === undefined ? undefined : JSON.stringify(body),
-      });
-    },
-  };
-}
-
+/** Переводит canonical API path в относительный путь клиента. */
+export function toClientPath(canonicalPath: string): string { if (canonicalPath === API_BASE) return '/'; if (!canonicalPath.startsWith(`${API_BASE}/`)) throw new Error(`API base path is required: ${API_BASE}`); return canonicalPath.slice(API_BASE.length); }
+export interface RequestOptions { signal?: AbortSignal; headers?: HeadersInit; }
+/** Безопасная ошибка HTTP API без секретных payloads. */
+export class ApiError extends Error { constructor(message: string, public readonly status: number, public readonly code?: string) { super(message); this.name = 'ApiError'; } }
+export interface ApiClient { get<T>(path: string, options?: RequestOptions): Promise<T>; post<T>(path: string, body?: unknown, options?: RequestOptions): Promise<T>; csrfToken: string | null; clearCsrf(): void; }
+/** Определяет мутации, которым нужен CSRF только после login. */
+function isAuthenticatedMutation(method: string | undefined, path: string): boolean { return method !== undefined && method !== 'GET' && path !== apiPaths.sessionLogin; }
+/** Извлекает только безопасные поля error envelope. */
+function readError(payload: unknown): { message: string | undefined; code: string | undefined } { if (typeof payload !== 'object' || payload === null) return { message: undefined, code: undefined }; const error = 'error' in payload ? payload.error : undefined; if (typeof error === 'object' && error !== null) return { message: 'message' in error && typeof error.message === 'string' ? error.message : undefined, code: 'code' in error && typeof error.code === 'string' ? error.code : undefined }; return { message: 'error' in payload && typeof payload.error === 'string' ? payload.error : undefined, code: 'code' in payload && typeof payload.code === 'string' ? payload.code : undefined }; }
+/** Создаёт клиент с cookie-сессией и volatile CSRF state. */
+function createApiClient(): ApiClient { let csrfToken: string | null = null; async function fetchJson<T>(path: string, options: RequestOptions & { method?: string; body?: BodyInit } = {}): Promise<T> { const { headers: requestHeaders, signal, body, method, ...requestOptions } = options; const headers: Record<string, string> = Object.fromEntries(new Headers(requestHeaders).entries()); if (!headers['Content-Type'] && body !== undefined) headers['Content-Type'] = 'application/json'; delete headers.Authorization; delete headers.authorization; if (isAuthenticatedMutation(method, path) && csrfToken) headers['X-CSRF-Token'] = csrfToken; const response = await fetch(path, { ...requestOptions, ...(method ? { method } : {}), ...(body !== undefined ? { body } : {}), credentials: 'same-origin', headers, ...(signal ? { signal } : {}) }); if (!response.ok) { let details: { message: string | undefined; code: string | undefined } = { message: undefined, code: undefined }; try { details = readError(await response.clone().json()); } catch { /* safe fallback */ } throw new ApiError(details.message ?? `API error: ${response.status} ${response.statusText}`, response.status, details.code); } if (response.status === 204) return undefined as T; const text = await response.text(); return text.length === 0 ? undefined as T : JSON.parse(text) as T; } return { get: <T>(path: string, options?: RequestOptions) => fetchJson<T>(`${API_BASE}${path}`, options), post: <T>(path: string, body?: unknown, options?: RequestOptions) => fetchJson<T>(`${API_BASE}${path}`, { ...options, method: 'POST', ...(body === undefined ? {} : { body: JSON.stringify(body) }) }), get csrfToken() { return csrfToken; }, set csrfToken(value: string | null) { csrfToken = value; }, clearCsrf() { csrfToken = null; } }; }
+/** Общий клиент API текущего browser session. */
 export const apiClient = createApiClient();
-
-/** Возвращает bearer-заголовок для потокового API, если bootstrap ещё хранит его в памяти. */
-export function authenticatedHeaders(): Record<string, string> {
-  return apiClient.sessionToken ? { Authorization: `Bearer ${apiClient.sessionToken}` } : {};
-}
-
-/**
- * Выполняет bootstrap локальной сессии через одноразовый launch token.
- */
-export function bootstrap(launchToken: string): Promise<void> {
-  if (!launchToken) return Promise.reject(new Error('Требуется одноразовый токен локального запуска.'));
-  return fetch('/api/v1/session/bootstrap', {
-    credentials: 'same-origin',
-    headers: { 'x-ebb-bootstrap-token': launchToken },
-  }).then(async (response) => {
-    if (!response.ok) throw new Error(`Local session bootstrap failed: ${response.status}`);
-    return response.json() as Promise<{ sessionToken: string; csrfToken: string }>;
-  }).then(({ sessionToken, csrfToken }) => {
-    apiClient.sessionToken = sessionToken;
-    apiClient.csrfToken = csrfToken;
-  });
-}
-
-/**
- * Восстанавливает CSRF-состояние после reload через HttpOnly-cookie локальной сессии.
- * Если сессия не найдена, создаёт новую сессию через POST /api/v1/session/new.
- */
-export function restoreSession(): Promise<void> {
-  return fetch('/api/v1/session', { credentials: 'same-origin' }).then(async (response) => {
-    if (response.ok) {
-      const json = await response.json() as { csrfToken: string };
-      apiClient.sessionToken = null;
-      apiClient.csrfToken = json.csrfToken;
-      return;
-    }
-    // Сессия не найдена или невалидна - создаём новую через локальный режим
-    const response2 = await fetch('/api/v1/session/new?local=true', {
-      credentials: 'same-origin',
-      method: 'POST',
-    });
-    if (!response2.ok) throw new Error(`Session creation failed: ${response2.status}`);
-    const json2 = await response2.json() as { csrfToken: string };
-    apiClient.sessionToken = null;
-    apiClient.csrfToken = json2.csrfToken;
-  });
-}
+/** Возвращает только volatile CSRF header для authenticated transport. */
+export function authenticatedHeaders(): Record<string, string> { return apiClient.csrfToken ? { 'X-CSRF-Token': apiClient.csrfToken } : {}; }
+export interface SessionResponse { contractVersion: 1; csrfToken: string; expiresAt: string; authenticated?: true; }
+/** Выполняет login и сохраняет только CSRF в памяти. */
+export function login(password: string): Promise<SessionResponse> { return apiClient.post<SessionResponse>(toClientPath(apiPaths.sessionLogin), { password }).then((response) => { apiClient.csrfToken = response.csrfToken; return response; }); }
+/** Выполняет idempotent logout и очищает volatile CSRF. */
+export function logout(): Promise<void> { return apiClient.post<void>(toClientPath(apiPaths.sessionLogout)).catch((error: unknown) => { if (error instanceof ApiError && error.status === 401 && (error.code === 'AUTH_SESSION_REQUIRED' || error.code === 'AUTH_SESSION_INVALID')) return; throw error; }).then(() => { apiClient.clearCsrf(); }); }
+/** Восстанавливает cookie session без создания новой сессии. */
+export function restoreSession(): Promise<SessionResponse> { return apiClient.get<SessionResponse>(toClientPath(apiPaths.session)).then((response) => { apiClient.csrfToken = response.csrfToken; return response; }); }

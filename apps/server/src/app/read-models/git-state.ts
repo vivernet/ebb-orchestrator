@@ -1,8 +1,15 @@
 import type { Database } from "../../platform/database/database.js";
 import type { GitProjection } from "@ebb-orchestrator/contracts";
+import { listActiveApprovedOnboardingRepositories } from "../../modules/projects/onboarding-service.js";
 
-/** Читает необязательное integration state проекта; отсутствующие ключи сохраняются отсутствующими. */
+/** Читает integration state проекта; repositoryPath возвращается только из активного onboarding с approval, привязанным к этому проекту. */
 export function persistedGitState(db: Database, projectId: string): Pick<GitProjection, "repositoryPath" | "defaultBranch" | "github"> {
+  let approvedRepositoryPath: string | null = null;
+  try {
+    approvedRepositoryPath = listActiveApprovedOnboardingRepositories(db, projectId)[0]?.repository_path ?? null;
+  } catch {
+    // Отсутствующая onboarding-схема не даёт права публиковать устаревший путь.
+  }
   const rows = db.all<{ key: string; value_json: string }>(
     "SELECT key,value_json FROM system_state WHERE key IN ($github,$git,$config,$projectConfig)",
     { github: `project:${projectId}:github`, git: `project:${projectId}:git`, config: `project:${projectId}:config`, projectConfig: `project_config:${projectId}` },
@@ -17,11 +24,11 @@ export function persistedGitState(db: Database, projectId: string): Pick<GitProj
     const url = typeof github.url === "string" ? github.url : null;
     if (status || url || typeof config.repositoryPath === "string" || typeof config.repository_path === "string" || typeof config.defaultBranch === "string" || typeof config.default_branch === "string") {
       return {
-        repositoryPath: typeof config.repositoryPath === "string" ? config.repositoryPath : typeof config.repository_path === "string" ? config.repository_path : null,
+        repositoryPath: approvedRepositoryPath,
         defaultBranch: typeof config.defaultBranch === "string" ? config.defaultBranch : typeof config.default_branch === "string" ? config.default_branch : null,
         github: status || url ? { status: status ?? "CONNECTED", url } : null,
       };
     }
   }
-  return { repositoryPath: null, defaultBranch: null, github: null };
+  return { repositoryPath: approvedRepositoryPath, defaultBranch: null, github: null };
 }

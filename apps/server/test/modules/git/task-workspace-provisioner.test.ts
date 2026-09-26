@@ -30,6 +30,36 @@ async function gitRepository(root: string): Promise<void> {
 }
 
 describe("TaskWorkspaceProvisioner", () => {
+  it("rejects onboarding bound to another project's approved workflow change without creating worktrees", async () => {
+    const root = await mkdtemp(join(tmpdir(), "task-provisioning-mismatch-"));
+    const repo = join(root, "repo");
+    const db = createSqliteDatabase(join(root, "orchestrator.sqlite"));
+    await import("node:fs/promises").then(({ mkdir }) => mkdir(repo));
+    await gitRepository(repo);
+    const projectId = randomUUID();
+    const otherProjectId = randomUUID();
+    const epicId = randomUUID();
+    const taskId = randomUUID();
+    const approvalId = randomUUID();
+    const now = new Date().toISOString();
+    try {
+      runMigrations(db, migrations());
+      for (const id of [projectId, otherProjectId]) db.run("INSERT INTO projects(id,name,display_name,status,created_at,updated_at) VALUES($id,'p','P','ACTIVE',$now,$now)", { id, now });
+      db.run("INSERT INTO epics(id,project_id,display_id,title,status,contract_json,created_at,updated_at) VALUES($id,$projectId,'EPIC-1','E','OPEN','{}',$now,$now)", { id: epicId, projectId, now });
+      db.run("INSERT INTO tasks(id,project_id,epic_id,display_id,title,status,contract_json,required,created_at,updated_at) VALUES($id,$projectId,$epicId,'TASK-1','T','DRAFT','{}',1,$now,$now)", { id: taskId, projectId, epicId, now });
+      db.run("INSERT INTO approvals(id,type,subject_id,subject_type,status,requested_by,created_at) VALUES($id,'WORKFLOW_CHANGE',$otherProjectId,'PROJECT','APPROVED','test',$now)", { id: approvalId, otherProjectId, now });
+      db.run("INSERT INTO onboarding_configs(project_id,repository_path,facts_json,proposed_json,status,approval_id,created_at,updated_at,activated_at) VALUES($projectId,$repo,$facts,$proposed,'ACTIVE',$approvalId,$now,$now,$now)", { projectId, repo, approvalId, facts: JSON.stringify({ defaultBranch: "master" }), proposed: JSON.stringify({ defaultBranch: "master" }), now });
+      const manager = new WorktreeManager({ db, worktreeDir: join(root, "worktrees") });
+      const provisioner = new TaskWorkspaceProvisioner({ database: db, worktreeManager: manager });
+      await expect(provisioner.provisionForEpic(epicId)).rejects.toThrow("active approved onboarding is required");
+      expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM git_operations")?.count).toBe(0);
+      expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM worktrees")?.count).toBe(0);
+    } finally {
+      db.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("provisions a task worktree from approved onboarding and is idempotent", async () => {
     const root = await mkdtemp(join(tmpdir(), "task-provisioning-"));
     const repo = join(root, "repo");

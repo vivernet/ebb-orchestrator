@@ -1,5 +1,8 @@
 import { parseFrontMatter, parseDocument, validateDocument, loadMigrationMap, validateMigrationMap, resolveCanonicalDocument } from './docs-governance-lib.mjs';
 import assert from 'node:assert';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 
 test('parseFrontMatter extracts metadata and body', () => {
@@ -88,9 +91,12 @@ test('isGeneratedRoadmapUpToDate checks for matching content', async () => {
 
 test('writeGeneratedRoadmap writes file to path', async () => {
   const { writeGeneratedRoadmap } = await import('./docs-governance-lib.mjs');
-  writeGeneratedRoadmap('/tmp/roadmap-test.md', 'test content');
-  const { readFileSync } = await import('fs');
-  assert.ok(readFileSync('/tmp/roadmap-test.md', 'utf-8').includes('test content'));
-  const { unlinkSync } = await import('fs');
-  unlinkSync('/tmp/roadmap-test.md');
+  const tempDir = await mkdtemp(join(tmpdir(), 'ebb-docs-test-'));
+  try {
+    const roadmapPath = join(tempDir, 'roadmap-test.md');
+    await writeGeneratedRoadmap(roadmapPath, 'test content');
+    assert.ok((await readFile(roadmapPath, 'utf-8')).includes('test content'));
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
 });

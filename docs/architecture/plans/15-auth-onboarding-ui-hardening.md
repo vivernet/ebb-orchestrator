@@ -3,11 +3,11 @@ id: plan-15
 kind: plan
 roadmap: 01
 stage: 13
-status: in_progress
+status: completed
 title: Устойчивые auth, onboarding и Russian Web UI
 summary: Устранить подтверждённые дефекты ephemeral auth/bootstrap и рассинхронизации onboarding, сохранив backend authority, loopback trust boundary и проверяемый real HTTP/browser flow.
 created: 2026-09-25
-updated: 2026-09-25
+updated: 2026-09-26
 depends_on:
   - plan-12
   - plan-13
@@ -18,7 +18,7 @@ specs:
 evidence:
   - apps/server/src/app/create-app.ts
   - apps/server/src/main.ts
-  - apps/server/src/platform/security/local-session.ts
+  - apps/server/src/platform/security/auth-service.ts
   - apps/server/src/app/routes/onboarding.ts
   - apps/server/src/modules/approvals/approval-service.ts
   - apps/server/src/modules/approvals/approval-types.ts
@@ -88,13 +88,14 @@ evidence:
                                   15-08 focused/full/security/browser verification and review
 ```
 
-The parent plan and all nine child plans are explicitly in scope: `15-auth-onboarding-ui-hardening.md`, `15-01-auth-contract-and-crypto.md`, `15-02-auth-persistence-and-repository.md`, `15-03-auth-cli-and-startup.md`, `15-09-atomic-auth-v2-remediation.md`, `15-04-server-security-boundary.md`, `15-05-web-auth-and-sse.md`, `15-06-onboarding-draft-and-scheduler-guard.md`, `15-07-russian-ui-and-artifact-cleanup.md`, and `15-08-verification-and-review.md`. Governance must therefore count exactly ten `plan-15` entries: this parent plus nine child plans. Status expectations are parent `in_progress`, historical `15-01`–`15-03` `completed`, and `15-09` plus `15-04`–`15-08` `planned`; IDs are unique and all are stage 13. Parts are intentionally ordered so no Web or E2E fixture can encode an unapproved auth DTO. `15-01` is a hard contract gate: it lands the versioned auth/onboarding DTOs and the server-owned `apps/server/test/platform/security/auth-onboarding-contract.test.ts` before downstream consumers. Completed 15-01–15-03 remain historical PASS tasks; `15-09` is the new executable prerequisite that remediates and verifies their still-missing atomic v2 internal seam before 15-04 starts route composition. `15-06` schema/service work starts after 15-01, its Web edits start after 15-05, and its scheduler guard is required before final E2E.
+The parent plan and all nine child plans are explicitly in scope: `15-auth-onboarding-ui-hardening.md`, `15-01-auth-contract-and-crypto.md`, `15-02-auth-persistence-and-repository.md`, `15-03-auth-cli-and-startup.md`, `15-09-atomic-auth-v2-remediation.md`, `15-04-server-security-boundary.md`, `15-05-web-auth-and-sse.md`, `15-06-onboarding-draft-and-scheduler-guard.md`, `15-07-russian-ui-and-artifact-cleanup.md`, and `15-08-verification-and-review.md`. Governance must therefore count exactly ten `plan-15` entries: this parent plus nine child plans. Before final promotion, parent `in_progress`, `15-01`–`15-07` and `15-09` `completed`, `15-08` `planned`; after verification parent and all nine children become `completed`. IDs are unique and all are stage 13. Parts were ordered so no Web or E2E fixture encodes an unapproved auth DTO. `15-01` was the hard contract gate for versioned auth/onboarding DTOs and the server-owned `apps/server/test/platform/security/auth-onboarding-contract.test.ts`; `15-09` verified the atomic v2 internal seam before 15-04 route composition. `15-06` schema/service work followed 15-01, its Web edits followed 15-05, and its scheduler guard is required before final E2E.
 
 The dependency order is also an ownership boundary: `15-03` owns only first-run wizard and startup gating. It must not construct `AuthService`, add `authService` to `createApp`, or otherwise wire the auth boundary. `15-09` owns the v2 internal `AuthService`/repository/fake contract remediation and its concurrency proof. Only after its PASS may `15-04` own `AuthService` composition and the `createApp`/`AppDeps.authService` route wiring in `create-app.ts` and `main.ts`; it consumes rather than changes the atomic port. `15-06` owns only the separate onboarding composition seam in those files (`ApprovalService` → `ApprovalTransactionPort` → transaction-aware `OnboardingService` → `AppDeps.onboardingService`), with no route-level `db`/approval fallback.
 
 ## Migration, rollback and recovery policy
 
-- Append exactly `026_local_auth.sql` after the current `025_audit_log.sql`; do not add `027_onboarding_draft.sql`. The smallest architecture-compatible onboarding model keeps `projects.status` within the existing `ACTIVE|ARCHIVED|DELETED` CHECK and represents a draft as `onboarding_configs.status='PROPOSED'` plus its generated project ID; `021_onboarding_approval.sql` is reused unchanged. Never edit 001–025 or 021 in place.
+- Исходный этап добавил ровно `026_local_auth.sql` после `025_audit_log.sql`; отдельная таблица `027_onboarding_draft.sql` не добавляется. Модель draft сохраняет существующий CHECK `projects.status` (`ACTIVE|ARCHIVED|DELETED`) и использует `onboarding_configs.status='PROPOSED'`; миграция `021_onboarding_approval.sql` повторно используется без изменений. Ни одну из исторических миграций `001`–`026` не редактировать.
+- После независимого review выявлен старый дефект видимого действия «Запросить изменения»: `ApprovalService.requestChanges` пишет `CHANGES_REQUESTED`, которого нет в CHECK таблицы `approvals`. Пользователь отдельно согласовал расширение scope: добавить новую forward-only `027_approval_changes_requested.sql`. Она пересоздаёт только `approvals`, копирует все колонки и строки без изменения ID, восстанавливает исходные индексы и добавляет разрешённый статус; `approval_metadata`, `onboarding_configs` и прочие дочерние данные/FK должны сохраниться. Поскольку production migrator оборачивает каждую migration в транзакцию, а SQLite не меняет `PRAGMA foreign_keys` внутри транзакции, migration-контракт явно разрешает для этой версии контролируемый путь: migrator выключает FK до `BEGIN IMMEDIATE` и проверяет, что PRAGMA вернул OFF; выполняет атомарную пересборку; проверяет `PRAGMA foreign_key_check` до commit. При ошибке migration transaction callback обязан завершиться и migrator обязан подтвердить rollback до восстановления FK. Внешний `finally` migrator-а, уже после commit/rollback и вне транзакции, включает FK ON и проверяет фактическое состояние; ошибку rollback или восстановления нельзя скрывать, startup закрывается fail-closed. Не переключать FK из transaction callback и не использовать `defer_foreign_keys` как замену. Доказать механизм populated upgrade-тестом с реальными дочерними строками и FK ON до/после, а также failure/rollback и повторным запуском. Для onboarding `CHANGES_REQUESTED` проецируется как `DRAFT`, история решения остаётся, новый request создаёт новый approval ID, а `ACTIVE`/scheduler остаются закрытыми до нового `APPROVED`. Покрыть HTTP и реальный browser flow. Запрет на `027_onboarding_draft.sql` сохраняется.
 - Fresh and upgraded SQLite fixtures must prove migration idempotence, transaction rollback, foreign keys and singleton constraints. There is no legacy persistent auth data to migrate: old in-memory sessions expire with the old process, and bootstrap files/tokens are discarded rather than imported.
 - Before rollout, stop the server and execute the backup/restore rehearsal owned by `15-02`: `pnpm --filter @ebb-orchestrator/server test -- backup-restore.test.ts`. The test copies the closed SQLite file, injects a failed 026 migration, restores the backup after database/process stop, and reruns forward migrations. A failed migration rolls back its transaction and prevents listener/worker startup; no automatic destructive downgrade is part of v1.
 - `revokeExpired` performs idempotent cleanup during startup recovery; validation always enforces revoked, idle and absolute limits. Logout is an explicit revocation, not merely cookie deletion.

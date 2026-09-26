@@ -1,15 +1,30 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { ApiError } from '../../api/client.js';
+import { apiErrorMessage } from '../../i18n/ru.js';
 import { onboardingApi, type OnboardingDiscoveryResult } from './api.js';
 import StatusBadge from '../../components/ui/StatusBadge.js';
 
 /**
  * Представляет экран онбординга проекта с полным flow: discovery → review → approve → activate.
  */
-export default function OnboardingPage() {
+export default function OnboardingPage({ projectId }: { projectId?: string }) {
   const [repositoryPath, setRepositoryPath] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<OnboardingDiscoveryResult | null>(null);
+  const errorRef = useRef<HTMLElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+
+  useEffect(() => {
+    if (error) errorRef.current?.focus();
+    else if (result) headingRef.current?.focus();
+  }, [error, result]);
+
+  useEffect(() => {
+    if (!projectId) return;
+    setLoading(true);
+    void onboardingApi.get(projectId).then(setResult).catch((e: unknown) => setError(apiErrorMessage(e instanceof ApiError ? e.code : undefined))).finally(() => setLoading(false));
+  }, [projectId]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -21,7 +36,7 @@ export default function OnboardingPage() {
       const discovery = await onboardingApi.discover(repositoryPath.trim());
       setResult(discovery);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Ошибка discovery');
+      setError(apiErrorMessage(e instanceof ApiError ? e.code : undefined));
     } finally {
       setLoading(false);
     }
@@ -32,11 +47,11 @@ export default function OnboardingPage() {
     setLoading(true);
     setError(null);
     try {
-      await onboardingApi.requestApproval(result.projectId);
+      await onboardingApi.requestApproval(result.projectId, result.proposed ?? { defaultBranch: result.detected.defaultBranch, workflow: 'standard', roles: ['Developer'], guidelines: [] });
       const refreshed = await onboardingApi.get(result.projectId);
       setResult(refreshed);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Ошибка запроса approval');
+      setError(apiErrorMessage(e instanceof ApiError ? e.code : undefined));
     } finally {
       setLoading(false);
     }
@@ -51,7 +66,7 @@ export default function OnboardingPage() {
       const refreshed = await onboardingApi.get(result.projectId);
       setResult(refreshed);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Ошибка утверждения');
+      setError(apiErrorMessage(e instanceof ApiError ? e.code : undefined));
     } finally {
       setLoading(false);
     }
@@ -66,7 +81,7 @@ export default function OnboardingPage() {
       const refreshed = await onboardingApi.get(result.projectId);
       setResult(refreshed);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Ошибка активации');
+      setError(apiErrorMessage(e instanceof ApiError ? e.code : undefined));
     } finally {
       setLoading(false);
     }
@@ -74,11 +89,11 @@ export default function OnboardingPage() {
 
   return (
     <main className="onboarding-page">
-      <h1>Project onboarding</h1>
+      <h1 ref={headingRef} tabIndex={-1}>Настройка проекта</h1>
 
       {!result ? (
-        <section aria-label="Discover project">
-          <h2>Discover project</h2>
+        <section aria-label="Поиск проекта">
+          <h2>Поиск проекта</h2>
           <form onSubmit={handleSubmit} aria-describedby="onboarding-instructions">
             <p id="onboarding-instructions">
               Введите абсолютный путь к локальному репозиторию для анализа.
@@ -93,6 +108,8 @@ export default function OnboardingPage() {
                 placeholder="/path/to/repo"
                 required
                 aria-required="true"
+                aria-invalid={error ? 'true' : undefined}
+                aria-describedby={error ? 'onboarding-error' : 'onboarding-instructions'}
               />
             </div>
             <button type="submit" disabled={loading}>
@@ -101,7 +118,7 @@ export default function OnboardingPage() {
           </form>
 
           {error && (
-            <section aria-label="Error">
+            <section ref={errorRef} tabIndex={-1} role="alert" aria-live="assertive" aria-label="Ошибка">
               <h2>Ошибка</h2>
               <p>{error}</p>
               <button type="button" onClick={() => setError(null)}>Очистить</button>
@@ -109,44 +126,44 @@ export default function OnboardingPage() {
           )}
         </section>
       ) : (
-        <section aria-label="Discovery results">
+        <section aria-label="Результаты анализа">
           <h2>Результаты анализа</h2>
 
-          <section aria-label="Repository">
+          <section aria-label="Репозиторий">
             <h3>Репозиторий</h3>
             <p>{result.repository.path ?? 'Не обнаружен'}</p>
           </section>
 
-          <section aria-label="Detected">
+          <section aria-label="Обнаружено">
             <h3>Обнаружено</h3>
-            <p>Default branch: {result.detected.defaultBranch ?? 'Не обнаружен'}</p>
-            <p>Package manager: {result.detected.packageManager ?? 'Не обнаружен'}</p>
-            <p>Orchestrator config found: {result.detected.orchestratorConfigFound ? 'Да' : 'Нет'}</p>
+            <p>Основная ветка: {result.detected.defaultBranch}</p>
+            <p>Менеджер пакетов: {result.detected.packageManager}</p>
+            <p>Конфигурация оркестратора найдена: {result.detected.untrustedExistingConfig ? 'Да' : 'Нет'}</p>
           </section>
 
-          <section aria-label="Proposed">
+          <section aria-label="Предложение">
             <h3>Предложение</h3>
-            <p>Workflow: {result.proposed.workflow ?? 'Не указано'}</p>
-            <p>Roles: {result.proposed.roles.join(', ') || 'Не указано'}</p>
+            <p>Рабочий процесс: {result.proposed?.workflow ?? 'Не указано'}</p>
+            <p>Роли: {result.proposed?.roles.join(', ') || 'Не указано'}</p>
           </section>
 
-          <section aria-label="Approval status">
+          <section aria-label="Статус согласования">
             <h3>Статус утверждения</h3>
-            <p>Status: <StatusBadge status={result.approvalStatus} label={result.approvalStatus} /></p>
-            <p>Semantic config approved: {result.semanticConfigApproved ? 'Да' : 'Нет'}</p>
+            <p>Статус: <StatusBadge status={result.status} label={result.status} /></p>
+            <p>Семантическая конфигурация утверждена: {result.status === 'APPROVED' || result.status === 'ACTIVE' ? 'Да' : 'Нет'}</p>
           </section>
 
-          {result.approvalStatus === 'PENDING' && !result.semanticConfigApproved && (
-            <section aria-label="Actions">
+          {result.status === 'DRAFT' && (
+            <section aria-label="Действия">
               <h3>Действия</h3>
               <button type="button" onClick={handleRequestApproval} disabled={loading}>
-                Запросить approval
+                Запросить согласование
               </button>
             </section>
           )}
 
-          {result.approvalStatus === 'APPROVED' && !result.semanticConfigApproved && (
-            <section aria-label="Actions">
+          {result.status === 'APPROVAL_PENDING' && (
+            <section aria-label="Действия">
               <h3>Действия</h3>
               <button type="button" onClick={handleApprove} disabled={loading}>
                 Утвердить
@@ -154,8 +171,8 @@ export default function OnboardingPage() {
             </section>
           )}
 
-          {result.semanticConfigApproved && (
-            <section aria-label="Actions">
+          {result.status === 'APPROVED' && (
+            <section aria-label="Действия">
               <h3>Действия</h3>
               <button type="button" onClick={handleActivate} disabled={loading}>
                 Активировать
@@ -164,7 +181,7 @@ export default function OnboardingPage() {
           )}
 
           {error && (
-            <section aria-label="Error">
+            <section ref={errorRef} tabIndex={-1} role="alert" aria-live="assertive" aria-label="Ошибка">
               <h2>Ошибка</h2>
               <p>{error}</p>
             </section>

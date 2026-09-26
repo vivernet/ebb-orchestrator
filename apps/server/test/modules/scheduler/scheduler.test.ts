@@ -29,12 +29,17 @@ const migration005 = readFileSync(
   join(import.meta.dirname, "../../../src/platform/database/migrations/005_scheduler.sql"),
   "utf-8",
 );
+const migration021 = readFileSync(
+  join(import.meta.dirname, "../../../src/platform/database/migrations/021_onboarding_approval.sql"),
+  "utf-8",
+);
 
 const migrations: Migration[] = [
   { version: 1, name: "001_system", sql: migration001 },
   { version: 2, name: "002_work_domain", sql: migration002 },
   { version: 3, name: "003_work_control", sql: migration003 },
   { version: 5, name: "005_scheduler", sql: migration005 },
+  { version: 21, name: "021_onboarding_approval", sql: migration021 },
 ];
 
 function contract(goal: string, deps: string[] = []): TaskContract {
@@ -140,11 +145,24 @@ describe("SchedulerService", () => {
           updated_at: now,
         },
       );
+      const approvalId = randomUUID();
+      tx.run("INSERT INTO approvals(id,type,subject_id,subject_type,status,requested_by,created_at) VALUES($approvalId,'WORKFLOW_CHANGE',$id,'PROJECT','APPROVED','test',$now)", { approvalId, id: projectId, now });
+      tx.run("INSERT INTO onboarding_configs(project_id,repository_path,facts_json,proposed_json,status,approval_id,created_at,updated_at) VALUES($id,'/tmp','{}','{}','ACTIVE',$approvalId,$now,$now)", { id: projectId, approvalId, now });
     });
     scheduler = new SchedulerService(db);
   }
 
   //  Тесты capacity ��
+
+  it("does not dispatch or reserve when onboarding_configs is absent", async () => {
+    await setup();
+    const task = insertTask(db!, projectId, { id: "missing-onboarding", status: "READY" });
+    db!.exec("DROP TABLE onboarding_configs");
+
+    expect(() => scheduler.dispatchTask(task.id, {} as never, vi.fn())).toThrow("ONBOARDING_NOT_ACTIVE");
+    expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_reservations WHERE subject_id=$taskId", { taskId: task.id })?.count).toBe(0);
+    expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_resource_locks WHERE owner_id=$ownerId", { ownerId: `task:${task.id}` })?.count).toBe(0);
+  });
 
   it("allows up to 3 project concurrent tasks", async () => {
     await setup();

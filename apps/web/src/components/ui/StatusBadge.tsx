@@ -1,3 +1,5 @@
+import { statusLabel } from '../../i18n/ru.js';
+
 interface StatusBadgeProps {
   status: string;
   label?: string;
@@ -26,5 +28,7 @@ export default function StatusBadge({ status, label, variant = 'default' }: Stat
     fontWeight: '500',
   };
 
-  return <span style={style} title={status}>{label ?? status}</span>;
+  const localized = statusLabel(status);
+  const visibleLabel = localized === 'Неизвестный статус' && label && /^[\p{Script=Cyrillic}\s\d.,!?—-]+$/u.test(label) ? label : localized;
+  return <span style={style} data-status={status} title={visibleLabel}>{visibleLabel}</span>;
 }

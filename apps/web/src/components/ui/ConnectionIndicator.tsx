@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { ru } from '../../i18n/ru.js';
 
 interface ConnectionIndicatorProps {
   /** Подписывается на события подключения браузера. */
@@ -29,7 +30,7 @@ export function ConnectionIndicator({ autoSubscribe = true, className = 'connect
   }, [autoSubscribe]);
 
   return (
-    <span className={className} data-online={isOnline} title={isOnline ? 'Online' : 'Offline'}>
+    <span role="img" className={className} data-online={isOnline} title={isOnline ? ru.common.online : ru.common.offline} aria-label={isOnline ? ru.common.online : ru.common.offline}>
       {isOnline ? '🟢' : '🔴'}
     </span>
   );

@@ -15,6 +15,7 @@
  * 7. Start HTTP server
  */
 import { createApp } from "./app/create-app.js";
+import { listActiveApprovedOnboardingRepositories } from "./modules/projects/onboarding-service.js";
 import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -60,6 +61,8 @@ import { createNodeDigestPort, createNodeRandomTokenPort } from "./platform/secu
 import { createArgon2PasswordHasher } from "./platform/security/password-hasher.js";
 import { createAuthService } from "./platform/security/auth-service.js";
 import { ensureLocalUser } from "./platform/security/local-user-wizard.js";
+import { ApprovalService } from "./modules/approvals/approval-service.js";
+import { OnboardingService } from "./modules/projects/onboarding-service.js";
 
 const host = "127.0.0.1";
 const port = Number(process.env["PORT"] ?? 3000);
@@ -74,7 +77,9 @@ const webRoot = fileURLToPath(new URL("../../web/dist/", import.meta.url));
 const migrations: Migration[] = readdirSync(migrationDir).filter((file) => file.endsWith(".sql")).map((file) => {
   const match = /^(\d+)_([^.]*)\.sql$/.exec(file);
   if (!match) throw new Error(`Invalid migration filename: ${file}`);
-  return { version: Number(match[1]), name: match[2]!, sql: readFileSync(resolve(migrationDir, file), "utf8") };
+  const name = match[2]!;
+  const migration: Migration = { version: Number(match[1]), name, sql: readFileSync(resolve(migrationDir, file), "utf8") };
+  return migration.version === 27 && name === "approval_changes_requested" ? { ...migration, foreignKeys: "disabled" } : migration;
 });
 try {
    await lock.acquire();
@@ -104,6 +109,8 @@ const authService = createAuthService(authRepository, authPasswordHasher, { now:
 
 // Создаёт единственный production экземпляр SchedulerService общий везде.
 const scheduler = new SchedulerService(database);
+const approvalService = new ApprovalService(database);
+const onboardingService = new OnboardingService(database, approvalService);
 const runtime = new HermesRuntimeAdapter(new ProcessExecutor(), undefined, {
   databasePath: home.database,
   resultDirectory: join(home.runtime, "hermes", "results"),
@@ -150,7 +157,7 @@ const secretStore = infisicalOptions
 mkdirSync(home.artifacts, { recursive: true });
 const artifactStore = new ArtifactStore(home.artifacts, new ArtifactRepository(database));
 
-const app = createApp({ host, port, db: database, scheduler, runtime, runService, secretStore, epicOrchestrator, status, eventBus, authService, ...(existsSync(webRoot) ? { webRoot } : {}) });
+const app = createApp({ host, port, db: database, scheduler, runtime, runService, secretStore, epicOrchestrator, status, eventBus, authService, approvalService, onboardingService, ...(existsSync(webRoot) ? { webRoot } : {}) });
 
 // Регистрирует шаги reconciliation которые будут запущены после migrations.
 const reconciler = new StartupReconciler();
@@ -158,9 +165,7 @@ reconciler.register(async () => {
   // Reconcile runs, Git/worktrees, budgets, outbox/jobs для активных проектов.
   // Этот запрос выполняется ПОСЛЕ завершения migrations, избегая доступа до migrations.
   const errors: string[] = [];
-  const onboarding = database.all<{ repository_path: string; proposed_json: string }>(
-    `SELECT repository_path, proposed_json FROM onboarding_configs WHERE status='ACTIVE'`,
-  );
+  const onboarding = listActiveApprovedOnboardingRepositories(database);
   for (const project of onboarding) {
     try {
       const proposed = JSON.parse(project.proposed_json) as { defaultBranch?: unknown };
@@ -320,6 +325,7 @@ function createEpicMergeAuthority(db: typeof database): {
          JOIN approvals a ON a.id=oc.approval_id
          JOIN epics e ON e.project_id=oc.project_id
         WHERE e.id=$epicId AND oc.status='ACTIVE'
+          AND a.subject_type='PROJECT' AND a.subject_id=oc.project_id
           AND a.type='WORKFLOW_CHANGE' AND a.status='APPROVED'`,
       { epicId },
     );

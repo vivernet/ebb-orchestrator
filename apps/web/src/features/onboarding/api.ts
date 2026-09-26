@@ -3,27 +3,9 @@
  */
 
 import { apiClient, toClientPath } from '../../api/client.js';
-import { apiPaths } from '@ebb-orchestrator/contracts';
+import { apiPaths, type OnboardingProjection, type OnboardingProposal } from '@ebb-orchestrator/contracts';
 
-export interface OnboardingDiscoveryResult {
-  projectId?: string;
-  repository: { path: string | null; remoteUrl: string | null };
-  detected: {
-    defaultBranch: string | null;
-    packageManager: string | null;
-    testFramework: string | null;
-    orchestratorConfigFound: boolean;
-  };
-  proposed: {
-    defaultBranch: string | null;
-    workflow: string | null;
-    roles: string[];
-    guidelines: string[];
-  };
-  approvalStatus: 'PENDING' | 'APPROVED';
-  semanticConfigApproved: boolean;
-  localModeEnabled: boolean;
-}
+export type OnboardingDiscoveryResult = OnboardingProjection;
 
 export const onboardingApi = {
   /**
@@ -51,10 +33,10 @@ export const onboardingApi = {
    * Запрашивает approval для onboarding project.
    * @param id ID onboarding project
    */
-  requestApproval: async (id: string) => {
+  requestApproval: async (id: string, proposed: OnboardingProposal) => {
     const response = await apiClient.post<OnboardingDiscoveryResult>(
       toClientPath(apiPaths.onboardingApproval(id)),
-      {},
+      { proposed },
     );
     return response;
   },

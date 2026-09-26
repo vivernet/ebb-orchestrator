@@ -3,7 +3,7 @@ id: plan-15-06
 kind: plan
 roadmap: 01
 stage: 13
-status: planned
+status: completed
 title: Atomic onboarding draft contract и scheduler guard
 created: 2026-09-25
 updated: 2026-09-25

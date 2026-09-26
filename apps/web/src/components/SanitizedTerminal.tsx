@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { ru } from '../i18n/ru.js';
 
 interface SanitizedTerminalProps {
   logs: string[];
@@ -57,7 +58,7 @@ export default function SanitizedTerminal({ logs, maxHeight = '400px' }: Sanitiz
         fontSize: '12px',
         margin: 0,
       }}
-      aria-label="Terminal output"
+      aria-label={ru.common.terminalOutput}
     >
       {logs.map((log, index) => (
         <div key={index} style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>

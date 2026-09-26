@@ -67,6 +67,12 @@ const forwardMigrations: Migration[] = [13, 14].map((version) => {
   };
 });
 
+const onboardingMigration: Migration = {
+  version: 21,
+  name: "021_onboarding_approval",
+  sql: readFileSync(join(import.meta.dirname, "../../../src/platform/database/migrations/021_onboarding_approval.sql"), "utf8"),
+};
+
 function cumulativeMigrations(...additional: Migration[]): Migration[] {
   return [...baseMigrations, ...additional];
 }
@@ -163,6 +169,12 @@ describe("scheduler lock compatibility migration", () => {
         { key: "repository:alpha" },
       ),
     ).toEqual({ reservation_id: expect.any(String), owner_id: "task-owner" });
+
+    runMigrations(db, cumulativeMigrations(legacyMigration012, ...forwardMigrations, onboardingMigration));
+    const onboardingApprovalId = randomUUID();
+    db.run("UPDATE projects SET status='ACTIVE' WHERE id=$id", { id: projectId });
+    db.run("INSERT INTO approvals(id,type,subject_id,subject_type,status,requested_by,created_at,resolved_by,resolved_at) VALUES($id,'WORKFLOW_CHANGE',$projectId,'PROJECT','APPROVED','fixture',$at,'fixture',$at)", { id: onboardingApprovalId, projectId, at: lockedAt });
+    db.run("INSERT INTO onboarding_configs(project_id,repository_path,facts_json,proposed_json,status,approval_id,created_at,updated_at,activated_at) VALUES($projectId,'/repo','{}','{}','ACTIVE',$approvalId,$at,$at,$at)", { projectId, approvalId: onboardingApprovalId, at: lockedAt });
 
     db.run("UPDATE tasks SET status='READY' WHERE id=$id", { id: secondTaskId });
     const scheduler = new SchedulerService(db);

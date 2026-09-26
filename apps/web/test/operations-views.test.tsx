@@ -48,9 +48,38 @@ describe('Queue row wait reason', () => {
 
     render(<MemoryRouter><ExecutionPage /></MemoryRouter>);
 
-    expect(await screen.findByText('Waiting for final merge approval')).toBeInTheDocument();
-    expect(screen.getByText('WAITING_FOR_APPROVAL')).toBeInTheDocument();
+    expect(await screen.findByText('Ожидается согласование.')).toBeInTheDocument();
+    expect(screen.getByRole('row', { name: /task-1/ })).not.toHaveTextContent('WAITING_FOR_APPROVAL');
     await waitFor(() => expect(apiClient.get).toHaveBeenCalledWith('/execution', expect.objectContaining({ signal: expect.any(AbortSignal) })));
+    vi.restoreAllMocks();
+  });
+
+  test('renders distinct coded waiting and blocking reasons safely without raw codes', async () => {
+    const reasons = [
+      ['WAITING_FOR_CAPACITY', 'Ожидается доступная мощность планировщика.'],
+      ['WAITING_FOR_ROLE_CAPACITY', 'Ожидается доступная мощность для роли.'],
+      ['WAITING_FOR_RESOURCE_LOCK', 'Ожидается освобождение ресурса.'],
+      ['WAITING_FOR_BUDGET', 'Ожидается бюджет проекта.'],
+      ['WAITING_FOR_DEPENDENCY', 'Ожидается выполнение зависимости.'],
+      ['APPROVAL', 'Ожидается согласование.'],
+      ['DEPENDENCY', 'Ожидается выполнение зависимости.'],
+      ['BLOCKED_BY_WORKFLOW', 'Заблокировано рабочим процессом.'],
+      ['BLOCKED_BY_PROJECT_STATE', 'Заблокировано состоянием проекта.'],
+      ['PROJECT_NOT_ACTIVE', 'Проект не активен.'],
+      ['ONBOARDING_NOT_ACTIVE', 'Онбординг проекта не активирован.'],
+      ['BLOCKED', 'Заблокировано рабочим процессом или политикой.'],
+      ['PAUSED', 'Приостановлено пользователем.'],
+      ['FUTURE_REASON', 'Причина ожидания недоступна.'],
+    ] as const;
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ running: [], waiting: reasons.map(([code], index) => ({ taskId: `task-${index}`, reason: { code, message: 'Secret backend English detail' } })), blocked: [] });
+    render(<MemoryRouter><ExecutionPage /></MemoryRouter>);
+    await screen.findByRole('link', { name: 'task-0' });
+    reasons.forEach(([code, label], index) => {
+      const row = screen.getByRole('link', { name: `task-${index}` }).closest('tr');
+      expect(row).toHaveTextContent(label);
+      expect(row).not.toHaveTextContent(code);
+      expect(row).not.toHaveTextContent('Secret backend English detail');
+    });
     vi.restoreAllMocks();
   });
 
@@ -58,12 +87,12 @@ describe('Queue row wait reason', () => {
     const get = vi.spyOn(apiClient, 'get').mockRejectedValueOnce(new Error('temporary outage')).mockResolvedValueOnce({ running: [], waiting: [], blocked: [] });
     render(<ExecutionPage />);
 
-    expect(await screen.findByText('Unable to load execution queue: temporary outage')).toBeInTheDocument();
+    expect(await screen.findByText('Не удалось загрузить очередь выполнения: Не удалось выполнить запрос.')).toBeInTheDocument();
     get.mockResolvedValueOnce({ running: [], waiting: [], blocked: [] });
     // Refresh is rendered only in the successful page shell, so retry first restores it.
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Повторить' }));
     await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
-    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Обновить' }));
     await waitFor(() => expect(get).toHaveBeenCalledTimes(3));
     vi.restoreAllMocks();
   });
@@ -80,7 +109,7 @@ describe('Queue row wait reason', () => {
 
     render(<MemoryRouter><ExecutionPage /></MemoryRouter>);
 
-    const button = await screen.findByRole('button', { name: 'Cancel' });
+    const button = await screen.findByRole('button', { name: 'Отменить' });
     fireEvent.click(button);
     fireEvent.click(button);
 
@@ -88,7 +117,7 @@ describe('Queue row wait reason', () => {
     expect(button).toBeDisabled();
     resolveCancel({});
     await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Cancel' })).not.toBeDisabled());
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Отменить' })).not.toBeDisabled());
     vi.restoreAllMocks();
   });
 });
@@ -103,8 +132,9 @@ describe('Agent Run detail', () => {
 
     render(<MemoryRouter><AgentRunPage id="run-1" /></MemoryRouter>);
 
-    expect(await screen.findByRole('heading', { name: 'Agent Run: run-1' })).toBeInTheDocument();
-    expect(screen.getByText('DEVELOPMENT')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Запуск агента: run-1' })).toBeInTheDocument();
+    expect(screen.getByText('Разработка')).toBeInTheDocument();
+    expect(screen.queryByText('DEVELOPMENT')).not.toBeInTheDocument();
     expect(screen.getByText('$0.4200')).toBeInTheDocument();
     // Page makes multiple calls: run, events, tools, permissions, recovery
     expect(get.mock.calls.filter(([path]) => path.startsWith('/runs/run-1'))).toHaveLength(5);
@@ -152,9 +182,9 @@ describe('Agent Run detail', () => {
     const post = vi.spyOn(apiClient, 'post').mockRejectedValue(new Error('cancel rejected'));
     render(<MemoryRouter><AgentRunPage id="run-1" /></MemoryRouter>);
 
-    const button = await screen.findByRole('button', { name: 'Cancel Run' });
+    const button = await screen.findByRole('button', { name: 'Отменить запуск' });
     fireEvent.click(button);
-    expect(await screen.findByText('Unable to cancel run: cancel rejected')).toBeInTheDocument();
+    expect(await screen.findByText('Не удалось отменить запуск: Не удалось выполнить запрос.')).toBeInTheDocument();
     expect(button).not.toBeDisabled();
     expect(post).toHaveBeenCalledTimes(1);
     vi.restoreAllMocks();

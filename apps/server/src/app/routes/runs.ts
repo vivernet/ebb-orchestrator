@@ -74,6 +74,16 @@ export async function runRoutes(app: FastifyInstance, deps: RunRouteDeps = {}): 
       return reply.code(409).send({ error: "task is not READY", status: task.status });
     }
 
+    try {
+      const project = deps.db.get<{ project_id: string }>("SELECT project_id FROM tasks WHERE id=$id", { id: task.id });
+      if (!project) return reply.code(404).send({ error: "task not found" });
+      deps.scheduler.assertProjectDispatchable(project.project_id);
+    } catch (error) {
+      const code = error instanceof Error ? error.message : "PROJECT_NOT_ACTIVE";
+      if (code === "ONBOARDING_NOT_ACTIVE" || code === "PROJECT_NOT_ACTIVE") return reply.code(409).send({ contractVersion: 1, error: { code, message: code === "ONBOARDING_NOT_ACTIVE" ? "Онбординг проекта не активирован" : "Проект не активен" } });
+      return reply.code(409).send({ error: "dispatch rejected" });
+    }
+
     // Выполняет соответствующую проверку или действие согласно контракту.
     const worktree = (deps.worktreeRepository ?? new WorktreeRepository(deps.db)).findTaskWorkspace(task.id);
     if (!worktree || !isAbsolute(worktree.path) || !existsSync(worktree.path) || !statIsDirectory(worktree.path)) {

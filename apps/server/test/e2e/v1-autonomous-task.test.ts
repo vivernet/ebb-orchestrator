@@ -44,7 +44,7 @@ import type { TaskContract as PromptTaskContract } from "../../src/modules/conte
 const execFileAsync = promisify(execFile);
 const resolve = createRequire(import.meta.url).resolve;
 const tsxLoader = pathToFileURL(resolve("tsx")).href;
-const migrationFiles = ["001_system.sql", "002_work_domain.sql", "003_work_control.sql", "004_agent_runs.sql", "005_scheduler.sql", "006_recovery.sql", "007_git.sql", "008_quality.sql", "009_integration_provenance.sql", "010_planning.sql", "011_epic_orchestration.sql", "012_epic_runtime_authority.sql", "013_remove_legacy_scheduler_locks.sql", "014_migrate_legacy_scheduler_authority.sql", "015_knowledge.sql", "016_context.sql", "017_usage.sql", "018_scheduler_config_audit.sql"];
+const migrationFiles = ["001_system.sql", "002_work_domain.sql", "003_work_control.sql", "004_agent_runs.sql", "005_scheduler.sql", "006_recovery.sql", "007_git.sql", "008_quality.sql", "009_integration_provenance.sql", "010_planning.sql", "011_epic_orchestration.sql", "012_epic_runtime_authority.sql", "013_remove_legacy_scheduler_locks.sql", "014_migrate_legacy_scheduler_authority.sql", "015_knowledge.sql", "016_context.sql", "017_usage.sql", "018_scheduler_config_audit.sql", "021_onboarding_approval.sql"];
 const migrations: Migration[] = migrationFiles.map((name, index) => ({
   version: index + 1,
   name: name.replace(".sql", ""),
@@ -200,6 +200,7 @@ describe("Autonomous Task End-to-End Workflow", () => {
     projectId = randomUUID(); taskId = randomUUID();
     const now = new Date().toISOString();
     db.run("INSERT INTO projects (id,name,display_name,status,created_at,updated_at) VALUES ($id,$name,$display_name,'ACTIVE',$created_at,$updated_at)", { id: projectId, name: "health-service", display_name: "Health Service", created_at: now, updated_at: now });
+    db.run("INSERT INTO onboarding_configs(project_id,repository_path,facts_json,proposed_json,status,approval_id,created_at,updated_at) VALUES ($projectId,$repositoryPath,$facts,$proposed,'ACTIVE',NULL,$now,$now)", { projectId, repositoryPath: masterRepoPath ?? "/repo", facts: JSON.stringify({ root: masterRepoPath ?? "/repo", defaultBranch: "master", remotes: [], packageManager: "npm", languageHints: [], testCommands: [], untrustedExistingConfig: false }), proposed: JSON.stringify({ defaultBranch: "master", workflow: "standard", roles: ["Developer"], guidelines: [] }), now });
     db.run("INSERT INTO tasks (id,project_id,display_id,title,status,contract_json,required,created_at,updated_at) VALUES ($id,$project_id,$display_id,$title,'DRAFT',$contract_json,1,$created_at,$updated_at)", { id: taskId, project_id: projectId, display_id: "TASK-HEALTH", title: "Add GET /health", contract_json: JSON.stringify({ version: 1, goal: "Add GET /health", context: "health check", requirements: ["GET /health returns 200"], acceptanceCriteria: ["returns 200 and JSON {status:'ok'}"], dependencies: [], nonGoals: ["no auth changes"], definitionOfDone: ["tests pass"] }), created_at: now, updated_at: now });
     masterRepoPath = await mkdtemp(join(tmpdir(), "master-repo-"));
     await cp(join(import.meta.dirname, "fixtures", "health-service"), masterRepoPath, { recursive: true });

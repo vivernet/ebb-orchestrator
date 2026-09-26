@@ -5,13 +5,13 @@ kind: roadmap
 title: Ebb Orchestrator Roadmap
 summary: Unified roadmap consolidating all stages and plans
 created: 2026-09-16
-updated: 2026-09-25
+updated: 2026-09-26
 ---
 
 # Ebb Orchestrator Roadmap
 
 **Version:** Roadmap 01
-**Last Updated:** 2026-09-25
+**Last Updated:** 2026-09-26
 **Status:** Active
 
 > This document is auto-generated from plan metadata. For manual edits, see [Governance Guide](../architecture/plans/governance/00-01-documentation-governance.md).
@@ -38,10 +38,10 @@ This roadmap consolidates all stages and plans into a single canonical document.
 
 | Stage | Total | Done | Progress |
 |-------|-------|------|----------|
-| 0 | 3 | 2 | 67% |
+| 0 | 2 | 2 | 100% |
 | 10 | 1 | 1 | 100% |
 | 12 | 1 | 0 | 0% |
-| 13 | 10 | 5 | 50% |
+| 13 | 10 | 10 | 100% |
 | 4 | 1 | 1 | 100% |
 | 8 | 1 | 1 | 100% |
 | 9 | 1 | 1 | 100% |
@@ -49,7 +49,7 @@ This roadmap consolidates all stages and plans into a single canonical document.
 | B | 1 | 1 | 100% |
 | C | 1 | 1 | 100% |
 | D | 1 | 1 | 100% |
-| undefined | 7 | 0 | 0% |
+| undefined | 8 | 0 | 0% |
 
 ---
 
@@ -70,12 +70,12 @@ This roadmap consolidates all stages and plans into a single canonical document.
 | plan-15-02 | 13 | completed | SQLite auth persistence и session repository |
 | plan-15-03 | 13 | completed | First-run CLI wizard и startup composition |
 | plan-15-04 | 13 | completed | Server auth routes, CSRF и security boundary |
-| plan-15-05 | 13 | planned | Shared auth contract, Web login/restore и SSE expiry |
-| plan-15-06 | 13 | planned | Atomic onboarding draft contract и scheduler guard |
-| plan-15-07 | 13 | planned | Russian UI, accessibility и bootstrap artifact cleanup |
-| plan-15-08 | 13 | planned | Verification, security evidence и independent plan review |
+| plan-15-05 | 13 | completed | Shared auth contract, Web login/restore и SSE expiry |
+| plan-15-06 | 13 | completed | Atomic onboarding draft contract и scheduler guard |
+| plan-15-07 | 13 | completed | Russian UI, accessibility и bootstrap artifact cleanup |
+| plan-15-08 | 13 | completed | Verification, security evidence и independent plan review |
 | plan-15-09 | 13 | completed | Atomic auth v2 prerequisite remediation |
-| plan-15 | 13 | in_progress | Устойчивые auth, onboarding и Russian Web UI |
+| plan-15 | 13 | completed | Устойчивые auth, onboarding и Russian Web UI |
 | plan-00 | N/A | completed | Documentation Governance Refactoring |
 | plan-00-02 | N/A | superseded | Plan Document |
 | plan-00-03 | N/A | completed | Naming Convention for Implementation Plans |
@@ -120,8 +120,7 @@ plan-15-02 → plan-15-09
 plan-15-03 → plan-15-09
 plan-12 → plan-15
 plan-13 → plan-15
-plan-00-01 → plan-00-05
-plan-00-04 → plan-00-05
+plan-00 → plan-00-05
 
 ---
 

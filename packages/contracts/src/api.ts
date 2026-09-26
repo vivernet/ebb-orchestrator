@@ -14,12 +14,24 @@ export type UsageSummary = z.infer<typeof usageSummarySchema>;
 
 /** Причина ожидания, пригодная для отображения и диагностики. */
 export interface WaitReason { code: string; message: string; details?: Record<string, string | number>; }
+export const SCHEDULER_PROJECTION_CONTRACT_VERSION = 1 as const;
+export type SchedulerProjectionStatus = "RUNNABLE" | "WAIT" | "BLOCK";
+export type ProjectionBlockReason =
+  | { code: "BLOCKED"; message: string }
+  | { code: "BLOCKED_BY_WORKFLOW"; message: string }
+  | { code: "BLOCKED_BY_PROJECT_STATE"; message: string }
+  | { code: "PROJECT_NOT_ACTIVE"; message: string }
+  | { code: "ONBOARDING_NOT_ACTIVE"; message: "Онбординг проекта не активирован" };
+export type SchedulerEligibilityProjection =
+  | { status: "RUNNABLE"; reason: null }
+  | { status: "WAIT"; reason: WaitReason }
+  | { status: "BLOCK"; reason: ProjectionBlockReason };
 /** Краткое представление активного агентского запуска. */
 export interface ActiveAgent { runId: string; role: string; taskId: string | null; status: string; }
 /** Снимок данных dashboard, собранный из авторитетных read models. */
 export interface DashboardProjection {
   activeAgents: ActiveAgent[];
-  activeWork: Array<{ id: string; title: string; status: string; waitReason: WaitReason | null }>;
+  activeWork: Array<{ id: string; title: string; status: string; eligibility: SchedulerEligibilityProjection }>;
   approvals: number;
   usage: UsageSummary;
   projects: Array<{ id: string; name: string; displayName: string; status: string }>;
@@ -51,7 +63,7 @@ export interface ProjectOverviewProjection {
   project: { id: string; name: string; displayName: string; status: string } | null;
   git: GitProjection;
   epics: Array<{ id: string; display_id: string; title: string; status: string }>;
-  tasks: Array<{ id: string; epic_id: string | null; display_id: string; title: string; status: string; required: number }>;
+  tasks: Array<{ id: string; epic_id: string | null; display_id: string; title: string; status: string; required: number; eligibility: SchedulerEligibilityProjection }>;
   approvals: ApprovalProjection[];
   blockers: Array<{ id: string; status: string; reason: string | null }>;
   events: EventProjection[];
@@ -60,7 +72,7 @@ export interface ProjectOverviewProjection {
 /** Авторитетная read model страницы Epic. */
 export interface EpicOverviewProjection { epic: unknown; contract: unknown; lifecycle: LifecycleProjection; git: GitProjection; tasks: EpicTaskProjection[]; approvals: ApprovalProjection[]; blockers: Array<{ id: string; status: string; reason: string | null }>; events: EventProjection[]; usage: UsageSummary; }
 /** Авторитетная read model страницы Task, включая причины ожидания. */
-export interface TaskOverviewProjection { task: unknown; contract: unknown; lifecycle: LifecycleProjection; git: GitProjection; runs: TaskRunProjection[]; findings: unknown[]; defects: unknown[]; dependencies: DependencyProjection[]; approvals: ApprovalProjection[]; events: EventProjection[]; usage: UsageSummary; waitReason: WaitReason | null; }
+export interface TaskOverviewProjection { task: unknown; contract: unknown; lifecycle: LifecycleProjection; git: GitProjection; runs: TaskRunProjection[]; findings: unknown[]; defects: unknown[]; dependencies: DependencyProjection[]; approvals: ApprovalProjection[]; events: EventProjection[]; usage: UsageSummary; scheduler: SchedulerEligibilityProjection; }
 /** Авторитетные scheduler fields, доступные Settings без выдумывания model/security policy. */
 export interface SchedulerSettingsProjection { schemaVersion: number | null; globalMax: number | null; projectMax: number | null; roleCapacity: Record<string, number> | null; }
 /** Read-only Settings projection с явными unavailable/null для неподтверждённых scopes. */
@@ -69,7 +81,7 @@ export interface SettingsProjection {
   securitySettings: { mostRestrictiveWins: boolean | null; localModeEnabled: boolean | null };
 }
 /** Снимок очереди Scheduler с активными, ожидающими и заблокированными Task. */
-export interface ExecutionQueueProjection { running: ActiveAgent[]; waiting: Array<{ taskId: string; reason: WaitReason }>; blocked: Array<{ taskId: string; reason: WaitReason }>; }
+export interface ExecutionQueueProjection { running: ActiveAgent[]; waiting: Array<{ taskId: string; reason: WaitReason }>; blocked: Array<{ taskId: string; reason: ProjectionBlockReason }>; }
 
 /** Версия публичного HTTP-контракта локальной аутентификации. */
 export const AUTH_CONTRACT_VERSION = 1 as const;

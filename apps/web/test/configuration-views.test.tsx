@@ -3,7 +3,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import ProjectOnboardingPage from '../src/features/onboarding/ProjectOnboardingPage.js';
 import SettingsPage from '../src/features/settings/SettingsPage.js';
 import UsagePage from '../src/features/usage/UsagePage.js';
-import { apiClient } from '../src/api/client.js';
+import { ApiError, apiClient } from '../src/api/client.js';
 
 function usageFixture(overrides: Partial<Record<'global' | 'project' | 'epic' | 'task', object>> = {}) {
   const bucket = { inputTokens: 10, cachedTokens: 2, outputTokens: 3, totalTokens: 15, tokens: 15, cost: 1.25, aggregation: 'all_records' };
@@ -22,8 +22,8 @@ describe('Onboarding DETECTED vs PROPOSED separation', () => {
 
     render(<ProjectOnboardingPage id="" />);
 
-    expect(screen.getByRole('heading', { name: 'Project onboarding' })).toBeInTheDocument();
-    expect(screen.getByText(/select a project/i)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Настройка проекта' })).toBeInTheDocument();
+    expect(screen.getByText(/Выберите проект/i)).toBeInTheDocument();
     expect(get).not.toHaveBeenCalled();
     vi.restoreAllMocks();
   });
@@ -51,14 +51,14 @@ describe('Onboarding DETECTED vs PROPOSED separation', () => {
 
     render(<ProjectOnboardingPage id="1" />);
 
-    await waitFor(() => expect(screen.getAllByText('DETECTED')).toHaveLength(1));
-    expect(screen.getByText(/Package manager: pnpm/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Обнаружено' })).toBeInTheDocument());
+    expect(screen.getByText(/Менеджер пакетов: pnpm/)).toBeInTheDocument();
 
-    expect(screen.getByText(/Workflow: standard/)).toBeInTheDocument();
-    expect(screen.getByText(/Roles: Developer, Reviewer, QA/)).toBeInTheDocument();
+    expect(screen.getByText(/Рабочий процесс: standard/)).toBeInTheDocument();
+    expect(screen.getByText(/Роли: Developer, Reviewer, QA/)).toBeInTheDocument();
 
     expect(screen.queryByRole('button', { name: /Activate/i })).not.toBeInTheDocument();
-    expect(screen.getByText(/activation is unavailable/i)).toBeInTheDocument();
+    expect(screen.getByText(/Активация проекта недоступна/i)).toBeInTheDocument();
     vi.restoreAllMocks();
   });
 
@@ -75,9 +75,9 @@ describe('Onboarding DETECTED vs PROPOSED separation', () => {
 
     render(<ProjectOnboardingPage id="1" />);
 
-    await waitFor(() => expect(screen.getAllByText('DETECTED')).toHaveLength(1));
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Обнаружено' })).toBeInTheDocument());
     expect(screen.queryByRole('button', { name: /Activate/i })).not.toBeInTheDocument();
-    expect(screen.getByText(/does not expose a client-side bypass/i)).toBeInTheDocument();
+    expect(screen.getByText(/не предоставляет обход этой политики на стороне клиента/i)).toBeInTheDocument();
     vi.restoreAllMocks();
   });
 
@@ -94,9 +94,9 @@ describe('Onboarding DETECTED vs PROPOSED separation', () => {
 
     render(<ProjectOnboardingPage id="1" />);
 
-    await waitFor(() => expect(screen.getAllByText('DETECTED')).toHaveLength(1));
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Обнаружено' })).toBeInTheDocument());
     expect(screen.queryByRole('button', { name: /Activate/i })).not.toBeInTheDocument();
-    expect(screen.getByText(/activation is unavailable/i)).toBeInTheDocument();
+    expect(screen.getByText(/Активация проекта недоступна/i)).toBeInTheDocument();
     vi.restoreAllMocks();
   });
 });
@@ -115,11 +115,11 @@ describe('Settings page configuration hierarchy', () => {
 
     render(<SettingsPage />);
 
-    await waitFor(() => expect(screen.getAllByText('Global')).toHaveLength(1));
-    expect(screen.getByText('Project')).toBeInTheDocument();
-    expect(screen.getByText('Role')).toBeInTheDocument();
-    expect(screen.getByText('Task/Epic')).toBeInTheDocument();
-    expect(screen.getByText('Global max: 7')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Глобально' })).toBeInTheDocument());
+    expect(screen.getByRole('heading', { name: 'Проект' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Роль' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Задача/эпик' })).toBeInTheDocument();
+    expect(screen.getByText('Общий максимум: 7')).toBeInTheDocument();
     expect(screen.queryByText(/gpt-4/)).not.toBeInTheDocument();
     vi.restoreAllMocks();
   });
@@ -132,25 +132,35 @@ describe('Settings page configuration hierarchy', () => {
 
     render(<SettingsPage />);
 
-    await waitFor(() => expect(screen.getAllByText('Security')).toHaveLength(1));
-    expect(screen.getAllByText(/Unavailable/).length).toBeGreaterThan(0);
-    expect(screen.queryByText(/Local Mode: Disabled/)).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Безопасность' })).toBeInTheDocument());
+    expect(screen.getAllByText(/Недоступно/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Локальный режим: Выключен/)).not.toBeInTheDocument();
     vi.restoreAllMocks();
   });
 
-  test('renders retryable settings load failure', async () => {
-    const get = vi.spyOn(apiClient, 'get').mockRejectedValueOnce(new Error('settings unavailable')).mockResolvedValueOnce({
+  test('renders retryable settings load failure without exposing backend details', async () => {
+    const get = vi.spyOn(apiClient, 'get').mockRejectedValueOnce(new Error('secret: settings unavailable')).mockResolvedValueOnce({
       effectiveHierarchy: { global: { schemaVersion: 1, globalMax: 4, projectMax: 3, roleCapacity: {} }, project: null, role: null, taskEpic: null },
       securitySettings: { mostRestrictiveWins: null, localModeEnabled: null },
     });
 
     render(<SettingsPage />);
 
-    expect(await screen.findByText('Unable to load settings: settings unavailable')).toBeInTheDocument();
-    screen.getByRole('button', { name: 'Retry' }).click();
-    await waitFor(() => expect(screen.getByText('Global max: 4')).toBeInTheDocument());
+    expect(await screen.findByText('Не удалось загрузить настройки: Не удалось выполнить запрос.')).toBeInTheDocument();
+    expect(screen.queryByText(/secret:/)).not.toBeInTheDocument();
+    screen.getByRole('button', { name: 'Повторить' }).click();
+    await waitFor(() => expect(screen.getByText('Общий максимум: 4')).toBeInTheDocument());
     expect(get).toHaveBeenCalledTimes(2);
     vi.restoreAllMocks();
+  });
+
+  test('maps recognized settings API error codes to safe Russian copy', async () => {
+    vi.spyOn(apiClient, 'get').mockRejectedValueOnce(new ApiError('secret: settings detail', 403, 'AUTH_FORBIDDEN'));
+
+    render(<SettingsPage />);
+
+    expect(await screen.findByText('Не удалось загрузить настройки: Доступ запрещён.')).toBeInTheDocument();
+    expect(screen.queryByText(/secret:/)).not.toBeInTheDocument();
   });
 });
 
@@ -160,7 +170,7 @@ describe('Usage page budget tracking', () => {
 
     render(<UsagePage />);
 
-    expect(screen.getByRole('status')).toHaveTextContent('Loading usage data…');
+    expect(screen.getByRole('status')).toHaveTextContent('Загрузка данных об использовании…');
     vi.restoreAllMocks();
   });
 
@@ -171,18 +181,18 @@ describe('Usage page budget tracking', () => {
 
     render(<UsagePage />);
 
-    await waitFor(() => expect(screen.getByRole('heading', { name: 'All records' })).toBeInTheDocument());
-    expect(screen.getByRole('heading', { name: 'Records with project_id' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Records with epic_id' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Records with task_id' })).toBeInTheDocument();
-    const allRecords = screen.getByRole('heading', { name: 'All records' }).closest('article');
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Все записи' })).toBeInTheDocument());
+    expect(screen.getByRole('heading', { name: 'Записи с project_id' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Записи с epic_id' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Записи с task_id' })).toBeInTheDocument();
+    const allRecords = screen.getByRole('heading', { name: 'Все записи' }).closest('article');
     expect(allRecords).not.toBeNull();
     expect(within(allRecords!).getByText('100')).toBeInTheDocument();
     expect(within(allRecords!).getByText('20')).toBeInTheDocument();
     expect(within(allRecords!).getByText('30')).toBeInTheDocument();
     expect(within(allRecords!).getByText('150')).toBeInTheDocument();
     expect(allRecords).toHaveTextContent('$10.00');
-    expect(screen.queryByText(/Effective limit/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Действующий лимит/)).not.toBeInTheDocument();
     expect(get).toHaveBeenCalledWith('/usage', expect.objectContaining({ signal: expect.any(AbortSignal) }));
     vi.restoreAllMocks();
   });
@@ -197,7 +207,7 @@ describe('Usage page budget tracking', () => {
 
     render(<UsagePage />);
 
-    expect(await screen.findByText('No usage records are available.')).toBeInTheDocument();
+    expect(await screen.findByText('Нет доступных записей об использовании.')).toBeInTheDocument();
     vi.restoreAllMocks();
   });
 
@@ -208,10 +218,10 @@ describe('Usage page budget tracking', () => {
 
     render(<UsagePage />);
 
-    expect(await screen.findByText('Unable to load usage: usage unavailable')).toBeInTheDocument();
+    expect(await screen.findByText('Не удалось загрузить данные об использовании: Не удалось выполнить запрос.')).toBeInTheDocument();
     get.mockResolvedValue(usageFixture());
-    screen.getByRole('button', { name: 'Retry' }).click();
-    await waitFor(() => expect(screen.getByRole('heading', { name: 'All records' })).toBeInTheDocument());
+    screen.getByRole('button', { name: 'Повторить' }).click();
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Все записи' })).toBeInTheDocument());
     expect(get).toHaveBeenCalledTimes(2);
     vi.restoreAllMocks();
   });

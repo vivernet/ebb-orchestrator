@@ -18,15 +18,15 @@ export default function ProjectsIndex() {
   const retry = useCallback(() => { void query.refetch().catch(() => undefined); }, [query.refetch]);
 
   if (query.status === 'loading' || query.status === 'idle') {
-    return <PageState status="loading" message="Loading projects…" />;
+    return <PageState status="loading" message="Загрузка проектов…" />;
   }
 
   if (query.status === 'error') {
     return (
       <PageState
         status="error"
-        title="Unable to load projects"
-        message="Unable to load projects list."
+        title="Не удалось загрузить проекты"
+        message="Не удалось загрузить список проектов."
         onRetry={retry}
       />
     );
@@ -35,15 +35,15 @@ export default function ProjectsIndex() {
   if (projects.length === 0) {
     return (
       <EmptyState
-        message="No projects yet."
-        action={<Link to="/projects/new">Create your first project</Link>}
+        message="Проектов пока нет."
+        action={<Link to="/projects/new">Создать первый проект</Link>}
       />
     );
   }
 
   return (
     <div className="projects-index">
-      <h1>Projects</h1>
+      <h1>Проекты</h1>
       <ul>
         {projects.map((project) => (
           <li key={project.id}>

@@ -475,3 +475,182 @@ The `15-04` server security boundary implementation and independent review retur
 ### Scope verification
 
 Only the three intended metadata documents were touched by this transition: `docs/architecture/plans/15-04-server-security-boundary.md`, `docs/roadmap/01-roadmap.md` (generated), and this ledger. Existing production/source/test changes in the worktree were preserved; no commit, push or merge was performed.
+
+## Plan-controller transition: 15-05 DONE/PASS (2026-09-25)
+
+The approved `15-05` Web auth/restore and SSE expiry implementation completed its independent implementation and security reviews with **PASS**. Frontmatter now uses the repository lifecycle convention `status: completed`, which maps to controller state `DONE/PASS`. Parent `plan-15` remains `in_progress`; completed `15-01`–`15-04` and `15-09` remain unchanged. Pending children `15-06`–`15-08` remain `WAITING` in the controller ledger and `status: planned` in frontmatter. No production or test files were changed by this metadata transition.
+
+### Implementer and review evidence
+
+- Web focused/auth/SSE verification: **16 files, 161 passed**.
+- Server suite: **792 passed, 2 skipped**.
+- Contracts verification: **3 passed**.
+- Workspace typecheck, lint, test, build and `git diff --check`: **PASS**.
+- Independent implementation review: **PASS**.
+- Independent security review: **PASS**.
+- Browser E2E is explicitly **deferred/blocked**: the existing first-run backend harness requires an interactive TTY, and the previously attempted Browser CDP path failed with Windows `WinError 1225`. This is an execution-environment limitation, not a claimed browser-pass result; the stale bootstrap E2E harness files remain owned by plan `15-07`.
+
+### Task state ledger
+
+| Task | State | Причина |
+|---|---|---|
+| 15-01 | DONE/PASS | Historical completed contract/crypto task; retained unchanged. |
+| 15-02 | DONE/PASS | Historical completed persistence/repository task; retained unchanged. |
+| 15-03 | DONE/PASS | Historical completed wizard/startup task; retained unchanged. |
+| 15-09 | DONE/PASS | Independent atomic auth v2 prerequisite; retained unchanged. |
+| 15-04 | DONE/PASS | Server security boundary implementation and review passed; retained unchanged. |
+| 15-05 | DONE/PASS | Web auth/restore/SSE implementation and independent implementation/security reviews passed. |
+| 15-06 | WAITING | Depends on 15-04 and 15-05; not started. |
+| 15-07 | WAITING | Depends on 15-05 and 15-06; stale bootstrap E2E harness ownership remains here. |
+| 15-08 | WAITING | Depends on 15-04–15-07 and 15-09; not started. |
+
+### Transition decision
+
+`15-05` is `DONE/PASS`. Tasks `15-06`–`15-08` remain `WAITING` on their declared dependencies. Browser E2E remains deferred/blocked under the explicit limitation above; no stale `15-07` harness or plan-16 files were modified.
+
+### Transition validation
+
+- `pnpm docs:roadmap -- --dry-run --output=docs/roadmap/01-roadmap.md` — exit `0`; generated-roadmap preview completed.
+- `pnpm docs:roadmap -- --output=docs/roadmap/01-roadmap.md` — exit `0`; canonical roadmap regenerated from repository metadata.
+- Canonical roadmap read-back — exit `0`; exactly 10 unique stage-13 `plan-15` entries: parent `plan-15` is `in_progress`; `plan-15-01`–`plan-15-05` and `plan-15-09` are `completed`; `plan-15-06`–`plan-15-08` are `planned`; no duplicate IDs.
+- `pnpm docs:check` — exit `0`; one existing warning only: `roadmap/generated.md` filename lacks a numeric prefix.
+- `pnpm docs:test` — exit `0`; **11 passed, 0 failed, 0 skipped**.
+- `git diff --check` — exit `0`; only pre-existing CRLF-normalization warnings remain.
+
+### Scope verification
+
+Only plan metadata, this evidence ledger, and the generated roadmap are intended transition outputs. Existing uncommitted Web implementation changes were preserved; no production/Web code, stale `15-07` harness, or plan-16 file was modified. No commit, push, or merge was performed.
+
+## Plan-controller transition: 15-06 DONE/PASS (2026-09-25)
+
+The approved onboarding draft and scheduler-guard implementation completed fresh independent task and security reviews with **PASS**. The task reviewer recommends promoting `plan-15-06` from `planned` to `completed`; the parent `plan-15` remains `in_progress`, and `15-07`/`15-08` remain pending. No migration history was changed.
+
+### Implementer and review evidence
+
+- Server full suite on Node 24.21.0 with the isolated process pool: **93 files, 825 passed, 2 skipped**.
+- Plan-15-06-focused Web tests: **3 files, 70 passed**.
+- Contracts suite: **3 files, 4 passed**.
+- Server, Web and contracts typechecks: **PASS**; full ESLint: **PASS**; server TypeScript build and migration-resource copy: **PASS**; Web TypeScript build and Vite build: **PASS**.
+- `git diff --check`: **PASS**.
+- Latest independent security review: **PASS**; no repository-path bypass found. Latest independent Plan-15-06 review: **PASS**, status promotion recommended.
+- The full Web suite still reports **6 failures in 3 unrelated store/API test files**. A minimal `.rejects.toThrow()` Vitest probe reproduces `TypeError: Cannot read properties of undefined (reading 'indexOf')`; the direct Node 24 store probe rejects with the expected `Error`. The full Web suite is not claimed as passing.
+- Real-browser E2E remains blocked by the previously recorded CDP `WinError 1225`; browser verification and bootstrap harness cleanup remain with `15-07`/`15-08`.
+
+### Task state ledger
+
+| Task | State | Причина |
+|---|---|---|
+| 15-01 | DONE/PASS | Historical completed contract/crypto task; retained unchanged. |
+| 15-02 | DONE/PASS | Historical completed persistence/repository task; retained unchanged. |
+| 15-03 | DONE/PASS | Historical completed wizard/startup task; retained unchanged. |
+| 15-09 | DONE/PASS | Independent atomic auth v2 prerequisite; retained unchanged. |
+| 15-04 | DONE/PASS | Server security boundary implementation and review passed; retained unchanged. |
+| 15-05 | DONE/PASS | Web auth/restore/SSE implementation and reviews passed; retained unchanged. |
+| 15-06 | DONE/PASS | Onboarding lifecycle, project-bound approved repository path, scheduler guard, focused verification, and independent reviews passed. |
+| 15-07 | WAITING | Depends on 15-05 and 15-06; Russian UI/accessibility and bootstrap artifact cleanup remain. |
+| 15-08 | WAITING | Depends on 15-04–15-07 and 15-09; final verification/reconciliation remains. |
+
+### Transition decision and validation
+
+`15-06` is `DONE/PASS`; its frontmatter is `status: completed`. The parent plan remains `in_progress`. The known full-Web matcher failure and browser/CDP limitation are recorded explicitly and are not represented as passing evidence for this child plan.
+
+- Node 24.21.0 server suite `vitest run --pool=forks --maxWorkers=4` — exit `0`; 93 files, 825 passed, 2 skipped.
+- Plan-15-06-focused Web suite — exit `0`; 3 files, 70 passed.
+- Contracts Vitest suite — exit `0`; 3 files, 4 passed.
+- Server/Web/contracts TypeScript checks, ESLint, server build, Web build, and `git diff --check` — exit `0`.
+- Full Web suite — not green: 6 failures in unrelated `.rejects.toThrow()` tests; minimal probe confirms the installed Vitest matcher failure independently of application logic.
+
+## Повторное открытие 15-07 (2026-09-26)
+
+- Свежая независимая проверка реализации 15-07 (`deleg_d4a01c76`) вернула `CHANGES_REQUIRED`: английские пользовательские статусы/этапы, generic fallback для известных auth/onboarding-кодов и недоступные именованные роли трёх индикаторов/таймлайна. Прежний `completed` и проверки до замечаний не закрывают эти дефекты.
+- После исправления двух замечаний к последовательности RED и pre/post-review Web gates независимая проверка поправки планов (`deleg_547104f2`) дала `APPROVED`. Это утверждение плана, не проверка реализации.
+- Метаданные `plan-15-07` переведены из `completed` в `in_progress`; `plan-15-08` остаётся `planned`, родитель `plan-15` остаётся `in_progress`. Владелец исправлений Web и регрессионных тестов — 15-07. До новых тестов и независимого `PASS` 15-07 задача 15-08 заблокирована; ранее пройденные тесты не засчитываются повторно.
+
+### Первый раунд исправления и оставшийся блокер
+
+- `pnpm --filter @ebb-orchestrator/web test test/api-client-foundation.test.ts test/auth-ui.test.tsx test/main-auth-state.test.ts test/sse-session-expiry.test.ts test/features/onboarding.test.tsx test/localization-accessibility.test.tsx test/app-shell.test.tsx test/core-views.test.tsx test/shared-primitives.test.tsx test/configuration-views.test.tsx test/operations-views.test.tsx test/features/RunPage.test.tsx test/ui-api-remediation.test.tsx test/routing-bootstrap.test.ts` — exit `0`, 14 файлов / 163 теста; результат промежуточный, не закрывает повторный review.
+- `pnpm lint` — exit `0`; `pnpm test` — exit `0`, Web 181/181, server 825 passed / 2 skipped, contracts 4/4; `pnpm --filter @ebb-orchestrator/web build` — exit `0`; `node --test apps/web/test/e2e/credential-handoff.test.mjs` — exit `0`, 14/14; `pnpm --filter @ebb-orchestrator/web test:e2e` — первый exit `1` из-за прежнего ожидания `DRAFT` вместо русского UI, после изменения только видимых E2E assertions повторный exit `0`, 4/4. Исходные API status assertions сохранены. `pnpm typecheck` и `pnpm build` — exit `0` после этой E2E-правки.
+- Независимый review `deleg_66543ba8` вернул `CHANGES_REQUESTED`: некоторые реальные run/status/scope ещё не локализованы, ряд страниц выводит сырые status и английские `reason.message`. Это текущий IMPORTANT-блокер. 15-07 остаётся `in_progress`, 15-08 остаётся `planned`; исправления и свежие gates/review обязательны до повторного закрытия.
+
+### Второй раунд и остаточные замечания review
+
+- После второго раунда: `pnpm --filter @ebb-orchestrator/web test test/api-client-foundation.test.ts test/auth-ui.test.tsx test/main-auth-state.test.ts test/sse-session-expiry.test.ts test/features/onboarding.test.tsx test/localization-accessibility.test.tsx test/app-shell.test.tsx test/core-views.test.tsx test/shared-primitives.test.tsx test/configuration-views.test.tsx test/operations-views.test.tsx test/features/RunPage.test.tsx test/ui-api-remediation.test.tsx test/routing-bootstrap.test.ts` — exit `0`, 14 файлов / 176 тестов. `pnpm lint` — exit `0`; `pnpm test` — exit `0`, Web 194/194, server 825 passed / 2 skipped, contracts 4/4; `pnpm --filter @ebb-orchestrator/web build` — exit `0`; `node --test apps/web/test/e2e/credential-handoff.test.mjs` — exit `0`, 14/14; `pnpm --filter @ebb-orchestrator/web test:e2e` — exit `0`, 4/4. Browser E2E намеренно подаёт некорректный ответ dashboard для проверки error boundary, поэтому console error этого сценария не является PASS всего UI.
+- Свежий независимый review `deleg_732cb9eb` вернул `CHANGES_REQUESTED`: оставшиеся сырые значения в Execution/Approvals/Project/AgentRun, небезопасный вывод recovery reason и route statusText, а также утраченное browser-покрытие Agent Run и пустых Dashboard/Approvals/Execution из исходного E2E. Это третья ограниченная итерация исправлений; до её проверки и `PASS` 15-07 остаётся `in_progress`, 15-08 остаётся `planned`.
+
+### Третья итерация и дополнительная browser-проверка
+
+- После исправления UI и возвращения двух браузерных сценариев: pre-review focused Web command из строки выше — exit `0`, 14/14 файлов, 179/179 тестов; `pnpm lint` — exit `0`; `pnpm test` — exit `0`, Web 197/197, server 825 passed / 2 skipped, contracts 4/4; `pnpm --filter @ebb-orchestrator/web build` — exit `0`; `node --test apps/web/test/e2e/credential-handoff.test.mjs` — exit `0`, 14/14. В первом совместном browser run 5/6, потому что восстановленный Agent Run тест всё ещё ожидал сырые английские подписи; после корректировки видимых assertions совместный browser E2E — exit `0`, 6/6. `pnpm typecheck`, `pnpm build`, `git diff --check` — exit `0`.
+- Независимый read-only review `deleg_ec203d48` прочитал промежуточный E2E-файл до указанной корректировки и вернул `CHANGES_REQUESTED`: устаревшие ожидания Agent Run и потерянные браузерные проверки missing epic/task, usage, read-only settings. Тест восстановлен с реальным HTTP для отсутствующих epic/task, проверкой reload задачи и русских состояний usage/settings; промежуточный browser run 5/6 выявил несовпадение ожидаемой пунктуации breadcrumbs, затем скорректирован тест. Повторный `pnpm --filter @ebb-orchestrator/web test:e2e` — exit `0`, 6/6 с совместным запуском backend/frontend. Независимая проверка этой последней E2E-правки ещё ожидается; `15-07` остаётся `in_progress`, `15-08` — `planned`.
+- Свежая независимая read-only проверка `deleg_7ca4976b` текущего E2E-файла и прежних двух блокеров вернула `PASS`: русские и безопасные Agent Run assertions совпадают с фактическим UI, отсутствующие epic/task, reload/breadcrumbs, usage и settings снова проверяются в Chromium. После fresh focused Web 179/179, root test Web 197/197 + server 825 passed/2 skipped + contracts 4/4, lint, typecheck, build, credential-handoff 14/14 и реального backend/frontend Chromium E2E 6/6 план `15-07` вновь `completed`; `15-08` теперь разблокирован для отдельного post-review verification, но остаётся `planned` до её собственных gates.
+
+## 15-08: post-review verification и предфинальная сверка
+
+Отдельный post-review запуск focused Web (после `deleg_7ca4976b PASS`) не подменяется pre-review запуском. Все строки ниже — команды из корня репозитория на текущем worktree; вывод не содержит секретов. `PASS` означает exit `0`, если не указано иное.
+
+| Команда | Exit | Фактический результат |
+|---|---:|---|
+| `pnpm --filter @ebb-orchestrator/web test test/api-client-foundation.test.ts test/auth-ui.test.tsx test/main-auth-state.test.ts test/sse-session-expiry.test.ts test/features/onboarding.test.tsx test/localization-accessibility.test.tsx test/app-shell.test.tsx test/core-views.test.tsx test/shared-primitives.test.tsx test/configuration-views.test.tsx test/operations-views.test.tsx test/features/RunPage.test.tsx test/ui-api-remediation.test.tsx test/routing-bootstrap.test.ts` | 0 | PASS; 14 файлов, 179/179 тестов. Post-review invocation. |
+| `pnpm --filter @ebb-orchestrator/server test auth-repository.concurrency.test.ts` | 0 | PASS; 1 файл, 5/5 тестов. |
+| `pnpm --filter @ebb-orchestrator/server test transport-origin.test.ts v1-security.test.ts` | 0 | PASS; 2 файла, 6/6 тестов; real HTTP Origin/session/CSRF. |
+| `pnpm --filter @ebb-orchestrator/server test scheduler.test.ts runs-dispatch.test.ts run-event-handlers.test.ts epic-orchestrator.test.ts scheduler-projection.test.ts scheduler-fixture-inventory.test.ts` | 0 | PASS; 6 файлов, 52/52 теста. |
+| `pnpm --filter @ebb-orchestrator/server test:auth-contract` | 0 | PASS; 2 файла, 12/12 тестов. |
+| `pnpm --filter @ebb-orchestrator/server test test/platform/database/backup-restore.test.ts test/platform/database/migrator.test.ts test/platform/process/startup.test.ts test/platform/security/local-user-wizard.test.ts` | 0 | PASS; 4 файла, 43/43 теста. |
+| `pnpm lint` | 0 | PASS; ESLint без ошибок. |
+| `pnpm typecheck` | 0 | PASS; contracts/testing/server TypeScript checks. |
+| `pnpm test` | 0 | PASS; contracts 4/4, Web 197/197, server 825 passed / 2 skipped; testing package без test-файлов, `--passWithNoTests`. |
+| `pnpm build` | 0 | PASS; contracts, server и Web, Vite 160 modules transformed. |
+| `pnpm server:build` | 0 | PASS; built server до browser E2E. |
+| `pnpm web:build` | 0 | PASS; Web `tsc -b` и Vite. |
+| `node scripts/verify-local-startup.mjs` | 0 | PASS; `local startup verification passed`. |
+| `node --test apps/web/test/e2e/credential-handoff.test.mjs` | 0 | PASS; 14/14 negative-path, secret handoff и teardown проверок. |
+| `pnpm --filter @ebb-orchestrator/web test:e2e` | 0 | PASS; Chromium 6/6; launcher собрал реальный backend, поднял backend и frontend на динамических loopback-портах, проверил login/logout, error boundary, пустые и отсутствующие страницы, заполненный Agent Run с подменой только пяти read projections, реальный onboarding и cookie session после restart/stop/start с общей SQLite. Намеренно невалидный mock в тесте error boundary пишет console error, но ожидаемое русское error UI проверено. |
+| `pnpm --filter @ebb-orchestrator/server test startup.test.ts scheduler.test.ts` | 0 | PASS; 2 файла, 51/51 тест. |
+| `pnpm --filter @ebb-orchestrator/server typecheck` | 0 | PASS; `tsc -p tsconfig.json --noEmit`. |
+| `pnpm docs:check` (до roadmap) | 0 | PASS; `Found 1 warning(s): [WARNING] roadmap/generated.md — Filename does not start with numeric prefix`; новых ошибок нет. |
+| `pnpm docs:roadmap -- --dry-run --output=docs/roadmap/01-roadmap.md` | 0 | PASS; `=== DRY RUN MODE ===`, `Plans collected: 29`, `Output: docs/roadmap/01-roadmap.md`; stdout далее содержит preview generated content. |
+| `pnpm docs:test` (предварительный запуск, не финальная последовательность) | 0 | PASS; 11/11 тестов. |
+
+- Прочитаны frontmatter всех десяти plan-15 перед promotion: уникальные `plan-15`, `plan-15-01`–`plan-15-09`; у всех `kind: plan`, `stage: 13`, `roadmap: 01`; parent `in_progress`, `15-08` `planned`, остальные восемь `completed`; граф внутренних зависимостей ацикличен. До финального генератора канонический roadmap ещё содержит устаревшее `plan-15-07: planned`, поэтому его нельзя принимать за свежий read-back; сравнение ведётся с текущими файлами планов.
+- Независимый review плана `deleg_0532794e` вернул `CHANGES_REQUIRED` из-за устаревших status expectations родителя и frontmatter evidence на отсутствующие `local-session.ts`/удалённый `get-link.html`. Plan Fixer заменил ссылки на существующие `auth-service.ts`, `auth-ports.ts`, `credential-handoff.test.mjs` и согласовал parent status contract. Повторная независимая read-only проверка `deleg_db318b46` вернула `APPROVED`: десять уникальных ID, предфинальные статусы, все frontmatter evidence существуют; новых противоречий нет. Статусы `15-08` и родителя не повышены до итогового implementation review и сверки генератора.
+
+### Финальное implementation review: исправление выявленных блокеров
+
+- Независимый read-only final implementation review `deleg_707f1a1f` вернул `CHANGES_REQUESTED`: discovered Git remote URL с credentials попадал в `onboarding_configs.facts_json` и approval metadata до UI-редактирования; отклонённый approval делал сохранённый draft нечитаемым. Ни план, ни roadmap до устранения не переводились в `completed`.
+- Для обоих дефектов создан test-first RED в `apps/server/test/modules/projects/onboarding-service.test.ts`: persistence test обнаружил неочищенный marker в facts JSON; reject test обнаружил `Persisted onboarding state is inconsistent`. Затем `OnboardingService` очищает URL удалением userinfo, query и fragment до записи facts/approval metadata; rejected/cancelled linked approval проецируется как восстанавливаемый `DRAFT` с сохранённым proposed и null approval, без активации до нового approval. `pnpm --filter @ebb-orchestrator/server test onboarding-service.test.ts onboarding-approval-transaction.test.ts` — exit `0`, 10/10; `pnpm --filter @ebb-orchestrator/server typecheck` и `pnpm lint` — exit `0`. Browser E2E дополнен реальным reject→reload→повторный request→approve→activate: `pnpm --filter @ebb-orchestrator/web test:e2e` — exit `0`, Chromium 6/6 после сборки реального backend/frontend.
+- Дополнительный RED для `ApprovalService.requestChanges` выявил существующее ограничение SQLite CHECK approvals: `CHANGES_REQUESTED` не входит в persisted `PENDING/APPROVED/REJECTED/CANCELLED`; этот путь не был молча объявлен работающим и не менялся без утверждённого migration scope. Тест на невыполнимый переход исключён из regression для исправления reject; вопрос о его влиянии на финальную приёмку передан независимому review. Два независимых read-only review текущего узкого исправления ещё ожидаются.
+- После этих кодовых правок повторно выполнены `pnpm lint` — exit `0`; `pnpm typecheck` — exit `0`; `pnpm test` — exit `0`, Web 197/197, server 827 passed / 2 skipped, contracts 4/4; `pnpm build`, `pnpm server:build`, `pnpm web:build`, `git diff --check` — exit `0`. Предшествующие post-review gate rows выше сохраняются как история, не подменяют эти свежие результаты. `15-08` и parent по-прежнему не закрыты.
+- Независимый scoped security review `deleg_ca261429` — `PASS` по редактированию discovered remote: новые facts/approval metadata не сохраняют URL userinfo/query/fragment, нераспознаваемые URL заменяются безопасной строкой. Независимый implementation review того же исправления подтвердил оба исходных дефекта устранёнными, но вернул `CHANGES_REQUESTED` по отдельной существующей ветке «Запросить изменения»: UI и HTTP предлагают операцию, а исторический `003_work_control.sql` CHECK отклоняет `CHANGES_REQUESTED`; запрос остаётся pending с HTTP 409. Это не исправлено в plan-15 и требует явного решения по scope: отдельная новая forward migration либо удаление неподдерживаемого действия. Исторические миграции не редактировались; `15-08`/parent остаются открытыми, roadmap не пересобирался после этого review.
+
+## Финальная приёмка и сверка plan-15 (2026-09-26)
+
+### RED → GREEN и независимые review
+
+- RED исходного onboarding-регресса уже зафиксирован выше: после отрицательного approval чтение сохранённого проекта падало с `Persisted onboarding state is inconsistent`; исправление восстанавливает `DRAFT` и сохраняет историю. Для старого persisted CHECK дополнительно выполнена read-only SQLite-проверка именно на миграциях `001`–`026`:
+
+  ```text
+  $ node --input-type=module -e 'import {DatabaseSync} from "node:sqlite"; import {readdirSync,readFileSync} from "node:fs"; import {join} from "node:path"; const dir="apps/server/src/platform/database/migrations"; const db=new DatabaseSync(":memory:"); const files=readdirSync(dir).filter(f=>f.endsWith(".sql")&&Number(f.slice(0,3))<=26).sort(); for(const file of files) db.exec(readFileSync(join(dir,file),"utf8")); db.prepare("INSERT INTO approvals (id,type,subject_id,subject_type,status,requested_by,created_at) VALUES (?,?,?,?,?,?,?)").run("approval-red","WORKFLOW_CHANGE","project-red","PROJECT","PENDING","local-user",new Date().toISOString()); let error=""; try { db.prepare("UPDATE approvals SET status=? WHERE id=?").run("CHANGES_REQUESTED","approval-red"); } catch(e) { error=e instanceof Error?e.message:String(e); } const status=db.prepare("SELECT status FROM approvals WHERE id=?").get("approval-red").status; const result={baseline:"migrations 001-026",updateError:error,approvalStatusAfter:status}; console.log(JSON.stringify(result)); if(!error.includes("CHECK constraint failed")||status!=="PENDING")process.exitCode=1; db.close();'
+  {"baseline":"migrations 001-026","updateError":"CHECK constraint failed: status IN ('PENDING', 'APPROVED', 'REJECTED', 'CANCELLED')","approvalStatusAfter":"PENDING"}
+  ```
+
+  Exit `0`: проверка подтвердила исходный CHECK и отсутствие перехода из `PENDING`.
+- GREEN: `pnpm --filter @ebb-orchestrator/server test test/platform/database/migrator.test.ts test/modules/approvals/approvals.test.ts test/modules/projects/onboarding-service.test.ts test/app/api.test.ts` — exit `0`, 4 файла / 53 теста; покрыты populated 026→027 upgrade, fresh schema, rollback/FK restoration, approval/outbox/audit, onboarding projection/history/re-request и HTTP.
+- `pnpm --filter @ebb-orchestrator/server test test/modules/approvals/approval-service.transaction.test.ts` — exit `0`, 1 файл / 3 теста.
+- `pnpm --filter @ebb-orchestrator/server test test/platform/database/backup-restore.test.ts test/platform/database/migrator.test.ts test/platform/process/startup.test.ts test/platform/security/local-user-wizard.test.ts` — exit `0`, 4 файла / 45 тестов.
+- `pnpm --filter @ebb-orchestrator/server test transport-origin.test.ts v1-security.test.ts` — exit `0`, 2 файла / 6 тестов; `pnpm --filter @ebb-orchestrator/server test:auth-contract` — exit `0`, 2 файла / 12 тестов.
+- Scheduler regression command `pnpm --filter @ebb-orchestrator/server test scheduler.test.ts runs-dispatch.test.ts run-event-handlers.test.ts epic-orchestrator.test.ts scheduler-projection.test.ts scheduler-fixture-inventory.test.ts` — exit `0`, 6 файлов / 52 теста.
+- Post-review Web focused command из строки 592 — exit `0`, 14 файлов / 179 тестов. `pnpm --filter @ebb-orchestrator/web test:e2e` — exit `0`, Chromium 6/6; реальная кнопка отправляет request-changes (HTTP 200), повторная загрузка показывает `DRAFT`, последующий request получает новый approval ID, затем проверены rejection/re-request/approval/activation и сохранение cookie-сессии после перезапуска backend. `node --test apps/web/test/e2e/credential-handoff.test.mjs` — exit `0`, 14/14; credential-channel/teardown проверки проходят без сохранения секретов.
+- Полный server suite `pnpm --filter @ebb-orchestrator/server test` — exit `0`, 93 файла / 832 passed / 2 skipped. `pnpm test` — exit `0`: contracts 4/4, Web 197/197, server 832 passed / 2 skipped. `pnpm lint`, `pnpm typecheck`, `pnpm build`, `pnpm server:build`, `pnpm web:build` — все exit `0`.
+- Независимый implementation/security review `deleg_c01c4ea5` — `PASS`; независимый plan review `deleg_af292aea` — `APPROVED`; свежий final code/architecture review `deleg_307e2dce` — `PASS`. Блокеров `BLOCKER/IMPORTANT` нет. Остался только `MINOR`: `runMigrations` распознаёт 027 по версии/имени даже без `foreignKeys: "disabled"` (`apps/server/src/platform/database/migrator.ts:129–131`); production и основной test-loader задают flag, проверка текущей миграции проходит. Это advisory зафиксирован, не скрыт.
+
+### Governance и promotion
+
+- До promotion прочитаны все десять frontmatter: уникальные ID `plan-15`, `plan-15-01`–`plan-15-09`, `stage: 13`; parent был `in_progress`, `15-01`–`15-07` и `15-09` — `completed`, `15-08` — `planned`; зависимости ацикличны.
+- `pnpm docs:check` до promotion — exit `0`; единственное предупреждение: `[WARNING] roadmap/generated.md — Filename does not start with numeric prefix`.
+- `pnpm docs:roadmap -- --dry-run --output=docs/roadmap/01-roadmap.md` — exit `0`; точный результат: `Plans collected: 29`, `Output: docs/roadmap/01-roadmap.md`.
+- После прохождения acceptance gates parent `plan-15` и child `plan-15-08` переведены в `completed`; остальные восемь child уже были `completed`. История этого ledger сохранена append-only; его frontmatter не менялся.
+- `pnpm docs:roadmap -- --output=docs/roadmap/01-roadmap.md` — exit `0`; точный stdout: `Roadmap generated: docs/roadmap/01-roadmap.md` / `Plans included: 29`.
+- Read-back frontmatter + сгенерированного `docs/roadmap/01-roadmap.md` — exit `0`: ровно десять уникальных записей `plan-15-01`, `plan-15-02`, `plan-15-03`, `plan-15-04`, `plan-15-05`, `plan-15-06`, `plan-15-07`, `plan-15-08`, `plan-15-09`, `plan-15`; все `stage: 13`, `status: completed`; граф зависимостей ацикличен.
+- `pnpm docs:check` после генерации — exit `0`; сохранилось то же единственное предупреждение про `roadmap/generated.md`.
+- Plan-16 не менялся: `git hash-object docs/architecture/plans/16-documentation-cleanup-and-refresh.md` → `73ed2b4ec42627ad5820d3003421542266353ad2`. Исторические миграции `001`–`026` не изменялись; в migration status присутствует только новый файл `027_approval_changes_requested.sql`. Push/merge/commit не выполнялись; секреты в ledger не записывались.
+
+После финальной записи ledger обязательны только терминальные проверки из `15-08`: `pnpm docs:check` → `pnpm docs:test` → `git diff --check`, без repository writes между или после них. Их точные результаты будут указаны только в итоговом отчёте.

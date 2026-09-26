@@ -1,6 +1,5 @@
 import type { Database } from "../../platform/database/database.js";
-import type { DashboardProjection as Dashboard } from "@ebb-orchestrator/contracts";
-import type { WaitReason } from "@ebb-orchestrator/contracts";
+import type { DashboardProjection as Dashboard, SchedulerEligibilityProjection, WaitReason } from "@ebb-orchestrator/contracts";
 import { SchedulerService } from "../../modules/scheduler/scheduler-service.js";
 
 const emptyUsage = () => ({ inputTokens: 0, cachedTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 });
@@ -23,7 +22,7 @@ export class DashboardProjection {
     const db = this.db;
     const projects = hasTable(db, "projects") ? db.all<ProjectRow>("SELECT id,name,display_name,status FROM projects ORDER BY name").map((p) => ({ id: p.id, name: p.name, displayName: p.display_name, status: p.status })) : [];
     const activeAgents = hasTable(db, "agent_runs") ? db.all<AgentRow>("SELECT id,role,task_id,status FROM agent_runs WHERE status IN ('STARTED','IN_PROGRESS','COMPLETING') ORDER BY started_at").map((r) => ({ runId: r.id, role: r.role, taskId: r.task_id, status: r.status })) : [];
-    const activeWork = hasTable(db, "tasks") ? db.all<SchedulerTaskRow>("SELECT id,title,status,project_id,wait_reason,contract_json FROM tasks WHERE status NOT IN ('DONE','CANCELLED','RELEASED') ORDER BY updated_at").map((t) => ({ id: t.id, title: t.title ?? "", status: t.status, waitReason: schedulerWaitReason(db, t, this.scheduler) })) : [];
+    const activeWork = hasTable(db, "tasks") ? db.all<SchedulerTaskRow>("SELECT id,title,status,project_id,wait_reason,contract_json FROM tasks WHERE status NOT IN ('DONE','CANCELLED','RELEASED') ORDER BY updated_at").map((t) => ({ id: t.id, title: t.title ?? "", status: t.status, eligibility: schedulerEligibility(db, t, this.scheduler) })) : [];
     const approvals = hasTable(db, "approvals") ? Number(db.get<CountRow>("SELECT COUNT(*) AS count FROM approvals WHERE status='PENDING'")?.count ?? 0) : 0;
     const usage = hasTable(db, "usage_records") ? (db.get<UsageRow>("SELECT COALESCE(SUM(input_tokens),0) inputTokens, COALESCE(SUM(cached_tokens),0) cachedTokens, COALESCE(SUM(output_tokens),0) outputTokens, COALESCE(SUM(total_tokens),0) totalTokens, COALESCE(SUM(actual_cost),0) cost FROM usage_records") ?? emptyUsage()) : emptyUsage();
     return { activeAgents, activeWork, approvals, usage, projects };
@@ -48,6 +47,39 @@ export function schedulerWaitReason(db: Database, task: SchedulerTaskRow, schedu
   const schedulerReason = eligibility.status === "WAIT" ? eligibility.reason : authoritativeScheduler.getWaitReason(task.id);
   if (schedulerReason) return schedulerReasonToProjection(schedulerReason, task);
   return waitReason(task.status);
+}
+
+/** Строит сериализуемую eligibility проекцию только из backend scheduler authority. */
+/** Сериализует scheduler eligibility без потери hard-block discriminant. */
+export function schedulerEligibility(db: Database, task: SchedulerTaskRow, scheduler?: SchedulerService): SchedulerEligibilityProjection {
+  if (scheduler) {
+    const eligibility = scheduler.getEligibility(task.id, { projectId: task.project_id });
+    if (eligibility.status === "RUNNABLE") return { status: "RUNNABLE", reason: null };
+    if (eligibility.status === "WAIT") return { status: "WAIT", reason: schedulerReasonToProjection(eligibility.reason, task) };
+    if (eligibility.reason === "ONBOARDING_NOT_ACTIVE") return { status: "BLOCK", reason: { code: "ONBOARDING_NOT_ACTIVE", message: "Онбординг проекта не активирован" } };
+    return { status: "BLOCK", reason: { code: eligibility.reason, message: schedulerReasonToProjection(eligibility.reason, task).message } };
+  }
+  const project = db.get<{ status: string }>("SELECT status FROM projects WHERE id=$projectId", { projectId: task.project_id });
+  if (!project || project.status !== "ACTIVE") return { status: "BLOCK", reason: { code: "PROJECT_NOT_ACTIVE", message: "Проект не активен" } };
+  let onboarding: { status: string } | undefined;
+  try {
+    onboarding = db.get<{ status: string }>(
+      `SELECT oc.status FROM onboarding_configs oc JOIN approvals a ON a.id=oc.approval_id
+        WHERE oc.project_id=$projectId AND oc.status='ACTIVE'
+          AND a.subject_type='PROJECT' AND a.subject_id=oc.project_id
+          AND a.type='WORKFLOW_CHANGE' AND a.status='APPROVED'`,
+      { projectId: task.project_id },
+    );
+  } catch (error) {
+    if (/no such table:\s*onboarding_configs/i.test(String(error))) {
+      return { status: "BLOCK", reason: { code: "ONBOARDING_NOT_ACTIVE", message: "Онбординг проекта не активирован" } };
+    }
+    throw error;
+  }
+  if (!onboarding || onboarding.status !== "ACTIVE") return { status: "BLOCK", reason: { code: "ONBOARDING_NOT_ACTIVE", message: "Онбординг проекта не активирован" } };
+  if (["DRAFT", "BLOCKED"].includes(task.status)) return { status: "BLOCK", reason: { code: "BLOCKED", message: "Blocked by workflow or policy" } };
+  const reason = waitReason(task.status);
+  return reason ? { status: "WAIT", reason } : { status: "RUNNABLE", reason: null };
 }
 
 function schedulerReasonToProjection(reason: string, task: SchedulerTaskRow): WaitReason {

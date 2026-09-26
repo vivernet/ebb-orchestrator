@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { ru } from '../../i18n/ru.js';
 
 /**
  * Общий компонент для состояний страницы: loading, error, empty, not-found.
@@ -23,8 +24,8 @@ export function PageState({ status, title, message, onRetry, onBack, action }: P
       {status === 'empty' && action && <div className="page-actions">{action}</div>}
       {(status === 'error' || status === 'not-found') && (
         <div className="page-actions">
-          {status === 'error' && onRetry && <button type="button" onClick={onRetry}>Retry</button>}
-          {status === 'not-found' && onBack && <button type="button" onClick={onBack}>Back</button>}
+          {status === 'error' && onRetry && <button type="button" onClick={onRetry}>{ru.common.retry}</button>}
+          {status === 'not-found' && onBack && <button type="button" onClick={onBack}>{ru.common.back}</button>}
         </div>
       )}
     </div>
@@ -50,7 +51,7 @@ export function ErrorAlert({ message, onRetry }: { message: string; onRetry?: ()
   return (
     <div className="inline-alert" role="alert">
       <p style={{ margin: 0 }}>{message}</p>
-      {onRetry && <button type="button" style={{ marginLeft: '8px' }} onClick={onRetry}>Retry</button>}
+      {onRetry && <button type="button" style={{ marginLeft: '8px' }} onClick={onRetry}>{ru.common.retry}</button>}
     </div>
   );
 }

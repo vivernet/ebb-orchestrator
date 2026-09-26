@@ -34,12 +34,14 @@ const migration003 = readFileSync(
   "utf-8",
 );
 const migration004 = readFileSync(join(import.meta.dirname, "../../src/platform/database/migrations/004_agent_runs.sql"), "utf-8");
+const migration021 = readFileSync(join(import.meta.dirname, "../../src/platform/database/migrations/021_onboarding_approval.sql"), "utf-8");
 
 const migrations: Migration[] = [
   { version: 1, name: "001_system", sql: migration001 },
   { version: 2, name: "002_work_domain", sql: migration002 },
   { version: 3, name: "003_work_control", sql: migration003 },
   { version: 4, name: "004_agent_runs", sql: migration004 },
+  { version: 21, name: "021_onboarding_approval", sql: migration021 },
 ];
 
 function contract(goal: string): TaskContract {
@@ -226,6 +228,9 @@ describe("Standalone task fake runtime scenario", () => {
           updated_at: now,
         },
       );
+      const approvalId = randomUUID();
+      tx.run("INSERT INTO approvals(id,type,subject_id,subject_type,status,requested_by,created_at) VALUES($id,'WORKFLOW_CHANGE',$projectId,'PROJECT','APPROVED','test',$now)", { id: approvalId, projectId, now });
+      tx.run("INSERT INTO onboarding_configs(project_id,repository_path,facts_json,proposed_json,status,approval_id,created_at,updated_at) VALUES($projectId,'/repo','{}','{}','ACTIVE',$approvalId,$now,$now)", { projectId, approvalId, now });
     });
 
     workflowEngine = new WorkflowEngine(db, registry);

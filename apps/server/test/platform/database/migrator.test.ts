@@ -84,16 +84,16 @@ describe("migrator", () => {
     expect(tables).toEqual([]);
   });
 
-  it("applies a 025 to 026 upgrade once and remains idempotent", async () => {
+  it("applies a 025 to 027 upgrade once and remains idempotent", async () => {
     tmpDir = await mkdtemp(join(tmpdir(), "orch-auth-upgrade-"));
     db = createSqliteDatabase(join(tmpDir, `test-${randomUUID()}.db`));
     const migrations = (await import("../../helpers/migrations.js")).loadTestMigrations();
     const beforeAuth = migrations.filter((migration) => migration.version <= 25);
 
     expect(runMigrations(db, beforeAuth).applied).toBe(25);
-    expect(runMigrations(db, migrations).applied).toBe(1);
+    expect(runMigrations(db, migrations).applied).toBe(2);
     expect(runMigrations(db, migrations).applied).toBe(0);
-    expect(db.all<{ version: number }>("SELECT version FROM schema_migrations ORDER BY version")).toHaveLength(26);
+    expect(db.all<{ version: number }>("SELECT version FROM schema_migrations ORDER BY version")).toHaveLength(27);
   });
 
   it("rejects a gap in applied migration history before changing the database", async () => {
@@ -163,11 +163,11 @@ describe("migrator", () => {
     const migrations = (await import("../../helpers/migrations.js")).loadTestMigrations();
 
     expect(migrations.map((migration) => migration.version)).toEqual(
-      Array.from({ length: 26 }, (_, index) => index + 1),
+      Array.from({ length: 27 }, (_, index) => index + 1),
     );
-    expect(runMigrations(db, migrations).applied).toBe(26);
+    expect(runMigrations(db, migrations).applied).toBe(27);
     expect(runMigrations(db, migrations).applied).toBe(0);
-    expect(db.get<{ version: number }>("SELECT MAX(version) AS version FROM schema_migrations")?.version).toBe(26);
+    expect(db.get<{ version: number }>("SELECT MAX(version) AS version FROM schema_migrations")?.version).toBe(27);
     expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name='local_users'")?.count).toBe(1);
     expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name='auth_sessions'")?.count).toBe(1);
 
@@ -205,9 +205,52 @@ describe("migrator", () => {
     db = createSqliteDatabase(join(tmpDir, `test-${randomUUID()}.db`));
     const failingSql = "CREATE TABLE local_users (id INTEGER PRIMARY KEY); SELECT invalid_auth_sql;";
     const migrations = (await import("../../helpers/migrations.js")).loadTestMigrations();
-    migrations[migrations.length - 1] = { version: 26, name: "026_local_auth", sql: failingSql };
+    const authMigrationIndex = migrations.findIndex((migration) => migration.version === 26);
+    migrations[authMigrationIndex] = { ...migrations[authMigrationIndex]!, sql: failingSql };
     expect(() => runMigrations(db!, migrations)).toThrow();
     expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name='local_users'")?.count).toBe(0);
     expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM schema_migrations WHERE version=26")?.count).toBe(0);
+  });
+
+  it("upgrades populated approval references without losing rows or foreign keys", async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "orch-approval-status-migration-"));
+    db = createSqliteDatabase(join(tmpDir, `test-${randomUUID()}.db`));
+    const migrations = (await import("../../helpers/migrations.js")).loadTestMigrations();
+    const before027 = migrations.filter((migration) => migration.version <= 26);
+    expect(runMigrations(db, before027).applied).toBe(26);
+    const now = new Date().toISOString();
+    db.run("INSERT INTO projects(id,name,display_name,status,created_at,updated_at) VALUES($id,'migration-test','Migration test','ACTIVE',$now,$now)", { id: "project-027", now });
+    db.run("INSERT INTO approvals(id,type,subject_id,subject_type,status,requested_by,created_at) VALUES('approval-027','WORKFLOW_CHANGE','project-027','PROJECT','PENDING','local-user',$now)", { now });
+    db.run("INSERT INTO approval_metadata(approval_id,metadata_json) VALUES('approval-027','{\"kind\":\"semantic-config\"}')");
+    db.run("INSERT INTO onboarding_configs(project_id,repository_path,facts_json,proposed_json,status,approval_id,created_at,updated_at) VALUES('project-027','/repo','{}','{}','PROPOSED','approval-027',$now,$now)", { now });
+
+    expect(runMigrations(db, migrations).applied).toBe(1);
+    expect(runMigrations(db, migrations).applied).toBe(0);
+    expect(db.get<{ status: string }>("SELECT status FROM approvals WHERE id='approval-027'")).toEqual({ status: "PENDING" });
+    expect(db.get<{ metadata_json: string }>("SELECT metadata_json FROM approval_metadata WHERE approval_id='approval-027'")?.metadata_json).toBe('{"kind":"semantic-config"}');
+    expect(db.get<{ approval_id: string }>("SELECT approval_id FROM onboarding_configs WHERE project_id='project-027'")).toEqual({ approval_id: "approval-027" });
+    expect(db.get<{ foreign_keys: number }>("PRAGMA foreign_keys")?.foreign_keys).toBe(1);
+    expect(db.all("PRAGMA foreign_key_check")).toEqual([]);
+    expect(db.all<{ name: string }>("PRAGMA index_list(approvals)").map(({ name }) => name)).toEqual(expect.arrayContaining(["idx_approvals_subject", "idx_approvals_status"]));
+    expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM schema_migrations WHERE version=27")?.count).toBe(1);
+  });
+
+  it("rolls back an opted-in migration on foreign-key violations and restores enforcement", async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "orch-approval-migration-fk-rollback-"));
+    db = createSqliteDatabase(join(tmpDir, `test-${randomUUID()}.db`));
+    const migrations = (await import("../../helpers/migrations.js")).loadTestMigrations();
+    const before027 = migrations.filter((migration) => migration.version <= 26);
+    runMigrations(db, before027);
+    const badMigration: Migration = {
+      version: 27,
+      name: "027_approval_changes_requested",
+      sql: "CREATE TABLE fk_failure (id TEXT REFERENCES approvals(id)); INSERT INTO fk_failure VALUES ('missing');",
+      foreignKeys: "disabled",
+    };
+
+    expect(() => runMigrations(db!, [...before027, badMigration])).toThrow(/foreign key check/i);
+    expect(db.get<{ foreign_keys: number }>("PRAGMA foreign_keys")?.foreign_keys).toBe(1);
+    expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name='fk_failure'")?.count).toBe(0);
+    expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM schema_migrations WHERE version=27")?.count).toBe(0);
   });
 });

@@ -4,6 +4,7 @@
 
 import type { Database } from "../../platform/database/database.js";
 import type { ReservationReleaseResult, SchedulerReconciliationResult } from "./scheduler-types.js";
+import { assertProjectDispatchableTx } from "./project-dispatch-guard.js";
 
 /**
  * Сервис захвата и освобождения resource locks.
@@ -33,6 +34,7 @@ export class ResourceLockService {
       const now = new Date().toISOString();
       const task = tx.get<{ project_id: string }>("SELECT project_id FROM tasks WHERE id=$taskId", { taskId });
       if (!task) return false;
+      assertProjectDispatchableTx(tx, task.project_id);
       const reservationId = crypto.randomUUID();
       tx.run("INSERT INTO scheduler_reservations(id,kind,subject_id,project_id,owner_id,reserved_at,estimate_cost,status,role,model) VALUES($id,'LOCK',$subject,$project,$owner,$at,0,'RESERVED','lock','lock')", { id: reservationId, subject: `lock:${taskId}`, project: task.project_id, owner: `task:${taskId}`, at: now });
       tx.run("INSERT INTO scheduler_resource_locks(resource_key,reservation_id,project_id,owner_id,locked_at) VALUES('global',$id,$project,$owner,$at)", { id: reservationId, project: task.project_id, owner: `task:${taskId}`, at: now });

@@ -5,7 +5,6 @@ import { apiPaths } from '@ebb-orchestrator/contracts';
 describe('typed API client foundation', () => {
   afterEach(() => {
     vi.restoreAllMocks();
-    apiClient.sessionToken = null;
     apiClient.csrfToken = null;
   });
 
@@ -26,6 +25,8 @@ describe('typed API client foundation', () => {
     expect(apiPaths.taskDispatch('task 1')).toBe('/api/v1/tasks/task%201/dispatch');
     expect(apiPaths.runCancel('run-1')).toBe('/api/v1/runs/run-1/cancel');
     expect(apiPaths.session).toBe('/api/v1/session');
+    expect(apiPaths.sessionLogin).toBe('/api/v1/session/login');
+    expect(apiPaths.sessionLogout).toBe('/api/v1/session/logout');
     expect(apiPaths.events).toBe('/api/v1/events');
   });
 
@@ -43,8 +44,23 @@ describe('typed API client foundation', () => {
     }));
   });
 
-  test('keeps in-memory bearer and CSRF headers authoritative over caller headers', async () => {
-    apiClient.sessionToken = 'memory-bearer';
+  test('never sends CSRF on login even when a stale token exists', async () => {
+    apiClient.csrfToken = 'stale-csrf';
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ contractVersion: 1, csrfToken: 'fresh-csrf', expiresAt: '2026-09-25T00:00:00.000Z' }), { status: 200 }),
+    );
+
+    await apiClient.post('/session/login', { password: 'secret' });
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/session/login', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ password: 'secret' }),
+    }));
+    expect(fetchMock.mock.calls[0]?.[1]).not.toHaveProperty('headers.X-CSRF-Token');
+    expect(fetchMock.mock.calls[0]?.[1]).not.toHaveProperty('headers.Authorization');
+  });
+
+  test('sends only in-memory CSRF on authenticated mutations', async () => {
     apiClient.csrfToken = 'memory-csrf';
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(JSON.stringify({ ok: true }), { status: 200 }),
@@ -56,10 +72,10 @@ describe('typed API client foundation', () => {
 
     expect(fetchMock).toHaveBeenCalledWith('/api/v1/approvals/approval-1/approve', expect.objectContaining({
       headers: expect.objectContaining({
-        Authorization: 'Bearer memory-bearer',
         'X-CSRF-Token': 'memory-csrf',
       }),
     }));
+    expect(fetchMock.mock.calls[0]?.[1]).not.toHaveProperty('headers.Authorization');
   });
 
   test('exposes structured status and code on API errors', async () => {

@@ -11,9 +11,15 @@ export function loadTestMigrations(): Migration[] {
   return readdirSync(directory)
     .filter((file) => file.endsWith(".sql"))
     .sort()
-    .map((file) => ({
-      version: Number(file.slice(0, 3)),
-      name: file.slice(0, -4),
-      sql: readFileSync(join(directory, file), "utf8"),
-    }));
+    .map((file) => {
+      const name = file.slice(0, -4);
+      const migration = {
+        version: Number(file.slice(0, 3)),
+        name,
+        sql: readFileSync(join(directory, file), "utf8"),
+      };
+      return name === "027_approval_changes_requested"
+        ? { ...migration, foreignKeys: "disabled" as const }
+        : migration;
+    });
 }

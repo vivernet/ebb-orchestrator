@@ -30,7 +30,7 @@ const migrationFiles = [
   "009_integration_provenance", "010_planning", "011_epic_orchestration",
   "012_epic_runtime_authority", "013_remove_legacy_scheduler_locks",
   "014_migrate_legacy_scheduler_authority", "015_knowledge",
-  "016_context", "017_usage", "018_scheduler_config_audit",
+  "016_context", "017_usage", "018_scheduler_config_audit", "021_onboarding_approval",
 ];
 
 class FakeAgentRuntime implements AgentRuntime {
@@ -106,6 +106,8 @@ describe("full epic orchestration with FakeAgentRuntime", () => {
     const runId = randomUUID();
     const now = new Date().toISOString();
     db.run("INSERT INTO projects (id,name,display_name,status,created_at,updated_at) VALUES ($id,'stale','Stale','ACTIVE',$now,$now)", { id: projectId, now });
+    db.run("INSERT INTO approvals(id,type,subject_id,subject_type,status,requested_by,created_at) VALUES($approvalId,'WORKFLOW_CHANGE',$id,'PROJECT','APPROVED','test',$now)", { approvalId: `${projectId}-onboarding`, id: projectId, now });
+    db.run("INSERT INTO onboarding_configs(project_id,repository_path,facts_json,proposed_json,status,approval_id,created_at,updated_at) VALUES($id,'/repo','{}','{}','ACTIVE',$approvalId,$now,$now)", { id: projectId, approvalId: `${projectId}-onboarding`, now });
     db.run("INSERT INTO epics (id,project_id,display_id,title,status,contract_json,created_at,updated_at) VALUES ($id,$projectId,'EPIC-STALE','Stale','IN_PROGRESS','{}',$now,$now)", { id: epicId, projectId, now });
     db.exec("CREATE TABLE IF NOT EXISTS agent_runs (id TEXT PRIMARY KEY, role TEXT NOT NULL, runtime TEXT NOT NULL, model TEXT NOT NULL, task_id TEXT, epic_id TEXT, status TEXT NOT NULL, started_at TEXT, ended_at TEXT, exit_code INTEGER, output TEXT, cost REAL)");
     db.exec("CREATE TABLE IF NOT EXISTS orchestration_phase_runs (id TEXT PRIMARY KEY, epic_id TEXT, task_id TEXT, phase TEXT NOT NULL, role TEXT NOT NULL, agent_run_id TEXT NOT NULL UNIQUE, result_json TEXT NOT NULL DEFAULT '{}', evidence_json TEXT NOT NULL DEFAULT '{}', validated INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'INTENT', request_json TEXT, started_at TEXT, ended_at TEXT, created_at TEXT NOT NULL, UNIQUE (epic_id, task_id, phase))");
@@ -148,6 +150,8 @@ describe("full epic orchestration with FakeAgentRuntime", () => {
     const projectId = randomUUID();
     const now = new Date().toISOString();
     db.run("INSERT INTO projects (id,name,display_name,status,created_at,updated_at) VALUES ($id,'demo','Demo','ACTIVE',$now,$now)", { id: projectId, now });
+    db.run("INSERT INTO approvals(id,type,subject_id,subject_type,status,requested_by,created_at) VALUES($approvalId,'WORKFLOW_CHANGE',$id,'PROJECT','APPROVED','test',$now)", { approvalId: `${projectId}-onboarding`, id: projectId, now });
+    db.run("INSERT INTO onboarding_configs(project_id,repository_path,facts_json,proposed_json,status,approval_id,created_at,updated_at) VALUES($id,'/repo','{}','{}','ACTIVE',$approvalId,$now,$now)", { id: projectId, approvalId: `${projectId}-onboarding`, now });
     const registry = new WorkflowRegistry();
     for (const template of Object.values(templates)) registry.register(template);
 const runtime = new FakeAgentRuntime(db);
@@ -226,6 +230,8 @@ const runtime = new FakeAgentRuntime(db);
     const projectId = randomUUID();
     const now = new Date().toISOString();
     db.run("INSERT INTO projects (id,name,display_name,status,created_at,updated_at) VALUES ($id,'merge','Merge','ACTIVE',$now,$now)", { id: projectId, now });
+    db.run("INSERT INTO approvals(id,type,subject_id,subject_type,status,requested_by,created_at) VALUES($approvalId,'WORKFLOW_CHANGE',$id,'PROJECT','APPROVED','test',$now)", { approvalId: `${projectId}-onboarding`, id: projectId, now });
+    db.run("INSERT INTO onboarding_configs(project_id,repository_path,facts_json,proposed_json,status,approval_id,created_at,updated_at) VALUES($id,'/repo','{}','{}','ACTIVE',$approvalId,$now,$now)", { id: projectId, approvalId: `${projectId}-onboarding`, now });
     const registry = new WorkflowRegistry();
     for (const template of Object.values(templates)) registry.register(template);
 const runtime = new FakeAgentRuntime(db);

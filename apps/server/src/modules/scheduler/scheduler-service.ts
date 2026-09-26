@@ -24,6 +24,7 @@ import type {
 } from "./scheduler-types.js";
 import { compareTasks } from "./scheduler-policy.js";
 import { ResourceLockService } from "./resource-lock-service.js";
+import { assertProjectDispatchableTx, projectDispatchEligibilityTx } from "./project-dispatch-guard.js";
 
 interface TaskRow {
   id: string;
@@ -97,6 +98,10 @@ export class SchedulerService {
   /**\n   * Возвращает сервис блокировок ресурсов для внешнего использования.\n   */
   get resourceLockService(): ResourceLockService {
     return this.lockService;
+  }
+
+  assertProjectDispatchable(projectId: string): void {
+    this.db.transaction((tx) => assertProjectDispatchableTx(tx, projectId));
   }
 
   /**\n   * Пересчитывает элигибельность для всех активных задач (опционально в пределах проекта).\n   *\n   * Результаты детерминированы — одно и то же состояние всегда даёт одинаковый порядок.\n   */
@@ -386,6 +391,8 @@ getEligibility(taskId: string, scope?: { projectId: string }): Eligibility {
           continue;
         }
 
+        this.assertProjectDispatchable(task.projectId);
+
         // Все callers, including the legacy bulk entry point, use the same
         // atomic authority.  There не должен be Объект capacity-only fast путь.
         this.dispatchTask(task.id, workflowEngine, onWorkflowRunStarted, "task-assignment");
@@ -415,6 +422,7 @@ getEligibility(taskId: string, scope?: { projectId: string }): Eligibility {
     if (!task) throw new Error(`Task ${taskId} not found`);
     if (task.status !== "READY") throw new Error(`Task ${taskId} is not READY`);
     this.db.transaction((tx) => {
+       assertProjectDispatchableTx(tx, task.project_id);
        const rows = tx.all<TaskRow>("SELECT id,project_id,epic_id,status,contract_json,created_at FROM tasks");
        const candidates = rows.map((row) => this.toSchedulableTask(row, tx));
        const candidate = candidates.find((entry) => entry.id === taskId);
@@ -472,6 +480,7 @@ getEligibility(taskId: string, scope?: { projectId: string }): Eligibility {
   /** Резервирует non-task AI phase через тот же authority для budget/capacity. */
   dispatchAgentRun(runId: string, projectId: string, role: string, model: string, resourceKey = `run:${runId}`, options: { approvalId?: string } = {}): void {
     this.db.transaction((tx) => {
+      assertProjectDispatchableTx(tx, projectId);
       const existing = tx.get<{ status: string; run_id: string | null }>("SELECT status,run_id FROM scheduler_reservations WHERE subject_id=$runId", { runId });
       if (existing?.status === "RESERVED") {
         if (existing.run_id !== runId) {
@@ -619,8 +628,8 @@ getEligibility(taskId: string, scope?: { projectId: string }): Eligibility {
   }
 
   private evaluateEligibilityTx(tx: DatabaseTx, task: SchedulableTask, activeTasks: SchedulableTask[]): Eligibility {
-    const projectState = tx.get<{ status: string }>("SELECT status FROM projects WHERE id=$projectId", { projectId: task.projectId });
-    if (projectState && projectState.status !== "ACTIVE") return { status: "BLOCK", reason: "BLOCKED_BY_PROJECT_STATE" };
+    const projectBoundary = projectDispatchEligibilityTx(tx, task.projectId);
+    if (!projectBoundary.allowed) return { status: "BLOCK", reason: projectBoundary.reason };
     if (isTerminalStatus(task.status) || task.status === "DRAFT" || task.status === "PAUSED") return { status: "BLOCK", reason: task.status === "DRAFT" ? "BLOCKED_BY_PROJECT_STATE" : "BLOCKED_BY_WORKFLOW" };
     if (task.status !== "READY") {
       if (task.status === "WAITING_FOR_DEPENDENCY") return { status: "WAIT", reason: "WAITING_FOR_DEPENDENCY" };

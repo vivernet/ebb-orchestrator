@@ -61,7 +61,7 @@ describe('AgentRunPage', () => {
     });
 
     renderWithRouter(<AgentRunPage id="test-run-123" />);
-    expect(screen.getByText('Loading Agent Run…')).toBeInTheDocument();
+    expect(screen.getByText('Загрузка запуска агента…')).toBeInTheDocument();
   });
 
   test('показывает error state при ошибке загрузки', () => {
@@ -74,7 +74,7 @@ describe('AgentRunPage', () => {
     });
 
     renderWithRouter(<AgentRunPage id="test-run-123" />);
-    expect(screen.getByText(/Unable to load Agent Run/i)).toBeInTheDocument();
+    expect(screen.getByText(/Не удалось загрузить запуск агента/i)).toBeInTheDocument();
   });
 
   test('показывает run details при успешной загрузке', async () => {
@@ -105,11 +105,13 @@ describe('AgentRunPage', () => {
 
     renderWithRouter(<AgentRunPage id="test-run-123" />);
 
-    expect(screen.getByText('Agent Run: test-run-123')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Запуск агента: test-run-123' })).toBeInTheDocument();
+    expect(screen.getByText('Завершено')).toHaveAttribute('data-status', 'COMPLETED');
     expect(screen.getByText('Code Reviewer')).toBeInTheDocument();
     expect(screen.getByText('node')).toBeInTheDocument();
     expect(screen.getByText('gpt-4.1')).toBeInTheDocument();
-    expect(screen.getByText('Pull request review')).toBeInTheDocument();
+    expect(screen.getByText('Причина запуска недоступна.')).toBeInTheDocument();
+    expect(screen.queryByText('Pull request review')).not.toBeInTheDocument();
     expect(screen.getByText('task-456')).toBeInTheDocument();
   });
 
@@ -146,11 +148,12 @@ describe('AgentRunPage', () => {
     renderWithRouter(<AgentRunPage id="test-run-123" />);
 
     await waitFor(() => {
-      expect(screen.getByText('Events')).toBeInTheDocument();
+      expect(screen.getByText('События')).toBeInTheDocument();
     });
 
-    expect(screen.getByText('run_started')).toBeInTheDocument();
-    expect(screen.getByText('run_completed')).toBeInTheDocument();
+    expect(screen.getByText('Запуск начат')).toBeInTheDocument();
+    expect(screen.getByText('Запуск завершён')).toBeInTheDocument();
+    expect(screen.queryByText('run_started')).not.toBeInTheDocument();
   });
 
   test('показывает Tools section с данными', async () => {
@@ -182,7 +185,7 @@ describe('AgentRunPage', () => {
     renderWithRouter(<AgentRunPage id="test-run-123" />);
 
     await waitFor(() => {
-      expect(screen.getByText('Allowed Tools')).toBeInTheDocument();
+      expect(screen.getByText('Разрешённые инструменты')).toBeInTheDocument();
     });
 
     expect(screen.getByText('git')).toBeInTheDocument();
@@ -222,11 +225,12 @@ describe('AgentRunPage', () => {
     renderWithRouter(<AgentRunPage id="test-run-123" />);
 
     await waitFor(() => {
-      expect(screen.getByText('Permissions & Audit Log')).toBeInTheDocument();
+      expect(screen.getByText('Разрешения и журнал аудита')).toBeInTheDocument();
     });
 
-    expect(screen.getByText('read_code')).toBeInTheDocument();
-    expect(screen.getByText('write_comment')).toBeInTheDocument();
+    expect(screen.getByText('Чтение кода')).toBeInTheDocument();
+    expect(screen.getByText('Запись комментария')).toBeInTheDocument();
+    expect(screen.queryByText('read_code')).not.toBeInTheDocument();
   });
 
   test('показывает Recovery section с данными', async () => {
@@ -240,7 +244,7 @@ describe('AgentRunPage', () => {
       recovery: {
         attempts: [{ id: 'rec-1', roleLevel: 'level-2', failureType: 'timeout', attemptCount: 1, timestamp: '2026-01-15T10:20:00Z', fingerprint: null }],
         schedulerRequests: [],
-        state: { id: 'rec-state-1', status: 'resolved', reason: 'recovered after timeout', createdAt: '2026-01-15T10:21:00Z', updatedAt: '2026-01-15T10:25:00Z' },
+        state: { id: 'rec-state-1', status: 'resolved', reason: 'SECRET_SESSION_TOKEN_123 recovered after timeout', createdAt: '2026-01-15T10:21:00Z', updatedAt: '2026-01-15T10:25:00Z' },
       },
     });
 
@@ -267,10 +271,13 @@ describe('AgentRunPage', () => {
     renderWithRouter(<AgentRunPage id="test-run-123" />);
 
     await waitFor(() => {
-      expect(screen.getByText('Recovery')).toBeInTheDocument();
+      expect(screen.getByText('Восстановление')).toBeInTheDocument();
     });
 
-    expect(screen.getByText('Recovery Attempts')).toBeInTheDocument();
+    expect(screen.getByText('Попытки восстановления')).toBeInTheDocument();
+    expect(screen.getByText('Статус запуска: Завершено')).toBeInTheDocument();
+    expect(screen.getByText(/Устранено — Причина восстановления недоступна/)).toHaveTextContent('Статус: Устранено — Причина восстановления недоступна.');
+    expect(screen.getByRole('region', { name: 'Восстановление' })).not.toHaveTextContent(/SECRET_SESSION_TOKEN_123|recovered after timeout|level-2|timeout/);
     expect(screen.getAllByRole('listitem').length).toBe(1);
   });
 });

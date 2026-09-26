@@ -79,4 +79,19 @@ describe("final merge route", () => {
     await app.close();
     db.close();
   });
+
+  it("rejects repository resolution when onboarding approval belongs to another project", async () => {
+    const { db, app, factory } = setup();
+    const now = new Date().toISOString();
+    db.run("INSERT INTO projects(id,name,display_name,status,created_at,updated_at) VALUES ('foreign-project','foreign','Foreign','ACTIVE',$now,$now)", { now });
+    db.run("INSERT INTO tasks(id,project_id,display_id,title,status,contract_json,created_at,updated_at) VALUES ('task-1','project-1','T-1','Task','READY_FOR_MERGE','{}',$now,$now)", { now });
+    db.run("INSERT INTO approvals(id,type,subject_id,subject_type,status,requested_by,resolved_by,created_at,resolved_at) VALUES ('task-merge-approval','FINAL_MERGE','task-1','TASK','APPROVED','local-user','local-user',$now,$now)", { now });
+    db.run("UPDATE approvals SET subject_id='foreign-project' WHERE id='onboarding-approval'");
+
+    const response = await app.inject({ method: "POST", url: "/api/v1/final-merges/task-1", headers: headers(app), payload: { approvalId: "task-merge-approval", integrationRunId: "integration-run-1" } });
+    expect(response.statusCode).toBe(409);
+    expect(factory).not.toHaveBeenCalled();
+    await app.close();
+    db.close();
+  });
 });

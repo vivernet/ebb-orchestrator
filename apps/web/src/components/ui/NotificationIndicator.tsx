@@ -1,3 +1,5 @@
+import { ru } from '../../i18n/ru.js';
+
 interface NotificationIndicatorProps {
   count?: number;
   /** Показывает красную точку, даже если count=0. */
@@ -16,7 +18,7 @@ export function NotificationIndicator({
 }: NotificationIndicatorProps) {
   const hasNotifications = count > 0 || forceShow;
   return (
-    <span className={className} data-has-notifications={hasNotifications} title="Notifications">
+    <span role="img" className={className} data-has-notifications={hasNotifications} title={ru.common.notifications} aria-label={ru.common.notifications}>
       {hasNotifications && count > 0 && (
         <span className="notification-badge">{count > 99 ? '99+' : count}</span>
       )}

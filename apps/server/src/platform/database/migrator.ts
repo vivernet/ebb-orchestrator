@@ -3,7 +3,7 @@
  */
 
 import { createHash } from "node:crypto";
-import type { Database } from "./database.js";
+import type { Database, DatabaseTx } from "./database.js";
 
 export interface Migration {
   /** Монотонно возрастающий номер версии, начиная с 1. */
@@ -12,6 +12,8 @@ export interface Migration {
   name: string;
   /** Исходный SQL-код для выполнения. */
   sql: string;
+  /** Разрешает миграции единожды отключить FK до транзакции с обязательной последующей проверкой. */
+  foreignKeys?: "disabled";
 }
 
 export interface MigrationResult {
@@ -34,6 +36,18 @@ function ensureSchemaTable(db: Database): void {
   `);
 }
 
+function restoreForeignKeys(db: Database, migrationName: string): { ok: true } | { ok: false; error: unknown } {
+  try {
+    db.exec("PRAGMA foreign_keys=ON");
+    if (db.get<{ foreign_keys: number }>("PRAGMA foreign_keys")?.foreign_keys !== 1) {
+      return { ok: false, error: new Error(`Migration ${migrationName} could not restore foreign keys outside its transaction`) };
+    }
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error };
+  }
+}
+
 function validateCatalog(migrations: Migration[]): Migration[] {
   const ordered = [...migrations].sort((a, b) => a.version - b.version);
   for (const [index, migration] of ordered.entries()) {
@@ -45,6 +59,10 @@ function validateCatalog(migrations: Migration[]): Migration[] {
       throw new Error(`Migration catalog contains duplicate version ${migration.version}`);
     }
     if (migration.name.trim() === "") throw new Error(`Migration ${migration.version} must have a name`);
+    const isApprovalChangesMigration = migration.version === 27 && migration.name.replace(/^0*27_/, "") === "approval_changes_requested";
+    if (migration.foreignKeys !== undefined && (migration.foreignKeys !== "disabled" || !isApprovalChangesMigration)) {
+      throw new Error(`Migration ${migration.version} requests an unsupported foreign-key policy`);
+    }
   }
   return ordered;
 }
@@ -109,8 +127,14 @@ export function runMigrations(
   const pending = catalog.filter((migration) => migration.version > current);
 
   for (const migration of pending) {
-    db.transaction((tx) => {
+    const foreignKeysDisabled = migration.foreignKeys === "disabled"
+      || (migration.version === 27 && migration.name.replace(/^0*27_/, "") === "approval_changes_requested");
+    const apply = (tx: DatabaseTx): void => {
       tx.exec(migration.sql);
+      if (foreignKeysDisabled) {
+        const violations = tx.all("PRAGMA foreign_key_check");
+        if (violations.length > 0) throw new Error(`Migration ${migration.name} failed foreign key check`);
+      }
       tx.run(
         `INSERT INTO schema_migrations (version, name, checksum, applied_at)
          VALUES ($version, $name, $checksum, $applied_at)`,
@@ -121,7 +145,39 @@ export function runMigrations(
           $applied_at: new Date().toISOString(),
         },
       );
-    });
+    };
+
+    if (!foreignKeysDisabled) {
+      db.transaction(apply);
+      continue;
+    }
+
+    const foreignKeysBefore = db.get<{ foreign_keys: number }>("PRAGMA foreign_keys")?.foreign_keys;
+    if (foreignKeysBefore !== 1) throw new Error(`Migration ${migration.name} requires foreign keys to be enabled`);
+
+    let migrationFailed = false;
+    let migrationFailure: unknown;
+    let restorationResult: { ok: true } | { ok: false; error: unknown };
+    try {
+      db.exec("PRAGMA foreign_keys=OFF");
+      if (db.get<{ foreign_keys: number }>("PRAGMA foreign_keys")?.foreign_keys !== 0) {
+        throw new Error(`Migration ${migration.name} could not disable foreign keys before its transaction`);
+      }
+      db.transaction(apply);
+    } catch (error) {
+      migrationFailed = true;
+      migrationFailure = error;
+    } finally {
+      restorationResult = restoreForeignKeys(db, migration.name);
+    }
+
+    if (!restorationResult.ok) {
+      if (migrationFailed) {
+        throw new AggregateError([migrationFailure, restorationResult.error], `Migration ${migration.name} failed and foreign-key enforcement could not be restored`);
+      }
+      throw restorationResult.error;
+    }
+    if (migrationFailed) throw migrationFailure;
   }
 
   return { applied: pending.length };

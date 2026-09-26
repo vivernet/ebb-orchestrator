@@ -1,29 +1,25 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './app/App.js';
-import { bootstrap, restoreSession } from './api/client.js';
+import type { AuthState } from './app/App.js';
+import { ApiError, restoreSession } from './api/client.js';
+import { apiErrorMessage } from './i18n/ru.js';
 import './styles/base.css';
 
-function renderApp(bootstrapError?: string) {
-  const appProps = bootstrapError === undefined ? {} : { bootstrapError };
-
-  ReactDOM.createRoot(document.getElementById('root')!).render(
-    <React.StrictMode>
-      <App {...appProps} />
-    </React.StrictMode>
-  );
+/** Монтирует приложение и переводит корневой render после завершения восстановления сессии. */
+export function bootstrap(rootElement: HTMLElement) {
+  const root = ReactDOM.createRoot(rootElement);
+  function render(state: AuthState, error?: string) {
+    root.render(<React.StrictMode><App {...(error === undefined ? { initialState: state } : { initialState: state, initializationError: error })} /></React.StrictMode>);
+  }
+  render('restoring');
+  void restoreSession().then(() => render('authenticated')).catch((cause: unknown) => {
+    if (cause instanceof ApiError && (cause.code === 'AUTH_SESSION_REQUIRED' || cause.code === 'AUTH_SESSION_INVALID')) { render(cause.code === 'AUTH_SESSION_INVALID' ? 'expired' : 'login', apiErrorMessage(cause.code)); return; }
+    if (cause instanceof ApiError && [400, 403, 503].includes(cause.status)) { render('error', cause.status === 400 ? 'Некорректный запрос восстановления.' : cause.status === 403 ? 'Доступ запрещён.' : 'Сервис временно недоступен.'); return; }
+    render('error', 'Не удалось восстановить сессию.');
+  });
+  return root;
 }
 
-function consumeLaunchToken(): string {
-  const hash = new URLSearchParams(window.location.hash.slice(1));
-  const launchToken = hash.get('ebb-bootstrap') ?? '';
-  if (window.location.hash) window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
-  return launchToken;
-}
-
-const launchToken = consumeLaunchToken();
-const sessionInitialization = launchToken ? bootstrap(launchToken) : restoreSession();
-
-void sessionInitialization.then(() => renderApp()).catch((error: unknown) => {
-  renderApp(error instanceof Error ? error.message : 'Unable to establish the local session.');
-});
+const rootElement = document.getElementById('root');
+if (rootElement) bootstrap(rootElement);

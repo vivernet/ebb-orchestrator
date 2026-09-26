@@ -13,7 +13,7 @@ specs:
   - ../specs/03-production-readiness-design.md
 evidence:
   - apps/server/src/app/create-app.ts
-  - apps/server/src/platform/security/local-session.ts
+  - apps/server/src/platform/security/auth-ports.ts
   - apps/server/package.json
   - packages/contracts/src/api.ts
   - pnpm-lock.yaml

@@ -49,6 +49,7 @@ export class TaskWorkspaceProvisioner {
          FROM onboarding_configs oc
          JOIN approvals a ON a.id=oc.approval_id
         WHERE oc.project_id=$projectId AND oc.status='ACTIVE'
+          AND a.subject_type='PROJECT' AND a.subject_id=oc.project_id
           AND a.type='WORKFLOW_CHANGE' AND a.status='APPROVED'`,
       { projectId: epic.project_id },
     );

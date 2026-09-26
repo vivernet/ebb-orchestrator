@@ -1,3 +1,5 @@
+import { ru, statusLabel } from '../i18n/ru.js';
+
 interface WorkflowTimelineProps {
   stages: string[];
   currentStage?: string;
@@ -49,7 +51,7 @@ export default function WorkflowTimeline({ stages, currentStage }: WorkflowTimel
     ? stages.indexOf(normalizedStage)
     : -1;
   return (
-    <div className="workflow-timeline" aria-label="Workflow timeline">
+    <div className="workflow-timeline" role="region" aria-label={ru.common.timeline}>
       <ol>
         {stages.map((stage, index) => {
           const isCurrent = stage === normalizedStage;
@@ -57,11 +59,11 @@ export default function WorkflowTimeline({ stages, currentStage }: WorkflowTimel
 
           return (
             <li key={stage} style={isPast ? { color: '#888' } : isCurrent ? { color: '#fff', fontWeight: '600' } : { color: '#a0a0a0' }}>
-              {stage}
+              {statusLabel(stage)}
             </li>
           );
         })}
-        {statusOnly && <li style={{ color: '#fff', fontWeight: '600' }}>{currentStage!.toUpperCase()}</li>}
+        {statusOnly && <li style={{ color: '#fff', fontWeight: '600' }}>{statusLabel(currentStage)}</li>}
       </ol>
     </div>
   );

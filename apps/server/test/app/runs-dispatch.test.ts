@@ -32,6 +32,7 @@ function setup() {
     failPreparedRun: vi.fn(),
   };
   const scheduler = {
+    assertProjectDispatchable: vi.fn(),
     dispatchTask: vi.fn(),
     releaseTask: vi.fn(),
     projectProjection: vi.fn(() => ({ global: { active: 0, max: 1 }, projects: [] })),

@@ -47,8 +47,8 @@ export class RuntimeEventHandlers {
     };
 
     // Проверяет task exists and is in READY state
-    const task = this.db.get<{ id: string; status: string }>(
-      "SELECT id, status FROM tasks WHERE id = $id",
+    const task = this.db.get<{ id: string; status: string; project_id: string }>(
+      "SELECT id, status, project_id FROM tasks WHERE id = $id",
       { id: taskId },
     );
 
@@ -61,6 +61,8 @@ export class RuntimeEventHandlers {
         `Task ${taskId} is not in READY state. Current status: ${task.status}`,
       );
     }
+
+    this.scheduler.assertProjectDispatchable(task.project_id);
 
     // Этот run identity is persisted before scheduling. Этот scheduler then
     // stores который точный identity in its резервирование, preventing Объект later

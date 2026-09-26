@@ -8,6 +8,8 @@ import { SchedulerService } from "../../src/modules/scheduler/scheduler-service.
 import { runMigrations, type Migration } from "../../src/platform/database/migrator.js";
 import type { AgentRuntime } from "../../src/modules/runtime/agent-runtime.js";
 import { createTestAuthService, TEST_COOKIE, TEST_CSRF_TOKEN } from "../helpers/auth.js";
+import { ApprovalService } from "../../src/modules/approvals/approval-service.js";
+import { OnboardingService } from "../../src/modules/projects/onboarding-service.js";
 
 const migrationDir = fileURLToPath(new URL("../../src/platform/database/migrations/", import.meta.url));
 const migrations: Migration[] = readdirSync(migrationDir).filter((file) => file.endsWith(".sql")).map((file) => {
@@ -40,7 +42,9 @@ function makeAppWithDatabase() {
   runMigrations(db, migrations);
   const scheduler = new SchedulerService(db);
   const authService = createTestAuthService();
-  return { app: createApp({ db, scheduler, runtime: mockRuntime, authService }), db, authService };
+  const approvalService = new ApprovalService(db);
+  const onboardingService = new OnboardingService(db, approvalService);
+  return { app: createApp({ db, scheduler, runtime: mockRuntime, authService, approvalService, onboardingService }), db, authService };
 }
 
 const validContract = {
@@ -196,7 +200,7 @@ describe("orchestrator read API", () => {
     });
 
     expect(response.statusCode).toBe(409);
-    expect(JSON.parse(response.body)).toMatchObject({ error: expect.stringContaining("semantic approval") });
+    expect(JSON.parse(response.body)).toMatchObject({ contractVersion: 1, error: { code: "ONBOARDING_NOT_APPROVED" } });
     expect(db.get<{ status: string }>("SELECT status FROM projects WHERE id = $id", { id: "project-1" })?.status).toBe("ACTIVE");
     await app.close();
     db.close();
@@ -204,31 +208,29 @@ describe("orchestrator read API", () => {
 
   it("persists semantic onboarding approval and activates only after backend approval", async () => {
     const { app, db, authService } = makeAppWithDatabase();
-    db.run(
-      "INSERT INTO projects (id, name, display_name, status, created_at, updated_at) VALUES ($id, $name, $displayName, 'ACTIVE', $now, $now)",
-      { id: "project-onboarding", name: "project", displayName: "Project", now: new Date().toISOString() },
-    );
     const headers = mutationHeaders(app);
-    const invalid = await app.inject({ method: "POST", url: "/api/v1/onboarding/project-onboarding/approval", headers, payload: { repositoryPath: "relative/path" } });
+    const discovered = await app.inject({ method: "POST", url: "/api/v1/onboarding/discover", headers, payload: { repositoryPath: process.cwd() } });
+    expect(discovered.statusCode).toBe(201);
+    const projectId = JSON.parse(discovered.body).projectId as string;
+    const invalid = await app.inject({ method: "POST", url: `/api/v1/onboarding/${projectId}/approval`, headers, payload: { repositoryPath: "relative/path" } });
     expect(invalid.statusCode).toBe(400);
 
-    const proposal = await app.inject({ method: "POST", url: "/api/v1/onboarding/project-onboarding/approval", headers, payload: { repositoryPath: process.cwd() } });
+    const proposal = await app.inject({ method: "POST", url: `/api/v1/onboarding/${projectId}/approval`, headers, payload: { proposed: { defaultBranch: "main", workflow: "standard", roles: ["Developer"], guidelines: [] } } });
     expect(proposal.statusCode).toBe(201);
-    const approval = JSON.parse(proposal.body).approval;
-    expect(approval).not.toHaveProperty("metadata");
-    expect(db.get<{ metadata_json: string }>("SELECT metadata_json FROM approval_metadata WHERE approval_id=$id", { id: approval.id })?.metadata_json).toContain("semantic-config");
+    const approvalId = JSON.parse(proposal.body).approval?.id ?? JSON.parse(proposal.body).approvalId;
+    expect(db.get<{ metadata_json: string }>("SELECT metadata_json FROM approval_metadata WHERE approval_id=$id", { id: approvalId })?.metadata_json).toContain("semantic-config");
 
-    const beforeApproval = await app.inject({ method: "POST", url: "/api/v1/onboarding/project-onboarding/activate", headers });
+    const beforeApproval = await app.inject({ method: "POST", url: `/api/v1/onboarding/${projectId}/activate`, headers, payload: {} });
     expect(beforeApproval.statusCode).toBe(409);
-    const approved = await app.inject({ method: "POST", url: "/api/v1/onboarding/project-onboarding/approve", headers, payload: {} });
+    const approved = await app.inject({ method: "POST", url: `/api/v1/onboarding/${projectId}/approve`, headers, payload: {} });
     expect(approved.statusCode).toBe(200);
-    const activated = await app.inject({ method: "POST", url: "/api/v1/onboarding/project-onboarding/activate", headers });
+    const activated = await app.inject({ method: "POST", url: `/api/v1/onboarding/${projectId}/activate`, headers, payload: {} });
     expect(activated.statusCode).toBe(200);
-    expect(JSON.parse(activated.body)).toMatchObject({ projectId: "project-onboarding", semanticConfigApproved: true, localModeEnabled: true });
+    expect(JSON.parse(activated.body)).toMatchObject({ projectId, status: "ACTIVE" });
     authService.resetAuthOperationCounts();
-    const view = await app.inject({ method: "GET", url: "/api/v1/onboarding/project-onboarding", headers: { cookie: TEST_COOKIE } });
+    const view = await app.inject({ method: "GET", url: `/api/v1/onboarding/${projectId}`, headers: { cookie: TEST_COOKIE } });
     expect(view.statusCode).toBe(200);
-    expect(JSON.parse(view.body).semanticConfigApproved).toBe(true);
+    expect(JSON.parse(view.body).status).toBe("ACTIVE");
     await app.close();
     db.close();
   });
@@ -279,6 +281,24 @@ describe("orchestrator read API", () => {
     expect(response.statusCode).toBe(200);
     expect(response.headers["content-type"]).toContain("application/json");
     await app.close();
+  });
+
+  it("accepts an authenticated request-changes decision and returns its persisted status", async () => {
+    const { app, db } = makeAppWithDatabase();
+    const service = new ApprovalService(db);
+    const approval = service.request({ type: "WORKFLOW_CHANGE", subjectId: "project-changes", subjectType: "PROJECT", requestedBy: "local-user" });
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/v1/approvals/${approval.id}/request-changes`,
+      headers: mutationHeaders(app),
+      payload: { note: "Please revise the proposal" },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body)).toEqual({ status: "CHANGES_REQUESTED" });
+    expect(db.get<{ status: string; resolution_note: string }>("SELECT status,resolution_note FROM approvals WHERE id=$id", { id: approval.id })).toEqual({ status: "CHANGES_REQUESTED", resolution_note: "Please revise the proposal" });
+    await app.close();
+    db.close();
   });
 
   it.each([

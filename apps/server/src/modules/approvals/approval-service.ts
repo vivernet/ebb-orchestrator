@@ -3,7 +3,7 @@
  * с single-transition enforcement и outbox события.
  */
 
-import type { Database } from "../../platform/database/database.js";
+import type { Database, DatabaseTx } from "../../platform/database/database.js";
 import { DomainEvent } from "../../platform/events/domain-event.js";
 import { appendOutboxEvent } from "../../platform/events/outbox-repository.js";
 import type {
@@ -13,6 +13,8 @@ import type {
   ApprovalStatus,
   ApprovalSubjectType,
 } from "./approval-types.js";
+import type { ApproveApprovalCommand, RequestApprovalCommand } from "./approval-commands.js";
+import type { ApprovalTransactionPort } from "./approval-port.js";
 
 interface ApprovalRow {
   id: string;
@@ -69,14 +71,17 @@ function readMetadata(db: Database, approvalId: string): Readonly<Record<string,
 /**
  * Предоставляет публичный контракт модуля approval-service для взаимодействия слоёв приложения.
  */
-export class ApprovalService {
+export class ApprovalService implements ApprovalTransactionPort {
   constructor(private readonly db: Database) {}
 
   /**
    * запрос Объект новый approval. статус равен ожидающий. Appends ApprovalRequested to outbox.
    */
   request(input: ApprovalRequestInput): Approval {
-    return this.db.transaction((tx) => {
+    return this.db.transaction((tx) => this.requestInTransaction(tx, input));
+  }
+
+  requestInTransaction(tx: DatabaseTx, input: RequestApprovalCommand): Approval {
       const now = new Date().toISOString();
       const id = crypto.randomUUID();
 
@@ -94,11 +99,7 @@ export class ApprovalService {
         },
       );
       if (input.metadata) {
-        try {
-          tx.run("INSERT OR REPLACE INTO approval_metadata(approval_id,metadata_json) VALUES($approvalId,$metadata)", { approvalId: id, metadata: JSON.stringify(input.metadata) });
-        } catch {
-          // сохранять compatibility с pre-onboarding schemas; Объект approval itself remains корректный.
-        }
+        tx.run("INSERT OR REPLACE INTO approval_metadata(approval_id,metadata_json) VALUES($approvalId,$metadata)", { approvalId: id, metadata: JSON.stringify(input.metadata) });
       }
 
       const event = DomainEvent.create({
@@ -128,14 +129,29 @@ export class ApprovalService {
         resolvedAt: null,
       };
       return input.metadata ? { ...approval, metadata: input.metadata } : approval;
-    });
   }
 
   /**
    * Approve Объект ожидающий approval. Throws если уже разрешённый.
    */
   approve(approvalId: string, actor: string, note?: string): Approval {
-    return this.resolve(approvalId, "APPROVED", actor, note ?? null, "ApprovalApproved");
+    const row = this.db.get<ApprovalRow>("SELECT subject_id,subject_type,type FROM approvals WHERE id=$id", { id: approvalId });
+    if (!row) throw new Error(`Approval ${approvalId} not found`);
+    const current = this.db.get<{ status: string }>("SELECT status FROM approvals WHERE id=$id", { id: approvalId });
+    if (current?.status !== "PENDING") throw new Error(`Approval ${approvalId} is already resolved with status ${current?.status ?? "UNKNOWN"}`);
+    return this.db.transaction((tx) => this.approveInTransaction(tx, { approvalId, subjectId: row.subject_id, subjectType: row.subject_type as ApprovalSubjectType, type: row.type as ApprovalType, actor, note: note ?? null }));
+  }
+
+  approveInTransaction(tx: DatabaseTx, command: ApproveApprovalCommand): Approval {
+    const row = tx.get<ApprovalRow>("SELECT * FROM approvals WHERE id=$id AND subject_id=$subjectId AND subject_type=$subjectType AND type=$type AND status='PENDING'", { id: command.approvalId, subjectId: command.subjectId, subjectType: command.subjectType, type: command.type });
+    if (!row) throw new Error(`Approval ${command.approvalId} is not pending for the requested subject`);
+    const now = new Date().toISOString();
+    tx.run("UPDATE approvals SET status='APPROVED',resolved_by=$actor,resolution_note=$note,resolved_at=$now WHERE id=$id AND subject_id=$subjectId AND subject_type=$subjectType AND type=$type AND status='PENDING'", { id: command.approvalId, subjectId: command.subjectId, subjectType: command.subjectType, type: command.type, actor: command.actor, note: command.note ?? null, now });
+    if (tx.get<{ changes: number }>("SELECT changes() AS changes")?.changes !== 1) throw new Error(`Approval ${command.approvalId} is no longer pending`);
+    const event = DomainEvent.create({ type: "ApprovalApproved", aggregateType: "Approval", aggregateId: command.subjectId, payload: { approvalId: command.approvalId, approvalType: command.type, subjectId: command.subjectId, subjectType: command.subjectType, status: "APPROVED", resolvedBy: command.actor, resolutionNote: command.note ?? null } });
+    appendOutboxEvent(tx, event);
+    tx.run("INSERT INTO audit_log(id,action,actor,aggregate_type,aggregate_id,details_json,created_at) VALUES($id,$action,$actor,$aggregate_type,$aggregate_id,$details,$created_at)", { id: crypto.randomUUID(), action: "APPROVAL_APPROVED", actor: command.actor, aggregate_type: "Approval", aggregate_id: command.approvalId, details: JSON.stringify({ approvalId: command.approvalId, approvalType: command.type, subjectId: command.subjectId, subjectType: command.subjectType, status: "APPROVED", resolvedBy: command.actor, resolutionNote: command.note ?? null }), created_at: now });
+    return { id: row.id, type: row.type as ApprovalType, subjectId: row.subject_id, subjectType: row.subject_type as ApprovalSubjectType, status: "APPROVED", requestedBy: row.requested_by, resolvedBy: command.actor, resolutionNote: command.note ?? null, createdAt: row.created_at, resolvedAt: now };
   }
 
   /**

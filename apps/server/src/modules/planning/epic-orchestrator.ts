@@ -88,6 +88,7 @@ export class EpicOrchestrator {
   async approveAndRun(planId: string, actor: string): Promise<EpicRunResult> {
     const row = this.db.get<{ project_id: string; plan_json: string; status: string }>("SELECT project_id, plan_json, status FROM planning_plans WHERE id=$id", { id: planId });
     if (!row) throw new Error(`Epic plan ${planId} not found`);
+    this.scheduler.assertProjectDispatchable(row.project_id);
     const input = JSON.parse(row.plan_json) as EpicStartInput;
     if (row.status === "PENDING") this.planning.approvePlan(planId, actor);
     const epic = this.db.get<{ id: string }>("SELECT epic_id AS id FROM planning_plans WHERE id=$planId AND epic_id IS NOT NULL", { planId });
@@ -128,6 +129,9 @@ export class EpicOrchestrator {
   }
 
   private async execute(epicId: string, input: EpicStartInput): Promise<EpicRunResult> {
+    const project = this.db.get<{ project_id: string }>("SELECT project_id FROM epics WHERE id=$epicId", { epicId });
+    if (!project) throw new Error(`Epic ${epicId} not found`);
+    this.scheduler.assertProjectDispatchable(project.project_id);
     const epic = this.db.get<{ display_id: string }>("SELECT display_id FROM epics WHERE id=$epicId", { epicId });
     if (!epic) throw new Error(`Epic ${epicId} not found`);
     this.db.run("UPDATE epics SET status='IN_PROGRESS', updated_at=$updatedAt WHERE id=$epicId AND status='OPEN'", { epicId, updatedAt: new Date().toISOString() });
@@ -184,6 +188,9 @@ export class EpicOrchestrator {
     }
   }
   private async runChild(task: Child, epicId: string, branch: string): Promise<void> {
+    const project = this.db.get<{ project_id: string }>("SELECT project_id FROM epics WHERE id=$epicId", { epicId });
+    if (!project) throw new Error(`Epic ${epicId} project not found`);
+    this.scheduler.assertProjectDispatchable(project.project_id);
     if (task.status === "INTEGRATED_INTO_EPIC" || task.status === "RELEASED") return;
     if (task.status === "DRAFT") this.workflow.transition(task.id, "READY");
     let result: EpicAgentResult;
@@ -230,6 +237,9 @@ export class EpicOrchestrator {
       if (existing.validated !== 1) throw new Error(`Persisted ${phase} evidence is not validated`);
       if (existing.status === "COMPLETED") return JSON.parse(existing.result_json) as EpicAgentResult;
     }
+    const project = this.db.get<{ project_id: string }>("SELECT project_id FROM epics WHERE id=$epicId", { epicId });
+    if (!project) throw new Error(`Epic ${epicId} project not found`);
+    this.scheduler.assertProjectDispatchable(project.project_id);
     // Intent является Объект idempotency boundary.  Объект runtime является never started перед
     // этот row и its AgentRun exist durably.
     const agentRunId = crypto.randomUUID();
@@ -308,10 +318,14 @@ export class EpicOrchestrator {
       { branch: sourceBranch },
     );
     const onboarding = this.db.get<{ repository_path: string; facts_json: string; proposed_json: string; status: string }>(
-      "SELECT repository_path,facts_json,proposed_json,status FROM onboarding_configs WHERE project_id=$projectId",
+      `SELECT oc.repository_path,oc.facts_json,oc.proposed_json,oc.status
+         FROM onboarding_configs oc JOIN approvals a ON a.id=oc.approval_id
+        WHERE oc.project_id=$projectId AND oc.status='ACTIVE'
+          AND a.subject_type='PROJECT' AND a.subject_id=oc.project_id
+          AND a.type='WORKFLOW_CHANGE' AND a.status='APPROVED'`,
       { projectId: task.project_id },
     );
-    if (onboarding && onboarding.status !== "ACTIVE") throw new Error(`Onboarding for project ${task.project_id} is not active`);
+    if (!onboarding) throw new Error(`Onboarding for project ${task.project_id} is not active and approved`);
     if (!operation?.branch_name) throw new Error(`No persisted source branch configured for task ${taskId}`);
     if (onboarding && operation.repo_path !== onboarding.repository_path) throw new Error(`Persisted repository mismatch for task ${taskId}`);
     const repoPath = operation.repo_path ?? onboarding?.repository_path;

@@ -1,9 +1,10 @@
 import { useCallback } from 'react';
 import { apiPaths } from '@ebb-orchestrator/contracts';
-import { apiClient, toClientPath } from '../../api/client.js';
+import { ApiError, apiClient, toClientPath } from '../../api/client.js';
 import { EmptyState, PageState } from '../../components/ui/PageState.js';
 import { useOnSSEReconnect } from '../../hooks/useEventClient.js';
 import { useQuery } from '../../state/use-query.js';
+import { apiErrorMessage } from '../../i18n/ru.js';
 
 interface UsageBucket {
   inputTokens: number;
@@ -24,14 +25,14 @@ interface UsageData {
 }
 
 const bucketLabels = [
-  ['global', 'All records'],
-  ['project', 'Records with project_id'],
-  ['epic', 'Records with epic_id'],
-  ['task', 'Records with task_id'],
+  ['global', 'Все записи'],
+  ['project', 'Записи с project_id'],
+  ['epic', 'Записи с epic_id'],
+  ['task', 'Записи с task_id'],
 ] as const;
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : 'unknown error';
+  return apiErrorMessage(error instanceof ApiError ? error.code : undefined);
 }
 
 function hasUsage(data: UsageData): boolean {
@@ -53,38 +54,38 @@ export default function UsagePage() {
   useOnSSEReconnect(refresh);
 
   if (!query.data && (query.status === 'idle' || query.status === 'loading')) {
-    return <PageState status="loading" message="Loading usage data…" />;
+    return <PageState status="loading" message="Загрузка данных об использовании…" />;
   }
 
   if (query.status === 'error') {
-    return <PageState status="error" message={`Unable to load usage: ${errorMessage(query.error)}`} onRetry={retry} />;
+    return <PageState status="error" message={`Не удалось загрузить данные об использовании: ${errorMessage(query.error)}`} onRetry={retry} />;
   }
 
   if (!query.data) {
-    return <PageState status="error" message="Usage data is unavailable." onRetry={retry} />;
+    return <PageState status="error" message="Данные об использовании недоступны." onRetry={retry} />;
   }
 
   const data = query.data;
   if (!hasUsage(data)) {
-    return <div className="usage-page"><h1>Usage</h1><EmptyState message="No usage records are available." /></div>;
+    return <div className="usage-page"><h1>Использование</h1><EmptyState message="Нет доступных записей об использовании." /></div>;
   }
 
   return (
     <div className="usage-page">
-      <h1>Usage</h1>
-      <p>Read-only aggregate metrics from authoritative usage records.</p>
-      <section aria-label="Usage aggregates" className="metric-grid">
+      <h1>Использование</h1>
+      <p>Агрегированные показатели только для чтения по достоверным записям использования.</p>
+      <section aria-label="Сводные показатели использования" className="metric-grid">
         {bucketLabels.map(([key, label]) => {
           const bucket = data[key];
           return (
             <article key={key} className="table-card">
               <h2>{label}</h2>
               <dl>
-                <div><dt>Input tokens</dt><dd>{bucket.inputTokens}</dd></div>
-                <div><dt>Cached tokens</dt><dd>{bucket.cachedTokens}</dd></div>
-                <div><dt>Output tokens</dt><dd>{bucket.outputTokens}</dd></div>
-                <div><dt>Total tokens</dt><dd>{bucket.totalTokens}</dd></div>
-                <div><dt>Cost</dt><dd>${bucket.cost.toFixed(2)}</dd></div>
+                <div><dt>Входные токены</dt><dd>{bucket.inputTokens}</dd></div>
+                <div><dt>Кэшированные токены</dt><dd>{bucket.cachedTokens}</dd></div>
+                <div><dt>Выходные токены</dt><dd>{bucket.outputTokens}</dd></div>
+                <div><dt>Всего токенов</dt><dd>{bucket.totalTokens}</dd></div>
+                <div><dt>Стоимость</dt><dd>${bucket.cost.toFixed(2)}</dd></div>
               </dl>
             </article>
           );

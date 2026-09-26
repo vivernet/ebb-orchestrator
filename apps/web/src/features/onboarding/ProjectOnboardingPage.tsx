@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { apiClient } from '../../api/client.js';
+import { ApiError, apiClient } from '../../api/client.js';
+import { apiErrorMessage } from '../../i18n/ru.js';
 import { EmptyState, PageState } from '../../components/ui/PageState.js';
 import StatusBadge from '../../components/ui/StatusBadge.js';
 
@@ -38,67 +39,67 @@ export default function ProjectOnboardingPage({ id }: { id: string }) {
 
     void apiClient.get<OnboardingProject>(`/onboarding/${encodeURIComponent(id)}`)
       .then(setData)
-      .catch((e) => setError(e.message || 'Failed to load onboarding data'))
+      .catch((e: unknown) => setError(apiErrorMessage(e instanceof ApiError ? e.code : undefined)))
       .finally(() => setLoading(false));
   }, [id]);
 
   if (!id) {
     return (
       <main className="project-onboarding-page">
-        <h1>Project onboarding</h1>
-        <EmptyState message="Select a project before opening its onboarding review. The current local API does not expose a project-discovery action, so this page never guesses an identifier or sends an invalid request." />
+        <h1>Настройка проекта</h1>
+        <EmptyState message="Выберите проект, чтобы открыть его проверку настройки. Текущий локальный API не предоставляет действие для поиска проекта, поэтому страница не подбирает идентификатор и не отправляет некорректный запрос." />
       </main>
     );
   }
 
   if (loading) {
-    return <PageState status="loading" message="Loading onboarding data..." />;
+    return <PageState status="loading" message="Загрузка данных настройки проекта…" />;
   }
 
   if (error || !data) {
-    return <PageState status="error" message={`Error: ${error ?? 'Data not available'}`} />;
+    return <PageState status="error" message={`Ошибка: ${error ?? 'Данные недоступны'}`} />;
   }
 
   return (
     <div className="project-onboarding-page">
-      <h1>Project Onboarding: {data.projectId}</h1>
+      <h1>Настройка проекта: {data.projectId}</h1>
 
-      <section aria-label="Repository">
-        <h2>Repository</h2>
+      <section aria-label="Репозиторий">
+        <h2>Репозиторий</h2>
         <p>{data.repository.path} ({data.repository.remoteUrl})</p>
       </section>
 
-      <section aria-label="DETECTED findings">
-        <h2>DETECTED</h2>
-        <p>Default branch: {data.detected.defaultBranch}</p>
-        <p>Package manager: {data.detected.packageManager ?? 'Not detected'}</p>
-        <p>Test framework: {data.detected.testFramework ?? 'Not detected'}</p>
-        <p>Orchestrator config found: {data.detected.orchestratorConfigFound ? 'Yes' : 'No'}</p>
+      <section aria-label="Обнаруженные сведения">
+        <h2>Обнаружено</h2>
+        <p>Основная ветка: {data.detected.defaultBranch}</p>
+        <p>Менеджер пакетов: {data.detected.packageManager ?? 'Не обнаружен'}</p>
+        <p>Тестовый фреймворк: {data.detected.testFramework ?? 'Не обнаружен'}</p>
+        <p>Конфигурация оркестратора найдена: {data.detected.orchestratorConfigFound ? 'Да' : 'Нет'}</p>
       </section>
 
-      <section aria-label="PROPOSED recommendations">
-        <h2>PROPOSED</h2>
-        <p>Default branch: {data.proposed.defaultBranch}</p>
-        <p>Workflow: {data.proposed.workflow}</p>
-        <p>Roles: {data.proposed.roles.join(', ')}</p>
-        <p>Guidelines: {data.proposed.guidelines.length}</p>
+      <section aria-label="Предложенные рекомендации">
+        <h2>Предложено</h2>
+        <p>Основная ветка: {data.proposed.defaultBranch}</p>
+        <p>Рабочий процесс: {data.proposed.workflow}</p>
+        <p>Роли: {data.proposed.roles.join(', ')}</p>
+        <p>Рекомендаций: {data.proposed.guidelines.length}</p>
       </section>
 
-      <section aria-label="Approval status">
-        <h2>Approval Status</h2>
-        <p>Status: <StatusBadge status={data.approvalStatus} label={data.approvalStatus} /></p>
-        <p>Semantic config approved: {data.semanticConfigApproved ? 'Yes' : 'No'}</p>
+      <section aria-label="Статус согласования">
+        <h2>Статус согласования</h2>
+        <p>Статус: <StatusBadge status={data.approvalStatus} label={data.approvalStatus} /></p>
+        <p>Семантическая конфигурация утверждена: {data.semanticConfigApproved ? 'Да' : 'Нет'}</p>
       </section>
 
-      <section aria-label="Security settings">
-        <h2>Security</h2>
-        <p>Local mode enabled: {data.localModeEnabled ? 'Yes' : 'No'}</p>
+      <section aria-label="Параметры безопасности">
+        <h2>Безопасность</h2>
+        <p>Локальный режим включён: {data.localModeEnabled ? 'Да' : 'Нет'}</p>
       </section>
 
-      <section aria-label="Actions">
-        <h2>Actions</h2>
+      <section aria-label="Действия">
+        <h2>Действия</h2>
         <p>
-          Project activation is unavailable until the backend has a persisted semantic-approval authority. This view does not expose a client-side bypass for that policy.
+          Активация проекта недоступна, пока на сервере не появится сохранённый источник полномочий для семантического согласования. Этот экран не предоставляет обход этой политики на стороне клиента.
         </p>
       </section>
     </div>

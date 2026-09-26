@@ -1,36 +1,17 @@
 import { useEffect } from 'react';
 import { eventClient } from '../api/events.js';
 
-/**
- * Инициализирует и управляет подключением `EventClient` к SSE.
- * Подключается к `/events` при монтировании и запускает обновление данных
- * после восстановления соединения.
- */
-export function useEventClient() {
+/** Подключает SSE и переводит приложение в expired при HTTP 401. */
+export function useEventClient(onSessionExpired: () => void) {
   useEffect(() => {
-    // Сначала регистрируем обновление данных, затем устанавливаем соединение.
-    eventClient.setRefetchCallback(() => {
-      window.dispatchEvent(new CustomEvent('sse-reconnect'));
-    });
-
+    eventClient.setRefetchCallback(() => window.dispatchEvent(new CustomEvent('sse-reconnect')));
+    const unsubscribe = eventClient.onSessionExpired(onSessionExpired);
     eventClient.connect();
-
-    return () => {
-      eventClient.disconnect();
-    };
-  }, []);
+    return () => { unsubscribe(); eventClient.disconnect(); };
+  }, [onSessionExpired]);
 }
 
-/**
- * Подписывается на уведомления о восстановлении SSE-соединения.
- * Вызывает переданный callback после переподключения клиента.
- */
+/** Подписывает экран на refetch signal после сетевого reconnect. */
 export function useOnSSEReconnect(callback: () => void) {
-  useEffect(() => {
-    const handleReconnect = () => callback();
-    window.addEventListener('sse-reconnect', handleReconnect);
-    return () => {
-      window.removeEventListener('sse-reconnect', handleReconnect);
-    };
-  }, [callback]);
+  useEffect(() => { window.addEventListener('sse-reconnect', callback); return () => window.removeEventListener('sse-reconnect', callback); }, [callback]);
 }

@@ -1,7 +1,6 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import { createMemoryRouter, RouterProvider } from 'react-router';
-import { apiClient } from '../src/api/client.js';
 import AppShell from '../src/components/AppShell.js';
 
 function renderShell(pathname: string, element = <div>Task body</div>) {
@@ -23,22 +22,19 @@ function renderShell(pathname: string, element = <div>Task body</div>) {
 describe('SSE EventClient integration', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    apiClient.sessionToken = 'session-token';
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(''));
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
-    apiClient.sessionToken = null;
+
   });
 
   test('initializes an authenticated stream at the server SSE route', async () => {
     const { eventClient } = await import('../src/api/events.js');
     eventClient.connect();
 
-    await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/v1/events', expect.objectContaining({
-      headers: { Authorization: 'Bearer session-token' },
-    })));
+    expect(fetch).toHaveBeenCalledWith('/api/v1/events', expect.objectContaining({ credentials: 'same-origin' }));
     eventClient.disconnect();
   });
 
@@ -62,17 +58,17 @@ describe('SSE EventClient integration', () => {
   test('renders route context breadcrumbs with a safe detail link', () => {
     renderShell('/tasks/task-7');
 
-    expect(screen.getByRole('navigation', { name: 'Breadcrumb' })).toBeInTheDocument();
-    expect(within(screen.getByRole('navigation', { name: 'Breadcrumb' })).getByRole('link', { name: 'Dashboard' })).toHaveAttribute('href', '/');
+    expect(screen.getByRole('navigation', { name: 'Навигационная цепочка' })).toBeInTheDocument();
+    expect(within(screen.getByRole('navigation', { name: 'Навигационная цепочка' })).getByRole('link', { name: 'Обзор' })).toHaveAttribute('href', '/');
     expect(screen.getByText('Task task-7')).toBeInTheDocument();
     expect(screen.getByText('Task body')).toBeInTheDocument();
-    expect(within(screen.getByRole('navigation', { name: 'Primary navigation' })).getByRole('link', { name: 'Dashboard' })).not.toHaveAttribute('aria-current', 'page');
+    expect(within(screen.getByRole('navigation', { name: 'Основная навигация' })).getByRole('link', { name: 'Обзор' })).not.toHaveAttribute('aria-current', 'page');
   });
 
   test('keeps the breadcrumb landmark outside the outlet content wrapper', () => {
     renderShell('/tasks/task-7');
 
-    const breadcrumbs = screen.getByRole('navigation', { name: 'Breadcrumb' });
+    const breadcrumbs = screen.getByRole('navigation', { name: 'Навигационная цепочка' });
     const taskBody = screen.getByText('Task body');
 
     expect(taskBody.closest('.route-breadcrumbs')).toBeNull();

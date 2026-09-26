@@ -11,12 +11,14 @@ import UsagePage from '../features/usage/UsagePage.js';
 import ApprovalInboxPage from '../features/approvals/ApprovalInboxPage.js';
 import ExecutionPage from '../features/execution/ExecutionPage.js';
 import AgentRunPage from '../features/runs/AgentRunPage.js';
-import { isRouteErrorResponse, Link, useParams, useRevalidator, useRouteError } from 'react-router';
+import { Link, useParams, useRevalidator } from 'react-router';
+import { ru } from '../i18n/ru.js';
 
 const ProjectRoute = () => <ProjectPage id={useParams().id ?? ''} />;
 const EpicRoute = () => <EpicPage id={useParams().id ?? ''} />;
 const TaskRoute = () => <TaskPage id={useParams().id ?? ''} />;
 const OnboardingRoute = () => <OnboardingPage />;
+const OnboardingProjectRoute = () => <OnboardingPage projectId={useParams().id ?? ''} />;
 const SettingsRoute = () => <SettingsPage />;
 const UsageRoute = () => <UsagePage />;
 const ApprovalRoute = () => <ApprovalInboxPage />;
@@ -30,9 +32,9 @@ export function NotFoundPage() {
   return (
     <div className="page-state">
       <p className="eyebrow">404</p>
-      <h1>Page not found</h1>
-      <p>The requested route does not exist in this control plane.</p>
-      <Link to="/">Back to Dashboard</Link>
+      <h1>{ru.common.notFound}</h1>
+      <p>{ru.common.requestedRouteMissing}</p>
+      <Link to="/">{ru.common.backToDashboard}</Link>
     </div>
   );
 }
@@ -41,20 +43,16 @@ export function NotFoundPage() {
  * Представляет безопасную границу ошибки маршрута без раскрытия внутренних деталей исключения.
  */
 export function RouteErrorPage() {
-  const error = useRouteError();
   const revalidator = useRevalidator();
-  const detail = isRouteErrorResponse(error)
-    ? `${error.status}: ${error.statusText}`
-    : 'The route could not be rendered safely.';
 
   return (
     <div className="page-state">
-      <p className="eyebrow">Route error</p>
-      <h1>Unable to render this page</h1>
-      <p role="alert">{detail}</p>
+      <p className="eyebrow">{ru.common.routeError}</p>
+      <h1>{ru.common.unableToRender}</h1>
+      <p role="alert">{ru.common.unableToRender}</p>
       <div className="page-actions">
-        <button type="button" onClick={() => revalidator.revalidate()} disabled={revalidator.state === 'loading'}>Retry</button>
-        <Link to="/">Back to Dashboard</Link>
+        <button type="button" onClick={() => revalidator.revalidate()} disabled={revalidator.state === 'loading'}>{ru.common.retry}</button>
+        <Link to="/">{ru.common.backToDashboard}</Link>
       </div>
     </div>
   );
@@ -69,86 +67,92 @@ export const router = createBrowserRouter([
       {
         id: 'dashboard',
         path: '',
-        handle: { breadcrumbLabel: 'Dashboard' },
+        handle: { breadcrumbLabel: ru.breadcrumbs.dashboard },
         Component: DashboardPage,
       },
       {
         id: 'projects-index',
         path: 'projects',
-        handle: { breadcrumbLabel: 'Projects' },
+        handle: { breadcrumbLabel: ru.breadcrumbs.projects },
         Component: ProjectsIndex,
       },
       {
         id: 'project',
         path: 'projects/:id',
-        handle: { breadcrumbLabel: 'Project' },
+        handle: { breadcrumbLabel: ru.breadcrumbs.project },
         Component: ProjectRoute,
       },
       {
         id: 'epic',
         path: 'epics/:id',
-        handle: { breadcrumbLabel: 'Epic' },
+        handle: { breadcrumbLabel: ru.breadcrumbs.epic },
         Component: EpicRoute,
       },
       {
         id: 'project-epic',
         path: 'projects/:projectId/epics/:epicId',
-        handle: { breadcrumbLabel: 'Epic' },
+        handle: { breadcrumbLabel: ru.breadcrumbs.epic },
         Component: EpicRoute,
       },
       {
         id: 'task',
         path: 'tasks/:id',
-        handle: { breadcrumbLabel: 'Task' },
+        handle: { breadcrumbLabel: ru.breadcrumbs.task },
         Component: TaskRoute,
       },
       {
         id: 'project-task',
         path: 'projects/:projectId/tasks/:taskId',
-        handle: { breadcrumbLabel: 'Task' },
+        handle: { breadcrumbLabel: ru.breadcrumbs.task },
         Component: TaskRoute,
       },
       {
         path: 'approvals',
-        handle: { breadcrumbLabel: 'Approvals' },
+        handle: { breadcrumbLabel: ru.breadcrumbs.approvals },
         Component: ApprovalRoute,
       },
       {
         path: 'execution',
-        handle: { breadcrumbLabel: 'Execution' },
+        handle: { breadcrumbLabel: ru.breadcrumbs.execution },
         Component: ExecutionRoute,
       },
       {
         id: 'run',
         path: 'runs/:id',
-        handle: { breadcrumbLabel: 'Run' },
+        handle: { breadcrumbLabel: ru.breadcrumbs.run },
         Component: RunRoute,
       },
       {
         id: 'project-run',
         path: 'projects/:projectId/runs/:runId',
-        handle: { breadcrumbLabel: 'Run' },
+        handle: { breadcrumbLabel: ru.breadcrumbs.run },
         Component: RunRoute,
       },
       {
         path: 'usage',
-        handle: { breadcrumbLabel: 'Usage' },
+        handle: { breadcrumbLabel: ru.breadcrumbs.usage },
         Component: UsageRoute,
       },
       {
         path: 'settings',
-        handle: { breadcrumbLabel: 'Settings' },
+        handle: { breadcrumbLabel: ru.breadcrumbs.settings },
         Component: SettingsRoute,
       },
       {
         path: 'projects/new',
-        handle: { breadcrumbLabel: 'Project onboarding' },
+        handle: { breadcrumbLabel: ru.breadcrumbs.onboarding },
         Component: OnboardingRoute,
+      },
+      {
+        id: 'onboarding-project',
+        path: 'onboarding/:id',
+        handle: { breadcrumbLabel: ru.breadcrumbs.onboarding },
+        Component: OnboardingProjectRoute,
       },
       {
         id: 'not-found',
         path: '*',
-        handle: { breadcrumbLabel: 'Page not found' },
+        handle: { breadcrumbLabel: ru.breadcrumbs.notFound },
         Component: NotFoundPage,
       },
     ],

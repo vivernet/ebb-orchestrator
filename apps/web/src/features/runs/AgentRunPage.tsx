@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiPaths } from '@ebb-orchestrator/contracts';
 import { Link } from 'react-router';
-import { apiClient, toClientPath } from '../../api/client.js';
+import { ApiError, apiClient, toClientPath } from '../../api/client.js';
 import { ErrorAlert, PageState } from '../../components/ui/PageState.js';
 import StatusBadge from '../../components/ui/StatusBadge.js';
 import { useOnSSEReconnect } from '../../hooks/useEventClient.js';
+import { apiErrorMessage, auditActionLabel, recoveryFailureLabel, recoveryReasonLabel, recoveryRoleLabel, ru, runEventLabel, runTriggerLabel, statusLabel } from '../../i18n/ru.js';
 import { useQuery } from '../../state/use-query.js';
 import { createMutationStore, type MutationState } from '../../state/mutation-store.js';
 import {
@@ -33,7 +34,7 @@ interface AgentRunPageProps {
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : 'unknown error';
+  return apiErrorMessage(error instanceof ApiError ? error.code : undefined);
 }
 
 /**
@@ -90,7 +91,7 @@ export default function AgentRunPage({ id }: AgentRunPageProps) {
   useEffect(() => {
     if (!run) return;
 
-    // Load events
+    // Load событий
     setEventsQuery((prev) => ({ ...prev, status: 'loading' }));
     getRunEvents(id)
       .then((data) => setEventsQuery({ status: 'success', data, error: null }))
@@ -115,50 +116,50 @@ export default function AgentRunPage({ id }: AgentRunPageProps) {
       .catch((err) => setRecoveryQuery({ status: 'error', data: null, error: err }));
   }, [run, id]);
 
-  if (query.status === 'loading' || query.status === 'idle') return <PageState status="loading" message="Loading Agent Run…" />;
-  if (query.status === 'error') return <PageState status="error" message={`Unable to load Agent Run: ${errorMessage(query.error)}`} onRetry={retry} />;
-  if (!run) return <ErrorAlert message="Unable to load Agent Run: not found" onRetry={retry} />;
+  if (query.status === 'loading' || query.status === 'idle') return <PageState status="loading" message="Загрузка запуска агента…" />;
+  if (query.status === 'error') return <PageState status="error" message={`Не удалось загрузить запуск агента: ${errorMessage(query.error)}`} onRetry={retry} />;
+  if (!run) return <ErrorAlert message={`Не удалось загрузить запуск агента: ${ru.runs.notFound}`} onRetry={retry} />;
 
   const isActive = ['STARTED', 'IN_PROGRESS', 'COMPLETING'].includes(run.status);
 
   return (
     <div className="agent-run-page page-stack">
       <header className="page-header">
-        <div><p className="eyebrow">Agent activity</p><h1>Agent Run: {run.id}</h1></div>
+        <div><p className="eyebrow">Активность агента</p><h1>Запуск агента: {run.id}</h1></div>
         <StatusBadge status={run.status} />
       </header>
 
-      {cancelState.status === 'error' && <ErrorAlert message={`Unable to cancel run: ${errorMessage(cancelState.error)}`} />}
+      {cancelState.status === 'error' && <ErrorAlert message={`Не удалось отменить запуск: ${errorMessage(cancelState.error)}`} />}
 
-      <section className="detail-grid" aria-label="Run details">
-        <div><span>Role</span><strong>{run.role}</strong></div>
-        <div><span>Runtime</span><strong>{run.runtime}</strong></div>
-        <div><span>Model</span><strong>{run.model}</strong></div>
-        <div><span>Trigger</span><strong>{run.triggerReason ?? 'Not recorded'}</strong></div>
-        <div><span>Task</span><strong>{run.taskId ? <Link to={`/tasks/${encodeURIComponent(run.taskId)}`}>{run.taskId}</Link> : 'System run'}</strong></div>
-        <div><span>Epic</span><strong>{run.epicId ? <Link to={`/epics/${encodeURIComponent(run.epicId)}`}>{run.epicId}</Link> : '—'}</strong></div>
+      <section className="detail-grid" aria-label="Сведения о запуске">
+        <div><span>Роль</span><strong>{run.role}</strong></div>
+        <div><span>Среда выполнения</span><strong>{run.runtime}</strong></div>
+        <div><span>Модель</span><strong>{run.model}</strong></div>
+        <div><span>Причина запуска</span><strong>{runTriggerLabel(run.triggerReason)}</strong></div>
+        <div><span>Задача</span><strong>{run.taskId ? <Link to={`/tasks/${encodeURIComponent(run.taskId)}`}>{run.taskId}</Link> : 'Системный запуск'}</strong></div>
+        <div><span>Эпик</span><strong>{run.epicId ? <Link to={`/epics/${encodeURIComponent(run.epicId)}`}>{run.epicId}</Link> : '—'}</strong></div>
       </section>
 
-      <section aria-label="Run timing"><h2>Timing</h2><p>Started: {run.startedAt ? new Date(run.startedAt).toLocaleString() : 'Not recorded'}</p><p>Ended: {run.endedAt ? new Date(run.endedAt).toLocaleString() : 'In progress'}</p></section>
+      <section aria-label="Время запуска"><h2>Время</h2><p>Начало: {run.startedAt ? new Date(run.startedAt).toLocaleString() : 'Не указано'}</p><p>Завершение: {run.endedAt ? new Date(run.endedAt).toLocaleString() : 'Выполняется'}</p></section>
 
-      <section aria-label="Run usage" className="metric-grid">
-        <div><span className="metric-value">{run.usage.inputTokens}</span><span className="metric-label">Input tokens</span></div>
-        <div><span className="metric-value">{run.usage.cachedTokens}</span><span className="metric-label">Cached tokens</span></div>
-        <div><span className="metric-value">{run.usage.outputTokens}</span><span className="metric-label">Output tokens</span></div>
-        <div><span className="metric-value">${run.usage.cost.toFixed(4)}</span><span className="metric-label">Cost</span></div>
+      <section aria-label="Использование запуска" className="metric-grid">
+        <div><span className="metric-value">{run.usage.inputTokens}</span><span className="metric-label">{ru.runs.inputTokens}</span></div>
+        <div><span className="metric-value">{run.usage.cachedTokens}</span><span className="metric-label">{ru.runs.cachedTokens}</span></div>
+        <div><span className="metric-value">{run.usage.outputTokens}</span><span className="metric-label">{ru.runs.outputTokens}</span></div>
+        <div><span className="metric-value">${run.usage.cost.toFixed(4)}</span><span className="metric-label">Стоимость</span></div>
       </section>
 
       {/* Events section */}
-      <section aria-label="Events">
-        <h2>Events</h2>
-        {eventsQuery.status === 'loading' && <p>Loading events…</p>}
-        {eventsQuery.status === 'error' && <p className="error">Unable to load events: {errorMessage(eventsQuery.error)}</p>}
-        {eventsQuery.status === 'success' && eventsQuery.data && eventsQuery.data.length === 0 && <p>No events recorded.</p>}
+      <section aria-label="События">
+        <h2>События</h2>
+        {eventsQuery.status === 'loading' && <p>Загрузка событий…</p>}
+        {eventsQuery.status === 'error' && <p className="error">Не удалось загрузить события: {errorMessage(eventsQuery.error)}</p>}
+        {eventsQuery.status === 'success' && eventsQuery.data && eventsQuery.data.length === 0 && <p>Событий нет.</p>}
         {eventsQuery.status === 'success' && eventsQuery.data && eventsQuery.data.length > 0 && (
           <ul>
             {eventsQuery.data.map((event) => (
               <li key={event.id}>
-                <strong>{event.type}</strong> at {new Date(event.createdAt).toLocaleString()}
+                <strong>{runEventLabel(event.type)}</strong> — {new Date(event.createdAt).toLocaleString()}
               </li>
             ))}
           </ul>
@@ -166,11 +167,11 @@ export default function AgentRunPage({ id }: AgentRunPageProps) {
       </section>
 
       {/* Tools section */}
-      <section aria-label="Tools">
-        <h2>Allowed Tools</h2>
-        {toolsQuery.status === 'loading' && <p>Loading tools…</p>}
-        {toolsQuery.status === 'error' && <p className="error">Unable to load tools: {errorMessage(toolsQuery.error)}</p>}
-        {toolsQuery.status === 'success' && toolsQuery.data && toolsQuery.data.tools && toolsQuery.data.tools.length === 0 && <p>No tools allowed.</p>}
+      <section aria-label="Инструменты">
+        <h2>Разрешённые инструменты</h2>
+        {toolsQuery.status === 'loading' && <p>Загрузка инструментов…</p>}
+        {toolsQuery.status === 'error' && <p className="error">Не удалось загрузить инструменты: {errorMessage(toolsQuery.error)}</p>}
+        {toolsQuery.status === 'success' && toolsQuery.data && toolsQuery.data.tools && toolsQuery.data.tools.length === 0 && <p>Нет разрешённых инструментов.</p>}
         {toolsQuery.status === 'success' && toolsQuery.data && toolsQuery.data.tools && toolsQuery.data.tools.length > 0 && (
           <ul>
             {toolsQuery.data.tools.map((tool: string, idx: number) => (
@@ -181,55 +182,55 @@ export default function AgentRunPage({ id }: AgentRunPageProps) {
       </section>
 
       {/* Permissions/Audit section */}
-      <section aria-label="Permissions">
-        <h2>Permissions & Audit Log</h2>
-        {permissionsQuery.status === 'loading' && <p>Loading permissions…</p>}
-        {permissionsQuery.status === 'error' && <p className="error">Unable to load permissions: {errorMessage(permissionsQuery.error)}</p>}
-        {permissionsQuery.status === 'success' && permissionsQuery.data && permissionsQuery.data.length === 0 && <p>No audit entries.</p>}
+      <section aria-label="Разрешения">
+        <h2>Разрешения и журнал аудита</h2>
+        {permissionsQuery.status === 'loading' && <p>Загрузка разрешений…</p>}
+        {permissionsQuery.status === 'error' && <p className="error">Не удалось загрузить разрешения: {errorMessage(permissionsQuery.error)}</p>}
+        {permissionsQuery.status === 'success' && permissionsQuery.data && permissionsQuery.data.length === 0 && <p>Записей аудита нет.</p>}
         {permissionsQuery.status === 'success' && permissionsQuery.data && permissionsQuery.data.length > 0 && (
           <ul>
             {permissionsQuery.data.map((entry) => (
               <li key={entry.id}>
-                <strong>{entry.action}</strong> by {entry.actor} at {new Date(entry.createdAt).toLocaleString()}
+                <strong>{auditActionLabel(entry.action)}</strong> — {entry.actor} — {new Date(entry.createdAt).toLocaleString()}
               </li>
             ))}
           </ul>
         )}
       </section>
 
-      {/* Recovery section */}
-      <section aria-label="Recovery">
-        <h2>Recovery</h2>
-        {recoveryQuery.status === 'loading' && <p>Loading recovery data…</p>}
-        {recoveryQuery.status === 'error' && <p className="error">Unable to load recovery: {errorMessage(recoveryQuery.error)}</p>}
-        {recoveryQuery.status === 'success' && recoveryQuery.data && recoveryQuery.data.recovery === null && <p>No recovery data available.</p>}
+      {/* Раздел восстановления */}
+      <section aria-label="Восстановление">
+        <h2>Восстановление</h2>
+        {recoveryQuery.status === 'loading' && <p>Загрузка данных восстановления…</p>}
+        {recoveryQuery.status === 'error' && <p className="error">Не удалось загрузить данные восстановления: {errorMessage(recoveryQuery.error)}</p>}
+        {recoveryQuery.status === 'success' && recoveryQuery.data && recoveryQuery.data.recovery === null && <p>Данные восстановления недоступны.</p>}
         {recoveryQuery.status === 'success' && recoveryQuery.data && recoveryQuery.data.recovery && (
           <div>
-            <p>Task: {recoveryQuery.data.taskId ?? '—'}</p>
-            <p>Run Status: {recoveryQuery.data.runStatus}</p>
-            <h3>Recovery Attempts</h3>
-            {recoveryQuery.data.recovery.attempts.length === 0 && <p>No recovery attempts.</p>}
+            <p>Задача: {recoveryQuery.data.taskId ?? '—'}</p>
+            <p>Статус запуска: {statusLabel(recoveryQuery.data.runStatus)}</p>
+            <h3>Попытки восстановления</h3>
+            {recoveryQuery.data.recovery.attempts.length === 0 && <p>Попыток восстановления нет.</p>}
             {recoveryQuery.data.recovery.attempts.length > 0 && (
               <ul>
                 {recoveryQuery.data.recovery.attempts.map((attempt) => (
                   <li key={attempt.id}>
-                    {attempt.roleLevel} — {attempt.failureType} (attempt {attempt.attemptCount}) at {new Date(attempt.timestamp).toLocaleString()}
+                    {recoveryRoleLabel(attempt.roleLevel)} — {recoveryFailureLabel(attempt.failureType)} (попытка {attempt.attemptCount}) — {new Date(attempt.timestamp).toLocaleString()}
                   </li>
                 ))}
               </ul>
             )}
-            <h3>State</h3>
-            {recoveryQuery.data.recovery.state === null && <p>No recovery state.</p>}
+            <h3>Состояние</h3>
+            {recoveryQuery.data.recovery.state === null && <p>Состояние восстановления отсутствует.</p>}
             {recoveryQuery.data.recovery.state !== null && (
               <p>
-                <strong>Status:</strong> {recoveryQuery.data.recovery.state.status} — {recoveryQuery.data.recovery.state.reason}
+                <strong>Статус:</strong> {statusLabel(recoveryQuery.data.recovery.state.status)} — {recoveryReasonLabel()}
               </p>
             )}
           </div>
         )}
       </section>
 
-      {isActive && <footer className="page-actions"><button type="button" className="danger-button" disabled={cancelState.status === 'pending'} onClick={() => void cancel()}>Cancel Run</button></footer>}
+      {isActive && <footer className="page-actions"><button type="button" className="danger-button" disabled={cancelState.status === 'pending'} onClick={() => void cancel()}>Отменить запуск</button></footer>}
     </div>
   );
 }

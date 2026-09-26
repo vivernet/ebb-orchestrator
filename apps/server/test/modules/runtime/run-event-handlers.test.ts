@@ -9,10 +9,11 @@ describe("RuntimeEventHandlers runtime dispatch", () => {
   function setup() {
     const db = {
       exec: vi.fn(),
-      get: vi.fn().mockReturnValue({ id: "task-1", status: "READY" }),
+      get: vi.fn().mockReturnValue({ id: "task-1", status: "READY", project_id: "project-1" }),
     } as unknown as Database;
     const workflow = {} as WorkflowEngine;
     const scheduler = {
+      assertProjectDispatchable: vi.fn(),
       dispatchTask: vi.fn(),
       releaseTask: vi.fn(),
     } as unknown as SchedulerService;

@@ -39,7 +39,7 @@ const migrationFiles = [
   "009_integration_provenance", "010_planning", "011_epic_orchestration",
   "012_epic_runtime_authority", "013_remove_legacy_scheduler_locks",
   "014_migrate_legacy_scheduler_authority", "015_knowledge",
-  "016_context", "017_usage", "018_scheduler_config_audit",
+  "016_context", "017_usage", "018_scheduler_config_audit", "021_onboarding_approval",
 ];
 
 function loadMigrations(): Migration[] {
@@ -163,6 +163,9 @@ describe("Request to Epic acceptance", () => {
     runMigrations(db, loadMigrations());
     projectId = randomUUID();
     db.run("INSERT INTO projects (id,name,display_name,status,created_at,updated_at) VALUES ($id,'rest-api','REST API','ACTIVE',$now,$now)", { id: projectId, now });
+    const onboardingApprovalId = randomUUID();
+    db.run("INSERT INTO approvals(id,type,subject_id,subject_type,status,requested_by,created_at) VALUES($id,'WORKFLOW_CHANGE',$projectId,'PROJECT','APPROVED','test',$now)", { id: onboardingApprovalId, projectId, now });
+    db.run("INSERT INTO onboarding_configs(project_id,repository_path,facts_json,proposed_json,status,approval_id,created_at,updated_at) VALUES($id,'/repo','{}','{}','ACTIVE',$approvalId,$now,$now)", { id: projectId, approvalId: onboardingApprovalId, now });
     const registry = new WorkflowRegistry();
     for (const template of Object.values(templates)) registry.register(template);
     const runtime = new FakeAgentRuntime(db);

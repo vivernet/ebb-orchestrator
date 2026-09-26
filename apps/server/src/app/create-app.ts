@@ -14,7 +14,7 @@ import { AUTH_CONTRACT_VERSION, AUTH_COOKIE_CONTRACT, AUTH_TOKEN_BYTES, type Aut
 import type { AuthService } from "../platform/security/auth-service.js";
 import { healthRoutes } from "./routes/health.js";
 import { eventRoutes } from "./routes/events.js";
-import { onboardingRoutes, type OnboardingApprovalService, type OnboardingCommandService } from "./routes/onboarding.js";
+import { onboardingRoutes, type OnboardingCommandService } from "./routes/onboarding.js";
 import { settingsRoutes } from "./routes/settings.js";
 import { usageRoutes } from "./routes/usage.js";
 import type { Database } from "../platform/database/database.js";
@@ -39,7 +39,6 @@ import { secretsRoutes } from "./routes/secrets.js";
 import type { GitHubSyncWorker } from "../modules/github/github-sync-worker.js";
 import type { DiagnosticsService } from "../platform/diagnostics/diagnostics-service.js";
 import type { SecretStore } from "../platform/security/secret-store.js";
-import { OnboardingService } from "../modules/projects/onboarding-service.js";
 import { DependencyService } from "../modules/work/dependency-service.js";
 import { dependencyRoutes, type DependencyCommandService } from "./routes/dependencies.js";
 import { finalMergeRoutes, type FinalMergeServiceFactory } from "./routes/final-merge.js";
@@ -104,7 +103,7 @@ export function createApp(deps: AppDeps): OrchestratorApp {
   const workService = deps.workService ?? (deps.db ? new WorkService(deps.db, workflow) : undefined);
   const projectService = deps.projectService ?? (deps.db ? new ProjectService(deps.db) : undefined);
   const approvalService = deps.approvalService ?? (deps.db ? new ApprovalService(deps.db) : undefined);
-  const onboardingService = deps.onboardingService ?? (deps.db ? new OnboardingService() : undefined);
+  const onboardingService = deps.onboardingService;
   if (deps.db && !deps.runtime && !deps.runService) throw new Error("production runtime is required");
   const runService = deps.runService ?? (deps.db && deps.runtime ? new RunService(deps.db, deps.runtime) : undefined);
   const dependencyService = deps.dependencyService ?? (deps.db ? new DependencyService(deps.db) : undefined);
@@ -258,13 +257,7 @@ export function createApp(deps: AppDeps): OrchestratorApp {
     await epicRoutes(instance, { db: deps.db, epicOrchestrator: deps.epicOrchestrator });
     await approvalRoutes(instance, { db: deps.db, approvalService });
     await runRoutes(instance, { db: deps.db, runService, scheduler, workflow });
-    await onboardingRoutes(instance, {
-      db: deps.db,
-      onboardingService,
-      approvalService: approvalService && "request" in approvalService
-        ? approvalService as OnboardingApprovalService
-        : undefined,
-    });
+    await onboardingRoutes(instance, onboardingService ? { onboardingService } : {});
     await settingsRoutes(instance, { scheduler: deps.scheduler });
     await usageRoutes(instance, { db: deps.db });
     await secretsRoutes(instance, {
