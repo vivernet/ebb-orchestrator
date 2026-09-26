@@ -11,10 +11,12 @@ const PHC_PATTERN = /^\$argon2id\$v=19\$m=65536,p=4,t=3\$([A-Za-z0-9+/]+)\$([A-Z
 const isWindowsX64 = process.platform === "win32" && process.arch === "x64";
 
 describe("bounded Argon2id password hashing feasibility", () => {
-  it.skipIf(!isWindowsX64)("loads the native binding on the supported Node 24 Windows x64 matrix", () => {
+  it.skipIf(!isWindowsX64)("loads the native binding on Node >=24.15 on Windows x64", () => {
     const [major, minor] = process.versions.node.split(".").map(Number);
-    expect(major).toBe(24);
-    expect(minor).toBeGreaterThanOrEqual(15);
+    expect(major).toBeGreaterThanOrEqual(24);
+    if (major === 24) {
+      expect(minor).toBeGreaterThanOrEqual(15);
+    }
     expect(process.platform).toBe("win32");
     expect(process.arch).toBe("x64");
     expect(argon2.argon2id).toBeDefined();

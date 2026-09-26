@@ -115,8 +115,8 @@ Developer изменяет код в выделенном worktree; Architect о
 
 ## Требования
 
-- Node.js `>=24.15 <25`;
-- pnpm `12.4.2` (версия закреплена в `package.json`);
+- Node.js `>=24.15` (в CI проверяются версии 24.x и 26.x);
+- pnpm `>=12.0.0`;
 - Git с поддержкой branches и worktrees;
 - ОС, поддерживаемая Node.js и Git. Для Hermes нужен установленный и
   доступный в окружении Hermes runtime;
