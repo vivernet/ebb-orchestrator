@@ -85,10 +85,36 @@ test('scan manifest describes a run-bound evidence contract instead of a stale s
   assert.equal(manifest.scanner.artifactPattern, 'artifacts/security/pnpm-audit-prod-{revision}.json');
 });
 
-test('production workflow uploads provenance evidence and preserves audit failure status', () => {
+test('root test graph builds contracts before workspace tests', () => {
+  const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+  assert.equal(manifest.scripts.test, 'pnpm --filter @ebb-orchestrator/contracts build && pnpm -r --if-present test && node --test scripts/server-env.test.mjs scripts/run-server.test.mjs scripts/local-user-stdin-smoke.test.mjs');
+});
+
+test('production workflow runs local-user stdin smoke after server build', () => {
   const workflow = readFileSync(join(root, '.github/workflows/production-gates.yml'), 'utf8');
 
-  assert.match(workflow, /security-audit-evidence\.mjs/);
-  assert.match(workflow, /if: always\(\)/);
-  assert.match(workflow, /steps\.dependency-audit\.outcome == 'failure'/);
+  const serverBuild = workflow.indexOf('pnpm server:build');
+  const stdinSmoke = workflow.indexOf('node scripts/local-user-stdin-smoke.mjs');
+  assert.ok(serverBuild !== -1, 'workflow must build the server');
+  assert.ok(stdinSmoke > serverBuild, 'workflow must run stdin smoke after server build');
+});
+
+test('production workflow preserves audit evidence under exact conditional contract', () => {
+  const workflow = readFileSync(join(root, '.github/workflows/production-gates.yml'), 'utf8');
+
+  assert.ok(workflow.includes('id: install-dependencies'));
+  assert.ok(workflow.includes("if: ${{ !cancelled() && steps.install-dependencies.outcome == 'success' }}"));
+  assert.ok(workflow.includes("if: ${{ !cancelled() && steps.dependency-audit.outcome != 'skipped' }}"));
+  assert.ok(workflow.includes("if: ${{ !cancelled() && steps.dependency-audit.outcome == 'failure' }}"));
+  assert.ok(workflow.includes('uses: actions/upload-artifact@v6'));
+  assert.ok(workflow.includes('name: pnpm-audit-prod-${{ github.sha }}'));
+  assert.ok(workflow.includes('path: artifacts/security/pnpm-audit-prod-${{ github.sha }}.json'));
+  assert.ok(workflow.includes('if-no-files-found: error'));
+  assert.ok(!workflow.includes('archive: false'));
+
+  const install = workflow.indexOf('id: install-dependencies');
+  const audit = workflow.indexOf('- name: Dependency audit');
+  const upload = workflow.indexOf('- name: Upload dependency audit evidence');
+  const finalGate = workflow.indexOf('- name: Fail if dependency audit failed');
+  assert.ok(install < audit && audit < upload && upload < finalGate);
 });

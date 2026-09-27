@@ -15,15 +15,19 @@ type SecretChunk = Uint8Array;
 /** Результат TTY wizard; секреты и сведения о хранилище не пересекают эту границу. */
 export type LocalUserWizardResult = "CREATED" | "FAILED";
 
-/** Параметры первого запуска; `now` нужен только для детерминированных тестов. */
+/** Параметры первого запуска; `mode` выбирает только явно разрешённый stdin protocol, `now` нужен тестам. */
 export interface LocalUserWizardOptions {
+  mode?: "tty" | "stdin";
+  inputTimeoutMs?: number;
   now?: () => string;
 }
 
 /**
  * Проверяет наличие единственной локальной учётной записи и запускает настройку
  * только при её отсутствии. Существующая учётная запись не требует TTY и не
- * вызывает интерактивный ввод.
+ * вызывает интерактивный ввод. Режим `stdin` предназначен только для явно
+ * выбранного автоматизированного запуска; секреты поступают через pipe, а не
+ * аргументы, окружение или файлы. Ошибки чтения и проверки прекращают запуск.
  */
 export async function ensureLocalUser(
   authRepository: AuthRepository,
@@ -32,7 +36,9 @@ export async function ensureLocalUser(
   options: LocalUserWizardOptions = {},
 ): Promise<"EXISTING" | "CREATED"> {
   if (await authRepository.hasLocalUser()) return "EXISTING";
-  const result = await runLocalUserWizard(input, output, authRepository, options);
+  const result = options.mode === "stdin"
+    ? await runLocalUserStdinWizard(input, output, authRepository, options)
+    : await runLocalUserWizard(input, output, authRepository, options);
   if (result !== "CREATED") {
     throw new Error("Local user setup failed; rerun the server from an interactive TTY.");
   }
@@ -79,6 +85,115 @@ export async function runLocalUserWizard(
   } finally {
     password.fill(0);
     confirmation?.fill(0);
+  }
+}
+
+/**
+ * Читает две завершённые LF/CRLF записи из pipe с ограничением размера и времени.
+ * Deadline охватывает только ввод; валидация и Argon2id выполняются после EOF.
+ */
+async function runLocalUserStdinWizard(
+  input: NodeJS.ReadStream,
+  _output: NodeJS.WriteStream,
+  authRepository: AuthRepository,
+  options: LocalUserWizardOptions,
+): Promise<LocalUserWizardResult> {
+  const records: Uint8Array[] = [];
+  let current: number[] = [];
+  let sawCR = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let settled = false;
+  const timeoutMs = options.inputTimeoutMs ?? 60_000;
+  const clearDeadline = (): void => {
+    if (timer !== undefined) clearTimeout(timer);
+    timer = undefined;
+  };
+
+  const pair = await new Promise<Uint8Array[]>((resolve, reject) => {
+    const cleanup = (pause: boolean): void => {
+      clearDeadline();
+      input.off("data", onData);
+      input.off("end", onEnd);
+      input.off("error", onError);
+      if (pause) input.pause();
+    };
+    const fail = (error: Error): void => {
+      if (settled) return;
+      settled = true;
+      cleanup(true);
+      for (const record of records) record.fill(0);
+      current.fill(0);
+      reject(error);
+    };
+    const onData = (chunk: SecretChunk): void => {
+      if (!(chunk instanceof Uint8Array)) {
+        fail(new Error("Password input must use binary chunks."));
+        return;
+      }
+      for (const byte of chunk) {
+        if (records.length === 2) {
+          fail(new Error("Unexpected bytes after the second password record."));
+          return;
+        }
+        if (sawCR) {
+          if (byte !== 0x0a) {
+            fail(new Error("Malformed password record framing."));
+            return;
+          }
+          sawCR = false;
+          records.push(Uint8Array.from(current));
+          current.fill(0);
+          current = [];
+          continue;
+        }
+        if (byte === 0x0d) {
+          sawCR = true;
+          continue;
+        }
+        if (byte === 0x0a) {
+          records.push(Uint8Array.from(current));
+          current.fill(0);
+          current = [];
+          continue;
+        }
+        current.push(byte);
+        if (current.length > 4096) {
+          fail(new Error("Password record exceeds the 4096-byte limit."));
+          return;
+        }
+      }
+    };
+    const onEnd = (): void => {
+      clearDeadline();
+      if (sawCR || current.length !== 0 || records.length !== 2) {
+        fail(new Error("Password input must contain exactly two newline-terminated records."));
+        return;
+      }
+      settled = true;
+      cleanup(false);
+      resolve(records);
+    };
+    const onError = (): void => fail(new Error("Password input failed."));
+    timer = setTimeout(() => fail(new Error("Password input timed out.")), timeoutMs);
+    input.on("data", onData);
+    input.once("end", onEnd);
+    input.once("error", onError);
+    try {
+      input.resume();
+    } catch {
+      fail(new Error("Password input failed."));
+    }
+  });
+
+  const [password, confirmation] = pair;
+  try {
+    if (!secretsEqual(password!, confirmation!)) return "FAILED";
+    if (!isStrongSecret(password!)) return "FAILED";
+    await authRepository.createLocalUser(password!, (options.now ?? DEFAULT_NOW)());
+    return "CREATED";
+  } finally {
+    password!.fill(0);
+    confirmation!.fill(0);
   }
 }
 

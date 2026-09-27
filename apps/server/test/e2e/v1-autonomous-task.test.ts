@@ -300,6 +300,7 @@ describe("Autonomous Task End-to-End Workflow", () => {
     const runtime = new HermesRuntimeAdapter(new ProcessExecutor(), undefined, {
       managedWorktreeForRun: (run) => workspaceByRun.get(run.id) ?? nextWorkspace,
       resultDirectory,
+      checkpointDirectory: join(tmpDir, "hermes-checkpoints"),
       timeoutMs: 180000,
       databasePath,
       mcpCommand: process.execPath,

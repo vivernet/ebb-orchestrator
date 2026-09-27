@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -307,6 +307,8 @@ describe("startup lifecycle", () => {
     const lock1 = new SingleInstanceLock(lockPath);
 
     await lock1.acquire();
+    const ownerRecord = await readFile(join(tmpDir, "orchestrator.lock"), "utf-8").catch(() => "");
+    expect(ownerRecord).toMatch(new RegExp(`^v1:${process.pid}:[0-9a-f]{32}\\n$`));
     await lock1.release();
 
     const lock2 = new SingleInstanceLock(lockPath);
@@ -316,25 +318,130 @@ describe("startup lifecycle", () => {
   // Ошибка не должна выбрасываться.
   });
 
-  it("recovers from stale lock file left by a dead process", async () => {
-    const lockPath = join(tmpDir, "stale.lock");
+  it("fails closed without changing stale, malformed, or legacy lock files", async () => {
+    const cases = ["12345", "{malformed", "v0:12345:legacy-token"];
+    const backing = await import("node:fs/promises");
+    let readCalls = 0;
+    for (const [index, contents] of cases.entries()) {
+      const lockPath = join(tmpDir, `existing-${index}.lock`);
+      await writeFile(lockPath, contents, "utf-8");
+      readCalls = 0;
+      const lock = new SingleInstanceLock(lockPath, {
+        open: (path, flags) => backing.open(path, flags),
+        readFile: async (path) => { readCalls += 1; return backing.readFile(path); },
+        unlink: (path) => backing.unlink(path),
+        createOwnerToken: () => Buffer.alloc(16),
+      });
+      const killSpy = vi.spyOn(process, "kill");
 
-  // Имитируем аварийно завершившийся процесс, записав файл блокировки с PID,
-  // который гарантированно не существует: на Unix используется 1, всегда занятый
-  // init, а в Windows выбирается очень большой PID, которого почти наверняка нет.
-    const stalePid = process.platform === "win32" ? 99999999 : 1;
-    await writeFile(lockPath, String(stalePid), "utf-8");
+      try {
+        await expect(lock.acquire()).rejects.toThrow(lockPath);
+        expect(readCalls).toBe(0);
+        expect(await readFile(lockPath, "utf-8")).toBe(contents);
+        expect(killSpy).not.toHaveBeenCalled();
+      } finally {
+        killSpy.mockRestore();
+      }
+    }
+  });
 
-  // Если PID занят (маловероятно, но возможно для 1 в некоторых Unix-системах),
-  // используем PID, который точно не существует.
+  it("preserves a same-PID replacement with a different owner token on release", async () => {
+    const lockPath = join(tmpDir, "replacement.lock");
     const lock = new SingleInstanceLock(lockPath);
-
-  // acquire() должен успешно обнаружить устаревшую блокировку и удалить её.
-    const handle = await lock.acquire();
-    expect(handle.pid).toBe(process.pid);
+    await lock.acquire();
+    const replacement = `v1:${process.pid}:00000000000000000000000000000000\n`;
+    await writeFile(lockPath, replacement, "utf-8");
 
     await lock.release();
+
+    expect(await readFile(lockPath, "utf-8")).toBe(replacement);
   });
+
+  it("allows exactly one of two independent contenders to acquire", async () => {
+    const lockPath = join(tmpDir, "contended.lock");
+    const contenders = [new SingleInstanceLock(lockPath), new SingleInstanceLock(lockPath)];
+    const results = await Promise.allSettled(contenders.map((lock) => lock.acquire()));
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    for (const [index, result] of results.entries()) {
+      if (result.status === "fulfilled") await contenders[index]!.release();
+    }
+  });
+
+  it("shares concurrent release and rejects acquire while release is pending", async () => {
+    const lockPath = join(tmpDir, "serialized.lock");
+    const lock = new SingleInstanceLock(lockPath);
+    await lock.acquire();
+    const releasing = lock.release();
+    await expect(lock.acquire()).rejects.toThrow();
+    const concurrentRelease = lock.release();
+    await Promise.all([releasing, concurrentRelease]);
+    expect(await readFile(lockPath, "utf-8").catch(() => "")).toBe("");
+    await lock.acquire();
+    await lock.release();
+  });
+
+  it("performs at most one unlink for concurrent release callers", async () => {
+    const backing = await import("node:fs/promises");
+    const lockPath = join(tmpDir, "single-unlink.lock");
+    let readCalls = 0;
+    let unlinkCalls = 0;
+    let signalRead!: () => void;
+    let allowRead!: () => void;
+    const readStarted = new Promise<void>((resolve) => { signalRead = resolve; });
+    const readGate = new Promise<void>((resolve) => { allowRead = resolve; });
+    const operations = {
+      open: (path: string, flags: "wx") => backing.open(path, flags),
+      readFile: async (path: string) => {
+        readCalls += 1;
+        signalRead();
+        await readGate;
+        return backing.readFile(path);
+      },
+      unlink: async (path: string) => { unlinkCalls += 1; await backing.unlink(path); },
+      createOwnerToken: () => Buffer.alloc(16, 9),
+    };
+    const lock = new SingleInstanceLock(lockPath, operations);
+    await lock.acquire();
+    const firstRelease = lock.release();
+    await readStarted;
+    const secondRelease = lock.release();
+    expect(readCalls).toBe(1);
+    allowRead();
+    await Promise.all([firstRelease, secondRelease]);
+    expect(unlinkCalls).toBe(1);
+  });
+
+  it("preserves a partial owner record after write failure and fails closed next time", async () => {
+    const lockPath = join(tmpDir, "partial.lock");
+    const backing = await import("node:fs/promises");
+    let closed = false;
+    const operations = {
+      open: async (path: string, flags: "wx") => {
+        const handle = await backing.open(path, flags);
+        return {
+          writeFile: async () => { await handle.writeFile("partial"); throw new Error("injected write failure"); },
+          close: async () => { closed = true; await handle.close(); },
+        } as unknown as Awaited<ReturnType<typeof backing.open>>;
+      },
+      readFile: async (path: string) => backing.readFile(path),
+      unlink: async (path: string) => backing.unlink(path),
+      createOwnerToken: () => Buffer.alloc(16, 1),
+    };
+    const lock = new SingleInstanceLock(lockPath, operations);
+    await expect(lock.acquire()).rejects.toThrow(`Не удалось записать lock-файл «${lockPath}»`);
+    expect(closed).toBe(true);
+    expect(await readFile(lockPath, "utf-8")).toBe("partial");
+    await expect(new SingleInstanceLock(lockPath).acquire()).rejects.toThrow(lockPath);
+  });
+
+  it("serializes a pending acquisition", async () => {
+    const lock = new SingleInstanceLock(join(tmpDir, "pending.lock"));
+    const acquire = lock.acquire();
+    await expect(lock.acquire()).rejects.toThrow();
+    await acquire;
+    await lock.release();
+  });
+
 
   it("StartupReconciler collects and runs registered functions", async () => {
     const calls: string[] = [];

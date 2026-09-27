@@ -6,10 +6,10 @@
   },
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/main.ts",
+    "dev": "node ../../scripts/run-server.js dev",
     "prebuild": "node scripts/clean-dist.mjs",
     "build": "pnpm --filter @ebb-orchestrator/contracts build && tsc -p tsconfig.build.json && node scripts/build.mjs",
-    "start": "node dist/main.js",
+    "start": "node ../../scripts/run-server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:auth-contract": "vitest run test/platform/security/auth-onboarding-contract.test.ts test/platform/security/password-hash-feasibility.test.ts"

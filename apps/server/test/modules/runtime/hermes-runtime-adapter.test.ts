@@ -2,11 +2,13 @@
  * Проверяет адаптер среды выполнения Hermes.
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
 import { HermesRuntimeAdapter } from "../../../src/modules/runtime/hermes/hermes-runtime-adapter.js";
+import { validatePlatform } from "../../../src/platform/config/app-config.js";
+import * as orchestratorHomeModule from "../../../src/platform/home/orchestrator-home.js";
 import { HermesCliBuilder } from "../../../src/modules/runtime/hermes/hermes-cli.js";
 import { createSqliteDatabase } from "../../../src/platform/database/sqlite-database.js";
 import {
@@ -82,13 +84,20 @@ describe("HermesRuntimeAdapter", () => {
   let adapter: HermesRuntimeAdapter;
   let mockExecutor: MockProcessExecutor;
   let mockArtifactStore: MockArtifactStore;
+  let sharedCheckpointDirectory: string;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     mockExecutor = new MockProcessExecutor();
     mockArtifactStore = new MockArtifactStore();
+    sharedCheckpointDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-checkpoints-"));
     adapter = new HermesRuntimeAdapter(mockExecutor, mockArtifactStore, {
       managedWorktree: path.join(os.tmpdir(), "hermes-test-workspace"),
+      checkpointDirectory: sharedCheckpointDirectory,
     });
+  });
+
+  afterEach(async () => {
+    await fs.rm(sharedCheckpointDirectory, { recursive: true, force: true });
   });
 
   it("uses the configured checkpoint directory instead of the OS home", () => {
@@ -104,6 +113,97 @@ describe("HermesRuntimeAdapter", () => {
 
     expect((configured as unknown as { checkpointDirectory: string }).checkpointDirectory)
       .toBe(configuredDirectory);
+  });
+
+  it.each(["linux", "darwin", "win32"] as const)("validates supported platform %s", (platform) => {
+    expect(validatePlatform(platform)).toBe(platform);
+  });
+
+  it("rejects unsupported platform values with a descriptive Russian error", () => {
+    expect(() => validatePlatform("freebsd")).toThrow(/платформ/i);
+  });
+
+  it("uses an explicitly selected platform home path without filesystem writes", () => {
+    const selected = new HermesRuntimeAdapter(mockExecutor, mockArtifactStore, {
+      platform: "win32",
+      homeEnvironment: { EBB_ORCHESTRATOR_HOME: "C:\\isolated\\app" },
+    });
+    expect((selected as unknown as { checkpointDirectory: string }).checkpointDirectory)
+      .toBe("C:\\isolated\\app\\runtime\\checkpoints");
+  });
+
+  it("rejects unsupported default process.platform before calling the home resolver", () => {
+    const originalProcess = process;
+    const resolverSpy = vi.spyOn(orchestratorHomeModule, "resolveOrchestratorHome");
+    try {
+      vi.stubGlobal("process", new Proxy(originalProcess, {
+        get(target, property, receiver) {
+          return property === "platform" ? "freebsd" : Reflect.get(target, property, receiver);
+        },
+      }));
+      expect(() => new HermesRuntimeAdapter(mockExecutor, mockArtifactStore))
+        .toThrow(/платформ/i);
+      expect(resolverSpy).not.toHaveBeenCalled();
+    } finally {
+      resolverSpy.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("creates checkpoints only under the injected orchestrator home", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-home-regression-"));
+    const checkpoints = path.join(root, "runtime", "checkpoints");
+    const legacyCheckpoints = path.join(root, ".orchestrator", "checkpoints");
+    const hostProfileCandidates = [
+      path.join(os.homedir(), ".orchestrator", "checkpoints"),
+      process.platform === "win32" && process.env.USERPROFILE
+        ? path.win32.join(process.env.USERPROFILE, ".orchestrator", "checkpoints")
+        : null,
+    ].filter((candidate): candidate is string => candidate !== null);
+    const readHostProfileStates = async () => Promise.all(hostProfileCandidates.map(async (candidate) => {
+      try {
+        const stats = await fs.stat(candidate);
+        return {
+          candidate,
+          exists: true,
+          dev: stats.dev,
+          ino: stats.ino,
+          mode: stats.mode,
+          size: stats.size,
+          mtimeMs: stats.mtimeMs,
+          ctimeMs: stats.ctimeMs,
+        };
+      } catch (error) {
+        if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+          return { candidate, exists: false };
+        }
+        throw error;
+      }
+    }));
+    const hostProfileStatesBefore = await readHostProfileStates();
+    vi.stubEnv("USERPROFILE", root);
+    vi.stubEnv("HOME", root);
+    try {
+      const runtime = new HermesRuntimeAdapter(mockExecutor, mockArtifactStore, {
+        managedWorktree: path.join(os.tmpdir(), "hermes-test-workspace"),
+        homeEnvironment: { EBB_ORCHESTRATOR_HOME: root },
+        platform: validatePlatform(process.platform),
+      });
+      await runtime.startRun({
+        id: "isolated-home-run", role: "Developer", runtime: "hermes", model: "default",
+        taskId: null, epicId: null, status: "STARTED", sessionId: null, attempt: null,
+        triggerReason: null, contextVersion: "v1", outputSchemaVersion: "v1", startedAt: new Date(),
+        endedAt: null, exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
+      });
+      expect((await fs.stat(checkpoints)).isDirectory()).toBe(true);
+      expect((runtime as unknown as { checkpointDirectory: string }).checkpointDirectory).toBe(checkpoints);
+      await expect(fs.stat(legacyCheckpoints)).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await readHostProfileStates()).toEqual(hostProfileStatesBefore);
+      expect(mockExecutor.getCalls()[0]?.options?.env).not.toHaveProperty("EBB_ORCHESTRATOR_HOME");
+    } finally {
+      vi.unstubAllEnvs();
+      await fs.rm(root, { recursive: true, force: true });
+    }
   });
 
   describe("startRun", () => {
@@ -225,6 +325,7 @@ describe("HermesRuntimeAdapter", () => {
       adapter = new HermesRuntimeAdapter(mockExecutor, mockArtifactStore, {
         resultDirectory,
         managedWorktree: path.join(os.tmpdir(), "hermes-test-workspace"),
+        checkpointDirectory: sharedCheckpointDirectory,
       });
       const run = {
         id: "wired-run-id", role: "Developer", runtime: "hermes", model: "default",
@@ -607,6 +708,7 @@ describe("HermesRuntimeAdapter", () => {
       const exactAdapter = new HermesRuntimeAdapter(mockExecutor, mockArtifactStore, {
         resultDirectory,
         managedWorktree: path.join(os.tmpdir(), "hermes-test-workspace"),
+        checkpointDirectory: sharedCheckpointDirectory,
       });
       await exactAdapter.startRun(run);
 
@@ -634,6 +736,7 @@ describe("HermesRuntimeAdapter", () => {
       const exactAdapter = new HermesRuntimeAdapter(mockExecutor, mockArtifactStore, {
         resultDirectory,
         managedWorktree: path.join(os.tmpdir(), "hermes-test-workspace"),
+        checkpointDirectory: sharedCheckpointDirectory,
       });
       await exactAdapter.startRun(run);
       await fs.writeFile(path.join(resultDirectory, `${run.id}.json`), JSON.stringify({ version: "1", outcome: "COMPLETED" }));
@@ -648,6 +751,7 @@ describe("HermesRuntimeAdapter", () => {
     it("rejects forbidden credentials in supplied runtime overlays", async () => {
       const restricted = new HermesRuntimeAdapter(mockExecutor, mockArtifactStore, {
         managedWorktree: path.join(os.tmpdir(), "hermes-test-workspace"),
+        checkpointDirectory: sharedCheckpointDirectory,
         environment: { GITHUB_TOKEN: "secret" },
       });
       await expect(restricted.startRun({

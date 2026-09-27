@@ -71,6 +71,12 @@ const status = new StatusTracker();
 const home = resolveOrchestratorHome(process.env, process.platform === "win32" ? "win32" : "linux");
 mkdirSync(home.root, { recursive: true });
 const lock = new SingleInstanceLock(join(home.root, "orchestrator.lock"));
+try {
+  await lock.acquire();
+} catch (err) {
+  console.error(`[Ebb Orchestrator] ${err instanceof Error ? err.message : "Не удалось захватить lock-файл."}`);
+  process.exit(1);
+}
 const database = createSqliteDatabase(home.database);
 const migrationDir = fileURLToPath(new URL("./platform/database/migrations/", import.meta.url));
 const webRoot = fileURLToPath(new URL("../../web/dist/", import.meta.url));
@@ -81,12 +87,6 @@ const migrations: Migration[] = readdirSync(migrationDir).filter((file) => file.
   const migration: Migration = { version: Number(match[1]), name, sql: readFileSync(resolve(migrationDir, file), "utf8") };
   return migration.version === 27 && name === "approval_changes_requested" ? { ...migration, foreignKeys: "disabled" } : migration;
 });
-try {
-   await lock.acquire();
-} catch (err) {
-  console.error(`[Ebb Orchestrator] ${err instanceof Error ? err.message : String(err)}`);
-  process.exit(1);
-}
 
 // Запускает migrations ДО создания любых сервисов которые зависят от таблиц.
 try {
@@ -238,7 +238,9 @@ process.on("SIGTERM", () => {
 let serverReady = false;
 async function ensureLocalUserBeforeStartup(): Promise<void> {
   try {
-    await ensureLocalUser(authRepository, process.stdin, process.stdout);
+    await ensureLocalUser(authRepository, process.stdin, process.stdout, {
+      mode: process.argv.includes("--bootstrap-local-user-stdin") ? "stdin" : "tty",
+    });
   } catch (error) {
     const message = error instanceof Error && /interactive TTY/i.test(error.message)
       ? error.message

@@ -15,6 +15,8 @@ import * as fs from "fs/promises";
 import * as os from "os";
 import { createSqliteDatabase } from "../../../platform/database/sqlite-database.js";
 import { loadValidatedCapability } from "../../execution/capability-validation.js";
+import { validatePlatform, type Platform } from "../../../platform/config/app-config.js";
+import { resolveOrchestratorHome, type HomeEnv } from "../../../platform/home/orchestrator-home.js";
 
 /**
  * В памяти run state tracking.
@@ -100,6 +102,8 @@ export class HermesRuntimeAdapter implements AgentRuntime {
       managedWorktree?: string;
       managedWorktreeForRun?: (run: AgentRun) => string;
       environment?: Record<string, string>;
+      homeEnvironment?: HomeEnv;
+      platform?: Platform;
       resultDirectory?: string;
       checkpointDirectory?: string;
       databasePath?: string;
@@ -117,7 +121,12 @@ export class HermesRuntimeAdapter implements AgentRuntime {
     this.managedWorktreeForRun = config?.managedWorktreeForRun;
     this.environment = config?.environment;
     this.resultDirectory = config?.resultDirectory ?? path.join(os.tmpdir(), "orchestrator-hermes-results");
-    this.checkpointDirectory = config?.checkpointDirectory ?? path.join(os.homedir(), ".orchestrator", "checkpoints");
+    this.checkpointDirectory = config?.checkpointDirectory ?? (() => {
+      const resolvedPlatform = config?.platform ?? validatePlatform(process.platform);
+      const home = resolveOrchestratorHome(config?.homeEnvironment ?? process.env, resolvedPlatform);
+      const join = resolvedPlatform === "win32" ? path.win32.join : path.posix.join;
+      return join(home.runtime, "checkpoints");
+    })();
     this.databasePath = config?.databasePath;
     this.mcpCommand = config?.mcpCommand ?? "ebb-orchestrator-mcp";
     this.mcpArgs = config?.mcpArgs ?? [];

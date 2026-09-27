@@ -12,6 +12,7 @@ import {
 import type { PasswordHasher } from "../../../src/platform/security/auth-ports.js";
 import type { Database } from "../../../src/platform/database/database.js";
 import {
+  ensureLocalUser,
   runLocalUserWizard,
   type LocalUserWizardResult,
 } from "../../../src/platform/security/local-user-wizard.js";
@@ -115,6 +116,99 @@ afterEach(() => {
 });
 
 describe("local first-run password wizard", () => {
+  it("creates a local user from exactly two newline-terminated stdin records", async () => {
+    const input = new PassThrough();
+    const output = makeTtyOutput();
+    const repository = makeRepository();
+    const pending = ensureLocalUser(repository, input as unknown as NodeJS.ReadStream, output, { mode: "stdin", now: () => "2030-01-01T00:00:00.000Z" });
+    input.end(Buffer.from(`${PASSWORD}\r\n${PASSWORD}\n`));
+
+    await expect(pending).resolves.toBe("CREATED");
+    expect(repository.createLocalUser).toHaveBeenCalledOnce();
+    expect(output.text).not.toContain(PASSWORD);
+    expect(await repository.hasLocalUser()).toBe(true);
+    expect(input.listenerCount("data")).toBe(0);
+    expect(input.listenerCount("end")).toBe(0);
+  });
+
+  it.each([
+    [`${PASSWORD}\n${PASSWORD}`, "truncated"],
+    [`${PASSWORD}\n${PASSWORD}\nextra`, "extra"],
+  ])("rejects %s stdin framing", async (payload) => {
+    const input = new PassThrough();
+    const repository = makeRepository();
+    const pending = ensureLocalUser(repository, input as unknown as NodeJS.ReadStream, makeTtyOutput(), { mode: "stdin" });
+    input.end(Buffer.from(payload));
+
+    await expect(pending).rejects.toThrow();
+    expect(repository.createLocalUser).not.toHaveBeenCalled();
+  });
+
+  it("does not consume stdin when a local user already exists", async () => {
+    const input = new PassThrough();
+    const repository = makeRepository();
+    await repository.createLocalUser(Buffer.from(PASSWORD), "2030-01-01T00:00:00.000Z");
+    const create = repository.createLocalUser;
+    create.mockClear();
+    input.write(Buffer.from("must remain unread"));
+
+    await expect(ensureLocalUser(repository, input as unknown as NodeJS.ReadStream, makeTtyOutput(), { mode: "stdin" })).resolves.toBe("EXISTING");
+    expect(input.readableLength).toBeGreaterThan(0);
+    expect(input.listenerCount("data")).toBe(0);
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("times out before persistence when stdin remains open after both terminated records", async () => {
+    const input = new PassThrough();
+    const repository = makeRepository();
+    const pending = ensureLocalUser(repository, input as unknown as NodeJS.ReadStream, makeTtyOutput(), { mode: "stdin", inputTimeoutMs: 20 });
+    input.write(Buffer.from(`${PASSWORD}\n${PASSWORD}\n`));
+
+    await expect(pending).rejects.toThrow(/timed out/i);
+    expect(repository.createLocalUser).not.toHaveBeenCalled();
+    expect(input.isPaused()).toBe(true);
+    expect(input.listenerCount("data")).toBe(0);
+    expect(input.listenerCount("end")).toBe(0);
+    expect(input.listenerCount("error")).toBe(0);
+  });
+
+  it("rejects records over 4096 bytes and clears input listeners", async () => {
+    const input = new PassThrough();
+    const repository = makeRepository();
+    const pending = ensureLocalUser(repository, input as unknown as NodeJS.ReadStream, makeTtyOutput(), { mode: "stdin" });
+    input.end(Buffer.concat([Buffer.alloc(4097, 0x61), Buffer.from("\n") ]));
+
+    await expect(pending).rejects.toThrow(/4096-byte limit/i);
+    expect(repository.createLocalUser).not.toHaveBeenCalled();
+    expect(input.listenerCount("data")).toBe(0);
+    expect(input.listenerCount("end")).toBe(0);
+    expect(input.listenerCount("error")).toBe(0);
+  });
+
+  it("keeps the default first-run path on the fail-closed TTY wizard", async () => {
+    const input = new PassThrough();
+    const repository = makeRepository();
+
+    await expect(ensureLocalUser(repository, input as unknown as NodeJS.ReadStream, makeTtyOutput())).rejects.toThrow(/interactive TTY/i);
+    expect(repository.createLocalUser).not.toHaveBeenCalled();
+  });
+
+  it("rejects stdin stream errors without creating a user and clears listeners", async () => {
+    const input = new PassThrough();
+    const repository = makeRepository();
+    const pending = ensureLocalUser(repository, input as unknown as NodeJS.ReadStream, makeTtyOutput(), { mode: "stdin" });
+    await waitForImmediate();
+    input.write(Buffer.from(`${PASSWORD}\n`));
+    input.emit("error", new Error("injected stream failure"));
+
+    await expect(pending).rejects.toThrow(/input failed/i);
+    expect(repository.createLocalUser).not.toHaveBeenCalled();
+    expect(input.isPaused()).toBe(true);
+    expect(input.listenerCount("data")).toBe(0);
+    expect(input.listenerCount("end")).toBe(0);
+    expect(input.listenerCount("error")).toBe(0);
+  });
+
   it("fails closed before creating a user when either stream is not a TTY", async () => {
     const input = new PassThrough();
     const output = makeTtyOutput();

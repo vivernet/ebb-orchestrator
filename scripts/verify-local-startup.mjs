@@ -47,11 +47,27 @@ function spawnServer() {
 
 function waitForExit(child, timeoutMs = 10_000) {
   return new Promise((resolveExit, reject) => {
-    const timer = globalThis.setTimeout(() => reject(new Error("server process did not exit")), timeoutMs);
-    child.once("exit", (code, signal) => {
+    let timer;
+    let settled = false;
+    const onExit = (code, signal) => {
+      if (settled) return;
+      settled = true;
       globalThis.clearTimeout(timer);
+      child.off("exit", onExit);
       resolveExit({ code, signal });
-    });
+    };
+    const exited = () => child.exitCode !== null || child.signalCode !== null;
+    if (exited()) {
+      resolveExit({ code: child.exitCode, signal: child.signalCode });
+      return;
+    }
+    timer = globalThis.setTimeout(() => {
+      settled = true;
+      child.off("exit", onExit);
+      reject(new Error("server process did not exit"));
+    }, timeoutMs);
+    child.once("exit", onExit);
+    if (exited()) onExit(child.exitCode, child.signalCode);
   });
 }
 
