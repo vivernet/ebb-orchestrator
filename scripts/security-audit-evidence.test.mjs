@@ -95,8 +95,14 @@ test('production workflow runs local-user stdin smoke after server build', () =>
 
   const serverBuild = workflow.indexOf('pnpm server:build');
   const stdinSmoke = workflow.indexOf('node scripts/local-user-stdin-smoke.mjs');
+  const webBuild = workflow.indexOf('pnpm web:build');
+  const harnessContracts = workflow.indexOf('node --test scripts/security-audit-evidence.test.mjs apps/web/test/e2e/credential-handoff.test.mjs');
+  const browserE2E = workflow.indexOf('pnpm --dir apps/web test:e2e');
   assert.ok(serverBuild !== -1, 'workflow must build the server');
   assert.ok(stdinSmoke > serverBuild, 'workflow must run stdin smoke after server build');
+  assert.ok(webBuild > stdinSmoke, 'workflow must build web before running E2E harness contracts');
+  assert.ok(harnessContracts > webBuild, 'workflow must run E2E harness contracts after both builds');
+  assert.ok(browserE2E > harnessContracts, 'workflow must run browser E2E after harness contracts');
 });
 
 test('production workflow preserves audit evidence under exact conditional contract', () => {

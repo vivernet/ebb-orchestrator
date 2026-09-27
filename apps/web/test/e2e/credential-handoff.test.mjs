@@ -3,12 +3,14 @@ import { Buffer } from "node:buffer";
 import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
+import { once } from "node:events";
 import { randomBytes, randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { clearTimeout, setTimeout } from "node:timers";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
+import { waitForChildExit } from "./child-lifecycle.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
 const webRoot = join(repoRoot, "apps/web");
@@ -374,7 +376,7 @@ async function startRuntimeHarness({ port, testMode = false }) {
     throw new Error(`E2E runtime fixture bootstrap failed: ${ready.code}`);
   }
   return {
-    child, home, ready, request,
+    child, home, ready, request, waitFor,
     async dispose() {
       if (child.connected) child.disconnect();
       if (child.exitCode === null && child.signalCode === null) {
@@ -392,6 +394,79 @@ async function startRuntimeHarness({ port, testMode = false }) {
     },
   };
 }
+
+test("backend shutdown acknowledges cleanup before a normal process exit", async () => {
+  const port = await freeLoopbackPort();
+  const harness = await startRuntimeHarness({ port, testMode: true });
+  try {
+    const started = await harness.request("start");
+    assert.equal(started.type, "ready");
+    const requestId = randomUUID();
+    const acknowledgementPromise = harness.waitFor((message) => message.requestId === requestId);
+    harness.child.send({ type: "shutdown", requestId });
+    const acknowledgement = await acknowledgementPromise;
+    assert.equal(acknowledgement.type, "shutdown-complete");
+    assert.equal(acknowledgement.controlListenerClosed, true);
+    const exit = await waitForChildExit(harness.child, 5_000);
+    assert.deepEqual(exit, { exited: true, code: 0, signal: null });
+    await assert.rejects(stat(join(harness.home, "orchestrator.lock")), { code: "ENOENT" });
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("child exit wait allows a delayed IPC disconnect handler to finish before fallback termination", async () => {
+  const script = "process.on('disconnect', () => setTimeout(() => process.exit(0), 75)); process.send({ type: 'ready' }); setInterval(() => {}, 1000);";
+  const child = spawn(process.execPath, ["-e", script], { stdio: ["ignore", "ignore", "pipe", "ipc"], windowsHide: true });
+  try {
+    const [ready] = await once(child, "message");
+    assert.equal(ready.type, "ready");
+    const exitPromise = waitForChildExit(child, 1_000);
+    child.disconnect();
+    assert.deepEqual(await exitPromise, { exited: true, code: 0, signal: null });
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) {
+      const exitPromise = waitForChildExit(child, 2_000);
+      child.kill();
+      await exitPromise;
+    }
+  }
+});
+
+test("child exit is observed before close when a descendant still holds inherited stderr", async () => {
+  const script = [
+    "const { spawn } = require('node:child_process');",
+    "process.on('disconnect', () => process.exit(0));",
+    "spawn(process.execPath, ['-e', 'setTimeout(() => process.exit(0), 350)'], { stdio: ['ignore', 'ignore', 'inherit'] });",
+    "process.send({ type: 'ready' });",
+    "setInterval(() => {}, 1000);",
+  ].join("\n");
+  const child = spawn(process.execPath, ["-e", script], { stdio: ["ignore", "ignore", "pipe", "ipc"], windowsHide: true });
+  let closeObserved = false;
+  child.once("close", () => { closeObserved = true; });
+  try {
+    const [ready] = await once(child, "message");
+    assert.equal(ready.type, "ready");
+    const closePromise = once(child, "close");
+    const exitPromise = waitForChildExit(child, 1_000);
+    child.disconnect();
+    assert.deepEqual(await exitPromise, { exited: true, code: 0, signal: null });
+    assert.equal(closeObserved, false);
+    let timer;
+    const closed = await Promise.race([
+      closePromise,
+      new Promise((resolvePromise) => { timer = setTimeout(() => resolvePromise(undefined), 500); }),
+    ]);
+    clearTimeout(timer);
+    if (closed) assert.equal(closeObserved, true);
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) {
+      const exitPromise = waitForChildExit(child, 2_000);
+      child.kill();
+      await exitPromise;
+    }
+  }
+});
 
 test("DB open failure after lock acquisition releases the lock and allows a real retry", async () => {
   const port = await freeLoopbackPort();

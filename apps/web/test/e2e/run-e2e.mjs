@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { randomBytes, randomUUID } from "node:crypto";
 import { createServer, connect } from "node:net";
+import { waitForChildExit } from "./child-lifecycle.mjs";
 import { createE2EPasswordChannel } from "./credential-channel.mjs";
 
 const require = createRequire(import.meta.url);
@@ -125,6 +126,44 @@ function waitForMessage(child, type, requestId, timeoutMs = 90_000) {
   });
 }
 
+function waitForBackendShutdown(child, requestId, timeoutMs = 5_000) {
+  return new Promise((resolvePromise, reject) => {
+    let timer;
+    const finish = (error, value) => {
+      clearTimeout(timer);
+      child.off("message", onMessage);
+      child.off("exit", onExit);
+      child.off("error", onError);
+      if (error) reject(error);
+      else resolvePromise(value);
+    };
+    const onMessage = (message) => {
+      if (message?.requestId !== requestId) return;
+      if (message.type === "shutdown-complete") return finish(undefined, message);
+      if (message.type === "shutdown-error") {
+        const error = new Error(`Backend shutdown failed: ${message.code ?? "unknown"}`);
+        error.code = message.code;
+        finish(error);
+      }
+    };
+    const onExit = (code, signal) => finish(new Error(`Backend exited before shutdown acknowledgement (code=${code ?? "none"}, signal=${signal ?? "none"})`));
+    const onError = (error) => finish(error);
+    timer = setTimeout(() => finish(new Error("Backend shutdown acknowledgement timed out")), timeoutMs);
+    child.on("message", onMessage);
+    child.once("exit", onExit);
+    child.once("error", onError);
+  });
+}
+
+function sendChildMessage(child, message) {
+  return new Promise((resolvePromise, reject) => {
+    if (!child.connected) return reject(new Error("Backend IPC channel is not connected"));
+    try {
+      child.send(message, (error) => error ? reject(error) : resolvePromise());
+    } catch (error) { reject(error); }
+  });
+}
+
 async function waitForHttp(url, child, accept) {
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
@@ -214,19 +253,8 @@ async function terminateChild(name) {
       recordChildEvent(child, "signal-result", { signal: "SIGTERM", sent: child.kill("SIGTERM") });
     }
   }
-  let timeout;
-  let exitCode;
-  try {
-    exitCode = await Promise.race([
-      waitForChild(child),
-      new Promise((_, reject) => {
-        timeout = setTimeout(() => reject(new Error(`${name} process did not exit during teardown; lifecycle=${childLifecycleSummary(name, child)}`)), 10_000);
-      }),
-    ]);
-  } finally {
-    if (timeout) clearTimeout(timeout);
-  }
-  if (exitCode === undefined) throw new Error(`${name} process exit was not observed`);
+  const exit = await waitForChildExit(child, 10_000);
+  if (!exit.exited) throw new Error(`${name} process did not exit during teardown; lifecycle=${childLifecycleSummary(name, child)}`);
   children.delete(name);
 }
 
@@ -340,11 +368,43 @@ try {
   }
   password.fill(0);
   const backend = children.get("backend");
-  if (backend?.connected) {
-    recordChildEvent(backend, "disconnect-requested");
-    backend.disconnect();
+  if (backend && !controlEndpoint) {
+    try { await terminateChild("backend"); } catch (error) { cleanupErrors.push(error); }
+  } else if (backend) {
+    const requestId = randomUUID();
+    recordChildEvent(backend, "shutdown-requested", { requestId });
+    let forceTerminationNeeded = false;
+    try {
+      const acknowledgementPromise = waitForBackendShutdown(backend, requestId);
+      const [, acknowledgement] = await Promise.all([
+        sendChildMessage(backend, { type: "shutdown", requestId }),
+        acknowledgementPromise,
+      ]);
+      recordChildEvent(backend, "shutdown-acknowledged", { controlListenerClosed: acknowledgement.controlListenerClosed === true });
+      if (acknowledgement.controlListenerClosed !== true) {
+        cleanupErrors.push(new Error("Backend shutdown acknowledgement did not confirm control listener closure"));
+        forceTerminationNeeded = true;
+      } else {
+        const exit = await waitForChildExit(backend, 5_000);
+        recordChildEvent(backend, "shutdown-exit-result", { exited: exit.exited, code: exit.code, signal: exit.signal });
+        if (!exit.exited) {
+          cleanupErrors.push(new Error(`Backend did not exit after shutdown acknowledgement; lifecycle=${childLifecycleSummary("backend", backend)}`));
+          forceTerminationNeeded = true;
+        } else {
+          children.delete("backend");
+          if (exit.code !== 0 || exit.signal !== null) {
+            cleanupErrors.push(new Error(`Backend exited abnormally after shutdown acknowledgement (code=${exit.code ?? "none"}, signal=${exit.signal ?? "none"})`));
+          }
+        }
+      }
+    } catch (error) {
+      cleanupErrors.push(error);
+      forceTerminationNeeded = true;
+    }
+    if (forceTerminationNeeded && children.has("backend")) {
+      try { await terminateChild("backend"); } catch (terminationError) { cleanupErrors.push(terminationError); }
+    }
   }
-  try { await terminateChild("backend"); } catch (error) { cleanupErrors.push(error); }
   try { await assertCleanSqliteAndHome(); } catch (error) { cleanupErrors.push(error); }
   if (cleanupErrors.length > 0 && !primaryError) primaryError = new AggregateError(cleanupErrors, "E2E teardown failed");
   if (cleanupErrors.length > 0 && primaryError) {

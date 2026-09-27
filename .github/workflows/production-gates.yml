@@ -48,6 +48,8 @@ jobs:
           pnpm server:build
           node scripts/local-user-stdin-smoke.mjs
           pnpm web:build
+      - name: E2E harness contracts
+        run: node --test scripts/security-audit-evidence.test.mjs apps/web/test/e2e/credential-handoff.test.mjs
       - name: Dependency audit
         id: dependency-audit
         if: ${{ !cancelled() && steps.install-dependencies.outcome == 'success' }}

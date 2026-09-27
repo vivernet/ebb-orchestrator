@@ -52,6 +52,13 @@ function send(message) {
   if (typeof process.send === "function" && process.connected) process.send(message);
 }
 
+function sendAndWait(message) {
+  return new Promise((resolvePromise, reject) => {
+    if (typeof process.send !== "function" || !process.connected) return reject(new Error("E2E IPC channel is not connected"));
+    process.send(message, (error) => error ? reject(error) : resolvePromise());
+  });
+}
+
 function loadRuntime() {
   return {
     async startRun() {}, async runResult() { return {}; }, async resumeRun() {}, async cancelRun() {},
@@ -209,8 +216,28 @@ function createControlServer() {
   });
 }
 
+function closeControlServer() {
+  if (!controlServer?.listening) return Promise.resolve();
+  return new Promise((resolvePromise, reject) => {
+    controlServer.close((error) => error ? reject(error) : resolvePromise());
+  });
+}
+
 process.on("message", async (message) => {
   const requestId = typeof message?.requestId === "string" ? message.requestId : "unknown";
+  if (message?.type === "shutdown") {
+    try {
+      if (backend) await stopBackend();
+      await closeControlServer();
+      const controlListenerClosed = !controlServer?.listening;
+      if (!controlListenerClosed) throw new Error("Control listener remained open during shutdown");
+      await sendAndWait({ type: "shutdown-complete", requestId, controlListenerClosed });
+      process.exit(0);
+    } catch (error) {
+      send({ type: "shutdown-error", requestId, code: error?.code ?? error?.name ?? "unknown" });
+    }
+    return;
+  }
   if (testMode && message?.type === "e2e-control") {
     try {
       if (message.command === "inject-db-open-failure") testFault = "db-open-once";
