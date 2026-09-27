@@ -1,83 +1,72 @@
-# Ebb Orchestrator Documentation
+# Документация Ebb Orchestrator
 
-## Governance
+## Назначение
 
-See the [Documentation Governance Guide](development/02-documentation-governance.md) for:
-- Numbering conventions (01, 02, 03...)
-- Glossary and terminology standards
-- File naming policy
-- YAML metadata requirements
-- Validator rules and compliance checks
-- File organization patterns
+Этот файл — навигация по документации проекта. Краткое описание продукта,
+установка и рабочие команды находятся в [корневом README](../README.md).
 
-## Normalized Directories
+## Каталоги
 
-| Directory | Purpose |
-|-----------|---------|
-| `architecture/` | Official specs, plans, and UI concepts |
-| `audit/` | Audit reports, guidelines, and project state |
-| `development/` | Development guidelines and code standards |
-| `architecture/reference-ui/` | UI concept gallery |
-| `roadmap/` | Generated Plan dependency roadmap and historical snapshots |
+| Каталог | Назначение |
+|---|---|
+| `architecture/specs/` | Архитектурные спецификации и основной источник истины |
+| `architecture/plans/` | Канонические планы реализации и governance-планы |
+| `architecture/reference-ui/` | Концепты интерфейса |
+| `audit/` | Аудиты, проверочные отчёты и снимки состояния |
+| `development/` | Правила разработки, документации и JSDoc |
+| `issues/` | Зафиксированные проблемы и их контекст |
+| `roadmap/` | Сгенерированная карта зависимостей и исторические снимки |
 
-## Architecture
+## Архитектура и планы
 
-### Specs (`architecture/specs/`)
+- [Системный дизайн](architecture/specs/01-system-design.md) — основная
+  архитектурная спецификация.
+- [Каталог планов](architecture/plans/) — актуальные и исторические планы.
+- [План governance документации](architecture/plans/governance/00-01-documentation-governance.md).
+- [Интеграция governance](architecture/plans/governance/00-05-governance-integration.md).
+- [План CI и runtime home](architecture/plans/17-ci-runtime-home-and-env-hardening.md).
 
-Official specifications serving as source of truth:
+Текущие статусы и зависимости планов публикуются в
+[сгенерированном roadmap](roadmap/generated.md). Файл
+[roadmap/01-roadmap.md](roadmap/01-roadmap.md) сохранён как исторический снимок
+и не является текущим реестром.
 
-- `01-system-design.md` — Core architecture
-- `02-web-ui-recovery-design.md` — UI recovery plans
-- `03-production-readiness-design.md` — Production standards
-- `04-hermes-development-capabilities.md` — Hermes integration specs
+## Governance и разработка
 
-### Plans (`architecture/plans/`)
+- [Правила документации](development/02-documentation-governance.md) — имена,
+  метаданные и проверка документов.
+- [Русский JSDoc и README](development/03-russian-jsdoc-readme.md).
+- [Стиль JSDoc](development/07-jsdoc-style-guide.md).
+- [Каталог UI-концептов](architecture/reference-ui/).
 
-Canonical implementation plans live in [`architecture/plans/`](architecture/plans/). Current governance references:
+Проверки документации запускаются из корня репозитория:
 
-- [`00-01-documentation-governance.md`](architecture/plans/governance/00-01-documentation-governance.md) — Plan metadata and documentation policy
-- [`00-05-governance-integration.md`](architecture/plans/governance/00-05-governance-integration.md) — current governance migration
-- [`17-ci-runtime-home-and-env-hardening.md`](architecture/plans/17-ci-runtime-home-and-env-hardening.md) — CI, runtime home and local environment hardening
+```bash
+pnpm docs:inventory
+pnpm docs:check
+pnpm docs:test
+```
 
-### UI Concepts (`architecture/`)
+`pnpm docs:rename:check` сейчас возвращает успешный код, но сообщает
+`Rename check not yet implemented`. `pnpm docs:link:sync` зарегистрирована в
+`package.json`, однако текущий диспетчер её не поддерживает и завершает работу
+с кодом `1`; не используйте её как успешную проверку.
 
-Conceptual UI designs:
-- Dashboard
-- Task View
-- Epic View
-- Approval Inbox
-- Execution Queue
-- Project View
+## Аудит и справочные материалы
 
-## Audit
+- [Аудит рабочего процесса разработки Hermes](audit/05-hermes-development-workflow-parity.md).
+- [Инвентаризация перехода на Hermes](audit/06-opencode-to-hermes-inventory.md).
+- [Текущий статус проекта](audit/07-project-state.md).
+- [Концепты интерфейса](architecture/reference-ui/).
 
-See the [Audit Section](audit/) for current audit records. The [`06-plan-grouping-removal-inventory.md`](architecture/plans/governance/evidence/06-plan-grouping-removal-inventory.md) preserves the baseline and current reconciliation for the Plan-only migration.
+Документы с YAML-метаданными в начале файла проверяются governance-скриптами.
+README являются исключением из этого требования и содержат обычный Markdown без
+метаданных в начале файла.
 
-## Development
+## Канонические правила
 
-See the [Development Section](development/) for current guidelines, including the [documentation governance guide](development/02-documentation-governance.md) and [JSDoc style guide](development/07-jsdoc-style-guide.md).
-
-## Roadmap
-
-See the [generated Plan roadmap](roadmap/generated.md) for current Plans and dependencies. [`01-roadmap.md`](roadmap/01-roadmap.md) is retained only as a historical snapshot; it is not a current Plan register.
-
-## Reference
-
-See the [UI concept gallery](architecture/reference-ui/), including [Dashboard](architecture/reference-ui/01-dashboard-concept.html), [Task](architecture/reference-ui/02-task-view-concept.html), and [Epic](architecture/reference-ui/03-epic-view-concept.html) concepts.
-
-## Key Links
-
-| Link | Description |
-|------|-------------|
-| [Governance Guide](development/02-documentation-governance.md) | Documentation standards |
-| [System Design](architecture/specs/01-system-design.md) | Core architecture |
-| [Generated Plan roadmap](roadmap/generated.md) | Current Plans and dependencies |
-|[Audit Report](audit/06-opencode-to-hermes-inventory.md) | Latest audit findings |
-
-## Notes
-
-1. **Architecture source of truth**: `architecture/specs/01-system-design.md`
-2. **Canonical generated roadmap**: `roadmap/generated.md`; `roadmap/01-roadmap.md` is a historical snapshot
-3. **JSDoc policy**: All production comments in Russian per `development/jsdoc-style-guide.md`
-4. **Git policy**: Master branch, feature work in separate worktrees
-5. **Quality gates**: Lint, typecheck, and test required before commit
+- Архитектурный источник истины: `architecture/specs/01-system-design.md`.
+- Канонический roadmap: `roadmap/generated.md`.
+- Правила JSDoc: `development/07-jsdoc-style-guide.md`.
+- Общие инструкции для агентов: [корневой `AGENTS.md`](../AGENTS.md).
+- Обязательные quality gates описаны в корневом README и `AGENTS.md`.

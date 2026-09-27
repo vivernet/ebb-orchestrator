@@ -9,14 +9,17 @@ const skillsRoot = join(root, 'tools', 'hermes', 'skills');
 const readme = readFileSync(join(root, 'README.md'), 'utf8');
 
 const expectedSkills = [
+  'ebb-debug-issue',
   'ebb-execute-plan',
   'ebb-final-review',
   'ebb-implement-task',
   'ebb-quality-gates',
   'ebb-repository-context',
+  'ebb-review-plan',
   'ebb-review-task',
   'ebb-security-review',
   'ebb-web-e2e',
+  'ebb-write-plan',
 ];
 
 test('canonical Hermes skills have valid discoverable frontmatter', () => {
@@ -28,7 +31,7 @@ test('canonical Hermes skills have valid discoverable frontmatter', () => {
   for (const skill of expectedSkills) {
     const content = readFileSync(join(skillsRoot, skill, 'SKILL.md'), 'utf8');
     assert.match(content, /^---\r?\nname: [a-z0-9-]+\r?\ndescription: .+\r?\n/s);
-    assert.doesNotMatch(content, /\[TODO:|your-api-key|sk-[A-Za-z0-9]/i);
+    assert.doesNotMatch(content, /\[TODO:|your-api-key|(?:^|[^A-Za-z0-9])sk-[A-Za-z0-9]/i);
   }
 });
 

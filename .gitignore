@@ -11,6 +11,9 @@ coverage/
 playwright-report/
 test-results/
 
+# Disposable repository-local temporary files
+/temp/
+
 # Environment / secrets
 .env
 .env.*

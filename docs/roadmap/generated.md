@@ -40,7 +40,7 @@ updated: 2026-09-27
 | plan-15-08 | completed | Verification, security evidence и independent plan review |
 | plan-15-09 | completed | Atomic auth v2 prerequisite remediation |
 | plan-15 | completed | Устойчивые auth, onboarding и Russian Web UI |
-| plan-16 | in_progress | Очистка и актуализация документации Ebb Orchestrator |
+| plan-16 | completed | Очистка и актуализация документации Ebb Orchestrator |
 | plan-17 | planned | Надёжность CI evidence и единая конфигурация Ebb Orchestrator |
 | plan-00 | completed | Documentation Governance Refactoring |
 | plan-00-02 | superseded | Проверка и исправление политики AGENTS |

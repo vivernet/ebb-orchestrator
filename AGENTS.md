@@ -46,7 +46,7 @@ LLM/Agent Runtime выполняет интеллектуальную работ
 
 Перед архитектурными изменениями обязательно прочитать:
 
-`docs/architecture/specs/2026-09-16-ebb-orchestrator-design.md`
+`docs/architecture/specs/01-system-design.md`
 
 Утверждённая design specification является архитектурным source of truth.
 
@@ -54,9 +54,9 @@ LLM/Agent Runtime выполняет интеллектуальную работ
 
 Текущий реализованный v1 scope нельзя самовольно расширять.
 
-Планы после v1 находятся в:
+Текущие статусы и зависимости планов находятся в:
 
-`docs/roadmap/post-v1.md`
+`docs/roadmap/generated.md`
 
 Roadmap описывает возможные будущие направления, а не разрешение реализовывать их в текущей задаче.
 
@@ -241,7 +241,7 @@ Managed Git operations должны:
 
 Публичный и нетривиальный first-party API должен иметь полезный JSDoc на русском языке согласно:
 
-`docs/development/jsdoc-style-guide.md`
+`docs/development/07-jsdoc-style-guide.md`
 
 JSDoc должен объяснять:
 
@@ -262,20 +262,27 @@ JSDoc должен объяснять:
 
 Не переводить технические identifiers, команды, API/property names, file paths и canonical protocol/tool names, если это снижает точность.
 
-## 14. Канонические документы
+## 14. Временные файлы
+
+Одноразовые артефакты проверок и экспериментов размещайте вне репозитория в
+системном временном каталоге. Если нужен временный путь внутри worktree,
+используйте корневой `temp/` и удаляйте его содержимое после проверки; этот
+каталог игнорируется Git. Не помещайте туда исходные тесты, не добавляйте
+широкое правило `test/` в `.gitignore` и не используйте `git clean` для уборки.
+
+## 15. Канонические документы
 
 Перед релевантной работой использовать:
 
-- Architecture: `docs/architecture/specs/2026-09-16-ebb-orchestrator-design.md`
-- V1 roadmap: `docs/architecture/plans/2026-09-16-ebb-orchestrator-v1-roadmap.md`
-- Post-v1 roadmap: `docs/roadmap/post-v1.md`
+- Architecture: `docs/architecture/specs/01-system-design.md`
+- Current roadmap: `docs/roadmap/generated.md`
 - Implementation plans: `docs/architecture/plans/`
-- JSDoc policy: `docs/development/jsdoc-style-guide.md`
+- JSDoc policy: `docs/development/07-jsdoc-style-guide.md`
 - Human-facing project documentation: `README.md`
 
 Не копировать крупные части этих документов в новые policy-файлы без необходимости.
 
-## 15. Completion discipline
+## 16. Completion discipline
 
 Перед финальным ответом проверить:
 

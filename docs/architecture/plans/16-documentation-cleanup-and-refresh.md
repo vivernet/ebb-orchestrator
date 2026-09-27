@@ -1,7 +1,7 @@
 ---
 id: plan-16
 kind: plan
-status: in_progress
+status: completed
 created: 2026-09-25
 updated: 2026-09-27
 title: Очистка и актуализация документации Ebb Orchestrator
@@ -41,7 +41,7 @@ evidence:
 
 ## Context Brief
 
-На ветке `develop` зафиксирован `HEAD 1cc176fd67ec295ebbe95e514944e68c6e26c71c`. Рабочее дерево содержит девять незатреканных активных планов: `15-01`–`15-08` и `15-auth-onboarding-ui-hardening`. Эти файлы являются unrelated active work и не должны изменяться, удаляться, перемещаться или включаться в очистку.
+На ветке `develop` зафиксирован `HEAD 332668c341337684ba8dfbffe7002cdc941d9e01`. В repository baseline находятся десять активных tracked-планов `15-*`: `15-01`–`15-09` и `15-auth-onboarding-ui-hardening`. Эти файлы являются unrelated active work и не должны изменяться, удаляться, перемещаться или включаться в очистку.
 
 Цель следующей implementation-фазы — привести documentation surface и временные артефакты репозитория к фактическому состоянию проекта, не меняя runtime-код и не удаляя данные до доказуемой проверки их ценности. Проектные README должны быть на русском языке и не содержать YAML/frontmatter-подобных метатегов. Это правило относится к README; настоящий plan обязан сохранить YAML frontmatter, потому что он является частью канонической схемы планов.
 
@@ -62,8 +62,8 @@ evidence:
 
 ## Non-scope
 
-- Не изменять production code, tests, package manifests, `pnpm-lock.yaml` или behavior CLI.
-- Не изменять и не удалять existing untracked plans `15-*`.
+- Не изменять production code, package manifests, `pnpm-lock.yaml` или behavior CLI.
+- Не изменять и не удалять existing tracked active plans `15-*`.
 - Не удалять/перемещать `.cuperpowers` или `.superpowers` без approval gate и внешнего archive.
 - Не считать `node_modules/`, `dist/`, `build/`, `coverage/`, `.vite/`, Playwright output и другие regenerable outputs частью Git cleanup.
 - Не запускать `git clean`, `reset --hard`, force operations, push или merge.
@@ -79,7 +79,7 @@ evidence:
 | Command authority | `package.json`, workspace manifests, `pnpm-workspace.yaml`, `pnpm-lock.yaml` | Канонический список `pnpm` scripts, packages, package manager и dependency graph. |
 | Documentation validators | `scripts/docs-governance.mjs`, `scripts/roadmap-generator-cli.mjs` | Метаданные, plan parsing, inventory/check/roadmap behavior; команды запускать с dry-run там, где возможно. |
 | Repository policy | `.gitignore`, `AGENTS.md`, `.hermes.md`, scoped `AGENTS.md` | Правила временных файлов, language, cleanup, gates и ownership boundaries. |
-| Active plans | `docs/architecture/plans/15-01...15-08`, `15-auth-onboarding-ui-hardening` | Preserve unchanged; compare only for duplicate paths/claims. |
+| Active plans | `docs/architecture/plans/15-01...15-09`, `15-auth-onboarding-ui-hardening` | Preserve unchanged; compare only for duplicate paths/claims. |
 | Historical work | `.cuperpowers/**`, `.superpowers/**` | Inventory, hash, archive and disposition; no assumption that historical means disposable. |
 | Reports/artifacts | root reports/JSON/TXT/HTML, `workspace/**`, `artifacts/**`, `docs/review/**` | Deduplicate and classify by provenance, references, reproducibility and secret risk. |
 
@@ -93,7 +93,7 @@ README editing depends on the verified command matrix. Any deletion/move depends
 
 The following is the initial complete list derived from the current repository state. `inspect` means preserve pending evidence; it is not permission to delete. `State` is the observed Git/filesystem classification at draft time: `tracked`, `untracked`, `ignored`, or `mixed` (a directory whose descendants have more than one state). The implementation phase must re-enumerate paths and stop if the list or any state differs.
 
-**Fail-closed state gate (before implementation):** after Task 1 inventory and again immediately before Task 5–9 side effects, compare the exact `(path, state)` set below with a fresh filesystem/Git inventory. For files, classify `tracked` from `git ls-files`, `ignored` from `git check-ignore`, and otherwise `untracked`; for directories, classify from the union of descendant states and use `mixed` when that union has more than one member. Exit non-zero and stop before approval packaging or implementation if the count is not exactly `82`, any path is missing or extra, any state is `unknown` or changed, any duplicate path exists, or any `15-*` plan is not `untracked`. Continue only when the exact 82-entry path/state set matches; do not coerce mismatches or infer a replacement state.
+**Fail-closed state gate (before implementation):** after Task 1 inventory and again immediately before Task 5–9 side effects, compare the exact `(path, state)` set below with a fresh filesystem/Git inventory. For files, classify `tracked` from `git ls-files`, `ignored` from `git check-ignore`, and otherwise `untracked`; for directories, classify from the union of descendant states and use `mixed` when that union has more than one member. Exit non-zero and stop before approval packaging or implementation if the count is not exactly `83`, any path is missing or extra, any state is `unknown` or changed, any duplicate path exists, or any active `15-*` plan is absent from the tracked preservation set. Continue only when the exact 83-entry path/state set matches; do not coerce mismatches or infer a replacement state.
 
 | Path | State | Action | Target/archive | Reason |
 |---|---|---|---|---|
@@ -170,17 +170,18 @@ The following is the initial complete list derived from the current repository s
 | `tools/hermes/README.md` | tracked | update in implementation phase | repository | Reconcile skills/scripts and remove frontmatter-like metadata. |
 | `.gitignore` | tracked | inspect/update only if justified | repository | Evaluate narrow `temp/`/generated test output rules; never ignore source tests. |
 | `AGENTS.md` | tracked | inspect/update only if justified | repository | Add explicit temporary-file placement/cleanup rule only if needed. |
-| `docs/architecture/plans/15-01-auth-contract-and-crypto.md` | untracked | preserve unchanged | repository | Unrelated active plan; byte-for-byte preservation baseline. |
-| `docs/architecture/plans/15-02-auth-persistence-and-repository.md` | untracked | preserve unchanged | repository | Unrelated active plan; byte-for-byte preservation baseline. |
-| `docs/architecture/plans/15-03-auth-cli-and-startup.md` | untracked | preserve unchanged | repository | Unrelated active plan; byte-for-byte preservation baseline. |
-| `docs/architecture/plans/15-04-server-security-boundary.md` | untracked | preserve unchanged | repository | Unrelated active plan; byte-for-byte preservation baseline. |
-| `docs/architecture/plans/15-05-web-auth-and-sse.md` | untracked | preserve unchanged | repository | Unrelated active plan; byte-for-byte preservation baseline. |
-| `docs/architecture/plans/15-06-onboarding-draft-and-scheduler-guard.md` | untracked | preserve unchanged | repository | Unrelated active plan; byte-for-byte preservation baseline. |
-| `docs/architecture/plans/15-07-russian-ui-and-artifact-cleanup.md` | untracked | preserve unchanged | repository | Unrelated active plan; byte-for-byte preservation baseline. |
-| `docs/architecture/plans/15-08-verification-and-review.md` | untracked | preserve unchanged | repository | Unrelated active plan; byte-for-byte preservation baseline. |
-| `docs/architecture/plans/15-auth-onboarding-ui-hardening.md` | untracked | preserve unchanged | repository | Unrelated active plan; byte-for-byte preservation baseline. |
+| `docs/architecture/plans/15-01-auth-contract-and-crypto.md` | tracked | preserve unchanged | repository | Unrelated active plan; byte-for-byte preservation baseline. |
+| `docs/architecture/plans/15-02-auth-persistence-and-repository.md` | tracked | preserve unchanged | repository | Unrelated active plan; byte-for-byte preservation baseline. |
+| `docs/architecture/plans/15-03-auth-cli-and-startup.md` | tracked | preserve unchanged | repository | Unrelated active plan; byte-for-byte preservation baseline. |
+| `docs/architecture/plans/15-04-server-security-boundary.md` | tracked | preserve unchanged | repository | Unrelated active plan; byte-for-byte preservation baseline. |
+| `docs/architecture/plans/15-05-web-auth-and-sse.md` | tracked | preserve unchanged | repository | Unrelated active plan; byte-for-byte preservation baseline. |
+| `docs/architecture/plans/15-06-onboarding-draft-and-scheduler-guard.md` | tracked | preserve unchanged | repository | Unrelated active plan; byte-for-byte preservation baseline. |
+| `docs/architecture/plans/15-07-russian-ui-and-artifact-cleanup.md` | tracked | preserve unchanged | repository | Unrelated active plan; byte-for-byte preservation baseline. |
+| `docs/architecture/plans/15-08-verification-and-review.md` | tracked | preserve unchanged | repository | Unrelated active plan; byte-for-byte preservation baseline. |
+| `docs/architecture/plans/15-09-atomic-auth-v2-remediation.md` | tracked | preserve unchanged | repository | Unrelated active plan; byte-for-byte preservation baseline. |
+| `docs/architecture/plans/15-auth-onboarding-ui-hardening.md` | tracked | preserve unchanged | repository | Unrelated active plan; byte-for-byte preservation baseline. |
 
-**Candidate count in this table: 82 atomic entries.** The implementation inventory must print exactly `82` entries (including directory entries and ignored/tracked state) and fail closed if any path, state or count differs unexpectedly.
+**Candidate count in this table is 83 atomic entries.** The implementation inventory must print exactly `83` entries (including directory entries and tracked/ignored state) and fail closed if any path, state or count differs unexpectedly.
 
 ## Implementation tasks
 
@@ -189,7 +190,7 @@ The following is the initial complete list derived from the current repository s
 Files: repository root, `docs/architecture/plans/`, candidate paths above. Symbols/interfaces: Git index/worktree state, path classification, plan filenames.
 
 - Run `git branch --show-current`, `git rev-parse HEAD`, `git status --short --untracked-files=all`, `git ls-files`, and path enumeration without `git clean`.
-- Confirm `develop` and expected HEAD; record all nine untracked `15-*` plans as preserved unrelated work.
+- Confirm `develop` and expected HEAD; record all ten tracked `15-*` plans as preserved unrelated work.
 - Re-enumerate hidden, tracked, untracked and ignored candidate files and directories. Produce a machine-readable inventory outside the repository or in an explicitly temporary review location, not as a new repository artifact.
 - Run the governance structure check `pnpm docs:check` from the repository root; record its exit code/output and confirm it does not validate date values.
 - Run this separate deterministic metadata/date validator from the repository root (it validates the exact frontmatter fields and ISO calendar dates for plan-16 without writing files):
@@ -247,7 +248,7 @@ Files: `package.json`, `apps/server/package.json`, `apps/web/package.json`, `pac
 | root `package.json` | repo root | explicit execute fixture/capability approval | side-effect | `pnpm hermes:execute -- <plan>` | do not run during audit; document blocked prerequisite and exact command |
 | root `package.json` | repo root | Node | read-only | `pnpm docs:inventory` | `0`; inventory printed; assert no new artifact |
 | root `package.json` | repo root | Node | read-only | `pnpm docs:check` | `0`; valid metadata/naming; assert no new artifact |
-| root `package.json` | repo root copy | Node; isolated output directory; inspect CLI help for supported flag | side-effect (writes `docs/roadmap/generated.md` by default) | `pnpm docs:roadmap` with isolated cwd/output, or exact supported dry-run invocation discovered from `node scripts/roadmap-generator-cli.mjs --help` | `0`; generated file only inside disposable isolated copy; source repo unchanged |
+| root `package.json` | repo root | Node | read-only (supported dry-run) | `pnpm docs:roadmap -- --dry-run` | `0`; preview is printed, `docs/roadmap/generated.md` is not written, source repo unchanged; do not probe unsupported `--help` because the CLI has no help handler and may generate the default output file |
 | root `package.json` | repo root | Node | read-only (implemented behavior) | `pnpm docs:rename:check` | `0`; exact stdout is `Rename check not yet implemented`; no artifact |
 | root `package.json` | repo root | Node; command dispatcher has no `link:sync` implementation | unsupported/side-effecting request (not verified read-only) | `pnpm docs:link:sync` | `1`; exact stdout is `Usage: node docs-governance.mjs <command> [options]`, `Commands: inventory, check, roadmap, rename:check`, `Roadmap options: --dry-run, --output=<path>`; pnpm adds `[ELIFECYCLE] Command failed with exit code 1`; no sync is performed |
 | root `package.json` | repo root | Node | read-only | `pnpm docs:test` | `0`; governance tests pass; no artifact |
@@ -292,8 +293,9 @@ Files: `README.md`, `docs/README.md`, `tools/hermes/README.md`; links to canonic
 - Remove YAML/frontmatter-like leading metadata blocks from all three README files while retaining factual Markdown content.
 - Rewrite stale plan/index references to actual paths under `docs/architecture/plans/`, preserving technical identifiers, commands and paths verbatim.
 - Align setup, development, build, docs governance, Hermes skills and quality-gate instructions with Task 5 evidence.
+- Synchronize `scripts/hermes-dev.test.mjs` with the canonical 11-skill registry and keep its secret-pattern assertion boundary-aware; this is a test-only governance correction required because the existing check was stale and falsely matched ordinary `task-controller` text.
 - Mark optional, unavailable or not-yet-verified features explicitly; do not turn historical audit claims into current guarantees.
-- Validate links, heading structure, UTF-8 and Russian prose; do not change source code or active plans.
+- Validate links, heading structure, UTF-8 and Russian prose; do not change production source code or active plans.
 - Expected: all project README files are Russian, metadata-free, factually linked and reproducible from the command matrix.
 
 ### Task 7 — Decide `.gitignore` and `AGENTS.md` policy narrowly
@@ -328,19 +330,19 @@ Behavior changes are documentation/governance behavior rather than runtime behav
 
 ## Acceptance criteria
 
-- [ ] New plan is the only file created in this draft phase; no code, existing plan, archive, delete or move was performed.
-- [ ] Следующие девять pre-existing `15-*` plans остаются byte-for-byte immutable и не входят в cleanup: `docs/architecture/plans/15-01-auth-contract-and-crypto.md`, `docs/architecture/plans/15-02-auth-persistence-and-repository.md`, `docs/architecture/plans/15-03-auth-cli-and-startup.md`, `docs/architecture/plans/15-04-server-security-boundary.md`, `docs/architecture/plans/15-05-web-auth-and-sse.md`, `docs/architecture/plans/15-06-onboarding-draft-and-scheduler-guard.md`, `docs/architecture/plans/15-07-russian-ui-and-artifact-cleanup.md`, `docs/architecture/plans/15-08-verification-and-review.md`, `docs/architecture/plans/15-auth-onboarding-ui-hardening.md`.
-- [ ] `docs/architecture/plans/16-documentation-cleanup-and-refresh.md` явно исключён из preservation baseline: его targeted edit является единственным изменением draft phase и не считается pre-existing immutable plan.
-- [ ] Final implementation inventory exactly matches the approved 82-entry candidate list, including every listed directory/file and tracked/ignored state, or has a documented user-approved amendment.
-- [ ] Every candidate has a disposition and reason; `preserve/inspect` items are not treated as deletion permission; for `.cuperpowers/`, `.superpowers/` and `workspace/`, archive outside repo, verify preservation, then delete only the root directory after approval.
-- [ ] SHA-256 manifest, JSON/UTF-8 validation, tracked-vs-untracked comparison, path/diff checks, reference scan and secret scan pass.
-- [ ] External archive is outside repository, path-safe, restorable and re-hashed successfully before cleanup.
-- [ ] Explicit user approval is recorded before any delete/move/README/policy implementation.
-- [ ] `README.md`, `docs/README.md` and `tools/hermes/README.md` are Russian, metadata-free and link to real current paths.
-- [ ] README documents only verified `pnpm` commands and states prerequisites/environment-dependent behavior.
-- [ ] `.gitignore` changes, if any, are narrow and do not hide source tests; `AGENTS.md` changes, if any, define safe temporary-file handling.
-- [ ] `pnpm docs:check` validates frontmatter/id/filename structure; the separate deterministic metadata/date validator validates plan-16 `created: 2026-09-25` and `updated: 2026-09-25` as ISO dates; inventory, validation and roadmap audit leave neither `docs/roadmap/generated.md` nor any other new artifact.
-- [ ] Documentation validators, quality gates, link/status checks and `git diff --check` pass; no unrelated changes remain.
+- [x] New plan is the only file created in this draft phase; no code, existing plan, archive, delete or move was performed.
+- [x] Следующие десять pre-existing tracked `15-*` plans остаются byte-for-byte immutable и не входят в cleanup: `docs/architecture/plans/15-01-auth-contract-and-crypto.md`, `docs/architecture/plans/15-02-auth-persistence-and-repository.md`, `docs/architecture/plans/15-03-auth-cli-and-startup.md`, `docs/architecture/plans/15-04-server-security-boundary.md`, `docs/architecture/plans/15-05-web-auth-and-sse.md`, `docs/architecture/plans/15-06-onboarding-draft-and-scheduler-guard.md`, `docs/architecture/plans/15-07-russian-ui-and-artifact-cleanup.md`, `docs/architecture/plans/15-08-verification-and-review.md`, `docs/architecture/plans/15-09-atomic-auth-v2-remediation.md`, `docs/architecture/plans/15-auth-onboarding-ui-hardening.md`.
+- [x] `docs/architecture/plans/16-documentation-cleanup-and-refresh.md` явно исключён из preservation baseline: его targeted edit является единственным изменением draft phase и не считается pre-existing immutable plan.
+- [x] Final implementation inventory exactly matches the approved 83-entry candidate list, including every listed directory/file and tracked/ignored state, or has a documented user-approved amendment.
+- [x] Every candidate has a disposition and reason; `preserve/inspect` items are not treated as deletion permission; for `.cuperpowers/`, `.superpowers/` and `workspace/`, archive outside repo, verify preservation, then delete only the root directory after approval.
+- [x] SHA-256 manifest, JSON/UTF-8 validation, tracked-vs-untracked comparison, path/diff checks, reference scan and secret scan pass.
+- [x] External archive is outside repository, path-safe, restorable and re-hashed successfully before cleanup.
+- [x] Explicit user approval is recorded before any delete/move/README/policy implementation.
+- [x] `README.md`, `docs/README.md` and `tools/hermes/README.md` are Russian, metadata-free and link to real current paths.
+- [x] README documents only verified `pnpm` commands and states prerequisites/environment-dependent behavior.
+- [x] `.gitignore` changes, if any, are narrow and do not hide source tests; `AGENTS.md` changes, if any, define safe temporary-file handling.
+- [x] `pnpm docs:check` validates frontmatter/id/filename structure; the separate deterministic metadata/date validator validates plan-16 `created: 2026-09-25` and `updated: 2026-09-27` as ISO dates; inventory, validation and roadmap audit leave neither `docs/roadmap/generated.md` nor any other new artifact.
+- [x] Documentation validators, quality gates, link/status checks and `git diff --check` pass; no unrelated changes remain.
 
 ## Risks and rollback
 

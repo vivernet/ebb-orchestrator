@@ -31,7 +31,7 @@ Web UI собираются отдельными gates; текущий browser E
 `apps/server/dist/main.js` и Vite frontend с изолированным временным
 `EBB_ORCHESTRATOR_HOME`, проверяя реальный HTTP transport, вход по паролю и
 восстановление cookie-сессии после перезапуска. Это ещё не является полным покрытием всех UI flows, Hermes live runtime,
-Git/worktree recovery и SecretStore-провайжининга. Полный набор gate-команд зафиксирован в
+Git/worktree recovery и настройки SecretStore-провайдеров. Полный набор gate-команд зафиксирован в
 `scan-manifest.json` и CI workflow.
 Внешние deployment-провайдеры и GitHub-синхронизация остаются опциональными
 адаптерами v1 и не являются обязательными для local-first запуска.
@@ -212,7 +212,8 @@ MCP-инструменты проверяют capability и аргументы. 
 
 ### Hermes development skills
 
-Канонические project-local skills находятся в [`tools/hermes`](tools/hermes). Полный каталог каждого skill, назначение и source/installed path см. в README.
+Канонические локальные skills проекта находятся в [`tools/hermes`](tools/hermes).
+Полный каталог skills, их назначение и пути исходных и установленных копий см. в README.
 
 В проекте установлены и проверяются следующие 11 skills:
 
@@ -235,22 +236,99 @@ pnpm hermes:setup
 pnpm hermes:check
 ```
 
-## Документация и governance
+## Справочник pnpm-команд
 
-Скрипты для управления и проверкой документации в `docs/`:
+Все команды ниже подтверждены текущими `package.json`. Команды запускаются из
+корня, если не указано иное.
+
+### Установка, проверки и сборка
 
 ```bash
-# Список всех файлов с метаданными
-pnpm docs:inventory
-
-# Проверка YAML frontmatter и правила именования
-pnpm docs:check
-
-# Unit-тесты скриптов
-pnpm docs:test
+pnpm install --frozen-lockfile
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm build
+pnpm server:build
+pnpm web:build
 ```
 
-Перед коммитом выполняйте `pnpm docs:check` и `pnpm docs:test`.
+`pnpm lint` запускает ESLint. `pnpm typecheck` и `pnpm test` рекурсивно
+запускают одноимённые scripts workspace-пакетов. `pnpm build` собирает пакеты,
+которые имеют `build`. Сборки создают `dist/`, поэтому это не read-only
+команды.
+
+### Разработка и запуск
+
+```bash
+pnpm server:dev
+pnpm web:dev
+pnpm start
+```
+
+`server:dev` и `web:dev` — долгоживущие dev-серверы. `start` запускает уже
+собранный `apps/server/dist/main.js`; перед ним выполните `pnpm server:build` и
+задайте доступный для записи `EBB_ORCHESTRATOR_HOME`.
+
+### Hermes
+
+```bash
+pnpm hermes:setup
+pnpm hermes:check
+pnpm hermes:test
+pnpm hermes:execute -- <plan-path>
+```
+
+`hermes:setup` изменяет `HERMES_HOME` и конфигурацию Hermes. `hermes:check` и
+`hermes:test` проверяют установленную интеграцию и её скрипты. `hermes:execute`
+запускает выполнение плана и требует явного одобрения.
+
+### Документация
+
+```bash
+pnpm docs:inventory
+pnpm docs:check
+pnpm docs:test
+pnpm docs:roadmap -- --dry-run
+pnpm docs:rename:check
+pnpm docs:link:sync
+```
+
+`docs:inventory`, `docs:check`, `docs:test` и `docs:roadmap -- --dry-run` не
+создают выходной файл в рабочем репозитории. `docs:roadmap` без `--dry-run`
+записывает `docs/roadmap/generated.md`. `docs:rename:check` сейчас является
+заглушкой: завершается с кодом `0` и печатает `Rename check not yet implemented`.
+`docs:link:sync` присутствует в корневом manifest, но не реализована текущим
+диспетчером:
+завершается с кодом `1` и выводит usage; успешной проверкой её считать нельзя.
+
+### Дополнительные package scripts
+
+```bash
+pnpm --filter @ebb-orchestrator/server typecheck
+pnpm --filter @ebb-orchestrator/server test
+pnpm --filter @ebb-orchestrator/server test:auth-contract
+pnpm --filter @ebb-orchestrator/server start
+pnpm --filter @ebb-orchestrator/web dev
+pnpm --filter @ebb-orchestrator/web test
+pnpm --filter @ebb-orchestrator/web test:watch
+pnpm --filter @ebb-orchestrator/web test:e2e
+pnpm --filter @ebb-orchestrator/contracts build
+pnpm --filter @ebb-orchestrator/contracts typecheck
+pnpm --filter @ebb-orchestrator/contracts test
+pnpm --filter @ebb-orchestrator/testing typecheck
+pnpm --filter @ebb-orchestrator/testing test
+```
+
+`test:watch`, `server:dev` и `web:dev` не завершаются самостоятельно. Web E2E
+требует доступного окружения браузера и создаёт тестовые артефакты. Пакет
+`apps/server/test/e2e/fixtures/health-service` не входит в workspace glob;
+его команды запускаются из каталога fixture отдельно:
+
+```bash
+pnpm start
+pnpm test
+```
 
 ## Модель безопасности
 
@@ -340,7 +418,7 @@ pnpm --filter @ebb-orchestrator/server start
 
 По умолчанию backend использует локальный OS keyring (`@napi-rs/keyring`): на
 Windows это Credential Manager. Если keyring недоступен, API секретов отвечает
-`503` и не создаёт SQLite metadata — это fail-closed поведение.
+`503` и не создаёт метаданные SQLite — это fail-closed поведение.
 
 Опционально можно включить Infisical Cloud или self-hosted Infisical:
 
@@ -438,7 +516,7 @@ fixtures не входят в обязательное покрытие JSDoc.
 workflow, permissions, Git, persistence или runtime добавляйте тесты и
 проверяйте влияние на инварианты. Новый экспортируемый production API должен
 иметь полезный русский JSDoc по
-[`docs/development/jsdoc-style-guide.md`](docs/development/jsdoc-style-guide.md).
+[`docs/development/07-jsdoc-style-guide.md`](docs/development/07-jsdoc-style-guide.md).
 
 Не изменяйте runtime ради прохождения lint, не добавляйте blanket excludes и не
 выдумывайте контракт, которого нет в реализации. Перед отправкой изменений
