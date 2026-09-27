@@ -1,12 +1,10 @@
 ---
 id: plan-11
 kind: plan
-roadmap: 01
-stage: 11
 status: completed
-title: Plan Document
+title: Hermes Development Capabilities Implementation Plan
 created: 2026-09-23
-updated: 2026-09-23
+updated: 2026-09-27
 depends_on: []
 specs:
   - ../specs/01-system-design.md

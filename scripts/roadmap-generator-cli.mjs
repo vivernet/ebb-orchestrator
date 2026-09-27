@@ -1,206 +1,100 @@
 #!/usr/bin/env node
-/**
- * CLI для генерации roadmap из метаданных планов
- */
-
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from 'fs';
-import { dirname, join } from 'path';
+import { dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import * as yaml from 'js-yaml';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const ROOT = join(__dirname, '..');
-
-/**
- * Парсинг YAML frontmatter из markdown файла
- */
-function parseFrontmatter(content) {
-  const match = content.match(/^---\n([\s\S]*?)\n---/);
-  if (!match) return null;
-  
-  try {
-    return yaml.load(match[1]);
-  } catch {
-    return null;
-  }
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const statuses = new Set(['proposed', 'planned', 'in_progress', 'blocked', 'completed', 'superseded', 'cancelled']);
+const nonPlanKinds = new Set(['roadmap', 'spec', 'audit', 'proposal', 'guideline', 'ledger', 'reference', 'index', 'governance-evidence']);
+function calendarDate(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [year, month, day] = value.split('-').map(Number);
+  const date = new Date(0); date.setUTCHours(0, 0, 0, 0); date.setUTCFullYear(year, month - 1, day);
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
 }
-
-/**
- * Сбор всех планов из директории
- */
+function parsePlan(content, source) {
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  if (!match) throw new Error(`${source}: missing YAML frontmatter`);
+  const metadata = yaml.load(match[1], { schema: yaml.JSON_SCHEMA });
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) throw new Error(`${source}: metadata must be an object`);
+  const required = ['id', 'kind', 'status', 'title', 'created', 'updated'];
+  const optional = ['summary', 'depends_on', 'specs', 'evidence'];
+  for (const field of [...required, ...optional]) {
+    if (!Object.hasOwn(metadata, field)) continue;
+    if (['id', 'title', 'summary'].includes(field) && typeof metadata[field] !== 'string') throw new Error(`${source}: ${field} must be a string`);
+    if (['depends_on', 'specs', 'evidence'].includes(field) && (!Array.isArray(metadata[field]) || !metadata[field].every((value) => typeof value === 'string'))) throw new Error(`${source}: ${field} must be a string array`);
+  }
+  for (const field of required) if (!Object.hasOwn(metadata, field)) throw new Error(`${source}: missing ${field}`);
+  for (const field of Object.keys(metadata)) if (![...required, ...optional].includes(field)) throw new Error(`${source}: unknown field ${field}`);
+  if (metadata.kind !== 'plan') throw new Error(`${source}: kind must be plan`);
+  if (!statuses.has(metadata.status)) throw new Error(`${source}: invalid Plan status`);
+  for (const field of ['created', 'updated']) if (!calendarDate(metadata[field])) throw new Error(`${source}: invalid ${field} date`);
+  return metadata;
+}
 function collectPlans(dir) {
   const plans = [];
-  
-  function scan(dirPath) {
-    if (!statSync(dirPath).isDirectory()) return;
-    
-    for (const entry of readdirSync(dirPath)) {
-      const fullPath = join(dirPath, entry);
-      const stat = statSync(fullPath);
-      
-      if (stat.isDirectory()) {
-        scan(fullPath);
-      } else if (entry.endsWith('.md') && entry.startsWith('plan-') === false) {
-        const content = readFileSync(fullPath, 'utf8');
-        const metadata = parseFrontmatter(content);
-        
-        if (metadata && metadata.status !== undefined) {
-          plans.push({
-            ...metadata,
-            file_path: fullPath,
-          });
+  function scan(folder) {
+    for (const entry of readdirSync(folder)) {
+      const path = join(folder, entry); const stat = statSync(path);
+      if (stat.isDirectory()) scan(path);
+      else if (entry.endsWith('.md')) {
+        const text = readFileSync(path, 'utf8');
+        const match = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+        if (!match) throw new Error(`${path}: missing YAML frontmatter`);
+        let raw;
+        try {
+          raw = yaml.load(match[1], { schema: yaml.JSON_SCHEMA });
+        } catch (error) {
+          throw new Error(`${path}: invalid YAML: ${error.message}`, { cause: error });
         }
+        if (raw && typeof raw === 'object' && !Array.isArray(raw) && (nonPlanKinds.has(raw.kind) || raw.type === 'evidence')) continue;
+        plans.push(parsePlan(text, path));
       }
     }
   }
-  
-  scan(dir);
-  return plans;
+  scan(dir); return plans;
 }
-
-/**
- * Генерация roadmap документа
- */
 function generateRoadmap(plans) {
-  const lines = [];
-  
-  // YAML header
-  lines.push('---');
-  lines.push('id: roadmap-01');
-  lines.push('status: completed');
-  lines.push('kind: roadmap');
-  lines.push('title: Ebb Orchestrator Roadmap');
-  lines.push('summary: Unified roadmap consolidating all stages and plans');
-  lines.push(`created: 2026-09-16`);
-  lines.push(`updated: ${new Date().toISOString().split('T')[0]}`);
-  lines.push('---');
-  lines.push('');
-  lines.push('# Ebb Orchestrator Roadmap');
-  lines.push('');
-  lines.push('**Version:** Roadmap 01');
-  lines.push(`**Last Updated:** ${new Date().toISOString().split('T')[0]}`);
-  lines.push('**Status:** Active');
-  lines.push('');
-  lines.push('> This document is auto-generated from plan metadata. For manual edits, see [Governance Guide](../architecture/plans/governance/00-01-documentation-governance.md).');
-  lines.push('');
-  lines.push('---');
-  lines.push('');
-  lines.push('## Table of Contents');
-  lines.push('');
-  lines.push('1. [Overview](#overview)');
-  lines.push('2. [Global Stage Register](#global-stage-register)');
-  lines.push('3. [Plan Register](#plan-register)');
-  lines.push('4. [Dependency Graph](#dependency-graph)');
-  lines.push('5. [Blockers and Evidence](#blockers-and-evidence)');
-  lines.push('');
-  lines.push('---');
-  lines.push('');
-  
-  // Overview
-  lines.push('## Overview');
-  lines.push('');
-  lines.push('This roadmap consolidates all stages and plans into a single canonical document.');
-  lines.push('');
-  
-  // Stage Register
-  lines.push('---');
-  lines.push('');
-  lines.push('## Global Stage Register');
-  lines.push('');
-  
-  const stages = new Map();
-  for (const plan of plans) {
-    const stage = plan.stage;
-    if (!stages.has(stage)) {
-      stages.set(stage, { total: 0, completed: 0, title: plan.title || 'Plan' });
-    }
-    const s = stages.get(stage);
-    s.total++;
-    if (plan.status === 'completed') s.completed++;
-  }
-  
-  lines.push('| Stage | Total | Done | Progress |');
-  lines.push('|-------|-------|------|----------|');
-  for (const [stage, data] of [...stages.entries()].sort((a, b) => String(a[0]).localeCompare(String(b[0])))) {
-    const progress = Math.round((data.completed / data.total) * 100);
-    lines.push(`| ${stage} | ${data.total} | ${data.completed} | ${progress}% |`);
-  }
-  lines.push('');
-  
-  // Plan Register
-  lines.push('---');
-  lines.push('');
-  lines.push('## Plan Register');
-  lines.push('');
-  lines.push('| ID | Stage | Status | Title |');
-  lines.push('|----|-------|--------|-------|');
-  
-  for (const plan of plans) {
-    lines.push(`| ${plan.id || 'N/A'} | ${plan.stage || 'N/A'} | ${plan.status || 'unknown'} | ${plan.title || 'Untitled'} |`);
-  }
-  lines.push('');
-  
-  // Dependency Graph
-  lines.push('---');
-  lines.push('');
-  lines.push('## Dependency Graph');
-  lines.push('');
-  
-  for (const plan of plans) {
-    if (plan.depends_on && plan.depends_on.length > 0) {
-      for (const dep of plan.depends_on) {
-        lines.push(`${dep} → ${plan.id}`);
-      }
-    }
-  }
-  
-  lines.push('');
-  lines.push('---');
-  lines.push('');
-  
-  // Blockers and Evidence
-  lines.push('## Blockers and Evidence');
-  lines.push('');
-  lines.push('### Evidence Links');
-  lines.push('');
-  lines.push('| Evidence ID | Type | Link |');
-  lines.push('|-------------|------|------|');
-  lines.push('| E001 | Full Audit | docs/audit/01-full-audit.md |');
-  lines.push('| E002 | Web UI Code Map | docs/audit/web-ui-code-map.md |');
-  lines.push('| E003 | Web UI Gap Analysis | docs/audit/web-ui-gap-analysis.md |');
-  lines.push('');
-  
-  return lines.join('\n');
+  const rows = plans.map((plan) => `| ${plan.id} | ${plan.status} | ${plan.title} |`);
+  const deps = plans.flatMap((plan) => (plan.depends_on ?? []).map((dep) => `${dep} → ${plan.id}`));
+  const updated = plans.reduce((latest, plan) => plan.updated > latest ? plan.updated : latest, '2026-09-16');
+  return [
+    '---',
+    'id: roadmap-01',
+    'status: generated',
+    'kind: roadmap',
+    'title: Ebb Orchestrator Roadmap',
+    'summary: Generated from Plan metadata and dependencies',
+    'created: 2026-09-16',
+    `updated: ${updated}`,
+    '---',
+    '',
+    '# Ebb Orchestrator Roadmap',
+    '',
+    '## Plan Register',
+    '',
+    '| ID | Status | Title |',
+    '|----|--------|-------|',
+    ...rows,
+    '',
+    '## Dependency Graph',
+    '',
+    ...(deps.length ? deps : ['No dependencies.']),
+  ].join('\n') + '\n';
 }
 
-// Main execution
 const args = process.argv.slice(2);
 const dryRun = args.includes('--dry-run');
-const outputArg = args.find(arg => arg.startsWith('--output='));
-const outputPath = outputArg ? outputArg.split('=')[1] : 'docs/roadmap/generated.md';
-
-// Collect plans
-const plansDir = join(ROOT, 'docs/architecture/plans');
+const plansArg = args.find((arg) => arg.startsWith('--plans-root='));
+const outputArg = args.find((arg) => arg.startsWith('--output='));
+const plansDir = plansArg ? resolve(plansArg.slice('--plans-root='.length)) : join(ROOT, 'docs/architecture/plans');
+const outputPath = outputArg ? outputArg.slice('--output='.length) : 'docs/roadmap/generated.md';
 const plans = collectPlans(plansDir);
-
-// Generate content
 const content = generateRoadmap(plans);
-
 if (dryRun) {
-  console.log('=== DRY RUN MODE ===\n');
-  console.log(`Plans collected: ${plans.length}`);
-  console.log(`Output: ${outputPath}`);
-  console.log('\n--- Generated content preview ---\n');
-  console.log(content.slice(0, 500) + (content.length > 500 ? '...' : ''));
-  process.exit(0);
+  console.log('=== DRY RUN MODE ===\n'); console.log(`Plans collected: ${plans.length}`); console.log(`Output: ${outputPath}`); console.log('\n--- Generated content preview ---\n'); console.log(content.slice(0, 500) + (content.length > 500 ? '...' : ''));
+} else {
+  const output = resolve(ROOT, outputPath); mkdirSync(dirname(output), { recursive: true }); writeFileSync(output, content, 'utf8');
+  console.log(`Roadmap generated: ${outputPath}`); console.log(`Plans included: ${plans.length}`);
 }
-
-// Ensure output directory exists
-const outputDir = dirname(outputPath);
-mkdirSync(outputDir, { recursive: true });
-
-// Write output
-writeFileSync(outputPath, content, 'utf8');
-console.log(`Roadmap generated: ${outputPath}`);
-console.log(`Plans included: ${plans.length}`);

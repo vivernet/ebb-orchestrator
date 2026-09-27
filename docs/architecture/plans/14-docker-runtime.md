@@ -1,8 +1,6 @@
 ---
 id: plan-14
 kind: plan
-roadmap: 01
-stage: 12
 status: planned
 title: Дополнительный Docker runtime для Ebb Orchestrator
 summary: Добавить воспроизводимый Linux-контейнерный режим с одним контейнером Ebb Orchestrator, Git, Node.js 24 и Hermes, сохранив native Windows режим и fail-closed границы секретов, путей и восстановления.
@@ -93,13 +91,13 @@ Docker mode не является скрытой заменой native mode: е�
 
 ## Governance evidence и naming decision
 
-`docs/architecture/plans/governance/00-03-plan-naming-policy.md` требует шаблон `XX-name.md`, YAML frontmatter и регистрацию плана в roadmap. В каталоге уже существуют `plan-09`, `plan-11`, `plan-13`; текущий `14-docker-runtime.md` является незакоммиченным draft, а не зарегистрированным plan. Поэтому выбран следующий основной номер `14`, а предложенный пользователем stage `12` сохранён. Текущий `docs/roadmap/01-roadmap.md` не содержит stage 12 или plan-14. Этот draft остаётся `status: proposed`; после approval parent controller должен зарегистрировать `plan-14` в canonical `docs/roadmap/01-roadmap.md` в Stage 12 и Plan Register. Команда `pnpm docs:roadmap` вызывает `scripts/roadmap-generator-cli.mjs` и по умолчанию пишет `docs/roadmap/generated.md`; она не обновляет canonical `docs/roadmap/01-roadmap.md`, поэтому генерация — отдельная проверка/артефакт, а не молчаливое обновление roadmap.
+Историческая запись naming decision (superseded): в исходном draft номер `14` выбирался по шаблону `XX-name.md`; предложенный тогда `stage 12` и идея регистрации в `docs/roadmap/01-roadmap.md` отражают прежнюю схему группировки, а не действующий metadata contract или обязательный шаг. Draft status, evidence и наблюдения о генераторе сохранены как история. `pnpm docs:roadmap` вызывает `scripts/roadmap-generator-cli.mjs` и по умолчанию пишет `docs/roadmap/generated.md`; генерация не обновляет `docs/roadmap/01-roadmap.md`.
 
 ## Plan lifecycle
 
 - `proposed`: текущий draft после review/fix, до approval; наличие файла не означает регистрацию или completed.
-- `planned`: parent controller выставляет этот status только после approval и регистрации `plan-14` в Stage 12/Plan Register canonical `docs/roadmap/01-roadmap.md`.
-- `in_progress`: выставляется при фактическом исполнении approved tasks; roadmap registration и plan status обновляются отдельным governance-действием.
+- `planned`: в исходной процедуре status предполагалось выставлять после approval и roadmap-регистрации; эта связь с Stage 12/Plan Register superseded и не является нормативным условием.
+- `in_progress`: выставляется при фактическом исполнении approved tasks; исходное требование синхронно обновлять roadmap registration сохранено как историческая процедура, но superseded.
 - `completed`: допустим только после всех focused/full/recovery/security/docs gates и release decision; review draft или наличие implementation plan не являются completion evidence.
 
 ## Acceptance Criteria

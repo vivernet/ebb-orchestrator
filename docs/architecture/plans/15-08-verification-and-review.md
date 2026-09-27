@@ -1,12 +1,10 @@
 ---
 id: plan-15-08
 kind: plan
-roadmap: 01
-stage: 13
 status: completed
 title: Verification, security evidence и independent plan review
 created: 2026-09-25
-updated: 2026-09-26
+updated: 2026-09-27
 depends_on:
   - plan-15-03
   - plan-15-09

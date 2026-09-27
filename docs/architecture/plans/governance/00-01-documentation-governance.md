@@ -1,13 +1,11 @@
 ---
 id: plan-00
 kind: plan
-roadmap: 01
-stage: 00
 status: completed
 title: Documentation Governance Refactoring
 summary: Рефакторинг документации и единого roadmap
 created: 2026-09-16
-updated: 2026-09-23
+updated: 2026-09-27
 ---
 # Рефакторинг документации и единого roadmap — план реализации
 
@@ -15,7 +13,7 @@ updated: 2026-09-23
 
 **Цель:** полностью привести `docs/` к единой модели нумерации, именования, типов документов, ссылок и статусов, объединить конкурирующие roadmap/plan-документы и сделать единый автоматически проверяемый roadmap проекта.
 
-**Архитектура:** документация остаётся Git-tracked source of truth. Каждый управляемый документ получает строгий metadata-блок с глобальным `id`, типом, принадлежностью к roadmap/stage, статусом и зависимостями. `docs/roadmap/01-roadmap.md` становится единственным каноническим roadmap; его сводные таблицы и графы генерируются из metadata планов/specs/proposals, а ручной текст ограничивается целями, решениями и правилами. Скрипт документационного каталога работает детерминированно, не читает Git history для определения статуса и не угадывает состояние по датам или checkbox.
+**Архитектура:** документация остаётся Git-tracked source of truth. Каждый управляемый документ получает metadata с глобальным `id`, типом и статусом. Для Plan идентичность и зависимости задаются только Plan ID и `depends_on`; данные roadmap/stage не входят в Plan metadata. `docs/roadmap/generated.md` — единственный поддерживаемый generated roadmap, построенный только из Plan metadata; `docs/roadmap/01-roadmap.md` остаётся историческим снимком. Скрипт документационного каталога работает детерминированно, не читает Git history для определения статуса и не угадывает состояние по датам или checkbox.
 
 **Технологический стек:** Markdown, YAML front matter, Node.js ESM, `node:fs`, `node:path`, `node:url`, `node:test`, существующие команды pnpm/Hermes development workflow.
 
@@ -23,13 +21,12 @@ updated: 2026-09-23
 
 ## Глобальные ограничения
 
-- Нумерация filename всегда находится в начале и использует фиксированную ширину (`00`, `01`, `02`, ...).
+- Числовой префикс используется только для нескольких документов одного типа, образующих упорядочиваемую серию; уникальные документы получают описательные имена без префикса. `README.md` — исключение: без префикса и YAML frontmatter.
 - Даты не используются в filename; исходные даты сохраняются в metadata и историческом тексте документов.
-- `docs/roadmap/01-roadmap.md` — единственный канонический roadmap; конкурирующие roadmap не сохраняются как параллельные источники истины.
-- Номер `roadmap` и номер `stage` не сбрасываются при переходе к следующему циклу планирования.
-- В актуальной документации используется единый термин `Stage`; `Phase` заменяется на `Stage`, если это описание исполняемой последовательности.
+- Generated roadmap — производный документ; его изменяют только через генератор.
+- Идентичность и зависимости Plan задаются только Plan ID и `depends_on`; отдельная группировка планов не используется.
+- Эта политика документации не меняет термины или значения сущностей runtime workflow.
 - `Plan` означает исполняемый документ, `Spec` — утверждённый design/contract, `Audit` — evidence snapshot, `Proposal` — неутверждённое направление, `Reference` — справочный или визуальный материал, `Guideline` — правило процесса.
-- `00` зарезервирован для governance/служебных планов и не является продуктовым Stage.
 - Новые и изменяемые комментарии production-кода должны быть на русском языке; документация также ведётся на русском, кроме технических identifiers и названий внешних протоколов.
 - Не изменять product runtime scope, domain semantics, approval policy или security model.
 - Не удалять исторические audit evidence; при объединении сохранять provenance, дату и исходный источник.
@@ -93,6 +90,17 @@ node scripts/docs-governance.mjs inventory --root docs
 
 ## 1. Каноническая модель идентификаторов и metadata
 
+Для Plan действует точный контракт: обязательные `id: string`, `kind: 'plan'`, `status: PlanStatus`, `title: string`, `created` и `updated` как ISO calendar date `YYYY-MM-DD`; `PlanStatus` — `proposed | planned | in_progress | blocked | completed | superseded | cancelled`. Необязательные поля: `summary: string`, `depends_on: string[]`, `specs: string[]`, `evidence: string[]`. Парсер проверяет обязательные поля, типы присутствующих необязательных полей, enum и календарную корректность дат без coercion. `id` и `depends_on` — единственная модель идентичности и зависимостей Plan; `roadmap` и `stage` не являются Plan metadata. Статусы и metadata документов иного `kind` остаются вне этого контракта.
+
+## 1.1. Каноническая naming/lifecycle policy
+
+- Plan идентифицируется только Plan ID; зависимости задаются только `depends_on`. Не добавлять поля или отдельную модель группировки для roadmap/stage.
+- Префикс применяется только к нескольким документам одного типа, составляющим упорядочиваемую серию. Уникальные документы получают уникальные описательные filenames без префикса.
+- `README.md` — исключение: имя остаётся без префикса, YAML frontmatter и Plan metadata.
+- Для `kind: plan` допустимы только статусы из `PlanStatus`, определённого выше. Эта lifecycle-валидация не применяется к документам другого `kind`; их собственные статусы, включая `draft`, сохраняются.
+- Roadmap, помеченный как generated, изменяется только предусмотренным генератором; generated output не редактируется вручную.
+- Эти правила не меняют значения или семантику runtime workflow.
+
 ### Task 1: Создать schema и parser документационного metadata
 
 **Files:**
@@ -117,8 +125,6 @@ Metadata schema:
 ---
 id: plan-01
 kind: plan
-roadmap: 01
-stage: 01
 status: completed
 title: Foundation и Persistence
 summary: Краткое описание результата документа
@@ -164,7 +170,7 @@ cancelled
 
 - обязательные поля `id`, `kind`, `title`, `status`, `created`, `updated`;
 - `id` соответствует `^(roadmap|spec|plan|audit|proposal|guideline|ledger|reference|index)-[0-9]{2}(-[0-9]{2})?$` там, где тип использует числовую идентификацию;
-- `roadmap` и `stage` имеют две цифры;
+- Plan metadata не содержит полей группировки `roadmap`/`stage`; связи Plan задаются только `id` и `depends_on`;
 - `status` принадлежит enum;
 - `depends_on`, `specs`, `evidence` являются массивами строк;
 - даты имеют ISO-формат `YYYY-MM-DD`;
@@ -309,7 +315,7 @@ Expected: FAIL с полным перечнем legacy violations; ошибки 
 - new path;
 - action: `rename`, `merge`, `archive`, `keep`;
 - document kind;
-- roadmap/stage;
+- `id` и `depends_on` для Plan records; runtime Stage references и исторические группировочные поля сохраняются только как данные источника, не как Plan metadata;
 - source date;
 - canonical target;
 - conflict decision;
@@ -371,12 +377,14 @@ Expected: PASS только после того, как все текущие ф
 - `writeGeneratedRoadmap(path: string, content: string): void`.
 - `isGeneratedRoadmapUpToDate(path: string, expected: string): boolean`.
 
+> **Архивная спецификация:** следующий список описывает прежнюю структуру ручного roadmap до Plan-only миграции; текущий generated output находится в `docs/roadmap/generated.md` и не включает отдельный register.
+
 `01-roadmap.md` должен содержать:
 
 1. назначение и правила документа;
 2. текущий generated timestamp/commit-independent update date из metadata, но не runtime guess;
 3. `Roadmap 01` и следующие roadmap generations как секции;
-4. глобальный Stage register;
+4. глобальный Stage register для runtime workflow stages; он не группирует и не классифицирует Plans;
 5. Plan register;
 6. dependency graph;
 7. status summary;
@@ -388,12 +396,11 @@ Expected: PASS только после того, как все текущие ф
 
 Roadmap generator должен:
 
-- сортировать roadmap/stage/plan numerically;
+- сортировать Plan records по Plan ID и зависимости по `depends_on`; runtime Stage register, если он отображается, остаётся отдельным от Plan metadata;
 - не считать `superseded` активным;
 - не считать наличие file или checkbox доказательством completion;
 - показывать `blocked` с причиной из metadata/evidence;
 - падать на duplicate IDs;
-- падать на stage без roadmap;
 - падать на dependency cycle;
 - сохранять ручные policy sections по explicit markers;
 - обновлять только generated sections;
@@ -962,7 +969,7 @@ Confirm:
 - no active filename uses `v1`, `post-v1` or `next` as its numbering scheme;
 - every managed lifecycle document has valid metadata;
 - every plan has one canonical ID;
-- Stage numbers are unique and globally ordered;
+- runtime Stage terminology and records remain intact and are not inferred from or stored as Plan grouping metadata;
 - roadmap generations are explicit sections, not competing files;
 - `00` contains only governance/meta plans;
 - all unique content from merged documents is preserved or explicitly classified as superseded.
@@ -1038,8 +1045,8 @@ No push, merge into `master`, tag or release. Report exact commit/working-tree s
 - [ ] `docs/roadmap/01-roadmap.md` is the only canonical roadmap.
 - [ ] All managed filenames begin with a fixed-width number.
 - [ ] Dates moved from filenames to metadata/content.
-- [ ] `Stage` is the only active delivery-stage term.
-- [ ] Roadmap generations and global Stage numbering are documented.
+- [ ] Plan identity/dependencies use only Plan ID and `depends_on`; no active Plan grouping by roadmap/stage remains.
+- [ ] Runtime Stage terminology/records and historical records are preserved; they do not define Plan identity or grouping.
 - [ ] Specs, plans, audits, proposals, guidelines, ledgers and references have distinct semantics.
 - [ ] `docs/README.md` fully documents the system and contains no stale manual inventory.
 - [ ] Metadata parser, validator, link checker and roadmap generator have tests.

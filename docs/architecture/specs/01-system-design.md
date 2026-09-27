@@ -3,7 +3,6 @@ id: spec-01
 status: superseded
 title: System Design
 date: 2026-09-16
-stage: 01
 type: spec
 tags: [architecture, design, system]
 ---
@@ -1603,33 +1602,35 @@ Mobile UI
 
 Enterprise extension points не должны усложнять v1.
 
-## 21.4. Порядок реализации
+## 21.4. Историческая последовательность реализации (superseded)
 
-### Stage 1 — Foundation
+Ниже сохранён исторический sequence исходного design draft. Он не является актуальным планом реализации или нормативной группировкой; актуальные зависимости фиксируются в metadata отдельных Plan.
+
+### Historical Stage 1 — Foundation
 
 SQLite, migrations, config, IDs, Artifacts, Event Bus/Outbox, Jobs, logging.
 
-### Stage 2 — Work + Workflow
+### Historical Stage 2 — Work + Workflow
 
 Project/Epic/Task/Dependency/Proposal/Decision, Workflow Engine, Approvals, FakeAgentRuntime.
 
-### Stage 3 — Scheduler + Recovery
+### Historical Stage 3 — Scheduler + Recovery
 
 Parallel limits, Resource Locks, priorities, run lifecycle, Recovery, no-progress/loop detection.
 
-### Stage 4 — Git + Worktrees
+### Historical Stage 4 — Git + Worktrees
 
 Git Manager, Worktree Manager, GitOperation journal, Task/Epic branches, integration workspaces, reconciliation.
 
-### Stage 5 — Security / Execution
+### Historical Stage 5 — Security / Execution
 
 Action Gateway, Permission Engine, filesystem/Git/project command tools, secret/env isolation.
 
-### Stage 6 — Hermes Runtime
+### Historical Stage 6 — Hermes Runtime
 
 Hermes adapter, session lifecycle, start/resume/cancel, controlled tools, `submit_result`, usage collection. Сначала только Developer на manually created Task.
 
-### Stage 7 — Vertical Slice 1: Autonomous Task
+### Historical Stage 7 — Vertical Slice 1: Autonomous Task
 
 Reviewer + QA + Integration.
 
@@ -1642,15 +1643,15 @@ Human-created Task
 → manual merge
 ```
 
-### Stage 8 — Vertical Slice 2: Request → Completed Task
+### Historical Stage 8 — Vertical Slice 2: Request → Completed Task
 
 Добавляется Coordinator planning/classification.
 
-### Stage 9 — Vertical Slice 3: Large Feature / Epic
+### Historical Stage 9 — Vertical Slice 3: Large Feature / Epic
 
 PM + Architect + Epic planning + parallel Task + Epic Review/QA/final integration.
 
-### Stage 10 — Advanced context/knowledge + Usage UI + optional GitHub
+### Historical Stage 10 — Advanced context/knowledge + Usage UI + optional GitHub
 
 Укрепляются Guideline/Decision lifecycle, Context Budget/Delta, dashboards и базовый GitHubAdapter.
 

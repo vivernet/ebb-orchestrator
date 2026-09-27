@@ -122,7 +122,7 @@
     },
     {
       "text": "Stage 01 Merge Decisions",
-      "target": "../architecture/plans/governance/08-stage-01-merge-decisions.md",
+      "target": "../architecture/plans/governance/merge-decisions.md",
       "line": 37
     },
     {
@@ -207,7 +207,7 @@
     },
     {
       "text": "detailed merge decisions",
-      "target": "../architecture/plans/governance/08-stage-01-merge-decisions.md",
+      "target": "../architecture/plans/governance/merge-decisions.md",
       "line": 272
     },
     {

@@ -1,8 +1,6 @@
 ---
 id: plan-17
 kind: plan
-roadmap: 01
-stage: 17
 status: planned
 title: Надёжность CI evidence и единая конфигурация Ebb Orchestrator
 created: 2026-09-27

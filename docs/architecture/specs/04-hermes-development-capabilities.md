@@ -3,7 +3,6 @@ id: spec-04
 status: superseded
 title: Hermes Development Capabilities
 date: 2026-09-21
-stage: 11
 type: spec
 tags: [hermes, development, capabilities]
 ---
@@ -30,7 +29,7 @@ tags: [hermes, development, capabilities]
 - автоматическое переключение production runtime;
 - хранение API key в Git, prompt, логах, artifacts или README;
 - установка внешних Codex marketplace plugins в пользовательский профиль;
-- удаление `.opencode` до успешного Stage 9 parity-run;
+- удаление `.opencode` до успешного parity-run (историческая зависимость от Stage 9; sequence superseded);
 - изменение domain workflow, permission semantics или v1 product scope.
 
 ## Архитектура

@@ -4,20 +4,22 @@ kind: ledger
 status: draft
 title: Reconciliation ledger for plan-15 roadmap registration
 created: 2026-09-25
-updated: 2026-09-25
+updated: 2026-09-27
 ---
 
 # Plan-15 roadmap reconciliation ledger
+
+> Архивный журнал; последняя записанная promotion-сверка датирована 2026-09-26. Все статусы, значения группировки и read-back ниже — снимки на указанные даты, а не текущее состояние. Текущая модель использует Plan ID, `status` и `depends_on`; поля группировки удалены из Plan metadata.
 
 ## Scope
 
 Зарегистрированы родительский plan-15 и части 15-01–15-08. На этапе регистрации все девять планов имели `status: planned`; bootstrap перевёл только родительский plan-15 в `status: in_progress`, не меняя статусы частей. Последующая реализация 15-01 и 15-02 зафиксирована отдельными transition sections ниже; этот transition не изменяет production code или tests. `docs/architecture/plans/16-documentation-cleanup-and-refresh.md` не входит в регистрацию и сохранён без изменения.
 
-## Fresh validation
+## Initial bootstrap validation (2026-09-25)
 
-Проверены frontmatter и граф зависимостей девяти файлов plan-15 после bootstrap: уникальные IDs `plan-15`, `plan-15-01`–`plan-15-08`; `kind: plan`, `roadmap: 01`, `stage: 13`; родительский `status: in_progress`, части `status: planned`; граф ацикличен. Все `specs`, `evidence` и зависимости разрешаются; внешние зависимости родительского плана `plan-12` и `plan-13` разрешены как существующие предшествующие планы.
+Исторический metadata snapshot от 2026-09-25 после bootstrap: проверены frontmatter и граф зависимостей девяти файлов plan-15; тогдашние `roadmap: 01` и `stage: 13` — бывшие поля группировки, не текущая Plan metadata. Уникальные IDs `plan-15`, `plan-15-01`–`plan-15-08`; родительский `status: in_progress`, части `status: planned`; граф ацикличен. Все `specs`, `evidence` и зависимости разрешались; внешние зависимости `plan-12` и `plan-13` существовали.
 
-Read-back канонического roadmap после bootstrap подтвердил ровно 9 записей plan-15: `plan-15`, `plan-15-01`, `plan-15-02`, `plan-15-03`, `plan-15-04`, `plan-15-05`, `plan-15-06`, `plan-15-07`, `plan-15-08`; у всех `stage: 13`, у родителя `status: in_progress`, у частей `status: planned`; duplicate IDs отсутствуют. Generated output: `docs/roadmap/01-roadmap.md`.
+Historical read-back от 2026-09-25: тогдашний canonical roadmap после bootstrap содержал ровно 9 записей plan-15: `plan-15`, `plan-15-01`, `plan-15-02`, `plan-15-03`, `plan-15-04`, `plan-15-05`, `plan-15-06`, `plan-15-07`, `plan-15-08`; бывшее группировочное значение для всех — 13, у родителя `status: in_progress`, у частей `status: planned`; duplicate IDs отсутствовали. Это исторический снимок, не текущий register. Generated output тогда: `docs/roadmap/01-roadmap.md`.
 
 ## Command ledger
 
@@ -53,7 +55,7 @@ id: roadmap-01
 status: completed
 kind: roadmap
 title: Ebb Orchestrator Roadmap
-summary: Unified roadmap consolidating all stages and plans
+summary: Historical snapshot used for plan-15 registration validation
 created: 2026-09-16
 updated: 2026-09-25
 ---
@@ -87,10 +89,10 @@ Plans included: 27
 ### Canonical roadmap read-back
 
 - Exit code: `0`
-- Result: PASS; exact plan-15 count, IDs, stage/status and duplicate check verified.
+- Исторический read-back от 2026-09-25: PASS; проверены точное число Plan-15, IDs, бывшие grouping/status значения и дубликаты; результат не описывает текущую metadata.
 
 ```text
-Canonical roadmap contains exactly 9 plan-15 entries: plan-15-01, plan-15-02, plan-15-03, plan-15-04, plan-15-05, plan-15-06, plan-15-07, plan-15-08, plan-15; all stage=13/status=planned; no duplicate plan-15 IDs.
+Архивный read-back от 2026-09-25: canonical roadmap тогда содержал ровно 9 записей plan-15: plan-15-01, plan-15-02, plan-15-03, plan-15-04, plan-15-05, plan-15-06, plan-15-07, plan-15-08, plan-15; бывшее группировочное значение для всех — 13, статусы тогда были `planned`; дубликатов ID не было. Это не текущая Plan metadata.
 ```
 
 ### `pnpm docs:check` after generated roadmap
@@ -110,6 +112,8 @@ Found 1 warning(s):
 
 - Exit code: `0`
 - Result: PASS; 11 tests passed, 0 failed, 0 skipped.
+
+Архивный output от 2026-09-25: тест ещё проверял прежнюю группировку roadmap по stage; его название не описывает текущую Plan-only модель.
 
 ```text
 $ node --test scripts/docs-governance.test.mjs
@@ -157,7 +161,7 @@ id: roadmap-01
 status: completed
 kind: roadmap
 title: Ebb Orchestrator Roadmap
-summary: Unified roadmap consolidating all stages and plans
+summary: Historical snapshot used for plan-15 registration validation
 created: 2026-09-16
 updated: 2026-09-25
 ---
@@ -218,7 +222,7 @@ Plans included: 28
 - `pnpm docs:roadmap -- --dry-run --output=docs/roadmap/01-roadmap.md` — exit `0`; `Plans collected: 28`, output `docs/roadmap/01-roadmap.md`.
 - `pnpm docs:roadmap -- --output=docs/roadmap/01-roadmap.md` — exit `0`; stdout exactly `Roadmap generated: docs/roadmap/01-roadmap.md` and `Plans included: 28`.
 - Plan graph/path validation — exit `0`; 9 plan files, unique IDs, no unresolved dependencies, no missing specs/evidence, no cycles.
-- Roadmap read-back — exit `0`; exactly 9 plan-15 entries, no duplicate IDs, parent `in_progress`, children `planned`, all `stage: 13`.
+- Архивный roadmap read-back от 2026-09-25: exit `0`; тогда было ровно 9 plan-15 entries без duplicate IDs, parent `in_progress`, children `planned`; `stage: 13` было бывшим grouping-значением, не текущим Plan-полем.
 
 ## Bootstrap verification results
 
@@ -256,7 +260,7 @@ Parent metadata remains `plan-15: in_progress`; child metadata is reconciled as 
 - `pnpm docs:check` before roadmap generation — exit `0`; one existing warning only: `[WARNING] roadmap/generated.md` / `Filename does not start with numeric prefix`.
 - `pnpm docs:roadmap -- --dry-run --output=docs/roadmap/01-roadmap.md` — exit `0`; `Plans collected: 28`; output `docs/roadmap/01-roadmap.md`.
 - `pnpm docs:roadmap -- --output=docs/roadmap/01-roadmap.md` — exit `0`; stdout exactly `Roadmap generated: docs/roadmap/01-roadmap.md` and `Plans included: 28`.
-- Canonical roadmap read-back — exit `0`; exactly 9 plan-15 rows in generator order: `plan-15-01`, `plan-15-02`, `plan-15-03`, `plan-15-04`, `plan-15-05`, `plan-15-06`, `plan-15-07`, `plan-15-08`, `plan-15`; all `stage: 13`; `plan-15: in_progress`; `plan-15-01: completed`; `plan-15-02`–`plan-15-08: planned`; no duplicate IDs.
+- Архивный canonical roadmap read-back от 2026-09-25: exit `0`; тогда было ровно 9 строк plan-15 в порядке генератора: `plan-15-01`, `plan-15-02`, `plan-15-03`, `plan-15-04`, `plan-15-05`, `plan-15-06`, `plan-15-07`, `plan-15-08`, `plan-15`; бывшее grouping-значение `stage: 13`; тогдашние статусы — `plan-15: in_progress`, `plan-15-01: completed`, `plan-15-02`–`plan-15-08: planned`; duplicate IDs отсутствовали. Это не текущая metadata.
 - `pnpm docs:check` after roadmap generation — exit `0`; the same existing `roadmap/generated.md` filename warning only.
 - `pnpm docs:test` — exit `0`; 11 passed, 0 failed, 0 skipped.
 - `git diff --check` — exit `0`; Git reported only the existing CRLF-normalization warning for `docs/architecture/plans/16-documentation-cleanup-and-refresh.md`.
@@ -300,7 +304,7 @@ Parent metadata remains `plan-15: in_progress`; child metadata is reconciled as 
   ```
 - `pnpm docs:roadmap -- --dry-run --output=docs/roadmap/01-roadmap.md` — exit `0`; exact result included `Plans collected: 28` and `Output: docs/roadmap/01-roadmap.md`.
 - `pnpm docs:roadmap -- --output=docs/roadmap/01-roadmap.md` — exit `0`; exact stdout: `Roadmap generated: docs/roadmap/01-roadmap.md` and `Plans included: 28`.
-- Canonical roadmap read-back — exit `0`; exactly 9 plan-15 rows: `plan-15-01`, `plan-15-02`, `plan-15-03`, `plan-15-04`, `plan-15-05`, `plan-15-06`, `plan-15-07`, `plan-15-08`, `plan-15`; all `stage: 13`; `plan-15: in_progress`; `plan-15-01` and `plan-15-02: completed`; `plan-15-03`–`plan-15-08: planned`; no duplicate IDs. Frontmatter read-back matched the same states.
+- Архивный canonical roadmap read-back от 2026-09-25: exit `0`; тогда было ровно 9 строк plan-15: `plan-15-01`, `plan-15-02`, `plan-15-03`, `plan-15-04`, `plan-15-05`, `plan-15-06`, `plan-15-07`, `plan-15-08`, `plan-15`; бывшее grouping-значение `stage: 13`; тогдашние статусы — `plan-15: in_progress`, `plan-15-01` и `plan-15-02: completed`, `plan-15-03`–`plan-15-08: planned`; duplicate IDs отсутствовали. Read-back отражает только тот исторический snapshot.
 - `pnpm docs:check` after roadmap generation — exit `0`; the same one existing warning only: `[WARNING] roadmap/generated.md` / `Filename does not start with numeric prefix`.
 - `pnpm docs:test` — exit `0`; **11 passed, 0 failed, 0 skipped**.
 - `git diff --check` — exit `0` after removing the transition's trailing blank line; Git reported only the existing CRLF-normalization warning for `docs/architecture/plans/16-documentation-cleanup-and-refresh.md`.
@@ -354,9 +358,9 @@ The contract amendment review found that the completed-task ledger was inconsist
 
 A new planned prerequisite, `plan-15-09` / `15-09-atomic-auth-v2-remediation.md`, now depends on `15-01`–`15-03` and owns the internal v2 port, repository, service, fake and concurrency remediation. Its `validateCsrf` source-absence proof is limited to `auth-ports.ts`, `auth-repository.ts`, `auth-service.ts`, `test/helpers/auth.ts`, `auth-onboarding-contract.test.ts` and `auth-service-red.test.ts`; it does not read or assert `create-app.ts`. It requires `AUTH_PORT_CONTRACT_VERSION=2`, exactly one repository `BEGIN IMMEDIATE` authorized-mutation transaction, and rotation-vs-authorized-mutation plus touch-vs-logout races in both controlled orders. Each race uses two independent file-backed workers that acknowledge readiness, blocks both on a barrier, releases only the designated first worker, waits for its `BEGIN IMMEDIATE` acquisition acknowledgement before releasing the second, and records durable snapshots after first completion and after both completions; missing or duplicate acknowledgements fail the test. `15-04` now depends on verified `15-09`, exclusively removes `validateCsrf` adapter references from `create-app.ts`/route tests, consumes rather than redefines the atomic port, and owns the exact green assertion that every accepted protected mutation makes one and only one `authenticateCsrfAndTouch` call.
 
-### Current task state and corrected roadmap assertion
+### Historical task-state snapshot and roadmap assertion (2026-09-25)
 
-The next generated-roadmap read-back must contain exactly 10 `plan-15` entries: parent `plan-15` plus nine child plans `plan-15-01`–`plan-15-09`. Expected metadata is parent `in_progress`; `plan-15-01`, `plan-15-02` and `plan-15-03` `completed`; and `plan-15-09`, `plan-15-04`, `plan-15-05`, `plan-15-06`, `plan-15-07` and `plan-15-08` `planned`. Every entry remains stage 13 with unique IDs and a valid acyclic dependency graph. Earlier nine-entry records above are historical bootstrap evidence from before `plan-15-09` existed and must not be reused as the current assertion.
+At the time of this 2026-09-25 snapshot, the former grouping value was 13. The expected 10 `plan-15` entries were the parent `plan-15` plus child plans `plan-15-01`–`plan-15-09`. Parent status was `in_progress`; `plan-15-01`, `plan-15-02` and `plan-15-03` were `completed`; `plan-15-09`, `plan-15-04`, `plan-15-05`, `plan-15-06`, `plan-15-07` and `plan-15-08` were `planned`. This was a historical validation snapshot, not a current roadmap assertion.
 
 | Task | State | Причина |
 |---|---|---|
@@ -392,7 +396,7 @@ This controller transition preserves the historical DONE/PASS records for `15-01
 - `pnpm docs:check` before roadmap generation — exit `0`; the only warning was `[WARNING] roadmap/generated.md` / `Filename does not start with numeric prefix`.
 - `pnpm docs:roadmap -- --dry-run --output=docs/roadmap/01-roadmap.md` — exit `0`; `Plans collected: 29`; output `docs/roadmap/01-roadmap.md`.
 - `pnpm docs:roadmap -- --output=docs/roadmap/01-roadmap.md` — exit `0`; stdout: `Roadmap generated: docs/roadmap/01-roadmap.md` and `Plans included: 29`.
-- Canonical roadmap read-back — exit `0`; exactly 10 unique stage-13 `plan-15` entries; parent `plan-15` is `in_progress`; `plan-15-01`–`plan-15-03` and `plan-15-09` are `completed`; `plan-15-04`–`plan-15-08` are `planned`; dependency `plan-15-09 → plan-15-04` is present.
+- Архивный canonical roadmap read-back от 2026-09-25: exit `0`; тогда было 10 уникальных plan-15 entries с бывшим grouping-значением `stage: 13`; parent `plan-15` был `in_progress`; `plan-15-01`–`plan-15-03` и `plan-15-09` были `completed`, `plan-15-04`–`plan-15-08` — `planned`; зависимость `plan-15-09 → plan-15-04` присутствовала. Значение `stage` не является текущей metadata.
 - `pnpm docs:check` after roadmap generation — exit `0`; the same existing `roadmap/generated.md` filename warning only.
 - `pnpm docs:test` — exit `0`; **11 passed, 0 failed, 0 skipped**.
 - `git diff --check` — exit `0`; it emitted only pre-existing CRLF-normalization warnings for plan-16 and `start.bat`.
@@ -429,7 +433,7 @@ The approved `15-09` atomic auth v2 prerequisite completed its independent task/
 - Full suite — known **17 route 503 failures** caused by pending `15-04` create-app composition; not a `15-09` failure.
 - `pnpm docs:roadmap -- --dry-run --output=docs/roadmap/01-roadmap.md` — exit `0`; `Plans collected: 29`.
 - `pnpm docs:roadmap -- --output=docs/roadmap/01-roadmap.md` — exit `0`; `Roadmap generated: docs/roadmap/01-roadmap.md`; `Plans included: 29`.
-- Canonical roadmap read-back — exit `0`; exactly 10 stage-13 `plan-15` entries: `plan-15-01`–`plan-15-03` and `plan-15-09` are `completed`; `plan-15-04`–`plan-15-08` are `planned`; parent `plan-15` is `in_progress`; no duplicate IDs.
+- Архивный canonical roadmap read-back от 2026-09-25: exit `0`; тогда было 10 plan-15 entries с бывшим grouping-значением `stage: 13`; `plan-15-01`–`plan-15-03` и `plan-15-09` были `completed`, `plan-15-04`–`plan-15-08` — `planned`, parent `plan-15` — `in_progress`; duplicate IDs отсутствовали. Это не текущая metadata.
 - `pnpm docs:check` — exit `0`; one existing warning only: `roadmap/generated.md` filename lacks numeric prefix.
 - `pnpm docs:test` — exit `0`; **11 passed, 0 failed, 0 skipped**.
 - `git diff --check` — exit `0`; only pre-existing CRLF-normalization warnings for plan-16 and `start.bat`.
@@ -466,7 +470,7 @@ The `15-04` server security boundary implementation and independent review retur
 - `pnpm docs:check` before roadmap generation — exit `0`; one existing warning only: `roadmap/generated.md` filename lacks a numeric prefix.
 - `pnpm docs:roadmap -- --dry-run --output=docs/roadmap/01-roadmap.md` — exit `0`; `Plans collected: 29`; output `docs/roadmap/01-roadmap.md`.
 - `pnpm docs:roadmap -- --output=docs/roadmap/01-roadmap.md` — exit `0`; `Roadmap generated: docs/roadmap/01-roadmap.md`; `Plans included: 29`.
-- Canonical roadmap read-back — exit `0`; exactly 10 stage-13 plan-15 rows with unique IDs: `plan-15-01`, `plan-15-02`, `plan-15-03`, `plan-15-04`, `plan-15-05`, `plan-15-06`, `plan-15-07`, `plan-15-08`, `plan-15-09`, `plan-15`; `plan-15` is `in_progress`, `15-01`–`15-04` and `15-09` are `completed`, and `15-05`–`15-08` are `planned`.
+- Архивный canonical roadmap read-back от 2026-09-25: exit `0`; тогда было 10 plan-15 rows с уникальными IDs `plan-15-01`, `plan-15-02`, `plan-15-03`, `plan-15-04`, `plan-15-05`, `plan-15-06`, `plan-15-07`, `plan-15-08`, `plan-15-09`, `plan-15`; бывшее grouping-значение — `stage: 13`; parent был `in_progress`, `15-01`–`15-04` и `15-09` — `completed`, `15-05`–`15-08` — `planned`. Значение группировки не является текущей metadata.
 - `pnpm docs:check` after roadmap generation — exit `0`; the same existing warning only.
 - `pnpm docs:test` — exit `0`; **11 passed, 0 failed, 0 skipped**.
 - `git diff --check` — exit `0`; only existing CRLF-normalization warnings for plan-16 and `start.bat`.
@@ -512,7 +516,7 @@ The approved `15-05` Web auth/restore and SSE expiry implementation completed it
 
 - `pnpm docs:roadmap -- --dry-run --output=docs/roadmap/01-roadmap.md` — exit `0`; generated-roadmap preview completed.
 - `pnpm docs:roadmap -- --output=docs/roadmap/01-roadmap.md` — exit `0`; canonical roadmap regenerated from repository metadata.
-- Canonical roadmap read-back — exit `0`; exactly 10 unique stage-13 `plan-15` entries: parent `plan-15` is `in_progress`; `plan-15-01`–`plan-15-05` and `plan-15-09` are `completed`; `plan-15-06`–`plan-15-08` are `planned`; no duplicate IDs.
+- Архивный canonical roadmap read-back от 2026-09-25: exit `0`; тогда было 10 уникальных plan-15 entries с бывшим grouping-значением `stage: 13`; parent `plan-15` был `in_progress`; `plan-15-01`–`plan-15-05` и `plan-15-09` были `completed`, `plan-15-06`–`plan-15-08` — `planned`; duplicate IDs отсутствовали. Это не текущая metadata.
 - `pnpm docs:check` — exit `0`; one existing warning only: `roadmap/generated.md` filename lacks a numeric prefix.
 - `pnpm docs:test` — exit `0`; **11 passed, 0 failed, 0 skipped**.
 - `git diff --check` — exit `0`; only pre-existing CRLF-normalization warnings remain.
@@ -610,7 +614,7 @@ The approved onboarding draft and scheduler-guard implementation completed fresh
 | `pnpm docs:roadmap -- --dry-run --output=docs/roadmap/01-roadmap.md` | 0 | PASS; `=== DRY RUN MODE ===`, `Plans collected: 29`, `Output: docs/roadmap/01-roadmap.md`; stdout далее содержит preview generated content. |
 | `pnpm docs:test` (предварительный запуск, не финальная последовательность) | 0 | PASS; 11/11 тестов. |
 
-- Прочитаны frontmatter всех десяти plan-15 перед promotion: уникальные `plan-15`, `plan-15-01`–`plan-15-09`; у всех `kind: plan`, `stage: 13`, `roadmap: 01`; parent `in_progress`, `15-08` `planned`, остальные восемь `completed`; граф внутренних зависимостей ацикличен. До финального генератора канонический roadmap ещё содержит устаревшее `plan-15-07: planned`, поэтому его нельзя принимать за свежий read-back; сравнение ведётся с текущими файлами планов.
+- Исторический pre-promotion metadata snapshot от 2026-09-26: прочитаны frontmatter десяти plan-15 с уникальными IDs `plan-15`, `plan-15-01`–`plan-15-09`; тогда `kind: plan`, бывшие поля группировки `stage: 13` и `roadmap: 01`; parent `in_progress`, `15-08` `planned`, остальные восемь `completed`; граф внутренних зависимостей ацикличен. Предфинальный generated roadmap содержал устаревший `plan-15-07: planned`, поэтому не считался свежим read-back; сравнивались plan-файлы.
 - Независимый review плана `deleg_0532794e` вернул `CHANGES_REQUIRED` из-за устаревших status expectations родителя и frontmatter evidence на отсутствующие `local-session.ts`/удалённый `get-link.html`. Plan Fixer заменил ссылки на существующие `auth-service.ts`, `auth-ports.ts`, `credential-handoff.test.mjs` и согласовал parent status contract. Повторная независимая read-only проверка `deleg_db318b46` вернула `APPROVED`: десять уникальных ID, предфинальные статусы, все frontmatter evidence существуют; новых противоречий нет. Статусы `15-08` и родителя не повышены до итогового implementation review и сверки генератора.
 
 ### Финальное implementation review: исправление выявленных блокеров
@@ -644,12 +648,12 @@ The approved onboarding draft and scheduler-guard implementation completed fresh
 
 ### Governance и promotion
 
-- До promotion прочитаны все десять frontmatter: уникальные ID `plan-15`, `plan-15-01`–`plan-15-09`, `stage: 13`; parent был `in_progress`, `15-01`–`15-07` и `15-09` — `completed`, `15-08` — `planned`; зависимости ацикличны.
+- Исторический pre-promotion metadata snapshot от 2026-09-26: у десяти plan-15 были уникальные IDs `plan-15`, `plan-15-01`–`plan-15-09`; тогдашнее `stage: 13` было бывшим grouping-значением, не текущим полем Plan. Parent был `in_progress`, `15-01`–`15-07` и `15-09` — `completed`, `15-08` — `planned`; зависимости ацикличны.
 - `pnpm docs:check` до promotion — exit `0`; единственное предупреждение: `[WARNING] roadmap/generated.md — Filename does not start with numeric prefix`.
 - `pnpm docs:roadmap -- --dry-run --output=docs/roadmap/01-roadmap.md` — exit `0`; точный результат: `Plans collected: 29`, `Output: docs/roadmap/01-roadmap.md`.
 - После прохождения acceptance gates parent `plan-15` и child `plan-15-08` переведены в `completed`; остальные восемь child уже были `completed`. История этого ledger сохранена append-only; его frontmatter не менялся.
 - `pnpm docs:roadmap -- --output=docs/roadmap/01-roadmap.md` — exit `0`; точный stdout: `Roadmap generated: docs/roadmap/01-roadmap.md` / `Plans included: 29`.
-- Read-back frontmatter + сгенерированного `docs/roadmap/01-roadmap.md` — exit `0`: ровно десять уникальных записей `plan-15-01`, `plan-15-02`, `plan-15-03`, `plan-15-04`, `plan-15-05`, `plan-15-06`, `plan-15-07`, `plan-15-08`, `plan-15-09`, `plan-15`; все `stage: 13`, `status: completed`; граф зависимостей ацикличен.
+- Архивный final read-back от 2026-09-26: frontmatter и тогдашний `docs/roadmap/01-roadmap.md` содержали ровно десять уникальных записей `plan-15-01`, `plan-15-02`, `plan-15-03`, `plan-15-04`, `plan-15-05`, `plan-15-06`, `plan-15-07`, `plan-15-08`, `plan-15-09`, `plan-15`; `stage: 13` было бывшим grouping-значением, а `status: completed` — статусом на момент того read-back; граф зависимостей был ацикличен. Это архивные данные, не текущая metadata.
 - `pnpm docs:check` после генерации — exit `0`; сохранилось то же единственное предупреждение про `roadmap/generated.md`.
 - Plan-16 не менялся: `git hash-object docs/architecture/plans/16-documentation-cleanup-and-refresh.md` → `73ed2b4ec42627ad5820d3003421542266353ad2`. Исторические миграции `001`–`026` не изменялись; в migration status присутствует только новый файл `027_approval_changes_requested.sql`. Push/merge/commit не выполнялись; секреты в ledger не записывались.
 

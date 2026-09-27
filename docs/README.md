@@ -1,16 +1,3 @@
----
-id: index-01
-status: completed
-title: Ebb Orchestrator Documentation
-description: Central navigation and index for all documentation
-type: documentation-index
-version: 1.0
-last_updated: 2026-09-23
----
-
--
-
-
 # Ebb Orchestrator Documentation
 
 ## Governance
@@ -30,8 +17,8 @@ See the [Documentation Governance Guide](development/02-documentation-governance
 | `architecture/` | Official specs, plans, and UI concepts |
 | `audit/` | Audit reports, guidelines, and project state |
 | `development/` | Development guidelines and code standards |
-| `reference/` | API and implementation reference |
-| `roadmap/` | Unified roadmap for all phases |
+| `architecture/reference-ui/` | UI concept gallery |
+| `roadmap/` | Generated Plan dependency roadmap and historical snapshots |
 
 ## Architecture
 
@@ -46,17 +33,11 @@ Official specifications serving as source of truth:
 
 ### Plans (`architecture/plans/`)
 
-Implementation plans aligned with specs:
+Canonical implementation plans live in [`architecture/plans/`](architecture/plans/). Current governance references:
 
-- `01-documentation-governance.md` — Governance implementation
-- `02-domain-workflow-scheduler.md` — Domain workflows
-- `02-foundation-persistence.md` — Data persistence
-- `02-git-execution-security.md` — Security policies
-- `02-hermes-autonomous-task.md` — Autonomous task handling
-- `02-planning-epics-context-knowledge.md` — Planning structure
-- `02-web-github-release.md` — Release process
-- `03-agents-policy-review.md` — Agent policies
-- `03-russian-jsdoc-readme.md` — JSDoc standards
+- [`00-01-documentation-governance.md`](architecture/plans/governance/00-01-documentation-governance.md) — Plan metadata and documentation policy
+- [`00-05-governance-integration.md`](architecture/plans/governance/00-05-governance-integration.md) — current governance migration
+- [`17-ci-runtime-home-and-env-hardening.md`](architecture/plans/17-ci-runtime-home-and-env-hardening.md) — CI, runtime home and local environment hardening
 
 ### UI Concepts (`architecture/`)
 
@@ -70,39 +51,19 @@ Conceptual UI designs:
 
 ## Audit
 
-See the [Audit Section](audit/) for:
-
-- `01-final-audit.md` — Final audit execution
-- `02-opencode-to-hermes-inventory.md` — Migration inventory
-- `03-PROJECT_STATE.md` — Project status
-- `2026-09-18-audit-report.md` — Audit findings
-- `2026-09-18-audit-guidelines.md` — Audit standards
-- `2026-09-18-full-audit.md` — Comprehensive audit process
+See the [Audit Section](audit/) for current audit records. The [`06-plan-grouping-removal-inventory.md`](architecture/plans/governance/evidence/06-plan-grouping-removal-inventory.md) preserves the baseline and current reconciliation for the Plan-only migration.
 
 ## Development
 
-See the [Development Section](development/) for:
-
-- `01-architecture-review.md` — Architecture review documentation
-- `02-documentation-governance.md` — Governance guidelines
-- `jsdoc-style-guide.md` — Comment standards
-- `jsdoc-execution-ledger.md` — Compliance tracking
-- `hermes.md` — Hermes integration docs
+See the [Development Section](development/) for current guidelines, including the [documentation governance guide](development/02-documentation-governance.md) and [JSDoc style guide](development/07-jsdoc-style-guide.md).
 
 ## Roadmap
 
-See the [Unified Roadmap](roadmap/01-roadmap.md) for all phases:
-
-- `01-roadmap.md` — Main roadmap
-- `2026-09-21-ecosystem-skills-and-plugins.md` — Ecosystem integration
+See the [generated Plan roadmap](roadmap/generated.md) for current Plans and dependencies. [`01-roadmap.md`](roadmap/01-roadmap.md) is retained only as a historical snapshot; it is not a current Plan register.
 
 ## Reference
 
-See the [Reference Section](reference/) for:
-
-- `ui/01-03-ui-spec.md` — UI specifications (Stage A)
-- `ui/02-03-ui-spec.md` — UI specifications (Stage B)
-- `ui/03-03-ui-spec.md` — UI specifications (Stage C)
+See the [UI concept gallery](architecture/reference-ui/), including [Dashboard](architecture/reference-ui/01-dashboard-concept.html), [Task](architecture/reference-ui/02-task-view-concept.html), and [Epic](architecture/reference-ui/03-epic-view-concept.html) concepts.
 
 ## Key Links
 
@@ -110,13 +71,13 @@ See the [Reference Section](reference/) for:
 |------|-------------|
 | [Governance Guide](development/02-documentation-governance.md) | Documentation standards |
 | [System Design](architecture/specs/01-system-design.md) | Core architecture |
-| [Unified Roadmap](roadmap/01-roadmap.md) | Implementation roadmap |
+| [Generated Plan roadmap](roadmap/generated.md) | Current Plans and dependencies |
 |[Audit Report](audit/06-opencode-to-hermes-inventory.md) | Latest audit findings |
 
 ## Notes
 
 1. **Architecture source of truth**: `architecture/specs/01-system-design.md`
-2. **Canonical roadmap**: `roadmap/01-roadmap.md`
+2. **Canonical generated roadmap**: `roadmap/generated.md`; `roadmap/01-roadmap.md` is a historical snapshot
 3. **JSDoc policy**: All production comments in Russian per `development/jsdoc-style-guide.md`
 4. **Git policy**: Master branch, feature work in separate worktrees
 5. **Quality gates**: Lint, typecheck, and test required before commit

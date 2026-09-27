@@ -1,10 +1,3 @@
----
-id: readme-root
-kind: documentation
-status: completed
-title: Ebb Orchestrator
----
-
 # Ebb Orchestrator
 
 Ebb Orchestrator — локально запускаемый modular monolith для
@@ -82,26 +75,7 @@ flowchart LR
 
 ## Планы реализации
 
-Реализация ведётся по каноническим планам в `docs/architecture/plans/`:
-
-| Ступень | План | Статус |
-|---------|------|--------|
-| 01 | Foundation & Persistence | completed |
-| 02 | Domain, Workflow, Scheduler | completed |
-| 03 | Git, Execution, Security | completed |
-| 04 | Hermes Autonomous Task | completed |
-| 05 | Planning, Epics, Context, Knowledge | completed |
-| 06 | Web, GitHub, Release | completed |
-| 07 | Hermes Development Workflow | completed |
-| 08-01 | Web UI Foundation | superseded |
-| 08-02 | Web UI Core Functional | superseded |
-| 08-03 | Web UI Operational & E2E | superseded |
-| 08-04 | Web UI Audit & Recovery Design | superseded |
-| 09 | Production Readiness | completed |
-| 10 | Final Audit Hardening | superseded |
-| 11 | Hermes Development Capabilities | completed |
-
-Планы 08-* и 10 заменены новой архитектурой Web UI recovery.
+Актуальные планы, статусы и зависимости ведутся в единственном [сгенерированном roadmap](docs/roadmap/generated.md). Канонические plan-файлы находятся в `docs/architecture/plans/`; этот README не дублирует их реестр.
 
 ## Роли агентов
 
@@ -240,16 +214,19 @@ MCP-инструменты проверяют capability и аргументы. 
 
 Канонические project-local skills находятся в [`tools/hermes`](tools/hermes). Полный каталог каждого skill, назначение и source/installed path см. в README.
 
-В проекте установлены и проверяются следующие 8 skills:
+В проекте установлены и проверяются следующие 11 skills:
 
-- `ebb-execute-plan` — исполняет repository plan с ограниченным делегированием;
-- `ebb-final-review` — проводит финальную проверку результата и gates;
-- `ebb-implement-task` — реализует одну изолированную задачу;
-- `ebb-quality-gates` — запускает обязательные lint/typecheck/test/build gates;
-- `ebb-repository-context` — собирает доверенный контекст репозитория;
-- `ebb-review-task` — выполняет независимый read-only review;
-- `ebb-security-review` — проверяет security boundary, secrets и recovery;
-- `ebb-web-e2e` — запускает и проверяет browser E2E.
+- `ebb-repository-context` — разведка репозитория и компактный Context Brief для контроллера;
+- `ebb-write-plan` — исследование требований и создание implementation plan;
+- `ebb-review-plan` — независимая read-only проверка плана;
+- `ebb-execute-plan` — ledger зависимостей, запуск готовых задач и закрытие всего плана;
+- `ebb-implement-task` — реализация одной задачи, TDD, review и необходимые локальные проверки;
+- `ebb-debug-issue` — воспроизведение, root-cause analysis и выбор bounded fix или плана;
+- `ebb-review-task` — read-only проверка diff одной задачи;
+- `ebb-quality-gates` — выбор и выполнение необходимых проверок с evidence;
+- `ebb-security-review` — проверка trust boundaries и security-регрессий;
+- `ebb-web-e2e` — проверка реальных browser/HTTP/SSE сценариев;
+- `ebb-final-review` — независимая попытка опровергнуть готовность всего изменения.
 
 Установить или обновить skills и templates:
 

@@ -1,12 +1,10 @@
 ---
 id: plan-10
 kind: plan
-roadmap: 01
-stage: 10
 status: completed
-title: Plan Document
+title: Ebb Orchestrator — Final V1 Audit & Hardening Plan (Перевод)
 created: 2026-09-23
-updated: 2026-09-23
+updated: 2026-09-27
 ---
 
 -

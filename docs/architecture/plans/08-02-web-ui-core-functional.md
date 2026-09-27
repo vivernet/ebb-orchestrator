@@ -1,12 +1,11 @@
 ---
 id: plan-08-02
-kind: implementation
+kind: plan
 title: Web UI Core Functional — Onboarding, Dashboard, Project
 status: completed
 created: 2026-09-23
-updated: 2026-09-24
-roadmap: web-ui
-stage: B
+updated: 2026-09-27
+
 depends_on:
   - plan-08-01
 specs:
@@ -18,9 +17,11 @@ evidence:
   - apps/web/test/features/onboarding.test.tsx
 ---
 
+> Historical legacy UI sequence: A–D labels are retained as archival stage names, not as a current roadmap or plan grouping.
+
 # План реализации Web UI Core Functional (Onboarding + Dashboard + Project)
 
-> **Для агентного исполнителя:** используй `ebb-execute-plan` и `ebb-implement-task` для последовательного выполнения. Не начинай до подтверждения Stage A/B завершённости.
+> **Для агентного исполнителя:** используй `ebb-execute-plan` и `ebb-implement-task`; перед началом подтверди завершение всех Plan ID из `depends_on`.
 
 **Цель:** реализовать три утверждённых экрана V1 с реальными backend-подключениями, без декоративных контролов и post-v1 scope.
 
@@ -216,7 +217,7 @@ evidence:
 
 Status updated to **completed**. Onboarding (/projects/new), Dashboard (/), and Project View (/projects/:id) implemented with real backend API adapters, projection rendering, and state primitives (loading/empty/error/not-found). Tests added for all screens.
 
-See implementation: `apps/web/src/features/onboarding/`, `apps/web/src/features/dashboard/`, `apps/web/src/features/projects/`. All components use shared primitives from Stage A.
+See implementation: `apps/web/src/features/onboarding/`, `apps/web/src/features/dashboard/`, `apps/web/src/features/projects/`. All components use shared primitives from Web UI Foundation (`plan-08-01`).
 
 ---
 
@@ -238,7 +239,7 @@ See implementation: `apps/web/src/features/onboarding/`, `apps/web/src/features/
 - Не добавлять пост-v1 scope (Coordinator Chat, Project List API, etc.)
 - Не менять backend contracts
 - Не создавать optimistic state без backend подтверждения
-- Не редактировать Stage A/B файлы без явной необходимости
+- Не редактировать файлы других Plan вне их собственного scope; `plan-08-01` поддерживается независимо
 - Сохранять существующие pre-existing изменения
 
 ---

@@ -1,12 +1,10 @@
 ---
 id: plan-15-01
 kind: plan
-roadmap: 01
-stage: 13
 status: completed
 title: Контракт auth и bounded crypto feasibility
 created: 2026-09-25
-updated: 2026-09-25
+updated: 2026-09-27
 depends_on: []
 specs:
   - ../specs/01-system-design.md

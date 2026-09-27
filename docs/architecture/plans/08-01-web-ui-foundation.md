@@ -1,12 +1,11 @@
 ---
 id: plan-08-01
-kind: implementation
-title: Web UI Recovery Stage A — Foundation & Shell
+kind: plan
+title: Web UI Foundation and Shell
 status: completed
 created: 2026-09-23
-updated: 2026-09-23
-roadmap: web-ui
-stage: A
+updated: 2026-09-27
+
 depends_on: []
 specs:
   - docs/architecture/specs/02-web-ui-recovery-design.md
@@ -18,6 +17,8 @@ evidence:
   - apps/web/test/shared-primitives.test.tsx
   - apps/web/test/app-shell.test.tsx
 ---
+
+> Historical legacy UI sequence: A–D labels are retained as archival stage names, not as a current roadmap or plan grouping.
 
 # Web UI Recovery Stage A Implementation Plan
 

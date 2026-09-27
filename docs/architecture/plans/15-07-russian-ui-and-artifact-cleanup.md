@@ -1,12 +1,10 @@
 ---
 id: plan-15-07
 kind: plan
-roadmap: 01
-stage: 13
 status: completed
 title: Russian UI, accessibility и bootstrap artifact cleanup
 created: 2026-09-25
-updated: 2026-09-26
+updated: 2026-09-27
 depends_on:
   - plan-15-05
   - plan-15-06

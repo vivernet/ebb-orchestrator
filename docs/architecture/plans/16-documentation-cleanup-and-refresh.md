@@ -1,11 +1,9 @@
 ---
 id: plan-16
 kind: plan
-roadmap: 01
-stage: 16
 status: in_progress
 created: 2026-09-25
-updated: 2026-09-25
+updated: 2026-09-27
 title: Очистка и актуализация документации Ebb Orchestrator
 depends_on:
   - plan-15-07
@@ -196,9 +194,9 @@ Files: repository root, `docs/architecture/plans/`, candidate paths above. Symbo
 - Run the governance structure check `pnpm docs:check` from the repository root; record its exit code/output and confirm it does not validate date values.
 - Run this separate deterministic metadata/date validator from the repository root (it validates the exact frontmatter fields and ISO calendar dates for plan-16 without writing files):
   ```bash
-  node --input-type=module -e "import {readFileSync} from 'node:fs'; const p='docs/architecture/plans/16-documentation-cleanup-and-refresh.md'; const text=readFileSync(p,'utf8'); const fm=text.match(/^---\r?\n([\s\S]*?)\r?\n---/); if(!fm) throw new Error('missing frontmatter'); const required={id:'plan-16',kind:'plan',roadmap:'01',stage:'16',status:'planned',created:'2026-09-25',updated:'2026-09-25'}; for(const [key,value] of Object.entries(required)){const m=fm[1].match(new RegExp('^'+key+':\\s*(.+)$','m')); if(!m||m[1].trim()!==value) throw new Error(key+' mismatch'); if((key==='created'||key==='updated')&&!/^\d{4}-\d{2}-\d{2}$/.test(m[1].trim())) throw new Error(key+' is not ISO date');} console.log('plan-16 metadata/date validation passed: created=2026-09-25 updated=2026-09-25');"
+  node --input-type=module -e "import {readFileSync} from 'node:fs'; const p='docs/architecture/plans/16-documentation-cleanup-and-refresh.md'; const text=readFileSync(p,'utf8'); const fm=text.match(/^---\r?\n([\s\S]*?)\r?\n---/); if(!fm) throw new Error('missing frontmatter'); const required={id:'plan-16',kind:'plan',status:'in_progress',created:'2026-09-25',updated:'2026-09-27',title:'Очистка и актуализация документации Ebb Orchestrator'}; for(const [key,value] of Object.entries(required)){const m=fm[1].match(new RegExp('^'+key+':\\s*(.+)$','m')); if(!m||m[1].trim()!==value) throw new Error(key+' mismatch'); if((key==='created'||key==='updated')&&!/^\d{4}-\d{2}-\d{2}$/.test(m[1].trim())) throw new Error(key+' is not ISO date');} console.log('plan-16 metadata/date validation passed: created=2026-09-25 updated=2026-09-27');"
   ```
-- Expected: `pnpm docs:check` exits `0` for frontmatter/id/filename checks, the inline validator exits `0` and prints `plan-16 metadata/date validation passed: created=2026-09-25 updated=2026-09-25`; neither command changes files. No candidate is silently omitted; any inventory mismatch blocks further work; inventory/validation leaves no `docs/roadmap/generated.md` or other new artifact.
+- Expected: `pnpm docs:check` exits `0` for frontmatter/id/filename checks, the inline validator exits `0` and prints `plan-16 metadata/date validation passed: created=2026-09-25 updated=2026-09-27`; neither command changes files. No candidate is silently omitted; any inventory mismatch blocks further work; inventory/validation leaves no `docs/roadmap/generated.md` or other new artifact.
 
 ### Task 2 — Establish authority and references
 

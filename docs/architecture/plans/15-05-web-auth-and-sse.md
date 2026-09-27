@@ -1,12 +1,10 @@
 ---
 id: plan-15-05
 kind: plan
-roadmap: 01
-stage: 13
 status: completed
 title: Shared auth contract, Web login/restore и SSE expiry
 created: 2026-09-25
-updated: 2026-09-25
+updated: 2026-09-27
 depends_on:
   - plan-15-04
 specs:

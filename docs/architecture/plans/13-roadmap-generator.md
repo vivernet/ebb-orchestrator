@@ -1,8 +1,6 @@
 ---
 id: plan-13
 kind: plan
-roadmap: 01
-stage: 09
 status: completed
 title: Автоматическая генерация роадмапа
 created: 2026-09-23
@@ -16,20 +14,21 @@ evidence: []
 
 # Автоматическая генерация роадмапа — Implementation Plan
 
+> **Историческая запись (superseded):** этот план сохраняет исходный замысел реализации. Упоминания `stage`, Stage Register и группировки планов не являются действующим metadata contract или нормативными требованиями.
+
 > **Для агентов-исполнителей:** ОБЯЗАТЕЛЬНЫЙ ПОДСКILL: Используйте `superpowers:subagent-driven-development` или `superpowers:executing-plans` для пошаговой реализации задач этого плана. Каждый шаг оформляется как checkbox (`- [ ]`).
 
 ## Goal
 
-Реализовать скрипт автоматической генерации `docs/roadmap/01-roadmap.md` из метаданных планов. Устранить ручной процесс редактирования роадмапа, обеспечить консистентность и воспроизводимость документации.
+Историческая цель: реализовать генерацию roadmap-документа из метаданных планов, снизив ручную синхронизацию.
 
 ## Architecture
 
 Скрипт будет:
 
 1. Сканировать `docs/architecture/plans/` на наличие `.md` файлов
-2. Парсить YAML frontmatter каждого плана (id, stage, status, title, depends_on и т.д.)
+2. Парсить YAML frontmatter плана (id, status, title, depends_on и т.д.)
 3. Генерировать canonical roadmap document с:
-   - Global Stage Register
    - Plan Register
    - Dependency Graph
    - Blockers and Evidence
@@ -71,7 +70,7 @@ evidence: []
 
 **Interfaces:**
 - `parsePlan(path: string): PlanMetadata`
-- `PlanMetadata`: id, kind, roadmap, stage, status, title, created, updated, depends_on, specs, evidence
+- `PlanMetadata`: id, kind, status, title, created, updated, depends_on, specs, evidence
 
 **Steps:**
 - [ ] RED test для parsing frontmatter из sample plan
@@ -86,12 +85,10 @@ evidence: []
 
 **Interfaces:**
 - `collectPlans(dir: string): PlanMetadata[]`
-- `groupedByStage(plans: PlanMetadata[]): Map<string, PlanMetadata[]>`
 
 **Steps:**
 - [ ] RED test для scanning директории и парсинга всех планов
 - [ ] Implement коллектор с фильтрацией non-plan файлов
-- [ ] Test grouping по stage
 - [ ] Test обработки ошибок чтения
 
 ### Task 3: Создать генератор roadmap
@@ -102,7 +99,6 @@ evidence: []
 
 **Interfaces:**
 - `generateRoadmap(plans: PlanMetadata[]): string`
-- `renderStageRegister(stages: Stage[]): string`
 - `renderPlanRegister(plans: PlanMetadata[]): string`
 - `renderDependencyGraph(plans: PlanMetadata[]): string`
 

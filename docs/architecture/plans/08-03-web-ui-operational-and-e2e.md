@@ -1,12 +1,11 @@
 ---
 id: plan-08-03
-kind: implementation
+kind: plan
 title: Web UI Onboarding Flow & Projections
 status: completed
 created: 2026-09-23
-updated: 2026-09-24
-roadmap: web-ui
-stage: C
+updated: 2026-09-27
+
 depends_on:
   - plan-08-02
 specs:
@@ -16,6 +15,8 @@ evidence:
   - apps/web/src/features/dashboard/DashboardPage.tsx
   - apps/web/src/features/projects/ProjectPage.tsx
 ---
+
+> Historical legacy UI sequence: A–D labels are retained as archival stage names, not as a current roadmap or plan grouping.
 
 # Stage C: Onboarding + Dashboard + Project Implementation
 

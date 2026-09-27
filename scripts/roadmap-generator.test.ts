@@ -1,14 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { generateRoadmap, renderStageRegister, renderPlanRegister, renderDependencyGraph, type PlanMetadata } from './roadmap-generator.js';
+import { generateRoadmap, renderPlanRegister, renderDependencyGraph, type PlanMetadata } from './roadmap-generator.js';
 
 describe('roadmap-generator', () => {
   const mockPlans: PlanMetadata[] = [
     {
       id: 'plan-01',
       kind: 'plan',
-      roadmap: '01',
-      stage: '02',
-      status: 'done',
+      status: 'completed',
       title: 'Initial Setup',
       created: '2026-09-01',
       updated: '2026-09-10',
@@ -19,9 +17,7 @@ describe('roadmap-generator', () => {
     {
       id: 'plan-02',
       kind: 'plan',
-      roadmap: '01',
-      stage: '03',
-      status: 'in-progress',
+      status: 'planned',
       title: 'Core Implementation',
       created: '2026-09-05',
       updated: '2026-09-20',
@@ -32,8 +28,6 @@ describe('roadmap-generator', () => {
     {
       id: 'plan-03',
       kind: 'plan',
-      roadmap: '01',
-      stage: '04',
       status: 'proposed',
       title: 'Testing & QA',
       created: '2026-09-15',
@@ -48,27 +42,31 @@ describe('roadmap-generator', () => {
     it('should generate a complete roadmap document', () => {
       const result = generateRoadmap(mockPlans);
       expect(result).toContain('# Автоматический роадмап');
-      expect(result).toContain('## Stage Register');
       expect(result).toContain('## Plan Register');
       expect(result).toContain('## Dependency Graph');
+      expect(result).not.toMatch(/stage/i);
     });
 
     it('should handle empty plans array', () => {
       const result = generateRoadmap([]);
       expect(result).toContain('# Автоматический роадмап');
     });
-  });
 
-  describe('renderStageRegister', () => {
-    it('should render stage register with stages', () => {
-      const stages = [
-        { id: '02', plans: [mockPlans[0]], done: 1, total: 1 },
-        { id: '03', plans: [mockPlans[1]], done: 0, total: 1 },
-        { id: '04', plans: [mockPlans[2]], done: 0, total: 1 },
-      ];
-      const result = renderStageRegister(stages);
-      expect(result).toContain('| Stage |');
-      expect(result).toContain('|-------|');
+    it('excludes non-Plan records from every roadmap projection', () => {
+      const ledger = {
+        id: 'ledger-01',
+        kind: 'ledger',
+        status: 'draft',
+        title: 'Ledger Fixture',
+        created: '2026-09-20',
+        updated: '2026-09-21',
+        depends_on: ['plan-01'],
+      } as unknown as PlanMetadata;
+      const mixedRecords = [...mockPlans, ledger];
+
+      expect(generateRoadmap(mixedRecords)).not.toContain('ledger-01');
+      expect(renderPlanRegister(mixedRecords)).not.toContain('Ledger Fixture');
+      expect(renderDependencyGraph(mixedRecords)).not.toContain('ledger-01');
     });
   });
 
@@ -80,12 +78,26 @@ describe('roadmap-generator', () => {
       expect(result).toContain('plan-01');
       expect(result).toContain('plan-02');
     });
+
+    it('preserves every PlanStatus in the register', () => {
+      const statuses: PlanMetadata['status'][] = ['proposed', 'planned', 'in_progress', 'blocked', 'completed', 'superseded', 'cancelled'];
+      const plans = statuses.map((status, index) => ({
+        ...mockPlans[0],
+        id: `plan-${String(index + 1).padStart(2, '0')}`,
+        status,
+      }));
+      const result = renderPlanRegister(plans);
+
+      for (const plan of plans) expect(result).toContain(`| ${plan.id} | ${plan.status} |`);
+      expect(result).not.toMatch(/stage/i);
+    });
   });
 
   describe('renderDependencyGraph', () => {
     it('should render dependency graph with dependencies', () => {
       const result = renderDependencyGraph(mockPlans);
-      expect(result).toContain('plan-02 → plan-01');
+      expect(result).toContain('plan-01 → plan-02');
+      expect(result).toContain('plan-02 → plan-03');
     });
 
     it('should render plans with no dependencies', () => {
@@ -93,9 +105,7 @@ describe('roadmap-generator', () => {
         {
           id: 'plan-01',
           kind: 'plan',
-          roadmap: '01',
-          stage: '02',
-          status: 'done',
+          status: 'completed',
           title: 'Test',
           created: '2026-09-01',
           updated: '2026-09-01',

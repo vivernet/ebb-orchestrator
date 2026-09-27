@@ -1,231 +1,34 @@
-/**
- * Генератор роадмапа из метаданных планов
- */
+export type { PlanMetadata } from './plan-parser.js';
+import type { PlanMetadata } from './plan-parser.js';
 
-import { PlanMetadata } from './plan-parser.js';
-
-/**
- * Информация о стадии с планом
- */
-export interface Stage {
-  id: string;
-  plans: PlanMetadata[];
-  done: number;
-  total: number;
+function selectPlans(plans: PlanMetadata[]): PlanMetadata[] {
+  return plans.filter((plan) => plan.kind === 'plan');
 }
 
-/**
- * Генерирует полный документ роадмапа из метаданных планов
- * @param plans Массив метаданных планов
- * @returns Markdown документ роадмапа
+/** Генерирует Plan-реестр и граф зависимостей без второй группировки.
+ * @param plans Проверенные Plans.
+ * @returns Markdown-представление Plan metadata.
  */
 export function generateRoadmap(plans: PlanMetadata[]): string {
-  if (plans.length === 0) {
-    return generateEmptyRoadmap();
-  }
-
-  const stages = groupIntoStages(plans);
-  
-  const sections = [
-  '# Автоматический роадмап',
-  '',
-  generateIntroduction(plans),
-  '',
-  '## Stage Register',
-  renderStageRegister(stages),
-  '',
-  '## Plan Register',
-  renderPlanRegister(plans),
-  '',
-  '## Dependency Graph',
-  renderDependencyGraph(plans),
-  '',
-  '## Blockers and Evidence',
-  renderBlockersAndEvidence(plans),
-  '',
-  '## Proposals',
-  renderProposals(plans),
-  ];
-
-  return sections.join('\n');
+  const planRecords = selectPlans(plans);
+  return ['# Автоматический роадмап', '', planRecords.length ? '## Plan Register' : 'Нет доступных планов.', '', renderPlanRegister(planRecords), '', '## Dependency Graph', '', renderDependencyGraph(planRecords)].join('\n');
 }
 
 /**
- * Генерирует документ роадмапа для пустого списка планов
- */
-function generateEmptyRoadmap(): string {
-  return `# Автоматический роадмап
-
-Нет доступных планов.
-
-## Stage Register
-
-Нет стадий.
-
-## Plan Register
-
-Нет планов.
-
-## Dependency Graph
-
-Нет зависимостей.
-`;
-}
-
-/**
- * Генерирует вступление к роадмапу
- */
-function generateIntroduction(plans: PlanMetadata[]): string {
-  const total = plans.length;
-  const done = plans.filter(p => p.status === 'done').length;
-  const inProgress = plans.filter(p => p.status === 'in-progress').length;
-  const proposed = plans.filter(p => p.status === 'proposed').length;
-
-  return `Этот роадмап автоматически сгенерирован из метаданных планов.
-
-| Статус | Количество |
-|--------|------------|
-| Всего | ${total} |
-| Завершено | ${done} |
-| В работе | ${inProgress} |
-| Предложено | ${proposed} |
-`;
-}
-
-/**
- * Группирует планы по стадиям
- */
-function groupIntoStages(plans: PlanMetadata[]): Stage[] {
-  const grouped = new Map<string, PlanMetadata[]>();
-
-  for (const plan of plans) {
-    const stage = String(plan.stage || 'unknown');
-    if (!grouped.has(stage)) {
-      grouped.set(stage, []);
-    }
-    grouped.get(stage)!.push(plan);
-  }
-
-  const stages: Stage[] = [];
-  for (const [id, stagePlans] of grouped.entries()) {
-    const done = stagePlans.filter(p => p.status === 'done').length;
-    stages.push({
-      id,
-      plans: stagePlans,
-      done,
-      total: stagePlans.length,
-    });
-  }
-
-  return stages.sort((a, b) => a.id.localeCompare(b.id));
-}
-
-/**
- * Рендерит таблицу стадий
- */
-export function renderStageRegister(stages: Stage[]): string {
-  if (stages.length === 0) {
-    return 'Нет стадий.';
-  }
-
-  const lines: string[] = [
-    '| Stage | Total | Done | Progress |',
-    '|-------|-------|------|----------|',
-  ];
-
-  for (const stage of stages) {
-    const progress = stage.done === stage.total ? '100%' : `${Math.round((stage.done / stage.total) * 100)}%`;
-    lines.push(`| ${stage.id} | ${stage.total} | ${stage.done} | ${progress} |`);
-  }
-
-  return lines.join('\n');
-}
-
-/**
- * Рендерит таблицу планов
+ * Формирует таблицу Plan с исходными идентификаторами, статусами и названиями.
+ * @param plans Проверенные Plans в требуемом порядке.
+ * @returns Markdown-таблица Plan Register без дополнительной группировки.
  */
 export function renderPlanRegister(plans: PlanMetadata[]): string {
-  if (plans.length === 0) {
-    return 'Нет планов.';
-  }
-
-  const lines: string[] = [
-    '| ID | Stage | Status | Title |',
-    '|----|-------|--------|-------|',
-  ];
-
-  for (const plan of plans) {
-    lines.push(`| ${plan.id} | ${plan.stage} | ${plan.status} | ${plan.title} |`);
-  }
-
-  return lines.join('\n');
+  return ['| ID | Status | Title |', '|----|--------|-------|', ...selectPlans(plans).map((plan) => `| ${plan.id} | ${plan.status} | ${plan.title} |`)].join('\n');
 }
 
 /**
- * Рендерит график зависимостей
+ * Строит ориентированные рёбра от зависимости к зависящему от неё Plan.
+ * @param plans Проверенные Plans с необязательными массивами `depends_on`.
+ * @returns Строки графа зависимостей либо сообщение об отсутствии рёбер.
  */
 export function renderDependencyGraph(plans: PlanMetadata[]): string {
-  const dependencies: string[] = [];
-
-  for (const plan of plans) {
-    if (plan.depends_on && plan.depends_on.length > 0) {
-      for (const depId of plan.depends_on) {
-        dependencies.push(`${plan.id} → ${depId}`);
-      }
-    }
-  }
-
-  if (dependencies.length === 0) {
-    return 'No dependencies.';
-  }
-
-  return dependencies.join('\n');
-}
-
-/**
- * Рендерит секцию Blockers and Evidence
- */
-export function renderBlockersAndEvidence(plans: PlanMetadata[]): string {
-  const blockers: string[] = [];
-  const evidence: string[] = [];
-
-  for (const plan of plans) {
-    if (plan.status === 'blocked' || plan.status === 'pending') {
-      blockers.push(`- ${plan.id}: ${plan.title}`);
-    }
-    if (plan.evidence && plan.evidence.length > 0) {
-      for (const item of plan.evidence) {
-        evidence.push(`- ${plan.id}: ${item}`);
-      }
-    }
-  }
-
-  const lines: string[] = [];
-  lines.push('### Blockers');
-  lines.push(blockers.length > 0 ? blockers.join('\n') : 'No blockers.');
-  lines.push('');
-  lines.push('### Evidence');
-  lines.push(evidence.length > 0 ? evidence.join('\n') : 'No evidence.');
-  
-  return lines.join('\n');
-}
-
-/**
- * Рендерит секцию Proposals
- */
-export function renderProposals(plans: PlanMetadata[]): string {
-  const proposals: PlanMetadata[] = plans.filter(p => p.status === 'proposed');
-
-  if (proposals.length === 0) {
-    return 'No proposals.';
-  }
-
-  const lines: string[] = ['| ID | Stage | Title |'];
-  lines.push('|----|-------|-------|');
-
-  for (const plan of proposals) {
-    lines.push(`| ${plan.id} | ${plan.stage} | ${plan.title} |`);
-  }
-
-  return lines.join('\n');
+  const dependencies = selectPlans(plans).flatMap((plan) => (plan.depends_on ?? []).map((dependency) => `${dependency} → ${plan.id}`));
+  return dependencies.length ? dependencies.join('\n') : 'No dependencies.';
 }

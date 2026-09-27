@@ -1,12 +1,10 @@
 ---
 id: plan-05
 kind: plan
-roadmap: 01
-stage: 05
 status: completed
-title: Plan Document
+title: План реализации планирования Orchestrator, эпиков, контекста, знаний и использования
 created: 2026-09-23
-updated: 2026-09-23
+updated: 2026-09-27
 depends_on: []
 specs:
   - ../specs/01-system-design.md

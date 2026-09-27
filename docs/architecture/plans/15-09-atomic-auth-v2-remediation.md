@@ -1,12 +1,10 @@
 ---
 id: plan-15-09
 kind: plan
-roadmap: 01
-stage: 13
 status: completed
 title: Atomic auth v2 prerequisite remediation
 created: 2026-09-25
-updated: 2026-09-25
+updated: 2026-09-27
 depends_on:
   - plan-15-01
   - plan-15-02

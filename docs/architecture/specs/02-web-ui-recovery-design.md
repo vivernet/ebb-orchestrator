@@ -3,7 +3,6 @@ id: spec-02
 status: superseded
 title: Web UI Recovery Design
 date: 2026-09-18
-stage: 08
 type: spec
 tags: [web, ui, recovery, design]
 ---
@@ -246,7 +245,9 @@ Semantic headings/landmarks, labeled navigation/forms/tables, keyboard-complete 
 
 Desktop keeps persistent nav; narrow viewport collapses it to an accessible menu. Tables become stacked labeled rows or horizontal scroll with headers. Primary action remains reachable without hover. E2E covers 1280px desktop and 390px narrow viewport for shell, dashboard, approvals and run detail.
 
-## Independently testable implementation stages
+## Historical independently testable implementation sequence (superseded)
+
+The A–F sequence below is retained as design history, not as a current implementation plan or normative grouping. Current work ordering is defined by individual Plan dependencies.
 
 ### A. Application shell + shared primitives
 

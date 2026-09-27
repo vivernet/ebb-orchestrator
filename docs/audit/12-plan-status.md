@@ -1,8 +1,6 @@
 ---
 id: analysis-12
 kind: analysis
-roadmap: 01
-stage: 04
 status: completed
 title: Plan 12 Status Report
 created: 2026-09-24

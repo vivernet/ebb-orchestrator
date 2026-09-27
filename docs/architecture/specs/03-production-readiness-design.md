@@ -3,7 +3,6 @@ id: spec-03
 status: superseded
 title: Production Readiness Design
 date: 2026-09-20
-stage: 09
 type: spec
 tags: [production, readiness, security]
 ---
@@ -149,7 +148,9 @@ Infisical Cloud не заменяет локальный keyring. При явн�
 - Все production paths контролируются configuration и остаются внутри
   разрешенных managed roots.
 
-## 5. Порядок реализации и доказательства
+## 5. Историческая последовательность реализации и доказательств (superseded)
+
+Пункты ниже сохраняют последовательность исходного design draft; это не актуальный план или нормативная группировка. Текущие зависимости определяются отдельными Plan.
 
 1. Добавить failing regression tests для worktree и SecretStore, затем
    минимальные исправления.

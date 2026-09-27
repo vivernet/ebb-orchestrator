@@ -9,6 +9,46 @@ import { readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSy
 import { join, relative, extname, dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import * as yaml from 'js-yaml';
+import { validatePlanLifecycle } from './docs-governance-lib.mjs';
+
+const PLAN_STATUSES = new Set(['proposed', 'planned', 'in_progress', 'blocked', 'completed', 'superseded', 'cancelled']);
+const PLAN_REQUIRED = ['id', 'kind', 'status', 'title', 'created', 'updated'];
+const PLAN_OPTIONAL = ['summary', 'depends_on', 'specs', 'evidence'];
+const NON_PLAN_KINDS = new Set(['roadmap', 'spec', 'audit', 'proposal', 'guideline', 'ledger', 'reference', 'index', 'governance-evidence']);
+/** Ошибка, указывающая на нарушение контракта metadata документа Plan. */
+export class PlanMetadataError extends Error {
+  /**
+   * Создаёт ошибку проверки metadata с указанием источника.
+   * @param {string} source Путь файла или метка входных metadata.
+   * @param {string} message Причина отклонения metadata.
+   */
+  constructor(source, message) { super(`${source}: ${message}`); this.name = 'PlanMetadataError'; this.source = source; }
+}
+function validCalendarDate(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [y, m, d] = value.split('-').map(Number); const date = new Date(0); date.setUTCHours(0, 0, 0, 0); date.setUTCFullYear(y, m - 1, d);
+  return date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d;
+}
+/**
+ * Проверяет объект frontmatter согласно единому контракту Plan metadata.
+ * @param {unknown} metadata Разобранные, но ещё не доверенные YAML metadata.
+ * @param {string} [source='<metadata>'] Источник metadata для диагностики.
+ * @returns {Record<string, unknown>} Исходный объект без преобразований, если он допустим.
+ * @throws {PlanMetadataError} Если структура, типы или значения не соответствуют контракту.
+ */
+export function validatePlanMetadata(metadata, source = '<metadata>') {
+  const fail = (message) => { throw new PlanMetadataError(source, message); };
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) fail('metadata must be an object');
+  for (const key of Object.keys(metadata)) if (![...PLAN_REQUIRED, ...PLAN_OPTIONAL].includes(key)) fail(`unknown field ${key}`);
+  for (const key of PLAN_REQUIRED) if (!Object.hasOwn(metadata, key)) fail(`missing ${key}`);
+  for (const key of ['id', 'title']) if (typeof metadata[key] !== 'string') fail(`${key} must be a string`);
+  if (metadata.kind !== 'plan') fail('kind must be plan');
+  if (typeof metadata.status !== 'string' || !PLAN_STATUSES.has(metadata.status)) fail('invalid Plan status');
+  for (const key of ['created', 'updated']) if (!validCalendarDate(metadata[key])) fail(`invalid ${key} date`);
+  if (Object.hasOwn(metadata, 'summary') && typeof metadata.summary !== 'string') fail('summary must be a string');
+  for (const key of ['depends_on', 'specs', 'evidence']) if (Object.hasOwn(metadata, key) && (!Array.isArray(metadata[key]) || !metadata[key].every(value => typeof value === 'string'))) fail(`${key} must be a string array`);
+  return metadata;
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -76,19 +116,26 @@ function scanDocs(rootDir) {
  */
 function checkDocs(files) {
   const issues = [];
+  const kindCounts = new Map();
+  for (const file of files) {
+    const kind = file.metadata?.kind;
+    if (typeof kind === 'string') kindCounts.set(kind, (kindCounts.get(kind) || 0) + 1);
+  }
   
   for (const file of files) {
-    if (!file.metadata || !file.metadata.id) {
-      issues.push({
-        file: file.path,
-        severity: 'error',
-        message: 'Missing YAML frontmatter or id field'
-      });
+    const repoPath = file.path.replace(/\\/g, '/').replace(/^\//, '');
+    const isReadme = repoPath === 'README.md' || repoPath === 'docs/README.md';
+    if ((!file.metadata || !file.metadata.id) && !isReadme) {
+      issues.push({ file: repoPath, severity: 'error', message: 'Missing YAML frontmatter or id field' });
+    }
+    for (const lifecycleIssue of validatePlanLifecycle({ kind: file.metadata?.kind, status: file.metadata?.status })) {
+      issues.push({ file: repoPath, severity: 'error', message: lifecycleIssue.message });
     }
     
-    // Check filename pattern (allow README.md)
-    const fileName = file.path.split('/').pop();
-    if (fileName !== 'README.md' && !fileName.match(/^\d\d-/)) {
+    const fileName = repoPath.split('/').pop();
+    const isCanonicalRoadmap = repoPath === 'docs/roadmap/generated.md';
+    const isUniqueDocumentKind = typeof file.metadata?.kind === 'string' && kindCounts.get(file.metadata.kind) === 1;
+    if (fileName !== 'README.md' && !isCanonicalRoadmap && !isUniqueDocumentKind && !fileName.match(/^\d\d-/)) {
       issues.push({
         file: file.path,
         severity: 'warning',
@@ -116,10 +163,16 @@ function inventoryDocs(files) {
 }
 
 /**
- * Check command
+ * Проверяет документы в указанном корне репозитория и печатает ошибки и предупреждения.
+ * @param {string} [repositoryRoot=ROOT] Корень репозитория, по умолчанию текущий проект.
  */
-function checkCommand() {
-  const files = scanDocs(DOCS_ROOT);
+function checkCommand(repositoryRoot = ROOT) {
+  const files = scanDocs(join(repositoryRoot, 'docs')).map(file => ({ ...file, path: `docs/${file.path}` }));
+  const readmePath = join(repositoryRoot, 'README.md');
+  if (existsSync(readmePath)) {
+    const content = readFileSync(readmePath, 'utf8'); const fm = parseFrontMatter(content);
+    files.push({ path: 'README.md', fullPath: readmePath, metadata: fm?.data || null, body: fm?.body || content });
+  }
   const issues = checkDocs(files);
   const errors = issues.filter(issue => issue.severity === 'error');
   const warnings = issues.filter(issue => issue.severity === 'warning');
@@ -145,7 +198,10 @@ function checkCommand() {
 }
 
 /**
- * Parse plan from file (inline YAML parsing)
+ * Разбирает YAML frontmatter файла и проверяет его, если документ имеет тип Plan.
+ * @param {string} path Путь к Markdown-файлу.
+ * @returns {unknown} Проверенные metadata Plan либо исходные metadata другого типа документа.
+ * @throws {PlanMetadataError} Если metadata Plan не соответствуют контракту.
  */
 function parsePlanFile(path) {
   const content = readFileSync(path, 'utf8');
@@ -158,14 +214,11 @@ function parsePlanFile(path) {
   
   try {
     const yamlContent = parts[1].trim();
-    const metadata = yaml.load(yamlContent);
-    
-    if (!metadata.id || !metadata.kind || !metadata.roadmap) {
-      throw new Error(`Plan in ${path} is missing required fields`);
-    }
-    
-    return metadata;
+    const metadata = yaml.load(yamlContent, { schema: yaml.JSON_SCHEMA });
+    if (metadata && typeof metadata === 'object' && (NON_PLAN_KINDS.has(metadata.kind) || metadata.type === 'evidence')) return metadata;
+    return validatePlanMetadata(metadata, path);
   } catch (e) {
+    if (e instanceof PlanMetadataError) throw e;
     const err = new Error(`Error parsing YAML from ${path}: ${e.message}`);
     err.cause = e;
     throw err;
@@ -173,9 +226,12 @@ function parsePlanFile(path) {
 }
 
 /**
- * Collect all plan files from directory
+ * Собирает проверенные Plan из непосредственных Markdown-файлов каталога.
+ * Известные типы документов, отличные от Plan, пропускаются; ошибки Plan metadata журналируются.
+ * @param {string} dir Каталог с Plan-файлами.
+ * @returns {Array<Record<string, unknown>>} Проверенные Plan в порядке чтения файлов.
  */
-function collectPlans(dir) {
+export function collectPlans(dir) {
   if (!existsSync(dir)) {
     return [];
   }
@@ -196,28 +252,12 @@ function collectPlans(dir) {
         plans.push(plan);
       }
     } catch (error) {
-      console.warn(`Failed to parse plan file: ${filePath}`, error.message);
+      if (error instanceof PlanMetadataError) console.warn(`Failed to parse plan file: ${filePath}: ${error.message}`);
+      else throw error;
     }
   }
   
   return plans;
-}
-
-/**
- * Group plans by stage
- */
-function groupByStage(plans) {
-  const grouped = new Map();
-  
-  for (const plan of plans) {
-    const stage = plan.stage || 'unknown';
-    if (!grouped.has(stage)) {
-      grouped.set(stage, []);
-    }
-    grouped.get(stage).push(plan);
-  }
-  
-  return grouped;
 }
 
 /**
@@ -277,58 +317,11 @@ function validatePlans(plans) {
  * Generate roadmap markdown content
  */
 function generateRoadmapContent(plans) {
-  const sections = [
-    '# Автоматический роадмап',
-    '',
-    'Этот роадмап автоматически сгенерирован из метаданных планов.',
-    '',
-    '## Stage Register',
-    '',
-  ];
-  
-  const stageGroups = groupByStage(plans);
-  const sortedStages = Array.from(stageGroups.keys()).sort();
-  
-  sections.push('| Stage | Total | Done | Progress |');
-  sections.push('|-------|-------|------|----------|');
-  
-  for (const stageId of sortedStages) {
-    const stagePlans = stageGroups.get(stageId);
-    const done = stagePlans.filter(p => p.status === 'completed' || p.status === 'done').length;
-    const total = stagePlans.length;
-    const progress = done === total ? '100%' : `${Math.round((done / total) * 100)}%`;
-    sections.push(`| ${stageId} | ${total} | ${done} | ${progress} |`);
-  }
-  
-  sections.push('');
-  sections.push('## Plan Register');
-  sections.push('');
-  sections.push('| ID | Stage | Status | Title |');
-  sections.push('|----|-------|--------|-------|');
-  
-  for (const plan of plans) {
-    sections.push(`| ${plan.id} | ${plan.stage} | ${plan.status} | ${plan.title} |`);
-  }
-  
-  sections.push('');
-  sections.push('## Dependency Graph');
-  sections.push('');
-  
-  const deps = [];
-  for (const plan of plans) {
-    if (plan.depends_on && plan.depends_on.length > 0) {
-      for (const depId of plan.depends_on) {
-        deps.push(`${plan.id} → ${depId}`);
-      }
-    }
-  }
-  
-  if (deps.length === 0) {
-    sections.push('No dependencies.');
-  } else {
-    sections.push(...deps);
-  }
-  
+  const sections = ['# Автоматический роадмап', '', 'Этот роадмап автоматически сгенерирован из метаданных планов.', '', '## Plan Register', '', '| ID | Status | Title |', '|----|--------|-------|'];
+  for (const plan of plans) sections.push(`| ${plan.id} | ${plan.status} | ${plan.title} |`);
+  sections.push('', '## Dependency Graph', '');
+  const deps = plans.flatMap(plan => (plan.depends_on || []).map(dep => `${dep} → ${plan.id}`));
+  sections.push(...(deps.length ? deps : ['No dependencies.']));
   return sections.join('\n');
 }
 
@@ -384,26 +377,20 @@ function roadmapCommand(args) {
 /**
  * Main CLI handler
  */
-const command = process.argv[2];
-const args = process.argv.slice(3);
-switch (command) {
-  case 'inventory': {
-    const files = scanDocs(DOCS_ROOT);
-    inventoryDocs(files);
-    break;
+if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
+  const command = process.argv[2];
+  const args = process.argv.slice(3);
+  const rootArg = args.find(arg => arg.startsWith('--root='));
+  const repositoryRoot = rootArg ? resolve(rootArg.slice('--root='.length)) : ROOT;
+  switch (command) {
+    case 'inventory': inventoryDocs(scanDocs(join(repositoryRoot, 'docs'))); break;
+    case 'check': checkCommand(repositoryRoot); break;
+    case 'roadmap': roadmapCommand(args); break;
+    case 'rename:check': console.log('Rename check not yet implemented'); break;
+    default:
+      console.log('Usage: node docs-governance.mjs <command> [options]');
+      console.log('Commands: inventory, check, roadmap, rename:check');
+      console.log('Roadmap options: --dry-run, --output=<path>');
+      process.exit(1);
   }
-  case 'check':
-    checkCommand();
-    break;
-  case 'roadmap':
-    roadmapCommand(args);
-    break;
-  case 'rename:check':
-    console.log('Rename check not yet implemented');
-    break;
-  default:
-    console.log('Usage: node docs-governance.mjs <command> [options]');
-    console.log('Commands: inventory, check, roadmap, rename:check');
-    console.log('Roadmap options: --dry-run, --output=<path>');
-    process.exit(1);
 }

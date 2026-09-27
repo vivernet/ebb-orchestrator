@@ -1,13 +1,11 @@
 ---
 id: plan-09
 kind: plan
-roadmap: 01
-stage: 09
 status: completed
 title: Production Readiness Hardening
 summary: Добавить fail-closed работу с Git worktree, отказоустойчивое хранилище секретов и чистую production композицию.
 created: 2026-09-23
-updated: 2026-09-23
+updated: 2026-09-27
 depends_on:
   - plan-03
 specs:

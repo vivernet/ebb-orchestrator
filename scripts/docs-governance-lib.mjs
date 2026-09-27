@@ -1,3 +1,17 @@
+/**
+ * Проверяет статус только у записей Plan, не изменяя исходную запись.
+ * @param {{kind?: string, status?: unknown} | null | undefined} record Проверяемая запись.
+ * @returns {Array<{field: string, message: string}>} Найденные ошибки статуса либо пустой список.
+ */
+function validatePlanLifecycle(record) {
+  if (record?.kind !== 'plan') return [];
+  const statuses = ['proposed', 'planned', 'in_progress', 'blocked', 'completed', 'superseded', 'cancelled'];
+  if (typeof record.status !== 'string' || !statuses.includes(record.status)) {
+    return [{ field: 'status', message: `Invalid Plan lifecycle status: ${record.status ?? 'missing'}` }];
+  }
+  return [];
+}
+
 function parseFrontMatter(text) {
   if (!text.startsWith('---')) {
     return { data: {}, body: text.trim() };
@@ -90,40 +104,44 @@ function validateLinks(catalog) {
   return issues;
 }
 
+/**
+ * Разбирает таблицы migration map без обязательного legacy-столбца `roadmap/stage`.
+ * @param {string} path Путь к Markdown-документу migration map.
+ * @returns {Promise<{entries: Array<Record<string, string>>, path: string}>} Распознанные записи и исходный путь.
+ * @throws {Error} Если файл невозможно прочитать.
+ */
 async function loadMigrationMap(path) {
   const { readFileSync } = await import('fs');
   const text = readFileSync(path, 'utf-8');
   const entries = [];
-  const lines = text.split('\n');
-  let inTable = false;
-  for (const line of lines) {
-    if (line.startsWith('|')) {
-      if (!inTable && line.includes('old path') && line.includes('new path')) {
-        inTable = true;
-        continue;
-      }
-      if (inTable && (line.startsWith('---') || line.trim() === '')) {
-        inTable = false;
-        continue;
-      }
-      if (inTable) {
-        const cols = line.split('|').map(c => c.trim()).filter(c => c);
-        if (cols.length >= 10) {
-          entries.push({
-            oldPath: cols[0],
-            newPath: cols[1],
-            action: cols[2],
-            kind: cols[3],
-            roadmapStage: cols[4],
-            sourceDate: cols[5],
-            canonicalTarget: cols[6],
-            conflictDecision: cols[7],
-            dependentLinksUpdate: cols[8],
-            evidencePreservation: cols[9]
-          });
-        }
-      }
+  const requiredHeaders = ['old path', 'new path', 'action', 'kind', 'source date', 'canonical target', 'conflict decision', 'dependent links to update', 'evidence preservation rule'];
+  let headers = null;
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('|')) {
+      headers = null;
+      continue;
     }
+    const columns = trimmed.replace(/^\||\|$/g, '').split('|').map(column => column.trim());
+    const normalized = columns.map(column => column.toLowerCase().replace(/\s+/g, ' '));
+    if (requiredHeaders.every(header => normalized.includes(header))) {
+      headers = normalized;
+      continue;
+    }
+    if (!headers || columns.every(column => /^:?-{3,}:?$/.test(column))) continue;
+    if (columns.length !== headers.length) continue;
+    const value = header => columns[headers.indexOf(header)];
+    entries.push({
+      oldPath: value('old path'),
+      newPath: value('new path'),
+      action: value('action'),
+      kind: value('kind'),
+      sourceDate: value('source date'),
+      canonicalTarget: value('canonical target'),
+      conflictDecision: value('conflict decision'),
+      dependentLinksUpdate: value('dependent links to update'),
+      evidencePreservation: value('evidence preservation rule')
+    });
   }
   return { entries, path };
 }
@@ -206,40 +224,25 @@ async function resolveCanonicalDocument(oldPath) {
   return { action: 'keep', target: oldPath };
 }
 
+/**
+ * Формирует модель роадмапа только из Plan и их зависимостей.
+ * @param {Array<Record<string, unknown>>} catalog Проверяемые метаданные документов.
+ * @returns {{generatedAt: string, plans: Array<{id: string, status: string, title: string, depends_on: string[]}>}} Модель Plan-реестра и зависимостей.
+ */
 function buildRoadmapModel(catalog) {
-  const roadmap = catalog.filter(r => r.kind === 'roadmap');
-  const plans = catalog.filter(r => r.kind === 'plan');
-  const proposals = catalog.filter(r => r.kind === 'proposal');
-  
-  const stagesMap = {};
-  plans.forEach(plan => {
-    const stage = plan.stage || '00';
-    if (!stagesMap[stage]) {
-      stagesMap[stage] = { stage, plans: [] };
-    }
-    stagesMap[stage].plans.push({
-      id: plan.id,
-      title: plan.title,
-      status: plan.status,
-      depends_on: plan.depends_on || []
-    });
-  });
-  
-  const stages = Object.values(stagesMap).sort((a, b) => a.stage.localeCompare(b.stage));
-  
-  const model = {
+  return {
     generatedAt: new Date().toISOString().split('T')[0],
-    stages,
-    plans: plans.map(p => ({ id: p.id, status: p.status, title: p.title })),
-    proposals: proposals.map(p => ({ id: p.id, status: p.status, title: p.title })),
-    roadmap
+    plans: catalog.filter(record => record.kind === 'plan').map(({ id, status, title, depends_on }) => ({ id, status, title, depends_on: depends_on || [] }))
   };
-  
-  return model;
 }
 
+/**
+ * Рендерит канонический роадмап из Plan-реестра и зависимостей.
+ * @param {{generatedAt: string, plans: Array<{id: string, status: string, title: string, depends_on?: string[]}>}} model Проверенная модель Plan-данных.
+ * @returns {string} Содержимое Markdown-роадмапа.
+ */
 function renderRoadmap(model) {
-  const { generatedAt, stages, plans, proposals } = model;
+  const { generatedAt, plans = [] } = model;
   
   let output = '# Единая дорожная карта проекта\n\n';
   output += `> Сгенерировано: ${generatedAt}\n\n`;
@@ -248,30 +251,18 @@ function renderRoadmap(model) {
   output += 'Этот документ является единственным каноническим roadmap проекта. Его сводные таблицы и графы генерируются из metadata планов. Ручной текст ограничивается целями, решениями и правилами.\n\n';
   
   output += '<!-- BEGIN GENERATED: roadmap-summary -->\n\n';
-  output += '## Roadmap 01\n\n';
-  
-  stages.forEach(stage => {
-    output += `### Stage ${stage.stage}\n\n`;
-    stage.plans.forEach(plan => {
-      output += `- [${plan.status}] ${plan.title} (${plan.id})\n`;
-    });
-    output += '\n';
-  });
+  output += '## Plan Register\n\n| ID | Status | Title |\n|---|---|---|\n';
+  plans.forEach(plan => { output += `| ${plan.id} | ${plan.status} | ${plan.title} |\n`; });
+  output += '\n## Dependency Graph\n\n';
+  const dependencies = plans.flatMap(plan => (plan.depends_on || []).map(dep => `${dep} → ${plan.id}`));
+  output += dependencies.length ? `${dependencies.join('\n')}\n\n` : 'No dependencies.\n\n';
   
   output += '<!-- END GENERATED: roadmap-summary -->\n\n';
   
-  if (proposals.length > 0) {
-    output += '## Предложения\n\n';
-    proposals.forEach(p => {
-      output += `- [${p.status}] ${p.title} (${p.id})\n`;
-    });
-    output += '\n';
-  }
-  
-  output += '## Правила добавления нового Stage/Plan\n\n';
+  output += '## Правила добавления нового Plan\n\n';
   output += '1. Создайте файл с числовым префиксом в `docs/architecture/plans/`\n';
   output += '2. Добавьте metadata-блок с обязательными полями: id, kind, title, status, created, updated\n';
-  output += '3. Укажите roadmap и stage номера\n';
+  output += '3. Укажите зависимости через Plan IDs в поле depends_on\n';
   output += '4. Ссылайтесь на спецификации в поле specs\n';
   output += '5. Проверьте валидность через `pnpm docs:check`\n\n';
   
@@ -300,6 +291,7 @@ async function isGeneratedRoadmapUpToDate(path, expected) {
 
 export {
   parseFrontMatter,
+  validatePlanLifecycle,
   parseDocument,
   validateDocument,
   scanDocs,

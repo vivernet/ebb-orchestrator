@@ -1,12 +1,10 @@
 ---
 id: plan-04
 kind: plan
-roadmap: 01
-stage: 04
 status: completed
-title: Plan Document
+title: План реализации среды выполнения Orchestrator Hermes и автономной задачи
 created: 2026-09-23
-updated: 2026-09-24
+updated: 2026-09-27
 depends_on: []
 specs:
   - ../specs/01-system-design.md

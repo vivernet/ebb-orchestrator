@@ -1,12 +1,10 @@
 ---
 id: plan-15-03
 kind: plan
-roadmap: 01
-stage: 13
 status: completed
 title: First-run CLI wizard и startup composition
 created: 2026-09-25
-updated: 2026-09-25
+updated: 2026-09-27
 depends_on:
   - plan-15-02
 specs:
