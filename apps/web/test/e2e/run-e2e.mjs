@@ -34,9 +34,18 @@ function delay(milliseconds) {
   return new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
 }
 
+function recordChildEvent(child, event, details = {}) {
+  child.lifecycleEvents ??= [];
+  child.lifecycleEvents.push({ event, at: new Date().toISOString(), ...details });
+}
+
 function trackChild(name, child) {
   children.set(name, child);
   child.startupOutput = "";
+  child.lifecycleEvents = [];
+  child.once("exit", (code, signal) => recordChildEvent(child, "exit", { code, signal }));
+  child.once("close", (code, signal) => recordChildEvent(child, "close", { code, signal }));
+  child.once("disconnect", () => recordChildEvent(child, "disconnect"));
   child.stderr?.on("data", (chunk) => {
     child.startupOutput = `${child.startupOutput}${chunk.toString("utf8")}`.slice(-8192);
     process.stderr.write(chunk);
@@ -180,14 +189,29 @@ function closeControlChannel() {
   controlSockets.clear();
 }
 
+function childLifecycleSummary(name, child) {
+  return JSON.stringify({
+    name,
+    pid: child.pid ?? null,
+    connected: child.connected ?? null,
+    exitCode: child.exitCode,
+    signalCode: child.signalCode,
+    events: child.lifecycleEvents,
+  });
+}
+
 async function terminateChild(name) {
   const child = children.get(name);
   if (!child) return;
   if (child.exitCode === null && child.signalCode === null) {
+    recordChildEvent(child, "termination-requested", { method: process.platform === "win32" ? "taskkill" : "SIGTERM" });
     if (process.platform === "win32" && child.pid) {
-      await new Promise((resolvePromise) => execFile("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], { shell: false, windowsHide: true }, () => resolvePromise()));
+      await new Promise((resolvePromise) => execFile("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], { shell: false, windowsHide: true }, (error) => {
+        recordChildEvent(child, "taskkill-result", { succeeded: !error, errorCode: error?.code ?? null });
+        resolvePromise();
+      }));
     } else {
-      child.kill("SIGTERM");
+      recordChildEvent(child, "signal-result", { signal: "SIGTERM", sent: child.kill("SIGTERM") });
     }
   }
   let timeout;
@@ -196,7 +220,7 @@ async function terminateChild(name) {
     exitCode = await Promise.race([
       waitForChild(child),
       new Promise((_, reject) => {
-        timeout = setTimeout(() => reject(new Error(`${name} process did not exit during teardown`)), 10_000);
+        timeout = setTimeout(() => reject(new Error(`${name} process did not exit during teardown; lifecycle=${childLifecycleSummary(name, child)}`)), 10_000);
       }),
     ]);
   } finally {
@@ -297,10 +321,16 @@ try {
     try { await terminateChild(name); } catch (error) { cleanupErrors.push(error); }
   }
   if (controlEndpoint && children.has("backend")) {
+    const backendProcess = children.get("backend");
+    recordChildEvent(backendProcess, "control-stop-requested");
     try {
       const stopped = await controlRequest("stop");
+      recordChildEvent(backendProcess, "control-stop-response", { type: stopped.type });
       if (stopped.type !== "stopped") cleanupErrors.push(new Error("Backend did not acknowledge final stop"));
-    } catch (error) { cleanupErrors.push(error); }
+    } catch (error) {
+      recordChildEvent(backendProcess, "control-stop-error", { name: error?.name ?? null, code: error?.code ?? null });
+      cleanupErrors.push(error);
+    }
   }
   if (controlChannel) {
     try { await controlChannel.dispose(); } catch (error) { cleanupErrors.push(error); }
@@ -310,7 +340,10 @@ try {
   }
   password.fill(0);
   const backend = children.get("backend");
-  if (backend?.connected) backend.disconnect();
+  if (backend?.connected) {
+    recordChildEvent(backend, "disconnect-requested");
+    backend.disconnect();
+  }
   try { await terminateChild("backend"); } catch (error) { cleanupErrors.push(error); }
   try { await assertCleanSqliteAndHome(); } catch (error) { cleanupErrors.push(error); }
   if (cleanupErrors.length > 0 && !primaryError) primaryError = new AggregateError(cleanupErrors, "E2E teardown failed");

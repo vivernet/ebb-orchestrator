@@ -278,7 +278,12 @@ process.on("message", async (message) => {
 });
 
 process.on("disconnect", async () => {
-  try { if (backend) await stopBackend(); } catch { /* Закрытие IPC следует завершить даже при ошибке остановки. */ }
+  process.stderr.write(`[E2E backend lifecycle] IPC disconnect received; running=${Boolean(backend)}\n`);
+  try { if (backend) await stopBackend(); } catch (error) {
+    process.stderr.write(`[E2E backend lifecycle] shutdown on disconnect failed; code=${error?.code ?? error?.name ?? "unknown"}\n`);
+  }
+  process.stderr.write(`[E2E backend lifecycle] closing control listener; listening=${Boolean(controlServer?.listening)}\n`);
   if (controlServer?.listening) controlServer.close();
+  process.stderr.write("[E2E backend lifecycle] calling process.exit(0)\n");
   process.exit(0);
 });
