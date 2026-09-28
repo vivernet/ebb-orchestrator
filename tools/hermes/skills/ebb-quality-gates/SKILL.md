@@ -1,18 +1,19 @@
 ---
 name: ebb-quality-gates
-description: Используй для выбора и выполнения проверок качества Ebb Orchestrator по затронутому scope, риску и требованиям плана.
-version: 2.0.0
-platforms: [windows, linux, macos]
+description: Используй, когда нужно выбрать и доказательно выполнить проверки качества для изменения Ebb Orchestrator перед task, plan или release-level completion claim.
 metadata:
-  hermes:
-    tags: [ebb-orchestrator, verification, quality]
+  project: "ebb-orchestrator"
+  version: "4.0.0"
 ---
 
 # Ebb Quality Gates
 
-Выбери сначала самое узкое полезное подтверждение, затем соседние проверки и обязательные repository gates. Не запускай весь набор без необходимости, если scope локален; не опускай plan-required gate.
+**Required companion before completion claims:** Superpowers `verification-before-completion`.
 
-Для каждого запускай свежую команду на текущем HEAD и запиши точную команду, exit code, существенный результат и ограничения. Применяй `pnpm lint`, `pnpm typecheck`, `pnpm test`, build, docs и E2E/security checks согласно изменённому scope и repository policy. Заверши `git diff --check`.
-
-Не объявляй PASS по намерению, старому отчёту, неполному подпроцессу или summary агента. Разделяй дефект текущей задачи и подтверждённую внешнюю dependency failure; при внешнем блокере сохраняй evidence и не называй worktree полностью проверенным. Проверь diff на generated artifacts, secrets и unrelated changes.
-
+1. Определи применимые gates из approved plan, repository policy и changed scope. Начинай с самого узкого доказательства, затем neighboring и обязательные broader gates.
+2. Для каждого запуска запиши exact command, cwd, exit code, фактически выбранные files/tests/counts, существенный result и platform/skipped limitations.
+3. Типовые gates (`pnpm lint`, `pnpm typecheck`, `pnpm test`, build, docs, E2E/security) применяй только если они существуют и относятся к scope; plan-required gate нельзя заменить «похожей» командой.
+4. Заверши diff hygiene: `git diff --check`, unexpected/generated artifacts, secrets/absolute paths, unrelated changes и final `git status --short`.
+5. Broader failures классифицируй: regression текущего scope, pre-existing baseline или pending dependency. Последние два требуют evidence и явного ограничения; они не превращаются в зелёный worktree.
+6. Если менялся setup/dev script или документация команд, используй `ebb-repository-maintenance` для command/source audit.
+7. Completion claim разрешён только после свежего output текущего HEAD. Старый log, intent, частичный subprocess или subagent summary не является PASS.

@@ -1,18 +1,21 @@
 ---
 name: ebb-final-review
-description: Используй после выполнения плана для независимого read-only ревью готовности полного изменения Ebb Orchestrator.
-version: 2.0.0
-platforms: [windows, linux, macos]
+description: Используй, когда все задачи плана Ebb Orchestrator выполнены и нужен независимый whole-change review перед объявлением работы завершённой.
 metadata:
-  hermes:
-    tags: [ebb-orchestrator, final-review]
+  project: "ebb-orchestrator"
+  version: "4.0.0"
 ---
 
 # Ebb Final Review
 
-В свежем контексте попытайся опровергнуть готовность. Прочитай approved plan/spec, полный текущий diff и актуальные результаты проверок; bootstrap context используй через brief, не перечитывай нерелевантные документы.
+В свежем контексте попытайся опровергнуть готовность полного изменения. Если Superpowers SDD уже запускает final reviewer, передай ему этот rubric вместо второго дублирующего review.
 
-Проверь архитектурные authority boundaries, state transitions, scheduler/runtime paths, permissions, persistence/migrations/recovery, security, startup/shutdown, Git/worktree safety, integration, тесты, русскую JSDoc policy и согласованность документации. Для Web/security scope проверь наличие соответствующего specialist evidence.
+1. Прочитай approved spec/plan, task verdicts, полный current diff и свежие `ebb-quality-gates` outputs.
+2. Проверь requirement coverage и cross-task integration: authority boundaries, state/lifecycle transitions, persistence/migrations/recovery, scheduler/runtime paths, startup/shutdown, Git/worktree safety и документацию.
+3. Проверь, что task-level PASS не скрыл deferred dependency, stale evidence или незапущенный plan-required gate.
+4. Для security scope потребуй `ebb-security-review` evidence; для Web/HTTP/session/SSE — `ebb-web-e2e`. Отсутствие обязательного specialist evidence — finding, а не предположение о PASS.
+5. Для docs/localization изменений проверь фактический changed-file inventory, корректность commands/paths и отсутствие orphan references.
+6. Finding содержит severity, path/symbol, evidence, impact и минимальное условие исправления. Не создавай cosmetic churn.
+7. Verdict: `PASS` или `CHANGES_REQUESTED`. После исправления load-bearing finding нужен свежий scoped verification/re-review, а затем актуальный final verdict.
 
-Не делай косметический review churn. Вердикт `PASS` или `CHANGES_REQUESTED`. Каждый finding — только с evidence, path/symbol, impact и минимальным условием исправления. Review read-only; подтверждённые блокеры возвращай implementer/controller.
-
+Review read-only. Не называй проект production-ready шире, чем доказанный scope текущего plan.

@@ -1,13 +1,13 @@
 # Architectural debugging checklist
 
-Используй только когда симптом проходит через несколько компонент или затрагивает auth, persistence, public API, scheduler/runtime, Web/E2E или security boundary.
+Используй, когда symptom проходит через несколько компонентов или затрагивает auth, persistence, public API, scheduler/runtime, Web/E2E либо security boundary.
 
-- Карта: источник запроса → проверки → владельцы состояния/транзакции → side effects → ответ/событие.
-- Отдельно проверь все entry paths: HTTP, worker, runtime и direct-call, если они существуют для этой функции.
-- До фикса согласуй load-bearing DTO/error semantics, transaction/rollback boundary, concurrency/idempotency и lifecycle transitions.
-- Для browser/process сценария проверь реальный transport, readiness/restart, worker-safe IPC, secret lifecycle и teardown/orphan processes.
-- Миграции, projections и fixtures должны быть проверены реальными consumers и upgrade/negative paths.
-- Тестируй исходный симптом и регрессию; общий зелёный unit suite не заменяет их.
+- Построй path: request/event source → validation/guards → state/transaction owner → side effects → response/event.
+- Перечисли все реальные entry paths (HTTP, worker, runtime, CLI/direct-call) и проверь, где контракт расходится.
+- До fix уточни load-bearing DTO/error semantics, transaction/rollback boundary, concurrency/idempotency и lifecycle transitions.
+- Для process/browser пути проверь readiness/restart, real transport, worker-safe IPC, secret lifecycle и teardown/orphan processes.
+- Для migration/projection/fixture проверь actual consumers, upgrade/negative paths и cumulative state.
+- Сравни working/broken states и recent changes; одно отличие = одна проверяемая гипотеза.
+- Regression обязана воспроизводить исходный symptom; общий зелёный unit suite не заменяет её.
 
-Это вопросы расследования, а не утверждения, что все перечисленные механизмы применимы в любом баге.
-
+Это investigation prompts, а не утверждение, что каждый механизм применим к любому bug.

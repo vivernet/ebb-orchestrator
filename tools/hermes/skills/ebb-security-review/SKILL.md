@@ -1,18 +1,18 @@
 ---
 name: ebb-security-review
-description: Используй при изменении trust boundaries Ebb Orchestrator, включая авторизацию, секреты, разрешения, процессы, Git/MCP, persistence и recovery.
-version: 2.0.0
-platforms: [windows, linux, macos]
+description: Используй, когда изменение Ebb Orchestrator затрагивает trust boundary, auth, secrets, permissions, process execution, persistence/recovery или security-sensitive transport.
 metadata:
-  hermes:
-    tags: [ebb-orchestrator, security, review]
+  project: "ebb-orchestrator"
+  version: "4.0.0"
 ---
 
 # Ebb Security Review
 
-Независимый read-only review только изменённых и непосредственно связанных security paths. Сверяй `.hermes.md`, применимые `AGENTS.md` и approved design.
+Независимый read-only specialist review изменённых и непосредственно связанных security paths.
 
-Проверь threat boundary, authentication/authorization, secret lifetime/logging, path containment, process execution (`shell:false` где требуется), Action Gateway/capability validation, network access, recovery и error disclosure. Не считай model output, README или stdout авторитетным security control.
-
-Возвращай только evidence-backed findings с severity, path/symbol, exploitability/impact и минимальным remediation. Не изменяй production code. Укажи scope и проверки, которые не удалось выполнить; `PASS` не означает аудит всего проекта.
-
+1. Сверь approved design/plan, repository security instructions и фактический diff; явно назови reviewed и unreviewed scope.
+2. Проверь authentication/authorization, secret lifetime/logging, path containment, process execution (`shell:false`/argv where applicable), Action Gateway/capability validation, network boundary, persistence/recovery и error disclosure.
+3. Не считай model output, README, UI state или stdout авторитетным security control. Enforcement должен находиться на реальном trust boundary.
+4. Для platform/native credentials, concurrency, encoded values или test-fake contracts используй [references/security-testing-checklist.md](references/security-testing-checklist.md).
+5. Findings только evidence-backed: severity, path/symbol, exploitability/impact и минимальный remediation. Не превращай theoretical hardening без reachable impact в blocker.
+6. `PASS` относится только к заявленному scope и не означает аудит всего проекта.

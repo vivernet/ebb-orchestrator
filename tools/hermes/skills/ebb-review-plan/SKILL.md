@@ -1,20 +1,21 @@
 ---
 name: ebb-review-plan
-description: Используй для независимой проверки implementation plan Ebb Orchestrator перед началом реализации, особенно для многочастных и межкомпонентных изменений.
-version: 2.0.0
-platforms: [windows, linux, macos]
+description: Используй, когда implementation plan Ebb Orchestrator готов к независимой read-only проверке перед исполнением.
 metadata:
-  hermes:
-    tags: [ebb-orchestrator, planning, review]
+  project: "ebb-orchestrator"
+  version: "4.0.0"
 ---
 
 # Ebb Review Plan
 
-Работай в свежем контексте и только как read-only reviewer. Проверь реальные требования и существующие файлы, затем попробуй доказать, что план нельзя выполнить безопасно или однозначно.
+Работай в свежем контексте как независимый reviewer. Не переписывай plan вместо автора.
 
-Проверь: coverage требований; naming/frontmatter/evidence; ownership и точные Create/Modify paths; интерфейсы и producer/consumer совместимость; порядок зависимостей; тесты RED→GREEN; исполнимые `Run` и конкретные `Expected`; gates; выполнимость каждой задачи агентом без истории чата; scope и открытые решения.
+1. Прочитай approved requirements/spec, актуальный plan и только нужные repository sources; проверь существование заявленных файлов, scripts и commands.
+2. Проверь coverage требований, scope, naming/lifecycle metadata, exact `Create`/`Modify` ownership, dependency DAG и отсутствие конкурирующих владельцев одного нового файла.
+3. Сверь producer/consumer interfaces, DTO/error semantics, persistence/transaction/lifecycle boundaries и порядок cross-component изменений.
+4. Для каждой task проверь meaningful RED, конкретный GREEN, исполнимые `Run`/`Expected`, acceptance criteria и возможность выполнить task свежим агентом без истории чата.
+5. Проверь, что generic Superpowers defaults не перезаписали project conventions (plan path, worktree, commit policy, docs layout).
+6. Для cleanup/move/rename/docs/setup-script scope используй `ebb-repository-maintenance`; для load-bearing cross-component plan — [references/plan-review-checklist.md](references/plan-review-checklist.md).
+7. Verdict: `APPROVED` или `CHANGES_REQUIRED`. Каждый blocking/important finding содержит path/symbol, evidence, риск и минимальное условие исправления.
 
-Для cross-component/load-bearing плана используй `references/plan-review-checklist.md`. Это условный reference, не глобальный список обязательных механизмов для каждой задачи.
-
-Вердикт: `APPROVED` либо `CHANGES_REQUIRED`. Каждый blocker/important finding содержит путь/символ, конкретный пробел, риск и минимально необходимое исправление. Не исправляй план сам. Не требуй тестов или матриц, не относящихся к изменённым контрактам.
-
+Не требуй механизмов, не относящихся к scope, и не считай style preference blocker. После изменения plan предыдущий verdict недействителен.

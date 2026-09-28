@@ -1,30 +1,26 @@
 ---
 name: ebb-implement-task
-description: Используй для реализации одной назначенной задачи Ebb Orchestrator или одного подтверждённого ограниченного finding cluster с регрессионными тестами.
-version: 3.0.0
-platforms: [windows, linux, macos]
+description: Используй, когда нужно реализовать одну задачу утверждённого плана Ebb Orchestrator или один ограниченный bugfix с проверяемым scope.
 metadata:
-  hermes:
-    tags: [ebb-orchestrator, implementation, tdd]
+  project: "ebb-orchestrator"
+  version: "4.0.0"
 ---
 
 # Ebb Implement Task
 
-Исполняй ровно одну задачу. Controller координирует; он может реализовать простой изолированный патч сам. Для объёмной или независимой реализации делегируй implementer, если это экономит контекст.
+Исполняй ровно одну task или один подтверждённый bounded finding cluster.
 
-## Контекст и делегирование
+**Companion:** используй Superpowers `test-driven-development` для behavior changes/bugfixes. Ebb scope policy имеет приоритет над generic full-suite default: task обязана доказать focused + plan-required checks; repository-wide suite выполняй здесь только если plan/repository policy требует её на каждой task, иначе её владеет `ebb-quality-gates`/final stage.
 
-Прими brief с разрешёнными файлами, контрактами, критериями и командами. Не перечитывай весь README/design, если актуальные выдержки есть в brief. Максимум два активных субагента в системе: task-controller запускает максимум одного leaf-agent; leaf не делегирует. Reviewer всегда независимый и read-only.
+## Cycle
 
-## Цикл
+1. Прими task brief с exact paths, contracts, acceptance, commands и dependency rulings. Проверь branch/HEAD/status и pre-existing changes.
+2. Для нового поведения/регрессии получи meaningful RED: ожидаемая assertion/failure reason, а не просто non-zero exit или setup error.
+3. Сделай минимальный GREEN fix; не расширяй scope «заодно». Затем refactor только при сохранённом GREEN.
+4. Запусти focused tests, neighboring checks и task-required typecheck/build/docs/security/E2E gates; зафиксируй actual selected tests/counts, когда forwarding команды может быть неоднозначным.
+5. Передай diff + task requirements + evidence свежему reviewer. Если используется Superpowers `requesting-code-review`/SDD reviewer dispatch, rubric — `ebb-review-task`.
+6. Для подтверждённых findings делай узкий fix и scoped re-review. Не переоткрывай unrelated scope; после повторяющихся неудачных раундов эскалируй root cause/model согласно execution workflow.
+7. Security-sensitive scope требует `ebb-security-review`; browser/HTTP/session/SSE — `ebb-web-e2e`.
+8. Верни changed paths, exact commands/results, review verdict и ограничения. Не заявляй `PASS` без свежего evidence.
 
-1. Подтверди базовый branch/HEAD/status и scope; запусти релевантный baseline.
-2. Для нового поведения/регрессии сначала добавь тест или воспроизводимый сценарий и получи RED по ожидаемой assertion. Ненулевой exit сам по себе не доказывает RED.
-3. Сделай минимальный fix, затем GREEN; проверь соседние тесты, применимые typecheck/build и `git diff --check`.
-4. Выполни scoped review через `ebb-review-task`; передай diff и evidence отдельному свежему reviewer.
-5. Исправляй подтверждённые finding ограниченными раундами; для каждого фикса повтори затронутый тест и scoped re-review. После пяти безуспешных fix rounds остановись и эскалируй архитектурную причину.
-6. Для security scope вызови `ebb-security-review`; для browser/HTTP/SSE behavior — `ebb-web-e2e`. Используй только применимые проверки.
-7. Верни список изменённых файлов, команды/результаты, review verdict и ограничения. Не заявляй PASS без свежего evidence.
-
-Применяй dependency gates: не начинай зависимую задачу, пока prerequisite не принят. Ошибки broader suite классифицируй по ownership; не ослабляй тесты и не называй всю работу завершённой при красной зависимости.
-
+Не начинай dependent task, пока prerequisite не принят. Broader-suite failure можно классифицировать как external dependency только после воспроизведения и доказательства ownership; тесты/fixtures нельзя ослаблять, чтобы скрыть красную зависимость.

@@ -1,29 +1,29 @@
-# Implementation plan format
+# Ebb implementation-plan overlay
 
-## Header
+Superpowers `writing-plans` задаёт базовую структуру и гранулярность. Этот файл добавляет только Ebb-specific требования.
 
-Название и цель. Frontmatter соответствует `governance/plan-naming-and-lifecycle-policy.md`. `evidence` содержит только существующие файлы. Будущие файлы объявляются в task scope.
+## Header / authority
 
-## Global Constraints
+- Укажи Goal, Architecture, Tech Stack и путь к approved spec/design, если он существует.
+- Перечисли authority sources и project-wide constraints; не копируй большие руководства.
+- Используй фактическую repository naming/lifecycle policy. Project convention имеет приоритет над generic именем/директорией Superpowers.
 
-Укажи утверждённые источники, invariants, границы scope, запрещённые изменения и общие gates. Не копируй целые руководства.
+## Task contract
 
-## Review Focus
+Каждая task обязана содержать:
 
-Перечисли конкретные риски и места, которые должен опровергнуть reviewer: ownership, compatibility, failure paths, persistence/concurrency, permissions, lifecycle, migrations и т. п. Только применимое.
+- `Task ID`, проверяемый результат и `Depends on`;
+- точные `Create`/`Modify` paths и owner; новые файлы имеют одного owner;
+- `Interfaces`: producer/consumer contracts, DTO/error semantics, transaction/lifecycle boundary на затронутых seams;
+- RED: тест/сценарий, точная команда и ожидаемая assertion/failure reason;
+- GREEN: минимальное изменение, exact command и ожидаемый результат;
+- neighboring/applicable gates и `Review Focus`;
+- completion evidence и условия, при которых task остаётся `BLOCKED`.
 
-## Tasks
+Не оставляй `TBD`, `or equivalent`, «исправить при необходимости» или будущий artifact в качестве существующего evidence.
 
-Каждая task включает:
+## Repository-maintenance tasks
 
-- `Task ID`, короткую цель и проверяемый результат;
-- `Depends on` с существующими task IDs;
-- `Create` и `Modify` точных путей, owner и важные symbols;
-- `Interfaces`/DTO/error semantics/transaction boundary на каждом затронутом seam;
-- RED: тест/сценарий, точная команда и ожидаемый провал;
-- GREEN: минимальное изменение, команда и ожидаемый результат;
-- соседние проверки и `Review Focus`;
-- критерии завершения и evidence.
+Для move/delete/cleanup/rename добавь атомарный disposition (`path`, current state, action, destination, reason, verification) и отдельный destructive approval gate, если меняются/удаляются пользовательские или runtime данные.
 
-Задача должна иметь один логический owner и быть достаточно узкой для одного свежего implementer. Разделяй tasks по зависимостям и ownership, а не по произвольному количеству файлов. Не оставляй placeholders, альтернативы без решения (`or equivalent`, `fix later`) или неуказанных владельцев.
-
+Для setup/dev scripts укажи реальную script owner path, cwd, prerequisites, side effects, cross-platform expectations и команду проверки.

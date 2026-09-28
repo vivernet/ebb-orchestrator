@@ -1,27 +1,26 @@
 ---
 name: ebb-write-plan
-description: Используй для исследования требований и создания нового implementation plan Ebb Orchestrator с конкретными задачами, владельцами файлов, интерфейсами и проверками.
-version: 3.0.0
-platforms: [windows, linux, macos]
+description: Используй, когда утверждённые требования Ebb Orchestrator нужно превратить в implementation plan перед многошаговой, рискованной или cross-component реализацией.
 metadata:
-  hermes:
-    tags: [ebb-orchestrator, planning, implementation-plan]
+  project: "ebb-orchestrator"
+  version: "4.0.0"
 ---
 
 # Ebb Write Plan
 
-Создай исполнимый план на основе текущего репозитория и утверждённых требований. Не начинай реализацию.
+**Companion:** используй Superpowers `writing-plans` как основной planning workflow. Если требования ещё требуют проектных решений, сначала используй Superpowers `brainstorming`; plan не должен скрыто заменять design/spec.
+
+Ebb-правила ниже являются project overlay и имеют приоритет над generic defaults Superpowers для путей, naming, worktree, commits и repository governance.
 
 ## Workflow
 
-1. Используй `ebb-repository-context` для краткого Context Brief; зафиксируй требования, ограничения, branch/HEAD/status.
-2. Для объёмного независимого исследования назначь до двух scouts (например, architecture/code и tests/tooling). Для простого плана исследуй сам. Каждый scout возвращает краткие выводы с путями/символами и evidence-файлом для подробностей.
-3. Зафиксируй открытые продуктовые/API/security решения. Не изобретай значения, меняющие публичный контракт или модель угроз: запроси решение пользователя либо пометь план `BLOCKED`/proposal согласно policy.
-4. Разбей работу на dependency-ordered tasks. Каждая должна выполняться свежим агентом без истории чата и содержать цель, точные `Create`/`Modify` файлы, владельца, интерфейсы, зависимости, RED→GREEN, `Run` и конкретный `Expected`, а также `Review Focus`.
-5. Проверь покрытие требований, единственность владельца новых файлов, межмодульные контракты, циклы зависимостей, реальные evidence paths и полноту gates. Формат — `references/plan-format.md`.
-6. Создай plan с canonical filename/metadata по governance policy; утверждённый и готовый к исполнению план получает `status: planned`. Generated registers вручную не правь: запусти `pnpm docs:roadmap`, затем `pnpm docs:check` и `git diff --check`, если эти команды существуют.
-7. Передай план независимому `ebb-review-plan`. При `CHANGES_REQUIRED` внеси только адресные изменения и запроси свежий review.
-8. После `APPROVED` создай обязательный локальный commit только для файлов плана и его generated outputs: `feat: add plan <plan-id> <short-title>`. Не включай unrelated/частичные изменения; если безопасно отделить scope нельзя, остановись и сообщи блокировку. Push/merge запрещены.
+1. Получи `ebb-repository-context` и утверждённые требования/spec. Не начинай implementation.
+2. Проверь фактическую plan directory/naming convention в репозитории до создания файла. Не применяй автоматически generic Superpowers plan directory или date-based naming, если проект использует другое правило.
+3. Для независимых больших исследований используй ограниченное число scouts с непересекающимися вопросами; результат возвращай кратким summary + artifact path, а не полным логом.
+4. Зафиксируй все открытые product/API/security решения. Не угадывай значения, меняющие публичный contract или threat model.
+5. Разбей работу на dependency-ordered tasks. Каждая task должна иметь точные `Create`/`Modify` paths, owner, interfaces, dependencies, RED→GREEN evidence, `Run` + конкретный `Expected`, acceptance criteria и `Review Focus`.
+6. Для cleanup/move/rename/docs/setup-script scope загрузи `ebb-repository-maintenance` и включи его disposition/command-audit requirements.
+7. Выполни self-review из Superpowers `writing-plans`, затем передай полный актуальный plan независимому `ebb-review-plan`. После любых правок нужен свежий verdict.
+8. План получает executable status только после `APPROVED`. Commit plan/generated outputs выполняй только по актуальной repository governance; никогда не включай unrelated changes и не push/merge.
 
-Не создавай субагентов для форматирования, простого поиска или короткого плана. Максимум два активных агента; не пересылай большие логи в controller context.
-
+Используй [references/plan-format.md](references/plan-format.md) как Ebb-specific overlay к Superpowers plan format, а не как второй конкурирующий формат.

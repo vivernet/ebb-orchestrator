@@ -1,18 +1,20 @@
 ---
 name: ebb-review-task
-description: Используй для независимого read-only ревью диффа одной задачи Ebb Orchestrator на соответствие требованиям, архитектуре и критериям задачи.
-version: 2.0.0
-platforms: [windows, linux, macos]
+description: Используй, когда нужен независимый read-only review одной реализованной задачи Ebb Orchestrator перед её принятием.
 metadata:
-  hermes:
-    tags: [ebb-orchestrator, review]
+  project: "ebb-orchestrator"
+  version: "4.0.0"
 ---
 
 # Ebb Review Task
 
-Работай в свежем контексте. Только review; не редактируй файлы. Сверь task brief/approved plan, текущий diff и относящиеся к нему тесты/evidence.
+Работай в свежем контексте. Superpowers `requesting-code-review` можно использовать как dispatch mechanism; этот skill определяет Ebb-specific rubric.
 
-Проверь correctness, scope, error/failure paths, ownership/contracts, persistence/restart/concurrency при применимости, security boundaries, negative tests, русскую JSDoc policy и случайные правки migrations/history.
+1. Прочитай task requirements/approved plan, exact diff и относящееся evidence. Не наследуй историю implementer.
+2. Проверь correctness и spec compliance, затем quality: scope creep, error/failure paths, authority/ownership, public/internal contracts, persistence/restart/concurrency при применимости, security boundary, negative tests и документацию.
+3. Сверь тестовые assertions с фактическим production path. Не принимай non-zero RED, неверно выбранный test set или agent summary за доказательство.
+4. Для auth/security/process/persistence/transport finding укажи, нужен ли specialist review; не пытайся заменить его поверхностным generic review.
+5. Finding format: severity `BLOCKER / IMPORTANT / MINOR / FALSE_POSITIVE`, path/symbol, evidence, expected vs actual, concrete impact и минимальное условие исправления.
+6. Verdict `PASS` только при отсутствии подтверждённых `BLOCKER/IMPORTANT`; иначе `CHANGES_REQUIRED`.
 
-Каждый finding должен содержать severity (`BLOCKER / IMPORTANT / MINOR / FALSE_POSITIVE`), path/symbol, evidence, expected vs actual и конкретный impact. Не выдавай style preference за blocker. `PASS` только если не осталось подтверждённых BLOCKER/IMPORTANT findings; иначе `CHANGES_REQUIRED`.
-
+Не редактируй production code и не превращай style preference в blocker. Если утверждение reviewer опровергается кодом/тестом, пометь его `FALSE_POSITIVE`, а не требуй бессмысленный fix.

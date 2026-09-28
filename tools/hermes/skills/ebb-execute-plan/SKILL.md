@@ -1,31 +1,29 @@
 ---
 name: ebb-execute-plan
-description: Используй для исполнения утверждённого implementation plan Ebb Orchestrator с учётом зависимостей, ledger, проверок и финального аудита.
-version: 3.0.0
-platforms: [windows, linux, macos]
+description: Используй, когда утверждённый implementation plan Ebb Orchestrator нужно выполнить с dependency-aware orchestration, subagents, task reviews и финальными gates.
 metadata:
-  hermes:
-    tags: [ebb-orchestrator, execution, implementation-plan]
+  project: "ebb-orchestrator"
+  version: "4.0.0"
 ---
 
 # Ebb Execute Plan
 
-Вход: repo-relative path к `APPROVED` plan со статусом `planned` или `in_progress`.
+**Preferred companion:** Superpowers `subagent-driven-development` при наличии subagent runtime; иначе `executing-plans`. Используй его dispatch/recovery/review mechanics, но Ebb project policy ниже имеет приоритет.
 
 ## Invariants
 
-- Работай в текущем worktree/branch; проверь branch, HEAD, dirty files и сохранность unrelated changes.
-- Не более двух активных субагентов: запускай максимум одного task-controller одновременно; тот может запустить максимум одного leaf-agent. Leaf-agent не создаёт агентов. Для мелкой/сильно связанной задачи контроллер может выполнить работу сам.
-- Не включай auto worktree isolation. Не делай push/merge/tag/release. Commit только если план явно требует, либо на основании отдельного согласованного правила.
-- Следуй `.hermes.md`, применимым `AGENTS.md`, approved design и plan; при конфликте зафиксируй ruling/evidence до продолжения.
+- Работай в уже выбранном Ebb worktree/branch. Не создавай nested/automatic worktree поверх него без требования plan.
+- Не push/merge/tag/release. Commit только когда это разрешено plan/repository governance.
+- Coordinator владеет dependency graph и file ownership. Не допускай неконтролируемый nested fan-out.
+- Параллельно запускай только `READY` tasks с доказанно непересекающимся mutable scope; иначе используй свежего агента последовательно.
 
 ## Procedure
 
-1. Проверь актуальность plan, его review verdict, prerequisites и status. Изменившийся контракт требует повторного review.
-2. Создай persistent ledger `WAITING / READY / RUNNING / REVIEW / DONE / BLOCKED`; планируй только READY tasks и не запускай конкурирующих владельцев файлов.
-3. Передавай каждому task-controller минимальный brief и нужные файлы. Большие отчёты храни как artifacts, в ledger держи статус и краткую ссылку.
-4. Исполняй задачу через `ebb-implement-task`. Task принимается после свежего `ebb-review-task` и применимых specialist checks.
-5. После всех задач обнови metadata/roadmap только по правилам governance, запусти применимые `ebb-quality-gates`, проверь полный diff и вызови `ebb-final-review`.
-6. На подтверждённый blocker вернись к root cause, исправь ограниченную область, повтори нужные проверки и вызови свежего final reviewer.
-7. Отчитайся о HEAD, задачах, командах/результатах, verdicts, ограничениях и состоянии worktree. Не называй частичную работу полной.
-
+1. Проверь plan path/status, `APPROVED` verdict, prerequisites, HEAD/status и актуальность contracts. При существенном drift верни plan на review.
+2. Веди persistent ledger `WAITING / READY / RUNNING / REVIEW / DONE / BLOCKED`. Если активен Superpowers SDD, используй его plan-owned ledger вместо второго параллельного журнала.
+3. Для task передай свежему implementer минимальный brief: task text, нужные interfaces/rulings, exact paths и artifact path для отчёта. Не передавай историю сессии.
+4. Реализация следует `ebb-implement-task`. Reviewer из Superpowers task loop должен использовать `ebb-review-task` как Ebb rubric — не запускай дублирующий review только ради двух названий.
+5. Findings исправляй scoped rounds с повтором затронутых тестов и re-review. Используй model escalation/fix-loop companion skill; не создавай второй независимый цикл.
+6. Task становится `DONE` только после нужного review и task-level gates. Broader failure классифицируй по ownership; deferred dependency остаётся явно красной/blocked, а не скрывается.
+7. После всех tasks запусти `ebb-quality-gates`, затем один независимый whole-change `ebb-final-review` (или передай его rubric final reviewer Superpowers).
+8. Отчёт содержит HEAD, task ledger, commands/results, review verdicts, remaining limitations и worktree status. Partial work не называй полной.
