@@ -298,7 +298,7 @@ describe("Autonomous Task End-to-End Workflow", () => {
       skip("Hermes acceptance requires EBB_HERMES_PROVIDER_BASE_URL, EBB_HERMES_PROVIDER_SECRET_NAME, and EBB_HERMES_ACCEPTANCE_API_KEY");
       return;
     }
-    const acceptanceSecretStore = new InMemorySecretStore(db!);
+    const acceptanceSecretStore = new InMemorySecretStore();
     await acceptanceSecretStore.store(HERMES_PROVIDER_SECRET_SERVICE, providerBridge.secretName, providerApiKey);
 
     const worktree = await worktreeManager.createTaskWorkspace(taskId, masterRepoPath, "master");
