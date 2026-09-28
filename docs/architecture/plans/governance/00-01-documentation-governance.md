@@ -5,7 +5,7 @@ status: completed
 title: Documentation Governance Refactoring
 summary: Рефакторинг документации и единого roadmap
 created: 2026-09-16
-updated: 2026-09-27
+updated: 2026-09-28
 ---
 # Рефакторинг документации и единого roadmap — план реализации
 
@@ -1044,7 +1044,7 @@ No push, merge into `master`, tag or release. Report exact commit/working-tree s
 - [ ] `docs/architecture/plans/governance/00-01-documentation-governance.md` is the canonical implementation plan for this refactor.
 - [ ] All current docs files are present in the migration map.
 - [ ] All competing roadmap sources are merged and no competing active roadmap remains.
-- [ ] `docs/roadmap/01-roadmap.md` is the only canonical roadmap.
+- [x] Current canonical Plan register is generated at `docs/roadmap/generated.md`; `docs/roadmap/01-roadmap.md` is an archival note. This replaces the original path requirement and is verified by Plan 13, Plan 00-05 and the current generated register.
 - [ ] All managed filenames begin with a fixed-width number.
 - [ ] Dates moved from filenames to metadata/content.
 - [ ] Plan identity/dependencies use only Plan ID and `depends_on`; no active Plan grouping by roadmap/stage remains.
@@ -1057,3 +1057,18 @@ No push, merge into `master`, tag or release. Report exact commit/working-tree s
 - [ ] Historical audit evidence and dates are preserved.
 - [ ] `pnpm docs:test`, `pnpm docs:check`, `pnpm docs:rename:check`, `pnpm hermes:test`, `pnpm hermes:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build` and `git diff --check` pass.
 - [ ] Independent review passes with no unresolved load-bearing finding.
+
+## Current reconciliation (2026-09-28)
+
+This plan records the original documentation-governance migration, not an active implementation backlog. Its 95 remaining unchecked markers are historical execution steps and acceptance wording from an earlier metadata/roadmap contract. They are not treated as completed merely because this plan has `status: completed`; substantive outcomes are reconciled below, and requirements that no longer match the approved current policy are explicitly replaced.
+
+| Original requirement cluster | Current disposition and evidence |
+|---|---|
+| Document naming, metadata, and Plan lifecycle | Replaced by the approved Plan-only contract in [00-05](00-05-governance-integration.md) and [guideline-01](../../../development/02-documentation-governance.md); current lifecycle validation is exercised by `docs:check` and `docs:test`. The original fixed-width prefix requirement is not current policy. |
+| Complete inventory / migration coverage | The 43-row [migration map](evidence/03-document-migration-map.md) is a historical snapshot, not a live inventory. Current document files are scanned by `docs:inventory` and validated by `docs:check`; the current inventory command result belongs to the 2026-09-28 reconciliation, not the old map. |
+| Canonical roadmap | The old requirement that `01-roadmap.md` be canonical is replaced by `generated.md`, as stated by this plan's own overview and implemented by [Plan 13](../13-roadmap-generator.md); `01-roadmap.md` is retained as an archival note. The generated file is regenerated from Plan metadata and now links to the actionable [current-state roadmap](../../../roadmap/02-current-state.md). |
+| Status safety / Hermes execution | Process exit alone does not complete a run. Hermes returns a structured submitted result; `run-event-handlers.ts` requires both `COMPLETED` and output, and adapter regression tests cover a process exiting without a valid submitted result (`hermes-runtime-adapter.test.ts`, test “returns AGENT_OUTPUT_MISSING when process exits without valid submitted result”). |
+| README, links, historical evidence | Current docs navigation is maintained in `docs/README.md`; historical audit snapshots retain their original dates and now point to the current reconciliation rather than presenting old state as live. |
+| RED/GREEN phases, old stage/grouping steps, commits | These are historical execution records or superseded workflow requirements. They are not recreated as if performed now. The conditional local commit step said “only if requested”; this audit did not authorize a commit. |
+
+The former acceptance requirement that every current file appear in the 2026-09-23 migration map is **not** claimed: that map is explicitly historical. The current scan/check provides present inventory and structural validation. The old requirement to use `docs:roadmap/01-roadmap.md` as the sole canonical roadmap is no longer applicable and has been replaced with the generated Plan-only register plus this linked execution sequence. No implementation scope or architecture was expanded by this reconciliation.

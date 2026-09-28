@@ -1,10 +1,10 @@
 ---
 id: plan-05
 kind: plan
-status: completed
+status: blocked
 title: План реализации планирования Orchestrator, эпиков, контекста, знаний и использования
 created: 2026-09-23
-updated: 2026-09-27
+updated: 2026-09-28
 depends_on: []
 specs:
   - ../specs/01-system-design.md
@@ -13,6 +13,7 @@ evidence:
   - https://github.com/ebb-orchestrator/ebb-orchestrator/commit/c18264e
   - apps/server/test/planning/
   - apps/server/test/knowledge/
+  - docs/architecture/plans/governance/evidence/07-current-plan-reconciliation.md
 ---
 # План реализации планирования Orchestrator, эпиков, контекста, знаний и использования
 

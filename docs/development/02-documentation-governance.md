@@ -1,10 +1,10 @@
 ---
 id: guideline-01
-status: in_progress
+status: current
 kind: development
 title: Documentation Governance — Checklist & Implementation
 created: 2026-09-23
-updated: 2026-09-27
+updated: 2026-09-28
 ---
 
 # Documentation Governance — Checklist & Implementation
@@ -16,7 +16,7 @@ updated: 2026-09-27
 
 ## Цель
 
-Этот документ фиксирует чеклист и инструкции по реализации политики документации, описанной в `01-documentation-governance.md`.
+Этот документ является каноническим источником политики и проверяемых требований к документации. Отдельный `01-documentation-governance.md` в актуальной структуре отсутствует.
 
 ## Контракт metadata для Plan
 
@@ -50,6 +50,10 @@ interface PlanMetadata {
 Для Plan идентичность определяется только Plan ID, а зависимости — только `depends_on`; дополнительные roadmap/stage metadata или отдельная группировка не используются. Lifecycle enum применяется только к `kind: plan`: допустимы статусы `proposed`, `planned`, `in_progress`, `blocked`, `completed`, `superseded`, `cancelled`. Документы других `kind` сохраняют собственные статусы (например, `kind: ledger` со статусом `draft`) без нормализации и проверки по Plan enum.
 
 Сгенерированные roadmap-файлы изменяются только запуском предусмотренного генератора. Это правило документации не меняет значения или семантику runtime workflow.
+
+## Язык README и пользовательской документации
+
+Основные README проекта и документация, предназначенная пользователям, пишутся на русском языке. Имена команд, API, файлов и другие технические identifiers сохраняются без перевода. Исключения для внешних контрибьюторских или vendor-документов фиксируются по их назначению.
 
 ## Правила нумерации
 
@@ -172,8 +176,9 @@ updated: YYYY-MM-DD
 - [ ] Проверить все сообщения об ошибках
 - [ ] Исправить выявленные проблемы
 
-## Ссылки
+## Связанные источники
 
-- [Documentation Governance — Naming Policy & Glossary](./01-documentation-governance.md)
+- [Текущий roadmap](../roadmap/generated.md)
+- [Общий индекс документации](../README.md)
 
 ```

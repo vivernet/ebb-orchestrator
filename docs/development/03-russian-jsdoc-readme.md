@@ -1,6 +1,6 @@
 ---
 id: guideline-03
-status: in_progress
+status: superseded
 kind: development
 title: Russian JSDoc и README документация
 created: 2026-09-23
@@ -8,6 +8,8 @@ updated: 2026-09-23
 ---
 
 # Russian JSDoc и README документация
+
+> Исторический общий гайд. Действующие требования к JSDoc описаны в [руководстве по русскому JSDoc](07-jsdoc-style-guide.md), а политика документации — в [руководстве governance](02-documentation-governance.md).
 
 **Версия:** 1.0  
 **Дата утверждения:** 2026-09-23
@@ -66,4 +68,5 @@ pnpm run dev
 
 ## См. также
 
-- [Documentation Governance](./01-documentation-governance.md)
+- [Руководство по русскому JSDoc](07-jsdoc-style-guide.md)
+- [Documentation Governance](02-documentation-governance.md)

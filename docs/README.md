@@ -19,9 +19,10 @@
 
 ## Архитектура и планы
 
-- [Системный дизайн](architecture/specs/01-system-design.md) — основная
+- [Системный дизайн](architecture/specs/01-system-design.md) — текущая
   архитектурная спецификация.
 - [Каталог планов](architecture/plans/) — актуальные и исторические планы.
+- [Последовательность закрытия обязательств](roadmap/02-current-state.md) — текущая сверка с evidence и решениями.
 - [План governance документации](architecture/plans/governance/00-01-documentation-governance.md).
 - [Интеграция governance](architecture/plans/governance/00-05-governance-integration.md).
 - [План CI и runtime home](architecture/plans/17-ci-runtime-home-and-env-hardening.md).
@@ -35,8 +36,7 @@
 
 - [Правила документации](development/02-documentation-governance.md) — имена,
   метаданные и проверка документов.
-- [Русский JSDoc и README](development/03-russian-jsdoc-readme.md).
-- [Стиль JSDoc](development/07-jsdoc-style-guide.md).
+- [Стиль JSDoc на русском и требования к README](development/07-jsdoc-style-guide.md).
 - [Каталог UI-концептов](architecture/reference-ui/).
 
 Проверки документации запускаются из корня репозитория:
@@ -65,7 +65,7 @@ README являются исключением из этого требован�
 
 ## Канонические правила
 
-- Архитектурный источник истины: `architecture/specs/01-system-design.md`.
+- Архитектурный источник истины: `architecture/specs/01-system-design.md` (metadata `current`).
 - Канонический roadmap: `roadmap/generated.md`.
 - Правила JSDoc: `development/07-jsdoc-style-guide.md`.
 - Общие инструкции для агентов: [корневой `AGENTS.md`](../AGENTS.md).

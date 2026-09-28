@@ -20,6 +20,7 @@ export interface LocalUserWizardOptions {
   mode?: "tty" | "stdin";
   inputTimeoutMs?: number;
   now?: () => string;
+  signal?: AbortSignal;
 }
 
 /**
@@ -35,7 +36,9 @@ export async function ensureLocalUser(
   output: NodeJS.WriteStream,
   options: LocalUserWizardOptions = {},
 ): Promise<"EXISTING" | "CREATED"> {
+  throwIfAborted(options.signal);
   if (await authRepository.hasLocalUser()) return "EXISTING";
+  throwIfAborted(options.signal);
   const result = options.mode === "stdin"
     ? await runLocalUserStdinWizard(input, output, authRepository, options)
     : await runLocalUserWizard(input, output, authRepository, options);
@@ -65,10 +68,10 @@ export async function runLocalUserWizard(
     throw new Error("First-run local user setup requires an interactive TTY on stdin and stdout; rerun with a terminal.");
   }
 
-  const password = await readSecret(ttyInput, ttyOutput, "Создайте локальный пароль: ");
+  const password = await readSecret(ttyInput, ttyOutput, "Создайте локальный пароль: ", options.signal);
   let confirmation: RawSecretBytes | undefined;
   try {
-    confirmation = await readSecret(ttyInput, ttyOutput, "Повторите локальный пароль: ");
+    confirmation = await readSecret(ttyInput, ttyOutput, "Повторите локальный пароль: ", options.signal);
     if (!secretsEqual(password, confirmation)) {
       await writeOutput(ttyOutput, "Пароли не совпадают. Сервер остановлен; повторите запуск интерактивно.\n");
       return "FAILED";
@@ -115,6 +118,7 @@ async function runLocalUserStdinWizard(
       input.off("data", onData);
       input.off("end", onEnd);
       input.off("error", onError);
+      options.signal?.removeEventListener("abort", onAbort);
       if (pause) input.pause();
     };
     const fail = (error: Error): void => {
@@ -174,10 +178,16 @@ async function runLocalUserStdinWizard(
       resolve(records);
     };
     const onError = (): void => fail(new Error("Password input failed."));
+    const onAbort = (): void => fail(abortError(options.signal));
+    if (options.signal?.aborted) {
+      onAbort();
+      return;
+    }
     timer = setTimeout(() => fail(new Error("Password input timed out.")), timeoutMs);
     input.on("data", onData);
     input.once("end", onEnd);
     input.once("error", onError);
+    options.signal?.addEventListener("abort", onAbort, { once: true });
     try {
       input.resume();
     } catch {
@@ -198,7 +208,7 @@ async function runLocalUserStdinWizard(
 }
 
 /** Читает секрет побайтно и гарантирует снятие обработчиков и raw mode. */
-async function readSecret(input: WizardInput, output: WizardOutput, prompt: string): Promise<RawSecretBytes> {
+async function readSecret(input: WizardInput, output: WizardOutput, prompt: string, signal?: AbortSignal): Promise<RawSecretBytes> {
   let buffer = new Uint8Array(64);
   let primaryError: unknown;
   let hasPrimaryError = false;
@@ -219,6 +229,7 @@ async function readSecret(input: WizardInput, output: WizardOutput, prompt: stri
         input.off("data", onData);
         input.off("error", onError);
         input.off("end", onEnd);
+        signal?.removeEventListener("abort", onAbort);
       };
       const settle = (error?: unknown): void => {
         if (settled) return;
@@ -274,10 +285,16 @@ async function readSecret(input: WizardInput, output: WizardOutput, prompt: stri
           settle(error);
         }
       };
+      const onAbort = (): void => settle(abortError(signal));
 
+      if (signal?.aborted) {
+        onAbort();
+        return;
+      }
       input.on("data", onData);
       input.once("error", onError);
       input.once("end", onEnd);
+      signal?.addEventListener("abort", onAbort, { once: true });
       try {
         input.resume();
       } catch (error) {
@@ -357,4 +374,14 @@ function writeOutput(output: WizardOutput, text: string): Promise<void> {
 
 function isAsciiWhitespace(byte: number): boolean {
   return byte === 0x09 || byte === 0x0a || byte === 0x0b || byte === 0x0c || byte === 0x0d || byte === 0x20;
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw abortError(signal);
+}
+
+function abortError(signal?: AbortSignal): Error {
+  return signal?.reason instanceof Error
+    ? signal.reason
+    : new Error("Local user setup interrupted.");
 }

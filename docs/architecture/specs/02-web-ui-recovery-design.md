@@ -1,6 +1,6 @@
 ---
 id: spec-02
-status: superseded
+status: current
 title: Web UI Recovery Design
 date: 2026-09-18
 type: spec
@@ -11,6 +11,8 @@ tags: [web, ui, recovery, design]
 # Ebb Orchestrator — Web UI Recovery Design
 
 ## Status and scope
+
+The design contract remains current for the recovery work that references it. The audit baseline below is a dated snapshot; use the current plan reconciliation for implementation state.
 
 Это recovery design по результатам factual audit в [`docs/audit/web-ui-gap-analysis.md`](../../audit/09-web-ui-gap-analysis.md). Он сохраняет утверждённую V1 information architecture и текущий React/Vite stack. Это не implementation plan и не разрешение менять backend contracts или добавлять post-v1 scope.
 

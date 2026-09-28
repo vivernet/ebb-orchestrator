@@ -1,6 +1,6 @@
 ---
 id: spec-03
-status: superseded
+status: current
 title: Production Readiness Design
 date: 2026-09-20
 type: spec

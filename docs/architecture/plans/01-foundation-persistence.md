@@ -1,10 +1,10 @@
 ---
 id: plan-01
 kind: plan
-status: completed
+status: in_progress
 title: План реализации Foundation и Persistence Orchestrator
 created: 2026-09-23
-updated: 2026-09-27
+updated: 2026-09-28
 depends_on: []
 specs:
   - ../specs/01-system-design.md

@@ -2,9 +2,11 @@
 id: plan-00-02
 title: Проверка и исправление политики AGENTS
 kind: plan
-status: superseded
+status: completed
 created: 2026-09-23
 updated: 2026-09-27
+evidence:
+  - docs/architecture/plans/governance/evidence/07-current-plan-reconciliation.md
 ---
 
 # Ebb Orchestrator — проверка и исправление политики AGENTS
@@ -309,3 +311,15 @@ AGENTS_POLICY_BLOCKED
 ```
 
 Не выполнять merge и не отправлять изменения.
+
+## Closeout record (2026-09-28)
+
+- **Статус:** `AGENTS_POLICY_APPROVED`.
+- **Проверенные инструкции:** `/AGENTS.md`, `apps/server/AGENTS.md`, `apps/web/AGENTS.md`, `packages/contracts/AGENTS.md`; дополнительно проверены корневой README, Plan metadata и generated roadmap как источники, на которые ссылаются инструкции.
+- **Найдено:** четыре AGENTS согласованы с текущими границами репозитория. Для переноса конкретных root-правил в scoped-файлы однозначного безопасного кандидата не найдено. Несоответствие metadata основной архитектурной спецификации исправлено отдельно: `spec-01` теперь имеет статус `current`; содержание архитектуры не менялось.
+- **Исправлено в AGENTS:** правки не потребовались; AGENTS-файлы не изменены.
+- **Claims и ссылки:** текущий путь roadmap подтверждён как `docs/roadmap/generated.md`; устаревшие ссылки и claims вне AGENTS исправлены отдельно в текущем reconciliation.
+- **`REQUIRES HUMAN DECISION` по политике AGENTS:** нет. Продуктовые/UI вопросы указаны отдельно в current-state roadmap и не блокируют данный policy review.
+- **Обязательная проверка:** `git diff --check` — PASS на closeout working tree (2026-09-28).
+- **Коммит/SHA:** N/A — AGENTS-файлы не менялись; отдельный коммит не создавался.
+- **`git status --short`:** рабочее дерево содержит незакоммиченные изменения сверки; полный актуальный список приводится в финальном отчёте задачи.

@@ -93,6 +93,8 @@ export interface GenerateConfigOptions {
   resultFile?: string;
   mcpCommand?: string;
   mcpArgs?: string[];
+  /** Конфигурация OpenAI-compatible provider без значения API key. */
+  provider?: { baseUrl: string; model: string };
 }
 
 /**
@@ -123,6 +125,16 @@ export function generateConfigYaml(options: GenerateConfigOptions): string {
     ...executableArgs.map((arg) => `      - ${yamlString(arg)}`),
     "terminal:",
     "  home_mode: profile",
+    ...(options.provider ? [
+      "providers:",
+      "  orchestrator-managed:",
+      `    api: ${yamlString(options.provider.baseUrl)}`,
+      '    key_env: "EBB_HERMES_PROVIDER_API_KEY"',
+      `    default_model: ${yamlString(options.provider.model)}`,
+      "model:",
+      '  provider: "custom:orchestrator-managed"',
+      `  default: ${yamlString(options.provider.model)}`,
+    ] : []),
     "",
   ].join("\n");
 

@@ -159,6 +159,20 @@ describe("Hermes profile isolation", () => {
       expect(config).toContain("home_mode: profile");
     });
 
+    it("configures only a custom provider endpoint and key environment name", () => {
+      const config = generateConfigYaml({
+        capability: { role: "Developer", workspace: "/test/workspace" },
+        toolsetPath: "/test/toolset",
+        provider: { baseUrl: "https://models.example.test/v1", model: "model-x" },
+      });
+
+      expect(config).toContain('provider: "custom:orchestrator-managed"');
+      expect(config).toContain('api: "https://models.example.test/v1"');
+      expect(config).toContain('key_env: "EBB_HERMES_PROVIDER_API_KEY"');
+      expect(config).toContain('default: "model-x"');
+      expect(config).not.toContain("secret-value");
+    });
+
     it("includes capability ref in MCP args", () => {
       const config = generateConfigYaml({
         capability: { role: "Developer", workspace: "/test/workspace" },

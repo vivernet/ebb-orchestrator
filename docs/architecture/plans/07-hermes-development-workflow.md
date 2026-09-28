@@ -1,10 +1,10 @@
 ---
 id: plan-07
 kind: plan
-status: completed
+status: blocked
 title: План миграции процесса разработки Ebb Orchestrator с OpenCode на Hermes
 created: 2026-09-23
-updated: 2026-09-27
+updated: 2026-09-28
 depends_on: []
 specs:
   - ../specs/01-system-design.md
@@ -15,10 +15,11 @@ evidence:
   - https://github.com/ebb-orchestrator/ebb-orchestrator/commit/4dfe769
   - tools/hermes/
   - scripts/hermes-dev.mjs
+  - docs/architecture/plans/governance/evidence/07-current-plan-reconciliation.md
 ---
 # План миграции процесса разработки Ebb Orchestrator с OpenCode на Hermes
 
-> Исторический завершённый план: пути `tools/hermes/skills/` ниже отражают состояние на момент выполнения плана и не являются текущим источником skills. Текущий canonical source — `.agents/skills/`.
+> Локальная миграция workflow заменена последующим Plan 18; provider-backed parity из Task 9 не подтверждён (HTTP 401), поэтому весь план не завершён. Пути `tools/hermes/skills/` ниже исторические; текущий canonical source — `.agents/skills/`.
 >
 > Дополнение от 2026-09-28: этот план описывает прежний workflow. Текущая Hermes setup/check логика не добавляет provider, не настраивает provider-профиль и не управляет `delegation.worktree_isolation`; она настраивает capabilities и проектный skill discovery.
 

@@ -8,6 +8,11 @@ date: 2026-09-24
 
 # Ebb Orchestrator — Web 401 and Project Completion Evidence
 
+> Исторический evidence snapshot на 2026-09-24. Revision, gate outcomes и статусы
+> задач ниже не являются текущими. Сопоставление с нынешним кодом, тестами и
+> lifecycle планов находится в [ledger-07](../architecture/plans/governance/evidence/07-current-plan-reconciliation.md)
+> и [current-state roadmap](../roadmap/02-current-state.md).
+
 ## Task 10 Evidence Report
 
 ### Current Revision
@@ -124,4 +129,3 @@ date: 2026-09-24
 
 - Browser E2E (session restore/401 flow) not executed
 - Runtime start/stop with migration integrity not executed
-

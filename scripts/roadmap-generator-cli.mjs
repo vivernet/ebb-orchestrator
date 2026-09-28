@@ -72,6 +72,8 @@ function generateRoadmap(plans) {
     '',
     '# Ebb Orchestrator Roadmap',
     '',
+    'Актуальная последовательность сверки и закрытия работ: [current-state roadmap](02-current-state.md). Реестр статусов и зависимостей ниже генерируется из Plan metadata.',
+    '',
     '## Plan Register',
     '',
     '| ID | Status | Title |',

@@ -301,6 +301,23 @@ describe('Project', () => {
     expect(screen.queryByText(/Runs · Git · Guidelines · Usage/)).not.toBeInTheDocument();
   });
 
+  test('loads the project matching the current route ID after navigation', async () => {
+    const getProjectOverview = vi.spyOn(projectApi, 'getProjectOverview').mockImplementation(async (id) => ({
+      project: { id, name: id, displayName: `Project ${id}`, status: 'ACTIVE' },
+      git: { repositoryPath: null, branch: null, defaultBranch: null, github: null, worktreePath: null },
+      epics: [], tasks: [], approvals: [], blockers: [], events: [],
+      usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 },
+    }));
+    const view = render(<MemoryRouter><ProjectPage id="route-project-a" /></MemoryRouter>);
+
+    expect(await screen.findByText('Активно · route-project-a')).toBeInTheDocument();
+    view.rerender(<MemoryRouter><ProjectPage id="route-project-b" /></MemoryRouter>);
+
+    await waitFor(() => expect(getProjectOverview).toHaveBeenLastCalledWith('route-project-b'));
+    expect(await screen.findByText('Активно · route-project-b')).toBeInTheDocument();
+    vi.restoreAllMocks();
+  });
+
   test('renders explicit project not-found state when projection has no project', async () => {
     const _get = vi.spyOn(apiClient, 'get').mockResolvedValue({
       project: null, git: { repositoryPath: null, branch: null, defaultBranch: null, github: null, worktreePath: null },

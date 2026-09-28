@@ -131,6 +131,25 @@ describe("local first-run password wizard", () => {
     expect(input.listenerCount("end")).toBe(0);
   });
 
+  it("stops stdin setup and removes listeners when startup is aborted", async () => {
+    const input = new PassThrough();
+    const repository = makeRepository();
+    const controller = new AbortController();
+    const pending = ensureLocalUser(repository, input as unknown as NodeJS.ReadStream, makeTtyOutput(), {
+      mode: "stdin",
+      signal: controller.signal,
+    });
+    await waitForImmediate();
+
+    controller.abort(new Error("Startup interrupted by SIGTERM"));
+
+    await expect(rejectAfterTimeout(pending, 100)).rejects.toThrow("Startup interrupted by SIGTERM");
+    expect(repository.createLocalUser).not.toHaveBeenCalled();
+    expect(input.listenerCount("data")).toBe(0);
+    expect(input.listenerCount("end")).toBe(0);
+    expect(input.listenerCount("error")).toBe(0);
+  });
+
   it.each([
     [`${PASSWORD}\n${PASSWORD}`, "truncated"],
     [`${PASSWORD}\n${PASSWORD}\nextra`, "extra"],
@@ -279,6 +298,24 @@ describe("local first-run password wizard", () => {
     input.end();
 
     await expect(rejectAfterTimeout(pending, 100)).rejects.toThrow(/closed unexpectedly|EOF/i);
+    expect(repository.createLocalUser).not.toHaveBeenCalled();
+    expect(input.rawModeCalls).toEqual([true, false]);
+    expect(input.listenerCount("data")).toBe(0);
+    expect(input.listenerCount("error")).toBe(0);
+    expect(input.listenerCount("end")).toBe(0);
+  });
+
+  it("restores terminal state and clears listeners when startup is aborted during password input", async () => {
+    const input = new FakeTtyInput();
+    const output = makeTtyOutput();
+    const repository = makeRepository();
+    const controller = new AbortController();
+    const pending = runLocalUserWizard(input as unknown as NodeJS.ReadStream, output, repository, { signal: controller.signal });
+    await waitForImmediate();
+
+    controller.abort(new Error("Startup interrupted by SIGTERM"));
+
+    await expect(rejectAfterTimeout(pending, 100)).rejects.toThrow("Startup interrupted by SIGTERM");
     expect(repository.createLocalUser).not.toHaveBeenCalled();
     expect(input.rawModeCalls).toEqual([true, false]);
     expect(input.listenerCount("data")).toBe(0);

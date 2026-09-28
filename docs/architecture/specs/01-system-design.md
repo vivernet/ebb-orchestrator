@@ -1,6 +1,6 @@
 ---
 id: spec-01
-status: superseded
+status: current
 title: System Design
 date: 2026-09-16
 type: spec

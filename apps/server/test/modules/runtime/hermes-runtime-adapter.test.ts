@@ -11,6 +11,7 @@ import { validatePlatform } from "../../../src/platform/config/app-config.js";
 import * as orchestratorHomeModule from "../../../src/platform/home/orchestrator-home.js";
 import { HermesCliBuilder } from "../../../src/modules/runtime/hermes/hermes-cli.js";
 import { createSqliteDatabase } from "../../../src/platform/database/sqlite-database.js";
+import { InMemorySecretStore } from "../../../src/platform/security/secret-store.js";
 import {
   ProcessExecutor,
   type ProcessOptions,
@@ -207,6 +208,63 @@ describe("HermesRuntimeAdapter", () => {
   });
 
   describe("startRun", () => {
+    it("resolves provider credentials per run without writing them to Hermes profile files", async () => {
+      const resultDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-provider-bridge-"));
+      const secrets = new InMemorySecretStore();
+      await secrets.store("hermes-provider", "acceptance", "secret-value");
+      adapter = new HermesRuntimeAdapter(mockExecutor, mockArtifactStore, {
+        resultDirectory,
+        managedWorktree: path.join(os.tmpdir(), "hermes-test-workspace"),
+        checkpointDirectory: sharedCheckpointDirectory,
+        secretStore: secrets,
+        provider: { baseUrl: "https://models.example.test/v1", secretName: "acceptance" },
+      });
+      mockExecutor.setNextResult({ exitCode: 0, stdout: "provider secret-value", stderr: "rejected secret-value" });
+      const run = {
+        id: "provider-bridge-run", role: "Developer", runtime: "hermes", model: "model-x",
+        taskId: null, epicId: null, status: "STARTED" as const, sessionId: null, attempt: null,
+        triggerReason: null, contextVersion: "v1", outputSchemaVersion: "v1", startedAt: new Date(),
+        endedAt: null, exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
+      };
+
+      await adapter.startRun(run);
+
+      const call = mockExecutor.getCalls()[0];
+      expect(call?.options?.env?.EBB_HERMES_PROVIDER_API_KEY).toBe("secret-value");
+      const profile = await fs.readFile(path.join(resultDirectory, "profiles", run.id, "config.yaml"), "utf8");
+      expect(profile).toContain('provider: "custom:orchestrator-managed"');
+      expect(profile).not.toContain("secret-value");
+      const artifacts = mockArtifactStore.getArtifacts(run.id);
+      expect(artifacts?.stdout).toBe("provider [REDACTED_PROVIDER_CREDENTIAL]");
+      expect(artifacts?.stderr).toBe("rejected [REDACTED_PROVIDER_CREDENTIAL]");
+      const runOutcome = await adapter.runResult(run.id);
+      expect(runOutcome.output).not.toContain("secret-value");
+      const promptPath = mockExecutor.getCalls()[0]?.args[2];
+      expect(promptPath).toBeDefined();
+      expect(await fs.readFile(promptPath!, "utf8")).not.toContain("secret-value");
+      await fs.rm(path.dirname(promptPath!), { recursive: true, force: true });
+      await fs.rm(resultDirectory, { recursive: true, force: true });
+    });
+
+    it("fails closed without spawning Hermes when the configured provider credential is absent", async () => {
+      const secrets = new InMemorySecretStore();
+      adapter = new HermesRuntimeAdapter(mockExecutor, mockArtifactStore, {
+        managedWorktree: path.join(os.tmpdir(), "hermes-test-workspace"),
+        checkpointDirectory: sharedCheckpointDirectory,
+        secretStore: secrets,
+        provider: { baseUrl: "https://models.example.test/v1", secretName: "missing" },
+      });
+      const run = {
+        id: "provider-bridge-missing", role: "Developer", runtime: "hermes", model: "model-x",
+        taskId: null, epicId: null, status: "STARTED" as const, sessionId: null, attempt: null,
+        triggerReason: null, contextVersion: "v1", outputSchemaVersion: "v1", startedAt: new Date(),
+        endedAt: null, exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
+      };
+
+      await expect(adapter.startRun(run)).rejects.toThrow("Hermes provider credentials are unavailable");
+      expect(mockExecutor.getCalls()).toHaveLength(0);
+    });
+
     it("uses the persisted capability workspace as the Hermes process cwd", async () => {
       const root = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-persisted-workspace-"));
       const workspace = path.join(root, "managed-worktree");

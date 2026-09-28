@@ -16,7 +16,7 @@ interface ProjectPageProps {
  */
 export default function ProjectPage({ id }: ProjectPageProps) {
   const projectPath = toClientPath(apiPaths.project(id));
-  const fetcher = useCallback((_signal: AbortSignal) => getProjectOverview(id), []);
+  const fetcher = useCallback((_signal: AbortSignal) => getProjectOverview(id), [id]);
   const query = useQuery(null, projectPath, undefined, fetcher);
   const projection = query.data;
   const project = projection?.project;

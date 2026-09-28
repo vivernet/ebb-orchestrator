@@ -6,7 +6,7 @@ stage: 04
 status: completed
 title: Сервер немедленно завершается после запуска
 created: 2026-09-22
-updated: 2026-09-24
+updated: 2026-09-28
 depends_on:
 specs:
   - ../specs/01-system-design.md
@@ -70,12 +70,15 @@ serverReady = true;
 - [x] Тестирование (см. test-service.test.ts)
 - [x] Документирование в Task 10 evidence report
 
-## Current State (2026-09-24)
+## Current State (2026-09-28)
 
-- Issue status: Resolved in code, pending commit
-- Dirty working tree: 9 modified files including this doc
-- Build status: Blocked by AgentRun.output contract error
-- Test status: Passes (run-service.test.ts covers this behavior)
+- Issue status: исправление присутствует в `main.ts`; startup boundary и его тест проверяют, что сигналы не закрывают сервер до завершения startup.
+- Проверки этой сверки: `test/platform/process/startup.test.ts` и `test/main.test.ts` прошли; полный `pnpm test` прошёл.
+- Изменения остаются незакоммиченными в рабочем дереве; коммит не является доказательством исправления и не выполнялся.
+
+## Историческое описание исходного инцидента
+
+Следующий сценарий описывает исходное наблюдение от 2026-09-22 и не отражает текущее поведение после исправления.
 
 ## Повторение проблемы
 

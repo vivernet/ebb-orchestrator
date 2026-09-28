@@ -22,9 +22,11 @@ import { fileURLToPath } from "node:url";
 import { createSqliteDatabase } from "./platform/database/sqlite-database.js";
 import { runMigrations, type Migration } from "./platform/database/migrator.js";
 import { resolveOrchestratorHome } from "./platform/home/orchestrator-home.js";
+import { createProductionPaths } from "./platform/home/production-paths.js";
 import { SingleInstanceLock } from "./platform/process/single-instance-lock.js";
 import { SchedulerService, SchedulerSafetyWorker } from "./modules/scheduler/scheduler-service.js";
 import { HermesRuntimeAdapter } from "./modules/runtime/hermes/hermes-runtime-adapter.js";
+import { resolveHermesProviderBridgeConfig } from "./modules/runtime/hermes/hermes-provider-bridge.js";
 import { ProcessExecutor } from "./platform/process/process-executor.js";
 import {
   StatusTracker,
@@ -55,7 +57,11 @@ import { ArtifactStore } from "./platform/artifacts/artifact-store.js";
 import { WorktreeManager } from "./modules/git/worktree-manager.js";
 import { TaskWorkspaceProvisioner } from "./modules/git/task-workspace-provisioner.js";
 import { StartupReconciler, failClosedStartupReconciliation } from "./platform/process/startup-reconciler.js";
-import { runStartupBoundary } from "./platform/process/startup-boundary.js";
+import {
+  createStartupCleanup,
+  createStartupSignalHandler,
+  runStartupBoundary,
+} from "./platform/process/startup-boundary.js";
 import { createAuthRepository } from "./platform/security/auth-repository.js";
 import { createNodeDigestPort, createNodeRandomTokenPort } from "./platform/security/auth-ports.js";
 import { createArgon2PasswordHasher } from "./platform/security/password-hasher.js";
@@ -64,20 +70,40 @@ import { ensureLocalUser } from "./platform/security/local-user-wizard.js";
 import { ApprovalService } from "./modules/approvals/approval-service.js";
 import { OnboardingService } from "./modules/projects/onboarding-service.js";
 
+async function startServer(): Promise<void> {
+let startupCleanup: () => Promise<void> = async () => {};
+try {
 const host = "127.0.0.1";
 const port = Number(process.env["PORT"] ?? 3000);
+let serverReady = false;
+const startupAbortController = new AbortController();
+const handleLifecycleSignal = createStartupSignalHandler({
+  controller: startupAbortController,
+  isReady: () => serverReady,
+  onReadySignal: (signal) => {
+    void gracefulShutdown(signal).catch(() => {
+      console.error("[ebb-orchestrator] graceful shutdown failed");
+      process.exit(1);
+    });
+  },
+});
+process.on("SIGINT", handleLifecycleSignal);
+process.on("SIGTERM", handleLifecycleSignal);
 
 const status = new StatusTracker();
 const home = resolveOrchestratorHome(process.env, process.platform === "win32" ? "win32" : "linux");
+const productionPaths = createProductionPaths(home);
 mkdirSync(home.root, { recursive: true });
 const lock = new SingleInstanceLock(join(home.root, "orchestrator.lock"));
+startupCleanup = async () => { await lock.release(); };
 try {
   await lock.acquire();
-} catch (err) {
-  console.error(`[Ebb Orchestrator] ${err instanceof Error ? err.message : "Не удалось захватить lock-файл."}`);
+} catch {
+  console.error("[Ebb Orchestrator] Could not acquire the startup lock.");
   process.exit(1);
 }
 const database = createSqliteDatabase(home.database);
+startupCleanup = createStartupCleanup({ database, instanceLock: lock });
 const migrationDir = fileURLToPath(new URL("./platform/database/migrations/", import.meta.url));
 const webRoot = fileURLToPath(new URL("../../web/dist/", import.meta.url));
 const migrations: Migration[] = readdirSync(migrationDir).filter((file) => file.endsWith(".sql")).map((file) => {
@@ -111,10 +137,17 @@ const authService = createAuthService(authRepository, authPasswordHasher, { now:
 const scheduler = new SchedulerService(database);
 const approvalService = new ApprovalService(database);
 const onboardingService = new OnboardingService(database, approvalService);
+const infisicalOptions = resolveInfisicalSecretStoreOptions(process.env);
+const secretStore = infisicalOptions
+  ? createInfisicalSecretStore(database, infisicalOptions)
+  : new KeyringSecretStore(database);
+const hermesProvider = resolveHermesProviderBridgeConfig(process.env);
 const runtime = new HermesRuntimeAdapter(new ProcessExecutor(), undefined, {
-  databasePath: home.database,
-  resultDirectory: join(home.runtime, "hermes", "results"),
-  checkpointDirectory: join(home.runtime, "checkpoints"),
+  databasePath: productionPaths.hermesDatabasePath,
+  resultDirectory: productionPaths.hermesResultDirectory,
+  checkpointDirectory: productionPaths.hermesCheckpointDirectory,
+  secretStore,
+  ...(hermesProvider ? { provider: hermesProvider } : {}),
 });
 const workflowRegistry = new WorkflowRegistry();
 for (const template of Object.values(templates)) workflowRegistry.register(template);
@@ -133,7 +166,7 @@ const taskWorkspaceProvisioner = new TaskWorkspaceProvisioner({
   database,
   worktreeManager: new WorktreeManager({
     db: database,
-    worktreeDir: join(home.worktrees, "tasks"),
+    worktreeDir: productionPaths.taskWorktreeDirectory,
   }),
 });
 const epicMergeAuthority = createEpicMergeAuthority(database);
@@ -146,14 +179,10 @@ const epicOrchestrator = new EpicOrchestrator(
   scheduler,
   {
     integrationServiceFactory,
-    integrationWorktreeRoot: join(home.worktrees, "epic-integration"),
+    integrationWorktreeRoot: productionPaths.integrationWorktreeRoot,
     taskWorkspaceProvisioner,
   },
 );
-const infisicalOptions = resolveInfisicalSecretStoreOptions(process.env);
-const secretStore = infisicalOptions
-  ? createInfisicalSecretStore(database, infisicalOptions)
-  : new KeyringSecretStore(database);
 mkdirSync(home.artifacts, { recursive: true });
 const artifactStore = new ArtifactStore(home.artifacts, new ArtifactRepository(database));
 
@@ -227,26 +256,11 @@ async function gracefulShutdown(signal: string): Promise<void> {
   process.exit(0);
 }
 
-// Игнорируем SIGINT/SIGTERM пока сервер не готов (для запуска через pnpm)
-process.on("SIGINT", () => {
-  if (serverReady) void gracefulShutdown("SIGINT");
-});
-process.on("SIGTERM", () => {
-  if (serverReady) void gracefulShutdown("SIGTERM");
-});
-
-let serverReady = false;
 async function ensureLocalUserBeforeStartup(): Promise<void> {
-  try {
-    await ensureLocalUser(authRepository, process.stdin, process.stdout, {
-      mode: process.argv.includes("--bootstrap-local-user-stdin") ? "stdin" : "tty",
-    });
-  } catch (error) {
-    const message = error instanceof Error && /interactive TTY/i.test(error.message)
-      ? error.message
-      : "Local user initialization failed; server stopped before listener and workers.";
-    await failClosedStartup(message);
-  }
+  await ensureLocalUser(authRepository, process.stdin, process.stdout, {
+    mode: process.argv.includes("--bootstrap-local-user-stdin") ? "stdin" : "tty",
+    signal: startupAbortController.signal,
+  });
 }
 
 // Полный production startup: STARTING → RECOVERING → reconciliation → READY.
@@ -285,13 +299,24 @@ async function startLifecycle(): Promise<void> {
   });
 }
 
-await runStartupBoundary({
-  ensureLocalUser: ensureLocalUserBeforeStartup,
-  startSystem: startLifecycle,
-  listen: async () => app.listen({ host, port }),
+startupCleanup = createStartupCleanup({
+  server: { isListening: () => app.server.listening, close: () => app.close() },
+  database,
+  instanceLock: lock,
 });
+try {
+  await runStartupBoundary({
+    ensureLocalUser: ensureLocalUserBeforeStartup,
+    startSystem: startLifecycle,
+    listen: async () => app.listen({ host, port }),
+    signal: startupAbortController.signal,
+    cleanupStartup: startupCleanup,
+    onReady: () => { serverReady = true; },
+  });
+} catch {
+  await failClosedStartup("Startup failed or was interrupted before READY; server stopped safely.");
+}
 
-serverReady = true;
 console.log(`[ebb-orchestrator] listening on http://${host}:${port}`);
 console.log(`[ebb-orchestrator] status: ${status.get()}`);
 
@@ -299,14 +324,9 @@ console.log(`[ebb-orchestrator] status: ${status.get()}`);
 async function failClosedStartup(message: string): Promise<never> {
   console.error(`[ebb-orchestrator] ${message}`);
   try {
-    database.close();
+    await startupCleanup();
   } catch {
-    // Закрытие уже закрытого/неполного handle идемпотентно для startup cleanup.
-  }
-  try {
-    await lock.release();
-  } catch {
-    // Освобождение отсутствующего lock не должно скрывать исходный startup отказ.
+    console.error("[ebb-orchestrator] startup resource cleanup failed");
   }
   process.exit(1);
   throw new Error(message);
@@ -344,3 +364,15 @@ function createEpicMergeAuthority(db: typeof database): {
     },
   };
 }
+} catch {
+  try {
+    await startupCleanup();
+  } catch {
+    console.error("[ebb-orchestrator] startup resource cleanup failed");
+  }
+  console.error("[ebb-orchestrator] startup failed before READY; the server stopped safely");
+  process.exit(1);
+}
+}
+
+await startServer();

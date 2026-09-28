@@ -1,15 +1,20 @@
 ---
 id: plan-12
 kind: plan
-status: completed
+status: in_progress
 title: Web 401 и завершение проекта
 created: 2026-09-23
-updated: 2026-09-27
+updated: 2026-09-28
 depends_on:
   - plan-08-01
 specs:
   - ../specs/01-system-design.md
-evidence: []
+evidence:
+  - apps/server/src/platform/process/startup-boundary.ts
+  - apps/server/src/platform/security/local-user-wizard.ts
+  - apps/server/test/platform/process/startup.test.ts
+  - apps/server/test/platform/security/local-user-wizard.test.ts
+  - docs/architecture/plans/governance/evidence/07-current-plan-reconciliation.md
 ---
 
 # Web 401 и завершение проекта — Implementation Plan

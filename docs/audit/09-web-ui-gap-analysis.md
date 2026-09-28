@@ -8,13 +8,17 @@ date: 2026-09-23
 
 # Ebb Orchestrator — Gap Analysis Web UI
 
+> Исторический снимок от 2026-09-23. Текущие implementation claims и проверки
+> сверяйте с [актуальным reconciliation](../architecture/plans/governance/evidence/07-current-plan-reconciliation.md)
+> и последовательностью работ в [current-state roadmap](../roadmap/02-current-state.md).
+
 ## Verdict
 
 Текущий Web UI — рабочий read-only/control-plane skeleton на правильном React/Vite/React Router stack, но не завершённый V1 product surface. Browser shell, session restore, empty/error projections и cancel/approve happy paths частично доказаны E2E. Полные approved V1 flows не замыкаются: onboarding не имеет discovery/select entry point, settings не редактируются, approvals поддерживают только approve, а task/epic/project creation и workflow transitions не подключены. Рекомендуется staged recovery на текущем stack; backend contracts расширять только отдельными доказанными gaps.
 
 ## Baseline
 
-- Реальный stack и source map: [`web-ui-code-map.md`](./08-web-ui-code-map.md).
+- Реальный stack и source map на дату аудита: [`08-web-ui-code-map.md`](./08-web-ui-code-map.md).
 - `pnpm lint` и root `pnpm typecheck` прошли.
 - `pnpm --filter @ebb-orchestrator/web test:e2e` прошёл: 3/3 Playwright tests; browser harness запустил реальный backend и Vite proxy, проверил shell, reload, missing/empty/error pages.
 - Unit/test/build baseline красный по pre-existing deletion `apps/web/test/setup.ts`; server suite дополнительно имеет Windows/git-worktree failure. Audit не маскирует эти failures.

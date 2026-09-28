@@ -8,7 +8,7 @@
   },
   "scripts": {
     "typecheck": "pnpm -r --if-present typecheck",
-    "test": "pnpm --filter @ebb-orchestrator/contracts build && pnpm -r --if-present test && node --test scripts/server-env.test.mjs scripts/run-server.test.mjs scripts/local-user-stdin-smoke.test.mjs",
+    "test": "pnpm --filter @ebb-orchestrator/contracts build && pnpm -r --workspace-concurrency=1 --if-present test && node --test scripts/server-env.test.mjs scripts/run-server.test.mjs scripts/local-user-stdin-smoke.test.mjs",
     "lint": "eslint .",
     "build": "pnpm -r --if-present build",
     "server:build": "pnpm --filter @ebb-orchestrator/server build",

@@ -15,7 +15,11 @@ import { SingleInstanceLock } from "../../../src/platform/process/single-instanc
 import { failClosedStartupReconciliation, StartupReconciler } from "../../../src/platform/process/startup-reconciler.js";
 import { ensureLocalUser } from "../../../src/platform/security/local-user-wizard.js";
 import type { AuthRepository } from "../../../src/platform/security/auth-repository.js";
-import { runStartupBoundary } from "../../../src/platform/process/startup-boundary.js";
+import {
+  createStartupCleanup,
+  createStartupSignalHandler,
+  runStartupBoundary,
+} from "../../../src/platform/process/startup-boundary.js";
 
 describe("startup lifecycle", () => {
   let tmpDir: string;
@@ -554,6 +558,121 @@ describe("startup lifecycle", () => {
 
     expect(startWorkers).not.toHaveBeenCalled();
     expect(listen).not.toHaveBeenCalled();
+  });
+
+  it("cleans up the database and instance lock when startup fails before READY", async () => {
+    const events: string[] = [];
+    const startupError = new Error("worker startup failed");
+    const cleanupStartup = createStartupCleanup({
+      database: { close: () => { events.push("close-database"); } },
+      instanceLock: { release: async () => { events.push("release-lock"); } },
+    });
+
+    await expect(runStartupBoundary({
+      ensureLocalUser: async () => { events.push("local-user"); },
+      startSystem: async () => { events.push("start-system"); throw startupError; },
+      listen: async () => { events.push("listen"); },
+      cleanupStartup,
+    })).rejects.toBe(startupError);
+
+    expect(events).toEqual(["local-user", "start-system", "close-database", "release-lock"]);
+    await cleanupStartup();
+    expect(events).toEqual(["local-user", "start-system", "close-database", "release-lock"]);
+  });
+
+  it("cleans up and does not continue startup when a signal arrives before READY", async () => {
+    const events: string[] = [];
+    const controller = new AbortController();
+    const readyShutdown = vi.fn();
+    const handleSignal = createStartupSignalHandler({
+      controller,
+      isReady: () => false,
+      onReadySignal: readyShutdown,
+    });
+    const cleanupStartup = createStartupCleanup({
+      database: { close: () => { events.push("close-database"); } },
+      instanceLock: { release: async () => { events.push("release-lock"); } },
+    });
+
+    await expect(runStartupBoundary({
+      ensureLocalUser: async () => {
+        events.push("local-user");
+        handleSignal("SIGTERM");
+      },
+      startSystem: async () => { events.push("start-system"); },
+      listen: async () => { events.push("listen"); },
+      signal: controller.signal,
+      cleanupStartup,
+    })).rejects.toThrow("Startup interrupted by SIGTERM");
+
+    expect(events).toEqual(["local-user", "close-database", "release-lock"]);
+    expect(readyShutdown).not.toHaveBeenCalled();
+  });
+
+  it("closes a listener if a signal arrives while it is binding before READY", async () => {
+    const events: string[] = [];
+    const controller = new AbortController();
+    let isListening = false;
+    const readyShutdown = vi.fn();
+    const handleSignal = createStartupSignalHandler({
+      controller,
+      isReady: () => false,
+      onReadySignal: readyShutdown,
+    });
+    const cleanupStartup = createStartupCleanup({
+      server: {
+        isListening: () => isListening,
+        close: async () => { events.push("close-listener"); isListening = false; },
+      },
+      database: { close: () => { events.push("close-database"); } },
+      instanceLock: { release: async () => { events.push("release-lock"); } },
+    });
+
+    await expect(runStartupBoundary({
+      ensureLocalUser: async () => { events.push("local-user"); },
+      startSystem: async () => { events.push("start-system"); },
+      listen: async () => {
+        events.push("listen");
+        isListening = true;
+        handleSignal("SIGINT");
+      },
+      signal: controller.signal,
+      cleanupStartup,
+    })).rejects.toThrow("Startup interrupted by SIGINT");
+
+    expect(events).toEqual(["local-user", "start-system", "listen", "close-listener", "close-database", "release-lock"]);
+    expect(isListening).toBe(false);
+    expect(readyShutdown).not.toHaveBeenCalled();
+  });
+
+  it("routes lifecycle signals to graceful shutdown after READY", () => {
+    const controller = new AbortController();
+    const onReadySignal = vi.fn();
+    const handleSignal = createStartupSignalHandler({
+      controller,
+      isReady: () => true,
+      onReadySignal,
+    });
+
+    handleSignal("SIGTERM");
+
+    expect(controller.signal.aborted).toBe(false);
+    expect(onReadySignal).toHaveBeenCalledOnce();
+    expect(onReadySignal).toHaveBeenCalledWith("SIGTERM");
+  });
+
+  it("attempts lock release when database close fails and shares the cleanup result", async () => {
+    const events: string[] = [];
+    const cleanupStartup = createStartupCleanup({
+      database: { close: () => { events.push("close-database"); throw new Error("close failed"); } },
+      instanceLock: { release: async () => { events.push("release-lock"); } },
+    });
+
+    const first = cleanupStartup();
+    const second = cleanupStartup();
+    await expect(first).rejects.toThrow("Startup resource cleanup failed");
+    await expect(second).rejects.toThrow("Startup resource cleanup failed");
+    expect(events).toEqual(["close-database", "release-lock"]);
   });
 
   it("system-lifecycle StatusTracker exposes correct status", async () => {

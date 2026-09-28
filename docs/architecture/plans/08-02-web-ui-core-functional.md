@@ -2,9 +2,9 @@
 id: plan-08-02
 kind: plan
 title: Web UI Core Functional — Onboarding, Dashboard, Project
-status: completed
+status: in_progress
 created: 2026-09-23
-updated: 2026-09-27
+updated: 2026-09-28
 
 depends_on:
   - plan-08-01
@@ -15,6 +15,8 @@ evidence:
   - apps/web/src/features/dashboard/
   - apps/web/src/features/projects/
   - apps/web/test/features/onboarding.test.tsx
+  - apps/web/test/e2e/v1-ui.spec.ts
+  - docs/architecture/plans/governance/evidence/07-current-plan-reconciliation.md
 ---
 
 > Historical legacy UI sequence: A–D labels are retained as archival stage names, not as a current roadmap or plan grouping.
@@ -213,22 +215,22 @@ evidence:
 
 ---
 
-## Completion Note
+## Implementation record (reconciled 2026-09-28)
 
-Status updated to **completed**. Onboarding (/projects/new), Dashboard (/), and Project View (/projects/:id) implemented with real backend API adapters, projection rendering, and state primitives (loading/empty/error/not-found). Tests added for all screens.
+The old completion note incorrectly claimed `completed` while this plan's metadata and acceptance checklist remained open. It is retained here as a historical implementation summary, not a lifecycle decision. Current state is `in_progress` pending the independent review and gates below. Onboarding (/projects/new), Dashboard (/), and Project View (/projects/:id) have real API adapters, projection rendering, and loading/empty/error/not-found states. Plan 08-03 subsequently expanded onboarding to persisted discovery/approval/activation; that implementation is accepted as replacement evidence for the onboarding work here.
 
-See implementation: `apps/web/src/features/onboarding/`, `apps/web/src/features/dashboard/`, `apps/web/src/features/projects/`. All components use shared primitives from Web UI Foundation (`plan-08-01`).
+The independent review found and the current tree fixes a stale route-ID closure in Project View. The regression is in `apps/web/test/core-views.test.tsx`: it changes the same mounted page from project A to project B, checks the B request and rendered projection. Focused regression result is PASS; final gates and a fresh whole-plan review remain required before promoting lifecycle metadata.
 
 ---
 
 ## Completion criteria
 
-- [ ] Все 3 экрана рендерятся без ошибок
-- [ ] API adapter вызывают реальные backend endpoints
-- [ ] States (loading/empty/error/not-found) корректны
-- [ ] Russian JSDoc добавлен для новых публичных API
-- [ ] Все тесты проходят
-- [ ] E2E покрывает базовую навигацию
+- [x] Все 3 экрана рендерятся без ошибок (component tests in `apps/web/test/core-views.test.tsx`)
+- [x] API adapter вызывают реальные backend endpoints (`apps/web/src/features/{onboarding,dashboard,projects}/`)
+- [x] States (loading/empty/error/not-found) корректны (screen component tests)
+- [x] Russian JSDoc добавлен для новых публичных API (onboarding API and public feature modules reviewed)
+- [ ] Все тесты проходят (fresh full workspace gate pending)
+- [x] E2E покрывает базовую навигацию and persisted onboarding/project flow (`apps/web/test/e2e/v1-ui.spec.ts`)
 - [ ] Independent review = PASS
 - [ ] Gates пройдены
 

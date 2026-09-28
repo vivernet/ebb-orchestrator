@@ -31,6 +31,7 @@ test('CLI projects only validated Plans from --plans-root to --output', () => {
     assert.match(content, /^---\nid: roadmap-01\nstatus: generated\nkind: roadmap\ntitle: Ebb Orchestrator Roadmap\nsummary: Generated from Plan metadata and dependencies\ncreated: 2026-09-16\nupdated: 2026-09-21\n---\n\n/);
     assert.match(content, /plan-91/);
     assert.match(content, /CLI Fixture Plan/);
+    assert.match(content, /\[current-state roadmap\]\(02-current-state\.md\)/);
     assert.match(content, /planned/);
     assert.match(content, /plan-90 → plan-91/);
     assert.doesNotMatch(content, /ledger-90|Ledger Fixture|plan-08-01-merge|Historical merge evidence|plan-00-progress-ledger|Progress Ledger|Stage Register|\| Stage \|/i);

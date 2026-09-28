@@ -8,6 +8,11 @@ date: 2026-09-24
 
 # Ebb Orchestrator — Project State
 
+> Исторический срез на 2026-09-24. Branch, HEAD, dirty count, test status и оценки
+> Tasks 1–11 ниже относятся только к этому снимку. Текущее подтверждённое состояние
+> и открытые обязательства см. в [ledger-07](../architecture/plans/governance/evidence/07-current-plan-reconciliation.md)
+> и [current-state roadmap](../roadmap/02-current-state.md).
+
 ## Status
 - Current branch: `develop`.
 - Current HEAD: `c18264e` (`Устранить зависания Hermes и завершить v1 hardening`).

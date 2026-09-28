@@ -254,7 +254,7 @@ async function assertAuthenticatedRestore(page: import('@playwright/test').Page)
   expect(storage.every((value) => !/(bearer|password|csrf.?token|session.?token)/i.test(value))).toBe(true);
 }
 
-test('authenticated browser completes real onboarding discovery, draft, approval, and activation', async ({ page, e2ePassword }) => {
+test('authenticated browser completes real onboarding and renders the populated Project view', async ({ page, e2ePassword }) => {
   const login = await page.request.post('/api/v1/session/login', {
     data: { password: e2ePassword.toString('utf8') },
   });
@@ -333,6 +333,21 @@ test('authenticated browser completes real onboarding discovery, draft, approval
   expect(activeProjection.status).toBe('ACTIVE');
   expect(activeProjection.approval.status).toBe('APPROVED');
   await expect(page.getByRole('region', { name: 'Результаты анализа' })).toContainText('Статус: Активно');
+
+  const projectResponsePromise = page.waitForResponse((response) => response.url().endsWith(`/api/v1/projects/${draft.projectId}`));
+  await page.goto(`/projects/${encodeURIComponent(draft.projectId)}`);
+  const projectResponse = await projectResponsePromise;
+  expect(projectResponse.status()).toBe(200);
+  const project = await projectResponse.json();
+  expect(project.project).toMatchObject({ id: draft.projectId, status: 'ACTIVE' });
+  expect(project.git.repositoryPath).toBe(resolve(process.cwd(), '../..'));
+
+  await expect(page.getByRole('heading', { name: `Проект: ${project.project.displayName ?? project.project.name}` })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Сведения о проекте' })).toContainText('Активно');
+  await expect(page.getByRole('region', { name: 'Репозиторий и GitHub' })).toContainText(project.git.repositoryPath);
+  await expect(page.getByRole('region', { name: 'Эпики и задачи' })).toContainText('Эпиков нет.');
+  await expect(page.getByRole('region', { name: 'Эпики и задачи' })).toContainText('Задач нет.');
+  await expect(page.getByRole('navigation', { name: 'Навигационная цепочка' })).toContainText(project.project.id);
 });
 
 test('real cookie session survives backend restart and stop/start on the same durable database', async ({ page, e2ePassword }) => {

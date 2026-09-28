@@ -1,11 +1,11 @@
 ---
 id: plan-09
 kind: plan
-status: completed
+status: in_progress
 title: Production Readiness Hardening
 summary: Добавить fail-closed работу с Git worktree, отказоустойчивое хранилище секретов и чистую production композицию.
 created: 2026-09-23
-updated: 2026-09-27
+updated: 2026-09-28
 depends_on:
   - plan-03
 specs:
@@ -17,6 +17,10 @@ evidence:
   - https://github.com/ebb-orchestrator/ebb-orchestrator/commit/f96a2ae
   - apps/server/test/platform/
   - apps/server/test/integration/
+  - apps/server/test/app/security.test.ts
+  - apps/server/test/main.test.ts
+  - apps/server/src/platform/home/production-paths.ts
+  - docs/architecture/plans/governance/evidence/07-current-plan-reconciliation.md
 ---
 
 # Production readiness hardening Implementation Plan

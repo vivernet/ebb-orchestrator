@@ -6,6 +6,7 @@ import { runMigrations, type Migration } from "../../src/platform/database/migra
 import { createAuthRepository } from "../../src/platform/security/auth-repository.js";
 import { createAuthService } from "../../src/platform/security/auth-service.js";
 import { createNodeDigestPort } from "../../src/platform/security/auth-ports.js";
+import { KeyringSecretStore } from "../../src/platform/security/keyring-secret-store.js";
 import type { AgentRuntime } from "../../src/modules/runtime/agent-runtime.js";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -16,7 +17,7 @@ const migrationDir = fileURLToPath(new URL("../../src/platform/database/migratio
 const migrations: Migration[] = readdirSync(migrationDir).filter((file) => file.endsWith(".sql")).map((file) => ({ version: Number(/^([0-9]+)/.exec(file)?.[1]), name: file.replace(/^[0-9]+_/, "").replace(/\.sql$/, ""), sql: readFileSync(join(migrationDir, file), "utf8") }));
 const runtime: AgentRuntime = { active: 0, maxActive: 0, calls: [], async startRun() {}, async runResult() { return { version: "1", summary: "" } as never; }, async resumeRun() {}, async cancelRun() {}, async inspectRun() { throw new Error("unused"); }, async collectResult() { return {} as never; }, async collectUsage() { return { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, cost: 0 }; }, async healthCheck() { return true; } };
 
-async function setup() {
+async function setup(withUnavailableSecretStore = false) {
   const db = createSqliteDatabase(":memory:");
   runMigrations(db, migrations);
   let sequence = 0;
@@ -25,7 +26,8 @@ async function setup() {
   const authRepository = createAuthRepository(db, hasher, { randomBytes: () => { sequence += 1; return Buffer.alloc(32, sequence); } }, createNodeDigestPort());
   await authRepository.createLocalUser(Buffer.from("password"), "2030-01-01T00:00:00.000Z");
   const authService = createAuthService(authRepository, hasher, { now: () => "2030-01-01T00:00:00.000Z" });
-  return { db, app: createApp({ db, scheduler: new SchedulerService(db), runtime, authService }) };
+  const secretStore = withUnavailableSecretStore ? new KeyringSecretStore(db, { backend: undefined }) : undefined;
+  return { db, app: createApp({ db, scheduler: new SchedulerService(db), runtime, authService, ...(secretStore ? { secretStore } : {}) }) };
 }
 
 async function login(app: ReturnType<typeof createApp>) {
@@ -36,6 +38,29 @@ async function login(app: ReturnType<typeof createApp>) {
 }
 
 describe("durable server auth boundary", () => {
+  it("returns a secret-free 503 when the authorized secret route has no keyring", async () => {
+    const { app, db } = await setup(true);
+    const auth = await login(app);
+    const secretValue = "sentinel-secret-must-not-escape";
+
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/v1/secrets",
+        headers: { cookie: auth.cookie, origin: "http://127.0.0.1:3000", "x-csrf-token": auth.csrf },
+        payload: { service: "unavailable-route", name: "token", value: secretValue },
+      });
+
+      expect(response.statusCode).toBe(503);
+      expect(JSON.parse(response.body)).toEqual({ error: "secret storage unavailable" });
+      expect(response.body).not.toContain(secretValue);
+      expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM secrets WHERE service = 'unavailable-route' AND name = 'token'")?.count).toBe(0);
+    } finally {
+      await app.close();
+      db.close();
+    }
+  });
+
   it("rejects legacy bootstrap/query paths and exposes no process-local credentials", async () => {
     const { app, db } = await setup();
     expect((app as object)).not.toHaveProperty("sessionToken");
