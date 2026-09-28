@@ -8,6 +8,10 @@ date: 2026-09-23
 
 # Hermes Development Workflow Parity Report
 
+> Исторический снимок состояния на 2026-09-22 до миграции canonical skills. Указанные ниже пути и выводы об установке не описывают текущую конфигурацию; актуальный источник — `.agents/skills`.
+
+> Этот отчёт также предшествует текущему решению убрать `delegation.worktree_isolation` из repository setup/check: установленный Hermes предупреждает, что ключ не распознан. Строка ниже сохраняется только как историческое наблюдение на дату отчёта.
+
 **Дата:** 2026-09-22
 **Ветка:** develop
 **HEAD:** 47a4f57 docs: перенести содержимое docs/superpowers/ в docs/architecture/ и удалить суперпированную директорию
@@ -27,7 +31,7 @@ date: 2026-09-23
 | `delegation.orchestrator_enabled` | PASS | false (из skill ebb-execute-plan) |
 | `delegation.worktree_isolation` | PASS | false (из skill ebb-execute-plan) |
 
-## Project-local installation
+## Историческая project-local установка
 
 8 skills в `tools/hermes/skills/`:
 - ebb-execute-plan

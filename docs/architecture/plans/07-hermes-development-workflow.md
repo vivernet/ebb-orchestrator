@@ -18,11 +18,15 @@ evidence:
 ---
 # План миграции процесса разработки Ebb Orchestrator с OpenCode на Hermes
 
+> Исторический завершённый план: пути `tools/hermes/skills/` ниже отражают состояние на момент выполнения плана и не являются текущим источником skills. Текущий canonical source — `.agents/skills/`; см. план миграции `.migration/ebb-skills/canonical-ebb-skills-migration-plan.md`.
+>
+> Дополнение от 2026-09-28: этот план описывает прежний workflow. Текущая Hermes setup/check логика не добавляет provider, не настраивает provider-профиль и не управляет `delegation.worktree_isolation`; она настраивает capabilities и проектный skill discovery.
+
 > **Для агентного исполнителя:** выполняй этот план последовательно, задача за задачей. Не ограничивайся пересказом плана.
 >
 > **Цель:** полностью заменить OpenCode как внешнюю среду, через которую разрабатывается сам Ebb Orchestrator, на Hermes, сохранив существующий формат планов, дисциплину Git/worktree, независимые review-гейты, правила русского JSDoc и жёсткое ограничение не более двух одновременно работающих субагентов.
 >
-> **Архитектура:** production-runtime Ebb Orchestrator в этом плане не переносится. Сам продукт уже использует `AgentRuntime` / `HermesRuntimeAdapter`. Этот план изменяет только внешний процесс разработки, через который разработчики исполняют `docs/architecture/plans/*.md`. Репозиторные инструкции Hermes хранятся в `.hermes.md`, исходные версии skills — в `tools/hermes/skills/`, а `scripts/hermes-dev.mjs` синхронизирует их с активным профилем Hermes и предоставляет команды настройки, проверки и запуска планов.
+> **Историческая архитектура на момент выполнения:** production-runtime Ebb Orchestrator в этом плане не переносился. Сам продукт уже использовал `AgentRuntime` / `HermesRuntimeAdapter`. План изменял только внешний процесс разработки, через который разработчики исполняют `docs/architecture/plans/*.md`. В тот момент исходные версии skills находились в `tools/hermes/skills/`, а `scripts/hermes-dev.mjs` синхронизировал их с активным профилем Hermes. Текущий source of truth — `.agents/skills`; setup/check детали описаны в актуальном `.agents/skills/ebb-repository-maintenance/SKILL.md` и `tools/hermes/README.md`.
 >
 > **Технологии:** Node.js 24+, pnpm, Git, Hermes Agent CLI/Desktop, Markdown `SKILL.md`, существующий проект TypeScript/React/Vitest.
 >

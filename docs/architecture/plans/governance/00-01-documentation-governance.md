@@ -9,6 +9,8 @@ updated: 2026-09-27
 ---
 # Рефакторинг документации и единого roadmap — план реализации
 
+> Исторический завершённый план: упоминания `tools/hermes/skills/` в его шагах описывают прежнее состояние репозитория. Текущий canonical source — `.agents/skills/`.
+
 > **Для агентных исполнителей:** ОБЯЗАТЕЛЬНЫЙ SUB-SKILL: используйте `superpowers:subagent-driven-development` (рекомендуется) или `superpowers:executing-plans` для реализации этого плана по задачам. Шаги используют синтаксис флажков (`- [ ]`) для отслеживания.
 
 **Цель:** полностью привести `docs/` к единой модели нумерации, именования, типов документов, ссылок и статусов, объединить конкурирующие roadmap/plan-документы и сделать единый автоматически проверяемый roadmap проекта.
@@ -853,7 +855,7 @@ pnpm docs:roadmap --output docs/roadmap/01-roadmap.md
 pnpm docs:rename:check -- --report
 ```
 
-Report every old path, old heading form and old command example with file and line. Отдельно просканировать все `tools/hermes/skills/**/SKILL.md`, `tools/hermes/providers/`, `scripts/`, root policy files и CI configuration; report должен явно показать, какие файлы проверены и какие ссылки найдены.
+Report every old path, old heading form and old command example with file and line. Отдельно просканировать все `tools/hermes/skills/**/SKILL.md`, `tools/hermes/`, `scripts/`, root policy files и CI configuration; report должен явно показать, какие файлы проверены и какие ссылки найдены.
 
 - [ ] **Step 2: Apply replacements from the migration map only**
 

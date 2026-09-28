@@ -110,34 +110,10 @@ function throwSyncFailure() {
   throw error;
 }
 
-export function syncHermesAssets(worktreeRoot, hermesHome) {
-  const sourceSkills = join(worktreeRoot, 'tools', 'hermes', 'skills');
-  const targetRoot = join(hermesHome, 'skills', 'ebb-orchestrator');
-  const sourceProviders = join(worktreeRoot, 'tools', 'hermes', 'providers');
-  const targetProviders = join(hermesHome, 'providers', 'ebb-orchestrator');
+export function syncHermesCapabilities(worktreeRoot, hermesHome) {
   const sourceCapabilities = join(worktreeRoot, 'tools', 'hermes', 'capabilities.yaml');
   const targetCapabilities = join(hermesHome, 'capabilities.yaml');
 
-  if (statSync(targetRoot, { throwIfNoEntry: false })) rmSync(targetRoot, { recursive: true, force: true });
-  mkdirSync(targetRoot, { recursive: true });
-  for (const dir of readdirSync(sourceSkills)) {
-    const sourceDir = join(sourceSkills, dir);
-    if (!statSync(sourceDir).isDirectory()) continue;
-    const targetDir = join(targetRoot, dir);
-    mkdirSync(targetDir, { recursive: true });
-    for (const file of readdirSync(sourceDir)) {
-      const sourcePath = join(sourceDir, file);
-      const targetPath = join(targetDir, file);
-      if (statSync(sourcePath).isFile()) copyFileSync(sourcePath, targetPath);
-    }
-  }
-
-  if (statSync(targetProviders, { throwIfNoEntry: false })) rmSync(targetProviders, { recursive: true, force: true });
-  mkdirSync(targetProviders, { recursive: true });
-  for (const file of readdirSync(sourceProviders)) {
-    const sourcePath = join(sourceProviders, file);
-    if (statSync(sourcePath).isFile()) copyFileSync(sourcePath, join(targetProviders, file));
-  }
   copyFileSync(sourceCapabilities, targetCapabilities);
 
   const verifyFile = (sourcePath, targetPath) => {
@@ -146,20 +122,66 @@ export function syncHermesAssets(worktreeRoot, hermesHome) {
     }
     if (sha256(sourcePath) !== sha256(targetPath)) throwSyncFailure();
   };
-  for (const dir of readdirSync(sourceSkills)) {
-    const sourceDir = join(sourceSkills, dir);
-    if (!statSync(sourceDir).isDirectory()) continue;
-    for (const file of readdirSync(sourceDir)) {
-      const sourcePath = join(sourceDir, file);
-      if (statSync(sourcePath).isFile()) verifyFile(sourcePath, join(targetRoot, dir, file));
-    }
-  }
-  for (const file of readdirSync(sourceProviders)) {
-    const sourcePath = join(sourceProviders, file);
-    if (statSync(sourcePath).isFile()) verifyFile(sourcePath, join(targetProviders, file));
-  }
   verifyFile(sourceCapabilities, targetCapabilities);
   return { verified: true };
+}
+
+const CANONICAL_EBB_SKILLS = [
+  'ebb-curate-skills', 'ebb-debug-issue', 'ebb-execute-plan', 'ebb-final-review',
+  'ebb-implement-task', 'ebb-quality-gates', 'ebb-repository-context', 'ebb-repository-maintenance',
+  'ebb-review-plan', 'ebb-review-task', 'ebb-security-review', 'ebb-web-e2e', 'ebb-write-plan',
+];
+
+export function validateCanonicalSkills(skillsRoot) {
+  const skills = readdirSync(skillsRoot)
+    .filter((entry) => statSync(join(skillsRoot, entry)).isDirectory())
+    .sort();
+  const valid = skills.length === CANONICAL_EBB_SKILLS.length
+    && skills.every((skill, index) => skill === CANONICAL_EBB_SKILLS[index])
+    && skills.every((skill) => statSync(join(skillsRoot, skill, 'SKILL.md'), { throwIfNoEntry: false })?.isFile());
+  return { skills, valid };
+}
+
+export function resolveRepositoryRoot(run = spawnSync) {
+  const result = run('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8', shell: false });
+  if (result.error || result.status !== 0 || !result.stdout?.trim()) throw new Error('Not in a Git repository');
+  return result.stdout.trim();
+}
+
+export function isHermesProjectTrusted(configValue, worktreeRoot) {
+  let entries = configValue?.split(/[\r\n,;]/).map((entry) => entry.trim()) ?? [];
+  try {
+    const parsed = JSON.parse(configValue);
+    if (Array.isArray(parsed)) entries = parsed.map(String);
+  } catch { /* Hermes may render list values as plain text. */ }
+  const normalize = (value) => value.trim()
+    .replace(/^-\s*/, '')
+    .replace(/^['"]|['"]$/g, '')
+    .replace(/[\\/]+$/, '')
+    .replace(/\\/g, '/')
+    .toLowerCase();
+  return entries.some((entry) => normalize(entry) === normalize(worktreeRoot));
+}
+
+export function isHermesProjectDiscoveryEnabled(configValue) {
+  return configValue?.trim().toLowerCase() === 'true';
+}
+
+export async function runHermesProjectSetup({ worktreeRoot, run = spawnSync, configure = async () => {} }) {
+  const help = run('hermes', ['skills', 'trust', '--help'], { encoding: 'utf8', shell: false });
+  if (help.error || help.status !== 0) {
+    const error = new Error('Installed Hermes CLI does not support `hermes skills trust`; update Hermes and retry.');
+    error.code = 'HERMES_PROJECT_TRUST_UNSUPPORTED';
+    throw error;
+  }
+  const trusted = run('hermes', ['skills', 'trust', worktreeRoot], { encoding: 'utf8', shell: false });
+  if (trusted.error || trusted.status !== 0) {
+    const error = new Error('Hermes could not trust the current project. Run `hermes skills trust <repo-root>` and retry.');
+    error.code = 'HERMES_PROJECT_TRUST_FAILED';
+    throw error;
+  }
+  await configure();
+  return { trusted: true };
 }
 
 export async function runSetupWithSync({ configure, sync }) {
@@ -303,7 +325,7 @@ async function main() {
   }));
   const command = process.argv[2];
   if (!command) {
-    console.error('Usage: hermes-dev.js <setup|check|provider|execute> [args...]');
+    console.error('Usage: hermes-dev.js <setup|check|execute> [args...]');
     process.exit(1);
   }
 
@@ -313,9 +335,6 @@ async function main() {
       break;
     case 'check':
       await doCheck();
-      break;
-    case 'provider':
-      await doProvider(process.argv.slice(3));
       break;
     case 'execute':
       await doExecute(process.argv.slice(3));
@@ -341,29 +360,27 @@ async function doSetup() {
   }
 
   // 1. Получаем корень Git worktree.
-  const gitResult = spawnSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' });
-  if (gitResult.status !== 0) {
+  let worktreeRoot;
+  try { worktreeRoot = resolveRepositoryRoot(); } catch {
     console.error('Not in a Git repository');
     process.exit(1);
   }
-  const worktreeRoot = gitResult.stdout.trim();
 
   // 2. Определяем HERMES_HOME.
   const hermesHome = resolveHermesHome();
 
-  // Сначала настраиваем Hermes: CLI может переписать profile при первом config set.
-  // Даже при failure config canonical assets всё равно должны быть синхронизированы.
   console.log('Configuring Hermes...');
-  const sync = await runSetupWithSync({
+  const setup = await runHermesProjectSetup({
+    worktreeRoot,
     configure: async () => {
       await hermesConfigSet('delegation.max_concurrent_children', '2');
       await hermesConfigSet('delegation.max_spawn_depth', '1');
       await hermesConfigSet('delegation.orchestrator_enabled', 'false');
-      await hermesConfigSet('delegation.worktree_isolation', 'false');
+      await hermesConfigSet('skills.project_discovery', 'true');
+      syncHermesCapabilities(worktreeRoot, hermesHome);
     },
-    sync: () => syncHermesAssets(worktreeRoot, hermesHome),
   });
-  console.log(`${HERMES_CONFIG_MARKER} marker=SETUP_SYNCED verified=${sync.verified} redacted=true`);
+  console.log(`${HERMES_CONFIG_MARKER} marker=SETUP_CONFIGURED trusted=${setup.trusted} redacted=true`);
 
   console.log('Setup complete.');
 }
@@ -374,6 +391,7 @@ async function doCheck() {
   const checks = [];
   let allPass = true;
   const hermesHome = resolveHermesHome();
+  const worktreeRoot = resolveRepositoryRoot();
 
   // 1. Проверяем hermes --version.
   try {
@@ -385,24 +403,27 @@ async function doCheck() {
   }
 
   // 2. Проверяем наличие .hermes.md.
-  const hermesMdPath = join(process.cwd(), '.hermes.md');
+  const hermesMdPath = join(worktreeRoot, '.hermes.md');
   checks.push({
     name: '.hermes.md exists',
     pass: statSync(hermesMdPath, { throwIfNoEntry: false }) !== undefined
   });
   if (!checks[1].pass) allPass = false;
 
-  // 3-6. Проверяем наличие исходных skill-файлов.
-  const sourceSkills = join(process.cwd(), 'tools', 'hermes', 'skills');
-  const skills = readdirSync(sourceSkills).filter((entry) => statSync(join(sourceSkills, entry)).isDirectory()).sort();
-  for (const skill of skills) {
-    const path = join(sourceSkills, skill, 'SKILL.md');
-    const pass = statSync(path, { throwIfNoEntry: false }) !== undefined;
-    checks.push({ name: `Source: ${skill}`, pass });
-    if (!pass) allPass = false;
-  }
+  // Validate the canonical inventory and Hermes project-discovery prerequisites.
+  const sourceSkills = join(worktreeRoot, '.agents', 'skills');
+  const inventory = validateCanonicalSkills(sourceSkills);
+  checks.push({ name: 'Canonical project skills (13)', pass: inventory.valid });
+  if (!inventory.valid) allPass = false;
+  const trustedProjects = await hermesConfigGet('skills.trusted_project_dirs');
+  const trusted = isHermesProjectTrusted(trustedProjects, worktreeRoot);
+  checks.push({ name: 'Hermes trusted project', pass: trusted });
+  if (!trusted) allPass = false;
+  const projectDiscoveryEnabled = isHermesProjectDiscoveryEnabled(await hermesConfigGet('skills.project_discovery'));
+  checks.push({ name: 'Hermes project discovery enabled', pass: projectDiscoveryEnabled });
+  if (!projectDiscoveryEnabled) allPass = false;
 
-  const sourceCapabilities = join(process.cwd(), 'tools', 'hermes', 'capabilities.yaml');
+  const sourceCapabilities = join(worktreeRoot, 'tools', 'hermes', 'capabilities.yaml');
   const targetCapabilities = join(hermesHome, 'capabilities.yaml');
   const capabilitiesMatch = statSync(sourceCapabilities, { throwIfNoEntry: false }) !== undefined
     && statSync(targetCapabilities, { throwIfNoEntry: false }) !== undefined
@@ -410,36 +431,11 @@ async function doCheck() {
   checks.push({ name: 'Capabilities registry match', pass: capabilitiesMatch });
   if (!capabilitiesMatch) allPass = false;
 
-  const sourceProviders = join(process.cwd(), 'tools', 'hermes', 'providers');
-  const targetProviders = join(hermesHome, 'providers', 'ebb-orchestrator');
-  for (const provider of readdirSync(sourceProviders).filter((entry) => entry.endsWith('.yaml')).sort()) {
-    const sourcePath = join(sourceProviders, provider);
-    const targetPath = join(targetProviders, provider);
-    const providerMatch = statSync(sourcePath, { throwIfNoEntry: false }) !== undefined
-      && statSync(targetPath, { throwIfNoEntry: false }) !== undefined
-      && sha256(sourcePath) === sha256(targetPath);
-    checks.push({ name: `Provider match: ${provider}`, pass: providerMatch });
-    if (!providerMatch) allPass = false;
-  }
-
-  // 7-10. Проверяем наличие target skill-файлов и совпадение hash.
-  const targetRoot = join(hermesHome, 'skills', 'ebb-orchestrator');
-  for (const skill of skills) {
-    const sourcePath = join(sourceSkills, skill, 'SKILL.md');
-    const targetPath = join(targetRoot, skill, 'SKILL.md');
-    const sourceExists = statSync(sourcePath, { throwIfNoEntry: false }) !== undefined;
-    const targetExists = statSync(targetPath, { throwIfNoEntry: false }) !== undefined;
-    const hashMatch = sourceExists && targetExists && sha256(sourcePath) === sha256(targetPath);
-    checks.push({ name: `Target match: ${skill}`, pass: hashMatch });
-    if (!hashMatch) allPass = false;
-  }
-
-  // 11-14. Проверяем конфигурацию Hermes.
+  // Проверяем конфигурацию Hermes.
   const configChecks = [
     ['delegation.max_concurrent_children', '2'],
     ['delegation.max_spawn_depth', '1'],
-    ['delegation.orchestrator_enabled', 'false'],
-    ['delegation.worktree_isolation', 'false']
+    ['delegation.orchestrator_enabled', 'false']
   ];
   for (const [key, expected] of configChecks) {
     const value = await hermesConfigGet(key);
@@ -457,30 +453,11 @@ async function doCheck() {
   if (!allPass) {
     console.log('');
     console.log(`${HERMES_CONFIG_MARKER} marker=CHECK_FAILED exit_code=1 redacted=true`);
-    console.log('Some checks failed. Run `pnpm hermes:setup` to fix.');
+    console.log('Some checks failed. Run `pnpm hermes:setup`; if project trust failed, run `hermes skills trust <repo-root>`.');
     process.exit(1);
   }
   console.log('');
   console.log('All checks passed.');
-}
-
-async function doProvider(args) {
-  const provider = args.filter((arg) => arg !== '--')[0];
-  if (provider !== 'inception') {
-    console.error('Usage: hermes-dev.js provider inception');
-    process.exit(1);
-  }
-
-  // Hermes получает secret по имени env key; значение API key не читается и не печатается.
-  await hermesConfigSet('providers.inception.api', 'https://api.inceptionlabs.ai/v1');
-  await hermesConfigSet('providers.inception.base_url', 'https://api.inceptionlabs.ai/v1');
-  await hermesConfigSet('providers.inception.key_env', 'INCEPTION_API_KEY');
-  await hermesConfigSet('providers.inception.model', 'mercury-2.5');
-  await hermesConfigSet('model.default', 'mercury-2.5');
-  await hermesConfigSet('model.provider', 'inception');
-  await hermesConfigSet('model.api_mode', 'chat_completions');
-  console.log('Provider profile inception configured. Set INCEPTION_API_KEY in the local environment.');
-  console.log('Use HERMES_MODEL=inception for an explicit Hermes development run.');
 }
 
 async function doExecute(args) {

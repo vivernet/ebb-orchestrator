@@ -222,12 +222,15 @@ MCP-инструменты проверяют capability и аргументы. 
 
 ### Hermes development skills
 
-Канонические локальные skills проекта находятся в [`tools/hermes`](tools/hermes).
-Полный каталог skills, их назначение и пути исходных и установленных копий см. в README.
+Канонический каталог из 13 repository-local Ebb skills находится в
+`.agents/skills/`; [README Hermes tooling](tools/hermes/README.md) описывает
+настройку trust и проверку runtime prerequisites.
 
-В проекте установлены и проверяются следующие 11 skills:
+Набор содержит следующие 13 skills:
 
+- `ebb-curate-skills` — evidence-based отбор новых и автоматически созданных skills;
 - `ebb-repository-context` — разведка репозитория и компактный Context Brief для контроллера;
+- `ebb-repository-maintenance` — безопасное изменение структуры, tooling scripts и документации;
 - `ebb-write-plan` — исследование требований и создание implementation plan;
 - `ebb-review-plan` — независимая read-only проверка плана;
 - `ebb-execute-plan` — ledger зависимостей, запуск готовых задач и закрытие всего плана;
@@ -239,7 +242,7 @@ MCP-инструменты проверяют capability и аргументы. 
 - `ebb-web-e2e` — проверка реальных browser/HTTP/SSE сценариев;
 - `ebb-final-review` — независимая попытка опровергнуть готовность всего изменения.
 
-Установить или обновить skills и templates:
+Настроить Hermes project discovery и проверить prerequisites:
 
 ```bash
 pnpm hermes:setup

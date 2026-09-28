@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -10,7 +10,7 @@ import {
   resolveHermesHome,
   runSetupWithSync,
   runHermesConfig,
-  syncHermesAssets,
+  syncHermesCapabilities,
 } from './hermes-dev.mjs';
 
 test('Hermes home honors an explicit environment override', () => {
@@ -118,25 +118,21 @@ test('Hermes config timeout reports termination failure without claiming cleanup
   });
 });
 
-test('Hermes setup syncs canonical assets and verifies target hashes', () => {
+test('Hermes setup syncs capabilities without copying skills or source providers', () => {
   const root = mkdtempSync(join(tmpdir(), 'hermes-sync-test-'));
   const source = join(root, 'source');
   const home = join(root, 'home');
-  const skill = join(source, 'tools', 'hermes', 'skills', 'demo');
-  const providers = join(source, 'tools', 'hermes', 'providers');
   try {
-    mkdirSync(skill, { recursive: true });
-    mkdirSync(providers, { recursive: true });
-    writeFileSync(join(skill, 'SKILL.md'), 'name: demo\n', 'utf8');
-    writeFileSync(join(providers, 'inception.yaml'), 'model: mercury-2\n', 'utf8');
+    mkdirSync(join(source, 'tools', 'hermes'), { recursive: true });
+    mkdirSync(home, { recursive: true });
     writeFileSync(join(source, 'tools', 'hermes', 'capabilities.yaml'), 'version: 1\n', 'utf8');
 
-    const result = syncHermesAssets(source, home);
+    const result = syncHermesCapabilities(source, home);
 
     assert.equal(result.verified, true);
-    assert.equal(readFileSync(join(home, 'providers', 'ebb-orchestrator', 'inception.yaml'), 'utf8'), 'model: mercury-2\n');
     assert.equal(readFileSync(join(home, 'capabilities.yaml'), 'utf8'), 'version: 1\n');
-    assert.equal(readFileSync(join(home, 'skills', 'ebb-orchestrator', 'demo', 'SKILL.md'), 'utf8'), 'name: demo\n');
+    assert.equal(statSync(join(home, 'skills'), { throwIfNoEntry: false }), undefined);
+    assert.equal(statSync(join(home, 'providers'), { throwIfNoEntry: false }), undefined);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

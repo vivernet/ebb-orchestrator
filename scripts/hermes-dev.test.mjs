@@ -1,26 +1,98 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { resolvePlanPath } from './hermes-dev-paths.mjs';
+import { isHermesProjectDiscoveryEnabled, isHermesProjectTrusted, resolveRepositoryRoot, runHermesProjectSetup, syncHermesCapabilities, validateCanonicalSkills } from './hermes-dev.mjs';
 
 const root = resolve(import.meta.dirname, '..');
-const skillsRoot = join(root, 'tools', 'hermes', 'skills');
-const readme = readFileSync(join(root, 'README.md'), 'utf8');
+const skillsRoot = join(root, '.agents', 'skills');
+const readme = readFileSync(join(root, 'tools', 'hermes', 'README.md'), 'utf8');
 
 const expectedSkills = [
-  'ebb-debug-issue',
-  'ebb-execute-plan',
-  'ebb-final-review',
-  'ebb-implement-task',
-  'ebb-quality-gates',
-  'ebb-repository-context',
-  'ebb-review-plan',
-  'ebb-review-task',
-  'ebb-security-review',
-  'ebb-web-e2e',
-  'ebb-write-plan',
+  'ebb-curate-skills', 'ebb-debug-issue', 'ebb-execute-plan', 'ebb-final-review',
+  'ebb-implement-task', 'ebb-quality-gates', 'ebb-repository-context', 'ebb-repository-maintenance',
+  'ebb-review-plan', 'ebb-review-task', 'ebb-security-review', 'ebb-web-e2e', 'ebb-write-plan',
 ];
+
+const canonicalSkills = expectedSkills;
+
+test('project setup trusts the resolved repository without writing skill copies', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'hermes-project-'));
+  const fakeHome = join(root, 'home');
+  const calls = [];
+  try {
+    const options = {
+      worktreeRoot: root,
+      hermesHome: fakeHome,
+      run: (...args) => { calls.push(args); return { status: 0, stdout: '' }; },
+      configure: async () => { calls.push(['configure']); },
+    };
+    const result = await runHermesProjectSetup(options);
+    await runHermesProjectSetup(options);
+    assert.equal(result.trusted, true);
+    assert.deepEqual(calls[0], ['hermes', ['skills', 'trust', '--help'], { encoding: 'utf8', shell: false }]);
+    assert.deepEqual(calls[1], ['hermes', ['skills', 'trust', root], { encoding: 'utf8', shell: false }]);
+    assert.equal(calls.filter(([first]) => first === 'configure').length, 2);
+    assert.equal(statSync(join(fakeHome, 'skills', 'ebb-orchestrator'), { throwIfNoEntry: false }), undefined);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('repository root resolution uses Git top-level rather than caller cwd', () => {
+  const result = resolveRepositoryRoot((...args) => {
+    assert.deepEqual(args.slice(0, 2), ['git', ['rev-parse', '--show-toplevel']]);
+    assert.equal(args[2].shell, false);
+    return { status: 0, stdout: 'C:/repo\n' };
+  });
+  assert.equal(result, 'C:/repo');
+});
+
+test('Hermes dev script does not expose provider-addition behavior', () => {
+  const script = readFileSync(join(root, 'scripts', 'hermes-dev.mjs'), 'utf8');
+  assert.doesNotMatch(script, /doProvider|hermes-dev\.js provider|providers\.inception/);
+});
+
+test('Hermes dev setup and check do not manage unsupported worktree isolation config', () => {
+  const script = readFileSync(join(root, 'scripts', 'hermes-dev.mjs'), 'utf8');
+  assert.doesNotMatch(script, /delegation\.worktree_isolation/);
+});
+
+test('project trust accepts Hermes list output and rejects a different repository', () => {
+  assert.equal(isHermesProjectTrusted('["C:\\\\repo"]', 'c:/repo/'), true);
+  assert.equal(isHermesProjectTrusted('  - C:\\repo  ', 'c:/repo/'), true);
+  assert.equal(isHermesProjectTrusted('/other/repo', 'C:/repo'), false);
+});
+
+test('Hermes project discovery check requires the documented enabled setting', () => {
+  assert.equal(isHermesProjectDiscoveryEnabled('true'), true);
+  assert.equal(isHermesProjectDiscoveryEnabled('false'), false);
+  assert.equal(isHermesProjectDiscoveryEnabled(undefined), false);
+});
+
+test('capabilities synchronization does not depend on additional source directories', () => {
+  const temp = mkdtempSync(join(tmpdir(), 'hermes-assets-'));
+  const source = join(temp, 'repo');
+  const home = join(temp, 'home');
+  try {
+    mkdirSync(join(source, 'tools', 'hermes'), { recursive: true });
+    mkdirSync(home, { recursive: true });
+    writeFileSync(join(source, 'tools', 'hermes', 'capabilities.yaml'), 'capabilities: []\n');
+    syncHermesCapabilities(source, home);
+    assert.equal(readFileSync(join(home, 'capabilities.yaml'), 'utf8'), 'capabilities: []\n');
+    assert.equal(statSync(join(home, 'providers'), { throwIfNoEntry: false }), undefined);
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test('canonical skill validation enforces the 13-skill project inventory', () => {
+  const result = validateCanonicalSkills(join(root, '.agents', 'skills'));
+  assert.deepEqual(result.skills, canonicalSkills);
+  assert.equal(result.valid, true);
+});
 
 test('canonical Hermes skills have valid discoverable frontmatter', () => {
   const actualSkills = readdirSync(skillsRoot)

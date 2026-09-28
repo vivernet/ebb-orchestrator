@@ -47,10 +47,13 @@ hermes --in "<worktree>" --tui
 ## Обновление skills
 
 ```bash
-# Edit tools/hermes/skills
+# Edit .agents/skills
 pnpm hermes:setup
 pnpm hermes:check
 ```
+
+`pnpm hermes:setup` настраивает Hermes project trust и prerequisites; skills
+не устанавливаются и не копируются в Hermes profile.
 
 ## Русский JSDoc
 

@@ -10,6 +10,8 @@ tags: [hermes, development, capabilities]
 
 # Hermes Development Capabilities
 
+> Историческая superseded specification: требования ниже описывают прежнее копирование skills в Hermes profile. Актуальный canonical source и runtime discovery flow заданы в `.migration/ebb-skills/canonical-ebb-skills-design.md` и миграционном плане.
+
 ## Цель
 
 Сделать в репозитории единый, проверяемый и воспроизводимый development-контур для Hermes: канонические skills, реестр capabilities и явная документация установки. Секреты и персональные Hermes настройки не должны становиться частью Git-репозитория.

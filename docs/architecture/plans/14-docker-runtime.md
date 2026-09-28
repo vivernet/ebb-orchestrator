@@ -31,8 +31,6 @@ evidence:
   - apps/server/src/platform/database/backup-service.ts
   - apps/server/test/platform/database/backup.test.ts
   - scripts/hermes-dev.mjs
-  - scripts/hermes-provider-smoke.mjs
-  - scripts/hermes-provider-smoke.test.mjs
   - scripts/project-env.test.mjs
   - scripts/run-server.js
   - README.md
@@ -82,7 +80,7 @@ Docker mode не является скрытой заменой native mode: е�
 Следующие пункты нельзя закрывать догадкой; до получения решения/артефакта они блокируют соответствующую реализацию, но не меняют `status: proposed`:
 
 1. **Hermes image artifact:** `HERMES_SOURCE`, exact `HERMES_VERSION`, `HERMES_SHA256`, approved `HERMES_ARCHITECTURES` и `HERMES_BINARY_NAME` с владельцем и воспроизводимой fetch-проверкой. Без них Task 4 может проверять контракт, но не заявлять production-reproducible image.
-2. **Provider credential bridge:** текущий код подтверждает только два разных уровня evidence: `inception` настроен в `scripts/hermes-dev.mjs`/`scripts/hermes-provider-smoke.mjs` (`api`, `base_url`, `key_env=INCEPTION_API_KEY`, `model=mercury-2.5`, `HERMES_MODEL=inception`), а `local` присутствует как `DefaultModels` provider с моделями `llama-3.1-8b`, `llama-3.1-70b`, `mistral-large`. Текущий `HermesRuntimeAdapter`/`hermes-profile` не содержит provider-secret bridge; provider-specific setting is only the allowlisted `HERMES_MODEL`, а `SecretStore` service/name для LLM не подтверждены. `scripts/project-env.test.mjs` подтверждает только native development dotenv parser и не разрешает переносить `INCEPTION_API_KEY` в Docker host `.env`. Поэтому `inception` — единственный подтверждённый credentialed candidate, `local` — только существующий model identifier без Docker secret contract; `openai`, `anthropic` и любые иные provider contracts здесь не заявляются. Новое remote service/name → child env mapping требует отдельного решения; до него — `REQUIREMENTS_BLOCKED`.
+2. **Provider credential bridge:** Hermes dev tooling больше не содержит функции добавления или настройки provider; temporary provider smoke harness удалён. `local` присутствует как `DefaultModels` provider с моделями `llama-3.1-8b`, `llama-3.1-70b`, `mistral-large`. Текущий `HermesRuntimeAdapter`/`hermes-profile` не содержит provider-secret bridge; provider-specific setting is only the allowlisted `HERMES_MODEL`, а `SecretStore` service/name для LLM не подтверждены. `scripts/project-env.test.mjs` подтверждает только native development dotenv parser и не разрешает переносить provider credentials в Docker host `.env`. `local` — только существующий model identifier без Docker secret contract; `openai`, `anthropic` и любые иные provider contracts здесь не заявляются. Любая новая remote service/name → child env mapping требует отдельного решения; до него — `REQUIREMENTS_BLOCKED`.
 3. **CI/release wiring:** изменение `.github/workflows/production-gates.yml`, registry publishing и production rollout не подтверждены scope этого плана; они остаются отдельным решением, а Task 9 даёт только локальное smoke evidence.
 
 До снятия blocker implementation не должна добавлять URL, model alias, secret name, architecture, image checksum или CI contract по аналогии с другим provider.
@@ -301,7 +299,7 @@ Task 1–9
 
 **Interfaces:**
 
-- The planned registry must distinguish observed identifiers from supported runtime contracts. Current evidence is: `inception` is configured by `scripts/hermes-dev.mjs` and `scripts/hermes-provider-smoke.mjs` with API `https://api.inceptionlabs.ai/v1`, `key_env=INCEPTION_API_KEY`, model `mercury-2.5`, and launch alias `HERMES_MODEL=inception`; `local` is present only in `DefaultModels` with the three model identifiers recorded in the blocker section. The current server adapter does not resolve either provider through `SecretStore`; it only allowlists `HERMES_MODEL` and rejects supplied credential names.
+- The planned registry must distinguish observed identifiers from supported runtime contracts. The Hermes dev provider-addition command and disposable provider smoke harness have been removed; they are not supported provider contracts. `local` remains present only in `DefaultModels` with the three model identifiers recorded in the blocker section. The current server adapter does not resolve providers through `SecretStore`; it only allowlists `HERMES_MODEL` and rejects supplied credential names.
 - `inception` is the first credentialed provider entry. The approved `SecretStore` mapping is `service=hermes`, `name=INCEPTION_API_KEY`. This exact service/name pair binds to `SecretStore.resolveForService("hermes", "INCEPTION_API_KEY")` and injects the resolved value as the child env key. Until its tests and validation exist, additional providers remain `REQUIREMENTS_BLOCKED`.
 - `local` remains a non-credentialed existing model identifier only. It may be retained for fake/test or existing role metadata paths, but this plan must not invent an endpoint, API key, model alias or Infisical mapping for it. `openai`, `anthropic` and every other unobserved provider are rejected as `REQUIREMENTS_BLOCKED`.
 - `HermesRuntimeSettings` contains only non-secret provider/model input, `hermesHome`, `hermesConfigPath` and runtime settings. An absent provider is valid for health/startup and fake/test runs that do not launch an LLM; no provider preflight or child credential is created in that case. A selected credentialed provider requires a supported model and an approved service/name mapping before readiness.
@@ -521,14 +519,14 @@ Task 1–9
 
 - [ ] Step 1: RED — add tests for native command preservation, fresh Docker home resolution, manual import destination containment, symlink refusal and no implicit copy.
 - [ ] Step 2: Run RED
-  Run: `node --test scripts/hermes-dev.test.mjs scripts/hermes-execute.test.mjs scripts/hermes-provider-smoke.test.mjs`
+  Run: `node --test scripts/hermes-dev.test.mjs scripts/hermes-execute.test.mjs`
   Expected: FAIL because explicit native/Docker separation and manual-import containment are not implemented.
 - [ ] Step 3: minimal implementation
   - Preserve native launch/setup behavior and do not add a migration utility.
   - Require the operator to materialize imported projects inside destination `projects`; reject outside references rather than rewriting silently.
   - Use the backup/recovery contract for any operator backup, not a live database copy.
 - [ ] Step 4: Run GREEN
-  Run: `node --test scripts/hermes-dev.test.mjs scripts/hermes-execute.test.mjs scripts/hermes-provider-smoke.test.mjs`
+  Run: `node --test scripts/hermes-dev.test.mjs scripts/hermes-execute.test.mjs`
   Expected: PASS; native scripts remain valid, Docker home is explicit and manual imports are bounded and secret-free.
 - [ ] Step 5: neighboring checks
   Run: `pnpm --filter @ebb-orchestrator/server test -- test/platform/home/orchestrator-home.test.ts test/modules/projects/repository-discovery.test.ts test/modules/git/task-workspace-provisioner.test.ts test/modules/git/worktree-manager.test.ts`
@@ -705,7 +703,7 @@ Implementation and documentation must make this operational contract explicit:
 | Infisical outage or bad Machine Identity | pre-listener startup test and health failure | No keyring fallback in Docker; fix/rotate identity or roll back to native mode |
 | Secret leaks through env/log/error/image | resolver redaction tests, image/config scan, local smoke | Remove offending path and invalidate credential; fail release; never print debug env |
 | WAL-only or live-file backup is inconsistent | restore `quick_check`, checksum/manifest and restart rehearsal | Keep original home, restore only validated staged backup; no automatic overwrite |
-| Hermes binary/version incompatibility | build version check and provider smoke | Pin verified release/checksum or reject image; use native Hermes until fixed |
+| Hermes binary/version incompatibility | build version check and runtime command checks | Pin verified release/checksum or reject image; use native Hermes until fixed |
 | Container removal loses state | restart/down smoke and volume mapping inspection | Stop rollout; recover from host home/backup; never accept anonymous volume or image-layer state |
 | Manual project import collision or partial copy | destination containment check, staged operator backup and cleanup test | Preserve source/destination, abort before replacement, retry only after explicit operator decision |
 | New Docker config changes native startup | native test matrix and before/after smoke | Revert only Docker mode/config dispatch; retain native paths and keyring |

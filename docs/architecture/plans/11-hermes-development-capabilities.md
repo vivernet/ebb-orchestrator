@@ -18,6 +18,8 @@ evidence:
 ---
 # Hermes Development Capabilities Implementation Plan
 
+> Исторический завершённый план: пути `tools/hermes/skills/` ниже отражают состояние на момент выполнения плана и не являются текущим источником skills. Текущий canonical source — `.agents/skills/`; см. план миграции `.migration/ebb-skills/canonical-ebb-skills-migration-plan.md`.
+
 > **Для агентов:** Используйте суперсилы superpowers:subagent-driven-development или superpowers:executing-plans для пошагового выполнения. Шаги используют чекбоксы (`- [ ]`).
 
 **Goal:** Добавить в репозиторий регистр канонических skills и capabilities, скрипты setup/check, и документацию.
