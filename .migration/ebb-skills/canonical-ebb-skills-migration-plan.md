@@ -45,13 +45,13 @@ The supplied `tools/hermes` archive includes `README.md`, `capabilities.yaml` an
 **Interfaces:**
 - Produces: `SETUP_OWNER[]`, `CHECK_OWNER[]`, `TEST_OWNER[]`, current skill-copy/hash behavior, and every repository reference to `tools/hermes/skills`/`HERMES_HOME` skill copies.
 
-- [ ] **Step 1: Record Git baseline**
+- [x] **Step 1: Record Git baseline**
 
 Run: `git rev-parse --show-toplevel && git branch --show-current && git rev-parse HEAD && git status --short`
 
 Expected: repository root/branch/HEAD plus an immutable list of pre-existing changes.
 
-- [ ] **Step 2: Resolve package-script entrypoints**
+- [x] **Step 2: Resolve package-script entrypoints**
 
 Run from repo root:
 
@@ -61,7 +61,7 @@ node -e "const p=require('./package.json'); for (const k of ['hermes:setup','her
 
 Expected: exact command behind each script. Follow nested package commands until the final JS/TS/MJS/shell owner files are identified.
 
-- [ ] **Step 3: Find skill-copy and path references**
+- [x] **Step 3: Find skill-copy and path references**
 
 Run an equivalent repository search for:
 
@@ -77,7 +77,7 @@ skills.project_discovery
 
 Expected: exact `path:line` inventory, including tests and docs. Do not edit yet.
 
-- [ ] **Step 4: Baseline existing Hermes tests**
+- [x] **Step 4: Baseline existing Hermes tests**
 
 Run: `pnpm hermes:test`
 
@@ -106,17 +106,17 @@ Expected: record exact exit code and existing failures before migration. Do not 
 **Interfaces:**
 - Produces: one reviewed candidate canonical skill tree, still coexisting temporarily with the old path for rollback.
 
-- [ ] **Step 1: Copy the provided canonical bundle exactly into `.agents/skills`**
+- [x] **Step 1: Copy the provided canonical bundle exactly into `.agents/skills`**
 
 Expected: 13 skill directories; no `ebb-task-execution-gates` directory.
 
-- [ ] **Step 2: Validate skill structure/frontmatter**
+- [x] **Step 2: Validate skill structure/frontmatter**
 
 Check for every skill: directory/name equality, lowercase-hyphen name, non-empty description, standard frontmatter, existing relative references, no stale hardcoded `tools/hermes/skills` or profile skill path.
 
 Expected: all 13 pass.
 
-- [ ] **Step 3: Search trigger overlap**
+- [x] **Step 3: Search trigger overlap**
 
 Review descriptions for at least these prompt classes: bug/debug, write plan, review plan, execute plan, implement one task, task review, quality verification, final review, security, web E2E, repository cleanup/move, skill curation.
 
@@ -136,7 +136,7 @@ Expected: each class has one primary Ebb trigger; no standalone execution-gates 
 - Consumes: canonical `.agents/skills` tree from Task 2 and owner lists from Task 1.
 - Produces: setup that trusts/configures project skills without copying them; check/test logic that validates project-local discovery instead of installed-copy hashes.
 
-- [ ] **Step 1: Write/update failing tests for the new setup contract**
+- [x] **Step 1: Write/update failing tests for the new setup contract**
 
 Assertions must prove:
 
@@ -150,11 +150,11 @@ Run the focused Hermes tooling tests.
 
 Expected RED: old code still performs copy/sync or lacks project trust.
 
-- [ ] **Step 2: Implement minimal setup change**
+- [x] **Step 2: Implement minimal setup change**
 
 Remove only Ebb skill copy/sync behavior. Feature-detect the installed Hermes command where appropriate (`hermes skills trust --help`) rather than inventing a version number. Preserve unrelated Hermes configuration behavior.
 
-- [ ] **Step 3: Rewrite check semantics**
+- [x] **Step 3: Rewrite check semantics**
 
 Replace source-vs-`HERMES_HOME` skill hash equality with:
 
@@ -165,11 +165,11 @@ Replace source-vs-`HERMES_HOME` skill hash equality with:
 
 A stale profile-local `ebb-*` copy may be reported as a warning, not used as the canonical pass criterion.
 
-- [ ] **Step 4: Update `tools/hermes/README.md`**
+- [x] **Step 4: Update `tools/hermes/README.md`**
 
 Document `.agents/skills` as source of truth; explain that `hermes:setup` establishes Hermes runtime prerequisites/trust and no longer copies project skills. Document `hermes:check` accordingly.
 
-- [ ] **Step 5: GREEN + neighboring tests**
+- [x] **Step 5: GREEN + neighboring tests**
 
 Run focused script tests, then `pnpm hermes:test`.
 
@@ -186,25 +186,25 @@ Expected: migration-specific tests pass; any pre-existing failures are separatel
 - Consumes: Task 2 canonical tree and Task 3 setup/check behavior.
 - Produces: real-runtime evidence that both hosts consume `.agents/skills`.
 
-- [ ] **Step 1: Hermes setup/check**
+- [x] **Step 1: Hermes setup/check**
 
 Run: `pnpm hermes:setup` then `pnpm hermes:check` from the repository worktree.
 
 Expected: setup succeeds without copying Ebb skills to `HERMES_HOME`; check recognizes canonical project skills.
 
-- [ ] **Step 2: Hermes project skill discovery**
+- [x] **Step 2: Hermes project skill discovery**
 
 Run the current Hermes skill-list/show command from inside the repository.
 
 Expected: all 13 `ebb-*` skills are visible as project skills. Verify at least `ebb-write-plan`, `ebb-execute-plan`, `ebb-repository-maintenance`, and `ebb-curate-skills` explicitly.
 
-- [ ] **Step 3: Codex repository skill discovery**
+- [x] **Step 3: Codex repository skill discovery**
 
 Start Codex from the repository and use `/skills` (or `$` skill mention discovery).
 
 Expected: the same 13 `ebb-*` skills are visible from `.agents/skills`.
 
-- [ ] **Step 4: Companion smoke checks**
+- [x] **Step 4: Companion smoke checks**
 
 For one planning prompt and one bug prompt, confirm the expected Ebb skill is selectable and its Superpowers companion is available in that runtime. If Superpowers is intentionally installed outside the repo, record its provenance rather than copying it into `.agents/skills`.
 
@@ -230,21 +230,21 @@ For one planning prompt and one bug prompt, confirm the expected Ebb skill is se
 - Consumes: passing dual-runtime discovery from Task 4.
 - Produces: exactly one Git-tracked Ebb skill source.
 
-- [ ] **Step 1: Refresh the old-path/reference inventory immediately before deletion**
+- [x] **Step 1: Refresh the old-path/reference inventory immediately before deletion**
 
 Expected: no newly appeared owner/reference is missed; if inventory differs from Task 1, reconcile it before continuing.
 
-- [ ] **Step 2: Delete the old source tree and update remaining repository references**
+- [x] **Step 2: Delete the old source tree and update remaining repository references**
 
 Do not delete profile-local `HERMES_HOME` skills in this task.
 
-- [ ] **Step 3: Prove old repository path is gone**
+- [x] **Step 3: Prove old repository path is gone**
 
 Run repository search for `tools/hermes/skills` and legacy copy/hash semantics.
 
 Expected: zero active references; intentional migration-history text, if any, is explicitly classified.
 
-- [ ] **Step 4: Re-run Hermes and Codex discovery**
+- [x] **Step 4: Re-run Hermes and Codex discovery**
 
 Expected: Task 4 results remain unchanged after old source deletion.
 
@@ -258,19 +258,19 @@ Expected: Task 4 results remain unchanged after old source deletion.
 **Interfaces:**
 - Produces: completion evidence for the migration.
 
-- [ ] **Step 1: Run repository gates**
+- [x] **Step 1: Run repository gates**
 
 Run at minimum the applicable Hermes tests/checks, docs validation, lint/typecheck/test/build required by the repository policy, and `git diff --check`.
 
 Expected: fresh outputs on current HEAD; failures are classified, not hidden.
 
-- [ ] **Step 2: Whole-change review**
+- [x] **Step 2: Whole-change review**
 
 Use `ebb-final-review`, with `ebb-repository-maintenance` and `ebb-curate-skills` as specialist rubrics for the migration/skill-set parts.
 
 Expected: `PASS` or concrete `CHANGES_REQUESTED` findings. Fix confirmed findings narrowly and re-run affected gates/re-review.
 
-- [ ] **Step 3: Final state proof**
+- [x] **Step 3: Final state proof**
 
 Verify:
 
@@ -290,3 +290,15 @@ Expected: all statements are backed by current commands/output.
 ## Separate post-migration operator action: legacy Hermes profile copies
 
 Do not bundle this into normal setup. First inventory every profile-local `ebb-*` directory under the active `HERMES_HOME`, compare names/content, and present the exact delete list. Only after explicit approval may those stale copies be removed. The repository migration is functionally complete without this cleanup because trusted project skills have higher precedence inside Ebb Orchestrator.
+
+## Execution record — 2026-09-28
+
+- **Task 1 — PASS:** resolved owners from `package.json`; recorded baseline and the pre-migration `pnpm hermes:test` failure in the Task 1 report.
+- **Task 2 — PASS:** imported and validated the exact 13-skill / 22-file canonical bundle; manifest hashes, frontmatter, references and trigger coverage passed.
+- **Task 3 — PASS:** setup/check/tests no longer copy skills or configure/add providers; setup establishes trust and check validates canonical inventory, discovery and capabilities. Provider smoke harness/tests removed per approved scope clarification. `delegation.worktree_isolation` was removed from setup/check; profile left unchanged.
+- **Task 4 — PASS:** Hermes setup/check pass after old-tree removal. `hermes skills trust` reports 13 project skills. Hermes runtime `agent.skill_commands.scan_skill_commands()` from the repository returns all 13 Ebb entries, each resolving to `$REPO_ROOT/.agents/skills/<name>/SKILL.md`; it applies project > profile precedence and project quarantine checks. Codex runtime catalog shows the same 13. The two authorized prompt smokes selected `ebb-write-plan` + external `superpowers:writing-plans`, and `ebb-debug-issue` + profile-local `systematic-debugging`.
+  - Planning smoke returned a useful response but CLI exit 1. Hermes logs show `reason=max_iterations_reached(3/3)` after three `skill_view` calls. Current Hermes CLI docs specify exit 1 for `-Q` when a turn hits its iteration budget. This is a bounded-run warning; the required skill selection and companion availability were verified. No additional prompt was sent.
+- **Task 5 — PASS:** removed the full `tools/hermes/skills` tree; repeated the post-removal Hermes index scan and confirmed all 13 paths resolve only under `.agents/skills`. Active references were updated; remaining old-path text is confined to this migration record and explicitly historical records. Profile-local skills were retained; `skills.create_dir` was not redirected.
+- **Task 6 — PASS:** lint, typecheck, test, build, Hermes focused checks, docs tests/check and `git diff --check` passed. Independent whole-change review returned `PASS WITH LIMITATION` (the planning iteration-budget warning above).
+
+Commit history: `1183b0e` contains the migration; a follow-up evidence/checklist commit is created before local integration into `develop`. No push or publication is performed.
