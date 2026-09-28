@@ -20,8 +20,8 @@ updated: 2026-09-28
 | `plan-05` | `blocked` | Зафиксировать workflow/API acceptance, совместимый с текущим scope, затем доказать реальный Hermes → Epic и restart/resume; текущий FakeAgentRuntime не является заменой. |
 | `plan-06` | `in_progress` | Подтвердить durable/idempotent GitHub feedback, production backup/config-migration wiring, реальную crash/restart matrix и Windows+Unix keyring acceptance; исправить отдельные findings по мере проверки. |
 | `plan-07` | `blocked` | Получить завершившийся provider-backed parity run с report и доказанной очисткой; предыдущий разрешённый запуск завершился timeout. |
-| `plan-09` | `in_progress` | Ввести testable production composition seam для зависимостей без listen/spawn; отменять/останавливать lifecycle workers при pre-READY сигнале; завершить supported source security scan и повторный независимый review. `pnpm audit` не заменяет source scan. |
-| `plan-12` | `in_progress` | Закрыть lifecycle signal race; убрать runtime DDL из сервисов и покрыть fresh/upgraded DB migrations; затем выполнить controlled process restart, browser/runtime acceptance и independent whole-plan review. |
+| `plan-09` | `in_progress` | Pre-READY cancellation и остановка workers исправлены и прошли focused review/gates. Ввести testable production composition seam для зависимостей без listen/spawn; завершить supported source security scan и повторный whole-plan review. `pnpm audit` не заменяет source scan. |
+| `plan-12` | `in_progress` | Lifecycle cancellation race исправлена. Убрать runtime DDL из сервисов и покрыть fresh/upgraded DB migrations; затем выполнить controlled process restart, browser/runtime acceptance и independent whole-plan review. |
 | `plan-14` | `proposed` | Оставить вне v1 закрытия до подтверждения Docker artifacts/version/hash/architectures, credential bridge и CI/release scope. |
 | `plan-16` | `blocked` | Перед external archive/delete пользователь должен одобрить frozen 97-entry disposition, точный archive target и proposed README/policy changes после завершения текущей проверки. |
 

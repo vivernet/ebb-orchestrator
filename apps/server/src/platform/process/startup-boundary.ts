@@ -18,6 +18,7 @@ export interface StartupCleanupDeps {
   database: { close(): void };
   instanceLock: { release(): Promise<void> };
   server?: { isListening(): boolean; close(): Promise<void> };
+  workers?: readonly { stop(): Promise<void> }[];
 }
 
 /**
@@ -36,6 +37,13 @@ export function createStartupCleanup(deps: StartupCleanupDeps): () => Promise<vo
       if (deps.server?.isListening()) {
         try {
           await deps.server.close();
+        } catch (error) {
+          errors.push(error);
+        }
+      }
+      for (const worker of deps.workers ?? []) {
+        try {
+          await worker.stop();
         } catch (error) {
           errors.push(error);
         }

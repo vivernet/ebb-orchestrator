@@ -296,11 +296,13 @@ async function startLifecycle(): Promise<void> {
     await failClosedStartupReconciliation(report, status);
   }],
   workers,
+  signal: startupAbortController.signal,
   });
 }
 
 startupCleanup = createStartupCleanup({
   server: { isListening: () => app.server.listening, close: () => app.close() },
+  workers,
   database,
   instanceLock: lock,
 });

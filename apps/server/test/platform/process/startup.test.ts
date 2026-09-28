@@ -197,6 +197,36 @@ describe("startup lifecycle", () => {
     expect(stopped).toEqual(["first"]);
   });
 
+  it("stops workers and refuses READY when startup is aborted during worker start", async () => {
+    const controller = new AbortController();
+    const statuses: SystemStatus[] = [];
+    const stopped: string[] = [];
+    const deps: SystemLifecycleDeps = {
+      instanceLock: { acquire: async () => ({ pid: 1 }), release: async () => {} },
+      lockAlreadyAcquired: true,
+      database: { open: async () => {}, close: async () => {} },
+      migrator: { run: async () => {} },
+      status: {
+        get: () => statuses.at(-1) ?? "STARTING",
+        set: async (status) => { statuses.push(status); },
+      },
+      reconcileOutbox: async () => {},
+      reconcileJobs: async () => {},
+      reconcileArtifacts: async () => {},
+      additionalReconcilers: [],
+      signal: controller.signal,
+      workers: [{
+        start: async () => { controller.abort(new Error("startup interrupted")); },
+        stop: async () => { stopped.push("worker"); },
+      }],
+    };
+
+    await expect(startSystem(deps)).rejects.toThrow("startup interrupted");
+
+    expect(stopped).toEqual(["worker"]);
+    expect(statuses).toEqual(["RECOVERING", "DEGRADED"]);
+  });
+
   it("keeps the server recoverable in degraded mode when startup reconciliation fails", async () => {
     const status = new StatusTracker();
     const workerStart = vi.fn(async () => {});
@@ -624,6 +654,7 @@ describe("startup lifecycle", () => {
         isListening: () => isListening,
         close: async () => { events.push("close-listener"); isListening = false; },
       },
+      workers: [{ stop: async () => { events.push("stop-workers"); } }],
       database: { close: () => { events.push("close-database"); } },
       instanceLock: { release: async () => { events.push("release-lock"); } },
     });
@@ -640,7 +671,7 @@ describe("startup lifecycle", () => {
       cleanupStartup,
     })).rejects.toThrow("Startup interrupted by SIGINT");
 
-    expect(events).toEqual(["local-user", "start-system", "listen", "close-listener", "close-database", "release-lock"]);
+    expect(events).toEqual(["local-user", "start-system", "listen", "close-listener", "stop-workers", "close-database", "release-lock"]);
     expect(isListening).toBe(false);
     expect(readyShutdown).not.toHaveBeenCalled();
   });

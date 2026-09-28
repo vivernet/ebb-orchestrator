@@ -71,6 +71,12 @@ export interface SystemLifecycleDeps {
   reconcileArtifacts(): Promise<void>;
   additionalReconcilers: Array<() => Promise<void>>;
   workers: BackgroundWorker[];
+  /** Прерывает startup между фазами и откатывает уже запущенные workers. */
+  signal?: AbortSignal;
+}
+
+function assertStartupActive(signal?: AbortSignal): void {
+  if (signal?.aborted) throw signal.reason ?? new Error("Startup interrupted before READY");
 }
 
 async function runRecoveryStep(step: string, reconcile: () => Promise<void>): Promise<void> {
@@ -91,18 +97,28 @@ async function runRecoveryStep(step: string, reconcile: () => Promise<void>): Pr
  * Порядок выбран намеренно и не должен изменяться.
  */
 export async function startSystem(deps: SystemLifecycleDeps): Promise<void> {
+  assertStartupActive(deps.signal);
   if (!deps.lockAlreadyAcquired) await deps.instanceLock.acquire();
+  assertStartupActive(deps.signal);
   await deps.database.open();
+  assertStartupActive(deps.signal);
   await deps.migrator.run();
+  assertStartupActive(deps.signal);
   await deps.status.set("RECOVERING");
+  assertStartupActive(deps.signal);
   try {
     await runRecoveryStep("reconcile_outbox", deps.reconcileOutbox);
+    assertStartupActive(deps.signal);
     await runRecoveryStep("reconcile_jobs", deps.reconcileJobs);
+    assertStartupActive(deps.signal);
     await runRecoveryStep("reconcile_artifacts", deps.reconcileArtifacts);
+    assertStartupActive(deps.signal);
     for (const reconcile of deps.additionalReconcilers) {
       await reconcile();
+      assertStartupActive(deps.signal);
     }
-  } catch {
+  } catch (error) {
+    if (deps.signal?.aborted) throw deps.signal.reason ?? error;
     // HTTP server должен оставаться доступным для health/readiness диагностики,
     // но workers нельзя запускать после неполного recovery.
     await deps.status.set("DEGRADED");
@@ -118,9 +134,13 @@ export async function startSystem(deps: SystemLifecycleDeps): Promise<void> {
   const startedWorkers: BackgroundWorker[] = [];
   try {
     for (const worker of deps.workers) {
+      assertStartupActive(deps.signal);
       await worker.start();
       startedWorkers.push(worker);
+      assertStartupActive(deps.signal);
     }
+    await deps.status.set("READY");
+    assertStartupActive(deps.signal);
   } catch (error) {
     // Не leave partially started workers running when startup cannot
     // establish Объект fully operational system.  Этот статус должен also remain
@@ -133,7 +153,6 @@ export async function startSystem(deps: SystemLifecycleDeps): Promise<void> {
     await deps.status.set("DEGRADED");
     throw error;
   }
-  await deps.status.set("READY");
 }
 
 /**
