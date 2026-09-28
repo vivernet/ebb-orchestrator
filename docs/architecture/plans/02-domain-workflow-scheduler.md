@@ -15,7 +15,7 @@ evidence:
 ---
 # План реализации домена Orchestrator, Workflow, Scheduler и Recovery
 
-> **Для агентных исполнителей:** ОБЯЗАТЕЛЬНЫЙ SUB-SKILL: Использовать superpowers:subagent-driven-development (рекомендуется) или superpowers:executing-plans для реализации этого плана по задачам. Для отслеживания шаги используют синтаксис флажков (`- [ ]`).
+> **Для агентного исполнения:** REQUIRED SKILL: `ebb-execute-plan`. План выполняется по задачам; для отслеживания шагов используется синтаксис флажков (`- [ ]`).
 
 **Цель:** Реализовать Project/Epic/Задача domain, approvals, state machine, FakeAgentRuntime, deterministic Scheduler и Recovery так, чтобы полный workflow прогонялся без LLM и Git.
 

@@ -16,6 +16,8 @@
     "hermes:setup": "node scripts/hermes-dev.mjs setup",
     "hermes:check": "node scripts/hermes-dev.mjs check",
     "hermes:test": "node --test scripts/hermes-dev.test.mjs",
+    "skills:test": "node --test scripts/ebb-skills.test.mjs",
+    "skills:dependencies:test": "node --test scripts/ebb-skill-dependencies.test.mjs",
     "hermes:execute": "node scripts/hermes-dev.mjs execute",
     "docs:inventory": "node scripts/docs-governance.mjs inventory",
     "docs:check": "node scripts/docs-governance.mjs check",

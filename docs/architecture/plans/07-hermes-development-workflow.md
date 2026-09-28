@@ -26,7 +26,7 @@ evidence:
 >
 > **Цель:** полностью заменить OpenCode как внешнюю среду, через которую разрабатывается сам Ebb Orchestrator, на Hermes, сохранив существующий формат планов, дисциплину Git/worktree, независимые review-гейты, правила русского JSDoc и жёсткое ограничение не более двух одновременно работающих субагентов.
 >
-> **Историческая архитектура на момент выполнения:** production-runtime Ebb Orchestrator в этом плане не переносился. Сам продукт уже использовал `AgentRuntime` / `HermesRuntimeAdapter`. План изменял только внешний процесс разработки, через который разработчики исполняют `docs/architecture/plans/*.md`. В тот момент исходные версии skills находились в `tools/hermes/skills/`, а `scripts/hermes-dev.mjs` синхронизировал их с активным профилем Hermes. Текущий source of truth — `.agents/skills`; setup/check детали описаны в актуальном `.agents/skills/ebb-repository-maintenance/SKILL.md` и `tools/hermes/README.md`.
+> **Историческая архитектура на момент выполнения:** production-runtime Ebb Orchestrator в этом плане не переносился. Сам продукт уже использовал `AgentRuntime` / `HermesRuntimeAdapter`. План изменял только внешний процесс разработки, через который разработчики исполняют `docs/architecture/plans/*.md`. В тот момент исходные версии skills находились в `tools/hermes/skills/`, а `scripts/hermes-dev.mjs` синхронизировал их с активным профилем Hermes. Текущий source of truth — `.agents/skills`; setup/check детали описаны в актуальном `.agents/skills/ebb-repository-maintenance/SKILL.md` и `docs/development/05-hermes.md`.
 >
 > **Технологии:** Node.js 24+, pnpm, Git, Hermes Agent CLI/Desktop, Markdown `SKILL.md`, существующий проект TypeScript/React/Vitest.
 >

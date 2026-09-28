@@ -1,26 +1,23 @@
 ---
 name: ebb-implement-task
-description: Используй, когда нужно реализовать одну задачу утверждённого плана Ebb Orchestrator или один ограниченный bugfix с проверяемым scope.
+description: Используй для реализации одной назначенной задачи Ebb Orchestrator или одного подтверждённого ограниченного finding cluster с test-first evidence и контролем scope.
 metadata:
   project: "ebb-orchestrator"
-  version: "4.0.0"
+  version: "5.0.0"
 ---
 
 # Ebb Implement Task
 
-Исполняй ровно одну task или один подтверждённый bounded finding cluster.
+Исполняй ровно одну task. Core rule для behavior change/bugfix: **сначала доказуемый failing test/reproduction, потом production change.**
 
-**Companion:** используй Superpowers `test-driven-development` для behavior changes/bugfixes. Ebb scope policy имеет приоритет над generic full-suite default: task обязана доказать focused + plan-required checks; repository-wide suite выполняй здесь только если plan/repository policy требует её на каждой task, иначе её владеет `ebb-quality-gates`/final stage.
+1. Прими task brief: scope, exact files/interfaces, acceptance, commands и protected unrelated changes. Зафиксируй BASE/status и baseline.
+2. **RED:** создай минимальный test/reproduction одного поведения и запусти его. Он должен падать по ожидаемой assertion/reason; случайный syntax/setup error и просто non-zero exit не являются RED.
+3. **GREEN:** внеси минимальное production изменение, необходимое для RED. Не добавляй speculative features/refactor.
+4. Повтори targeted test до PASS, затем neighboring/applicable tests. После GREEN разрешён refactor без нового поведения; тесты остаются зелёными.
+5. Если command output не совпадает с expected, не наслаивай fixes: используй `ebb-debug-issue` для root cause.
+6. Проверь `git diff`, scope creep, `git diff --check`, generated artifacts/secrets и task-specific build/type/docs gates.
+7. Если execution mode требует independent task review, передай brief + exact diff + evidence в `ebb-review-task`. Findings обрабатывай через `ebb-handle-review-feedback`.
+8. Security/Web changes требуют соответственно `ebb-security-review`/`ebb-web-e2e`.
+9. Верни files changed, exact commands/results, RED/GREEN evidence, review verdict и limitations. Не утверждай PASS без свежей проверки текущего HEAD.
 
-## Cycle
-
-1. Прими task brief с exact paths, contracts, acceptance, commands и dependency rulings. Проверь branch/HEAD/status и pre-existing changes.
-2. Для нового поведения/регрессии получи meaningful RED: ожидаемая assertion/failure reason, а не просто non-zero exit или setup error.
-3. Сделай минимальный GREEN fix; не расширяй scope «заодно». Затем refactor только при сохранённом GREEN.
-4. Запусти focused tests, neighboring checks и task-required typecheck/build/docs/security/E2E gates; зафиксируй actual selected tests/counts, когда forwarding команды может быть неоднозначным.
-5. Передай diff + task requirements + evidence свежему reviewer. Если используется Superpowers `requesting-code-review`/SDD reviewer dispatch, rubric — `ebb-review-task`.
-6. Для подтверждённых findings делай узкий fix и scoped re-review. Не переоткрывай unrelated scope; после повторяющихся неудачных раундов эскалируй root cause/model согласно execution workflow.
-7. Security-sensitive scope требует `ebb-security-review`; browser/HTTP/session/SSE — `ebb-web-e2e`.
-8. Верни changed paths, exact commands/results, review verdict и ограничения. Не заявляй `PASS` без свежего evidence.
-
-Не начинай dependent task, пока prerequisite не принят. Broader-suite failure можно классифицировать как external dependency только после воспроизведения и доказательства ownership; тесты/fixtures нельзя ослаблять, чтобы скрыть красную зависимость.
+Подробный test-first protocol: [references/tdd-protocol.md](references/tdd-protocol.md).

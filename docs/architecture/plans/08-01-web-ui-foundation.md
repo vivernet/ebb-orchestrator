@@ -22,7 +22,7 @@ evidence:
 
 # Web UI Recovery Stage A Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` or `superpowers:executing-plans` to implement this plan task-by-task.
+> **Для агентного исполнения:** REQUIRED SKILL: `ebb-execute-plan`. План выполняется по задачам.
 
 **Goal:** Привести application shell и shared UI primitives к единому доступному V1 foundation без изменения backend contracts, session security или workflow semantics.
 

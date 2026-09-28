@@ -1,19 +1,33 @@
 ---
 name: ebb-debug-issue
-description: Используй, когда Ebb Orchestrator имеет bug, test/build failure или unexpected behavior и требуется root-cause investigation до исправления.
+description: Используй, когда Ebb Orchestrator имеет bug, failing test/build, performance problem или unexpected behavior и требуется доказать root cause до исправления.
 metadata:
   project: "ebb-orchestrator"
-  version: "4.0.0"
+  version: "5.0.0"
 ---
 
 # Ebb Debug Issue
 
-**Required companion:** Superpowers `systematic-debugging`. Не дублируй его four-phase workflow; используй его для root-cause method, а этот skill — для Ebb-specific orchestration.
+**Никаких fixes до root-cause investigation.** Симптомный patch без доказанной причины не считается debugging.
 
-1. Создай `ebb-repository-context`; зафиксируй exact expected/actual, reproduction command, exit/status, environment и affected scope.
-2. Следуй `systematic-debugging`: воспроизведение → evidence/data flow → одна гипотеза → минимальный probe. Не начинай fix по сходству с прошлым инцидентом.
-3. Для cross-boundary/load-bearing symptom используй [references/architectural-debugging-checklist.md](references/architectural-debugging-checklist.md) и при необходимости независимые reproduction/investigation scouts с непересекающимися вопросами.
-4. После доказанного root cause выбери путь: bounded fix → `ebb-implement-task`; multi-task/cross-component → `ebb-write-plan` → `ebb-review-plan` → `ebb-execute-plan`.
-5. После fix повтори исходное reproduction свежим запуском, regression checks и применимые specialist reviews. `ebb-quality-gates` владеет broader completion evidence.
-6. Если несколько fix-направлений подряд не подтверждают гипотезу, вернись к архитектурному предположению вместо patch churn; следуй stop/escalation rule `systematic-debugging`.
-7. Verdict: `DONE`, `BLOCKED`, `PARTIALLY_VERIFIED` или `NOT_REPRODUCED`, с evidence и непроверенными областями.
+## Phase 1 — Evidence
+
+1. Получи `ebb-repository-context`; запиши exact expected/actual, reproduction command, exit/status, environment и affected scope.
+2. Воспроизведи стабильно. Прочитай полный error/stack, проверь recent changes и environment/config propagation.
+3. Для multi-component path проследи data/control flow через каждую boundary и собери evidence, где именно contract ломается.
+
+## Phase 2 — Pattern
+
+4. Найди близкий working path/reference внутри repo; перечисли различия и зависимости без отбрасывания «маленьких» отличий.
+5. Для cross-boundary/load-bearing issue используй [architectural checklist](references/architectural-debugging-checklist.md). Независимые investigations можно делегировать через `ebb-dispatch-agents`.
+
+## Phase 3 — Hypothesis
+
+6. Сформулируй **одну** гипотезу: root cause X, потому что evidence Y. Проверяй минимальным probe, одна переменная за раз.
+7. Не сработало → новая гипотеза на основе нового evidence, а не дополнительный случайный fix.
+
+## Phase 4 — Fix
+
+8. После доказанного cause: bounded fix → `ebb-implement-task`; multi-task/cross-component → `ebb-write-plan` → review → execute.
+9. Повтори исходное reproduction на текущем HEAD, regression checks и applicable specialist gates.
+10. После трёх неудачных fix-направлений останови patch churn и пересмотри architecture/assumption. Verdict: `DONE / BLOCKED / PARTIALLY_VERIFIED / NOT_REPRODUCED` с evidence.

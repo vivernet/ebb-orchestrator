@@ -1,16 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { URL } from 'node:url';
 
 import {
   parseConfigTimeout,
   resolveHermesHome,
-  runSetupWithSync,
+  runHermesProjectSetup,
   runHermesConfig,
-  syncHermesCapabilities,
 } from './hermes-dev.mjs';
 
 test('Hermes home honors an explicit environment override', () => {
@@ -118,39 +118,57 @@ test('Hermes config timeout reports termination failure without claiming cleanup
   });
 });
 
-test('Hermes setup syncs capabilities without copying skills or source providers', () => {
-  const root = mkdtempSync(join(tmpdir(), 'hermes-sync-test-'));
-  const source = join(root, 'source');
+test('Hermes setup preserves a disposable profile without copying project assets', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'hermes-config-test-'));
   const home = join(root, 'home');
+  const previousHome = process.env.HERMES_HOME;
   try {
-    mkdirSync(join(source, 'tools', 'hermes'), { recursive: true });
+    process.env.HERMES_HOME = home;
     mkdirSync(home, { recursive: true });
-    writeFileSync(join(source, 'tools', 'hermes', 'capabilities.yaml'), 'version: 1\n', 'utf8');
-
-    const result = syncHermesCapabilities(source, home);
-
-    assert.equal(result.verified, true);
-    assert.equal(readFileSync(join(home, 'capabilities.yaml'), 'utf8'), 'version: 1\n');
-    assert.equal(statSync(join(home, 'skills'), { throwIfNoEntry: false }), undefined);
-    assert.equal(statSync(join(home, 'providers'), { throwIfNoEntry: false }), undefined);
+    writeFileSync(join(home, 'sentinel'), 'preserved\n');
+    await runHermesProjectSetup({
+      worktreeRoot: root,
+      run: () => ({ status: 0 }),
+      configure: async () => {},
+    });
+    assert.deepEqual(readdirSync(home), ['sentinel']);
+    assert.equal(readFileSync(join(home, 'sentinel'), 'utf8'), 'preserved\n');
+    const script = readFileSync(new URL('./hermes-dev.mjs', import.meta.url), 'utf8');
+    assert.doesNotMatch(script, /copyFileSync|createHash|sha256|skills\.create_dir/);
   } finally {
+    if (previousHome === undefined) delete process.env.HERMES_HOME;
+    else process.env.HERMES_HOME = previousHome;
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test('Hermes setup syncs assets after config timeout and preserves failure code', async () => {
-  let synced = false;
+test('Hermes project setup preserves config failure and only invokes project trust', async () => {
+  const calls = [];
   const failure = Object.assign(new Error(), { code: 'HERMES_CONFIG_TIMEOUT' });
 
   await assert.rejects(
-    runSetupWithSync({
+    runHermesProjectSetup({
+      worktreeRoot: '/disposable/project',
+      run: (command, args) => { calls.push([command, args]); return { status: 0 }; },
       configure: () => { throw failure; },
-      sync: () => {
-        synced = true;
-        return { verified: true };
-      },
     }),
     (error) => error === failure,
   );
-  assert.equal(synced, true);
+  assert.deepEqual(calls, [
+    ['hermes', ['skills', 'trust', '--help']],
+    ['hermes', ['skills', 'trust', '/disposable/project']],
+  ]);
+});
+
+test('Hermes check only reads supported configuration and setup retains supported keys', () => {
+  const script = readFileSync(new URL('./hermes-dev.mjs', import.meta.url), 'utf8');
+  const setup = script.slice(script.indexOf('async function doSetup()'), script.indexOf('async function doCheck()'));
+  const check = script.slice(script.indexOf('async function doCheck()'), script.indexOf('async function doExecute('));
+  for (const key of ['delegation.max_concurrent_children', 'delegation.max_spawn_depth', 'delegation.orchestrator_enabled', 'skills.project_discovery']) {
+    assert.ok(setup.includes(key), key);
+    assert.ok(check.includes(key), key);
+  }
+  assert.match(check, /skills\.trusted_project_dirs/);
+  assert.doesNotMatch(check, /hermesConfigSet|writeFileSync|mkdirSync|rmSync|copyFileSync/);
+  assert.doesNotMatch(script, /providers\.|doProvider|skills\.create_dir|delegation\.worktree_isolation/);
 });

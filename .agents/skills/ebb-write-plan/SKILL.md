@@ -1,26 +1,24 @@
 ---
 name: ebb-write-plan
-description: Используй, когда утверждённые требования Ebb Orchestrator нужно превратить в implementation plan перед многошаговой, рискованной или cross-component реализацией.
+description: Используй, когда утверждённые требования или design Ebb Orchestrator нужно превратить в исполнимый dependency-ordered implementation plan перед многошаговой или рискованной реализацией.
 metadata:
   project: "ebb-orchestrator"
-  version: "4.0.0"
+  version: "5.0.0"
 ---
 
 # Ebb Write Plan
 
-**Companion:** используй Superpowers `writing-plans` как основной planning workflow. Если требования ещё требуют проектных решений, сначала используй Superpowers `brainstorming`; plan не должен скрыто заменять design/spec.
+План — набор решений, которые implementer не должен угадывать. Не начинай implementation во время authoring plan.
 
-Ebb-правила ниже являются project overlay и имеют приоритет над generic defaults Superpowers для путей, naming, worktree, commits и repository governance.
+1. Получи `ebb-repository-context` и authoritative requirements/design. Если load-bearing design ещё не утверждён, вернись в `ebb-design-change`.
+2. Проверь существующую plan directory/naming/lifecycle convention в репозитории; project convention имеет приоритет над шаблоном.
+3. Для независимых исследований используй `ebb-dispatch-agents` с узкими read-only scopes; synthesis делает plan author.
+4. Составь file/interface map до задач: создаваемые/изменяемые файлы, owner каждого нового файла, producer/consumer seams.
+5. Разбей работу на dependency DAG. Task — минимальная единица, имеющая собственный RED→GREEN цикл, acceptance и осмысленный review boundary.
+6. Каждая task содержит exact paths, interfaces, dependencies, test/reproduction first, конкретные `Run`/`Expected`, neighboring gates, completion evidence и Review Focus.
+7. Для cleanup/move/setup/docs применяй требования `ebb-repository-maintenance`; для security/Web scope включи specialist evidence.
+8. Выполни self-review: requirement coverage, task granularity, interface consistency, commands, Review Focus, proportion. Исправь gaps до передачи reviewer.
+9. Передай актуальный plan в свежий `ebb-review-plan`; после правок нужен новый verdict. Исполняемый status появляется только после `APPROVED`.
+10. Commit plan/generated outputs выполняй только по repository governance; unrelated changes, push и merge не допускаются по умолчанию.
 
-## Workflow
-
-1. Получи `ebb-repository-context` и утверждённые требования/spec. Не начинай implementation.
-2. Проверь фактическую plan directory/naming convention в репозитории до создания файла. Не применяй автоматически generic Superpowers plan directory или date-based naming, если проект использует другое правило.
-3. Для независимых больших исследований используй ограниченное число scouts с непересекающимися вопросами; результат возвращай кратким summary + artifact path, а не полным логом.
-4. Зафиксируй все открытые product/API/security решения. Не угадывай значения, меняющие публичный contract или threat model.
-5. Разбей работу на dependency-ordered tasks. Каждая task должна иметь точные `Create`/`Modify` paths, owner, interfaces, dependencies, RED→GREEN evidence, `Run` + конкретный `Expected`, acceptance criteria и `Review Focus`.
-6. Для cleanup/move/rename/docs/setup-script scope загрузи `ebb-repository-maintenance` и включи его disposition/command-audit requirements.
-7. Выполни self-review из Superpowers `writing-plans`, затем передай полный актуальный plan независимому `ebb-review-plan`. После любых правок нужен свежий verdict.
-8. План получает executable status только после `APPROVED`. Commit plan/generated outputs выполняй только по актуальной repository governance; никогда не включай unrelated changes и не push/merge.
-
-Используй [references/plan-format.md](references/plan-format.md) как Ebb-specific overlay к Superpowers plan format, а не как второй конкурирующий формат.
+Полный формат: [references/plan-format.md](references/plan-format.md).

@@ -1,10 +1,9 @@
 #!/usr/bin/env node
 
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
-import { existsSync, rmSync, mkdirSync, copyFileSync, readdirSync, statSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, rmSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
 import { dirname, join, posix, win32 } from 'node:path';
-import { createHash } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { clearTimeout, setTimeout } from 'node:timers';
 import { resolvePlanPath } from './hermes-dev-paths.mjs';
@@ -99,37 +98,12 @@ async function hermesConfigGet(key) {
   return result.ok ? result.stdout : null;
 }
 
-function sha256(path) {
-  const content = readFileSync(path);
-  return createHash('sha256').update(content).digest('hex');
-}
-
-function throwSyncFailure() {
-  const error = new Error();
-  error.code = 'HERMES_SYNC_FAILED';
-  throw error;
-}
-
-export function syncHermesCapabilities(worktreeRoot, hermesHome) {
-  const sourceCapabilities = join(worktreeRoot, 'tools', 'hermes', 'capabilities.yaml');
-  const targetCapabilities = join(hermesHome, 'capabilities.yaml');
-
-  copyFileSync(sourceCapabilities, targetCapabilities);
-
-  const verifyFile = (sourcePath, targetPath) => {
-    if (!statSync(sourcePath, { throwIfNoEntry: false }) || !statSync(targetPath, { throwIfNoEntry: false })) {
-      throwSyncFailure();
-    }
-    if (sha256(sourcePath) !== sha256(targetPath)) throwSyncFailure();
-  };
-  verifyFile(sourceCapabilities, targetCapabilities);
-  return { verified: true };
-}
-
 const CANONICAL_EBB_SKILLS = [
-  'ebb-curate-skills', 'ebb-debug-issue', 'ebb-execute-plan', 'ebb-final-review',
-  'ebb-implement-task', 'ebb-quality-gates', 'ebb-repository-context', 'ebb-repository-maintenance',
-  'ebb-review-plan', 'ebb-review-task', 'ebb-security-review', 'ebb-web-e2e', 'ebb-write-plan',
+  'ebb-curate-skills', 'ebb-debug-issue', 'ebb-design-change', 'ebb-dispatch-agents',
+  'ebb-execute-plan', 'ebb-final-review', 'ebb-finish-branch', 'ebb-handle-review-feedback',
+  'ebb-implement-task', 'ebb-orchestrate-work', 'ebb-quality-gates', 'ebb-repository-context',
+  'ebb-repository-maintenance', 'ebb-review-plan', 'ebb-review-task', 'ebb-security-review',
+  'ebb-web-e2e', 'ebb-worktree', 'ebb-write-plan',
 ];
 
 export function validateCanonicalSkills(skillsRoot) {
@@ -182,27 +156,6 @@ export async function runHermesProjectSetup({ worktreeRoot, run = spawnSync, con
   }
   await configure();
   return { trusted: true };
-}
-
-export async function runSetupWithSync({ configure, sync }) {
-  let configFailure;
-  try {
-    await configure();
-  } catch (error) {
-    configFailure = error;
-  }
-
-  let syncFailure;
-  let syncResult;
-  try {
-    syncResult = await sync();
-  } catch (error) {
-    syncFailure = error;
-  }
-
-  if (configFailure) throw configFailure;
-  if (syncFailure) throw syncFailure;
-  return syncResult;
 }
 
 export function parseExecuteTimeout(value = process.env.HERMES_EXECUTE_TIMEOUT_MS) {
@@ -366,9 +319,6 @@ async function doSetup() {
     process.exit(1);
   }
 
-  // 2. Определяем HERMES_HOME.
-  const hermesHome = resolveHermesHome();
-
   console.log('Configuring Hermes...');
   const setup = await runHermesProjectSetup({
     worktreeRoot,
@@ -377,7 +327,6 @@ async function doSetup() {
       await hermesConfigSet('delegation.max_spawn_depth', '1');
       await hermesConfigSet('delegation.orchestrator_enabled', 'false');
       await hermesConfigSet('skills.project_discovery', 'true');
-      syncHermesCapabilities(worktreeRoot, hermesHome);
     },
   });
   console.log(`${HERMES_CONFIG_MARKER} marker=SETUP_CONFIGURED trusted=${setup.trusted} redacted=true`);
@@ -390,7 +339,6 @@ async function doCheck() {
 
   const checks = [];
   let allPass = true;
-  const hermesHome = resolveHermesHome();
   const worktreeRoot = resolveRepositoryRoot();
 
   // 1. Проверяем hermes --version.
@@ -413,7 +361,7 @@ async function doCheck() {
   // Validate the canonical inventory and Hermes project-discovery prerequisites.
   const sourceSkills = join(worktreeRoot, '.agents', 'skills');
   const inventory = validateCanonicalSkills(sourceSkills);
-  checks.push({ name: 'Canonical project skills (13)', pass: inventory.valid });
+  checks.push({ name: 'Canonical project skills (19)', pass: inventory.valid });
   if (!inventory.valid) allPass = false;
   const trustedProjects = await hermesConfigGet('skills.trusted_project_dirs');
   const trusted = isHermesProjectTrusted(trustedProjects, worktreeRoot);
@@ -422,14 +370,6 @@ async function doCheck() {
   const projectDiscoveryEnabled = isHermesProjectDiscoveryEnabled(await hermesConfigGet('skills.project_discovery'));
   checks.push({ name: 'Hermes project discovery enabled', pass: projectDiscoveryEnabled });
   if (!projectDiscoveryEnabled) allPass = false;
-
-  const sourceCapabilities = join(worktreeRoot, 'tools', 'hermes', 'capabilities.yaml');
-  const targetCapabilities = join(hermesHome, 'capabilities.yaml');
-  const capabilitiesMatch = statSync(sourceCapabilities, { throwIfNoEntry: false }) !== undefined
-    && statSync(targetCapabilities, { throwIfNoEntry: false }) !== undefined
-    && sha256(sourceCapabilities) === sha256(targetCapabilities);
-  checks.push({ name: 'Capabilities registry match', pass: capabilitiesMatch });
-  if (!capabilitiesMatch) allPass = false;
 
   // Проверяем конфигурацию Hermes.
   const configChecks = [

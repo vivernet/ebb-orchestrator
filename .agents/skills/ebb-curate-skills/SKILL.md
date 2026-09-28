@@ -1,28 +1,24 @@
 ---
 name: ebb-curate-skills
-description: Используй, когда нужно оценить новые, автоматически созданные или часто использованные skills вокруг Ebb Orchestrator и решить merge/create/remove для канонического ebb-* набора.
+description: Используй, когда нужно создать, изменить или оценить новые/автоматически созданные/часто использованные skills вокруг Ebb Orchestrator и сохранить один автономный канонический ebb-* набор.
 metadata:
   project: "ebb-orchestrator"
-  version: "1.0.0"
+  version: "5.0.0"
 ---
 
 # Ebb Curate Skills
 
-Цель — поддерживать один канонический набор Ebb skills без накопления дубликатов и случайных self-improvement patches.
+Source of truth — repository `.agents/skills/`. Полезная обязательная методология должна быть **встроена в `ebb-*`**, а не оставлена runtime dependency другого skill set.
 
-**Required authoring companion:** Superpowers `writing-skills`. Используй его TDD/trigger-testing подход для фактического создания или переписывания skill, когда runtime позволяет pressure tests.
+## RED → GREEN → REFACTOR для skills
 
-## Workflow
+1. Инвентаризируй canonical `ebb-*`, candidate skills/references и usage evidence. Сначала опиши baseline failure/pressure scenario **без предлагаемого изменения**.
+2. **RED:** докажи, что текущий набор пропускает нужный trigger, допускает ошибочный workflow или не содержит capability. Для discipline rules используй pressure scenarios; для references — retrieval/application tests.
+3. Выбери verdict: `MERGE_PATTERN`, `NEW_EBB`, `REPLACE_EBB`, `REJECT`, `NEEDS_EVIDENCE`. Если reusable pattern полезен для обязательного Ebb workflow, он должен быть MERGE/NEW, а не runtime dependency.
+4. **GREEN:** внеси минимальный skill/reference change, закрывающий доказанный failure. Description описывает только trigger, а не сокращённую версию workflow.
+5. **REFACTOR:** тестируй overlap, rationalizations, wrong routing, token footprint; heavy/rare detail выноси в `references/`.
+6. Каждый новый skill имеет уникальную responsibility/trigger. Один и тот же workflow не дублируется под разными именами.
+7. Валидируй frontmatter, relative links, cross-skill references, отсутствие host-specific runtime dependencies, Codex/Hermes discovery layout и stale paths.
+8. Выпусти review + migration map + trigger/pressure matrix + limitations. Candidate, созданный self-improvement механизмом, не становится canonical без этого процесса.
 
-1. Source of truth — repository `.agents/skills/`. Runtime-installed/copied skills и автоматически созданные skills являются evidence/candidates, но не каноническим источником.
-2. Инвентаризируй canonical `ebb-*`, candidate skills, references и реальное usage evidence. Сравни name/description/ownership, а не только похожие слова.
-3. Для каждого candidate/pattern вынеси verdict: `KEEP_EXTERNAL`, `MERGE`, `NEW_EBB`, `REPLACE`, `REJECT` или `NEEDS_EVIDENCE`; обоснуй устойчивой project-specific ценностью.
-4. Общие техники (TDD, debugging, planning, generic code review/verification) предпочитай переиспользовать из Superpowers вместо копирования в Ebb. В Ebb хранится project overlay: contracts, governance, orchestration и specialist policy.
-5. Перед `NEW_EBB` докажи отдельный trigger/zone of responsibility и отсутствие опасного overlap. Перед `MERGE` укажи target skill и конкретный reusable pattern.
-6. Изменения authoring выполняй через Superpowers `writing-skills`; descriptions тестируй на implicit routing и держи concise. Large/rare detail выноси в `references/`.
-7. Валидируй Agent Skills standard, relative references, cross-runtime compatibility (Codex + Hermes), forbidden stale paths и token footprint.
-8. Выпусти review/migration map: added/changed/removed skills, imported patterns, deliberately external patterns, trigger tests и limitations.
-
-Никогда не продвигай self-improvement skill в canonical set только потому, что он часто загружался или был автоматически patched.
-
-См. [references/decision-matrix.md](references/decision-matrix.md).
+См. [decision matrix](references/decision-matrix.md) и [authoring protocol](references/skill-authoring-protocol.md).

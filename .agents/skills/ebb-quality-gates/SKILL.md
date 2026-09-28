@@ -1,19 +1,29 @@
 ---
 name: ebb-quality-gates
-description: Используй, когда нужно выбрать и доказательно выполнить проверки качества для изменения Ebb Orchestrator перед task, plan или release-level completion claim.
+description: Используй перед любым утверждением PASS/DONE/fixed/ready по Ebb Orchestrator и для выполнения свежих verification gates текущего HEAD.
 metadata:
   project: "ebb-orchestrator"
-  version: "4.0.0"
+  version: "5.0.0"
 ---
 
 # Ebb Quality Gates
 
-**Required companion before completion claims:** Superpowers `verification-before-completion`.
+Core law: **никакого completion claim без свежего evidence на текущем tree.**
 
-1. Определи применимые gates из approved plan, repository policy и changed scope. Начинай с самого узкого доказательства, затем neighboring и обязательные broader gates.
-2. Для каждого запуска запиши exact command, cwd, exit code, фактически выбранные files/tests/counts, существенный result и platform/skipped limitations.
-3. Типовые gates (`pnpm lint`, `pnpm typecheck`, `pnpm test`, build, docs, E2E/security) применяй только если они существуют и относятся к scope; plan-required gate нельзя заменить «похожей» командой.
-4. Заверши diff hygiene: `git diff --check`, unexpected/generated artifacts, secrets/absolute paths, unrelated changes и final `git status --short`.
-5. Broader failures классифицируй: regression текущего scope, pre-existing baseline или pending dependency. Последние два требуют evidence и явного ограничения; они не превращаются в зелёный worktree.
-6. Если менялся setup/dev script или документация команд, используй `ebb-repository-maintenance` для command/source audit.
-7. Completion claim разрешён только после свежего output текущего HEAD. Старый log, intent, частичный subprocess или subagent summary не является PASS.
+## Gate function
+
+Перед каждым статусным утверждением:
+
+1. **Identify:** какая exact command/inspection доказывает claim?
+2. **Run:** выполни её полностью и свежо.
+3. **Read:** прочитай output, exit code, failure counts/warnings.
+4. **Verify:** output действительно подтверждает claim? Если нет — сообщи фактический статус и blocker.
+5. **Claim:** только теперь сформулируй PASS/DONE/fixed и приложи evidence.
+
+## Scope ladder
+
+Сначала focused test/reproduction, затем neighboring suite, затем mandatory repository gates по изменённому scope/plan: lint, typecheck, tests, build, docs, E2E/security и всегда применимый `git diff --check`. Full suite обязателен перед branch integration, если repository policy не определяет эквивалентный полный gate.
+
+Agent report, старый CI run, «должно работать», зелёный lint вместо build или partial suite не заменяют нужную проверку. Broader failure классифицируй по ownership; подтверждённый pre-existing/dependency blocker сохраняется как blocker и не превращается в общий PASS.
+
+Перед завершением также проверь requirements checklist, diff на unrelated/generated files/secrets и worktree status. Формат evidence: [references/completion-evidence.md](references/completion-evidence.md).

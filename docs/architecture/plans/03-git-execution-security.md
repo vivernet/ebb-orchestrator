@@ -16,7 +16,7 @@ evidence:
 ---
 # План реализации Git, Execution и Security Orchestrator
 
-> **Для агентных исполнителей:** ОБЯЗАТЕЛЬНЫЙ SUB-SKILL: Использовать superpowers:subagent-driven-development (рекомендуется) или superpowers:executing-plans для реализации этого плана по задачам. Для отслеживания шаги используют синтаксис флажков (`- [ ]`).
+> **Для агентного исполнения:** REQUIRED SKILL: `ebb-execute-plan`. План выполняется по задачам; для отслеживания шагов используется синтаксис флажков (`- [ ]`).
 
 **Цель:** Добавить реальные Git/worktree operations, controlled execution, Permission Engine и security boundaries так, чтобы deterministic workflow мог безопасно работать с локальным repository без Hermes.
 

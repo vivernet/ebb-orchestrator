@@ -14,7 +14,7 @@ evidence: []
 
 # Web 401 и завершение проекта — Implementation Plan
 
-> **Для agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (рекомендуется) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Этот документ является планом реализации; сам по себе он ничего не реализует.
+> **Для агентного исполнения:** REQUIRED SKILL: `ebb-execute-plan`. План выполняется по задачам; для отслеживания шагов используется синтаксис флажков (`- [ ]`). Этот документ является планом реализации; сам по себе он ничего не реализует.
 
 **Goal:** Устранить доказанный дефект restore-flow Web/401 и довести связанные серверные контракты, жизненный цикл, миграции, безопасность команд, фоновые задачи, редактирование ошибок и доказательства качества до состояния, проверяемого реальным HTTP/browser transport и полным набором quality gates.
 

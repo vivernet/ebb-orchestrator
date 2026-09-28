@@ -1,21 +1,20 @@
-# Skill curation decision matrix
+# Ebb skill curation decision matrix
 
 | Verdict | Когда использовать |
 |---|---|
-| `KEEP_EXTERNAL` | Общая техника уже качественно покрыта Superpowers/runtime skill и Ebb-specific delta минимален |
-| `MERGE` | Candidate содержит устойчивый project-specific pattern, но отдельный trigger совпадает с существующим ebb-* |
+| `MERGE_PATTERN` | Candidate содержит устойчивый reusable pattern, но trigger/owner уже принадлежит существующему `ebb-*` |
 | `NEW_EBB` | Есть отдельный повторяемый Ebb workflow, собственный trigger и независимая ответственность |
-| `REPLACE` | Existing ebb-* имеет неверную границу ответственности; новая форма полностью заменяет его |
-| `REJECT` | One-off, stale, ошибочный, слишком узкий или дублирующий pattern |
-| `NEEDS_EVIDENCE` | Польза предполагается, но usage/pressure scenarios не подтверждают её |
+| `REPLACE_EBB` | Existing `ebb-*` имеет неверную boundary и новая форма полностью её заменяет |
+| `REJECT` | One-off, stale, ошибочный, слишком узкий, дублирующий или не относится к Ebb workflow |
+| `NEEDS_EVIDENCE` | Польза предполагается, но usage/pressure/application tests её не подтверждают |
 
-## Review questions
+## Mandatory questions
 
-1. Какой пользовательский/task trigger должен загрузить skill?
-2. Почему generic Superpowers/runtime skill недостаточен?
-3. Какой Ebb-specific invariant или workflow он добавляет?
-4. Есть ли существующий ebb-* с тем же trigger?
-5. Можно ли вынести редкую деталь в reference вместо нового skill?
-6. Сколько startup description/context добавляет решение?
-7. Работает ли структура в `.agents/skills` для Codex и Hermes без host-specific копии?
-8. Есть ли evidence, что skill предотвращает реальный повторяемый failure mode?
+1. Какой конкретный task/symptom должен загружать capability?
+2. Какой повторяемый failure mode она предотвращает?
+3. Какой существующий `ebb-*` уже владеет этим trigger?
+4. Можно ли встроить pattern в owner skill/reference вместо нового top-level skill?
+5. Если capability обязательна Ebb workflow — где её собственная реализация внутри canonical set?
+6. Как изменение влияет на discovery overlap и startup token footprint?
+7. Может ли Codex и Hermes прочитать этот же repository file без host-specific копии?
+8. Каким RED/application scenario доказана необходимость и каким GREEN scenario — результат?

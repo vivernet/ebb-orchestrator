@@ -222,25 +222,31 @@ MCP-инструменты проверяют capability и аргументы. 
 
 ### Hermes development skills
 
-Канонический каталог из 13 repository-local Ebb skills находится в
-`.agents/skills/`; [README Hermes tooling](tools/hermes/README.md) описывает
+Канонический каталог из 19 repository-local Ebb skills находится в
+`.agents/skills/`; [руководство разработки через Hermes](docs/development/05-hermes.md) описывает
 настройку trust и проверку runtime prerequisites.
 
-Набор содержит следующие 13 skills:
+Это единственный полный пользовательский список skills проекта:
 
 - `ebb-curate-skills` — evidence-based отбор новых и автоматически созданных skills;
+- `ebb-debug-issue` — воспроизведение дефекта, доказательство root cause и выбор ограниченного исправления;
+- `ebb-design-change` — исследование требований и архитектурных решений до реализации;
+- `ebb-dispatch-agents` — разделение независимых задач и контроль делегирования;
+- `ebb-execute-plan` — ledger зависимостей, запуск готовых задач и закрытие всего плана;
+- `ebb-final-review` — независимая попытка опровергнуть готовность всего изменения;
+- `ebb-finish-branch` — проверка готовности ветки и передача результата для разрешённой интеграции;
+- `ebb-handle-review-feedback` — проверка review findings и устранение подтверждённых замечаний;
+- `ebb-implement-task` — реализация одной задачи, TDD, review и необходимые локальные проверки;
+- `ebb-orchestrate-work` — выбор Ebb workflow и владельцев этапов инженерной работы;
+- `ebb-quality-gates` — выбор и выполнение необходимых проверок с evidence;
 - `ebb-repository-context` — разведка репозитория и компактный Context Brief для контроллера;
 - `ebb-repository-maintenance` — безопасное изменение структуры, tooling scripts и документации;
-- `ebb-write-plan` — исследование требований и создание implementation plan;
 - `ebb-review-plan` — независимая read-only проверка плана;
-- `ebb-execute-plan` — ledger зависимостей, запуск готовых задач и закрытие всего плана;
-- `ebb-implement-task` — реализация одной задачи, TDD, review и необходимые локальные проверки;
-- `ebb-debug-issue` — воспроизведение, root-cause analysis и выбор bounded fix или плана;
 - `ebb-review-task` — read-only проверка diff одной задачи;
-- `ebb-quality-gates` — выбор и выполнение необходимых проверок с evidence;
 - `ebb-security-review` — проверка trust boundaries и security-регрессий;
 - `ebb-web-e2e` — проверка реальных browser/HTTP/SSE сценариев;
-- `ebb-final-review` — независимая попытка опровергнуть готовность всего изменения.
+- `ebb-worktree` — проверка изолированного worktree и безопасный жизненный цикл checkout;
+- `ebb-write-plan` — создание implementation plan из подтверждённых требований и design.
 
 Настроить Hermes project discovery и проверить prerequisites:
 
@@ -289,11 +295,15 @@ pnpm start
 pnpm hermes:setup
 pnpm hermes:check
 pnpm hermes:test
+pnpm skills:test
+pnpm skills:dependencies:test
 pnpm hermes:execute -- <plan-path>
 ```
 
-`hermes:setup` изменяет `HERMES_HOME` и конфигурацию Hermes. `hermes:check` и
-`hermes:test` проверяют установленную интеграцию и её скрипты. `hermes:execute`
+`hermes:setup` изменяет конфигурацию выбранного Hermes home. `hermes:check` и
+`hermes:test` проверяют prerequisites интеграции и её скрипты. `skills:test`
+проверяет canonical bundle, а `skills:dependencies:test` — обязательные workflow
+dependencies во всём tracked source. `hermes:execute`
 запускает выполнение плана и требует явного одобрения.
 
 ### Документация

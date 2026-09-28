@@ -21,7 +21,7 @@ evidence:
 
 # Production readiness hardening Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use \`superpowers:executing-plans\` to implement this plan task-by-task. Steps use checkbox (\`- [ ]\`) syntax for tracking.
+> **Для агентного исполнения:** REQUIRED SKILL: `ebb-execute-plan`. План выполняется по задачам; для отслеживания шагов используется синтаксис флажков (`- [ ]`).
 
 **Goal:** Сделать утверждённый local-first v1 безопасным и доказуемо готовым к production: без потери dirty worktree, ложного сохранения секретов, unwired local paths и ложноположительных E2E.
 

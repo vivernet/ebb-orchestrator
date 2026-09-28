@@ -4,16 +4,18 @@ import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, wr
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { resolvePlanPath } from './hermes-dev-paths.mjs';
-import { isHermesProjectDiscoveryEnabled, isHermesProjectTrusted, resolveRepositoryRoot, runHermesProjectSetup, syncHermesCapabilities, validateCanonicalSkills } from './hermes-dev.mjs';
+import { isHermesProjectDiscoveryEnabled, isHermesProjectTrusted, resolveRepositoryRoot, runHermesProjectSetup, validateCanonicalSkills } from './hermes-dev.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const skillsRoot = join(root, '.agents', 'skills');
-const readme = readFileSync(join(root, 'tools', 'hermes', 'README.md'), 'utf8');
+const readme = readFileSync(join(root, 'README.md'), 'utf8');
 
 const expectedSkills = [
-  'ebb-curate-skills', 'ebb-debug-issue', 'ebb-execute-plan', 'ebb-final-review',
-  'ebb-implement-task', 'ebb-quality-gates', 'ebb-repository-context', 'ebb-repository-maintenance',
-  'ebb-review-plan', 'ebb-review-task', 'ebb-security-review', 'ebb-web-e2e', 'ebb-write-plan',
+  'ebb-curate-skills', 'ebb-debug-issue', 'ebb-design-change', 'ebb-dispatch-agents',
+  'ebb-execute-plan', 'ebb-final-review', 'ebb-finish-branch', 'ebb-handle-review-feedback',
+  'ebb-implement-task', 'ebb-orchestrate-work', 'ebb-quality-gates', 'ebb-repository-context',
+  'ebb-repository-maintenance', 'ebb-review-plan', 'ebb-review-task', 'ebb-security-review',
+  'ebb-web-e2e', 'ebb-worktree', 'ebb-write-plan',
 ];
 
 const canonicalSkills = expectedSkills;
@@ -72,26 +74,37 @@ test('Hermes project discovery check requires the documented enabled setting', (
   assert.equal(isHermesProjectDiscoveryEnabled(undefined), false);
 });
 
-test('capabilities synchronization does not depend on additional source directories', () => {
-  const temp = mkdtempSync(join(tmpdir(), 'hermes-assets-'));
-  const source = join(temp, 'repo');
-  const home = join(temp, 'home');
-  try {
-    mkdirSync(join(source, 'tools', 'hermes'), { recursive: true });
-    mkdirSync(home, { recursive: true });
-    writeFileSync(join(source, 'tools', 'hermes', 'capabilities.yaml'), 'capabilities: []\n');
-    syncHermesCapabilities(source, home);
-    assert.equal(readFileSync(join(home, 'capabilities.yaml'), 'utf8'), 'capabilities: []\n');
-    assert.equal(statSync(join(home, 'providers'), { throwIfNoEntry: false }), undefined);
-  } finally {
-    rmSync(temp, { recursive: true, force: true });
-  }
+test('Hermes setup and check do not copy or hash profile assets', () => {
+  const source = readFileSync(join(root, 'scripts', 'hermes-dev.mjs'), 'utf8');
+  assert.doesNotMatch(source, /copyFileSync|createHash|sha256|skills\.create_dir/);
+  assert.match(source, /Canonical project skills \(19\)/);
 });
 
-test('canonical skill validation enforces the 13-skill project inventory', () => {
+test('canonical skill validation enforces the 19-skill project inventory', () => {
   const result = validateCanonicalSkills(join(root, '.agents', 'skills'));
   assert.deepEqual(result.skills, canonicalSkills);
   assert.equal(result.valid, true);
+});
+
+test('canonical skill validation rejects missing, extra and incomplete skills', () => {
+  const temp = mkdtempSync(join(tmpdir(), 'hermes-inventory-'));
+  try {
+    for (const skill of expectedSkills) {
+      mkdirSync(join(temp, skill));
+      writeFileSync(join(temp, skill, 'SKILL.md'), '---\n');
+    }
+    assert.equal(validateCanonicalSkills(temp).valid, true);
+    rmSync(join(temp, expectedSkills[0], 'SKILL.md'));
+    assert.equal(validateCanonicalSkills(temp).valid, false);
+    writeFileSync(join(temp, expectedSkills[0], 'SKILL.md'), '---\n');
+    mkdirSync(join(temp, 'unexpected-skill'));
+    assert.equal(validateCanonicalSkills(temp).valid, false);
+    rmSync(join(temp, 'unexpected-skill'), { recursive: true });
+    rmSync(join(temp, expectedSkills[0]), { recursive: true });
+    assert.equal(validateCanonicalSkills(temp).valid, false);
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
 });
 
 test('canonical Hermes skills have valid discoverable frontmatter', () => {
@@ -107,10 +120,28 @@ test('canonical Hermes skills have valid discoverable frontmatter', () => {
   }
 });
 
-test('README documents every skill and setup commands', () => {
-  for (const skill of expectedSkills) assert.match(readme, new RegExp(skill));
+test('README inventory lists all 19 skills exactly once', () => {
+  const documentedSkills = [...readme.matchAll(/^- `([a-z\d-]+)` —/gmu)]
+    .map((match) => match[1]).filter((name) => name.startsWith('ebb-')).sort();
+  assert.deepEqual(documentedSkills, expectedSkills);
+});
+
+test('README points to Hermes guide and canonical skills', () => {
+  assert.match(readme, /\]\(docs\/development\/05-hermes\.md\)/);
+  assert.match(readme, /`\.agents\/skills\/`/);
+  assert.doesNotMatch(readme, /tools\/hermes\/README\.md/);
+  assert.match(readme, /19 repository-local Ebb skills/);
+  const documentedSkills = [...readme.matchAll(/^- `([a-z\d-]+)` —/gmu)]
+    .map((match) => match[1]).filter((name) => name.startsWith('ebb-')).sort();
+  assert.deepEqual(documentedSkills, expectedSkills);
   assert.match(readme, /pnpm hermes:setup/);
   assert.match(readme, /pnpm hermes:check/);
+  const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+  assert.equal(manifest.scripts['hermes:setup'], 'node scripts/hermes-dev.mjs setup');
+  assert.equal(manifest.scripts['hermes:check'], 'node scripts/hermes-dev.mjs check');
+  assert.equal(manifest.scripts['skills:dependencies:test'], 'node --test scripts/ebb-skill-dependencies.test.mjs');
+  const guide = readFileSync(join(root, 'docs', 'development', '05-hermes.md'), 'utf8');
+  assert.match(guide, /\]\(\.\.\/\.\.\/README\.md#hermes-development-skills\)/);
 });
 
 test('plan path resolution rejects traversal and sibling-prefix escapes', () => {

@@ -22,7 +22,7 @@ evidence:
 ---
 # План реализации Foundation и Persistence Orchestrator
 
-> **Для агентных исполнителей:** ОБЯЗАТЕЛЬНЫЙ SUB-SKILL: Использовать superpowers:subagent-driven-development (рекомендуется) или superpowers:executing-plans для реализации этого плана по задачам. Для отслеживания шаги используют синтаксис флажков (`- [ ]`).
+> **Для агентного исполнения:** REQUIRED SKILL: `ebb-execute-plan`. План выполняется по задачам; для отслеживания шагов используется синтаксис флажков (`- [ ]`).
 
 **Цель:** Создать запускаемый основу локального backend: monorepo, версионированную конфигурацию, SQLite migrations, transactional outbox, background jobs, artifact store, startup state и HTTP/SSE shell.
 

@@ -1,29 +1,38 @@
 ---
 name: ebb-execute-plan
-description: Используй, когда утверждённый implementation plan Ebb Orchestrator нужно выполнить с dependency-aware orchestration, subagents, task reviews и финальными gates.
+description: Используй для исполнения утверждённого implementation plan Ebb Orchestrator с persistent ledger, dependency gates, subagent или inline режимом, review loops и финальной проверкой.
 metadata:
   project: "ebb-orchestrator"
-  version: "4.0.0"
+  version: "5.0.0"
 ---
 
 # Ebb Execute Plan
 
-**Preferred companion:** Superpowers `subagent-driven-development` при наличии subagent runtime; иначе `executing-plans`. Используй его dispatch/recovery/review mechanics, но Ebb project policy ниже имеет приоритет.
+Вход: repo-relative path к актуальному `APPROVED` plan. Execution полностью определяется Ebb skills.
 
-## Invariants
+## Setup
 
-- Работай в уже выбранном Ebb worktree/branch. Не создавай nested/automatic worktree поверх него без требования plan.
-- Не push/merge/tag/release. Commit только когда это разрешено plan/repository governance.
-- Coordinator владеет dependency graph и file ownership. Не допускай неконтролируемый nested fan-out.
-- Параллельно запускай только `READY` tasks с доказанно непересекающимся mutable scope; иначе используй свежего агента последовательно.
+1. Получи `ebb-repository-context`; проверь plan authority, status, prerequisites, current worktree/branch и protected unrelated changes. Не создавай worktree автоматически.
+2. Создай plan-owned scratch workspace через `git rev-parse --git-path "ebb-execution/<plan-id>"`; ledger переживает compaction и не попадает в commit.
+3. Прочитай plan/spec один раз, создай task state `WAITING / READY / RUNNING / REVIEW / DONE / BLOCKED` и pre-flight interface scan для зависимых tasks.
+4. Любую неоднозначность, которую можно разрешить из spec/repo evidence, фиксируй как `Ruling:` в ledger и продолжай. Остановись только на destructive/security/publish side effect либо когда любой путь — догадка.
 
-## Procedure
+## Choose mode
 
-1. Проверь plan path/status, `APPROVED` verdict, prerequisites, HEAD/status и актуальность contracts. При существенном drift верни plan на review.
-2. Веди persistent ledger `WAITING / READY / RUNNING / REVIEW / DONE / BLOCKED`. Если активен Superpowers SDD, используй его plan-owned ledger вместо второго параллельного журнала.
-3. Для task передай свежему implementer минимальный brief: task text, нужные interfaces/rulings, exact paths и artifact path для отчёта. Не передавай историю сессии.
-4. Реализация следует `ebb-implement-task`. Reviewer из Superpowers task loop должен использовать `ebb-review-task` как Ebb rubric — не запускай дублирующий review только ради двух названий.
-5. Findings исправляй scoped rounds с повтором затронутых тестов и re-review. Используй model escalation/fix-loop companion skill; не создавай второй независимый цикл.
-6. Task становится `DONE` только после нужного review и task-level gates. Broader failure классифицируй по ownership; deferred dependency остаётся явно красной/blocked, а не скрывается.
-7. После всех tasks запусти `ebb-quality-gates`, затем один независимый whole-change `ebb-final-review` (или передай его rubric final reviewer Superpowers).
-8. Отчёт содержит HEAD, task ledger, commands/results, review verdicts, remaining limitations и worktree status. Partial work не называй полной.
+- **SUBAGENT:** независимые tasks + доступен delegation runtime. Fresh implementer per task; fresh reviewer per task; scoped fix/re-review; final whole-change reviewer.
+- **INLINE:** controller реализует tasks сам. TDD/evidence и ledger остаются обязательными; task-level fresh review применяется только если plan требует его или reviewer доступен без превращения inline mode в полный subagent loop; final independent review предпочтителен всегда.
+
+## Task loop
+
+1. READY task получает минимальный brief и BASE. Если task делегируется — используй `ebb-dispatch-agents`.
+2. Реализация следует `ebb-implement-task`; implementer не получает историю controller.
+3. SUBAGENT mode: `ebb-review-task` читает task brief + diff/evidence. `CHANGES_REQUIRED` → узкий fix → scoped re-review. После 3 неудачных rounds пересмотри root cause; rounds 4–5 требуют свежего implementer/более сильного reasoning. После 5 unresolved load-bearing findings task `BLOCKED`.
+4. INLINE mode: после task completion contract запиши evidence в ledger; если отдельного reviewer нет, явно пометь self-review как reduced assurance.
+5. Parallel READY tasks разрешены только с доказанно непересекающимся mutable scope; иначе последовательность.
+6. Не спрашивай «продолжать?» между tasks. Выполняй plan непрерывно до named stop condition или завершения.
+
+## Finish
+
+После всех tasks: `ebb-quality-gates` → один `ebb-final-review` → при findings адресный fix и свежая re-review. Отчёт включает HEAD, ledger states, commands/results, verdicts, rulings, ограничения и worktree state.
+
+Детали: [execution state](references/execution-state-machine.md), [ledger](references/ledger-format.md), [subagent mode](references/subagent-mode.md), [inline mode](references/inline-mode.md).
