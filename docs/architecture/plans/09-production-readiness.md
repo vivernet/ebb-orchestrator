@@ -5,7 +5,7 @@ status: in_progress
 title: Production Readiness Hardening
 summary: Добавить fail-closed работу с Git worktree, отказоустойчивое хранилище секретов и чистую production композицию.
 created: 2026-09-23
-updated: 2026-09-28
+updated: 2026-09-29
 depends_on:
   - plan-03
 specs:
@@ -198,27 +198,27 @@ git commit -m "Сделать хранилище секретов отказоу
 - Consumes: \`OrchestratorHomePaths\`, \`ProcessExecutor\`, existing Git/runtime services.
 - Produces: pure composition factory used by \`main.ts\`; runtime artifacts under \`home.runtime\`, worktrees under \`home.worktrees\`.
 
-- [ ] **Step 1: Write failing composition/path test**
+- [x] **Step 1: Write failing composition/path test**
 
 Supply temporary \`EBB_ORCHESTRATOR_HOME\`, build dependencies without listen/spawn and assert worktree, integration, Hermes results and checkpoints begin under it.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
-Run: \`pnpm --filter @ebb-orchestrator/server test -- test/main.test.ts\`
+Run: \`pnpm --filter @ebb-orchestrator/server exec vitest run test/platform/home/production-composition.test.ts test/main.test.ts\`
 
 Expected: FAIL because production does not compose Git services and Hermes defaults use OS temp/home.
 
-- [ ] **Step 3: Implement a pure composition root**
+- [x] **Step 3: Implement a pure composition root**
 
 Construct shared \`WorktreeManager({ worktreeDir: home.worktrees })\`, \`IntegrationService({ worktreeDir: join(home.worktrees, "integration"), database })\`, configured Hermes adapter and reconciliation callbacks after migrations, before listen. Route code keeps service dependencies; it does not get shell/Git access.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run: \`pnpm --filter @ebb-orchestrator/server test -- test/main.test.ts\`
 
-Expected: PASS without listener, external command or host mutation outside test home.
+Expected: PASS without listener or subprocess; lifecycle regression proves migrations precede recovery and READY follows recovery/workers.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 \`\`\`bash
 git add apps/server/src/main.ts apps/server/src/modules/runtime/hermes/hermes-runtime-adapter.ts apps/server/src/platform/home apps/server/test/main.test.ts
@@ -236,7 +236,7 @@ git commit -m "Собрать production composition из Orchestrator home"
 - Consumes: server start command, Vite proxy environment, one-shot bootstrap endpoint.
 - Produces: E2E command launches isolated backend+web and fails on transport failure.
 
-- [ ] **Step 1: Write failing backend-backed E2E smoke test**
+- [x] **Step 1: Write failing backend-backed E2E smoke test**
 
 Replace blanket \`/api/v1/**\` fulfillment with real \`/api/v1/health\` and actual browser session bootstrap. Keep mocked tests only when explicitly named browser-contract tests.
 
@@ -246,17 +246,17 @@ Run: \`pnpm --filter @ebb-orchestrator/web test:e2e\`
 
 Expected: FAIL with connection refusal because current config launches only Vite.
 
-- [ ] **Step 3: Implement controlled dual-server harness**
+- [x] **Step 3: Implement controlled dual-server harness**
 
 Configure Playwright \`webServer\` entries for server with disposable \`EBB_ORCHESTRATOR_HOME\` and Vite proxy target. Test a non-mocked health response. Never use developer production home.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run: \`pnpm --filter @ebb-orchestrator/web test:e2e\`
 
 Expected: PASS with no \`ECONNREFUSED\`; health and bootstrap come from launched backend.
 
-- [ ] **Step 5: Update operator documentation**
+- [x] **Step 5: Update operator documentation**
 
 Document keyring prerequisite and \`503\` behaviour, \`EBB_ORCHESTRATOR_HOME\` layout, backup boundaries, launch command and verification commands. Do not document Infisical as current dependency.
 

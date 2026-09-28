@@ -511,6 +511,15 @@ SQLite является локальным хранилищем состояни
 имеет порядок `STARTING → RECOVERING → READY`; process lock захватывается до
 открытия базы данных, миграций, workers и listener.
 
+Каталог `backups/` зарезервирован в home, но production startup пока не создаёт
+полный backup и не выполняет restore. `BackupService` умеет сохранить только
+SQLite и не подключён к startup; он не включает artifacts, Git worktrees или
+значения локального OS keyring. Поэтому такой файл не является полной копией
+Orchestrator. Не копируйте открытую базу как обычный файл: до появления
+поддерживаемого backup workflow остановите сервер и отдельно сохраните нужные
+данные и исходные Git repositories. Keyring credentials восстанавливаются
+отдельно средствами ОС.
+
 ## GitHub integration
 
 GitHub — необязательный adapter для синхронизации с hosting API. Локальный
