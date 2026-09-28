@@ -1,7 +1,7 @@
 ---
 id: plan-17
 kind: plan
-status: in_progress
+status: completed
 title: Надёжность CI evidence и единая конфигурация Ebb Orchestrator
 created: 2026-09-27
 updated: 2026-09-28
@@ -300,11 +300,11 @@ evidence:
 
 ## Текущий результат исполнения
 
-- Изменения кода на commit `f3f658211609c6b74c5748b66f24d1e983bb42e4` (`fix: await graceful E2E backend shutdown`) опубликованы в `master` fast-forward-ом из `develop`.
-- GitHub Actions run `36358730911` для этого commit завершился `success` на `ubuntu-latest`; jobs Node 24 и Node 26 прошли. В обоих jobs Browser E2E завершился `6 passed`, а Node harness/security tests — `24 passed`.
-- В каждом GitHub Actions job шаги `Dependency audit` и `Upload dependency audit evidence` завершились `success`; artifact с прежним именем `pnpm-audit-prod-f3f658211609c6b74c5748b66f24d1e983bb42e4` загружен. Содержимое обоих JSON artifacts проверено: `exitCode: 0`, advisories пусты, все уровни vulnerabilities равны нулю. Поиск в hosted logs не нашёл `DEP0040` или `punycode`.
-- Buildkite #34 для того же commit также завершился `passed` на Node 24/26. Workflow запускает POSIX stdin bootstrap smoke после server build.
-- На Windows прошли `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `node scripts/local-user-stdin-smoke.mjs`, `node scripts/verify-lock-startup.mjs`, `node scripts/verify-local-startup.mjs`, `pnpm --filter @ebb-orchestrator/web test:e2e` и `git diff --check`.
-- Добавлен dispatch-only workflow `.github/workflows/security-audit-failure-paths.yml`; production workflow triggers не менялись. `scripts/security-audit-failure-path-check.mjs` сверяет outcomes upstream/audit/install сценариев и проверяет наличие audit evidence с ожидаемым `exitCode`.
-- `node --test scripts/security-audit-evidence.test.mjs` прошёл: 9/9; contract test проверяет YAML workflow/условия, а helper получает позитивные фикстуры для трёх failure сценариев и отрицательную фикстуру с неверным upload outcome. Независимый read-only review harness получил `PASS`.
-- **Остаётся обязательный hosted acceptance:** запустить все четыре сценария через GitHub Actions; подтвердить загрузку artifact при upstream/audit failure, пропуск audit/upload при install failure и фактическую отмену до audit с соответствующими step conclusions. Статус плана остаётся `in_progress` до проверки этих результатов.
+- Runtime/CI changes `f3f658211609c6b74c5748b66f24d1e983bb42e4` и manual failure-path harness `7458b59f81376feb359b91c6aba7b0e1ecc86c2d` опубликованы в `master` fast-forward-ом из `develop`. `production-gates.yml` не менялся при добавлении отдельного dispatch-only workflow.
+- GitHub Actions run `36362597545` для `7458b59f81376feb359b91c6aba7b0e1ecc86c2d` завершился `success` на Node 24 и Node 26: lint, typecheck, unit/integration tests, build (включая server build и POSIX stdin smoke), workflow contracts, dependency audit, upload, repository integrity и Browser E2E прошли.
+- В обоих GitHub matrix jobs artifact загружен под именем `pnpm-audit-prod-7458b59f81376feb359b91c6aba7b0e1ecc86c2d`. Оба JSON manifests прочитаны: `exitCode: 0`, advisories пусты, все уровни vulnerabilities равны нулю. Поиск по hosted logs `DEP0040|punycode` не нашёл совпадений.
+- Buildkite #35 для того же SHA завершился `passed`; jobs Node 24 и Node 26 имеют `exit_status: 0`.
+- Hosted fault injection: run `36362637569` (upstream failure) завершился ожидаемым `failure`: injected gate failed, audit/upload и verifier прошли, artifact содержит `exitCode: 0`; run `36362639845` (audit failure) завершился ожидаемым `failure`: upload и verifier прошли, final failure gate сработал, artifact содержит `exitCode: 1`; run `36362642631` (install failure) завершился ожидаемым `failure`: audit/upload пропущены, verifier прошёл и artifact отсутствует.
+- Hosted cancellation: run `36362841278` завершился `cancelled` во время cancellation-pause; шаги audit, upload, final gate и verifier завершились `skipped`, как требуется.
+- Локально на Windows прошли `pnpm lint`, `pnpm typecheck`, полный `pnpm test` (93 server test files, 853 passed / 2 skipped; 18 web files, 198 passed; root Node tests 19/19), `pnpm build`, `node scripts/local-user-stdin-smoke.mjs`, `node scripts/verify-lock-startup.mjs`, `node scripts/verify-local-startup.mjs`, `pnpm --filter @ebb-orchestrator/web test:e2e` и `git diff --check`. `node --test scripts/security-audit-evidence.test.mjs` прошёл 9/9; YAML parse и `bash -n` всех workflow run blocks прошли.
+- Независимый read-only review failure-path harness и итоговый whole-plan review получили `PASS`; findings не выявлены. Hosted acceptance всех четырёх сценариев подтверждён по GitHub run/job/step outcomes и artifact contents; статус плана установлен в `completed`.
