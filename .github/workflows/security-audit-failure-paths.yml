@@ -1,0 +1,104 @@
+name: Ebb Orchestrator — проверка отказов CI-аудита
+
+on:
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: Сценарий для проверки пути отказа
+        required: true
+        type: choice
+        options:
+          - upstream-failure
+          - audit-failure
+          - install-failure
+          - cancel-before-audit
+
+permissions:
+  contents: read
+
+jobs:
+  failure-path:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup pnpm
+        uses: pnpm/setup@v1
+        with:
+          version: ">=12.0.0"
+          runtime: node@24
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24.x"
+          cache: pnpm
+      - name: Install dependencies
+        id: install-dependencies
+        env:
+          PLAN17_SCENARIO: ${{ inputs.scenario }}
+        run: |
+          if [[ "$PLAN17_SCENARIO" == "install-failure" ]]; then
+            printf '%s\n' 'Ebb Orchestrator: искусственный отказ установки зависимостей' >&2
+            exit 1
+          fi
+          pnpm install --frozen-lockfile
+      - name: Смоделировать отказ предыдущего quality gate
+        id: upstream-quality-gate
+        if: ${{ inputs.scenario == 'upstream-failure' }}
+        run: |
+          printf '%s\n' 'Ebb Orchestrator: искусственный отказ предыдущего quality gate' >&2
+          exit 1
+      - name: Ожидать ручной отмены до audit
+        id: cancellation-pause
+        if: ${{ inputs.scenario == 'cancel-before-audit' }}
+        run: |
+          printf '%s\n' 'Ebb Orchestrator: отмените этот запуск вручную до выполнения audit.'
+          while true; do sleep 30; done
+      - name: Подготовить искусственный отказ audit
+        id: audit-failure-injection
+        if: ${{ success() && inputs.scenario == 'audit-failure' }}
+        run: |
+          real_pnpm="$(command -v pnpm)"
+          wrapper_dir="$RUNNER_TEMP/plan17-failing-pnpm"
+          mkdir -p "$wrapper_dir"
+          printf '%s\n' \
+            '#!/bin/sh' \
+            'if [ "$1" = "--version" ]; then' \
+            '  exec "$REAL_PNPM" "$@"' \
+            'fi' \
+            'printf "%s\n" "Ebb Orchestrator: симулированный отказ audit" >&2' \
+            'exit 1' > "$wrapper_dir/pnpm"
+          chmod +x "$wrapper_dir/pnpm"
+          printf 'REAL_PNPM=%s\n' "$real_pnpm" >> "$GITHUB_ENV"
+          printf '%s\n' "$wrapper_dir" >> "$GITHUB_PATH"
+      - name: Dependency audit
+        id: dependency-audit
+        if: ${{ !cancelled() && steps.install-dependencies.outcome == 'success' }}
+        continue-on-error: true
+        run: node scripts/security-audit-evidence.mjs --output "artifacts/security/pnpm-audit-prod-${GITHUB_SHA}.json"
+      - name: Upload dependency audit evidence
+        id: upload-audit-evidence
+        if: ${{ !cancelled() && steps.dependency-audit.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: pnpm-audit-prod-${{ github.sha }}
+          path: artifacts/security/pnpm-audit-prod-${{ github.sha }}.json
+          if-no-files-found: error
+      - name: Fail if dependency audit failed
+        id: fail-if-audit-failed
+        if: ${{ !cancelled() && steps.dependency-audit.outcome == 'failure' }}
+        run: exit 1
+      - name: Проверить ожидаемые исходы и audit evidence
+        id: verify-scenario-outcomes
+        if: ${{ !cancelled() }}
+        env:
+          PLAN17_SCENARIO: ${{ inputs.scenario }}
+          INSTALL_OUTCOME: ${{ steps.install-dependencies.outcome }}
+          UPSTREAM_GATE_OUTCOME: ${{ steps.upstream-quality-gate.outcome }}
+          AUDIT_INJECTION_OUTCOME: ${{ steps.audit-failure-injection.outcome }}
+          AUDIT_OUTCOME: ${{ steps.dependency-audit.outcome }}
+          UPLOAD_OUTCOME: ${{ steps.upload-audit-evidence.outcome }}
+          FINAL_GATE_OUTCOME: ${{ steps.fail-if-audit-failed.outcome }}
+          AUDIT_EVIDENCE_PATH: artifacts/security/pnpm-audit-prod-${{ github.sha }}.json
+        run: node scripts/security-audit-failure-path-check.mjs

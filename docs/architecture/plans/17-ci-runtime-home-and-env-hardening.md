@@ -4,7 +4,7 @@ kind: plan
 status: in_progress
 title: Надёжность CI evidence и единая конфигурация Ebb Orchestrator
 created: 2026-09-27
-updated: 2026-09-27
+updated: 2026-09-28
 depends_on: []
 specs:
   - ../specs/01-system-design.md
@@ -31,11 +31,18 @@ evidence:
   - scripts/hermes-dev.mjs
   - scripts/security-audit-evidence.mjs
   - scripts/security-audit-evidence.test.mjs
+  - scripts/security-audit-failure-path-check.mjs
+  - .github/workflows/security-audit-failure-paths.yml
   - scripts/run-server.js
   - scripts/run-server.test.mjs
   - README.md
   - .gitignore
   - pnpm-lock.yaml
+  - apps/web/test/e2e/run-e2e.mjs
+  - apps/web/test/e2e/web-e2e-server.mjs
+  - apps/web/test/e2e/child-lifecycle.mjs
+  - apps/web/test/e2e/credential-handoff.test.mjs
+  - apps/web/test/launcher-lifecycle.test.mjs
 ---
 
 # Надёжность CI evidence и единая конфигурация Ebb Orchestrator
@@ -105,6 +112,8 @@ evidence:
 - Modify: `package.json` — только Task 1: задать промежуточную команду `test` ровно как `pnpm --filter @ebb-orchestrator/contracts build && pnpm -r --if-present test`; не добавлять сюда launcher tests.
 - Modify: `.github/workflows/production-gates.yml` — присвоить install step `id: install-dependencies`, сохранить audit evidence после раннего quality-gate failure, условно пропускать upload только когда audit не запускался; перейти на `actions/upload-artifact@v6`.
 - Modify: `scripts/security-audit-evidence.test.mjs` — покрыть промежуточный порядок contracts build/workspace tests, полные audit/upload/final-gate expressions, cancellation semantics, artifact path/name, отсутствие upload при skipped producer и выбранный action major.
+- Create: `.github/workflows/security-audit-failure-paths.yml` — отдельный `workflow_dispatch` harness для fault-injection сценариев без изменения push/PR поведения production workflow.
+- Create: `scripts/security-audit-failure-path-check.mjs` — проверка фактических GitHub step outcomes и наличия/exitCode audit evidence в трёх завершаемых сценариях.
 - Modify: `scripts/run-server.test.mjs` — только если CI-условия или команды требуют корректировки общего test harness; не добавлять документационные проверки.
 
 **Interfaces and semantics:**
@@ -115,6 +124,7 @@ evidence:
 - Upload step установить полный `if: ${{ !cancelled() && steps.dependency-audit.outcome != 'skipped' }}`. Сохранить `if-no-files-found: error`: если producer был запущен, но evidence не создал, workflow обязан явно упасть; при skipped audit upload не запускается. Отмена workflow не запускает upload.
 - Audit failure остаётся `continue-on-error: true` только до upload. Final audit failure-gate установить полный `if: ${{ !cancelled() && steps.dependency-audit.outcome == 'failure' }}` и завершать job ненулевым результатом. При отмене gate не запускается; при ранее проваленном lint/typecheck/test/build, но успешном audit, исходная неуспешность job сохраняется стандартной семантикой GitHub Actions и не маскируется.
 - Обновить `actions/upload-artifact` до v6 major: его официальный changelog прямо указывает Node 24 и исправление Node punycode deprecation. Проверить hosted runner compatibility (для self-hosted минимальная версия runner из release notes) и текущие `path`/`name`/missing-file semantics; `archive: false` не включать.
+- Fault-injection проверки запускать отдельным workflow, доступным только через `workflow_dispatch`: ранний quality-gate failure, отказ audit, ошибка установки и отмена до audit. Для трёх неотменённых случаев отдельный verifier сверяет все step outcomes и audit evidence; cancellation подтверждать по hosted job conclusions, так как последующие шаги отменённого job не исполняются. Production workflow triggers не менять.
 - Не менять workspace `punycode`/`tr46`/`uri-js` overrides без отдельного воспроизведения deprecation из процесса workspace.
 
 **RED:**
@@ -126,7 +136,7 @@ evidence:
 
 - Использовать существующую CI matrix `node-version: 24.x` и `26.x` в `.github/workflows/production-gates.yml:20-23` без добавления новых runtime versions; в обоих clean jobs выполнить `pnpm test`. Ожидание: `contracts/dist` создан до server tests, все не-документационные workspace suites завершаются без `ERR_MODULE_NOT_FOUND`.
 - Выполнить `node --test scripts/security-audit-evidence.test.mjs`; ожидание: все workflow/evidence assertions проходят.
-- Контрактные assertions должны проверять три полных выражения посимвольно: audit `!cancelled() && steps.install-dependencies.outcome == 'success'`; upload `!cancelled() && steps.dependency-audit.outcome != 'skipped'`; final failure gate `!cancelled() && steps.dependency-audit.outcome == 'failure'` (в YAML каждое выражение обёрнуто `${{ ... }}`). На тестовых CI-runs раздельно искусственно провалить один quality gate после install, сам audit и install, а также отменить workflow до этих шагов. Ожидание: ранний gate failure запускает audit и upload, job остаётся failed; audit failure загружает JSON и final gate завершает job failure; install failure пропускает audit/upload; cancellation не запускает audit/upload/final gate.
+- Контрактные assertions должны проверять три полных выражения посимвольно: audit `!cancelled() && steps.install-dependencies.outcome == 'success'`; upload `!cancelled() && steps.dependency-audit.outcome != 'skipped'`; final failure gate `!cancelled() && steps.dependency-audit.outcome == 'failure'` (в YAML каждое выражение обёрнуто `${{ ... }}`). На test-only workflow отдельно запустить fault injection раннего gate failure, самого audit и install; verifier обязан подтвердить соответствующие outcomes, наличие evidence после audit и его `exitCode`. Отдельно отменить workflow во время ожидания до audit и подтвердить через GitHub job/step conclusions, что audit/upload/final gate пропущены, а run отменён.
 - На GitHub-hosted runner повторить upload и проверить, что artifact читается под прежним именем и warning `DEP0040` отсутствует.
 
 **Соседние проверки:** `pnpm --filter @ebb-orchestrator/contracts build`; `pnpm test`; `pnpm lint`; `pnpm typecheck`; `git diff --check` для затронутых файлов. Документационные tests/commands не запускать.
@@ -280,10 +290,21 @@ evidence:
 
 ## Plan-wide verification
 
-- Для изменения root test graph и action: чистая установка/CI evidence, Node 24 + 26, focused security-audit workflow contract test.
+- Для изменения root test graph и action: чистая установка/CI evidence, Node 24 + 26, focused security-audit workflow contract test и hosted выполнение всех четырёх manual failure-path сценариев.
 - Для runtime path: focused resolver/adapter tests и controlled smoke с подтверждённым home, health endpoint, graceful stop и отсутствием второго `.orchestrator` каталога.
 - Для `.env`: isolated env-file tests плюс проверка каждого штатного server launcher и process-vs-file precedence.
 - Для lock policy: focused startup tests, server typecheck, `pnpm server:build && node scripts/verify-lock-startup.mjs`, README operator guidance review; выполнить независимый обязательный `ebb-security-review` после реализации с фокусом на serialized ownership/release, exact record preservation, partial-write fail-closed behavior, DB startup order и явно принятую trusted-operator boundary (без обещания защиты от произвольной внешней подмены между compare/unlink).
 - Для opt-in stdin bootstrap: focused auth/startup tests и subprocess pipe smoke на Windows и хотя бы одном POSIX runner (macOS или Linux); явно проверить LF/CRLF termination, EOF framing, open-pipe timeout до persistence и timer/listener cleanup; выполнить независимый обязательный `ebb-security-review` после реализации.
 - Repository gates после реализации: `pnpm lint`, `pnpm typecheck`, `pnpm test`, затронутые builds и `git diff --check`; не запускать документационные проверки без отдельного разрешения пользователя.
 - Финальный whole-bug review должен отдельно подтвердить шесть результатов: чистый CI test dependency order, audit artifact при upstream gate failure, отсутствие `DEP0040` на hosted runner, единый `.ebb-orchestrator` home с явной `.env` поддержкой, fail-closed lock с owner-token release и DB startup ordering, безопасный opt-in cross-platform stdin bootstrap при неизменном TTY default.
+
+## Текущий результат исполнения
+
+- Изменения кода на commit `f3f658211609c6b74c5748b66f24d1e983bb42e4` (`fix: await graceful E2E backend shutdown`) опубликованы в `master` fast-forward-ом из `develop`.
+- GitHub Actions run `36358730911` для этого commit завершился `success` на `ubuntu-latest`; jobs Node 24 и Node 26 прошли. В обоих jobs Browser E2E завершился `6 passed`, а Node harness/security tests — `24 passed`.
+- В каждом GitHub Actions job шаги `Dependency audit` и `Upload dependency audit evidence` завершились `success`; artifact с прежним именем `pnpm-audit-prod-f3f658211609c6b74c5748b66f24d1e983bb42e4` загружен. Содержимое обоих JSON artifacts проверено: `exitCode: 0`, advisories пусты, все уровни vulnerabilities равны нулю. Поиск в hosted logs не нашёл `DEP0040` или `punycode`.
+- Buildkite #34 для того же commit также завершился `passed` на Node 24/26. Workflow запускает POSIX stdin bootstrap smoke после server build.
+- На Windows прошли `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `node scripts/local-user-stdin-smoke.mjs`, `node scripts/verify-lock-startup.mjs`, `node scripts/verify-local-startup.mjs`, `pnpm --filter @ebb-orchestrator/web test:e2e` и `git diff --check`.
+- Добавлен dispatch-only workflow `.github/workflows/security-audit-failure-paths.yml`; production workflow triggers не менялись. `scripts/security-audit-failure-path-check.mjs` сверяет outcomes upstream/audit/install сценариев и проверяет наличие audit evidence с ожидаемым `exitCode`.
+- `node --test scripts/security-audit-evidence.test.mjs` прошёл: 9/9; contract test проверяет YAML workflow/условия, а helper получает позитивные фикстуры для трёх failure сценариев и отрицательную фикстуру с неверным upload outcome. Независимый read-only review harness получил `PASS`.
+- **Остаётся обязательный hosted acceptance:** запустить все четыре сценария через GitHub Actions; подтвердить загрузку artifact при upstream/audit failure, пропуск audit/upload при install failure и фактическую отмену до audit с соответствующими step conclusions. Статус плана остаётся `in_progress` до проверки этих результатов.
