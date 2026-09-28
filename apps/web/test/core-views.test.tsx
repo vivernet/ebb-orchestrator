@@ -301,6 +301,22 @@ describe('Project', () => {
     expect(screen.queryByText(/Runs · Git · Guidelines · Usage/)).not.toBeInTheDocument();
   });
 
+  test('renders populated project activity without exposing event payload', async () => {
+    vi.spyOn(projectApi, 'getProjectOverview').mockResolvedValue({
+      project: { id: 'project-1', name: 'Project', displayName: 'Project One', status: 'ACTIVE' },
+      git: { repositoryPath: null, branch: null, defaultBranch: null, github: null, worktreePath: null },
+      epics: [], tasks: [], approvals: [], blockers: [],
+      events: [{ id: 'event-1', type: 'TASK_CREATED', createdAt: '2026-09-28T10:30:00.000Z', payload: { secret: 'must-not-render' } }],
+      usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 },
+    });
+    render(<MemoryRouter><ProjectPage id="project-1" /></MemoryRouter>);
+
+    expect(await screen.findByText('TASK_CREATED')).toBeInTheDocument();
+    expect(screen.getByRole('time')).toHaveAttribute('dateTime', '2026-09-28T10:30:00.000Z');
+    expect(screen.queryByText('must-not-render')).not.toBeInTheDocument();
+    vi.restoreAllMocks();
+  });
+
   test('loads the project matching the current route ID after navigation', async () => {
     const getProjectOverview = vi.spyOn(projectApi, 'getProjectOverview').mockImplementation(async (id) => ({
       project: { id, name: id, displayName: `Project ${id}`, status: 'ACTIVE' },

@@ -2,7 +2,7 @@
 id: plan-08-02
 kind: plan
 title: Web UI Core Functional — Onboarding, Dashboard, Project
-status: in_progress
+status: completed
 created: 2026-09-23
 updated: 2026-09-28
 
@@ -217,9 +217,11 @@ evidence:
 
 ## Implementation record (reconciled 2026-09-28)
 
-The old completion note incorrectly claimed `completed` while this plan's metadata and acceptance checklist remained open. It is retained here as a historical implementation summary, not a lifecycle decision. Current state is `in_progress` pending the independent review and gates below. Onboarding (/projects/new), Dashboard (/), and Project View (/projects/:id) have real API adapters, projection rendering, and loading/empty/error/not-found states. Plan 08-03 subsequently expanded onboarding to persisted discovery/approval/activation; that implementation is accepted as replacement evidence for the onboarding work here.
+The old completion note incorrectly claimed `completed` while this plan's metadata and acceptance checklist remained open. This reconciliation closes that mismatch with fresh evidence. Onboarding (/projects/new), Dashboard (/), and Project View (/projects/:id) have real API adapters, projection rendering, and loading/empty/error/not-found states. Plan 08-03 subsequently expanded onboarding to persisted discovery/approval/activation; that implementation is accepted as replacement evidence for the onboarding work here.
 
-The independent review found and the current tree fixes a stale route-ID closure in Project View. The regression is in `apps/web/test/core-views.test.tsx`: it changes the same mounted page from project A to project B, checks the B request and rendered projection. Focused regression result is PASS; final gates and a fresh whole-plan review remain required before promoting lifecycle metadata.
+The independent review found and the current tree fixes a stale route-ID closure in Project View. The regression changes the same mounted page from project A to project B, checks the B request and rendered projection. The review also found missing Activity/Events content; Project View now renders each event's type and localized time in an accessible `<time>` element and deliberately omits its untrusted payload. A populated-projection test checks both rendering and payload exclusion. Final whole-plan review: PASS; no load-bearing findings remain. One minor onboarding `aria-describedby` target mismatch is non-blocking because the error alert remains announced.
+
+Verification on 2026-09-28: focused Project suite 58/58; `pnpm lint` PASS; `pnpm typecheck` PASS; full `pnpm test` PASS (Server 870/872, 2 skipped; Web 200/200; contracts 4/4; launcher 19/19); `pnpm build` PASS; browser E2E 6/6 PASS with clean teardown.
 
 ---
 
@@ -229,10 +231,10 @@ The independent review found and the current tree fixes a stale route-ID closure
 - [x] API adapter вызывают реальные backend endpoints (`apps/web/src/features/{onboarding,dashboard,projects}/`)
 - [x] States (loading/empty/error/not-found) корректны (screen component tests)
 - [x] Russian JSDoc добавлен для новых публичных API (onboarding API and public feature modules reviewed)
-- [ ] Все тесты проходят (fresh full workspace gate pending)
+- [x] Все тесты проходят (fresh full workspace gate 2026-09-28)
 - [x] E2E покрывает базовую навигацию and persisted onboarding/project flow (`apps/web/test/e2e/v1-ui.spec.ts`)
-- [ ] Independent review = PASS
-- [ ] Gates пройдены
+- [x] Independent review = PASS (2026-09-28)
+- [x] Gates пройдены (2026-09-28)
 
 ---
 
@@ -248,8 +250,8 @@ The independent review found and the current tree fixes a stale route-ID closure
 
 ## Статус выполнения
 
-[ ] Task 1: Onboarding
-[ ] Task 2: Dashboard
-[ ] Task 3: Project View
-[ ] Task 4: Integration & accessibility
-[ ] Task 5: Gates & review
+[x] Task 1: Onboarding
+[x] Task 2: Dashboard
+[x] Task 3: Project View
+[x] Task 4: Integration & accessibility
+[x] Task 5: Gates & review

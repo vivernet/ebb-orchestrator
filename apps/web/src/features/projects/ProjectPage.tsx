@@ -37,7 +37,21 @@ export default function ProjectPage({ id }: ProjectPageProps) {
         <p>{projection && !notFound ? `${projection.git.repositoryPath ?? 'Репозиторий не указан'} · ${projection.git.defaultBranch ?? 'Ветка по умолчанию не указана'} · ${projection.git.github ? githubStatusLabel(projection.git.github.status) : 'GitHub не подключён'}` : notFound ? 'Проект не найден.' : 'Загрузка сведений о репозитории…'}</p>
       </section>
        <section aria-label="Зависимости и среда выполнения"><h2>Зависимости / среда выполнения</h2><p>{projection && !notFound ? `${projection.blockers.length} блокировок · ${projection.approvals.length} согласований` : notFound ? 'Зависимости проекта недоступны.' : 'Загрузка зависимостей проекта…'}</p></section>
-       <section aria-label="Активность и бюджет"><h2>Активность / бюджет</h2><p>{projection && !notFound ? `${projection.events.length} событий · ${projection.usage.totalTokens} токенов` : notFound ? 'Данные об активности проекта недоступны.' : 'Загрузка активности проекта…'}</p></section>
+       <section aria-label="Активность и бюджет">
+        <h2>Активность / бюджет</h2>
+        {projection && !notFound ? <>
+          <p>{projection.events.length} событий · {projection.usage.totalTokens} токенов</p>
+          <ul aria-label="События проекта">
+            {projection.events.length === 0 ? <li>Событий пока нет.</li> : projection.events.map((event) => {
+              const timestamp = Date.parse(event.createdAt);
+              const displayTime = Number.isNaN(timestamp)
+                ? event.createdAt
+                : new Intl.DateTimeFormat('ru-RU', { dateStyle: 'medium', timeStyle: 'short' }).format(timestamp);
+              return <li key={event.id}><span>{event.type}</span> · <time dateTime={event.createdAt}>{displayTime}</time></li>;
+            })}
+          </ul>
+        </> : notFound ? <p>Данные об активности проекта недоступны.</p> : <p>Загрузка активности проекта…</p>}
+       </section>
       <section aria-label="Эпики и задачи">
         <h2>Эпики и задачи</h2>
         {projection && !notFound ? <><ul>{projection.epics.length === 0 ? <li>Эпиков нет.</li> : projection.epics.map((epic) => <li key={epic.id}><Link to={`/epics/${encodeURIComponent(epic.id)}`}>{epic.title || epic.display_id}</Link></li>)}</ul><ul>{projection.tasks.length === 0 ? <li>Задач нет.</li> : projection.tasks.map((task) => <li key={task.id}><Link to={`/tasks/${encodeURIComponent(task.id)}`}>{task.title || task.display_id}</Link></li>)}</ul></> : notFound ? <p>Рабочие элементы проекта недоступны.</p> : null}

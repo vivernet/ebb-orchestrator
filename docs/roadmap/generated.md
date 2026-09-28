@@ -18,13 +18,13 @@ updated: 2026-09-28
 |----|--------|-------|
 | plan-01 | in_progress | План реализации Foundation и Persistence Orchestrator |
 | plan-02 | completed | План реализации домена Orchestrator, Workflow, Scheduler и Recovery |
-| plan-03 | in_progress | План реализации Git, Execution и Security Orchestrator |
+| plan-03 | completed | План реализации Git, Execution и Security Orchestrator |
 | plan-04 | blocked | План реализации среды выполнения Orchestrator Hermes и автономной задачи |
 | plan-05 | blocked | План реализации планирования Orchestrator, эпиков, контекста, знаний и использования |
 | plan-06 | in_progress | План реализации Web UI, GitHub и выпуска v1 Orchestrator |
 | plan-07 | blocked | План миграции процесса разработки Ebb Orchestrator с OpenCode на Hermes |
 | plan-08-01 | completed | Web UI Foundation and Shell |
-| plan-08-02 | in_progress | Web UI Core Functional — Onboarding, Dashboard, Project |
+| plan-08-02 | completed | Web UI Core Functional — Onboarding, Dashboard, Project |
 | plan-08-03 | completed | Web UI Onboarding Flow & Projections |
 | plan-09 | in_progress | Production Readiness Hardening |
 | plan-10 | completed | Ebb Orchestrator — Final V1 Audit & Hardening Plan (Перевод) |

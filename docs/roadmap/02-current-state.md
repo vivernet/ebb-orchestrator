@@ -16,12 +16,10 @@ updated: 2026-09-28
 | Plan | Статус | Следующее условие закрытия |
 |---|---|---|
 | `plan-01` | `in_progress` | Добавить process-level recovery acceptance: остановить и перезапустить сервер, когда одновременно ожидают durable outbox event и retryable job; проверить один запуск migration, redelivery, lease reclaim и переход startup до READY. |
-| `plan-03` | `in_progress` | Удалить или сделать доказуемо локальным `git remote show origin` fallback в repository discovery; добавить regression на repo без current branch и origin/HEAD, доказывающий отсутствие network operation. |
 | `plan-04` | `blocked` | Использовать настроенный OpenAI-compatible provider через SecretStore либо получить решение по безопасной OAuth-границе; затем выполнить provider-backed Developer → Reviewer → QA → Integration acceptance и review. |
 | `plan-05` | `blocked` | Зафиксировать workflow/API acceptance, совместимый с текущим scope, затем доказать реальный Hermes → Epic и restart/resume; текущий FakeAgentRuntime не является заменой. |
 | `plan-06` | `in_progress` | Подтвердить durable/idempotent GitHub feedback, production backup/config-migration wiring, реальную crash/restart matrix и Windows+Unix keyring acceptance; исправить отдельные findings по мере проверки. |
 | `plan-07` | `blocked` | Получить завершившийся provider-backed parity run с report и доказанной очисткой; предыдущий разрешённый запуск завершился timeout. |
-| `plan-08-02` | `in_progress` | Отобразить safe Activity/Events summary (тип и timestamp) в Project View и покрыть populated projection тестом; затем повторить review/gates, сверить критерии и обновить status/generated roadmap. |
 | `plan-09` | `in_progress` | Ввести testable production composition seam для зависимостей без listen/spawn; отменять/останавливать lifecycle workers при pre-READY сигнале; завершить supported source security scan и повторный независимый review. `pnpm audit` не заменяет source scan. |
 | `plan-12` | `in_progress` | Закрыть lifecycle signal race; убрать runtime DDL из сервисов и покрыть fresh/upgraded DB migrations; затем выполнить controlled process restart, browser/runtime acceptance и independent whole-plan review. |
 | `plan-14` | `proposed` | Оставить вне v1 закрытия до подтверждения Docker artifacts/version/hash/architectures, credential bridge и CI/release scope. |
@@ -30,7 +28,7 @@ updated: 2026-09-28
 ## Очерёдность
 
 1. Завершить текущую сверку completed-планов с незакрытыми историческими чек-листами. По каждому содержательному пункту добавить ссылку на актуальную реализацию и acceptance evidence либо вернуть план в активный статус, если исходное обязательство остаётся без доказательства. Не массово проставлять чекбоксы.
-2. Закрыть технические acceptance Plan `01`, `03`, `06`, а также исправить IMPORTANT findings, выявленные при ревью `08-02`, `09` и `12`; затем выполнить свежие независимые review и обязательные gates.
+2. Закрыть технические acceptance Plan `01` и `06`, а также исправить findings по `09` и `12`; `03` и `08-02` закрыты после fixes, review и gates.
 3. Для `plan-04`, `plan-05` и `plan-07` выполнять только уже разрешённые provider acceptance runs. Сейчас в process env нет Hermes provider bridge config и `HERMES_MODEL`, а `pnpm hermes:check` завершился `FAILED`; без полного настроенного config run не подтверждает acceptance. Если credential, provider или acceptance contract отсутствуют, сохранить точный blocker; не подменять runtime fake-тестом.
 4. Определить судьбу пустых UI reference placeholders. Metadata specs `01`–`03` уже согласованы с текущими нормативными ссылками; design contracts не менялись.
 5. Перегенерировать этот документ и [Plan Register](generated.md) после подтверждённых изменений; сверить, что generated statuses соответствуют frontmatter всех `kind: plan`.
@@ -49,6 +47,6 @@ updated: 2026-09-28
 
 ## Завершённые проверки этой сверки
 
-- Реестр содержит 32 документа `kind: plan`; одиннадцать статусов выше отличаются от `completed`.
-- Полный локальный suite и documentation gates записаны в `ledger-07`; они не заменяют provider acceptance, fresh security scan или independent review.
+- Реестр содержит 32 документа `kind: plan`; девять статусов выше отличаются от `completed`.
+- Полный локальный suite и documentation gates записаны в `ledger-07`; они не заменяют provider acceptance, fresh security scan или оставшиеся independent reviews.
 - Никакие внешние изменения, commit, push или merge этим roadmap не разрешаются.

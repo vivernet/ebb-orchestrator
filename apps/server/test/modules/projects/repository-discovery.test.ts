@@ -1,10 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
 import { mkdtempSync, writeFileSync, mkdirSync } from "fs";
 import { execSync } from "child_process";
 
 import { RepositoryDiscovery } from "../../../src/modules/projects/repository-discovery.js";
+import { GitCli } from "../../../src/modules/git/git-cli.js";
 
 function createTempDir(): string {
   return mkdtempSync(join(tmpdir(), "repo-discovery-test-"));
@@ -69,6 +70,23 @@ describe("RepositoryDiscovery", () => {
       const facts = await discovery.discover(tmpDir);
 
       expect(facts.defaultBranch).toBe("master");
+    });
+
+    it("uses only local refs when no current branch or origin HEAD exists", async () => {
+      const tmpDir = createTempDir();
+      const run = vi.fn(async (_repoPath: string, args: string[]) => {
+        if (args[0] === "symbolic-ref") return { exitCode: 1, stdout: "", stderr: "" };
+        if (args[0] === "branch") return { exitCode: 0, stdout: "", stderr: "" };
+        if (args[0] === "for-each-ref") return { exitCode: 0, stdout: "", stderr: "" };
+        if (args[0] === "remote") return { exitCode: 0, stdout: "", stderr: "" };
+        throw new Error(`Unexpected Git command: ${args.join(" ")}`);
+      });
+      const discovery = new RepositoryDiscovery({ run } as unknown as GitCli);
+
+      const facts = await discovery.discover(tmpDir);
+
+      expect(facts.defaultBranch).toBe("main");
+      expect(run).not.toHaveBeenCalledWith(tmpDir, ["remote", "show", "origin"]);
     });
 
     it("detects remotes from git config", async () => {

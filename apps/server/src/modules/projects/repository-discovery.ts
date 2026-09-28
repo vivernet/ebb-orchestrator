@@ -65,10 +65,16 @@ export class RepositoryDiscovery {
     }
 
     try {
-      const result = await this.git.run(repoPath, ["remote", "show", "origin"]);
-      if (result.exitCode === 0 && result.stdout.trim()) {
-        const match = /HEAD branch:\s*(\S+)/.exec(result.stdout);
-        if (match?.[1]) return match[1];
+      const result = await this.git.run(repoPath, [
+        "for-each-ref",
+        "--format=%(refname:short)",
+        "refs/heads/main",
+        "refs/heads/master",
+      ]);
+      if (result.exitCode === 0) {
+        const branches = new Set(result.stdout.split(/\r?\n/).map((branch) => branch.trim()).filter(Boolean));
+        if (branches.has("main")) return "main";
+        if (branches.has("master")) return "master";
       }
     } catch {
       // Резервный to main.

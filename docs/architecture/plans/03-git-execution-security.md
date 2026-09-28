@@ -1,7 +1,7 @@
 ---
 id: plan-03
 kind: plan
-status: in_progress
+status: completed
 title: План реализации Git, Execution и Security Orchestrator
 created: 2026-09-23
 updated: 2026-09-28
@@ -465,3 +465,9 @@ git status --short
 - вредоносный текст/scripts repository не предоставляют полномочий; предупреждение Local Mode остаётся актуальным, поскольку произвольные одобренные project processes всё ещё имеют привилегии OS-пользователя.
 
 Перед началом Plan 4, ожидаемый инструмент `git.diff` уже должен быть реализован этим планом через Action Gateway.
+
+---
+
+## Reconciliation closeout (2026-09-28)
+
+Review выявил fallback `git remote show origin`, способный обращаться к сети при отсутствии локального `origin/HEAD` и активной ветки. Он заменён локальным чтением существующих `main`/`master` refs с детерминированным fallback; regression проверяет, что `remote show` не вызывается. Fresh independent review: PASS; `pnpm lint`, `pnpm typecheck`, полный `pnpm test`, `pnpm build` и browser E2E прошли. Неблокирующее замечание review: отдельно проверить выбор существующего detached `main`/`master` ref; кодовый путь прямой, а имеющиеся тесты проверяют default для активных веток. Старые procedural marks не отмечаются задним числом.
