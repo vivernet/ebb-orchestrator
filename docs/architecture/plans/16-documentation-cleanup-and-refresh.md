@@ -3,7 +3,7 @@ id: plan-16
 kind: plan
 status: completed
 created: 2026-09-25
-updated: 2026-09-27
+updated: 2026-09-28
 title: Очистка и актуализация документации Ebb Orchestrator
 depends_on:
   - plan-15-07
@@ -45,7 +45,7 @@ evidence:
 
 Цель следующей implementation-фазы — привести documentation surface и временные артефакты репозитория к фактическому состоянию проекта, не меняя runtime-код и не удаляя данные до доказуемой проверки их ценности. Проектные README должны быть на русском языке и не содержать YAML/frontmatter-подобных метатегов. Это правило относится к README; настоящий plan обязан сохранить YAML frontmatter, потому что он является частью канонической схемы планов.
 
-Корень содержит исторические материалы в `.cuperpowers/` и `.superpowers/`, generated reports/JSON, `workspace/`, `get-link.html`, `inventory.txt` и дублирующиеся security artifacts. `.cuperpowers/` содержит один tracked JSON; `.superpowers/` содержит три tracked audit reports и ignored local state. `node_modules/`, `dist/`, `build/` и иные regenerable outputs находятся вне Git cleanup scope.
+Корень содержит исторические материалы в `.cuperpowers/` и `.superpowers/`, generated reports/JSON, `workspace/`, root-level task reports и дублирующиеся security artifacts. `.cuperpowers/` содержит один tracked JSON; `.superpowers/` содержит три tracked audit reports и ignored local state. `scan-manifest.json` сохраняется, потому что используется README и security-audit тестом. `node_modules/`, `dist/`, `build/` и иные regenerable outputs находятся вне Git cleanup scope.
 
 **Deferred evidence inconsistency:** the previously expected `docs/development/jsdoc-style-guide.md` is absent from the repository; the existing `docs/development/07-jsdoc-style-guide.md` is not substituted as an authoritative spec in this plan. Restoring or renaming a JSDoc guide is out of scope and deferred pending a separate repository-backed requirement; no task may depend on that missing path.
 
@@ -93,7 +93,7 @@ README editing depends on the verified command matrix. Any deletion/move depends
 
 The following is the initial complete list derived from the current repository state. `inspect` means preserve pending evidence; it is not permission to delete. `State` is the observed Git/filesystem classification at draft time: `tracked`, `untracked`, `ignored`, or `mixed` (a directory whose descendants have more than one state). The implementation phase must re-enumerate paths and stop if the list or any state differs.
 
-**Fail-closed state gate (before implementation):** after Task 1 inventory and again immediately before Task 5–9 side effects, compare the exact `(path, state)` set below with a fresh filesystem/Git inventory. For files, classify `tracked` from `git ls-files`, `ignored` from `git check-ignore`, and otherwise `untracked`; for directories, classify from the union of descendant states and use `mixed` when that union has more than one member. Exit non-zero and stop before approval packaging or implementation if the count is not exactly `83`, any path is missing or extra, any state is `unknown` or changed, any duplicate path exists, or any active `15-*` plan is absent from the tracked preservation set. Continue only when the exact 83-entry path/state set matches; do not coerce mismatches or infer a replacement state.
+**Fail-closed state gate (before implementation):** after Task 1 inventory and again immediately before Task 5–9 side effects, compare the exact `(path, state)` set below with a fresh filesystem/Git inventory. For files, classify `tracked` from `git ls-files`, `ignored` from `git check-ignore`, and otherwise `untracked`; for directories, classify from the union of descendant states and use `mixed` when that union has more than one member. Exit non-zero and stop before approval packaging or implementation if the count is not exactly `96`, any path is missing or extra, any state is `unknown` or changed, any duplicate path exists, or any active `15-*` plan is absent from the tracked preservation set. Continue only when the exact 96-entry path/state set matches; do not coerce mismatches or infer a replacement state.
 
 | Path | State | Action | Target/archive | Reason |
 |---|---|---|---|---|
@@ -165,6 +165,19 @@ The following is the initial complete list derived from the current repository s
 | `docs/review/findings.json` | tracked | inspect/preserve unless superseded | archive if stale and redundant | Tracked findings; do not remove load-bearing evidence. |
 | `docs/99-plan-analysis-report.md` | tracked | inspect/preserve unless superseded | archive if stale and redundant | Tracked documentation report; verify links and uniqueness. |
 | `docs/audit/02-audit-report.md` | tracked | inspect/preserve unless superseded | archive if stale and redundant | Tracked audit evidence. |
+| `evidence_report.md` | tracked | archive/delete after verification | external archive `2026-09-28-root-artifacts` → delete | Stale root quality-gates report; superseded by current gates and not referenced by runtime/tooling. |
+| `inventory.txt` | tracked | archive/delete after verification | external archive `2026-09-28-root-artifacts` → delete | Empty root inventory artifact. |
+| `plan_summary.json` | tracked | archive/delete after verification | external archive `2026-09-28-root-artifacts` → delete | Stale historical plan summary; not a current authority. |
+| `plan_verification_status.json` | tracked | archive/delete after verification | external archive `2026-09-28-root-artifacts` → delete | Stale historical verification artifact; current plan metadata/validators are authoritative. |
+| `stage-a-implementation.json` | tracked | archive/delete after verification | external archive `2026-09-28-root-artifacts` → delete | Historical implementation report with no current consumer. |
+| `summary.json` | tracked | archive/delete after verification | external archive `2026-09-28-root-artifacts` → delete | Stale task summary with no current consumer. |
+| `task10-summary.json` | tracked | archive/delete after verification | external archive `2026-09-28-root-artifacts` → delete | Historical task summary with no current consumer. |
+| `task-1-report.txt` | tracked | archive/delete after verification | external archive `2026-09-28-root-artifacts` → delete | Historical task report with no current consumer. |
+| `task-5-report.txt` | tracked | archive/delete after verification | external archive `2026-09-28-root-artifacts` → delete | Historical task report with no current consumer. |
+| `task7-completion.json` | tracked | archive/delete after verification | external archive `2026-09-28-root-artifacts` → delete | Historical task completion artifact with no current consumer. |
+| `task-7-report.txt` | tracked | archive/delete after verification | external archive `2026-09-28-root-artifacts` → delete | Historical task report with no current consumer. |
+| `task9-10-completion.json` | tracked | archive/delete after verification | external archive `2026-09-28-root-artifacts` → delete | Historical task completion artifact with no current consumer. |
+| `task-report.md` | tracked | archive/delete after verification | external archive `2026-09-28-root-artifacts` → delete | Historical task report with no current consumer. |
 | `README.md` | tracked | update in implementation phase | repository | Correct command matrix, claims and language; remove frontmatter-like metadata. |
 | `docs/README.md` | tracked | update in implementation phase | repository | Reconcile index/paths and remove frontmatter-like metadata. |
 | `tools/hermes/README.md` | tracked | update in implementation phase | repository | Reconcile skills/scripts and remove frontmatter-like metadata. |
@@ -181,7 +194,7 @@ The following is the initial complete list derived from the current repository s
 | `docs/architecture/plans/15-09-atomic-auth-v2-remediation.md` | tracked | preserve unchanged | repository | Unrelated active plan; byte-for-byte preservation baseline. |
 | `docs/architecture/plans/15-auth-onboarding-ui-hardening.md` | tracked | preserve unchanged | repository | Unrelated active plan; byte-for-byte preservation baseline. |
 
-**Candidate count in this table is 83 atomic entries.** The implementation inventory must print exactly `83` entries (including directory entries and tracked/ignored state) and fail closed if any path, state or count differs unexpectedly.
+**Candidate count in this table is 96 atomic entries.** The implementation inventory must print exactly `96` entries (including directory entries and tracked/ignored state) and fail closed if any path, state or count differs unexpectedly.
 
 ## Implementation tasks
 
@@ -333,7 +346,7 @@ Behavior changes are documentation/governance behavior rather than runtime behav
 - [x] New plan is the only file created in this draft phase; no code, existing plan, archive, delete or move was performed.
 - [x] Следующие десять pre-existing tracked `15-*` plans остаются byte-for-byte immutable и не входят в cleanup: `docs/architecture/plans/15-01-auth-contract-and-crypto.md`, `docs/architecture/plans/15-02-auth-persistence-and-repository.md`, `docs/architecture/plans/15-03-auth-cli-and-startup.md`, `docs/architecture/plans/15-04-server-security-boundary.md`, `docs/architecture/plans/15-05-web-auth-and-sse.md`, `docs/architecture/plans/15-06-onboarding-draft-and-scheduler-guard.md`, `docs/architecture/plans/15-07-russian-ui-and-artifact-cleanup.md`, `docs/architecture/plans/15-08-verification-and-review.md`, `docs/architecture/plans/15-09-atomic-auth-v2-remediation.md`, `docs/architecture/plans/15-auth-onboarding-ui-hardening.md`.
 - [x] `docs/architecture/plans/16-documentation-cleanup-and-refresh.md` явно исключён из preservation baseline: его targeted edit является единственным изменением draft phase и не считается pre-existing immutable plan.
-- [x] Final implementation inventory exactly matches the approved 83-entry candidate list, including every listed directory/file and tracked/ignored state, or has a documented user-approved amendment.
+- [x] Final implementation inventory exactly matches the approved 96-entry candidate list, including every listed directory/file and tracked/ignored state, or has a documented user-approved amendment.
 - [x] Every candidate has a disposition and reason; `preserve/inspect` items are not treated as deletion permission; for `.cuperpowers/`, `.superpowers/` and `workspace/`, archive outside repo, verify preservation, then delete only the root directory after approval.
 - [x] SHA-256 manifest, JSON/UTF-8 validation, tracked-vs-untracked comparison, path/diff checks, reference scan and secret scan pass.
 - [x] External archive is outside repository, path-safe, restorable and re-hashed successfully before cleanup.
@@ -341,7 +354,7 @@ Behavior changes are documentation/governance behavior rather than runtime behav
 - [x] `README.md`, `docs/README.md` and `tools/hermes/README.md` are Russian, metadata-free and link to real current paths.
 - [x] README documents only verified `pnpm` commands and states prerequisites/environment-dependent behavior.
 - [x] `.gitignore` changes, if any, are narrow and do not hide source tests; `AGENTS.md` changes, if any, define safe temporary-file handling.
-- [x] `pnpm docs:check` validates frontmatter/id/filename structure; the separate deterministic metadata/date validator validates plan-16 `created: 2026-09-25` and `updated: 2026-09-27` as ISO dates; inventory, validation and roadmap audit leave neither `docs/roadmap/generated.md` nor any other new artifact.
+- [x] `pnpm docs:check` validates frontmatter/id/filename structure; the separate deterministic metadata/date validator validates plan-16 `created: 2026-09-25` and `updated: 2026-09-28` as ISO dates; inventory, validation and roadmap audit leave neither `docs/roadmap/generated.md` nor any other new artifact.
 - [x] Documentation validators, quality gates, link/status checks and `git diff --check` pass; no unrelated changes remain.
 
 ## Risks and rollback

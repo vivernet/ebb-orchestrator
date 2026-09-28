@@ -5,7 +5,7 @@ kind: roadmap
 title: Ebb Orchestrator Roadmap
 summary: Generated from Plan metadata and dependencies
 created: 2026-09-16
-updated: 2026-09-27
+updated: 2026-09-28
 ---
 
 # Ebb Orchestrator Roadmap
@@ -41,7 +41,7 @@ updated: 2026-09-27
 | plan-15-09 | completed | Atomic auth v2 prerequisite remediation |
 | plan-15 | completed | Устойчивые auth, onboarding и Russian Web UI |
 | plan-16 | completed | Очистка и актуализация документации Ebb Orchestrator |
-| plan-17 | planned | Надёжность CI evidence и единая конфигурация Ebb Orchestrator |
+| plan-17 | completed | Надёжность CI evidence и единая конфигурация Ebb Orchestrator |
 | plan-00 | completed | Documentation Governance Refactoring |
 | plan-00-02 | superseded | Проверка и исправление политики AGENTS |
 | plan-00-05 | completed | Интеграция политик документации и governance |

@@ -232,7 +232,7 @@ git grep --no-index -inE '[sS][tT][aA][gG][eE]|roadmap[Ss][tT][aA][gG][eE]|group
 
 ### Filename reconciliation
 
-Baseline tracked-path scan: `docs/architecture/plans/governance/08-stage-01-merge-decisions.md` and `stage-a-implementation.json`. In the current worktree the legacy merge-evidence path is deleted and its replacement exists as an untracked file (unstaged rename); `git ls-files` still reports the deleted source until the index changes. `stage-a-implementation.json` remains present and unrelated. Plan 17 is included as a normal Plan and has no retired grouping metadata.
+Baseline tracked-path scan: `docs/architecture/plans/governance/08-stage-01-merge-decisions.md` and the historical root artifact `stage-a-implementation.json`. The root artifact was archived and removed by Plan-16 because it had no current consumer; the canonical governance evidence remains under `docs/architecture/plans/governance/evidence/`. Plan 17 is included as a normal Plan and has no retired grouping metadata.
 
 ## Классификация и rationale
 
