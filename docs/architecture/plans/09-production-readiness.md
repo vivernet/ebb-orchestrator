@@ -50,7 +50,7 @@ evidence:
 - Dirty managed worktree при ошибке \`git worktree remove\` остаётся на диске и в DB — Task 1 test \`keeps a dirty managed worktree when git removal fails\`.
 - Path вне configured managed root никогда не удаляется fallback-логикой — Task 1 test \`rejects fallback cleanup outside managed root\`.
 - Недоступный keyring возвращает controlled service-unavailable error и не создаёт metadata row — Task 2 tests \`rejects store when backend is unavailable\` и route test.
-- Ошибка SQLite после успешной keyring-записи компенсируется delete — Task 2 test \`compensates keyring entry when metadata persistence fails\`.
+- Ошибка SQLite после успешной keyring-записи восстанавливает прежний credential; если его не было, удаляет новую запись. Операции одного account сериализуются — Task 2 tests `\`compensates keyring entry when metadata persistence fails\`, `\`restores the previous credential when metadata update fails\` и `\`serializes concurrent updates for the same credential\`.
 - E2E при недоступном backend завершается ошибкой — Task 4 \`health endpoint is served by the launched backend\`.
 
 ---
@@ -78,7 +78,7 @@ evidence:
 - Consumes: \`GitCli.run(cwd, args)\`, \`WorktreeRepository.findById/remove\`.
 - Produces: \`removeWorkspace(id): Promise<void>\` and \`cleanupIntegration(attempt): Promise<void>\` that reject without deleting a dirty or out-of-root directory.
 
-- [ ] **Step 1: Write failing worktree regressions**
+- [x] **Step 1: Write failing worktree regressions**
 
 Add a real temporary repository case:
 
@@ -99,7 +99,7 @@ Run: \`pnpm --filter @ebb-orchestrator/server test -- test/modules/git/worktree-
 
 Expected: FAIL because current implementation checks \`repoPath\` and deletes the dirty worktree.
 
-- [ ] **Step 3: Write failing integration cleanup regression**
+- [x] **Step 3: Write failing integration cleanup regression**
 
 Prepare integration, write an uncommitted file in \`attempt.worktreePath\`, invoke cleanup and assert the file remains with a dirty-worktree error.
 
@@ -109,17 +109,17 @@ Run: \`pnpm --filter @ebb-orchestrator/server test -- test/modules/git/integrati
 
 Expected: FAIL because cleanup checks \`attempt.repoPath\` then recursively deletes \`attempt.worktreePath\`.
 
-- [ ] **Step 5: Implement minimal fail-closed cleanup**
+- [x] **Step 5: Implement minimal fail-closed cleanup**
 
 Check status in the actual worktree, reject non-empty porcelain output, constrain the path to its configured managed root, and use \`git worktree remove\`. Filesystem fallback is permitted only for a clean, confined orphan and must re-check status/confinement immediately before deletion. It never runs after dirty-status or general Git error.
 
-- [ ] **Step 6: Verify GREEN**
+- [x] **Step 6: Verify GREEN**
 
 Run: \`pnpm --filter @ebb-orchestrator/server test -- test/modules/git/worktree-manager.test.ts test/modules/git/integration-service.test.ts\`
 
 Expected: PASS with dirty artifacts preserved.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 \`\`\`bash
 git add apps/server/src/modules/git/worktree-manager.ts apps/server/src/modules/git/integration-service.ts apps/server/test/modules/git/worktree-manager.test.ts apps/server/test/modules/git/integration-service.test.ts
@@ -138,7 +138,7 @@ git commit -m "Исправить безопасную очистку Git worktr
 - Consumes: narrow \`KeyringBackend\` (\`setPassword/getPassword/deletePassword\`) and \`Database.run\`.
 - Produces: \`SecretStoreUnavailableError\`, compensating \`store\`, and HTTP \`503\` without plaintext.
 
-- [ ] **Step 1: Write failing SecretStore tests**
+- [x] **Step 1: Write failing SecretStore tests**
 
 \`\`\`ts
 it("rejects store when backend is unavailable", async () => {
@@ -148,39 +148,39 @@ it("rejects store when backend is unavailable", async () => {
 });
 \`\`\`
 
-Add a fake backend where \`setPassword\` succeeds but SQLite insert throws; assert \`deletePassword\` is called once.
+Add fake-backend cases where \`setPassword\` succeeds but SQLite insert throws: for a first-time credential, assert \`deletePassword\` is called once; for an existing \`service/name\`, assert its prior keyring value and SQLite metadata remain unchanged after the failed update. Also overlap two updates for the same account, fail the first metadata write, and assert the successful second update remains the final keyring value.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
-Run: \`pnpm --filter @ebb-orchestrator/server test -- test/platform/security/secret-store.test.ts\`
+Run: \`pnpm --filter @ebb-orchestrator/server exec vitest run test/platform/security/secret-store.test.ts -t 'normalizes operational keyring failures'\`
 
-Expected: FAIL because current code reports success without keyring and has no compensation.
+Expected: FAIL because an operational keyring error escapes as its raw backend error.
 
-- [ ] **Step 3: Write failing authenticated route test**
+- [x] **Step 3: Write failing authenticated route test**
 
 Inject unavailable SecretStore through \`createApp\`; POST with valid session/origin/CSRF and assert \`503\`, generic error and no metadata row.
 
-- [ ] **Step 4: Verify RED**
+- [x] **Step 4: Verify RED**
 
-Run: \`pnpm --filter @ebb-orchestrator/server test -- test/app/security.test.ts\`
+Run: \`pnpm --filter @ebb-orchestrator/server exec vitest run test/app/security.test.ts -t 'operational keyring failures'\`
 
-Expected: FAIL because the route creates a hidden store and returns \`201\`.
+Expected: FAIL because the route returns HTTP \`500\` for an operational keyring failure.
 
-- [ ] **Step 5: Implement minimal backend port and error boundary**
+- [x] **Step 5: Implement minimal backend port and error boundary**
 
-Make availability explicit, write keyring before metadata, compensate keyring on metadata failure, and retain metadata when backend revoke fails. Inject Store through route deps and map only unavailable error to \`503\`. No response/log contains a secret value.
+Make availability explicit, write keyring before metadata, restore the previous keyring value on failed metadata updates, and delete only a newly created key when metadata persistence fails. Serialize store/read/revoke operations for the same account so rollback cannot overwrite a later operation. Retain metadata when backend revoke fails. Inject Store through route deps and map only unavailable error to \`503\`. No response/log contains a secret value.
 
-- [ ] **Step 6: Install a production keyring dependency only if verified compatible**
+- [x] **Step 6: Install a production keyring dependency only if verified compatible**
 
 Use the lockfile and verify runtime import on Windows. If compatibility cannot be proven, do not silently add a dependency: production startup exposes unavailable storage and docs name the prerequisite.
 
-- [ ] **Step 7: Verify GREEN**
+- [x] **Step 7: Verify GREEN**
 
 Run: \`pnpm --filter @ebb-orchestrator/server test -- test/platform/security/secret-store.test.ts test/app/security.test.ts\`
 
 Expected: PASS; no partial metadata or plaintext response.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 \`\`\`bash
 git add apps/server/src/platform/security apps/server/src/app/routes/secrets.ts apps/server/src/app/create-app.ts apps/server/test/platform/security/secret-store.test.ts apps/server/test/app/security.test.ts apps/server/package.json pnpm-lock.yaml
@@ -204,7 +204,7 @@ Supply temporary \`EBB_ORCHESTRATOR_HOME\`, build dependencies without listen/sp
 
 - [x] **Step 2: Verify RED**
 
-Run: \`pnpm --filter @ebb-orchestrator/server exec vitest run test/platform/home/production-composition.test.ts test/main.test.ts\`
+Run: \`pnpm --filter @ebb-orchestrator/server exec vitest run test/platform/home/production-composition.test.ts\`
 
 Expected: FAIL because production does not compose Git services and Hermes defaults use OS temp/home.
 
@@ -214,7 +214,7 @@ Construct shared \`WorktreeManager({ worktreeDir: home.worktrees })\`, \`Integra
 
 - [x] **Step 4: Verify GREEN**
 
-Run: \`pnpm --filter @ebb-orchestrator/server test -- test/main.test.ts\`
+Run: \`pnpm --filter @ebb-orchestrator/server exec vitest run test/platform/home/production-composition.test.ts test/main.test.ts\`
 
 Expected: PASS without listener or subprocess; lifecycle regression proves migrations precede recovery and READY follows recovery/workers.
 
@@ -260,7 +260,7 @@ Expected: PASS with no \`ECONNREFUSED\`; health and bootstrap come from launched
 
 Document keyring prerequisite and \`503\` behaviour, \`EBB_ORCHESTRATOR_HOME\` layout, backup boundaries, launch command and verification commands. Do not document Infisical as current dependency.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 \`\`\`bash
 git add apps/web/playwright.config.ts apps/web/test/e2e/v1-ui.spec.ts apps/web/package.json README.md
@@ -276,7 +276,7 @@ git commit -m "Проверить Web UI вместе с реальным backen
 - Consumes: Tasks 1–4 and repository quality scripts.
 - Produces: release-readiness evidence; no push or merge.
 
-- [ ] **Step 1: Run complete quality gate**
+- [x] **Step 1: Run complete quality gate**
 
 \`\`\`bash
 pnpm lint
@@ -294,7 +294,7 @@ Expected: each command exits zero; worktree contains only intended committed cha
 
 Use a new scan, never the failed scan ID. Missing scanner artifacts are a tooling failure, not a pass.
 
-- [ ] **Step 3: Fresh whole-branch review**
+- [x] **Step 3: Fresh whole-branch review**
 
 Create review package versus implementation base. Critical/important review findings require one TDD fix pass and suite re-run.
 

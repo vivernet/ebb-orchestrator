@@ -17,7 +17,7 @@ const migrationDir = fileURLToPath(new URL("../../src/platform/database/migratio
 const migrations: Migration[] = readdirSync(migrationDir).filter((file) => file.endsWith(".sql")).map((file) => ({ version: Number(/^([0-9]+)/.exec(file)?.[1]), name: file.replace(/^[0-9]+_/, "").replace(/\.sql$/, ""), sql: readFileSync(join(migrationDir, file), "utf8") }));
 const runtime: AgentRuntime = { active: 0, maxActive: 0, calls: [], async startRun() {}, async runResult() { return { version: "1", summary: "" } as never; }, async resumeRun() {}, async cancelRun() {}, async inspectRun() { throw new Error("unused"); }, async collectResult() { return {} as never; }, async collectUsage() { return { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, cost: 0 }; }, async healthCheck() { return true; } };
 
-async function setup(withUnavailableSecretStore = false) {
+async function setup(secretStoreFactory?: (db: ReturnType<typeof createSqliteDatabase>) => KeyringSecretStore) {
   const db = createSqliteDatabase(":memory:");
   runMigrations(db, migrations);
   let sequence = 0;
@@ -26,7 +26,7 @@ async function setup(withUnavailableSecretStore = false) {
   const authRepository = createAuthRepository(db, hasher, { randomBytes: () => { sequence += 1; return Buffer.alloc(32, sequence); } }, createNodeDigestPort());
   await authRepository.createLocalUser(Buffer.from("password"), "2030-01-01T00:00:00.000Z");
   const authService = createAuthService(authRepository, hasher, { now: () => "2030-01-01T00:00:00.000Z" });
-  const secretStore = withUnavailableSecretStore ? new KeyringSecretStore(db, { backend: undefined }) : undefined;
+  const secretStore = secretStoreFactory?.(db);
   return { db, app: createApp({ db, scheduler: new SchedulerService(db), runtime, authService, ...(secretStore ? { secretStore } : {}) }) };
 }
 
@@ -39,7 +39,7 @@ async function login(app: ReturnType<typeof createApp>) {
 
 describe("durable server auth boundary", () => {
   it("returns a secret-free 503 when the authorized secret route has no keyring", async () => {
-    const { app, db } = await setup(true);
+    const { app, db } = await setup((database) => new KeyringSecretStore(database, { backend: undefined }));
     const auth = await login(app);
     const secretValue = "sentinel-secret-must-not-escape";
 
@@ -55,6 +55,48 @@ describe("durable server auth boundary", () => {
       expect(JSON.parse(response.body)).toEqual({ error: "secret storage unavailable" });
       expect(response.body).not.toContain(secretValue);
       expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM secrets WHERE service = 'unavailable-route' AND name = 'token'")?.count).toBe(0);
+    } finally {
+      await app.close();
+      db.close();
+    }
+  });
+
+  it("maps operational keyring failures to generic 503 without metadata changes", async () => {
+    const secretStoreFactory = (database: ReturnType<typeof createSqliteDatabase>) => new KeyringSecretStore(database, {
+      backend: {
+        async setPassword(): Promise<void> { throw new Error("OS keyring failure containing route-secret"); },
+        async getPassword(): Promise<string | undefined> { return undefined; },
+        async deletePassword(): Promise<void> { throw new Error("OS keyring delete failure"); },
+      },
+    });
+    const { app, db } = await setup(secretStoreFactory);
+    const auth = await login(app);
+    const secretValue = "route-secret";
+    db.run(
+      "INSERT INTO secrets(reference_id, service, name, created_at, updated_at) VALUES($id, $service, $name, 1, 1)",
+      { $id: "existing-reference", $service: "existing-service", $name: "token" },
+    );
+
+    try {
+      const storeResponse = await app.inject({
+        method: "POST",
+        url: "/api/v1/secrets",
+        headers: { cookie: auth.cookie, origin: "http://127.0.0.1:3000", "x-csrf-token": auth.csrf },
+        payload: { service: "failed-service", name: "token", value: secretValue },
+      });
+      expect(storeResponse.statusCode).toBe(503);
+      expect(JSON.parse(storeResponse.body)).toEqual({ error: "secret storage unavailable" });
+      expect(storeResponse.body).not.toContain(secretValue);
+      expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM secrets WHERE service='failed-service'")?.count).toBe(0);
+
+      const revokeResponse = await app.inject({
+        method: "DELETE",
+        url: "/api/v1/secrets/existing-service/token",
+        headers: { cookie: auth.cookie, origin: "http://127.0.0.1:3000", "x-csrf-token": auth.csrf },
+      });
+      expect(revokeResponse.statusCode).toBe(503);
+      expect(JSON.parse(revokeResponse.body)).toEqual({ error: "secret storage unavailable" });
+      expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM secrets WHERE service='existing-service'")?.count).toBe(1);
     } finally {
       await app.close();
       db.close();

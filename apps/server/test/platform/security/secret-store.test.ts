@@ -6,10 +6,10 @@ import { mkdtemp } from 'node:fs/promises';
 import { readFileSync, readdirSync } from 'node:fs';
 import { createSqliteDatabase } from '../../../src/platform/database/sqlite-database.js';
 import { runMigrations, type Migration } from '../../../src/platform/database/migrator.js';
-import { InMemorySecretStore } from '../../../src/platform/security/secret-store.js';
+import { InMemorySecretStore, SecretStoreUnavailableError } from '../../../src/platform/security/secret-store.js';
 import { SecretRedactor } from '../../../src/platform/security/secret-redactor.js';
 import { KeyringSecretStore } from '../../../src/platform/security/keyring-secret-store.js';
-import type { Database } from '../../../src/platform/database/database.js';
+import type { Database, StatementParams } from '../../../src/platform/database/database.js';
 
 const migrationsDir = join(import.meta.dirname, '../../../src/platform/database/migrations');
 const migrations: Migration[] = readdirSync(migrationsDir)
@@ -83,6 +83,96 @@ describe('SecretStore no-plaintext', () => {
 
       await expect(store.store('service', 'name', 'secret-value')).rejects.toThrow('metadata write failed');
       expect(calls).toEqual(['set', 'delete']);
+    });
+
+    it('restores the previous credential when metadata update fails', async () => {
+      sqliteDb.run(
+        'INSERT INTO secrets(reference_id, service, name, created_at, updated_at) VALUES($id, $service, $name, 10, 10)',
+        { $id: 'existing-reference', $service: 'service', $name: 'name' },
+      );
+      let keyringValue: string | undefined = 'old-value';
+      const failingDb = {
+        all: sqliteDb.all.bind(sqliteDb),
+        get: sqliteDb.get.bind(sqliteDb),
+        run(sql: string, parameters?: StatementParams) {
+          if (sql.startsWith('INSERT OR REPLACE INTO secrets')) throw new Error('metadata update failed');
+          return sqliteDb.run(sql, parameters);
+        },
+      } as unknown as Database;
+      const backend = {
+        async setPassword(_service: string, _account: string, value: string): Promise<void> { keyringValue = value; },
+        async getPassword(): Promise<string | undefined> { return keyringValue; },
+        async deletePassword(): Promise<void> { keyringValue = undefined; },
+      };
+      const store = new KeyringSecretStore(failingDb, { backend });
+      const previousMetadata = await store.listMetadata('service');
+
+      await expect(store.store('service', 'name', 'new-value')).rejects.toThrow('metadata update failed');
+
+      expect(keyringValue).toBe('old-value');
+      expect(previousMetadata).toEqual([expect.objectContaining({ referenceId: 'existing-reference', name: 'name' })]);
+      expect(await store.listMetadata('service')).toEqual(previousMetadata);
+    });
+
+    it('serializes concurrent updates for the same credential', async () => {
+      let keyringValue: string | undefined = 'old-value';
+      let firstReadStarted!: () => void;
+      const firstRead = new Promise<void>((resolve) => { firstReadStarted = resolve; });
+      let metadataWrites = 0;
+      const concurrentDb = {
+        all: sqliteDb.all.bind(sqliteDb),
+        get: sqliteDb.get.bind(sqliteDb),
+        run(sql: string, parameters?: StatementParams) {
+          if (sql.startsWith('INSERT OR REPLACE INTO secrets')) {
+            metadataWrites += 1;
+            if (metadataWrites === 1) throw new Error('first metadata update failed');
+          }
+          return sqliteDb.run(sql, parameters);
+        },
+      } as unknown as Database;
+      const backend = {
+        async setPassword(_service: string, _account: string, value: string): Promise<void> { keyringValue = value; },
+        async getPassword(): Promise<string | undefined> {
+          firstReadStarted();
+          return keyringValue;
+        },
+        async deletePassword(): Promise<void> { keyringValue = undefined; },
+      };
+      const store = new KeyringSecretStore(concurrentDb, { backend });
+      const first = store.store('service', 'same-name', 'first-value');
+      await firstRead;
+      const second = store.store('service', 'same-name', 'second-value');
+
+      await expect(first).rejects.toThrow('first metadata update failed');
+      const secondResult = await second;
+
+      expect(keyringValue).toBe('second-value');
+      expect(await store.resolveForService('service', 'same-name')).toBe('second-value');
+      expect(await store.listMetadata('service')).toEqual([
+        expect.objectContaining({ referenceId: secondResult.id, name: 'same-name' }),
+      ]);
+    });
+
+    it('normalizes operational keyring failures without exposing backend errors', async () => {
+      let reads = 0;
+      const backend = {
+        async setPassword(): Promise<void> { throw new Error('OS keyring error with secret-value'); },
+        async getPassword(): Promise<string | undefined> {
+          reads += 1;
+          if (reads === 1) return undefined;
+          throw new Error('OS keyring read error');
+        },
+        async deletePassword(): Promise<void> { throw new Error('OS keyring delete error'); },
+      };
+      const store = new KeyringSecretStore(sqliteDb, { backend });
+
+      await expect(store.store('service', 'write-failure', 'secret-value'))
+        .rejects.toBeInstanceOf(SecretStoreUnavailableError);
+      await expect(store.resolveForService('service', 'read-failure'))
+        .rejects.toBeInstanceOf(SecretStoreUnavailableError);
+      await expect(store.revoke('service', 'delete-failure'))
+        .rejects.toBeInstanceOf(SecretStoreUnavailableError);
+      expect(await store.listMetadata('service')).toEqual([]);
     });
   });
 

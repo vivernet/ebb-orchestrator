@@ -133,7 +133,14 @@ export async function secretsRoutes(
     },
     async (request, reply) => {
       const { service, name } = request.params;
-      await store.revoke(service, name);
+      try {
+        await store.revoke(service, name);
+      } catch (error) {
+        if (isSecretStoreUnavailableError(error)) {
+          return reply.code(503).send({ error: "secret storage unavailable" });
+        }
+        throw error;
+      }
       return reply.code(204).send();
     }
   );

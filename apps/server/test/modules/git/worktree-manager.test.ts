@@ -91,6 +91,28 @@ describe("WorktreeManager", () => {
     });
   });
 
+  describe("failed creation cleanup", () => {
+    it("leaves a clean candidate outside the configured managed root untouched", async () => {
+      const worktreeDir = createTempDir();
+      const outsideRoot = createTempDir();
+      const outsideMarker = join(outsideRoot, "keep.txt");
+      writeFileSync(outsideMarker, "outside managed root");
+      const manager = new WorktreeManager({ worktreeDir });
+      const cleanup = (manager as unknown as { removeCleanOrphan(path: string): Promise<void> })
+        .removeCleanOrphan.bind(manager);
+
+      try {
+        await cleanup(outsideRoot);
+
+        expect(existsSync(outsideMarker)).toBe(true);
+        expect(readFileSync(outsideMarker, "utf8")).toBe("outside managed root");
+      } finally {
+        rmSync(worktreeDir, { recursive: true, force: true });
+        rmSync(outsideRoot, { recursive: true, force: true });
+      }
+    });
+  });
+
   describe("hooks are disabled", () => {
       it("does not execute repository hooks when creating worktrees", async () => {
         const repoPath = createTempDir();
