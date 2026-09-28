@@ -15,7 +15,6 @@ evidence:
   - apps/server/src/bin/ebb-orchestrator-mcp.ts
   - apps/server/test/platform/process/startup.test.ts
   - scripts/run-server.js
-  - start.bat
 ---
 
 # 15-03. First-run CLI wizard и startup composition

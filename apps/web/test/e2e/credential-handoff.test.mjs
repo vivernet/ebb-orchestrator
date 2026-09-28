@@ -23,7 +23,6 @@ const ownedLaunchFiles = [
   "apps/web/test/e2e/web-e2e-server.mjs",
   "apps/web/test/e2e/v1-ui.spec.ts",
   "scripts/run-server.js",
-  "start.bat",
 ];
 
 async function source(path) {

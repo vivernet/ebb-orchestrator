@@ -93,7 +93,7 @@ README editing depends on the verified command matrix. Any deletion/move depends
 
 The following is the initial complete list derived from the current repository state. `inspect` means preserve pending evidence; it is not permission to delete. `State` is the observed Git/filesystem classification at draft time: `tracked`, `untracked`, `ignored`, or `mixed` (a directory whose descendants have more than one state). The implementation phase must re-enumerate paths and stop if the list or any state differs.
 
-**Fail-closed state gate (before implementation):** after Task 1 inventory and again immediately before Task 5–9 side effects, compare the exact `(path, state)` set below with a fresh filesystem/Git inventory. For files, classify `tracked` from `git ls-files`, `ignored` from `git check-ignore`, and otherwise `untracked`; for directories, classify from the union of descendant states and use `mixed` when that union has more than one member. Exit non-zero and stop before approval packaging or implementation if the count is not exactly `96`, any path is missing or extra, any state is `unknown` or changed, any duplicate path exists, or any active `15-*` plan is absent from the tracked preservation set. Continue only when the exact 96-entry path/state set matches; do not coerce mismatches or infer a replacement state.
+**Fail-closed state gate (before implementation):** after Task 1 inventory and again immediately before Task 5–9 side effects, compare the exact `(path, state)` set below with a fresh filesystem/Git inventory. For files, classify `tracked` from `git ls-files`, `ignored` from `git check-ignore`, and otherwise `untracked`; for directories, classify from the union of descendant states and use `mixed` when that union has more than one member. Exit non-zero and stop before approval packaging or implementation if the count is not exactly `97`, any path is missing or extra, any state is `unknown` or changed, any duplicate path exists, or any active `15-*` plan is absent from the tracked preservation set. Continue only when the exact 97-entry path/state set matches; do not coerce mismatches or infer a replacement state.
 
 | Path | State | Action | Target/archive | Reason |
 |---|---|---|---|---|
@@ -178,6 +178,7 @@ The following is the initial complete list derived from the current repository s
 | `task-7-report.txt` | tracked | archive/delete after verification | external archive `2026-09-28-root-artifacts` → delete | Historical task report with no current consumer. |
 | `task9-10-completion.json` | tracked | archive/delete after verification | external archive `2026-09-28-root-artifacts` → delete | Historical task completion artifact with no current consumer. |
 | `task-report.md` | tracked | archive/delete after verification | external archive `2026-09-28-root-artifacts` → delete | Historical task report with no current consumer. |
+| `start.bat` | tracked | archive/delete after verification | external archive `2026-09-28-root-artifacts` → delete | Obsolete Windows-only launcher; cross-platform project uses `pnpm start`. |
 | `README.md` | tracked | update in implementation phase | repository | Correct command matrix, claims and language; remove frontmatter-like metadata. |
 | `docs/README.md` | tracked | update in implementation phase | repository | Reconcile index/paths and remove frontmatter-like metadata. |
 | `tools/hermes/README.md` | tracked | update in implementation phase | repository | Reconcile skills/scripts and remove frontmatter-like metadata. |
@@ -194,7 +195,7 @@ The following is the initial complete list derived from the current repository s
 | `docs/architecture/plans/15-09-atomic-auth-v2-remediation.md` | tracked | preserve unchanged | repository | Unrelated active plan; byte-for-byte preservation baseline. |
 | `docs/architecture/plans/15-auth-onboarding-ui-hardening.md` | tracked | preserve unchanged | repository | Unrelated active plan; byte-for-byte preservation baseline. |
 
-**Candidate count in this table is 96 atomic entries.** The implementation inventory must print exactly `96` entries (including directory entries and tracked/ignored state) and fail closed if any path, state or count differs unexpectedly.
+**Candidate count in this table is 97 atomic entries.** The implementation inventory must print exactly `97` entries (including directory entries and tracked/ignored state) and fail closed if any path, state or count differs unexpectedly.
 
 ## Implementation tasks
 
@@ -346,7 +347,7 @@ Behavior changes are documentation/governance behavior rather than runtime behav
 - [x] New plan is the only file created in this draft phase; no code, existing plan, archive, delete or move was performed.
 - [x] Следующие десять pre-existing tracked `15-*` plans остаются byte-for-byte immutable и не входят в cleanup: `docs/architecture/plans/15-01-auth-contract-and-crypto.md`, `docs/architecture/plans/15-02-auth-persistence-and-repository.md`, `docs/architecture/plans/15-03-auth-cli-and-startup.md`, `docs/architecture/plans/15-04-server-security-boundary.md`, `docs/architecture/plans/15-05-web-auth-and-sse.md`, `docs/architecture/plans/15-06-onboarding-draft-and-scheduler-guard.md`, `docs/architecture/plans/15-07-russian-ui-and-artifact-cleanup.md`, `docs/architecture/plans/15-08-verification-and-review.md`, `docs/architecture/plans/15-09-atomic-auth-v2-remediation.md`, `docs/architecture/plans/15-auth-onboarding-ui-hardening.md`.
 - [x] `docs/architecture/plans/16-documentation-cleanup-and-refresh.md` явно исключён из preservation baseline: его targeted edit является единственным изменением draft phase и не считается pre-existing immutable plan.
-- [x] Final implementation inventory exactly matches the approved 96-entry candidate list, including every listed directory/file and tracked/ignored state, or has a documented user-approved amendment.
+- [x] Final implementation inventory exactly matches the approved 97-entry candidate list, including every listed directory/file and tracked/ignored state, or has a documented user-approved amendment.
 - [x] Every candidate has a disposition and reason; `preserve/inspect` items are not treated as deletion permission; for `.cuperpowers/`, `.superpowers/` and `workspace/`, archive outside repo, verify preservation, then delete only the root directory after approval.
 - [x] SHA-256 manifest, JSON/UTF-8 validation, tracked-vs-untracked comparison, path/diff checks, reference scan and secret scan pass.
 - [x] External archive is outside repository, path-safe, restorable and re-hashed successfully before cleanup.
