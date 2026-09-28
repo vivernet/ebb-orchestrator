@@ -18,7 +18,7 @@ evidence:
 ---
 # План миграции процесса разработки Ebb Orchestrator с OpenCode на Hermes
 
-> Исторический завершённый план: пути `tools/hermes/skills/` ниже отражают состояние на момент выполнения плана и не являются текущим источником skills. Текущий canonical source — `.agents/skills/`; см. план миграции `.migration/ebb-skills/canonical-ebb-skills-migration-plan.md`.
+> Исторический завершённый план: пути `tools/hermes/skills/` ниже отражают состояние на момент выполнения плана и не являются текущим источником skills. Текущий canonical source — `.agents/skills/`.
 >
 > Дополнение от 2026-09-28: этот план описывает прежний workflow. Текущая Hermes setup/check логика не добавляет provider, не настраивает provider-профиль и не управляет `delegation.worktree_isolation`; она настраивает capabilities и проектный skill discovery.
 

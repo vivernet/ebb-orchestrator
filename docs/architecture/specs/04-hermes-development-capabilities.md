@@ -10,7 +10,7 @@ tags: [hermes, development, capabilities]
 
 # Hermes Development Capabilities
 
-> Историческая superseded specification: требования ниже описывают прежнее копирование skills в Hermes profile. Актуальный canonical source и runtime discovery flow заданы в `.migration/ebb-skills/canonical-ebb-skills-design.md` и миграционном плане.
+> Историческая superseded specification: требования ниже описывают прежнее копирование skills в Hermes profile. Текущий canonical source — `.agents/skills/`; актуальный runtime discovery flow описан в `docs/development/05-hermes.md`.
 
 ## Цель
 
