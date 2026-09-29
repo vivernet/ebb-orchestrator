@@ -84,16 +84,16 @@ describe("migrator", () => {
     expect(tables).toEqual([]);
   });
 
-  it("applies a 025 to 029 upgrade once and remains idempotent", async () => {
+  it("applies a 025 to 030 upgrade once and remains idempotent", async () => {
     tmpDir = await mkdtemp(join(tmpdir(), "orch-auth-upgrade-"));
     db = createSqliteDatabase(join(tmpDir, `test-${randomUUID()}.db`));
     const migrations = (await import("../../helpers/migrations.js")).loadTestMigrations();
     const beforeAuth = migrations.filter((migration) => migration.version <= 25);
 
     expect(runMigrations(db, beforeAuth).applied).toBe(25);
-    expect(runMigrations(db, migrations).applied).toBe(4);
+    expect(runMigrations(db, migrations).applied).toBe(5);
     expect(runMigrations(db, migrations).applied).toBe(0);
-    expect(db.all<{ version: number }>("SELECT version FROM schema_migrations ORDER BY version")).toHaveLength(29);
+    expect(db.all<{ version: number }>("SELECT version FROM schema_migrations ORDER BY version")).toHaveLength(30);
   });
 
   it("rejects a gap in applied migration history before changing the database", async () => {
@@ -187,11 +187,11 @@ describe("migrator", () => {
     const migrations = (await import("../../helpers/migrations.js")).loadTestMigrations();
 
     expect(migrations.map((migration) => migration.version)).toEqual(
-      Array.from({ length: 29 }, (_, index) => index + 1),
+      Array.from({ length: 30 }, (_, index) => index + 1),
     );
-    expect(runMigrations(db, migrations).applied).toBe(29);
+    expect(runMigrations(db, migrations).applied).toBe(30);
     expect(runMigrations(db, migrations).applied).toBe(0);
-    expect(db.get<{ version: number }>("SELECT MAX(version) AS version FROM schema_migrations")?.version).toBe(29);
+    expect(db.get<{ version: number }>("SELECT MAX(version) AS version FROM schema_migrations")?.version).toBe(30);
     expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name='local_users'")?.count).toBe(1);
     expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name='auth_sessions'")?.count).toBe(1);
 
@@ -236,7 +236,7 @@ describe("migrator", () => {
     db.exec("ALTER TABLE agent_runs ADD COLUMN prompt TEXT");
     db.exec("ALTER TABLE git_operations ADD COLUMN failure_reason TEXT");
 
-    expect(runMigrations(db, migrations).applied).toBe(2);
+    expect(runMigrations(db, migrations).applied).toBe(3);
     expect(runMigrations(db, migrations).applied).toBe(0);
     expect(db.all<{ name: string }>("PRAGMA table_info(agent_runs)").filter(({ name }) => name === "prompt")).toHaveLength(1);
     expect(db.all<{ name: string }>("PRAGMA table_info(git_operations)").filter(({ name }) => name === "failure_reason")).toHaveLength(1);
@@ -266,7 +266,7 @@ describe("migrator", () => {
     db.run("INSERT INTO approval_metadata(approval_id,metadata_json) VALUES('approval-027','{\"kind\":\"semantic-config\"}')");
     db.run("INSERT INTO onboarding_configs(project_id,repository_path,facts_json,proposed_json,status,approval_id,created_at,updated_at) VALUES('project-027','/repo','{}','{}','PROPOSED','approval-027',$now,$now)", { now });
 
-    expect(runMigrations(db, migrations).applied).toBe(3);
+    expect(runMigrations(db, migrations).applied).toBe(4);
     expect(runMigrations(db, migrations).applied).toBe(0);
     expect(db.get<{ status: string }>("SELECT status FROM approvals WHERE id='approval-027'")).toEqual({ status: "PENDING" });
     expect(db.get<{ metadata_json: string }>("SELECT metadata_json FROM approval_metadata WHERE approval_id='approval-027'")?.metadata_json).toBe('{"kind":"semantic-config"}');

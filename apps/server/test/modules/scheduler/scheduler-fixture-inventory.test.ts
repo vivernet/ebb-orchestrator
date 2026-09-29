@@ -47,13 +47,13 @@ describe("closed scheduler fixture and authority inventory", () => {
     expect(Object.values(fixtureModes).filter((mode) => mode === "no-dispatch").length).toBeGreaterThan(0);
   });
 
-  it("loads the complete ordered 001-029 chain and excludes immutable 013/014 from runtime authority", () => {
+  it("loads the complete ordered 001-030 chain and excludes immutable 013/014 from runtime authority", () => {
     const migrations = loadSchedulerMigrations();
-    expect(migrations.map((migration) => migration.version)).toEqual(Array.from({ length: 29 }, (_, index) => index + 1));
+    expect(migrations.map((migration) => migration.version)).toEqual(Array.from({ length: 30 }, (_, index) => index + 1));
     const runtime = runtimeSources.map((file) => readFileSync(join(import.meta.dirname, "../../../", file), "utf8")).join("\n");
     expect((runtime.match(/INSERT INTO scheduler_reservations/g) ?? []).length).toBe(3);
     expect(readFileSync(join(import.meta.dirname, "../../../src/platform/database/migrations/013_remove_legacy_scheduler_locks.sql"), "utf8")).toContain("scheduler_reservations");
     expect(readFileSync(join(import.meta.dirname, "../../../src/platform/database/migrations/014_migrate_legacy_scheduler_authority.sql"), "utf8")).toContain("scheduler_reservations");
-    expect(readdirSync(join(import.meta.dirname, "../../../src/platform/database/migrations")).filter((file) => file.startsWith("028_") || file.startsWith("029_"))).toEqual(["028_agent_run_prompt.sql", "029_git_operation_failure_reason.sql"]);
+    expect(readdirSync(join(import.meta.dirname, "../../../src/platform/database/migrations")).filter((file) => /^(028|029|030)_/.test(file))).toEqual(["028_agent_run_prompt.sql", "029_git_operation_failure_reason.sql", "030_github_feedback_delivery.sql"]);
   });
 });

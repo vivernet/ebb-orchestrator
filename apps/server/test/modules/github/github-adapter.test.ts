@@ -28,4 +28,36 @@ describe('GitHub adapter', () => {
     const forbidden = new GitHubAdapter(tokens, { fetch: vi.fn().mockResolvedValue(new Response('{}', { status: 403 })), maxRetries: 0 });
     expect((await forbidden.importIssues('o/r')).status).toBe('BLOCKED_PERMISSION');
   });
+
+  it('imports comments only from real Issues and follows pagination', async () => {
+    const tokens = { getToken: vi.fn().mockResolvedValue('opaque'), clearCache: vi.fn() } as unknown as GitHubAppTokenProvider;
+    const issuePageOne = Array.from({ length: 100 }, (_, index) => ({ number: index + 5 }));
+    const commentPageOne = Array.from({ length: 100 }, (_, index) => ({
+      id: index + 100,
+      issue_url: 'https://api.github.com/repos/o/r/issues/106',
+      body: 'older comment',
+      user: { type: 'User' },
+    }));
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(issuePageOne), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([
+        { number: 105 },
+        { number: 106, pull_request: { url: 'https://api.github.com/repos/o/r/pulls/106' } },
+      ]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(commentPageOne), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([
+        { id: 201, issue_url: 'https://api.github.com/repos/o/r/issues/105', body: 'human', user: { type: 'User' } },
+        { id: 202, issue_url: 'https://api.github.com/repos/o/r/issues/106', body: 'PR conversation', user: { type: 'User' } },
+      ]), { status: 200 }));
+    const adapter = new GitHubAdapter(tokens, { fetch });
+
+    const result = await adapter.listIssueComments('o/r');
+
+    expect(result).toEqual({ status: 'OK', value: [{ id: 201, issueNumber: 105, body: 'human', authorType: 'User' }] });
+    expect(fetch).toHaveBeenCalledTimes(4);
+    expect(String(fetch.mock.calls[0]?.[0])).toContain('page=1');
+    expect(String(fetch.mock.calls[1]?.[0])).toContain('page=2');
+    expect(String(fetch.mock.calls[2]?.[0])).toContain('page=1');
+    expect(String(fetch.mock.calls[3]?.[0])).toContain('page=2');
+  });
 });

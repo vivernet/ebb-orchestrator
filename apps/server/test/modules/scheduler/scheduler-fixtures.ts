@@ -5,7 +5,7 @@ import type { Migration } from "../../../src/platform/database/migrator.js";
 import { runMigrations } from "../../../src/platform/database/migrator.js";
 import type { SchedulerService } from "../../../src/modules/scheduler/scheduler-service.js";
 
-/** Загружает полный каталог миграций, включая условные upgrade-миграции 028/029. */
+/** Загружает полный каталог миграций, включая условные upgrade-миграции 028–030. */
 export function loadSchedulerMigrations(): Migration[] {
   const directory = join(import.meta.dirname, "../../../src/platform/database/migrations");
   return readdirSync(directory).filter((file) => file.endsWith(".sql")).sort().map((file) => {

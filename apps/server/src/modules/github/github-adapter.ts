@@ -1,7 +1,10 @@
-import type { GitHosting, HostingResult, PullRequest, PullRequestInput } from './git-hosting.js';
+import type { GitHosting, GitHubIssueComment, HostingResult, PullRequest, PullRequestInput } from './git-hosting.js';
 import { GitHubAppTokenProvider } from './github-app-token-provider.js';
 
 export interface GitHubAdapterOptions { fetch?: typeof globalThis.fetch; apiBase?: string; sleep?: (ms: number) => Promise<void>; maxRetries?: number; }
+
+interface RemoteIssueRecord { number: number; pull_request?: unknown; }
+interface RemoteIssueCommentRecord { id: number; issue_url: string; body?: string | null; user?: { type?: string } | null; }
 
 /** REST-адаптер GitHub с status-aware errors и bounded transient retries. */
 export class GitHubAdapter implements GitHosting {
@@ -18,6 +21,29 @@ export class GitHubAdapter implements GitHosting {
 
   async importIssues(repository: string): Promise<HostingResult<Array<{ id: number; title: string; body?: string; state: string }>>> {
     return this.call(`/repos/${repository}/issues?state=all`, 'GET');
+  }
+  /** Загружает комментарии реальных Issues, исключая discussion comments у pull requests. */
+  async listIssueComments(repository: string): Promise<HostingResult<GitHubIssueComment[]>> {
+    const issues = await this.callAllPages<RemoteIssueRecord>(`/repos/${repository}/issues?state=all`);
+    if (issues.status !== 'OK' || !issues.value) return issues as unknown as HostingResult<GitHubIssueComment[]>;
+    const issueNumbers = new Set(issues.value
+      .filter((issue) => issue.pull_request === undefined && Number.isSafeInteger(issue.number))
+      .map((issue) => issue.number));
+    const comments = await this.callAllPages<RemoteIssueCommentRecord>(`/repos/${repository}/issues/comments`);
+    if (comments.status !== 'OK' || !comments.value) return comments as unknown as HostingResult<GitHubIssueComment[]>;
+    const mapped: GitHubIssueComment[] = [];
+    for (const comment of comments.value) {
+      const match = /\/issues\/(\d+)$/.exec(comment.issue_url);
+      const issueNumber = match ? Number(match[1]) : NaN;
+      if (!Number.isSafeInteger(comment.id) || !issueNumbers.has(issueNumber)) continue;
+      mapped.push({
+        id: comment.id,
+        issueNumber,
+        body: typeof comment.body === 'string' ? comment.body : '',
+        authorType: typeof comment.user?.type === 'string' ? comment.user.type : 'Unknown',
+      });
+    }
+    return { status: 'OK', value: mapped };
   }
   async findPullRequest(repository: string, marker: string): Promise<HostingResult<PullRequest | undefined>> {
     const result = await this.call<Array<Record<string, unknown>>>(`/repos/${repository}/pulls?state=all&per_page=100`, 'GET');
@@ -67,6 +93,19 @@ export class GitHubAdapter implements GitHosting {
         return { status: 'TRANSIENT_ERROR', error: error instanceof Error ? error.message : String(error) };
       }
     }
+  }
+
+  private async callAllPages<T>(path: string): Promise<HostingResult<T[]>> {
+    const values: T[] = [];
+    for (let page = 1; page <= 1_000; page += 1) {
+      const separator = path.includes('?') ? '&' : '?';
+      const result = await this.call<unknown>(`${path}${separator}per_page=100&page=${page}`, 'GET');
+      if (result.status !== 'OK') return result as HostingResult<T[]>;
+      if (!Array.isArray(result.value)) return { status: 'TRANSIENT_ERROR', error: 'GitHub returned an invalid list response' };
+      values.push(...result.value as T[]);
+      if (result.value.length < 100) return { status: 'OK', value: values };
+    }
+    return { status: 'TRANSIENT_ERROR', error: 'GitHub pagination exceeded the bounded page limit' };
   }
 
   private toPullRequest(row: Record<string, unknown>): PullRequest {

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createSqliteDatabase } from '../../src/platform/database/sqlite-database.js';
 import type { Database } from '../../src/platform/database/database.js';
-import { GitHubSyncService } from '../../src/modules/github/github-sync-service.js';
+import { GitHubSyncService, InMemorySyncState } from '../../src/modules/github/github-sync-service.js';
 import type { GitHosting } from '../../src/modules/github/git-hosting.js';
 
 const failpoints = ['branch-create', 'db-commit', 'event-dispatch', 'budget-reserve', 'run-start'] as const;
@@ -76,7 +76,7 @@ describe('v1 crash/restart matrix', () => {
       findPullRequest: async () => ({ status: 'OK' as const, value: { id: 1, number: 7, url: 'https://github.com/o/r/pull/7', state: 'open' as const, head: 'task/1', base: 'master' } }),
       createPullRequest: async () => { throw new Error('duplicate PR creation'); },
     } as unknown as GitHosting;
-    const service = new GitHubSyncService(hosting);
+    const service = new GitHubSyncService(hosting, new InMemorySyncState());
     const record = await service.ensurePullRequest('o/r', 'task-1', { head: 'task/1', base: 'master', title: 'Task 1' });
     expect(record.status).toBe('SUCCEEDED');
     expect(record.pullRequest?.number).toBe(7);
