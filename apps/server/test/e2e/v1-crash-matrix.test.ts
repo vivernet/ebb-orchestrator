@@ -20,6 +20,7 @@ import { GitCli } from "../../src/modules/git/git-cli.js";
 import { GitReconciler } from "../../src/modules/git/git-reconciler.js";
 import { WorktreeManager } from "../../src/modules/git/worktree-manager.js";
 import { WorktreeRepository } from "../../src/modules/git/worktree-repository.js";
+import { SchedulerService } from "../../src/modules/scheduler/scheduler-service.js";
 
 describe('v1 production recovery paths', () => {
   let tempDirectory: string | undefined;
@@ -148,6 +149,45 @@ describe('v1 production recovery paths', () => {
     expect(branch.stdout.trim()).not.toBe('');
     expect(content).toBe('committed task result');
     expect(recovered.state).toBe('IN_SYNC');
+  });
+
+  it('releases a durable scheduler run reservation and resource lock after restart', async () => {
+    db = await openDatabase();
+    const projectId = randomUUID();
+    const reservationId = randomUUID();
+    const now = new Date().toISOString();
+    db.run(
+      `INSERT INTO projects (id, name, display_name, status, created_at, updated_at)
+       VALUES ($id, 'scheduler-recovery', 'Scheduler recovery', 'ACTIVE', $now, $now)`,
+      { id: projectId, now },
+    );
+    db.run('INSERT INTO scheduler_budgets(project_id,limit_cost,spent_cost,reserved_cost) VALUES($project,10,0,2)', { project: projectId });
+    db.run("INSERT INTO agent_runs (id,role,runtime,model,status,cost) VALUES ('interrupted-run','reviewer','test','test','FAILED',0)");
+    db.run(
+      `INSERT INTO scheduler_reservations(id,kind,subject_id,project_id,owner_id,reserved_at,estimate_cost,status,role,model,run_id)
+       VALUES($id,'RUN','interrupted-run',$project,'run:interrupted-run',$now,2,'RESERVED','reviewer','test','interrupted-run')`,
+      { id: reservationId, project: projectId, now },
+    );
+    db.run(
+      `INSERT INTO scheduler_resource_locks(resource_key,reservation_id,project_id,owner_id,locked_at)
+       VALUES('interrupted-run-resource',$reservation,$project,'run:interrupted-run',$now)`,
+      { reservation: reservationId, project: projectId, now },
+    );
+    db.close();
+    db = await openDatabase();
+
+    expect(new SchedulerService(db).reconcile()).toEqual({
+      releasedReservationIds: [reservationId], blockedReservationIds: [],
+    });
+    expect(db.get<{ status: string }>(
+      'SELECT status FROM scheduler_reservations WHERE id=$id', { id: reservationId },
+    )?.status).toBe('RELEASED');
+    expect(db.get<{ count: number }>(
+      'SELECT COUNT(*) AS count FROM scheduler_resource_locks WHERE reservation_id=$id', { id: reservationId },
+    )?.count).toBe(0);
+    expect(db.get<{ reserved_cost: number }>(
+      'SELECT reserved_cost FROM scheduler_budgets WHERE project_id=$id', { id: projectId },
+    )?.reserved_cost).toBe(0);
   });
 
   it('finds the remote PR after local acknowledgement fails and does not create a duplicate', async () => {
