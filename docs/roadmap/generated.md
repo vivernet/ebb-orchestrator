@@ -16,7 +16,7 @@ updated: 2026-09-29
 
 | ID | Status | Title |
 |----|--------|-------|
-| plan-01 | in_progress | План реализации Foundation и Persistence Orchestrator |
+| plan-01 | completed | План реализации Foundation и Persistence Orchestrator |
 | plan-02 | completed | План реализации домена Orchestrator, Workflow, Scheduler и Recovery |
 | plan-03 | completed | План реализации Git, Execution и Security Orchestrator |
 | plan-04 | blocked | План реализации среды выполнения Orchestrator Hermes и автономной задачи |

@@ -12,6 +12,7 @@
     "lint": "eslint .",
     "build": "pnpm -r --if-present build",
     "server:build": "pnpm --filter @ebb-orchestrator/server build",
+    "plan01:acceptance": "pnpm server:build && node scripts/plan01-process-recovery-acceptance.mjs",
     "web:build": "pnpm --filter @ebb-orchestrator/web build",
     "hermes:setup": "node scripts/hermes-dev.mjs setup",
     "hermes:check": "node scripts/hermes-dev.mjs check",

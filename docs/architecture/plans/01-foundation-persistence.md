@@ -1,10 +1,10 @@
 ---
 id: plan-01
 kind: plan
-status: in_progress
+status: completed
 title: План реализации Foundation и Persistence Orchestrator
 created: 2026-09-23
-updated: 2026-09-28
+updated: 2026-09-29
 depends_on: []
 specs:
   - ../specs/01-system-design.md
@@ -19,6 +19,7 @@ evidence:
   - apps/server/test/platform/artifacts/artifact-store.test.ts
   - apps/server/test/platform/security.test.ts
   - apps/server/test/platform/process/startup.test.ts
+  - scripts/plan01-process-recovery-acceptance.mjs
 ---
 # План реализации Foundation и Persistence Orchestrator
 
@@ -780,9 +781,14 @@ git commit -m "feat: add startup reconciliation lifecycle"
 ```bash
 pnpm typecheck
 pnpm test
+pnpm plan01:acceptance
 ```
 
-Затем вручную завершить/перезапустить server, пока ожидаются outbox event и retryable job. После перезапуска:
+`pnpm plan01:acceptance` запускает собранный production backend как отдельный процесс в disposable home, проверяет READY и отказ второго экземпляра, создаёт pending outbox event и retryable job в его SQLite, затем штатно останавливает процесс. Пока процесс остановлен, harness записывает expired lease, после чего перезапускает backend. Harness проверяет неизменность миграций, повторную попытку доставки события, сохранность retryable job, восстановление expired lease в `RETRY_WAIT`, lifecycle `READY` и штатный teardown.
+
+Результат 2026-09-29: `PLAN01_PROCESS_RECOVERY_ACCEPTANCE=PASS`; полный `pnpm test`: 97 файлов, 896 passed, 2 skipped; `pnpm lint` и `pnpm typecheck` прошли.
+
+После перезапуска:
 
 - DB мигрируется ровно один раз;
 - pending event остаётся доступным для доставки;
@@ -790,3 +796,10 @@ pnpm test
 - system transitions `STARTING → RECOVERING → READY`;
 - второй экземпляр backend отклоняется;
 - no AI runtime exists yet.
+
+## Completion evidence — 2026-09-29
+
+- `pnpm plan01:acceptance`: PASS на двух отдельных production process стартах в disposable home; pending event и retryable job пережили restart, expired lease восстановлен, migrations неизменны, второй instance отклонён, процессы завершены контролируемо.
+- `pnpm lint`, `pnpm typecheck`, `pnpm test`: PASS; 97 test files, 896 passed, 2 skipped; launcher scripts 19/19.
+- Независимый whole-plan review: PASS; подтверждено покрытие acceptance без изменения production policy.
+- Исторические procedural checkboxes выше не отмечались задним числом; их выполнение не заявляется этим completion note.
