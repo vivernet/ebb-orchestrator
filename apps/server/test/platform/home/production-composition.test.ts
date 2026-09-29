@@ -86,6 +86,12 @@ describe("production composition", () => {
         return [];
       }),
       run: vi.fn((sql: string) => { events.push(sql.includes("background_jobs") ? "jobs" : "budget"); }),
+      transaction: vi.fn((callback: (tx: unknown) => unknown) => callback({
+        all: (sql: string) => { if (sql.includes("background_jobs")) events.push("jobs"); return []; },
+        run: (sql: string) => { events.push(sql.includes("background_jobs") ? "jobs" : "budget"); },
+        get: () => undefined,
+        exec: () => {},
+      })),
     } as unknown as Database;
     const gitReconciler = {
       initialize: vi.fn(async (repoPath: string) => { events.push(`initialize:${repoPath}`); }),
@@ -140,6 +146,12 @@ describe("production composition", () => {
         return [];
       }),
       run: vi.fn((sql: string) => { events.push(sql.includes("background_jobs") ? "jobs" : "budget-check"); }),
+      transaction: vi.fn((callback: (tx: unknown) => unknown) => callback({
+        all: (sql: string) => { if (sql.includes("background_jobs")) events.push("jobs"); return []; },
+        run: (sql: string) => { events.push(sql.includes("background_jobs") ? "jobs" : "budget-check"); },
+        get: () => undefined,
+        exec: () => {},
+      })),
     } as unknown as Database;
     const composition = createProductionComposition({
       database: fakeDatabase,

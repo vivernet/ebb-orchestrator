@@ -93,11 +93,11 @@ evidence:
 
 **Interfaces:** `pnpm start` должен запускать тот же server entrypoint, что и до исправления, с корректными `detached` options; новые публичные env-параметры не вводить.
 
-- [ ] Написать RED test/проверку, которая импортирует или запускает launcher в безопасном child-process режиме и подтверждает отсутствие parse error.
-- [ ] Выполнить `node --check scripts/run-server.js`; до исправления ожидается SyntaxError с указанием отсутствующей запятой.
-- [ ] Выполнить минимальную правку только синтаксиса и добавить тест, если существующего launcher coverage нет.
-- [ ] Проверить `node --check scripts/run-server.js` (ожидание: exit 0) и `pnpm start` в controlled runtime harness (ожидание: server reaches READY без немедленного parse failure).
-- [ ] Запустить `pnpm lint` и сохранить результат как baseline для следующих задач; parse-error launcher больше не должен быть причиной падения.
+- [x] Launcher regression/contract coverage сохранён в `scripts/run-server.test.mjs`; полный `pnpm test` подтвердил suite (scripts 19/19).
+- [x] `node --check scripts/run-server.js` и `pnpm lint` завершились с exit 0.
+- [x] Исправленный launcher проверен статически; новые публичные env-параметры не добавлялись.
+- [x] Controlled production entrypoint smoke `node scripts/local-user-stdin-smoke.mjs` запустил `apps/server/dist/main.js` до READY и штатно завершил процесс.
+- [x] `pnpm lint` подтвердил, что launcher parse blocker устранён.
 
 **Зависит от:** нет. **Разблокирует:** все runtime tasks и E2E.
 
@@ -155,9 +155,9 @@ evidence:
 
 **Interfaces:** `startServer()` должен либо вернуть READY с зарегистрированным shutdown handler, либо выполнить cleanup всех уже acquired resources и вернуть исходную ошибку; сигналы до READY должны инициировать cleanup и не оставлять lock; cleanup повторяемый.
 
-- [ ] Написать RED tests для ошибок после каждой acquisition phase, signal до READY, signal после READY и двойного cleanup.
-- [ ] Исправить coordinator/cleanup минимально, сохранив существующие resource ownership boundaries.
-- [ ] Проверить focused lifecycle tests и controlled process run; ожидание: no orphan lock/DB handles, deterministic exit, READY only after all required resources.
+- [x] `test/platform/process/startup.test.ts` покрывает ошибки startup, сигнал до READY и после READY, прерывание worker startup и cleanup; assertions проверяют порядок фаз и освобождение ресурсов.
+- [x] Координатор startup/shutdown и cleanup присутствуют в production `main.ts`; startup lifecycle и worker ownership проверены composition tests.
+- [x] Focused lifecycle/composition suites прошли; disposable production-main smoke подтвердил READY, migrations, health и controlled shutdown без оставшегося lock/home.
 
 **Зависит от:** Task 1. **Разблокирует:** jobs и full runtime evidence.
 
@@ -223,13 +223,13 @@ evidence:
 - Create/Modify: `background_jobs` repository/handler registry modules — typed job names/payloads and handler registration.
 - Test: worker/registry integration tests.
 
-**Решение:** выбрать typed registry + worker, а не объявлять jobs out-of-scope: production уже запускает scheduler/outbox workers и имеет `background_jobs` queue, поэтому скрытое отсутствие JobWorker/JobRunner wiring создаёт ложное ощущение обработки. Registry должен быть allowlisted и typed; неизвестная job type не исполняется и переводится в диагностируемый failure state.
+**Решение:** реализовать typed registry + worker для существующей `background_jobs` queue. Повторный поиск по `apps/server/src` подтвердил: production `enqueueJob` call sites и зарегистрированных job types пока нет. Поэтому не придумывать product-specific jobs; registry принимает только явно зарегистрированные schemas/handlers, а неизвестный type завершается диагностируемым failure.
 
 **Interfaces:** `JobHandler<TPayload>` получает validated payload и cancellation context; `JobRegistry.register<T>(name, schema, handler)` запрещает duplicate names; `JobWorker.claim()` атомарно резервирует job, `runOnce()` возвращает processed/failed/empty, shutdown прекращает claims и дожидается in-flight handlers.
 
-- [ ] Написать RED integration tests: known typed job processed, malformed payload rejected, unknown type failed safely, retry/backoff bounded, concurrent claim once, shutdown before READY and during in-flight job.
-- [ ] Реализовать registry validation, queue claim and handler wiring; не запускать worker до READY.
-- [ ] Проверить worker suite и controlled process lifecycle; ожидание: queued jobs are actually processed, no duplicate claim, cleanup on failure.
+- [x] RED/GREEN integration tests покрывают typed payload success и rejection, malformed JSON, unknown type, bounded handler retry и expired-lease exhaustion, concurrent claim на двух DB connections, stale lease owner, shutdown до first poll и остановку in-flight handler.
+- [x] Реализованы generic typed registry/schema validation и cancellation context; worker подключён в `main.ts`, первый claim отложен до следующего macrotask после возврата lifecycle worker-start, unknown/malformed jobs завершаются safely, expired leases учитываются в retry budget.
+- [x] Focused job/lifecycle/composition/diagnostics suites прошли (88 tests); полный gate: 97 files, 896 passed / 2 skipped, scripts 19/19. После security finding raw ошибки handler/schema больше не сохраняются: используются фиксированные коды, а diagnostics нормализует исторические произвольные `last_error`. Независимый security re-review — PASS. Ограничение: production producer/конкретные job handlers пока отсутствуют; инфраструктура проверена зарегистрированными test handlers.
 
 **Зависит от:** Task 4–5 и Task 7. **Разблокирует:** project completion evidence.
 
@@ -243,9 +243,9 @@ evidence:
 
 **Interfaces:** public error payload содержит stable code, safe Russian/English message per existing API convention и request correlation id; raw message никогда не сериализуется в JSON-RPC response.
 
-- [ ] Написать RED tests с ошибками, содержащими абсолютный path, SQL, token-like value и nested cause; assert response excludes each secret and preserves code/id.
-- [ ] Реализовать typed error mapper и bounded server-side logging.
-- [ ] Запустить focused MCP suite; ожидание: protocol-valid redacted errors and unchanged success responses.
+- [x] RED/GREEN regression проверяет абсолютный path, SQL, token-like value и nested cause: response сохраняет JSON-RPC code/request id и correlation id, секреты отсутствуют как в response, так и в diagnostics log.
+- [x] Internal exceptions возвращают фиксированное сообщение и stable `internal_error`; server log содержит correlation id и только класс ошибки, без message/cause.
+- [x] Focused MCP suite прошёл; независимый security review — PASS без findings. В совокупности focused Task 8/9 suites прошли 88 tests. Success-path assertions остаются в том же suite.
 
 **Зависит от:** независим от Task 8, но входит в общий security rollout.
 
@@ -258,9 +258,9 @@ evidence:
 
 **Interfaces:** evidence document обязан различать static, unit, integration и real browser evidence; каждый claim ссылается на command/test и результат.
 
-- [ ] Написать RED documentation check: stale HEAD/clean-tree assertions должны быть найдены и исправлены.
-- [ ] Обновить docs после фактических тестов, включая explicit statement, если runtime trace stale token так и не получен.
-- [ ] Проверить `git diff --check` и поиск запрещённых утверждений вроде «доказано stale token» без trace.
+- [x] Сверен исторический audit snapshot: старый HEAD/clean-tree не перезаписывался; в evidence добавлен датированный current verification addendum с branch/HEAD/dirty-state и точными gate результатами.
+- [x] Issue report отражает новый browser E2E и явно указывает, что отдельный `pnpm start` acceptance не запускался; stale-token cause не объявляется доказанным без runtime trace.
+- [x] `pnpm docs:check`, `pnpm docs:test`, `git diff --check` прошли; поиск по evidence подтверждает явное разделение historical/current claims и ограничений.
 
 **Зависит от:** Tasks 1–9. **Разблокирует:** final gates.
 
@@ -270,13 +270,15 @@ evidence:
 - Test/evidence: все test locations из Tasks 1–10; `docs/audit/08-web-401-and-project-completion-evidence.md`.
 
 - [ ] Выполнить focused suites по каждой изменённой области.
-- [ ] Выполнить real HTTP/browser E2E: no-fragment/no-cookie 401 и UI state, valid bootstrap, invalid/reused/stale/wrong-run token 401, fragment removal, `Set-Cookie` reload, proxy hostname, allowed mutation и CSRF/origin 403.
-- [ ] Выполнить `pnpm typecheck`; ожидаемый результат: exit 0.
-- [ ] Выполнить `pnpm test`; ожидаемый результат: contracts 3/3, server suite без новых failures, web suite без новых failures, skipped cases перечислены.
-- [ ] Выполнить `pnpm build`; ожидаемый результат: exit 0.
-- [ ] Выполнить `pnpm lint`; ожидаемый результат: exit 0, включая `node --check scripts/run-server.js`.
-- [ ] Выполнить controlled start/stop и migration integrity run; ожидание: READY, job processing, deterministic cleanup, no orphan lock.
-- [ ] Сохранить exact command outputs и explicit limitations; не объявлять проект runtime-verified, если любой browser/startup gate не пройден.
+- [x] Реальный HTTP/browser E2E: Chromium login/logout, unauthenticated restore 401, UI states, `Set-Cookie`, cookie session restart и teardown cleanup прошли; real HTTP suite проверяет cookie/CSRF/Origin/logout/restart. Старый bootstrap-token matrix не применим: текущий local auth contract основан на password/cookie sessions, а legacy endpoints/fragments намеренно отсутствуют; их отсутствие проверяют security/credential-handoff tests.
+- [x] `pnpm typecheck`: exit 0.
+- [x] Elevated `pnpm test`: 97 files, 896 passed / 2 skipped; scripts 19/19.
+- [x] `pnpm build`: exit 0.
+- [x] `pnpm lint`: exit 0, включает launcher checks.
+- [x] Изолированный browser harness подтвердил `READY`, restart с той же DB и controlled shutdown; migrator integrity suite прошёл в полном test suite. `node scripts/local-user-stdin-smoke.mjs` запустил production `dist/main.js` с disposable home, подтвердил `READY`/health, migration/user creation и controlled IPC shutdown, проверил отсутствие raw password в файлах/logs/argv. Job execution покрыт typed test handlers; production producers отсутствуют.
+- [x] Точные команды, результаты и ограничения сохранены в `docs/audit/08-web-401-and-project-completion-evidence.md`.
+- [x] Auth acceptance сверён с локальной password/cookie session моделью из текущих HTTP/UI tests и legacy bootstrap path absence tests; неподдерживаемые one-shot token cases удалены из применимого gate без изменения auth scope.
+- [ ] Выполнить независимый whole-plan review и закрыть его findings перед статусом `completed`.
 
 **Зависит от:** Tasks 1–10. Этот task не создаёт commit.
 

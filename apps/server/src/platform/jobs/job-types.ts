@@ -43,7 +43,38 @@ export interface BackgroundJobRow {
   updated_at: string;
 }
 
-export type JobHandler = (job: BackgroundJobRow) => Promise<void>;
+/**
+ * Контекст выполнения handler.
+ * `signal` отменяется при штатном shutdown worker, чтобы handler мог завершить работу контролируемо.
+ */
+export interface JobExecutionContext {
+  /** Сигнал отмены, который worker активирует при контролируемом shutdown. */
+  signal: AbortSignal;
+}
+
+/**
+ * Проверяет недоверенный JSON payload до передачи handler.
+ * Реализация должна бросить исключение при несоответствии схеме; такой job получает постоянный failure.
+ */
+export interface JobPayloadSchema<TPayload> {
+  parse(value: unknown): TPayload;
+}
+
+/**
+ * Выполняет одну типизированную background job.
+ * Handler получает только payload после schema validation и сигнал отмены процесса.
+ */
+export type JobHandler<TPayload> = (
+  payload: TPayload,
+  context: JobExecutionContext,
+  job: BackgroundJobRow,
+) => Promise<void>;
+
+/** Внутренний erased-контракт registry после lookup по сохранённому type. */
+export interface RegisteredJobHandler {
+  parsePayload(value: unknown): unknown;
+  execute(payload: unknown, context: JobExecutionContext, job: BackgroundJobRow): Promise<void>;
+}
 
 export interface JobRunSummary {
   /** Количество job, захваченных на этом tick. */

@@ -20,6 +20,7 @@ import type { EventDispatcher } from "../events/event-dispatcher.js";
 import type { StatusTrackerInterface } from "../process/system-lifecycle.js";
 import { createProductionPaths } from "./production-paths.js";
 import type { OrchestratorHomePaths } from "./orchestrator-home.js";
+import { recoverExpiredJobs } from "../jobs/job-repository.js";
 
 /** Зависимости для построения production adapters без старта процессов. */
 export interface ProductionCompositionOptions {
@@ -116,12 +117,7 @@ export function createProductionComposition(options: ProductionCompositionOption
     return {
       reconcileOutbox: async () => { await recovery.eventDispatcher.dispatchBatch(100); },
       reconcileJobs: async () => {
-        database.run(
-          `UPDATE background_jobs
-              SET status='QUEUED', lease_owner=NULL, lease_expires_at=NULL, updated_at=$now
-            WHERE status='RUNNING' AND lease_expires_at < $now`,
-          { now: new Date().toISOString() },
-        );
+        database.transaction((tx) => recoverExpiredJobs(tx, new Date()));
       },
       reconcileArtifacts: async () => { await artifactStore.reconcileStagingArtifacts(); },
       additionalReconcilers: [async () => {

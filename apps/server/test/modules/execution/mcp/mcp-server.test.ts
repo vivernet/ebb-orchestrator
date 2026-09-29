@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { tmpdir } from 'node:os';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -131,6 +131,42 @@ describe('MCP Server', () => {
         jsonrpc: '2.0', id: 4, error: { code: -32603, message: 'An internal error occurred' },
       });
       await expect(server.processRequest({ jsonrpc: '2.0', method: 'tools/call', params: { name: 'project.test' } })).resolves.toBeNull();
+    });
+
+    it('redacts secrets from JSON-RPC errors and diagnostics while preserving code and request correlation', async () => {
+      const { McpServer } = await import('../../../../src/modules/execution/mcp/mcp-server.js');
+      const { RunCapability } = await import('../../../../src/modules/execution/run-capability.js');
+      const server = new McpServer(new RunCapability(
+        { id: 'redaction-run', role: 'reviewer', workspace: workspaceDir, allowedTools: ['project.test'] },
+      ));
+      const absolutePath = path.join(testDir, 'private', 'database.sqlite');
+      const sql = 'SELECT api_token FROM private_credentials';
+      const token = 'sk-live-secret-4f2a';
+      const internal = new Error(`${absolutePath} ${sql}`, { cause: new Error(token) });
+      server.getRegistry().getTool = () => { throw internal; };
+      const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      try {
+        const response = await server.processRequest({
+          jsonrpc: '2.0', id: 42, method: 'tools/call', params: { name: 'project.test' },
+        });
+        const serialized = JSON.stringify(response);
+        expect(response).toMatchObject({
+          jsonrpc: '2.0', id: 42,
+          error: { code: -32603, message: 'An internal error occurred', data: {
+            code: 'internal_error', correlationId: expect.any(String),
+          } },
+        });
+        const errorData = (response as { error: { data: { correlationId: string } } }).error.data;
+        expect(errorData.correlationId).toMatch(/^[0-9a-f-]{36}$/i);
+        for (const secret of [absolutePath, sql, token]) expect(serialized).not.toContain(secret);
+        const diagnostics = log.mock.calls.flat().join(' ');
+        for (const secret of [absolutePath, sql, token]) expect(diagnostics).not.toContain(secret);
+        expect(diagnostics).toContain(errorData.correlationId);
+        expect(diagnostics).toContain('error_kind=error');
+      } finally {
+        log.mockRestore();
+      }
     });
 
     it('runs project.test through the configured controlled executor', async () => {

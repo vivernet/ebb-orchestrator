@@ -18,4 +18,15 @@ describe('diagnostics export', () => {
     expect(snapshot.deadLetter).toBe(1);
     expect(snapshot.workerHealth).toHaveLength(1);
   });
+
+  it('redacts historical raw job errors from worker diagnostics', () => {
+    const db = createSqliteDatabase(':memory:');
+    db.exec('CREATE TABLE schema_migrations (version INTEGER, name TEXT, applied_at TEXT); CREATE TABLE background_jobs (id TEXT, type TEXT, status TEXT, attempts INTEGER, max_attempts INTEGER, lease_owner TEXT, lease_expires_at TEXT, last_error TEXT, updated_at TEXT); CREATE TABLE outbox_events (id TEXT, processed_at TEXT, dead_lettered_at TEXT); CREATE TABLE scheduler_resource_locks (resource_key TEXT);');
+    db.run("INSERT INTO background_jobs VALUES ('job-1','test','FAILED',1,5,NULL,NULL,'C:/private/db.sqlite SELECT api_token=sk-live-sensitive-value','2026-01-01T00:00:00.000Z')");
+
+    const snapshot = new DiagnosticsService(db, { appVersion: 'test', schemaVersion: 1 }).snapshot();
+
+    expect(JSON.stringify(snapshot)).not.toMatch(/private|SELECT|api_token|sk-live-sensitive-value/);
+    expect(snapshot.workerHealth).toMatchObject([{ last_error: 'JOB_ERROR_DETAILS_REDACTED' }]);
+  });
 });

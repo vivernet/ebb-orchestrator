@@ -70,11 +70,12 @@ serverReady = true;
 - [x] Тестирование (см. test-service.test.ts)
 - [x] Документирование в Task 10 evidence report
 
-## Current State (2026-09-28)
+## Current State (2026-09-29)
 
 - Issue status: исправление присутствует в `main.ts`; startup boundary и его тест проверяют, что сигналы не закрывают сервер до завершения startup.
-- Проверки этой сверки: `test/platform/process/startup.test.ts` и `test/main.test.ts` прошли; полный `pnpm test` прошёл.
-- Изменения остаются незакоммиченными в рабочем дереве; коммит не является доказательством исправления и не выполнялся.
+- Проверки текущей сверки: `test/platform/process/startup.test.ts`, `test/main.test.ts`, полный `pnpm test` (97 files; 896 passed / 2 skipped) и реальный Chromium E2E с READY, restart и штатным stop прошли.
+- E2E teardown прошёл при запуске с разрешённым process cleanup; обычный sandbox запуск не мог вызвать `taskkill` для собственного frontend child.
+- Актуальный `pnpm start` acceptance отдельно не запускался. Историческое описание инцидента ниже относится к 2026-09-22 и не является текущим runtime claim.
 
 ## Историческое описание исходного инцидента
 

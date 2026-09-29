@@ -8,6 +8,53 @@ date: 2026-09-24
 
 # Ebb Orchestrator — Web 401 and Project Completion Evidence
 
+## Current Verification Addendum — 2026-09-29
+
+Этот addendum дополняет исторический snapshot от 2026-09-24 и фиксирует
+проверяемое состояние на текущей ревизии. Он не переписывает старые результаты.
+
+- Branch: `develop`; HEAD: `0975233d6b2ef88101ee41ad7b3bffdd3c9272f4`.
+- На момент проверки рабочее дерево содержало незакоммиченные изменения Task 8/9
+  и этот evidence update; поэтому HEAD не включает перечисленную ниже реализацию.
+- `pnpm lint`, `pnpm typecheck`, `pnpm build`, `pnpm docs:check` и `pnpm docs:test`
+  завершились с exit 0.
+- Elevated `pnpm test`: 97 test files passed; 896 passed, 2 skipped; scripts: 19/19.
+- Focused Task 8/9 job, diagnostics, lifecycle/composition и MCP suites:
+  7 files, 88 tests passed.
+- `pnpm --dir apps/web test:e2e`: Chromium 6/6 passed, включая real login/logout,
+  cookie restore после backend restart и UI flows. Первичный sandbox-запуск не смог
+  завершить frontend через `taskkill` (exit 1); после остановки принадлежащего
+  этому запуску PID и повторного запуска с разрешённым process cleanup команда
+  завершилась exit 0. Штатный teardown подтвердил process exits и удаление
+  isolated E2E home. В тесте `localized route errors...` fixture намеренно отвечает
+  `{projects:{}}`; проверяются route error boundary, localized heading и alert.
+  Поэтому `projects.map is not a function` является ожидаемым negative-case сигналом,
+  а не ошибкой реального onboarding flow.
+- В browser harness backend сообщил `READY`, применил каталог миграций и прошёл
+  restart с той же durable DB; focused migration integrity matrix также входит
+  в полный server suite. Harness не включает production job producers, которых
+  пока нет; queue processing подтверждён typed test handlers и focused worker tests.
+- `node scripts/local-user-stdin-smoke.mjs`: exit 0, `local-user stdin bootstrap
+  smoke passed`. Smoke импортирует production `apps/server/dist/main.js`, использует
+  disposable `EBB_ORCHESTRATOR_HOME`, подтверждает HTTP health=`READY`, migrations,
+  создание пользователя, отсутствие raw password в argv/env/logs/files и graceful
+  IPC shutdown. Cleanup удаляет только созданный им временный home.
+- Текущий browser suite не упражняет устаревший one-shot bootstrap-token flow:
+  действующий UI использует local password login и cookie session; real HTTP
+  transport tests проверяют cookie, `Set-Cookie`, restart, Origin/CSRF и 401.
+  Raw token fragment/legacy bootstrap routes проверяются на отсутствие.
+- `git diff --check`: exit 0. Отдельная интерактивная `pnpm start` с пользовательским
+  home не запускалась; production entrypoint проверен штатным disposable smoke.
+
+### Current Task 11 verdict
+
+Кодовые quality gates, real HTTP/browser E2E и disposable production-entrypoint
+startup/shutdown smoke прошли. Старые one-shot bootstrap-token cases признаны
+неприменимыми по текущей password/cookie session модели и удалены из gate; отдельный
+пользовательский `pnpm start` не требовался для проверки того же production entrypoint.
+Task 11 ждёт независимый whole-plan review. Остальные планы с отдельными
+незакрытыми обязательствами перечислены в ledger-07.
+
 > Исторический evidence snapshot на 2026-09-24. Revision, gate outcomes и статусы
 > задач ниже не являются текущими. Сопоставление с нынешним кодом, тестами и
 > lifecycle планов находится в [ledger-07](../architecture/plans/governance/evidence/07-current-plan-reconciliation.md)

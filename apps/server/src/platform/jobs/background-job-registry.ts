@@ -2,7 +2,7 @@
  * Typed registry для регистрации и поиска обработчиков фоновых задач.
  */
 
-import type { BackgroundJobRow, JobHandler } from "./job-types.js";
+import type { BackgroundJobRow, JobExecutionContext, JobHandler, JobPayloadSchema, RegisteredJobHandler } from "./job-types.js";
 
 /**
  * Typed job type key.
@@ -26,16 +26,20 @@ export interface TypedBackgroundJob<T extends JobTypeKey> {
  * Registry для управления обработчиками фоновых задач.
  */
 export class BackgroundJobRegistry {
-  private readonly handlers: Map<JobTypeKey, JobHandler> = new Map();
+  private readonly handlers: Map<JobTypeKey, RegisteredJobHandler> = new Map();
 
   /**
    * Регистрирует обработчик для конкретного типа задачи.
    */
-  register<T extends JobTypeKey>(type: T, handler: (job: BackgroundJobRow) => Promise<void>): void {
+  register<TPayload>(type: JobTypeKey, schema: JobPayloadSchema<TPayload>, handler: JobHandler<TPayload>): void {
+    if (!type.trim()) throw new Error("Job type must be non-empty");
     if (this.handlers.has(type)) {
       throw new Error(`Handler for job type "${type}" is already registered`);
     }
-    this.handlers.set(type, handler);
+    this.handlers.set(type, {
+      parsePayload: (value) => schema.parse(value),
+      execute: (payload: unknown, context: JobExecutionContext, job: BackgroundJobRow) => handler(payload as TPayload, context, job),
+    });
   }
 
   /**
@@ -55,7 +59,7 @@ export class BackgroundJobRegistry {
   /**
    * Получает обработчик для типа задачи.
    */
-  getHandler(type: JobTypeKey): JobHandler | undefined {
+  getHandler(type: JobTypeKey): RegisteredJobHandler | undefined {
     return this.handlers.get(type);
   }
 

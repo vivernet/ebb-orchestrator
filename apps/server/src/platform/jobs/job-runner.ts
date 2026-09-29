@@ -10,6 +10,7 @@ import type {
 } from "./job-types.js";
 import { BACKOFF_SCHEDULE } from "./job-types.js";
 import type { BackgroundJobRegistry } from "./background-job-registry.js";
+import { recoverExpiredJobs } from "./job-repository.js";
 
 /** Длительность lease в миллисекундах (5 минут). */
 const LEASE_DURATION_MS = 5 * 60 * 1000;
@@ -33,7 +34,7 @@ export class JobRunner {
    * Runner захватывает job внутри транзакции, устанавливая lease_owner и
    * lease_expires_at, а затем выполняет handler вне транзакции.
    */
-  async runOnce(now: Date): Promise<JobRunSummary> {
+  async runOnce(now: Date, signal?: AbortSignal): Promise<JobRunSummary> {
     const summary: JobRunSummary = { claimed: 0, succeeded: 0, failed: 0 };
 
     // Захватывает одновременно не более одной runnable job: транзакция DB
@@ -48,44 +49,62 @@ export class JobRunner {
 
     if (!handler) {
       // Handler не зарегистрирован — пометить как не выполнен
-      this.db.run(
+      const failed = this.db.get<{ id: string }>(
         `UPDATE background_jobs
-         SET status = $status, last_error = $error, updated_at = $updated_at
-         WHERE id = $id`,
+         SET status = $status, last_error = $error, updated_at = $updated_at,
+             lease_owner = NULL, lease_expires_at = NULL
+         WHERE id = $id AND status = 'RUNNING' AND lease_owner = $lease_owner RETURNING id`,
         {
           id: job.id,
+          lease_owner: job.lease_owner,
           status: "FAILED",
-          error: `No handler registered for type "${job.type}"`,
+          error: "JOB_TYPE_UNREGISTERED",
           updated_at: new Date().toISOString(),
         },
       );
-      summary.failed = 1;
+      if (failed) summary.failed = 1;
+      return summary;
+    }
+
+    let payload: unknown;
+    try {
+      payload = handler.parsePayload(JSON.parse(job.payload_json) as unknown);
+    } catch {
+      const failed = this.db.get<{ id: string }>(
+        `UPDATE background_jobs
+         SET status = 'FAILED', last_error = $error, updated_at = $updated_at,
+             lease_owner = NULL, lease_expires_at = NULL
+         WHERE id = $id AND status = 'RUNNING' AND lease_owner = $lease_owner RETURNING id`,
+        { id: job.id, lease_owner: job.lease_owner, error: "JOB_PAYLOAD_INVALID", updated_at: new Date().toISOString() },
+      );
+      if (failed) summary.failed = 1;
       return summary;
     }
 
     try {
-      await handler(job);
-      this.db.run(
+      const executionSignal = signal ?? new AbortController().signal;
+      executionSignal.throwIfAborted();
+      await handler.execute(payload, { signal: executionSignal }, job);
+      const completed = this.db.get<{ id: string }>(
         `UPDATE background_jobs
          SET status = 'SUCCEEDED', updated_at = $updated_at, lease_owner = NULL, lease_expires_at = NULL
-         WHERE id = $id`,
-        { id: job.id, updated_at: new Date().toISOString() },
+         WHERE id = $id AND status = 'RUNNING' AND lease_owner = $lease_owner RETURNING id`,
+        { id: job.id, lease_owner: job.lease_owner, updated_at: new Date().toISOString() },
       );
-      summary.succeeded = 1;
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
+      if (completed) summary.succeeded = 1;
+    } catch {
       const attempts = job.attempts + 1;
 
       if (attempts >= job.max_attempts) {
         // Переводит job в dead-letter
-        this.db.run(
+        const failed = this.db.get<{ id: string }>(
           `UPDATE background_jobs
            SET status = 'DEAD_LETTER', attempts = $attempts, last_error = $error,
                updated_at = $updated_at, lease_owner = NULL, lease_expires_at = NULL
-           WHERE id = $id`,
-          { id: job.id, attempts, error: errorMsg, updated_at: new Date().toISOString() },
+           WHERE id = $id AND status = 'RUNNING' AND lease_owner = $lease_owner RETURNING id`,
+          { id: job.id, lease_owner: job.lease_owner, attempts, error: "JOB_HANDLER_FAILED", updated_at: new Date().toISOString() },
         );
-        summary.failed = 1;
+        if (failed) summary.failed = 1;
       } else {
         // Повторяет с backoff
         const backoffIndex = Math.min(attempts - 1, BACKOFF_SCHEDULE.length - 1);
@@ -94,16 +113,17 @@ export class JobRunner {
         const jitterMs = (Math.random() * 0.2 - 0.1) * baseDelay * 1000;
         const retryAfter = new Date(now.getTime() + baseDelay * 1000 + jitterMs);
 
-        this.db.run(
+        this.db.get<{ id: string }>(
           `UPDATE background_jobs
            SET status = 'RETRY_WAIT', attempts = $attempts, last_error = $error,
                run_after = $run_after, updated_at = $updated_at,
                lease_owner = NULL, lease_expires_at = NULL
-           WHERE id = $id`,
+           WHERE id = $id AND status = 'RUNNING' AND lease_owner = $lease_owner RETURNING id`,
           {
             id: job.id,
+            lease_owner: job.lease_owner,
             attempts,
-            error: errorMsg,
+            error: "JOB_HANDLER_FAILED",
             run_after: retryAfter.toISOString(),
             updated_at: new Date().toISOString(),
           },
@@ -124,14 +144,7 @@ export class JobRunner {
     const nowIso = now.toISOString();
 
     return this.db.transaction<BackgroundJobRow | undefined>((tx) => {
-      // Восстанавливает job с истёкшим lease (worker завершился или завис).
-      // Возвращает их в QUEUED, чтобы следующий SELECT мог их выбрать.
-      tx.run(
-        `UPDATE background_jobs
-         SET status = 'QUEUED', lease_owner = NULL, lease_expires_at = NULL
-         WHERE status = 'RUNNING' AND lease_expires_at < $now`,
-        { now: nowIso },
-      );
+      recoverExpiredJobs(tx, now);
 
       // Находит наиболее приоритетную runnable job, которую ещё не захватили.
       const row = tx.get<BackgroundJobRow>(

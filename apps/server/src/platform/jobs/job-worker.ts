@@ -13,6 +13,7 @@ export class JobWorker implements BackgroundWorker {
   private running = false;
   private stopping = false;
   private inFlight: Promise<void> | undefined;
+  private abortController: AbortController | undefined;
 
   constructor(
     private readonly runner: Pick<JobRunner, "runOnce">,
@@ -31,12 +32,19 @@ export class JobWorker implements BackgroundWorker {
     if (this.running) return;
     this.running = true;
     this.stopping = false;
-    await this.poll();
+    this.abortController = new AbortController();
+    // Отложенный macrotask даёт lifecycle завершить публикацию READY после возврата start().
+    this.timer = setTimeout(() => {
+      this.timer = undefined;
+      void this.poll();
+    }, 0);
+    this.timer.unref?.();
   }
 
   async stop(): Promise<void> {
     this.stopping = true;
     this.running = false;
+    this.abortController?.abort(new Error("Job worker is stopping"));
     if (this.timer !== undefined) clearTimeout(this.timer);
     this.timer = undefined;
     if (this.inFlight) await this.inFlight;
@@ -48,7 +56,7 @@ export class JobWorker implements BackgroundWorker {
       try {
         for (let index = 0; index < this.maxJobsPerTick; index += 1) {
           if (!this.running || this.stopping) break;
-          const result = await this.runner.runOnce(new Date());
+          const result = await this.runner.runOnce(new Date(), this.abortController?.signal);
           if (result.claimed === 0) break;
         }
       } catch {

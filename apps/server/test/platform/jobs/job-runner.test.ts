@@ -18,10 +18,13 @@ const migration001 = await readFile(
 const migrations: Migration[] = [
   { version: 1, name: "001_system", sql: migration001 },
 ];
+const identityPayloadSchema = { parse: (value: unknown) => value };
 
 describe("background job runner", () => {
   let db: Database | undefined;
+  let competingDb: Database | undefined;
   let tmpDir: string;
+  let sharedDbPath: string;
 
   beforeEach(() => {
     tmpDir = "";
@@ -30,6 +33,8 @@ describe("background job runner", () => {
   afterEach(async () => {
     db?.close();
     db = undefined;
+    competingDb?.close();
+    competingDb = undefined;
     if (tmpDir) {
       await rm(tmpDir, { recursive: true, force: true });
     }
@@ -37,8 +42,8 @@ describe("background job runner", () => {
 
   async function setupDb(): Promise<Database> {
     tmpDir = await mkdtemp(join(tmpdir(), "orch-job-test-"));
-    const dbPath = join(tmpDir, `test-${randomUUID()}.db`);
-    const database = createSqliteDatabase(dbPath);
+    sharedDbPath = join(tmpDir, `test-${randomUUID()}.db`);
+    const database = createSqliteDatabase(sharedDbPath);
     runMigrations(database, migrations);
     return database;
   }
@@ -74,7 +79,7 @@ describe("background job runner", () => {
     db = await setupDb();
 
     const registry = new BackgroundJobRegistry();
-    registry.register("testTask", async () => {
+    registry.register("testTask", identityPayloadSchema, async () => {
       throw new Error("transient failure");
     });
 
@@ -109,7 +114,7 @@ describe("background job runner", () => {
     db = await setupDb();
 
     const registry = new BackgroundJobRegistry();
-    registry.register("testTask", async () => {
+    registry.register("testTask", identityPayloadSchema, async () => {
       throw new Error("permanent failure");
     });
 
@@ -142,7 +147,7 @@ describe("background job runner", () => {
     db = await setupDb();
 
     const registry = new BackgroundJobRegistry();
-    registry.register("testTask", async () => {
+    registry.register("testTask", identityPayloadSchema, async () => {
       // успех
     });
 
@@ -170,9 +175,15 @@ describe("background job runner", () => {
     expect(stuck!.status).toBe("RUNNING");
     expect(stuck!.lease_owner).toBe("dead-worker");
 
-    // Следующий runOnce должен восстановить задачу с истёкшей арендой и выполнить её снова.
+    // Сначала lease expiration учитывается как failed attempt и ставит bounded backoff.
     const futureNow = new Date(Date.now() + 1_000);
-    const result = await jobRunner.runOnce(futureNow);
+    const recovered = await jobRunner.runOnce(futureNow);
+    expect(recovered.claimed).toBe(0);
+    expect(db.get<{ status: string; attempts: number }>(
+      "SELECT status, attempts FROM background_jobs WHERE id = $id", { id: job1Id },
+    )).toEqual({ status: "RETRY_WAIT", attempts: 1 });
+
+    const result = await jobRunner.runOnce(new Date(futureNow.getTime() + 70_000));
     expect(result.claimed).toBe(1);
     expect(result.succeeded).toBe(1);
 
@@ -181,6 +192,25 @@ describe("background job runner", () => {
       { id: job1Id },
     );
     expect(afterSecond!.status).toBe("SUCCEEDED");
+  });
+
+  it("dead-letters an expired lease when it exhausts the attempt limit", async () => {
+    db = await setupDb();
+    const registry = new BackgroundJobRegistry();
+    let handlerCalled = false;
+    registry.register("crashLoop", identityPayloadSchema, async () => { handlerCalled = true; });
+    const id = enqueueJob(db, { type: "crashLoop", payload: {}, maxAttempts: 1 });
+    db.run("UPDATE background_jobs SET status = 'RUNNING', lease_expires_at = $expiry WHERE id = $id", {
+      id, expiry: new Date(Date.now() - 1_000).toISOString(),
+    });
+
+    const result = await new JobRunner(db, registry).runOnce(new Date());
+
+    expect(result.claimed).toBe(0);
+    expect(handlerCalled).toBe(false);
+    expect(db.get<{ status: string; attempts: number; lease_owner: string | null }>(
+      "SELECT status, attempts, lease_owner FROM background_jobs WHERE id = $id", { id },
+    )).toEqual({ status: "DEAD_LETTER", attempts: 1, lease_owner: null });
   });
 
   it("runOnce returns 0 claimed when no jobs are runnable", async () => {
@@ -199,7 +229,7 @@ describe("background job runner", () => {
     db = await setupDb();
 
     const registry = new BackgroundJobRegistry();
-    registry.register("testTask", async () => {
+    registry.register("testTask", identityPayloadSchema, async () => {
       // успех
     });
 
@@ -219,6 +249,124 @@ describe("background job runner", () => {
       { id: job1Id },
     );
     expect(row!.status).toBe("SUCCEEDED");
+  });
+
+  it("allows only one runner to claim a queued job across database connections", async () => {
+    db = await setupDb();
+    competingDb = createSqliteDatabase(sharedDbPath);
+    const registry = new BackgroundJobRegistry();
+    let handlerCalls = 0;
+    let releaseHandler!: () => void;
+    let markEntered!: () => void;
+    const entered = new Promise<void>((resolve) => { markEntered = resolve; });
+    const held = new Promise<void>((resolve) => { releaseHandler = resolve; });
+    registry.register("singleClaim", identityPayloadSchema, async () => {
+      handlerCalls += 1;
+      markEntered();
+      await held;
+    });
+    enqueueJob(db, { type: "singleClaim", payload: {} });
+    const firstRunner = new JobRunner(db, registry);
+    const secondRunner = new JobRunner(competingDb, registry);
+
+    const firstRun = firstRunner.runOnce(new Date());
+    await entered;
+    const secondResult = await secondRunner.runOnce(new Date());
+    releaseHandler();
+    const firstResult = await firstRun;
+
+    expect(firstResult.claimed).toBe(1);
+    expect(secondResult.claimed).toBe(0);
+    expect(handlerCalls).toBe(1);
+  });
+
+  it("does not acknowledge completion after another lease owner takes over", async () => {
+    db = await setupDb();
+    let releaseHandler!: () => void;
+    let markEntered!: () => void;
+    const entered = new Promise<void>((resolve) => { markEntered = resolve; });
+    const held = new Promise<void>((resolve) => { releaseHandler = resolve; });
+    const registry = new BackgroundJobRegistry();
+    registry.register("leaseRace", identityPayloadSchema, async () => {
+      markEntered();
+      await held;
+    });
+    const id = enqueueJob(db, { type: "leaseRace", payload: {} });
+    const running = new JobRunner(db, registry).runOnce(new Date());
+    await entered;
+    db.run("UPDATE background_jobs SET lease_owner = $owner WHERE id = $id", { id, owner: "new-owner" });
+    releaseHandler();
+
+    const summary = await running;
+
+    expect(summary.succeeded).toBe(0);
+    expect(db.get<{ status: string; lease_owner: string | null }>(
+      "SELECT status, lease_owner FROM background_jobs WHERE id = $id", { id },
+    )).toEqual({ status: "RUNNING", lease_owner: "new-owner" });
+  });
+
+  it("validates a typed payload before invoking the registered handler", async () => {
+    db = await setupDb();
+    const received: unknown[] = [];
+    const signals: AbortSignal[] = [];
+    const registry = new BackgroundJobRegistry();
+    registry.register<{ value: string }>(
+      "typedTask",
+      { parse: (value) => {
+        if (typeof value !== "object" || value === null || !("value" in value) || typeof value.value !== "string") {
+          throw new Error("payload.value must be a string");
+        }
+        return { value: value.value };
+      } },
+      async (payload, context) => { received.push(payload); signals.push(context.signal); },
+    );
+    const validId = enqueueJob(db, { type: "typedTask", payload: { value: "accepted" } });
+    const invalidId = enqueueJob(db, { type: "typedTask", payload: { value: 7 } });
+
+    const valid = await new JobRunner(db, registry).runOnce(new Date());
+    const invalid = await new JobRunner(db, registry).runOnce(new Date());
+
+    expect(valid.succeeded).toBe(1);
+    expect(invalid.failed).toBe(1);
+    expect(received).toEqual([{ value: "accepted" }]);
+    expect(signals).toHaveLength(1);
+    expect(signals[0]).toBeInstanceOf(AbortSignal);
+    expect(db.get<{ status: string }>("SELECT status FROM background_jobs WHERE id = $id", { id: validId })?.status)
+      .toBe("SUCCEEDED");
+    expect(db.get<{ status: string; last_error: string }>("SELECT status, last_error FROM background_jobs WHERE id = $id", { id: invalidId }))
+      .toMatchObject({ status: "FAILED", last_error: "JOB_PAYLOAD_INVALID" });
+  });
+
+  it("rejects malformed JSON payload without invoking a handler", async () => {
+    db = await setupDb();
+    let called = false;
+    const registry = new BackgroundJobRegistry();
+    registry.register("typedTask", identityPayloadSchema, async () => { called = true; });
+    const id = enqueueJob(db, { type: "typedTask", payload: {} });
+    db.run("UPDATE background_jobs SET payload_json = $payload WHERE id = $id", { id, payload: "{" });
+
+    const result = await new JobRunner(db, registry).runOnce(new Date());
+
+    expect(result.failed).toBe(1);
+    expect(called).toBe(false);
+    expect(db.get<{ status: string; last_error: string; lease_owner: string | null }>(
+      "SELECT status, last_error, lease_owner FROM background_jobs WHERE id = $id", { id },
+    )).toMatchObject({ status: "FAILED", last_error: "JOB_PAYLOAD_INVALID", lease_owner: null });
+  });
+
+  it("does not persist handler error details", async () => {
+    db = await setupDb();
+    const registry = new BackgroundJobRegistry();
+    registry.register("secretFailure", identityPayloadSchema, async () => {
+      throw new Error("C:/private/app.sqlite SELECT api_token='sk-live-sensitive-value'");
+    });
+    const id = enqueueJob(db, { type: "secretFailure", payload: {}, maxAttempts: 1 });
+
+    const result = await new JobRunner(db, registry).runOnce(new Date());
+
+    expect(result.failed).toBe(1);
+    expect(db.get<{ last_error: string }>("SELECT last_error FROM background_jobs WHERE id = $id", { id }))
+      .toEqual({ last_error: "JOB_HANDLER_FAILED" });
   });
 
   it("no handler for job type marks job as FAILED", async () => {
@@ -249,7 +397,7 @@ describe("background job runner", () => {
     const executedOrder: string[] = [];
 
     const registry = new BackgroundJobRegistry();
-    registry.register("testTask", async (job) => {
+    registry.register("testTask", identityPayloadSchema, async (_payload, _context, job) => {
       executedOrder.push(job.id);
     });
 
@@ -282,7 +430,7 @@ describe("background job runner", () => {
     db = await setupDb();
 
     const registry = new BackgroundJobRegistry();
-    registry.register("testTask", async () => {
+    registry.register("testTask", identityPayloadSchema, async () => {
       // успех
     });
 

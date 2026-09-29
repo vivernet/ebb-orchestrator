@@ -15,6 +15,7 @@ const migrations: Migration[] = readdirSync(migrationDir).filter((file) => file.
   if (!match) throw new Error(`Invalid migration filename: ${file}`);
   return { version: Number(match[1]), name: match[2]!, sql: readFileSync(join(migrationDir, file), "utf8") };
 });
+const identityPayloadSchema = { parse: (value: unknown) => value };
 
 describe("BackgroundJobRegistry", () => {
   let registry: BackgroundJobRegistry;
@@ -24,28 +25,28 @@ describe("BackgroundJobRegistry", () => {
   });
 
   it("registers a handler successfully", () => {
-    const handler = async (_job: { id: string; type: string }) => {};
-    registry.register("test-job", handler);
+    const handler = async (_payload: unknown) => {};
+    registry.register("test-job", identityPayloadSchema, handler);
     expect(registry.hasHandler("test-job")).toBe(true);
   });
 
   it("throws when registering duplicate handler", () => {
-    const handler = async (_job: { id: string; type: string }) => {};
-    registry.register("test-job", handler);
-    expect(() => registry.register("test-job", handler)).toThrow("already registered");
+    const handler = async (_payload: unknown) => {};
+    registry.register("test-job", identityPayloadSchema, handler);
+    expect(() => registry.register("test-job", identityPayloadSchema, handler)).toThrow("already registered");
   });
 
   it("unregisters a handler", () => {
-    const handler = async (_job: { id: string; type: string }) => {};
-    registry.register("test-job", handler);
+    const handler = async (_payload: unknown) => {};
+    registry.register("test-job", identityPayloadSchema, handler);
     registry.unregister("test-job");
     expect(registry.hasHandler("test-job")).toBe(false);
   });
 
   it("gets handler by type", () => {
-    const handler = async (_job: { id: string; type: string }) => {};
-    registry.register("test-job", handler);
-    expect(registry.getHandler("test-job")).toBe(handler);
+    const handler = async (_payload: unknown) => {};
+    registry.register("test-job", identityPayloadSchema, handler);
+    expect(registry.getHandler("test-job")).toBeDefined();
   });
 
   it("returns undefined for unregistered handler", () => {
@@ -53,14 +54,14 @@ describe("BackgroundJobRegistry", () => {
   });
 
   it("returns all registered types", () => {
-    registry.register("job-1", async (_job: { id: string; type: string }) => {});
-    registry.register("job-2", async (_job: { id: string; type: string }) => {});
+    registry.register("job-1", identityPayloadSchema, async (_payload: unknown) => {});
+    registry.register("job-2", identityPayloadSchema, async (_payload: unknown) => {});
     expect(registry.getRegisteredTypes()).toEqual(["job-1", "job-2"]);
   });
 
   it("clears all handlers", () => {
-    registry.register("job-1", async (_job: { id: string; type: string }) => {});
-    registry.register("job-2", async (_job: { id: string; type: string }) => {});
+    registry.register("job-1", identityPayloadSchema, async (_payload: unknown) => {});
+    registry.register("job-2", identityPayloadSchema, async (_payload: unknown) => {});
     registry.clear();
     expect(registry.getRegisteredTypes()).toHaveLength(0);
   });
@@ -110,15 +111,15 @@ describe("JobRunner", () => {
         { id: job.id }
       );
       expect(updated!.status).toBe("FAILED");
-      expect(updated!.last_error).toContain("No handler registered");
+      expect(updated!.last_error).toBe("JOB_TYPE_UNREGISTERED");
     });
   });
 
   it("executes registered handler successfully", () => {
-    const handler = async (_job: { id: string; type: string }) => {
+    const handler = async (_payload: unknown) => {
       // Simulate successful work
     };
-    registry.register("success-job", handler);
+    registry.register("success-job", identityPayloadSchema, handler);
 
     const job = {
       id: randomUUID(),

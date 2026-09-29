@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { RunCapability } from '../run-capability.js';
 import { ToolRegistry, type SchemaDefinition, type ToolDefinition } from './tool-registry.js';
 import type { CompletionStore } from './submit-result-tool.js';
@@ -52,10 +53,11 @@ interface PublicError {
  * Maps internal exceptions to stable public JSON-RPC error responses.
  * Logs correlation-safe diagnostics server-side without exposing secrets or internals.
  */
-const mapPublicError = (error: unknown, runId: string): PublicError => {
-  // Log correlation-safe diagnostic server-side (never expose in response)
+const mapPublicError = (error: unknown, runId: string, correlationId = runId): PublicError => {
+  // Логирует только generated identifiers и класс ошибки; message/cause могут содержать секреты.
   const safeMsg = error instanceof Error ? error.message : String(error);
-  console.error(`[MCP ${runId}] Internal error: ${safeMsg}`);
+  const errorKind = error instanceof Error ? 'error' : 'non_error';
+  console.error(`[MCP ${runId}] Internal error: correlationId=${correlationId}; error_kind=${errorKind}`);
 
   if (error instanceof Error) {
     // Map known internal error codes to public equivalents
@@ -249,6 +251,7 @@ export class McpServer {
         (!requestValue.params || typeof requestValue.params !== 'object' || Array.isArray(requestValue.params))) {
       return respond(errorResponse(id ?? null, -32602, 'Invalid params'));
     }
+    const correlationId = randomUUID();
     try {
       switch (requestValue.method) {
         case 'tools/list':
@@ -284,8 +287,11 @@ export class McpServer {
           return respond(errorResponse(id ?? null, -32601, `Method not found: ${requestValue.method}`));
       }
     } catch (error) {
-    const publicErr = mapPublicError(error, this.runId);
-    return respond(errorResponse(id ?? null, -32603, publicErr.message));
+    const publicErr = mapPublicError(error, this.runId, correlationId);
+    return respond(errorResponse(id ?? null, -32603, publicErr.message, {
+      code: publicErr.code,
+      correlationId,
+    }));
     }
   }
 }

@@ -3,8 +3,8 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { Database } from "../database/database.js";
-import type { EnqueueJobInput } from "./job-types.js";
+import type { Database, DatabaseTx } from "../database/database.js";
+import { BACKOFF_SCHEDULE, type BackgroundJobRow, type EnqueueJobInput } from "./job-types.js";
 
 /**
  * Вставляет новую фоновую job.
@@ -55,4 +55,42 @@ export function enqueueJob(db: Database, input: EnqueueJobInput): string {
   );
 
   return id;
+}
+
+/**
+ * Учитывает истёкшие leases как неуспешные попытки и применяет bounded backoff.
+ * Вызывается внутри startup или claim transaction; сверх max_attempts задача уходит в DEAD_LETTER.
+ */
+export function recoverExpiredJobs(tx: DatabaseTx, now: Date): number {
+  const nowIso = now.toISOString();
+  const expired = tx.all<BackgroundJobRow>(
+    `SELECT * FROM background_jobs
+      WHERE status = 'RUNNING' AND lease_expires_at < $now`,
+    { now: nowIso },
+  );
+
+  for (const job of expired) {
+    const attempts = job.attempts + 1;
+    const exhausted = attempts >= job.max_attempts;
+    const baseDelaySeconds = BACKOFF_SCHEDULE[Math.min(attempts - 1, BACKOFF_SCHEDULE.length - 1)]!;
+    const jitterMs = (Math.random() * 0.2 - 0.1) * baseDelaySeconds * 1_000;
+    const retryAfter = new Date(now.getTime() + baseDelaySeconds * 1_000 + jitterMs).toISOString();
+    tx.run(
+      `UPDATE background_jobs
+          SET status = $status, attempts = $attempts, last_error = $error,
+              run_after = $run_after, lease_owner = NULL, lease_expires_at = NULL,
+              updated_at = $updated_at
+        WHERE id = $id AND status = 'RUNNING' AND lease_expires_at < $now`,
+      {
+        id: job.id,
+        status: exhausted ? "DEAD_LETTER" : "RETRY_WAIT",
+        attempts,
+        error: "JOB_LEASE_EXPIRED",
+        run_after: retryAfter,
+        updated_at: nowIso,
+        now: nowIso,
+      },
+    );
+  }
+  return expired.length;
 }

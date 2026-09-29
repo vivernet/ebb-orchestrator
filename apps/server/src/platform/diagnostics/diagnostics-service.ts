@@ -4,6 +4,13 @@ import { SecretRedactor } from '../security/secret-redactor.js';
 export interface DiagnosticsOptions { appVersion: string; schemaVersion: number; redactor?: SecretRedactor; recentErrors?: string[]; }
 export interface DiagnosticsSnapshot { appVersion: string; schemaVersion: number; migrationHistory: unknown[]; workerHealth: unknown[]; pendingOutbox: number; deadLetter: number; staleLocks: number; recentErrors: string[]; }
 
+const SAFE_JOB_ERRORS = new Set([
+  'JOB_TYPE_UNREGISTERED',
+  'JOB_PAYLOAD_INVALID',
+  'JOB_HANDLER_FAILED',
+  'JOB_LEASE_EXPIRED',
+]);
+
 /** Формирует безопасный для JSON operational snapshot с точной redaction значений. */
 export class DiagnosticsService {
   constructor(private readonly db: Database, private readonly options: DiagnosticsOptions) {}
@@ -15,7 +22,13 @@ export class DiagnosticsService {
       appVersion: this.options.appVersion,
       schemaVersion: this.options.schemaVersion,
       migrationHistory: rows('SELECT version, name, applied_at FROM schema_migrations ORDER BY version'),
-      workerHealth: rows('SELECT id, type, status, attempts, max_attempts, lease_owner, lease_expires_at, last_error, updated_at FROM background_jobs ORDER BY updated_at DESC LIMIT 100'),
+      workerHealth: rows<{ last_error: string | null }>('SELECT id, type, status, attempts, max_attempts, lease_owner, lease_expires_at, last_error, updated_at FROM background_jobs ORDER BY updated_at DESC LIMIT 100')
+        .map((job) => ({
+          ...job,
+          last_error: job.last_error === null || SAFE_JOB_ERRORS.has(job.last_error)
+            ? job.last_error
+            : 'JOB_ERROR_DETAILS_REDACTED',
+        })),
       pendingOutbox: count("SELECT COUNT(*) as count FROM outbox_events WHERE processed_at IS NULL AND dead_lettered_at IS NULL"),
       deadLetter: count("SELECT COUNT(*) as count FROM outbox_events WHERE dead_lettered_at IS NOT NULL"),
       staleLocks: count('SELECT COUNT(*) as count FROM scheduler_resource_locks'),
