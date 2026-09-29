@@ -2,6 +2,7 @@ import type { Database } from '../../platform/database/database.js';
 import { realpathSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { RunCapability, SUPPORTED_TOOL_IDS, type RoleName, type ToolId } from './run-capability.js';
+import { validateCommandPolicies } from './command-policy.js';
 
 const roles = new Set<RoleName>(['developer', 'reviewer', 'qa', 'integration', 'coordinator', 'architect']);
 const tools = new Set<string>(SUPPORTED_TOOL_IDS);
@@ -11,11 +12,17 @@ function isProjectConfig(value: unknown): value is NonNullable<import('./project
   const commands = (value as { commands?: unknown }).commands;
   if (!commands || typeof commands !== 'object' || Array.isArray(commands)) return false;
   const entries = Object.values(commands as Record<string, unknown>);
-  return entries.every((entry) => {
+  const validCommands = entries.every((entry) => {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false;
     const command = entry as { executable?: unknown; args?: unknown };
     return typeof command.executable === 'string' && Array.isArray(command.args) && command.args.every((arg) => typeof arg === 'string');
   });
+  if (!validCommands) return false;
+  const commandPolicies = (value as { commandPolicies?: unknown }).commandPolicies;
+  return commandPolicies === undefined || validateCommandPolicies(
+    (value as { workspace?: string }).workspace ?? '',
+    commandPolicies,
+  );
 }
 
 function canonicalExistingPath(value: string): string | undefined {
@@ -110,6 +117,9 @@ export function loadValidatedCapability(db: Database, capabilityRef: string): Ru
     throw new Error('capability does not match authoritative agent run');
   }
   assertManagedWorkspaceBinding(db, row, workspace);
-  if (projectConfig !== undefined && !isProjectConfig(projectConfig)) throw new Error('malformed project configuration');
-  return new RunCapability({ id: capabilityRef, capabilityRef, runId, role: role.toLowerCase() as RoleName, workspace, allowedTools: allowedTools as ToolId[], ...(projectConfig ? { projectConfig } : {}) }, validate);
+  const validatedProjectConfig = projectConfig === undefined
+    ? undefined
+    : { ...(projectConfig as Record<string, unknown>), workspace };
+  if (validatedProjectConfig !== undefined && !isProjectConfig(validatedProjectConfig)) throw new Error('malformed project configuration');
+  return new RunCapability({ id: capabilityRef, capabilityRef, runId, role: role.toLowerCase() as RoleName, workspace, allowedTools: allowedTools as ToolId[], ...(validatedProjectConfig ? { projectConfig: validatedProjectConfig } : {}) }, validate);
 }

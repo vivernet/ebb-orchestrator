@@ -170,14 +170,37 @@ describe('MCP Server', () => {
       const server = new McpServer(new RunCapability({
         id: 'command-exec', role: 'developer', workspace: workspaceDir,
         allowedTools: ['command.exec'],
+        projectConfig: { commands: {}, commandPolicies: [{
+          id: 'node-version', executable: process.execPath,
+          args: [{ type: 'string', enum: ['--version'] }],
+          allowedRoots: [workspaceDir], timeout: 5_000, maxOutput: 1_024,
+        }] },
       }));
 
       const result = await server.callTool('command.exec', {
-        executable: process.execPath,
-        args: ['-e', 'process.stdout.write("command")'],
+        policyId: 'node-version',
+        args: ['--version'],
       });
       expect(result.success).toBe(true);
-      expect(result.result).toMatchObject({ stdout: 'command', exitCode: 0 });
+      expect(result.result).toMatchObject({ stdout: expect.stringMatching(/^v\d/), exitCode: 0 });
+
+      const substituted = await server.callTool('command.exec', {
+        policyId: 'node-version', executable: process.execPath, args: ['--version'],
+      });
+      expect(substituted).toMatchObject({ success: false, error: expect.stringContaining('unexpected') });
+      const unknownPolicy = await server.callTool('command.exec', { policyId: 'unregistered', args: ['--version'] });
+      expect(unknownPolicy).toMatchObject({ success: false });
+    });
+
+    it('does not expose command.exec when the capability declares no command policies', async () => {
+      const { McpServer } = await import('../../../../src/modules/execution/mcp/mcp-server.js');
+      const { RunCapability } = await import('../../../../src/modules/execution/run-capability.js');
+      const server = new McpServer(new RunCapability({
+        id: 'command-exec-unconfigured', role: 'developer', workspace: workspaceDir,
+        allowedTools: ['command.exec'],
+      }));
+
+      expect(server.getAvailableTools().some((tool) => tool.name === 'command.exec')).toBe(false);
     });
 
     it('should instantiate MCP server for Reviewer capability and filter tools correctly', async () => {

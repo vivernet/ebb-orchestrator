@@ -97,6 +97,13 @@ const validateToolArguments = (
         : typeof candidate === definition.type;
     if (!validType) return `${path} must be ${definition.type === 'array' || definition.type === 'object' ? 'an' : 'a'} ${definition.type}`;
 
+    if (definition.enum && (typeof candidate !== 'string' || !definition.enum.includes(candidate))) {
+      return `${path} is not an allowed value`;
+    }
+    if (definition.type === 'array' && Array.isArray(candidate)) {
+      if (definition.minItems !== undefined && candidate.length < definition.minItems) return `${path} has too few items`;
+      if (definition.maxItems !== undefined && candidate.length > definition.maxItems) return `${path} has too many items`;
+    }
     if (definition.type === 'array' && definition.items && Array.isArray(candidate)) {
       for (const [index, item] of candidate.entries()) {
         const error = validateValue(definition.items, item, `${path}[${index}]`);

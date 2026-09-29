@@ -11,6 +11,9 @@ export interface SchemaDefinition {
   items?: SchemaDefinition;
   required?: string[];
   additionalProperties?: boolean;
+  enum?: string[];
+  minItems?: number;
+  maxItems?: number;
 }
 
 export interface ToolDefinition {
@@ -170,30 +173,29 @@ export class ToolRegistry {
       });
     }
 
-    this.toolDefinitions.set('command.exec', {
-      name: 'command.exec',
-      description: 'Run an explicit executable without shell interpretation',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          executable: { type: 'string' },
-          args: { type: 'array', items: { type: 'string' } },
-          timeout: { type: 'number' },
-          maxOutput: { type: 'number' },
+    const commandPolicies = capability.getActionGateway().getCommandPolicies();
+    if (commandPolicies.length > 0) {
+      this.toolDefinitions.set('command.exec', {
+        name: 'command.exec',
+        description: 'Run a declared command policy with validated arguments',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            policyId: { type: 'string', enum: commandPolicies.map((policy) => policy.id) },
+            args: { type: 'array', items: { type: 'string' } },
+          },
+          required: ['policyId', 'args'],
+          additionalProperties: false,
         },
-        required: ['executable', 'args'],
-        additionalProperties: false,
-      },
-      handler: async (args) => {
-        const result = await capability.getActionGateway().exec({
-          executable: args.executable as string,
-          args: args.args as string[],
-          ...(typeof args.timeout === 'number' ? { timeout: args.timeout } : {}),
-          ...(typeof args.maxOutput === 'number' ? { maxOutput: args.maxOutput } : {}),
-        });
-        return { success: result.success, result, ...(result.success ? {} : { error: result.stderr }) };
-      },
-    });
+        handler: async (args) => {
+          const result = await capability.getActionGateway().exec({
+            policyId: args.policyId as string,
+            args: args.args as unknown[],
+          });
+          return { success: result.success, result, ...(result.success ? {} : { error: result.stderr }) };
+        },
+      });
+    }
 
     // Регистрирует submit_result.
     const submitTool = new SubmitResultTool(capability, completion);

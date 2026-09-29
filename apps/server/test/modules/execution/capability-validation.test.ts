@@ -39,6 +39,19 @@ describe('issued capability validation', () => {
     expect(loadValidatedCapability(db, 'cap-1').runId).toBe('run-1');
     db.close();
   });
+  it('rejects command policies whose allowed roots escape the managed workspace', () => {
+    const outside = mkdtempSync(join(tmpdir(), 'capability-command-root-'));
+    const db = fixture('STARTED', JSON.stringify({
+      runId: 'run-1', capabilityRef: 'cap-1', role: 'reviewer', workspace: '/tmp/work',
+      allowedTools: ['command.exec'],
+      projectConfig: { commands: {}, commandPolicies: [{
+        id: 'bad-root', executable: process.execPath, args: [], allowedRoots: [outside], timeout: 5_000, maxOutput: 1_024,
+      }] },
+    }));
+
+    expect(() => loadValidatedCapability(db, 'cap-1')).toThrow(/malformed project configuration/);
+    db.close();
+  });
   it('rejects a workspace that does not match the persisted task worktree', () => {
     const workspace = mkdtempSync(join(tmpdir(), 'foreign-workspace-'));
     const db = fixture('STARTED', JSON.stringify({ runId: 'run-1', capabilityRef: 'cap-1', role: 'reviewer', workspace, allowedTools: ['submit_result'] }));

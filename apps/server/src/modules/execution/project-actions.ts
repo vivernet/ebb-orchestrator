@@ -4,10 +4,13 @@
  */
 import { CommandTools } from './command-tools.js';
 import type { ExecOptions } from './command-tools.js';
+import type { CommandPolicyDefinition } from './command-policy.js';
 
 export type ProjectAction = 'test' | 'lint' | 'typecheck' | 'build';
 
 export type ProjectConfig = {
+  /** Команды, которые command.exec может вызвать по ID и фиксированной схеме аргументов. */
+  commandPolicies?: CommandPolicyDefinition[];
   /** команды to run для каждого действие тип */
   commands: {
     test?: ExecOptions;

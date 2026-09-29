@@ -58,6 +58,62 @@ describe('ActionGateway', () => {
     });
   });
 
+  it('rejects a command invocation when no command policy is declared', async () => {
+    const commandGateway = new ActionGateway(resolver, workspaceDir, ['command.exec']);
+
+    await expect(commandGateway.exec({ policyId: 'node-version', args: ['--version'] }))
+      .resolves.toMatchObject({ success: false, stderr: 'command.exec has no declared policies' });
+  });
+
+  it('runs only the exact invocation declared by a command policy', async () => {
+    const commandGateway = new ActionGateway(resolver, workspaceDir, ['command.exec'], {
+      commands: {},
+      commandPolicies: [{
+        id: 'node-version', executable: process.execPath,
+        args: [{ type: 'string', enum: ['--version'] }],
+        allowedRoots: [workspaceDir], timeout: 5_000, maxOutput: 1_024,
+      }],
+    });
+
+    await expect(commandGateway.exec({ policyId: 'node-version', args: ['--version'] }))
+      .resolves.toMatchObject({ success: true, stdout: expect.stringMatching(/^v\d/) });
+    await expect(commandGateway.exec({ policyId: 'node-version', args: ['--eval'] }))
+      .resolves.toMatchObject({ success: false, stderr: expect.stringContaining('enum') });
+  });
+
+  it('enforces command.exec capability before applying a declared policy', async () => {
+    const commandGateway = new ActionGateway(resolver, workspaceDir, [], {
+      commands: {},
+      commandPolicies: [{
+        id: 'node-version', executable: process.execPath,
+        args: [{ type: 'string', enum: ['--version'] }],
+        allowedRoots: [workspaceDir], timeout: 5_000, maxOutput: 1_024,
+      }],
+    });
+
+    await expect(commandGateway.exec({ policyId: 'node-version', args: ['--version'] }))
+      .resolves.toMatchObject({ success: false, stderr: expect.stringContaining('Permission denied') });
+  });
+
+  it('enforces policy timeout and output caps on the spawned process', async () => {
+    const timeoutScript = path.join(workspaceDir, 'timeout.js');
+    const outputScript = path.join(workspaceDir, 'output.js');
+    fs.writeFileSync(timeoutScript, 'setTimeout(() => {}, 1000);');
+    fs.writeFileSync(outputScript, 'process.stdout.write("x".repeat(10000));');
+    const commandGateway = new ActionGateway(resolver, workspaceDir, ['command.exec'], {
+      commands: {},
+      commandPolicies: [
+        { id: 'timeout', executable: process.execPath, args: [{ type: 'workspace-path' }], allowedRoots: [workspaceDir], timeout: 20, maxOutput: 1_024 },
+        { id: 'output', executable: process.execPath, args: [{ type: 'workspace-path' }], allowedRoots: [workspaceDir], timeout: 5_000, maxOutput: 64 },
+      ],
+    });
+
+    await expect(commandGateway.exec({ policyId: 'timeout', args: ['timeout.js'] }))
+      .resolves.toMatchObject({ success: false, stderr: expect.stringContaining('timed out') });
+    await expect(commandGateway.exec({ policyId: 'output', args: ['output.js'] }))
+      .resolves.toMatchObject({ success: false, stderr: expect.stringContaining('output buffer exceeded') });
+  });
+
   describe('workspace.search', () => {
     it('should search within workspace only', async () => {
       const file = path.join(workspaceDir, 'test.txt');

@@ -193,9 +193,9 @@ evidence:
 
 **Interfaces:** `CommandPolicy` должен явно содержать `id`, `executable`, аргументную схему, allowed root(s), timeout и stdout/stderr limits; executor принимает только validated policy invocation и возвращает bounded result либо typed rejection. Абсолютные пути вне allowed roots, shell metacharacters и неразрешённые executable запрещаются.
 
-- [ ] Написать RED tests для unknown command, wrong arg type, executable substitution, `../` escape, symlink/absolute path escape, timeout, oversized output и missing capability.
-- [ ] Реализовать registry/schema validation и containment check через canonical path comparison; не выполнять пользовательскую строку через shell.
-- [ ] Проверить focused security suite и отрицательные cases; ожидание: каждый unsafe invocation отклонён до spawn.
+- [x] RED tests зафиксировали обход через произвольный executable без policy; после исправления добавлены проверки unknown command, wrong args, executable substitution, `../`/absolute/symlink escape, timeout, oversized output и missing capability.
+- [x] Реализованы registry/schema validation и containment check по canonical path; пользовательская команда проходит как typed argv с `shell: false`.
+- [x] Проверены focused security suites (69 tests), полный `pnpm test` (server 881 passed / 2 skipped; web 200; contracts 4; scripts 19), `pnpm lint`, `pnpm typecheck`, `pnpm build`; независимый security review — PASS без findings.
 
 **Зависит от:** Task 5 не обязателен для unit tests, но до production rollout требуется lifecycle baseline. **Разблокирует:** safe action execution.
 

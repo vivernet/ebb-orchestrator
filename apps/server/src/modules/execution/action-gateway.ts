@@ -6,7 +6,8 @@ import { PathResolver } from '../../platform/security/path-resolver.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { ProjectActions, type ProjectAction, type ProjectConfig, type ActionResult } from './project-actions.js';
-import { CommandTools, type ExecOptions, type ExecResult } from './command-tools.js';
+import { CommandTools, type ExecResult } from './command-tools.js';
+import { CommandPolicy, type CommandInvocation } from './command-policy.js';
 import { PermissionEngine } from '../permissions/permission-engine.js';
 import { ActionId, PermissionDecision, type EvaluationInput } from '../permissions/permission-types.js';
 
@@ -26,6 +27,7 @@ const MAX_SEARCH_PATTERN_LENGTH = 256;
  */
 export class ActionGateway {
   private readonly permissionEngine: PermissionEngine;
+  private readonly commandPolicy: CommandPolicy | null;
 
   constructor(
     private resolver: PathResolver,
@@ -36,6 +38,9 @@ export class ActionGateway {
   ) {
     this.permissionEngine = new PermissionEngine();
     this.projectActions = projectConfig ? new ProjectActions(projectConfig) : null;
+    this.commandPolicy = projectConfig?.commandPolicies
+      ? new CommandPolicy(workspace, projectConfig.commandPolicies)
+      : null;
   }
 
   private readonly projectActions: ProjectActions | null;
@@ -96,21 +101,20 @@ export class ActionGateway {
 
   /**
    * Выполняет явный executable с аргументами без shell-интерпретации.
-   * @param options Команда и безопасные параметры запуска.
+   * @param invocation ID объявленной команды и её аргументы.
    * @returns Результат процесса.
    */
-  async exec(options: ExecOptions): Promise<ExecResult> {
+  async exec(invocation: CommandInvocation): Promise<ExecResult> {
     if (!this.checkPermission(ActionId.CommandExec)) {
       return { success: false, stdout: '', stderr: 'Permission denied: command.exec action not allowed', exitCode: null };
     }
-    if (!options.executable || !Array.isArray(options.args) || options.args.some((arg) => typeof arg !== 'string')) {
-      return { success: false, stdout: '', stderr: 'invalid command.exec arguments', exitCode: null };
-    }
-    if (this.commandTools.isShellExecutable(options.executable)) {
-      return { success: false, stdout: '', stderr: 'command.shell is not available through command.exec', exitCode: null };
-    }
-    return this.commandTools.exec(options, this.workspace);
+    if (!this.commandPolicy) return { success: false, stdout: '', stderr: 'command.exec has no declared policies', exitCode: null };
+    const resolved = this.commandPolicy.resolve(invocation);
+    if (!resolved.valid) return { success: false, stdout: '', stderr: resolved.error, exitCode: null };
+    return this.commandTools.exec(resolved.command, resolved.command.cwd);
   }
+
+  getCommandPolicies() { return this.commandPolicy?.definitions() ?? []; }
 
   /**
    * Читает файл из workspace.
