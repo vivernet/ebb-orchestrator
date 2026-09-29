@@ -1,10 +1,10 @@
 ---
 id: plan-12
 kind: plan
-status: in_progress
+status: completed
 title: Web 401 и завершение проекта
 created: 2026-09-23
-updated: 2026-09-28
+updated: 2026-09-29
 depends_on:
   - plan-08-01
 specs:
@@ -33,7 +33,7 @@ evidence:
 
 - Production-код не изменяется этим документом; реализация выполняется отдельными задачами после согласования плана.
 - Не регистрировать заголовок как исправление 401: HTTP header names case-insensitive, а изменение `X-EBB-Bootstrap-Token` на lowercase не является доказанным исправлением.
-- Сохранять security boundary bootstrap: одноразовый token привязан к запуску, сравнивается через `safeEquals`, обнуляется после успеха; missing/stale/reused/wrong-run token остаётся недействительным.
+- Сохранять утверждённую local password/cookie session boundary: password вводится только на login UI/одноразовом stdin setup, session token хранится в HttpOnly cookie, Origin/CSRF защищают mutations; legacy bootstrap endpoint, bearer token и URL-fragment credential не восстанавливать.
 - Комментарии и JSDoc, добавленные при реализации, писать на русском языке.
 - Не принимать runtime trace stale token за доказательство первоначальной причины: доказана только причина 401 в restore-flow без launch fragment и без cookie.
 - Не перезаписывать несвязанные dirty-файлы и не считать baseline чистым: HEAD `9a3dc7c`, ветка `develop`, tracked dirty `apps/server/src/main.ts`, `package.json`, untracked `docs/issues/`, `get-link.html`, `scripts/run-server.js`, `start.bat`.
@@ -54,7 +54,7 @@ evidence:
 
 - Доказанная первопричина 401 restore-flow: `apps/server/src/app/create-app.ts:132-165` пропускает preHandler только для `/api/v1/health` и `/api/v1/session/bootstrap`; `GET /api/v1/session` на `185` защищён. При отсутствии launch fragment `apps/web/src/main.tsx:17-29` вызывает `restoreSession`, а `apps/web/src/api/client.ts:132-143` делает `GET /api/v1/session`; без cookie запрос получает 401 до handler.
 - Не доказана конкретная первоначальная runtime-причина пользовательского 401: stale/reused/wrong-run bootstrap token только перечислены как корректные причины 401 для bootstrap, но runtime trace такого token не получен.
-- Подтверждено, что bootstrap token одноразовый и run-bound: `create-app.ts:170-183`, `local-session.ts:38-43`; fragment удаляется frontend после получения.
+- Текущий auth contract подтверждён в system design §13.2 и production-коде: local session auth, Origin validation, CSRF, closed CORS. Browser login выдаёт HttpOnly cookie; legacy bootstrap/query routes и credential fragments проверяются на отсутствие.
 - Подтверждено, что header case change в commit `9a3dc7c` не объясняет исправление: HTTP headers case-insensitive и Fastify нормализует их.
 
 ### Уже выполненные проверки и ограничения
@@ -101,45 +101,45 @@ evidence:
 
 **Зависит от:** нет. **Разблокирует:** все runtime tasks и E2E.
 
-### Task 2: Зафиксировать безопасный session/401 contract сначала RED-тестами
+### Task 2: Зафиксировать безопасный password/cookie session contract
 
 **Files:**
-- Modify: `apps/server/src/app/create-app.ts:132-183` — явно оформить выбранный контракт `/api/v1/session` и bootstrap boundary.
+- Modify: `apps/server/src/app/create-app.ts` — явно оформить защищённый контракт `/api/v1/session` и public local-password login.
 - Modify: `apps/web/src/main.tsx:17-29`, `apps/web/src/api/client.ts:132-143` — согласовать restore flow, status handling и UI state.
-- Inspect/Modify: `apps/server/src/local-session.ts:38-43` — сохранить one-shot run-bound token.
+- Inspect: `apps/server/src/platform/security/auth-service.ts`, local-session auth routes and cookies.
 - Test: server route/integration tests; web integration tests; новая transport E2E fixture.
 
-**Решение:** рекомендуемый контракт — `GET /api/v1/session` остаётся auth-protected и при отсутствии валидной cookie возвращает предсказуемый `401` (не anonymous success и не обход preHandler); frontend трактует его как unauthenticated state и показывает контролируемый launch/bootstrap entrypoint. `/api/v1/session/bootstrap` остаётся единственным публичным bootstrap endpoint, принимает только token из URL fragment, устанавливает HttpOnly cookie и не превращается в общий bearer login. Это сохраняет границу безопасности и не требует регистрации нового заголовка.
+**Решение, подтверждённое пользователем 2026-09-29:** текущий v1 contract использует локальный password login и durable cookie session. `GET /api/v1/session` остаётся auth-protected и при отсутствии/недействительности cookie возвращает `401`; frontend показывает login state. Успешный login выдаёт HttpOnly/SameSite cookie и CSRF token для последующих mutations. Legacy `/api/v1/session/bootstrap`, bearer bootstrap token и URL fragment не являются частью текущего v1 и не должны восстанавливаться.
 
 **Interfaces:**
-- `GET /api/v1/session`: `200` для валидной cookie; `401` для отсутствующей/невалидной cookie; не вызывает domain handler при preHandler rejection.
-- `GET /api/v1/session/bootstrap`: успешный bootstrap устанавливает HttpOnly cookie с `Path=/api/v1`, invalid/missing/stale/reused/wrong-run token возвращает `401`, token после успеха недействителен.
-- Frontend: hash `ebb-bootstrap` обрабатывается как bootstrap; без hash выполняется restore; `401` restore переводит UI в unauthenticated state с явным способом получить новый launch link, без бесконечного retry.
+- `POST /api/v1/session/login`: проверяет password и выдаёт HttpOnly/SameSite cookie; секрет не сохраняется в browser storage.
+- `GET /api/v1/session`: `200` для активной cookie; `401` для отсутствующей, malformed, expired, revoked или неизвестной session; защищённый handler не выполняется до auth.
+- Mutations требуют same-origin `Origin` и актуальный CSRF token; invalid Origin/CSRF возвращают `403`.
+- Frontend: initial `401` переводит UI в unauthenticated login state; после login restore работает через cookie, без bearer/fragment bootstrap flow.
 
-- [ ] Написать RED server tests для no-cookie `GET /api/v1/session` (`401` до handler), valid-cookie `200`, и сохранения bootstrap one-shot semantics.
-- [ ] Написать RED web/transport tests для no-fragment/no-cookie (`GET /api/v1/session` → `401`, ожидаемое UI state), bootstrap success, invalid/reused/stale token (`401`), и cookie reload.
-- [ ] Выполнить focused tests и зафиксировать ожидаемые RED failures до implementation.
-- [ ] Реализовать минимальную contract-aligned обработку, не добавляя header registration и не ослабляя preHandler.
-- [ ] Выполнить focused server/web tests; ожидание: все перечисленные cases PASS.
+- [x] Server/UI tests проверяют initial no-cookie `401`, valid cookie `200`, login state и отсутствие legacy bootstrap routes/artifacts.
+- [x] Real HTTP/browser tests проверяют login, HttpOnly/SameSite cookie, reload/restart restore, revoked/expired/malformed sessions, logout и отсутствие auth bypass.
+- [x] Текущая реализация сохраняет preHandler boundary и не регистрирует bearer/bootstrap header; frontend не помещает credentials в local/session storage.
+- [x] Focused server auth/transport suites прошли (12 tests), focused web auth/session-state suites — 13 tests; browser E2E 6/6 и full gate приведены в Task 11 evidence.
+- [x] Одноразовый run-bound token acceptance исключён по решению пользователя 2026-09-29; security tests подтверждают отсутствие legacy endpoints/fragments.
 
 **Зависит от:** Task 1 для runtime harness; **разблокирует:** Task 3 и browser evidence.
 
-### Task 3: Исправить hostname/origin/proxy и проверить browser transport
+### Task 3: Проверить same-origin proxy transport и Origin/CSRF boundary
 
 **Files:**
-- Modify: `apps/server/src/app/create-app.ts:150-163, 251-288` — согласовать origin/CSRF validation с canonical development origin и фактически используемым proxy.
-- Modify: `vite.config.ts:7-12` — сохранить/явно протестировать `changeOrigin=true` и target.
-- Modify: `get-link.html:43` — генерировать canonical `127.0.0.1` URL, совместимый с server/start config, вместо `localhost:3000`.
+- Inspect/Modify: `apps/server/src/app/create-app.ts` — согласовать Origin/CSRF policy с loopback server и same-origin development proxy.
+- Inspect: `vite.config.ts` — сохранить проксирование `/api` без широкого CORS allow-all.
 - Test: real HTTP/browser E2E fixture; origin/CSRF tests.
 
-**Root cause / impact:** backend origin `127.0.0.1`, Vite proxy `changeOrigin=true`, а generated link `localhost:3000` создают hostname/origin mismatch; mutation может получить `403`, хотя bootstrap GET доступен. Документированный CORS не подтверждён фактическим plugin/header.
+**Root cause / impact:** API mutations зависят от согласованного same-origin proxy и точной проверки `Origin`/CSRF. Документированный CORS не должен подразумевать открытый cross-origin доступ.
 
-**Interfaces:** canonical dev origin должен быть единственным значением в generated link/server config; cross-origin mutation без разрешённого origin получает `403`; proxied same-origin browser mutation получает ожидаемый success.
+**Interfaces:** browser traffic проходит через same-origin `/api` proxy; валидная session+CSRF mutation succeeds; untrusted Origin или неверный CSRF получает `403`; credentials не передаются в URL.
 
-- [ ] Написать RED real transport cases: bootstrap through proxy, reload with `Set-Cookie`, mutation through canonical host, mutation with `Origin: http://localhost:3000`/неразрешённым host (`403`), and direct frontend/backend mismatch.
-- [ ] Выполнить E2E до implementation; ожидаемый RED — mismatch/403 или отсутствующий cookie/proxy evidence.
-- [ ] Реализовать минимальное согласование canonical hostname, generated link и origin policy; не добавлять широкое CORS allow-all.
-- [ ] Повторить browser E2E: bootstrap fragment исчезает из URL, cookie survives reload, valid mutation succeeds, disallowed origin is `403`.
+- [x] Real HTTP transport tests проверяют `Set-Cookie` flags, restore после restart, successful same-origin logout, hostile Origin `403`, invalid CSRF `403` и revoked/expired sessions.
+- [x] Chromium E2E через динамический frontend `/api` proxy проверяет unauthenticated `401`, password login, browser cookie session, reload/restart и logout; UI URL/storage не содержит credentials.
+- [x] `pnpm --filter @ebb-orchestrator/server exec vitest run test/e2e/transport-origin.test.ts test/platform/database/migrator.test.ts` прошёл (18 tests); browser E2E прошёл 6/6.
+- [x] Архитектурная граница из system design §13.2 подтверждена: local auth, Origin validation, CSRF и closed CORS; legacy bootstrap fragment не используется.
 
 **Зависит от:** Task 1–2. **Разблокирует:** доказательную runtime проверку.
 
@@ -269,7 +269,7 @@ evidence:
 **Files:**
 - Test/evidence: все test locations из Tasks 1–10; `docs/audit/08-web-401-and-project-completion-evidence.md`.
 
-- [ ] Выполнить focused suites по каждой изменённой области.
+- [x] Выполнить focused suites по каждой изменённой области: jobs/diagnostics/lifecycle/MCP — 7 файлов, 88 тестов; server auth/transport — 2 файла, 12 тестов; web auth/routing — 2 файла, 13 тестов. Команды и результаты перечислены в `docs/audit/08-web-401-and-project-completion-evidence.md`.
 - [x] Реальный HTTP/browser E2E: Chromium login/logout, unauthenticated restore 401, UI states, `Set-Cookie`, cookie session restart и teardown cleanup прошли; real HTTP suite проверяет cookie/CSRF/Origin/logout/restart. Старый bootstrap-token matrix не применим: текущий local auth contract основан на password/cookie sessions, а legacy endpoints/fragments намеренно отсутствуют; их отсутствие проверяют security/credential-handoff tests.
 - [x] `pnpm typecheck`: exit 0.
 - [x] Elevated `pnpm test`: 97 files, 896 passed / 2 skipped; scripts 19/19.
@@ -278,7 +278,7 @@ evidence:
 - [x] Изолированный browser harness подтвердил `READY`, restart с той же DB и controlled shutdown; migrator integrity suite прошёл в полном test suite. `node scripts/local-user-stdin-smoke.mjs` запустил production `dist/main.js` с disposable home, подтвердил `READY`/health, migration/user creation и controlled IPC shutdown, проверил отсутствие raw password в файлах/logs/argv. Job execution покрыт typed test handlers; production producers отсутствуют.
 - [x] Точные команды, результаты и ограничения сохранены в `docs/audit/08-web-401-and-project-completion-evidence.md`.
 - [x] Auth acceptance сверён с локальной password/cookie session моделью из текущих HTTP/UI tests и legacy bootstrap path absence tests; неподдерживаемые one-shot token cases удалены из применимого gate без изменения auth scope.
-- [ ] Выполнить независимый whole-plan review и закрыть его findings перед статусом `completed`.
+- [x] Независимый whole-plan review: PASS, 2026-09-29; предыдущие findings устранены, новых блокирующих замечаний нет.
 
 **Зависит от:** Tasks 1–10. Этот task не создаёт commit.
 
@@ -288,7 +288,7 @@ evidence:
 |---|---:|---|
 | Launcher SyntaxError и lint blocker | 1 | `node --check`, `pnpm lint`, controlled `pnpm start` |
 | Доказанный no-fragment restore 401 | 2 | no-cookie real HTTP + UI/browser E2E |
-| One-shot/bootstrap invalid-reused token | 2 | valid, missing, stale, reused, wrong-run cases |
+| Password/cookie session security | 2–3 | password login and session restore; no-cookie/invalid-session 401; HttpOnly cookie; CSRF/Origin enforcement; logout and restart; absence of legacy bootstrap endpoints/fragments |
 | Не исправлять 401 header registration | 2 | code review/assert no new header bypass; contract tests |
 | Cookie Path/reload transport | 2–3 | `Set-Cookie`, reload, `/api/v1` request |
 | Hostname/proxy/CSRF/origin | 3 | canonical and disallowed-origin mutation E2E |

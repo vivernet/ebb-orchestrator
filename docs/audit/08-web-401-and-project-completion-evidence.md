@@ -21,6 +21,9 @@ date: 2026-09-24
 - Elevated `pnpm test`: 97 test files passed; 896 passed, 2 skipped; scripts: 19/19.
 - Focused Task 8/9 job, diagnostics, lifecycle/composition и MCP suites:
   7 files, 88 tests passed.
+- После user-approved auth criteria reconciliation: focused server auth/HTTP
+  security suites — 2 files, 12 tests passed; focused web auth/session-state
+  suites — 2 files, 13 tests passed.
 - `pnpm --dir apps/web test:e2e`: Chromium 6/6 passed, включая real login/logout,
   cookie restore после backend restart и UI flows. Первичный sandbox-запуск не смог
   завершить frontend через `taskkill` (exit 1); после остановки принадлежащего
@@ -49,11 +52,11 @@ date: 2026-09-24
 ### Current Task 11 verdict
 
 Кодовые quality gates, real HTTP/browser E2E и disposable production-entrypoint
-startup/shutdown smoke прошли. Старые one-shot bootstrap-token cases признаны
-неприменимыми по текущей password/cookie session модели и удалены из gate; отдельный
-пользовательский `pnpm start` не требовался для проверки того же production entrypoint.
-Task 11 ждёт независимый whole-plan review. Остальные планы с отдельными
-незакрытыми обязательствами перечислены в ledger-07.
+startup/shutdown smoke прошли. По решению пользователя от 2026-09-29 Plan12 сохраняет
+текущую password/cookie session модель; старые one-shot bootstrap-token cases заменены
+на применимые login/session/Origin/CSRF проверки в Tasks 2–3. Legacy paths по-прежнему
+проверяются на отсутствие. Task 11 ждёт fresh whole-plan review. Остальные планы с
+отдельными незакрытыми обязательствами перечислены в ledger-07.
 
 > Исторический evidence snapshot на 2026-09-24. Revision, gate outcomes и статусы
 > задач ниже не являются текущими. Сопоставление с нынешним кодом, тестами и

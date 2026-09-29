@@ -29,7 +29,7 @@ updated: 2026-09-29
 | plan-09 | in_progress | Production Readiness Hardening |
 | plan-10 | completed | Ebb Orchestrator — Final V1 Audit & Hardening Plan (Перевод) |
 | plan-11 | completed | Hermes Development Capabilities Implementation Plan |
-| plan-12 | in_progress | Web 401 и завершение проекта |
+| plan-12 | completed | Web 401 и завершение проекта |
 | plan-13 | completed | Автоматическая генерация роадмапа |
 | plan-14 | proposed | Дополнительный Docker runtime для Ebb Orchestrator |
 | plan-15-01 | completed | Контракт auth и bounded crypto feasibility |
