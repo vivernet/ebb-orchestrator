@@ -13,6 +13,7 @@ import { appendOutboxEvent } from "../../src/platform/events/outbox-repository.j
 import { DomainEvent } from "../../src/platform/events/domain-event.js";
 import { RunService } from "../../src/modules/runtime/run-service.js";
 import { FakeAgentRuntime } from "../fakes/fake-agent-runtime.js";
+import { BudgetService } from "../../src/modules/usage/budget-service.js";
 import { GitHubSyncService, SqliteSyncState } from "../../src/modules/github/github-sync-service.js";
 import type { GitHosting, PullRequest } from "../../src/modules/github/git-hosting.js";
 
@@ -73,6 +74,39 @@ describe('v1 production recovery paths', () => {
     expect(db.get<{ status: string; capability_ref: string | null }>(
       'SELECT status, capability_ref FROM agent_runs WHERE id=$id', { id: run.id },
     )).toEqual({ status: 'FAILED', capability_ref: null });
+  });
+
+  it('releases a durable orphaned budget reservation after restart', async () => {
+    db = await openDatabase();
+    const projectId = randomUUID();
+    const now = new Date().toISOString();
+    db.run(
+      `INSERT INTO projects (id, name, display_name, status, created_at, updated_at)
+       VALUES ($id, $name, $display_name, 'ACTIVE', $now, $now)`,
+      { id: projectId, name: 'recovery-budget', display_name: 'Recovery budget', now },
+    );
+    db.run(
+      `INSERT INTO budget_configs (id, scope, scope_id, limit_cost, soft_limit_cost, policy, created_at, updated_at)
+       VALUES ($id, 'project', $scope_id, 10, 8, 'hard', $now, $now)`,
+      { id: randomUUID(), scope_id: projectId, now },
+    );
+    const reserved = new BudgetService(db).reserve({
+      projectId, estimateCost: 3, role: 'developer', model: 'test-model', triggerReason: 'DEVELOPMENT',
+    });
+    expect(reserved.decision).toBe('ALLOW');
+    expect(db.get<{ reserved_cost: number }>(
+      'SELECT reserved_cost FROM budget_configs WHERE scope_id=$id', { id: projectId },
+    )?.reserved_cost).toBe(3);
+    db.close();
+    db = await openDatabase();
+
+    expect(new BudgetService(db).cleanupStaleReservations([])).toEqual({ released: 1 });
+    expect(db.get<{ status: string }>(
+      'SELECT status FROM budget_reservations WHERE id=$id', { id: reserved.reservationId },
+    )?.status).toBe('RELEASED');
+    expect(db.get<{ reserved_cost: number }>(
+      'SELECT reserved_cost FROM budget_configs WHERE scope_id=$id', { id: projectId },
+    )?.reserved_cost).toBe(0);
   });
 
   it('finds the remote PR after local acknowledgement fails and does not create a duplicate', async () => {
