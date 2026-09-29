@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { createSqliteDatabase } from "../../../src/platform/database/sqlite-database.js";
 import { runMigrations } from "../../../src/platform/database/migrator.js";
 import type { Database } from "../../../src/platform/database/database.js";
-import { RunService } from "../../../src/modules/runtime/run-service.js";
+import { RunService, RunTransitionConflictError } from "../../../src/modules/runtime/run-service.js";
 import { FakeAgentRuntime } from "../../fakes/fake-agent-runtime.js";
 import type { RunOutcome } from "../../../src/modules/runtime/run-types.js";
 import { loadTestMigrations } from "../../helpers/migrations.js";
@@ -339,6 +339,83 @@ describe("RunService with FakeAgentRuntime", () => {
       .rejects.toThrow(/Attempt must be a positive integer/);
     await expect(runService.resumeRun(run.id, { sessionId: "session", attempt: -1 }))
       .rejects.toThrow(/Attempt must be a positive integer/);
+  });
+
+  it("rejects non-integer attempts and empty runtime sessions before dispatch", async () => {
+    await setup();
+    const run = await runService.startRun({
+      role: "developer", model: "gpt-4", taskId, epicId,
+      triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
+    });
+
+    await expect(runService.resumeRun(run.id, { sessionId: "session", attempt: 1.5 }))
+      .rejects.toThrow(/Attempt must be a positive integer/);
+    await expect(runService.resumeRun(run.id, { sessionId: "  ", attempt: 1 }))
+      .rejects.toThrow(/session ID/);
+    expect(fakeRuntime.resumeCalls).toEqual([]);
+  });
+
+  it("rejects resume when the stored capability is missing or inconsistent", async () => {
+    await setup();
+    const run = await runService.startRun({
+      role: "developer", model: "gpt-4", taskId, epicId,
+      triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
+    });
+    db!.run("UPDATE agent_runs SET capability_json = NULL WHERE id = $id", { id: run.id });
+
+    await expect(runService.resumeRun(run.id, { sessionId: "session", attempt: 1 }))
+      .rejects.toThrow(/active capability/);
+    expect(fakeRuntime.resumeCalls).toEqual([]);
+  });
+
+  it("rejects resume after a validated result has entered COMPLETING", async () => {
+    await setup();
+    const run = await runService.startRun({
+      role: "developer", model: "gpt-4", taskId, epicId,
+      triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
+    });
+    await runService.completionStore().accept(run.capabilityRef!, {
+      runId: run.id, role: run.role, output: { version: "1.0.0", outcome: "COMPLETED" },
+    });
+
+    await expect(runService.resumeRun(run.id, { sessionId: "session", attempt: 1 }))
+      .rejects.toThrow(/cannot be resumed/);
+    expect(fakeRuntime.resumeCalls).toEqual([]);
+    expect(db!.get<{ status: string; attempt: number | null }>(
+      "SELECT status, attempt FROM agent_runs WHERE id = $id", { id: run.id },
+    )).toEqual({ status: "COMPLETING", attempt: null });
+  });
+
+  it("serializes concurrent resumes so one attempt dispatches only once", async () => {
+    await setup();
+    const run = await runService.startRun({
+      role: "developer", model: "gpt-4", taskId, epicId,
+      triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
+    });
+
+    const outcomes = await Promise.allSettled([
+      runService.resumeRun(run.id, { sessionId: "session-1", attempt: 1 }),
+      runService.resumeRun(run.id, { sessionId: "session-duplicate", attempt: 1 }),
+    ]);
+    expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
+    expect(outcomes.filter((outcome) => outcome.status === "rejected")).toHaveLength(1);
+    const repeated = await runService.resumeRun(run.id, { sessionId: "session-1", attempt: 1 });
+    expect(repeated.status).toBe("IN_PROGRESS");
+    await expect(runService.resumeRun(run.id, { sessionId: "session-stale", attempt: 0 }))
+      .rejects.toThrow(/Attempt must be a positive integer/);
+    expect(fakeRuntime.resumeCalls).toHaveLength(1);
+  });
+
+  it("returns a typed conflict when a terminal run is resumed", async () => {
+    await setup();
+    const run = await runService.startRun({
+      role: "developer", model: "gpt-4", taskId, epicId,
+      triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
+    });
+    await runService.cancelRun(run.id);
+
+    await expect(runService.resumeRun(run.id, { sessionId: "session", attempt: 1 }))
+      .rejects.toBeInstanceOf(RunTransitionConflictError);
   });
 
   it("allows resuming runs in STARTED state", async () => {

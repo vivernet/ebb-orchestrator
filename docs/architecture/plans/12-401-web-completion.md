@@ -209,9 +209,9 @@ evidence:
 
 **Interfaces:** `resumeRun(runId, resumeInput)` разрешён только из перечисленных resumable states, с валидными capability/attempt/result; terminal states (`SUCCEEDED`, `FAILED`, `CANCELLED` или фактические equivalent enum values) immutable, повторный resume возвращает typed conflict.
 
-- [ ] Написать RED matrix: every current status × valid/invalid attempt, capability, result; отдельно terminal reopen и idempotent retry.
-- [ ] Реализовать state-transition guard с атомарным conditional update, чтобы concurrent resume не создавал двойной transition.
-- [ ] Запустить focused run-service suite; ожидание: illegal transitions rejected, legal transition persisted once, terminal record unchanged.
+- [x] RED/GREEN matrix покрывает разрешённые `STARTED`/`IN_PROGRESS`, `COMPLETING` с принятым result, terminal `COMPLETED`/`FAILED`/`CANCELLED`, invalid attempts, отсутствующую capability, empty session, конкурентный duplicate и idempotent retry.
+- [x] Реализован atomic compare-and-set по status/capability/result/attempt; stale или terminal переход возвращает `RunTransitionConflictError` (`RUN_TRANSITION_CONFLICT`, HTTP 409), повтор того же session/attempt не вызывает runtime повторно.
+- [x] `run-service.test.ts` прошёл (33 tests); `pnpm lint`, `pnpm typecheck`, elevated полный `pnpm test` (97 files, 886 passed / 2 skipped; scripts 19/19) и `pnpm build` прошли.
 
 **Зависит от:** Task 5 для стабильной schema semantics. **Разблокирует:** jobs/retry correctness.
 

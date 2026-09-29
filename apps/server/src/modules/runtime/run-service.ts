@@ -14,6 +14,20 @@ import { appendOutboxEvent } from "../../platform/events/outbox-repository.js";
 import { DomainEvent } from "../../platform/events/domain-event.js";
 
 /**
+ * Представляет конфликт перехода persisted run.
+ * Используется при запрещённом переходе, сохраняет стабильный код и HTTP 409 для адаптеров.
+ */
+export class RunTransitionConflictError extends Error {
+  readonly code = "RUN_TRANSITION_CONFLICT";
+  readonly statusCode = 409;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "RunTransitionConflictError";
+  }
+}
+
+/**
  * Связывает runtime-контракт run-service с жизненным циклом agent run и структурированным результатом.
  */
 export class RunService {
@@ -200,44 +214,86 @@ export class RunService {
   }
 
   /**
-   * Возобновление a run with session info.
-   * Terminal runs (COMPLETED, FAILED, CANCELLED) cannot be reopened.
-   * Validates status, capability, attempt before writing IN_PROGRESS.
+   * Возобновляет run только из `STARTED` или `IN_PROGRESS` с действующей capability и без принятого результата.
+   * Сравнивает сохранённую попытку внутри транзакции; одинаковый session/attempt является идемпотентным повтором.
+   * Вызывает runtime после фиксации перехода, а ошибку запуска сохраняет как `FAILED`.
+   * @throws {RunTransitionConflictError} Если состояние, capability, результат или номер попытки конфликтуют с переходом.
    */
   async resumeRun(runId: string, options: ResumeRunOptions): Promise<AgentRun> {
-    // Get current run state for validation
-    const currentRun = this.getRun(this.db, runId);
-
-    // Validate status: terminal states are immutable and cannot be reopened
-    if (this.isTerminalState(currentRun.status)) {
-      throw new Error(
-        `Run ${runId} is in terminal state '${currentRun.status}' and cannot be reopened. ` +
-        `Only runs in STARTED or IN_PROGRESS states can be resumed.`
-      );
-    }
-
-    // Validate capability: run must have an active capability
-    if (!currentRun.capabilityRef) {
-      throw new Error(`Run ${runId} has no active capability and cannot be resumed.`);
-    }
-
-    // Validate attempt: must be a positive integer
-    if (options.attempt <= 0) {
+    if (!Number.isInteger(options.attempt) || options.attempt <= 0) {
       throw new Error(`Attempt must be a positive integer, got: ${options.attempt}`);
     }
+    if (typeof options.sessionId !== "string" || options.sessionId.trim().length === 0) {
+      throw new Error("A non-empty runtime session ID is required to resume a run.");
+    }
 
-    // Transition to IN_PROGRESS atomically
-    this.db.transaction((tx) => {
+    const shouldDispatch = this.db.transaction((tx) => {
+      const currentRun = tx.get<{
+        status: RunStatus;
+        capability_ref: string | null;
+        capability_json: string | null;
+        attempt: number | null;
+        session_id: string | null;
+        output: string | null;
+        ended_at: string | null;
+      }>(
+        `SELECT status, capability_ref, capability_json, attempt, session_id, output, ended_at
+           FROM agent_runs WHERE id = $id`,
+        { id: runId },
+      );
+      if (!currentRun) throw new Error(`Run ${runId} not found`);
+      if (this.isTerminalState(currentRun.status)) {
+        throw new RunTransitionConflictError(`Run ${runId} is in terminal state '${currentRun.status}' and cannot be reopened.`);
+      }
+      if (currentRun.status !== "STARTED" && currentRun.status !== "IN_PROGRESS") {
+        throw new RunTransitionConflictError(`Run ${runId} in state '${currentRun.status}' cannot be resumed.`);
+      }
+      if (!currentRun.capability_ref || !currentRun.capability_json) {
+        throw new RunTransitionConflictError(`Run ${runId} has no active capability and cannot be resumed.`);
+      }
+      let capability: { id?: unknown; capabilityRef?: unknown; runId?: unknown };
+      try {
+        capability = JSON.parse(currentRun.capability_json) as typeof capability;
+      } catch {
+        throw new RunTransitionConflictError(`Run ${runId} has invalid active capability and cannot be resumed.`);
+      }
+      if (capability.id !== currentRun.capability_ref || capability.capabilityRef !== currentRun.capability_ref || capability.runId !== runId) {
+        throw new RunTransitionConflictError(`Run ${runId} has invalid active capability and cannot be resumed.`);
+      }
+      if (currentRun.output !== null || currentRun.ended_at !== null) {
+        throw new RunTransitionConflictError(`Run ${runId} already has a result and cannot be resumed.`);
+      }
+      if (currentRun.attempt !== null && options.attempt <= currentRun.attempt) {
+        if (currentRun.status === "IN_PROGRESS" && options.attempt === currentRun.attempt && options.sessionId === currentRun.session_id) {
+          return false;
+        }
+        throw new RunTransitionConflictError(`Attempt must be greater than the current attempt (${currentRun.attempt}).`);
+      }
+
+      const expectedAttempt = currentRun.attempt;
       tx.run(
         `UPDATE agent_runs SET session_id = $session_id, attempt = $attempt,
-          status = 'IN_PROGRESS' WHERE id = $id`,
+          status = 'IN_PROGRESS'
+         WHERE id = $id AND status = $status AND capability_ref = $capability_ref
+           AND capability_json = $capability_json AND output IS NULL AND ended_at IS NULL
+           AND attempt IS $expected_attempt`,
         {
           id: runId,
           session_id: options.sessionId,
           attempt: options.attempt,
+          status: currentRun.status,
+          capability_ref: currentRun.capability_ref,
+          capability_json: currentRun.capability_json,
+          expected_attempt: expectedAttempt,
         }
       );
+      const changed = tx.get<{ changes: number }>("SELECT changes() AS changes")?.changes ?? 0;
+      if (changed !== 1) {
+        throw new RunTransitionConflictError(`Run ${runId} changed concurrently and cannot be resumed with this attempt.`);
+      }
+      return true;
     });
+    if (!shouldDispatch) return this.getRun(this.db, runId);
 
     // Resume with runtime
     try {
