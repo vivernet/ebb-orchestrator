@@ -1,8 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
+import { spawn, type ChildProcess } from "node:child_process";
+import { createServer } from "node:net";
 import { createSqliteDatabase } from "../../src/platform/database/sqlite-database.js";
 import { runMigrations } from "../../src/platform/database/migrator.js";
 import type { Database } from "../../src/platform/database/database.js";
@@ -21,6 +25,89 @@ import { GitReconciler } from "../../src/modules/git/git-reconciler.js";
 import { WorktreeManager } from "../../src/modules/git/worktree-manager.js";
 import { WorktreeRepository } from "../../src/modules/git/worktree-repository.js";
 import { SchedulerService } from "../../src/modules/scheduler/scheduler-service.js";
+import { resolveOrchestratorHome } from "../../src/platform/home/orchestrator-home.js";
+
+const crashServerEntry = resolve(import.meta.dirname, "fixtures/crash-recovery-server.mjs");
+const crashShutdownMessage = "ebb-v1-crash-recovery:shutdown";
+
+interface ProductionChild {
+  process: ChildProcess;
+  output: string;
+}
+
+async function reserveLoopbackPort(): Promise<number> {
+  const server = createServer();
+  await new Promise<void>((resolveListen, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolveListen);
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Could not reserve a test port");
+  await new Promise<void>((resolveClose, reject) => server.close((error) => error ? reject(error) : resolveClose()));
+  return address.port;
+}
+
+function launchProductionChild(home: string, port: number, bootstrap: boolean): ProductionChild {
+  const processHandle = spawn(process.execPath, [crashServerEntry, ...(bootstrap ? ["--bootstrap-local-user-stdin"] : [])], {
+    cwd: resolve(import.meta.dirname, "../.."),
+    env: { ...process.env, EBB_ORCHESTRATOR_HOME: home, PORT: String(port) },
+    shell: false,
+    stdio: ["pipe", "pipe", "pipe", "ipc"],
+  });
+  let output = "";
+  processHandle.stdout?.on("data", (chunk: Buffer) => { output += chunk.toString("utf8"); });
+  processHandle.stderr?.on("data", (chunk: Buffer) => { output += chunk.toString("utf8"); });
+  if (bootstrap) {
+    const password = randomBytes(32).toString("base64url");
+    const passwordPayload = Buffer.from(`${password}\n${password}\n`, "utf8");
+    processHandle.stdin?.end(passwordPayload);
+    passwordPayload.fill(0);
+  } else {
+    processHandle.stdin?.end();
+  }
+  return { process: processHandle, get output() { return output; } };
+}
+
+async function waitForProductionExit(child: ProductionChild, timeoutMs: number): Promise<void> {
+  if (child.process.exitCode !== null || child.process.signalCode !== null) return;
+  await new Promise<void>((resolveExit, reject) => {
+    const onExit = () => { clearTimeout(timer); resolveExit(); };
+    const timer = setTimeout(() => {
+      child.process.off("exit", onExit);
+      reject(new Error("production test child did not exit within timeout"));
+    }, timeoutMs);
+    child.process.once("exit", onExit);
+  });
+}
+
+async function waitForProductionReady(child: ProductionChild, port: number): Promise<void> {
+  const deadline = Date.now() + 60_000;
+  while (Date.now() < deadline) {
+    if (child.process.exitCode !== null || child.process.signalCode !== null) {
+      throw new Error(`production test child exited before READY: ${child.output.slice(-2000)}`);
+    }
+    const response = await fetch(`http://127.0.0.1:${port}/api/v1/health`, {
+      signal: AbortSignal.timeout(500),
+    }).catch(() => undefined);
+    if (response?.ok) {
+      expect((await response.json()).lifecycle).toBe("READY");
+      expect(child.output).toContain("status: READY");
+      return;
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+  }
+  throw new Error("production test child did not reach READY within timeout");
+}
+
+async function stopProductionChild(child: ProductionChild): Promise<void> {
+  if (child.process.exitCode !== null || child.process.signalCode !== null) return;
+  await new Promise<void>((resolveSend, reject) => {
+    child.process.send(crashShutdownMessage, (error) => error ? reject(error) : resolveSend());
+  });
+  await waitForProductionExit(child, 15_000);
+  expect(child.process.exitCode).toBe(0);
+  expect(child.output).toContain("shutdown complete");
+}
 
 describe('v1 production recovery paths', () => {
   let tempDirectory: string | undefined;
@@ -189,6 +276,63 @@ describe('v1 production recovery paths', () => {
       'SELECT reserved_cost FROM scheduler_budgets WHERE project_id=$id', { id: projectId },
     )?.reserved_cost).toBe(0);
   });
+
+  it('recovers an interrupted run after a killed production process and explicit stale-lock cleanup', async () => {
+    tempDirectory ??= await mkdtemp(join(tmpdir(), 'orchestrator-v1-recovery-'));
+    const home = join(tempDirectory, 'production-home');
+    await mkdir(home);
+    const port = await reserveLoopbackPort();
+    const platform = process.platform === 'win32' ? 'win32' : process.platform === 'darwin' ? 'darwin' : 'linux';
+    const databasePath = resolveOrchestratorHome({ EBB_ORCHESTRATOR_HOME: home }, platform).database;
+    let firstProcess: ProductionChild | undefined;
+    let restartedProcess: ProductionChild | undefined;
+    let restartRejected: ProductionChild | undefined;
+
+    try {
+      firstProcess = launchProductionChild(home, port, true);
+      await waitForProductionReady(firstProcess, port);
+      db = createSqliteDatabase(databasePath);
+      const run = new RunService(db, new FakeAgentRuntime()).prepareRun({
+        runId: randomUUID(), role: 'developer', model: 'test-model', taskId: randomUUID(), epicId: randomUUID(),
+        triggerReason: 'task-assignment', contextVersion: '1', outputSchemaVersion: '1',
+      });
+      db.run("UPDATE agent_runs SET status='IN_PROGRESS' WHERE id=$id", { id: run.id });
+      db.close();
+      db = undefined;
+
+      expect(firstProcess.process.kill('SIGKILL')).toBe(true);
+      await waitForProductionExit(firstProcess, 15_000);
+      expect(firstProcess.process.exitCode !== null || firstProcess.process.signalCode !== null).toBe(true);
+
+      const lockPath = join(home, 'orchestrator.lock');
+      expect(existsSync(lockPath)).toBe(true);
+      expect(await readFile(lockPath, 'utf8')).toContain(`v1:${firstProcess.process.pid}:`);
+      restartRejected = launchProductionChild(home, port, false);
+      await waitForProductionExit(restartRejected, 10_000);
+      expect(restartRejected.process.exitCode).toBe(1);
+      expect(restartRejected.output).toContain('Could not acquire the startup lock');
+
+      await rm(lockPath);
+      restartedProcess = launchProductionChild(home, port, false);
+      await waitForProductionReady(restartedProcess, port);
+      db = createSqliteDatabase(databasePath);
+      expect(db.get<{ status: string; capability_ref: string | null }>(
+        'SELECT status, capability_ref FROM agent_runs WHERE id=$id', { id: run.id },
+      )).toEqual({ status: 'FAILED', capability_ref: null });
+      db.close();
+      db = undefined;
+      await stopProductionChild(restartedProcess);
+      restartedProcess = undefined;
+    } finally {
+      db?.close();
+      db = undefined;
+      for (const child of [firstProcess, restartRejected, restartedProcess]) {
+        if (!child || child.process.exitCode !== null || child.process.signalCode !== null) continue;
+        child.process.kill('SIGTERM');
+        await waitForProductionExit(child, 15_000).catch(() => undefined);
+      }
+    }
+  }, 180_000);
 
   it('finds the remote PR after local acknowledgement fails and does not create a duplicate', async () => {
     db = await openDatabase();
