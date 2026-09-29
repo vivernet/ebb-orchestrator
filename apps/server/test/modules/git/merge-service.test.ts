@@ -111,7 +111,8 @@ describe("MergeService", () => {
       await git.run(repoPath, ["commit", "-m", "feature"]);
       await git.run(repoPath, ["checkout", "master"]);
 
-      const db = createIntegrationTestDatabase(join(repoPath, "orchestrator.sqlite"));
+      const databasePath = join(repoPath, "orchestrator.sqlite");
+      let db = createIntegrationTestDatabase(databasePath);
       const runId = "integration-recovery-run";
        db.run("INSERT INTO epic_orchestrations (epic_id) VALUES ('epic-recovery')");
        db.run("INSERT INTO orchestration_phase_runs (agent_run_id,epic_id,phase,validated) VALUES ($id,'epic-recovery','integration',1)", { id: runId });
@@ -123,7 +124,7 @@ describe("MergeService", () => {
       });
       const approvalStore = new Map([["approval-recovery", { id: "approval-recovery", subjectId: "epic-recovery", type: "FINAL_MERGE", status: "APPROVED" }]]);
       const originalRun = db.run.bind(db);
-      let failJournalWrite = true;
+      const failJournalWrite = true;
       db.run = (sql: string, params?: StatementParams): void => {
         if (failJournalWrite && (sql.includes("SET status='VERIFIED'") || sql.includes("SET status='FAILED'"))) {
           throw new Error("simulated journal crash");
@@ -133,7 +134,10 @@ describe("MergeService", () => {
       const firstService = new MergeService({ database: db, git, repoPath, approvalStore });
       await expect(firstService.mergeApprovedForIntegration("epic-recovery", "approval-recovery", runId)).rejects.toThrow("simulated journal crash");
       expect(db.get<{ status: string }>("SELECT status FROM git_operations")).toEqual({ status: "STARTED" });
-      failJournalWrite = false;
+      db.close();
+      db = createSqliteDatabase(databasePath);
+      expect(db.get<{ status: string }>("SELECT status FROM git_operations")).toEqual({ status: "STARTED" });
+      const mergeHeadBeforeRecovery = (await git.run(repoPath, ["rev-parse", "master"])).stdout.trim();
 
       const secondService = new MergeService({ database: db, git, repoPath, approvalStore });
       const result = await secondService.mergeApprovedForIntegration("epic-recovery", "approval-recovery", runId);
@@ -143,6 +147,8 @@ describe("MergeService", () => {
         resulting_target_sha: result.resultingTargetSha,
       });
       expect((await git.run(repoPath, ["show", "master:feature.txt"])).stdout.trim()).toBe("feature");
+      expect((await git.run(repoPath, ["rev-parse", "master"])).stdout.trim()).toBe(mergeHeadBeforeRecovery);
+      expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM git_operations")).toEqual({ count: 1 });
       db.close();
     });
 
