@@ -1,16 +1,15 @@
-import { copyFileSync, existsSync, mkdirSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Database } from './database.js';
 
 export interface BackupResult { path: string; createdAt: string; }
 /** Создаёт моментальный backup SQLite перед применением миграций. */
 export class BackupService {
-  constructor(private readonly db: Database, private readonly databasePath?: string) {}
+  constructor(private readonly db: Database) {}
   createBackup(destinationDir: string): BackupResult {
     mkdirSync(destinationDir, { recursive: true });
     const path = join(destinationDir, `orchestrator-${new Date().toISOString().replace(/[:.]/g, '-')}.sqlite`);
-    if (this.databasePath && existsSync(this.databasePath)) copyFileSync(this.databasePath, path);
-    else this.db.exec(`VACUUM INTO '${path.replaceAll("'", "''")}'`);
+    this.db.exec(`VACUUM INTO '${path.replaceAll("'", "''")}'`);
     return { path, createdAt: new Date().toISOString() };
   }
   integrityCheck(): { ok: boolean; foreignKeys: boolean } {

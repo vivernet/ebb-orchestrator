@@ -139,6 +139,19 @@ function validateAppliedMigrations(migrations: Migration[], applied: AppliedMigr
   }
 }
 
+/** Проверяет каталог/историю без изменения схемы и сообщает, нужен ли backup перед миграцией. */
+export function hasPendingMigrations(db: Database, migrations: Migration[]): boolean {
+  const catalog = validateCatalog(migrations);
+  const historyTable = db.get<{ name: string }>(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations'",
+  );
+  if (!historyTable) return catalog.length > 0;
+  const applied = readAppliedMigrations(db);
+  validateAppliedMigrations(catalog, applied);
+  const current = applied[applied.length - 1]?.version ?? 0;
+  return catalog.some((migration) => migration.version > current);
+}
+
 /**
  * Применяет каталог миграций вперёд и проверяет сохранённую историю.
  * Уже применённые записи нельзя переименовать, изменить или пропустить; повторный

@@ -19,7 +19,9 @@ import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createSqliteDatabase } from "./platform/database/sqlite-database.js";
-import { runMigrations, type Migration } from "./platform/database/migrator.js";
+import { hasPendingMigrations, runMigrations, type Migration } from "./platform/database/migrator.js";
+import { BackupService } from "./platform/database/backup-service.js";
+import { DiagnosticsService } from "./platform/diagnostics/diagnostics-service.js";
 import { resolveOrchestratorHome } from "./platform/home/orchestrator-home.js";
 import { createProductionComposition } from "./platform/home/production-composition.js";
 import { SingleInstanceLock } from "./platform/process/single-instance-lock.js";
@@ -104,6 +106,9 @@ const migrations: Migration[] = readdirSync(migrationDir).filter((file) => file.
 
 // Запускает migrations ДО создания любых сервисов которые зависят от таблиц.
 try {
+  if (hasPendingMigrations(database, migrations)) {
+    new BackupService(database).createBackup(home.backups);
+  }
   runMigrations(database, migrations);
 } catch {
   await failClosedStartup("Database migration failed; server stopped before listener and workers.");
@@ -130,6 +135,10 @@ const secretStore = infisicalOptions
   ? createInfisicalSecretStore(database, infisicalOptions)
   : new KeyringSecretStore(database);
 const hermesProvider = resolveHermesProviderBridgeConfig(process.env);
+const diagnostics = new DiagnosticsService(database, {
+  appVersion: process.env["EBB_ORCHESTRATOR_VERSION"] ?? "development",
+  schemaVersion: Math.max(0, ...migrations.map((migration) => migration.version)),
+});
 const production = createProductionComposition({
   database,
   home,
@@ -161,7 +170,7 @@ const epicOrchestrator = new EpicOrchestrator(
 );
 mkdirSync(home.artifacts, { recursive: true });
 
-const app = createApp({ host, port, db: database, scheduler, runtime, runService, secretStore, epicOrchestrator, status, eventBus, authService, approvalService, onboardingService, ...(existsSync(webRoot) ? { webRoot } : {}) });
+const app = createApp({ host, port, db: database, scheduler, runtime, runService, secretStore, epicOrchestrator, status, eventBus, authService, approvalService, onboardingService, diagnostics, ...(existsSync(webRoot) ? { webRoot } : {}) });
 
 // Composition собирает callbacks после migrations; lifecycle запускает их
 // до workers, listener и перехода в READY.

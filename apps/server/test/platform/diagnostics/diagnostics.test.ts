@@ -29,4 +29,23 @@ describe('diagnostics export', () => {
     expect(JSON.stringify(snapshot)).not.toMatch(/private|SELECT|api_token|sk-live-sensitive-value/);
     expect(snapshot.workerHealth).toMatchObject([{ last_error: 'JOB_ERROR_DETAILS_REDACTED' }]);
   });
+
+  it('counts orphaned or released reservation locks as stale, not active locks', () => {
+    const db = createSqliteDatabase(':memory:');
+    db.exec(`
+      CREATE TABLE schema_migrations (version INTEGER, name TEXT, applied_at TEXT);
+      CREATE TABLE background_jobs (id TEXT, type TEXT, status TEXT, attempts INTEGER, max_attempts INTEGER, lease_owner TEXT, lease_expires_at TEXT, last_error TEXT, updated_at TEXT);
+      CREATE TABLE outbox_events (id TEXT, processed_at TEXT, dead_lettered_at TEXT);
+      CREATE TABLE scheduler_resource_locks (resource_key TEXT, reservation_id TEXT, project_id TEXT, owner_id TEXT, locked_at TEXT);
+      CREATE TABLE scheduler_reservations (id TEXT PRIMARY KEY, status TEXT NOT NULL);
+      INSERT INTO scheduler_reservations VALUES ('active-reservation', 'RESERVED');
+      INSERT INTO scheduler_reservations VALUES ('released-reservation', 'RELEASED');
+      INSERT INTO scheduler_resource_locks VALUES ('active', 'active-reservation', 'project-1', 'run:1', '2026-01-01');
+      INSERT INTO scheduler_resource_locks VALUES ('released', 'released-reservation', 'project-1', 'run:2', '2026-01-01');
+      INSERT INTO scheduler_resource_locks VALUES ('orphaned', 'missing-reservation', 'project-1', 'run:3', '2026-01-01');
+    `);
+
+    expect(new DiagnosticsService(db, { appVersion: 'test', schemaVersion: 1 }).snapshot().staleLocks).toBe(2);
+    db.close();
+  });
 });

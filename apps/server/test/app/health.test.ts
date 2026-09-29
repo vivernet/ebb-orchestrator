@@ -8,7 +8,8 @@ import { SchedulerService } from "../../src/modules/scheduler/scheduler-service.
 import { runMigrations, type Migration } from "../../src/platform/database/migrator.js";
 import type { AgentRuntime } from "../../src/modules/runtime/agent-runtime.js";
 import { StatusTracker } from "../../src/platform/process/system-lifecycle.js";
-import { createTestAuthService } from "../helpers/auth.js";
+import { createTestAuthService, TEST_COOKIE } from "../helpers/auth.js";
+import { DiagnosticsService } from "../../src/platform/diagnostics/diagnostics-service.js";
 
 const migrationDir = fileURLToPath(new URL("../../src/platform/database/migrations/", import.meta.url));
 const migrations: Migration[] = readdirSync(migrationDir).filter((file) => file.endsWith(".sql")).map((file) => {
@@ -66,5 +67,26 @@ describe("GET /api/v1/health", () => {
     expect(res.statusCode).toBe(503);
     expect(res.json()).toEqual({ status: "unavailable", lifecycle: "DEGRADED" });
     await app.close();
+  });
+});
+
+describe("GET /api/v1/diagnostics", () => {
+  it("registers the diagnostics projection behind local-session authentication", async () => {
+    const db = createSqliteDatabase(":memory:");
+    runMigrations(db, migrations);
+    const app = createApp({
+      db,
+      scheduler: new SchedulerService(db),
+      runtime: mockRuntime,
+      diagnostics: new DiagnosticsService(db, { appVersion: "test", schemaVersion: migrations.length }),
+      authService: createTestAuthService(),
+    });
+
+    expect((await app.inject({ method: "GET", url: "/api/v1/diagnostics" })).statusCode).toBe(401);
+    const response = await app.inject({ method: "GET", url: "/api/v1/diagnostics", headers: { cookie: TEST_COOKIE } });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ appVersion: "test", schemaVersion: migrations.length });
+    await app.close();
+    db.close();
   });
 });

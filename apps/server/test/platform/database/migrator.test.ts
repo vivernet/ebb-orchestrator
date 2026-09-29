@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { createSqliteDatabase } from "../../../src/platform/database/sqlite-database.js";
-import { runMigrations, type Migration } from "../../../src/platform/database/migrator.js";
+import { hasPendingMigrations, runMigrations, type Migration } from "../../../src/platform/database/migrator.js";
 import type { Database } from "../../../src/platform/database/database.js";
 
 const migration001 = readFileSync(
@@ -27,6 +27,15 @@ describe("migrator", () => {
     if (tmpDir) {
       await rm(tmpDir, { recursive: true, force: true });
     }
+  });
+
+  it("detects pending migrations without creating migration history", async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "orch-migration-pending-check-"));
+    db = createSqliteDatabase(join(tmpDir, `test-${randomUUID()}.db`));
+    expect(hasPendingMigrations(db, goodMigrations)).toBe(true);
+    expect(db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations'")).toBeUndefined();
+    runMigrations(db, goodMigrations);
+    expect(hasPendingMigrations(db, goodMigrations)).toBe(false);
   });
 
   it("runs migrations idempotently and sets WAL mode", async () => {

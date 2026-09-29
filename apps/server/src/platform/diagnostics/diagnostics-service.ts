@@ -31,7 +31,9 @@ export class DiagnosticsService {
         })),
       pendingOutbox: count("SELECT COUNT(*) as count FROM outbox_events WHERE processed_at IS NULL AND dead_lettered_at IS NULL"),
       deadLetter: count("SELECT COUNT(*) as count FROM outbox_events WHERE dead_lettered_at IS NOT NULL"),
-      staleLocks: count('SELECT COUNT(*) as count FROM scheduler_resource_locks'),
+      staleLocks: count(`SELECT COUNT(*) as count FROM scheduler_resource_locks l
+        LEFT JOIN scheduler_reservations r ON r.id = l.reservation_id
+        WHERE r.id IS NULL OR r.status <> 'RESERVED'`),
       recentErrors: (this.options.recentErrors ?? []).map((error) => JSON.parse(redact(error))),
     };
   }
