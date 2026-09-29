@@ -45,6 +45,7 @@ updated: 2026-09-29
 | plan-16 | blocked | Очистка и актуализация документации Ebb Orchestrator |
 | plan-17 | completed | Надёжность CI evidence и единая конфигурация Ebb Orchestrator |
 | plan-18 | completed | Автономный набор Ebb skills и очистка Hermes tooling |
+| plan-19 | proposed | План разблокирования и завершения открытых планов v1 |
 | plan-00 | completed | Documentation Governance Refactoring |
 | plan-00-02 | completed | Проверка и исправление политики AGENTS |
 | plan-00-05 | completed | Интеграция политик документации и governance |
