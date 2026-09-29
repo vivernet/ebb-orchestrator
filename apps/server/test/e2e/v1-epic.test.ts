@@ -12,11 +12,11 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createSqliteDatabase } from "../../src/platform/database/sqlite-database.js";
-import { runMigrations, type Migration } from "../../src/platform/database/migrator.js";
+import { runMigrations } from "../../src/platform/database/migrator.js";
+import { loadTestMigrations } from "../helpers/migrations.js";
 import type { Database } from "../../src/platform/database/database.js";
 import { WorkflowEngine } from "../../src/modules/workflow/workflow-engine.js";
 import { WorkflowRegistry } from "../../src/modules/workflow/workflow-registry.js";
@@ -32,23 +32,6 @@ import { DatabaseCompletionStore } from "../../src/modules/execution/mcp/submit-
 import { MergeService } from "../../src/modules/git/merge-service.js";
 
 // ── Настройка migration ──
-
-const migrationFiles = [
-  "001_system", "002_work_domain", "003_work_control", "004_agent_runs",
-  "005_scheduler", "006_recovery", "007_git", "008_quality",
-  "009_integration_provenance", "010_planning", "011_epic_orchestration",
-  "012_epic_runtime_authority", "013_remove_legacy_scheduler_locks",
-  "014_migrate_legacy_scheduler_authority", "015_knowledge",
-  "016_context", "017_usage", "018_scheduler_config_audit", "021_onboarding_approval",
-];
-
-function loadMigrations(): Migration[] {
-  return migrationFiles.map((name, index) => ({
-    version: index + 1,
-    name,
-    sql: readFileSync(join(import.meta.dirname, `../../src/platform/database/migrations/${name}.sql`), "utf8"),
-  }));
-}
 
 // ── FakeAgentRuntime ──
 
@@ -160,7 +143,7 @@ describe("Request to Epic acceptance", () => {
   async function setupDatabase(): Promise<{ registry: WorkflowRegistry; runtime: FakeAgentRuntime; merge: MergeService }> {
     directory = await mkdtemp(join(tmpdir(), "orch-req-to-epic-"));
     db = createSqliteDatabase(join(directory, "test.db"));
-    runMigrations(db, loadMigrations());
+    runMigrations(db, loadTestMigrations());
     projectId = randomUUID();
     db.run("INSERT INTO projects (id,name,display_name,status,created_at,updated_at) VALUES ($id,'rest-api','REST API','ACTIVE',$now,$now)", { id: projectId, now });
     const onboardingApprovalId = randomUUID();

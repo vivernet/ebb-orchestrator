@@ -173,11 +173,11 @@ evidence:
 
 **Interfaces:** migrator принимает ordered migration set и applied metadata, возвращает success только при точном соответствии name/version/checksum и непрерывной истории; runtime services не выполняют `CREATE/ALTER`.
 
-- [ ] Написать RED tests: changed checksum, skipped version, duplicate version/name, unknown applied migration, fresh DB, already-current DB, and migration containing former runtime DDL.
-- [ ] Перенести DDL в новые append-only migration versions; существующие applied migration files не редактировать.
-- [ ] Реализовать полную integrity validation с явным диагностическим сообщением и fail-fast до запуска workers.
-- [ ] Удалить runtime DDL paths из services.
-- [ ] Запустить focused migrator/schema tests, затем `pnpm typecheck`; ожидание: fresh and upgraded databases migrate once, tampered/gapped histories fail before service startup.
+- [x] Написать RED tests: changed checksum, skipped applied version, duplicate version/name, unknown applied migration, fresh DB, already-current DB, and migration containing former runtime DDL.
+- [x] Перенести DDL в новые append-only migration versions; существующие applied migration files не редактировать.
+- [x] Реализовать полную integrity validation с явным диагностическим сообщением и fail-fast до запуска workers.
+- [x] Удалить runtime DDL paths из services.
+- [x] Запустить focused migrator/schema tests, затем `pnpm typecheck`; fresh/upgraded databases migrate once, tampered/gapped histories fail before service startup.
 
 **Зависит от:** Task 4 для startup ordering. **Разблокирует:** reliable runtime and jobs.
 

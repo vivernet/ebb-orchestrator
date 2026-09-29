@@ -25,6 +25,11 @@ const baseMigrations: Migration[] = baseMigrationNames.map((name) => ({
   ),
 }));
 
+const schedulerRuntimeSchema = readFileSync(
+  join(import.meta.dirname, "../../../src/platform/database/migrations/024_scheduler_runtime_schema.sql"),
+  "utf8",
+);
+
 const legacyMigration012: Migration = {
   version: 12,
   name: "012_epic_runtime_authority",
@@ -177,6 +182,7 @@ describe("scheduler lock compatibility migration", () => {
     db.run("INSERT INTO onboarding_configs(project_id,repository_path,facts_json,proposed_json,status,approval_id,created_at,updated_at,activated_at) VALUES($projectId,'/repo','{}','{}','ACTIVE',$approvalId,$at,$at,$at)", { projectId, approvalId: onboardingApprovalId, at: lockedAt });
 
     db.run("UPDATE tasks SET status='READY' WHERE id=$id", { id: secondTaskId });
+    db.exec(schedulerRuntimeSchema);
     const scheduler = new SchedulerService(db);
     const workflow = { transitionInTransaction: () => undefined } as never;
     expect(() => scheduler.dispatchTask(secondTaskId, workflow, () => undefined)).toThrow(/WAITING_FOR_RESOURCE_LOCK/);
@@ -234,6 +240,7 @@ describe("scheduler lock compatibility migration", () => {
       { resource_key: "global", reservation_id: "legacy-lock:" + taskId, owner_id: "legacy-owner" },
       { resource_key: "repository:alpha", reservation_id: "legacy-lock:" + taskId, owner_id: "different-owner" },
     ]);
+    db.exec(schedulerRuntimeSchema);
     const scheduler = new SchedulerService(db);
     db.exec("CREATE TABLE agent_runs (id TEXT PRIMARY KEY, status TEXT NOT NULL, cost REAL, task_id TEXT, started_at TEXT)");
     db.run("UPDATE tasks SET status='DONE' WHERE id=$id", { id: taskId });

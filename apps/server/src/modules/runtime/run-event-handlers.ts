@@ -20,11 +20,6 @@ export class RuntimeEventHandlers {
     private readonly scheduler: SchedulerService,
     private readonly runService?: RunService,
   ) {
-    // Final merge provenance является authoritative even для databases created
-    // перед Объект provenance migration was installed.
-    for (const column of ["approval_id TEXT", "source_sha TEXT", "expected_target_sha TEXT", "resulting_target_sha TEXT"]) {
-      try { this.db.exec(`ALTER TABLE git_operations ADD COLUMN ${column}`); } catch { /* already present */ }
-    }
   }
 
   /**
@@ -253,9 +248,6 @@ export class RuntimeEventHandlers {
 
   /** Complete Объект Epic merge и только then release its integrated children. */
   handleEpicMergeCompleted(epicId: string, approvalId: string): void {
-    for (const column of ["approval_id TEXT", "source_sha TEXT", "expected_target_sha TEXT", "resulting_target_sha TEXT"]) {
-      try { this.db.exec(`ALTER TABLE git_operations ADD COLUMN ${column}`); } catch { /* table/column is installed by migration */ }
-    }
     const orchestration = this.db.get<{ stage: string; final_approval_id: string | null }>(
       "SELECT stage, final_approval_id FROM epic_orchestrations WHERE epic_id=$epicId", { epicId });
     if (!orchestration || orchestration.final_approval_id !== approvalId || !["FINAL_APPROVAL", "DONE"].includes(orchestration.stage)) {

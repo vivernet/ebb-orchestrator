@@ -1,0 +1,1 @@
+-- @add-column-if-missing git_operations failure_reason TEXT

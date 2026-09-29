@@ -84,16 +84,16 @@ describe("migrator", () => {
     expect(tables).toEqual([]);
   });
 
-  it("applies a 025 to 027 upgrade once and remains idempotent", async () => {
+  it("applies a 025 to 029 upgrade once and remains idempotent", async () => {
     tmpDir = await mkdtemp(join(tmpdir(), "orch-auth-upgrade-"));
     db = createSqliteDatabase(join(tmpDir, `test-${randomUUID()}.db`));
     const migrations = (await import("../../helpers/migrations.js")).loadTestMigrations();
     const beforeAuth = migrations.filter((migration) => migration.version <= 25);
 
     expect(runMigrations(db, beforeAuth).applied).toBe(25);
-    expect(runMigrations(db, migrations).applied).toBe(2);
+    expect(runMigrations(db, migrations).applied).toBe(4);
     expect(runMigrations(db, migrations).applied).toBe(0);
-    expect(db.all<{ version: number }>("SELECT version FROM schema_migrations ORDER BY version")).toHaveLength(27);
+    expect(db.all<{ version: number }>("SELECT version FROM schema_migrations ORDER BY version")).toHaveLength(29);
   });
 
   it("rejects a gap in applied migration history before changing the database", async () => {
@@ -109,6 +109,30 @@ describe("migrator", () => {
 
     expect(() => runMigrations(db!, migrations)).toThrow(/gap|пропуск|разрыв/i);
     expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM schema_migrations")?.count).toBe(2);
+  });
+
+  it("rejects duplicate migration names before applying the catalog", async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "orch-migration-duplicate-name-"));
+    db = createSqliteDatabase(join(tmpDir, `test-${randomUUID()}.db`));
+    const migrations: Migration[] = [
+      { version: 1, name: "001_same_name", sql: migration001 },
+      { version: 2, name: "001_same_name", sql: "CREATE TABLE duplicate_name (id INTEGER PRIMARY KEY);" },
+    ];
+
+    expect(() => runMigrations(db!, migrations)).toThrow(/duplicate.*name|name.*duplicate/i);
+    expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM schema_migrations")?.count).toBe(0);
+  });
+
+  it("rejects duplicate migration versions before applying the catalog", async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "orch-migration-duplicate-version-"));
+    db = createSqliteDatabase(join(tmpDir, `test-${randomUUID()}.db`));
+    const migrations: Migration[] = [
+      { version: 1, name: "001_system", sql: migration001 },
+      { version: 1, name: "001_other", sql: "CREATE TABLE duplicate_version (id INTEGER PRIMARY KEY);" },
+    ];
+
+    expect(() => runMigrations(db!, migrations)).toThrow(/duplicate.*version|version.*duplicate/i);
+    expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM schema_migrations")?.count).toBe(0);
   });
 
   it("rejects an applied migration that is outside the supplied catalog", async () => {
@@ -163,11 +187,11 @@ describe("migrator", () => {
     const migrations = (await import("../../helpers/migrations.js")).loadTestMigrations();
 
     expect(migrations.map((migration) => migration.version)).toEqual(
-      Array.from({ length: 27 }, (_, index) => index + 1),
+      Array.from({ length: 29 }, (_, index) => index + 1),
     );
-    expect(runMigrations(db, migrations).applied).toBe(27);
+    expect(runMigrations(db, migrations).applied).toBe(29);
     expect(runMigrations(db, migrations).applied).toBe(0);
-    expect(db.get<{ version: number }>("SELECT MAX(version) AS version FROM schema_migrations")?.version).toBe(27);
+    expect(db.get<{ version: number }>("SELECT MAX(version) AS version FROM schema_migrations")?.version).toBe(29);
     expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name='local_users'")?.count).toBe(1);
     expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name='auth_sessions'")?.count).toBe(1);
 
@@ -198,6 +222,24 @@ describe("migrator", () => {
     ]));
     expect(db.get<{ sql: string }>("SELECT sql FROM sqlite_master WHERE name = 'local_users'")?.sql).toContain("CHECK (id = 1)");
     expect(db.get<{ sql: string }>("SELECT sql FROM sqlite_master WHERE name = 'auth_sessions'")?.sql).toContain("token_hash TEXT NOT NULL UNIQUE");
+    expect(db.all<{ name: string }>("PRAGMA table_info(agent_runs)").map(({ name }) => name)).toContain("prompt");
+    expect(db.all<{ name: string }>("PRAGMA table_info(git_operations)").map(({ name }) => name)).toContain("failure_reason");
+  });
+
+  it("upgrades databases where legacy runtime DDL already added the columns", async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "orch-conditional-column-upgrade-"));
+    db = createSqliteDatabase(join(tmpDir, `test-${randomUUID()}.db`));
+    const migrations = (await import("../../helpers/migrations.js")).loadTestMigrations();
+    const through027 = migrations.filter((migration) => migration.version <= 27);
+
+    expect(runMigrations(db, through027).applied).toBe(27);
+    db.exec("ALTER TABLE agent_runs ADD COLUMN prompt TEXT");
+    db.exec("ALTER TABLE git_operations ADD COLUMN failure_reason TEXT");
+
+    expect(runMigrations(db, migrations).applied).toBe(2);
+    expect(runMigrations(db, migrations).applied).toBe(0);
+    expect(db.all<{ name: string }>("PRAGMA table_info(agent_runs)").filter(({ name }) => name === "prompt")).toHaveLength(1);
+    expect(db.all<{ name: string }>("PRAGMA table_info(git_operations)").filter(({ name }) => name === "failure_reason")).toHaveLength(1);
   });
 
   it("rolls back a failed appended auth migration without partial auth state", async () => {
@@ -224,7 +266,7 @@ describe("migrator", () => {
     db.run("INSERT INTO approval_metadata(approval_id,metadata_json) VALUES('approval-027','{\"kind\":\"semantic-config\"}')");
     db.run("INSERT INTO onboarding_configs(project_id,repository_path,facts_json,proposed_json,status,approval_id,created_at,updated_at) VALUES('project-027','/repo','{}','{}','PROPOSED','approval-027',$now,$now)", { now });
 
-    expect(runMigrations(db, migrations).applied).toBe(1);
+    expect(runMigrations(db, migrations).applied).toBe(3);
     expect(runMigrations(db, migrations).applied).toBe(0);
     expect(db.get<{ status: string }>("SELECT status FROM approvals WHERE id='approval-027'")).toEqual({ status: "PENDING" });
     expect(db.get<{ metadata_json: string }>("SELECT metadata_json FROM approval_metadata WHERE approval_id='approval-027'")?.metadata_json).toBe('{"kind":"semantic-config"}');

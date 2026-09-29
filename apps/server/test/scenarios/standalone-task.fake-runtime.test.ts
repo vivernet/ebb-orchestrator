@@ -1,11 +1,11 @@
 import { describe, expect, it, afterEach, beforeEach } from "vitest";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
-import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createSqliteDatabase } from "../../src/platform/database/sqlite-database.js";
-import { runMigrations, type Migration } from "../../src/platform/database/migrator.js";
+import { runMigrations } from "../../src/platform/database/migrator.js";
+import { loadTestMigrations } from "../helpers/migrations.js";
 import type { Database } from "../../src/platform/database/database.js";
 import { EventBus } from "../../src/platform/events/event-bus.js";
 import { EventDispatcher } from "../../src/platform/events/event-dispatcher.js";
@@ -19,30 +19,7 @@ import type { RunOutcome } from "../../src/modules/runtime/run-types.js";
 import type { TaskContract } from "../../src/modules/work/work-types.js";
 import { appendOutboxEvent } from "../../src/platform/events/outbox-repository.js";
 
-const migration001 = readFileSync(
-  join(import.meta.dirname, "../../src/platform/database/migrations/001_system.sql"),
-  "utf-8",
-);
-
-const migration002 = readFileSync(
-  join(import.meta.dirname, "../../src/platform/database/migrations/002_work_domain.sql"),
-  "utf-8",
-);
-
-const migration003 = readFileSync(
-  join(import.meta.dirname, "../../src/platform/database/migrations/003_work_control.sql"),
-  "utf-8",
-);
-const migration004 = readFileSync(join(import.meta.dirname, "../../src/platform/database/migrations/004_agent_runs.sql"), "utf-8");
-const migration021 = readFileSync(join(import.meta.dirname, "../../src/platform/database/migrations/021_onboarding_approval.sql"), "utf-8");
-
-const migrations: Migration[] = [
-  { version: 1, name: "001_system", sql: migration001 },
-  { version: 2, name: "002_work_domain", sql: migration002 },
-  { version: 3, name: "003_work_control", sql: migration003 },
-  { version: 4, name: "004_agent_runs", sql: migration004 },
-  { version: 21, name: "021_onboarding_approval", sql: migration021 },
-];
+const migrations = loadTestMigrations();
 
 function contract(goal: string): TaskContract {
   return {

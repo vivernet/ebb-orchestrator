@@ -16,7 +16,8 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { execFile, spawn } from "node:child_process";
 import { createSqliteDatabase } from "../../src/platform/database/sqlite-database.js";
-import { runMigrations, type Migration } from "../../src/platform/database/migrator.js";
+import { runMigrations } from "../../src/platform/database/migrator.js";
+import { loadTestMigrations } from "../helpers/migrations.js";
 import type { Database } from "../../src/platform/database/database.js";
 import { WorkflowEngine } from "../../src/modules/workflow/workflow-engine.js";
 import { WorkflowRegistry } from "../../src/modules/workflow/workflow-registry.js";
@@ -46,12 +47,7 @@ import type { TaskContract as PromptTaskContract } from "../../src/modules/conte
 const execFileAsync = promisify(execFile);
 const resolve = createRequire(import.meta.url).resolve;
 const tsxLoader = pathToFileURL(resolve("tsx")).href;
-const migrationFiles = ["001_system.sql", "002_work_domain.sql", "003_work_control.sql", "004_agent_runs.sql", "005_scheduler.sql", "006_recovery.sql", "007_git.sql", "008_quality.sql", "009_integration_provenance.sql", "010_planning.sql", "011_epic_orchestration.sql", "012_epic_runtime_authority.sql", "013_remove_legacy_scheduler_locks.sql", "014_migrate_legacy_scheduler_authority.sql", "015_knowledge.sql", "016_context.sql", "017_usage.sql", "018_scheduler_config_audit.sql", "021_onboarding_approval.sql"];
-const migrations: Migration[] = migrationFiles.map((name, index) => ({
-  version: index + 1,
-  name: name.replace(".sql", ""),
-  sql: readFileSync(join(import.meta.dirname, `../../src/platform/database/migrations/${name}`), "utf8"),
-}));
+const migrations = loadTestMigrations();
 
 class DeterministicRuntime implements AgentRuntime {
   active = 0;
@@ -226,7 +222,7 @@ describe("Autonomous Task End-to-End Workflow", () => {
     const worktree = await driver.developer();
     await driver.reviewer(worktree);
     await driver.qa(worktree);
-     const integrationService = new IntegrationService({ worktreeDir: join(tmpDir, "integration"), database: db!, integrationRunId: await driver.reserveIntegrationRun() });
+     const integrationService = new IntegrationService({ worktreeDir: join(tmpDir, "integration"), database: db!, provenanceDatabasePath: join(tmpDir, "acceptance.db"), integrationRunId: await driver.reserveIntegrationRun() });
      const integration = await integrationService.prepareIntegration(`task/${taskId}`, "master", masterRepoPath);
      await integrationService.mergePreparedSource(integration);
      const integrationRunId = integration.integrationRunId;
@@ -395,7 +391,7 @@ try { inspected = await runtime.inspectRun(run.id); } catch { /* процесс 
         advanceRealStage(workflow, taskId, role);
       }
        const integrationWorkspace = join(tmpDir, "real-integration");
-       const integrationService = new IntegrationService({ worktreeDir: integrationWorkspace, database: db! });
+       const integrationService = new IntegrationService({ worktreeDir: integrationWorkspace, database: db!, provenanceDatabasePath: join(tmpDir, "acceptance.db") });
          const preparedIntegration = await integrationService.prepareIntegration(`task/${taskId}`, "master", masterRepoPath);
          await integrationService.mergePreparedSource(preparedIntegration);
          const integrationPrompt = new PromptBuilder().buildIntegrationPrompt({ taskContract: contract, workspace: preparedIntegration.worktreePath, targetRef: "master", checks: ["call the project.test MCP tool and verify its returned result (do not run the smoke test directly as a substitute)", "verify target and task provenance"], ...(preparedIntegration.expectedTargetSha ? { expectedTargetSha: preparedIntegration.expectedTargetSha } : {}), sourceSha: preparedIntegration.sourceSha, integrationAttemptId: preparedIntegration.id, ...(preparedIntegration.provenanceDatabasePath ? { provenanceDatabasePath: preparedIntegration.provenanceDatabasePath } : {}) });
@@ -441,7 +437,7 @@ try { inspected = await runtime.inspectRun(run.id); } catch { /* процесс 
       expect((await new GitCli().run(integration.worktreePath, ["rev-parse", "HEAD"])).stdout.trim()).toBe(masterSha);
       expect(db!.get<{ id: string; role: string; status: string; output: string }>("SELECT id, role, status, output FROM agent_runs WHERE id = $id", { id: integrationRun.id })).toMatchObject({ id: integrationRun.id, role: "Integration", status: "COMPLETED", output: expect.stringContaining('"outcome":"PASS"') });
      expect(readFileSync(join(integration.worktreePath, "src", "server.js"), "utf8")).toContain("/health");
-     await new IntegrationService().cleanupIntegration(integration);
+     await new IntegrationService({ database: db! }).cleanupIntegration(integration);
      const approval = approvalService.request({ type: "FINAL_MERGE", subjectId: taskId, subjectType: "TASK", requestedBy: "orchestrator" });
      expect(approval).toMatchObject({ id: expect.any(String), type: "FINAL_MERGE", subjectId: taskId, subjectType: "TASK", status: "PENDING" });
     expect(approval.status).toBe("PENDING");

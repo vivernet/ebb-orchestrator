@@ -21,8 +21,35 @@ export interface MigrationResult {
   applied: number;
 }
 
+interface AddColumnIfMissingOperation {
+  table: string;
+  column: string;
+  definition: "TEXT" | "INTEGER" | "REAL" | "BLOB";
+}
+
 function checksum(sql: string): string {
   return createHash("sha256").update(sql).digest("hex");
+}
+
+function parseAddColumnIfMissing(sql: string): AddColumnIfMissingOperation | undefined {
+  const trimmed = sql.trim();
+  if (!trimmed.startsWith("-- @add-column-if-missing")) return undefined;
+  const match = /^-- @add-column-if-missing ([a-z_][a-z0-9_]*) ([a-z_][a-z0-9_]*) (TEXT|INTEGER|REAL|BLOB)$/i.exec(trimmed);
+  if (!match) throw new Error("Malformed add-column-if-missing migration directive");
+  return { table: match[1]!, column: match[2]!, definition: match[3]!.toUpperCase() as AddColumnIfMissingOperation["definition"] };
+}
+
+function applyMigrationSql(tx: DatabaseTx, migration: Migration): void {
+  const operation = parseAddColumnIfMissing(migration.sql);
+  if (!operation) {
+    tx.exec(migration.sql);
+    return;
+  }
+
+  const columns = tx.all<{ name: string }>(`PRAGMA table_info("${operation.table}")`);
+  if (!columns.some(({ name }) => name === operation.column)) {
+    tx.exec(`ALTER TABLE "${operation.table}" ADD COLUMN "${operation.column}" ${operation.definition}`);
+  }
 }
 
 function ensureSchemaTable(db: Database): void {
@@ -50,6 +77,7 @@ function restoreForeignKeys(db: Database, migrationName: string): { ok: true } |
 
 function validateCatalog(migrations: Migration[]): Migration[] {
   const ordered = [...migrations].sort((a, b) => a.version - b.version);
+  const names = new Set<string>();
   for (const [index, migration] of ordered.entries()) {
     if (!Number.isSafeInteger(migration.version) || migration.version < 1) {
       throw new Error(`Migration version must be a positive integer; found ${migration.version}`);
@@ -59,6 +87,8 @@ function validateCatalog(migrations: Migration[]): Migration[] {
       throw new Error(`Migration catalog contains duplicate version ${migration.version}`);
     }
     if (migration.name.trim() === "") throw new Error(`Migration ${migration.version} must have a name`);
+    if (names.has(migration.name)) throw new Error(`Migration catalog contains duplicate name ${migration.name}`);
+    names.add(migration.name);
     const isApprovalChangesMigration = migration.version === 27 && migration.name.replace(/^0*27_/, "") === "approval_changes_requested";
     if (migration.foreignKeys !== undefined && (migration.foreignKeys !== "disabled" || !isApprovalChangesMigration)) {
       throw new Error(`Migration ${migration.version} requests an unsupported foreign-key policy`);
@@ -130,7 +160,7 @@ export function runMigrations(
     const foreignKeysDisabled = migration.foreignKeys === "disabled"
       || (migration.version === 27 && migration.name.replace(/^0*27_/, "") === "approval_changes_requested");
     const apply = (tx: DatabaseTx): void => {
-      tx.exec(migration.sql);
+      applyMigrationSql(tx, migration);
       if (foreignKeysDisabled) {
         const violations = tx.all("PRAGMA foreign_key_check");
         if (violations.length > 0) throw new Error(`Migration ${migration.name} failed foreign key check`);

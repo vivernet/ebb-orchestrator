@@ -1,46 +1,16 @@
 import { describe, expect, it, afterEach, beforeEach, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
-import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createSqliteDatabase } from "../../../src/platform/database/sqlite-database.js";
-import { runMigrations, type Migration } from "../../../src/platform/database/migrator.js";
+import { runMigrations } from "../../../src/platform/database/migrator.js";
+import { loadTestMigrations } from "../../helpers/migrations.js";
 import type { Database } from "../../../src/platform/database/database.js";
 import { SchedulerSafetyWorker, SchedulerService } from "../../../src/modules/scheduler/scheduler-service.js";
 import type { TaskContract } from "../../../src/modules/work/work-types.js";
 
-const migration001 = readFileSync(
-  join(import.meta.dirname, "../../../src/platform/database/migrations/001_system.sql"),
-  "utf-8",
-);
-
-const migration002 = readFileSync(
-  join(import.meta.dirname, "../../../src/platform/database/migrations/002_work_domain.sql"),
-  "utf-8",
-);
-
-const migration003 = readFileSync(
-  join(import.meta.dirname, "../../../src/platform/database/migrations/003_work_control.sql"),
-  "utf-8",
-);
-
-const migration005 = readFileSync(
-  join(import.meta.dirname, "../../../src/platform/database/migrations/005_scheduler.sql"),
-  "utf-8",
-);
-const migration021 = readFileSync(
-  join(import.meta.dirname, "../../../src/platform/database/migrations/021_onboarding_approval.sql"),
-  "utf-8",
-);
-
-const migrations: Migration[] = [
-  { version: 1, name: "001_system", sql: migration001 },
-  { version: 2, name: "002_work_domain", sql: migration002 },
-  { version: 3, name: "003_work_control", sql: migration003 },
-  { version: 5, name: "005_scheduler", sql: migration005 },
-  { version: 21, name: "021_onboarding_approval", sql: migration021 },
-];
+const migrations = loadTestMigrations();
 
 function contract(goal: string, deps: string[] = []): TaskContract {
   return {
@@ -371,7 +341,6 @@ describe("SchedulerService", () => {
 
   it("releases an AgentRun reservation idempotently", async () => {
     await setup();
-    db!.exec("CREATE TABLE agent_runs (id TEXT PRIMARY KEY, role TEXT NOT NULL, runtime TEXT NOT NULL, model TEXT NOT NULL, status TEXT NOT NULL, cost REAL)");
     db!.run("INSERT INTO scheduler_budgets (project_id,limit_cost,spent_cost,reserved_cost) VALUES ($projectId,100,0,0)", { projectId });
     scheduler.dispatchAgentRun("duplicate-run", projectId, "reviewer", "test");
     db!.run("INSERT INTO agent_runs (id,role,runtime,model,status) VALUES ('duplicate-run','reviewer','test','test','STARTED')");
@@ -397,7 +366,6 @@ describe("SchedulerService", () => {
 
   it("releases a task reservation when failure cleanup is addressed by AgentRun id", async () => {
     await setup();
-    db!.exec("CREATE TABLE agent_runs (id TEXT PRIMARY KEY, role TEXT NOT NULL, runtime TEXT NOT NULL, model TEXT NOT NULL, status TEXT NOT NULL, task_id TEXT, cost REAL, started_at TEXT)");
     db!.run("INSERT INTO scheduler_budgets (project_id,limit_cost,spent_cost,reserved_cost) VALUES ($projectId,100,0,0)", { projectId });
     const taskId = insertTask(db!, projectId, { id: "failed-task", status: "READY" }).id;
     db!.run("INSERT INTO agent_runs (id,role,runtime,model,status,task_id,started_at) VALUES ('failed-run','developer','test','test','STARTED',$taskId,$at)", { taskId, at: new Date().toISOString() });
@@ -442,7 +410,6 @@ describe("SchedulerService", () => {
 
   it("reconciles run-owned locks from AgentRun and reservation state", async () => {
     await setup();
-    db!.exec("CREATE TABLE agent_runs (id TEXT PRIMARY KEY, role TEXT NOT NULL, runtime TEXT NOT NULL, model TEXT NOT NULL, status TEXT NOT NULL, cost REAL)");
     db!.run("INSERT INTO scheduler_budgets (project_id,limit_cost,spent_cost,reserved_cost) VALUES ($projectId,100,0,0)", { projectId });
     db!.run("INSERT INTO agent_runs (id,role,runtime,model,status,cost) VALUES ('stale-run','reviewer','test','test','FAILED',0)");
     scheduler.dispatchAgentRun("stale-run", projectId, "reviewer", "test");
@@ -458,7 +425,6 @@ describe("SchedulerService", () => {
 
   it("blocks reconciliation when the exact reserved run is missing instead of using task_id", async () => {
     await setup();
-    db!.exec("CREATE TABLE agent_runs (id TEXT PRIMARY KEY, role TEXT NOT NULL, runtime TEXT NOT NULL, model TEXT NOT NULL, status TEXT NOT NULL, task_id TEXT, cost REAL)");
     const reservationId = "identity-collision-reservation";
     db!.run(
       "INSERT INTO agent_runs (id,role,runtime,model,status,task_id,cost) VALUES ('unrelated-run','reviewer','test','test','COMPLETED','phase-subject',2)",
@@ -479,7 +445,6 @@ describe("SchedulerService", () => {
 
   it("blocks reconciliation when a reservation has no run identity", async () => {
     await setup();
-    db!.exec("CREATE TABLE agent_runs (id TEXT PRIMARY KEY, role TEXT NOT NULL, runtime TEXT NOT NULL, model TEXT NOT NULL, status TEXT NOT NULL, task_id TEXT, cost REAL)");
     const reservationId = "null-run-id-reservation";
     db!.run(
       "INSERT INTO scheduler_reservations(id,kind,subject_id,project_id,owner_id,reserved_at,status,role,model,run_id) VALUES($id,'PHASE','phase-without-run',$projectId,'run:phase-without-run',$at,'RESERVED','reviewer','test',NULL)",
@@ -495,7 +460,6 @@ describe("SchedulerService", () => {
 
   it("does not release a live run lock as if it were a task lock", async () => {
     await setup();
-    db!.exec("CREATE TABLE agent_runs (id TEXT PRIMARY KEY, role TEXT NOT NULL, runtime TEXT NOT NULL, model TEXT NOT NULL, status TEXT NOT NULL, cost REAL)");
     db!.run("INSERT INTO agent_runs (id,role,runtime,model,status,cost) VALUES ('live-run','reviewer','test','test','STARTED',0)");
     scheduler.dispatchAgentRun("live-run", projectId, "reviewer", "test");
 
@@ -507,7 +471,6 @@ describe("SchedulerService", () => {
 
   it("preserves an active task LOCK reservation across scheduler restart reconciliation", async () => {
     await setup();
-    db!.exec("CREATE TABLE agent_runs (id TEXT PRIMARY KEY, role TEXT NOT NULL, runtime TEXT NOT NULL, model TEXT NOT NULL, status TEXT NOT NULL, cost REAL)");
     const taskId = insertTask(db!, projectId, { id: "active-locked-task", status: "DEVELOPMENT" }).id;
     expect(scheduler.resourceLockService.acquire(taskId, "owner")).toBe(true);
 
@@ -520,7 +483,6 @@ describe("SchedulerService", () => {
 
   it("preserves a run lock and reservation when the lock owner does not match", async () => {
     await setup();
-    db!.exec("CREATE TABLE agent_runs (id TEXT PRIMARY KEY, role TEXT NOT NULL, runtime TEXT NOT NULL, model TEXT NOT NULL, status TEXT NOT NULL, cost REAL)");
     db!.run("INSERT INTO scheduler_budgets (project_id,limit_cost,spent_cost,reserved_cost) VALUES ($projectId,100,0,0)", { projectId });
     db!.run("INSERT INTO agent_runs (id,role,runtime,model,status,cost) VALUES ('authoritative-run','reviewer','test','test','STARTED',0)");
     scheduler.dispatchAgentRun("authoritative-run", projectId, "reviewer", "test", "shared-resource");
@@ -536,7 +498,6 @@ describe("SchedulerService", () => {
 
   it("blocks terminal-run reconciliation on durable lock ownership drift", async () => {
     await setup();
-    db!.exec("CREATE TABLE agent_runs (id TEXT PRIMARY KEY, role TEXT NOT NULL, runtime TEXT NOT NULL, model TEXT NOT NULL, status TEXT NOT NULL, task_id TEXT, cost REAL, started_at TEXT)");
     db!.run("INSERT INTO scheduler_budgets (project_id,limit_cost,spent_cost,reserved_cost) VALUES ($projectId,100,0,0)", { projectId });
     db!.run("INSERT INTO agent_runs (id,role,runtime,model,status,cost) VALUES ('run-a','reviewer','test','test','COMPLETED',2)");
     scheduler.dispatchAgentRun("run-a", projectId, "reviewer", "test", "run-a-resource");

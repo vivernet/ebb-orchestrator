@@ -8,6 +8,7 @@ import { MergeService } from "../../../src/modules/git/merge-service.js";
 import { IntegrationService } from "../../../src/modules/git/integration-service.js";
 import type { IntegrationAttempt } from "../../../src/modules/git/integration-service.js";
 import { createSqliteDatabase } from "../../../src/platform/database/sqlite-database.js";
+import { createIntegrationTestDatabase } from "../../helpers/integration-database.js";
 import type { StatementParams } from "../../../src/platform/database/database.js";
 
 function createTempDir(): string {
@@ -32,12 +33,9 @@ async function successfulIntegration(repoPath: string, git: GitCli, sourceBranch
   const integrationRunId = `integration-run-${Date.now()}-${Math.random()}`;
   const worktreeDir = createTempDir();
   const provenancePath = join(worktreeDir, "integration-provenance.sqlite");
-  const db = createSqliteDatabase(provenancePath);
-       db.exec("CREATE TABLE agent_runs (id TEXT PRIMARY KEY, role TEXT, status TEXT, output TEXT, epic_id TEXT)");
-       db.exec("CREATE TABLE epic_orchestrations (epic_id TEXT PRIMARY KEY)");
-       db.exec("CREATE TABLE orchestration_phase_runs (agent_run_id TEXT PRIMARY KEY, epic_id TEXT, phase TEXT, validated INTEGER)");
+  const db = createIntegrationTestDatabase(provenancePath);
   db.run("INSERT INTO agent_runs (id, role, status, output) VALUES ($id, 'Integration', 'IN_PROGRESS', NULL)", { id: integrationRunId });
-  const service = new IntegrationService({ git, database: db, worktreeDir, integrationRunId });
+  const service = new IntegrationService({ git, database: db, provenanceDatabasePath: provenancePath, worktreeDir, integrationRunId });
   const attempt = await service.prepareIntegration(sourceBranch, "master", repoPath);
   await service.runInIntegrationWorktree(attempt, async () => {
     const completedDb = createSqliteDatabase(provenancePath);
@@ -52,16 +50,12 @@ describe("MergeService", () => {
     it("uses the method approval and persists a verified provenance-bound operation", async () => {
       const repoPath = createTempDir();
       const git = await initGitRepo(repoPath);
-      const db = createSqliteDatabase(join(repoPath, "orchestrator.sqlite"));
-       db.exec("CREATE TABLE agent_runs (id TEXT PRIMARY KEY, role TEXT, status TEXT, output TEXT, epic_id TEXT)");
-       db.exec("CREATE TABLE epic_orchestrations (epic_id TEXT PRIMARY KEY)");
-       db.exec("CREATE TABLE orchestration_phase_runs (agent_run_id TEXT PRIMARY KEY, epic_id TEXT, phase TEXT, validated INTEGER)");
-      db.exec("CREATE TABLE git_operations (id TEXT PRIMARY KEY, type TEXT, status TEXT, repo_path TEXT, branch_name TEXT, target_ref TEXT, created_at TEXT, verified_at TEXT, approval_id TEXT, source_sha TEXT, expected_target_sha TEXT, resulting_target_sha TEXT)");
+      const db = createIntegrationTestDatabase(join(repoPath, "orchestrator.sqlite"));
        const runId = "integration-real-run";
        db.run("INSERT INTO epic_orchestrations (epic_id) VALUES ('epic-1')");
        db.run("INSERT INTO orchestration_phase_runs (agent_run_id,epic_id,phase,validated) VALUES ($id,'epic-1','integration',1)", { id: runId });
        db.run("INSERT INTO agent_runs (id,role,status,output,epic_id) VALUES ($id,'Integration','STARTED',NULL,'epic-1')", { id: runId });
-      const integration = new IntegrationService({ git, database: db, worktreeDir: createTempDir(), integrationRunId: runId });
+      const integration = new IntegrationService({ git, database: db, provenanceDatabasePath: join(repoPath, "orchestrator.sqlite"), worktreeDir: createTempDir(), integrationRunId: runId });
       const attempt = await integration.prepareIntegration("HEAD", "master", repoPath);
       await integration.runInIntegrationWorktree(attempt, async () => {
         db.run("UPDATE agent_runs SET status='COMPLETED',output=$output WHERE id=$id", { id: runId, output: JSON.stringify({ outcome: "PASS" }) });
@@ -88,15 +82,12 @@ describe("MergeService", () => {
      it("rejects an Epic from using another Epic's Integration run and SHA", async () => {
        const repoPath = createTempDir();
        const git = await initGitRepo(repoPath);
-       const db = createSqliteDatabase(join(repoPath, "orchestrator.sqlite"));
-       db.exec("CREATE TABLE agent_runs (id TEXT PRIMARY KEY, role TEXT, status TEXT, output TEXT, epic_id TEXT)");
-       db.exec("CREATE TABLE epic_orchestrations (epic_id TEXT PRIMARY KEY)");
-       db.exec("CREATE TABLE orchestration_phase_runs (agent_run_id TEXT PRIMARY KEY, epic_id TEXT, phase TEXT, validated INTEGER)");
+       const db = createIntegrationTestDatabase(join(repoPath, "orchestrator.sqlite"));
        const runId = "epic-b-integration-run";
        db.run("INSERT INTO epic_orchestrations (epic_id) VALUES ('epic-a'),('epic-b')");
        db.run("INSERT INTO agent_runs (id,role,status,output,epic_id) VALUES ($id,'Integration','COMPLETED',NULL,'epic-b')", { id: runId });
        db.run("INSERT INTO orchestration_phase_runs (agent_run_id,epic_id,phase,validated) VALUES ($id,'epic-b','integration',1)", { id: runId });
-       const integration = new IntegrationService({ git, database: db, worktreeDir: createTempDir(), integrationRunId: runId });
+       const integration = new IntegrationService({ git, database: db, provenanceDatabasePath: join(repoPath, "orchestrator.sqlite"), worktreeDir: createTempDir(), integrationRunId: runId });
        await integration.prepareIntegration("HEAD", "master", repoPath);
        db.run("UPDATE integration_attempts SET status='MERGED' WHERE integration_run_id=$id", { id: runId });
        const service = new MergeService({
@@ -120,16 +111,12 @@ describe("MergeService", () => {
       await git.run(repoPath, ["commit", "-m", "feature"]);
       await git.run(repoPath, ["checkout", "master"]);
 
-      const db = createSqliteDatabase(join(repoPath, "orchestrator.sqlite"));
-       db.exec("CREATE TABLE agent_runs (id TEXT PRIMARY KEY, role TEXT, status TEXT, output TEXT, epic_id TEXT)");
-       db.exec("CREATE TABLE epic_orchestrations (epic_id TEXT PRIMARY KEY)");
-       db.exec("CREATE TABLE orchestration_phase_runs (agent_run_id TEXT PRIMARY KEY, epic_id TEXT, phase TEXT, validated INTEGER)");
-      db.exec("CREATE TABLE git_operations (id TEXT PRIMARY KEY, type TEXT, status TEXT, repo_path TEXT, branch_name TEXT, target_ref TEXT, created_at TEXT, verified_at TEXT, approval_id TEXT, source_sha TEXT, expected_target_sha TEXT, resulting_target_sha TEXT)");
+      const db = createIntegrationTestDatabase(join(repoPath, "orchestrator.sqlite"));
       const runId = "integration-recovery-run";
        db.run("INSERT INTO epic_orchestrations (epic_id) VALUES ('epic-recovery')");
        db.run("INSERT INTO orchestration_phase_runs (agent_run_id,epic_id,phase,validated) VALUES ($id,'epic-recovery','integration',1)", { id: runId });
        db.run("INSERT INTO agent_runs (id,role,status,output,epic_id) VALUES ($id,'Integration','STARTED',NULL,'epic-recovery')", { id: runId });
-      const integration = new IntegrationService({ git, database: db, worktreeDir: createTempDir(), integrationRunId: runId });
+      const integration = new IntegrationService({ git, database: db, provenanceDatabasePath: join(repoPath, "orchestrator.sqlite"), worktreeDir: createTempDir(), integrationRunId: runId });
       const attempt = await integration.prepareIntegration("feature", "master", repoPath);
       await integration.runInIntegrationWorktree(attempt, async () => {
         db.run("UPDATE agent_runs SET status='COMPLETED',output=$output WHERE id=$id", { id: runId, output: JSON.stringify({ outcome: "PASS" }) });
@@ -168,16 +155,12 @@ describe("MergeService", () => {
       await git.run(repoPath, ["commit", "-m", "feature"]);
       await git.run(repoPath, ["checkout", "master"]);
 
-      const db = createSqliteDatabase(join(repoPath, "orchestrator.sqlite"));
-       db.exec("CREATE TABLE agent_runs (id TEXT PRIMARY KEY, role TEXT, status TEXT, output TEXT, epic_id TEXT)");
-       db.exec("CREATE TABLE epic_orchestrations (epic_id TEXT PRIMARY KEY)");
-       db.exec("CREATE TABLE orchestration_phase_runs (agent_run_id TEXT PRIMARY KEY, epic_id TEXT, phase TEXT, validated INTEGER)");
-      db.exec("CREATE TABLE git_operations (id TEXT PRIMARY KEY, type TEXT, status TEXT, repo_path TEXT, branch_name TEXT, target_ref TEXT, created_at TEXT, verified_at TEXT, approval_id TEXT, source_sha TEXT, expected_target_sha TEXT, resulting_target_sha TEXT)");
+      const db = createIntegrationTestDatabase(join(repoPath, "orchestrator.sqlite"));
       const runId = "integration-drift-run";
        db.run("INSERT INTO epic_orchestrations (epic_id) VALUES ('epic-drift')");
        db.run("INSERT INTO orchestration_phase_runs (agent_run_id,epic_id,phase,validated) VALUES ($id,'epic-drift','integration',1)", { id: runId });
        db.run("INSERT INTO agent_runs (id,role,status,output,epic_id) VALUES ($id,'Integration','STARTED',NULL,'epic-drift')", { id: runId });
-      const integration = new IntegrationService({ git, database: db, worktreeDir: createTempDir(), integrationRunId: runId });
+      const integration = new IntegrationService({ git, database: db, provenanceDatabasePath: join(repoPath, "orchestrator.sqlite"), worktreeDir: createTempDir(), integrationRunId: runId });
       const attempt = await integration.prepareIntegration("feature", "master", repoPath);
       await integration.runInIntegrationWorktree(attempt, async () => {
         db.run("UPDATE agent_runs SET status='COMPLETED',output=$output WHERE id=$id", { id: runId, output: JSON.stringify({ outcome: "PASS" }) });

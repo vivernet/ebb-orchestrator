@@ -65,13 +65,6 @@ export class EpicOrchestrator {
     this.integrationServiceFactory = options.integrationServiceFactory;
     this.integrationWorktreeRoot = options.integrationWorktreeRoot;
     this.taskWorkspaceProvisioner = options.taskWorkspaceProvisioner;
-    for (const column of ["cost REAL", "input_tokens INTEGER", "output_tokens INTEGER"]) {
-      try { this.db.exec(`ALTER TABLE agent_runs ADD COLUMN ${column}`); } catch { /* migration already installed */ }
-    }
-    try { this.db.exec("ALTER TABLE planning_plans ADD COLUMN epic_id TEXT"); } catch { /* already present */ }
-    for (const column of ["status TEXT NOT NULL DEFAULT 'INTENT'", "request_json TEXT", "started_at TEXT", "ended_at TEXT"]) {
-      try { this.db.exec(`ALTER TABLE orchestration_phase_runs ADD COLUMN ${column}`); } catch { /* current schema */ }
-    }
     this.reconcileStaleRuns();
     // AgentRuns должен быть marked terminal перед their scheduler резервирования являются
     // reconciled.  Otherwise Объект stale фаза still looks live to Объект scheduler.

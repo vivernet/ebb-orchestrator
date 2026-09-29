@@ -68,7 +68,7 @@ export function createProductionComposition(options: ProductionCompositionOption
     worktreeManager: new WorktreeManager({ db: database, worktreeDir: paths.taskWorktreeDirectory }),
   });
   const integrationServiceFactory: IntegrationServiceFactory = ({ worktreeRoot, epicId, taskId }: IntegrationServiceFactoryContext) =>
-    new IntegrationService({ database, worktreeDir: join(worktreeRoot, epicId, taskId) });
+    new IntegrationService({ database, provenanceDatabasePath: home.database, worktreeDir: join(worktreeRoot, epicId, taskId) });
   const artifactStore = new ArtifactStore(home.artifacts, new ArtifactRepository(database));
 
   /**

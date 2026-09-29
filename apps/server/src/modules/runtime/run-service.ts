@@ -9,7 +9,6 @@ import type { StartRunOptions, ResumeRunOptions, RunOutcome } from "./run-types.
 import { validateRoleOutput } from "./output-validator.js";
 import { DatabaseCompletionStore, type CompletionStore } from "../execution/mcp/submit-result-tool.js";
 import { SUPPORTED_TOOL_IDS, type RoleName, type ToolId } from "../execution/run-capability.js";
-import { schema, migrationColumns } from './migrations/schema.js';
 import { RoleRegistry } from './role-registry.js';
 import { appendOutboxEvent } from "../../platform/events/outbox-repository.js";
 import { DomainEvent } from "../../platform/events/domain-event.js";
@@ -24,14 +23,6 @@ export class RunService {
     private readonly db: Database,
     private readonly runtime: AgentRuntime
   ) {
-    this.db.exec(schema);
-    // сохранять databases created перед capability_json usable пока Объект migration
-    // set является upgraded by Объект хост процесс.
-    const columns = this.db.all<{ name: string }>("PRAGMA table_info(agent_runs)");
-    for (const column of migrationColumns) {
-      const name = column.split(" ", 1)[0];
-      if (!columns.some((existing) => existing.name === name)) this.db.exec(`ALTER TABLE agent_runs ADD COLUMN ${column}`);
-    }
   }
 
   /** Adapter используемый by MCP. Этот обновляет predicate makes acceptance atomic и one-shot. */

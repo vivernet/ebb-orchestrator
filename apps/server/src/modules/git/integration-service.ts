@@ -3,8 +3,6 @@ import { tmpdir } from "os";
 import { isAbsolute, join, relative, resolve } from "path";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync } from "fs";
 import type { Database } from "../../platform/database/database.js";
-import { createSqliteDatabase } from "../../platform/database/sqlite-database.js";
-import { readFileSync } from "node:fs";
 
 export interface IntegrationAttempt {
   id: string;
@@ -42,7 +40,10 @@ export interface VerifiedIntegrationProvenance {
 export interface IntegrationServiceOptions {
   git?: GitCli;
   worktreeDir?: string;
-  database?: Database;
+  /** Database после применения полного versioned migration catalog при startup. */
+  database: Database;
+  /** Полный путь к той же базе для Integration tooling, которое читает provenance напрямую. */
+  provenanceDatabasePath?: string;
   integrationRunId?: string;
 }
 
@@ -68,23 +69,18 @@ export type IntegrationRunner<T> = (worktreePath: string, attempt: Readonly<Inte
 export class IntegrationService {
   private readonly git: GitCli;
   private readonly worktreeDir: string;
-  private database: Database;
-  private databasePath: string;
-  private databaseClosed = false;
-  private readonly ownsDatabase: boolean;
+  private readonly database: Database;
+  private readonly provenanceDatabasePath: string | undefined;
   private integrationRunId: string | undefined;
 
-  constructor(options: IntegrationServiceOptions = {}) {
+  constructor(options: IntegrationServiceOptions) {
     this.git = options.git ?? new GitCli();
     this.worktreeDir = options.worktreeDir ?? join(tmpdir(), "orchestrator-integration");
     mkdirSync(this.worktreeDir, { recursive: true });
-    this.databasePath = join(this.worktreeDir, "integration-provenance.sqlite");
-    this.ownsDatabase = !options.database;
-    this.database = options.database ?? createSqliteDatabase(this.databasePath);
+    if (!options.database) throw new Error("IntegrationService requires a migrated database");
+    this.database = options.database;
+    this.provenanceDatabasePath = options.provenanceDatabasePath;
     this.integrationRunId = options.integrationRunId;
-    this.database.exec(readFileSync(new URL("../../platform/database/migrations/009_integration_provenance.sql", import.meta.url), "utf8"));
-    const columns = this.database.all<{ name: string }>("PRAGMA table_info(integration_attempts)");
-    if (!columns.some((column) => column.name === "source_sha")) this.database.exec("ALTER TABLE integration_attempts ADD COLUMN source_sha TEXT NOT NULL DEFAULT ''");
   }
 
   /**
@@ -143,9 +139,14 @@ export class IntegrationService {
           createdAt: new Date().toISOString(),
           ...(this.integrationRunId ? { integrationRunId: this.integrationRunId } : {}),
         };
-      Object.defineProperty(attempt, "provenanceDatabasePath", { value: join(this.worktreeDir, "integration-provenance.sqlite"), enumerable: false, writable: false });
+      if (this.provenanceDatabasePath) {
+        Object.defineProperty(attempt, "provenanceDatabasePath", {
+          value: this.provenanceDatabasePath,
+          enumerable: false,
+          writable: false,
+        });
+      }
       this.database.run(`INSERT INTO integration_attempts (id, repository_path, source_branch, target_branch, expected_target_sha, source_sha, worktree_path, integration_run_id, status, created_at) VALUES ($id,$repo,$source,$target,$sha,$source_sha,$worktree,$run,$status,$created)`, { id: attempt.id, repo: attempt.repoPath, source: attempt.sourceBranch, target: attempt.currentTargetBranch, sha: attempt.expectedTargetSha, source_sha: attempt.sourceSha, worktree: attempt.worktreePath, run: attempt.integrationRunId ?? null, status: attempt.status, created: attempt.createdAt });
-      if (this.ownsDatabase) { this.database.close(); this.databaseClosed = true; }
 
       return attempt;
     } catch (error) {
@@ -168,7 +169,6 @@ export class IntegrationService {
    * Связывает уже созданный интеграционный workspace с авторизованным run.
    */
   bindIntegrationRun(attempt: IntegrationAttempt, integrationRunId: string): IntegrationAttempt {
-    if (this.databaseClosed) throw new Error("Integration database is closed");
     this.integrationRunId = integrationRunId;
     this.database.run("UPDATE integration_attempts SET integration_run_id = $run WHERE id = $id", { id: attempt.id, run: integrationRunId });
     return { ...attempt, integrationRunId };
@@ -180,13 +180,6 @@ export class IntegrationService {
   async runInIntegrationWorktree<T>(attempt: IntegrationAttempt, runner: IntegrationRunner<T>): Promise<T> {
     if (!this.integrationRunId || !attempt.integrationRunId || attempt.integrationRunId !== this.integrationRunId) {
       throw new Error("integrationRunId is required and must be bound to the IntegrationService");
-    }
-    if (this.databaseClosed || (this.ownsDatabase && attempt.provenanceDatabasePath && attempt.provenanceDatabasePath !== this.databasePath)) {
-      if (!this.databaseClosed && this.ownsDatabase) this.database.close();
-      const provenancePath = attempt.provenanceDatabasePath ?? this.databasePath;
-      this.databasePath = provenancePath;
-      this.database = createSqliteDatabase(this.databasePath);
-      this.databaseClosed = false;
     }
     const persisted = this.database.get<{ status: IntegrationAttempt["status"]; integration_run_id: string }>("SELECT status, integration_run_id FROM integration_attempts WHERE id = $id", { id: attempt.id });
     if (!persisted || persisted.status !== "PREPARED" || attempt.status !== "PREPARED") throw new Error("integration attempt is not prepared");
@@ -232,13 +225,11 @@ export class IntegrationService {
       }
       attempt.status = "MERGED";
        this.database.run("UPDATE integration_attempts SET status = 'MERGED' WHERE id = $id", { id: attempt.id });
-       if (this.ownsDatabase) { this.database.close(); this.databaseClosed = true; }
        return result;
     } catch (error) {
       attempt.status = "FAILED";
       this.failIntegration(attempt, error);
       await this.cleanupIntegration(attempt);
-      if (this.ownsDatabase) { this.database.close(); this.databaseClosed = true; }
       throw error;
     }
   }
@@ -272,7 +263,6 @@ export class IntegrationService {
    * Слияет подготовленный commit задачи перед запуском Integration Agent.
    */
   async mergePreparedSource(attempt: IntegrationAttempt): Promise<void> {
-    if (this.databaseClosed) throw new Error("Integration database is closed");
     const persisted = this.database.get<{ status: IntegrationAttempt["status"]; integration_run_id: string | null }>(
       "SELECT status, integration_run_id FROM integration_attempts WHERE id = $id", { id: attempt.id });
     if (!persisted || persisted.status !== "PREPARED" || attempt.status !== "PREPARED") {

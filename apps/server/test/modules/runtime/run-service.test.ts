@@ -1,48 +1,17 @@
 import { describe, expect, it, afterEach, beforeEach } from "vitest";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
-import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createSqliteDatabase } from "../../../src/platform/database/sqlite-database.js";
-import { runMigrations, type Migration } from "../../../src/platform/database/migrator.js";
+import { runMigrations } from "../../../src/platform/database/migrator.js";
 import type { Database } from "../../../src/platform/database/database.js";
 import { RunService } from "../../../src/modules/runtime/run-service.js";
 import { FakeAgentRuntime } from "../../fakes/fake-agent-runtime.js";
 import type { RunOutcome } from "../../../src/modules/runtime/run-types.js";
+import { loadTestMigrations } from "../../helpers/migrations.js";
 
-const migration001 = readFileSync(
-  join(import.meta.dirname, "../../../src/platform/database/migrations/001_system.sql"),
-  "utf-8",
-);
-
-const migration002 = readFileSync(
-  join(import.meta.dirname, "../../../src/platform/database/migrations/002_work_domain.sql"),
-  "utf-8",
-);
-
-const migration003 = readFileSync(
-  join(import.meta.dirname, "../../../src/platform/database/migrations/003_work_control.sql"),
-  "utf-8",
-);
-
-const migration004 = readFileSync(
-  join(import.meta.dirname, "../../../src/platform/database/migrations/004_agent_runs.sql"),
-  "utf-8",
-);
-
-const migration025 = readFileSync(
-  join(import.meta.dirname, "../../../src/platform/database/migrations/025_audit_log.sql"),
-  "utf-8",
-);
-
-const migrations: Migration[] = [
-  { version: 1, name: "001_system", sql: migration001 },
-  { version: 2, name: "002_work_domain", sql: migration002 },
-  { version: 3, name: "003_work_control", sql: migration003 },
-  { version: 4, name: "004_agent_runs", sql: migration004 },
-  { version: 25, name: "025_audit_log", sql: migration025 },
-];
+const migrations = loadTestMigrations();
 
 describe("RunService with FakeAgentRuntime", () => {
   let db: Database | undefined;

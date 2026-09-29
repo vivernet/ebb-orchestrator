@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createSqliteDatabase } from "../../src/platform/database/sqlite-database.js";
-import { runMigrations, type Migration } from "../../src/platform/database/migrator.js";
+import { runMigrations } from "../../src/platform/database/migrator.js";
+import { loadTestMigrations } from "../helpers/migrations.js";
 import type { Database } from "../../src/platform/database/database.js";
 import { WorkflowEngine } from "../../src/modules/workflow/workflow-engine.js";
 import { WorkflowRegistry } from "../../src/modules/workflow/workflow-registry.js";
@@ -23,15 +23,6 @@ import { MergeService } from "../../src/modules/git/merge-service.js";
 import { IntegrationService } from "../../src/modules/git/integration-service.js";
 import { GitCli } from "../../src/modules/git/git-cli.js";
 import { writeFile } from "node:fs/promises";
-
-const migrationFiles = [
-  "001_system", "002_work_domain", "003_work_control", "004_agent_runs",
-  "005_scheduler", "006_recovery", "007_git", "008_quality",
-  "009_integration_provenance", "010_planning", "011_epic_orchestration",
-  "012_epic_runtime_authority", "013_remove_legacy_scheduler_locks",
-  "014_migrate_legacy_scheduler_authority", "015_knowledge",
-  "016_context", "017_usage", "018_scheduler_config_audit", "021_onboarding_approval",
-];
 
 class FakeAgentRuntime implements AgentRuntime {
   readonly calls: Array<{ phase: string; role: string; taskId?: string; targetBranch?: string }> = [];
@@ -95,12 +86,7 @@ describe("full epic orchestration with FakeAgentRuntime", () => {
   it("reconciles stale orchestration runs before releasing scheduler capacity", async () => {
     directory = await mkdtemp(join(tmpdir(), "orchestrator-stale-reconcile-"));
     db = createSqliteDatabase(join(directory, "test.db"));
-    const migrations: Migration[] = migrationFiles.map((name, index) => ({
-      version: index + 1,
-      name,
-      sql: readFileSync(join(import.meta.dirname, `../../src/platform/database/migrations/${name}.sql`), "utf8"),
-    }));
-    runMigrations(db, migrations);
+    runMigrations(db, loadTestMigrations());
     const projectId = randomUUID();
     const epicId = randomUUID();
     const runId = randomUUID();
@@ -140,12 +126,7 @@ describe("full epic orchestration with FakeAgentRuntime", () => {
   it("runs plan → PM → Architect → parallel children → final validation and releases children last", async () => {
     directory = await mkdtemp(join(tmpdir(), "orchestrator-epic-e2e-"));
     db = createSqliteDatabase(join(directory, "test.db"));
-    const migrations: Migration[] = migrationFiles.map((name, index) => ({
-      version: index + 1,
-      name,
-      sql: readFileSync(join(import.meta.dirname, `../../src/platform/database/migrations/${name}.sql`), "utf8"),
-    }));
-    runMigrations(db, migrations);
+    runMigrations(db, loadTestMigrations());
     ;
     const projectId = randomUUID();
     const now = new Date().toISOString();
@@ -207,11 +188,7 @@ const runtime = new FakeAgentRuntime(db);
   it("merges an actual verified Integration attempt and releases children only after final approval", async () => {
     directory = await mkdtemp(join(tmpdir(), "orchestrator-epic-merge-e2e-"));
     db = createSqliteDatabase(join(directory, "test.db"));
-    const migrations: Migration[] = migrationFiles.map((name, index) => ({
-      version: index + 1, name,
-      sql: readFileSync(join(import.meta.dirname, `../../src/platform/database/migrations/${name}.sql`), "utf8"),
-    }));
-    runMigrations(db, migrations);
+    runMigrations(db, loadTestMigrations());
     const git = new GitCli();
     await git.run(directory, ["init", "-b", "master"]);
     await git.run(directory, ["config", "user.email", "test@example.invalid"]);

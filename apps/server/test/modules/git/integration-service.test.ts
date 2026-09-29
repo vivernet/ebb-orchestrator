@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 
 import { GitCli } from "../../../src/modules/git/git-cli.js";
 import { IntegrationService } from "../../../src/modules/git/integration-service.js";
-import { createSqliteDatabase } from "../../../src/platform/database/sqlite-database.js";
+import { createIntegrationTestDatabase } from "../../helpers/integration-database.js";
 
 function createTempDir(): string {
   return mkdtempSync(join(tmpdir(), "git-integration-"));
@@ -25,11 +25,16 @@ async function initGitRepo(path: string, commitMessage: string = "initial"): Pro
   return git;
 }
 
-function boundService(git: GitCli): { service: IntegrationService; database: ReturnType<typeof createSqliteDatabase> } {
-  const database = createSqliteDatabase(join(createTempDir(), "provenance.sqlite"));
-    database.exec("CREATE TABLE agent_runs (id TEXT PRIMARY KEY, role TEXT NOT NULL, status TEXT NOT NULL, output TEXT, ended_at TEXT, exit_code INTEGER)");
+function createIntegrationService(options: { git?: GitCli; worktreeDir?: string; integrationRunId?: string } = {}): { service: IntegrationService; database: ReturnType<typeof createIntegrationTestDatabase> } {
+  const provenanceDatabasePath = join(createTempDir(), "provenance.sqlite");
+  const database = createIntegrationTestDatabase(provenanceDatabasePath);
+  return { service: new IntegrationService({ ...options, database, provenanceDatabasePath }), database };
+}
+
+function boundService(git: GitCli): { service: IntegrationService; database: ReturnType<typeof createIntegrationTestDatabase> } {
+  const { service, database } = createIntegrationService({ git, integrationRunId: "integration-run" });
   database.run("INSERT INTO agent_runs (id, role, status) VALUES ('integration-run', 'Integration', 'STARTED')");
-  return { service: new IntegrationService({ git, database, integrationRunId: "integration-run" }), database };
+  return { service, database };
 }
 
 describe("IntegrationService", () => {
@@ -38,7 +43,7 @@ describe("IntegrationService", () => {
       const repoPath = createTempDir();
       const git = await initGitRepo(repoPath);
       const worktreeDir = createTempDir();
-      const service = new IntegrationService({ git, worktreeDir });
+      const service = createIntegrationService({ git, worktreeDir }).service;
       const attempt = await service.prepareIntegration("master", "master", repoPath);
 
       writeFileSync(join(attempt.worktreePath, "uncommitted.txt"), "keep me");
@@ -63,7 +68,7 @@ describe("IntegrationService", () => {
       await git.run(repoPath, ["commit", "-m", "add feature"]);
       await git.run(repoPath, ["checkout", "master"]);
 
-      const integrationService = new IntegrationService();
+      const integrationService = createIntegrationService().service;
       const attempt = await integrationService.prepareIntegration("feature-branch", "master", repoPath);
 
       expect(attempt.id).toBeDefined();
@@ -106,7 +111,7 @@ describe("IntegrationService", () => {
       expect(initialSha).not.toBe(finalSha);
 
       // Подготавливаем интеграцию — должен использоваться текущий target SHA.
-      const integrationService = new IntegrationService();
+      const integrationService = createIntegrationService().service;
       const attempt = await integrationService.prepareIntegration("source-branch", "master", repoPath);
 
       // Проверяем, что worktree создан от итогового перемещённого target.
@@ -132,7 +137,7 @@ describe("IntegrationService", () => {
       // Сохраняем состояние master до интеграции.
       const masterBefore = await git.run(repoPath, ["rev-parse", "master"]);
 
-      const integrationService = new IntegrationService();
+      const integrationService = createIntegrationService().service;
       const attempt = await integrationService.prepareIntegration("task-123", "master", repoPath);
 
       // Проверяем, что master не изменился.
@@ -175,7 +180,7 @@ describe("IntegrationService", () => {
       await git.run(repoPath, ["commit", "-m", "merge commit"]);
       await git.run(repoPath, ["checkout", "master"]);
 
-      const integrationService = new IntegrationService();
+      const integrationService = createIntegrationService().service;
       const attempt = await integrationService.prepareIntegration("merge-source", "master", repoPath);
 
       // Попытка интеграции должна отслеживать ожидаемый target.
@@ -219,7 +224,7 @@ describe("IntegrationService", () => {
     it("rejects an attempt without a bound integration run", async () => {
       const repoPath = createTempDir();
       const git = await initGitRepo(repoPath);
-      const service = new IntegrationService({ git });
+      const service = createIntegrationService({ git }).service;
       const attempt = await service.prepareIntegration("master", "master", repoPath);
 
       await expect(service.runInIntegrationWorktree(attempt, async () => undefined))

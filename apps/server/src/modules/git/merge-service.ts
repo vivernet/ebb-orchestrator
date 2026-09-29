@@ -75,19 +75,6 @@ export class MergeService {
     this.integrationAttempt = options.integrationAttempt ?? null;
     this.database = options.database;
     this.onVerifiedCompletion = options.onVerifiedCompletion;
-    if (this.database) {
-      this.database.exec(`CREATE TABLE IF NOT EXISTS git_operations (
-        id TEXT PRIMARY KEY, type TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'STARTED',
-        repo_path TEXT NOT NULL, branch_name TEXT, target_ref TEXT, created_at TEXT NOT NULL,
-        verified_at TEXT, approval_id TEXT, source_sha TEXT, expected_target_sha TEXT,
-        resulting_target_sha TEXT, failure_reason TEXT
-      )`);
-    }
-    if (this.database) {
-      for (const column of ["approval_id TEXT", "source_sha TEXT", "expected_target_sha TEXT", "resulting_target_sha TEXT", "failure_reason TEXT"]) {
-        try { this.database.exec(`ALTER TABLE git_operations ADD COLUMN ${column}`); } catch { /* already present */ }
-      }
-    }
   }
 
   /**
