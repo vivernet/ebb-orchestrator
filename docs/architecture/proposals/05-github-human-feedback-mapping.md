@@ -109,7 +109,52 @@ GitHub остаётся optional. Существующие installations без 
 - Integration: fake GitHub pagination, rate limit, timeout, 401/403, manual and scheduled sync using the same service.
 - Acceptance: отключённый GitHub не блокирует local workflow; linked repository comment появляется один раз в правильном Project inbox.
 
-## 10. Решение пользователя
+## 10. Предлагаемый точный контракт
 
-Пользователь подтвердил, что mapping нужно определить отдельным proposal. Предлагаемый вариант A нуждается в явном принятии до реализации production wiring. Также остаётся решение о retention срока для тела комментария и о UI/API минимального inbox surface.
+Это recommendation для review, а не разрешение на реализацию. Он конкретизирует вариант A и ограничивает v1 импортом комментариев в Project-scoped inbox.
 
+### Mapping и source identity
+
+- Один GitHub repository может быть привязан максимум к одному активному локальному Project. Mapping задаёт пользователь в Project Settings; связь из Issue title/body, labels, branch или модели не выводится.
+- V1 принимает канонический GitHub repository в форме `owner/repository`, нормализует `owner` и `repository` в lowercase и включает host `github.com` в source identity: `github.com:{owner/repository}:issue-comment:{commentId}`.
+- Комментарии к незамапленному repository не получают receipt и не импортируются. Sync возвращает `SYNC_PENDING` с безопасной причиной `PROJECT_MAPPING_REQUIRED`; повтор после настройки mapping перечитывает ещё не доставленные comments.
+- Mapping уникален по normalized repository key. Передача repository другому Project не меняет уже сохранённые feedback rows: они остаются в первоначальном Project.
+
+### Inbox record и lifecycle
+
+Предлагается отдельная `human_feedback` таблица с Orchestrator-generated `id`, `project_id`, `source_key` (UNIQUE), `source_repository`, `source_issue_number`, `source_comment_id`, `author_login`, `body`, `source_url`, `source_created_at`, `received_at`, `status`, nullable `task_id`/`epic_id` и `triaged_at`. `source_key` уникален во всей таблице, а локальная запись хранится неизменно после получения; mutable triage поля обновляются только через HumanFeedback module API.
+
+Начальный статус — `UNTRIAGED`. Человек может связать feedback с существующим Task/Epic того же Project (`LINKED`), закрыть triage как `IGNORED` либо `RESOLVED`; все переходы проверяются детерминированным service. Получение, `LINKED`, `IGNORED` и `RESOLVED` не меняют Task/Epic workflow state и не создают Proposal автоматически. Создание Task или Proposal из feedback — отдельное явное действие в UI/application flow.
+
+### Durable delivery и recovery
+
+Worker сначала проверяет repository mapping, затем запрашивает Issue comments. Для каждого принятого comment одна SQLite transaction вставляет inbox row и переводит существующий technical delivery receipt в `DELIVERED`; unique `source_key` делает повторный poll безопасным. Если SQLite transaction не завершилась, следующий poll повторяет доставку. Старые `PENDING` receipts миграция не объявляет доставленными: sync перечитывает источник и вставляет inbox row по source identity.
+
+Repository polling сериализуется как сейчас в одном процессе. SQLite uniqueness защищает от дублей при повторе/restart, но distributed/multi-process workers остаются вне v1. GitHub timeout, 401/403 или rate limit оставляют sync pending/blocked по существующей GitHosting модели и не блокируют local workflow.
+
+### Module/API/UI boundary
+
+- `GitHubSyncWorker` передаёт типизированный comment DTO application service; он не записывает domain rows напрямую.
+- Новый `HumanFeedbackService` владеет mapping lookup, транзакционной вставкой, dedupe и triage transitions. `GitHubAdapter` остаётся владельцем только GitHub transport/auth.
+- В защищённом Web UI предлагается Project inbox: список `UNTRIAGED` items и detail с source link/body; действия связать с существующим Task/Epic, отметить `IGNORED` или `RESOLVED`. Body показывается как недоверенный текст, без HTML execution.
+- Application routes ограничены выбранным Project и используют существующие local-session, Origin и CSRF проверки. Ошибка cross-project link возвращает controlled `404`/`409` без раскрытия существования чужого Task.
+- Предлагаемые endpoints: `GET /api/v1/projects/{projectId}/human-feedback?status=UNTRIAGED`; `POST /api/v1/projects/{projectId}/human-feedback/{feedbackId}/link` с `{ targetType: "TASK" | "EPIC", targetId }`; `POST .../{feedbackId}/ignore`; `POST .../{feedbackId}/resolve`. Ответы содержат только DTO inbox item, pagination cursor и безопасный status; route не принимает repository/comment identity от клиента.
+- Ни API, ни logs не возвращают credentials; structured logs содержат только source identity, Project ID, безопасный status/reason и correlation ID, но не body.
+
+### Migration, retention и verification
+
+- Добавить append-only migration для repository-to-Project mapping и `human_feedback`; technical delivery receipts остаются техническими receipts и не переинтерпретируются как inbox rows.
+- Рекомендуемая retention policy: хранить body вместе с активным локальным Project до явного удаления feedback/Project пользователем; удаление feedback сохраняет минимальный source identity tombstone, чтобы последующий poll не импортировал удалённый comment повторно. Удаление Project удаляет mapping и inbox в рамках явного Project deletion flow.
+- Acceptance включает duplicate poll/restart, crash до и после transaction, mapping отсутствует/переназначен, cross-project link, hostile body rendering, session/Origin/CSRF, redaction, migration из поддерживаемой схемы и GitHub outage без влияния на local workflow.
+
+### Решения, необходимые до implementation plan
+
+1. Принять предложенный Project-scoped inbox и правило «один repository → один Project» либо выбрать другой вариант из раздела 3.
+2. Принять retention policy с явным пользовательским удалением либо задать срок автоматического хранения.
+3. Подтвердить UI inbox с link/ignore/resolve действиями как часть Plan06 Task 8 либо ограничить v1 API и вынести UI в отдельный план.
+
+Без решений 1–3 production wiring и реализация HumanFeedback не начинаются. До их принятия текущий импорт остаётся выключенным в production.
+
+## 11. Решение пользователя
+
+Пользователь попросил определить mapping отдельным proposal. Этот документ содержит предлагаемую конкретизацию варианта A; решения 1–3 выше ожидают review. Production wiring и implementation plan остаются заблокированы до их явного принятия.
