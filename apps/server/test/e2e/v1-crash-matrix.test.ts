@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -16,6 +16,10 @@ import { FakeAgentRuntime } from "../fakes/fake-agent-runtime.js";
 import { BudgetService } from "../../src/modules/usage/budget-service.js";
 import { GitHubSyncService, SqliteSyncState } from "../../src/modules/github/github-sync-service.js";
 import type { GitHosting, PullRequest } from "../../src/modules/github/git-hosting.js";
+import { GitCli } from "../../src/modules/git/git-cli.js";
+import { GitReconciler } from "../../src/modules/git/git-reconciler.js";
+import { WorktreeManager } from "../../src/modules/git/worktree-manager.js";
+import { WorktreeRepository } from "../../src/modules/git/worktree-repository.js";
 
 describe('v1 production recovery paths', () => {
   let tempDirectory: string | undefined;
@@ -107,6 +111,43 @@ describe('v1 production recovery paths', () => {
     expect(db.get<{ reserved_cost: number }>(
       'SELECT reserved_cost FROM budget_configs WHERE scope_id=$id', { id: projectId },
     )?.reserved_cost).toBe(0);
+  });
+
+  it('preserves committed task code and branch across a worktree manager restart', async () => {
+    db = await openDatabase();
+    tempDirectory ??= await mkdtemp(join(tmpdir(), 'orchestrator-v1-recovery-'));
+    const repoPath = join(tempDirectory, 'repo');
+    const worktreeRoot = join(tempDirectory, 'managed-worktrees');
+    await mkdir(repoPath);
+    const git = new GitCli();
+    await git.run(repoPath, ['init', '--initial-branch=master']);
+    await git.run(repoPath, ['config', 'user.email', 'test@example.com']);
+    await git.run(repoPath, ['config', 'user.name', 'Test User']);
+    await writeFile(join(repoPath, 'README.md'), '# Initial');
+    await git.run(repoPath, ['add', 'README.md']);
+    await git.run(repoPath, ['commit', '-m', 'initial']);
+
+    const taskId = 'recovery-branch';
+    const workspace = await new WorktreeManager({ db: db!, worktreeDir: worktreeRoot })
+      .createTaskWorkspace(taskId, repoPath, 'master');
+    await writeFile(join(workspace.path, 'committed.txt'), 'committed task result');
+    await git.run(workspace.path, ['add', 'committed.txt']);
+    await git.run(workspace.path, ['commit', '-m', 'task result']);
+
+    db!.close();
+    db = await openDatabase();
+    expect(new WorktreeRepository(db).findById(taskId)).toMatchObject({
+      id: taskId, repoPath, path: workspace.path, branch: 'task/recovery-branch',
+    });
+    const branch = await git.run(repoPath, ['rev-parse', '--verify', '--end-of-options', 'task/recovery-branch']);
+    const content = await readFile(join(workspace.path, 'committed.txt'), 'utf8');
+    const reconciler = new GitReconciler();
+    await reconciler.initialize(repoPath);
+    const recovered = await reconciler.reconcile('task/recovery-branch', workspace.path);
+
+    expect(branch.stdout.trim()).not.toBe('');
+    expect(content).toBe('committed task result');
+    expect(recovered.state).toBe('IN_SYNC');
   });
 
   it('finds the remote PR after local acknowledgement fails and does not create a duplicate', async () => {
