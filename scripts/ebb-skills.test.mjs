@@ -6,7 +6,7 @@ import { fileURLToPath, URL } from 'node:url';
 
 const skillsRoot = fileURLToPath(new URL('../.agents/skills/', import.meta.url));
 const expectedNames = [
-  'ebb-curate-skills', 'ebb-debug-issue', 'ebb-design-change',
+  'ebb-curate-skills', 'ebb-database-engineering', 'ebb-debug-issue', 'ebb-design-change',
   'ebb-dispatch-agents', 'ebb-execute-plan', 'ebb-final-review',
   'ebb-finish-branch', 'ebb-handle-review-feedback', 'ebb-implement-task',
   'ebb-orchestrate-work', 'ebb-quality-gates', 'ebb-repository-context',
@@ -18,14 +18,14 @@ const expectedNames = [
 // These assertions inspect routing documentation; they do not execute scenarios
 // or prove model application of a skill.
 const triggerMatrix = [
-  ['Start arbitrary Ebb engineering work', 'ebb-orchestrate-work', /в начале любой инженерной работы/u],
+  ['Start arbitrary Ebb engineering work', 'ebb-orchestrate-work', /при начале инженерной работы/u],
   ['Need current Git/instructions/scope brief', 'ebb-repository-context', /актуальные инструкции/u],
   ['New cross-component architecture/API/state decision', 'ebb-design-change', /проектных решений, новой архитектуры/u, 'Неясные требования / новая архитектура'],
   ['Approved requirements need multi-task plan', 'ebb-write-plan', /утверждённые требования или design.*implementation plan/u, 'Approved multi-task change'],
   ['Plan ready for independent approval', 'ebb-review-plan', /implementation plan.*независимой.*проверке/u],
   ['Need/create/check isolated worktree', 'ebb-worktree', /проверить или создать изолированный Git worktree/u],
   ['2+ independent problem domains / scouts', 'ebb-dispatch-agents', /два или больше независимых/u, 'Несколько независимых доменов'],
-  ['Execute approved dependency plan', 'ebb-execute-plan', /исполнения утверждённого implementation plan/u, 'Approved executable plan'],
+  ['Execute approved dependency plan', 'ebb-execute-plan', /исполнить актуальный утверждённый implementation plan/u, 'Approved executable plan'],
   ['Implement one task/finding', 'ebb-implement-task', /одной назначенной задачи.*подтверждённого.*finding/u, 'Одна bounded task'],
   ['Review one task diff', 'ebb-review-task', /review одной реализованной задачи/u],
   ['Received review findings', 'ebb-handle-review-feedback', /после получения review findings/u],
@@ -36,7 +36,8 @@ const triggerMatrix = [
   ['Cleanup/move/setup/docs/tooling', 'ebb-repository-maintenance', /cleanup, move\/rename, documentation restructuring, setup\/dev-script/u, 'Cleanup/move/setup/docs'],
   ['Auth/secrets/permissions/process/persistence boundary', 'ebb-security-review', /trust boundary, auth, secrets, permissions, process.*persistence/u, 'Trust boundary/auth/secrets/process'],
   ['Browser/HTTP/session/SSE behavior', 'ebb-web-e2e', /Web UI, HTTP, sessions, SSE.*browser-visible/u, 'Browser-visible HTTP/session/SSE'],
-  ['Add/edit/audit Ebb skills', 'ebb-curate-skills', /создать, изменить или оценить/u, 'Skill authoring/curation'],
+  ['Add/edit/audit Ebb skills', 'ebb-curate-skills', /создать, изменить, объединить, удалить или оценить skill/u, 'Skill authoring/curation'],
+  ['Database schema, migration or persistence work', 'ebb-database-engineering', /database schema, migrations, persisted-data representation/u],
 ];
 
 function skillDescription(name) {
@@ -108,7 +109,7 @@ const actualNames = readdirSync(skillsRoot, { withFileTypes: true })
     return entry.name;
   }).sort();
 
-test('canonical workflow exposes exactly the 19 approved skill owners', () => {
+test('canonical workflow exposes exactly the 20 approved skill owners', () => {
   assert.deepEqual(actualNames, expectedNames);
 });
 

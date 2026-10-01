@@ -2,13 +2,14 @@
 
 Per task:
 
-1. Capture BASE and create a compact task brief.
-2. Dispatch fresh implementer with exact scope, interfaces, tests and report path.
+1. Capture BASE and create a compact self-contained task brief.
+2. Dispatch fresh implementer with exact scope, interfaces, applicable domain skills/gates, tests and return contract.
 3. Implementer follows `ebb-implement-task`, runs checks, returns concise report/artifact.
-4. Build review package: task requirements, BASE..HEAD diff, test evidence, relevant rulings.
-5. Dispatch fresh read-only `ebb-review-task`; reviewer never inherits implementer history.
-6. `PASS` → ledger DONE. `CHANGES_REQUIRED` → narrow fix round and scoped re-review.
-7. Fix rounds 1–3 may resume implementer; 4–5 use fresh/higher-capability implementer. After 5, adjudicate remaining findings and block only load-bearing unresolved issues.
+4. **Technical agent failure** (`crash/timeout/no usable return`) is not a code verdict: retry the same deterministic brief automatically. Second failure uses a fresh/more reliable model when available; third technical failure → `BLOCKED` with evidence. Controller never becomes implementer.
+5. Build review package: task requirements, BASE..HEAD diff, test/specialist evidence, relevant rulings.
+6. Dispatch fresh read-only `ebb-review-task`; reviewer never inherits implementer history.
+7. `PASS` → ledger DONE. `CHANGES_REQUIRED` → narrow fix subagent and scoped re-review.
+8. Fix rounds 1–3 may resume implementer; 4–5 use fresh/higher-capability implementer. After 5, adjudicate remaining findings and block only load-bearing unresolved issues.
 
 ## Model/cost policy
 

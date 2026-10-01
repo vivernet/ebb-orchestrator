@@ -9,12 +9,15 @@
 | Ошибка / failing test / build | `ebb-debug-issue` | bounded fix или plan |
 | Несколько независимых доменов | `ebb-dispatch-agents` | synthesis / execute |
 | Cleanup/move/setup/docs | `ebb-repository-maintenance` | plan или focused implementation |
+| Schema/migrations/persisted data/transactions/DB lifecycle | `ebb-database-engineering` | domain constraints → primary workflow/gates |
 | Trust boundary/auth/secrets/process | `ebb-security-review` | finding fixes / gates |
 | Browser-visible HTTP/session/SSE | `ebb-web-e2e` | gates |
 | Completion claim | `ebb-quality-gates` | final review / report |
 | Whole-change readiness | `ebb-final-review` | fix or finish branch |
 | Branch/PR integration | `ebb-finish-branch` | user/pipeline decision |
 | Skill authoring/curation | `ebb-curate-skills` | validation + migration map |
+
+Database/security/Web rows — domain overlays: они не заменяют design/plan/implementation workflow, а добавляют specialist invariants/evidence к нему.
 
 ## Stop conditions
 

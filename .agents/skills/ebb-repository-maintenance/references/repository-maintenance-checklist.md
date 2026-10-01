@@ -8,6 +8,11 @@
 - Для local tool-state перед удалением проверь readability/JSON/UTF-8, referenced paths, secret exposure и нужное historical evidence.
 - Если evidence нужно сохранить, архивируй вне worktree, сохраняй relative paths + SHA-256 manifest и повторно хэшируй копию.
 
+## Database migration artifacts
+
+- Delete/squash/rebaseline migration history не классифицируется как обычный file cleanup: сначала `ebb-database-engineering` определяет lifecycle/compatibility safety.
+- Maintenance отвечает за exact path disposition/reference scan только после database decision.
+
 ## Move / rename
 
 - До изменения — полный reference scan.

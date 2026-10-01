@@ -3,7 +3,7 @@ name: ebb-quality-gates
 description: Используй перед любым утверждением PASS/DONE/fixed/ready по Ebb Orchestrator и для выполнения свежих verification gates текущего HEAD.
 metadata:
   project: "ebb-orchestrator"
-  version: "5.0.0"
+  version: "5.1.0"
 ---
 
 # Ebb Quality Gates
@@ -22,7 +22,7 @@ Core law: **никакого completion claim без свежего evidence н�
 
 ## Scope ladder
 
-Сначала focused test/reproduction, затем neighboring suite, затем mandatory repository gates по изменённому scope/plan: lint, typecheck, tests, build, docs, E2E/security и всегда применимый `git diff --check`. Full suite обязателен перед branch integration, если repository policy не определяет эквивалентный полный gate.
+Сначала focused test/reproduction, затем neighboring suite, затем mandatory repository gates по изменённому scope/plan: lint, typecheck, tests, build, docs и applicable specialist gates. Для database-contract changes используй required fresh/upgrade/schema/data evidence из `ebb-database-engineering`; для Web/security — соответствующие E2E/review evidence. `git diff --check` применим всегда. Full suite обязателен перед branch integration, если repository policy не определяет эквивалентный полный gate.
 
 Agent report, старый CI run, «должно работать», зелёный lint вместо build или partial suite не заменяют нужную проверку. Broader failure классифицируй по ownership; подтверждённый pre-existing/dependency blocker сохраняется как blocker и не превращается в общий PASS.
 

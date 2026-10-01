@@ -3,7 +3,7 @@ name: ebb-debug-issue
 description: Используй, когда Ebb Orchestrator имеет bug, failing test/build, performance problem или unexpected behavior и требуется доказать root cause до исправления.
 metadata:
   project: "ebb-orchestrator"
-  version: "5.0.0"
+  version: "5.1.0"
 ---
 
 # Ebb Debug Issue
@@ -19,7 +19,7 @@ metadata:
 ## Phase 2 — Pattern
 
 4. Найди близкий working path/reference внутри repo; перечисли различия и зависимости без отбрасывания «маленьких» отличий.
-5. Для cross-boundary/load-bearing issue используй [architectural checklist](references/architectural-debugging-checklist.md). Независимые investigations можно делегировать через `ebb-dispatch-agents`.
+5. Для cross-boundary/load-bearing issue используй [architectural checklist](references/architectural-debugging-checklist.md). Если evidence указывает на schema/migration/data/transaction/database-engine contract, используй `ebb-database-engineering` для domain invariants и verification requirements; root-cause ownership остаётся здесь. Независимые investigations можно делегировать через `ebb-dispatch-agents`.
 
 ## Phase 3 — Hypothesis
 

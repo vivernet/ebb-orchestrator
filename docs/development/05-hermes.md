@@ -19,7 +19,7 @@ production `AgentRuntime` / `HermesRuntimeAdapter` задаётся архите
 - Нужны Node.js и pnpm из требований корневого README, Git и доступный в `PATH`
   Hermes Agent с командами config и project trust.
 - В worktree должны присутствовать `.hermes.md` и canonical source `.agents/skills/`.
-- Полный актуальный набор из 19 Ebb skills находится в
+- Полный актуальный набор из 20 Ebb skills находится в
   [единственном README inventory](../../README.md#hermes-development-skills).
 
 ## Первоначальная настройка
@@ -41,7 +41,7 @@ Hermes home и завершает успешную настройку марке
 `HERMES_CONFIG marker=SETUP_CONFIGURED trusted=true redacted=true`.
 
 `hermes:check` проверяет `hermes --version`, `.hermes.md`, точный canonical
-inventory с `SKILL.md` у всех 19 owners, trusted repository через
+inventory с `SKILL.md` у всех 20 owners, trusted repository через
 `skills.trusted_project_dirs`, `skills.project_discovery=true` и три значения
 delegation выше. Успех — exit `0` и `All checks passed.`; ошибка — exit `1` и
 `HERMES_CONFIG marker=CHECK_FAILED exit_code=1 redacted=true`.

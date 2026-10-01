@@ -5,7 +5,7 @@ Store under the plan-owned Git metadata scratch path so it survives conversation
 ```markdown
 # Ebb execution ledger — plan: <repo-relative plan path>
 Base: <merge/base SHA>
-Mode: SUBAGENT | INLINE
+Mode: SUBAGENT
 
 ## Pre-flight
 - Task 1 → Task 2: produces X / consumes X — OK
@@ -13,7 +13,7 @@ Mode: SUBAGENT | INLINE
 
 ## Tasks
 - Task 1: DONE — commits <range> — tests <command/result> — review <verdict>
-- Task 2: RUNNING — BASE <sha> — brief <artifact path>
+- Task 2: RUNNING — BASE <sha> — brief <artifact path> — attempt <n>
 ```
 
-After compaction/restart, ledger + Git history override conversational recollection. Never redispatch a task marked `DONE` unless its acceptance evidence was invalidated by later change.
+After compaction/restart, ledger + Git history override conversational recollection. Never redispatch a task marked `DONE` unless its acceptance evidence was invalidated by later change. Technical retry increments `attempt`; it does not duplicate a completed task.

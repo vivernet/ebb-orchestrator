@@ -6,7 +6,7 @@
 - Перечисли все реальные entry paths (HTTP, worker, runtime, CLI/direct-call) и проверь, где контракт расходится.
 - До fix уточни load-bearing DTO/error semantics, transaction/rollback boundary, concurrency/idempotency и lifecycle transitions.
 - Для process/browser пути проверь readiness/restart, real transport, worker-safe IPC, secret lifecycle и teardown/orphan processes.
-- Для migration/projection/fixture проверь actual consumers, upgrade/negative paths и cumulative state.
+- Для migration/projection/fixture проверь actual consumers, upgrade/negative paths и cumulative state; schema/migration/data/transaction contract сверяй с `ebb-database-engineering`.
 - Сравни working/broken states и recent changes; одно отличие = одна проверяемая гипотеза.
 - Regression обязана воспроизводить исходный symptom; общий зелёный unit suite не заменяет её.
 

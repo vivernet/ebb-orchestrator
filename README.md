@@ -222,13 +222,14 @@ MCP-инструменты проверяют capability и аргументы. 
 
 ### Hermes development skills
 
-Канонический каталог из 19 repository-local Ebb skills находится в
+Канонический каталог из 20 repository-local Ebb skills находится в
 `.agents/skills/`; [руководство разработки через Hermes](docs/development/05-hermes.md) описывает
 настройку trust и проверку runtime prerequisites.
 
 Это единственный полный пользовательский список skills проекта:
 
 - `ebb-curate-skills` — evidence-based отбор новых и автоматически созданных skills;
+- `ebb-database-engineering` — schema, migrations, ORM mappings, queries, transactions и database lifecycle;
 - `ebb-debug-issue` — воспроизведение дефекта, доказательство root cause и выбор ограниченного исправления;
 - `ebb-design-change` — исследование требований и архитектурных решений до реализации;
 - `ebb-dispatch-agents` — разделение независимых задач и контроль делегирования;
