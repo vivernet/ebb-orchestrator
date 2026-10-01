@@ -6,6 +6,7 @@
  */
 
 import { z } from "zod";
+import { load } from "js-yaml";
 import { ConfigValidationError } from "./config-errors.js";
 
 export const ProjectConfigV1Schema = z.strictObject({
@@ -37,4 +38,18 @@ export function parseProjectConfig(input: unknown): ProjectConfigV1 {
     );
   }
   return result.data;
+}
+
+/** Разбирает строгий YAML project.yaml и применяет ту же versioned schema authority. */
+export function parseProjectConfigYaml(source: string): ProjectConfigV1 {
+  let input: unknown;
+  try {
+    input = load(source, { json: false });
+  } catch (cause) {
+    throw new ConfigValidationError(
+      `Project config YAML parsing failed: ${cause instanceof Error ? cause.message : "invalid YAML"}`,
+      [],
+    );
+  }
+  return parseProjectConfig(input);
 }

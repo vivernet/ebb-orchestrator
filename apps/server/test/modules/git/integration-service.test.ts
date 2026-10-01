@@ -1,7 +1,7 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { tmpdir } from "os";
 import { join } from "path";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 
 import { GitCli } from "../../../src/modules/git/git-cli.js";
 import { IntegrationService } from "../../../src/modules/git/integration-service.js";
@@ -25,16 +25,28 @@ async function initGitRepo(path: string, commitMessage: string = "initial"): Pro
   return git;
 }
 
-function createIntegrationService(options: { git?: GitCli; worktreeDir?: string; integrationRunId?: string } = {}): { service: IntegrationService; database: ReturnType<typeof createIntegrationTestDatabase> } {
+function createIntegrationService(options: { git?: GitCli; worktreeDir?: string; integrationRunId?: string; finalizeRunFailure?: (runId: string, error: unknown) => boolean } = {}): { service: IntegrationService; database: ReturnType<typeof createIntegrationTestDatabase> } {
   const provenanceDatabasePath = join(createTempDir(), "provenance.sqlite");
   const database = createIntegrationTestDatabase(provenanceDatabasePath);
   return { service: new IntegrationService({ ...options, database, provenanceDatabasePath }), database };
 }
 
-function boundService(git: GitCli): { service: IntegrationService; database: ReturnType<typeof createIntegrationTestDatabase> } {
-  const { service, database } = createIntegrationService({ git, integrationRunId: "integration-run" });
+function boundService(git: GitCli, finalizeRunFailure?: (runId: string, error: unknown) => boolean): { service: IntegrationService; database: ReturnType<typeof createIntegrationTestDatabase> } {
+  const { service, database } = createIntegrationService({ git, integrationRunId: "integration-run", ...(finalizeRunFailure ? { finalizeRunFailure } : {}) });
   database.run("INSERT INTO agent_runs (id, role, status) VALUES ('integration-run', 'Integration', 'STARTED')");
   return { service, database };
+}
+
+class MoveTargetDuringWorktreeCreationGit extends GitCli {
+  private moved = false;
+  constructor(private readonly targetSha: string) { super(); }
+  override async run(repoPath: string, args: string[]) {
+    if (!this.moved && args.includes("worktree") && args.includes("add")) {
+      this.moved = true;
+      await super.run(repoPath, ["update-ref", "refs/heads/master", this.targetSha]);
+    }
+    return super.run(repoPath, args);
+  }
 }
 
 describe("IntegrationService", () => {
@@ -57,6 +69,65 @@ describe("IntegrationService", () => {
   });
 
   describe("prepareIntegration", () => {
+    it("binds the immutable Run provenance at attempt creation and treats the same bind as verification", async () => {
+      const repoPath = createTempDir();
+      const git = await initGitRepo(repoPath);
+      const { service, database } = boundService(git);
+      const attempt = await service.prepareIntegration("master", "master", repoPath);
+
+      expect(attempt.integrationRunId).toBe("integration-run");
+      expect(database.get<{ integration_run_id: string }>("SELECT integration_run_id FROM integration_attempts WHERE id=$id", { id: attempt.id }))
+        .toEqual({ integration_run_id: "integration-run" });
+      expect(service.bindIntegrationRun(attempt, "integration-run")).toMatchObject({ integrationRunId: "integration-run" });
+      expect(() => service.bindIntegrationRun(attempt, "another-run")).toThrow("integrationRunId does not match the persisted attempt");
+
+      await service.cleanupIntegration(attempt);
+    });
+
+    it("does not move an existing integration branch when its generated name collides", async () => {
+      const repoPath = createTempDir();
+      const worktreeDir = createTempDir();
+      const timestamp = 1_700_000_000_000;
+      const randomValue = 0.5;
+      const dateNowSpy = vi.spyOn(Date, "now").mockReturnValue(timestamp);
+      const randomSpy = vi.spyOn(Math, "random").mockReturnValue(randomValue);
+
+      try {
+        const git = await initGitRepo(repoPath);
+        await git.run(repoPath, ["checkout", "-b", "unrelated-commit"]);
+        writeFileSync(join(repoPath, "unrelated.txt"), "keep existing branch commit");
+        await git.run(repoPath, ["add", "unrelated.txt"]);
+        await git.run(repoPath, ["commit", "-m", "unrelated branch commit"]);
+        const existingCommit = (await git.run(repoPath, ["rev-parse", "HEAD"])).stdout.trim();
+        await git.run(repoPath, ["checkout", "master"]);
+
+        const generatedAttemptId = `integration-${timestamp}-${randomValue.toString(36).slice(2, 9)}`;
+        const collidingBranch = `integration/${generatedAttemptId}`;
+        await git.run(repoPath, ["branch", collidingBranch, existingCommit]);
+        const targetCommit = (await git.run(repoPath, ["rev-parse", "master"])).stdout.trim();
+        expect(existingCommit).not.toBe(targetCommit);
+
+        const service = createIntegrationService({ git, worktreeDir }).service;
+        let preparationError: unknown;
+        try {
+          await service.prepareIntegration("master", "master", repoPath);
+        } catch (error) {
+          preparationError = error;
+        }
+
+        const branchAfterPreparation = (await git.run(repoPath, ["rev-parse", collidingBranch])).stdout.trim();
+        expect(branchAfterPreparation).toBe(existingCommit);
+        expect(preparationError).toMatchObject({
+          stderr: expect.stringMatching(/already exists/i),
+        });
+      } finally {
+        dateNowSpy.mockRestore();
+        randomSpy.mockRestore();
+        if (existsSync(worktreeDir)) rmSync(worktreeDir, { recursive: true, force: true });
+        rmSync(repoPath, { recursive: true, force: true });
+      }
+    });
+
     it("creates integration worktree from current target branch", async () => {
       const repoPath = createTempDir();
       const git = await initGitRepo(repoPath);
@@ -83,7 +154,7 @@ describe("IntegrationService", () => {
       expect(branchStatus.stdout.trim()).toContain("integration/");
 
       // Очищаем ресурсы.
-      rmSync(attempt.worktreePath, { recursive: true, force: true });
+      await integrationService.cleanupIntegration(attempt);
     });
 
     it("handles moving target branch correctly", async () => {
@@ -120,7 +191,7 @@ describe("IntegrationService", () => {
       expect(worktreeHead.stdout.trim()).toBe(finalSha);
 
       // Очищаем ресурсы.
-      rmSync(attempt.worktreePath, { recursive: true, force: true });
+      await integrationService.cleanupIntegration(attempt);
     });
 
     it("never experiments in task worktree or master", async () => {
@@ -145,7 +216,7 @@ describe("IntegrationService", () => {
       expect(masterBefore.stdout.trim()).toBe(masterAfter.stdout.trim());
 
       // Очищаем ресурсы.
-      rmSync(attempt.worktreePath, { recursive: true, force: true });
+      await integrationService.cleanupIntegration(attempt);
     });
   });
 
@@ -166,7 +237,51 @@ describe("IntegrationService", () => {
       expect(readFileSync(join(attempt.worktreePath, "source.txt"), "utf8")).toBe("source content");
       expect((await git.run(attempt.worktreePath, ["rev-parse", "HEAD"])).stdout.trim()).not.toBe(attempt.expectedTargetSha);
       expect((await git.run(repoPath, ["rev-parse", "master"])).stdout.trim()).toBe(attempt.expectedTargetSha);
-      rmSync(attempt.worktreePath, { recursive: true, force: true });
+      await service.cleanupIntegration(attempt);
+    });
+
+    it("merges the source commit recorded at preparation even if its branch advances", async () => {
+      const repoPath = createTempDir();
+      const git = await initGitRepo(repoPath);
+      await git.run(repoPath, ["checkout", "-b", "source-branch"]);
+      writeFileSync(join(repoPath, "prepared.txt"), "prepared source");
+      await git.run(repoPath, ["add", "prepared.txt"]);
+      await git.run(repoPath, ["commit", "-m", "prepared source"]);
+      await git.run(repoPath, ["checkout", "master"]);
+      const { service } = boundService(git);
+      const attempt = await service.prepareIntegration("source-branch", "master", repoPath);
+
+      await git.run(repoPath, ["checkout", "source-branch"]);
+      writeFileSync(join(repoPath, "later.txt"), "after preparation");
+      await git.run(repoPath, ["add", "later.txt"]);
+      await git.run(repoPath, ["commit", "-m", "later source change"]);
+      await git.run(repoPath, ["checkout", "master"]);
+
+      await service.mergePreparedSource(attempt);
+
+      expect(readFileSync(join(attempt.worktreePath, "prepared.txt"), "utf8")).toBe("prepared source");
+      expect(existsSync(join(attempt.worktreePath, "later.txt"))).toBe(false);
+      expect((await git.run(attempt.worktreePath, ["merge-base", "--is-ancestor", attempt.sourceSha, "HEAD"])).exitCode).toBe(0);
+      await service.cleanupIntegration(attempt);
+    });
+
+    it("anchors the integration worktree to the captured target when the branch moves during creation", async () => {
+      const repoPath = createTempDir();
+      const setupGit = await initGitRepo(repoPath);
+      await setupGit.run(repoPath, ["checkout", "-b", "moved-target"]);
+      writeFileSync(join(repoPath, "target-change.txt"), "new target");
+      await setupGit.run(repoPath, ["add", "target-change.txt"]);
+      await setupGit.run(repoPath, ["commit", "-m", "new target"]);
+      const movedTargetSha = (await setupGit.run(repoPath, ["rev-parse", "HEAD"])).stdout.trim();
+      await setupGit.run(repoPath, ["checkout", "master"]);
+      const capturedTargetSha = (await setupGit.run(repoPath, ["rev-parse", "master"])).stdout.trim();
+      const git = new MoveTargetDuringWorktreeCreationGit(movedTargetSha);
+      const { service } = boundService(git);
+      const attempt = await service.prepareIntegration("master", "master", repoPath);
+
+      expect((await git.run(attempt.worktreePath, ["rev-parse", "HEAD"])).stdout.trim()).toBe(capturedTargetSha);
+      await expect(service.mergePreparedSource(attempt)).rejects.toThrow("TARGET_MOVED");
+      await service.cleanupIntegration(attempt);
     });
 
     it("records and verifies resulting target SHA after merge", async () => {
@@ -187,7 +302,7 @@ describe("IntegrationService", () => {
       expect(attempt.expectedTargetBranch).toBe("master");
 
       // Очищаем ресурсы.
-      rmSync(attempt.worktreePath, { recursive: true, force: true });
+      await integrationService.cleanupIntegration(attempt);
     });
 
     it("rejects a target that moved before marking integration merged", async () => {
@@ -205,8 +320,26 @@ describe("IntegrationService", () => {
       expect(attempt.status).toBe("FAILED");
        expect(database.get<{ status: string; output: string; ended_at: string; exit_code: number }>(
          "SELECT status, output, ended_at, exit_code FROM agent_runs WHERE id = 'integration-run'",
-       )).toMatchObject({ status: "FAILED", output: expect.stringContaining("TARGET_MOVED"), ended_at: expect.any(String), exit_code: -1 });
-       await expect(git.run(attempt.worktreePath, ["rev-parse", "HEAD"])).rejects.toThrow();
+       )).toMatchObject({ status: "STARTED", output: null, ended_at: null, exit_code: null });
+       await expect(git.run(attempt.worktreePath, ["rev-parse", "HEAD"])).resolves.toMatchObject({ exitCode: 0 });
+       await service.cleanupIntegration(attempt);
+    });
+
+    it("delegates Run failure and removes its worktree only when the runtime command confirms terminalization", async () => {
+      const repoPath = createTempDir();
+      const git = await initGitRepo(repoPath);
+      const finalizer = vi.fn(() => true);
+      const { service, database } = boundService(git, finalizer);
+      const attempt = await service.prepareIntegration("master", "master", repoPath);
+
+      await expect(service.runInIntegrationWorktree(attempt, async () => { throw new Error("integration execution failed"); }))
+        .rejects.toThrow("integration execution failed");
+
+      expect(finalizer).toHaveBeenCalledTimes(1);
+      expect(finalizer).toHaveBeenCalledWith("integration-run", expect.any(Error));
+      expect(database.get<{ status: string }>("SELECT status FROM integration_attempts WHERE id=$id", { id: attempt.id }))
+        .toEqual({ status: "FAILED" });
+      await expect(git.run(attempt.worktreePath, ["rev-parse", "HEAD"])).rejects.toThrow();
     });
 
     it("rejects a runner that mutates integration provenance", async () => {
@@ -216,9 +349,10 @@ describe("IntegrationService", () => {
       const attempt = await service.prepareIntegration("master", "master", repoPath);
 
       await expect(service.runInIntegrationWorktree(attempt, async (_path, runnerAttempt) => {
-        (runnerAttempt as { expectedTargetSha: string }).expectedTargetSha = "forged-sha";
+       (runnerAttempt as { expectedTargetSha: string }).expectedTargetSha = "forged-sha";
       })).rejects.toThrow(/INTEGRATION_PROVENANCE_MUTATED/);
        expect(attempt.status).toBe("FAILED");
+      await service.cleanupIntegration(attempt);
      });
 
     it("rejects an attempt without a bound integration run", async () => {

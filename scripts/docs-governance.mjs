@@ -6,10 +6,10 @@
  */
 
 import { readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSync } from 'fs';
-import { join, relative, extname, dirname, resolve } from 'path';
+import { join, relative, extname, dirname, resolve, isAbsolute } from 'path';
 import { fileURLToPath } from 'url';
 import * as yaml from 'js-yaml';
-import { validatePlanLifecycle } from './docs-governance-lib.mjs';
+import { loadMigrationMap, validateLinks, validatePlanLifecycle } from './docs-governance-lib.mjs';
 
 const PLAN_STATUSES = new Set(['proposed', 'planned', 'in_progress', 'blocked', 'completed', 'superseded', 'cancelled']);
 const PLAN_REQUIRED = ['id', 'kind', 'status', 'title', 'created', 'updated'];
@@ -174,6 +174,14 @@ function checkCommand(repositoryRoot = ROOT) {
     files.push({ path: 'README.md', fullPath: readmePath, metadata: fm?.data || null, body: fm?.body || content });
   }
   const issues = checkDocs(files);
+  for (const linkIssue of validateLinks(files.map(file => ({ filePath: file.fullPath, body: file.body })))) {
+    const sourceFile = files.find(file => file.fullPath === linkIssue.filePath);
+    issues.push({
+      file: sourceFile?.path ?? relative(repositoryRoot, linkIssue.filePath).replace(/\\/g, '/'),
+      severity: 'error',
+      message: linkIssue.message,
+    });
+  }
   const errors = issues.filter(issue => issue.severity === 'error');
   const warnings = issues.filter(issue => issue.severity === 'warning');
   
@@ -203,7 +211,7 @@ function checkCommand(repositoryRoot = ROOT) {
  * @returns {unknown} Проверенные metadata Plan либо исходные metadata другого типа документа.
  * @throws {PlanMetadataError} Если metadata Plan не соответствуют контракту.
  */
-function parsePlanFile(path) {
+export function parsePlanFile(path, { requirePlan = false } = {}) {
   const content = readFileSync(path, 'utf8');
   const delimiter = '---';
   const parts = content.split(delimiter);
@@ -215,7 +223,7 @@ function parsePlanFile(path) {
   try {
     const yamlContent = parts[1].trim();
     const metadata = yaml.load(yamlContent, { schema: yaml.JSON_SCHEMA });
-    if (metadata && typeof metadata === 'object' && (NON_PLAN_KINDS.has(metadata.kind) || metadata.type === 'evidence')) return metadata;
+    if (!requirePlan && metadata && typeof metadata === 'object' && (NON_PLAN_KINDS.has(metadata.kind) || metadata.type === 'evidence')) return metadata;
     return validatePlanMetadata(metadata, path);
   } catch (e) {
     if (e instanceof PlanMetadataError) throw e;
@@ -223,6 +231,59 @@ function parsePlanFile(path) {
     err.cause = e;
     throw err;
   }
+}
+
+/**
+ * Проверяет migration map, активные относительные ссылки и отсутствие оставленных переименованных источников.
+ * @param {string} repositoryRoot Корень репозитория, переданный CLI.
+ */
+async function renameCheckCommand(repositoryRoot) {
+  const migrationMapPath = join(repositoryRoot, 'docs', 'architecture', 'plans', 'governance', 'evidence', '03-document-migration-map.md');
+  const errors = [];
+  if (!existsSync(migrationMapPath)) {
+    console.log(`Migration map not found: ${relative(repositoryRoot, migrationMapPath).replace(/\\/g, '/')}`);
+    process.exitCode = 1;
+    return;
+  }
+
+  const { entries } = await loadMigrationMap(migrationMapPath);
+  if (entries.length === 0) errors.push('Migration map contains no entries');
+  const cleanMapPath = value => String(value ?? '').trim().replace(/^`|`$/g, '').replace(/^['"]|['"]$/g, '').replace(/\\/g, '/');
+  const resolveLegacyPath = mapPath => {
+    const cleaned = cleanMapPath(mapPath);
+    if (!cleaned || /^n\/a$/i.test(cleaned)) return null;
+    const absolutePath = resolve(repositoryRoot, cleaned);
+    const repositoryRelative = relative(repositoryRoot, absolutePath);
+    if (repositoryRelative === '..' || repositoryRelative.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) || isAbsolute(repositoryRelative)) {
+      errors.push(`Legacy source path escapes repository root: ${mapPath}`);
+      return null;
+    }
+    return absolutePath;
+  };
+
+  for (const entry of entries) {
+    const oldPath = cleanMapPath(entry.oldPath);
+    const canonical = cleanMapPath(entry.canonicalTarget);
+    const oldAbsolute = resolveLegacyPath(oldPath);
+    if (oldAbsolute && oldPath.toLowerCase() !== canonical.toLowerCase() && existsSync(oldAbsolute)) {
+      errors.push(`Legacy source path still exists: ${oldPath}`);
+    }
+  }
+
+  const docs = scanDocs(join(repositoryRoot, 'docs'));
+  const readmePath = join(repositoryRoot, 'README.md');
+  if (existsSync(readmePath)) docs.push({ fullPath: readmePath, body: readFileSync(readmePath, 'utf8') });
+  for (const issue of validateLinks(docs.map(file => ({ filePath: file.fullPath, body: file.body })))) {
+    errors.push(`Broken link in ${relative(repositoryRoot, issue.filePath).replace(/\\/g, '/')}: ${issue.message}`);
+  }
+
+  if (errors.length > 0) {
+    for (const error of errors) console.log(`[ERROR] ${error}`);
+    process.exitCode = 1;
+    return;
+  }
+  const entryLabel = entries.length === 1 ? 'entry' : 'entries';
+  console.log(`Rename check passed: ${entries.length} migration ${entryLabel}, no retained legacy sources or broken relative links.`);
 }
 
 /**
@@ -386,7 +447,7 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import
     case 'inventory': inventoryDocs(scanDocs(join(repositoryRoot, 'docs'))); break;
     case 'check': checkCommand(repositoryRoot); break;
     case 'roadmap': roadmapCommand(args); break;
-    case 'rename:check': console.log('Rename check not yet implemented'); break;
+    case 'rename:check': renameCheckCommand(repositoryRoot).catch(error => { console.error(error.message); process.exitCode = 1; }); break;
     default:
       console.log('Usage: node docs-governance.mjs <command> [options]');
       console.log('Commands: inventory, check, roadmap, rename:check');

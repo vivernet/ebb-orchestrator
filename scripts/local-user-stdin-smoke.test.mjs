@@ -80,7 +80,7 @@ test("smoke requires database, checkpoints, and artifacts under disposable home"
     hermesResults: "C:/tmp/disposable/runtime/hermes/results",
   });
   assert.throws(() => assertRuntimePaths("C:/tmp/disposable", {
-    database: "C:/Users/test/.orchestrator/ebb-orchestrator.db",
+    database: "C:/Users/test/.ebb-orchestrator/ebb-orchestrator.db",
     checkpoints: "C:/tmp/disposable/runtime/checkpoints",
     artifacts: "C:/tmp/disposable/artifacts",
     hermesResults: "C:/tmp/disposable/runtime/hermes/results",

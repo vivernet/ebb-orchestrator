@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createSqliteDatabase } from '../../../src/platform/database/sqlite-database.js';
-import { BackupService } from '../../../src/platform/database/backup-service.js';
+import { applyMigrationsWithVerifiedBackup, BackupService } from '../../../src/platform/database/backup-service.js';
 import type { Database } from '../../../src/platform/database/database.js';
 
 describe('backup service', () => {
@@ -22,7 +22,7 @@ describe('backup service', () => {
     databases.push(db);
     db.exec('CREATE TABLE sample (id INTEGER PRIMARY KEY, value TEXT)');
     const backup = new BackupService(db).createBackup(dir);
-    expect(backup.path).toContain('orchestrator-');
+    expect(backup.path).toContain('ebb-orchestrator-');
     expect(new BackupService(db).integrityCheck()).toEqual({ ok: true, foreignKeys: true });
   });
 
@@ -40,5 +40,19 @@ describe('backup service', () => {
     const restored = createSqliteDatabase(backup.path);
     databases.push(restored);
     expect(restored.get<{ value: string }>('SELECT value FROM wal_sample WHERE id = 1')).toEqual({ value: 'committed in WAL' });
+  });
+
+  it('does not apply a pending migration when the verified backup cannot be created', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ebb-orchestrator-backup-failure-'));
+    directories.push(dir);
+    const db = createSqliteDatabase(join(dir, 'source.db'));
+    databases.push(db);
+    const blockedDestination = join(dir, 'not-a-directory');
+    await writeFile(blockedDestination, 'occupied');
+
+    expect(() => applyMigrationsWithVerifiedBackup(db, [
+      { version: 1, name: 'sample', sql: 'CREATE TABLE should_not_exist (id INTEGER PRIMARY KEY)' },
+    ], blockedDestination)).toThrow();
+    expect(db.get<{ name: string }>("SELECT name FROM sqlite_master WHERE type='table' AND name='should_not_exist'")).toBeUndefined();
   });
 });

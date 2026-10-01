@@ -3,7 +3,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { Database, DatabaseTx } from "../database/database.js";
+import type { DatabaseTx } from "../database/database.js";
 import { BACKOFF_SCHEDULE, type BackgroundJobRow, type EnqueueJobInput } from "./job-types.js";
 
 /**
@@ -15,7 +15,7 @@ import { BACKOFF_SCHEDULE, type BackgroundJobRow, type EnqueueJobInput } from ".
  *
  * Возвращает идентификатор job.
  */
-export function enqueueJob(db: Database, input: EnqueueJobInput): string {
+export function enqueueJob(db: DatabaseTx, input: EnqueueJobInput): string {
   const id = randomUUID();
   const now = new Date().toISOString();
   const runAfter = (input.runAfter ?? new Date()).toISOString();

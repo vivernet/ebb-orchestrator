@@ -10,6 +10,116 @@ permissions:
   contents: read
 
 jobs:
+  process-scope-linux-acceptance:
+    if: ${{ github.event_name == 'push' }}
+    runs-on: [self-hosted, Linux, X64, ebb-systemd-cgroup-v2]
+    timeout-minutes: 15
+    env:
+      EBB_RUN_NATIVE_SCOPE_ACCEPTANCE: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup pnpm
+        uses: pnpm/setup@v1
+        with:
+          version: ">=12.0.0"
+          runtime: node@24
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24.x"
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Verify native Linux runner prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(stat -fc '%T' /sys/fs/cgroup)" = "cgroup2fs"
+          test -r /sys/fs/cgroup/cgroup.controllers
+          test -n "${HOME:-}"
+          test -n "${XDG_RUNTIME_DIR:-}"
+          test -d "$XDG_RUNTIME_DIR"
+          command -v systemd-run
+          command -v systemctl
+          command -v setsid
+          command -v journalctl
+          systemctl --user is-system-running
+          systemctl --user show-environment >/dev/null
+      - name: Run native provider-free process-scope acceptance
+        run: pnpm --filter @ebb-orchestrator/server exec vitest run test/e2e/hermes-process-scope.acceptance.test.ts
+
+  hermes-process-scope-acceptance:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      EBB_RUN_NATIVE_SCOPE_ACCEPTANCE: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup pnpm
+        uses: pnpm/setup@v1
+        with:
+          version: ">=12.0.0"
+          runtime: node@24
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24.x"
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build Windows native helper with Visual Studio 2022
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+          $installPath = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if ($LASTEXITCODE -ne 0 -or -not $installPath) { throw "VISUAL_STUDIO_CXX_BUILD_TOOLS_UNAVAILABLE" }
+          $developerCommand = 'call "' + (Join-Path $installPath "Common7\Tools\VsDevCmd.bat") + '" -arch=amd64 -host_arch=amd64 && set'
+          $environmentLines = & cmd.exe /d /s /c $developerCommand
+          if ($LASTEXITCODE -ne 0) { throw "VISUAL_STUDIO_DEVELOPER_ENVIRONMENT_FAILED" }
+          foreach ($line in $environmentLines) {
+            $separator = $line.IndexOf('=')
+            if ($separator -gt 0) {
+              $name = $line.Substring(0, $separator)
+              $value = $line.Substring($separator + 1)
+              Set-Item -Path "Env:$name" -Value $value
+            }
+          }
+          pnpm --filter @ebb-orchestrator/server build:windows-run-supervisor
+          if ($LASTEXITCODE -ne 0) { throw "WINDOWS_PROCESS_SCOPE_HELPER_BUILD_FAILED" }
+      - name: Run native provider-free process-scope acceptance
+        run: pnpm --filter @ebb-orchestrator/server exec vitest run test/e2e/hermes-process-scope.acceptance.test.ts
+
+  keyring-acceptance:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+          - os: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup pnpm
+        uses: pnpm/setup@v1
+        with:
+          version: ">=12.0.0"
+          runtime: node@24
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24.x"
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Validate keyring acceptance workflow
+        run: node --test scripts/keyring-acceptance.test.mjs
+      - name: Run real OS keyring acceptance
+        run: pnpm exec tsx apps/server/scripts/keyring-smoke.ts
+
   quality-security:
     runs-on: ubuntu-latest
     timeout-minutes: 20

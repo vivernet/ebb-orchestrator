@@ -23,6 +23,17 @@ export interface ArtifactRow {
   expires_at: string | null;
 }
 
+/** Безопасные metadata-поля артефакта, принадлежащего конкретному Run. */
+export interface RunArtifactMetadataRow {
+  id: string;
+  type: string;
+  content_type: string | null;
+  size_bytes: number;
+  sha256: string;
+  status: ArtifactStatus;
+  created_at: string;
+}
+
 /** Параметры для вставки новой строки артефакта. */
 export interface InsertArtifactParams {
   id: string;
@@ -88,6 +99,15 @@ export class ArtifactRepository {
     return this.db.all<ArtifactRow>(
       "SELECT * FROM artifacts WHERE status = $status",
       { $status: status },
+    );
+  }
+
+  /** Возвращает только metadata артефактов с точной связью `run_id`; пути и содержимое не читаются. */
+  listMetadataByRunId(runId: string): RunArtifactMetadataRow[] {
+    return this.db.all<RunArtifactMetadataRow>(
+      `SELECT id, type, content_type, size_bytes, sha256, status, created_at
+       FROM artifacts WHERE run_id = $runId ORDER BY created_at, id`,
+      { runId },
     );
   }
 

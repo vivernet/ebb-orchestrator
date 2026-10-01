@@ -4,15 +4,26 @@ import ProjectOnboardingPage from '../src/features/onboarding/ProjectOnboardingP
 import SettingsPage from '../src/features/settings/SettingsPage.js';
 import UsagePage from '../src/features/usage/UsagePage.js';
 import { ApiError, apiClient } from '../src/api/client.js';
+import type { UsagePageProjection } from '@ebb-orchestrator/contracts';
 
-function usageFixture(overrides: Partial<Record<'global' | 'project' | 'epic' | 'task', object>> = {}) {
-  const bucket = { inputTokens: 10, cachedTokens: 2, outputTokens: 3, totalTokens: 15, tokens: 15, cost: 1.25, aggregation: 'all_records' };
+function usageFixture(
+  overrides: Partial<Record<'global' | 'project' | 'epic' | 'task', object>> = {},
+  budgetOverrides: Partial<UsagePageProjection['budget']> = {},
+): UsagePageProjection {
+  const bucket = { inputTokens: 10, cachedTokens: 2, outputTokens: 3, totalTokens: 15, tokens: 15, cost: 1.25, aggregation: 'all_records' as const };
   return {
     global: { ...bucket, ...overrides.global },
     project: { ...bucket, aggregation: 'records_with_project_id', ...overrides.project },
     epic: { ...bucket, aggregation: 'records_with_epic_id', ...overrides.epic },
     task: { ...bucket, aggregation: 'records_with_task_id', ...overrides.task },
-    effectiveLimit: 'global',
+    budget: {
+      configurations: budgetOverrides.configurations ?? [],
+      contexts: budgetOverrides.contexts ?? [{
+        scope: 'global', scopeId: 'global', projectId: null, epicId: null, taskId: null,
+        applicableLimits: [], effectiveLimit: null,
+      }],
+      activeReservations: budgetOverrides.activeReservations ?? [],
+    },
   };
 }
 
@@ -36,7 +47,7 @@ describe('Onboarding DETECTED vs PROPOSED separation', () => {
         defaultBranch: 'main',
         packageManager: 'pnpm',
         testFramework: 'vitest',
-        orchestratorConfigFound: false,
+        ebbOrchestratorConfigFound: false,
       },
       proposed: {
         defaultBranch: 'main',
@@ -66,7 +77,7 @@ describe('Onboarding DETECTED vs PROPOSED separation', () => {
     vi.spyOn(apiClient, 'get').mockResolvedValue({
       projectId: '1',
       repository: { path: '/repo', remoteUrl: 'https://github.com/test/repo.git' },
-      detected: { defaultBranch: 'main', packageManager: 'npm', testFramework: null, orchestratorConfigFound: false },
+      detected: { defaultBranch: 'main', packageManager: 'npm', testFramework: null, ebbOrchestratorConfigFound: false },
       proposed: { defaultBranch: 'main', workflow: 'standard', roles: ['Developer'], guidelines: [] },
       approvalStatus: 'PENDING',
       semanticConfigApproved: false,
@@ -85,7 +96,7 @@ describe('Onboarding DETECTED vs PROPOSED separation', () => {
     vi.spyOn(apiClient, 'get').mockResolvedValue({
       projectId: '1',
       repository: { path: '/repo', remoteUrl: 'https://github.com/test/repo.git' },
-      detected: { defaultBranch: 'main', packageManager: 'npm', testFramework: null, orchestratorConfigFound: false },
+      detected: { defaultBranch: 'main', packageManager: 'npm', testFramework: null, ebbOrchestratorConfigFound: false },
       proposed: { defaultBranch: 'main', workflow: 'standard', roles: ['Developer'], guidelines: [] },
       approvalStatus: 'PENDING',
       semanticConfigApproved: true,
@@ -192,7 +203,8 @@ describe('Usage page budget tracking', () => {
     expect(within(allRecords!).getByText('30')).toBeInTheDocument();
     expect(within(allRecords!).getByText('150')).toBeInTheDocument();
     expect(allRecords).toHaveTextContent('$10.00');
-    expect(screen.queryByText(/Действующий лимит/)).not.toBeInTheDocument();
+    expect(screen.getByText('Настроенных лимитов нет.')).toBeInTheDocument();
+    expect(screen.queryByText('global')).not.toBeInTheDocument();
     expect(get).toHaveBeenCalledWith('/usage', expect.objectContaining({ signal: expect.any(AbortSignal) }));
     vi.restoreAllMocks();
   });
@@ -207,7 +219,7 @@ describe('Usage page budget tracking', () => {
 
     render(<UsagePage />);
 
-    expect(await screen.findByText('Нет доступных записей об использовании.')).toBeInTheDocument();
+    expect(await screen.findByText('Нет данных об использовании, лимитов бюджета или активных резервирований.')).toBeInTheDocument();
     vi.restoreAllMocks();
   });
 
@@ -234,6 +246,36 @@ describe('Usage page budget tracking', () => {
     await waitFor(() => expect(get).toHaveBeenCalledTimes(1));
     window.dispatchEvent(new CustomEvent('sse-reconnect'));
     await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+    vi.restoreAllMocks();
+  });
+
+  test('renders configured scope limits, effective limiting config, and active reservations read-only', async () => {
+    const globalLimit = { scope: 'global', scopeId: 'global', limitCost: 100, softLimitCost: 80, policy: 'hard', spentCost: 10, reservedCost: 5 } as const;
+    const projectLimit = { scope: 'project', scopeId: 'project-1', limitCost: 50, softLimitCost: 40, policy: 'soft', spentCost: 20, reservedCost: 3 } as const;
+    const reservation = {
+      id: 'reservation-1', projectId: 'project-1', epicId: null, taskId: null,
+      estimateCost: 2.5, status: 'RESERVED', role: 'developer', model: 'model-x',
+      triggerReason: 'DEVELOPMENT', reworkCategory: null, createdAt: '2026-09-30T12:00:00.000Z',
+    } as const;
+    vi.spyOn(apiClient, 'get').mockResolvedValue(usageFixture({}, {
+      configurations: [globalLimit, projectLimit],
+      contexts: [
+        { scope: 'global', scopeId: 'global', projectId: null, epicId: null, taskId: null, applicableLimits: [globalLimit], effectiveLimit: globalLimit },
+        { scope: 'project', scopeId: 'project-1', projectId: 'project-1', epicId: null, taskId: null, applicableLimits: [globalLimit, projectLimit], effectiveLimit: projectLimit },
+      ],
+      activeReservations: [reservation],
+    }));
+
+    render(<UsagePage />);
+
+    expect(await screen.findByRole('heading', { name: 'Лимиты бюджета' })).toBeInTheDocument();
+    expect(screen.getByRole('table', { name: 'Сохранённые конфигурации лимитов' })).toHaveTextContent('Жёсткая (hard)');
+    expect(screen.getByRole('table', { name: 'Сохранённые конфигурации лимитов' })).toHaveTextContent('Мягкая (soft)');
+    const effectiveTable = screen.getByRole('table', { name: 'Наиболее строгая применимая конфигурация для каждой области' });
+    expect(effectiveTable).toHaveTextContent('Глобально (global), Проект (project-1)');
+    expect(effectiveTable).toHaveTextContent('Проект (project-1)');
+    expect(screen.getByRole('table', { name: 'Записи со статусом RESERVED' })).toHaveTextContent('reservation-1');
+    expect(screen.getByText('Текущие резервирования')).toBeInTheDocument();
     vi.restoreAllMocks();
   });
 });

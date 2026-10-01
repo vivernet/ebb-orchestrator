@@ -1,4 +1,4 @@
-import { parseFrontMatter, parseDocument, validateDocument, loadMigrationMap, validateMigrationMap, resolveCanonicalDocument, validatePlanLifecycle } from './docs-governance-lib.mjs';
+import { parseFrontMatter, parseDocument, validateDocument, loadMigrationMap, validateMigrationMap, resolveCanonicalDocument, validatePlanLifecycle, validateLinks } from './docs-governance-lib.mjs';
 import assert from 'node:assert';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -31,6 +31,38 @@ test('validateDocument returns issues for invalid id', () => {
   const issues = validateDocument(record, []);
   assert.strictEqual(issues.length, 1);
   assert.strictEqual(issues[0].field, 'id');
+});
+
+test('validateLinks rejects broken relative files and anchors but ignores external links and code examples', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'ebb-doc-links-'));
+  try {
+    const sourcePath = join(directory, 'source.md');
+    const targetPath = join(directory, 'target.md');
+    await writeFile(targetPath, '# Target section\n');
+    const source = [
+      '# Source',
+      '[valid](./target.md#target-section)',
+      '[valid reference][target]',
+      '[target]: ./target.md#target-section',
+      '[missing file](./missing.md)',
+      '[missing anchor](./target.md#unknown-section)',
+      '[external](https://example.com/guide)',
+      '`[inline code example](./inline-example.md)`',
+      '    [indented code example](./indented-example.md)',
+      '```md',
+      '[example only](./example.md)',
+      '```',
+    ].join('\n');
+    await writeFile(sourcePath, source);
+
+    const issues = validateLinks([parseDocument(sourcePath, source)]);
+
+    assert.equal(issues.length, 2);
+    assert.deepEqual(issues.map((issue) => issue.target), ['./missing.md', './target.md#unknown-section']);
+    assert.ok(issues.every((issue) => issue.filePath === sourcePath));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test('loadMigrationMap parses migration document', async () => {
@@ -257,4 +289,68 @@ test('check CLI uses temporary root, README exemption, and ordinary filename/lif
     assert.equal(clean.status,0);
     assert.equal(clean.stdout,'All documentation files pass checks.\n');
   } finally { await rm(root,{recursive:true,force:true}); }
+});
+
+test('check CLI rejects broken relative Markdown links', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const root = await mkdtemp(join(tmpdir(), 'ebb-doc-links-check-'));
+  const cli = join(dirname(fileURLToPath(import.meta.url)), 'docs-governance.mjs');
+  const frontmatter = (id, kind) => `---\nid: ${id}\nkind: ${kind}\nstatus: approved\ntitle: Fixture\ncreated: 2026-09-25\nupdated: 2026-09-26\n---\n`;
+  try {
+    await mkdir(join(root, 'docs'), { recursive: true });
+    await writeFile(join(root, 'README.md'), '# Root index\n');
+    await writeFile(join(root, 'docs', '01-source.md'), `${frontmatter('spec-01', 'spec')}[missing](./missing.md) and [bad anchor](./02-target.md#absent)\n`);
+    await writeFile(join(root, 'docs', '02-target.md'), `${frontmatter('spec-02', 'spec')}# Target section\n`);
+
+    const result = spawnSync(process.execPath, [cli, 'check', `--root=${root}`], { encoding: 'utf8' });
+
+    assert.equal(result.status, 1);
+    assert.equal(result.stderr, '');
+    assert.match(result.stdout, /\[ERROR\] docs\/01-source\.md/);
+    assert.match(result.stdout, /Broken relative link target: \.\/missing\.md/);
+    assert.match(result.stdout, /Broken relative link anchor: \.\/02-target\.md#absent/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('rename:check rejects retained legacy sources and broken links while accepting a historical map', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const root = await mkdtemp(join(tmpdir(), 'ebb-doc-rename-check-'));
+  const cli = join(dirname(fileURLToPath(import.meta.url)), 'docs-governance.mjs');
+  const evidenceDir = join(root, 'docs', 'architecture', 'plans', 'governance', 'evidence');
+  const mapPath = join(evidenceDir, '03-document-migration-map.md');
+  const map = [
+    '| old path | new path | action | kind | source date | canonical target | conflict decision | dependent links to update | evidence preservation rule |',
+    '|---|---|---|---|---|---|---|---|---|',
+    '| docs/old.md | docs/01-current.md | rename | spec | 2026-09-25 | docs/01-current.md | canonical target | update links | preserve content |',
+  ].join('\n');
+  try {
+    await mkdir(evidenceDir, { recursive: true });
+    await mkdir(join(root, 'docs'), { recursive: true });
+    await writeFile(mapPath, map);
+    await writeFile(join(root, 'docs', '01-current.md'), '# Current\n');
+    await writeFile(join(root, 'docs', 'old.md'), '# Old duplicate\n');
+
+    const duplicate = spawnSync(process.execPath, [cli, 'rename:check', `--root=${root}`], { encoding: 'utf8' });
+
+    assert.equal(duplicate.status, 1);
+    assert.match(duplicate.stdout, /Legacy source path still exists: docs\/old\.md/);
+
+    await rm(join(root, 'docs', 'old.md'));
+    await writeFile(join(root, 'docs', '01-current.md'), '[missing](./missing.md)\n');
+    const brokenLink = spawnSync(process.execPath, [cli, 'rename:check', `--root=${root}`], { encoding: 'utf8' });
+
+    assert.equal(brokenLink.status, 1);
+    assert.match(brokenLink.stdout, /Broken relative link target: \.\/missing\.md/);
+
+    await writeFile(join(root, 'docs', '01-current.md'), '# Current\n');
+    const clean = spawnSync(process.execPath, [cli, 'rename:check', `--root=${root}`], { encoding: 'utf8' });
+
+    assert.equal(clean.status, 0, clean.stderr);
+    assert.equal(clean.stderr, '');
+    assert.match(clean.stdout, /Rename check passed: 1 migration entry, no retained legacy sources or broken relative links\./);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

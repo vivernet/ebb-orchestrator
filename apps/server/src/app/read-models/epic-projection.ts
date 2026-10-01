@@ -2,6 +2,7 @@ import type { Database } from "../../platform/database/database.js";
 import type { EpicOverviewProjection } from "@ebb-orchestrator/contracts";
 import type { SchedulerService } from "../../modules/scheduler/scheduler-service.js";
 import { persistedGitState } from "./git-state.js";
+import { EPIC_RECOVERY_FAILURE_CODE } from "../../modules/planning/planning-types.js";
 interface EpicRow { [key: string]: unknown; id: string; }
 interface TaskRow { id: string; display_id: string; title: string; status: string; required: number; contract_json: string; }
 interface UsageRow { inputTokens: number; cachedTokens: number; outputTokens: number; totalTokens: number; cost: number; }
@@ -16,7 +17,7 @@ export class EpicProjection {
     if (!epic) return undefined;
     const tasks = this.db.all<TaskRow>("SELECT id,display_id,title,status,required,contract_json FROM tasks WHERE epic_id=$id ORDER BY created_at", { id });
     const contract = parseJson((epic.contract_json as string) ?? "{}");
-     const lifecycleRow = this.db.get<{ stage: string; updated_at: string; sequence_json: string }>("SELECT stage,updated_at,sequence_json FROM epic_orchestrations WHERE epic_id=$id", { id });
+     const lifecycleRow = this.db.get<{ stage: string; updated_at: string; sequence_json: string; recovery_failure_code: string | null }>("SELECT stage,updated_at,sequence_json,recovery_failure_code FROM epic_orchestrations WHERE epic_id=$id", { id });
     const approvals = this.db.all<{ id: string; type: string; status: string; created_at: string }>("SELECT id,type,status,created_at FROM approvals WHERE subject_id=$id ORDER BY created_at", { id }).map((a) => ({ id: a.id, type: a.type, status: a.status, createdAt: a.created_at }));
     const blockers = this.db.all<{ id: string; status: string; reason: string | null }>("SELECT id,status,reason FROM recovery_state WHERE task_id IN (SELECT id FROM tasks WHERE epic_id=$id) AND status NOT IN ('RESOLVED','DONE')", { id });
     const events = this.db.all<{ id: string; type: string; created_at: string; payload_json: string }>("SELECT id,type,created_at,payload_json FROM outbox_events WHERE aggregate_id=$id ORDER BY created_at", { id }).map(event => ({ id: event.id, type: event.type, createdAt: event.created_at, payload: parseJson(event.payload_json) }));
@@ -35,7 +36,7 @@ const EPIC_STAGES = [
   ["FINAL_APPROVAL", "Merge approval"],
   ["DONE", "Done"],
 ] as const;
-function epicLifecycle(status: string, row?: { stage: string; updated_at: string; sequence_json: string }) {
+function epicLifecycle(status: string, row?: { stage: string; updated_at: string; sequence_json: string; recovery_failure_code: string | null }) {
   const current = row?.stage ?? null;
   let sequence: string[] = [];
   try { sequence = row ? JSON.parse(row.sequence_json) as string[] : []; } catch { sequence = []; }
@@ -45,6 +46,7 @@ function epicLifecycle(status: string, row?: { stage: string; updated_at: string
     const isCurrent = current === id;
     return { id, label, status: isCurrent ? "CURRENT" as const : completed ? "COMPLETED" as const : "PENDING" as const, updatedAt: row?.updated_at ?? null };
   });
-  return { status, stage: current, updatedAt: row?.updated_at ?? null, stages };
+  const recoveryFailureCode = row?.recovery_failure_code === EPIC_RECOVERY_FAILURE_CODE ? EPIC_RECOVERY_FAILURE_CODE : null;
+  return { status: recoveryFailureCode ? "BLOCKED" : status, stage: current, updatedAt: row?.updated_at ?? null, stages, recoveryFailureCode };
 }
 function parseJson(value: string): unknown { try { return JSON.parse(value); } catch { return value; } }

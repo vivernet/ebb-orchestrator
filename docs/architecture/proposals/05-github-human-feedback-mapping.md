@@ -1,6 +1,6 @@
 ---
 id: proposal-05
-status: proposed
+status: accepted
 title: Связь комментариев GitHub Issues с HumanFeedback
 date: 2026-09-29
 type: proposal
@@ -9,7 +9,7 @@ tags: [github, human-feedback, v1]
 
 # Proposal: связь комментариев GitHub Issues с HumanFeedback
 
-**Статус:** proposed; требуется решение по предлагаемому mapping до production wiring.
+**Статус:** accepted; production wiring остаётся заблокирован до реализации и acceptance.
 
 ## 1. Цель и ограничения
 
@@ -92,7 +92,7 @@ Production `main.ts` не создаёт GitHub adapter/worker и не пере�
 - GitHub comments и metadata считаются недоверенным вводом.
 - Credentials доступны только GitHub adapter через `SecretStore`, не Hermes.
 - API и логи не возвращают token/private key; в логах допустимы стабильный comment ID и безопасный статус, без тела.
-- Предлагаемая retention policy: inbox хранит тело до явного удаления Project/feedback по продуктовой retention policy. Требуется подтвердить срок до реализации; по умолчанию не логировать и не копировать body в диагностические artifacts.
+- Принятая retention policy: inbox хранит тело до явного удаления feedback или Project; по умолчанию body не логируется и не копируется в диагностические artifacts.
 - Unlinked Issue comments не получают доступ к другим Projects.
 
 ## 8. Миграция и совместимость
@@ -147,14 +147,14 @@ Repository polling сериализуется как сейчас в одном 
 - Рекомендуемая retention policy: хранить body вместе с активным локальным Project до явного удаления feedback/Project пользователем; удаление feedback сохраняет минимальный source identity tombstone, чтобы последующий poll не импортировал удалённый comment повторно. Удаление Project удаляет mapping и inbox в рамках явного Project deletion flow.
 - Acceptance включает duplicate poll/restart, crash до и после transaction, mapping отсутствует/переназначен, cross-project link, hostile body rendering, session/Origin/CSRF, redaction, migration из поддерживаемой схемы и GitHub outage без влияния на local workflow.
 
-### Решения, необходимые до implementation plan
+### Решения пользователя (2026-09-29)
 
-1. Принять предложенный Project-scoped inbox и правило «один repository → один Project» либо выбрать другой вариант из раздела 3.
-2. Принять retention policy с явным пользовательским удалением либо задать срок автоматического хранения.
-3. Подтвердить UI inbox с link/ignore/resolve действиями как часть Plan06 Task 8 либо ограничить v1 API и вынести UI в отдельный план.
+1. Принят вариант A: Project-scoped inbox, один repository → один активный Project.
+2. Тело комментария хранится до явного удаления feedback или Project; сохраняется минимальный source identity tombstone от повторного импорта.
+3. Inbox UI с link/ignore/resolve действиями входит в Plan 06.
 
-Без решений 1–3 production wiring и реализация HumanFeedback не начинаются. До их принятия текущий импорт остаётся выключенным в production.
+Production wiring и реализация HumanFeedback начинаются только в рамках принятого Plan 06 после design review Project Config и выполнения зависимостей. До этого текущий импорт остаётся выключенным в production.
 
 ## 11. Решение пользователя
 
-Пользователь попросил определить mapping отдельным proposal. Этот документ содержит предлагаемую конкретизацию варианта A; решения 1–3 выше ожидают review. Production wiring и implementation plan остаются заблокированы до их явного принятия.
+Пользователь явно принял вариант A, хранение до явного удаления и inbox UI в составе Plan 06. Эти решения не дают GitHub-комментариям authority менять workflow и не разрешают production wiring вне плана.

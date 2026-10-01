@@ -1,7 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { parseProjectConfig } from "../../../src/platform/config/project-config.js";
+import { parseProjectConfig, parseProjectConfigYaml } from "../../../src/platform/config/project-config.js";
 
 describe("parseProjectConfig", () => {
+  it("parses the repository YAML document with strict schema validation", () => {
+    const result = parseProjectConfigYaml("schema_version: 1\nproject:\n  name: sample\n  default_branch: main\n");
+    expect(result).toEqual({
+      schema_version: 1,
+      project: { name: "sample", default_branch: "main" },
+      execution: { mode: "local" },
+    });
+  });
+
+  it("rejects duplicate keys and non-mapping YAML documents", () => {
+    expect(() => parseProjectConfigYaml("schema_version: 1\nschema_version: 1\nproject: {}\n")).toThrow();
+    expect(() => parseProjectConfigYaml("- not\n- a mapping\n")).toThrow();
+  });
+
   it("parses a valid V1 config", () => {
     const result = parseProjectConfig({
       schema_version: 1,

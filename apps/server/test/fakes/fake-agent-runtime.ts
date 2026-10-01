@@ -19,6 +19,7 @@ export class FakeAgentRuntime implements AgentRuntime {
   active = 0;
   maxActive = 0;
   readonly calls: Array<{ phase: string; role: string; taskId?: string; targetBranch?: string }> = [];
+  readonly startCalls: AgentRun[] = [];
   private readonly scripts: Map<string, ScriptedOutcome[]> = new Map();
   private readonly pendingRuns: Set<string> = new Set();
   readonly resumeCalls: Array<{ runId: string; options: { sessionId: string; attempt: number } }> = [];
@@ -37,8 +38,8 @@ export class FakeAgentRuntime implements AgentRuntime {
   /**
  * Запускает новый run.
    */
-  async startRun(_run: AgentRun): Promise<void> {
-    // Записываем начало run.
+  async startRun(run: AgentRun): Promise<void> {
+    this.startCalls.push(run);
   }
 
   /**

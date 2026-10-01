@@ -6,6 +6,7 @@ import { useQuery } from '../../state/use-query.js';
 import { apiErrorMessage } from '../../i18n/ru.js';
 
 function valueOrUnavailable(value: unknown): string {
+  if (typeof value === 'boolean') return value ? 'Да' : 'Нет';
   return value === null || value === undefined ? 'Недоступно' : String(value);
 }
 
@@ -50,7 +51,7 @@ export default function SettingsPage() {
         <h2>Безопасность</h2>
         <p><strong>Действует наиболее строгое ограничение:</strong> {valueOrUnavailable(security.mostRestrictiveWins)}</p>
         <p><strong>Локальный режим:</strong> {valueOrUnavailable(security.localModeEnabled)}</p>
-        <p>Сведения о политике безопасности недоступны в этой проекции настроек только для чтения.</p>
+        {security.localModeEnabled && <p role="note">Local Mode изолирует policy, tools и credentials, но не является OS sandbox и не изолирует process, filesystem или network при запуске кода проекта.</p>}
       </section>
     </div>
   );

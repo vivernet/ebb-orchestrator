@@ -5,7 +5,7 @@ status: completed
 title: Устойчивые auth, onboarding и Russian Web UI
 summary: Устранить подтверждённые дефекты ephemeral auth/bootstrap и рассинхронизации onboarding, сохранив backend authority, loopback trust boundary и проверяемый real HTTP/browser flow.
 created: 2026-09-25
-updated: 2026-09-27
+updated: 2026-09-30
 depends_on:
   - plan-12
   - plan-13
@@ -26,11 +26,12 @@ evidence:
   - apps/web/test/e2e/v1-ui.spec.ts
   - scripts/docs-governance.test.mjs
   - scripts/roadmap-generator-cli.mjs
+  - docs/architecture/plans/governance/evidence/05-plan-15-roadmap-reconciliation.md
 ---
 
-# Auth, onboarding и Russian Web UI — draft implementation plan
+# Auth, onboarding и Russian Web UI — implementation plan
 
-> **Для агентного исполнения:** REQUIRED SKILL: `ebb-execute-plan`. Этот файл и части плана только фиксируют будущие изменения; production-код, тесты, roadmap и commit этим draft не изменяются.
+> **Lifecycle:** исходная draft-редакция и ограничения подготовки сохранены как исторический контекст. Parent `plan-15` и все девять дочерних планов имеют `status: completed`; финальная сверка статусов, gates и review записана в [архивном reconciliation ledger](governance/evidence/05-plan-15-roadmap-reconciliation.md). Текущие статусы определяются frontmatter и generated roadmap.
 
 ## Цель и доказанный root cause
 
@@ -101,8 +102,10 @@ The dependency order is also an ownership boundary: `15-03` owns only first-run 
 
 ## No hidden scope / completion definition
 
-Implementation is complete only when every part’s focused RED → GREEN tests pass, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm server:build`, `pnpm web:build`, relevant server security tests, and real `pnpm --filter @ebb-orchestrator/web test:e2e` pass; browser verification covers restart, expiry, logout, CSRF/Origin, onboarding activation guard and Russian accessible names. `git diff --check` must pass and generated temporary bootstrap files must be absent. A reviewer must run `ebb-review-plan` and report `APPROVED` with no BLOCKER/IMPORTANT findings before this draft can be promoted.
+Implementation is complete only when every part’s focused RED → GREEN tests pass, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm server:build`, `pnpm web:build`, relevant server security tests, and real `pnpm --filter @ebb-orchestrator/web test:e2e` pass; browser verification covers restart, expiry, logout, CSRF/Origin, onboarding activation guard and Russian accessible names. `git diff --check` must pass and generated temporary bootstrap files must be absent. Before promotion, a reviewer had to run `ebb-review-plan` and report `APPROVED` with no BLOCKER/IMPORTANT findings; the following completion record and archived reconciliation show that gate was met.
+
+**Фактическое завершение:** criteria above были закрыты для `plan-15` и его девяти частей. Архивный ledger фиксирует promotion parent и `15-08` в `completed`, ранее завершённые дочерние планы, полный набор gates, E2E и независимые review. Этот итоговый статус подтверждён текущими Plan metadata и generated roadmap; старые незаполненные пункты описывают baseline RED-прогоны и шаги отдельных исторических раундов, а не оставшуюся реализацию.
 
 ## Governance note
 
-The repository’s current canonical roadmap is stale and the plan files are intentionally draft-only. No roadmap or generated status file is modified in this Plan Fixer round. `15-08` owns creation and verification of the repo-relative governance ledger `docs/architecture/plans/governance/evidence/05-plan-15-roadmap-reconciliation.md` with parser-allowed frontmatter `id: ledger-05`, `kind: ledger`, `status: draft`, `title`, `created` and `updated`; `kind: evidence`, an `evidence-*` ID and `status: planned` are forbidden. Run the repository root script `pnpm docs:roadmap -- --output=docs/roadmap/01-roadmap.md`, capture its stdout (`Roadmap generated: ...`, `Plans included: ...`) and exact `docs:check`/`docs:test` results there, read back the exact canonical output, reconcile plan-15 metadata/dependencies, then run `pnpm docs:check` and `pnpm docs:test` again. External Hermes cache paths, absolute user paths and untracked cache artifacts are not evidence inputs.
+Указания о stale roadmap и draft-only файлах отражают подготовительный снимок до реализации и promotion и заменены более поздней reconciliation-записью. Ledger оставлен как архивный журнал переходов со своим `status: draft`; он не понижает lifecycle завершённых Plan. Текущие frontmatter, generated roadmap и финальная запись ledger являются согласованными источниками статуса. Plan 16 остаётся отдельным планом с собственным статусом и границами.

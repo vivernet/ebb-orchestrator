@@ -6,7 +6,7 @@ status: completed
 title: Интеграция политик документации и governance
 summary: Упрощение naming/lifecycle policy и удаление дублирующей модели группировки планов из документации и governance tooling
 created: 2026-09-24
-updated: 2026-09-27
+updated: 2026-09-30
 depends_on:
   - plan-00
 specs:
@@ -17,7 +17,7 @@ evidence:
 
 # Интеграция политик документации и governance — план реализации
 
-> Исторический завершённый план: встроенный индекс из 11 skills отражает состояние README до добавления `ebb-curate-skills` и `ebb-repository-maintenance`. Текущий каталог содержит 13 skills в `.agents/skills/`; актуальный перечень поддерживается в корневом README.
+> Исторический завершённый план: встроенный индекс из 11 skills отражает состояние README до добавления `ebb-curate-skills` и `ebb-repository-maintenance`; 13 skills — состояние `.agents/skills/` на дату завершения этого плана (2026-09-27). После Plan 18 актуальный каталог содержит 19 skills; перечень поддерживается в корневом README.
 
 > **Для агентного исполнения:** REQUIRED SKILL: `ebb-execute-plan`.
 
@@ -40,7 +40,7 @@ evidence:
 - Для plan-файлов сохраняются canonical filenames и IDs, установленные repository policy; Plan ID и `depends_on` задают идентичность и зависимости без второй оси группировки. Не вводить `XX`/`YY` naming convention из roadmap milestone-схемы.
 - Lifecycle enum для `kind: plan`: `proposed`, `planned`, `in_progress`, `blocked`, `completed`, `superseded`, `cancelled`. Lifecycle-валидация не применяется к документам с иным `kind` (включая `kind: ledger`): их собственные статусы, например `draft`, сохраняются без нормализации и не считаются ошибкой plan lifecycle.
 - Roadmap registers являются generated output; их изменяют через генератор, а не вручную.
-- Согласованный индекс содержит 11 skills; обновить только соответствующий список в root `README.md`, не менять skill source files:
+- Историческое attachment-требование на момент подготовки этого плана: согласованный индекс содержал 11 skills; оно не задаёт текущий inventory после Plan 18. Обновить только соответствующий список в root `README.md`, не менять skill source files:
 
 | Skill | Краткая ответственность для индекса |
 |---|---|
@@ -240,7 +240,7 @@ evidence:
 - Runtime workflow documentation uses clear terminology for its distinct domain meaning and is never presented as Plan grouping.
 - All Plan metadata omits the retired grouping fields and follows Task 2's explicit contract. Non-Plan metadata is preserved unchanged.
 - README remains unprefixed and without plan frontmatter.
-- `README.md` lists the 11 skills and responsibilities from `Embedded Source Requirements`; no other skill-related file changes.
+- Historical acceptance at plan completion: `README.md` listed the then-approved 11 skills and responsibilities from `Embedded Source Requirements`. Plan 18 supersedes that inventory with 19 current skills; this historical count is not a current README requirement. No other skill-related file changes were part of this task.
 - Root `README.md` contains no competing partial Plan register; its canonical Plans entry point is `docs/roadmap/generated.md`.
 Filename-validation tests demonstrate the four cases: repeated document type with numeric prefixes passes; unique `roadmap/generated.md` without a prefix passes; root `README.md` without prefix/frontmatter passes; arbitrary invalid unprefixed document fails. A regression through the real normal `pnpm docs:check` path verifies only exact root `README.md` and `docs/README.md` bypass metadata/frontmatter/required-id checks, while the unchanged filename rule still warns on a metadata-valid unprefixed non-README fixture such as `docs/unprefixed.md`. The current validator explicitly allows any filename whose basename is `README.md`, so neither README exemption path can honestly serve as a negative filename-warning case; the regression must assert no README metadata errors and the sibling non-README warning instead.
 - All `README.md` index files remain unprefixed and have no YAML frontmatter.

@@ -313,9 +313,9 @@ export class PromptBuilder {
       `Expected source SHA: ${input.sourceSha ?? 'read from the persisted integration attempt'}`,
       `Integration attempt ID: ${input.integrationAttemptId ?? 'read from the persisted integration attempt'}`,
       `Provenance database: ${input.provenanceDatabasePath ?? 'authoritative persisted provenance database'}`,
-      'A PASS must include baseSha equal to expected target SHA, sourceSha equal to expected source SHA, and provenance entries that identify this exact persisted integration attempt and its verification.',
+      'A PASS must include baseSha equal to expected target SHA, sourceSha equal to expected source SHA, provenance containing exactly the identity entry integration_attempt:<Integration attempt ID>, and non-empty evidence for the verification performed.',
       '=== STRUCTURED RESULT / submit_result ===',
-      'Call submit_result exactly once using the validated Integration schema. Include outcome, baseSha, sourceSha, provenance, and test evidence.',
+      'Call submit_result exactly once using the validated Integration schema. Include outcome, baseSha, sourceSha, provenance, and non-empty test evidence.',
       '',
       'Begin integration verification.',
     ];

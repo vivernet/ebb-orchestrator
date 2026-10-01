@@ -44,6 +44,35 @@ export const ru = {
     inputTokens: 'Входные токены',
     cachedTokens: 'Кэшированные токены',
     outputTokens: 'Выходные токены',
+    contextManifest: {
+      loading: 'Загрузка сохранённого манифеста…',
+      requestFailed: 'Не удалось загрузить сохранённый манифест.',
+      available: 'Сохранённая provenance доступна.',
+      unavailable: 'Сохранённая provenance недоступна.',
+      unknown: 'Неизвестный статус манифеста.',
+      emptyItems: 'Выбранных элементов контекста нет.',
+      tokenCount: 'Точный размер контекста',
+      tokenCountUnknown: 'Не измерен',
+      manifestId: 'ID манифеста',
+      runId: 'ID запуска',
+      subject: 'Привязка',
+      role: 'Роль',
+      contractRequestDigest: 'Digest контракта или запроса',
+      contextBuilderVersion: 'Версия сборщика контекста',
+      promptHash: 'Hash точного prompt',
+      contextHash: 'Hash контекста',
+      items: 'Выбранные элементы',
+      itemVersion: 'версия',
+      itemDigest: 'digest',
+      valueUnavailable: 'Не указано',
+      reason: 'Причина',
+      bindingUnknown: 'Привязка недоступна',
+      subjects: { TASK: 'Задача', EPIC: 'Эпик', REQUEST: 'Запрос' },
+      reasons: {
+        LEGACY_PROVENANCE_UNAVAILABLE: 'Для этой исторической записи provenance не сохранялась.',
+        INVALID_PERSISTED_PROVENANCE: 'Сохранённые данные provenance повреждены или не совпадают с запуском.',
+      },
+    },
   },
   breadcrumbs: {
     dashboard: 'Обзор', projects: 'Проекты', project: 'Проект', epic: 'Эпик', task: 'Задача',
@@ -51,6 +80,11 @@ export const ru = {
     settings: 'Настройки', onboarding: 'Создание проекта', notFound: 'Страница не найдена',
   },
 } as const;
+
+/** Возвращает локализованную подпись недоступной provenance-записи Run. */
+export function runContextManifestUnavailableLabel(): string {
+  return ru.runs.contextManifest.unavailable;
+}
 
 const statusLabels: Record<string, string> = {
   DRAFT: 'Черновик', READY: 'Готово', ACTIVE: 'Активно', IN_PROGRESS: 'Выполняется',
@@ -75,6 +109,7 @@ const epicStageLabels: Record<string, string> = {
 
 const waitReasonLabels: Record<string, string> = {
   WAITING_FOR_CAPACITY: 'Ожидается доступная мощность планировщика.',
+  WAITING_FOR_PAUSE: 'Ожидается возобновление задачи.',
   WAITING_FOR_ROLE_CAPACITY: 'Ожидается доступная мощность для роли.',
   WAITING_FOR_RESOURCE_LOCK: 'Ожидается освобождение ресурса.',
   WAITING_FOR_BUDGET: 'Ожидается бюджет проекта.',

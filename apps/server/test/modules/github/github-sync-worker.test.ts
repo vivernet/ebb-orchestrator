@@ -41,6 +41,7 @@ describe('GitHub sync idempotency', () => {
       { id: 101, issueNumber: 5, body: 'Please retain this behavior.', authorType: 'User' },
       { id: 102, issueNumber: 5, body: 'ORCHESTRATOR:task-1 synced', authorType: 'Bot' },
       { id: 103, issueNumber: 5, body: 'ORCHESTRATOR:task-2 synced', authorType: 'User' },
+      { id: 104, issueNumber: 5, body: 'ORCHESTRATOR:', authorType: 'User' },
     ];
     const hosting = { listIssueComments: vi.fn(async () => ({ status: 'OK' as const, value: comments })) };
     const onFeedback = vi.fn(async () => {});

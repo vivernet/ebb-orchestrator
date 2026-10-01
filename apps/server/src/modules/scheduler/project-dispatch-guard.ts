@@ -1,8 +1,9 @@
 import type { DatabaseTx } from "../../platform/database/database.js";
+import { projectConfigDispatchAllowedTx } from "../projects/project-config-service.js";
 
 export type ProjectDispatchEligibility =
   | { allowed: true }
-  | { allowed: false; reason: "PROJECT_NOT_ACTIVE" | "ONBOARDING_NOT_ACTIVE" };
+  | { allowed: false; reason: "PROJECT_NOT_ACTIVE" | "ONBOARDING_NOT_ACTIVE" | "PROJECT_CONFIG_DEGRADED" };
 
 /**
  * Проверяет авторитетное состояние проекта и onboarding в одной caller-owned
@@ -23,6 +24,7 @@ export function projectDispatchEligibilityTx(tx: DatabaseTx, projectId: string):
     { projectId },
   );
   if (!onboarding || onboarding.status !== "ACTIVE") return { allowed: false, reason: "ONBOARDING_NOT_ACTIVE" };
+  if (!projectConfigDispatchAllowedTx(tx, projectId)) return { allowed: false, reason: "PROJECT_CONFIG_DEGRADED" };
   return { allowed: true };
 }
 

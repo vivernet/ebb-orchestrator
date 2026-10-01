@@ -1,5 +1,5 @@
 import { describe, test, expect, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import SanitizedTerminal from '../src/components/SanitizedTerminal.js';
 import ExecutionPage from '../src/features/execution/ExecutionPage.js';
@@ -123,7 +123,58 @@ describe('Queue row wait reason', () => {
 });
 
 describe('Agent Run detail', () => {
-  test('uses the supported run detail projection and does not request unavailable subresources', async () => {
+  test('renders run-scoped artifact metadata without requesting or exposing contents', async () => {
+    const get = vi.spyOn(apiClient, 'get').mockImplementation(async (path) => {
+      if (path === '/runs/run-1/artifacts') return [{
+        id: 'artifact-1',
+        type: 'test-report',
+        contentType: 'text/plain',
+        sizeBytes: 42,
+        sha256: 'a'.repeat(64),
+        status: 'ACTIVE',
+        createdAt: '2026-09-30T00:00:00.000Z',
+      }] as never;
+      if (path === '/runs/run-1/context-manifests') return {
+        availability: 'available', id: 'manifest-1', runId: 'run-1', subject: { type: 'TASK', id: 'task-1' }, role: 'developer',
+        contractRequestDigest: 'a'.repeat(64), items: [{ id: 'guideline-1', version: 3, digest: 'b'.repeat(64) }, { id: 'decision-2', version: null, digest: null }],
+        promptHash: 'c'.repeat(64), contextHash: 'd'.repeat(64), contextBuilderVersion: 'builder-v2', initialTokenSize: 23,
+      } as never;
+      if (path === '/settings') return { securitySettings: { localModeEnabled: true } } as never;
+      if (path === '/runs/run-1/events' || path === '/runs/run-1/permissions') return [] as never;
+      if (path === '/runs/run-1/tools') return { tools: [] } as never;
+      if (path === '/runs/run-1/recovery') return { runId: 'run-1', taskId: null, runStatus: 'DONE', recovery: null } as never;
+      return {
+        id: 'run-1', role: 'Developer', runtime: 'hermes', model: 'gpt', status: 'DONE', taskId: 'task-1', epicId: null,
+        triggerReason: 'DEVELOPMENT', startedAt: null, endedAt: null,
+        usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, cost: 0 },
+      } as never;
+    });
+
+    render(<MemoryRouter><AgentRunPage id="run-1" /></MemoryRouter>);
+
+    expect(await screen.findByRole('heading', { name: 'Артефакты запуска' })).toBeInTheDocument();
+    const item = within(screen.getByRole('region', { name: 'Артефакты запуска' })).getByRole('listitem');
+    expect(item).toHaveTextContent('test-report');
+    expect(item).toHaveTextContent('text/plain');
+    expect(item).toHaveTextContent('42 Б');
+    expect(item).toHaveTextContent('a'.repeat(64));
+    expect(screen.getByRole('region', { name: 'Манифест контекста' })).toHaveTextContent('guideline-1');
+    expect(screen.getByRole('region', { name: 'Манифест контекста' })).toHaveTextContent('Задача · task-1');
+    expect(screen.getByRole('region', { name: 'Манифест контекста' })).toHaveTextContent('b'.repeat(64));
+    expect(screen.getByRole('region', { name: 'Манифест контекста' })).toHaveTextContent('a'.repeat(64));
+    expect(screen.getByRole('region', { name: 'Манифест контекста' })).toHaveTextContent('c'.repeat(64));
+    expect(screen.getByRole('region', { name: 'Манифест контекста' })).toHaveTextContent('d'.repeat(64));
+    expect(screen.getByRole('region', { name: 'Манифест контекста' })).toHaveTextContent('23');
+    expect(screen.getByRole('region', { name: 'Манифест контекста' })).toHaveTextContent('builder-v2');
+    expect(screen.getByRole('note', { name: 'Предупреждение Local Mode' })).toHaveTextContent('не является OS sandbox');
+    expect(get).toHaveBeenCalledWith('/runs/run-1/artifacts');
+    expect(get).toHaveBeenCalledWith('/runs/run-1/context-manifests');
+    expect(get).toHaveBeenCalledWith('/settings');
+    expect(screen.queryByText(/private|contents|raw output/i)).not.toBeInTheDocument();
+    vi.restoreAllMocks();
+  });
+
+  test('uses the run projection and requests its supported read subresources', async () => {
     const get = vi.spyOn(apiClient, 'get').mockResolvedValue({
       id: 'run-1', role: 'Developer', runtime: 'hermes', model: 'gpt', status: 'IN_PROGRESS', taskId: 'task-1', epicId: null,
       triggerReason: 'DEVELOPMENT', startedAt: '2026-09-20T00:00:00.000Z', endedAt: null,
@@ -136,9 +187,111 @@ describe('Agent Run detail', () => {
     expect(screen.getByText('Разработка')).toBeInTheDocument();
     expect(screen.queryByText('DEVELOPMENT')).not.toBeInTheDocument();
     expect(screen.getByText('$0.4200')).toBeInTheDocument();
-    // Page makes multiple calls: run, events, tools, permissions, recovery
-    expect(get.mock.calls.filter(([path]) => path.startsWith('/runs/run-1'))).toHaveLength(5);
+    // Page makes calls for run, events, tools, permissions, recovery, artifacts, and context manifests.
+    expect(get.mock.calls.filter(([path]) => path.startsWith('/runs/run-1'))).toHaveLength(7);
     expect(get).toHaveBeenCalledWith('/runs/run-1', expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    vi.restoreAllMocks();
+  });
+
+  test('requests and displays explicit unavailable provenance for a request-bound run', async () => {
+    const get = vi.spyOn(apiClient, 'get').mockImplementation(async (path) => {
+      if (path === '/runs/run-2/context-manifests') return { availability: 'unavailable', runId: 'run-2', subject: { type: 'REQUEST', id: 'request-2' }, role: 'coordinator', reason: 'LEGACY_PROVENANCE_UNAVAILABLE' } as never;
+      if (path === '/runs/run-2/artifacts' || path === '/runs/run-2/events' || path === '/runs/run-2/permissions') return [] as never;
+      if (path === '/runs/run-2/tools') return { tools: [] } as never;
+      if (path === '/runs/run-2/recovery') return { runId: 'run-2', taskId: null, runStatus: 'DONE', recovery: null } as never;
+      return {
+        id: 'run-2', role: 'Developer', runtime: 'hermes', model: 'gpt', status: 'DONE', taskId: null, epicId: null,
+        triggerReason: 'REQUESTED', startedAt: null, endedAt: null,
+        usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, cost: 0 },
+      } as never;
+    });
+
+    render(<MemoryRouter><AgentRunPage id="run-2" /></MemoryRouter>);
+
+    const manifest = await screen.findByRole('region', { name: 'Манифест контекста' });
+    expect(manifest).toHaveTextContent('Запрос · request-2');
+    expect(manifest).toHaveTextContent('request-2');
+    expect(manifest).toHaveTextContent('Для этой исторической записи provenance не сохранялась.');
+    expect(get).toHaveBeenCalledWith('/runs/run-2/context-manifests');
+    expect(get).not.toHaveBeenCalledWith('/settings');
+    expect(screen.queryByRole('note', { name: 'Предупреждение Local Mode' })).not.toBeInTheDocument();
+    vi.restoreAllMocks();
+  });
+
+  test('does not synthesize a manifest when a task-bound run has no persisted row', async () => {
+    const get = vi.spyOn(apiClient, 'get').mockImplementation(async (path) => {
+      if (path === '/runs/run-3/context-manifests') return { availability: 'unavailable', runId: 'run-3', subject: { type: 'TASK', id: 'task-3' }, role: 'developer', reason: 'LEGACY_PROVENANCE_UNAVAILABLE' } as never;
+      if (path === '/runs/run-3/artifacts' || path === '/runs/run-3/events' || path === '/runs/run-3/permissions') return [] as never;
+      if (path === '/runs/run-3/tools') return { tools: [] } as never;
+      if (path === '/runs/run-3/recovery') return { runId: 'run-3', taskId: 'task-3', runStatus: 'DONE', recovery: null } as never;
+      if (path === '/settings') return { securitySettings: { localModeEnabled: false } } as never;
+      return {
+        id: 'run-3', role: 'Developer', runtime: 'hermes', model: 'gpt', status: 'DONE', taskId: 'task-3', epicId: null,
+        triggerReason: 'REQUESTED', startedAt: null, endedAt: null,
+        usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, cost: 0 },
+      } as never;
+    });
+
+    render(<MemoryRouter><AgentRunPage id="run-3" /></MemoryRouter>);
+
+    const manifest = await screen.findByRole('region', { name: 'Манифест контекста' });
+    expect(manifest).toHaveTextContent('Для этой исторической записи provenance не сохранялась.');
+    expect(get).toHaveBeenCalledWith('/runs/run-3/context-manifests');
+    expect(manifest).not.toHaveTextContent('task-v');
+    vi.restoreAllMocks();
+  });
+
+  test('renders Epic binding and keeps unknown availability explicit', async () => {
+    const get = vi.spyOn(apiClient, 'get').mockImplementation(async (path) => {
+      if (path === '/runs/run-epic/context-manifests') return { availability: 'future-state', runId: 'run-epic', subject: { type: 'EPIC', id: 'epic-7' }, role: 'architect', prompt: 'private ui prompt sentinel', runtimeInstructions: 'hidden ui prompt sentinel' } as never;
+      if (path === '/runs/run-epic/artifacts' || path === '/runs/run-epic/events' || path === '/runs/run-epic/permissions') return [] as never;
+      if (path === '/runs/run-epic/tools') return { tools: [] } as never;
+      if (path === '/runs/run-epic/recovery') return { runId: 'run-epic', taskId: null, runStatus: 'DONE', recovery: null } as never;
+      if (path === '/settings') return { securitySettings: { localModeEnabled: false } } as never;
+      return {
+        id: 'run-epic', role: 'Architect', runtime: 'hermes', model: 'gpt', status: 'DONE', taskId: null, epicId: 'epic-7',
+        triggerReason: 'REQUESTED', startedAt: null, endedAt: null,
+        usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, cost: 0 },
+      } as never;
+    });
+
+    render(<MemoryRouter><AgentRunPage id="run-epic" /></MemoryRouter>);
+
+    const manifest = await screen.findByRole('region', { name: 'Манифест контекста' });
+    expect(manifest).toHaveTextContent('Эпик · epic-7');
+    expect(manifest).toHaveTextContent('epic-7');
+    expect(manifest).toHaveTextContent('Неизвестный статус манифеста');
+    expect(manifest).not.toHaveTextContent('future-state');
+    expect(manifest).not.toHaveTextContent('private ui prompt sentinel');
+    expect(manifest).not.toHaveTextContent('hidden ui prompt sentinel');
+    expect(get).toHaveBeenCalledWith('/runs/run-epic/context-manifests');
+    vi.restoreAllMocks();
+  });
+
+  test('renders valid-empty Request provenance separately from unknown token size', async () => {
+    const get = vi.spyOn(apiClient, 'get').mockImplementation(async (path) => {
+      if (path === '/runs/run-request/context-manifests') return {
+        availability: 'available', id: 'manifest-request', runId: 'run-request', subject: { type: 'REQUEST', id: 'request-9' }, role: 'product_manager',
+        contractRequestDigest: null, items: [], promptHash: 'a'.repeat(64), contextHash: 'b'.repeat(64), contextBuilderVersion: 'builder-v9', initialTokenSize: null,
+      } as never;
+      if (path === '/runs/run-request/artifacts' || path === '/runs/run-request/events' || path === '/runs/run-request/permissions') return [] as never;
+      if (path === '/runs/run-request/tools') return { tools: [] } as never;
+      if (path === '/runs/run-request/recovery') return { runId: 'run-request', taskId: null, runStatus: 'DONE', recovery: null } as never;
+      return {
+        id: 'run-request', role: 'Product Manager', runtime: 'hermes', model: 'gpt', status: 'DONE', taskId: null, epicId: null,
+        triggerReason: 'REQUESTED', startedAt: null, endedAt: null,
+        usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, cost: 0 },
+      } as never;
+    });
+
+    render(<MemoryRouter><AgentRunPage id="run-request" /></MemoryRouter>);
+
+    const manifest = await screen.findByRole('region', { name: 'Манифест контекста' });
+    expect(manifest).toHaveTextContent('Запрос · request-9');
+    expect(manifest).toHaveTextContent('Выбранных элементов контекста нет.');
+    expect(manifest).toHaveTextContent('Не измерен');
+    expect(manifest).not.toHaveTextContent('private prompt sentinel');
+    expect(get).toHaveBeenCalledWith('/runs/run-request/context-manifests');
     vi.restoreAllMocks();
   });
 

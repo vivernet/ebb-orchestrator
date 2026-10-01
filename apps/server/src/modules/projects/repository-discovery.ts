@@ -247,6 +247,6 @@ export class RepositoryDiscovery {
   }
 
   private detectUntrustedExistingConfig(repoPath: string): boolean {
-    return existsSync(join(repoPath, ".orchestrator"));
+    return existsSync(join(repoPath, ".ebb-orchestrator"));
   }
 }

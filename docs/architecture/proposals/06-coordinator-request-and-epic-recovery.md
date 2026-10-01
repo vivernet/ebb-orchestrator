@@ -1,6 +1,6 @@
 ---
 id: proposal-06
-status: proposed
+status: accepted
 title: Публичный Coordinator request flow и восстановление Epic после рестарта
 date: 2026-09-29
 type: proposal
@@ -9,7 +9,7 @@ tags: [planning, epic, recovery, v1]
 
 # Proposal: Coordinator request flow и восстановление Epic
 
-**Статус:** proposed; перечисленные решения блокируют implementation plan и закрытие `plan-05`.
+**Статус:** accepted; реализация выполняется по выбранному варианту в Plan 05 после прохождения plan review.
 
 ## 1. Цель и границы
 
@@ -54,7 +54,9 @@ E2E напрямую создаёт `PlanningRequest`, вызывает Coordina
 - `POST /api/v1/projects/{projectId}/requests` принимает `{ request: string }`; проект должен быть ACTIVE и иметь одобренный onboarding. Сервер устанавливает `requestedBy` из local session, а не из body.
 - Route создаёт durable `PlanningRequest`, ставит Coordinator работу через существующие Jobs/Outbox/Scheduler boundaries и возвращает `202 { requestId, status }`. HTTP не удерживается на длительности Hermes Run.
 - `GET /api/v1/projects/{projectId}/requests/{requestId}` возвращает status, безопасную ошибку, связанный pending plan и его версию. Ни prompt secrets, ни непроверенный raw output в status DTO не входят.
-- Вывод Coordinator проходит `validateRoleOutput`, `validatePlan` и deterministic policy до записи `PlanningPlan`. Для Epic действует существующая обязательная approval policy. До одобрения materialization не создаёт Epic/Task IDs и Scheduler не запускает дочернюю работу.
+- Вывод Coordinator проходит `validateRoleOutput`, `validatePlan` и deterministic policy до записи `PlanningPlan`. Для Epic действует существующая обязательная approval policy.
+- До явного human `approve-run` допустимы request-bound planning `AgentRuns` Coordinator, Product Manager и Architect. Product Manager/Architect привязываются к `PlanningRequest` через отдельную durable связь request↔role↔run; эти Runs не имеют `task_id`/`epic_id` и используют только read-only planning tools. Их validated decisions сохраняются в pending plan и входят в request approval summary.
+- До явного human `approve-run` не создаются доменные Epic/Task IDs, child-work `AgentRuns` или child Scheduler reservations. Только существующий authenticated `approve-run` materializes Epic/Tasks и открывает dispatch дочерней работы. Формулировка «до одобрения нет AgentRuns» означает отсутствие именно child-work Runs; request-bound planning Runs выше разрешены.
 - Существующие `POST /api/v1/projects/{projectId}/epics/plans/{planId}/approve-run` остаются human gate и запускают только тот plan, который связан с этим request и принадлежит тому же Project. Повтор approval/run идемпотентен по сохранённой связи.
 - Ответ классификации `NEEDS_INPUT`, `TASK` либо `EPIC` хранится на PlanningRequest. В рамках этого acceptance запрос выбирается так, чтобы Coordinator классифицировал его как Epic с 2–3 зависимыми Tasks; изменение standalone Task UX не входит в acceptance.
 
@@ -77,19 +79,19 @@ E2E напрямую создаёт `PlanningRequest`, вызывает Coordina
 ## 5. Проверка
 
 - Unit: Request state transitions, stable request/plan relation, повторный approval, duplicate job delivery, malformed Coordinator output и cross-project IDs.
-- Integration: authenticated API создает request; Coordinator result формирует pending plan; до одобрения нет Epic/Tasks/AgentRuns; approval материализует IDs одной транзакцией.
+- Integration: authenticated API создает request; request-bound planning Runs формируют и durable-связывают validated PM/Architect decisions, request API/UI показывают их в approval summary; до human `approve-run` нет доменных Epic/Task IDs, child-work Runs или child reservations; approval материализует IDs одной транзакцией.
 - Recovery: test server выполняет и интегрирует минимум одну child Task, затем принудительно завершается; production `dist/main.js` стартует с той же disposable home/SQLite, восстанавливает оставшиеся Tasks, не повторяет completed phase/Run и доходит до ожидаемого approval gate.
 - Real Hermes acceptance запускается только с доступным поддерживаемым CLI/profile/provider и сохраняет redacted evidence отдельно от deterministic CI.
 - Полные gates Plan 05 и независимый whole-plan review нужны до `completed`.
 
-## 6. Решения, нужные до implementation plan
+## 6. Решения пользователя (2026-09-29)
 
-1. Принять вариант A (request API + минимальный UI + automatic startup resume), либо выбрать B/C и признать, что текущий Plan 05 acceptance/scope меняется.
-2. Подтвердить, что startup должен автоматически resume-ить одобренные Epic до `READY`, а не показывать их как `PAUSED` до ручного resume.
-3. Подтвердить минимальный UI request/plan approval view как часть Plan 05; существующий API сейчас не предоставляет пользовательский NL request path.
+1. Принят вариант A: request API, минимальный UI и automatic startup resume.
+2. Одобренные Epic автоматически resume-ятся до `READY`; обычные Scheduler, budgets, permissions и Git reconciliation остаются обязательными.
+3. Минимальный UI request/plan approval view входит в Plan 05.
 
-Real Hermes provider acceptance останется отдельным runtime gate и не заменяется решением по API/UI.
+Real Hermes provider acceptance остаётся отдельным runtime gate и не заменяется решением по API/UI. Это решение не даёт автоматического одобрения plan или final merge.
 
 ## 7. Решение пользователя
 
-Пока не получено. До принятия решений выше реализация нового request flow или изменения startup/resume semantics не начинается.
+Пользователь явно принял вариант A, автоматическое восстановление одобренных Epic до `READY` и минимальный UI как часть Plan 05. До plan review и выполнения зависимостей реализация не начинается.

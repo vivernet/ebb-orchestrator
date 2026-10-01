@@ -9,6 +9,7 @@ import { runMigrations, type Migration } from '../../../src/platform/database/mi
 import { InMemorySecretStore, SecretStoreUnavailableError } from '../../../src/platform/security/secret-store.js';
 import { SecretRedactor } from '../../../src/platform/security/secret-redactor.js';
 import { KeyringSecretStore } from '../../../src/platform/security/keyring-secret-store.js';
+import type { KeyringBackend } from '../../../src/platform/security/keyring-secret-store.js';
 import type { Database, StatementParams } from '../../../src/platform/database/database.js';
 
 const migrationsDir = join(import.meta.dirname, '../../../src/platform/database/migrations');
@@ -54,6 +55,17 @@ describe('SecretStore no-plaintext', () => {
   });
 
   describe('KeyringSecretStore availability', () => {
+    it('normalizes the native keyring null sentinel for a missing credential', async () => {
+      const backend = {
+        async setPassword(): Promise<void> {},
+        async getPassword(): Promise<string | null> { return null; },
+        async deletePassword(): Promise<void> {},
+      };
+      const store = new KeyringSecretStore(sqliteDb, { backend: backend as KeyringBackend });
+
+      await expect(store.resolveForService('service', 'missing')).resolves.toBeUndefined();
+    });
+
     it('rejects store when the keyring backend is unavailable', async () => {
       const StoreWithBackend = KeyringSecretStore as unknown as new (
         database: Database,

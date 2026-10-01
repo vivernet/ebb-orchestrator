@@ -17,7 +17,7 @@ const server = setupServer(
         defaultBranch: 'main',
         packageManager: 'pnpm',
         testFramework: 'vitest',
-        orchestratorConfigFound: true,
+        ebbOrchestratorConfigFound: true,
       },
       proposed: {
         defaultBranch: 'main',

@@ -43,9 +43,14 @@ import { DependencyService } from "../modules/work/dependency-service.js";
 import { dependencyRoutes, type DependencyCommandService } from "./routes/dependencies.js";
 import { finalMergeRoutes, type FinalMergeServiceFactory } from "./routes/final-merge.js";
 import { epicRoutes } from "./routes/epics.js";
+import { projectConfigRoutes } from "./routes/project-config.js";
+import { humanFeedbackRoutes } from "./routes/human-feedback.js";
+import type { HumanFeedbackService } from "../modules/github/human-feedback-service.js";
+import type { ProjectConfigService } from "../modules/projects/project-config-service.js";
 import type { EpicOrchestrator } from "../modules/planning/epic-orchestrator.js";
 import type { StatusTrackerInterface } from "../platform/process/system-lifecycle.js";
 import type { EventBus } from "../platform/events/event-bus.js";
+import type { ArtifactStore } from "../platform/artifacts/artifact-store.js";
 
 const LOCAL_SESSION_COOKIE = AUTH_COOKIE_CONTRACT.name;
 
@@ -59,7 +64,12 @@ export interface AppDeps {
   workService?: WorkCommandService;
   approvalService?: ApprovalCommandService;
   onboardingService?: OnboardingCommandService;
+  projectConfigService?: ProjectConfigService;
+  humanFeedbackService?: HumanFeedbackService;
+  githubSyncWorker?: GitHubSyncWorker;
   runService?: RunCommandService;
+  /** Production artifact store; Run routes expose only metadata scoped to one existing run. */
+  artifactStore?: Pick<ArtifactStore, "listRunArtifacts">;
   dependencyService?: DependencyCommandService;
   /** Необязательная authority-bound factory; production по умолчанию использует MergeService. */
   finalMergeServiceFactory?: FinalMergeServiceFactory;
@@ -104,6 +114,8 @@ export function createApp(deps: AppDeps): OrchestratorApp {
   const projectService = deps.projectService ?? (deps.db ? new ProjectService(deps.db) : undefined);
   const approvalService = deps.approvalService ?? (deps.db ? new ApprovalService(deps.db) : undefined);
   const onboardingService = deps.onboardingService;
+  const projectConfigService = deps.projectConfigService;
+  const humanFeedbackService = deps.humanFeedbackService;
   if (deps.db && !deps.runtime && !deps.runService) throw new Error("production runtime is required");
   const runService = deps.runService ?? (deps.db && deps.runtime ? new RunService(deps.db, deps.runtime) : undefined);
   const dependencyService = deps.dependencyService ?? (deps.db ? new DependencyService(deps.db) : undefined);
@@ -256,8 +268,10 @@ export function createApp(deps: AppDeps): OrchestratorApp {
     await finalMergeRoutes(instance, { db: deps.db, mergeServiceFactory: deps.finalMergeServiceFactory, workflow, epicOrchestrator: deps.epicOrchestrator });
     await epicRoutes(instance, { db: deps.db, epicOrchestrator: deps.epicOrchestrator });
     await approvalRoutes(instance, { db: deps.db, approvalService });
-    await runRoutes(instance, { db: deps.db, runService, scheduler, workflow });
+    await runRoutes(instance, { db: deps.db, runService, scheduler, workflow, artifactStore: deps.artifactStore });
     await onboardingRoutes(instance, onboardingService ? { onboardingService } : {});
+    await projectConfigRoutes(instance, projectConfigService ? { service: projectConfigService } : {});
+    await humanFeedbackRoutes(instance, { ...(humanFeedbackService ? { service: humanFeedbackService } : {}), ...(deps.githubSyncWorker ? { worker: deps.githubSyncWorker } : {}) });
     await settingsRoutes(instance, { scheduler: deps.scheduler });
     await usageRoutes(instance, { db: deps.db });
     await secretsRoutes(instance, {

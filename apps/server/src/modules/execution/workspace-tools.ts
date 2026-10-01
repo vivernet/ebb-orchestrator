@@ -5,6 +5,7 @@
 import { PathResolver } from '../../platform/security/path-resolver.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { approvedConfigFileForPath } from './approved-config-file.js';
 
 export type WorkspaceReadResult = { success: boolean; content?: string; error?: string };
 export type WorkspaceWriteResult = { success: boolean; error?: string };
@@ -15,13 +16,18 @@ export type WorkspaceWriteResult = { success: boolean; error?: string };
 export class WorkspaceTools {
   constructor(
     private resolver: PathResolver,
-    private workspace: string
+    private workspace: string,
+    private readonly approvedConfigFiles?: Readonly<Record<string, string>>,
   ) {}
 
   /**
    * Читает файл из workspace.
    */
   async readFile(relPath: string): Promise<WorkspaceReadResult> {
+    const approved = approvedConfigFileForPath(this.workspace, relPath, this.approvedConfigFiles);
+    if (approved.applies) return approved.content === undefined
+      ? { success: false, error: 'File is absent from approved Project Config snapshot' }
+      : { success: true, content: approved.content };
     const fullPath = path.resolve(this.workspace, relPath);
     const result = this.resolver.resolveSafePathSync(this.workspace, fullPath);
 

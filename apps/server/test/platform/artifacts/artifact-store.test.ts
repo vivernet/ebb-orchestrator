@@ -64,6 +64,36 @@ describe("ArtifactStore", () => {
     expect(record.status).toBe("ACTIVE");
   });
 
+  it("exposes only metadata for artifacts attached to the requested run", async () => {
+    await store.writeArtifact({
+      type: "test-report",
+      contentType: "text/plain",
+      bytes: Buffer.from("fixture content must stay private"),
+      runId: "run-1",
+    });
+    await store.writeArtifact({
+      type: "other-report",
+      contentType: "text/plain",
+      bytes: Buffer.from("another fixture"),
+      runId: "run-2",
+    });
+
+    const metadata = store.listRunArtifacts("run-1");
+
+    expect(metadata).toHaveLength(1);
+    expect(metadata[0]).toMatchObject({
+      type: "test-report",
+      contentType: "text/plain",
+      sizeBytes: Buffer.byteLength("fixture content must stay private"),
+      sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      status: "ACTIVE",
+    });
+    expect(Object.keys(metadata[0]!).sort()).toEqual([
+      "contentType", "createdAt", "id", "sha256", "sizeBytes", "status", "type",
+    ]);
+    expect(JSON.stringify(metadata)).not.toContain("fixture content must stay private");
+  });
+
   it("reads an artifact via openArtifact", async () => {
     const record = await store.writeArtifact({
       type: "build-output",

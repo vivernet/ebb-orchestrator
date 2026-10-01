@@ -239,6 +239,9 @@ describe('ManifestBuilder', () => {
 
   it('should persist manifest IDs and versions', () => {
     const manifest = manifestBuilder.build({
+      runId: 'RUN-1',
+      taskId: 'TASK-1',
+      role: 'developer',
       taskContractVersion: '1.0.0',
       guidelineIds: ['GL-001', 'GL-002'],
       decisionIds: ['DEC-001'],
@@ -254,6 +257,9 @@ describe('ManifestBuilder', () => {
 
   it('should NOT include secrets in manifest', () => {
     const manifest = manifestBuilder.build({
+      runId: 'RUN-2',
+      taskId: 'TASK-2',
+      role: 'developer',
       taskContractVersion: '1.0.0',
     });
 
@@ -264,6 +270,9 @@ describe('ManifestBuilder', () => {
 
   it('should include initial token size', () => {
     const manifest = manifestBuilder.build({
+      runId: 'RUN-3',
+      taskId: 'TASK-3',
+      role: 'developer',
       taskContractVersion: '1.0.0',
       initialTokenSize: 5000,
     });

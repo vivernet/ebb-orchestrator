@@ -46,14 +46,14 @@ describe('GitHub adapter', () => {
       ]), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify(commentPageOne), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify([
-        { id: 201, issue_url: 'https://api.github.com/repos/o/r/issues/105', body: 'human', user: { type: 'User' } },
+        { id: 201, issue_url: 'https://api.github.com/repos/o/r/issues/105', html_url: 'https://github.com/o/r/issues/105#issuecomment-201', created_at: '2026-09-29T10:00:00Z', updated_at: '2026-09-29T10:01:00Z', body: 'human', user: { type: 'User', login: 'alice' } },
         { id: 202, issue_url: 'https://api.github.com/repos/o/r/issues/106', body: 'PR conversation', user: { type: 'User' } },
       ]), { status: 200 }));
     const adapter = new GitHubAdapter(tokens, { fetch });
 
     const result = await adapter.listIssueComments('o/r');
 
-    expect(result).toEqual({ status: 'OK', value: [{ id: 201, issueNumber: 105, body: 'human', authorType: 'User' }] });
+    expect(result).toEqual({ status: 'OK', value: [{ id: 201, issueNumber: 105, body: 'human', authorType: 'User', authorLogin: 'alice', sourceUrl: 'https://github.com/o/r/issues/105#issuecomment-201', sourceCreatedAt: '2026-09-29T10:00:00Z', sourceUpdatedAt: '2026-09-29T10:01:00Z' }] });
     expect(fetch).toHaveBeenCalledTimes(4);
     expect(String(fetch.mock.calls[0]?.[0])).toContain('page=1');
     expect(String(fetch.mock.calls[1]?.[0])).toContain('page=2');

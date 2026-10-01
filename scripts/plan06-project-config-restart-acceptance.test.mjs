@@ -1,0 +1,86 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { test } from "node:test";
+import { URL } from "node:url";
+
+const root = new URL("../", import.meta.url);
+
+test("Plan 06 Project Config acceptance runs the production server in a disposable process harness", async () => {
+  const packageSource = await readFile(new URL("package.json", root), "utf8");
+  const packageJson = JSON.parse(packageSource);
+  assert.equal(
+    packageJson.scripts["plan06:project-config:acceptance"],
+    "pnpm server:build && node scripts/plan06-project-config-restart-acceptance.mjs",
+  );
+
+  const harness = await readFile(new URL("scripts/plan06-project-config-restart-acceptance.mjs", root), "utf8");
+  assert.match(harness, /apps\/server\/dist\/main\.js/);
+  assert.match(harness, /spawn\(process\.execPath,[\s\S]*?shell:\s*false/);
+  assert.match(harness, /mkdtemp\(join\(tmpdir\(\)/);
+  assert.match(harness, /EBB_ORCHESTRATOR_HOME/);
+  assert.match(harness, /\/api\/v1\/projects\/\$\{[^}]+\}\/config\/candidates/);
+  assert.match(harness, /manifestHash/);
+  assert.match(harness, /PENDING_REVIEW/);
+  assert.match(harness, /PROJECT_CONFIG_DEGRADED/);
+  assert.match(harness, /runWindowsFailClosedScenario/);
+  assert.match(harness, /PROJECT_CONFIG_UNSUPPORTED_PLATFORM/);
+  assert.match(harness, /PLAN06_PROJECT_CONFIG_RESTART_ACCEPTANCE=WAIVED \/ NOT RUN/);
+  assert.match(harness, /trg_plan06_fail_before_active_pointer_update/);
+  assert.match(harness, /RAISE\(ABORT/);
+  assert.match(harness, /"--import", pathToFileURL\(observer\.preloadPath\)\.href/);
+  assert.match(harness, /DatabaseSync\.prototype\.prepare/);
+  assert.match(harness, /StatementSync\.prototype\.run/);
+  assert.match(harness, /this\.location\(\)/);
+  assert.match(harness, /error\?\.errcode === 1811/);
+  assert.match(harness, /plan06 injected failure before active pointer commit/);
+  assert.match(harness, /projectApprovalSideEffectSnapshot/);
+  assert.match(harness, /assertProjectApprovalSideEffectDelta/);
+  assert.match(harness, /ApprovalRequested/);
+  assert.match(harness, /APPROVAL_APPROVED/);
+  assert.match(harness, /async function runPostCommitCrashScenario/);
+  assert.match(harness, /createPostCommitCrashObserver/);
+  assert.match(harness, /DatabaseSync\.prototype\.exec/);
+  assert.match(harness, /normalizeSql\(sql\) !== "COMMIT"/);
+  assert.match(harness, /holdCommittedChildUntilParentKills/);
+  assert.match(harness, /assert\.equal\(crashApprovalOutcome\.kind, "transport-error"/);
+  assert.match(harness, /afterCrashRestart\.active\.revisionId/);
+  assert.match(harness, /afterCrashRestart\.active\.revisionHash/);
+  assert.match(harness, /assertProjectApprovalSideEffectDelta\(sideEffectsBeforeCrash/);
+  assert.match(harness, /async function runPreCommitCrashScenario/);
+  assert.match(harness, /await runPreCommitCrashScenario/);
+  assert.match(harness, /createPreCommitCrashObserver/);
+  assert.match(harness, /originalRun\.apply\(this, parameters\)[\s\S]*?database\.isTransaction === true/);
+  assert.match(harness, /normalizeSql\(owner\.sql\) !== expectedSql/);
+  assert.match(harness, /bindings\.\$projectId !== expectedProjectId/);
+  assert.match(harness, /row\.manifest_hash !== expectedManifestHash/);
+  assert.match(harness, /PLAN06_PRE_COMMIT_ACTIVE_POINTER/);
+  assert.match(harness, /preCommitApprovalOutcome\.kind, "transport-error"/);
+  assert.match(harness, /afterPreCommitRestart\.active\.revisionId/);
+  assert.match(harness, /afterPreCommitRestart\.active\.revisionHash/);
+  assert.match(harness, /afterPreCommitRestart\.current\.status, "PENDING_REVIEW"/);
+  assert.match(harness, /afterPreCommitRestart\.revisions\.length, revisionCountBeforeCrash/);
+  assert.match(harness, /projectApprovalSideEffectSnapshot\(server\.databasePath, project\.projectId\), sideEffectsBeforePreCommitCrash/);
+  assert.match(harness, /sideEffectsBeforePreCommitCrash/);
+  assert.match(harness, /faultResponse/);
+  assert.match(harness, /approvalMetadataCount/);
+  assert.match(harness, /afterCommitRestart/);
+  assert.match(harness, /apps\/server\/dist\/modules\/runtime\/run-service\.js/);
+  assert.match(harness, /apps\/server\/dist\/modules\/execution\/capability-validation\.js/);
+  assert.match(harness, /loadValidatedCapability/);
+  assert.match(harness, /approvedProjectConfig\.revisionHash/);
+  assert.match(harness, /rawWorktreeConfig/);
+  assert.match(harness, /assert\.match\(rawWorktreeConfig, \/default_branch: develop\//);
+  assert.match(harness, /assert\.match\(approvedFile\.content, \/default_branch: main\//);
+  assert.match(harness, /BackupService/);
+  assert.match(harness, /runtimeCalls/);
+  assert.match(harness, /child\.kill\("SIGTERM"\)/);
+  assert.match(harness, /process\.kill\(-child\.pid, "SIGKILL"\)/);
+  assert.match(harness, /orchestrator\.lock/);
+  assert.match(harness, /server\.child\.pid/);
+  assert.doesNotMatch(harness, /sendShutdown|shutdownMessage/);
+  assert.match(harness, /PRAGMA integrity_check/);
+  assert.match(harness, /async function cleanupOwnedTemporaryRoot/);
+  assert.match(harness, /acceptanceError/);
+  assert.match(harness, /temporary root was preserved because its child is still running/);
+  assert.doesNotMatch(harness, /HERMES_PROVIDER|INCEPTION_API_KEY|OPENAI_API_KEY/);
+});

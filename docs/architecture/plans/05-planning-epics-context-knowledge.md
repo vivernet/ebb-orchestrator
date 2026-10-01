@@ -4,7 +4,7 @@ kind: plan
 status: blocked
 title: План реализации планирования Orchestrator, эпиков, контекста, знаний и использования
 created: 2026-09-23
-updated: 2026-09-28
+updated: 2026-09-30
 depends_on: []
 specs:
   - ../specs/01-system-design.md
@@ -17,6 +17,8 @@ evidence:
 ---
 # План реализации планирования Orchestrator, эпиков, контекста, знаний и использования
 
+> **Актуальная сверка (2026-09-30):** `plan-05` остаётся `blocked`. Proposal 06 принят: request API/UI, validated PM/Architect approval summary, запрет materialization/child dispatch до human approval и startup resume одобренных Epic до `READY` входят в scope Task 8. Durable request linkage и seeded production restart harness реализованы, но они не заменяют same-request restart и real Hermes acceptance. В production также нет writer/callsite, который связывает `ContextManifest` с фактическим Orchestrator-prepared Run input. Proposal 08 прошёл независимый design review `PASS` и принят пользователем 2026-09-30; его producer и runtime acceptance реализуются по отдельному Plan20 и пока остаются открытыми.
+
 > **Для агентного исполнения:** REQUIRED SKILL: `ebb-execute-plan`. План выполняется по задачам; для отслеживания шагов используется синтаксис флажков (`- [ ]`).
 
 **Цель:** Добавить интеллектуальное планирование Coordinator/PM/Architect, полноценный Epic workflow, долгосрочные знания проекта, расширенный Context Engine и иерархические средства управления использованием/бюджетом.
@@ -26,6 +28,8 @@ evidence:
 **Технологический стек:** существующий runtime Hermes; Zod; SQLite; знания проекта в Markdown/YAML; native Git.
 
 **Спецификация:** `docs/architecture/specs/01-system-design.md`
+
+**Принятый lifecycle design:** `docs/architecture/proposals/06-coordinator-request-and-epic-recovery.md` (вариант A принят пользователем 2026-09-29). Task 8 включает его request/approval/recovery contract и принимает `Plan 19` как текущий implementation/evidence source.
 
 ## Глобальные ограничения
 
@@ -358,14 +362,18 @@ git commit -m "feat: add usage accounting and budget reservations"
 
 **Файлы:**
 - Создать: `apps/server/test/e2e/request-to-epic.hermes.test.ts`
-- Повторно использовать: `apps/server/test/e2e/fixtures/health-service/` или добавить более крупный fixture в стиле провайдера.
+- Использовать production request path `POST /api/v1/projects/{projectId}/requests`, persisted plan/role-run linkage, `apps/web/src/features/coordinator/CoordinatorRequestPanel.tsx` и startup recovery wiring из `apps/server/src/main.ts`.
+- Повторно использовать: `apps/server/test/e2e/fixtures/health-service/` или добавить более крупный fixture в стиле provider-backed acceptance.
 
 **Интерфейсы:**
-- Доказывает применимость всех девяти контрактов ролей; вызываются только роли, нужные сценарию.
+- Доказывает текущий accepted Proposal 06 flow. До explicit plan approval допускаются только request-bound Coordinator/PM/Architect planning Runs; PM/Architect решения и validated summary видны человеку до materialization. До `approve-run` запрещены domain Epic/Task IDs, child-work Runs и child scheduler reservations.
+- После human approval сохраняются и повторно используются те же `requestId`, `planId`, Epic/Task/Run/phase IDs; duplicate request delivery или process restart не создаёт дублей.
+- Startup выполняет migrations и run/scheduler/git reconciliation до `READY`, автоматически возобновляет только approved Epic и останавливается на `FINAL_APPROVAL`; plan approval и final merge никогда не одобряются автоматически.
+- Доказывает применимость нужных role contracts; вызываются только роли, выбранные deterministic workflow. ContextManifest acceptance остаётся отдельным gated criterion по spec-01: Proposal 08 принят, но producer/runtime evidence ещё не реализованы.
 
 - [ ] **Шаг 1: Определить запрос и ожидаемые структурные проверки**
 
-Использовать запрос, которому обязательно нужны 2–3 зависимые Tasks. Тест проверяет, что Coordinator возвращает Epic, одобрение плана создаётся, временные ссылки проходят проверку, а работа не начинается до одобрения.
+Использовать запрос, которому обязательно нужны 2–3 зависимые Tasks. Проверить сохранение PlanningRequest, authenticated approval summary с PM/Architect decisions, отсутствие materialized Epic/Tasks/child Runs/reservations до approval, а затем создание ровно одного approved plan/Epic и отсутствие дублей после повторной доставки.
 
 - [ ] **Шаг 2: Один раз запустить для выявления интеграционных пробелов**
 
@@ -373,13 +381,15 @@ git commit -m "feat: add usage accounting and budget reservations"
 RUN_HERMES_E2E=1 pnpm --filter @ebb-orchestrator/server test -- request-to-epic.hermes.test.ts
 ```
 
+Этот provider-backed acceptance запускается только на исправном isolated Hermes CLI/profile и разрешённой модели/provider; `HERMES_EXECUTE COMPLETED`, fake runtime и локальный smoke не являются заменой. Run повторяется на той же request identity после production-process restart и проверяет отсутствие дублированных role Runs/Tasks/phases.
+
 - [ ] **Шаг 3: Завершить связку без ослабления политики**
 
-После одобрения Tasks выполняются с учётом зависимостей и параллельности. Роли Architecture/PM запускаются только если выбраны одобренным workflow. Финальное слияние Epic по-прежнему требует явного одобрения.
+После explicit plan approval Tasks выполняются с учётом зависимостей и scheduler policy. Request-bound PM/Architect decisions входят в summary до materialization; child-work выполняется лишь после `approve-run`. Финальное слияние Epic по-прежнему требует отдельного явного одобрения и не выполняется при startup recovery.
 
 - [ ] **Шаг 4: Проверить устойчивость к перезапуску в середине Epic**
 
-Тестовый стенд завершает и перезапускает backend после интеграции хотя бы одной дочерней задачи; согласование при запуске продолжает оставшуюся работу без дублирования Task/Run/слияния.
+Тестовый стенд перезапускает production `dist/main.js` на том же request после approval и после durable child checkpoint. Startup повторно использует сохранённые IDs/checkpoints, проходит обычный Scheduler/budget/permission path, не дублирует Runs/phases/Tasks и останавливается на `FINAL_APPROVAL`. Отдельно запуск `pnpm plan05:epic-restart:acceptance` подтверждает seeded-checkpoint recovery, но сам по себе не закрывает Hermes/same-request части.
 
 - [ ] **Шаг 5: Закоммитить**
 
@@ -392,7 +402,8 @@ git commit -m "feat: complete request to epic orchestration"
 
 - Вывод плана Coordinator не может обойти валидацию или политику одобрение планирования.
 - Workflow Epic переживает перезапуск backend.
-- Манифест контекста доказывает, какие именно версии guideline/decision/contract видел каждый Run.
+- Proposal 06 request API/UI, pre-materialization approval summary, durable same-request linkage, no preapproval child work и resume-before-READY проверены на production acceptance.
+- Манифест контекста фиксирует Orchestrator-prepared input и версии contract/knowledge для Task/Epic/Request Run bindings. Proposal 08 принят, а реализация и evidence ведутся в Plan20; placeholder manifests не создаются.
 - Новые семантические изменения Guideline требуют одобрения; точные дубликаты не требуют вызовов LLM.
 - Резервирование бюджета предотвращает параллельный перерасход.
 - Vector DB и вечная сессия Hermes проекта отсутствуют.

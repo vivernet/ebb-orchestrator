@@ -137,15 +137,15 @@ export class MergeService {
       throw new Error("Missing verified integration provenance: associated Integration run is required");
     }
     if (!provenanceDb || !hasAgentRuns) throw new Error("Missing verified integration provenance: authoritative agent run database is required");
+    let storedOutput: unknown;
     if (provenance) {
       const run = provenanceDb.get<{ id: string; role: string; status: string; output: string | null }>(
         "SELECT id, role, status, output FROM agent_runs WHERE id = $id", { id: integration.integrationRunId });
       if (!run || run.role.toLowerCase() !== "integration" || run.status !== "COMPLETED" || !run.output) {
         throw new Error("Missing verified integration provenance: associated Integration run is not completed");
       }
-      let output: unknown;
-      try { output = JSON.parse(run.output); } catch { output = undefined; }
-      if (!output || (output as { outcome?: string }).outcome !== "PASS") throw new Error("Missing verified integration provenance: stored Integration result is not PASS");
+      try { storedOutput = JSON.parse(run.output); } catch { storedOutput = undefined; }
+      if (!storedOutput || (storedOutput as { outcome?: string }).outcome !== "PASS") throw new Error("Missing verified integration provenance: stored Integration result is not PASS");
     }
     if (!integration || !provenance || !provenance.snapshot.sourceBranch || !provenance.snapshot.sourceSha ||
         !provenance.snapshot.currentTargetBranch || !provenance.snapshot.expectedTargetSha) {
@@ -160,6 +160,13 @@ export class MergeService {
         integration.id !== verified.id ||
         `${verified.id}:${verified.repoPath}:${verified.currentTargetBranch}:${verified.sourceBranch}` !== provenance.identity) {
       throw new Error("Missing verified integration provenance: expected target SHA does not match integration record");
+    }
+    const output = storedOutput as { baseSha?: unknown; sourceSha?: unknown; provenance?: unknown; evidence?: unknown } | undefined;
+    const outputProvenance = Array.isArray(output?.provenance) ? output.provenance : [];
+    const outputEvidence = Array.isArray(output?.evidence) ? output.evidence : [];
+    if (output?.baseSha !== verified.expectedTargetSha || output.sourceSha !== verified.sourceSha ||
+        !outputProvenance.includes(`integration_attempt:${verified.id}`) || outputEvidence.length === 0) {
+      throw new Error("Missing verified integration provenance: stored Integration PASS does not match its exact attempt and SHAs");
     }
 
     // Этот approval supplied to this invocation is authoritative.  The
@@ -285,22 +292,58 @@ export class MergeService {
    */
   async mergeApprovedForIntegration(subjectId: string, approvalId: string, integrationRunId: string): Promise<MergeResult> {
     if (!this.database) throw new Error("Authoritative database is required for Integration provenance");
-    const row = this.database.get<{
+    const attempts = this.database.all<{
       id: string; source_branch: string; target_branch: string; repository_path: string;
       expected_target_sha: string; source_sha: string; worktree_path: string;
-      integration_run_id: string; status: IntegrationAttempt["status"]; created_at: string;
+      integration_run_id: string; status: IntegrationAttempt["status"]; created_at: string; capability_json: string | null;
     }>(`SELECT ia.*
+             , ar.capability_json
         FROM integration_attempts ia
         JOIN agent_runs ar ON ar.id = ia.integration_run_id
           AND lower(ar.role) = 'integration'
           AND ar.epic_id = $subjectId
         JOIN orchestration_phase_runs pr ON pr.agent_run_id = ar.id
           AND pr.epic_id = $subjectId
+          AND pr.task_id IS NULL
           AND lower(pr.phase) = 'integration'
           AND pr.validated = 1
         JOIN epic_orchestrations eo ON eo.epic_id = $subjectId
-        WHERE ia.integration_run_id = $runId AND ia.status = 'MERGED'`, { runId: integrationRunId, subjectId });
-    if (!row || row.integration_run_id !== integrationRunId) throw new Error("Missing exact Integration provenance");
+        WHERE ia.integration_run_id = $runId AND ia.status = 'MERGED'
+        ORDER BY ia.created_at,ia.id`, { runId: integrationRunId, subjectId });
+    if (attempts.length !== 1 || attempts[0]?.integration_run_id !== integrationRunId) throw new Error("Missing exact Integration provenance");
+    const row = attempts[0]!;
+    const epicConfigs = this.database.all<{
+      display_id: string; repository_path: string; facts_json: string; proposed_json: string;
+    }>(`SELECT e.display_id,oc.repository_path,oc.facts_json,oc.proposed_json
+          FROM epics e
+          JOIN projects p ON p.id=e.project_id AND p.status='ACTIVE'
+          JOIN onboarding_configs oc ON oc.project_id=e.project_id AND oc.status='ACTIVE'
+          JOIN approvals a ON a.id=oc.approval_id
+            AND a.subject_type='PROJECT' AND a.subject_id=e.project_id
+            AND a.type='WORKFLOW_CHANGE' AND a.status='APPROVED'
+         WHERE e.id=$epicId`, { epicId: subjectId });
+    if (epicConfigs.length !== 1) throw new Error("Missing exact Integration provenance: active approved Epic repository configuration is required");
+    const epicConfig = epicConfigs[0]!;
+    let facts: Record<string, unknown> = {};
+    let proposed: Record<string, unknown> = {};
+    try { facts = JSON.parse(epicConfig.facts_json) as Record<string, unknown>; } catch { /* fail closed below */ }
+    try { proposed = JSON.parse(epicConfig.proposed_json) as Record<string, unknown>; } catch { /* fail closed below */ }
+    const approvedBaseBranch = typeof proposed.defaultBranch === "string" && proposed.defaultBranch.length > 0
+      ? proposed.defaultBranch
+      : typeof facts.defaultBranch === "string" && facts.defaultBranch.length > 0
+        ? facts.defaultBranch
+        : undefined;
+    let capabilityWorkspace: string | undefined;
+    try {
+      const capability = row.capability_json ? JSON.parse(row.capability_json) as { workspace?: unknown } : undefined;
+      if (typeof capability?.workspace === "string") capabilityWorkspace = capability.workspace;
+    } catch { /* fail closed below */ }
+    const expectedSourceBranch = `epic/${epicConfig.display_id}`;
+    if (!approvedBaseBranch || row.repository_path !== epicConfig.repository_path ||
+        row.source_branch !== expectedSourceBranch || row.target_branch !== approvedBaseBranch ||
+        !capabilityWorkspace || row.worktree_path !== capabilityWorkspace) {
+      throw new Error("Missing exact Integration provenance: attempt refs, repository, or workspace do not match the approved Epic configuration");
+    }
     this.integrationAttempt = {
       id: row.id, sourceBranch: row.source_branch, currentTargetBranch: row.target_branch,
       expectedTargetBranch: row.target_branch, repoPath: row.repository_path,

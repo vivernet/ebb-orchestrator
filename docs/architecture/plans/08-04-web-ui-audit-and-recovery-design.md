@@ -4,14 +4,14 @@ kind: audit
 title: Web UI Audit & Recovery Design
 status: completed
 created: 2026-09-23
-updated: 2026-09-27
+updated: 2026-09-30
 
 depends_on: []
 specs:
   - docs/architecture/specs/01-system-design.md
 evidence:
-  - docs/audit/web-ui-code-map.md
-  - docs/audit/web-ui-gap-analysis.md
+  - docs/audit/08-web-ui-code-map.md
+  - docs/audit/09-web-ui-gap-analysis.md
   - docs/architecture/specs/02-web-ui-recovery-design.md
 ---
 
@@ -32,8 +32,8 @@ evidence:
 > **Спецификация:** `docs/architecture/specs/01-system-design.md`
 >
 > **Результаты этапа:**
-> - `docs/audit/web-ui-gap-analysis.md`;
-> - `docs/audit/web-ui-code-map.md`;
+> - `docs/audit/09-web-ui-gap-analysis.md`;
+> - `docs/audit/08-web-ui-code-map.md`;
 > - `docs/architecture/specs/02-web-ui-recovery-design.md`.
 >
 > **Жёсткий лимит:** одновременно не более 2 субагентов.
@@ -63,7 +63,7 @@ evidence:
 - Читать: root/package manifests.
 - Читать: `apps/web/**`.
 - Читать: backend API/read-model routes, используемые Web UI.
-- Создать: `docs/audit/web-ui-code-map.md`.
+- Создать: `docs/audit/08-web-ui-code-map.md`.
 
 - [ ] Зафиксировать branch/HEAD/status.
 - [ ] Определить реальный frontend framework.
@@ -80,7 +80,7 @@ evidence:
 - [ ] Сопоставить backend endpoints/read models и frontend consumers.
 - [ ] Найти доказанный dead/unreferenced code.
 
-Создать `docs/audit/web-ui-code-map.md`:
+Создать `docs/audit/08-web-ui-code-map.md`:
 
 ```markdown
 # Карта кода Web UI
@@ -318,7 +318,7 @@ read effective config
 Создать:
 
 ```text
-docs/audit/web-ui-gap-analysis.md
+docs/audit/09-web-ui-gap-analysis.md
 ```
 
 Структура:
@@ -496,6 +496,6 @@ Approval gate обязателен, потому что следующий эт�
 
 ## Completion Note
 
-Status updated to **completed**. Audit/design phase concluded with full Web UI baseline capture, contract matrix, browser verification, gap analysis (`docs/audit/web-ui-gap-analysis.md`), and recovery design (`docs/architecture/specs/02-web-ui-recovery-design.md`). Implementation stages A-F defined.
+Status updated to **completed**. Audit/design phase concluded with full Web UI baseline capture, contract matrix, browser verification, gap analysis (`docs/audit/09-web-ui-gap-analysis.md`), and recovery design (`docs/architecture/specs/02-web-ui-recovery-design.md`). Implementation stages A-F defined.
 
-See artifacts: `docs/audit/web-ui-code-map.md`, `docs/audit/web-ui-gap-analysis.md`, `docs/architecture/specs/02-web-ui-recovery-design.md`.
+See artifacts: `docs/audit/08-web-ui-code-map.md`, `docs/audit/09-web-ui-gap-analysis.md`, `docs/architecture/specs/02-web-ui-recovery-design.md`.

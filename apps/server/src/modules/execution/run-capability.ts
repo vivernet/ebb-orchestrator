@@ -7,8 +7,9 @@ import { ActionGateway } from './action-gateway.js';
 import { GitTools } from './git-tools.js';
 import { WorkspaceTools } from './workspace-tools.js';
 import type { ProjectConfig } from './project-actions.js';
+import type { ProjectConfigV1 } from '../../platform/config/project-config.js';
 
-export type RoleName = 'developer' | 'reviewer' | 'qa' | 'integration' | 'coordinator' | 'architect';
+export type RoleName = 'developer' | 'reviewer' | 'qa' | 'integration' | 'coordinator' | 'product_manager' | 'architect';
 export type ToolId =
   | 'workspace.read'
   | 'workspace.search'
@@ -37,8 +38,14 @@ export interface RunCapabilityDef {
   runId?: string;
   role: RoleName;
   workspace: string;
+  /** Request/Epic identity carried by a narrowly validated planning capability. */
+  requestId?: string;
+  projectId?: string;
+  epicId?: string;
   allowedTools: ToolId[];
   projectConfig?: ProjectConfig;
+  /** Точная approved revision из SQLite для lifecycle Project; не является command policy. */
+  approvedProjectConfig?: { revisionId: string; revisionHash: string; config: ProjectConfigV1; files: Readonly<Record<string, string>> };
 }
 
 /**
@@ -52,8 +59,8 @@ export class RunCapability {
 
   constructor(public capability: RunCapabilityDef, private readonly revalidate?: () => void) {
     this.resolver = new PathResolver();
-    this.gateway = new ActionGateway(this.resolver, capability.workspace, capability.allowedTools, capability.projectConfig);
-    this.workspaceTools = new WorkspaceTools(this.resolver, capability.workspace);
+    this.gateway = new ActionGateway(this.resolver, capability.workspace, capability.allowedTools, capability.projectConfig, undefined, capability.approvedProjectConfig?.files);
+    this.workspaceTools = new WorkspaceTools(this.resolver, capability.workspace, capability.approvedProjectConfig?.files);
     this.gitTools = capability.workspace ? new GitTools(capability.workspace) : null;
   }
 

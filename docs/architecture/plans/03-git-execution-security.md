@@ -4,15 +4,17 @@ kind: plan
 status: completed
 title: План реализации Git, Execution и Security Orchestrator
 created: 2026-09-23
-updated: 2026-09-28
+updated: 2026-09-30
 depends_on: []
 specs:
   - ../specs/01-system-design.md
 evidence:
   - https://github.com/ebb-orchestrator/ebb-orchestrator/commit/6908acd
   - https://github.com/ebb-orchestrator/ebb-orchestrator/commit/c18264e
-  - apps/server/test/platform/git/
-  - apps/server/test/platform/security/
+  - apps/server/test/modules/git/worktree-manager.test.ts
+  - apps/server/test/modules/git/integration-service.test.ts
+  - apps/server/test/modules/execution/security-execution-path.test.ts
+  - apps/server/test/platform/security/path-resolver.test.ts
 ---
 # План реализации Git, Execution и Security Orchestrator
 
@@ -105,7 +107,7 @@ pnpm --filter @ebb-orchestrator/server test -- repository-discovery.test.ts
 
 - [ ] **Шаг 3: Реализовать deterministic discovery**
 
-Использовать только Git commands и filesystem checks. Не запускать package scripts. Существующий `.orchestrator/` помечается как `untrustedExistingConfig` до явного approval импорта.
+Использовать только Git commands и filesystem checks. Не запускать package scripts. Существующий `.ebb-orchestrator/` помечается как `untrustedExistingConfig` до явного approval импорта.
 
 - [ ] **Шаг 4: Запустить тесты**
 

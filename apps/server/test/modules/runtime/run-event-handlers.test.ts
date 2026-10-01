@@ -7,9 +7,13 @@ import { RuntimeEventHandlers } from "../../../src/modules/runtime/run-event-han
 
 describe("RuntimeEventHandlers runtime dispatch", () => {
   function setup() {
+    const worktree = { id: "task-1", repo_path: "C:/repo", path: "C:/worktree/task-1", branch: "task/task-1", created_at: "now", removed_at: null };
     const db = {
       exec: vi.fn(),
-      get: vi.fn().mockReturnValue({ id: "task-1", status: "READY", project_id: "project-1" }),
+      get: vi.fn((sql: string) => sql.includes("FROM tasks")
+        ? { id: "task-1", status: "READY", project_id: "project-1", epic_id: null }
+        : sql.includes("FROM worktrees") ? worktree
+          : sql.includes("FROM git_operations") ? { target_ref: "HEAD" } : undefined),
     } as unknown as Database;
     const workflow = {} as WorkflowEngine;
     const scheduler = {
@@ -24,11 +28,14 @@ describe("RuntimeEventHandlers runtime dispatch", () => {
         run,
         outcome: { success: true, exitCode: 0, output: "accepted", diagnostics: { runId: "run-1" } },
       }),
-      failPreparedRun: vi.fn(),
+      failPreparedRun: vi.fn().mockReturnValue(true),
     } as unknown as RunService;
-    const handlers = new RuntimeEventHandlers(db, workflow, scheduler, runService);
+    const git = { run: vi.fn(async (_path: string, args: string[]) => ({
+      exitCode: 0, stdout: args[0] === "symbolic-ref" ? worktree.branch : args[0] === "diff" ? "fixture diff" : "a".repeat(40), stderr: "",
+    })) };
+    const handlers = new RuntimeEventHandlers(db, workflow, scheduler, runService, git);
     vi.spyOn(handlers, "handleRuntimeCompletion").mockImplementation(() => undefined);
-    return { db, workflow, scheduler, runService, handlers };
+    return { db, workflow, scheduler, runService, handlers, git };
   }
 
   it("persists one run identity, binds it to the scheduler reservation, and executes it", async () => {
@@ -41,16 +48,21 @@ describe("RuntimeEventHandlers runtime dispatch", () => {
     });
 
     expect(runService.prepareRun).toHaveBeenCalledWith(expect.objectContaining({
-      role: "Developer",
+      role: "developer",
       model: "test-model",
       taskId: "task-1",
+      epicId: null,
+      contextInput: expect.objectContaining({
+        role: "developer", subject: { type: "TASK", id: "task-1" },
+        execution: expect.objectContaining({ targetHead: "a".repeat(40), targetBranch: "task/task-1" }),
+      }),
       triggerReason: "runtime-request",
     }));
     expect(scheduler.dispatchTask).toHaveBeenCalledWith(
       "task-1",
       expect.anything(),
       expect.any(Function),
-      expect.objectContaining({ runId: "run-1", role: "Developer", model: "test-model" }),
+      expect.objectContaining({ runId: "run-1", role: "developer", model: "test-model" }),
     );
     expect(runService.executePreparedRun).toHaveBeenCalledWith("run-1");
     expect(runService.failPreparedRun).not.toHaveBeenCalled();
@@ -68,5 +80,56 @@ describe("RuntimeEventHandlers runtime dispatch", () => {
 
     expect(runService.failPreparedRun).toHaveBeenCalledWith("run-1", expect.any(Error));
     expect(scheduler.releaseTask).toHaveBeenCalledWith("task-1", 0);
+  });
+
+  it("retains task reservation when launch failure has no persisted stop proof", async () => {
+    const { scheduler, runService, handlers } = setup();
+    vi.mocked(runService.executePreparedRun).mockRejectedValueOnce(new Error("launcher unavailable"));
+    vi.mocked(runService.failPreparedRun).mockReturnValueOnce(false);
+
+    await expect(handlers.handleAgentRunRequested({
+      type: "AgentRunRequested", aggregateId: "task-1", payload: {},
+    })).rejects.toThrow("launcher unavailable");
+
+    expect(runService.failPreparedRun).toHaveBeenCalledWith("run-1", expect.any(Error));
+    expect(scheduler.releaseTask).not.toHaveBeenCalled();
+  });
+
+  it("rejects unsupported Task roles before scheduler or Run preparation", async () => {
+    const { scheduler, runService, handlers } = setup();
+
+    await expect(handlers.handleAgentRunRequested({
+      type: "AgentRunRequested", aggregateId: "task-1", payload: { role: "coordinator" },
+    })).rejects.toThrow("TASK_RUN_ROLE_UNSUPPORTED");
+
+    expect(runService.prepareRun).not.toHaveBeenCalled();
+    expect(scheduler.assertProjectDispatchable).not.toHaveBeenCalled();
+    expect(scheduler.dispatchTask).not.toHaveBeenCalled();
+  });
+
+  it("keeps Reviewer as a supported Task role without using Developer transcript", async () => {
+    const { scheduler, runService, handlers } = setup();
+
+    await handlers.handleAgentRunRequested({
+      type: "AgentRunRequested", aggregateId: "task-1", payload: { role: "reviewer", model: "test-model" },
+    });
+
+    const options = vi.mocked(runService.prepareRun).mock.calls[0]?.[0];
+    expect(options).toMatchObject({ role: "reviewer", contextInput: { role: "reviewer", roleInputs: { gitDiff: "fixture diff", checks: [] } } });
+    expect(options?.contextInput?.prompt).toContain("Independently review");
+    expect(options?.contextInput?.prompt).not.toContain("=== DEVELOPER TRANSCRIPT ===");
+    expect(scheduler.dispatchTask).toHaveBeenCalledWith("task-1", expect.anything(), expect.any(Function), expect.objectContaining({ role: "reviewer" }));
+  });
+
+  it("fails closed without RunService instead of dispatching a legacy unmanifested Run", async () => {
+    const { db, workflow, scheduler } = setup();
+    const handlers = new RuntimeEventHandlers(db, workflow, scheduler);
+
+    await expect(handlers.handleAgentRunRequested({
+      type: "AgentRunRequested", aggregateId: "task-1", payload: { role: "Developer" },
+    })).rejects.toThrow("RUN_PREPARATION_SERVICE_UNAVAILABLE");
+
+    expect(scheduler.assertProjectDispatchable).not.toHaveBeenCalled();
+    expect(scheduler.dispatchTask).not.toHaveBeenCalled();
   });
 });

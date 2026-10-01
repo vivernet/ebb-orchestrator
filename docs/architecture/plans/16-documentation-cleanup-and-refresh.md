@@ -3,7 +3,7 @@ id: plan-16
 kind: plan
 status: blocked
 created: 2026-09-25
-updated: 2026-09-28
+updated: 2026-09-30
 title: Очистка и актуализация документации Ebb Orchestrator
 depends_on:
   - plan-15-07
@@ -209,9 +209,9 @@ Files: repository root, `docs/architecture/plans/`, candidate paths above. Symbo
 - Run the governance structure check `pnpm docs:check` from the repository root; record its exit code/output and confirm it does not validate date values.
 - Run this separate deterministic metadata/date validator from the repository root (it validates the exact frontmatter fields and ISO calendar dates for plan-16 without writing files):
   ```bash
-  node --input-type=module -e "import {readFileSync} from 'node:fs'; const p='docs/architecture/plans/16-documentation-cleanup-and-refresh.md'; const text=readFileSync(p,'utf8'); const fm=text.match(/^---\r?\n([\s\S]*?)\r?\n---/); if(!fm) throw new Error('missing frontmatter'); const required={id:'plan-16',kind:'plan',status:'in_progress',created:'2026-09-25',updated:'2026-09-27',title:'Очистка и актуализация документации Ebb Orchestrator'}; for(const [key,value] of Object.entries(required)){const m=fm[1].match(new RegExp('^'+key+':\\s*(.+)$','m')); if(!m||m[1].trim()!==value) throw new Error(key+' mismatch'); if((key==='created'||key==='updated')&&!/^\d{4}-\d{2}-\d{2}$/.test(m[1].trim())) throw new Error(key+' is not ISO date');} console.log('plan-16 metadata/date validation passed: created=2026-09-25 updated=2026-09-27');"
+  node --input-type=module -e "import {readFileSync} from 'node:fs'; const p='docs/architecture/plans/16-documentation-cleanup-and-refresh.md'; const text=readFileSync(p,'utf8'); const fm=text.match(/^---\r?\n([\s\S]*?)\r?\n---/); if(!fm) throw new Error('missing frontmatter'); const required={id:'plan-16',kind:'plan',status:'blocked',created:'2026-09-25',updated:'2026-09-30',title:'Очистка и актуализация документации Ebb Orchestrator'}; for(const [key,value] of Object.entries(required)){const m=fm[1].match(new RegExp('^'+key+':\\s*(.+)$','m')); if(!m||m[1].trim()!==value) throw new Error(key+' mismatch'); if((key==='created'||key==='updated')&&!/^\d{4}-\d{2}-\d{2}$/.test(m[1].trim())) throw new Error(key+' is not ISO date');} console.log('plan-16 metadata/date validation passed: status=blocked created=2026-09-25 updated=2026-09-30');"
   ```
-- Expected: `pnpm docs:check` exits `0` for frontmatter/id/filename checks, the inline validator exits `0` and prints `plan-16 metadata/date validation passed: created=2026-09-25 updated=2026-09-27`; neither command changes files. No candidate is silently omitted; any inventory mismatch blocks further work; inventory/validation leaves no `docs/roadmap/generated.md` or other new artifact.
+- Expected: `pnpm docs:check` exits `0` for frontmatter/id/filename checks, the inline validator exits `0` and prints `plan-16 metadata/date validation passed: status=blocked created=2026-09-25 updated=2026-09-30`; neither command changes files. No candidate is silently omitted; any inventory mismatch blocks further work; inventory/validation leaves no `docs/roadmap/generated.md` or other new artifact.
 
 ### Task 2 — Establish authority and references
 
@@ -344,19 +344,21 @@ Behavior changes are documentation/governance behavior rather than runtime behav
 
 ## Acceptance criteria
 
+**Reconciliation 2026-09-30:** The first and third checks describe the completed draft-only phase. Check 2 is reopened because a Plan 15 file is modified in the current worktree; checks 4–13 had been marked complete without current evidence and are also reopened. The candidate inventory is stale, and no exact user approval or verified external archive is recorded. Keep this plan `blocked` and perform no delete, move, archive, README or policy implementation until the approval gate is satisfied.
+
 - [x] New plan is the only file created in this draft phase; no code, existing plan, archive, delete or move was performed.
-- [x] Следующие десять pre-existing tracked `15-*` plans остаются byte-for-byte immutable и не входят в cleanup: `docs/architecture/plans/15-01-auth-contract-and-crypto.md`, `docs/architecture/plans/15-02-auth-persistence-and-repository.md`, `docs/architecture/plans/15-03-auth-cli-and-startup.md`, `docs/architecture/plans/15-04-server-security-boundary.md`, `docs/architecture/plans/15-05-web-auth-and-sse.md`, `docs/architecture/plans/15-06-onboarding-draft-and-scheduler-guard.md`, `docs/architecture/plans/15-07-russian-ui-and-artifact-cleanup.md`, `docs/architecture/plans/15-08-verification-and-review.md`, `docs/architecture/plans/15-09-atomic-auth-v2-remediation.md`, `docs/architecture/plans/15-auth-onboarding-ui-hardening.md`.
+- [ ] Следующие десять pre-existing tracked `15-*` plans остаются byte-for-byte immutable и не входят в cleanup: `docs/architecture/plans/15-01-auth-contract-and-crypto.md`, `docs/architecture/plans/15-02-auth-persistence-and-repository.md`, `docs/architecture/plans/15-03-auth-cli-and-startup.md`, `docs/architecture/plans/15-04-server-security-boundary.md`, `docs/architecture/plans/15-05-web-auth-and-sse.md`, `docs/architecture/plans/15-06-onboarding-draft-and-scheduler-guard.md`, `docs/architecture/plans/15-07-russian-ui-and-artifact-cleanup.md`, `docs/architecture/plans/15-08-verification-and-review.md`, `docs/architecture/plans/15-09-atomic-auth-v2-remediation.md`, `docs/architecture/plans/15-auth-onboarding-ui-hardening.md`.
 - [x] `docs/architecture/plans/16-documentation-cleanup-and-refresh.md` явно исключён из preservation baseline: его targeted edit является единственным изменением draft phase и не считается pre-existing immutable plan.
-- [x] Final implementation inventory exactly matches the approved 97-entry candidate list, including every listed directory/file and tracked/ignored state, or has a documented user-approved amendment.
-- [x] Every candidate has a disposition and reason; `preserve/inspect` items are not treated as deletion permission; for `.cuperpowers/`, `.superpowers/` and `workspace/`, archive outside repo, verify preservation, then delete only the root directory after approval.
-- [x] SHA-256 manifest, JSON/UTF-8 validation, tracked-vs-untracked comparison, path/diff checks, reference scan and secret scan pass.
-- [x] External archive is outside repository, path-safe, restorable and re-hashed successfully before cleanup.
-- [x] Explicit user approval is recorded before any delete/move/README/policy implementation.
-- [x] `README.md`, `docs/README.md` and `tools/hermes/README.md` are Russian, metadata-free and link to real current paths.
-- [x] README documents only verified `pnpm` commands and states prerequisites/environment-dependent behavior.
-- [x] `.gitignore` changes, if any, are narrow and do not hide source tests; `AGENTS.md` changes, if any, define safe temporary-file handling.
-- [x] `pnpm docs:check` validates frontmatter/id/filename structure; the separate deterministic metadata/date validator validates plan-16 `created: 2026-09-25` and `updated: 2026-09-28` as ISO dates; inventory, validation and roadmap audit leave neither `docs/roadmap/generated.md` nor any other new artifact.
-- [x] Documentation validators, quality gates, link/status checks and `git diff --check` pass; no unrelated changes remain.
+- [ ] Final implementation inventory exactly matches the approved 97-entry candidate list, including every listed directory/file and tracked/ignored state, or has a documented user-approved amendment.
+- [ ] Every candidate has a disposition and reason; `preserve/inspect` items are not treated as deletion permission; for `.cuperpowers/`, `.superpowers/` and `workspace/`, archive outside repo, verify preservation, then delete only the root directory after approval.
+- [ ] SHA-256 manifest, JSON/UTF-8 validation, tracked-vs-untracked comparison, path/diff checks, reference scan and secret scan pass.
+- [ ] External archive is outside repository, path-safe, restorable and re-hashed successfully before cleanup.
+- [ ] Explicit user approval is recorded before any delete/move/README/policy implementation.
+- [ ] `README.md`, `docs/README.md` and `tools/hermes/README.md` are Russian, metadata-free and link to real current paths.
+- [ ] README documents only verified `pnpm` commands and states prerequisites/environment-dependent behavior.
+- [ ] `.gitignore` changes, if any, are narrow and do not hide source tests; `AGENTS.md` changes, if any, define safe temporary-file handling.
+- [ ] `pnpm docs:check` validates frontmatter/id/filename structure; the separate deterministic metadata/date validator validates plan-16 `created: 2026-09-25` and `updated: 2026-09-30` as ISO dates; inventory, validation and roadmap audit leave neither `docs/roadmap/generated.md` nor any other new artifact.
+- [ ] Documentation validators, quality gates, link/status checks and `git diff --check` pass; no unrelated changes remain.
 
 ## Risks and rollback
 

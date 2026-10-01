@@ -318,10 +318,13 @@ pnpm docs:rename:check
 pnpm docs:link:sync
 ```
 
-`docs:inventory`, `docs:check`, `docs:test` и `docs:roadmap -- --dry-run` не
-создают выходной файл в рабочем репозитории. `docs:roadmap` без `--dry-run`
-записывает `docs/roadmap/generated.md`. `docs:rename:check` сейчас является
-заглушкой: завершается с кодом `0` и печатает `Rename check not yet implemented`.
+`docs:inventory`, `docs:check`, `docs:test`, `docs:rename:check` и
+`docs:roadmap -- --dry-run` не создают выходной файл в рабочем репозитории.
+`docs:roadmap` без `--dry-run` записывает `docs/roadmap/generated.md`.
+`docs:rename:check` проверяет 43 записи исторической migration map, отсутствие
+оставшихся старых исходных путей и относительные ссылки в `docs/` и корневом
+`README.md`. Карта — исторический снимок: текущие canonical target paths не
+обязаны существовать, если документы позднее перемещались или объединялись.
 `docs:link:sync` присутствует в корневом manifest, но не реализована текущим
 диспетчером:
 завершается с кодом `1` и выводит usage; успешной проверкой её считать нельзя.
@@ -396,7 +399,7 @@ cp .env.example .env
 
 В `.env.example` приведены только безопасные настройки: `EBB_ORCHESTRATOR_HOME` пустой (это означает использовать платформенный пользовательский каталог по умолчанию) и `PORT=3000`. Чтобы задать другое расположение, раскомментируйте и адаптируйте абсолютный путь для своей ОС в примерах Windows/macOS/Linux. Секреты не храните в `.env` или Git; production credentials задавайте через защищённое окружение или secret manager. Приоритет значений: окружение процесса, затем корневой `.env`, затем defaults приложения. Если `EBB_ORCHESTRATOR_HOME` не задан ни одним способом, используется платформенный пользовательский каталог `~/.ebb-orchestrator` (Windows: `%USERPROFILE%/.ebb-orchestrator`). При отсутствии `PORT` используется `3000`.
 
-`repo/.orchestrator/` — конфигурация подключаемого репозитория; `~/.ebb-orchestrator/` — пользовательские данные приложения, включая базу данных и runtime-файлы. Это разные каталоги с разным назначением.
+`repo/.ebb-orchestrator/` — конфигурация подключаемого репозитория; `~/.ebb-orchestrator/` — пользовательские данные приложения, включая базу данных и runtime-файлы. Это разные каталоги с разным назначением.
 
 ### Режимы запуска
 

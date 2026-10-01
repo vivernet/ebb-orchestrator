@@ -8,7 +8,9 @@ import { WorkflowEngine } from "../workflow/workflow-engine.js";
 import type { RunOutcome } from "./run-types.js";
 import { validateRoleOutput } from "./output-validator.js";
 import { SchedulerService } from "../scheduler/scheduler-service.js";
-import { RunService } from "./run-service.js";
+import { createRunContextInput, RunService, taskDeveloperPrompt, taskQaPrompt, taskReviewerPrompt } from "./run-service.js";
+import { WorktreeRepository } from "../git/worktree-repository.js";
+import { assertSafeGitRef, GitCli } from "../git/git-cli.js";
 
 /**
  * Orchestrates runtime события и workflow transitions.
@@ -19,6 +21,7 @@ export class RuntimeEventHandlers {
     private readonly workflowEngine: WorkflowEngine,
     private readonly scheduler: SchedulerService,
     private readonly runService?: RunService,
+    private readonly git: Pick<GitCli, "run"> = new GitCli(),
   ) {
   }
 
@@ -26,24 +29,27 @@ export class RuntimeEventHandlers {
    * Обрабатывает AgentRunRequested event.
    * Transitions задача to DEVELOPMENT и запускает Объект runtime.
    */
-  handleAgentRunRequested(event: {
+  async handleAgentRunRequested(event: {
     readonly type: string;
     readonly aggregateId: string | undefined;
     readonly payload: Record<string, unknown>;
-  }): void | Promise<void> {
+  }): Promise<void> {
     if (event.type !== "AgentRunRequested" || !event.aggregateId) {
       return;
     }
 
     const taskId = event.aggregateId;
-    const { role = "Developer", model = "test-model" } = event.payload as {
-      role?: string;
-      model?: string;
-    };
+    const roleValue = event.payload.role === undefined ? "developer" : event.payload.role;
+    const modelValue = event.payload.model === undefined ? "test-model" : event.payload.model;
+    if (typeof roleValue !== "string" || !["developer", "reviewer", "qa", "integration"].includes(roleValue.toLowerCase())) throw new Error("TASK_RUN_ROLE_UNSUPPORTED");
+    if (typeof modelValue !== "string" || modelValue.trim() === "") throw new Error("TASK_RUN_MODEL_INVALID");
+    if (!this.runService) throw new Error("RUN_PREPARATION_SERVICE_UNAVAILABLE");
+    const role = roleValue.toLowerCase() as "developer" | "reviewer" | "qa" | "integration";
+    const model = modelValue;
 
     // Проверяет task exists and is in READY state
-    const task = this.db.get<{ id: string; status: string; project_id: string }>(
-      "SELECT id, status, project_id FROM tasks WHERE id = $id",
+    const task = this.db.get<{ id: string; status: string; project_id: string; epic_id: string | null }>(
+      "SELECT id, status, project_id, epic_id FROM tasks WHERE id = $id",
       { id: taskId },
     );
 
@@ -57,31 +63,53 @@ export class RuntimeEventHandlers {
       );
     }
 
+    const worktree = new WorktreeRepository(this.db).findTaskWorkspace(taskId);
+    if (!worktree) throw new Error("TASK_MANAGED_WORKSPACE_UNAVAILABLE");
+    const targetHead = (await this.git.run(worktree.path, ["rev-parse", "--verify", "--end-of-options", "HEAD^{commit}"])).stdout.trim();
+    const actualBranch = (await this.git.run(worktree.path, ["symbolic-ref", "--quiet", "--short", "HEAD"])).stdout.trim();
+    if (!/^[a-f0-9]{40}$/i.test(targetHead) || actualBranch !== worktree.branch) throw new Error("TASK_WORKTREE_SNAPSHOT_UNAVAILABLE");
+    let prompt: string;
+    let roleInputs: unknown;
+    if (role === "developer") {
+      prompt = taskDeveloperPrompt();
+    } else if (role === "reviewer") {
+      const operation = this.db.get<{ target_ref: string | null }>(
+        `SELECT target_ref FROM git_operations WHERE type='CREATE_WORKTREE' AND status='VERIFIED'
+           AND repo_path=$repoPath AND branch_name=$branch AND worktree_id=$taskId ORDER BY verified_at DESC LIMIT 1`,
+        { repoPath: worktree.repoPath, branch: worktree.branch, taskId },
+      );
+      if (!operation?.target_ref) throw new Error("TASK_REVIEW_BASE_UNAVAILABLE");
+      assertSafeGitRef(operation.target_ref);
+      const gitDiff = (await this.git.run(worktree.path, ["diff", "--no-ext-diff", "--no-textconv", `${operation.target_ref}...HEAD`, "--"])).stdout;
+      prompt = taskReviewerPrompt();
+      roleInputs = { gitDiff, checks: [] };
+    } else if (role === "qa") {
+      prompt = taskQaPrompt();
+      roleInputs = { environment: `Managed task worktree branch ${actualBranch} at target SHA ${targetHead} on ${process.platform}.` };
+    } else {
+      throw new Error("TASK_INTEGRATION_REQUIRES_PREPARED_ATTEMPT");
+    }
     this.scheduler.assertProjectDispatchable(task.project_id);
 
-    // Этот run identity is persisted before scheduling. Этот scheduler then
-    // stores который точный identity in its резервирование, preventing Объект later
-    // runtime из being attached to Объект разный резервирование/run.
-    if (!this.runService) {
-      // сохранять direct legacy scenario fixtures usable until their composition
-      // является migrated. Production RuntimeOrchestrator always supplies RunService.
-      this.scheduler.dispatchTask(taskId, this.workflowEngine, () => undefined, {
-        triggerReason: "runtime-request",
-        role,
-        model,
-      });
-      this.emitAgentRunStarted(taskId, role, model);
-      return;
-    }
-
-    const run = this.runService.prepareRun({
+    const runOptions = {
       role,
       model,
       taskId,
-      epicId: null,
+      epicId: task.epic_id,
       triggerReason: "runtime-request",
       contextVersion: "runtime-request-v1",
       outputSchemaVersion: "1",
+      capability: { workspace: worktree.path },
+    } as const;
+    const run = this.runService.prepareRun({
+      ...runOptions,
+      contextInput: createRunContextInput(runOptions, {
+        prompt,
+        ...(roleInputs !== undefined ? { roleInputs } : {}),
+        workspaceIdentity: { repository: worktree.repoPath, workspace: worktree.path, worktree: worktree.id },
+        targetHead,
+        targetBranch: actualBranch,
+      }),
     });
 
     try {
@@ -94,13 +122,13 @@ export class RuntimeEventHandlers {
         runId: run.id,
       });
     } catch (error) {
-      this.runService.failPreparedRun(run.id, error);
-      this.scheduler.releaseTask(taskId, 0);
+      if (this.runService.failPreparedRun(run.id, error)) this.scheduler.releaseTask(taskId, 0);
       throw error;
     }
 
     this.emitAgentRunStarted(taskId, role, model);
-    return this.executePreparedRun(taskId, run.id);
+    await this.executePreparedRun(taskId, run.id);
+    return;
   }
 
   /** Executes Объект scheduler-bound run и applies только its persisted outcome. */
@@ -109,8 +137,7 @@ export class RuntimeEventHandlers {
       const execution = await this.runService!.executePreparedRun(runId);
       this.handleRuntimeCompletion(runId, execution.outcome);
     } catch (error) {
-      this.runService!.failPreparedRun(runId, error);
-      this.scheduler.releaseTask(taskId, 0);
+      if (this.runService!.failPreparedRun(runId, error)) this.scheduler.releaseTask(taskId, 0);
       throw error;
     }
   }

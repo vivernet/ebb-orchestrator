@@ -173,7 +173,7 @@ test('authenticated browser shows empty Dashboard, Approvals, Execution and the 
 
   await page.goto('/usage');
   await expect(page.getByRole('heading', { name: 'Использование' })).toBeVisible();
-  await expect(page.getByText('Нет доступных записей об использовании.')).toBeVisible();
+  await expect(page.getByText('Нет данных об использовании, лимитов бюджета или активных резервирований.')).toBeVisible();
 
   await page.goto('/settings');
   await expect(page.getByRole('heading', { name: 'Настройки' })).toBeVisible();
@@ -213,21 +213,42 @@ test('authenticated Chromium renders all populated Agent Run sections from run p
         state: { id: 'rec-state-1', status: 'resolved', reason: 'recovered after timeout', createdAt: '2026-01-15T10:21:00Z', updatedAt: '2026-01-15T10:25:00Z' },
       },
     },
+    [`${runPath}/artifacts`]: [
+      {
+        id: 'artifact-1', type: 'test-report', contentType: 'text/plain', sizeBytes: 128,
+        sha256: 'a'.repeat(64), status: 'ACTIVE', createdAt: '2026-01-15T10:30:00Z',
+      },
+    ],
+    [`${runPath}/context-manifests`]: {
+        availability: 'available', id: 'manifest-1', runId, subject: { type: 'TASK', id: 'task-456' }, role: 'developer',
+        contractRequestDigest: 'b'.repeat(64), items: [{ id: 'guideline-1', version: 3, digest: 'c'.repeat(64) }],
+        promptHash: 'd'.repeat(64), contextHash: 'e'.repeat(64), contextBuilderVersion: 'builder-v2', initialTokenSize: null,
+    },
   };
-  // The launcher has no run-seeding API: only the five run read projections are supplied here.
+  // The launcher has no run-seeding API: only the run read projections are supplied here.
   // Auth, session restoration, UI delivery and unrelated API requests still use the live backend.
-  await page.route(/\/api\/v1\/runs\/run-123(?:\/(?:events|tools|permissions|recovery))?$/, async (route) => {
+  await page.route(/\/api\/v1\/runs\/run-123(?:\/(?:events|tools|permissions|recovery|artifacts|context-manifests))?$/, async (route) => {
     const pathname = new URL(route.request().url()).pathname;
     if (!Object.hasOwn(projections, pathname)) return route.continue();
     requested.add(pathname);
     await route.fulfill({ json: projections[pathname] });
   });
+  await page.route(/\/api\/v1\/settings$/, async (route) => route.fulfill({
+    json: { securitySettings: { localModeEnabled: true } },
+  }));
 
   await page.goto(`/runs/${runId}`);
   await expect(page.getByRole('heading', { name: `Запуск агента: ${runId}` })).toBeVisible();
   const details = page.getByRole('region', { name: 'Сведения о запуске' });
   await expect(details).toContainText('Code Reviewer');
   await expect(details).toContainText('gpt-4.1');
+  await expect(page.getByRole('note', { name: 'Предупреждение Local Mode' })).toContainText('не является OS sandbox');
+  await expect(page.getByRole('region', { name: 'Артефакты запуска' })).toContainText('test-report');
+  const contextManifest = page.getByRole('region', { name: 'Манифест контекста' });
+  await expect(contextManifest).toContainText('guideline-1');
+  await expect(contextManifest).toContainText('Задача · task-456');
+  await expect(contextManifest).toContainText('Не измерен');
+  await expect(contextManifest).toContainText('builder-v2');
   await expect(page.getByRole('region', { name: 'Время запуска' })).toContainText('Завершение:');
   await expect(page.getByRole('region', { name: 'Использование запуска' })).toContainText('5000');
   await expect(page.getByRole('region', { name: 'События' })).toContainText('Запуск начат');

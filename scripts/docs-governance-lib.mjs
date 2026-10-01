@@ -1,3 +1,6 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+
 /**
  * Проверяет статус только у записей Plan, не изменяя исходную запись.
  * @param {{kind?: string, status?: unknown} | null | undefined} record Проверяемая запись.
@@ -99,8 +102,126 @@ async function scanDocs(rootDir) {
   return catalog;
 }
 
+function stripMarkdownCode(source) {
+  let fence = null;
+  return source.split(/\r?\n/).map((line) => {
+    const marker = line.match(/^\s{0,3}(`{3,}|~{3,})/);
+    if (marker) {
+      const token = marker[1];
+      if (!fence) fence = { character: token[0], length: token.length };
+      else if (token[0] === fence.character && token.length >= fence.length) fence = null;
+      return '';
+    }
+    return fence || /^(?: {4}|\t)/.test(line) ? '' : line;
+  }).join('\n');
+}
+
+function markdownHeadingAnchors(source) {
+  const anchors = new Set();
+  const occurrences = new Map();
+  const visible = stripMarkdownCode(source);
+  for (const match of visible.matchAll(/^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/gm)) {
+    const explicit = match[1].match(/\s*\{#([^}]+)\}\s*$/);
+    let heading = explicit ? match[1].slice(0, explicit.index) : match[1];
+    heading = heading
+      .replace(/`([^`]+)`/g, '$1')
+      .replace(/!?\[([^\]]+)\]\([^)]*\)/g, '$1')
+      .replace(/<[^>]*>/g, '')
+      .trim();
+    const slug = heading.toLowerCase().replace(/[^\p{L}\p{N}_\- ]/gu, '').replace(/\s+/g, '-');
+    const occurrence = occurrences.get(slug) ?? 0;
+    occurrences.set(slug, occurrence + 1);
+    anchors.add(explicit?.[1] ?? (occurrence === 0 ? slug : `${slug}-${occurrence}`));
+  }
+  for (const match of visible.matchAll(/\b(?:id|name)\s*=\s*(["'])(.*?)\1/gi)) anchors.add(match[2]);
+  return anchors;
+}
+
+function extractMarkdownTargets(source) {
+  const visible = stripMarkdownCode(source).replace(/(?<!\\)(`+)([\s\S]*?)\1/g, '');
+  const targets = [];
+  const definitions = new Map();
+  for (const match of visible.matchAll(/^\s{0,3}\[([^\]]+)\]:\s*<?([^\s>]+)>?/gm)) {
+    definitions.set(match[1].trim().toLowerCase().replace(/\s+/g, ' '), match[2]);
+    targets.push(match[2]);
+  }
+
+  const inlinePattern = /!?\[[^\]]*\]\(\s*/g;
+  for (const match of visible.matchAll(inlinePattern)) {
+    let cursor = match.index + match[0].length;
+    if (visible[cursor] === '<') {
+      const end = visible.indexOf('>', cursor + 1);
+      if (end !== -1) targets.push(visible.slice(cursor + 1, end));
+      continue;
+    }
+    let value = '';
+    let depth = 0;
+    while (cursor < visible.length) {
+      const character = visible[cursor];
+      if (character === '\\' && cursor + 1 < visible.length) {
+        value += visible[cursor + 1];
+        cursor += 2;
+        continue;
+      }
+      if (character === '(') depth += 1;
+      else if (character === ')') {
+        if (depth === 0) break;
+        depth -= 1;
+      } else if (/\s/.test(character) && depth === 0) break;
+      value += character;
+      cursor += 1;
+    }
+    if (value) targets.push(value);
+  }
+
+  const referencePattern = /!?\[([^\]]+)\](?:\[([^\]]*)\])?/g;
+  for (const match of visible.matchAll(referencePattern)) {
+    const label = (match[2] || match[1]).trim().toLowerCase().replace(/\s+/g, ' ');
+    const target = definitions.get(label);
+    if (target) targets.push(target);
+  }
+
+  for (const match of visible.matchAll(/\b(?:href|src)\s*=\s*(["'])(.*?)\1/gi)) targets.push(match[2]);
+  return [...new Set(targets)];
+}
+
+/**
+ * Проверяет относительные Markdown/HTML-ссылки на существование файла и якоря.
+ * @param {Array<{filePath?: string, fullPath?: string, body?: string}>} catalog Документы с путём и текстом.
+ * @returns {Array<{filePath: string, target: string, field: string, message: string}>} Найденные неразрешимые ссылки.
+ */
 function validateLinks(catalog) {
   const issues = [];
+  for (const document of catalog) {
+    const filePath = document.filePath ?? document.fullPath;
+    if (typeof filePath !== 'string') continue;
+    const source = typeof document.body === 'string' ? document.body : '';
+    for (const target of extractMarkdownTargets(source)) {
+      if (!target || target.startsWith('//') || target.startsWith('/') || /^[a-z][a-z\d+.-]*:/i.test(target)) continue;
+      let decodedTarget;
+      try { decodedTarget = decodeURIComponent(target); } catch {
+        issues.push({ filePath, target, field: 'link', message: `Broken relative link target: ${target}` });
+        continue;
+      }
+      const hashIndex = decodedTarget.indexOf('#');
+      const pathAndQuery = hashIndex === -1 ? decodedTarget : decodedTarget.slice(0, hashIndex);
+      const rawFragment = hashIndex === -1 ? '' : decodedTarget.slice(hashIndex + 1).split('?')[0];
+      const relativePath = pathAndQuery.split('?')[0];
+      let fragment;
+      try { fragment = decodeURIComponent(rawFragment); } catch { fragment = rawFragment; }
+      const targetPath = relativePath ? resolve(dirname(filePath), relativePath) : filePath;
+      if (!existsSync(targetPath)) {
+        issues.push({ filePath, target, field: 'link', message: `Broken relative link target: ${target}` });
+        continue;
+      }
+      if (!fragment || !/\.(?:md|mdx|html?)$/i.test(targetPath)) continue;
+      let targetSource;
+      try { targetSource = readFileSync(targetPath, 'utf8'); } catch { continue; }
+      if (!markdownHeadingAnchors(targetSource).has(fragment)) {
+        issues.push({ filePath, target, field: 'link', message: `Broken relative link anchor: ${target}` });
+      }
+    }
+  }
   return issues;
 }
 

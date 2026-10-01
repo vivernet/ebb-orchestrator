@@ -209,11 +209,11 @@ describe("RepositoryDiscovery", () => {
       expect(facts.testCommands).toContain("mocha");
     });
 
-    it("detects untrustedExistingConfig when .orchestrator/ exists", async () => {
+    it("detects untrustedExistingConfig when .ebb-orchestrator/ exists", async () => {
       const tmpDir = createTempDir();
       setupGitRepo(tmpDir);
-      mkdirSync(join(tmpDir, ".orchestrator"));
-      writeFileSync(join(tmpDir, ".orchestrator", "project.yaml"), "");
+      mkdirSync(join(tmpDir, ".ebb-orchestrator"));
+      writeFileSync(join(tmpDir, ".ebb-orchestrator", "project.yaml"), "");
 
       const discovery = new RepositoryDiscovery();
       const facts = await discovery.discover(tmpDir);
@@ -221,7 +221,7 @@ describe("RepositoryDiscovery", () => {
       expect(facts.untrustedExistingConfig).toBe(true);
     });
 
-    it("does not detect untrustedExistingConfig when .orchestrator/ does not exist", async () => {
+    it("does not detect untrustedExistingConfig when .ebb-orchestrator/ does not exist", async () => {
       const tmpDir = createTempDir();
       setupGitRepo(tmpDir);
 

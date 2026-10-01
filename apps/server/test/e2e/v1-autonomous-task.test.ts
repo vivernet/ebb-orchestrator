@@ -7,7 +7,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { cp, mkdtemp, rm } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -32,7 +32,8 @@ import { McpServer } from "../../src/modules/execution/mcp/mcp-server.js";
 import { RunCapability } from "../../src/modules/execution/run-capability.js";
 import { GitTools } from "../../src/modules/execution/git-tools.js";
 import { PathResolver } from "../../src/platform/security/path-resolver.js";
-import { RunService } from "../../src/modules/runtime/run-service.js";
+import { createRunContextInput, RunService, taskDeveloperPrompt, taskQaPrompt, taskReviewerPrompt } from "../../src/modules/runtime/run-service.js";
+import type { StartRunOptions } from "../../src/modules/runtime/run-types.js";
 import type { AgentRuntime } from "../../src/modules/runtime/agent-runtime.js";
 import type { AgentRun } from "@ebb-orchestrator/contracts";
 import type { RunOutcome } from "../../src/modules/runtime/run-types.js";
@@ -43,6 +44,7 @@ import { HERMES_PROVIDER_SECRET_SERVICE, resolveHermesProviderBridgeConfig } fro
 import { ContextBuilder } from "../../src/modules/context/context-builder.js";
 import { PromptBuilder } from "../../src/modules/runtime/prompt-builder.js";
 import type { TaskContract as PromptTaskContract } from "../../src/modules/context/context-types.js";
+import { seedApprovedProjectConfig } from "../helpers/approved-project-config.js";
 
 const execFileAsync = promisify(execFile);
 const resolve = createRequire(import.meta.url).resolve;
@@ -79,10 +81,66 @@ class AcceptanceWorkflow {
 
   ready(): void { this.workflow.transition(this.taskId, "READY"); }
 
-  async reserveIntegrationRun(): Promise<string> {
-    const run = await this.runs.startRun({ role: "Integration", model: "deterministic-test-runtime", taskId: this.taskId, epicId: null, triggerReason: "integration", contextVersion: "acceptance-v1", outputSchemaVersion: "1" });
+  async reserveIntegrationRun(attempt: IntegrationAttempt): Promise<string> {
+    const row = this.db.get<{ contract_json: string }>("SELECT contract_json FROM tasks WHERE id=$taskId", { taskId: this.taskId });
+    if (!row || !attempt.expectedTargetSha || !attempt.integrationRunId || !attempt.provenanceDatabasePath) {
+      throw new Error("Persisted Task contract or Integration attempt provenance is unavailable");
+    }
+    const persisted = JSON.parse(row.contract_json) as Omit<PromptTaskContract, "id" | "priority">;
+    const taskContract: PromptTaskContract = { id: this.taskId, priority: "p0", ...persisted };
+    const prompt = new PromptBuilder().buildIntegrationPrompt({
+      taskContract,
+      workspace: attempt.worktreePath,
+      targetRef: attempt.currentTargetBranch,
+      checks: ["verify the isolated merge and project.test result", "verify target and task provenance"],
+      expectedTargetSha: attempt.expectedTargetSha,
+      sourceSha: attempt.sourceSha,
+      integrationAttemptId: attempt.id,
+      provenanceDatabasePath: attempt.provenanceDatabasePath,
+    });
+    const roleInputs = {
+      sourceSha: attempt.sourceSha,
+      targetSha: attempt.expectedTargetSha,
+      attemptId: attempt.id,
+      provenanceDatabasePath: attempt.provenanceDatabasePath,
+    };
+    const run = await this.startTaskRun("Integration", prompt, attempt.worktreePath, roleInputs, "integration", attempt.expectedTargetSha, attempt.currentTargetBranch, attempt.integrationRunId);
     this.integrationRunId = run.id;
     return run.id;
+  }
+
+  private async startTaskRun(
+    role: string,
+    prompt: string,
+    workspace: string,
+    roleInputs: unknown,
+    triggerReason: string,
+    targetHead: string | null,
+    targetBranch: string | null,
+    runId?: string,
+  ): Promise<AgentRun> {
+    const options = {
+      ...(runId ? { runId } : {}),
+      role,
+      model: "deterministic-test-runtime",
+      taskId: this.taskId,
+      epicId: null,
+      triggerReason,
+      contextVersion: "acceptance-v1",
+      outputSchemaVersion: "1",
+      capability: { workspace },
+    } satisfies StartRunOptions;
+    return this.runs.startRun({
+      ...options,
+      prompt,
+      contextInput: createRunContextInput(options, {
+        prompt,
+        roleInputs,
+        workspaceIdentity: { repository: this.repoPath, workspace, worktree: this.taskId },
+        targetHead,
+        targetBranch,
+      }),
+    });
   }
 
   async developer(): Promise<WorktreeRecord> {
@@ -108,16 +166,16 @@ class AcceptanceWorkflow {
   }
 
   async reviewer(worktree: WorktreeRecord): Promise<void> {
-    const run = await this.record("Reviewer", { outcome: "PASS", findings: [], independent: true }, "review");
     const diff = (await this.git.run(worktree.path, ["diff", "master", "HEAD"])).stdout;
     expect(diff).toContain("/health");
+    const run = await this.record("Reviewer", { outcome: "PASS", findings: [], independent: true }, "review", worktree.path, { gitDiff: diff, checks: ["Compare the committed changes with persisted acceptance criteria"] });
     expect(run.status).toBe("COMPLETED");
     this.workflow.transition(this.taskId, "QA", { hasReviewPassed: true, hasSuccessfulIntegration: false, hasFinalMergeApproval: false, parentEpicReleased: false });
   }
 
   async qa(worktree: WorktreeRecord): Promise<void> {
     await execFileAsync(process.execPath, ["test/smoke.js"], { cwd: worktree.path });
-    await this.record("QA", { outcome: "PASS", evidence: ["AC-1: GET /health returns 200 and JSON status ok"] }, "qa");
+    await this.record("QA", { outcome: "PASS", evidence: ["AC-1: GET /health returns 200 and JSON status ok"] }, "qa", worktree.path, { environment: `managed task workspace; smoke test completed in ${worktree.path}` });
     this.workflow.transition(this.taskId, "READY_FOR_INTEGRATION");
   }
 
@@ -141,16 +199,30 @@ class AcceptanceWorkflow {
      if (!testText) throw new Error("project.test MCP response did not include result text");
      expect(JSON.parse(testText)).toMatchObject({ action: "test", success: true, exitCode: 0 });
     if (this.integrationRunId) {
-      const output = { version: "1", outcome: "PASS" };
+      const output = {
+        version: "1",
+        outcome: "PASS",
+        baseSha: attempt.expectedTargetSha,
+        sourceSha: attempt.sourceSha,
+        provenance: [`integration_attempt:${attempt.id}`],
+        evidence: ["Verified the prepared source SHA in the integration worktree"],
+      };
       await this.runs.completionStore().accept(this.runs.getCapabilityReference(this.integrationRunId), { runId: this.integrationRunId, role: "Integration", output });
       await this.runs.collectResult(this.integrationRunId, { success: true, exitCode: 0, output: JSON.stringify(output), validatedSubmission: true, diagnostics: { runId: this.integrationRunId, sessionId: null, stderr: "", exitCode: 0, artifactReferences: [] } });
       await this.runs.collectUsage(this.integrationRunId, { inputTokens: 1, cachedInputTokens: 0, outputTokens: 1, cost: 0 });
-    } else await this.record("Integration", { outcome: "PASS", baseSha: targetSha, conflicts: [] }, "integration");
+    } else throw new Error("Integration Run was not prepared from its persisted attempt");
     this.workflow.transition(this.taskId, "READY_FOR_MERGE");
   }
 
-  async record(role: string, output: object, triggerReason = "task-assignment"): Promise<AgentRun> {
-    const run = await this.runs.startRun({ role, model: "deterministic-test-runtime", taskId: this.taskId, epicId: null, triggerReason, contextVersion: "acceptance-v1", outputSchemaVersion: "1" });
+  async record(role: string, output: object, triggerReason = "task-assignment", workspace?: string, roleInputs: unknown = {}): Promise<AgentRun> {
+    const persistedWorkspace = workspace ?? this.db.get<{ path: string }>("SELECT path FROM worktrees WHERE id=$id", { id: this.taskId })?.path;
+    if (!persistedWorkspace) throw new Error("Persisted managed Task workspace is unavailable");
+    const prompt = role.toLowerCase() === "developer" ? taskDeveloperPrompt()
+      : role.toLowerCase() === "reviewer" ? taskReviewerPrompt()
+        : role.toLowerCase() === "qa" ? taskQaPrompt()
+          : "Run the accepted Task role and submit its validated result.";
+    const targetHead = (await this.git.run(this.repoPath, ["rev-parse", "master"])).stdout.trim();
+    const run = await this.startTaskRun(role, prompt, persistedWorkspace, roleInputs, triggerReason, targetHead, "master");
       const raw = output as { outcome?: string; findings?: unknown[]; failedCriteria?: unknown[] };
       const roleOutput = {
         version: "1",
@@ -186,7 +258,9 @@ describe("Autonomous Task End-to-End Workflow", () => {
 
   beforeEach(async () => {
     tmpDir = await mkdtemp(join(tmpdir(), "orch-e2e-"));
-    db = createSqliteDatabase(join(tmpDir, "acceptance.db"));
+    const orchestratorDirectory = join(tmpDir, ".ebb-orchestrator");
+    await mkdir(orchestratorDirectory, { recursive: true });
+    db = createSqliteDatabase(join(orchestratorDirectory, "acceptance.db"));
     runMigrations(db, migrations);
   // Текущий sqlite-адаптер отклоняет UNIQUE-условия с выражениями в migration 007.
   // Для проверки очистки acceptance-теста репозиторию managed worktree нужна
@@ -200,6 +274,7 @@ describe("Autonomous Task End-to-End Workflow", () => {
     db.run("INSERT INTO projects (id,name,display_name,status,created_at,updated_at) VALUES ($id,$name,$display_name,'ACTIVE',$created_at,$updated_at)", { id: projectId, name: "health-service", display_name: "Health Service", created_at: now, updated_at: now });
     db.run("INSERT INTO onboarding_configs(project_id,repository_path,facts_json,proposed_json,status,approval_id,created_at,updated_at) VALUES ($projectId,$repositoryPath,$facts,$proposed,'ACTIVE',NULL,$now,$now)", { projectId, repositoryPath: masterRepoPath ?? "/repo", facts: JSON.stringify({ root: masterRepoPath ?? "/repo", defaultBranch: "master", remotes: [], packageManager: "npm", languageHints: [], testCommands: [], untrustedExistingConfig: false }), proposed: JSON.stringify({ defaultBranch: "master", workflow: "standard", roles: ["Developer"], guidelines: [] }), now });
     db.run("INSERT INTO tasks (id,project_id,display_id,title,status,contract_json,required,created_at,updated_at) VALUES ($id,$project_id,$display_id,$title,'DRAFT',$contract_json,1,$created_at,$updated_at)", { id: taskId, project_id: projectId, display_id: "TASK-HEALTH", title: "Add GET /health", contract_json: JSON.stringify({ version: 1, goal: "Add GET /health", context: "health check", requirements: ["GET /health returns 200"], acceptanceCriteria: ["returns 200 and JSON {status:'ok'}"], dependencies: [], nonGoals: ["no auth changes"], definitionOfDone: ["tests pass"] }), created_at: now, updated_at: now });
+    seedApprovedProjectConfig(db, projectId);
     masterRepoPath = await mkdtemp(join(tmpdir(), "master-repo-"));
     await cp(join(import.meta.dirname, "fixtures", "health-service"), masterRepoPath, { recursive: true });
     const git = new GitCli();
@@ -222,12 +297,15 @@ describe("Autonomous Task End-to-End Workflow", () => {
     const worktree = await driver.developer();
     await driver.reviewer(worktree);
     await driver.qa(worktree);
-     const integrationService = new IntegrationService({ worktreeDir: join(tmpDir, "integration"), database: db!, provenanceDatabasePath: join(tmpDir, "acceptance.db"), integrationRunId: await driver.reserveIntegrationRun() });
-     const integration = await integrationService.prepareIntegration(`task/${taskId}`, "master", masterRepoPath);
+     const integrationRunId = randomUUID();
+     const integrationService = new IntegrationService({ worktreeDir: join(tmpDir, "integration"), database: db!, provenanceDatabasePath: join(tmpDir, ".ebb-orchestrator", "acceptance.db"), integrationRunId });
+     const preparedIntegration = await integrationService.prepareIntegration(`task/${taskId}`, "master", masterRepoPath);
+     const integrationRunIdFromRun = await driver.reserveIntegrationRun(preparedIntegration);
+     const integration = integrationService.bindIntegrationRun(preparedIntegration, integrationRunIdFromRun);
      await integrationService.mergePreparedSource(integration);
-     const integrationRunId = integration.integrationRunId;
-     expect(integrationRunId).toBeDefined();
-     if (!integrationRunId) throw new Error("Integration attempt did not receive its reserved run ID");
+     const persistedIntegrationRunId = integration.integrationRunId;
+     expect(persistedIntegrationRunId).toBeDefined();
+     if (!persistedIntegrationRunId) throw new Error("Integration attempt did not receive its reserved run ID");
       mergeService = new MergeService({ approvalStore: new Map(), repoPath: masterRepoPath, integrationAttempt: integration, database: db! });
       await integrationService.runInIntegrationWorktree(integration, async () => driver.integration(integration));
     const outcomes = db!.all<{ role: string; output: string }>("SELECT role, output FROM agent_runs WHERE task_id = $task_id ORDER BY started_at", { task_id: taskId });
@@ -235,7 +313,7 @@ describe("Autonomous Task End-to-End Workflow", () => {
     expect(JSON.parse(outcomes[1]!.output)).toMatchObject({ outcome: "PASS", findings: [] });
       expect(JSON.parse(outcomes[2]!.output)).toMatchObject({ outcome: "PASS" });
       expect(JSON.parse(outcomes[3]!.output)).toMatchObject({ outcome: "PASS" });
-      expect(db!.get<{ id: string; role: string; status: string; output: string }>("SELECT id, role, status, output FROM agent_runs WHERE id = $id", { id: integrationRunId })).toMatchObject({ id: integrationRunId, role: "Integration", status: "COMPLETED", output: expect.stringContaining('"outcome":"PASS"') });
+      expect(db!.get<{ id: string; role: string; status: string; output: string }>("SELECT id, role, status, output FROM agent_runs WHERE id = $id", { id: persistedIntegrationRunId })).toMatchObject({ id: persistedIntegrationRunId, role: "Integration", status: "COMPLETED", output: expect.stringContaining('"outcome":"PASS"') });
     expect(readFileSync(join(masterRepoPath, "src", "server.js"), "utf8")).not.toContain("/health");
     const approval = approvalService.request({ type: "FINAL_MERGE", subjectId: taskId, subjectType: "TASK", requestedBy: "orchestrator" });
     expect(approval.status).toBe("PENDING");
@@ -299,7 +377,7 @@ describe("Autonomous Task End-to-End Workflow", () => {
 
     const worktree = await worktreeManager.createTaskWorkspace(taskId, masterRepoPath, "master");
     const mcpCli = join(import.meta.dirname, "../../src/bin/ebb-orchestrator-mcp.ts");
-    const databasePath = join(tmpDir, "acceptance.db");
+    const databasePath = join(tmpDir, ".ebb-orchestrator", "acceptance.db");
     const resultDirectory = join(tmpDir, "hermes-results");
     const workspaceByRun = new Map<string, string>();
     let nextWorkspace = worktree.path;
@@ -379,24 +457,30 @@ try { inspected = await runtime.inspectRun(run.id); } catch { /* процесс 
        const contract: PromptTaskContract = { id: taskId, priority: "p0", goal: "Add GET /health", context: "health check service", requirements: ["GET /health returns 200"], acceptanceCriteria: ['returns 200 and JSON {"status":"ok"}'], dependencies: [], nonGoals: ["no auth changes"], definitionOfDone: ["tests pass"] };
        const context = new ContextBuilder();
        const prompts = new PromptBuilder();
+       const targetHead = (await new GitCli().run(masterRepoPath, ["rev-parse", "master"])).stdout.trim();
        for (const role of ["Developer", "Reviewer", "QA"]) {
+         let roleInputs: unknown = {};
          const prompt = role === "Developer"
            ? prompts.buildDeveloperPrompt({ taskContract: context.buildDeveloperPackage({ taskContract: contract, workspaceMeta: { repoPath: worktree.path, branch: `task/${taskId}`, commitHash: "managed" } }).taskContract, workspaceMeta: { repoPath: worktree.path, branch: `task/${taskId}` }, outputInstructions: "Commit the implementation and submit commitSha." })
            : role === "Reviewer"
-             ? prompts.buildReviewerPrompt({ taskContract: context.buildReviewerPackage({ taskContract: contract, gitDiff: "Read the current worktree diff", checks: ["inspect committed implementation"] }).taskContract, gitDiff: "Read the current worktree diff", checks: ["inspect committed implementation"] })
-             : prompts.buildQAPrompt({ taskContract: context.buildQAPackage({ taskContract: contract, environment: `workspace=${worktree.path}` }).taskContract, environment: `workspace=${worktree.path}` });
-         const run = await runs.startRun({ role, model: process.env.HERMES_MODEL ?? "default", taskId, epicId: null, triggerReason: "task-assignment", contextVersion: "hermes-acceptance-v1", outputSchemaVersion: "1", prompt, capability: { workspace: worktree.path, allowedTools: ["workspace.read", "workspace.patch", "git.status", "git.diff", "git.commit", "submit_result"] } });
+             ? (roleInputs = { gitDiff: "Read the current worktree diff", checks: ["inspect committed implementation"] }, prompts.buildReviewerPrompt({ taskContract: context.buildReviewerPackage({ taskContract: contract, gitDiff: "Read the current worktree diff", checks: ["inspect committed implementation"] }).taskContract, gitDiff: "Read the current worktree diff", checks: ["inspect committed implementation"] }))
+             : (roleInputs = { environment: `workspace=${worktree.path}` }, prompts.buildQAPrompt({ taskContract: context.buildQAPackage({ taskContract: contract, environment: `workspace=${worktree.path}` }).taskContract, environment: `workspace=${worktree.path}` }));
+         const options = { role, model: process.env.HERMES_MODEL ?? "default", taskId, epicId: null, triggerReason: "task-assignment", contextVersion: "hermes-acceptance-v1", outputSchemaVersion: "1", capability: { workspace: worktree.path, allowedTools: ["workspace.read", "workspace.patch", "git.status", "git.diff", "git.commit", "submit_result"] } } satisfies StartRunOptions;
+         const run = await runs.startRun({ ...options, prompt, contextInput: createRunContextInput(options, { prompt, roleInputs, workspaceIdentity: { repository: masterRepoPath, workspace: worktree.path, worktree: taskId }, targetHead, targetBranch: "master" }) });
         workspaceByRun.set(run.id, worktree.path);
         await runHermesRole(role, worktree.path, run);
         advanceRealStage(workflow, taskId, role);
       }
        const integrationWorkspace = join(tmpDir, "real-integration");
-       const integrationService = new IntegrationService({ worktreeDir: integrationWorkspace, database: db!, provenanceDatabasePath: join(tmpDir, "acceptance.db") });
+       const integrationRunId = randomUUID();
+       const integrationService = new IntegrationService({ worktreeDir: integrationWorkspace, database: db!, provenanceDatabasePath: databasePath, integrationRunId });
          const preparedIntegration = await integrationService.prepareIntegration(`task/${taskId}`, "master", masterRepoPath);
          await integrationService.mergePreparedSource(preparedIntegration);
-         const integrationPrompt = new PromptBuilder().buildIntegrationPrompt({ taskContract: contract, workspace: preparedIntegration.worktreePath, targetRef: "master", checks: ["call the project.test MCP tool and verify its returned result (do not run the smoke test directly as a substitute)", "verify target and task provenance"], ...(preparedIntegration.expectedTargetSha ? { expectedTargetSha: preparedIntegration.expectedTargetSha } : {}), sourceSha: preparedIntegration.sourceSha, integrationAttemptId: preparedIntegration.id, ...(preparedIntegration.provenanceDatabasePath ? { provenanceDatabasePath: preparedIntegration.provenanceDatabasePath } : {}) });
+         if (!preparedIntegration.expectedTargetSha || !preparedIntegration.provenanceDatabasePath) throw new Error("Prepared Integration provenance is incomplete");
+         const integrationPrompt = new PromptBuilder().buildIntegrationPrompt({ taskContract: contract, workspace: preparedIntegration.worktreePath, targetRef: "master", checks: ["call the project.test MCP tool and verify its returned result (do not run the smoke test directly as a substitute)", "verify target and task provenance"], expectedTargetSha: preparedIntegration.expectedTargetSha, sourceSha: preparedIntegration.sourceSha, integrationAttemptId: preparedIntegration.id, provenanceDatabasePath: preparedIntegration.provenanceDatabasePath });
         nextWorkspace = preparedIntegration.worktreePath;
-         const integrationRun = await runs.startRun({ role: "Integration", model: process.env.HERMES_MODEL ?? "default", taskId, epicId: null, triggerReason: "integration", contextVersion: "hermes-acceptance-v1", outputSchemaVersion: "1", prompt: integrationPrompt, capability: { workspace: preparedIntegration.worktreePath, allowedTools: ["workspace.read", "workspace.search", "git.diff", "project.test", "submit_result"] } });
+         const integrationOptions = { runId: integrationRunId, role: "Integration", model: process.env.HERMES_MODEL ?? "default", taskId, epicId: null, triggerReason: "integration", contextVersion: "hermes-acceptance-v1", outputSchemaVersion: "1", capability: { workspace: preparedIntegration.worktreePath, allowedTools: ["workspace.read", "workspace.search", "git.diff", "project.test", "submit_result"] } } satisfies StartRunOptions;
+         const integrationRun = await runs.startRun({ ...integrationOptions, prompt: integrationPrompt, contextInput: createRunContextInput(integrationOptions, { prompt: integrationPrompt, roleInputs: { sourceSha: preparedIntegration.sourceSha, targetSha: preparedIntegration.expectedTargetSha, attemptId: preparedIntegration.id, provenanceDatabasePath: preparedIntegration.provenanceDatabasePath }, workspaceIdentity: { repository: masterRepoPath, workspace: preparedIntegration.worktreePath, worktree: preparedIntegration.id }, targetHead: preparedIntegration.expectedTargetSha, targetBranch: "master" }) });
         workspaceByRun.set(integrationRun.id, preparedIntegration.worktreePath);
         const realIntegration = integrationService.bindIntegrationRun(preparedIntegration, integrationRun.id);
         expect(realIntegration.integrationRunId).toBe(integrationRun.id);

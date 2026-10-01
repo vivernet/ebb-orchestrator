@@ -9,9 +9,10 @@
  * 2. Open database
  * 3. Run migrations
  * 4. Set status to RECOVERING
- * 5. Reconcile outbox / jobs / artifacts / additional reconcilers
- * 6. Start workers
- * 7. Set status to READY
+ * 5. Preflight process owners and reconcile Project Config
+ * 6. Reconcile outbox / jobs / artifacts / additional reconcilers
+ * 7. Start workers
+ * 8. Set status to READY
  */
 
 export type SystemStatus =
@@ -66,6 +67,10 @@ export interface SystemLifecycleDeps {
   database: LifecycleDatabase;
   migrator: LifecycleMigrator;
   status: StatusTrackerInterface;
+  /** Доказывает/останавливает каждый nonterminal process scope до любого recovery side effect. */
+  preflightRecovery(): Promise<void>;
+  /** Integrity reconciliation допускается только после process-owner STOPPED proof. */
+  reconcileProjectConfig(): Promise<void>;
   reconcileOutbox(): Promise<void>;
   reconcileJobs(): Promise<void>;
   reconcileArtifacts(): Promise<void>;
@@ -107,6 +112,10 @@ export async function startSystem(deps: SystemLifecycleDeps): Promise<void> {
   await deps.status.set("RECOVERING");
   assertStartupActive(deps.signal);
   try {
+    await runRecoveryStep("preflight_recovery", deps.preflightRecovery);
+    assertStartupActive(deps.signal);
+    await runRecoveryStep("reconcile_project_config", deps.reconcileProjectConfig);
+    assertStartupActive(deps.signal);
     await runRecoveryStep("reconcile_outbox", deps.reconcileOutbox);
     assertStartupActive(deps.signal);
     await runRecoveryStep("reconcile_jobs", deps.reconcileJobs);

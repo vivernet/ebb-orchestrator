@@ -5,6 +5,7 @@ import { GitHubSyncService } from './github-sync-service.js';
 export interface GitHubSyncWorkerOptions {
   intervalMs?: number;
   onFeedback?: (feedback: { repository: string; commentId: number; issueNumber: number; body: string; idempotencyKey: string }) => Promise<void>;
+  persistFeedback?: (feedback: { repository: string; commentId: number; issueNumber: number; body: string; authorLogin: string; authorType: string; sourceUrl: string; sourceCreatedAt: string | null; sourceUpdatedAt: string | null }) => Promise<'DELIVERED' | 'UNMAPPED'>;
 }
 
 export type FeedbackDeliveryStatus = 'PENDING' | 'DELIVERED';
@@ -62,11 +63,28 @@ export class GitHubSyncWorker {
     try {
       const result = await this.hosting.listIssueComments(repository);
       if (result.status !== 'OK' || !result.value) return 'SYNC_PENDING';
-      const comments = result.value.filter((comment) => comment.authorType.toLowerCase() !== 'bot' && !/ORCHESTRATOR:[^\s]+/.test(comment.body));
-      if (comments.length > 0 && !this.options.onFeedback) return 'SYNC_PENDING';
+      const comments = result.value.filter((comment) => comment.authorType.toLowerCase() !== 'bot' && !comment.body.includes('ORCHESTRATOR:'));
+      if (comments.length > 0 && !this.options.onFeedback && !this.options.persistFeedback) return 'SYNC_PENDING';
       for (const comment of comments) {
         const status = this.feedbackState.getStatus(repository, comment.id);
         if (status === 'DELIVERED') continue;
+        if (this.options.persistFeedback) {
+          try {
+            const persisted = await this.options.persistFeedback({
+              repository,
+              commentId: comment.id,
+              issueNumber: comment.issueNumber,
+              body: comment.body,
+              authorLogin: comment.authorLogin ?? 'unknown',
+              authorType: comment.authorType,
+              sourceUrl: comment.sourceUrl ?? `https://github.com/${repository}/issues/${comment.issueNumber}#issuecomment-${comment.id}`,
+              sourceCreatedAt: comment.sourceCreatedAt ?? null,
+              sourceUpdatedAt: comment.sourceUpdatedAt ?? null,
+            });
+            if (persisted === 'UNMAPPED') return 'SYNC_PENDING';
+          } catch { return 'SYNC_PENDING'; }
+          continue;
+        }
         const idempotencyKey = `github:${repository}:issue-comment:${comment.id}`;
         try {
           this.feedbackState.markPending(repository, comment.id, comment.issueNumber);
@@ -88,5 +106,12 @@ export class GitHubSyncWorker {
     }
   }
   start(repository: string): void { this.stop(); const interval = this.options.intervalMs ?? 60_000; this.timer = setInterval(() => { void this.syncIssues(repository).catch(() => undefined); }, interval); }
+  startMappedRepositories(listRepositories: () => string[]): void {
+    this.stop();
+    const interval = this.options.intervalMs ?? 60_000;
+    this.timer = setInterval(() => {
+      void (async () => { for (const repository of listRepositories()) await this.syncIssues(repository); })().catch(() => undefined);
+    }, interval);
+  }
   stop(): void { if (this.timer) clearInterval(this.timer); this.timer = undefined; }
 }

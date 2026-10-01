@@ -302,6 +302,13 @@ describe("SchedulerService", () => {
     expect(() => scheduler.dispatchTask("budget-task", registry, () => undefined)).toThrow(/WAITING_FOR_BUDGET/);
   });
 
+  it("reports a paused task as waiting with an explicit pause reason", async () => {
+    await setup();
+    insertTask(db!, projectId, { id: "paused-task", status: "PAUSED" });
+
+    expect(scheduler.getEligibility("paused-task")).toEqual({ status: "WAIT", reason: "WAITING_FOR_PAUSE" });
+  });
+
   it("reads configurable limits from persisted system state", async () => {
     await setup();
     db!.run("INSERT INTO system_state(key,value_json,updated_at) VALUES ('scheduler_limits',$value,$at)", { value: JSON.stringify({ globalMax: 2, projectMax: 1, reviewerMax: 2 }), at: new Date().toISOString() });

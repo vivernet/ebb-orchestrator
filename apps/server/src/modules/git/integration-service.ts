@@ -45,6 +45,8 @@ export interface IntegrationServiceOptions {
   /** Полный путь к той же базе для Integration tooling, которое читает provenance напрямую. */
   provenanceDatabasePath?: string;
   integrationRunId?: string;
+  /** Runtime application command; `true` means the associated Run is safely terminal and its workspace may be cleaned. */
+  finalizeRunFailure?: (runId: string, error: unknown) => boolean;
 }
 
 /**
@@ -72,6 +74,7 @@ export class IntegrationService {
   private readonly database: Database;
   private readonly provenanceDatabasePath: string | undefined;
   private integrationRunId: string | undefined;
+  private readonly finalizeRunFailure: IntegrationServiceOptions["finalizeRunFailure"];
 
   constructor(options: IntegrationServiceOptions) {
     this.git = options.git ?? new GitCli();
@@ -81,6 +84,7 @@ export class IntegrationService {
     this.database = options.database;
     this.provenanceDatabasePath = options.provenanceDatabasePath;
     this.integrationRunId = options.integrationRunId;
+    this.finalizeRunFailure = options.finalizeRunFailure;
   }
 
   /**
@@ -108,22 +112,23 @@ export class IntegrationService {
     const targetShaResult = await this.git.run(repoPath, ["rev-parse", currentTargetBranch]);
     const expectedTargetSha = targetShaResult.stdout.trim();
     const sourceSha = (await this.git.run(repoPath, ["rev-parse", sourceBranch])).stdout.trim();
+    if (!expectedTargetSha || !sourceSha) throw new Error("Integration refs did not resolve to commit SHAs");
 
     // Создаёт пустую директорию hooks для отключения hooks
     const emptyHooksDir = mkdtempSync(join(this.worktreeDir, "hooks-"));
 
     try {
-      // Создаёт worktree с интеграционным branch напрямую из target branch
-      // Используя -B для принудительного создания/чекута если branch существует
+      // Создаёт integration branch только если такого ref ещё нет. При коллизии
+      // Git должен отказать, не перемещая существующую ветку на текущий target.
       await this.git.run(repoPath, [
         "-c",
         `core.hooksPath=${emptyHooksDir.replace(/\\/g, "/")}`,
         "worktree",
         "add",
-        "-B",
+        "-b",
         integrationBranch,
         worktreePath,
-        currentTargetBranch,
+        expectedTargetSha,
       ]);
 
       const attempt: IntegrationAttempt = {
@@ -169,8 +174,15 @@ export class IntegrationService {
    * Связывает уже созданный интеграционный workspace с авторизованным run.
    */
   bindIntegrationRun(attempt: IntegrationAttempt, integrationRunId: string): IntegrationAttempt {
+    const persisted = this.database.get<{ integration_run_id: string | null }>(
+      "SELECT integration_run_id FROM integration_attempts WHERE id = $id",
+      { id: attempt.id },
+    );
+    if (!persisted || !integrationRunId || persisted.integration_run_id !== integrationRunId || attempt.integrationRunId !== integrationRunId ||
+        (this.integrationRunId !== undefined && this.integrationRunId !== integrationRunId)) {
+      throw new Error("integrationRunId does not match the persisted attempt");
+    }
     this.integrationRunId = integrationRunId;
-    this.database.run("UPDATE integration_attempts SET integration_run_id = $run WHERE id = $id", { id: attempt.id, run: integrationRunId });
     return { ...attempt, integrationRunId };
   }
 
@@ -181,15 +193,21 @@ export class IntegrationService {
     if (!this.integrationRunId || !attempt.integrationRunId || attempt.integrationRunId !== this.integrationRunId) {
       throw new Error("integrationRunId is required and must be bound to the IntegrationService");
     }
-    const persisted = this.database.get<{ status: IntegrationAttempt["status"]; integration_run_id: string }>("SELECT status, integration_run_id FROM integration_attempts WHERE id = $id", { id: attempt.id });
+    const persisted = this.database.get<{ id: string; repository_path: string; source_branch: string; target_branch: string; expected_target_sha: string; source_sha: string; worktree_path: string; created_at: string; status: IntegrationAttempt["status"]; integration_run_id: string | null }>(
+      "SELECT id,repository_path,source_branch,target_branch,expected_target_sha,source_sha,worktree_path,created_at,status,integration_run_id FROM integration_attempts WHERE id = $id", { id: attempt.id });
     if (!persisted || persisted.status !== "PREPARED" || attempt.status !== "PREPARED") throw new Error("integration attempt is not prepared");
-    if (persisted.integration_run_id !== attempt.integrationRunId) throw new Error("integrationRunId is not bound to the integration attempt");
+    if (!this.matchesPersistedProvenance(attempt, persisted)) throw new Error("integration attempt does not match its immutable persisted provenance");
     const run = this.database.get<{ role: string; status: string }>("SELECT role, status FROM agent_runs WHERE id = $id", { id: attempt.integrationRunId });
     if (!run || run.role.toLowerCase() !== "integration" || !["STARTED", "IN_PROGRESS", "COMPLETING"].includes(run.status)) throw new Error("integration run is missing or inactive");
     attempt.status = "MERGING";
     this.database.run("UPDATE integration_attempts SET status = 'MERGING' WHERE id = $id AND status = 'PREPARED'", { id: attempt.id });
     const snapshot = Object.freeze({ ...attempt });
     try {
+      const containsExpectedTarget = await this.isAncestor(snapshot.expectedTargetSha ?? "", "HEAD", snapshot.worktreePath);
+      const containsPreparedSource = await this.isAncestor(snapshot.sourceSha, "HEAD", snapshot.worktreePath);
+      if (!snapshot.expectedTargetSha || !containsExpectedTarget || !containsPreparedSource) {
+        throw new Error("INTEGRATION_SNAPSHOT_MISMATCH: worktree does not contain the prepared target and source commits");
+      }
       // Не give the runner the live attempt record. In addition to the
       // immutable проверка ниже, этот prevents Объект in-process runner из
       // changing Объект object используемый by Объект final verification.
@@ -228,8 +246,8 @@ export class IntegrationService {
        return result;
     } catch (error) {
       attempt.status = "FAILED";
-      this.failIntegration(attempt, error);
-      await this.cleanupIntegration(attempt);
+      const mayCleanup = this.failIntegration(attempt, error);
+      if (mayCleanup) await this.cleanupIntegration(attempt);
       throw error;
     }
   }
@@ -237,40 +255,26 @@ export class IntegrationService {
   /**
    * Сохраняет попытку и её сбой авторизованного agent run вместе.
    */
-  private failIntegration(attempt: IntegrationAttempt, error: unknown): void {
-    const message = error instanceof Error ? error.message : String(error);
-    const diagnostics = JSON.stringify({
-      type: "INTEGRATION_RECONCILIATION_FAILURE",
-      attemptId: attempt.id,
-      integrationRunId: attempt.integrationRunId ?? null,
-      message,
-    });
-    this.database.transaction((tx) => {
-      tx.run("UPDATE integration_attempts SET status = 'FAILED' WHERE id = $id", { id: attempt.id });
-      if (attempt.integrationRunId) {
-        tx.run(
-          `UPDATE agent_runs SET status = 'FAILED', output = $output,
-            ended_at = $ended_at, exit_code = -1
-            WHERE id = $id AND role = 'Integration'
-              AND status IN ('STARTED', 'IN_PROGRESS', 'COMPLETING')`,
-          { id: attempt.integrationRunId, output: diagnostics, ended_at: new Date().toISOString() },
-        );
-      }
-    });
+  private failIntegration(attempt: IntegrationAttempt, error: unknown): boolean {
+    this.database.run("UPDATE integration_attempts SET status = 'FAILED' WHERE id = $id", { id: attempt.id });
+    if (!attempt.integrationRunId) return true;
+    try {
+      return this.finalizeRunFailure?.(attempt.integrationRunId, error) === true;
+    } catch {
+      return false;
+    }
   }
 
   /**
    * Слияет подготовленный commit задачи перед запуском Integration Agent.
    */
   async mergePreparedSource(attempt: IntegrationAttempt): Promise<void> {
-    const persisted = this.database.get<{ status: IntegrationAttempt["status"]; integration_run_id: string | null }>(
-      "SELECT status, integration_run_id FROM integration_attempts WHERE id = $id", { id: attempt.id });
+    const persisted = this.database.get<{ id: string; repository_path: string; source_branch: string; target_branch: string; expected_target_sha: string; source_sha: string; worktree_path: string; created_at: string; status: IntegrationAttempt["status"]; integration_run_id: string | null }>(
+      "SELECT id,repository_path,source_branch,target_branch,expected_target_sha,source_sha,worktree_path,created_at,status,integration_run_id FROM integration_attempts WHERE id = $id", { id: attempt.id });
     if (!persisted || persisted.status !== "PREPARED" || attempt.status !== "PREPARED") {
       throw new Error("integration attempt is not prepared");
     }
-    if (persisted.integration_run_id !== (attempt.integrationRunId ?? null)) {
-      throw new Error("integrationRunId is not bound to the integration attempt");
-    }
+    if (!this.matchesPersistedProvenance(attempt, persisted)) throw new Error("integration attempt does not match its immutable persisted provenance");
     const targetSha = (await this.git.run(attempt.repoPath, ["rev-parse", attempt.currentTargetBranch])).stdout.trim();
     if (targetSha !== attempt.expectedTargetSha) {
       throw new Error(`TARGET_MOVED: expected ${attempt.expectedTargetSha ?? "a verified target"}, found ${targetSha}; restart integration`);
@@ -282,14 +286,37 @@ export class IntegrationService {
         `core.hooksPath=${emptyHooksDir.replace(/\\/g, "/")}`,
         "merge",
         "--no-edit",
-        attempt.sourceBranch,
+        attempt.sourceSha,
       ]);
     } finally {
       rmSync(emptyHooksDir, { recursive: true, force: true });
     }
     const mergedSha = (await this.git.run(attempt.worktreePath, ["rev-parse", "HEAD"])).stdout.trim();
-    if (!mergedSha || mergedSha === attempt.expectedTargetSha) {
+    const containsExpectedTarget = await this.isAncestor(attempt.expectedTargetSha ?? "", "HEAD", attempt.worktreePath);
+    const containsPreparedSource = await this.isAncestor(attempt.sourceSha, "HEAD", attempt.worktreePath);
+    if (!mergedSha || mergedSha === attempt.expectedTargetSha || !containsExpectedTarget || !containsPreparedSource) {
       throw new Error("INTEGRATION_SOURCE_NOT_MERGED: prepared worktree does not contain the source commit");
+    }
+  }
+
+  private matchesPersistedProvenance(
+    attempt: IntegrationAttempt,
+    persisted: { id: string; repository_path: string; source_branch: string; target_branch: string; expected_target_sha: string; source_sha: string; worktree_path: string; created_at: string; integration_run_id: string | null },
+  ): boolean {
+    return persisted.id === attempt.id && persisted.repository_path === attempt.repoPath &&
+      persisted.source_branch === attempt.sourceBranch && persisted.target_branch === attempt.currentTargetBranch &&
+      persisted.expected_target_sha === attempt.expectedTargetSha && persisted.source_sha === attempt.sourceSha &&
+      persisted.worktree_path === attempt.worktreePath && persisted.created_at === attempt.createdAt &&
+      persisted.integration_run_id === (attempt.integrationRunId ?? null);
+  }
+
+  private async isAncestor(ancestor: string, descendant: string, worktreePath: string): Promise<boolean> {
+    if (!ancestor) return false;
+    try {
+      await this.git.run(worktreePath, ["merge-base", "--is-ancestor", ancestor, descendant]);
+      return true;
+    } catch {
+      return false;
     }
   }
 

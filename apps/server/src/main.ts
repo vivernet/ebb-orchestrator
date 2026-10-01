@@ -19,8 +19,8 @@ import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createSqliteDatabase } from "./platform/database/sqlite-database.js";
-import { hasPendingMigrations, runMigrations, type Migration } from "./platform/database/migrator.js";
-import { BackupService } from "./platform/database/backup-service.js";
+import { type Migration } from "./platform/database/migrator.js";
+import { applyMigrationsWithVerifiedBackup } from "./platform/database/backup-service.js";
 import { DiagnosticsService } from "./platform/diagnostics/diagnostics-service.js";
 import { resolveOrchestratorHome } from "./platform/home/orchestrator-home.js";
 import { createProductionComposition } from "./platform/home/production-composition.js";
@@ -47,6 +47,7 @@ import { templates } from "./modules/workflow/templates.js";
 import { KeyringSecretStore } from "./platform/security/keyring-secret-store.js";
 import { createInfisicalSecretStore, resolveInfisicalSecretStoreOptions } from "./platform/security/infisical-secret-store.js";
 import { PlanningService } from "./modules/planning/planning-service.js";
+import { registerCoordinatorPlanningJob } from "./modules/planning/coordinator-planning-job.js";
 import { EpicOrchestrator } from "./modules/planning/epic-orchestrator.js";
 import {
   createStartupCleanup,
@@ -60,6 +61,12 @@ import { createAuthService } from "./platform/security/auth-service.js";
 import { ensureLocalUser } from "./platform/security/local-user-wizard.js";
 import { ApprovalService } from "./modules/approvals/approval-service.js";
 import { OnboardingService } from "./modules/projects/onboarding-service.js";
+import { ProjectConfigService } from "./modules/projects/project-config-service.js";
+import { HumanFeedbackService } from "./modules/github/human-feedback-service.js";
+import { GitHubAppTokenProvider } from "./modules/github/github-app-token-provider.js";
+import { GitHubAdapter } from "./modules/github/github-adapter.js";
+import { GitHubSyncService, SqliteSyncState } from "./modules/github/github-sync-service.js";
+import { GitHubSyncWorker, SqliteFeedbackDeliveryState } from "./modules/github/github-sync-worker.js";
 
 async function startServer(): Promise<void> {
 let startupCleanup: () => Promise<void> = async () => {};
@@ -106,10 +113,7 @@ const migrations: Migration[] = readdirSync(migrationDir).filter((file) => file.
 
 // Запускает migrations ДО создания любых сервисов которые зависят от таблиц.
 try {
-  if (hasPendingMigrations(database, migrations)) {
-    new BackupService(database).createBackup(home.backups);
-  }
-  runMigrations(database, migrations);
+  applyMigrationsWithVerifiedBackup(database, migrations, home.backups);
 } catch {
   await failClosedStartup("Database migration failed; server stopped before listener and workers.");
 }
@@ -130,10 +134,16 @@ const authService = createAuthService(authRepository, authPasswordHasher, { now:
 const scheduler = new SchedulerService(database);
 const approvalService = new ApprovalService(database);
 const onboardingService = new OnboardingService(database, approvalService);
+const projectConfigService = new ProjectConfigService(database, approvalService);
+const humanFeedbackService = new HumanFeedbackService(database);
 const infisicalOptions = resolveInfisicalSecretStoreOptions(process.env);
 const secretStore = infisicalOptions
   ? createInfisicalSecretStore(database, infisicalOptions)
   : new KeyringSecretStore(database);
+const githubAdapter = new GitHubAdapter(new GitHubAppTokenProvider(secretStore));
+const githubSyncWorker = new GitHubSyncWorker(githubAdapter, new GitHubSyncService(githubAdapter, new SqliteSyncState(database)), new SqliteFeedbackDeliveryState(database), {
+  persistFeedback: (comment) => Promise.resolve(humanFeedbackService.receiveComment(comment)),
+});
 const hermesProvider = resolveHermesProviderBridgeConfig(process.env);
 const diagnostics = new DiagnosticsService(database, {
   appVersion: process.env["EBB_ORCHESTRATOR_VERSION"] ?? "development",
@@ -145,7 +155,7 @@ const production = createProductionComposition({
   secretStore,
   ...(hermesProvider ? { provider: hermesProvider } : {}),
 });
-const { paths: productionPaths, runtime, taskWorkspaceProvisioner, integrationServiceFactory, epicMergeAuthority } = production;
+const { paths: productionPaths, runtime, artifactStore, epicWorkspaceProvisioner, taskWorkspaceProvisioner, integrationServiceFactory, epicMergeAuthority } = production;
 const workflowRegistry = new WorkflowRegistry();
 for (const template of Object.values(templates)) workflowRegistry.register(template);
 const workflowEngine = new WorkflowEngine(database, workflowRegistry);
@@ -165,16 +175,17 @@ const epicOrchestrator = new EpicOrchestrator(
   {
     integrationServiceFactory,
     integrationWorktreeRoot: productionPaths.integrationWorktreeRoot,
+    epicWorkspaceProvisioner,
     taskWorkspaceProvisioner,
   },
 );
 mkdirSync(home.artifacts, { recursive: true });
 
-const app = createApp({ host, port, db: database, scheduler, runtime, runService, secretStore, epicOrchestrator, status, eventBus, authService, approvalService, onboardingService, diagnostics, ...(existsSync(webRoot) ? { webRoot } : {}) });
+const app = createApp({ host, port, db: database, scheduler, runtime, runService, artifactStore, secretStore, epicOrchestrator, status, eventBus, authService, approvalService, onboardingService, projectConfigService, humanFeedbackService, githubSyncWorker, diagnostics, ...(existsSync(webRoot) ? { webRoot } : {}) });
 
 // Composition собирает callbacks после migrations; lifecycle запускает их
 // до workers, listener и перехода в READY.
-const startupReconciliation = production.createStartupReconciliation({ runService, eventDispatcher, status });
+const startupReconciliation = production.createStartupReconciliation({ runService, eventDispatcher, status, projectConfigService });
 
 // Worker wrapper: SchedulerSafetyWorker имеет void запускать() но BackgroundWorker требует Promise<void>.
 const schedulerSafetyWorker = new SchedulerSafetyWorker(scheduler);
@@ -184,9 +195,14 @@ const schedulerWorker: BackgroundWorker = {
 };
 const outboxWorker = new OutboxWorker(eventDispatcher);
 const backgroundJobRegistry = new BackgroundJobRegistry();
+registerCoordinatorPlanningJob(backgroundJobRegistry, { db: database, planning: planningService, runs: runService, scheduler });
 const backgroundJobRunner = new JobRunner(database, backgroundJobRegistry);
 const backgroundJobWorker: BackgroundWorker = new JobWorker(backgroundJobRunner);
-const workers = [schedulerWorker, outboxWorker, backgroundJobWorker];
+const githubFeedbackWorker: BackgroundWorker = {
+  start: async () => { githubSyncWorker.startMappedRepositories(() => humanFeedbackService.listMappedRepositories()); },
+  stop: async () => { githubSyncWorker.stop(); },
+};
+const workers = [schedulerWorker, outboxWorker, backgroundJobWorker, githubFeedbackWorker];
 
 async function gracefulShutdown(signal: string): Promise<void> {
    console.log(`\n[ebb-orchestrator] received ${signal}, shutting down…`);
@@ -214,9 +230,17 @@ async function startLifecycle(): Promise<void> {
   instanceLock: lock,
   lockAlreadyAcquired: true,
   database: { open: async () => {}, close: () => database.close() },
-  migrator: { run: async () => { runMigrations(database, migrations); } },
+  migrator: { run: async () => { applyMigrationsWithVerifiedBackup(database, migrations, home.backups); } },
   status,
   ...startupReconciliation,
+  additionalReconcilers: [
+    ...startupReconciliation.additionalReconcilers,
+    async () => { epicOrchestrator.reconcileInterruptedRuns(); },
+    async () => { scheduler.reconcile(); },
+    async () => { planningService.reconcileInterruptedRequests(); },
+    async () => { epicOrchestrator.reconcileInterruptedExecutionClaims(); },
+    () => epicOrchestrator.resumeApprovedEpics(),
+  ],
   workers,
   signal: startupAbortController.signal,
   });

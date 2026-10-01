@@ -62,6 +62,8 @@ describe("startup lifecycle", () => {
           steps.push(`status ${s}`);
         },
       },
+      preflightRecovery: async () => { steps.push("process owner preflight"); },
+      reconcileProjectConfig: async () => { steps.push("project config"); },
       reconcileOutbox: async () => {
         steps.push("reconcile outbox");
       },
@@ -89,6 +91,8 @@ describe("startup lifecycle", () => {
       "open DB",
       "migrations",
       "status RECOVERING",
+      "process owner preflight",
+      "project config",
       "reconcile outbox",
       "reconcile jobs",
       "reconcile artifacts",
@@ -97,6 +101,30 @@ describe("startup lifecycle", () => {
     ]);
 
     expect(currentStatus).toBe("READY");
+  });
+
+  it("fails closed at process-owner preflight before Project Config and later recovery", async () => {
+    const calls: string[] = [];
+    const status = new StatusTracker();
+    const deps = {
+      instanceLock: { acquire: async () => ({ pid: 1 }), release: async () => {} },
+      lockAlreadyAcquired: true,
+      database: { open: async () => {}, close: () => {} },
+      migrator: { run: async () => {} },
+      status,
+      preflightRecovery: async () => { calls.push("owner-preflight"); throw new Error("scope remains UNKNOWN"); },
+      reconcileProjectConfig: async () => { calls.push("project-config"); },
+      reconcileOutbox: async () => { calls.push("outbox"); },
+      reconcileJobs: async () => { calls.push("jobs"); },
+      reconcileArtifacts: async () => { calls.push("artifacts"); },
+      additionalReconcilers: [async () => { calls.push("additional"); }],
+      workers: [{ start: async () => { calls.push("worker"); }, stop: async () => {} }],
+    } as SystemLifecycleDeps & { preflightRecovery: () => Promise<void>; reconcileProjectConfig: () => Promise<void> };
+
+    await startSystem(deps);
+
+    expect(calls).toEqual(["owner-preflight"]);
+    expect(status.get()).toBe("DEGRADED");
   });
 
   it("runs additional reconcilers after built-in ones", async () => {
@@ -120,6 +148,8 @@ describe("startup lifecycle", () => {
         get: () => "STARTING" as SystemStatus,
         set: async () => {},
       },
+      preflightRecovery: async () => {},
+      reconcileProjectConfig: async () => {},
       reconcileOutbox: async () => {},
       reconcileJobs: async () => {},
       reconcileArtifacts: async () => {},
@@ -153,6 +183,8 @@ describe("startup lifecycle", () => {
       database: { open: async () => { steps.push("open DB"); }, close: async () => {} },
       migrator: { run: async () => { steps.push("migrations"); } },
       status: { get: () => "STARTING" as SystemStatus, set: async (status) => { steps.push(`status ${status}`); } },
+      preflightRecovery: async () => {},
+      reconcileProjectConfig: async () => {},
       reconcileOutbox: async () => {},
       reconcileJobs: async () => {},
       reconcileArtifacts: async () => {},
@@ -176,6 +208,8 @@ describe("startup lifecycle", () => {
         get: () => statuses.at(-1) ?? "STARTING",
         set: async (status) => { statuses.push(status); },
       },
+      preflightRecovery: async () => {},
+      reconcileProjectConfig: async () => {},
       reconcileOutbox: async () => {},
       reconcileJobs: async () => {},
       reconcileArtifacts: async () => {},
@@ -210,6 +244,8 @@ describe("startup lifecycle", () => {
         get: () => statuses.at(-1) ?? "STARTING",
         set: async (status) => { statuses.push(status); },
       },
+      preflightRecovery: async () => {},
+      reconcileProjectConfig: async () => {},
       reconcileOutbox: async () => {},
       reconcileJobs: async () => {},
       reconcileArtifacts: async () => {},
@@ -235,6 +271,8 @@ describe("startup lifecycle", () => {
       database: { open: async () => {}, close: () => {} },
       migrator: { run: async () => {} },
       status,
+      preflightRecovery: async () => {},
+      reconcileProjectConfig: async () => {},
       reconcileOutbox: async () => {},
       reconcileJobs: async () => {},
       reconcileArtifacts: async () => {},
@@ -263,6 +301,8 @@ describe("startup lifecycle", () => {
       database: { open: async () => {}, close: () => {} },
       migrator: { run: async () => {} },
       status,
+      preflightRecovery: async () => {},
+      reconcileProjectConfig: async () => {},
       reconcileOutbox: async () => {},
       reconcileJobs: async () => {
         throw new Error(secretLikeMessage);
@@ -545,6 +585,8 @@ describe("startup lifecycle", () => {
       database: { open: async () => {}, close: () => {} },
       migrator: { run: async () => { throw new Error("migration failed"); } },
       status: { get: () => "STARTING", set: async () => {} },
+      preflightRecovery: async () => {},
+      reconcileProjectConfig: async () => {},
       reconcileOutbox: async () => {},
       reconcileJobs: async () => {},
       reconcileArtifacts: async () => {},

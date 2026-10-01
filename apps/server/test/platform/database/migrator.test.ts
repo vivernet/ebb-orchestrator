@@ -96,7 +96,7 @@ describe("migrator", () => {
   it("applies a 025 to 030 upgrade once and remains idempotent", async () => {
     tmpDir = await mkdtemp(join(tmpdir(), "orch-auth-upgrade-"));
     db = createSqliteDatabase(join(tmpDir, `test-${randomUUID()}.db`));
-    const migrations = (await import("../../helpers/migrations.js")).loadTestMigrations();
+    const migrations = (await import("../../helpers/migrations.js")).loadTestMigrations().filter((migration) => migration.version <= 30);
     const beforeAuth = migrations.filter((migration) => migration.version <= 25);
 
     expect(runMigrations(db, beforeAuth).applied).toBe(25);
@@ -193,7 +193,7 @@ describe("migrator", () => {
     tmpDir = await mkdtemp(join(tmpdir(), "orch-auth-migration-"));
     const dbPath = join(tmpDir, `test-${randomUUID()}.db`);
     db = createSqliteDatabase(dbPath);
-    const migrations = (await import("../../helpers/migrations.js")).loadTestMigrations();
+    const migrations = (await import("../../helpers/migrations.js")).loadTestMigrations().filter((migration) => migration.version <= 30);
 
     expect(migrations.map((migration) => migration.version)).toEqual(
       Array.from({ length: 30 }, (_, index) => index + 1),
@@ -238,7 +238,7 @@ describe("migrator", () => {
   it("upgrades databases where legacy runtime DDL already added the columns", async () => {
     tmpDir = await mkdtemp(join(tmpdir(), "orch-conditional-column-upgrade-"));
     db = createSqliteDatabase(join(tmpDir, `test-${randomUUID()}.db`));
-    const migrations = (await import("../../helpers/migrations.js")).loadTestMigrations();
+    const migrations = (await import("../../helpers/migrations.js")).loadTestMigrations().filter((migration) => migration.version <= 30);
     const through027 = migrations.filter((migration) => migration.version <= 27);
 
     expect(runMigrations(db, through027).applied).toBe(27);
@@ -255,7 +255,7 @@ describe("migrator", () => {
     tmpDir = await mkdtemp(join(tmpdir(), "orch-auth-rollback-"));
     db = createSqliteDatabase(join(tmpDir, `test-${randomUUID()}.db`));
     const failingSql = "CREATE TABLE local_users (id INTEGER PRIMARY KEY); SELECT invalid_auth_sql;";
-    const migrations = (await import("../../helpers/migrations.js")).loadTestMigrations();
+    const migrations = (await import("../../helpers/migrations.js")).loadTestMigrations().filter((migration) => migration.version <= 30);
     const authMigrationIndex = migrations.findIndex((migration) => migration.version === 26);
     migrations[authMigrationIndex] = { ...migrations[authMigrationIndex]!, sql: failingSql };
     expect(() => runMigrations(db!, migrations)).toThrow();
@@ -266,7 +266,7 @@ describe("migrator", () => {
   it("upgrades populated approval references without losing rows or foreign keys", async () => {
     tmpDir = await mkdtemp(join(tmpdir(), "orch-approval-status-migration-"));
     db = createSqliteDatabase(join(tmpDir, `test-${randomUUID()}.db`));
-    const migrations = (await import("../../helpers/migrations.js")).loadTestMigrations();
+    const migrations = (await import("../../helpers/migrations.js")).loadTestMigrations().filter((migration) => migration.version <= 30);
     const before027 = migrations.filter((migration) => migration.version <= 26);
     expect(runMigrations(db, before027).applied).toBe(26);
     const now = new Date().toISOString();
@@ -289,7 +289,7 @@ describe("migrator", () => {
   it("rolls back an opted-in migration on foreign-key violations and restores enforcement", async () => {
     tmpDir = await mkdtemp(join(tmpdir(), "orch-approval-migration-fk-rollback-"));
     db = createSqliteDatabase(join(tmpDir, `test-${randomUUID()}.db`));
-    const migrations = (await import("../../helpers/migrations.js")).loadTestMigrations();
+    const migrations = (await import("../../helpers/migrations.js")).loadTestMigrations().filter((migration) => migration.version <= 30);
     const before027 = migrations.filter((migration) => migration.version <= 26);
     runMigrations(db, before027);
     const badMigration: Migration = {

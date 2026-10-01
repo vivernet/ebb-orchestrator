@@ -1,10 +1,10 @@
 ---
 id: plan-19
 kind: plan
-status: proposed
+status: in_progress
 title: План разблокирования и завершения открытых планов v1
 created: 2026-09-29
-updated: 2026-09-29
+updated: 2026-09-30
 depends_on: []
 specs:
   - ../specs/01-system-design.md
@@ -24,11 +24,11 @@ evidence:
 
 **Goal:** Закрыть подтверждённые обязательства `plan-04`, `plan-05`, `plan-06`, `plan-07` и `plan-09`, провести required reviews и обновить статусы только после получения evidence.
 
-**Architecture:** Реализация остаётся внутри утверждённых local-first v1 contracts `spec-01` и `spec-03`. `Plan 05` и `Plan 06` proposals задают предлагаемые API/data/lifecycle решения и должны быть явно приняты до реализации. Project Config lifecycle требует отдельного design decision, потому что текущий `ConfigMigrator` не подключён к durable production Project Config. Hermes/provider и source security scan — независимые внешние acceptance gates; fake runtime, dependency audit и отсутствие findings в старом отчёте их не заменяют.
+**Architecture:** Реализация остаётся внутри утверждённых local-first v1 contracts `spec-01` и `spec-03`. Уже принятые Proposal 05/06 определяют API/data/lifecycle решения для своих implementation tasks. Полный Project Config lifecycle утверждён в Proposal 07 после независимого design review; production wiring выполняется только в Plan 06 Task 9 в пределах его source-of-truth, approval, migration и recovery boundaries. Hermes/provider и source security scan — независимые внешние acceptance gates; fake runtime, dependency audit и отсутствие findings в старом отчёте их не заменяют.
 
 **Authority:** `docs/architecture/specs/01-system-design.md`, `docs/architecture/specs/03-production-readiness-design.md`, принятые решения по `docs/architecture/proposals/05-github-human-feedback-mapping.md` и `docs/architecture/proposals/06-coordinator-request-and-epic-recovery.md`, затем конкретные исходные планы `04`, `05`, `06`, `07`, `09`.
 
-**Global Constraints:** Не включать `plan-14` и `plan-16`; не передавать secrets в prompts/logs/repository; не считать FakeAgentRuntime/provider wrapper завершённым external acceptance; не ослаблять gates; не менять approval/workflow/security policy; не push и не merge без отдельного разрешения; все коммиты на русском.
+**Global Constraints:** `plan-14` исключён. Closure audit охватывает все остальные планы, включая `plan-16`; для Plan16 сначала подготовить точный reviewable пакет, а операции удаления/переноса/архивации выполнять только после отдельного явного одобрения конкретных путей и destination. Не передавать secrets в prompts/logs/repository; не считать FakeAgentRuntime/provider wrapper завершённым external acceptance; не ослаблять gates; не менять approval/workflow/security policy; не push и не merge без отдельного разрешения; все коммиты на русском.
 
 **Review Focus:** Дизайны не реализуются до явного принятия; startup resume не обходит Scheduler/budget/permissions и не запускает final merge; GitHub feedback не получает authority менять workflow; source scan получает свежий успешный отчёт на том же revision, что прошёл gates; статус original Plan меняется только после полного evidence и независимого whole-plan review.
 
@@ -39,19 +39,19 @@ evidence:
 | Исходный plan | Текущий статус | Gate для завершения |
 |---|---|---|
 | `plan-04` | `blocked` | Поддерживаемые Hermes CLI/profile и настроенный OpenAI-compatible provider через SecretStore; полный реальный Developer → Reviewer → QA → Integration acceptance и review. |
-| `plan-05` | `blocked` | Принятое решение по request API/UI/recovery; реальный Hermes request → Epic и process restart/resume acceptance; whole-plan review. |
-| `plan-06` | `in_progress` | Принятый GitHub feedback mapping, production inbox/wiring, Project Config lifecycle, keyring/runtime и release acceptance; whole-plan review. |
+| `plan-05` | `blocked` | Mandatory request/plan UI, startup recovery до `READY` и deterministic production-process Epic recovery harness реализованы; harness прошёл, но он не заменяет same-request restart и real Hermes request → Epic acceptance. Нужно завершить ContextManifest producer по принятому Proposal 08 и пройти whole-plan review. Решение о показе PM/Architect summary до materialization содержится в принятом варианте A Proposal 06. |
+| `plan-06` | `in_progress` | Production inbox/wiring/UI и Project Config lifecycle реализованы. По решению пользователя capture на Windows теперь fail closed с HTTP 503 до safe-handle verification; Windows happy-path недоступен. Metadata-only Artifact/Run UI и read-only Settings/Usage projections реализованы; persisted task-bound ContextManifest acceptance остаётся открытым до producer/acceptance по Proposal 08. Schema v1 — первый поддерживаемый формат; predecessor migration не требуется. Остаются supported-platform acceptance, hosted Ubuntu keyring evidence и whole-plan review. |
 | `plan-07` | `blocked` | Поддерживаемый Hermes runtime/provider и завершённый parity plan с report, двумя read-only subagents и доказанным teardown; review. |
 | `plan-09` | `in_progress` | Свежий source security scan после изменений, все gates и whole-plan review без load-bearing finding. |
 
-`plan-01` и `plan-12` уже `completed` в generated register и ledger; current-state snapshot синхронизирован при подготовке этого плана и проверяется повторно в Task 2. `plan-14` и `plan-16` остаются за пределами данного плана по решению пользователя.
+`plan-01` и `plan-12` уже `completed` в generated register и ledger; current-state snapshot синхронизирован при подготовке этого плана и проверяется повторно в Task 2. По уточнению пользователя от 2026-09-30 closure охватывает все планы, кроме `plan-14`, включая `plan-16`; его конкретные destructive/archive операции остаются за approval gate самого Plan16.
 
-Статус `plan-19` остаётся `proposed`, пока пользователь не примет решения в Tasks 0 и 1, а `ebb-review-plan` не выдаст `APPROVED`.
+Plan review обновлённой редакции завершился `APPROVED`; Proposal 05/06, полный lifecycle Proposal 07, canonical `.ebb-orchestrator/` и весь Proposal 08 приняты пользователем. Proposal 08 утверждён 2026-09-30; его implementation plan проходит отдельное независимое review.
 
 ## Зависимости
 
 ```text
-Task 0 (принять proposals 05/06)
+Task 0 (сверить уже принятые proposals 05/06)
   ├── Task 5 (Plan 05 request-to-Epic implementation)
   └── Task 6 (Plan 06 feedback inbox implementation)
 
@@ -69,9 +69,9 @@ Plan04 provider acceptance может выполняться после Task 3 �
 
 - `docs/architecture/plans/19-unfinished-plan-closure.md` — этот координирующий план и его task evidence.
 - `docs/roadmap/02-current-state.md` — актуальный список статусов и последовательность; `docs/roadmap/generated.md` обновляется только `pnpm docs:roadmap`.
-- `docs/architecture/proposals/05-github-human-feedback-mapping.md` — решение по repository → Project mapping, inbox, retention и UI; implementation owner после approval: `apps/server/src/modules/github/` и `apps/web/src/features/`.
-- `docs/architecture/proposals/06-coordinator-request-and-epic-recovery.md` — решение по NL request API, plan approval UI и startup resume; implementation owner после approval: `apps/server/src/modules/planning/`, `apps/server/src/app/routes/`, `apps/server/src/main.ts`, `apps/web/src/features/`.
-- `docs/architecture/proposals/07-project-config-lifecycle.md` — создать в Task 1; определяет production source-of-truth, migration/approval и recovery contract для Plan06 Task 9. До approval Project Config production wiring не реализовывать.
+- `docs/architecture/proposals/05-github-human-feedback-mapping.md` — принятое решение по repository → Project mapping, inbox, retention и UI; implementation owner: `apps/server/src/modules/github/` и `apps/web/src/features/`.
+- `docs/architecture/proposals/06-coordinator-request-and-epic-recovery.md` — принятое решение по NL request API, plan approval UI и startup resume; implementation owner: `apps/server/src/modules/planning/`, `apps/server/src/app/routes/`, `apps/server/src/main.ts`, `apps/web/src/features/`.
+- `docs/architecture/proposals/07-project-config-lifecycle.md` — принятый после независимого `PASS` design; определяет production source-of-truth, migration/approval и recovery contract для Plan06 Task 9.
 - `apps/server/src/modules/runtime/hermes/` и `tools/hermes/` — существующие runtime/provider boundary и Hermes development runner; изменять только если preflight/acceptance даёт воспроизводимую source-level ошибку.
 - `.github/workflows/codeql.yml` — рекомендуемый свежий source scan на GitHub CodeQL advanced setup для JavaScript/TypeScript; доступность code scanning и сохранение результата проверяются до исполнения.
 - `docs/architecture/plans/governance/evidence/07-current-plan-reconciliation.md` — добавить конечные run IDs/commit SHAs/review verdicts и точные remaining blockers.
@@ -79,7 +79,7 @@ Plan04 provider acceptance может выполняться после Task 3 �
 
 ## Tasks
 
-### Task 0: Принять решения, которые меняют product contract
+### Task 0: Зафиксировать принятые product-contract решения
 
 **Depends on:** none.
 
@@ -89,41 +89,44 @@ Plan04 provider acceptance может выполняться после Task 3 �
 - Modify: оба proposal только для записи принятого варианта и даты; код не меняется.
 
 **Interfaces:**
-- Plan 05: выбрать вариант request-to-Epic; отдельно решить automatic startup resume и минимальный UI.
-- Plan 06: выбрать mapping cardinality, retention и API-only vs Project inbox UI.
-- Источник approval — явное решение пользователя в текущем task; proposal frontmatter/section фиксирует точное принятое решение.
+- Plan 05 / Proposal 06: пользователь принял вариант A — project-scoped request API, minimal request/plan approval UI и automatic resume одобренных Epic до `READY`; recovery проходит migrations, run/scheduler/git reconciliation, бюджеты и permissions, повторно использует persisted IDs/checkpoints и останавливается перед `FINAL_APPROVAL`.
+- Plan 06 / Proposal 05: пользователь принял вариант A — один GitHub repository связан максимум с одним активным Project, комментарии поступают в Project inbox, UI link/ignore/resolve обязателен, тело хранится до явного удаления feedback или Project.
+- Решения пользователя от 2026-09-29 уже записаны в Proposal 05/06. Задача сверяет записи и устраняет только документальные расхождения; новых approval-вопросов не открывает.
 
-**RED:** Proposal остаётся `proposed`; по нему нельзя составить approved implementation boundary.
+**RED:** proposals или этот plan противоречат зафиксированным решениям пользователя.
 
-**GREEN:** В каждом proposal записаны выбранные ответы и non-goals. Если ответ меняет рекомендованный контракт, обновить proposal и повторно предъявить на approval до продолжения dependent tasks.
+**GREEN:** Proposal 05/06 и plan содержат согласованные варианты, retention, обязательный UI, resume boundary и non-goals.
 
 **Completion evidence:** явное принятое решение отражено в proposals; `pnpm docs:check` и `pnpm docs:test` проходят.
 
-**Blocked when:** нет явного принятия либо ответы конфликтуют с `spec-01`; не начинать Tasks 4 и 5.
+**Blocked when:** записанное решение противоречит `spec-01`; не начинать зависимые tasks до согласования документации.
 
-**Review Focus:** не интерпретировать прежнюю просьбу «подготовить proposal» как approval реализации.
+**Review Focus:** не переоткрывать принятые решения и не трактовать их как approval автоматического plan approval, final merge или автоматического применения repo config.
 
 ### Task 1: Зафиксировать Project Config lifecycle для Plan06 Task 9
 
 **Depends on:** Task 0 для границ GitHub config; решение об изменении Project Config отдельно.
 
 **Files:**
-- Create: `docs/architecture/proposals/07-project-config-lifecycle.md`
+- Read/Review: `docs/architecture/proposals/07-project-config-lifecycle.md`
 - Read: `docs/architecture/specs/01-system-design.md` §4 и Settings / Project Configuration; `apps/server/src/platform/database/config-migrator.ts`; onboarding config routes/services.
-- Modify after decision: `docs/architecture/plans/19-unfinished-plan-closure.md` и, если меняется API/scope, `docs/architecture/plans/06-web-github-release.md`.
+- Modify after review: `docs/architecture/plans/19-unfinished-plan-closure.md` и, если меняется API/scope, `docs/architecture/plans/06-web-github-release.md`; Proposal 07 изменять только для addressable review findings.
 
 **Interfaces:**
-- Design должен однозначно определить canonical config location (`.orchestrator/project.yaml` и связанные документы согласно `spec-01`), active approved snapshot, version/hash/provenance, `USER_DECISION_REQUIRED`, backup/migration order и source trust boundary.
+- Canonical repository config directory уже выбран пользователем: только `.ebb-orchestrator/`; repository-authored изменения нельзя применять автоматически. Соответствующие места `spec-01`, onboarding/UI, README и discovery приведены к этому пути.
+- Accepted design определяет active approved SQLite snapshot, immutable candidate source bytes, manifest/revision hashes/provenance, `USER_DECISION_REQUIRED`, verified DB backup/migration order и recovery behavior. Repository-authored config остаётся недоверенным до явного review/approval и никогда не применяется автоматически.
 - Не смешивать repository-authored config с machine-local runtime/auth/secrets state.
-- Design review решает, хранится ли active normalized snapshot в SQLite либо читается из проверенного Git revision; до выбора implementation не начинается.
+- Пользователь принял Proposal 07 целиком 2026-09-29 после независимого review `PASS`; active normalized snapshot хранится в SQLite.
 
-**RED:** Proposal ссылается только на generic `ConfigMigrator` и не определяет кто/где читает/пишет Project Config; Plan06 Task 9 не имеет production acceptance.
+**RED (historical baseline):** до Proposal 07 существовал только generic `ConfigMigrator`, не подключённый к durable Project Config service/repository; после принятия design этот gap закрывается implementation и acceptance в Task 6, а не считается текущим дефектом proposal.
 
-**GREEN:** Proposal покрывает source-of-truth, lifecycle, schema, migration, backup/recovery и API/UI approval boundary; `ebb-review-plan`/design review фиксирует verdict и принятое решение. После approval этот план дополняется точными implementation paths и acceptance.
+**GREEN:** Proposal покрывает source-of-truth, lifecycle, schema, migration, backup/recovery и API/UI approval boundary; независимый design review `PASS` и approval пользователя зафиксированы. Plan 19 Task 6 содержит implementation boundary и acceptance.
 
 **Review Focus:** неизвестная/новая version fail-closed; semantic migration не активируется без решения; repo config остаётся недоверенным до review/approval.
 
-**Blocked when:** принятое решение требует изменения `spec-01`; тогда сначала обновить/утвердить spec, затем этот plan.
+**Completion evidence:** accepted Proposal 07, независимый review verdict `PASS`, явное принятие пользователя 2026-09-29; lifecycle implementation входит в Task 6.
+
+User decision follow-up (2026-09-30): Project Config capture на Windows должен fail closed до поддержки safe handle/reparse verification. Реализация возвращает `PROJECT_CONFIG_UNSUPPORTED_PLATFORM`/HTTP 503 до чтения repository-файлов; acceptance на Windows проверяет отказ и отсутствие candidate/state записей, а полный lifecycle/restart сценарий помечает `WAIVED / NOT RUN`.
 
 ### Task 2: Исправить roadmap snapshot и publish plan-19
 
@@ -136,7 +139,7 @@ Plan04 provider acceptance может выполняться после Task 3 �
 
 **RED:** На исходном baseline current-state расходился с metadata `plan-01`/`plan-12`, а evidence ledger продолжает утверждать, что `plan-01` `in_progress`. Этот baseline частично исправлен при подготовке plan-19; остаётся синхронизировать ledger и повторно проверить все три источника.
 
-**GREEN:** `02-current-state.md` и ledger согласованы с metadata/generated register: `plan-01`/`plan-12` completed, открытые планы указаны без пропусков, `plan-14`/`plan-16` явно вне scope, `plan-19` proposed; следующий шаг отражает порядок Tasks 0–8.
+**GREEN:** `02-current-state.md` и ledger согласованы с metadata/generated register: `plan-01`/`plan-12` completed, открытые планы указаны без пропусков, `plan-14` явно вне scope, остальные планы включая `plan-16` входят в closure audit, `plan-19` in_progress; следующий шаг отражает порядок Tasks 0–8.
 
 ```text
 Run: pnpm docs:roadmap
@@ -179,6 +182,8 @@ Expected baseline failure: проверка указывает точные от
 
 **Blocked when:** нет доступного поддерживаемого CLI, provider/model или активного SecretStore backend; сохранить redacted диагностику и не закрывать Plan04/07.
 
+**Scoped source hardening (2026-09-30):** repo-owned Hermes wrapper теперь выводит bounded/sanitized stderr + exit code, завершает setup до trust/config при CLI health failure и применяет 30-секундный timeout к `hermes --version`. Regression покрывает sanitization, порядок вызовов, spawn failure и timeout. `node --test scripts/hermes-dev.test.mjs` PASS 23/23; scoped ESLint и `git diff --check` PASS; независимый scoped review APPROVED. Свежий read-only `pnpm hermes:check` всё ещё FAIL: `--version` exit 1 и trust/discovery/delegation settings недоступны. Setup/profile/provider не запускались.
+
 ### Task 4: Выполнить реальный Autonomous Task acceptance Plan04
 
 **Depends on:** Task 3.
@@ -211,11 +216,11 @@ Expected: все роли завершаются подтверждённым st
 
 **Files:**
 - Modify/Create: `apps/server/src/modules/planning/planning-service.ts`, `apps/server/src/modules/planning/epic-orchestrator.ts`, `apps/server/src/app/routes/epics.ts`, `apps/server/src/app/create-app.ts`, `apps/server/src/main.ts`.
-- Create: `apps/server/src/platform/database/migrations/031_planning_request_linkage.sql`.
+- Create: `apps/server/src/platform/database/migrations/031_planning_request_linkage.sql` and `036_planning_request_role_runs.sql` for durable request-to-role-run linkage and validated-decision requirement on new queued requests.
 - Modify/Create: `apps/server/test/modules/planning/`, `apps/server/test/modules/runtime/`, `apps/server/test/e2e/request-to-epic.hermes.test.ts`, `apps/server/test/e2e/fixtures/epic-restart/`.
-- Modify/Create per accepted UI scope: `apps/web/src/features/coordinator/`, `apps/web/src/app/router.tsx`, `apps/web/test/`.
+- Modify/Create mandatory minimal request/plan approval UI: `apps/web/src/features/coordinator/`, `apps/web/src/app/router.tsx`, `apps/web/test/`.
 
-**Interfaces:** использовать project-scoped `POST /api/v1/projects/{projectId}/requests`, durable `requestId`/`planId` связь и существующий authenticated approve-run gate по принятому Proposal 06. Startup recovery выполняется после migrations, run/scheduler/git reconciliation и до `READY`; повторно использует сохранённые Epic/Task IDs и validated phase checkpoints.
+**Interfaces:** использовать project-scoped `POST /api/v1/projects/{projectId}/requests`, durable `requestId`/`planId` связь, обязательный minimal request/plan approval UI и существующий authenticated approve-run gate по принятому Proposal 06. Для нового Epic request до approval допускаются Coordinator и request-bound Product Manager/Architect planning Runs; последние имеют отдельную durable request↔role↔run связь, не получают `task_id`/`epic_id`, используют read-only planning tools, а их validated decisions входят в durable pending plan и видимый approval summary. Здесь формулировка «до одобрения нет AgentRuns» означает отсутствие child-work Runs: до явного human `approve-run` не создаются доменные Epic/Task IDs, child-work Runs и child Scheduler reservations. Только `approve-run` материализует доменные IDs и разрешает child dispatch. До `READY` startup выполняет migrations, run/scheduler/git reconciliation, затем возобновляет только одобренные Epic до `FINAL_APPROVAL`; recovery повторно использует сохранённые Epic/Task IDs и validated phase checkpoints и проходит обычные Scheduler, budgets и permissions. Ни plan approval, ни final merge не выполняются автоматически.
 
 **RED:** тест доказывает отсутствующий flow/recovery: authenticated NL request не создаёт durable PlanningRequest/plan relation, либо restart дублирует completed child Run/Task.
 
@@ -225,14 +230,18 @@ Expected: все роли завершаются подтверждённым st
 Run: pnpm --filter @ebb-orchestrator/server exec vitest run test/modules/planning test/app/epic-routes.test.ts --pool=forks --maxWorkers=1
 Expected: routes/state transitions, ownership, duplicate requests and approvals pass.
 Run: pnpm --filter @ebb-orchestrator/server exec vitest run test/e2e/request-to-epic.hermes.test.ts --pool=forks --maxWorkers=1
-Expected deterministic path and production kill/restart acceptance pass; same request resumes without duplicate Task/Run/phase and stops at human final approval.
+Expected deterministic path and production kill/restart acceptance pass; same request resumes without duplicate Task/Run/phase and stops at human `FINAL_APPROVAL`.
 Run (PowerShell): сохранить текущее `$env:RUN_HERMES_E2E`, установить `$env:RUN_HERMES_E2E = '1'`, выполнить `pnpm --filter @ebb-orchestrator/server exec vitest run test/e2e/request-to-epic.hermes.test.ts --pool=forks --maxWorkers=1`, затем в `finally` восстановить или удалить переменную.
 Expected: real Coordinator creates 2–3 dependent Tasks; validated plan waits for approval; Epic completes roles and persists resume evidence.
 ```
 
-**Review Focus:** no materialization or child dispatch before plan approval; startup never auto-approves final merge; resumed work re-enters Scheduler and budgets; failure before/after durable checkpoint is idempotent.
+**Review Focus:** minimal request/plan UI shows validated PM/Architect decisions before approval; duplicate delivery/restart reuses durable request-bound role Runs without duplicates; preapproval planning Runs are distinct from child-work Runs; no domain Epic/Task IDs, child-work Runs or child reservations before explicit human plan approval; startup recovers approved Epic before `READY`, never auto-approves plan/final merge, and resumes only through `FINAL_APPROVAL`; resumed work re-enters Scheduler, budgets and permissions; failure before/after durable checkpoint is idempotent.
 
-**Blocked when:** Proposal 06 answers unaccepted, real Hermes run unavailable, or user decision changes architecture. Do not mark Plan05 completed based only on FakeAgentRuntime.
+**Blocked when:** real Hermes run unavailable or implementation reveals a contradiction with the accepted Proposal 06 contract. Do not mark Plan05 completed based only on FakeAgentRuntime.
+
+**Execution evidence (2026-09-30):** `pnpm plan05:epic-restart:acceptance` PASS после server build. Fixture-runtime checkpoints были подготовлены в parent test process; restart и startup recovery выполнялись собранным production `dist/main.js`. Evidence: Epic `663ca96d-2e78-4224-9dd3-6c66171896d4`, plan `2efcaad5-93ba-4630-b5aa-ed7fed6f5a2f`, tasks `88dc8af9-f094-42ae-b8ab-a37ea80768f1` и `a858db0a-de22-4b2e-885a-6779ef712d1c`; восстановлены 12 Run IDs и 12 phase IDs, стадия `FINAL_APPROVAL`, ровно одно pending final approval, контрольный plan остался `PENDING`. Это подтверждает production startup recovery для seeded checkpoints, но не same-request process restart или Hermes provider execution (`provider=NOT_INVOKED`). Три acceptance tests прошли, включая allowlisted child environment и fail-closed child teardown. Independent re-review исправлений harness: `PASS`.
+
+**Повторная acceptance-проверка (2026-09-30):** `pnpm plan05:epic-restart:acceptance` снова завершилась `PASS` после добавления journal-verified Epic worktree и child branches от Epic branch. Новые IDs: Epic `f51deac4-5613-4a50-ae17-4f2db602a94b`, plan `31fd77da-66b2-4235-a637-2e7e58b53152`, tasks `3c142777-11a6-4f75-80d1-800727eb64f6` и `0ca995e5-a65d-49c5-bd1f-96e6c104539a`; recovery сохранил 12 Runs/12 phases и завершился на `FINAL_APPROVAL` с одним pending final approval. Это по-прежнему seeded-checkpoint process recovery, `provider=NOT_INVOKED`; same-request restart и real Hermes остаются открытыми.
 
 ### Task 6: Завершить production GitHub feedback, Project Config и Plan06 acceptance
 
@@ -242,10 +251,14 @@ Expected: real Coordinator creates 2–3 dependent Tasks; validated plan waits f
 - Create: `apps/server/src/modules/github/human-feedback-service.ts`, `apps/server/src/modules/github/github-project-mapping.ts`, `apps/server/src/app/routes/human-feedback.ts`, `apps/server/src/platform/database/migrations/032_github_project_mapping_feedback.sql` (031 is reserved for PlanningRequest linkage in Task 5).
 - Modify: `apps/server/src/modules/github/github-sync-worker.ts`, `apps/server/src/app/create-app.ts`, `apps/server/src/main.ts`, `apps/server/src/platform/database/config-migrator.ts` and Project Config files named in approved Proposal 07.
 - Create: `apps/server/test/modules/github/human-feedback-service.test.ts`, `apps/server/test/app/human-feedback-routes.test.ts`; extend `apps/server/test/modules/github/github-sync-worker.test.ts` and config migration/startup tests.
-- Modify/Create for approved UI: `apps/web/src/features/human-feedback/`, `apps/web/src/app/router.tsx`, `apps/web/test/`.
+- Modify/Create mandatory Project inbox UI with link/ignore/resolve: `apps/web/src/features/human-feedback/`, `apps/web/src/app/router.tsx`, `apps/web/test/`.
+- Complete original Plan 06 operational/configuration read-only views: apps/server/src/app/routes/runs.ts, apps/web/src/features/runs/AgentRunPage.tsx, apps/server/src/app/routes/settings.ts, apps/web/src/features/settings/SettingsPage.tsx, and the Usage route/page/read-model and focused tests.
+- Create Project Config repository/service/approval API and tests under `apps/server/src/modules/projects/`, `apps/server/src/app/routes/`, and existing server test trees as specified by accepted Proposal 07; extend onboarding/configuration UI and tests under `apps/web/src/features/`.
+- Project Config production v1 treats `schema_version: 1` as its first supported format; repository inspection found no shipped predecessor. Only `.ebb-orchestrator/` is canonical; the legacy `.orchestrator/` path is not imported. ContextManifest production producer remains gated on the independent design proposal `../proposals/08-production-context-manifest.md`; no placeholder provenance is permitted.
+- Create append-only Project Config SQLite migration after `031_planning_request_linkage.sql` and `032_github_project_mapping_feedback.sql`; select and verify the next unused migration sequence before implementation.
 - Modify: `.github/workflows/production-gates.yml` only for the required Windows keyring acceptance matrix.
 
-**Interfaces:** GitHub transport supplies Issue comment DTO; HumanFeedback module owns Project mapping, atomic inbox insert+receipt acknowledgement, dedupe and triage. Production `main.ts` constructs worker/service and passes `deps.github`; sync is optional and local workflow remains usable offline. Project Config follows only approved Proposal 07 contract. Keyring acceptance runs on Windows and Ubuntu without provider secrets.
+**Interfaces:** GitHub transport supplies Issue comment DTO; HumanFeedback module owns Project mapping, atomic inbox insert+receipt acknowledgement, dedupe and triage. Production `main.ts` constructs worker/service and passes `deps.github`; sync is optional and local workflow remains usable offline. Project Config reads candidates only from `.ebb-orchestrator/`, stores immutable candidates and active approved normalized revisions in SQLite, binds approval to candidate/hash, and never auto-applies repository changes. Keyring acceptance runs on Windows and Ubuntu without provider secrets.
 
 **RED:**
 
@@ -253,7 +266,7 @@ Expected: real Coordinator creates 2–3 dependent Tasks; validated plan waits f
 Run: pnpm --filter @ebb-orchestrator/server exec vitest run test/modules/github/human-feedback-service.test.ts test/app/human-feedback-routes.test.ts test/modules/github/github-sync-worker.test.ts --pool=forks --maxWorkers=1
 Expected baseline failure: domain inbox/mapping route absent, crash cannot atomically link durable item and delivery receipt.
 Run: pnpm --filter @ebb-orchestrator/web test -- human-feedback
-Expected baseline failure: project feedback inbox route/component absent when UI is approved.
+Expected baseline failure: required project feedback inbox route/component is absent.
 ```
 
 **GREEN:**
@@ -261,13 +274,25 @@ Expected baseline failure: project feedback inbox route/component absent when UI
 ```text
 Run: pnpm --filter @ebb-orchestrator/server exec vitest run test/modules/github/human-feedback-service.test.ts test/app/human-feedback-routes.test.ts test/modules/github/github-sync-worker.test.ts test/platform/database/config-migrator.test.ts test/main.test.ts --pool=forks --maxWorkers=1
 Expected: exact GitHub comment-ID dedupe, bot/marker filtering, transaction/restart, session/Origin/CSRF, cross-project isolation, production worker wiring, offline behavior and Project Config migration lifecycle pass.
+Run: pnpm --filter @ebb-orchestrator/server exec vitest run test/modules/projects/project-config-service.test.ts test/modules/projects/project-config-repository.test.ts test/app/project-config-routes.test.ts test/platform/database/project-config-migration.test.ts --pool=forks --maxWorkers=1
+Expected: immutable candidate source bytes and canonical manifest hash across HEAD/dirty/untracked/deleted files; normalized revision hash binding and restart integrity; current-candidate idempotency; atomic stale transition and capture/approval race orderings; exact candidateId/hash approval CAS and stale rejection; cross-project ownership; symlink/junction/reparse/traversal/TOCTOU rejection; failed capture preserves current candidate and active pointer; format migration creates reviewable candidate; semantic migration returns USER_DECISION_REQUIRED; verified DB-backup failure stops schema migration; transaction crash before/after commit preserves old/new active pointer consistently; corrupt/unsupported active revision blocks Project dispatch without repository/default/older-revision fallback.
 Run: pnpm --filter @ebb-orchestrator/web test -- human-feedback
-Expected: approved inbox interactions and untrusted text rendering pass; omit only if Proposal 05 explicitly chose API-only and records that UI scope is moved out of Plan06.
+Expected: approved inbox interactions and untrusted text rendering pass; these tests are required by the accepted Proposal 05 scope.
+Run: pnpm --filter @ebb-orchestrator/web test -- project-config onboarding
+Expected: UI renders the persisted candidate's exact source diff and manifest hash, sends approval for that exact candidate/hash, rejects stale candidates, and cannot silently activate or apply repository changes.
 Run: pnpm --filter @ebb-orchestrator/web test:e2e
 Expected: backend-backed E2E passes with clean child-process and home teardown.
 ```
 
 **Acceptance:** Re-run current 7-case `v1-crash-matrix.test.ts` and persisted merge restart test; run GitHub issue comment poll twice and across production restart; prove exactly one inbox row, one receipt, no workflow mutation, no PR comments/reviews; run Windows + Ubuntu keyring import/store/retrieve/revoke smoke with ephemeral non-production test entries and verified cleanup.
+
+Project Config production restart acceptance runs in a disposable Project/home against the composed production server: persist an approved active revision and a separate pending candidate; restart the process; prove only the approved normalized snapshot is runtime authority, the pending candidate remains reviewable, and exact diff/hash approval activates only that snapshot. In separate recovery cases, inject failure before/after the active-pointer transaction and corrupt/unsupported active revision; prove atomic old/new recovery and that the affected Project remains blocked with no fallback or Agent dispatch. Record migration backup result, restart/process cleanup, and redacted evidence. A mocked service unit test alone does not satisfy production restart acceptance. On Windows, the acceptance command verifies capture returns `PROJECT_CONFIG_UNSUPPORTED_PLATFORM`/HTTP 503 before any candidate/state row is written, then reports the lifecycle/restart happy path as `WAIVED / NOT RUN`; that platform result does not substitute for full supported-platform acceptance.
+
+Plan 06 also requires its original operational/configuration UI contract: Run displays a persisted task-bound context manifest (IDs/versions only) and safe artifact metadata without contents, prompts or hidden reasoning; Coordinator request-bound Runs whose manifest is unsupported by schema v1 state that manifest is unavailable. Settings displays only server-authoritative values with their actual scope/source, identifies unsupported hierarchy/security values as unavailable, and derives Local Mode warning from server state. Usage displays applicable budget scopes, policy, spent/reserved values, effective limit and RESERVED entries from existing budget authority; historical aggregate usage records are labeled separately. These are read-only projections; they do not add active-config/budget write paths or new policy semantics.
+
+**Partial execution evidence (2026-09-30):** Run UI/API now project artifact metadata only and exact task/run-bound persisted ContextManifest IDs/versions. A corrupted ID JSON value or a non-string array causes a generic `503 context manifest unavailable`; focused route regression passed, and independent security re-review is `PASS`. Request-bound Runs return no fabricated manifest and the UI labels it unavailable. Production has no ContextManifest writer or callsite tied to actual runtime context construction, so there are no records from real Runs to display; this acceptance remains open until the accepted Proposal 08 implementation and runtime-backed acceptance pass. Settings and Usage now render read-only server-authoritative facts and budget/reservation projections, with unsupported values called unavailable. Browser E2E passed 6/6 with launcher exit 0 and verified teardown; the malformed-project response fixture still emits expected error-boundary console noise.
+
+**Повторный acceptance и teardown review (2026-09-30):** `pnpm plan06:github-inbox:acceptance` прошла на production `dist/main.js` с local GitHub HTTP fixture: повторный poll до/после restart сохранил одну inbox row и один `DELIVERED` receipt, workflow tables остались без изменений, cleanup прошёл; test-only keyring shim не является OS-keyring evidence. После принятия fail-closed на Windows `pnpm plan06:project-config:acceptance` проверила HTTP 503 `PROJECT_CONFIG_UNSUPPORTED_PLATFORM`, отсутствие candidate/state rows и integrity базы, затем вывела `WAIVED / NOT RUN` для Windows lifecycle/restart happy path. Полная Project Config lifecycle acceptance на supported POSIX host остаётся незапущенной. Independent review прежнего browser E2E teardown выявил, что Playwright detached browser groups не покрывались проверкой родительской process group; старый E2E PASS сам по себе это замечание не закрывает. Исправление теперь отслеживает подтверждённые detached sessions и оставляет isolated home при неразрешённом ownership; regression, `node --check`, ESLint и `git diff --check` прошли, но POSIX integration кейсы на Windows `SKIP`, Linux execution остаётся `NOT RUN`.
 
 **Review Focus:** unknown/ambiguous Project mapping never routes comment elsewhere; request body cannot choose repository/project ownership; comment text remains untrusted; credentials/body never appear in logs; existing `github_feedback_deliveries` are not mislabeled as inbox records; no secret value in CI.
 
@@ -281,15 +306,15 @@ Expected: backend-backed E2E passes with clean child-process and home teardown.
 - Evidence target: `docs/audit/hermes-development-workflow-parity.md`.
 - Modify migration scripts/config only after a reproduced failing contract and test-first fix; do not remove active `.opencode` workflow in this Task.
 
-**RED:** prior approved parity runner timed out/failed before a valid parity report; fixture `tools/hermes/fixtures/parity-plan.md` отсутствует, а required two read-only subagent behavior is unproven.
+**RED:** prior approved parity runner timed out/failed before a valid parity report; fixture `tools/hermes/fixtures/parity-plan.md` создан, но required two read-only subagent behavior and provider-backed parity report are unproven.
 
 **GREEN:**
 
 ```text
 Run: pnpm hermes:setup
-Expected: canonical skills are materialized in the isolated managed profile with verified hashes.
+Expected: setup validates the canonical repository-owned `.agents/skills/` inventory and configures project trust/discovery in the isolated managed profile; it does not copy those skills into Hermes profile directories.
 Run: pnpm hermes:check
-Expected: supported CLI, trust/discovery, delegation and provider checks all PASS.
+Expected: supported CLI, canonical project skill discovery, trust, delegation and provider checks all PASS.
 Run: create `tools/hermes/fixtures/parity-plan.md` with the current contracts: ровно два параллельных read-only subagents без nested delegation; только `.agents/skills/`; lint/typecheck/test/diff-check; no product-code changes, merge, push or release; report has date/branch/HEAD/commands/evidence/verdict; no automatic commit.
 Expected: fixture exists, is reviewable, excludes stale `.hermes.md` and `tools/hermes/skills/` assumptions and cannot authorize repository mutations.
 Run: pnpm hermes:execute -- tools/hermes/fixtures/parity-plan.md
@@ -303,13 +328,13 @@ Expected: parity verdict PASS, exactly two read-only subagents, no nested/third 
 **Depends on:** Tasks 4–7 complete; scan targets the final source revision.
 
 **Files:**
-- Create: `.github/workflows/codeql.yml` using GitHub CodeQL advanced setup for JavaScript/TypeScript.
+- Verify/configure: `.github/workflows/codeql.yml` using GitHub CodeQL advanced setup for JavaScript/TypeScript.
 - Modify: `docs/architecture/plans/09-production-readiness.md`, `docs/architecture/plans/governance/evidence/07-current-plan-reconciliation.md`.
 - No source scanner binary or SARIF/report is committed to the product repository.
 
 **Interfaces:** workflow runs on `push` to `master`/`develop`, `pull_request` to `master`, and scheduled refresh; use read-only `contents`/`actions` and only `security-events: write` required for Code Scanning result upload. GitHub CodeQL advanced setup for JavaScript/TypeScript uploads the analysis when `analyze` completes; verify repository is public or has Code Security entitlement before relying on upload ([official setup](https://docs.github.com/en/code-security/code-scanning/creating-an-advanced-setup-for-code-scanning/configuring-advanced-setup-for-code-scanning)). Dependency audit artifact remains a separate existing control and never satisfies this source scan.
 
-**RED:** no `.github/workflows/codeql.yml` exists and no fresh source scan result is tied to current revision.
+**Current state (2026-09-30):** `.github/workflows/codeql.yml` is present with JavaScript/TypeScript CodeQL analysis and least-privilege job permissions. No hosted analysis result is tied to the current source revision, so Task 8 remains open; a configured workflow is not scan evidence.
 
 **GREEN:**
 
@@ -374,5 +399,19 @@ Expected: exit code 0; `git status --short` lists only reviewed intended evidenc
 
 - `plan-04`, `plan-05`, `plan-06`, `plan-07`, `plan-09` have all source acceptance criteria met, required provider/security scan evidence retained, and independent whole-plan reviews PASS.
 - Original metadata/checkboxes/evidence and `02-current-state.md` agree with `generated.md`.
-- `plan-19` changes to `completed` only after its final review and every completion criterion above passes. `plan-14` and `plan-16` are not changed by this plan.
+- `plan-19` changes to `completed` only after its final review and every completion criterion above passes. `plan-14` is not changed by this plan. Plan16 status/evidence may be reconciled; its destructive/archive execution remains blocked until the exact action list and external archive destination are explicitly approved.
 - No push or merge is part of completion; branch transfer requires a separate instruction.
+
+## Continuation evidence (2026-09-30, final review and current gates)
+
+- User decision: Project Config capture fails closed on Windows until safe handle/reparse verification is implemented and verified. `pnpm plan06:project-config:acceptance` on Windows reports HTTP 503 `PROJECT_CONFIG_UNSUPPORTED_PLATFORM`, no candidate/state writes, and `WAIVED / NOT RUN` for the Windows lifecycle path. Supported POSIX lifecycle acceptance remains open.
+- Windows E2E teardown review finding fixed: `terminateWindowsChild` failure now records PID, exit/signal state, `taskkill` code, bounded stderr and cause; `run-e2e.mjs` includes the child name/lifecycle summary. A platform-independent regression injects `taskkill` and exit polling. `node --test apps/web/test/e2e/credential-handoff.test.mjs` PASS: 29 passed, 2 POSIX-only skipped.
+- Browser E2E rerun inside the restricted runner passed all six browser scenarios but `taskkill.exe` returned code 1 and the frontend child remained alive; the launcher correctly failed and retained that run's isolated home. After verifying the exact child PID/name/start time, only that E2E-owned process was stopped; its retained home was not deleted. The same `pnpm --filter @ebb-orchestrator/web test:e2e` rerun outside that restriction passed 6/6 with exit 0 and verified teardown/home cleanup. No application defect was found in this failure.
+- Fresh gates after the final code changes: `pnpm lint` PASS; `pnpm typecheck` PASS; unrestricted `pnpm test` PASS (113 files, 1,016 passed, 13 skipped; root launcher/acceptance scripts 21/21); `pnpm build` PASS; browser E2E 6/6, exit 0. The separate limited-runner full test previously failed only on nested `tsx` `uv_os_get_passwd ENOMEM` and readiness acknowledgements.
+- Documentation reconciliation: `pnpm docs:check` PASS; `pnpm docs:test` PASS 20/20; `pnpm docs:rename:check` PASS, 43 entries; `pnpm docs:roadmap` generated 33 Plans and read-back matches metadata/statuses. Current-state documentation now records the missing ContextManifest producer, current Hermes check failure, Plan09 source-scan gap, Plan10 historical-report caveat and Plan16 stale inventory/archive gate; historical completed statuses/unchecked steps were not rewritten.
+- Fresh `hermes --version` exits 1 with no output and `pnpm hermes:check` is `CHECK_FAILED` for CLI version, project trust/discovery and delegation settings; `.hermes.md` and all 19 canonical skills pass. Managed `pnpm hermes:setup` was not retried because its prior post-update attempt stopped before dispatch on the missing Python `ruamel` dependency.
+- Plan16 remains blocked: 97-entry inventory is stale (75 paths absent including 11 directories; 24 Git-state mismatches), external archive destination is unknown, and its strict plan gate disallows packaging or side effects before written inventory-rebaseline approval and an exact target.
+- Fresh whole-plan reviews: Plan05's documentation finding about accepted Proposal 06 was resolved and independently re-reviewed `PASS`; Plan05 itself remains blocked by real Hermes/same-request acceptance and the not-yet-implemented ContextManifest producer. Plan06's plan-consistency review is `APPROVED`, but this is not completion approval: supported-platform Project Config acceptance, Ubuntu keyring evidence, ContextManifest implementation/acceptance, and external Hermes acceptance remain open.
+- Proposal08 was independently reviewed `PASS` and explicitly approved by the user on 2026-09-30. It requires Run bindings for TASK/EPIC/REQUEST, version/hash provenance, exact-fingerprint same-session resume with fail-closed mismatch handling, and the corresponding `spec-01` §10.2 update. A separate implementation plan is being prepared and must pass independent plan review before code changes.
+- Plan05 and Plan06 remain blocked/in progress on real Hermes request-to-Epic/same-request restart, production ContextManifest implementation/acceptance, supported-platform Config acceptance, and Ubuntu keyring evidence. Plan05's whole-plan review still has blocking acceptance gates; Plan06's approved plan-consistency review does not clear its implementation gates. Schema v1 is the first supported Project Config format; no predecessor migration is applicable. Plan09 remains in progress without current-revision CodeQL/SARIF and dependent whole-plan review. These gates are NOT VERIFIED; no plan lifecycle is being closed.
+- `git diff --check` PASS. No commit, push, merge, archive, inventory mutation or lifecycle closeout was performed.

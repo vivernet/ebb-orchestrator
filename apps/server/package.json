@@ -9,6 +9,7 @@
     "dev": "node ../../scripts/run-server.js dev",
     "prebuild": "node scripts/clean-dist.mjs",
     "build": "pnpm --filter @ebb-orchestrator/contracts build && tsc -p tsconfig.build.json && node scripts/build.mjs",
+    "build:windows-run-supervisor": "node scripts/build-windows-run-supervisor.mjs",
     "start": "node ../../scripts/run-server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
@@ -21,6 +22,7 @@
     "@napi-rs/keyring": "2.1.0",
     "argon2": "0.45.1",
     "fastify": "^5.12.4",
+    "js-yaml": "^5.4.2",
     "zod": "^4.6.0"
   }
 }

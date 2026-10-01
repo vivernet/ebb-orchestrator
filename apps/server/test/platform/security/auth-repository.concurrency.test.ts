@@ -13,6 +13,9 @@ import type { Database } from "../../../src/platform/database/database.js";
 import type { RawSecretBytes } from "../../../src/platform/security/auth-ports.js";
 
 const WORKER_SOURCE = `
+  // TSX's temp-directory fallback calls os.userInfo() on Windows; use a process-local cache identity instead.
+  process.geteuid ??= () => process.pid;
+  await import("tsx/esm");
   const { parentPort, workerData } = await import("node:worker_threads");
   const { createSqliteDatabase } = await import(workerData.databaseUrl);
   const { runMigrations } = await import(workerData.migratorUrl);
@@ -80,7 +83,7 @@ async function setup(): Promise<{ path: string; token: RawSecretBytes; csrf: Raw
 async function runControlledRace(path: string, token: RawSecretBytes, csrf: RawSecretBytes, first: Operation, second: Operation): Promise<{ firstResult: unknown; secondResult: unknown; afterFirst: Row }> {
   const workers = new Map<number, Worker>();
   const events: Array<{ kind: string; workerId: number; result?: unknown }> = [];
-  const spawn = (workerId: number, operation: Operation, randomByte: number | null) => new Worker(WORKER_SOURCE, { eval: true, execArgv: ["--import", "tsx/esm"], workerData: {
+  const spawn = (workerId: number, operation: Operation, randomByte: number | null) => new Worker(WORKER_SOURCE, { eval: true, execArgv: ["--input-type=module"], workerData: {
     path, workerId, operation, randomByte, now: "2030-01-01T00:01:00.000Z", phc: PHC, token: [...token], csrf: [...csrf],
     databaseUrl: new URL("../../../src/platform/database/sqlite-database.ts", import.meta.url).href,
     migratorUrl: new URL("../../../src/platform/database/migrator.ts", import.meta.url).href,

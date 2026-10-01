@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
-import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { once } from "node:events";
@@ -11,6 +12,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
 import { waitForChildExit } from "./child-lifecycle.mjs";
+import { createDetachedLedgerErrorDetector } from "./detached-ledger-error-detector.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
 const webRoot = join(repoRoot, "apps/web");
@@ -20,6 +22,9 @@ const ownedLaunchFiles = [
   "apps/web/vite.config.ts",
   "apps/web/playwright.config.ts",
   "apps/web/test/e2e/run-e2e.mjs",
+  "apps/web/test/e2e/child-lifecycle.mjs",
+  "apps/web/test/e2e/detached-ledger-error-detector.mjs",
+  "apps/web/test/e2e/detached-process-ledger.cjs",
   "apps/web/test/e2e/web-e2e-server.mjs",
   "apps/web/test/e2e/v1-ui.spec.ts",
   "scripts/run-server.js",
@@ -280,9 +285,14 @@ test("production and E2E paths exclude secret-bearing environment, argv, stdin, 
     assert.doesNotMatch(text, /(?:console\.(?:log|info|warn|error)|process\.(?:stdout|stderr)\.write)[^\n]*(?:password|e2ePassword|secret)/i);
   }
   const launcher = await source("apps/web/test/e2e/run-e2e.mjs");
+  const playwright = await source("apps/web/playwright.config.ts");
   const fixtures = await source("apps/web/test/e2e/fixtures.ts");
   const spec = await source("apps/web/test/e2e/v1-ui.spec.ts");
   assert.match(launcher, /passwordChannel\.endpoint/);
+  assert.match(launcher, /EBB_E2E_HOME:\s*e2eHome/);
+  assert.match(launcher, /EBB_E2E_PLAYWRIGHT_OUTPUT_DIR:\s*join\(e2eHome, ["']playwright-output["']\)/);
+  assert.match(playwright, /outputDir:\s*launcherOutputDir\(\)/);
+  assert.match(playwright, /output directory must be a child of its isolated home/);
   assert.match(fixtures, /process\.env\.EBB_E2E_PASSWORD_CHANNEL/);
   assert.match(fixtures, /import\s*\{\s*test\s+as\s+base\s*\}\s*from\s*["']@playwright\/test["']/);
   assert.match(spec, /data:\s*\{\s*password:\s*e2ePassword\.toString\('utf8'\)\s*\}/);
@@ -307,6 +317,420 @@ test("launcher teardown is failure-visible and removes only its isolated home", 
   assert.match(spec, /start/);
 });
 
+test("launcher teardown owns, escalates, and verifies each POSIX child process group", async () => {
+  const launcher = await source("apps/web/test/e2e/run-e2e.mjs");
+  const lifecycle = await source("apps/web/test/e2e/child-lifecycle.mjs");
+  const ledgerErrorDetector = await source("apps/web/test/e2e/detached-ledger-error-detector.mjs");
+  const preload = await source("apps/web/test/e2e/detached-process-ledger.cjs");
+  assert.match(launcher, /spawnManagedChild/);
+  assert.match(launcher, /monitorDetachedProcessGroups\(playwright,/);
+  assert.match(launcher, /detached-process-groups\.jsonl/);
+  assert.match(launcher, /NODE_OPTIONS/);
+  assert.match(launcher, /EBB_E2E_PROCESS_GROUP_LEDGER/);
+  assert.match(launcher, /createDetachedLedgerErrorDetector/);
+  assert.match(ledgerErrorDetector, /suffix/);
+  assert.match(launcher, /mode:\s*0o600/);
+  assert.match(launcher, /terminateManagedChild/);
+  assert.match(lifecycle, /readLinuxProcessIdentity/);
+  assert.match(lifecycle, /startTicks/);
+  assert.match(lifecycle, /signalVerifiedDetachedGroups/);
+  assert.match(preload, /childProcess\.spawn\s*=\s*function trackedSpawn/);
+  assert.match(preload, /O_APPEND/);
+  assert.match(preload, /fsyncSync/);
+  assert.match(lifecycle, /execFileProvider\("taskkill\.exe", \["\/PID", String\(child\.pid\), "\/T", "\/F"\]/);
+  assert.match(launcher, /cleanupErrors\.length === 0[\s\S]*assertCleanSqliteAndHome/);
+});
+
+test("Windows taskkill failure exposes process identity, status, and stderr", async () => {
+  const { terminateWindowsChild } = await import("./child-lifecycle.mjs");
+  assert.equal(typeof terminateWindowsChild, "function");
+
+  const child = { pid: 42, exitCode: null, signalCode: null };
+  const lifecycleEvents = [];
+  const taskkillError = Object.assign(new Error("taskkill failed"), { code: "EPERM" });
+  let observedError;
+  await assert.rejects(terminateWindowsChild(child, {
+    timeoutMs: 0,
+    onEvent: (event, details) => lifecycleEvents.push({ event, ...details }),
+    waitForChildExitProvider: async () => ({ exited: false, code: null, signal: null }),
+    execFileProvider: (command, args, options, callback) => {
+      assert.equal(command, "taskkill.exe");
+      assert.deepEqual(args, ["/PID", "42", "/T", "/F"]);
+      assert.deepEqual(options, { shell: false, windowsHide: true });
+      callback(taskkillError, "", "Access is denied.");
+    },
+  }), (error) => {
+    observedError = error;
+    assert.match(error.message, /Windows E2E child did not exit after taskkill \(pid=42, exitCode=running, signalCode=none, taskkillCode=EPERM, taskkillStderr="Access is denied\."\)/);
+    return true;
+  });
+
+  assert.equal(observedError.cause, taskkillError);
+  assert.ok(lifecycleEvents.some((event) => event.event === "taskkill-result"
+    && event.succeeded === false
+    && event.errorCode === "EPERM"
+    && event.stderr === "Access is denied."));
+});
+
+test("detached ledger error marker is detected when split across stderr chunks", () => {
+  const marker = "EBB_E2E_DETACHED_LEDGER_ERROR";
+  for (let splitAt = 1; splitAt < marker.length; splitAt += 1) {
+    let detectionCount = 0;
+    const detect = createDetachedLedgerErrorDetector(() => { detectionCount += 1; });
+    assert.equal(detect(Buffer.from(marker.slice(0, splitAt))), false, `split ${splitAt}: partial marker`);
+    assert.equal(detect(Buffer.from(marker.slice(splitAt))), true, `split ${splitAt}: trailing marker`);
+    assert.equal(detectionCount, 1, `split ${splitAt}: marker callback count`);
+  }
+});
+
+function processGroupExists(processGroupId) {
+  try {
+    process.kill(-processGroupId, 0);
+    return true;
+  } catch (error) {
+    if (error?.code === "ESRCH") return false;
+    throw error;
+  }
+}
+
+async function waitForProcessGroupExit(processGroupId, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (processGroupExists(processGroupId) && Date.now() < deadline) {
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 20));
+  }
+  return !processGroupExists(processGroupId);
+}
+
+test("POSIX teardown escalates when a grandchild ignores SIGTERM and removes only its owned home", {
+  skip: process.platform !== "linux",
+}, async (t) => {
+  const home = await mkdtemp(join(tmpdir(), "ebb-e2e-process-group-"));
+  const ledgerPath = join(home, "detached-process-groups.jsonl");
+  const preloadPath = join(repoRoot, "apps/web/test/e2e/detached-process-ledger.cjs");
+  await writeFile(ledgerPath, "", { flag: "wx", mode: 0o600 });
+  const script = [
+    "process.on('SIGTERM', () => {});",
+    "const { spawn } = require('node:child_process');",
+    "const grandchild = spawn(process.execPath, ['-e', \"process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);\"], { stdio: 'ignore' });",
+    "process.send({ type: 'ready', grandchildPid: grandchild.pid });",
+    "setInterval(() => {}, 1000);",
+  ].join("\n");
+  let processGroupId;
+  let child;
+  t.after(async () => {
+    let cleanupError;
+    if (child) {
+      try { await (await import("./child-lifecycle.mjs")).terminateManagedChild(child, { termTimeoutMs: 100, killTimeoutMs: 3_000 }); }
+      catch (error) { cleanupError = error; }
+    }
+    const groupCleaned = !Number.isInteger(processGroupId) || await waitForProcessGroupExit(processGroupId, 3_000);
+    assert.ok(groupCleaned && !cleanupError, `Test-owned process group ${processGroupId} survived safe cleanup (${cleanupError?.message ?? "group remains"}); retained ${home}`);
+    await rm(home, { recursive: true, force: false });
+    await assert.rejects(stat(home), { code: "ENOENT" });
+  });
+  const { spawnManagedChild, terminateManagedChild } = await import("./child-lifecycle.mjs");
+  child = spawnManagedChild(process.execPath, ["-e", script], {
+    cwd: home,
+    env: {
+      ...process.env,
+      EBB_E2E_HOME: home,
+      EBB_E2E_PROCESS_GROUP_LEDGER: ledgerPath,
+      NODE_OPTIONS: [process.env.NODE_OPTIONS, "--require", JSON.stringify(preloadPath)].filter(Boolean).join(" "),
+    },
+    stdio: ["ignore", "ignore", "ignore", "ipc"],
+    windowsHide: true,
+  });
+  processGroupId = child.pid;
+  const { monitorDetachedProcessGroups } = await import("./child-lifecycle.mjs");
+  monitorDetachedProcessGroups(child, { pollIntervalMs: 10, ledgerPath });
+  const [ready] = await once(child, "message");
+  assert.equal(ready.type, "ready");
+  assert.ok(Number.isInteger(ready.grandchildPid));
+
+  const lifecycleEvents = [];
+  const result = await terminateManagedChild(child, {
+    termTimeoutMs: 100,
+    killTimeoutMs: 3_000,
+    pollIntervalMs: 20,
+    onEvent: (event, details) => lifecycleEvents.push({ event, ...details }),
+  });
+  assert.deepEqual(result, { exited: true, groupGone: true, escalated: true });
+  assert.ok(lifecycleEvents.some((event) => event.event === "signal-result" && event.signal === "SIGKILL" && event.sent));
+  assert.equal(processGroupExists(processGroupId), false, "owned group and SIGTERM-ignoring grandchild are gone");
+});
+
+test("POSIX teardown tracks detached descendants and keeps the home until their group is gone", {
+  skip: process.platform !== "linux",
+}, async (t) => {
+  const home = await mkdtemp(join(tmpdir(), "ebb-e2e-detached-group-"));
+  const ledgerPath = join(home, "detached-process-groups.jsonl");
+  const preloadPath = join(repoRoot, "apps/web/test/e2e/detached-process-ledger.cjs");
+  const survivorIdentityPath = join(home, "survivor-identity.json");
+  await writeFile(ledgerPath, "", { flag: "wx", mode: 0o600 });
+  const detachedLeaderScript = [
+    "const { spawn } = require('node:child_process');",
+    "const { readFileSync, writeFileSync } = require('node:fs');",
+    "const survivor = spawn(process.execPath, ['-e', \"process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);\"], { stdio: 'ignore' });",
+    "const stat = readFileSync(`/proc/${survivor.pid}/stat`, 'utf8');",
+    "const fields = stat.slice(stat.lastIndexOf(')') + 1).trim().split(/\\s+/);",
+    "writeFileSync(process.env.EBB_E2E_SURVIVOR_IDENTITY, JSON.stringify({ pid: survivor.pid, processGroupId: Number(fields[2]), sessionId: Number(fields[3]), startTicks: fields[19] }), { mode: 0o600 });",
+    "survivor.unref();",
+    "setTimeout(() => process.exit(0), 75);",
+  ].join("\n");
+  const rootScript = [
+    "const { spawn } = require('node:child_process');",
+    `const detached = spawn(process.execPath, ["-e", ${JSON.stringify(detachedLeaderScript)}], { detached: true, stdio: 'ignore' });`,
+    "detached.once('exit', () => process.send({ type: 'ready', detachedPid: detached.pid }));",
+    "setInterval(() => {}, 1000);",
+  ].join("\n");
+  let processGroupId;
+  let rootGroupId;
+  let child;
+  let terminationAttempted = false;
+  t.after(async () => {
+    let cleanupError;
+    if (child && !terminationAttempted) {
+      try { await (await import("./child-lifecycle.mjs")).terminateManagedChild(child, { termTimeoutMs: 100, killTimeoutMs: 3_000 }); }
+      catch (error) { cleanupError = error; }
+    }
+    try {
+      const { readLinuxProcessIdentity } = await import("./child-lifecycle.mjs");
+      const saved = JSON.parse(await readFile(survivorIdentityPath, "utf8"));
+      const current = readLinuxProcessIdentity(saved.pid);
+      if (current && current.pid === saved.pid && current.processGroupId === saved.processGroupId
+          && current.sessionId === saved.sessionId && current.startTicks === saved.startTicks) {
+        process.kill(saved.pid, "SIGKILL");
+      } else if (processGroupExists(saved.processGroupId)) {
+        cleanupError ??= new Error("Survivor PID identity changed; refusing to signal test cleanup process");
+      }
+    } catch (error) {
+      if (error?.code !== "ENOENT") cleanupError ??= error;
+    }
+    const groupCleaned = (await Promise.all([processGroupId, rootGroupId].map((groupId) => (
+      Number.isInteger(groupId) ? waitForProcessGroupExit(groupId, 3_000) : true
+    )))).every(Boolean);
+    assert.ok(groupCleaned, `Test-owned process groups ${processGroupId}/${rootGroupId} survived safe cleanup (${cleanupError?.message ?? "group remains"}); retained ${home}`);
+    await rm(home, { recursive: true, force: false });
+    await assert.rejects(stat(home), { code: "ENOENT" });
+  });
+
+  const { monitorDetachedProcessGroups, spawnManagedChild, terminateManagedChild } = await import("./child-lifecycle.mjs");
+  child = spawnManagedChild(process.execPath, ["-e", rootScript], {
+    cwd: home,
+    env: {
+      ...process.env,
+      EBB_E2E_HOME: home,
+      EBB_E2E_PROCESS_GROUP_LEDGER: ledgerPath,
+      EBB_E2E_SURVIVOR_IDENTITY: survivorIdentityPath,
+      NODE_OPTIONS: [process.env.NODE_OPTIONS, "--require", JSON.stringify(preloadPath)].filter(Boolean).join(" "),
+    },
+    stdio: ["ignore", "ignore", "ignore", "ipc"],
+    windowsHide: true,
+  });
+  rootGroupId = child.pid;
+  monitorDetachedProcessGroups(child, { pollIntervalMs: 10, ledgerPath });
+  const [ready] = await once(child, "message");
+  assert.equal(ready.type, "ready");
+  processGroupId = ready.detachedPid;
+
+  const trackingDeadline = Date.now() + 3_000;
+  while (!child.ownedDetachedProcessGroups?.has(processGroupId) && Date.now() < trackingDeadline) {
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 10));
+  }
+  const trackedGroup = child.ownedDetachedProcessGroups?.get(processGroupId);
+  assert.ok(trackedGroup, "append-only spawn ledger captures detached session leader even after it exits");
+  assert.ok(typeof trackedGroup.startTicks === "string", "ledger records Linux kernel start ticks");
+  assert.equal(processGroupExists(processGroupId), true, "detached leader exited but its persistent same-session child remains");
+  const survivor = JSON.parse(await readFile(survivorIdentityPath, "utf8"));
+  const { readLinuxProcessIdentity } = await import("./child-lifecycle.mjs");
+  const beforeTerm = readLinuxProcessIdentity(survivor.pid);
+  assert.deepEqual(beforeTerm, survivor, "survivor PID, process group, session, and start ticks still match the owned identity");
+  process.kill(survivor.pid, "SIGTERM");
+  await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
+  assert.deepEqual(readLinuxProcessIdentity(survivor.pid), survivor, "the exact detached survivor ignores SIGTERM and remains alive");
+  assert.equal(processGroupExists(processGroupId), true, "same-session group remains after the verified SIGTERM");
+
+  terminationAttempted = true;
+  await assert.rejects(terminateManagedChild(child, {
+    termTimeoutMs: 100,
+    killTimeoutMs: 100,
+    pollIntervalMs: 20,
+  }), /could not be verified/);
+  assert.equal(processGroupExists(processGroupId), true, "teardown fails closed while the recorded group still has a surviving child");
+  assert.equal(existsSync(home), true, "home remains available while the orphaned recorded group is alive");
+});
+
+test("POSIX teardown refuses root process-group reuse before signalling", async (t) => {
+  const { terminatePosixManagedChild } = await import("./child-lifecycle.mjs");
+  const processId = 424_242;
+  const originalStartTicks = "100001";
+  const replacementStartTicks = "100002";
+
+  for (const scenario of ["before-term", "before-kill"]) {
+    await t.test(scenario, async () => {
+      let identityReads = 0;
+      let currentStartTicks = originalStartTicks;
+      const signalCalls = [];
+      const processIdentityProvider = () => {
+        identityReads += 1;
+        if ((scenario === "before-term" && identityReads >= 1) || (scenario === "before-kill" && identityReads >= 2)) {
+          currentStartTicks = replacementStartTicks;
+        }
+        return { pid: processId, processGroupId: processId, sessionId: processId, startTicks: currentStartTicks };
+      };
+      const child = {
+        pid: processId,
+        ownedProcessGroupId: processId,
+        ownedProcessIdentity: { pid: processId, processGroupId: processId, sessionId: processId, startTicks: originalStartTicks },
+        exitCode: null,
+        signalCode: null,
+      };
+
+      await assert.rejects(terminatePosixManagedChild(child, {
+        termTimeoutMs: 0,
+        killTimeoutMs: 0,
+        pollIntervalMs: 1,
+        processIdentityProvider,
+        processGroupExistsProvider: () => true,
+        signalProcessGroupProvider: (groupId, signal) => {
+          signalCalls.push({ groupId, signal, startTicks: currentStartTicks });
+          return true;
+        },
+      }), /refusing to signal/);
+
+      const expectedCalls = scenario === "before-term"
+        ? []
+        : [{ groupId: processId, signal: "SIGTERM", startTicks: originalStartTicks }];
+      assert.deepEqual(signalCalls, expectedCalls, "no signal is sent while the observed group belongs to the replacement identity");
+      assert.ok(identityReads >= (scenario === "before-term" ? 1 : 2));
+    });
+  }
+});
+
+test("POSIX teardown keeps reading detached-group ledger through bounded signal phases", async (t) => {
+  const home = await mkdtemp(join(tmpdir(), "ebb-e2e-late-detached-ledger-"));
+  t.after(async () => {
+    if (existsSync(home)) await rm(home, { recursive: true, force: false });
+  });
+
+  const { terminatePosixManagedChild } = await import("./child-lifecycle.mjs");
+  const rootPid = 515_151;
+  const latePid = 515_252;
+  const rootIdentity = { pid: rootPid, processGroupId: rootPid, sessionId: rootPid, startTicks: "151515" };
+  const lateIdentity = { pid: latePid, processGroupId: latePid, sessionId: latePid, startTicks: "252525" };
+  const child = {
+    pid: rootPid,
+    ownedProcessGroupId: rootPid,
+    ownedProcessIdentity: rootIdentity,
+    ownedDetachedProcessGroups: new Map(),
+    exitCode: null,
+    signalCode: null,
+  };
+  const ledgerRecords = [];
+  child.detachedProcessGroupMonitor = {
+    refresh() {
+      for (const record of ledgerRecords) {
+        child.ownedDetachedProcessGroups.set(record.processGroupId, {
+          leaderPid: record.pid,
+          processGroupId: record.processGroupId,
+          sessionId: record.sessionId,
+          startTicks: record.startTicks,
+        });
+      }
+    },
+  };
+
+  let rootGroupExists = true;
+  let lateGroupExists = false;
+  let ledgerAppendedDuringTerm = false;
+  const signalCalls = [];
+  const processIdentityProvider = (pid) => {
+    if (pid === rootPid) return rootGroupExists ? rootIdentity : undefined;
+    if (pid === latePid) return lateGroupExists ? lateIdentity : undefined;
+    return undefined;
+  };
+  const processGroupExistsProvider = (processGroupId) => (
+    processGroupId === rootPid ? rootGroupExists : processGroupId === latePid ? lateGroupExists : false
+  );
+  const signalProcessGroupProvider = (processGroupId, signal) => {
+    signalCalls.push({ processGroupId, signal });
+    if (processGroupId === rootPid && signal === "SIGTERM") {
+      rootGroupExists = false;
+      child.signalCode = "SIGTERM";
+      lateGroupExists = true;
+      ledgerAppendedDuringTerm = true;
+      ledgerRecords.push({
+        version: 1,
+        type: "detached-process-group",
+        pid: latePid,
+        processGroupId: latePid,
+        sessionId: latePid,
+        startTicks: lateIdentity.startTicks,
+      });
+    }
+    return true;
+  };
+
+  await assert.rejects(terminatePosixManagedChild(child, {
+    termTimeoutMs: 0,
+    killTimeoutMs: 0,
+    pollIntervalMs: 1,
+    processIdentityProvider,
+    processGroupExistsProvider,
+    signalProcessGroupProvider,
+  }), /could not be verified/);
+
+  assert.equal(ledgerAppendedDuringTerm, true, "a new detached group is appended after the initial ownership snapshot");
+  assert.deepEqual(signalCalls, [
+    { processGroupId: rootPid, signal: "SIGTERM" },
+    { processGroupId: latePid, signal: "SIGTERM" },
+    { processGroupId: latePid, signal: "SIGKILL" },
+  ], "the teardown re-reads and signals the late group with fresh identity gates");
+  assert.equal(lateGroupExists, true, "the simulated late group remains after bounded escalation");
+  assert.equal(existsSync(home), true, "the isolated home remains while a late ledger group is alive");
+
+  lateGroupExists = false;
+  const recovered = await terminatePosixManagedChild(child, {
+    termTimeoutMs: 0,
+    killTimeoutMs: 0,
+    pollIntervalMs: 1,
+    processIdentityProvider,
+    processGroupExistsProvider,
+    signalProcessGroupProvider,
+  });
+  assert.deepEqual(recovered, { exited: true, groupGone: true, escalated: false });
+  await rm(home, { recursive: true, force: false });
+  await assert.rejects(stat(home), { code: "ENOENT" });
+});
+
+test("POSIX teardown retains the home when root identity is unavailable but its group remains", async (t) => {
+  const home = await mkdtemp(join(tmpdir(), "ebb-e2e-unknown-root-identity-"));
+  t.after(async () => {
+    if (existsSync(home)) await rm(home, { recursive: true, force: false });
+  });
+
+  const { terminatePosixManagedChild } = await import("./child-lifecycle.mjs");
+  const processId = 616_161;
+  const signalCalls = [];
+  const child = {
+    pid: processId,
+    ownedProcessGroupId: processId,
+    exitCode: 0,
+    signalCode: null,
+  };
+  await assert.rejects(terminatePosixManagedChild(child, {
+    processIdentityProvider: () => undefined,
+    processGroupExistsProvider: () => true,
+    signalProcessGroupProvider: (groupId, signal) => {
+      signalCalls.push({ groupId, signal });
+      return true;
+    },
+  }), /refusing to signal/);
+
+  assert.deepEqual(signalCalls, [], "an unverified root group is never signalled");
+  assert.equal(existsSync(home), true, "the isolated home remains while the unverified group exists");
+});
+
 function listenLoopback(server) {
   return new Promise((resolvePromise, reject) => {
     server.once("error", reject);
@@ -326,35 +750,129 @@ async function closeListener(server) {
   await new Promise((resolvePromise, reject) => server.close((error) => error ? reject(error) : resolvePromise()));
 }
 
-async function startRuntimeHarness({ port, testMode = false }) {
+async function resolveWithin(promise, timeoutMs) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((resolvePromise) => { timer = setTimeout(() => resolvePromise(undefined), timeoutMs); }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function terminateHarnessProcess(child, disposeGraceMs) {
+  let exit = await waitForChildExit(child, disposeGraceMs).catch(() => ({ exited: false }));
+  if (!exit.exited) {
+    child.kill("SIGTERM");
+    exit = await waitForChildExit(child, disposeGraceMs).catch(() => ({ exited: false }));
+  }
+  if (!exit.exited) {
+    child.kill("SIGKILL");
+    exit = await waitForChildExit(child, disposeGraceMs).catch(() => ({ exited: false }));
+  }
+  if (!exit.exited) throw new Error(`E2E runtime harness child did not exit after bounded TERM/KILL (pid=${child.pid ?? "none"})`);
+}
+
+async function cleanupRuntimeHarness(child, home, childClosePromise, spawnOutcomePromise, disposeGraceMs) {
+  if (!child.pid) {
+    const spawnOutcome = await resolveWithin(spawnOutcomePromise, disposeGraceMs);
+    if (!spawnOutcome) throw new Error("E2E runtime harness spawn outcome could not be verified; isolated home retained");
+    if (spawnOutcome.kind === "spawned") {
+      if (!child.pid) throw new Error("E2E runtime harness PID could not be verified after spawn; isolated home retained");
+    } else {
+      const closed = await resolveWithin(childClosePromise, disposeGraceMs);
+      if (!closed) throw new Error("E2E runtime harness spawn failure did not close its child handle; isolated home retained");
+    }
+  }
+
+  if (child.pid) {
+    if (child.connected) child.disconnect();
+    // The E2E wrapper owns its backend in-process, so this exact ChildProcess handle is its full process boundary.
+    await terminateHarnessProcess(child, disposeGraceMs);
+  }
+
+  if (existsSync(home)) await rm(home, { recursive: true, force: false });
+  if (existsSync(home)) throw new Error("E2E runtime harness isolated home remained after verified cleanup");
+}
+
+async function startRuntimeHarness({
+  port,
+  testMode = false,
+  serverScriptPath = join(webRoot, "test/e2e/web-e2e-server.mjs"),
+  nodeExecutablePath = process.execPath,
+  bootstrapTimeoutMs = 5_000,
+  disposeGraceMs = 5_000,
+  onSpawn,
+}) {
   const home = await mkdtemp(join(tmpdir(), "ebb-runtime-failure-"));
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/(?:password|passwd|token|secret|credential)/i.test(key)));
-  const child = spawn(process.execPath, [join(webRoot, "test/e2e/web-e2e-server.mjs"), String(port)], {
-    cwd: repoRoot,
-    env: { ...env, EBB_ORCHESTRATOR_HOME: home, ...(testMode ? { EBB_E2E_TEST_MODE: "1" } : {}) },
-    stdio: ["ignore", "ignore", "ignore", "ipc"],
-    windowsHide: true,
-  });
+  let child;
+  try {
+    child = spawn(nodeExecutablePath, [serverScriptPath, String(port)], {
+      cwd: repoRoot,
+      env: { ...env, EBB_ORCHESTRATOR_HOME: home, ...(testMode ? { EBB_E2E_TEST_MODE: "1" } : {}) },
+      stdio: ["ignore", "ignore", "ignore", "ipc"],
+      windowsHide: true,
+    });
+  } catch (error) {
+    await rm(home, { recursive: true, force: false });
+    throw error;
+  }
   const messages = [];
   const waiters = [];
+  let childError;
+  let childExit;
+  let resolveSpawnOutcome;
+  const spawnOutcomePromise = new Promise((resolvePromise) => { resolveSpawnOutcome = resolvePromise; });
+  const childClosePromise = new Promise((resolvePromise) => {
+    child.once("close", (code, signal) => {
+      resolvePromise({ code, signal });
+    });
+  });
+  child.once("spawn", () => {
+    resolveSpawnOutcome({ kind: "spawned" });
+  });
+  child.on("error", (error) => {
+    childError ??= error;
+    resolveSpawnOutcome({ kind: "error", error });
+    for (const waiter of [...waiters]) waiter.reject(error);
+  });
+  child.once("exit", (code, signal) => {
+    childExit = { code, signal };
+    const error = new Error(`E2E runtime harness exited before expected response (code=${code ?? "none"}, signal=${signal ?? "none"})`);
+    for (const waiter of [...waiters]) waiter.reject(error);
+  });
   child.on("message", (message) => {
     messages.push(message);
     const index = waiters.findIndex((waiter) => waiter.matches(message));
     if (index >= 0) waiters.splice(index, 1)[0].resolve(message);
   });
-  child.on("error", (error) => { for (const waiter of waiters.splice(0)) waiter.reject(error); });
   const waitFor = (matches, timeoutMs = 5_000) => {
     const predicate = typeof matches === "string" ? (message) => message.type === matches || message.type === "seed-error" : matches;
     const existing = messages.find(predicate);
     if (existing) return Promise.resolve(existing);
+    if (childError) return Promise.reject(childError);
+    if (childExit) return Promise.reject(new Error(`E2E runtime harness exited before expected response (code=${childExit.code ?? "none"}, signal=${childExit.signal ?? "none"})`));
     return new Promise((resolvePromise, reject) => {
-      const timer = setTimeout(() => {
-        const index = waiters.findIndex((waiter) => waiter.resolve === wrappedResolve);
+      let settled = false;
+      let timer;
+      const finish = (callback, value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        const index = waiters.indexOf(waiter);
         if (index >= 0) waiters.splice(index, 1);
-        reject(new Error("Timed out awaiting E2E server response"));
-      }, timeoutMs);
-      const wrappedResolve = (message) => { clearTimeout(timer); resolvePromise(message); };
-      waiters.push({ matches: predicate, resolve: wrappedResolve, reject });
+        callback(value);
+      };
+      const waiter = {
+        matches: predicate,
+        resolve: (message) => finish(resolvePromise, message),
+        reject: (error) => finish(reject, error),
+      };
+      timer = setTimeout(() => waiter.reject(new Error("Timed out awaiting E2E server response")), timeoutMs);
+      waiters.push(waiter);
     });
   };
   const request = async (command, options = {}) => {
@@ -364,34 +882,28 @@ async function startRuntimeHarness({ port, testMode = false }) {
     return response;
   };
   const seedPassword = Buffer.from(randomBytes(24).toString("base64url"));
-  const seeded = waitFor((message) => ["harness-ready", "ready", "seed-error"].includes(message.type));
-  child.send({ type: "seed-password", requestId: randomUUID(), password: seedPassword.toString("utf8") });
-  seedPassword.fill(0);
-  const ready = await seeded;
-  if (ready.type === "seed-error") {
-    child.disconnect();
-    if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
-    await rm(home, { recursive: true, force: true });
-    throw new Error(`E2E runtime fixture bootstrap failed: ${ready.code}`);
-  }
-  return {
-    child, home, ready, request, waitFor,
-    async dispose() {
-      if (child.connected) child.disconnect();
-      if (child.exitCode === null && child.signalCode === null) {
-        await Promise.race([
-          new Promise((resolvePromise) => child.once("close", resolvePromise)),
-          new Promise((resolvePromise) => setTimeout(resolvePromise, 5_000)),
-        ]);
-        if (child.exitCode === null && child.signalCode === null) {
-          child.kill("SIGTERM");
-          await new Promise((resolvePromise) => child.once("close", resolvePromise));
-        }
-      }
-      await rm(home, { recursive: true, force: true });
-      await assert.rejects(stat(home), { code: "ENOENT" });
-    },
+  let disposal;
+  const dispose = () => {
+    disposal ??= cleanupRuntimeHarness(child, home, childClosePromise, spawnOutcomePromise, disposeGraceMs);
+    return disposal;
   };
+  try {
+    onSpawn?.({ child, home });
+    const seeded = waitFor((message) => ["harness-ready", "ready", "seed-error"].includes(message.type), bootstrapTimeoutMs);
+    child.send({ type: "seed-password", requestId: randomUUID(), password: seedPassword.toString("utf8") });
+    const ready = await seeded;
+    if (ready.type === "seed-error") throw new Error(`E2E runtime fixture bootstrap failed: ${ready.code}`);
+    return { child, home, ready, request, waitFor, dispose };
+  } catch (error) {
+    try {
+      await dispose();
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], `E2E runtime harness bootstrap failed and teardown was not verified: ${cleanupError.message}`, { cause: cleanupError });
+    }
+    throw error;
+  } finally {
+    seedPassword.fill(0);
+  }
 }
 
 test("backend shutdown acknowledges cleanup before a normal process exit", async () => {
@@ -411,6 +923,62 @@ test("backend shutdown acknowledges cleanup before a normal process exit", async
     await assert.rejects(stat(join(harness.home, "orchestrator.lock")), { code: "ENOENT" });
   } finally {
     await harness.dispose();
+  }
+});
+
+test("runtime harness bootstrap failures terminate their child and remove their home before rejecting", async (t) => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "ebb-runtime-harness-bootstrap-"));
+  const stalledServerPath = join(fixtureRoot, "stalled-server.mjs");
+  const exitingServerPath = join(fixtureRoot, "exiting-server.mjs");
+  await writeFile(stalledServerPath, "process.on('message', () => {}); setInterval(() => {}, 1_000);\n", { flag: "wx" });
+  await writeFile(exitingServerPath, "process.exit(7);\n", { flag: "wx" });
+  try {
+    const scenarios = [
+      {
+        name: "bootstrap timeout",
+        options: { serverScriptPath: stalledServerPath, nodeExecutablePath: process.execPath, port: 45_678 },
+        timeoutMs: 100,
+        expectedError: /Timed out awaiting E2E server response/,
+      },
+      {
+        name: "child exit before bootstrap response",
+        options: { serverScriptPath: exitingServerPath, port: 45_678 },
+        timeoutMs: 2_000,
+        expectedError: /exited before expected response/,
+      },
+      {
+        name: "spawn error before bootstrap response",
+        options: { serverScriptPath: stalledServerPath, nodeExecutablePath: join(fixtureRoot, "missing-node.exe"), port: 45_678 },
+        timeoutMs: 100,
+        expectedError: /ENOENT/,
+      },
+    ];
+    for (const scenario of scenarios) {
+      await t.test(scenario.name, async () => {
+        let captured;
+        try {
+          await assert.rejects(startRuntimeHarness({
+            ...scenario.options,
+            bootstrapTimeoutMs: scenario.timeoutMs,
+            disposeGraceMs: 1_000,
+            onSpawn: (details) => { captured = details; },
+          }), scenario.expectedError);
+          assert.ok(captured?.child, "test observes the exact harness child created by this attempt");
+          const childExit = await waitForChildExit(captured.child, 250);
+          assert.equal(childExit.exited, true, "a failed bootstrap must not leave its child process alive");
+          await assert.rejects(stat(captured.home), { code: "ENOENT" }, "a failed bootstrap must remove its isolated home");
+        } finally {
+          if (captured?.child?.pid && captured.child.exitCode === null && captured.child.signalCode === null) {
+            captured.child.kill("SIGTERM");
+            const cleanupExit = await waitForChildExit(captured.child, 1_000);
+            assert.equal(cleanupExit.exited, true, `test-owned bootstrap child ${captured.child.pid} must be cleaned after assertion`);
+          }
+          if (captured?.home && existsSync(captured.home)) await rm(captured.home, { recursive: true, force: false });
+        }
+      });
+    }
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: false });
   }
 });
 

@@ -4,11 +4,15 @@ import { ArtifactRepository } from "../artifacts/artifact-repository.js";
 import { ArtifactStore } from "../artifacts/artifact-store.js";
 import { HermesRuntimeAdapter } from "../../modules/runtime/hermes/hermes-runtime-adapter.js";
 import { ProcessExecutor } from "../process/process-executor.js";
+import { SystemdRunSupervisor } from "../process/systemd-run-supervisor.js";
+import { WindowsJobSupervisor } from "../process/windows-job-supervisor.js";
+import type { ProcessScopeSupervisor } from "../process/run-scope-supervisor.js";
 import { GitCli } from "../../modules/git/git-cli.js";
 import { GitReconciler } from "../../modules/git/git-reconciler.js";
 import { IntegrationService } from "../../modules/git/integration-service.js";
 import { MergeService, type MergeResult } from "../../modules/git/merge-service.js";
 import { TaskWorkspaceProvisioner } from "../../modules/git/task-workspace-provisioner.js";
+import { EpicWorkspaceProvisioner } from "../../modules/git/epic-workspace-provisioner.js";
 import { WorktreeManager } from "../../modules/git/worktree-manager.js";
 import type { IntegrationServiceFactory, IntegrationServiceFactoryContext } from "../../modules/planning/epic-orchestrator.js";
 import type { HermesProviderBridgeConfig } from "../../modules/runtime/hermes/hermes-provider-bridge.js";
@@ -21,6 +25,8 @@ import type { StatusTrackerInterface } from "../process/system-lifecycle.js";
 import { createProductionPaths } from "./production-paths.js";
 import type { OrchestratorHomePaths } from "./orchestrator-home.js";
 import { recoverExpiredJobs } from "../jobs/job-repository.js";
+import { preflightRunProcessOwners } from "../../modules/runtime/run-process-owner.js";
+import type { ProjectConfigService } from "../../modules/projects/project-config-service.js";
 
 /** Зависимости для построения production adapters без старта процессов. */
 export interface ProductionCompositionOptions {
@@ -34,6 +40,8 @@ export interface ProductionCompositionOptions {
   provider?: HermesProviderBridgeConfig;
   /** Зависимость для детерминированной проверки startup recovery. */
   gitReconciler?: Pick<GitReconciler, "initialize" | "reconcile">;
+  /** Платформенный supervisor можно подменить только в provider-free tests. */
+  processScopeSupervisor?: ProcessScopeSupervisor;
 }
 
 /** Зависимости application services, необходимые для startup recovery callbacks. */
@@ -44,6 +52,8 @@ export interface ProductionStartupReconciliationOptions {
   eventDispatcher: Pick<EventDispatcher, "dispatchBatch">;
   /** Lifecycle status изменяется только startup coordinator. */
   status: StatusTrackerInterface;
+  /** Project Config integrity проверяется после process-owner preflight. */
+  projectConfigService: Pick<ProjectConfigService, "reconcileActiveOnStartup">;
 }
 
 /**
@@ -56,6 +66,7 @@ export function createProductionComposition(options: ProductionCompositionOption
   const { database, home } = options;
   const paths = createProductionPaths(home);
   const processExecutor = new ProcessExecutor();
+  const processScopeSupervisor = options.processScopeSupervisor ?? createPlatformSupervisor(processExecutor);
   const gitReconciler = options.gitReconciler ?? new GitReconciler(new GitCli(processExecutor));
   const runtime = new HermesRuntimeAdapter(processExecutor, undefined, {
     databasePath: paths.hermesDatabasePath,
@@ -63,13 +74,14 @@ export function createProductionComposition(options: ProductionCompositionOption
     checkpointDirectory: paths.hermesCheckpointDirectory,
     secretStore: options.secretStore,
     ...(options.provider ? { provider: options.provider } : {}),
-  });
+  }, processScopeSupervisor);
   const taskWorkspaceProvisioner = new TaskWorkspaceProvisioner({
     database,
     worktreeManager: new WorktreeManager({ db: database, worktreeDir: paths.taskWorktreeDirectory }),
   });
-  const integrationServiceFactory: IntegrationServiceFactory = ({ worktreeRoot, epicId, taskId }: IntegrationServiceFactoryContext) =>
-    new IntegrationService({ database, provenanceDatabasePath: home.database, worktreeDir: join(worktreeRoot, epicId, taskId) });
+  const epicWorkspaceProvisioner = new EpicWorkspaceProvisioner({ database, worktreeDir: paths.epicWorktreeDirectory });
+  const integrationServiceFactory: IntegrationServiceFactory = ({ worktreeRoot, epicId, taskId, integrationRunId, finalizeRunFailure }: IntegrationServiceFactoryContext) =>
+    new IntegrationService({ database, provenanceDatabasePath: home.database, integrationRunId, finalizeRunFailure, worktreeDir: join(worktreeRoot, epicId, taskId ?? "epic-final") });
   const artifactStore = new ArtifactStore(home.artifacts, new ArtifactRepository(database));
 
   /**
@@ -115,6 +127,8 @@ export function createProductionComposition(options: ProductionCompositionOption
       }
     });
     return {
+      preflightRecovery: async () => { await preflightRunProcessOwners(database, processScopeSupervisor); },
+      reconcileProjectConfig: async () => { recovery.projectConfigService.reconcileActiveOnStartup(); },
       reconcileOutbox: async () => { await recovery.eventDispatcher.dispatchBatch(100); },
       reconcileJobs: async () => {
         database.transaction((tx) => recoverExpiredJobs(tx, new Date()));
@@ -134,13 +148,26 @@ export function createProductionComposition(options: ProductionCompositionOption
   return {
     paths,
     runtime,
+    epicWorkspaceProvisioner,
     taskWorkspaceProvisioner,
     integrationServiceFactory,
     artifactStore,
     processExecutor,
+    processScopeSupervisor,
     gitReconciler,
     createStartupReconciliation,
     epicMergeAuthority: createEpicMergeAuthority(database),
+  };
+}
+
+function createPlatformSupervisor(executor: ProcessExecutor): ProcessScopeSupervisor {
+  if (process.platform === "win32") return new WindowsJobSupervisor(executor);
+  if (process.platform === "linux") return new SystemdRunSupervisor(executor);
+  return {
+    async inspect() { return { state: "UNKNOWN", reason: "UNSUPPORTED_PROCESS_SCOPE_PLATFORM" }; },
+    async launch() { throw new Error("PROCESS_SCOPE_PLATFORM_UNSUPPORTED"); },
+    async stop() { return { state: "UNKNOWN", reason: "UNSUPPORTED_PROCESS_SCOPE_PLATFORM" }; },
+    async waitForStopped() { return { state: "UNKNOWN", reason: "UNSUPPORTED_PROCESS_SCOPE_PLATFORM" }; },
   };
 }
 

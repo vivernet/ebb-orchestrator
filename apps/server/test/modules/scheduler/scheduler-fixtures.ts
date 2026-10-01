@@ -5,10 +5,10 @@ import type { Migration } from "../../../src/platform/database/migrator.js";
 import { runMigrations } from "../../../src/platform/database/migrator.js";
 import type { SchedulerService } from "../../../src/modules/scheduler/scheduler-service.js";
 
-/** Загружает полный каталог миграций, включая условные upgrade-миграции 028–030. */
+/** Загружает историческую цепочку 001–030, которую фиксируют scheduler fixtures. */
 export function loadSchedulerMigrations(): Migration[] {
   const directory = join(import.meta.dirname, "../../../src/platform/database/migrations");
-  return readdirSync(directory).filter((file) => file.endsWith(".sql")).sort().map((file) => {
+  return readdirSync(directory).filter((file) => file.endsWith(".sql") && Number(file.slice(0, 3)) <= 30).sort().map((file) => {
     const migration = { version: Number(file.slice(0, 3)), name: file.slice(0, -4), sql: readFileSync(join(directory, file), "utf8") };
     return migration.version === 27 ? { ...migration, foreignKeys: "disabled" as const } : migration;
   });

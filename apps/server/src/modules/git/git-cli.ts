@@ -16,9 +16,9 @@ export function assertSafeGitRef(ref: string): void {
  * Инкапсулирует операцию Git git-cli с журналированием и проверкой целевого repository/worktree.
  */
 export class GitCli {
-  private readonly executor: ProcessExecutor;
+  private readonly executor: Pick<ProcessExecutor, "exec">;
 
-  constructor(executor?: ProcessExecutor) {
+  constructor(executor?: Pick<ProcessExecutor, "exec">) {
     this.executor = executor ?? new ProcessExecutor();
   }
 

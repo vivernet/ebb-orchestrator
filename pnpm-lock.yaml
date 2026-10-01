@@ -215,6 +215,9 @@ importers:
       fastify:
         specifier: ^5.12.4
         version: 5.12.4
+      js-yaml:
+        specifier: ^5.4.2
+        version: 5.4.2
       zod:
         specifier: ^4.6.0
         version: 4.6.5

@@ -9,6 +9,7 @@ describe("production path composition", () => {
 
     expect(createProductionPaths(home)).toEqual({
       taskWorktreeDirectory: join(home.worktrees, "tasks"),
+      epicWorktreeDirectory: join(home.worktrees, "epics"),
       integrationWorktreeRoot: join(home.worktrees, "epic-integration"),
       hermesDatabasePath: home.database,
       hermesResultDirectory: join(home.runtime, "hermes", "results"),

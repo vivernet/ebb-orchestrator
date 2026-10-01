@@ -1,20 +1,21 @@
 import { Buffer } from "node:buffer";
 import { createRequire } from "node:module";
-import { execFile, spawn } from "node:child_process";
 import { clearTimeout, setTimeout } from "node:timers";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { randomBytes, randomUUID } from "node:crypto";
 import { createServer, connect } from "node:net";
-import { waitForChildExit } from "./child-lifecycle.mjs";
+import { monitorDetachedProcessGroups, spawnManagedChild, terminateManagedChild, waitForChildExit } from "./child-lifecycle.mjs";
 import { createE2EPasswordChannel } from "./credential-channel.mjs";
+import { createDetachedLedgerErrorDetector } from "./detached-ledger-error-detector.mjs";
 
 const require = createRequire(import.meta.url);
 const webRoot = resolve(import.meta.dirname, "../..");
 const repoRoot = resolve(webRoot, "../..");
 const serverScript = resolve(import.meta.dirname, "web-e2e-server.mjs");
+const detachedProcessLedgerPreload = resolve(import.meta.dirname, "detached-process-ledger.cjs");
 const playwrightCli = resolve(dirname(require.resolve("@playwright/test/package.json")), "cli.js");
 const viteCli = resolve(dirname(require.resolve("vite/package.json")), "bin/vite.js");
 const pnpmCommand = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
@@ -30,6 +31,7 @@ let controlEndpoint;
 let controlChannel;
 let playwrightExitCode = 1;
 let primaryError;
+let detachedProcessLedgerFailure = false;
 
 function delay(milliseconds) {
   return new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
@@ -44,11 +46,17 @@ function trackChild(name, child) {
   children.set(name, child);
   child.startupOutput = "";
   child.lifecycleEvents = [];
+  const detectDetachedLedgerFailure = createDetachedLedgerErrorDetector(() => {
+    child.detachedProcessGroupLedgerError = true;
+    detachedProcessLedgerFailure = true;
+  });
   child.once("exit", (code, signal) => recordChildEvent(child, "exit", { code, signal }));
   child.once("close", (code, signal) => recordChildEvent(child, "close", { code, signal }));
   child.once("disconnect", () => recordChildEvent(child, "disconnect"));
   child.stderr?.on("data", (chunk) => {
-    child.startupOutput = `${child.startupOutput}${chunk.toString("utf8")}`.slice(-8192);
+    const output = chunk.toString("utf8");
+    child.startupOutput = `${child.startupOutput}${output}`.slice(-8192);
+    detectDetachedLedgerFailure(chunk);
     process.stderr.write(chunk);
   });
   child.once("error", (error) => {
@@ -60,23 +68,49 @@ function trackChild(name, child) {
 function waitForChild(child) {
   if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(child.exitCode ?? 1);
   return new Promise((resolvePromise, reject) => {
-    child.once("error", reject);
-    child.once("close", (code) => resolvePromise(code ?? 1));
+    const finish = (error, code) => {
+      child.off("error", onError);
+      child.off("exit", onExit);
+      if (error) reject(error);
+      else resolvePromise(code ?? 1);
+    };
+    const onError = (error) => finish(error);
+    const onExit = (code) => finish(undefined, code);
+    child.once("error", onError);
+    child.once("exit", onExit);
   });
 }
 
 function spawnNode(name, args, { cwd = webRoot, env = process.env, ipc = false } = {}) {
   const stdio = ipc ? ["ignore", "inherit", "pipe", "ipc"] : ["ignore", "inherit", "pipe"];
-  return trackChild(name, spawn(process.execPath, args, { cwd, env, shell: false, stdio, windowsHide: true }));
+  return trackChild(name, spawnManagedChild(process.execPath, args, { cwd, env, shell: false, stdio, windowsHide: true }));
 }
 
 function runBuild() {
+  const child = spawnManagedChild(buildCommand, buildArgs, {
+    cwd: repoRoot, env: inheritedEnv, shell: false, stdio: "inherit", windowsHide: true,
+  });
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(buildCommand, buildArgs, {
-      cwd: repoRoot, env: inheritedEnv, shell: false, stdio: "inherit", windowsHide: true,
-    });
-    child.once("error", reject);
-    child.once("close", (code) => code === 0 ? resolvePromise() : reject(new Error(`server:build failed with exit code ${code ?? 1}`)));
+    let settled = false;
+    const finish = async (error) => {
+      if (settled) return;
+      settled = true;
+      child.off("error", onError);
+      child.off("exit", onExit);
+      try {
+        await terminateManagedChild(child);
+      } catch (cleanupError) {
+        return reject(error ? new AggregateError([error, cleanupError], "server:build failed and process-group teardown was not verified") : cleanupError);
+      }
+      if (error) reject(error);
+      else resolvePromise();
+    };
+    const onError = (error) => { void finish(error); };
+    const onExit = (code) => {
+      void finish(code === 0 ? undefined : new Error(`server:build failed with exit code ${code ?? 1}`));
+    };
+    child.once("error", onError);
+    child.once("exit", onExit);
   });
 }
 
@@ -242,19 +276,11 @@ function childLifecycleSummary(name, child) {
 async function terminateChild(name) {
   const child = children.get(name);
   if (!child) return;
-  if (child.exitCode === null && child.signalCode === null) {
-    recordChildEvent(child, "termination-requested", { method: process.platform === "win32" ? "taskkill" : "SIGTERM" });
-    if (process.platform === "win32" && child.pid) {
-      await new Promise((resolvePromise) => execFile("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], { shell: false, windowsHide: true }, (error) => {
-        recordChildEvent(child, "taskkill-result", { succeeded: !error, errorCode: error?.code ?? null });
-        resolvePromise();
-      }));
-    } else {
-      recordChildEvent(child, "signal-result", { signal: "SIGTERM", sent: child.kill("SIGTERM") });
-    }
+  try {
+    await terminateManagedChild(child, { onEvent: (event, details) => recordChildEvent(child, event, details) });
+  } catch (cause) {
+    throw new Error(`E2E ${name} teardown failed: ${cause.message}; lifecycle=${childLifecycleSummary(name, child)}`, { cause });
   }
-  const exit = await waitForChildExit(child, 10_000);
-  if (!exit.exited) throw new Error(`${name} process did not exit during teardown; lifecycle=${childLifecycleSummary(name, child)}`);
   children.delete(name);
 }
 
@@ -273,6 +299,8 @@ try {
   await runBuild();
 
   e2eHome = await mkdtemp(join(tmpdir(), "ebb-orchestrator-e2e-"));
+  const detachedProcessLedger = process.platform === "win32" ? undefined : join(e2eHome, "detached-process-groups.jsonl");
+  if (detachedProcessLedger) await writeFile(detachedProcessLedger, "", { flag: "wx", mode: 0o600 });
   const backend = spawnNode("backend", [serverScript, String(backendPort)], {
     cwd: repoRoot,
     env: { ...inheritedEnv, EBB_ORCHESTRATOR_HOME: e2eHome },
@@ -330,16 +358,26 @@ try {
     }
   }
 
-  const playwright = spawnNode("playwright", [playwrightCli, "test"], {
-    env: {
-      ...inheritedEnv,
-      EBB_E2E_SERVERS_STARTED: "1",
-      EBB_E2E_BASE_URL: frontendUrl,
-      EBB_E2E_BACKEND_URL: backendReady.backendUrl,
-      EBB_E2E_PASSWORD_CHANNEL: passwordChannel.endpoint,
-      EBB_E2E_CONTROL_CHANNEL: controlEndpoint,
-    },
+  const playwrightArgs = process.argv.slice(2);
+  if (playwrightArgs[0] === "--") playwrightArgs.shift();
+  const playwrightEnv = {
+    ...inheritedEnv,
+    EBB_E2E_SERVERS_STARTED: "1",
+    EBB_E2E_BASE_URL: frontendUrl,
+    EBB_E2E_BACKEND_URL: backendReady.backendUrl,
+    EBB_E2E_HOME: e2eHome,
+    EBB_E2E_PLAYWRIGHT_OUTPUT_DIR: join(e2eHome, "playwright-output"),
+    EBB_E2E_PASSWORD_CHANNEL: passwordChannel.endpoint,
+    EBB_E2E_CONTROL_CHANNEL: controlEndpoint,
+  };
+  if (detachedProcessLedger) {
+    playwrightEnv.EBB_E2E_PROCESS_GROUP_LEDGER = detachedProcessLedger;
+    playwrightEnv.NODE_OPTIONS = [inheritedEnv.NODE_OPTIONS, "--require", JSON.stringify(detachedProcessLedgerPreload)].filter(Boolean).join(" ");
+  }
+  const playwright = spawnNode("playwright", [playwrightCli, "test", ...playwrightArgs], {
+    env: playwrightEnv,
   });
+  monitorDetachedProcessGroups(playwright, { ledgerPath: detachedProcessLedger });
   playwrightExitCode = await waitForChild(playwright);
 } catch (error) {
   primaryError = error;
@@ -391,7 +429,7 @@ try {
           cleanupErrors.push(new Error(`Backend did not exit after shutdown acknowledgement; lifecycle=${childLifecycleSummary("backend", backend)}`));
           forceTerminationNeeded = true;
         } else {
-          children.delete("backend");
+          try { await terminateChild("backend"); } catch (terminationError) { cleanupErrors.push(terminationError); }
           if (exit.code !== 0 || exit.signal !== null) {
             cleanupErrors.push(new Error(`Backend exited abnormally after shutdown acknowledgement (code=${exit.code ?? "none"}, signal=${exit.signal ?? "none"})`));
           }
@@ -405,10 +443,14 @@ try {
       try { await terminateChild("backend"); } catch (terminationError) { cleanupErrors.push(terminationError); }
     }
   }
-  try { await assertCleanSqliteAndHome(); } catch (error) { cleanupErrors.push(error); }
+  if (detachedProcessLedgerFailure) cleanupErrors.push(new Error("E2E detached process ownership ledger failed; isolated home must be retained"));
+  if (cleanupErrors.length === 0) {
+    try { await assertCleanSqliteAndHome(); } catch (error) { cleanupErrors.push(error); }
+  }
   if (cleanupErrors.length > 0 && !primaryError) primaryError = new AggregateError(cleanupErrors, "E2E teardown failed");
   if (cleanupErrors.length > 0 && primaryError) {
     for (const error of cleanupErrors) process.stderr.write(`E2E teardown failure: ${error.message}\n`);
+    if (e2eHome && existsSync(e2eHome)) process.stderr.write(`E2E isolated home retained after unverified teardown: ${e2eHome}\n`);
   }
 }
 

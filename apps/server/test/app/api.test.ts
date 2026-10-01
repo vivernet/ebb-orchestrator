@@ -10,6 +10,10 @@ import type { AgentRuntime } from "../../src/modules/runtime/agent-runtime.js";
 import { createTestAuthService, TEST_COOKIE, TEST_CSRF_TOKEN } from "../helpers/auth.js";
 import { ApprovalService } from "../../src/modules/approvals/approval-service.js";
 import { OnboardingService } from "../../src/modules/projects/onboarding-service.js";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { ArtifactRepository } from "../../src/platform/artifacts/artifact-repository.js";
+import { ArtifactStore } from "../../src/platform/artifacts/artifact-store.js";
 
 const migrationDir = fileURLToPath(new URL("../../src/platform/database/migrations/", import.meta.url));
 const migrations: Migration[] = readdirSync(migrationDir).filter((file) => file.endsWith(".sql")).map((file) => {
@@ -67,6 +71,216 @@ function mutationHeaders(_app: ReturnType<typeof makeApp>) {
 }
 
 describe("orchestrator read API", () => {
+  it("lists only run-scoped artifact metadata and never returns artifact contents", async () => {
+    const db = createSqliteDatabase(":memory:");
+    runMigrations(db, migrations);
+    const scheduler = new SchedulerService(db);
+    const artifactsDirectory = await mkdtemp(join(tmpdir(), "run-artifact-metadata-"));
+    const artifactStore = new ArtifactStore(artifactsDirectory, new ArtifactRepository(db));
+    const runId = "run-artifact-metadata";
+    db.run(
+      "INSERT INTO agent_runs (id,role,runtime,model,status) VALUES ($id,'developer','hermes','test','COMPLETED')",
+      { id: runId },
+    );
+    const artifact = await artifactStore.writeArtifact({
+      type: "test-report",
+      contentType: "text/plain",
+      bytes: Buffer.from("private artifact fixture"),
+      runId,
+    });
+    await artifactStore.writeArtifact({
+      type: "other-run-report",
+      contentType: "text/plain",
+      bytes: Buffer.from("unrelated fixture"),
+      runId: "another-run",
+    });
+    const app = createApp({
+      db,
+      scheduler,
+      runtime: mockRuntime,
+      authService: createTestAuthService(),
+      artifactStore,
+    });
+
+    try {
+      const response = await app.inject({
+        method: "GET",
+        url: `/api/v1/runs/${runId}/artifacts`,
+        headers: { cookie: TEST_COOKIE },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(JSON.parse(response.body)).toEqual([{
+        id: artifact.id,
+        type: "test-report",
+        contentType: "text/plain",
+        sizeBytes: Buffer.byteLength("private artifact fixture"),
+        sha256: artifact.sha256,
+        status: "ACTIVE",
+        createdAt: expect.any(String),
+      }]);
+      expect(response.body).not.toContain("private artifact fixture");
+      expect(response.body).not.toContain("unrelated fixture");
+      expect(response.body).not.toContain("storagePath");
+
+      const missingRun = await app.inject({
+        method: "GET",
+        url: "/api/v1/runs/missing-run/artifacts",
+        headers: { cookie: TEST_COOKIE },
+      });
+      expect(missingRun.statusCode).toBe(404);
+    } finally {
+      await app.close();
+      db.close();
+      await rm(artifactsDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("returns safe subject-bound context manifest availability for Task, Epic, and Request runs", async () => {
+    const { app, db } = makeAppWithDatabase();
+    const now = new Date().toISOString();
+    db.run("INSERT INTO projects(id,name,display_name,status,created_at,updated_at) VALUES ('context-project','context','Context','ACTIVE',$now,$now)", { now });
+    db.run("INSERT INTO tasks(id,project_id,display_id,title,status,contract_json,created_at,updated_at) VALUES ('context-task','context-project','T-1','Task','READY','{}',$now,$now)", { now });
+    db.run("INSERT INTO tasks(id,project_id,display_id,title,status,contract_json,created_at,updated_at) VALUES ('other-context-task','context-project','T-2','Other task','READY','{}',$now,$now)", { now });
+    db.run("INSERT INTO tasks(id,project_id,display_id,title,status,contract_json,created_at,updated_at) VALUES ('third-context-task','context-project','T-3','Third task','READY','{}',$now,$now)", { now });
+    db.run("UPDATE tasks SET contract_json=$contract WHERE id='context-task'", { contract: JSON.stringify({ note: "private contract sentinel", knowledge: "private knowledge sentinel" }) });
+    db.run("INSERT INTO epics(id,project_id,display_id,title,status,contract_json,created_at,updated_at) VALUES ('context-epic','context-project','E-1','Epic','OPEN','{}',$now,$now)", { now });
+    db.run(
+      "INSERT INTO agent_runs(id,role,runtime,model,status,task_id) VALUES ('context-run','developer','hermes','test','COMPLETED','context-task')",
+    );
+    db.run("UPDATE agent_runs SET prompt=$prompt WHERE id='context-run'", { prompt: "private task prompt sentinel credential-sentinel hidden runtime prompt sentinel" });
+    db.run("INSERT INTO agent_runs(id,role,runtime,model,status,task_id) VALUES ('other-context-run','reviewer','hermes','test','COMPLETED','context-task')");
+    db.run("INSERT INTO agent_runs(id,role,runtime,model,status,task_id) VALUES ('wrong-task-run','reviewer','hermes','test','COMPLETED','other-context-task')");
+    db.run(
+      `INSERT INTO context_manifests(
+        id,run_id,subject_type,task_id,role,contract_request_digest,items_json,prompt_hash,context_hash,
+        context_builder_version,initial_token_size,created_at
+      ) VALUES (
+        'manifest-1','context-run','TASK','context-task','developer',$contractDigest,
+        $items,$promptHash,$contextHash,
+        'context-builder-v2',999,$now
+      )`,
+      {
+        now,
+        contractDigest: "a".repeat(64),
+        items: JSON.stringify([
+          { id: "guideline-1", version: 3, digest: "b".repeat(64) },
+          { id: "decision-2", version: null, digest: "c".repeat(64) },
+          { id: "finding-3", version: null, digest: "d".repeat(64) },
+          { id: "defect-4", version: null, digest: "e".repeat(64) },
+        ]),
+        promptHash: "f".repeat(64),
+        contextHash: "1".repeat(64),
+      },
+    );
+    db.run("INSERT INTO agent_runs(id,role,runtime,model,status,capability_json) VALUES ('request-run','coordinator','hermes','test','COMPLETED',$capability)", { capability: JSON.stringify({ requestId: "context-request" }) });
+    db.run("INSERT INTO planning_requests(id,project_id,request,requested_by,created_at,coordinator_run_id,status,updated_at) VALUES ('context-request','context-project','private request sentinel','user',$now,'request-run','RECEIVED',$now)", { now });
+    db.run("INSERT INTO agent_runs(id,role,runtime,model,status,epic_id) VALUES ('epic-run','architect','hermes','test','COMPLETED','context-epic')");
+    db.run("INSERT INTO agent_runs(id,role,runtime,model,status,task_id) VALUES ('legacy-run','qa','hermes','test','COMPLETED','third-context-task')");
+    db.run(
+      `INSERT INTO context_manifests(
+       id,run_id,subject_type,task_id,role,contract_request_digest,items_json,prompt_hash,context_hash,context_builder_version,created_at
+       ) VALUES ('other-run-manifest','other-context-run','TASK','context-task','reviewer',NULL,'[]',$promptHash,$contextHash,'builder-v2',$now)`,
+      { now, promptHash: "4".repeat(64), contextHash: "5".repeat(64) },
+    );
+    db.run(
+      `INSERT INTO context_manifests(
+        id,run_id,subject_type,task_id,role,contract_request_digest,items_json,prompt_hash,context_hash,context_builder_version,created_at
+       ) VALUES ('wrong-task-manifest','wrong-task-run','TASK','other-context-task','reviewer',NULL,'[]',$promptHash,$contextHash,'builder-v2',$now)`,
+      { now, promptHash: "2".repeat(64), contextHash: "3".repeat(64) },
+    );
+    db.run(
+      `INSERT INTO context_manifests(
+        id,run_id,subject_type,epic_id,role,contract_request_digest,items_json,prompt_hash,context_hash,context_builder_version,created_at
+       ) VALUES ('epic-manifest','epic-run','EPIC','context-epic','architect',NULL,'[]',$promptHash,$contextHash,'builder-v3',$now)`,
+      { now, promptHash: "6".repeat(64), contextHash: "7".repeat(64) },
+    );
+    db.run(
+      `INSERT INTO context_manifests(
+        id,run_id,subject_type,request_id,role,contract_request_digest,items_json,prompt_hash,context_hash,context_builder_version,created_at
+       ) VALUES ('request-manifest','request-run','REQUEST','context-request','coordinator',NULL,'[]',$promptHash,$contextHash,'builder-v4',$now)`,
+      { now, promptHash: "8".repeat(64), contextHash: "9".repeat(64) },
+    );
+
+    try {
+      const taskResponse = await app.inject({
+        method: "GET",
+        url: "/api/v1/runs/context-run/context-manifests",
+        headers: { cookie: TEST_COOKIE },
+      });
+      expect(taskResponse.statusCode).toBe(200);
+      expect(JSON.parse(taskResponse.body)).toEqual({
+        availability: "available",
+        id: "manifest-1",
+        runId: "context-run",
+        subject: { type: "TASK", id: "context-task" },
+        role: "developer",
+        contractRequestDigest: "a".repeat(64),
+        items: [
+          { id: "guideline-1", version: 3, digest: "b".repeat(64) },
+          { id: "decision-2", version: null, digest: "c".repeat(64) },
+          { id: "finding-3", version: null, digest: "d".repeat(64) },
+          { id: "defect-4", version: null, digest: "e".repeat(64) },
+        ],
+        promptHash: "f".repeat(64),
+        contextHash: "1".repeat(64),
+        contextBuilderVersion: "context-builder-v2",
+        initialTokenSize: 999,
+      });
+      for (const secret of ["private task prompt sentinel", "private contract sentinel", "private knowledge sentinel", "credential-sentinel", "hidden runtime prompt sentinel"]) {
+        expect(taskResponse.body).not.toContain(secret);
+      }
+      expect(taskResponse.body).not.toContain("wrong-task-manifest");
+      expect(taskResponse.body).not.toContain("other-run-manifest");
+
+      const emptyResponse = await app.inject({ method: "GET", url: "/api/v1/runs/other-context-run/context-manifests", headers: { cookie: TEST_COOKIE } });
+      expect(emptyResponse.statusCode).toBe(200);
+      expect(JSON.parse(emptyResponse.body)).toMatchObject({ availability: "available", subject: { type: "TASK", id: "context-task" }, items: [] });
+
+      const epicResponse = await app.inject({ method: "GET", url: "/api/v1/runs/epic-run/context-manifests", headers: { cookie: TEST_COOKIE } });
+      expect(epicResponse.statusCode).toBe(200);
+      expect(JSON.parse(epicResponse.body)).toMatchObject({ availability: "available", id: "epic-manifest", subject: { type: "EPIC", id: "context-epic" }, role: "architect", items: [], promptHash: "6".repeat(64), contextHash: "7".repeat(64) });
+
+      const requestResponse = await app.inject({ method: "GET", url: "/api/v1/runs/request-run/context-manifests", headers: { cookie: TEST_COOKIE } });
+      expect(requestResponse.statusCode).toBe(200);
+      expect(JSON.parse(requestResponse.body)).toMatchObject({ availability: "available", id: "request-manifest", subject: { type: "REQUEST", id: "context-request" }, role: "coordinator", items: [], promptHash: "8".repeat(64), contextHash: "9".repeat(64) });
+      expect(requestResponse.body).not.toContain("private request sentinel");
+
+      const legacyResponse = await app.inject({ method: "GET", url: "/api/v1/runs/legacy-run/context-manifests", headers: { cookie: TEST_COOKIE } });
+      expect(legacyResponse.statusCode).toBe(200);
+      expect(JSON.parse(legacyResponse.body)).toEqual({ availability: "unavailable", runId: "legacy-run", subject: { type: "TASK", id: "third-context-task" }, role: "qa", reason: "LEGACY_PROVENANCE_UNAVAILABLE" });
+
+      db.exec("PRAGMA ignore_check_constraints = ON");
+      db.run("UPDATE context_manifests SET items_json='not-json' WHERE id='manifest-1'");
+      db.exec("PRAGMA ignore_check_constraints = OFF");
+      const corruptedManifestResponse = await app.inject({
+        method: "GET",
+        url: "/api/v1/runs/context-run/context-manifests",
+        headers: { cookie: TEST_COOKIE },
+      });
+      expect(corruptedManifestResponse.statusCode).toBe(200);
+      expect(JSON.parse(corruptedManifestResponse.body)).toEqual({ availability: "unavailable", runId: "context-run", subject: { type: "TASK", id: "context-task" }, role: "developer", reason: "INVALID_PERSISTED_PROVENANCE" });
+      db.run("UPDATE context_manifests SET items_json='[1]' WHERE id='manifest-1'");
+      const invalidIdsResponse = await app.inject({
+        method: "GET",
+        url: "/api/v1/runs/context-run/context-manifests",
+        headers: { cookie: TEST_COOKIE },
+      });
+      expect(invalidIdsResponse.statusCode).toBe(200);
+      expect(JSON.parse(invalidIdsResponse.body)).toEqual({ availability: "unavailable", runId: "context-run", subject: { type: "TASK", id: "context-task" }, role: "developer", reason: "INVALID_PERSISTED_PROVENANCE" });
+
+      const missingRun = await app.inject({
+        method: "GET",
+        url: "/api/v1/runs/missing-run/context-manifests",
+        headers: { cookie: TEST_COOKIE },
+      });
+      expect(missingRun.statusCode).toBe(404);
+    } finally {
+      await app.close();
+      db.close();
+    }
+  });
+
   it("closes the application while an SSE client is connected", async () => {
     const { app, db } = makeAppWithDatabase();
     await app.listen({ host: "127.0.0.1", port: 0 });

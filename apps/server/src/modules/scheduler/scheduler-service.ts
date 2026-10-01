@@ -609,7 +609,8 @@ getEligibility(taskId: string, scope?: { projectId: string }): Eligibility {
   private evaluateEligibilityTx(tx: DatabaseTx, task: SchedulableTask, activeTasks: SchedulableTask[]): Eligibility {
     const projectBoundary = projectDispatchEligibilityTx(tx, task.projectId);
     if (!projectBoundary.allowed) return { status: "BLOCK", reason: projectBoundary.reason };
-    if (isTerminalStatus(task.status) || task.status === "DRAFT" || task.status === "PAUSED") return { status: "BLOCK", reason: task.status === "DRAFT" ? "BLOCKED_BY_PROJECT_STATE" : "BLOCKED_BY_WORKFLOW" };
+    if (task.status === "PAUSED") return { status: "WAIT", reason: "WAITING_FOR_PAUSE" };
+    if (isTerminalStatus(task.status) || task.status === "DRAFT") return { status: "BLOCK", reason: task.status === "DRAFT" ? "BLOCKED_BY_PROJECT_STATE" : "BLOCKED_BY_WORKFLOW" };
     if (task.status !== "READY") {
       if (task.status === "WAITING_FOR_DEPENDENCY") return { status: "WAIT", reason: "WAITING_FOR_DEPENDENCY" };
       if (task.status === "WAITING_FOR_APPROVAL") return { status: "WAIT", reason: "WAITING_FOR_APPROVAL" };

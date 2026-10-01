@@ -57,6 +57,7 @@ export function schedulerEligibility(db: Database, task: SchedulerTaskRow, sched
     if (eligibility.status === "RUNNABLE") return { status: "RUNNABLE", reason: null };
     if (eligibility.status === "WAIT") return { status: "WAIT", reason: schedulerReasonToProjection(eligibility.reason, task) };
     if (eligibility.reason === "ONBOARDING_NOT_ACTIVE") return { status: "BLOCK", reason: { code: "ONBOARDING_NOT_ACTIVE", message: "Онбординг проекта не активирован" } };
+    if (eligibility.reason === "PROJECT_CONFIG_DEGRADED") return { status: "BLOCK", reason: { code: "PROJECT_CONFIG_DEGRADED", message: "Конфигурация проекта повреждена или требует восстановления" } };
     return { status: "BLOCK", reason: { code: eligibility.reason, message: schedulerReasonToProjection(eligibility.reason, task).message } };
   }
   const project = db.get<{ status: string }>("SELECT status FROM projects WHERE id=$projectId", { projectId: task.project_id });
@@ -77,6 +78,8 @@ export function schedulerEligibility(db: Database, task: SchedulerTaskRow, sched
     throw error;
   }
   if (!onboarding || onboarding.status !== "ACTIVE") return { status: "BLOCK", reason: { code: "ONBOARDING_NOT_ACTIVE", message: "Онбординг проекта не активирован" } };
+  const projectConfig = db.get<{ config_status: string }>("SELECT config_status FROM project_config_state WHERE project_id=$projectId", { projectId: task.project_id });
+  if (projectConfig && projectConfig.config_status !== "READY") return { status: "BLOCK", reason: { code: "PROJECT_CONFIG_DEGRADED", message: "Конфигурация проекта повреждена или требует восстановления" } };
   if (["DRAFT", "BLOCKED"].includes(task.status)) return { status: "BLOCK", reason: { code: "BLOCKED", message: "Blocked by workflow or policy" } };
   const reason = waitReason(task.status);
   return reason ? { status: "WAIT", reason } : { status: "RUNNABLE", reason: null };

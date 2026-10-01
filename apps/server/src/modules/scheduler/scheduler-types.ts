@@ -24,6 +24,7 @@ export type Priority = "Critical" | "High" | "Normal" | "Low";
  * Причины, по которым задача может ожидать ресурсы.
  */
 export type WaitReason =
+  | "WAITING_FOR_PAUSE"
   | "WAITING_FOR_DEPENDENCY"
   | "WAITING_FOR_RESOURCE_LOCK"
   | "WAITING_FOR_BUDGET"
@@ -38,7 +39,8 @@ export type BlockReason =
   | "BLOCKED_BY_WORKFLOW"
   | "BLOCKED_BY_PROJECT_STATE"
   | "PROJECT_NOT_ACTIVE"
-  | "ONBOARDING_NOT_ACTIVE";
+  | "ONBOARDING_NOT_ACTIVE"
+  | "PROJECT_CONFIG_DEGRADED";
 
 /**
  * Статус элигибельности задачи для планирования.

@@ -127,8 +127,8 @@ async function runSmoke() {
   let stdout = "";
   let stderr = "";
   try {
-    const legacyHome = join(homedir(), ".orchestrator");
-    const legacyHomeExistedBefore = await access(legacyHome).then(() => true, () => false);
+    const defaultEbbOrchestratorHome = join(homedir(), ".ebb-orchestrator");
+    const defaultEbbOrchestratorHomeExistedBefore = await access(defaultEbbOrchestratorHome).then(() => true, () => false);
     const port = String(3000 + randomBytes(2).readUInt16BE() % 30000);
     const env = { ...process.env, EBB_ORCHESTRATOR_HOME: home, PORT: port };
     const { resolveOrchestratorHome } = await import(pathToFileURL(resolve(repositoryRoot, "apps/server/dist/platform/home/orchestrator-home.js")));
@@ -201,7 +201,7 @@ async function runSmoke() {
     const filesAfterShutdown = await scanFiles(home);
     for (const { bytes } of filesAfterShutdown) assert.equal(bytes.includes(secretBytes), false, "raw secret appeared in a shutdown log or file");
     assertSecretAbsent(secret, { stdout: [stdout], stderr: [stderr] });
-    assert.equal(await access(legacyHome).then(() => true, () => false), legacyHomeExistedBefore, "legacy ~/.orchestrator existence changed");
+    assert.equal(await access(defaultEbbOrchestratorHome).then(() => true, () => false), defaultEbbOrchestratorHomeExistedBefore, "default ~/.ebb-orchestrator existence changed");
     console.log("local-user stdin bootstrap smoke passed");
   } finally {
     secretBytes?.fill(0);

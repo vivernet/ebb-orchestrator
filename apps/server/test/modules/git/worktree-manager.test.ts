@@ -26,6 +26,31 @@ async function initGitRepo(path: string): Promise<GitCli> {
   return git;
 }
 
+class FailOnceDuringWorktreeVerificationGitCli extends GitCli {
+  constructor(private readonly taskId: string) {
+    super();
+  }
+
+  override async run(repoPath: string, args: string[]) {
+    if (args.includes(`refs/heads/task/${this.taskId}^{commit}`)) {
+      throw new Error("simulated verification interruption after git worktree add");
+    }
+    return super.run(repoPath, args);
+  }
+}
+
+class FailOnceBeforeWorktreeAddGitCli extends GitCli {
+  private failed = false;
+
+  override async run(repoPath: string, args: string[]) {
+    if (!this.failed && args.includes("worktree") && args.includes("add")) {
+      this.failed = true;
+      throw new Error("simulated interruption before git worktree add");
+    }
+    return super.run(repoPath, args);
+  }
+}
+
 describe("WorktreeManager", () => {
   describe("createTaskWorkspace", () => {
     it("creates a worktree for a task", async () => {
@@ -46,6 +71,131 @@ describe("WorktreeManager", () => {
       
   // Очищаем ресурсы.
       await new GitCli().run(repoPath, ["worktree", "remove", "--force", worktree.path]);
+    });
+
+    it("refuses to reset a pre-existing task branch", async () => {
+      const repoPath = createTempDir();
+      const git = await initGitRepo(repoPath);
+      await git.run(repoPath, ["branch", "task/task-existing"]);
+      await git.run(repoPath, ["checkout", "task/task-existing"]);
+      writeFileSync(join(repoPath, "task-change.txt"), "preserve branch history");
+      await git.run(repoPath, ["add", "task-change.txt"]);
+      await git.run(repoPath, ["commit", "-m", "task change"]);
+      const originalHead = (await git.run(repoPath, ["rev-parse", "task/task-existing"])).stdout.trim();
+      await git.run(repoPath, ["checkout", "--detach", "master"]);
+
+      await expect(new WorktreeManager().createTaskWorkspace("task-existing", repoPath, "master")).rejects.toThrow();
+
+      expect((await git.run(repoPath, ["rev-parse", "task/task-existing"])).stdout.trim()).toBe(originalHead);
+      expect((await git.run(repoPath, ["branch", "--show-current"])).stdout.trim()).toBe("");
+    });
+
+    it("reconciles a STARTED create only when the worktree still matches its target", async () => {
+      const repoPath = createTempDir();
+      const git = await initGitRepo(repoPath);
+      const worktreeDir = createTempDir();
+      const databaseRoot = createTempDir();
+      const db = createSqliteDatabase(join(databaseRoot, "worktrees.sqlite"));
+      db.exec(readFileSync(new URL("../../../src/platform/database/migrations/007_git.sql", import.meta.url), "utf8"));
+      const taskId = "task-interrupted";
+      const worktreePath = join(worktreeDir, `task-${taskId}`);
+      const hooksPath = createTempDir();
+      try {
+        await git.run(repoPath, ["-c", `core.hooksPath=${hooksPath.replace(/\\/g, "/")}`, "worktree", "add", "-b", `task/${taskId}`, worktreePath, "master"]);
+        db.run("INSERT INTO git_operations(id,type,status,repo_path,branch_name,worktree_id,target_ref,created_at) VALUES('task-operation','CREATE_WORKTREE','STARTED',$repo,$branch,$taskId,'master',$now)", {
+          repo: repoPath,
+          branch: `task/${taskId}`,
+          taskId,
+          now: new Date().toISOString(),
+        });
+
+        const recovered = await new WorktreeManager({ db, worktreeDir }).createTaskWorkspace(taskId, repoPath, "master");
+
+        expect(recovered.path).toBe(worktreePath);
+        expect(db.get<{ status: string }>("SELECT status FROM git_operations WHERE id='task-operation'")?.status).toBe("VERIFIED");
+        expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM worktrees WHERE id=$taskId AND removed_at IS NULL", { taskId })?.count).toBe(1);
+      } finally {
+        db.close();
+        rmSync(repoPath, { recursive: true, force: true });
+        rmSync(worktreeDir, { recursive: true, force: true });
+        rmSync(databaseRoot, { recursive: true, force: true });
+        rmSync(hooksPath, { recursive: true, force: true });
+      }
+    });
+
+    it("preserves and reconciles Git state after post-create verification fails", async () => {
+      const repoPath = createTempDir();
+      const git = await initGitRepo(repoPath);
+      const worktreeDir = createTempDir();
+      const databaseRoot = createTempDir();
+      const db = createSqliteDatabase(join(databaseRoot, "worktrees.sqlite"));
+      db.exec(readFileSync(new URL("../../../src/platform/database/migrations/007_git.sql", import.meta.url), "utf8"));
+      const taskId = "task-recoverable";
+      const worktreePath = join(worktreeDir, `task-${taskId}`);
+      try {
+        const interruptedManager = new WorktreeManager({
+          db,
+          git: new FailOnceDuringWorktreeVerificationGitCli(taskId),
+          worktreeDir,
+        });
+
+        await expect(interruptedManager.createTaskWorkspace(taskId, repoPath, "master"))
+          .rejects.toThrow("simulated verification interruption");
+
+        expect(existsSync(worktreePath)).toBe(true);
+        expect((await git.run(repoPath, ["worktree", "list"])).stdout.replace(/\\/g, "/").toLowerCase())
+          .toContain(worktreePath.replace(/\\/g, "/").toLowerCase());
+        expect((await git.run(repoPath, ["show-ref", "--verify", `refs/heads/task/${taskId}`])).stdout).toContain(`refs/heads/task/${taskId}`);
+        expect(db.get<{ status: string }>("SELECT status FROM git_operations WHERE worktree_id=$taskId", { taskId })?.status).toBe("STARTED");
+
+        const recovered = await new WorktreeManager({ db, worktreeDir }).createTaskWorkspace(taskId, repoPath, "master");
+
+        expect(recovered.path).toBe(worktreePath);
+        expect(db.get<{ status: string }>("SELECT status FROM git_operations WHERE worktree_id=$taskId", { taskId })?.status).toBe("VERIFIED");
+        expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM worktrees WHERE id=$taskId AND removed_at IS NULL", { taskId })?.count).toBe(1);
+      } finally {
+        await git.run(repoPath, ["worktree", "remove", "--force", worktreePath]).catch(() => undefined);
+        db.close();
+        rmSync(repoPath, { recursive: true, force: true });
+        rmSync(worktreeDir, { recursive: true, force: true });
+        rmSync(databaseRoot, { recursive: true, force: true });
+      }
+    });
+
+    it("retries the exact STARTED operation when no Git mutation occurred", async () => {
+      const repoPath = createTempDir();
+      const git = await initGitRepo(repoPath);
+      const worktreeDir = createTempDir();
+      const databaseRoot = createTempDir();
+      const db = createSqliteDatabase(join(databaseRoot, "worktrees.sqlite"));
+      db.exec(readFileSync(new URL("../../../src/platform/database/migrations/007_git.sql", import.meta.url), "utf8"));
+      const taskId = "task-no-mutation";
+      const worktreePath = join(worktreeDir, `task-${taskId}`);
+      try {
+        const interruptedManager = new WorktreeManager({
+          db,
+          git: new FailOnceBeforeWorktreeAddGitCli(),
+          worktreeDir,
+        });
+
+        await expect(interruptedManager.createTaskWorkspace(taskId, repoPath, "master"))
+          .rejects.toThrow("simulated interruption before git worktree add");
+        expect(db.get<{ status: string }>("SELECT status FROM git_operations WHERE worktree_id=$taskId", { taskId })?.status).toBe("STARTED");
+        expect(existsSync(worktreePath)).toBe(false);
+        expect((await git.run(repoPath, ["for-each-ref", "--format=%(refname)", `refs/heads/task/${taskId}`])).stdout.trim()).toBe("");
+
+        const recovered = await new WorktreeManager({ db, worktreeDir }).createTaskWorkspace(taskId, repoPath, "master");
+
+        expect(recovered.path).toBe(worktreePath);
+        expect(db.get<{ status: string }>("SELECT status FROM git_operations WHERE worktree_id=$taskId", { taskId })?.status).toBe("VERIFIED");
+        expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM worktrees WHERE id=$taskId AND removed_at IS NULL", { taskId })?.count).toBe(1);
+      } finally {
+        await git.run(repoPath, ["worktree", "remove", "--force", worktreePath]).catch(() => undefined);
+        db.close();
+        rmSync(repoPath, { recursive: true, force: true });
+        rmSync(worktreeDir, { recursive: true, force: true });
+        rmSync(databaseRoot, { recursive: true, force: true });
+      }
     });
   });
 
@@ -91,24 +241,34 @@ describe("WorktreeManager", () => {
     });
   });
 
-  describe("failed creation cleanup", () => {
-    it("leaves a clean candidate outside the configured managed root untouched", async () => {
+  describe("failed creation recovery", () => {
+    it("preserves an ambiguous pre-existing managed-path candidate without adopting it", async () => {
+      const repoPath = createTempDir();
+      const git = await initGitRepo(repoPath);
       const worktreeDir = createTempDir();
-      const outsideRoot = createTempDir();
-      const outsideMarker = join(outsideRoot, "keep.txt");
-      writeFileSync(outsideMarker, "outside managed root");
-      const manager = new WorktreeManager({ worktreeDir });
-      const cleanup = (manager as unknown as { removeCleanOrphan(path: string): Promise<void> })
-        .removeCleanOrphan.bind(manager);
+      const databaseRoot = createTempDir();
+      const db = createSqliteDatabase(join(databaseRoot, "worktrees.sqlite"));
+      db.exec(readFileSync(new URL("../../../src/platform/database/migrations/007_git.sql", import.meta.url), "utf8"));
+      const taskId = "task-existing-path";
+      const worktreePath = join(worktreeDir, `task-${taskId}`);
+      mkdirSync(worktreePath);
+      const marker = join(worktreePath, "keep.txt");
+      writeFileSync(marker, "preserve ambiguous candidate");
 
       try {
-        await cleanup(outsideRoot);
+        const manager = new WorktreeManager({ db, worktreeDir });
+        await expect(manager.createTaskWorkspace(taskId, repoPath, "master"))
+          .rejects.toThrow("already exists without a verified managed journal");
 
-        expect(existsSync(outsideMarker)).toBe(true);
-        expect(readFileSync(outsideMarker, "utf8")).toBe("outside managed root");
+        expect(existsSync(marker)).toBe(true);
+        expect(readFileSync(marker, "utf8")).toBe("preserve ambiguous candidate");
+        expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM git_operations WHERE worktree_id=$taskId", { taskId })?.count).toBe(0);
+        expect((await git.run(repoPath, ["for-each-ref", "--format=%(refname)", `refs/heads/task/${taskId}`])).stdout.trim()).toBe("");
       } finally {
+        db.close();
+        rmSync(repoPath, { recursive: true, force: true });
         rmSync(worktreeDir, { recursive: true, force: true });
-        rmSync(outsideRoot, { recursive: true, force: true });
+        rmSync(databaseRoot, { recursive: true, force: true });
       }
     });
   });

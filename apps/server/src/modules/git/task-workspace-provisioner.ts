@@ -20,6 +20,12 @@ interface TaskRow {
   project_id: string;
 }
 
+interface EpicProvisioningRow {
+  id: string;
+  project_id: string;
+  display_id: string;
+}
+
 /**
  * Создаёт authoritative task worktree до запуска Epic integration.
  *
@@ -38,8 +44,8 @@ export class TaskWorkspaceProvisioner {
 
   /** Гарантирует persisted worktree/branch для всех child tasks Epic. */
   async provisionForEpic(epicId: string): Promise<void> {
-    const epic = this.db.get<{ project_id: string }>(
-      "SELECT project_id FROM epics WHERE id=$epicId",
+    const epic = this.db.get<EpicProvisioningRow>(
+      "SELECT id,project_id,display_id FROM epics WHERE id=$epicId",
       { epicId },
     );
     if (!epic) throw new Error(`Epic ${epicId} not found`);
@@ -56,7 +62,30 @@ export class TaskWorkspaceProvisioner {
     if (!onboarding) throw new Error("active approved onboarding is required");
 
     const repoPath = validatePersistedRepository(onboarding.repository_path);
-    const targetRef = resolveTargetRef(onboarding);
+    const epicBranch = `epic/${epic.display_id}`;
+    assertSafeGitRef(epicBranch);
+    const baseRef = resolveTargetRef(onboarding);
+    const epicWorktrees = this.db.all<{ repo_path: string; path: string; branch: string; removed_at: string | null }>(
+      `SELECT w.repo_path,w.path,w.branch,w.removed_at
+         FROM worktrees w
+        WHERE w.id=$worktreeId`,
+      { worktreeId: `epic:${epic.id}` },
+    );
+    const epicOperations = this.db.all<{ type: string; status: string; repo_path: string; branch_name: string | null; worktree_id: string | null; target_ref: string | null }>(
+      `SELECT type,status,repo_path,branch_name,worktree_id,target_ref FROM git_operations
+        WHERE worktree_id=$worktreeId ORDER BY created_at`,
+      { worktreeId: `epic:${epic.id}` },
+    );
+    const epicWorktree = epicWorktrees[0];
+    const epicOperation = epicOperations[0];
+    if (epicWorktrees.length !== 1 || epicOperations.length !== 1 || !epicWorktree || !epicOperation
+      || epicWorktree.removed_at !== null || epicWorktree.repo_path !== repoPath || epicWorktree.branch !== epicBranch
+      || epicOperation.type !== "CREATE_WORKTREE" || epicOperation.status !== "VERIFIED"
+      || epicOperation.repo_path !== repoPath || epicOperation.branch_name !== epicBranch
+      || epicOperation.worktree_id !== `epic:${epic.id}` || epicOperation.target_ref !== baseRef) {
+      throw new Error("verified managed Epic workspace is required before child task provisioning");
+    }
+    const targetRef = epicBranch;
     const tasks = this.db.all<TaskRow>(
       "SELECT id,project_id FROM tasks WHERE epic_id=$epicId ORDER BY display_id",
       { epicId },
@@ -71,7 +100,7 @@ export class TaskWorkspaceProvisioner {
 
   private async provisionTask(taskId: string, repoPath: string, targetRef: string): Promise<void> {
     const branch = `task/${taskId}`;
-    const existing = this.db.get<{
+    const existingOperations = this.db.all<{
       id: string;
       status: string;
       repo_path: string;
@@ -79,26 +108,24 @@ export class TaskWorkspaceProvisioner {
       target_ref: string | null;
     }>(
       `SELECT id,status,repo_path,branch_name,target_ref
-         FROM git_operations
-        WHERE branch_name=$branch
-        ORDER BY created_at DESC LIMIT 1`,
-      { branch },
+        FROM git_operations
+        WHERE repo_path=$repoPath AND branch_name=$branch AND worktree_id=$taskId
+        ORDER BY created_at`,
+      { repoPath, branch, taskId },
     );
+    if (existingOperations.length > 1) throw new Error(`Task ${taskId} has multiple Git provisioning operations`);
+    const existing = existingOperations[0];
 
     if (existing) {
-      if (existing.status !== "VERIFIED") {
+      if (existing.status !== "STARTED" && existing.status !== "VERIFIED") {
         throw new Error(`Task ${taskId} has an unfinished Git provisioning operation`);
       }
       if (existing.repo_path !== repoPath || existing.branch_name !== branch || existing.target_ref !== targetRef) {
         throw new Error(`Task ${taskId} has a persisted Git provisioning mismatch`);
       }
-      const worktree = this.db.get<{ path: string; branch: string; removed_at: string | null }>(
-        "SELECT path,branch,removed_at FROM worktrees WHERE id=$taskId ORDER BY created_at DESC LIMIT 1",
-        { taskId },
-      );
-      if (!worktree || worktree.removed_at !== null || worktree.branch !== branch || !existsSync(worktree.path)) {
-        throw new Error(`Task ${taskId} has a verified Git journal but no active worktree`);
-      }
+      // Re-run the journal and actual Git-state checks for VERIFIED entries too;
+      // the persisted status alone is not proof that the worktree still matches.
+      await this.worktrees.createTaskWorkspace(taskId, repoPath, existing.target_ref);
       return;
     }
 

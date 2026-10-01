@@ -5,7 +5,7 @@
 import type { AgentRuntime } from "../agent-runtime.js";
 import type { AgentRun, RunStatus } from "@ebb-orchestrator/contracts";
 import type { RunOutcome } from "../run-types.js";
-import { ProcessExecutor, ExitCodeError, type ProcessOptions } from "../../../platform/process/process-executor.js";
+import { ProcessExecutor, ExitCodeError, type ProcessOptions, type ProcessResult } from "../../../platform/process/process-executor.js";
 import { HermesCliBuilder } from "./hermes-cli.js";
 import { generateConfigYaml } from "./hermes-profile.js";
 import { parseSessionId } from "./hermes-session-parser.js";
@@ -19,6 +19,9 @@ import { validatePlatform, type Platform } from "../../../platform/config/app-co
 import { resolveOrchestratorHome, type HomeEnv } from "../../../platform/home/orchestrator-home.js";
 import type { SecretStore } from "../../../platform/security/secret-store.js";
 import { HERMES_PROVIDER_SECRET_ENV, HERMES_PROVIDER_SECRET_SERVICE, type HermesProviderBridgeConfig } from "./hermes-provider-bridge.js";
+import { ProcessScopeLaunchNotDispatchedError, type ProcessScopeLaunchRequest, type ProcessScopeSupervisor } from "../../../platform/process/run-scope-supervisor.js";
+import type { ProcessScopeIdentity, ProcessScopeObservation } from "../../../platform/process/process-inspector.js";
+import { getRunProcessOwner, isCanonicalRunProcessStopEvidence, prepareRunProcessOwner, transitionRunProcessOwnerTx, type RunProcessOwner, type RunProcessOwnerState } from "../run-process-owner.js";
 
 /**
  * В памяти run state tracking.
@@ -27,6 +30,7 @@ interface RunState {
   run: AgentRun;
   pid: number | null;
   sessionId: string | null;
+  observedSessionId?: string | null;
   stdout: string;
   stderr: string;
   exitCode: number | null;
@@ -36,6 +40,13 @@ interface RunState {
   submittedResult: string | null;
   resultPath: string;
   usage: RunUsage | null;
+}
+
+interface RunStartControl {
+  abortController: AbortController;
+  cancelled: boolean;
+  stopProven: boolean;
+  startPromise?: Promise<void>;
 }
 
 interface RunUsage {
@@ -94,6 +105,9 @@ export class HermesRuntimeAdapter implements AgentRuntime {
   private readonly mcpArgs: string[];
   private readonly secretStore: SecretStore | undefined;
   private readonly provider: HermesProviderBridgeConfig | undefined;
+  private readonly processScopeSupervisor: ProcessScopeSupervisor | undefined;
+  private readonly activeScopes = new Map<string, { owner: ProcessScopeIdentity; durable: boolean; abortController: AbortController }>();
+  private readonly startingRuns = new Map<string, RunStartControl>();
 
   constructor(
     executor: ProcessExecutor,
@@ -115,7 +129,8 @@ export class HermesRuntimeAdapter implements AgentRuntime {
       mcpArgs?: string[];
       secretStore?: SecretStore;
       provider?: HermesProviderBridgeConfig;
-    }
+    },
+    processScopeSupervisor?: ProcessScopeSupervisor,
   ) {
     this.executor = executor;
     this.artifactStore = artifactStore ?? new InMemoryArtifactStore();
@@ -138,6 +153,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
     this.mcpArgs = config?.mcpArgs ?? [];
     this.secretStore = config?.secretStore;
     this.provider = config?.provider;
+    this.processScopeSupervisor = processScopeSupervisor;
     if (this.provider && !this.secretStore) throw new Error("Hermes provider bridge requires SecretStore");
     this.cliBuilder = new HermesCliBuilder();
   }
@@ -145,18 +161,41 @@ export class HermesRuntimeAdapter implements AgentRuntime {
   /**
    * запускать Объект новый run с Объект указанного options.
    */
-  async startRun(run: AgentRun): Promise<void> {
+  startRun(run: AgentRun): Promise<void> {
+    if (this.startingRuns.has(run.id)) throw new Error(`RUN_START_ALREADY_IN_PROGRESS:${run.id}`);
+    const control: RunStartControl = { abortController: new AbortController(), cancelled: false, stopProven: false };
+    this.startingRuns.set(run.id, control);
+    const startPromise = this.startRunWithControl(run, control);
+    control.startPromise = startPromise;
+    const clearControl = () => {
+      if (this.startingRuns.get(run.id) === control) this.startingRuns.delete(run.id);
+    };
+    void startPromise.then(clearControl, clearControl);
+    return startPromise;
+  }
+
+  private async startRunWithControl(run: AgentRun, control: RunStartControl): Promise<void> {
+    const supervisor = this.processScopeSupervisor;
+    if (!supervisor) throw new Error("PROCESS_SCOPE_SUPERVISOR_REQUIRED");
     const providerApiKey = await this.resolveProviderApiKey();
-    const abortController = new AbortController();
+    if (this.finishCancelledBeforeLaunch(run.id, control)) return;
+    const abortController = control.abortController;
     const promptFile = await this.writePromptFile(run);
+    if (this.finishCancelledBeforeLaunch(run.id, control)) return;
     let workspace = this.getManagedWorktree(run);
     // Экземпляр integration run can be authenticated before its worktree is created.
     // Wait только для callers который explicitly provide per-run workspaces; the
     // legacy/стандартный-путь remains сразу наблюдаемым для unit-test заглушек.
-    if (this.managedWorktreeForRun) workspace = await this.waitForWorkspace(run);
-    const profileHome = path.join(this.resultDirectory, "profiles", run.id);
+    if (this.managedWorktreeForRun) {
+      workspace = await this.waitForWorkspace(run);
+      if (this.finishCancelledBeforeLaunch(run.id, control)) return;
+    }
+    const defaultProfileHome = path.join(this.resultDirectory, "profiles", run.id);
+    const preparedOwner = this.loadProcessOwner(run.id, defaultProfileHome);
+    const profileHome = preparedOwner.hermesHome;
     const resultPath = path.join(this.resultDirectory, `${run.id}.json`);
     await fs.mkdir(path.join(profileHome, "home"), { recursive: true });
+    if (this.finishCancelledBeforeLaunch(run.id, control)) return;
     const configOptions = {
       capability: { role: run.role, workspace },
       toolsetPath: "mcp-orchestrator",
@@ -167,6 +206,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
       ...(this.provider ? { provider: { baseUrl: this.provider.baseUrl, model: run.model } } : {}),
     };
     await fs.writeFile(path.join(profileHome, "config.yaml"), generateConfigYaml(configOptions));
+    if (this.finishCancelledBeforeLaunch(run.id, control)) return;
 
     const args = this.cliBuilder.buildLaunchArgs({
       queryFile: promptFile,
@@ -178,38 +218,43 @@ export class HermesRuntimeAdapter implements AgentRuntime {
       maxTurns: this.roleLimit,
     });
 
-    const options: ProcessOptions = {
-      cwd: workspace,
-      env: this.buildEnvironment(run, profileHome, providerApiKey),
-      timeout: this.timeoutMs,
-      signal: abortController.signal,
-    };
-
-    let processOutput: { stdout: string; stderr: string; exitCode: number };
-
-    try {
-      const result = await this.executor.exec("hermes", args, options);
-      processOutput = { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode };
-      this.exitCodes.set(run.id, result.exitCode);
-    } catch (error) {
-      const processError = error instanceof ExitCodeError ? error : undefined;
-      // Экземпляр process that started and returned non-zero is a run outcome. A
-      // spawn/launcher ошибка является разный: let RunService atomically fail
-      // Объект сохранённый run и отзывает его capability.
-      if (!processError) throw error;
-      processOutput = { stdout: processError?.stdout ?? "", stderr: processError?.stderr ?? (error as Error).message, exitCode: processError?.exitCode ?? -1 };
-      this.exitCodes.set(run.id, processOutput.exitCode);
+    if (control.cancelled || abortController.signal.aborted) {
+      this.markNeverLaunched(preparedOwner.runId);
+      control.stopProven = true;
+      return;
     }
+
+    let processOutput: ProcessResult;
+    try {
+      processOutput = await this.launchScopedRun(supervisor, preparedOwner, {
+        executable: "hermes",
+        args,
+        cwd: workspace,
+        environment: this.buildEnvironment(run, profileHome),
+        ...(providerApiKey !== undefined ? { secret: providerApiKey } : {}),
+        signal: abortController.signal,
+        timeoutMs: this.timeoutMs,
+      }, abortController, control);
+    } catch (error) {
+      if (control.cancelled && control.stopProven) return;
+      throw error;
+    }
+    if (control.cancelled) {
+      this.assertStopProof(run.id, control);
+      return;
+    }
+    this.exitCodes.set(run.id, processOutput.exitCode);
     processOutput = this.redactProviderCredential(processOutput, providerApiKey);
 
-    const sessionId = parseSessionId(processOutput?.stdout ?? "");
+    const observedSessionId = parseSessionId(processOutput?.stdout ?? "");
     const pid = this.extractPid(processOutput?.stdout ?? "");
     this.artifactStore.saveArtifacts(run.id, processOutput.stdout, processOutput.stderr, processOutput.exitCode);
 
     const state: RunState = {
-      run: { ...run, status: "IN_PROGRESS" as RunStatus, sessionId },
+      run: { ...run, status: "IN_PROGRESS" as RunStatus, sessionId: null },
       pid: pid || null,
-      sessionId: sessionId || null,
+      sessionId: null,
+      observedSessionId: observedSessionId || null,
       stdout: processOutput.stdout,
       stderr: processOutput.stderr,
       exitCode: processOutput.exitCode,
@@ -224,10 +269,233 @@ export class HermesRuntimeAdapter implements AgentRuntime {
     this.runs.set(run.id, state);
   }
 
+  private loadProcessOwner(runId: string, defaultHermesHome: string): RunProcessOwner {
+    if (this.databasePath) {
+      const database = createSqliteDatabase(this.databasePath);
+      try {
+        const owner = getRunProcessOwner(database, runId);
+        if (!owner) throw new Error("RUN_PROCESS_OWNER_MISSING");
+        if (owner.state !== "PREPARED") throw new Error("RUN_PROCESS_OWNER_NOT_PREPARED");
+        return owner;
+      } finally {
+        database.close();
+      }
+    }
+    // In-memory owner identities are used only by unit tests which explicitly inject a test supervisor.
+    return prepareRunProcessOwner(runId, defaultHermesHome, currentContainmentKind());
+  }
+
+  private async launchScopedRun(
+    supervisor: ProcessScopeSupervisor,
+    preparedOwner: RunProcessOwner,
+    request: ProcessScopeLaunchRequest,
+    abortController: AbortController,
+    control: RunStartControl,
+  ): Promise<ProcessResult> {
+    const durable = this.databasePath !== undefined;
+    let owner = ownerToScopeIdentity(preparedOwner);
+    if (control.cancelled || abortController.signal.aborted) {
+      this.markNeverLaunched(preparedOwner.runId);
+      control.stopProven = true;
+      throw new Error("RUN_CANCELLED_BEFORE_LAUNCH");
+    }
+    if (durable) {
+      this.transitionOwner(owner, "PREPARED", "LAUNCHING");
+      owner = { ...owner, state: "LAUNCHING" };
+    } else {
+      owner = { ...owner, state: "LAUNCHING" };
+    }
+
+    let liveIdentity: ProcessScopeIdentity | undefined;
+    try {
+      const handle = await supervisor.launch(owner, request, async (identity) => {
+        assertMatchingLiveIdentity(owner, identity);
+        // Keep the exact OS identity available even if the durable LIVE CAS fails;
+        // the failure path must still stop that exact scope before returning.
+        liveIdentity = identity;
+        if (control.cancelled || abortController.signal.aborted) {
+          throw new Error("RUN_CANCELLED_BEFORE_LAUNCH_AUTHORIZATION");
+        }
+        if (durable) this.transitionOwner(owner, "LAUNCHING", "LIVE", identity);
+      });
+      if (!liveIdentity) throw new Error("PROCESS_SCOPE_LIVE_IDENTITY_MISSING");
+      this.activeScopes.set(preparedOwner.runId, { owner: liveIdentity, durable, abortController });
+      const result = await handle.completion;
+      let stopped = await supervisor.waitForStopped(liveIdentity, 30_000);
+      if (stopped.state !== "STOPPED") {
+        const stopping = { ...liveIdentity, state: "STOPPING" as const };
+        if (durable) {
+          try { this.transitionOwner(liveIdentity, "LIVE", "STOPPING"); }
+          catch { /* Stop the exact OS scope even when durable state cannot be updated. */ }
+        }
+        const stop = await supervisor.stop(stopping);
+        stopped = stop.state === "STOPPED" ? stop : await supervisor.waitForStopped(stopping, 30_000);
+        liveIdentity = stopping;
+      }
+      if (stopped.state !== "STOPPED") {
+        const current = liveIdentity;
+        if (durable) {
+          try { this.persistUnknown(current.runId); }
+          catch { /* The existing nonterminal owner remains for startup preflight. */ }
+        }
+        throw new Error("PROCESS_SCOPE_STOP_UNPROVEN");
+      }
+      control.stopProven = true;
+      if (durable) this.persistStopped(liveIdentity, stopped.evidence);
+      return result;
+    } catch (error) {
+      if (control.cancelled && error instanceof ProcessScopeLaunchNotDispatchedError) {
+        if (durable) this.transitionOwner(owner, "LAUNCHING", "STOPPED", undefined, "NEVER_LAUNCHED");
+        control.stopProven = true;
+        throw error;
+      }
+      const current = liveIdentity ?? owner;
+      const observation = await supervisor.inspect(current).catch((): ProcessScopeObservation => ({
+        state: "UNKNOWN", reason: "PROCESS_SCOPE_INSPECTION_FAILED",
+      }));
+      if (observation.state === "STOPPED") {
+        control.stopProven = true;
+        if (durable) this.persistStopped(current, observation.evidence);
+      } else if (observation.state === "LIVE") {
+        assertMatchingLiveIdentity(current, observation.identity);
+        const live = { ...observation.identity, state: "STOPPING" as const };
+        if (durable) {
+          try { this.transitionOwner(current, "LIVE", "STOPPING"); } catch { /* Still stop the exact OS scope below. */ }
+        }
+        const stopped = await supervisor.stop(live);
+        const final = stopped.state === "STOPPED" ? stopped : await supervisor.waitForStopped(live, 30_000);
+        if (final.state === "STOPPED") {
+          control.stopProven = true;
+          if (durable) this.persistStopped(current, final.evidence);
+        } else {
+          if (durable) {
+            try { this.persistUnknown(current.runId); }
+            catch { /* Preserve whichever nonterminal durable state is still available. */ }
+          }
+          throw new Error("PROCESS_SCOPE_STOP_UNPROVEN", { cause: error });
+        }
+      } else {
+        if (durable) {
+          try { this.persistUnknown(current.runId); }
+          catch { /* Preserve the current row so startup remains fail-closed. */ }
+        }
+        throw new Error("PROCESS_SCOPE_STATE_UNKNOWN", { cause: error });
+      }
+      throw error;
+    } finally {
+      this.activeScopes.delete(preparedOwner.runId);
+    }
+  }
+
+  private transitionOwner(
+    owner: Pick<ProcessScopeIdentity, "runId">,
+    expectedState: RunProcessOwnerState,
+    nextState: RunProcessOwnerState,
+    identity?: ProcessScopeIdentity,
+    evidence?: string,
+  ): void {
+    if (!this.databasePath) return;
+    const database = createSqliteDatabase(this.databasePath);
+    try {
+      database.transaction((tx) => transitionRunProcessOwnerTx(tx, {
+        runId: owner.runId,
+        expectedState,
+        nextState,
+        ...(identity ? { identity: ownerTransitionIdentity(identity) } : {}),
+        ...(evidence ? { evidence } : {}),
+      }));
+    } finally {
+      database.close();
+    }
+  }
+
+  private persistStopped(owner: ProcessScopeIdentity, evidence: string): void {
+    if (!this.databasePath) return;
+    let state = this.readPersistedOwnerState(owner.runId);
+    if (!state) throw new Error("RUN_PROCESS_OWNER_MISSING");
+    if (state === "STOPPED") {
+      const persisted = this.readPersistedOwner(owner.runId);
+      if (!persisted || !isCanonicalRunProcessStopEvidence(persisted.stopEvidence)) {
+        throw new Error("RUN_PROCESS_STOP_PROOF_INVALID");
+      }
+      return;
+    }
+    if (state === "LIVE") {
+      this.transitionOwner(owner, "LIVE", "STOPPING", owner);
+      state = "STOPPING";
+    }
+    this.transitionOwner(owner, state, "STOPPED", owner, evidence);
+    const persisted = this.readPersistedOwner(owner.runId);
+    if (!persisted || persisted.state !== "STOPPED" || persisted.stopEvidence !== evidence ||
+        !isCanonicalRunProcessStopEvidence(persisted.stopEvidence)) {
+      throw new Error("RUN_PROCESS_STOP_PROOF_PERSISTENCE_FAILED");
+    }
+  }
+
+  private readPersistedOwner(runId: string): RunProcessOwner | undefined {
+    if (!this.databasePath) return undefined;
+    const database = createSqliteDatabase(this.databasePath);
+    try { return getRunProcessOwner(database, runId); }
+    finally { database.close(); }
+  }
+
+  private readPersistedOwnerState(runId: string): RunProcessOwnerState | undefined {
+    if (!this.databasePath) return undefined;
+    const database = createSqliteDatabase(this.databasePath);
+    try { return getRunProcessOwner(database, runId)?.state; }
+    finally { database.close(); }
+  }
+
+  private persistUnknown(runId: string): void {
+    const current = this.readPersistedOwnerState(runId);
+    if (!current || current === "UNKNOWN" || current === "STOPPED" || current === "PREPARED") return;
+    this.transitionOwner({ runId }, current, "UNKNOWN", undefined, "OS_STATE_UNPROVEN");
+  }
+
+  private markNeverLaunched(runId: string): void {
+    if (!this.databasePath) return;
+    const database = createSqliteDatabase(this.databasePath);
+    try {
+      const owner = getRunProcessOwner(database, runId);
+      if (!owner) throw new Error("RUN_PROCESS_OWNER_MISSING");
+      if (owner.state === "PREPARED") {
+        database.transaction((tx) => transitionRunProcessOwnerTx(tx, {
+          runId, expectedState: "PREPARED", nextState: "STOPPED", evidence: "NEVER_LAUNCHED",
+        }));
+      } else if (owner.state !== "STOPPED" || !isCanonicalRunProcessStopEvidence(owner.stopEvidence)) {
+        throw new Error("RUN_PROCESS_SCOPE_STOP_UNPROVEN");
+      }
+    } finally {
+      database.close();
+    }
+  }
+
+  private finishCancelledBeforeLaunch(runId: string, control: RunStartControl): boolean {
+    if (!control.cancelled && !control.abortController.signal.aborted) return false;
+    this.markNeverLaunched(runId);
+    control.stopProven = true;
+    return true;
+  }
+
+  private assertStopProof(runId: string, control: RunStartControl): void {
+    if (!control.stopProven) throw new Error("PROCESS_SCOPE_STOP_UNPROVEN");
+    if (!this.databasePath) return;
+    const database = createSqliteDatabase(this.databasePath);
+    try {
+      const owner = getRunProcessOwner(database, runId);
+      if (!owner || owner.state !== "STOPPED" || !isCanonicalRunProcessStopEvidence(owner.stopEvidence)) {
+        throw new Error("PROCESS_SCOPE_STOP_UNPROVEN");
+      }
+    } finally {
+      database.close();
+    }
+  }
+
   /**
    * Возобновление a run that was paused.
    */
   async resumeRun(runId: string, options: { sessionId: string; attempt: number }): Promise<void> {
+    if (this.databasePath) throw new Error("HERMES_RESUME_REQUIRES_TASK_5C");
     const existingState = this.runs.get(runId) ?? await this.restoreRunState(runId, options);
     const providerApiKey = await this.resolveProviderApiKey();
 
@@ -310,40 +578,55 @@ export class HermesRuntimeAdapter implements AgentRuntime {
    * Отмена an in-progress run.
    */
   async cancelRun(runId: string): Promise<void> {
+    const starting = this.startingRuns.get(runId);
+    if (starting) {
+      starting.cancelled = true;
+      starting.abortController.abort();
+      let startFailure: unknown;
+      try {
+        await starting.startPromise;
+      } catch (error) {
+        startFailure = error;
+      }
+      try {
+        this.assertStopProof(runId, starting);
+      } catch (error) {
+        if (startFailure !== undefined) throw startFailure;
+        throw error;
+      }
+      return;
+    }
+    const activeScope = this.activeScopes.get(runId);
+    if (activeScope) {
+      const supervisor = this.processScopeSupervisor;
+      if (!supervisor) throw new Error("PROCESS_SCOPE_SUPERVISOR_REQUIRED");
+      let owner = activeScope.owner;
+      if (owner.state === "LIVE") {
+        if (activeScope.durable) this.transitionOwner(owner, "LIVE", "STOPPING");
+        owner = { ...owner, state: "STOPPING" };
+        activeScope.owner = owner;
+      }
+      activeScope.abortController.abort();
+      const stopped = await supervisor.stop(owner);
+      const final = stopped.state === "STOPPED" ? stopped : await supervisor.waitForStopped(owner, 30_000);
+      if (final.state !== "STOPPED") {
+        if (activeScope.durable && owner.state !== "UNKNOWN") {
+          this.transitionOwner(owner, owner.state, "UNKNOWN", undefined, "OS_STATE_UNPROVEN");
+        }
+        throw new Error("PROCESS_SCOPE_STOP_UNPROVEN");
+      }
+      if (activeScope.durable) this.transitionOwner(owner, owner.state, "STOPPED", undefined, final.evidence);
+      return;
+    }
     const state = this.runs.get(runId);
     if (!state) {
       return;
     }
 
-    // отправлять корректный сигнал первый
-    if (state.abortController) {
-      state.abortController.abort();
-    }
-
-    // Жёсткое завершение после timeout (10 seconds)
-    const hardKillTimeout = setTimeout(() => {
-      // Жёсткое завершение by terminating Объект процесс напрямую
-      if (state.pid) {
-        try {
-          process.kill(state.pid, "SIGKILL");
-        } catch {
-          // процесс may have уже завершился
-        }
-      }
-    }, 10000);
-
-    // Очищает timeout когда run completes normally
-    const cleanup = () => {
-      clearTimeout(hardKillTimeout);
-    };
-
     // Обновляет run status
     const updatedRun = { ...state.run, status: "CANCELLED" as RunStatus };
     state.run = updatedRun;
     state.exitCode = -1;
-
-    // CleОбъект up on состояние changes (exit, collect, etc.)
-    state.abortController?.signal.addEventListener("abort", cleanup);
   }
 
   /**
@@ -377,7 +660,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
         validatedSubmission: false,
         diagnostics: {
           runId,
-          sessionId: state.sessionId,
+          sessionId: state.observedSessionId ?? state.sessionId,
           stderr: state.stderr,
           exitCode: state.exitCode ?? -1,
           artifactReferences: [state.resultPath, `run-artifacts://${runId}`],
@@ -392,7 +675,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
       validatedSubmission: true,
       diagnostics: {
         runId,
-        sessionId: state.sessionId,
+        sessionId: state.observedSessionId ?? state.sessionId,
         stderr: state.stderr,
         exitCode: state.exitCode ?? -1,
         artifactReferences: [state.resultPath, `run-artifacts://${runId}`],
@@ -431,7 +714,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
       validatedSubmission: false,
       diagnostics: {
         runId,
-        sessionId: state.sessionId,
+        sessionId: state.observedSessionId ?? state.sessionId,
         stderr: state.stderr,
         exitCode: state.exitCode ?? -1,
         artifactReferences: [state.resultPath],
@@ -634,4 +917,49 @@ export class HermesRuntimeAdapter implements AgentRuntime {
     const match = stdout.match(pidPattern);
     return match?.[1] ? parseInt(match[1], 10) : null;
   }
+}
+
+function ownerToScopeIdentity(owner: RunProcessOwner): ProcessScopeIdentity {
+  return {
+    runId: owner.runId,
+    containmentKind: owner.containmentKind,
+    containmentId: owner.containmentId,
+    launchNonce: owner.launchNonce,
+    systemdInvocationId: owner.systemdInvocationId,
+    systemdControlGroup: owner.systemdControlGroup,
+    supervisorPid: owner.supervisorPid,
+    supervisorStartIdentity: owner.supervisorStartIdentity,
+    pid: owner.pid,
+    platform: owner.platform,
+    processStartIdentity: owner.processStartIdentity,
+    executableIdentity: owner.executableIdentity,
+    state: owner.state,
+  };
+}
+
+function assertMatchingLiveIdentity(owner: ProcessScopeIdentity, identity: ProcessScopeIdentity): void {
+  if (identity.state !== "LIVE" || identity.runId !== owner.runId ||
+      identity.containmentKind !== owner.containmentKind || identity.containmentId !== owner.containmentId ||
+      identity.launchNonce !== owner.launchNonce) {
+    throw new Error("PROCESS_SCOPE_IDENTITY_MISMATCH");
+  }
+}
+
+function ownerTransitionIdentity(identity: ProcessScopeIdentity) {
+  return {
+    systemdInvocationId: identity.systemdInvocationId,
+    systemdControlGroup: identity.systemdControlGroup,
+    supervisorPid: identity.supervisorPid,
+    supervisorStartIdentity: identity.supervisorStartIdentity,
+    pid: identity.pid,
+    platform: identity.platform,
+    processStartIdentity: identity.processStartIdentity,
+    executableIdentity: identity.executableIdentity,
+  };
+}
+
+function currentContainmentKind(): RunProcessOwner["containmentKind"] {
+  if (process.platform === "win32") return "windows-job";
+  if (process.platform === "linux") return "systemd-user-service";
+  throw new Error(`RUN_PROCESS_CONTAINMENT_UNSUPPORTED:${process.platform}`);
 }

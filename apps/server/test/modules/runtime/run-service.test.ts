@@ -6,10 +6,13 @@ import { join } from "node:path";
 import { createSqliteDatabase } from "../../../src/platform/database/sqlite-database.js";
 import { runMigrations } from "../../../src/platform/database/migrator.js";
 import type { Database } from "../../../src/platform/database/database.js";
-import { RunService, RunTransitionConflictError } from "../../../src/modules/runtime/run-service.js";
+import { createRunContextInput, effectiveRunToolIds, RunService, RunTransitionConflictError } from "../../../src/modules/runtime/run-service.js";
 import { FakeAgentRuntime } from "../../fakes/fake-agent-runtime.js";
-import type { RunOutcome } from "../../../src/modules/runtime/run-types.js";
+import type { RunOutcome, StartRunOptions } from "../../../src/modules/runtime/run-types.js";
 import { loadTestMigrations } from "../../helpers/migrations.js";
+import { digestRunPromptBytesV1 } from "../../../src/modules/context/context-provenance.js";
+import type { PreparedRunContext } from "../../../src/modules/context/context-types.js";
+import { transitionRunProcessOwnerTx } from "../../../src/modules/runtime/run-process-owner.js";
 
 const migrations = loadTestMigrations();
 
@@ -45,13 +48,183 @@ describe("RunService with FakeAgentRuntime", () => {
 
   async function setup(): Promise<void> {
     db = await setupDb();
+    const now = new Date().toISOString();
+    db.run("INSERT INTO projects(id,name,display_name,status,created_at,updated_at) VALUES($id,'runtime','Runtime','ACTIVE',$now,$now)", { id: _projectId, now });
+    db.run("INSERT INTO tasks(id,project_id,display_id,title,status,contract_json,required,created_at,updated_at) VALUES($id,$projectId,'TASK-RUN','Runtime task','READY','{}',1,$now,$now)", { id: taskId, projectId: _projectId, now });
     fakeRuntime = new FakeAgentRuntime();
-    runService = new RunService(db, fakeRuntime);
+    runService = new RunService(db, fakeRuntime, {
+      prepare: (_tx, input) => preparedContext(input.prompt, input.role, input.subject),
+    });
+    fakeRuntime.cancelRun = async (runId) => {
+      const owner = db!.get<{ state: string }>("SELECT state FROM run_process_owners WHERE run_id=$runId", { runId });
+      if (owner?.state === "PREPARED") {
+        db!.transaction((tx) => transitionRunProcessOwnerTx(tx, {
+          runId, expectedState: "PREPARED", nextState: "STOPPED", evidence: "NEVER_LAUNCHED",
+        }));
+      }
+    };
   }
+
+  function preparedContext(
+    finalPrompt: string,
+    role = "developer",
+    subject: PreparedRunContext["subject"] = { type: "TASK", id: taskId },
+  ): PreparedRunContext {
+    return {
+      finalPrompt,
+      subject,
+      role: role as PreparedRunContext["role"],
+      contractDigest: null,
+      items: [],
+      contextBuilderVersion: "1.0.0",
+      promptHash: digestRunPromptBytesV1(new TextEncoder().encode(finalPrompt)),
+      contextHash: "b".repeat(64),
+      initialTokenSize: null,
+      workspaceFingerprint: "c".repeat(64),
+    };
+  }
+
+  function testContextInput(options: { taskId: string | null; epicId: string | null; role: string; requestId?: string; prompt?: string; allowedTools?: import("../../../src/modules/execution/run-capability.js").ToolId[] }) {
+    const subject = options.taskId !== null ? { type: "TASK" as const, id: options.taskId }
+      : options.epicId !== null ? { type: "EPIC" as const, id: options.epicId }
+        : { type: "REQUEST" as const, id: options.requestId ?? "request-test" };
+    return {
+      prompt: options.prompt ?? "test caller prompt",
+      subject,
+      role: options.role.toLowerCase() as PreparedRunContext["role"],
+      roleInputs: {},
+      versions: { roleVersion: null, runtime: "default", runtimeVersion: null, model: "test", modelVersion: null, outputSchemaVersion: "1", contextVersion: "1" },
+      execution: {
+        workspaceIdentity: { repository: "test-repository", workspace: "test-worktree", worktree: "test-worktree" },
+        targetHead: null, targetBranch: null, effectiveCapabilityIds: effectiveRunToolIds(options.role, options.allowedTools, subject.type === "REQUEST"),
+        policyIdentity: { providerId: null, providerPolicyId: null, runtimeId: "default", runtimePolicyId: null },
+      },
+    };
+  }
+
+  function withTestContext(options: StartRunOptions): StartRunOptions {
+    return {
+      ...options,
+      contextInput: options.contextInput ?? testContextInput({
+        taskId: options.taskId,
+        epicId: options.epicId,
+        role: options.role,
+        ...("requestId" in options && options.requestId ? { requestId: options.requestId } : {}),
+        ...(options.capability?.allowedTools ? { allowedTools: options.capability.allowedTools } : {}),
+        ...(options.prompt ? { prompt: options.prompt } : {}),
+      }),
+    } as StartRunOptions;
+  }
+
+  function startRun(options: StartRunOptions) {
+    return runService.startRun(withTestContext(options));
+  }
+
+  function prepareRun(options: StartRunOptions) {
+    return runService.prepareRun(withTestContext(options));
+  }
+
+  function execute(options: StartRunOptions) {
+    return runService.execute(withTestContext(options));
+  }
+
+  function markFakeRunNeverLaunched(runId: string): void {
+    db!.transaction((tx) => transitionRunProcessOwnerTx(tx, {
+      runId, expectedState: "PREPARED", nextState: "STOPPED", evidence: "NEVER_LAUNCHED",
+    }));
+  }
+
+  it("normalizes absent Developer and Coordinator role inputs to the assembler's empty object", () => {
+    const snapshot = {
+      prompt: "exact caller prompt",
+      workspaceIdentity: { repository: "project-repository", workspace: "managed-worktree", worktree: "task-1" },
+      targetHead: null,
+      targetBranch: null,
+    };
+    const developer = createRunContextInput({
+      role: "developer", model: "persisted", taskId: "task-1", epicId: null,
+      triggerReason: "runtime-request", contextVersion: "1", outputSchemaVersion: "1",
+    }, snapshot);
+    const coordinator = createRunContextInput({
+      role: "coordinator", model: "persisted", taskId: null, requestId: "request-1", projectId: "project-1", epicId: null,
+      triggerReason: "planning-request", contextVersion: "1", outputSchemaVersion: "1",
+    }, snapshot);
+
+    expect(developer.roleInputs).toEqual({});
+    expect(coordinator.roleInputs).toEqual({});
+  });
+
+  it("persists the exact prepared prompt, one manifest, and one PREPARED owner before execution", async () => {
+    await setup();
+    const finalPrompt = "caller bytes\n\n=== EBB ORCHESTRATOR VALIDATED CONTEXT V1 ===\n{}\n";
+    const prepared = preparedContext(finalPrompt);
+    const options = {
+      role: "developer", model: "gpt-4", taskId, epicId: null, triggerReason: "task-assignment",
+      contextVersion: "1", outputSchemaVersion: "1", prompt: finalPrompt,
+      contextInput: testContextInput({ taskId, epicId: null, role: "developer", prompt: finalPrompt }),
+    };
+
+    const run = db!.transaction((tx) => runService.prepareRunInTransaction(tx, options, prepared));
+
+    expect(db!.get<{ prompt: string }>("SELECT prompt FROM agent_runs WHERE id=$id", { id: run.id })?.prompt).toBe(finalPrompt);
+    expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM context_manifests WHERE run_id=$id", { id: run.id })?.count).toBe(1);
+    expect(db!.get<{ source_tag: string; hermes_home: string; containment_kind: string; containment_id: string; launch_nonce: string; state: string }>(
+      "SELECT source_tag,hermes_home,containment_kind,containment_id,launch_nonce,state FROM run_process_owners WHERE run_id=$id", { id: run.id },
+    )).toMatchObject({ source_tag: `ebb-run:${run.id}`, state: "PREPARED" });
+    expect(db!.get<{ state: string }>("SELECT state FROM run_process_owners WHERE run_id=$id", { id: run.id })?.state).toBe("PREPARED");
+    expect(fakeRuntime.startCalls).toHaveLength(0);
+  });
+
+  it("rolls back the Run when prepared provenance is invalid", async () => {
+    await setup();
+    const prepared = { ...preparedContext("final prompt"), promptHash: "f".repeat(64) };
+    const options = {
+      role: "developer", model: "gpt-4", taskId, epicId: null, triggerReason: "task-assignment",
+      contextVersion: "1", outputSchemaVersion: "1", prompt: prepared.finalPrompt,
+      contextInput: testContextInput({ taskId, epicId: null, role: "developer", prompt: prepared.finalPrompt }),
+    };
+
+    expect(() => db!.transaction((tx) => runService.prepareRunInTransaction(tx, options, prepared))).toThrow(/PREPARED_CONTEXT/);
+    expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM agent_runs")?.count).toBe(0);
+    expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM context_manifests")?.count).toBe(0);
+    expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM run_process_owners")?.count).toBe(0);
+    expect(fakeRuntime.startCalls).toHaveLength(0);
+  });
+
+  it.each([
+    ["manifest", "CREATE TRIGGER reject_manifest BEFORE INSERT ON context_manifests BEGIN SELECT RAISE(ABORT, 'injected manifest failure'); END"],
+    ["owner", "CREATE TRIGGER reject_owner BEFORE INSERT ON run_process_owners BEGIN SELECT RAISE(ABORT, 'injected owner failure'); END"],
+  ])("rolls back Run and provenance when %s persistence fails", async (_kind, triggerSql) => {
+    await setup();
+    db!.run(triggerSql);
+    const options = withTestContext({
+      role: "developer", model: "gpt-4", taskId, epicId: null, triggerReason: "task-assignment",
+      contextVersion: "1", outputSchemaVersion: "1", capability: { workspace: tmpDir },
+    });
+
+    expect(() => runService.prepareRun(options)).toThrow(/injected (manifest|owner) failure/);
+    expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM agent_runs")?.count).toBe(0);
+    expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM context_manifests")?.count).toBe(0);
+    expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM run_process_owners")?.count).toBe(0);
+    expect(fakeRuntime.startCalls).toHaveLength(0);
+  });
+
+  it("does not start Hermes when durable manifest or owner is missing", async () => {
+    await setup();
+    const run = prepareRun({
+      role: "developer", model: "gpt-4", taskId, epicId: null, triggerReason: "task-assignment",
+      contextVersion: "1", outputSchemaVersion: "1", capability: { workspace: tmpDir },
+    });
+    db!.run("DELETE FROM context_manifests WHERE run_id=$id", { id: run.id });
+
+    await expect(runService.executePreparedRun(run.id)).rejects.toThrow("RUN_CONTEXT_MANIFEST_UNAVAILABLE");
+    expect(fakeRuntime.startCalls).toHaveLength(0);
+    expect(db!.get<{ status: string }>("SELECT status FROM agent_runs WHERE id=$id", { id: run.id })?.status).toBe("FAILED");
+  });
 
   it("starts a run and records it in the database", async () => {
     await setup();
-    const run = await runService.startRun({
+    const run = await startRun({
       role: "developer",
       model: "gpt-4",
       taskId,
@@ -76,7 +249,7 @@ describe("RunService with FakeAgentRuntime", () => {
 
   it("derives capability tools from the role contract", async () => {
     await setup();
-    const run = await runService.startRun({
+    const run = await startRun({
       role: "reviewer", model: "gpt-4", taskId, epicId, triggerReason: "review-request",
       contextVersion: "1", outputSchemaVersion: "1",
       capability: {
@@ -90,7 +263,7 @@ describe("RunService with FakeAgentRuntime", () => {
     expect(capability.allowedTools).not.toContain("workspace.patch");
     expect(capability.allowedTools).not.toContain("git.commit");
 
-    const integration = await runService.startRun({
+    const integration = await startRun({
       role: "integration", model: "gpt-4", taskId, epicId, triggerReason: "integration",
       contextVersion: "1", outputSchemaVersion: "1",
       capability: {
@@ -105,7 +278,7 @@ describe("RunService with FakeAgentRuntime", () => {
 
   it("atomically accepts one authenticated completion for the exact run", async () => {
     await setup();
-    const run = await runService.startRun({
+    const run = await startRun({
       role: "developer", model: "gpt-4", taskId, epicId, triggerReason: "task-assignment",
       contextVersion: "1", outputSchemaVersion: "1", capability: { workspace: tmpDir, allowedTools: ["submit_result"] },
     });
@@ -119,7 +292,7 @@ describe("RunService with FakeAgentRuntime", () => {
 
   it("resumes an in-progress run", async () => {
     await setup();
-    const startedRun = await runService.startRun({
+    const startedRun = await startRun({
       role: "reviewer",
       model: "gpt-4o",
       taskId,
@@ -145,7 +318,7 @@ describe("RunService with FakeAgentRuntime", () => {
 
   it("collects result and marks run as completed", async () => {
     await setup();
-    const startedRun = await runService.startRun({
+    const startedRun = await startRun({
        role: "developer",
       model: "claude-3",
       taskId,
@@ -159,6 +332,7 @@ describe("RunService with FakeAgentRuntime", () => {
     await runService.completionStore().accept(startedRun.capabilityRef!, {
       runId: startedRun.id, role: startedRun.role, output: JSON.parse(output),
     });
+    markFakeRunNeverLaunched(startedRun.id);
     const outcome: RunOutcome = {
       success: true,
       exitCode: 0,
@@ -172,14 +346,40 @@ describe("RunService with FakeAgentRuntime", () => {
     expect(collected.outputSchemaVersion).toBe("1.0.0");
   });
 
+  it.each([
+    ["missing", null],
+    ["malformed", "invalid evidence!"],
+  ])("keeps a completing Run nonterminal when persisted STOPPED evidence is %s", async (_label, evidence) => {
+    await setup();
+    const run = await startRun({
+      role: "developer", model: "gpt-4", taskId, epicId, triggerReason: "task-assignment",
+      contextVersion: "1", outputSchemaVersion: "1",
+    });
+    const output = { version: "1.0.0", outcome: "COMPLETED" };
+    await runService.completionStore().accept(run.capabilityRef!, { runId: run.id, role: run.role, output });
+    db!.run("UPDATE run_process_owners SET state='STOPPED',stop_evidence=$evidence WHERE run_id=$runId", {
+      runId: run.id, evidence,
+    });
+
+    await expect(runService.collectResult(run.id, {
+      success: true, exitCode: 0, output: JSON.stringify(output), validatedSubmission: true,
+      diagnostics: { runId: run.id, sessionId: null, stderr: "", exitCode: 0, artifactReferences: [] },
+    })).rejects.toThrow(`RUN_PROCESS_SCOPE_STOP_UNPROVEN:${run.id}`);
+
+    expect(db!.get<{ status: string; capability_ref: string | null }>(
+      "SELECT status,capability_ref FROM agent_runs WHERE id=$runId", { runId: run.id },
+    )).toMatchObject({ status: "COMPLETING", capability_ref: run.capabilityRef });
+  });
+
   it("rejects an artifact or adapter outcome that is not the authenticated submission", async () => {
     await setup();
-    const run = await runService.startRun({
+    const run = await startRun({
       role: "developer", model: "gpt-4", taskId, epicId, triggerReason: "task-assignment",
       contextVersion: "1", outputSchemaVersion: "1",
     });
     const accepted = { version: "1.0.0", outcome: "COMPLETED" };
     await runService.completionStore().accept(run.capabilityRef!, { runId: run.id, role: run.role, output: accepted });
+    markFakeRunNeverLaunched(run.id);
     await expect(runService.collectResult(run.id, {
       success: true, exitCode: 0, output: JSON.stringify({ version: "1.0.0", outcome: "FAILED" }),
       validatedSubmission: true,
@@ -189,7 +389,7 @@ describe("RunService with FakeAgentRuntime", () => {
 
   it("requires COMPLETING status even when an outcome claims validation", async () => {
     await setup();
-    const run = await runService.startRun({
+    const run = await startRun({
       role: "developer", model: "gpt-4", taskId, epicId, triggerReason: "task-assignment",
       contextVersion: "1", outputSchemaVersion: "1",
     });
@@ -206,7 +406,7 @@ describe("RunService with FakeAgentRuntime", () => {
       { success: true, exitCode: 0, output: "Code generated" },
     ]);
 
-    const run = await runService.startRun({
+    const run = await startRun({
       role: "developer",
       model: "gpt-4",
       taskId,
@@ -223,8 +423,8 @@ describe("RunService with FakeAgentRuntime", () => {
 
   it("fails when no scripted outcome is available", async () => {
     await setup();
-    const run = await runService.startRun({
-      role: "tester",
+    const run = await startRun({
+      role: "developer",
       model: "gpt-4",
       taskId,
       epicId,
@@ -240,7 +440,7 @@ describe("RunService with FakeAgentRuntime", () => {
     await setup();
     fakeRuntime.startRun = async () => { throw new Error("launcher unavailable"); };
 
-    await expect(runService.startRun({
+    await expect(startRun({
       role: "developer", model: "gpt-4", taskId, epicId, triggerReason: "task-assignment",
       contextVersion: "1", outputSchemaVersion: "1",
     })).rejects.toThrow("launcher unavailable");
@@ -250,9 +450,46 @@ describe("RunService with FakeAgentRuntime", () => {
     )).toMatchObject({ status: "FAILED", capability_ref: null, capability_json: null, output: "Error: launcher unavailable" });
   });
 
+  it("retains the active Run and capability when process stop is unproven", async () => {
+    await setup();
+    let startDispatches = 0;
+    fakeRuntime.startRun = async (run) => {
+      startDispatches += 1;
+      db!.transaction((tx) => {
+        transitionRunProcessOwnerTx(tx, {
+          runId: run.id, expectedState: "PREPARED", nextState: "LAUNCHING",
+        });
+        transitionRunProcessOwnerTx(tx, {
+          runId: run.id, expectedState: "LAUNCHING", nextState: "UNKNOWN", evidence: "OS_STATE_UNPROVEN",
+        });
+      });
+      throw new Error("PROCESS_SCOPE_STOP_UNPROVEN");
+    };
+
+    await expect(startRun({
+      role: "developer", model: "gpt-4", taskId, epicId, triggerReason: "task-assignment",
+      contextVersion: "1", outputSchemaVersion: "1",
+    })).rejects.toThrow("PROCESS_SCOPE_STOP_UNPROVEN");
+
+    const stored = db!.get<{
+      status: string; ended_at: string | null; capability_ref: string | null; capability_json: string | null;
+    }>("SELECT status,ended_at,capability_ref,capability_json FROM agent_runs ORDER BY started_at DESC LIMIT 1");
+    expect(stored?.status).toBe("STARTED");
+    expect(stored?.ended_at).toBeNull();
+    expect(stored?.capability_ref).not.toBeNull();
+    expect(stored?.capability_json).not.toBeNull();
+    expect(db!.get<{ state: string }>("SELECT state FROM run_process_owners ORDER BY updated_at DESC LIMIT 1")?.state)
+      .toBe("UNKNOWN");
+
+    await expect(runService.executePreparedRun(
+      db!.get<{ id: string }>("SELECT id FROM agent_runs ORDER BY started_at DESC LIMIT 1")!.id,
+    )).rejects.toThrow("RUN_PROCESS_OWNER_UNAVAILABLE");
+    expect(startDispatches).toBe(1);
+  });
+
   it("atomically fails and revokes capability when runtime launch fails on resume", async () => {
     await setup();
-    const run = await runService.startRun({
+    const run = await startRun({
       role: "developer", model: "gpt-4", taskId, epicId, triggerReason: "task-assignment",
       contextVersion: "1", outputSchemaVersion: "1",
     });
@@ -270,7 +507,7 @@ describe("RunService with FakeAgentRuntime", () => {
     const runId = randomUUID();
     fakeRuntime.script("developer", [{ success: false, exitCode: 1, output: "runtime failed" }]);
 
-    await expect(runService.execute({
+    await expect(execute({
       runId,
       role: "developer", model: "gpt-4", taskId, epicId, triggerReason: "epic-plan",
       contextVersion: "1", outputSchemaVersion: "1",
@@ -283,7 +520,7 @@ describe("RunService with FakeAgentRuntime", () => {
 
   it("rejects resuming runs in terminal state COMPLETED", async () => {
     await setup();
-    const run = await runService.startRun({
+    const run = await startRun({
       role: "developer", model: "gpt-4", taskId, epicId,
       triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
     });
@@ -292,6 +529,7 @@ describe("RunService with FakeAgentRuntime", () => {
     await runService.completionStore().accept(run.capabilityRef!, {
       runId: run.id, role: run.role, output: JSON.parse(output),
     });
+    markFakeRunNeverLaunched(run.id);
     await runService.collectResult(run.id, {
       success: true, exitCode: 0, output, validatedSubmission: true,
       diagnostics: { runId: run.id, sessionId: null, stderr: "", exitCode: 0, artifactReferences: [] },
@@ -303,7 +541,7 @@ describe("RunService with FakeAgentRuntime", () => {
 
   it("rejects resuming runs in terminal state FAILED", async () => {
     await setup();
-    const run = await runService.startRun({
+    const run = await startRun({
       role: "developer", model: "gpt-4", taskId, epicId,
       triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
     });
@@ -318,7 +556,7 @@ describe("RunService with FakeAgentRuntime", () => {
 
   it("rejects resuming runs in terminal state CANCELLED", async () => {
     await setup();
-    const run = await runService.startRun({
+    const run = await startRun({
       role: "developer", model: "gpt-4", taskId, epicId,
       triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
     });
@@ -331,7 +569,7 @@ describe("RunService with FakeAgentRuntime", () => {
 
   it("rejects resuming runs with invalid attempt (<=0)", async () => {
     await setup();
-    const run = await runService.startRun({
+    const run = await startRun({
       role: "developer", model: "gpt-4", taskId, epicId,
       triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
     });
@@ -343,7 +581,7 @@ describe("RunService with FakeAgentRuntime", () => {
 
   it("rejects non-integer attempts and empty runtime sessions before dispatch", async () => {
     await setup();
-    const run = await runService.startRun({
+    const run = await startRun({
       role: "developer", model: "gpt-4", taskId, epicId,
       triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
     });
@@ -357,7 +595,7 @@ describe("RunService with FakeAgentRuntime", () => {
 
   it("rejects resume when the stored capability is missing or inconsistent", async () => {
     await setup();
-    const run = await runService.startRun({
+    const run = await startRun({
       role: "developer", model: "gpt-4", taskId, epicId,
       triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
     });
@@ -370,7 +608,7 @@ describe("RunService with FakeAgentRuntime", () => {
 
   it("rejects resume after a validated result has entered COMPLETING", async () => {
     await setup();
-    const run = await runService.startRun({
+    const run = await startRun({
       role: "developer", model: "gpt-4", taskId, epicId,
       triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
     });
@@ -388,7 +626,7 @@ describe("RunService with FakeAgentRuntime", () => {
 
   it("serializes concurrent resumes so one attempt dispatches only once", async () => {
     await setup();
-    const run = await runService.startRun({
+    const run = await startRun({
       role: "developer", model: "gpt-4", taskId, epicId,
       triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
     });
@@ -408,7 +646,7 @@ describe("RunService with FakeAgentRuntime", () => {
 
   it("returns a typed conflict when a terminal run is resumed", async () => {
     await setup();
-    const run = await runService.startRun({
+    const run = await startRun({
       role: "developer", model: "gpt-4", taskId, epicId,
       triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
     });
@@ -420,7 +658,7 @@ describe("RunService with FakeAgentRuntime", () => {
 
   it("allows resuming runs in STARTED state", async () => {
     await setup();
-    const run = await runService.startRun({
+    const run = await startRun({
       role: "developer", model: "gpt-4", taskId, epicId,
       triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
     });
@@ -432,7 +670,7 @@ describe("RunService with FakeAgentRuntime", () => {
 
   it("allows resuming runs in IN_PROGRESS state", async () => {
     await setup();
-    const run = await runService.startRun({
+    const run = await startRun({
       role: "developer", model: "gpt-4", taskId, epicId,
       triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
     });
@@ -448,7 +686,7 @@ describe("RunService with FakeAgentRuntime", () => {
     await setup();
     const output = JSON.stringify({ version: "1.0.0", outcome: "COMPLETED" });
     fakeRuntime.script("developer", [{ success: true, exitCode: 0, output }]);
-    const run = runService.prepareRun({
+    const run = prepareRun({
       runId: randomUUID(), role: "developer", model: "gpt-4", taskId, epicId,
       triggerReason: "epic-plan", contextVersion: "1", outputSchemaVersion: "1",
       prompt: "prepared prompt",
@@ -461,7 +699,7 @@ describe("RunService with FakeAgentRuntime", () => {
 
   it("fails non-terminal runs during startup recovery and clears capabilities", async () => {
     await setup();
-    const run = runService.prepareRun({
+    const run = prepareRun({
       runId: randomUUID(), role: "developer", model: "gpt-4", taskId, epicId,
       triggerReason: "epic-plan", contextVersion: "1", outputSchemaVersion: "1",
     });
@@ -477,7 +715,7 @@ describe("RunService with FakeAgentRuntime", () => {
   // RED Tests for State Transition Matrix
   it("transition matrix: STARTED -> IN_PROGRESS via resume", async () => {
     await setup();
-    const run = await runService.startRun({
+    const run = await startRun({
       role: "developer", model: "gpt-4", taskId, epicId,
       triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
     });
@@ -489,7 +727,7 @@ describe("RunService with FakeAgentRuntime", () => {
 
   it("transition matrix: IN_PROGRESS -> IN_PROGRESS via resume (retry)", async () => {
     await setup();
-    const run = await runService.startRun({
+    const run = await startRun({
       role: "developer", model: "gpt-4", taskId, epicId,
       triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
     });
@@ -502,7 +740,7 @@ describe("RunService with FakeAgentRuntime", () => {
 
   it("transition matrix: COMPLETING -> COMPLETED via collectResult", async () => {
     await setup();
-    const run = await runService.startRun({
+    const run = await startRun({
       role: "developer", model: "gpt-4", taskId, epicId,
       triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
     });
@@ -510,6 +748,7 @@ describe("RunService with FakeAgentRuntime", () => {
     await runService.completionStore().accept(run.capabilityRef!, {
       runId: run.id, role: run.role, output: JSON.parse(output),
     });
+    markFakeRunNeverLaunched(run.id);
     expect(db!.get<{ status: string }>("SELECT status FROM agent_runs WHERE id=$id", { id: run.id })!.status)
       .toBe("COMPLETING");
 
@@ -524,7 +763,7 @@ describe("RunService with FakeAgentRuntime", () => {
   it("transition matrix: any non-terminal -> FAILED on runtime error", async () => {
     await setup();
     fakeRuntime.startRun = async () => { throw new Error("crash"); };
-    await expect(runService.startRun({
+    await expect(startRun({
       role: "developer", model: "gpt-4", taskId, epicId,
       triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
     })).rejects.toThrow("crash");
@@ -534,7 +773,7 @@ describe("RunService with FakeAgentRuntime", () => {
 
   it("transition matrix: any non-terminal -> CANCELLED via cancelRun", async () => {
     await setup();
-    const run = await runService.startRun({
+    const run = await startRun({
       role: "developer", model: "gpt-4", taskId, epicId,
       triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
     });
@@ -543,9 +782,99 @@ describe("RunService with FakeAgentRuntime", () => {
       .toBe("CANCELLED");
   });
 
+  it("keeps a Run nonterminal when runtime cancellation returns without durable STOPPED proof", async () => {
+    await setup();
+    const run = await startRun({
+      role: "developer", model: "gpt-4", taskId, epicId,
+      triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
+    });
+    let releaseCancel!: () => void;
+    fakeRuntime.cancelRun = async () => new Promise<void>((resolve) => { releaseCancel = resolve; });
+
+    const cancelling = runService.cancelRun(run.id);
+    await Promise.resolve();
+    expect(db!.get<{ status: string }>("SELECT status FROM agent_runs WHERE id=$id", { id: run.id })?.status)
+      .toBe("STARTED");
+    releaseCancel();
+    await expect(cancelling).rejects.toThrow(`RUN_PROCESS_SCOPE_STOP_UNPROVEN:${run.id}`);
+
+    expect(db!.get<{ status: string; capability_ref: string | null }>(
+      "SELECT status,capability_ref FROM agent_runs WHERE id=$id", { id: run.id },
+    )).toMatchObject({ status: "STARTED", capability_ref: run.capabilityRef });
+    expect(db!.get<{ state: string; stop_evidence: string | null }>(
+      "SELECT state,stop_evidence FROM run_process_owners WHERE run_id=$id", { id: run.id },
+    )).toEqual({ state: "PREPARED", stop_evidence: null });
+  });
+
+  it("does not cancel a Run when STOPPED evidence is malformed", async () => {
+    await setup();
+    const run = await startRun({
+      role: "developer", model: "gpt-4", taskId, epicId,
+      triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
+    });
+    fakeRuntime.cancelRun = async (runId) => {
+      db!.run("UPDATE run_process_owners SET state='STOPPED',stop_evidence='invalid evidence!' WHERE run_id=$runId", { runId });
+    };
+
+    await expect(runService.cancelRun(run.id)).rejects.toThrow(`RUN_PROCESS_SCOPE_STOP_UNPROVEN:${run.id}`);
+    expect(db!.get<{ status: string; capability_ref: string | null }>(
+      "SELECT status,capability_ref FROM agent_runs WHERE id=$runId", { runId: run.id },
+    )).toMatchObject({ status: "STARTED", capability_ref: run.capabilityRef });
+  });
+
+  it.each([
+    ["missing", null],
+    ["malformed", "invalid evidence!"],
+  ])("does not fail a Run when persisted STOPPED evidence is %s", async (_label, evidence) => {
+    await setup();
+    const run = prepareRun({
+      role: "developer", model: "gpt-4", taskId, epicId,
+      triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
+    });
+    db!.run("UPDATE run_process_owners SET state='STOPPED',stop_evidence=$evidence WHERE run_id=$runId", {
+      runId: run.id, evidence,
+    });
+
+    runService.failPreparedRun(run.id, new Error("injected runtime failure"));
+
+    expect(db!.get<{ status: string; capability_ref: string | null }>(
+      "SELECT status,capability_ref FROM agent_runs WHERE id=$runId", { runId: run.id },
+    )).toMatchObject({ status: "STARTED", capability_ref: run.capabilityRef });
+  });
+
+  it.each([
+    ["missing", null],
+    ["malformed", "invalid evidence!"],
+  ])("does not authorize cleanup of a terminal Run when STOPPED evidence is %s", async (_label, evidence) => {
+    await setup();
+    const run = prepareRun({
+      role: "developer", model: "gpt-4", taskId, epicId,
+      triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
+    });
+    db!.run("UPDATE run_process_owners SET state='STOPPED',stop_evidence=$evidence WHERE run_id=$runId", {
+      runId: run.id, evidence,
+    });
+    db!.run("UPDATE agent_runs SET status='FAILED',ended_at=$now WHERE id=$runId", { runId: run.id, now: new Date().toISOString() });
+
+    expect(runService.failPreparedRun(run.id, new Error("integration cleanup retry"))).toBe(false);
+    expect(db!.get<{ status: string }>("SELECT status FROM agent_runs WHERE id=$runId", { runId: run.id })?.status).toBe("FAILED");
+  });
+
+  it("allows terminal cleanup only when the persisted owner has canonical STOPPED evidence", async () => {
+    await setup();
+    const run = prepareRun({
+      role: "developer", model: "gpt-4", taskId, epicId,
+      triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
+    });
+    db!.run("UPDATE run_process_owners SET state='STOPPED',stop_evidence='SUPERVISOR_SCOPE_EMPTY' WHERE run_id=$runId", { runId: run.id });
+    db!.run("UPDATE agent_runs SET status='FAILED',ended_at=$now WHERE id=$runId", { runId: run.id, now: new Date().toISOString() });
+
+    expect(runService.failPreparedRun(run.id, new Error("integration cleanup retry"))).toBe(true);
+  });
+
   it("transition matrix: CANCELLED is immutable (cannot resume)", async () => {
     await setup();
-    const run = await runService.startRun({
+    const run = await startRun({
       role: "developer", model: "gpt-4", taskId, epicId,
       triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
     });
@@ -556,7 +885,7 @@ describe("RunService with FakeAgentRuntime", () => {
 
   it("transition matrix: COMPLETED is immutable (cannot resume)", async () => {
     await setup();
-    const run = await runService.startRun({
+    const run = await startRun({
       role: "developer", model: "gpt-4", taskId, epicId,
       triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
     });
@@ -564,6 +893,7 @@ describe("RunService with FakeAgentRuntime", () => {
     await runService.completionStore().accept(run.capabilityRef!, {
       runId: run.id, role: run.role, output: JSON.parse(output),
     });
+    markFakeRunNeverLaunched(run.id);
     await runService.collectResult(run.id, {
       success: true, exitCode: 0, output, validatedSubmission: true,
       diagnostics: { runId: run.id, sessionId: null, stderr: "", exitCode: 0, artifactReferences: [] },
@@ -575,7 +905,7 @@ describe("RunService with FakeAgentRuntime", () => {
   it("transition matrix: FAILED is immutable (cannot resume)", async () => {
     await setup();
     fakeRuntime.startRun = async () => { throw new Error("crash"); };
-    await expect(runService.startRun({
+    await expect(startRun({
       role: "developer", model: "gpt-4", taskId, epicId,
       triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
     })).rejects.toThrow("crash");

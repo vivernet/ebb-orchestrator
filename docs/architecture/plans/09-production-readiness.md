@@ -5,7 +5,7 @@ status: in_progress
 title: Production Readiness Hardening
 summary: Добавить fail-closed работу с Git worktree, отказоустойчивое хранилище секретов и чистую production композицию.
 created: 2026-09-23
-updated: 2026-09-29
+updated: 2026-09-30
 depends_on:
   - plan-03
 specs:
@@ -24,6 +24,8 @@ evidence:
 ---
 
 # Production readiness hardening Implementation Plan
+
+> **Актуальная сверка (2026-09-30):** production startup вызывает `applyMigrationsWithVerifiedBackup`; прежнее утверждение, что `BackupService` не wired в startup, устарело. План остаётся `in_progress`: source security scan и whole-plan review для текущего дерева не подтверждены. Настроенный CodeQL workflow сам по себе не является evidence выполненного hosted scan.
 
 > **Для агентного исполнения:** REQUIRED SKILL: `ebb-execute-plan`. План выполняется по задачам; для отслеживания шагов используется синтаксис флажков (`- [ ]`).
 
@@ -293,6 +295,8 @@ Expected: each command exits zero; worktree contains only intended committed cha
 - [ ] **Step 2: Run fresh security scan**
 
 Use a new scan, never the failed scan ID. Missing scanner artifacts are a tooling failure, not a pass.
+
+Execution update (2026-09-30): `.github/workflows/codeql.yml` is configured for JavaScript/TypeScript, but no hosted analysis result is tied to the current source revision. This checklist item remains open until a completed scan and retained evidence are available.
 
 - [x] **Step 3: Fresh whole-branch review**
 

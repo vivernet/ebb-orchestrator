@@ -145,10 +145,25 @@ describe("validateRoleOutput", () => {
         version: "1.0.0",
         outcome: "PASS",
         summary: "Integration successful",
+        baseSha: "target-sha",
+        sourceSha: "source-sha",
+        provenance: ["integration_attempt:attempt-1"],
+        evidence: ["Verified merged commit contains the prepared source SHA"],
       };
       const result = validateRoleOutput("integration", value);
       expect(result.valid).toBe(true);
       expect(result.outcome).toBe("PASS");
+    });
+
+    it("rejects PASS without SHA, exact-attempt provenance, or evidence", () => {
+      const result = validateRoleOutput("integration", {
+        version: "1.0.0",
+        outcome: "PASS",
+        summary: "Integration successful",
+      });
+
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain("Schema validation failed");
     });
 
     it("accepts valid BLOCKED outcome", () => {

@@ -12,6 +12,66 @@ export const usageSummarySchema = z.object({
 /** Сводка использования runtime, включая стоимость в единицах каталога. */
 export type UsageSummary = z.infer<typeof usageSummarySchema>;
 
+/** Уровни и политики, уже поддерживаемые Usage & Budget Engine. */
+export type UsageBudgetScope = "global" | "project" | "epic" | "task";
+export type UsageBudgetPolicy = "soft" | "hard";
+
+/** Сохранённая конфигурация лимита без вычисления решения о запуске. */
+export interface UsageBudgetLimitProjection {
+  scope: UsageBudgetScope;
+  scopeId: string;
+  limitCost: number;
+  softLimitCost: number;
+  policy: UsageBudgetPolicy;
+  spentCost: number;
+  reservedCost: number;
+}
+
+/** Иерархический контекст и применимые к нему конфигурации лимитов. */
+export interface UsageBudgetContextProjection {
+  scope: UsageBudgetScope;
+  scopeId: string;
+  projectId: string | null;
+  epicId: string | null;
+  taskId: string | null;
+  applicableLimits: UsageBudgetLimitProjection[];
+  effectiveLimit: UsageBudgetLimitProjection | null;
+}
+
+/** Активная запись резервирования, доступная для read-only Usage UI. */
+export interface ActiveUsageBudgetReservationProjection {
+  id: string;
+  projectId: string;
+  epicId: string | null;
+  taskId: string | null;
+  estimateCost: number;
+  status: "RESERVED";
+  role: string;
+  model: string;
+  triggerReason: string;
+  reworkCategory: string | null;
+  createdAt: string;
+}
+
+/** Авторитетная read-only проекция страницы Usage, включая budget state. */
+export interface UsagePageProjection {
+  global: UsageMetricBucketProjection;
+  project: UsageMetricBucketProjection;
+  epic: UsageMetricBucketProjection;
+  task: UsageMetricBucketProjection;
+  budget: {
+    configurations: UsageBudgetLimitProjection[];
+    contexts: UsageBudgetContextProjection[];
+    activeReservations: ActiveUsageBudgetReservationProjection[];
+  };
+}
+
+/** Агрегированные метрики; `aggregation` описывает только состав включённых записей. */
+export interface UsageMetricBucketProjection extends UsageSummary {
+  tokens: number;
+  aggregation: "all_records" | "records_with_project_id" | "records_with_epic_id" | "records_with_task_id";
+}
+
 /** Причина ожидания, пригодная для отображения и диагностики. */
 export interface WaitReason { code: string; message: string; details?: Record<string, string | number>; }
 export const SCHEDULER_PROJECTION_CONTRACT_VERSION = 1 as const;
@@ -21,7 +81,8 @@ export type ProjectionBlockReason =
   | { code: "BLOCKED_BY_WORKFLOW"; message: string }
   | { code: "BLOCKED_BY_PROJECT_STATE"; message: string }
   | { code: "PROJECT_NOT_ACTIVE"; message: string }
-  | { code: "ONBOARDING_NOT_ACTIVE"; message: "Онбординг проекта не активирован" };
+  | { code: "ONBOARDING_NOT_ACTIVE"; message: "Онбординг проекта не активирован" }
+  | { code: "PROJECT_CONFIG_DEGRADED"; message: "Конфигурация проекта повреждена или требует восстановления" };
 export type SchedulerEligibilityProjection =
   | { status: "RUNNABLE"; reason: null }
   | { status: "WAIT"; reason: WaitReason }
@@ -57,7 +118,7 @@ export interface TaskRunProjection { id: string; role: string; status: string; }
 /** Состояние одного отображаемого этапа lifecycle. */
 export interface LifecycleStageProjection { id: string; label: string; status: "COMPLETED" | "CURRENT" | "PENDING"; updatedAt: string | null; }
 /** читает модель lifecycle с текущим этапом и историей отображаемых stages. */
-export interface LifecycleProjection { status: string; stage: string | null; updatedAt: string | null; stages?: LifecycleStageProjection[]; }
+export interface LifecycleProjection { status: string; stage: string | null; updatedAt: string | null; stages?: LifecycleStageProjection[]; recoveryFailureCode?: "EPIC_RECOVERY_FAILED" | null; }
 /** Авторитетная read model страницы проекта. */
 export interface ProjectOverviewProjection {
   project: { id: string; name: string; displayName: string; status: string } | null;

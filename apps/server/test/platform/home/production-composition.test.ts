@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { randomUUID } from "node:crypto";
 import { createProductionComposition } from "../../../src/platform/home/production-composition.js";
 import { resolveOrchestratorHome } from "../../../src/platform/home/orchestrator-home.js";
 import { InMemorySecretStore } from "../../../src/platform/security/secret-store.js";
@@ -10,9 +11,16 @@ import type { Database } from "../../../src/platform/database/database.js";
 import { createSqliteDatabase } from "../../../src/platform/database/sqlite-database.js";
 import { HermesRuntimeAdapter } from "../../../src/modules/runtime/hermes/hermes-runtime-adapter.js";
 import { TaskWorkspaceProvisioner } from "../../../src/modules/git/task-workspace-provisioner.js";
+import { EpicWorkspaceProvisioner } from "../../../src/modules/git/epic-workspace-provisioner.js";
 import { ProcessExecutor } from "../../../src/platform/process/process-executor.js";
 import { GitReconciler } from "../../../src/modules/git/git-reconciler.js";
 import { startSystem, type SystemStatus } from "../../../src/platform/process/system-lifecycle.js";
+import { runMigrations } from "../../../src/platform/database/migrator.js";
+import { loadTestMigrations } from "../../helpers/migrations.js";
+import { createRunContextInput, RunService, taskDeveloperPrompt } from "../../../src/modules/runtime/run-service.js";
+import { seedApprovedProjectConfig } from "../../helpers/approved-project-config.js";
+import { FakeAgentRuntime } from "../../fakes/fake-agent-runtime.js";
+import { SchedulerService } from "../../../src/modules/scheduler/scheduler-service.js";
 
 describe("production composition", () => {
   let temporaryRoot = "";
@@ -39,6 +47,7 @@ describe("production composition", () => {
     });
 
     expect(composition.paths.taskWorktreeDirectory).toBe(join(home.worktrees, "tasks"));
+    expect(composition.paths.epicWorktreeDirectory).toBe(join(home.worktrees, "epics"));
     expect(composition.paths.integrationWorktreeRoot).toBe(join(home.worktrees, "epic-integration"));
     expect(composition.paths.hermesResultDirectory).toBe(join(home.runtime, "hermes", "results"));
     expect(composition.paths.hermesCheckpointDirectory).toBe(join(home.runtime, "checkpoints"));
@@ -47,6 +56,7 @@ describe("production composition", () => {
     expect((composition.runtime as unknown as { resultDirectory: string }).resultDirectory).toBe(composition.paths.hermesResultDirectory);
     expect((composition.runtime as unknown as { checkpointDirectory: string }).checkpointDirectory).toBe(composition.paths.hermesCheckpointDirectory);
     expect(composition.taskWorkspaceProvisioner).toBeInstanceOf(TaskWorkspaceProvisioner);
+    expect(composition.epicWorkspaceProvisioner).toBeInstanceOf(EpicWorkspaceProvisioner);
     expect((composition.taskWorkspaceProvisioner as unknown as { worktrees: { worktreeDir: string } }).worktrees.worktreeDir)
       .toBe(composition.paths.taskWorktreeDirectory);
     expect((composition.artifactStore as unknown as { artifactsDir: string }).artifactsDir).toBe(home.artifacts);
@@ -67,6 +77,8 @@ describe("production composition", () => {
       repoPath: temporaryRoot,
       worktreeRoot: composition.paths.integrationWorktreeRoot,
       epicId: "epic-1",
+      integrationRunId: "integration-run-1",
+      finalizeRunFailure: () => false,
       taskId: "task-1",
     });
 
@@ -111,6 +123,7 @@ describe("production composition", () => {
     const startup = composition.createStartupReconciliation({
       runService: { reconcileInterruptedRuns: () => { events.push("runs"); return 0; } },
       eventDispatcher: { dispatchBatch: async () => { events.push("outbox"); return 0; } },
+      projectConfigService: { reconcileActiveOnStartup: () => { events.push("project-config"); } },
       status: { get: () => "RECOVERING", set: async () => { events.push("degraded"); } },
     });
 
@@ -172,10 +185,13 @@ describe("production composition", () => {
         startup = composition.createStartupReconciliation({
           runService: { reconcileInterruptedRuns: () => { events.push("runs"); return 0; } },
           eventDispatcher: { dispatchBatch: async () => { events.push("outbox"); return 0; } },
+          projectConfigService: { reconcileActiveOnStartup: () => { events.push("project-config"); } },
           status: { get: () => currentStatus, set: async (next) => { currentStatus = next; events.push(`status:${next}`); } },
         });
       } },
       status: { get: () => currentStatus, set: async (next) => { currentStatus = next; events.push(`status:${next}`); } },
+      preflightRecovery: async () => { await startup!.preflightRecovery(); },
+      reconcileProjectConfig: async () => { await startup!.reconcileProjectConfig(); },
       reconcileOutbox: async () => { await startup!.reconcileOutbox(); },
       reconcileJobs: async () => { await startup!.reconcileJobs(); },
       reconcileArtifacts: async () => { await startup!.reconcileArtifacts(); },
@@ -187,6 +203,7 @@ describe("production composition", () => {
       "database-open",
       "migrations",
       "status:RECOVERING",
+      "project-config",
       "outbox",
       "jobs",
       "git-initialize",
@@ -197,5 +214,151 @@ describe("production composition", () => {
       "status:READY",
     ]);
     expect(currentStatus).toBe("READY");
+  });
+
+  it("reconciles run reservations after interrupted runs and before approved Epic resume", async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), "ebb-production-scheduler-recovery-"));
+    const events: string[] = [];
+    let currentStatus: SystemStatus = "STARTING";
+    let startup: ReturnType<ReturnType<typeof createProductionComposition>["createStartupReconciliation"]> | undefined;
+    database = createSqliteDatabase(join(temporaryRoot, "startup.db"));
+    runMigrations(database, loadTestMigrations());
+
+    const now = new Date().toISOString();
+    const projectId = randomUUID();
+    const taskId = randomUUID();
+    const approvalId = randomUUID();
+    database.run(
+      "INSERT INTO projects(id,name,display_name,status,created_at,updated_at) VALUES($id,'startup-test','Startup Test','ACTIVE',$now,$now)",
+      { id: projectId, now },
+    );
+    database.run(
+      "INSERT INTO approvals(id,type,subject_id,subject_type,status,requested_by,created_at) VALUES($approvalId,'WORKFLOW_CHANGE',$projectId,'PROJECT','APPROVED','test',$now)",
+      { approvalId, projectId, now },
+    );
+    database.run(
+      "INSERT INTO onboarding_configs(project_id,repository_path,facts_json,proposed_json,status,approval_id,created_at,updated_at) VALUES($projectId,$path,'{}','{}','ACTIVE',$approvalId,$now,$now)",
+      { projectId, path: temporaryRoot, approvalId, now },
+    );
+    database.run(
+      "INSERT INTO tasks(id,project_id,display_id,title,status,contract_json,required,created_at,updated_at) VALUES($taskId,$projectId,'TASK-STARTUP','Startup task','READY',$contract,1,$now,$now)",
+      { taskId, projectId, contract: JSON.stringify({ version: 1, goal: "Startup recovery", context: "Scheduler recovery fixture", requirements: [], acceptanceCriteria: [], dependencies: [], nonGoals: [], definitionOfDone: [] }), now },
+    );
+    seedApprovedProjectConfig(database, projectId);
+
+    const scheduler = new SchedulerService(database);
+    database.run(
+      "UPDATE scheduler_config SET config_json=$config WHERE id=1",
+      { config: JSON.stringify({ globalMax: 1, projectMax: 1, roleCapacity: { developer: 1 } }) },
+    );
+    const runService = new RunService(database, new FakeAgentRuntime());
+    const prompt = taskDeveloperPrompt();
+    const runOptions = {
+      runId: "interrupted-non-epic-run",
+      role: "developer",
+      model: "test",
+      taskId,
+      epicId: null,
+      triggerReason: "task-assignment",
+      contextVersion: "1",
+      outputSchemaVersion: "1",
+      capability: { workspace: temporaryRoot },
+    } as const;
+    const interruptedRun = runService.prepareRun({
+      ...runOptions,
+      prompt,
+      contextInput: createRunContextInput(runOptions, {
+        prompt,
+        workspaceIdentity: { repository: temporaryRoot, workspace: temporaryRoot, worktree: taskId },
+        targetHead: null,
+        targetBranch: null,
+      }),
+    });
+    scheduler.dispatchAgentRun(interruptedRun.id, projectId, "developer", "test");
+    database.run("UPDATE agent_runs SET status='IN_PROGRESS' WHERE id=$id", { id: interruptedRun.id });
+    expect(() => scheduler.dispatchAgentRun("probe-before-startup", projectId, "developer", "test"))
+      .toThrow(/WAITING_FOR_CAPACITY/);
+
+    const composition = createProductionComposition({
+      database,
+      home: resolveOrchestratorHome({ EBB_ORCHESTRATOR_HOME: temporaryRoot }, "win32"),
+      secretStore: new InMemorySecretStore(),
+      gitReconciler: {
+        initialize: async () => { events.push("git-initialize"); },
+        reconcile: async () => { events.push("git-reconcile"); return { state: "IN_SYNC" }; },
+      },
+    });
+
+    await startSystem({
+      instanceLock: { acquire: async () => ({ pid: 1 }), release: async () => {} },
+      lockAlreadyAcquired: true,
+      database: { open: async () => {}, close: () => {} },
+      migrator: { run: async () => {
+        startup = composition.createStartupReconciliation({
+          runService: { reconcileInterruptedRuns: () => {
+            events.push("runs");
+            return runService.reconcileInterruptedRuns();
+          } },
+          eventDispatcher: { dispatchBatch: async () => 0 },
+          projectConfigService: { reconcileActiveOnStartup: () => { events.push("project-config"); } },
+          status: { get: () => currentStatus, set: async (next) => { currentStatus = next; events.push(`status:${next}`); } },
+        });
+      } },
+      status: { get: () => currentStatus, set: async (next) => { currentStatus = next; events.push(`status:${next}`); } },
+      preflightRecovery: async () => { await startup!.preflightRecovery(); },
+      reconcileProjectConfig: async () => { await startup!.reconcileProjectConfig(); },
+      reconcileOutbox: async () => {},
+      reconcileJobs: async () => {},
+      reconcileArtifacts: async () => {},
+      additionalReconcilers: [
+        async () => { await startup!.additionalReconcilers[0]!(); },
+        async () => { events.push("epic-reconcile"); },
+        async () => { events.push("scheduler-reconcile"); scheduler.reconcile(); },
+        async () => { events.push("planning-reconcile"); },
+        async () => { events.push("execution-claims-reconcile"); },
+        async () => {
+          events.push("resume-approved-epics");
+          expect(database!.get<{ status: string }>("SELECT status FROM scheduler_reservations WHERE run_id=$runId", { runId: interruptedRun.id })?.status)
+            .toBe("RELEASED");
+          scheduler.dispatchAgentRun("recovery-run", projectId, "developer", "test");
+        },
+      ],
+      workers: [{ start: async () => { events.push("worker-start"); }, stop: async () => {} }],
+    });
+
+    expect(events).toEqual([
+      "status:RECOVERING",
+      "project-config",
+      "git-initialize",
+      "git-reconcile",
+      "runs",
+      "epic-reconcile",
+      "scheduler-reconcile",
+      "planning-reconcile",
+      "execution-claims-reconcile",
+      "resume-approved-epics",
+      "worker-start",
+      "status:READY",
+    ]);
+    expect(currentStatus).toBe("READY");
+    expect(database.get<{ status: string }>("SELECT status FROM agent_runs WHERE id=$id", { id: interruptedRun.id })?.status)
+      .toBe("FAILED");
+    expect(database.get<{ status: string }>("SELECT status FROM scheduler_reservations WHERE subject_id='recovery-run'")?.status)
+      .toBe("RESERVED");
+
+    const mainSource = await readFile(join(import.meta.dirname, "../../../src/main.ts"), "utf8");
+    expect(mainSource).toMatch(/additionalReconcilers:\s*\[\s*\.\.\.startupReconciliation\.additionalReconcilers,\s*async \(\) => \{\s*epicOrchestrator\.reconcileInterruptedRuns\(\);\s*\},\s*async \(\) => \{\s*scheduler\.reconcile\(\);\s*\},\s*async \(\) => \{\s*planningService\.reconcileInterruptedRequests\(\);/s);
+    const runRecoveryIndex = mainSource.indexOf("...startupReconciliation.additionalReconcilers");
+    const epicRecoveryIndex = mainSource.indexOf("epicOrchestrator.reconcileInterruptedRuns()");
+    const schedulerRecoveryIndex = mainSource.indexOf("scheduler.reconcile()");
+    const planningRecoveryIndex = mainSource.indexOf("planningService.reconcileInterruptedRequests()");
+    const executionClaimsRecoveryIndex = mainSource.indexOf("epicOrchestrator.reconcileInterruptedExecutionClaims()");
+    const resumeApprovedEpicsIndex = mainSource.indexOf("epicOrchestrator.resumeApprovedEpics()");
+    expect(runRecoveryIndex).toBeGreaterThanOrEqual(0);
+    expect(epicRecoveryIndex).toBeGreaterThan(runRecoveryIndex);
+    expect(schedulerRecoveryIndex).toBeGreaterThan(epicRecoveryIndex);
+    expect(planningRecoveryIndex).toBeGreaterThan(schedulerRecoveryIndex);
+    expect(executionClaimsRecoveryIndex).toBeGreaterThan(planningRecoveryIndex);
+    expect(resumeApprovedEpicsIndex).toBeGreaterThan(executionClaimsRecoveryIndex);
   });
 });

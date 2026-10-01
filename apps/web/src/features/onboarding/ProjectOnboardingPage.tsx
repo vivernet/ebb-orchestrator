@@ -11,7 +11,7 @@ interface OnboardingProject {
     defaultBranch: string;
     packageManager: string | null;
     testFramework: string | null;
-    orchestratorConfigFound: boolean;
+    ebbOrchestratorConfigFound: boolean;
   };
   proposed: {
     defaultBranch: string;
@@ -74,7 +74,7 @@ export default function ProjectOnboardingPage({ id }: { id: string }) {
         <p>Основная ветка: {data.detected.defaultBranch}</p>
         <p>Менеджер пакетов: {data.detected.packageManager ?? 'Не обнаружен'}</p>
         <p>Тестовый фреймворк: {data.detected.testFramework ?? 'Не обнаружен'}</p>
-        <p>Конфигурация оркестратора найдена: {data.detected.orchestratorConfigFound ? 'Да' : 'Нет'}</p>
+        <p>Конфигурация Ebb Orchestrator найдена: {data.detected.ebbOrchestratorConfigFound ? 'Да' : 'Нет'}</p>
       </section>
 
       <section aria-label="Предложенные рекомендации">

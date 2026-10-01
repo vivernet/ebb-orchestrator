@@ -4,7 +4,7 @@ kind: plan
 status: completed
 title: Hermes Development Capabilities Implementation Plan
 created: 2026-09-23
-updated: 2026-09-27
+updated: 2026-09-30
 depends_on: []
 specs:
   - ../specs/01-system-design.md
@@ -24,7 +24,7 @@ evidence:
 
 **Goal:** Добавить в репозиторий регистр канонических skills и capabilities, скрипты setup/check, и документацию.
 
-**Архитектура:** `tools/hermes` остаётся source of truth. Script синхронизирует skills в `HERMES_HOME`. Production runtime не меняется.
+**Архитектура на момент исполнения (исторически):** `tools/hermes` был source of truth, а script синхронизировал skills в `HERMES_HOME`. Эта формулировка описывает прежнее состояние и не задаёт текущую архитектуру. Текущий canonical source skills — `.agents/skills/`; production runtime этим планом не менялся.
 
 **Spec:** `docs/architecture/specs/04-hermes-development-capabilities.md`
 

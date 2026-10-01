@@ -4,7 +4,7 @@ kind: plan
 status: completed
 title: Автономный набор Ebb skills и очистка Hermes tooling
 created: 2026-09-28
-updated: 2026-09-28
+updated: 2026-09-30
 depends_on: []
 specs:
   - ../specs/01-system-design.md
@@ -39,11 +39,11 @@ evidence:
 ## Context Brief
 
 - Текущая ветка `develop`, HEAD `7a76feb`; рабочее дерево было чистым до создания этого draft plan. Изменение `.migration` уже интегрировано в `master`; каталог не восстанавливать и новые временные migration artifacts в репозиторий не добавлять.
-- Текущий canonical inventory содержит 13 skills. Bundle содержит 19: обновляет все 13 текущих и добавляет `ebb-design-change`, `ebb-dispatch-agents`, `ebb-finish-branch`, `ebb-handle-review-feedback`, `ebb-orchestrate-work`, `ebb-worktree`.
+- На момент подготовки плана (2026-09-27) canonical inventory содержал 13 skills. Bundle содержит 19: обновляет все 13 skills того снимка и добавляет `ebb-design-change`, `ebb-dispatch-agents`, `ebb-finish-branch`, `ebb-handle-review-feedback`, `ebb-orchestrate-work`, `ebb-worktree`.
 - Архивные `.agents/skills/**` перечислены в его `MANIFEST.sha256` (47 проверенных файлов вместе с bundle metadata). В репозиторий переносится только `.agents/skills/**`; README, migration task/design, manifest и validation reports из корня архива сами по себе не копируются.
 - `package.json` разрешает owners: `hermes:setup` → `scripts/hermes-dev.mjs setup`, `hermes:check` → `scripts/hermes-dev.mjs check`, `hermes:test` → `scripts/hermes-dev.test.mjs`. Дополнительный setup/config test owner — `scripts/hermes-config.test.mjs`.
 - Текущий setup/check синхронизирует `tools/hermes/capabilities.yaml` в `HERMES_HOME`; это единственный найденный repository-code consumer. В `tools/hermes` сейчас находятся `README.md` и `capabilities.yaml`.
-- Активный список из 13 skills находится в `README.md`; test inventory из 13 имён задан в `scripts/hermes-dev.mjs` и `scripts/hermes-dev.test.mjs`. `docs/audit/05-hermes-development-workflow-parity.md` содержит отдельный явно исторический список из 8 skills; сохранять как snapshot, не переписывать в текущий inventory.
+- В исходном снимке на 2026-09-27 активный список из 13 skills находился в `README.md`; test inventory из 13 имён был задан в `scripts/hermes-dev.mjs` и `scripts/hermes-dev.test.mjs`. `docs/audit/05-hermes-development-workflow-parity.md` содержит отдельный явно исторический список из 8 skills; сохранять как snapshot, не переписывать в текущий inventory.
 - Текущие Ebb skills содержат обязательные companion-ссылки на внешний workflow-набор. Целевой bundle заявляет автономный runtime; требуется полностью удалить эти зависимости из skills и заменить активные обязательные plan headers Ebb owners.
 - Bundle `PATTERN-COVERAGE.md` сопоставляет все текущие обязательные механики Ebb с owners в новом наборе. Предварительная матрица: workflow routing → `ebb-orchestrate-work`; brainstorming/design → `ebb-design-change`; planning → `ebb-write-plan`; subagent/inline plan execution → `ebb-execute-plan` + `ebb-dispatch-agents`; TDD → `ebb-implement-task`; debugging → `ebb-debug-issue`; code/plan/final review → `ebb-review-task` + `ebb-review-plan` + `ebb-final-review`; review feedback → `ebb-handle-review-feedback`; completion verification → `ebb-quality-gates`; worktree safety → `ebb-worktree`; branch finish → `ebb-finish-branch`; skill authoring → `ebb-curate-skills`.
 - Предварительное сопоставление не выявило обязательной workflow-capability без Ebb owner. Во время реализации нужно перепроверить полные source skills, их references и активные repository instructions; любой найденный пробел фиксируется как blocker/finding и сообщается пользователю, а не маскируется аналогией.
@@ -148,7 +148,7 @@ Expected: оба focused test commands pass; нет `syncHermesCapabilities`, `c
 - Delete: `tools/hermes/capabilities.yaml`.
 - Preserve: `docs/audit/05-hermes-development-workflow-parity.md` как dated historical snapshot, его список из 8 skills не является current inventory.
 
-**Interfaces:** root README остаётся единственным полным пользовательским списком skills; Hermes-specific instructions находятся в `docs/development/05-hermes.md`; `tools/hermes` отсутствует в итоговом checkout.
+**Interfaces:** root README остаётся единственным полным пользовательским списком skills; Hermes-specific instructions находятся в `docs/development/05-hermes.md`; старые Hermes runtime/tooling assets и skill registry удалены из `tools/hermes`. Изолированный fixture `tools/hermes/fixtures/parity-plan.md`, добавленный позже для Plan19, не является runtime/tooling asset.
 
 **Cleanup disposition:** `tools/hermes/README.md` (tracked, текущая документация tooling; delete после переноса нужной актуальной информации в `docs/development/05-hermes.md`; причина — отдельный дублирующий entrypoint); `tools/hermes/capabilities.yaml` (tracked, generic capability registry; delete только после подтверждения отсутствия runtime consumer и удаления sync owner/tests; причина — последняя связь, делающая каталог нужным). Для обоих путей verification: `rg` по tracked source не находит active path references, Hermes setup/check tests проходят, `git status` показывает только ожидаемое удаление.
 
@@ -166,11 +166,11 @@ Run these commands separately and record each result; do not chain with `&&`, be
 - [x] **Step 4: Проверить GREEN**
 
 Run these commands separately and record each result: `node --test --test-name-pattern="README points to Hermes guide and canonical skills" scripts/hermes-dev.test.mjs`; `pnpm docs:check`; `pnpm docs:test`; `pnpm hermes:test`; `node --test scripts/ebb-skill-dependencies.test.mjs`.
-Expected: все документационные проверки и тесты pass; `tools/hermes` отсутствует; active docs не ссылаются на него; repository-wide dependency scan проходит с только обоснованным historical allowlist.
+Expected: все документационные проверки и тесты pass; прежние runtime/tooling assets и skill registry отсутствуют; active docs не ссылаются на удалённые assets, кроме явно датированной Plan19 fixture reference; repository-wide dependency scan проходит с только обоснованным historical allowlist.
 
 **Review Focus:** README действительно перечисляет все 19 bundle owners; не переписано датированное parity evidence; setup/check instructions совпадают с source.
 
-**Acceptance:** список в README актуален; `tools/hermes/` удалён из working tree; active docs не ссылаются на него; ни один tracked project instruction/plan header не требует внешний workflow skill; исторические technical evidence остаются помеченными и не вводят runtime-зависимость.
+**Acceptance:** список в README актуален; прежние Hermes runtime/tooling assets и skill registry удалены; active docs не ссылаются на эти assets, кроме изолированного Plan19 fixture; ни один tracked project instruction/plan header не требует внешний workflow skill; исторические technical evidence остаются помеченными и не вводят runtime-зависимость.
 
 ---
 ---
@@ -194,6 +194,10 @@ Expected: все документационные проверки и тесты
 
 **Acceptance:** Hermes и Codex runtime inventories совпадают и содержат 19 `.agents/skills` paths; статическая trigger matrix pass; provider-backed prompt smoke отдельно отражён как waived/not run по прямому указанию пользователя.
 
+## Post-completion reconciliation (2026-09-30)
+
+Удаление `tools/hermes/` в acceptance выше относится к прежним runtime/tooling assets и skill registry, которые дублировали canonical `.agents/skills/`. Созданный для Plan 19 `tools/hermes/fixtures/parity-plan.md` — изолированный тестовый вход, не Hermes runtime, skill source или копия skills; его наличие не отменяет результат Plan 18. Provider-backed prompt smoke остаётся `WAIVED / NOT RUN` по исходному указанию; актуальные external Hermes acceptance ведутся в Plan 19.
+
 ---
 ---
 
@@ -213,7 +217,7 @@ Expected: каждый command exits `0`; setup/check tests используют
 Run: `pnpm lint`; `pnpm typecheck`; `pnpm test`; `pnpm build`; `git diff --check`; `git status --short`.
 Expected: все gates exits `0`, кроме явно одобренных/environment-specific provider acceptance; generated build/test artifacts перечислены и удалены безопасно.
 
-- [x] **Step 3: Проверить конечные invariants** — `.agents/skills` ровно 19; `tools/hermes` отсутствует; `.migration` не восстановлен; profile-local skills сохранены; нет provider-addition/worktree-isolation behavior; README содержит 19 текущих owners; старые ссылки классифицированы.
+- [x] **Step 3: Проверить конечные invariants** — `.agents/skills` ровно 19; прежние Hermes runtime/tooling assets и skill registry отсутствуют; fixture `tools/hermes/fixtures/parity-plan.md` является последующим isolated Plan19 test input; `.migration` не восстановлен; profile-local skills сохранены; нет provider-addition/worktree-isolation behavior; README содержит 19 текущих owners; старые ссылки классифицированы.
 - [x] **Step 3a: Проверить обязательную skill dependency coverage** — сопоставить каждый текущий внешний required workflow owner и delegated procedure с Ebb owner из матрицы выше; доложить пользователю о любом не покрытом обязательном навыке. Полный tracked-source scan охватывает skills, все инструкции и документацию; ни один действующий skill, instruction, setup guide или plan header не требует внешний workflow skill. Исторические audit/plan evidence упоминания классифицированы отдельно, объяснены как неисполняемые и не считаются действующей обязательной ссылкой.
 - [x] **Step 4: Провести независимый `ebb-final-review` всего diff и перепроверить findings после fixes.** Fresh whole-change review: `PASS`; reviewer повторно проверил status/diff, `git diff --check`, и focused skills/dependency tests (36/36 PASS), не запускав Hermes runtime.
 

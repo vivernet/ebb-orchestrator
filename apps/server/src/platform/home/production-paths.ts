@@ -9,6 +9,7 @@ import type { OrchestratorHomePaths } from "./orchestrator-home.js";
 export function createProductionPaths(home: OrchestratorHomePaths) {
   return {
     taskWorktreeDirectory: join(home.worktrees, "tasks"),
+    epicWorktreeDirectory: join(home.worktrees, "epics"),
     integrationWorktreeRoot: join(home.worktrees, "epic-integration"),
     hermesDatabasePath: home.database,
     hermesResultDirectory: join(home.runtime, "hermes", "results"),

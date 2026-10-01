@@ -1,18 +1,59 @@
 #!/usr/bin/env node
 
-import { spawn, spawnSync, execFileSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, rmSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
 import { dirname, join, posix, win32 } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { clearTimeout, setTimeout } from 'node:timers';
 import { resolvePlanPath } from './hermes-dev-paths.mjs';
+import { parsePlanFile } from './docs-governance.mjs';
 import { loadProjectEnv } from './project-env.mjs';
 
 export const HERMES_EXECUTE_MARKER = 'HERMES_EXECUTE';
 export const HERMES_CONFIG_MARKER = 'HERMES_CONFIG';
 const DEFAULT_EXECUTE_TIMEOUT_MS = 300_000;
 const DEFAULT_CONFIG_TIMEOUT_MS = 30_000;
+const MAX_HERMES_DIAGNOSTIC_LENGTH = 240;
+const ANSI_ESCAPE_SEQUENCE = new RegExp(`${String.fromCharCode(0x1b)}\\[[0-?]*[ -/]*[@-~]`, 'g');
+const CONTROL_CHARACTERS = new RegExp(`[${String.fromCharCode(0)}-${String.fromCharCode(0x1f)}${String.fromCharCode(0x7f)}]+`, 'g');
+
+export function sanitizeHermesDiagnostic(value) {
+  return String(value ?? '')
+    .replace(ANSI_ESCAPE_SEQUENCE, '')
+    .replace(CONTROL_CHARACTERS, ' ')
+    .replace(/\b([A-Za-z0-9_]*(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|secret|authorization))\b(["']?\s*[:=]\s*["']?)(?:Bearer\s+)?([^"'\s,;}]+)(["']?)/gi, '$1$2[REDACTED]$4')
+    .replace(/\b(?:sk|rk|pk|gh[pousr]|xox[baprs])[-_][A-Za-z0-9_-]{8,}|Bearer\s+[^\s,;]+/gi, '[REDACTED]')
+    .replace(/\b(https?:\/\/)[^/@\s]+@/gi, '$1[REDACTED]@')
+    .replace(/\b[A-Za-z]:[\\/][^\s"'<>]+|\\\\[^\s"'<>]+/g, '[PATH]')
+    .replace(/\/(?:[^\s"'<>/]+\/)+[^\s"'<>]+/g, '[PATH]')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, MAX_HERMES_DIAGNOSTIC_LENGTH);
+}
+
+export function checkHermesVersion(run = spawnSync, timeoutMs = DEFAULT_CONFIG_TIMEOUT_MS) {
+  let result;
+  try {
+    result = run('hermes', ['--version'], { encoding: 'utf8', shell: false, timeout: timeoutMs });
+  } catch (error) {
+    const timedOut = error?.code === 'ETIMEDOUT';
+    return {
+      ok: false,
+      exitCode: timedOut ? 124 : Number.isInteger(error?.status) ? error.status : 1,
+      timedOut,
+      diagnostic: sanitizeHermesDiagnostic(error?.stderr || (timedOut ? 'hermes --version timed out' : error?.message)),
+    };
+  }
+  const timedOut = result?.error?.code === 'ETIMEDOUT';
+  const exitCode = Number.isInteger(result?.status) ? result.status : 1;
+  return {
+    ok: !result?.error && exitCode === 0,
+    exitCode: timedOut ? 124 : exitCode,
+    timedOut,
+    diagnostic: sanitizeHermesDiagnostic(result?.stderr || (timedOut ? 'hermes --version timed out' : result?.error?.message)),
+  };
+}
 
 export function resolveHermesHome(env = process.env, platformName = platform(), home = homedir()) {
   if (env.HERMES_HOME) return env.HERMES_HOME;
@@ -31,42 +72,60 @@ export function runHermesConfig(args, {
   spawnChild = spawn,
   terminate = terminateHermesProcessTree,
   timeoutMs = parseConfigTimeout(),
+  command = 'config',
+  captureStdout = true,
+  requireCloseOnTimeout = false,
+  terminationGraceMs = 1_000,
+  detached = false,
 } = {}) {
   return new Promise((resolve) => {
     let settled = false;
     let timer;
+    let graceTimer;
+    let timedOut = false;
     let stdout = '';
+    let stderr = '';
     const finish = (result) => {
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
+      if (graceTimer) clearTimeout(graceTimer);
       resolve(result);
     };
 
     let child;
     try {
-      child = spawnChild('hermes', ['config', ...args], {
+      child = spawnChild('hermes', [command, ...args], {
         encoding: 'utf8',
         shell: false,
         stdio: ['ignore', 'pipe', 'pipe'],
         windowsHide: true,
+        ...(detached ? { detached: true } : {}),
       });
-      child.stdout?.on('data', (chunk) => { stdout += String(chunk); });
-      child.stderr?.on('data', () => {});
-      child.once('error', () => finish({ ok: false, exitCode: 1, timedOut: false, terminationFailed: false, marker: 'FAILED', stdout: '' }));
-      child.once('close', (code) => finish({
+      child.stdout?.on('data', (chunk) => { if (captureStdout) stdout += String(chunk); });
+      child.stderr?.on('data', (chunk) => { stderr = `${stderr}${String(chunk)}`.slice(-4_096); });
+      child.once('error', (error) => { if (!timedOut) finish({ ok: false, exitCode: 1, timedOut: false, terminationFailed: false, marker: 'FAILED', stdout: '', diagnostic: sanitizeHermesDiagnostic(stderr || error?.message) }); });
+      child.once('close', (code) => finish(timedOut && requireCloseOnTimeout
+        ? { ok: false, exitCode: 124, timedOut: true, terminationFailed: false, marker: 'TIMEOUT', stdout: '', diagnostic: sanitizeHermesDiagnostic(stderr) }
+        : {
         ok: code === 0,
         exitCode: code === 0 ? 0 : (code ?? 1),
         timedOut: false,
         terminationFailed: false,
         marker: code === 0 ? 'COMPLETED' : 'FAILED',
         stdout: code === 0 ? stdout.trim() : '',
+        diagnostic: code === 0 ? '' : sanitizeHermesDiagnostic(stderr),
       }));
       timer = setTimeout(() => {
+        timedOut = true;
         let termination;
         try { termination = terminate(child.pid, platform()); } catch { termination = { ok: false }; }
         try { child.kill(); } catch { /* child may already be gone */ }
         const terminated = termination?.ok === true;
+        if (requireCloseOnTimeout && terminated) {
+          graceTimer = setTimeout(() => finish({ ok: false, exitCode: 125, timedOut: true, terminationFailed: true, marker: 'TERMINATION_FAILED', stdout: '', diagnostic: sanitizeHermesDiagnostic(stderr) }), terminationGraceMs);
+          return;
+        }
         finish({
           ok: false,
           exitCode: terminated ? 124 : 125,
@@ -74,10 +133,11 @@ export function runHermesConfig(args, {
           terminationFailed: !terminated,
           marker: terminated ? 'TIMEOUT' : 'TERMINATION_FAILED',
           stdout: '',
+          diagnostic: sanitizeHermesDiagnostic(stderr),
         });
       }, timeoutMs);
-    } catch {
-      finish({ ok: false, exitCode: 1, timedOut: false, terminationFailed: false, marker: 'FAILED', stdout: '' });
+    } catch (error) {
+      finish({ ok: false, exitCode: 1, timedOut: false, terminationFailed: false, marker: 'FAILED', stdout: '', diagnostic: sanitizeHermesDiagnostic(error?.stderr || error?.message) });
     }
   });
 }
@@ -89,13 +149,14 @@ async function hermesConfigSet(key, value) {
     error.code = result.terminationFailed
       ? 'HERMES_CONFIG_TERMINATION_FAILED'
       : result.timedOut ? 'HERMES_CONFIG_TIMEOUT' : 'HERMES_CONFIG_FAILED';
+    error.exitCode = result.exitCode;
+    error.diagnostic = result.diagnostic;
     throw error;
   }
 }
 
 async function hermesConfigGet(key) {
-  const result = await runHermesConfig(['get', key]);
-  return result.ok ? result.stdout : null;
+  return runHermesConfig(['get', key]);
 }
 
 const CANONICAL_EBB_SKILLS = [
@@ -141,17 +202,58 @@ export function isHermesProjectDiscoveryEnabled(configValue) {
   return configValue?.trim().toLowerCase() === 'true';
 }
 
-export async function runHermesProjectSetup({ worktreeRoot, run = spawnSync, configure = async () => {} }) {
-  const help = run('hermes', ['skills', 'trust', '--help'], { encoding: 'utf8', shell: false });
-  if (help.error || help.status !== 0) {
-    const error = new Error('Installed Hermes CLI does not support `hermes skills trust`; update Hermes and retry.');
-    error.code = 'HERMES_PROJECT_TRUST_UNSUPPORTED';
+export async function runHermesProjectSetup({
+  worktreeRoot,
+  run,
+  spawnChild = spawn,
+  terminate = terminateHermesProcessTree,
+  timeoutMs = parseConfigTimeout(),
+  terminationGraceMs = 1_000,
+  checkVersion = checkHermesVersion,
+  configure = async () => {},
+}) {
+  const health = checkVersion(run ?? spawnSync);
+  if (!health.ok) {
+    const error = new Error('Hermes CLI health check failed before project setup.');
+    error.code = health.timedOut ? 'HERMES_CLI_TIMEOUT' : 'HERMES_CLI_UNAVAILABLE';
+    error.exitCode = health.exitCode;
+    error.diagnostic = health.diagnostic;
     throw error;
   }
-  const trusted = run('hermes', ['skills', 'trust', worktreeRoot], { encoding: 'utf8', shell: false });
-  if (trusted.error || trusted.status !== 0) {
+  const invoke = async (args) => run
+    ? run('hermes', ['skills', ...args], { encoding: 'utf8', shell: false })
+    : runHermesConfig(args, {
+      command: 'skills', captureStdout: false, requireCloseOnTimeout: true,
+      detached: platform() !== 'win32', spawnChild,
+      terminate: terminate === terminateHermesProcessTree
+        ? (pid, platformName) => terminateHermesProcessTree(pid, platformName, spawnSync, platformName !== 'win32')
+        : terminate,
+      timeoutMs, terminationGraceMs,
+    });
+  const assertBounded = (result) => {
+    if (!result?.timedOut) return;
+    const error = new Error();
+    error.code = result.terminationFailed ? 'HERMES_CONFIG_TERMINATION_FAILED' : 'HERMES_CONFIG_TIMEOUT';
+    error.exitCode = result.exitCode;
+    error.diagnostic = result.diagnostic;
+    throw error;
+  };
+  const help = await invoke(['trust', '--help']);
+  assertBounded(help);
+  if (help.error || (run ? help.status !== 0 : !help.ok)) {
+    const error = new Error('Installed Hermes CLI does not support `hermes skills trust`; update Hermes and retry.');
+    error.code = 'HERMES_PROJECT_TRUST_UNSUPPORTED';
+    error.exitCode = run ? (help.status ?? 1) : help.exitCode;
+    error.diagnostic = sanitizeHermesDiagnostic(run ? help.stderr || help.error?.message : help.diagnostic);
+    throw error;
+  }
+  const trusted = await invoke(['trust', worktreeRoot]);
+  assertBounded(trusted);
+  if (trusted.error || (run ? trusted.status !== 0 : !trusted.ok)) {
     const error = new Error('Hermes could not trust the current project. Run `hermes skills trust <repo-root>` and retry.');
     error.code = 'HERMES_PROJECT_TRUST_FAILED';
+    error.exitCode = run ? (trusted.status ?? 1) : trusted.exitCode;
+    error.diagnostic = sanitizeHermesDiagnostic(run ? trusted.stderr || trusted.error?.message : trusted.diagnostic);
     throw error;
   }
   await configure();
@@ -164,7 +266,7 @@ export function parseExecuteTimeout(value = process.env.HERMES_EXECUTE_TIMEOUT_M
   return parsed;
 }
 
-export function terminateHermesProcessTree(pid, platformName = platform(), run = spawnSync) {
+export function terminateHermesProcessTree(pid, platformName = platform(), run = spawnSync, processGroup = false, signal = process.kill) {
   if (!pid) return { ok: false };
   if (platformName === 'win32') {
     const result = run('taskkill.exe', ['/PID', String(pid), '/T', '/F'], {
@@ -175,7 +277,7 @@ export function terminateHermesProcessTree(pid, platformName = platform(), run =
     return { ok: !result?.error && result?.status === 0 };
   }
   try {
-    process.kill(pid, 'SIGTERM');
+    signal(processGroup ? -pid : pid, 'SIGTERM');
     return { ok: true };
   } catch {
     // Процесс мог завершиться между timeout и попыткой termination.
@@ -341,14 +443,10 @@ async function doCheck() {
   let allPass = true;
   const worktreeRoot = resolveRepositoryRoot();
 
-  // 1. Проверяем hermes --version.
-  try {
-    execFileSync('hermes', ['--version'], { stdio: 'pipe' });
-    checks.push({ name: 'hermes --version', pass: true });
-  } catch {
-    checks.push({ name: 'hermes --version', pass: false });
-    allPass = false;
-  }
+  // 1. Проверяем hermes --version и сохраняем безопасную диагностику сбоя.
+  const health = checkHermesVersion();
+  checks.push({ name: 'hermes --version', pass: health.ok, detail: health.diagnostic, exitCode: health.exitCode });
+  if (!health.ok) allPass = false;
 
   // 2. Проверяем наличие .hermes.md.
   const hermesMdPath = join(worktreeRoot, '.hermes.md');
@@ -364,11 +462,12 @@ async function doCheck() {
   checks.push({ name: 'Canonical project skills (20)', pass: inventory.valid });
   if (!inventory.valid) allPass = false;
   const trustedProjects = await hermesConfigGet('skills.trusted_project_dirs');
-  const trusted = isHermesProjectTrusted(trustedProjects, worktreeRoot);
-  checks.push({ name: 'Hermes trusted project', pass: trusted });
+  const trusted = trustedProjects.ok && isHermesProjectTrusted(trustedProjects.stdout, worktreeRoot);
+  checks.push({ name: 'Hermes trusted project', pass: trusted, detail: trustedProjects.diagnostic, exitCode: trustedProjects.exitCode });
   if (!trusted) allPass = false;
-  const projectDiscoveryEnabled = isHermesProjectDiscoveryEnabled(await hermesConfigGet('skills.project_discovery'));
-  checks.push({ name: 'Hermes project discovery enabled', pass: projectDiscoveryEnabled });
+  const projectDiscovery = await hermesConfigGet('skills.project_discovery');
+  const projectDiscoveryEnabled = projectDiscovery.ok && isHermesProjectDiscoveryEnabled(projectDiscovery.stdout);
+  checks.push({ name: 'Hermes project discovery enabled', pass: projectDiscoveryEnabled, detail: projectDiscovery.diagnostic, exitCode: projectDiscovery.exitCode });
   if (!projectDiscoveryEnabled) allPass = false;
 
   // Проверяем конфигурацию Hermes.
@@ -378,9 +477,9 @@ async function doCheck() {
     ['delegation.orchestrator_enabled', 'false']
   ];
   for (const [key, expected] of configChecks) {
-    const value = await hermesConfigGet(key);
-    checks.push({ name: `Config: ${key}`, pass: value === expected });
-    if (value !== expected) allPass = false;
+    const result = await hermesConfigGet(key);
+    checks.push({ name: `Config: ${key}`, pass: result.ok && result.stdout === expected, detail: result.diagnostic, exitCode: result.exitCode });
+    if (!result.ok || result.stdout !== expected) allPass = false;
   }
 
   // Выводим результаты.
@@ -388,6 +487,8 @@ async function doCheck() {
   console.log('Check results:');
   for (const check of checks) {
     console.log(`  ${check.pass ? 'PASS' : 'FAIL'}: ${check.name}`);
+    if (!check.pass && check.exitCode !== undefined) console.log(`    exit_code=${check.exitCode}`);
+    if (!check.pass && check.detail) console.log(`    diagnostic: ${check.detail}`);
   }
 
   if (!allPass) {
@@ -437,6 +538,14 @@ async function doExecute(args) {
     process.exit(1);
   }
 
+  // Перед dispatch к Hermes принимается только Plan с metadata, прошедшими каноническую проверку docs governance.
+  try {
+    parsePlanFile(finalPlan, { requirePlan: true });
+  } catch (error) {
+    console.error(`Invalid Plan metadata: ${error.message}`);
+    process.exit(1);
+  }
+
   const result = await runHermesExecute({ worktreeRoot, planPath });
   console.log(`${HERMES_EXECUTE_MARKER} marker=${result.marker} exit_code=${result.exitCode} redacted=${result.redacted} cleanup_verified=${result.cleanupVerified}`);
   process.exitCode = result.exitCode;
@@ -448,9 +557,11 @@ if (invokedPath === import.meta.url) {
     const isExecute = process.argv[2] === 'execute';
     const marker = isExecute ? HERMES_EXECUTE_MARKER : HERMES_CONFIG_MARKER;
     const terminationFailed = error?.code === 'HERMES_CONFIG_TERMINATION_FAILED';
-    const timeout = error?.code === 'HERMES_CONFIG_TIMEOUT';
+    const timeout = error?.code === 'HERMES_CONFIG_TIMEOUT' || error?.code === 'HERMES_CLI_TIMEOUT';
     const errorMarker = terminationFailed ? 'TERMINATION_FAILED' : timeout ? 'TIMEOUT' : 'FAILED';
-    const exitCode = terminationFailed ? 125 : timeout ? 124 : 1;
+    const exitCode = Number.isInteger(error?.exitCode) ? error.exitCode : terminationFailed ? 125 : timeout ? 124 : 1;
+    const diagnostic = sanitizeHermesDiagnostic(error?.diagnostic);
+    if (diagnostic) console.error(`Hermes diagnostic: ${diagnostic}`);
     console.log(`${marker} marker=${errorMarker} exit_code=${exitCode} redacted=true`);
     process.exitCode = exitCode;
   });

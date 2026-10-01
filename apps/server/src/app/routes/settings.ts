@@ -4,8 +4,11 @@ import type { SchedulerService } from "../../modules/scheduler/scheduler-service
 
 export interface SettingsRouteDeps { scheduler?: Pick<SchedulerService, "getConfig">; }
 
+// Эти значения — текущие архитектурные инварианты, а не редактируемые настройки.
+const SECURITY_FACTS = { mostRestrictiveWins: true, localModeEnabled: true } as const;
+
 /**
- * Регистрирует HTTP-маршруты settings и передаёт изменяющие состояние действия backend policy.
+ * Регистрирует read-only Settings projection из подтверждённых Scheduler и security facts.
  */
 export async function settingsRoutes(app: FastifyInstance, deps: SettingsRouteDeps = {}): Promise<void> {
   app.get("/api/v1/settings", async (_request, reply): Promise<SettingsProjection | unknown> => {
@@ -20,7 +23,7 @@ export async function settingsRoutes(app: FastifyInstance, deps: SettingsRouteDe
           role: null,
           taskEpic: null,
         },
-        securitySettings: { mostRestrictiveWins: null, localModeEnabled: null },
+        securitySettings: SECURITY_FACTS,
       } satisfies SettingsProjection;
     } catch {
       return reply.code(503).send({ error: "scheduler configuration unavailable" });
@@ -36,6 +39,6 @@ function unavailableSettings(): SettingsProjection {
       role: null,
       taskEpic: null,
     },
-    securitySettings: { mostRestrictiveWins: null, localModeEnabled: null },
+    securitySettings: SECURITY_FACTS,
   };
 }

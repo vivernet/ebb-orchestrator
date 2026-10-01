@@ -7,13 +7,26 @@ export function createIntegrationTestDatabase(path: string): Database {
   database.exec(`
     CREATE TABLE agent_runs (
       id TEXT PRIMARY KEY, role TEXT NOT NULL, status TEXT NOT NULL,
-      output TEXT, epic_id TEXT, ended_at TEXT, exit_code INTEGER
+      output TEXT, epic_id TEXT, capability_json TEXT, ended_at TEXT, exit_code INTEGER
+    );
+    CREATE TABLE projects (id TEXT PRIMARY KEY, status TEXT NOT NULL);
+    CREATE TABLE approvals (
+      id TEXT PRIMARY KEY, type TEXT NOT NULL, subject_id TEXT NOT NULL,
+      subject_type TEXT NOT NULL, status TEXT NOT NULL
+    );
+    CREATE TABLE epics (
+      id TEXT PRIMARY KEY, project_id TEXT NOT NULL, display_id TEXT NOT NULL, status TEXT NOT NULL
+    );
+    CREATE TABLE onboarding_configs (
+      project_id TEXT NOT NULL, repository_path TEXT NOT NULL,
+      facts_json TEXT NOT NULL, proposed_json TEXT NOT NULL,
+      status TEXT NOT NULL, approval_id TEXT NOT NULL
     );
     CREATE TABLE epic_orchestrations (
       epic_id TEXT PRIMARY KEY, stage TEXT, final_approval_id TEXT
     );
     CREATE TABLE orchestration_phase_runs (
-      agent_run_id TEXT PRIMARY KEY, epic_id TEXT, phase TEXT, validated INTEGER
+      agent_run_id TEXT PRIMARY KEY, epic_id TEXT, task_id TEXT, phase TEXT, validated INTEGER
     );
     CREATE TABLE git_operations (
       id TEXT PRIMARY KEY, type TEXT NOT NULL, status TEXT NOT NULL,
@@ -29,6 +42,13 @@ export function createIntegrationTestDatabase(path: string): Database {
       worktree_path TEXT NOT NULL, integration_run_id TEXT,
       status TEXT NOT NULL, created_at TEXT NOT NULL
     );
+    CREATE TRIGGER integration_attempts_immutable_provenance
+    BEFORE UPDATE OF id, repository_path, source_branch, target_branch,
+      expected_target_sha, worktree_path, integration_run_id, created_at, source_sha
+    ON integration_attempts
+    BEGIN
+      SELECT RAISE(ABORT, 'integration provenance is immutable');
+    END;
   `);
   return database;
 }

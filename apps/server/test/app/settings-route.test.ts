@@ -37,7 +37,7 @@ test("settings exposes only the scheduler fields confirmed by getConfig", async 
       role: null,
       taskEpic: null,
     },
-    securitySettings: { mostRestrictiveWins: null, localModeEnabled: null },
+    securitySettings: { mostRestrictiveWins: true, localModeEnabled: true },
   });
   await app.close();
 });
@@ -52,7 +52,7 @@ test("settings marks scheduler and security data unavailable without a scheduler
   const body = JSON.parse(response.body);
   expect(body.effectiveHierarchy.global).toEqual({ schemaVersion: null, globalMax: null, projectMax: null, roleCapacity: null });
   expect(body.effectiveHierarchy.project).toBeNull();
-  expect(body.securitySettings).toEqual({ mostRestrictiveWins: null, localModeEnabled: null });
+  expect(body.securitySettings).toEqual({ mostRestrictiveWins: true, localModeEnabled: true });
   await app.close();
 });
 

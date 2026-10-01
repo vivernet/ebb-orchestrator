@@ -6,6 +6,9 @@ import { ErrorAlert } from '../../components/ui/PageState.js';
 import { useQuery } from '../../state/use-query.js';
 import { getProjectOverview } from './api.js';
 import { apiErrorMessage, githubStatusLabel, statusLabel } from '../../i18n/ru.js';
+import ProjectConfigPanel from './ProjectConfigPanel.js';
+import HumanFeedbackPanel from './HumanFeedbackPanel.js';
+import CoordinatorRequestPanel from '../coordinator/CoordinatorRequestPanel.js';
 
 interface ProjectPageProps {
   id: string;
@@ -36,6 +39,9 @@ export default function ProjectPage({ id }: ProjectPageProps) {
         <h2>Репозиторий / путь / ветка / GitHub</h2>
         <p>{projection && !notFound ? `${projection.git.repositoryPath ?? 'Репозиторий не указан'} · ${projection.git.defaultBranch ?? 'Ветка по умолчанию не указана'} · ${projection.git.github ? githubStatusLabel(projection.git.github.status) : 'GitHub не подключён'}` : notFound ? 'Проект не найден.' : 'Загрузка сведений о репозитории…'}</p>
       </section>
+      {project && <ProjectConfigPanel projectId={id} />}
+      {project && <CoordinatorRequestPanel key={id} projectId={id} />}
+      {projection && !notFound && <HumanFeedbackPanel projectId={id} tasks={projection.tasks.map((task) => ({ id: task.id, title: task.title || task.display_id }))} epics={projection.epics.map((epic) => ({ id: epic.id, title: epic.title || epic.display_id }))} />}
        <section aria-label="Зависимости и среда выполнения"><h2>Зависимости / среда выполнения</h2><p>{projection && !notFound ? `${projection.blockers.length} блокировок · ${projection.approvals.length} согласований` : notFound ? 'Зависимости проекта недоступны.' : 'Загрузка зависимостей проекта…'}</p></section>
        <section aria-label="Активность и бюджет">
         <h2>Активность / бюджет</h2>

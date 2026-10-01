@@ -11,7 +11,7 @@ import { SecretStoreUnavailableError, type SecretStore, type StoreResult, type S
 /** Минимальный порт OS keyring, не позволяющий transport details проникнуть в domain. */
 export interface KeyringBackend {
   setPassword(service: string, account: string, value: string): Promise<void>;
-  getPassword(service: string, account: string): Promise<string | undefined>;
+  getPassword(service: string, account: string): Promise<string | null | undefined>;
   deletePassword(service: string, account: string): Promise<void>;
 }
 
@@ -38,8 +38,8 @@ export class KeyringSecretStore implements SecretStore {
       const { Entry } = require('@napi-rs/keyring') as {
         Entry: new (service: string, account: string) => {
           setPassword(value: string): void;
-          getPassword(): string | undefined;
-          deletePassword(): void;
+          getPassword(): string | null;
+          deletePassword(): boolean;
         };
       };
       this.keyring = {
@@ -67,7 +67,7 @@ export class KeyringSecretStore implements SecretStore {
     return this.withMutationLock(account, async () => {
       const id = `keyring_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       const now = Date.now();
-      const previousValue = await this.withKeyring((backend) => backend.getPassword(service, account));
+      const previousValue = (await this.withKeyring((backend) => backend.getPassword(service, account))) ?? undefined;
       try {
         await this.withKeyring((backend) => backend.setPassword(service, account, value));
       } catch (error) {
@@ -94,7 +94,8 @@ export class KeyringSecretStore implements SecretStore {
 
   async resolveForService(service: string, name: string): Promise<string | undefined> {
     const account = this.key(service, name);
-    return this.withMutationLock(account, () => this.withKeyring((backend) => backend.getPassword(service, account)));
+    const value = await this.withMutationLock(account, () => this.withKeyring((backend) => backend.getPassword(service, account)));
+    return value ?? undefined;
   }
 
   async revoke(service: string, name: string): Promise<void> {

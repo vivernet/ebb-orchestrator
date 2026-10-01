@@ -15,7 +15,8 @@ import { EventBus } from "../../src/platform/events/event-bus.js";
 import { EventDispatcher } from "../../src/platform/events/event-dispatcher.js";
 import { appendOutboxEvent } from "../../src/platform/events/outbox-repository.js";
 import { DomainEvent } from "../../src/platform/events/domain-event.js";
-import { RunService } from "../../src/modules/runtime/run-service.js";
+import { createRunContextInput, RunService, taskDeveloperPrompt } from "../../src/modules/runtime/run-service.js";
+import type { StartRunOptions } from "../../src/modules/runtime/run-types.js";
 import { FakeAgentRuntime } from "../fakes/fake-agent-runtime.js";
 import { BudgetService } from "../../src/modules/usage/budget-service.js";
 import { GitHubSyncService, SqliteSyncState } from "../../src/modules/github/github-sync-service.js";
@@ -26,6 +27,7 @@ import { WorktreeManager } from "../../src/modules/git/worktree-manager.js";
 import { WorktreeRepository } from "../../src/modules/git/worktree-repository.js";
 import { SchedulerService } from "../../src/modules/scheduler/scheduler-service.js";
 import { resolveOrchestratorHome } from "../../src/platform/home/orchestrator-home.js";
+import { seedApprovedProjectConfig } from "../helpers/approved-project-config.js";
 
 const crashServerEntry = resolve(import.meta.dirname, "fixtures/crash-recovery-server.mjs");
 const crashShutdownMessage = "ebb-v1-crash-recovery:shutdown";
@@ -127,6 +129,45 @@ describe('v1 production recovery paths', () => {
     return database;
   }
 
+  function seedRunSubject(database: Database, taskId: string): void {
+    const projectId = randomUUID();
+    const now = new Date().toISOString();
+    database.run(
+      "INSERT INTO projects (id,name,display_name,status,created_at,updated_at) VALUES ($id,'recovery-run','Recovery Run','ACTIVE',$now,$now)",
+      { id: projectId, now },
+    );
+    database.run(
+      `INSERT INTO tasks (id,project_id,display_id,title,status,contract_json,required,created_at,updated_at)
+       VALUES ($id,$projectId,'TASK-RECOVERY','Recovery task','READY',$contract,1,$now,$now)`,
+      {
+        id: taskId,
+        projectId,
+        contract: JSON.stringify({ version: 1, goal: "Recovery task", context: "Crash recovery fixture", requirements: [], acceptanceCriteria: [], dependencies: [], nonGoals: [], definitionOfDone: [] }),
+        now,
+      },
+    );
+    seedApprovedProjectConfig(database, projectId);
+  }
+
+  function recoveryRunOptions(taskId: string, workspacePath: string): StartRunOptions {
+    const prompt = taskDeveloperPrompt();
+    const options = {
+      runId: randomUUID(), role: 'developer', model: 'test-model', taskId, epicId: null,
+      triggerReason: 'task-assignment', contextVersion: '1', outputSchemaVersion: '1',
+      capability: { workspace: workspacePath },
+    } satisfies StartRunOptions;
+    return {
+      ...options,
+      prompt,
+      contextInput: createRunContextInput(options, {
+        prompt,
+        workspaceIdentity: { repository: workspacePath, workspace: workspacePath, worktree: taskId },
+        targetHead: null,
+        targetBranch: null,
+      }),
+    };
+  }
+
   it('acknowledges a delivered outbox event after restart without repeating its consumer', async () => {
     db = await openDatabase();
     const event = DomainEvent.create({ type: 'recovery.test', payload: { id: 'one' } });
@@ -153,11 +194,10 @@ describe('v1 production recovery paths', () => {
 
   it('marks a durable in-progress run interrupted and clears its capability after restart', async () => {
     db = await openDatabase();
+    const taskId = randomUUID();
+    seedRunSubject(db, taskId);
     const runService = new RunService(db, new FakeAgentRuntime());
-    const run = runService.prepareRun({
-      runId: randomUUID(), role: 'developer', model: 'test-model', taskId: randomUUID(), epicId: randomUUID(),
-      triggerReason: 'task-assignment', contextVersion: '1', outputSchemaVersion: '1',
-    });
+    const run = runService.prepareRun(recoveryRunOptions(taskId, tempDirectory!));
     db.run("UPDATE agent_runs SET status='IN_PROGRESS' WHERE id=$id", { id: run.id });
     db.close();
     db = await openDatabase();
@@ -292,10 +332,9 @@ describe('v1 production recovery paths', () => {
       firstProcess = launchProductionChild(home, port, true);
       await waitForProductionReady(firstProcess, port);
       db = createSqliteDatabase(databasePath);
-      const run = new RunService(db, new FakeAgentRuntime()).prepareRun({
-        runId: randomUUID(), role: 'developer', model: 'test-model', taskId: randomUUID(), epicId: randomUUID(),
-        triggerReason: 'task-assignment', contextVersion: '1', outputSchemaVersion: '1',
-      });
+      const taskId = randomUUID();
+      seedRunSubject(db, taskId);
+      const run = new RunService(db, new FakeAgentRuntime()).prepareRun(recoveryRunOptions(taskId, home));
       db.run("UPDATE agent_runs SET status='IN_PROGRESS' WHERE id=$id", { id: run.id });
       db.close();
       db = undefined;

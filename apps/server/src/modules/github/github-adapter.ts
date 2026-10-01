@@ -4,7 +4,7 @@ import { GitHubAppTokenProvider } from './github-app-token-provider.js';
 export interface GitHubAdapterOptions { fetch?: typeof globalThis.fetch; apiBase?: string; sleep?: (ms: number) => Promise<void>; maxRetries?: number; }
 
 interface RemoteIssueRecord { number: number; pull_request?: unknown; }
-interface RemoteIssueCommentRecord { id: number; issue_url: string; body?: string | null; user?: { type?: string } | null; }
+interface RemoteIssueCommentRecord { id: number; issue_url: string; html_url?: string; created_at?: string; updated_at?: string; body?: string | null; user?: { type?: string; login?: string } | null; }
 
 /** REST-адаптер GitHub с status-aware errors и bounded transient retries. */
 export class GitHubAdapter implements GitHosting {
@@ -36,12 +36,17 @@ export class GitHubAdapter implements GitHosting {
       const match = /\/issues\/(\d+)$/.exec(comment.issue_url);
       const issueNumber = match ? Number(match[1]) : NaN;
       if (!Number.isSafeInteger(comment.id) || !issueNumbers.has(issueNumber)) continue;
-      mapped.push({
+      const mappedComment: GitHubIssueComment = {
         id: comment.id,
         issueNumber,
         body: typeof comment.body === 'string' ? comment.body : '',
         authorType: typeof comment.user?.type === 'string' ? comment.user.type : 'Unknown',
-      });
+      };
+      if (typeof comment.user?.login === 'string') mappedComment.authorLogin = comment.user.login;
+      if (typeof comment.html_url === 'string') mappedComment.sourceUrl = comment.html_url;
+      if (typeof comment.created_at === 'string') mappedComment.sourceCreatedAt = comment.created_at;
+      if (typeof comment.updated_at === 'string') mappedComment.sourceUpdatedAt = comment.updated_at;
+      mapped.push(mappedComment);
     }
     return { status: 'OK', value: mapped };
   }

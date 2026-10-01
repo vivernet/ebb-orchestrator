@@ -4,7 +4,7 @@ kind: plan
 status: completed
 title: План реализации Foundation и Persistence Orchestrator
 created: 2026-09-23
-updated: 2026-09-29
+updated: 2026-09-30
 depends_on: []
 specs:
   - ../specs/01-system-design.md
@@ -17,7 +17,7 @@ evidence:
   - apps/server/test/platform/events/outbox.test.ts
   - apps/server/test/platform/jobs/job-runner.test.ts
   - apps/server/test/platform/artifacts/artifact-store.test.ts
-  - apps/server/test/platform/security.test.ts
+  - apps/server/test/app/security.test.ts
   - apps/server/test/platform/process/startup.test.ts
   - scripts/plan01-process-recovery-acceptance.mjs
 ---

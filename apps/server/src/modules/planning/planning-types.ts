@@ -1,7 +1,10 @@
 import type { TaskContract } from "../work/work-types.js";
+import type { DesignResult, ProductDefinition } from "@ebb-orchestrator/contracts";
 
 export type PlanningClassification = "TASK" | "EPIC" | "NEEDS_INPUT";
 export type PlanningStatus = "PENDING" | "APPROVED" | "REJECTED";
+export type PlanningRequestStatus = "RECEIVED" | "PLANNING" | "NEEDS_INPUT" | "PLAN_PENDING_APPROVAL" | "REJECTED" | "MATERIALIZED" | "FAILED";
+export const EPIC_RECOVERY_FAILURE_CODE = "EPIC_RECOVERY_FAILED" as const;
 
 export interface PlanningApprovalPolicy {
   standalone_task: boolean;
@@ -27,8 +30,15 @@ export interface PlanningPlanInput {
   projectId: string;
   tasks: TemporaryTask[];
   epic?: { title: string; goal?: string };
+  /** Результаты отдельных PM/Architect planning Runs, сохранённые для human review. */
+  planningDecisions?: PlanningDecisions;
   architectureChange?: boolean;
   requestedBy?: string;
+}
+
+export interface PlanningDecisions {
+  productManager: ProductDefinition;
+  architect: DesignResult;
 }
 
 export interface PlanningPlan extends PlanningPlanInput {
@@ -46,7 +56,12 @@ export interface PlanningRequest {
   requestedBy: string;
   classification: PlanningClassification | null;
   planId: string | null;
+  status: PlanningRequestStatus;
+  coordinatorRunId: string | null;
+  planningDecisionsRequired: boolean;
+  failureCode: string | null;
   createdAt: string;
+  updatedAt: string;
 }
 
 export interface PlanValidationResult {

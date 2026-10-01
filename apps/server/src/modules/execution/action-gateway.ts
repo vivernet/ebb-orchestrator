@@ -9,6 +9,7 @@ import { ProjectActions, type ProjectAction, type ProjectConfig, type ActionResu
 import { CommandTools, type ExecResult } from './command-tools.js';
 import { CommandPolicy, type CommandInvocation } from './command-policy.js';
 import { PermissionEngine } from '../permissions/permission-engine.js';
+import { approvedConfigFileForPath } from './approved-config-file.js';
 import { ActionId, PermissionDecision, type EvaluationInput } from '../permissions/permission-types.js';
 
 export type FilePatch = { start: number; end: number; content: string };
@@ -35,6 +36,7 @@ export class ActionGateway {
     private capabilities?: string[],
     projectConfig?: ProjectConfig,
     private readonly openFile: OpenFile = fs.openSync,
+    private readonly approvedConfigFiles?: Readonly<Record<string, string>>,
   ) {
     this.permissionEngine = new PermissionEngine();
     this.projectActions = projectConfig ? new ProjectActions(projectConfig) : null;
@@ -125,6 +127,10 @@ export class ActionGateway {
     if (!this.checkPermission(ActionId.WorkspaceRead)) {
       return { success: false, error: 'Permission denied: workspace.read action not allowed' };
     }
+    const approved = approvedConfigFileForPath(this.workspace, relPath, this.approvedConfigFiles);
+    if (approved.applies) return approved.content === undefined
+      ? { success: false, error: 'File is absent from approved Project Config snapshot' }
+      : { success: true, content: approved.content };
     const fullPath = path.resolve(this.workspace, relPath);
     const result = this.resolver.resolveSafePathSync(this.workspace, fullPath);
 

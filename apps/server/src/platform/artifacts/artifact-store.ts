@@ -30,6 +30,17 @@ export interface ArtifactRecord {
   status: string;
 }
 
+/** Metadata DTO безопасного списка артефактов одного Run; бинарные данные и storage path исключены. */
+export interface RunArtifactMetadata {
+  id: string;
+  type: string;
+  contentType: string | null;
+  sizeBytes: number;
+  sha256: string;
+  status: string;
+  createdAt: string;
+}
+
 /** Входные данные для записи нового артефакта. */
 export interface WriteArtifactInput {
   type: string;
@@ -151,6 +162,19 @@ export class ArtifactStore {
     const absolutePath = this.resolveRegularArtifactPath(row.relative_path);
 
     return createReadStream(absolutePath);
+  }
+
+  /** Возвращает только metadata артефактов Run, не открывая и не читая их содержимое. */
+  listRunArtifacts(runId: string): RunArtifactMetadata[] {
+    return this.repository.listMetadataByRunId(runId).map((row) => ({
+      id: row.id,
+      type: row.type,
+      contentType: row.content_type,
+      sizeBytes: row.size_bytes,
+      sha256: row.sha256,
+      status: row.status,
+      createdAt: row.created_at,
+    }));
   }
 
   /**

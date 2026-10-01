@@ -2,18 +2,24 @@ import type { FastifyInstance } from "fastify";
 import type { Database } from "../../platform/database/database.js";
 import { ExecutionProjection } from "../read-models/execution-projection.js";
 import type { SchedulerService } from "../../modules/scheduler/scheduler-service.js";
-import type { AgentRun } from "@ebb-orchestrator/contracts";
+import { contextManifestProjectionSchema, type AgentRun } from "@ebb-orchestrator/contracts";
 import type { StartRunOptions } from "../../modules/runtime/run-types.js";
 import type { WorkflowEngine } from "../../modules/workflow/workflow-engine.js";
 import { existsSync, statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { WorktreeRepository } from "../../modules/git/worktree-repository.js";
+import type { ArtifactStore } from "../../platform/artifacts/artifact-store.js";
+import { assertSafeGitRef, GitCli } from "../../modules/git/git-cli.js";
+import { createRunContextInput, taskDeveloperPrompt, taskQaPrompt, taskReviewerPrompt } from "../../modules/runtime/run-service.js";
+import { getContextManifest } from "../../modules/context/context-manifest-repository.js";
+
+const CONTEXT_MANIFEST_ROLES = ["coordinator", "product_manager", "architect", "developer", "reviewer", "qa", "integration"] as const;
 
 export interface RunCommandService {
   cancelRun(id: string): unknown | Promise<unknown>;
   prepareRun?(options: StartRunOptions): AgentRun;
   executePreparedRun?(runId: string): Promise<unknown>;
-  failPreparedRun?(runId: string, error: unknown): void;
+  failPreparedRun?(runId: string, error: unknown): boolean;
 }
 
 export interface RunRouteDeps {
@@ -22,6 +28,8 @@ export interface RunRouteDeps {
   scheduler?: SchedulerService | undefined;
   workflow?: WorkflowEngine | undefined;
   worktreeRepository?: WorktreeRepository | undefined;
+  artifactStore?: Pick<ArtifactStore, "listRunArtifacts"> | undefined;
+  git?: Pick<GitCli, "run"> | undefined;
 }
 
 /**
@@ -74,13 +82,16 @@ export async function runRoutes(app: FastifyInstance, deps: RunRouteDeps = {}): 
       return reply.code(409).send({ error: "task is not READY", status: task.status });
     }
 
+    const options = parseDispatchBody(request.body);
+    if (!options) return reply.code(400).send({ error: "invalid dispatch options" });
+
     try {
       const project = deps.db.get<{ project_id: string }>("SELECT project_id FROM tasks WHERE id=$id", { id: task.id });
       if (!project) return reply.code(404).send({ error: "task not found" });
       deps.scheduler.assertProjectDispatchable(project.project_id);
     } catch (error) {
       const code = error instanceof Error ? error.message : "PROJECT_NOT_ACTIVE";
-      if (code === "ONBOARDING_NOT_ACTIVE" || code === "PROJECT_NOT_ACTIVE") return reply.code(409).send({ contractVersion: 1, error: { code, message: code === "ONBOARDING_NOT_ACTIVE" ? "Онбординг проекта не активирован" : "Проект не активен" } });
+      if (code === "ONBOARDING_NOT_ACTIVE" || code === "PROJECT_NOT_ACTIVE" || code === "PROJECT_CONFIG_DEGRADED") return reply.code(409).send({ contractVersion: 1, error: { code, message: code === "ONBOARDING_NOT_ACTIVE" ? "Онбординг проекта не активирован" : code === "PROJECT_CONFIG_DEGRADED" ? "Конфигурация проекта требует восстановления" : "Проект не активен" } });
       return reply.code(409).send({ error: "dispatch rejected" });
     }
 
@@ -90,12 +101,49 @@ export async function runRoutes(app: FastifyInstance, deps: RunRouteDeps = {}): 
       return reply.code(409).send({ error: "managed task workspace is required" });
     }
 
-    const options = parseDispatchBody(request.body);
-    if (!options) return reply.code(400).send({ error: "invalid dispatch options" });
+    let targetHead: string;
+    let actualBranch: string;
+    try {
+      const git = deps.git ?? new GitCli();
+      targetHead = (await git.run(worktree.path, ["rev-parse", "--verify", "--end-of-options", "HEAD^{commit}"])).stdout.trim();
+      actualBranch = (await git.run(worktree.path, ["symbolic-ref", "--quiet", "--short", "HEAD"])).stdout.trim();
+      if (!/^[a-f0-9]{40}$/i.test(targetHead) || actualBranch !== worktree.branch) throw new Error("TASK_WORKTREE_SNAPSHOT_UNAVAILABLE");
+    } catch {
+      return reply.code(409).send({ error: "managed task workspace snapshot is unavailable" });
+    }
+
+    let roleInputs: unknown;
+    let prompt: string;
+    try {
+      if (options.role === "developer") {
+        prompt = taskDeveloperPrompt();
+      } else if (options.role === "reviewer") {
+        const operation = deps.db.get<{ target_ref: string | null }>(
+          `SELECT target_ref FROM git_operations WHERE type='CREATE_WORKTREE' AND status='VERIFIED'
+             AND repo_path=$repoPath AND branch_name=$branch AND worktree_id=$taskId ORDER BY verified_at DESC LIMIT 1`,
+          { repoPath: worktree.repoPath, branch: worktree.branch, taskId: task.id },
+        );
+        if (!operation?.target_ref) throw new Error("TASK_REVIEW_BASE_UNAVAILABLE");
+        assertSafeGitRef(operation.target_ref);
+        const gitDiff = (await (deps.git ?? new GitCli()).run(worktree.path, [
+          "diff", "--no-ext-diff", "--no-textconv", `${operation.target_ref}...HEAD`, "--",
+        ])).stdout;
+        roleInputs = { gitDiff, checks: [] };
+        prompt = taskReviewerPrompt();
+      } else if (options.role === "qa") {
+        roleInputs = { environment: `Managed task worktree branch ${actualBranch} at target SHA ${targetHead} on ${process.platform}.` };
+        prompt = taskQaPrompt();
+      } else {
+        throw new Error("TASK_INTEGRATION_REQUIRES_PREPARED_ATTEMPT");
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "TASK_ROLE_INPUT_UNAVAILABLE";
+      return reply.code(409).send({ error: message });
+    }
 
     let run: AgentRun | undefined;
     try {
-      run = runService.prepareRun({
+      const runOptions: StartRunOptions = {
         role: options.role,
         model: options.model,
         taskId: task.id,
@@ -104,6 +152,16 @@ export async function runRoutes(app: FastifyInstance, deps: RunRouteDeps = {}): 
         contextVersion: "runtime-request-v1",
         outputSchemaVersion: "1",
         capability: { workspace: worktree.path },
+      };
+      run = runService.prepareRun({
+        ...runOptions,
+        contextInput: createRunContextInput(runOptions, {
+          prompt,
+          ...(roleInputs !== undefined ? { roleInputs } : {}),
+          workspaceIdentity: { repository: worktree.repoPath, workspace: worktree.path, worktree: worktree.id },
+          targetHead,
+          targetBranch: actualBranch,
+        }),
       });
       deps.scheduler.dispatchTask(task.id, deps.workflow, () => undefined, {
         triggerReason: "runtime-request",
@@ -112,14 +170,17 @@ export async function runRoutes(app: FastifyInstance, deps: RunRouteDeps = {}): 
         runId: run.id,
       });
     } catch (error) {
-      if (run) runService.failPreparedRun?.(run.id, error);
+      if (run && runService.failPreparedRun?.(run.id, error) === true) {
+        try { deps.scheduler.releaseTask(task.id, 0); } catch { /* recovery reconciler owns retry */ }
+      }
       return reply.code(classifyDispatchError(error)).send({ error: "dispatch rejected" });
     }
 
     // Выполняет соответствующую проверку или действие согласно контракту.
     void runService.executePreparedRun(run.id).catch((error: unknown) => {
-      runService.failPreparedRun?.(run.id, error);
-      try { deps.scheduler!.releaseTask(task.id, 0); } catch { /* recovery reconciler owns retry */ }
+      if (runService.failPreparedRun?.(run.id, error) === true) {
+        try { deps.scheduler!.releaseTask(task.id, 0); } catch { /* recovery reconciler owns retry */ }
+      }
     });
     return reply.code(202).send({ runId: run.id, taskId: task.id, status: run.status });
   });
@@ -159,6 +220,51 @@ export async function runRoutes(app: FastifyInstance, deps: RunRouteDeps = {}): 
         cost: run.cost ?? 0,
       },
     };
+  });
+
+  app.get<{ Params: { id: string } }>("/api/v1/runs/:id/artifacts", async (request, reply) => {
+    if (!deps.db) return reply.code(503).send({ error: "database unavailable" });
+    const run = deps.db.get<{ id: string }>("SELECT id FROM agent_runs WHERE id = $id", { id: request.params.id });
+    if (!run) return reply.code(404).send({ error: "run not found" });
+    if (!deps.artifactStore) return reply.code(503).send({ error: "artifact metadata unavailable" });
+    return deps.artifactStore.listRunArtifacts(run.id);
+  });
+
+  app.get<{ Params: { id: string } }>("/api/v1/runs/:id/context-manifests", async (request, reply) => {
+    if (!deps.db) return reply.code(503).send({ error: "database unavailable" });
+    const run = deps.db.get<{ id: string; task_id: string | null; epic_id: string | null; role: string; capability_json: string | null }>(
+      "SELECT id, task_id, epic_id, role, capability_json FROM agent_runs WHERE id = $id",
+      { id: request.params.id },
+    );
+    if (!run) return reply.code(404).send({ error: "run not found" });
+    const subject = readRunManifestSubject(deps.db, run);
+    const role = normalizeContextManifestRole(run.role);
+    const readResult = getContextManifest(deps.db, run.id);
+    if (readResult.availability === "unavailable") {
+      return contextManifestProjectionSchema.parse({
+        availability: "unavailable", runId: run.id, subject, role, reason: readResult.reason,
+      });
+    }
+
+    const manifest = readResult.manifest;
+    if (!subject || manifest.subject.type !== subject.type || manifest.subject.id !== subject.id || manifest.role !== role) {
+      return contextManifestProjectionSchema.parse({
+        availability: "unavailable", runId: run.id, subject, role, reason: "INVALID_PERSISTED_PROVENANCE",
+      });
+    }
+    return contextManifestProjectionSchema.parse({
+      availability: "available",
+      id: manifest.id,
+      runId: manifest.runId,
+      subject: manifest.subject,
+      role: manifest.role,
+      contractRequestDigest: manifest.contractRequestDigest,
+      items: manifest.items,
+      promptHash: manifest.promptHash,
+      contextHash: manifest.contextHash,
+      contextBuilderVersion: manifest.contextBuilderVersion,
+      initialTokenSize: manifest.initialTokenSize,
+    });
   });
   
   /**
@@ -296,17 +402,52 @@ export async function runRoutes(app: FastifyInstance, deps: RunRouteDeps = {}): 
   });
 }
 
+function readRunManifestSubject(
+  db: Database,
+  run: { id: string; task_id: string | null; epic_id: string | null; capability_json: string | null },
+): { type: "TASK" | "EPIC" | "REQUEST"; id: string } | null {
+  if (run.task_id !== null) {
+    const task = db.get<{ id: string }>("SELECT id FROM tasks WHERE id = $id", { id: run.task_id });
+    return task ? { type: "TASK", id: task.id } : null;
+  }
+  if (run.epic_id !== null) {
+    const epic = db.get<{ id: string }>("SELECT id FROM epics WHERE id = $id", { id: run.epic_id });
+    return epic ? { type: "EPIC", id: epic.id } : null;
+  }
+  if (!run.capability_json) return null;
+  try {
+    const capability: unknown = JSON.parse(run.capability_json);
+    if (!isPlainObject(capability) || !isNonEmptyString(capability.requestId)) return null;
+    const request = db.get<{ id: string }>(
+      `SELECT p.id FROM planning_requests p
+        WHERE p.id = $requestId AND (
+          p.coordinator_run_id = $runId OR EXISTS (
+            SELECT 1 FROM planning_request_role_runs pr WHERE pr.request_id = p.id AND pr.run_id = $runId
+          )
+        )`,
+      { requestId: capability.requestId, runId: run.id },
+    );
+    return request ? { type: "REQUEST", id: request.id } : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeContextManifestRole(value: string): (typeof CONTEXT_MANIFEST_ROLES)[number] | "unknown" {
+  return CONTEXT_MANIFEST_ROLES.find((role) => role === value) ?? "unknown";
+}
+
 function statIsDirectory(path: string): boolean {
   try { return statSync(path).isDirectory(); } catch { return false; }
 }
 
-function parseDispatchBody(value: unknown): { role: string; model: string } | null {
+function parseDispatchBody(value: unknown): { role: "developer" | "reviewer" | "qa" | "integration"; model: string } | null {
   if (value === undefined) return { role: "developer", model: "default" };
   if (!isPlainObject(value) || Object.keys(value).some((key) => key !== "role" && key !== "model")) return null;
   const role = value.role === undefined ? "developer" : value.role;
   const model = value.model === undefined ? "default" : value.model;
-  if (!isNonEmptyString(role) || !isNonEmptyString(model)) return null;
-  return { role, model };
+  if (!isNonEmptyString(role) || !["developer", "reviewer", "qa", "integration"].includes(role.toLowerCase()) || !isNonEmptyString(model)) return null;
+  return { role: role.toLowerCase() as "developer" | "reviewer" | "qa" | "integration", model };
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

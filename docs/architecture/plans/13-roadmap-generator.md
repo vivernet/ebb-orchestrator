@@ -4,17 +4,24 @@ kind: plan
 status: completed
 title: Автоматическая генерация роадмапа
 created: 2026-09-23
-updated: 2026-09-24
+updated: 2026-09-30
 depends_on:
   - plan-09
 specs:
   - ../specs/01-system-design.md
-evidence: []
+evidence:
+  - scripts/docs-governance.mjs
+  - scripts/docs-governance-lib.mjs
+  - scripts/docs-governance.test.mjs
+  - docs/roadmap/generated.md
+  - docs/architecture/plans/governance/evidence/07-current-plan-reconciliation.md
 ---
 
 # Автоматическая генерация роадмапа — Implementation Plan
 
 > **Историческая запись (superseded):** этот план сохраняет исходный замысел реализации. Упоминания `stage`, Stage Register и группировки планов не являются действующим metadata contract или нормативными требованиями.
+
+> **Актуальная сверка (2026-09-30):** текущая реализация roadmap governance и её tests указаны в `evidence`; generated register содержит 33 уникальные записи. Более ранние подсчёты относятся к предыдущим snapshots и не описывают текущий inventory.
 
 > **Для агентного исполнения:** REQUIRED SKILL: `ebb-execute-plan`. План выполняется по задачам; каждый шаг оформляется как checkbox (`- [ ]`).
 
