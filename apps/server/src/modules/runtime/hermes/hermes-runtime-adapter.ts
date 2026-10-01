@@ -214,7 +214,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
       toolsets: this.toolsets,
       worktree: workspace,
       ignoreRules: this.ignoreRules,
-      source: "tool",
+      source: preparedOwner.sourceTag,
       maxTurns: this.roleLimit,
     });
 

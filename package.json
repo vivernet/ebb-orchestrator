@@ -8,7 +8,7 @@
   },
   "scripts": {
     "typecheck": "pnpm -r --if-present typecheck",
-    "test": "pnpm --filter @ebb-orchestrator/contracts build && pnpm -r --workspace-concurrency=1 --if-present test && node --test scripts/server-env.test.mjs scripts/run-server.test.mjs scripts/local-user-stdin-smoke.test.mjs scripts/plan06-project-config-restart-acceptance.test.mjs scripts/plan06-github-inbox-restart-acceptance.test.mjs",
+    "test": "pnpm --filter @ebb-orchestrator/contracts build && pnpm -r --workspace-concurrency=1 --if-present test && node --test scripts/server-env.test.mjs scripts/run-server.test.mjs scripts/local-user-stdin-smoke.test.mjs scripts/plan06-project-config-restart-acceptance.test.mjs scripts/plan06-github-inbox-restart-acceptance.test.mjs scripts/hermes-session-tag-acceptance.test.mjs",
     "lint": "eslint .",
     "build": "pnpm -r --if-present build",
     "server:build": "pnpm --filter @ebb-orchestrator/server build",
@@ -16,6 +16,7 @@
     "plan05:epic-restart:acceptance": "pnpm server:build && node scripts/plan05-epic-restart-acceptance.mjs",
     "plan06:project-config:acceptance": "pnpm server:build && node scripts/plan06-project-config-restart-acceptance.mjs",
     "plan06:github-inbox:acceptance": "pnpm server:build && node scripts/plan06-github-inbox-restart-acceptance.mjs",
+    "hermes:session-tag:acceptance": "node scripts/hermes-session-tag-acceptance.mjs",
     "web:build": "pnpm --filter @ebb-orchestrator/web build",
     "hermes:setup": "node scripts/hermes-dev.mjs setup",
     "hermes:check": "node scripts/hermes-dev.mjs check",

@@ -553,6 +553,10 @@ describe("HermesRuntimeAdapter", () => {
         await adapter.startRun(run);
 
         expect(mockExecutor.getCalls()[0]?.options?.cwd).toBe(workspace);
+        expect(scopeSupervisor.lastRequest?.args.slice(
+          scopeSupervisor.lastRequest.args.indexOf("--source"),
+          scopeSupervisor.lastRequest.args.indexOf("--source") + 2,
+        )).toEqual(["--source", `ebb-run:${run.id}`]);
         expect(database.get<{ session_id: string | null }>(
           "SELECT session_id FROM agent_runs WHERE id=$id", { id: run.id },
         )?.session_id).toBeNull();
@@ -790,7 +794,8 @@ describe("HermesRuntimeAdapter", () => {
       expect(args).toContain("--in");
       expect(args).toContain("--ignore-rules");
       expect(args).toContain("--source");
-      expect(args).toContain("tool");
+      const sourceIndex = args.indexOf("--source");
+      expect(args.slice(sourceIndex, sourceIndex + 2)).toEqual(["--source", `ebb-run:${run.id}`]);
       expect(args).toContain("--max-turns");
     });
 
