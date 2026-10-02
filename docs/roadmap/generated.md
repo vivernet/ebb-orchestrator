@@ -5,7 +5,7 @@ kind: roadmap
 title: Ebb Orchestrator Roadmap
 summary: Generated from Plan metadata and dependencies
 created: 2026-09-16
-updated: 2026-10-02
+updated: 2026-10-03
 ---
 
 # Ebb Orchestrator Roadmap

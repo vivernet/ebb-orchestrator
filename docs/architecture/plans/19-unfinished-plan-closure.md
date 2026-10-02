@@ -4,7 +4,7 @@ kind: plan
 status: in_progress
 title: План разблокирования и завершения открытых планов v1
 created: 2026-09-29
-updated: 2026-09-30
+updated: 2026-10-03
 depends_on: []
 specs:
   - ../specs/01-system-design.md
@@ -28,7 +28,7 @@ evidence:
 
 **Authority:** `docs/architecture/specs/01-system-design.md`, `docs/architecture/specs/03-production-readiness-design.md`, принятые решения по `docs/architecture/proposals/05-github-human-feedback-mapping.md` и `docs/architecture/proposals/06-coordinator-request-and-epic-recovery.md`, затем конкретные исходные планы `04`, `05`, `06`, `07`, `09`.
 
-**Global Constraints:** `plan-14` исключён. Closure audit охватывает все остальные планы, включая `plan-16`; для Plan16 сначала подготовить точный reviewable пакет, а операции удаления/переноса/архивации выполнять только после отдельного явного одобрения конкретных путей и destination. Не передавать secrets в prompts/logs/repository; не считать FakeAgentRuntime/provider wrapper завершённым external acceptance; не ослаблять gates; не менять approval/workflow/security policy; не push и не merge без отдельного разрешения; все коммиты на русском.
+**Global Constraints:** `plan-14` исключён. Closure audit охватывает все остальные планы, включая `plan-16`. Для Plan16 пользователь подтвердил удаление старых материалов: выполненный 2026-10-02 rebaseline точно классифицировал 97 путей, восемь существующих tracked-файлов удалены без архива в `966f1ec`, 14 актуальных README/инструкций/активных планов сохранены; иных delete targets этот inventory не содержит. Отдельный archive destination или повторное approval для этих восьми удалений не требуются. Оставшиеся README, command-matrix и governance criteria Plan16 проверяются отдельно; не расширять удаление за пределы inventory. Не передавать secrets в prompts/logs/repository; не считать FakeAgentRuntime/provider wrapper завершённым external acceptance; не ослаблять gates; не менять approval/workflow/security policy; не push и не merge без отдельного разрешения; все коммиты на русском.
 
 **Review Focus:** Дизайны не реализуются до явного принятия; startup resume не обходит Scheduler/budget/permissions и не запускает final merge; GitHub feedback не получает authority менять workflow; source scan получает свежий успешный отчёт на том же revision, что прошёл gates; статус original Plan меняется только после полного evidence и независимого whole-plan review.
 
@@ -44,7 +44,7 @@ evidence:
 | `plan-07` | `blocked` | Поддерживаемый Hermes runtime/provider и завершённый parity plan с report, двумя read-only subagents и доказанным teardown; review. |
 | `plan-09` | `in_progress` | Свежий source security scan после изменений, все gates и whole-plan review без load-bearing finding. |
 
-`plan-01` и `plan-12` уже `completed` в generated register и ledger; current-state snapshot синхронизирован при подготовке этого плана и проверяется повторно в Task 2. По уточнению пользователя от 2026-09-30 closure охватывает все планы, кроме `plan-14`, включая `plan-16`; его конкретные destructive/archive операции остаются за approval gate самого Plan16.
+`plan-01` и `plan-12` уже `completed` в generated register и ledger; current-state snapshot синхронизирован при подготовке этого плана и проверяется повторно в Task 2. По уточнению пользователя от 2026-09-30 closure охватывает все планы, кроме `plan-14`, включая `plan-16`. Его exact deletion disposition уже выполнен по решению пользователя; для остальных obligations Plan16 повторно сверить acceptance, не восстанавливая старые approval/archive prerequisites.
 
 Plan review обновлённой редакции завершился `APPROVED`; Proposal 05/06, полный lifecycle Proposal 07, canonical `.ebb-orchestrator/` и весь Proposal 08 приняты пользователем. Proposal 08 утверждён 2026-09-30; его implementation plan проходит отдельное независимое review.
 
@@ -404,7 +404,7 @@ Expected: exit code 0; `git status --short` lists only reviewed intended evidenc
 
 - `plan-04`, `plan-05`, `plan-06`, `plan-07`, `plan-09` have all source acceptance criteria met, required provider/security scan evidence retained, and independent whole-plan reviews PASS.
 - Original metadata/checkboxes/evidence and `02-current-state.md` agree with `generated.md`.
-- `plan-19` changes to `completed` only after its final review and every completion criterion above passes. `plan-14` is not changed by this plan. Plan16 status/evidence may be reconciled; its destructive/archive execution remains blocked until the exact action list and external archive destination are explicitly approved.
+- `plan-19` changes to `completed` only after its final review and every completion criterion above passes. `plan-14` is not changed by this plan. Plan16 status/evidence may be reconciled; the eight approved exact historical files were deleted without archive in `966f1ec`. No further deletion is authorized by that inventory; remaining Plan16 acceptance criteria still require evidence.
 - No push or merge is part of completion; branch transfer requires a separate instruction.
 
 ## Continuation evidence (2026-09-30, final review and current gates)
@@ -420,3 +420,10 @@ Expected: exit code 0; `git status --short` lists only reviewed intended evidenc
 - Proposal08 was independently reviewed `PASS` and explicitly approved by the user on 2026-09-30. It requires Run bindings for TASK/EPIC/REQUEST, version/hash provenance, exact-fingerprint same-session resume with fail-closed mismatch handling, and the corresponding `spec-01` §10.2 update. A separate implementation plan is being prepared and must pass independent plan review before code changes.
 - Plan05 and Plan06 remain blocked/in progress on real Hermes request-to-Epic/same-request restart, production ContextManifest implementation/acceptance, supported-platform Config acceptance, and Ubuntu keyring evidence. Plan05's whole-plan review still has blocking acceptance gates; Plan06's approved plan-consistency review does not clear its implementation gates. Schema v1 is the first supported Project Config format; no predecessor migration is applicable. Plan09 remains in progress without current-revision CodeQL/SARIF and dependent whole-plan review. These gates are NOT VERIFIED; no plan lifecycle is being closed.
 - `git diff --check` PASS. No commit, push, merge, archive, inventory mutation or lifecycle closeout was performed.
+
+## Дополнение от 2026-10-03 — решение пользователя по Plan16 и актуальный Plan20 checkpoint
+
+- Пользователь подтвердил, что старые материалы Plan16 являются мусором и должны удаляться. Rebaseline сверил 97 путей: восемь существовавших tracked-файлов проверены по path/tracking/SHA-256 и удалены без архива в `966f1ec`; 75 путей уже отсутствовали, 14 актуальных README/инструкций/активных Plan15 путей сохранены. В этом inventory других точных целей удаления нет.
+- Строка 418 и другие утверждения выше о запрете удаления/неизвестном archive destination относятся к snapshot на 2026-09-30 и superseded этим решением и точным rebaseline. Plan16 остаётся `blocked` по оставшимся README, command-matrix и governance acceptance criteria; его статус не менялся.
+- На checkpoint `66a51b1` удалён Ebb provider-key bridge из Hermes process scope; production Run fail closed до безопасной Hermes-native реализации Task5B. Task5A code review повторно получил `APPROVED`, а `pnpm test`, lint, typecheck, docs check и diff check прошли. `pnpm build` завершился `WINDOWS_PROCESS_SCOPE_BUILD_TOOLS_UNAVAILABLE`; native Windows/Linux acceptance и provider acceptance остаются `NOT RUN`. Plan05/06/19/20 статусы не менялись.
+- Проведённая read-only all-plan recovery подтвердила, что прежние audit streams остаются частичными: полной requirement/code/test/acceptance/evidence/checklist матрицы на каждый план в репозитории пока нет. Её нужно создать и завершить после текущих implementation/review gates; metadata `completed` не служит доказательством.
