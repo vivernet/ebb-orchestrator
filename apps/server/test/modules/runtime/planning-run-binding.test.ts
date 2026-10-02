@@ -60,6 +60,8 @@ describe('project-scoped Coordinator planning run', () => {
     db.close();
   });
 
+  // This scenario calls ProjectConfigService.capture; Windows intentionally fails closed until native handle/reparse verification is available.
+  // The scenario remains covered on supported capture platforms.
   it.skipIf(process.platform === 'win32')('prepares and claims atomically, then validates its read-only capability', () => {
     const { db, requestId, projectId, service, options } = fixture();
     const run = prepareRequestInTransaction(db, service, options, (tx, runId) => {
