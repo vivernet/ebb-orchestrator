@@ -38,13 +38,16 @@ describe("context manifest v2 migration", () => {
     db = createSqliteDatabase(dbPath);
     const migrations = loadTestMigrations();
     const migration037 = migrations.find((migration) => migration.version === 37);
+    const migration039 = migrations.find((migration) => migration.version === 39);
     expect(migration037?.name).toBe("037_context_manifest_v2");
+    expect(migration039?.name).toBe("039_run_session_capture_state");
     expect(migrations.map(({ version }) => version)).toEqual(
-      Array.from({ length: 38 }, (_, index) => index + 1),
+      Array.from({ length: 39 }, (_, index) => index + 1),
     );
 
     runMigrations(db, migrations.filter((migration) => migration.version <= 36));
     seedLegacyRows(db);
+    db.run("UPDATE agent_runs SET session_id='legacy-session-id' WHERE id='legacy-run-a'");
     const oldManifestRows = db.all<Row>("SELECT * FROM context_manifests ORDER BY id");
     const oldDeltaRows = db.all<Row>("SELECT * FROM context_deltas ORDER BY id");
     const oldManifestColumns = tableColumns(db, "context_manifests");
@@ -59,7 +62,19 @@ describe("context manifest v2 migration", () => {
       { table: "context_manifests", from: "manifest_id", to: "id", on_delete: "CASCADE" },
     ]);
 
-    expect(runMigrations(db, migrations).applied).toBe(2);
+    expect(runMigrations(db, migrations.filter((migration) => migration.version <= 38)).applied).toBe(2);
+
+    const deltaRowsBefore039 = db.all<Row>("SELECT * FROM context_deltas ORDER BY id");
+    const deltaColumnsBefore039 = tableColumns(db, "context_deltas");
+    const deltaIndexesBefore039 = indexes(db, "context_deltas");
+    const deltaRootPageBefore039 = rootPage(db, "context_deltas");
+    const deltaSqlBefore039 = tableSql(db, "context_deltas");
+    const deltaForeignKeysBefore039 = foreignKeys(db, "context_deltas").map(({ table, from, to, on_delete }) => ({ table, from, to, on_delete }));
+    const foreignKeyViolationsBefore039 = db.all("PRAGMA foreign_key_check");
+    expect(foreignKeyViolationsBefore039).toEqual([]);
+    insertRawOwner(db, prepareRunProcessOwner("legacy-run-a", "C:\\legacy\\hermes\\legacy-run-a", "windows-job"));
+
+    expect(runMigrations(db, migrations).applied).toBe(1);
 
     expect(db.all<Row>("SELECT * FROM context_manifests_legacy_v1 ORDER BY id")).toEqual(oldManifestRows);
     expect(db.all<Row>("SELECT * FROM context_deltas ORDER BY id")).toEqual(oldDeltaRows);
@@ -72,9 +87,27 @@ describe("context manifest v2 migration", () => {
       { table: "context_manifests_legacy_v1", from: "previous_manifest_id", to: "id", on_delete: "SET NULL" },
       { table: "context_manifests_legacy_v1", from: "manifest_id", to: "id", on_delete: "CASCADE" },
     ]);
-    expect(db.all("PRAGMA foreign_key_check")).toEqual([]);
+    expect(db.all("PRAGMA foreign_key_check")).toEqual(foreignKeyViolationsBefore039);
     expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM context_manifests")?.count).toBe(0);
-    expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM run_process_owners")?.count).toBe(0);
+    expect(db.all<Row>("SELECT * FROM context_deltas ORDER BY id")).toEqual(deltaRowsBefore039);
+    expect(tableColumns(db, "context_deltas")).toEqual(deltaColumnsBefore039);
+    expect(indexes(db, "context_deltas")).toEqual(deltaIndexesBefore039);
+    expect(rootPage(db, "context_deltas")).toBe(deltaRootPageBefore039);
+    expect(tableSql(db, "context_deltas")).toBe(deltaSqlBefore039);
+    expect(foreignKeys(db, "context_deltas").map(({ table, from, to, on_delete }) => ({ table, from, to, on_delete })))
+      .toEqual(deltaForeignKeysBefore039);
+    expect(db.get<{ capture_state: string }>("SELECT capture_state FROM run_process_owners WHERE run_id='legacy-run-a'"))
+      .toEqual({ capture_state: "UNBOUND" });
+    expect(db.get<{ session_id: string }>("SELECT session_id FROM agent_runs WHERE id='legacy-run-a'"))
+      .toEqual({ session_id: "legacy-session-id" });
+    expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM run_process_owners")?.count).toBe(1);
+    expect(db.get<{ resume_reason: string; resume_safe: number }>(
+      "SELECT resume_reason, resume_safe FROM context_deltas WHERE id='legacy-delta-b'",
+    )).toEqual({ resume_reason: "historical diagnostic only", resume_safe: 0 });
+    expect(getContextManifest(db, "legacy-run-a")).toEqual({
+      availability: "unavailable",
+      reason: "LEGACY_PROVENANCE_UNAVAILABLE",
+    });
 
     // Restart/reopen must preserve all bytes represented by historical SQLite values.
     db.close();
@@ -82,6 +115,8 @@ describe("context manifest v2 migration", () => {
     expect(runMigrations(db, migrations).applied).toBe(0);
     expect(db.all<Row>("SELECT * FROM context_manifests_legacy_v1 ORDER BY id")).toEqual(oldManifestRows);
     expect(db.all<Row>("SELECT * FROM context_deltas ORDER BY id")).toEqual(oldDeltaRows);
+    expect(db.get<{ capture_state: string }>("SELECT capture_state FROM run_process_owners WHERE run_id='legacy-run-a'"))
+      .toEqual({ capture_state: "UNBOUND" });
     expect(db.all("PRAGMA foreign_key_check")).toEqual([]);
 
     // The renamed manifest remains the diagnostic-only owner of both historical FKs.
@@ -114,7 +149,7 @@ describe("context manifest v2 migration", () => {
 
     const migration038 = migrations.find((migration) => migration.version === 38);
     expect(migration038?.name).toBe("038_run_process_owner_cgroup");
-    expect(runMigrations(db, migrations).applied).toBe(1);
+    expect(runMigrations(db, migrations).applied).toBe(2);
 
     expect(tableColumns(db, "run_process_owners").map((column) => column.name)).toContain("systemd_control_group");
     expect(db.all<Row>("SELECT * FROM context_deltas ORDER BY id")).toEqual(deltas);
@@ -513,4 +548,8 @@ function foreignKeys(database: Database, table: string): Array<{
 
 function rootPage(database: Database, table: string): number {
   return database.get<{ rootpage: number }>("SELECT rootpage FROM sqlite_master WHERE type='table' AND name=$table", { table })!.rootpage;
+}
+
+function tableSql(database: Database, table: string): string {
+  return database.get<{ sql: string }>("SELECT sql FROM sqlite_master WHERE type='table' AND name=$table", { table })!.sql;
 }
