@@ -4,7 +4,7 @@ status: current
 kind: roadmap
 title: Текущая сверка и последовательность закрытия работ
 created: 2026-09-28
-updated: 2026-09-30
+updated: 2026-10-02
 ---
 
 # Текущая сверка и последовательность закрытия работ
@@ -15,23 +15,25 @@ updated: 2026-09-30
 
 | Plan | Статус | Следующее условие закрытия |
 |---|---|---|
-| `plan-04` | `blocked` | Свежая проверка 2026-09-30: `hermes --version` завершается exit 1 без вывода, `pnpm hermes:check` — `CHECK_FAILED` (CLI version, project trust/discovery и delegation settings); `.hermes.md` и 19 canonical skills проходят. Ранее изолированный `pnpm hermes:setup` останавливался до role dispatch на отсутствующем Python `ruamel`. Нужны исправный managed profile/provider, реальный Developer → Reviewer → QA → Integration acceptance и whole-plan review. |
+| `plan-04` | `blocked` | Developer readiness обновлена 2026-10-02: установленный Hermes CLI, `pnpm hermes:check` и disposable-profile setup прошли; provider/auth/network не проверялись. `hermes:check` не снимает runtime gate. После безопасного Hermes-native per-Run профиля/auth path по Plan20 нужны реальный provider-backed Developer → Reviewer → QA → Integration acceptance и whole-plan review. |
 | `plan-05` | `blocked` | Request API/UI, durable request/plan linkage, approval gate, startup resume реализованы; `pnpm plan05:epic-restart:acceptance` PASS на production `dist/main.js` recovery: 12 Runs/12 phases preserved, `FINAL_APPROVAL`, control plan `PENDING`, cleanup PASS. Этот seeded-checkpoint harness не заменяет same-request restart и real Hermes request → Epic. Production ContextManifest producer отсутствует; Proposal 08 принят 2026-09-30, implementation plan проходит независимое review. Решение о PM/Architect summary до materialization покрыто принятым Proposal 06 A; остаются real Hermes acceptance и whole-plan review. |
 | `plan-06` | `in_progress` | Production GitHub inbox и Project Config services/UI wired. По решению пользователя capture на Windows fail closed с HTTP 503 до safe-handle verification; Windows happy-path недоступен. Ранее пройденные rollback/restart acceptances предшествуют этому fail-closed revision. Run artifacts показывают только metadata, Settings/Usage read-only projections добавлены; persisted task-bound ContextManifest acceptance остаётся открытым до реализации и acceptance по принятому Proposal 08. Schema v1 — первая поддерживаемая версия без predecessor migration. Остаются supported-platform acceptance, hosted Ubuntu keyring result и whole-plan review. |
-| `plan-07` | `blocked` | Актуальный `tools/hermes/fixtures/parity-plan.md` подготовлен. Реальный parity run, два параллельных read-only subagents, provider-backed evidence и teardown report не подтверждены; managed setup блокируется до dispatch, а свежий `pnpm hermes:check` остаётся `CHECK_FAILED` по CLI/trust/discovery/delegation prerequisites. |
+| `plan-07` | `blocked` | Актуальный `tools/hermes/fixtures/parity-plan.md` подготовлен. Developer readiness (`hermes --version`, `pnpm hermes:check`, disposable-profile setup) прошла 2026-10-02, но это не provider acceptance. Реальный parity run, два параллельных read-only subagents, provider-backed evidence и teardown report не подтверждены; запуск ждёт безопасный native provider/profile path и отдельный parity acceptance. |
 | `plan-09` | `in_progress` | После окончательных code/UI правок нужен свежий independent source security scan, disposition findings и whole-plan review. `.github/workflows/codeql.yml` настроен, но hosted scan/SARIF для текущей revision отсутствует; dependency audit отдельно не заменяет source scan, а запуск CI требует разрешённого publication path. |
 | `plan-14` | `proposed` | Оставить вне v1 закрытия до подтверждения Docker artifacts/version/hash/architectures, credential bridge и CI/release scope. |
 | `plan-16` | `blocked` | Его 97-entry inventory/metadata validator не совпадают с текущим состоянием: 75 путей отсутствуют (включая 11 каталогов), 24 entries имеют Git-state mismatch, external archive target неизвестен. Из 13 acceptance criteria отмечены 2. По строгому gate Plan16 сначала нужно явно одобрить пересмотр устаревшего inventory и предоставить точный archive target; до этого нельзя готовить package или выполнять delete/move/policy side effects. |
-| `plan-19` | `in_progress` | Plan review `APPROVED`; Tasks 0/1/2 закрыты. Task 3 частично blocked (managed Hermes dependency); Tasks 4/7 ждут runtime; Task 5 production restart recovery harness PASS в ограниченном fake-seed scope, остаются same-request restart, real Hermes и whole-plan review. Task 6 включает fail-closed Windows capture по решению пользователя; остаются supported-platform acceptance, реализация и acceptance принятого Proposal 08, Ubuntu keyring evidence и whole-plan review. Schema v1 — первый поддерживаемый Project Config формат. Task 8 требует свежий source scan; Task 9 — final gates/reviews и roadmap reconciliation. |
+| `plan-19` | `in_progress` | Plan review `APPROVED`; Tasks 0/1/2 закрыты. Task 3 developer Hermes readiness PASS на 2026-10-02; real provider acceptance — отдельный gate. Tasks 4/7 ждут безопасный native provider/profile path и runtime acceptance; Task 5 production restart recovery harness PASS только в ограниченном fake-seed scope, остаются same-request restart, real Hermes и whole-plan review. Task 6 включает fail-closed Windows capture по решению пользователя; остаются supported-platform acceptance, реализация и acceptance принятого Proposal 08, Ubuntu keyring evidence и whole-plan review. Schema v1 — первый поддерживаемый Project Config формат. Task 8 требует свежий source scan; Task 9 — final gates/reviews и roadmap reconciliation. |
+| `plan-20` | `in_progress` | Исходный review на `b839cba` завершился `CHANGES_REQUIRED`; его замечания о filename и retention/cleanup per-Run профиля внесены в текущий diff. Объём auth должен согласовать Proposal09; пользовательский ответ ожидается. После него нужен новый независимый review; до `APPROVED` runtime implementation не начинается. Ранее уже закрытые зависимости, durable session ID, process-stop evidence, seven-role matrix и `context_deltas` migration preservation сохраняются. |
 
 ## Очерёдность
 
-1. Закрыть независимые Plan 05/06 остатки: same-request/realtime Hermes acceptance, реализовать принятый дизайн ContextManifest и собрать producer/evidence, supported-platform Config capture acceptance, Ubuntu keyring result and whole-plan reviews.
-2. Разблокировать Hermes managed setup без profile/auth копирования; затем выполнить real acceptance Plan 04/05 и parity Plan 07 с безопасной изоляцией.
-3. Для Plan 16 получить письменное решение о rebaseline stale inventory и точный external archive target; лишь после этого снимать новый inventory и готовить approval package. Не делать archive/delete или policy edits до explicit approval точного списка и target.
-4. После завершения всех изменений подготовить и получить свежий source security scan Plan 09 на том же revision, который прошёл финальные gates; для hosted CI нужен разрешённый publication path.
-5. Запустить общие quality/build/browser gates, выполнить independent whole-plan reviews и обновить original plan evidence/status только после PASS.
-6. Перегенерировать [Plan Register](generated.md) после подтверждённых lifecycle изменений; не проставлять статусы или чекбоксы без evidence.
+1. Довести Plan20 до исполнимого состояния и получить новое независимое `APPROVED`; до этого не начинать его runtime implementation.
+2. После approval реализовать Plan20, пройти его migration/profile/session/provider acceptance и independent recovery/architecture review. Только затем обновлять связанные обязательства Plan05/06/19, и только после их собственных gates.
+3. После готовности Hermes-native profile/auth path выполнить реальный Plan04 acceptance и Plan07 parity; developer `hermes:check` сам по себе эти gates не закрывает.
+4. Для Plan16 получить письменный rebaseline устаревшего inventory и точный external archive target; лишь после этого снимать новый inventory и готовить approval package. Не делать archive/delete/move до explicit approval точного списка и target.
+5. После завершения source changes подготовить свежий Plan09 source security scan на том же revision, который прошёл финальные gates; для hosted CI нужен разрешённый publication path.
+6. Провести closure audit всех планов, кроме Plan14, затем общие quality/build/browser gates, independent whole-plan reviews, reconciliation и lifecycle updates по evidence.
+7. Перегенерировать [Plan Register](generated.md) после подтверждённых lifecycle изменений; не проставлять статусы или чекбоксы без evidence.
 
 ## Открытые evidence-reconciliation записи
 

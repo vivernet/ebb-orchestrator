@@ -38,7 +38,7 @@ evidence:
 
 | Исходный plan | Текущий статус | Gate для завершения |
 |---|---|---|
-| `plan-04` | `blocked` | Поддерживаемые Hermes CLI/profile и настроенный OpenAI-compatible provider через SecretStore; полный реальный Developer → Reviewer → QA → Integration acceptance и review. |
+| `plan-04` | `blocked` | Поддерживаемые Hermes CLI/profile и безопасный Hermes-native provider/auth path для изолированного Run; полный реальный provider-backed Developer → Reviewer → QA → Integration acceptance и review. Ebb SecretStore mapping не является целевым путём. |
 | `plan-05` | `blocked` | Mandatory request/plan UI, startup recovery до `READY` и deterministic production-process Epic recovery harness реализованы; harness прошёл, но он не заменяет same-request restart и real Hermes request → Epic acceptance. Нужно завершить ContextManifest producer по принятому Proposal 08 и пройти whole-plan review. Решение о показе PM/Architect summary до materialization содержится в принятом варианте A Proposal 06. |
 | `plan-06` | `in_progress` | Production inbox/wiring/UI и Project Config lifecycle реализованы. По решению пользователя capture на Windows теперь fail closed с HTTP 503 до safe-handle verification; Windows happy-path недоступен. Metadata-only Artifact/Run UI и read-only Settings/Usage projections реализованы; persisted task-bound ContextManifest acceptance остаётся открытым до producer/acceptance по Proposal 08. Schema v1 — первый поддерживаемый формат; predecessor migration не требуется. Остаются supported-platform acceptance, hosted Ubuntu keyring evidence и whole-plan review. |
 | `plan-07` | `blocked` | Поддерживаемый Hermes runtime/provider и завершённый parity plan с report, двумя read-only subagents и доказанным teardown; review. |
@@ -154,35 +154,40 @@ Expected: exit code 0.
 
 **Review Focus:** metadata `kind: plan` — authority статуса; current-state/ledger не возвращают завершённые `plan-01/12` в список blocker. Повторить синхронизацию после изменения статусов в Task 9.
 
-### Task 3: Восстановить поддерживаемый Hermes CLI/profile/provider preflight
+### Task 3: Подтвердить Hermes CLI и developer project-trust readiness
 
-**Depends on:** none; требуется локальный Hermes runtime и разрешённый provider credential.
+**Depends on:** none; требуется поддерживаемый локальный Hermes CLI. Provider credentials не являются prerequisite этого developer preflight.
 
 **Files:**
-- Existing: `scripts/hermes-dev.mjs`, `scripts/project-env.mjs`, `.agents/skills/`, `tools/hermes/`, `apps/server/src/modules/runtime/hermes/hermes-provider-bridge.ts`.
+- Existing: `scripts/hermes-dev.mjs`, `scripts/project-env.mjs`, `.agents/skills/`, `tools/hermes/`.
 - Modify only on reproduced source-level defect: соответствующий script/profile/runtime test и production source.
 - Do not write: credentials, profile tokens, private provider values into repo, prompt or logs.
 
 **Interfaces:**
-- Для Orchestrator runtime задать non-secret `EBB_HERMES_PROVIDER_BASE_URL`, `EBB_HERMES_PROVIDER_SECRET_NAME` и supported `HERMES_MODEL`; credential хранить только в `SecretStore` с service `hermes-provider`.
-- Для development parity использовать canonical project skills и isolated managed `HERMES_HOME`; не синхронизировать данные в personal profile.
+- Developer setup/check используют canonical project skills, project trust/discovery и настройки delegation в выбранном Hermes home. Для `hermes:setup` в acceptance применять отдельный disposable Hermes-native home; не менять пользовательский default profile.
+- Этот Task не настраивает provider для production Run. По принятому условному направлению Proposal09 Hermes владеет provider/auth; Plan20 отдельно проверяет безопасный per-Run native profile path. Не требовать `EBB_HERMES_PROVIDER_BASE_URL`, `EBB_HERMES_PROVIDER_SECRET_NAME`, provider-key entry в Ebb `SecretStore` или provider credentials в root `.env`.
+- Имена ключей root `.env` — только `EBB_ORCHESTRATOR_HOME` и `PORT`; это настройки Ebb Orchestrator, а не Hermes provider credentials.
 
-**RED:**
+**Developer readiness commands:**
 
 ```text
 Run: hermes --version
-Expected baseline failure: текущий установленный CLI возвращает exit 1 без версии.
+Expected: поддерживаемая версия Hermes, exit code 0.
 Run: pnpm hermes:check
-Expected baseline failure: проверка указывает точные отсутствующие CLI/trust/provider/delegation prerequisites.
+Expected: exit code 0 только если проходят CLI health, `.hermes.md`, canonical project skills inventory, project trust/discovery и delegation checks. Команда не проверяет provider credentials, authentication, network access или доступность модели.
+Run: pnpm hermes:setup with HERMES_HOME pointing to an empty disposable Hermes-native profile
+Expected: setup completes in that disposable profile; the user's default profile is not changed.
 ```
 
-**GREEN:** `hermes --version` возвращает поддерживаемую версию; `pnpm hermes:setup` завершается успешно в managed home; `pnpm hermes:check` сообщает `PASSED`; redacted smoke подтверждает доступность выбранной модели без публикации credential. Любой setup/profile failure сначала классифицируется: runtime install/config vs source bug.
+**GREEN:** Hermes CLI, project trust/discovery and delegation checks pass; `hermes:setup` succeeds in a disposable native profile. Это подтверждает только developer readiness. Provider-backed smoke и runtime auth acceptance выполняются отдельно по Plan04/Plan20 после прохождения их profile/configuration safety gates; `hermes:check` не заменяет этот acceptance. Любой setup/profile failure сначала классифицируется: runtime install/config vs source bug.
 
-**Review Focus:** `HTTP 401`, `MODEL_FAILED`, timeout, пустой exit-1 и `HERMES_EXECUTE COMPLETED` не считаются provider acceptance. Не повторять бесконечно существующий 180/300-секундный failed run без изменения предварительного условия.
+**Review Focus:** `pnpm hermes:check` подтверждает только developer project prerequisites. `HTTP 401`, `MODEL_FAILED`, timeout, пустой exit-1 и `HERMES_EXECUTE COMPLETED` не считаются provider acceptance без отдельного реального provider-backed evidence. Не повторять бесконечно существующий 180/300-секундный failed run без изменения предварительного условия.
 
-**Blocked when:** нет доступного поддерживаемого CLI, provider/model или активного SecretStore backend; сохранить redacted диагностику и не закрывать Plan04/07.
+**Blocked when:** нет доступного поддерживаемого CLI или не выполнены project trust/discovery/delegation prerequisites; сохранить redacted диагностику. Отсутствие Ebb SecretStore provider entry не блокирует этот developer preflight. Plan04/07 остаются открытыми, пока их отдельные runtime/provider acceptance gates не пройдены.
 
-**Scoped source hardening (2026-09-30):** repo-owned Hermes wrapper теперь выводит bounded/sanitized stderr + exit code, завершает setup до trust/config при CLI health failure и применяет 30-секундный timeout к `hermes --version`. Regression покрывает sanitization, порядок вызовов, spawn failure и timeout. `node --test scripts/hermes-dev.test.mjs` PASS 23/23; scoped ESLint и `git diff --check` PASS; независимый scoped review APPROVED. Свежий read-only `pnpm hermes:check` всё ещё FAIL: `--version` exit 1 и trust/discovery/delegation settings недоступны. Setup/profile/provider не запускались.
+**Scoped source hardening (2026-09-30):** repo-owned Hermes wrapper теперь выводит bounded/sanitized stderr + exit code, завершает setup до trust/config при CLI health failure и применяет 30-секундный timeout к `hermes --version`. Regression покрывает sanitization, порядок вызовов, spawn failure и timeout. `node --test scripts/hermes-dev.test.mjs` PASS 23/23; scoped ESLint и `git diff --check` PASS; независимый scoped review APPROVED.
+
+**Fresh developer-readiness evidence (2026-10-02):** `hermes --version` exit 0: Hermes Agent `v0.21.5+5778.g0a374d1`, upstream/source prefix `0a374d16`, Python `3.14.7`, OpenAI SDK `2.24.0`. `pnpm hermes:check` on the current real Hermes profile exit 0: CLI version, project `.hermes.md`, canonical skills inventory (20), project trust/discovery and all three delegation settings PASS; provider/auth/network/model access were not checked. `node scripts/hermes-dev.mjs setup` (the `pnpm hermes:setup` package entrypoint) ran with `HERMES_HOME` set to an empty disposable native profile under `%LOCALAPPDATA%\hermes\profiles\<unique-temp>`; exit 0 and setup completion line were observed, and the temporary profile was removed with cleanup verified. The generated unique suffix was not retained. The personal/default Hermes profile was not changed. Root `.env` variable names were checked without reading values: only `EBB_ORCHESTRATOR_HOME` and `PORT`. Real provider invocation: **NOT RUN**; this readiness evidence does not clear Plan04/Plan07 provider acceptance.
 
 ### Task 4: Выполнить реальный Autonomous Task acceptance Plan04
 
@@ -314,7 +319,7 @@ Plan 06 also requires its original operational/configuration UI contract: Run di
 Run: pnpm hermes:setup
 Expected: setup validates the canonical repository-owned `.agents/skills/` inventory and configures project trust/discovery in the isolated managed profile; it does not copy those skills into Hermes profile directories.
 Run: pnpm hermes:check
-Expected: supported CLI, canonical project skill discovery, trust, delegation and provider checks all PASS.
+Expected: supported CLI, canonical skills inventory, project discovery/trust and delegation settings all PASS. This check does not test provider/auth/network access; provider-backed parity remains a separate acceptance gate and must have its own report.
 Run: create `tools/hermes/fixtures/parity-plan.md` with the current contracts: ровно два параллельных read-only subagents без nested delegation; только `.agents/skills/`; lint/typecheck/test/diff-check; no product-code changes, merge, push or release; report has date/branch/HEAD/commands/evidence/verdict; no automatic commit.
 Expected: fixture exists, is reviewable, excludes stale `.hermes.md` and `tools/hermes/skills/` assumptions and cannot authorize repository mutations.
 Run: pnpm hermes:execute -- tools/hermes/fixtures/parity-plan.md
@@ -408,8 +413,8 @@ Expected: exit code 0; `git status --short` lists only reviewed intended evidenc
 - Windows E2E teardown review finding fixed: `terminateWindowsChild` failure now records PID, exit/signal state, `taskkill` code, bounded stderr and cause; `run-e2e.mjs` includes the child name/lifecycle summary. A platform-independent regression injects `taskkill` and exit polling. `node --test apps/web/test/e2e/credential-handoff.test.mjs` PASS: 29 passed, 2 POSIX-only skipped.
 - Browser E2E rerun inside the restricted runner passed all six browser scenarios but `taskkill.exe` returned code 1 and the frontend child remained alive; the launcher correctly failed and retained that run's isolated home. After verifying the exact child PID/name/start time, only that E2E-owned process was stopped; its retained home was not deleted. The same `pnpm --filter @ebb-orchestrator/web test:e2e` rerun outside that restriction passed 6/6 with exit 0 and verified teardown/home cleanup. No application defect was found in this failure.
 - Fresh gates after the final code changes: `pnpm lint` PASS; `pnpm typecheck` PASS; unrestricted `pnpm test` PASS (113 files, 1,016 passed, 13 skipped; root launcher/acceptance scripts 21/21); `pnpm build` PASS; browser E2E 6/6, exit 0. The separate limited-runner full test previously failed only on nested `tsx` `uv_os_get_passwd ENOMEM` and readiness acknowledgements.
-- Documentation reconciliation: `pnpm docs:check` PASS; `pnpm docs:test` PASS 20/20; `pnpm docs:rename:check` PASS, 43 entries; `pnpm docs:roadmap` generated 33 Plans and read-back matches metadata/statuses. Current-state documentation now records the missing ContextManifest producer, current Hermes check failure, Plan09 source-scan gap, Plan10 historical-report caveat and Plan16 stale inventory/archive gate; historical completed statuses/unchecked steps were not rewritten.
-- Fresh `hermes --version` exits 1 with no output and `pnpm hermes:check` is `CHECK_FAILED` for CLI version, project trust/discovery and delegation settings; `.hermes.md` and all 19 canonical skills pass. Managed `pnpm hermes:setup` was not retried because its prior post-update attempt stopped before dispatch on the missing Python `ruamel` dependency.
+- Documentation reconciliation: `pnpm docs:check` PASS; `pnpm docs:test` PASS 20/20; `pnpm docs:rename:check` PASS, 43 entries; `pnpm docs:roadmap` generated 33 Plans and read-back matches metadata/statuses. Current-state documentation records the missing ContextManifest producer, the then-current Hermes check failure (now superseded by the 2026-10-02 developer-readiness evidence in Task 3), Plan09 source-scan gap, Plan10 historical-report caveat and Plan16 stale inventory/archive gate; historical completed statuses/unchecked items were not rewritten.
+- Historical Hermes observation (2026-09-30): `hermes --version` exited 1 without output and `pnpm hermes:check` was `CHECK_FAILED` for CLI version, project trust/discovery and delegation settings; `.hermes.md` and all 19 then-current canonical skills passed. Managed setup was not retried at that time because the prior attempt stopped before dispatch on the missing Python `ruamel` dependency. The fresh 2026-10-02 developer-readiness result and separate real-provider status are recorded under Task 3.
 - Plan16 remains blocked: 97-entry inventory is stale (75 paths absent including 11 directories; 24 Git-state mismatches), external archive destination is unknown, and its strict plan gate disallows packaging or side effects before written inventory-rebaseline approval and an exact target.
 - Fresh whole-plan reviews: Plan05's documentation finding about accepted Proposal 06 was resolved and independently re-reviewed `PASS`; Plan05 itself remains blocked by real Hermes/same-request acceptance and the not-yet-implemented ContextManifest producer. Plan06's plan-consistency review is `APPROVED`, but this is not completion approval: supported-platform Project Config acceptance, Ubuntu keyring evidence, ContextManifest implementation/acceptance, and external Hermes acceptance remain open.
 - Proposal08 was independently reviewed `PASS` and explicitly approved by the user on 2026-09-30. It requires Run bindings for TASK/EPIC/REQUEST, version/hash provenance, exact-fingerprint same-session resume with fail-closed mismatch handling, and the corresponding `spec-01` §10.2 update. A separate implementation plan is being prepared and must pass independent plan review before code changes.
