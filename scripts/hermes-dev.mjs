@@ -32,26 +32,38 @@ export function sanitizeHermesDiagnostic(value) {
     .slice(0, MAX_HERMES_DIAGNOSTIC_LENGTH);
 }
 
+function firstSanitizedHermesDiagnostic(candidates, fallback) {
+  for (const candidate of candidates) {
+    const sanitized = sanitizeHermesDiagnostic(candidate);
+    if (sanitized) return sanitized;
+  }
+  return sanitizeHermesDiagnostic(fallback);
+}
+
 export function checkHermesVersion(run = spawnSync, timeoutMs = DEFAULT_CONFIG_TIMEOUT_MS) {
   let result;
   try {
     result = run('hermes', ['--version'], { encoding: 'utf8', shell: false, timeout: timeoutMs });
   } catch (error) {
     const timedOut = error?.code === 'ETIMEDOUT';
+    const exitCode = timedOut ? 124 : Number.isInteger(error?.status) ? error.status : 1;
+    const fallback = timedOut ? 'hermes --version timed out' : `Hermes exited with code ${exitCode} without diagnostic output`;
     return {
       ok: false,
-      exitCode: timedOut ? 124 : Number.isInteger(error?.status) ? error.status : 1,
+      exitCode,
       timedOut,
-      diagnostic: sanitizeHermesDiagnostic(error?.stderr || (timedOut ? 'hermes --version timed out' : error?.message)),
+      diagnostic: firstSanitizedHermesDiagnostic([error?.stderr, error?.stdout, timedOut ? fallback : error?.message], fallback),
     };
   }
   const timedOut = result?.error?.code === 'ETIMEDOUT';
   const exitCode = Number.isInteger(result?.status) ? result.status : 1;
+  const ok = !result?.error && exitCode === 0;
+  const fallback = timedOut ? 'hermes --version timed out' : `Hermes exited with code ${exitCode} without diagnostic output`;
   return {
-    ok: !result?.error && exitCode === 0,
+    ok,
     exitCode: timedOut ? 124 : exitCode,
     timedOut,
-    diagnostic: sanitizeHermesDiagnostic(result?.stderr || (timedOut ? 'hermes --version timed out' : result?.error?.message)),
+    diagnostic: firstSanitizedHermesDiagnostic([result?.stderr, result?.stdout, timedOut ? fallback : result?.error?.message], ok ? '' : fallback),
   };
 }
 
@@ -436,6 +448,51 @@ async function doSetup() {
   console.log('Setup complete.');
 }
 
+/**
+ * Проверяет trust, project discovery и параметры delegation через Hermes CLI.
+ * Не запускает `config get`, если проверка версии уже показала, что CLI
+ * недоступен; в этом случае зависимые проверки получают статус skipped.
+ * @param {{health: {ok: boolean}, configGet?: (key: string) => Promise<{ok: boolean, stdout?: string, diagnostic?: string, exitCode?: number}>, worktreeRoot?: string}} options Параметры проверки и подменяемый reader для тестов.
+ * @returns {Promise<Array<{name: string, pass: boolean, skipped?: boolean, detail?: string, exitCode?: number}>>} Результаты независимых CLI-проверок.
+ */
+export async function collectHermesConfigChecks({ health, configGet = hermesConfigGet, worktreeRoot = resolveRepositoryRoot() }) {
+  const definitions = [
+    'Hermes trusted project',
+    'Hermes project discovery enabled',
+    'Config: delegation.max_concurrent_children',
+    'Config: delegation.max_spawn_depth',
+    'Config: delegation.orchestrator_enabled',
+  ];
+  if (!health?.ok) {
+    return definitions.map((name) => ({
+      name,
+      pass: false,
+      skipped: true,
+      detail: 'Skipped because Hermes CLI health check failed',
+    }));
+  }
+
+  const checks = [];
+  const trustedProjects = await configGet('skills.trusted_project_dirs');
+  const trusted = trustedProjects.ok && isHermesProjectTrusted(trustedProjects.stdout, worktreeRoot);
+  checks.push({ name: 'Hermes trusted project', pass: trusted, detail: trustedProjects.diagnostic, exitCode: trustedProjects.exitCode });
+
+  const projectDiscovery = await configGet('skills.project_discovery');
+  const projectDiscoveryEnabled = projectDiscovery.ok && isHermesProjectDiscoveryEnabled(projectDiscovery.stdout);
+  checks.push({ name: 'Hermes project discovery enabled', pass: projectDiscoveryEnabled, detail: projectDiscovery.diagnostic, exitCode: projectDiscovery.exitCode });
+
+  const configDefinitions = [
+    ['delegation.max_concurrent_children', '2'],
+    ['delegation.max_spawn_depth', '1'],
+    ['delegation.orchestrator_enabled', 'false'],
+  ];
+  for (const [key, expected] of configDefinitions) {
+    const result = await configGet(key);
+    checks.push({ name: `Config: ${key}`, pass: result.ok && result.stdout === expected, detail: result.diagnostic, exitCode: result.exitCode });
+  }
+  return checks;
+}
+
 async function doCheck() {
   console.log('Checking Hermes development environment...');
 
@@ -461,40 +518,28 @@ async function doCheck() {
   const inventory = validateCanonicalSkills(sourceSkills);
   checks.push({ name: 'Canonical project skills (20)', pass: inventory.valid });
   if (!inventory.valid) allPass = false;
-  const trustedProjects = await hermesConfigGet('skills.trusted_project_dirs');
-  const trusted = trustedProjects.ok && isHermesProjectTrusted(trustedProjects.stdout, worktreeRoot);
-  checks.push({ name: 'Hermes trusted project', pass: trusted, detail: trustedProjects.diagnostic, exitCode: trustedProjects.exitCode });
-  if (!trusted) allPass = false;
-  const projectDiscovery = await hermesConfigGet('skills.project_discovery');
-  const projectDiscoveryEnabled = projectDiscovery.ok && isHermesProjectDiscoveryEnabled(projectDiscovery.stdout);
-  checks.push({ name: 'Hermes project discovery enabled', pass: projectDiscoveryEnabled, detail: projectDiscovery.diagnostic, exitCode: projectDiscovery.exitCode });
-  if (!projectDiscoveryEnabled) allPass = false;
-
-  // Проверяем конфигурацию Hermes.
-  const configChecks = [
-    ['delegation.max_concurrent_children', '2'],
-    ['delegation.max_spawn_depth', '1'],
-    ['delegation.orchestrator_enabled', 'false']
-  ];
-  for (const [key, expected] of configChecks) {
-    const result = await hermesConfigGet(key);
-    checks.push({ name: `Config: ${key}`, pass: result.ok && result.stdout === expected, detail: result.diagnostic, exitCode: result.exitCode });
-    if (!result.ok || result.stdout !== expected) allPass = false;
-  }
+  const hermesConfigChecks = await collectHermesConfigChecks({ health, worktreeRoot });
+  checks.push(...hermesConfigChecks);
+  if (hermesConfigChecks.some((check) => !check.pass && !check.skipped)) allPass = false;
 
   // Выводим результаты.
   console.log('');
   console.log('Check results:');
   for (const check of checks) {
-    console.log(`  ${check.pass ? 'PASS' : 'FAIL'}: ${check.name}`);
+    const status = check.skipped ? 'SKIP' : check.pass ? 'PASS' : 'FAIL';
+    console.log(`  ${status}: ${check.name}`);
     if (!check.pass && check.exitCode !== undefined) console.log(`    exit_code=${check.exitCode}`);
-    if (!check.pass && check.detail) console.log(`    diagnostic: ${check.detail}`);
+    if ((!check.pass || check.skipped) && check.detail) console.log(`    diagnostic: ${check.detail}`);
   }
 
   if (!allPass) {
     console.log('');
     console.log(`${HERMES_CONFIG_MARKER} marker=CHECK_FAILED exit_code=1 redacted=true`);
-    console.log('Some checks failed. Run `pnpm hermes:setup`; if project trust failed, run `hermes skills trust <repo-root>`.');
+    if (!health.ok) {
+      console.log('Hermes CLI health check failed. Resolve CLI availability, then rerun `pnpm hermes:check` before changing Hermes project settings.');
+    } else {
+      console.log('Some checks failed. Run `pnpm hermes:setup`; if project trust failed, run `hermes skills trust <repo-root>`.');
+    }
     process.exit(1);
   }
   console.log('');

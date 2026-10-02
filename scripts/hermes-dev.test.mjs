@@ -6,7 +6,7 @@ import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, wr
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { resolvePlanPath } from './hermes-dev-paths.mjs';
-import { isHermesProjectDiscoveryEnabled, isHermesProjectTrusted, resolveRepositoryRoot, runHermesConfig, runHermesProjectSetup, terminateHermesProcessTree, validateCanonicalSkills } from './hermes-dev.mjs';
+import { checkHermesVersion, collectHermesConfigChecks, isHermesProjectDiscoveryEnabled, isHermesProjectTrusted, resolveRepositoryRoot, runHermesConfig, runHermesProjectSetup, terminateHermesProcessTree, validateCanonicalSkills } from './hermes-dev.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const skillsRoot = join(root, '.agents', 'skills');
@@ -21,6 +21,73 @@ const expectedSkills = [
 ];
 
 const canonicalSkills = expectedSkills;
+
+test('silent nonzero Hermes health result has a bounded fallback diagnostic', () => {
+  const result = checkHermesVersion(() => ({ status: 1, stdout: '', stderr: '' }));
+
+  assert.equal(result.ok, false);
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.diagnostic, 'Hermes exited with code 1 without diagnostic output');
+  assert.ok(result.diagnostic.length <= 240);
+});
+
+test('successful Hermes health result without output keeps an empty diagnostic', () => {
+  const result = checkHermesVersion(() => ({ status: 0, stdout: '', stderr: '' }));
+
+  assert.equal(result.ok, true);
+  assert.equal(result.diagnostic, '');
+});
+
+test('sanitized-empty Hermes output falls back for returned and thrown failures', () => {
+  const returned = checkHermesVersion(() => ({ status: 7, stdout: '\t\r\n', stderr: '  \r\n' }));
+  assert.equal(returned.exitCode, 7);
+  assert.equal(returned.diagnostic, 'Hermes exited with code 7 without diagnostic output');
+
+  const thrown = checkHermesVersion(() => {
+    throw Object.assign(new Error(' \t '), { status: 8, stdout: '\u0000\r', stderr: ' \t ' });
+  });
+  assert.equal(thrown.exitCode, 8);
+  assert.equal(thrown.diagnostic, 'Hermes exited with code 8 without diagnostic output');
+});
+
+test('sanitized-empty Hermes output preserves timeout diagnostics', () => {
+  const returned = checkHermesVersion(() => ({
+    status: null,
+    stdout: '\u0000\r',
+    stderr: ' \t ',
+    error: Object.assign(new Error(' \t '), { code: 'ETIMEDOUT' }),
+  }));
+  assert.equal(returned.exitCode, 124);
+  assert.equal(returned.diagnostic, 'hermes --version timed out');
+
+  const thrown = checkHermesVersion(() => {
+    throw Object.assign(new Error(' \t '), { code: 'ETIMEDOUT', stdout: '\u0000', stderr: ' \t ' });
+  });
+  assert.equal(thrown.exitCode, 124);
+  assert.equal(thrown.diagnostic, 'hermes --version timed out');
+});
+
+test('Hermes config-dependent checks are skipped when CLI health fails', async () => {
+  const calls = [];
+  const checks = await collectHermesConfigChecks({
+    health: { ok: false, exitCode: 1, diagnostic: 'Hermes exited with code 1 without diagnostic output' },
+    configGet: async (key) => {
+      calls.push(key);
+      return { ok: true, stdout: 'unexpected' };
+    },
+    worktreeRoot: 'C:\\repo',
+  });
+
+  assert.deepEqual(calls, []);
+  assert.deepEqual(checks.map(({ name, skipped }) => [name, skipped]), [
+    ['Hermes trusted project', true],
+    ['Hermes project discovery enabled', true],
+    ['Config: delegation.max_concurrent_children', true],
+    ['Config: delegation.max_spawn_depth', true],
+    ['Config: delegation.orchestrator_enabled', true],
+  ]);
+  assert.ok(checks.every((check) => check.detail === 'Skipped because Hermes CLI health check failed'));
+});
 
 test('project setup checks Hermes health before trust or config writes', async () => {
   const calls = [];
