@@ -26,6 +26,9 @@ import { EpicWorkspaceProvisioner } from "../../src/modules/git/epic-workspace-p
 import { TaskWorkspaceProvisioner } from "../../src/modules/git/task-workspace-provisioner.js";
 import { WorktreeManager } from "../../src/modules/git/worktree-manager.js";
 import { seedApprovedProjectConfig } from "../helpers/approved-project-config.js";
+import { markFakeRunNeverLaunched } from "../helpers/fake-run-process-owner.js";
+import { insertRunProcessOwnerTx, preflightRunProcessOwners, prepareRunProcessOwner } from "../../src/modules/runtime/run-process-owner.js";
+import type { ProcessScopeSupervisor } from "../../src/platform/process/run-scope-supervisor.js";
 
 type FakeRequest = {
   phase: string;
@@ -68,6 +71,7 @@ class FakeAgentRuntime implements AgentRuntime {
   }
 
   async startRun(run: AgentRun): Promise<void> {
+    if (this.db) markFakeRunNeverLaunched(this.db, run.id);
     const phase = this.db?.get<{ phase: string; task_id: string | null; request_json: string | null }>(
       "SELECT phase,task_id,request_json FROM orchestration_phase_runs WHERE agent_run_id=$runId",
       { runId: run.id },
@@ -250,6 +254,11 @@ describe("full epic orchestration with FakeAgentRuntime", () => {
     db.exec("CREATE TABLE IF NOT EXISTS agent_runs (id TEXT PRIMARY KEY, role TEXT NOT NULL, runtime TEXT NOT NULL, model TEXT NOT NULL, task_id TEXT, epic_id TEXT, status TEXT NOT NULL, started_at TEXT, ended_at TEXT, exit_code INTEGER, output TEXT, cost REAL)");
     db.exec("CREATE TABLE IF NOT EXISTS orchestration_phase_runs (id TEXT PRIMARY KEY, epic_id TEXT, task_id TEXT, phase TEXT NOT NULL, role TEXT NOT NULL, agent_run_id TEXT NOT NULL UNIQUE, result_json TEXT NOT NULL DEFAULT '{}', evidence_json TEXT NOT NULL DEFAULT '{}', validated INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'INTENT', request_json TEXT, started_at TEXT, ended_at TEXT, created_at TEXT NOT NULL, UNIQUE (epic_id, task_id, phase))");
     db.run("INSERT INTO agent_runs (id,role,runtime,model,epic_id,status,started_at) VALUES ($id,'reviewer','test','test',$epicId,'STARTED',$now)", { id: runId, epicId, now });
+    db.transaction((tx) => insertRunProcessOwnerTx(tx, prepareRunProcessOwner(
+      runId,
+      join(directory, "test-hermes-home", runId),
+      process.platform === "win32" ? "windows-job" : "systemd-user-service",
+    )));
     db.run("INSERT INTO orchestration_phase_runs (id,epic_id,phase,role,agent_run_id,status,started_at,created_at) VALUES ($id,$epicId,'epic_review','reviewer',$runId,'INTENT',$now,$now)", { id: randomUUID(), epicId, runId, now });
     ;
     ;
@@ -261,7 +270,24 @@ describe("full epic orchestration with FakeAgentRuntime", () => {
 
     const registry = new WorkflowRegistry();
     for (const template of Object.values(templates)) registry.register(template);
-    new EpicOrchestrator(db, new WorkflowEngine(db, registry), new PlanningService(db), new RunService(db, new FakeAgentRuntime()), {} as never, new SchedulerService(db));
+    const scheduler = new SchedulerService(db);
+    const runService = new RunService(db, new FakeAgentRuntime(db));
+    const orchestrator = new EpicOrchestrator(db, new WorkflowEngine(db, registry), new PlanningService(db), runService, {} as never, scheduler);
+
+    expect(db.get<{ status: string }>("SELECT status FROM agent_runs WHERE id=$id", { id: runId })?.status).toBe("STARTED");
+    expect(db.get<{ status: string }>("SELECT status FROM scheduler_reservations WHERE id=$id", { id: reservationId })?.status).toBe("RESERVED");
+
+    await preflightRunProcessOwners(db, {
+      launch: async () => { throw new Error("prepared owners must not launch during recovery"); },
+      inspect: async () => { throw new Error("prepared owners must not require OS inspection"); },
+      stop: async () => { throw new Error("prepared owners must not stop during recovery"); },
+      waitForStopped: async () => { throw new Error("prepared owners must not poll during recovery"); },
+    } as ProcessScopeSupervisor);
+    expect(db.get<{ state: string; stop_evidence: string }>("SELECT state,stop_evidence FROM run_process_owners WHERE run_id=$id", { id: runId }))
+      .toEqual({ state: "STOPPED", stop_evidence: "NEVER_LAUNCHED" });
+    expect(runService.reconcileInterruptedRuns()).toBe(1);
+    orchestrator.reconcileInterruptedRuns();
+    expect(scheduler.reconcile().releasedReservationIds).toContain(reservationId);
 
     expect(db.get<{ status: string }>("SELECT status FROM agent_runs WHERE id=$id", { id: runId })?.status).toBe("FAILED");
     expect(db.get<{ status: string }>("SELECT status FROM orchestration_phase_runs WHERE agent_run_id=$runId", { runId })?.status).toBeUndefined();
@@ -269,7 +295,6 @@ describe("full epic orchestration with FakeAgentRuntime", () => {
     expect(db.get<{ reserved_cost: number }>("SELECT reserved_cost FROM scheduler_budgets WHERE project_id=$projectId", { projectId })?.reserved_cost).toBe(0);
     expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_resource_locks WHERE reservation_id=$id", { id: reservationId })?.count).toBe(0);
 
-    const scheduler = new SchedulerService(db);
     expect(() => scheduler.dispatchAgentRun("retry-run", projectId, "reviewer", "test")).not.toThrow();
     scheduler.releaseAgentRun("retry-run", 0);
     expect(db.get<{ reserved_cost: number }>("SELECT reserved_cost FROM scheduler_budgets WHERE project_id=$projectId", { projectId })?.reserved_cost).toBe(0);

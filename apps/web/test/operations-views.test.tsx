@@ -268,6 +268,46 @@ describe('Agent Run detail', () => {
     vi.restoreAllMocks();
   });
 
+  test('renders available Epic provenance metadata', async () => {
+    const get = vi.spyOn(apiClient, 'get').mockImplementation(async (path) => {
+      if (path === '/runs/run-epic-available/context-manifests') return {
+        availability: 'available', id: 'manifest-epic', runId: 'run-epic-available',
+        subject: { type: 'EPIC', id: 'epic-available' }, role: 'architect',
+        contractRequestDigest: 'a'.repeat(64),
+        items: [{ id: 'epic-guideline', version: 4, digest: 'b'.repeat(64) }],
+        promptHash: 'c'.repeat(64), contextHash: 'd'.repeat(64), contextBuilderVersion: 'builder-epic-v2', initialTokenSize: 321,
+      } as never;
+      if (path === '/runs/run-epic-available/artifacts' || path === '/runs/run-epic-available/events' || path === '/runs/run-epic-available/permissions') return [] as never;
+      if (path === '/runs/run-epic-available/tools') return { tools: [] } as never;
+      if (path === '/runs/run-epic-available/recovery') return { runId: 'run-epic-available', taskId: null, runStatus: 'DONE', recovery: null } as never;
+      if (path === '/settings') return { securitySettings: { localModeEnabled: false } } as never;
+      return {
+        id: 'run-epic-available', role: 'Architect', runtime: 'hermes', model: 'gpt', status: 'DONE', taskId: null, epicId: 'epic-available',
+        triggerReason: 'REQUESTED', startedAt: null, endedAt: null,
+        usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, cost: 0 },
+      } as never;
+    });
+
+    render(<MemoryRouter><AgentRunPage id="run-epic-available" /></MemoryRouter>);
+
+    const manifest = await screen.findByRole('region', { name: 'Манифест контекста' });
+    expect(manifest).toHaveTextContent('Сохранённая provenance доступна.');
+    expect(manifest).toHaveTextContent('run-epic-available');
+    expect(manifest).toHaveTextContent('Эпик · epic-available');
+    expect(manifest).toHaveTextContent('manifest-epic');
+    expect(manifest).toHaveTextContent('architect');
+    expect(manifest).toHaveTextContent('epic-guideline');
+    expect(manifest).toHaveTextContent('4');
+    expect(manifest).toHaveTextContent('b'.repeat(64));
+    expect(manifest).toHaveTextContent('a'.repeat(64));
+    expect(manifest).toHaveTextContent('c'.repeat(64));
+    expect(manifest).toHaveTextContent('d'.repeat(64));
+    expect(manifest).toHaveTextContent('builder-epic-v2');
+    expect(manifest).toHaveTextContent('Точный размер контекста: 321');
+    expect(get).toHaveBeenCalledWith('/runs/run-epic-available/context-manifests');
+    vi.restoreAllMocks();
+  });
+
   test('renders valid-empty Request provenance separately from unknown token size', async () => {
     const get = vi.spyOn(apiClient, 'get').mockImplementation(async (path) => {
       if (path === '/runs/run-request/context-manifests') return {

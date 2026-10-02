@@ -14,6 +14,7 @@ import type { AgentRuntime } from "../../src/modules/runtime/agent-runtime.js";
 import type { RunOutcome } from "../../src/modules/runtime/run-types.js";
 import { RunService } from "../../src/modules/runtime/run-service.js";
 import { DatabaseCompletionStore } from "../../src/modules/execution/mcp/submit-result-tool.js";
+import { markFakeRunNeverLaunched } from "../helpers/fake-run-process-owner.js";
 import { GitCli } from "../../src/modules/git/git-cli.js";
 import { MergeService } from "../../src/modules/git/merge-service.js";
 import { IntegrationService } from "../../src/modules/git/integration-service.js";
@@ -105,6 +106,7 @@ class CheckpointFixtureRuntime implements AgentRuntime {
   }
 
   async startRun(run: AgentRun): Promise<void> {
+    markFakeRunNeverLaunched(this.database, run.id);
     const phase = this.database.get<{ phase: string; task_id: string | null }>(
       "SELECT phase,task_id FROM orchestration_phase_runs WHERE agent_run_id=$runId",
       { runId: run.id },

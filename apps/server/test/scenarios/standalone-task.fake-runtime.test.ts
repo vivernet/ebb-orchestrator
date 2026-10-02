@@ -24,6 +24,7 @@ import { appendOutboxEvent } from "../../src/platform/events/outbox-repository.j
 import { GitCli } from "../../src/modules/git/git-cli.js";
 import { WorktreeManager } from "../../src/modules/git/worktree-manager.js";
 import { seedApprovedProjectConfig } from "../helpers/approved-project-config.js";
+import { markFakeRunNeverLaunched } from "../helpers/fake-run-process-owner.js";
 
 const migrations = loadTestMigrations();
 
@@ -252,6 +253,7 @@ describe("Standalone task fake runtime scenario", () => {
       maxActive: 0,
       calls: runtimeCalls,
       async startRun(run) {
+        markFakeRunNeverLaunched(db!, run.id);
         runtimeCalls.push({ phase: "start", role: run.role, ...(run.taskId ? { taskId: run.taskId } : {}) });
         statusAtRuntimeStart = db!.get<{ status: string }>("SELECT status FROM tasks WHERE id=$id", { id: run.taskId })?.status ?? null;
         if (!run.capabilityRef || !await completion.accept(run.capabilityRef, { runId: run.id, role: run.role, output: { version: "1", outcome: "COMPLETED" } })) {
@@ -458,6 +460,7 @@ describe("Standalone task fake runtime scenario", () => {
       maxActive: 1,
       calls: [],
       async startRun(run) {
+        markFakeRunNeverLaunched(db!, run.id);
         runtime.calls.push({
           phase: "start",
           role: run.role,

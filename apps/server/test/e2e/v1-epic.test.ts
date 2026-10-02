@@ -36,6 +36,9 @@ import { EpicWorkspaceProvisioner } from "../../src/modules/git/epic-workspace-p
 import { TaskWorkspaceProvisioner } from "../../src/modules/git/task-workspace-provisioner.js";
 import { WorktreeManager } from "../../src/modules/git/worktree-manager.js";
 import { seedApprovedProjectConfig } from "../helpers/approved-project-config.js";
+import { markFakeRunNeverLaunched } from "../helpers/fake-run-process-owner.js";
+import { preflightRunProcessOwners } from "../../src/modules/runtime/run-process-owner.js";
+import type { ProcessScopeSupervisor } from "../../src/platform/process/run-scope-supervisor.js";
 
 // ── Настройка migration ──
 
@@ -82,6 +85,7 @@ class FakeAgentRuntime implements AgentRuntime {
   }
 
   async startRun(run: AgentRun): Promise<void> {
+    markFakeRunNeverLaunched(this.db, run.id);
     const phase = this.db.get<{ phase: string; task_id: string | null; request_json: string | null }>(
       "SELECT phase,task_id,request_json FROM orchestration_phase_runs WHERE agent_run_id=$runId",
       { runId: run.id },
@@ -415,10 +419,12 @@ describe("Coordinator request to Epic deterministic lifecycle", () => {
     const { registry, merge, executionOptions } = await setupDatabase();
     // Порядок выполнения: plan(1), task_1 child_task(2), task_1 review(3),
 // task_1 qa(4), task_1 integration(5) — затем запускаются task_2/task_3.
-// Пауза после 5 вызовов позволяет завершить task_1, но вызывает сбой до task_2/task_3.
+    // Пауза после 5 вызовов позволяет завершить task_1, но вызывает сбой до task_2/task_3.
     const runtime = new PausableFakeAgentRuntime(db!, 5);
     const planning = new PlanningService(db!);
-    const orchestrator = new EpicOrchestrator(db!, new WorkflowEngine(db!, registry), planning, new RunService(db!, runtime), merge, new SchedulerService(db!), executionOptions);
+    const scheduler = new SchedulerService(db!);
+    const runService = new RunService(db!, runtime);
+    const orchestrator = new EpicOrchestrator(db!, new WorkflowEngine(db!, registry), planning, runService, merge, scheduler, executionOptions);
     db!.run("INSERT INTO scheduler_budgets (project_id,limit_cost,spent_cost,reserved_cost) VALUES ($projectId,100,0,0)", { projectId });
 
     const plan = await orchestrator.start({
@@ -479,10 +485,22 @@ describe("Coordinator request to Epic deterministic lifecycle", () => {
     );
     expect(orchestrationBefore?.stage).toBe("CHILDREN");
 
-    // Проверяем persisted checkpoints новым orchestrator instance с той же открытой БД.
-    // Production process restart проверяется отдельным acceptance harness.
+    // Новый instance проходит тот же порядок восстановления, что и production startup.
     const runtime2 = new FakeAgentRuntime(db!);
-    const orchestrator2 = new EpicOrchestrator(db!, new WorkflowEngine(db!, registry), planning, new RunService(db!, runtime2), merge, new SchedulerService(db!), executionOptions);
+    const scheduler2 = new SchedulerService(db!);
+    const runService2 = new RunService(db!, runtime2);
+    const orchestrator2 = new EpicOrchestrator(db!, new WorkflowEngine(db!, registry), planning, runService2, merge, scheduler2, executionOptions);
+
+    // Сначала завершаются owner preflight, Run/Epic reconcile и только потом Scheduler reconcile.
+    await preflightRunProcessOwners(db!, {
+      launch: async () => { throw new Error("stopped fake owners must not launch during recovery"); },
+      inspect: async () => { throw new Error("stopped fake owners must not require OS inspection"); },
+      stop: async () => { throw new Error("stopped fake owners must not stop during recovery"); },
+      waitForStopped: async () => { throw new Error("stopped fake owners must not poll during recovery"); },
+    } as ProcessScopeSupervisor);
+    expect(runService2.reconcileInterruptedRuns()).toBe(0);
+    orchestrator2.reconcileInterruptedRuns();
+    scheduler2.reconcile();
 
     const secondResult = await orchestrator2.approveAndRun(plan.id, "user");
 

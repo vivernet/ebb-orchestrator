@@ -45,6 +45,7 @@ import { ContextBuilder } from "../../src/modules/context/context-builder.js";
 import { PromptBuilder } from "../../src/modules/runtime/prompt-builder.js";
 import type { TaskContract as PromptTaskContract } from "../../src/modules/context/context-types.js";
 import { seedApprovedProjectConfig } from "../helpers/approved-project-config.js";
+import { markFakeRunNeverLaunched } from "../helpers/fake-run-process-owner.js";
 
 const execFileAsync = promisify(execFile);
 const resolve = createRequire(import.meta.url).resolve;
@@ -55,7 +56,8 @@ class DeterministicRuntime implements AgentRuntime {
   active = 0;
   maxActive = 0;
   calls: Array<{ phase: string; role: string; taskId?: string; targetBranch?: string }> = [];
-  async startRun(_run: AgentRun): Promise<void> {}
+  constructor(private readonly database: Database) {}
+  async startRun(run: AgentRun): Promise<void> { markFakeRunNeverLaunched(this.database, run.id); }
   async runResult(_runId: string): Promise<RunOutcome> { throw new Error("runResult is not used by this acceptance driver"); }
   async resumeRun(): Promise<void> {}
   async cancelRun(): Promise<void> {}
@@ -286,7 +288,7 @@ describe("Autonomous Task End-to-End Workflow", () => {
     approvalService = new ApprovalService(db);
      worktreeManager = new WorktreeManager({ db, worktreeDir: join(tmpDir, "worktrees") });
     mergeService = new MergeService({ approvalStore: new Map(), repoPath: masterRepoPath, sourceBranch: `task/${taskId}`, targetBranch: "master" });
-    (globalThis as { acceptance?: AcceptanceWorkflow }).acceptance = new AcceptanceWorkflow(db, workflow, new RunService(db, new DeterministicRuntime()), worktreeManager, git, masterRepoPath, taskId);
+    (globalThis as { acceptance?: AcceptanceWorkflow }).acceptance = new AcceptanceWorkflow(db, workflow, new RunService(db, new DeterministicRuntime(db)), worktreeManager, git, masterRepoPath, taskId);
   });
 
     afterEach(async () => { db?.close(); db = undefined; if (masterRepoPath) await rm(masterRepoPath, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }); if (tmpDir) await rm(tmpDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }); });
