@@ -642,18 +642,9 @@ P2 SUPPORTING
 P3 OPTIONAL
 ```
 
-При превышении Context Budget сначала выполняется deterministic pruning:
+Context selection и budget pruning — deterministic операции обычного кода. Без явно переданной доверенным deterministic caller поддерживаемой versioned `ContextBudgetPolicyV1 { version: 1, limit }` production preparation сохраняет все role-selected items, не выполняет pruning и не сокращает context. LLM summarization не используется для обхода отсутствующей policy или budget limit.
 
-- resolved findings/defects;
-- superseded Decisions;
-- irrelevant Guidelines;
-- completed dependency details;
-- source excerpts, которые можно прочитать tool'ом;
-- необязательный background.
-
-LLM summarization используется только после обычного pruning и только там, где структурного сокращения недостаточно.
-
-Production context preparation принимает optional `ContextBudgetPolicyV1 { version: 1, limit }` только от доверенного deterministic caller. Без policy сохраняются все role-selected items без budget pruning. Поддерживаемая policy v1 применяет существующее deterministic priority pruning только к selected Guidelines до сериализации; обязательные role inputs, Decisions, findings и defects не сокращаются. Неизвестная или некорректная policy отклоняется. `limit` задаёт structural pruning policy и не доказывает, что prompt поместится в модельный context window; его нельзя выводить из approximate size или usage spend. SHA-256 policy digest использует domain separator `ebb-context-budget-policy-v1\\0` и входит в подготовленную context-секцию, а точный prompt hash фиксирует policy metadata и оставшиеся items.
+Поддерживаемая policy v1 задаёт structural pruning policy и применяет существующий deterministic priority pruning только к selected Guidelines до сериализации; обязательные role inputs, Decisions, findings и defects не сокращаются. Неизвестная или некорректная policy отклоняется. `limit` не доказывает, что prompt поместится в модельный context window, и не выводится из approximate size или usage spend. SHA-256 policy digest использует domain separator `ebb-context-budget-policy-v1\0`; суффикс `\0` означает ровно один завершающий байт NUL (0x00), как в исходной константе; digest входит в подготовленную context-секцию, а точный prompt hash фиксирует policy metadata и оставшиеся items.
 
 Каждый production Run хранит ровно один `ContextManifest`, связанный с его единственным subject type (`TASK`, `EPIC` или `REQUEST`). Run и manifest сохраняются атомарно до dispatch. Manifest фиксирует только подготовленные Orchestrator входные данные и execution boundary; он не утверждает, что содержит весь model-visible context, скрытый system prompt, runtime-injected context или историю Hermes session.
 
@@ -661,7 +652,7 @@ Manifest связывает subject type/id и role с точными верси
 
 `prompt_hash` — SHA-256 от domain separator `ebb-run-prompt-v1\0` и точных UTF-8 bytes финального prompt, сохранённого в Run. `context_hash` — детерминированный fingerprint, включающий `prompt_hash` и эти подготовленные входы/execution boundary: subject, contract/request digest, отсортированные ID/version/digest tuples, builder version, role/runtime/model/output schema/context versions, нормализованные repository/workspace/worktree identity, target HEAD/branch, отсортированные effective capability IDs, утверждённые Project Config revision/hash и не содержащая секретов provider/runtime policy identity. Для fingerprint используется versioned RFC 8785 JCS и SHA-256 с domain separator `ebb-run-context-v1\0`; он фиксирует равенство/изменение provenance, но не восстанавливает исходный текст.
 
-Начальный token size (`initial token size`) записывается только как точный результат поддерживаемого tokenizer/runtime. Если точное измерение недоступно, значение — `NULL`; byte/character estimate не считается token count. Context budget limit не заменяет tokenizer и не является обещанием fit. Для исторических Run, где точные версии или provenance неизвестны, manifest availability явно указывает `unavailable`: неизвестные значения не заменяются фиктивными версиями, пустым context или backfill.
+Начальный token size (`initial token size`) записывается только при наличии одновременно поддерживаемой trusted versioned budget policy и точного поддерживаемого tokenizer/runtime; значение должно быть exact tokenizer result. Без policy, без поддерживаемого tokenizer или при любой неопределённости значение — `NULL`; byte/character estimate не считается token count. Policy limit и точный token count не являются обещанием fit в модельный context window. Для исторических Run, где точные версии или provenance неизвестны, manifest availability явно указывает `unavailable`: неизвестные значения не заменяются фиктивными версиями, пустым context или backfill.
 
 Resume допустим только для того же Run и его исходной Hermes `session_id`, сохранённой в durable storage до recovery. До resume Orchestrator должен иметь authoritative proof, что прежний Hermes process scope полностью остановлен, затем пересчитать и сопоставить `context_hash` и проверить неизменность workspace, включая staged, unstaged, untracked и ignored regular files, доступных workspace tools. При неизвестном manifest/session ID/process-stop state или любом расхождении resume блокируется; расхождение входов или workspace возвращает `RESUME_NOT_SAFE_WORKSPACE_CHANGED`. Нельзя запускать второй Run параллельно или освобождать прежние owner/capability/reservation до подтверждения остановки process scope и штатной terminalization/reconciliation исходного Run. Новый Run может быть создан только существующим Scheduler recovery flow после этих подтверждений.
 
