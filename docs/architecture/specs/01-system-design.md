@@ -903,6 +903,8 @@ Secret injection допускается только для строго scoped 
 
 Logs/Artifacts проходят redaction/sanitization, но основная защита — **не давать секрет процессу без необходимости**.
 
+Для provider integration источником истины по provider-конфигурации и credential resolution является Agent Runtime, который обслуживает этот provider (включая Hermes). Ebb не требует дублирующего provider endpoint/key mapping в собственной конфигурации или второй provider credential в `SecretStore`, не читает, не копирует, не разбирает и не преобразует значения из native credential store и не внедряет provider credential от своего имени. Runtime разрешает credentials через собственный поддерживаемый native mechanism; Ebb может передавать только явно разрешённые non-secret selection settings. Если выбранный provider/auth path неизвестен, не поддержан закреплённой версией runtime, неоднозначен или native resolution завершается ошибкой, запуск завершается fail-closed. Нельзя молча переключаться на другой credential source, provider, model или endpoint. Это не меняет владение отдельными Ebb capabilities: например, GitHub credentials остаются в `SecretStore` и доступны только `GitHubAdapter`.
+
 ## 13.2. Локальный API и Web UI
 
 Backend по умолчанию слушает только loopback.
