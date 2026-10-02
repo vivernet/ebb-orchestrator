@@ -62,7 +62,7 @@ git grep -inE '[sS][tT][aA][gG][eE]|roadmap[Ss][tT][aA][gG][eE]|grouped[Bb]y[Ss]
 | `apps/web/src/i18n/ru.ts` | runtime | 3 | 71, 105, 107 |
 | `apps/web/test/core-views.test.tsx` | runtime | 17 | 12, 33, 34, 37, 38, 168, 184, 200, 217, 346, 349, 370, 385, 400, 403, 415, 416 |
 | `apps/web/test/localization-accessibility.test.tsx` | runtime | 1 | 85 |
-| `artifacts/task-10-fix-report.md` | unrelated | 1 | 23 |
+| `artifacts/task-10-fix-report.md` | unrelated; removed by Plan16 rebaseline 2026-10-02 | 1 | 23 |
 | `docs/README.md` | historical language | 3 | 103, 104, 105 |
 | `docs/architecture/plans/01-foundation-persistence.md` | historical language | 1 | 5 |
 | `docs/architecture/plans/02-domain-workflow-scheduler.md` | historical language | 3 | 5, 37, 184 |
@@ -188,7 +188,7 @@ git grep --no-index -inE '[sS][tT][aA][gG][eE]|roadmap[Ss][tT][aA][gG][eE]|group
 | `apps/web/src/i18n/ru.ts` | runtime | 3 | 71, 105, 107 |
 | `apps/web/test/core-views.test.tsx` | runtime | 17 | 12, 33, 34, 37, 38, 168, 184, 200, 217, 346, 349, 370, 385, 400, 403, 415, 416 |
 | `apps/web/test/localization-accessibility.test.tsx` | runtime | 1 | 85 |
-| `artifacts/task-10-fix-report.md` | unrelated | 1 | 23 |
+| `artifacts/task-10-fix-report.md` | unrelated; removed by Plan16 rebaseline 2026-10-02 | 1 | 23 |
 | `docs/architecture/plans/02-domain-workflow-scheduler.md` | historical language | 2 | 35, 182 |
 | `docs/architecture/plans/07-hermes-development-workflow.md` | historical language | 2 | 995, 1206 |
 | `docs/architecture/plans/08-01-web-ui-foundation.md` | historical language | 7 | 21, 23, 29, 98, 102, 105, 111 |

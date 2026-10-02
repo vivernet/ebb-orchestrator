@@ -164,7 +164,7 @@ This superseded record preserves the migration decisions made on 2026-09-23; it 
 ### 30. Audit: Audit Report
 | old path | new path | action | kind | former Plan grouping (historical) | source date | canonical target | conflict decision | dependent links to update | evidence preservation rule |
 |----------|--------|--------|------|---------------|-------------|------------------|-------------------|--------------------------|---------------------------|
-| `docs/audit/2026-09-18-audit-report.md` | `docs/audit/02-audit-report.md` | rename | audit | N/A | 2026-09-18 | `docs/audit/02-audit-report.md` | Standardized numbering | Update all references | Preserve original date |
+| `docs/audit/2026-09-18-audit-report.md` | `docs/audit/02-audit-report.md` | rename; target later removed by Plan16 rebaseline 2026-10-02 | audit | N/A | 2026-09-18 | historical target: `docs/audit/02-audit-report.md` (removed) | Standardized numbering | Historical references only | Preserve original date and mark target removal |
 
 ### 31. Audit: Audit Guidelines
 | old path | new path | action | kind | former Plan grouping (historical) | source date | canonical target | conflict decision | dependent links to update | evidence preservation rule |

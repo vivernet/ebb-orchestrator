@@ -3,7 +3,7 @@ id: plan-16
 kind: plan
 status: blocked
 created: 2026-09-25
-updated: 2026-09-30
+updated: 2026-10-02
 title: Очистка и актуализация документации Ebb Orchestrator
 depends_on:
   - plan-15-07
@@ -41,11 +41,11 @@ evidence:
 
 ## Context Brief
 
-На ветке `develop` зафиксирован `HEAD 332668c341337684ba8dfbffe7002cdc941d9e01`. В repository baseline находятся десять активных tracked-планов `15-*`: `15-01`–`15-09` и `15-auth-onboarding-ui-hardening`. Эти файлы являются unrelated active work и не должны изменяться, удаляться, перемещаться или включаться в очистку.
+Rebaseline выполнен на develop, HEAD 7d2e8a3, 2026-10-02. Повторная проверка 97 ранее перечисленных candidate paths показала: 75 отсутствуют, 14 существующих путей сохраняются, 8 существующих tracked-файлов являются точными целями удаления. Десять tracked-планов 15-* относятся к 14 preservation paths и остаются неизменными.
 
-Цель следующей implementation-фазы — привести documentation surface и временные артефакты репозитория к фактическому состоянию проекта, не меняя runtime-код и не удаляя данные до доказуемой проверки их ценности. Проектные README должны быть на русском языке и не содержать YAML/frontmatter-подобных метатегов. Это правило относится к README; настоящий plan обязан сохранить YAML frontmatter, потому что он является частью канонической схемы планов.
+Цель следующей implementation-фазы — привести documentation surface и временные артефакты репозитория к фактическому состоянию проекта, не меняя runtime-код и сохраняя актуальные исходники, инструкции и активные планы. Проектные README должны быть на русском языке и не содержать YAML/frontmatter-подобных метатегов. Это правило относится к README; настоящий plan обязан сохранить YAML frontmatter, потому что он является частью канонической схемы планов.
 
-Корень содержит исторические материалы в `.cuperpowers/` и `.superpowers/`, generated reports/JSON, `workspace/`, root-level task reports и дублирующиеся security artifacts. `.cuperpowers/` содержит один tracked JSON; `.superpowers/` содержит три tracked audit reports и ignored local state. `scan-manifest.json` сохраняется, потому что используется README и security-audit тестом. `node_modules/`, `dist/`, `build/` и иные regenerable outputs находятся вне Git cleanup scope.
+Большинство ранее перечисленных исторических путей, включая .cuperpowers/, .superpowers/ и workspace/, уже отсутствуют; повторно их не создавать, не искать для удаления и не архивировать. Пользователь прямо распорядился удалить оставшиеся исторические материалы. Для этой ограниченной очистки архив не создаётся. scan-manifest.json, workflows, scripts, tests, актуальные README и планы не входят в цели удаления и сохраняются.
 
 **Deferred evidence inconsistency:** the previously expected `docs/development/jsdoc-style-guide.md` is absent from the repository; the existing `docs/development/07-jsdoc-style-guide.md` is not substituted as an authoritative spec in this plan. Restoring or renaming a JSDoc guide is out of scope and deferred pending a separate repository-backed requirement; no task may depend on that missing path.
 
@@ -53,18 +53,18 @@ evidence:
 
 1. Провести read-only inventory всех кандидатов и расслоить их на tracked/untracked/ignored, active/unrelated, reproducible/non-reproducible и содержащие/не содержащие секреты.
 2. Проверить целостность кандидатов: SHA-256 manifest, валидность JSON/UTF-8, diff/path checks, ссылки, tracked-vs-untracked comparison и secret/path scan.
-3. Подготовить внешний archive вне repository с повторной проверкой hash; только после этого разрешить удаление/перемещение согласованных кандидатов.
+3. Сверить существование, tracked-состояние и SHA-256 каждого из восьми точных targets с rebaseline; удалить только их индивидуальными операциями. Archive не создавать.
 4. Проверить каждую реально существующую `pnpm`-команду по manifests/workspace/lockfile и обновить `README.md` с фактическими командами, ограничениями и expected outputs.
 5. Обновить все три project README: `README.md`, `docs/README.md`, `tools/hermes/README.md`; убрать из них frontmatter-подобные блоки, исправить stale paths, язык и ссылки.
 6. Оценить и при необходимости добавить в `.gitignore` правила для `temp/` и `test/` только с явным объяснением scope; не игнорировать source/test directories целиком.
 7. Оценить добавление в `AGENTS.md` правила для временных файлов и зафиксировать его только если оно однозначно предотвращает повторное загрязнение репозитория.
-8. Получить явное подтверждение пользователя после показа полного disposition list и до любой реализации удаления/перемещения/изменения документации.
+8. Выполнить прямо разрешённое пользователем удаление только восьми перечисленных tracked-файлов; дополнительное подтверждение и archive не требуются. Другие Plan16 задачи и изменения README/policy этим разрешением не считаются выполненными.
 
 ## Non-scope
 
 - Не изменять production code, package manifests, `pnpm-lock.yaml` или behavior CLI.
 - Не изменять и не удалять existing tracked active plans `15-*`.
-- Не удалять/перемещать `.cuperpowers` или `.superpowers` без approval gate и внешнего archive.
+- .cuperpowers/, .superpowers/ и workspace/ отсутствуют по rebaseline; не создавать для них archive и не выполнять повторных файловых операций.
 - Не считать `node_modules/`, `dist/`, `build/`, `coverage/`, `.vite/`, Playwright output и другие regenerable outputs частью Git cleanup.
 - Не запускать `git clean`, `reset --hard`, force operations, push или merge.
 - Не принимать README, historical audit или report как authority над текущим кодом без проверки evidence.
@@ -80,138 +80,94 @@ evidence:
 | Documentation validators | `scripts/docs-governance.mjs`, `scripts/roadmap-generator-cli.mjs` | Метаданные, plan parsing, inventory/check/roadmap behavior; команды запускать с dry-run там, где возможно. |
 | Repository policy | `.gitignore`, `AGENTS.md`, `.hermes.md`, scoped `AGENTS.md` | Правила временных файлов, language, cleanup, gates и ownership boundaries. |
 | Active plans | `docs/architecture/plans/15-01...15-09`, `15-auth-onboarding-ui-hardening` | Preserve unchanged; compare only for duplicate paths/claims. |
-| Historical work | `.cuperpowers/**`, `.superpowers/**` | Inventory, hash, archive and disposition; no assumption that historical means disposable. |
+| Historical work | `.cuperpowers/**`, `.superpowers/**`, `workspace/**` | These trees are absent in the 2026-10-02 rebaseline; no further file operation is needed. |
 | Reports/artifacts | root reports/JSON/TXT/HTML, `workspace/**`, `artifacts/**`, `docs/review/**` | Deduplicate and classify by provenance, references, reproducibility and secret risk. |
 
 ### Dependency graph
 
-`inventory and authority check → integrity/secret/path verification → complete disposition list → explicit user approval → external archive and re-hash → approved delete/move and README/.gitignore/AGENTS updates → command/docs validation → links/status verification → final diff/status review`.
+97-path rebaseline → verify exact target existence + Git tracking + inventory SHA-256 → annotate the two historical evidence references → individually delete only the 8 approved targets (destination: none; no archive) → verify target absence, preservation paths and surviving links → relevant docs checks → final diff/status review.
 
-README editing depends on the verified command matrix. Any deletion/move depends on both the approval gate and successful external archive verification. No implementation task may depend on or modify the active `15-*` plans.
+Пользователь прямо распорядился удалить старые материалы; дополнительное approval и внешний archive не являются prerequisites для перечисленных восьми файлов. Никакая другая deletion/move, README/policy edit или изменение active 15-* plans этим разрешением не охватывается. README editing в остальной части Plan16 по-прежнему зависит от проверенной command matrix.
 
-## Complete candidate disposition table
+## Rebaseline and exact cleanup disposition
 
-The following is the initial complete list derived from the current repository state. `inspect` means preserve pending evidence; it is not permission to delete. `State` is the observed Git/filesystem classification at draft time: `tracked`, `untracked`, `ignored`, or `mixed` (a directory whose descendants have more than one state). The implementation phase must re-enumerate paths and stop if the list or any state differs.
+Rebaseline at develop HEAD 7d2e8a3 on 2026-10-02: 97 listed: 75 missing, 14 existing preservation paths, 8 exact delete targets. This reclassifies the prior inventory; it does not authorize substitute paths or broader cleanup.
 
-**Fail-closed state gate (before implementation):** after Task 1 inventory and again immediately before Task 5–9 side effects, compare the exact `(path, state)` set below with a fresh filesystem/Git inventory. For files, classify `tracked` from `git ls-files`, `ignored` from `git check-ignore`, and otherwise `untracked`; for directories, classify from the union of descendant states and use `mixed` when that union has more than one member. Exit non-zero and stop before approval packaging or implementation if the count is not exactly `97`, any path is missing or extra, any state is `unknown` or changed, any duplicate path exists, or any active `15-*` plan is absent from the tracked preservation set. Continue only when the exact 97-entry path/state set matches; do not coerce mismatches or infer a replacement state.
+The 75 missing paths require no action. Do not recreate, archive, move, or retry deletion for them.
 
-| Path | State | Action | Target/archive | Reason |
-|---|---|---|---|---|
-| `.cuperpowers/` | tracked | mixed directory (tracked descendant) | archive outside repo → verify preservation → delete root directory only after approval | Root action is atomic only after every listed descendant is archived and re-hashed. |
-| `.cuperpowers/sdd/` | tracked | directory | archive as part of root snapshot; preserve relative path | Exact directory entry; no wildcard substitution. |
-| `.cuperpowers/sdd/12-401-web-completion/` | tracked | directory | archive as part of root snapshot; preserve relative path | Exact directory entry. |
-| `.cuperpowers/sdd/12-401-web-completion/task-5-report.json` | tracked | tracked file | archive as part of root snapshot; delete only with approved root action | Tracked historical report; JSON/secret/reference checks required. |
-| `.superpowers/` | mixed | mixed directory (3 tracked, remaining ignored descendants) | archive outside repo → verify preservation → delete root directory only after approval | Root action is atomic only after every listed descendant is archived and re-hashed. |
-| `.superpowers/sdd/` | mixed | mixed directory | archive as part of root snapshot; preserve relative path | Exact directory entry. |
-| `.superpowers/sdd/.gitignore` | ignored | ignored file | archive as part of root snapshot; delete only with approved root action | Ignored local-state policy. |
-| `.superpowers/sdd/12-401-web-completion/` | ignored | ignored directory | archive as part of root snapshot; preserve relative path | Exact directory entry. |
-| `.superpowers/sdd/12-401-web-completion/progress.md` | ignored | ignored file | archive as part of root snapshot; delete only with approved root action | Ignored progress state. |
-| `.superpowers/sdd/12-401-web-completion/task-1-brief.md` | ignored | ignored file | archive as part of root snapshot; delete only with approved root action | Ignored task input. |
-| `.superpowers/sdd/12-401-web-completion/task-1-fix-review.diff` | ignored | ignored file | archive as part of root snapshot; delete only with approved root action | Ignored review diff. |
-| `.superpowers/sdd/12-401-web-completion/task-1-report.md` | ignored | ignored file | archive as part of root snapshot; delete only with approved root action | Ignored task report. |
-| `.superpowers/sdd/12-401-web-completion/task-1-review.diff` | ignored | ignored file | archive as part of root snapshot; delete only with approved root action | Ignored review diff. |
-| `.superpowers/sdd/12-401-web-completion/task-10-brief.md` | ignored | ignored file | archive as part of root snapshot; delete only with approved root action | Ignored task input. |
-| `.superpowers/sdd/12-401-web-completion/task-11-brief.md` | ignored | ignored file | archive as part of root snapshot; delete only with approved root action | Ignored task input. |
-| `.superpowers/sdd/12-401-web-completion/task-2-brief.md` | ignored | ignored file | archive as part of root snapshot; delete only with approved root action | Ignored task input. |
-| `.superpowers/sdd/12-401-web-completion/task-2-fix-review.diff` | ignored | ignored file | archive as part of root snapshot; delete only with approved root action | Ignored review diff. |
-| `.superpowers/sdd/12-401-web-completion/task-2-report.md` | ignored | ignored file | archive as part of root snapshot; delete only with approved root action | Ignored task report. |
-| `.superpowers/sdd/12-401-web-completion/task-2-review.diff` | ignored | ignored file | archive as part of root snapshot; delete only with approved root action | Ignored review diff. |
-| `.superpowers/sdd/12-401-web-completion/task-3-brief.md` | ignored | ignored file | archive as part of root snapshot; delete only with approved root action | Ignored task input. |
-| `.superpowers/sdd/12-401-web-completion/task-3-report.md` | ignored | ignored file | archive as part of root snapshot; delete only with approved root action | Ignored task report. |
-| `.superpowers/sdd/12-401-web-completion/task-3-review.diff` | ignored | ignored file | archive as part of root snapshot; delete only with approved root action | Ignored review diff. |
-| `.superpowers/sdd/12-401-web-completion/task-4-brief.md` | ignored | ignored file | archive as part of root snapshot; delete only with approved root action | Ignored task input. |
-| `.superpowers/sdd/12-401-web-completion/task-4-report.md` | ignored | ignored file | archive as part of root snapshot; delete only with approved root action | Ignored task report. |
-| `.superpowers/sdd/12-401-web-completion/task-4-review.diff` | ignored | ignored file | archive as part of root snapshot; delete only with approved root action | Ignored review diff. |
-| `.superpowers/sdd/12-401-web-completion/task-5-brief.md` | ignored | ignored file | archive as part of root snapshot; delete only with approved root action | Ignored task input. |
-| `.superpowers/sdd/12-401-web-completion/task-5-report.md` | ignored | ignored file | archive as part of root snapshot; delete only with approved root action | Ignored task report. |
-| `.superpowers/sdd/12-401-web-completion/task-5-review.diff` | ignored | ignored file | archive as part of root snapshot; delete only with approved root action | Ignored review diff. |
-| `.superpowers/sdd/12-401-web-completion/task-6-brief.md` | ignored | ignored file | archive as part of root snapshot; delete only with approved root action | Ignored task input. |
-| `.superpowers/sdd/12-401-web-completion/task-7-brief.md` | ignored | ignored file | archive as part of root snapshot; delete only with approved root action | Ignored task input. |
-| `.superpowers/sdd/12-401-web-completion/task-8-brief.md` | ignored | ignored file | archive as part of root snapshot; delete only with approved root action | Ignored task input. |
-| `.superpowers/sdd/12-401-web-completion/task-9-brief.md` | ignored | ignored file | archive as part of root snapshot; delete only with approved root action | Ignored task input. |
-| `.superpowers/sdd/2026-09-16-orchestrator-final-v1-audit-hardening/` | tracked | directory | archive as part of root snapshot; preserve relative path | Exact directory entry. |
-| `.superpowers/sdd/2026-09-16-orchestrator-final-v1-audit-hardening/mcp-validation-report.md` | tracked | tracked file | archive as part of root snapshot; delete only with approved root action | Tracked audit evidence. |
-| `.superpowers/sdd/2026-09-16-orchestrator-final-v1-audit-hardening/security-remediation-report.md` | tracked | tracked file | archive as part of root snapshot; delete only with approved root action | Tracked security evidence; secret scan required. |
-| `.superpowers/sdd/2026-09-16-orchestrator-final-v1-audit-hardening/ui-api-remediation-report.md` | tracked | tracked file | archive as part of root snapshot; delete only with approved root action | Tracked UI/API evidence. |
-| `.superpowers/sdd/2026-09-18-web-ui-audit-and-recovery-design/` | ignored | ignored directory | archive as part of root snapshot; preserve relative path | Exact directory entry. |
-| `.superpowers/sdd/2026-09-18-web-ui-audit-and-recovery-design/progress.md` | ignored | ignored file | archive as part of root snapshot; delete only with approved root action | Ignored progress state. |
-| `.superpowers/sdd/2026-09-20-production-readiness-hardening/` | ignored | ignored directory | archive as part of root snapshot; preserve relative path | Exact directory entry. |
-| `.superpowers/sdd/2026-09-20-production-readiness-hardening/plan-path` | ignored | ignored file | archive as part of root snapshot; delete only with approved root action | Ignored plan pointer. |
-| `.superpowers/sdd/2026-09-20-production-readiness-hardening/progress.md` | ignored | ignored file | archive as part of root snapshot; delete only with approved root action | Ignored progress state. |
-| `.superpowers/sdd/2026-09-22-web-ui-recovery-stage-a/` | ignored | ignored directory | archive as part of root snapshot; preserve relative path | Exact directory entry. |
-| `.superpowers/sdd/2026-09-22-web-ui-recovery-stage-a/progress.md` | ignored | ignored file | archive as part of root snapshot; delete only with approved root action | Ignored progress state. |
-| `.superpowers/sdd/2026-09-22-web-ui-recovery-stage-a/task-1-brief.md` | ignored | ignored file | archive as part of root snapshot; delete only with approved root action | Ignored task input. |
-| `.superpowers/sdd/2026-09-22-web-ui-recovery-stage-a/task-1-report.md` | ignored | ignored file | archive as part of root snapshot; delete only with approved root action | Ignored task report. |
-| `.superpowers/sdd/2026-09-22-web-ui-recovery-stage-a/task-1-review-package.md` | ignored | ignored file | archive as part of root snapshot; delete only with approved root action | Ignored review package. |
-| `.superpowers/sdd/2026-09-22-web-ui-recovery-stage-a/task-2-brief.md` | ignored | ignored file | archive as part of root snapshot; delete only with approved root action | Ignored task input. |
-| `.superpowers/sdd/2026-09-22-web-ui-recovery-stage-a/task-2-report.md` | ignored | ignored file | archive as part of root snapshot; delete only with approved root action | Ignored task report. |
-| `.superpowers/sdd/2026-09-22-web-ui-recovery-stage-a/task-2-review-package.md` | ignored | ignored file | archive as part of root snapshot; delete only with approved root action | Ignored review package. |
-| `.superpowers/sdd/2026-09-22-web-ui-recovery-stage-a/task-3-brief.md` | ignored | ignored file | archive as part of root snapshot; delete only with approved root action | Ignored task input. |
-| `.superpowers/sdd/2026-09-22-web-ui-recovery-stage-a/task-3-report.md` | ignored | ignored file | archive as part of root snapshot; delete only with approved root action | Ignored task report. |
-| `.superpowers/sdd/2026-09-22-web-ui-recovery-stage-a/task-3-review-report.md` | ignored | ignored file | archive as part of root snapshot; delete only with approved root action | Ignored review package. |
-| `.superpowers/sdd/2026-09-22-web-ui-recovery-stage-a/task-4-brief.md` | ignored | ignored file | archive as part of root snapshot; delete only with approved root action | Ignored task input. |
-| `.superpowers/sdd/2026-09-22-web-ui-recovery-stage-a/task-4-report.md` | ignored | ignored file | archive as part of root snapshot; delete only with approved root action | Ignored task report. |
-| `workspace/` | tracked | tracked directory | archive outside repo → verify preservation → delete root directory only after approval | Root action is atomic only after every listed descendant is archived and re-hashed. |
-| `workspace/link_analysis.json` | tracked | tracked file | archive as part of root snapshot; delete only with approved root action | Reference evidence. |
-| `workspace/task-3-report.txt` | tracked | tracked file | archive as part of root snapshot; delete only with approved root action | Historical report. |
-| `workspace/task-4-report.txt` | tracked | tracked file | archive as part of root snapshot; delete only with approved root action | Historical report. |
-| `workspace/task-5-report.txt` | tracked | tracked file | archive as part of root snapshot; delete only with approved root action | Historical report. |
-| `workspace/task-7-report.txt` | tracked | tracked file | archive as part of root snapshot; delete only with approved root action | Historical report. |
-| `artifacts/security/pnpm-audit-prod-2026-09-21.json` | tracked | inspect/deduplicate | retain one canonical archive copy | Audit artifact dated by run; compare content and provenance. |
-| `artifacts/security/pnpm-audit-prod-a0f18b3cfd8e8b3ae3139c9c9973ae2e2ebd81d8.json` | tracked | inspect/deduplicate | retain canonical hash-verified copy | Candidate duplicate security report. |
-| `artifacts/security/pnpm-audit-prod-b3b66154729ca2b373e0424dbab96b4435ec2c11.json` | tracked | inspect/deduplicate | retain canonical hash-verified copy | Candidate duplicate security report. |
-| `artifacts/task-10-fix-report.md` | tracked | inspect | archive/delete only after references | Historical task artifact; classify before removal. |
-| `docs/review/final-report.json` | tracked | inspect/preserve unless superseded | archive if stale and redundant | Tracked review evidence; check current references. |
-| `docs/review/findings.json` | tracked | inspect/preserve unless superseded | archive if stale and redundant | Tracked findings; do not remove load-bearing evidence. |
-| `docs/99-plan-analysis-report.md` | tracked | inspect/preserve unless superseded | archive if stale and redundant | Tracked documentation report; verify links and uniqueness. |
-| `docs/audit/02-audit-report.md` | tracked | inspect/preserve unless superseded | archive if stale and redundant | Tracked audit evidence. |
-| `evidence_report.md` | tracked | archive/delete after verification | external archive `2026-09-28-root-artifacts` → delete | Stale root quality-gates report; superseded by current gates and not referenced by runtime/tooling. |
-| `inventory.txt` | tracked | archive/delete after verification | external archive `2026-09-28-root-artifacts` → delete | Empty root inventory artifact. |
-| `plan_summary.json` | tracked | archive/delete after verification | external archive `2026-09-28-root-artifacts` → delete | Stale historical plan summary; not a current authority. |
-| `plan_verification_status.json` | tracked | archive/delete after verification | external archive `2026-09-28-root-artifacts` → delete | Stale historical verification artifact; current plan metadata/validators are authoritative. |
-| `stage-a-implementation.json` | tracked | archive/delete after verification | external archive `2026-09-28-root-artifacts` → delete | Historical implementation report with no current consumer. |
-| `summary.json` | tracked | archive/delete after verification | external archive `2026-09-28-root-artifacts` → delete | Stale task summary with no current consumer. |
-| `task10-summary.json` | tracked | archive/delete after verification | external archive `2026-09-28-root-artifacts` → delete | Historical task summary with no current consumer. |
-| `task-1-report.txt` | tracked | archive/delete after verification | external archive `2026-09-28-root-artifacts` → delete | Historical task report with no current consumer. |
-| `task-5-report.txt` | tracked | archive/delete after verification | external archive `2026-09-28-root-artifacts` → delete | Historical task report with no current consumer. |
-| `task7-completion.json` | tracked | archive/delete after verification | external archive `2026-09-28-root-artifacts` → delete | Historical task completion artifact with no current consumer. |
-| `task-7-report.txt` | tracked | archive/delete after verification | external archive `2026-09-28-root-artifacts` → delete | Historical task report with no current consumer. |
-| `task9-10-completion.json` | tracked | archive/delete after verification | external archive `2026-09-28-root-artifacts` → delete | Historical task completion artifact with no current consumer. |
-| `task-report.md` | tracked | archive/delete after verification | external archive `2026-09-28-root-artifacts` → delete | Historical task report with no current consumer. |
-| `start.bat` | tracked | archive/delete after verification | external archive `2026-09-28-root-artifacts` → delete | Obsolete Windows-only launcher; cross-platform project uses `pnpm start`. |
-| `README.md` | tracked | update in implementation phase | repository | Correct command matrix, claims and language; remove frontmatter-like metadata. |
-| `docs/README.md` | tracked | update in implementation phase | repository | Reconcile index/paths and remove frontmatter-like metadata. |
-| `tools/hermes/README.md` | tracked | update in implementation phase | repository | Reconcile skills/scripts and remove frontmatter-like metadata. |
-| `.gitignore` | tracked | inspect/update only if justified | repository | Evaluate narrow `temp/`/generated test output rules; never ignore source tests. |
-| `AGENTS.md` | tracked | inspect/update only if justified | repository | Add explicit temporary-file placement/cleanup rule only if needed. |
-| `docs/architecture/plans/15-01-auth-contract-and-crypto.md` | tracked | preserve unchanged | repository | Unrelated active plan; byte-for-byte preservation baseline. |
-| `docs/architecture/plans/15-02-auth-persistence-and-repository.md` | tracked | preserve unchanged | repository | Unrelated active plan; byte-for-byte preservation baseline. |
-| `docs/architecture/plans/15-03-auth-cli-and-startup.md` | tracked | preserve unchanged | repository | Unrelated active plan; byte-for-byte preservation baseline. |
-| `docs/architecture/plans/15-04-server-security-boundary.md` | tracked | preserve unchanged | repository | Unrelated active plan; byte-for-byte preservation baseline. |
-| `docs/architecture/plans/15-05-web-auth-and-sse.md` | tracked | preserve unchanged | repository | Unrelated active plan; byte-for-byte preservation baseline. |
-| `docs/architecture/plans/15-06-onboarding-draft-and-scheduler-guard.md` | tracked | preserve unchanged | repository | Unrelated active plan; byte-for-byte preservation baseline. |
-| `docs/architecture/plans/15-07-russian-ui-and-artifact-cleanup.md` | tracked | preserve unchanged | repository | Unrelated active plan; byte-for-byte preservation baseline. |
-| `docs/architecture/plans/15-08-verification-and-review.md` | tracked | preserve unchanged | repository | Unrelated active plan; byte-for-byte preservation baseline. |
-| `docs/architecture/plans/15-09-atomic-auth-v2-remediation.md` | tracked | preserve unchanged | repository | Unrelated active plan; byte-for-byte preservation baseline. |
-| `docs/architecture/plans/15-auth-onboarding-ui-hardening.md` | tracked | preserve unchanged | repository | Unrelated active plan; byte-for-byte preservation baseline. |
+### Existing preservation paths (14)
 
-**Candidate count in this table is 97 atomic entries.** The implementation inventory must print exactly `97` entries (including directory entries and tracked/ignored state) and fail closed if any path, state or count differs unexpectedly.
+| Path | Disposition |
+|---|---|
+| README.md | preserve |
+| docs/README.md | preserve |
+| .gitignore | preserve |
+| AGENTS.md | preserve |
+| docs/architecture/plans/15-01-auth-contract-and-crypto.md | preserve unchanged |
+| docs/architecture/plans/15-02-auth-persistence-and-repository.md | preserve unchanged |
+| docs/architecture/plans/15-03-auth-cli-and-startup.md | preserve unchanged |
+| docs/architecture/plans/15-04-server-security-boundary.md | preserve unchanged |
+| docs/architecture/plans/15-05-web-auth-and-sse.md | preserve unchanged |
+| docs/architecture/plans/15-06-onboarding-draft-and-scheduler-guard.md | preserve unchanged |
+| docs/architecture/plans/15-07-russian-ui-and-artifact-cleanup.md | preserve unchanged |
+| docs/architecture/plans/15-08-verification-and-review.md | preserve unchanged |
+| docs/architecture/plans/15-09-atomic-auth-v2-remediation.md | preserve unchanged |
+| docs/architecture/plans/15-auth-onboarding-ui-hardening.md | preserve unchanged |
+
+### Exact delete targets (8)
+
+Пользователь прямо распорядился удалить старые материалы. Archive не создаётся (destination: none); удаление разрешено только при повторном совпадении существования, Git tracking и SHA-256 непосредственно перед каждой операцией. Любое несовпадение останавливает удаление соответствующего файла.
+
+| Path | Expected SHA-256 | Destination | Disposition |
+|---|---|---|---|
+| artifacts/security/pnpm-audit-prod-2026-09-21.json | 8447f4373d97d220c7a78a148e455aa23b472793403a47dbcf5febceac49c5ef | none | delete exact file |
+| artifacts/security/pnpm-audit-prod-a0f18b3cfd8e8b3ae3139c9c9973ae2e2ebd81d8.json | dff8095a1e0e7b08832a7349fe54fa2e151d456949b2269cde70d4046465dbf4 | none | delete exact file |
+| artifacts/security/pnpm-audit-prod-b3b66154729ca2b373e0424dbab96b4435ec2c11.json | 298748970c310a84ff5c63082cfa8e2713f38b8fe7e38f01a62bd7c09a62776b | none | delete exact file |
+| artifacts/task-10-fix-report.md | f7419f134b18d6bb52acef8ccc60adff4d4e37848a350047e0dccae9110860b9 | none | delete exact file |
+| docs/99-plan-analysis-report.md | c2024bddc23bb433d5ce7a4a1b1daf9eece90055fb4c7213d48bca3e057d3b6f | none | delete exact file |
+| docs/audit/02-audit-report.md | 331c0c864127170639d3ef6a80fc00dec4c86e0b94c8e2924b148aa5c2acaf54 | none | delete exact file |
+| docs/review/final-report.json | 16d4c6f7cc35551a472e0153b1e70b4e05976c83bc4dbc614e48dbc6cb16dfb4 | none | delete exact file |
+| docs/review/findings.json | be649c91edbcbfbbeef4e4dd93a5a60795b5a35b420d20824e88d10e6559a4f3 | none | delete exact file |
+
+scan-manifest.json, workflows, scripts, tests, directories/root paths, current README files and active plans are outside this delete table and must remain untouched.
+
+Fail-closed recheck: immediately before removing each row, require Test-Path -LiteralPath, exact git ls-files --error-unmatch -- <path>, and Get-FileHash -Algorithm SHA256 equal to the listed value. Delete that one file using Remove-Item -LiteralPath; never recurse or substitute another path. Afterward confirm the exact path is absent and the other targets still match their manifest until processed.
 
 ## Implementation tasks
 
-### Task 1 — Freeze context and reproduce the initial inventory
+### Task 1 — Freeze context and record the 2026-10-02 rebaseline
 
 Files: repository root, `docs/architecture/plans/`, candidate paths above. Symbols/interfaces: Git index/worktree state, path classification, plan filenames.
 
 - Run `git branch --show-current`, `git rev-parse HEAD`, `git status --short --untracked-files=all`, `git ls-files`, and path enumeration without `git clean`.
 - Confirm `develop` and expected HEAD; record all ten tracked `15-*` plans as preserved unrelated work.
-- Re-enumerate hidden, tracked, untracked and ignored candidate files and directories. Produce a machine-readable inventory outside the repository or in an explicitly temporary review location, not as a new repository artifact.
+- Rebaseline the existing 97 listed entries against the current filesystem and Git index; record exactly 75 missing, 14 preservation paths and 8 delete targets. Do not discover substitute targets or generate an in-repository inventory artifact.
 - Run the governance structure check `pnpm docs:check` from the repository root; record its exit code/output and confirm it does not validate date values.
-- Run this separate deterministic metadata/date validator from the repository root (it validates the exact frontmatter fields and ISO calendar dates for plan-16 without writing files):
-  ```bash
-  node --input-type=module -e "import {readFileSync} from 'node:fs'; const p='docs/architecture/plans/16-documentation-cleanup-and-refresh.md'; const text=readFileSync(p,'utf8'); const fm=text.match(/^---\r?\n([\s\S]*?)\r?\n---/); if(!fm) throw new Error('missing frontmatter'); const required={id:'plan-16',kind:'plan',status:'blocked',created:'2026-09-25',updated:'2026-09-30',title:'Очистка и актуализация документации Ebb Orchestrator'}; for(const [key,value] of Object.entries(required)){const m=fm[1].match(new RegExp('^'+key+':\\s*(.+)$','m')); if(!m||m[1].trim()!==value) throw new Error(key+' mismatch'); if((key==='created'||key==='updated')&&!/^\d{4}-\d{2}-\d{2}$/.test(m[1].trim())) throw new Error(key+' is not ISO date');} console.log('plan-16 metadata/date validation passed: status=blocked created=2026-09-25 updated=2026-09-30');"
+- Validate the exact Plan16 frontmatter dates with this read-only PowerShell snippet from the repository root:
+  ```powershell
+  $planPath = 'docs/architecture/plans/16-documentation-cleanup-and-refresh.md'
+  $content = Get-Content -LiteralPath $planPath -Raw
+  $frontMatterResult = [regex]::Match($content, '(?s)\A---\r?\n(?<yaml>.*?)\r?\n---')
+  if (-not $frontMatterResult.Success) { throw 'Plan16 YAML frontmatter is missing.' }
+  $yaml = $frontMatterResult.Groups['yaml'].Value
+  $expectedDates = [ordered]@{ created = '2026-09-25'; updated = '2026-10-02' }
+  foreach ($entry in $expectedDates.GetEnumerator()) {
+    if ($yaml -notmatch "(?m)^$($entry.Key):\s+$([regex]::Escape($entry.Value))\s*$") {
+      throw "Plan16 $($entry.Key) does not match the expected date."
+    }
+    $parsedDate = [datetime]::MinValue
+    $isValidDate = [datetime]::TryParseExact(
+      [string]$entry.Value,
+      'yyyy-MM-dd',
+      [Globalization.CultureInfo]::InvariantCulture,
+      [Globalization.DateTimeStyles]::None,
+      [ref]$parsedDate
+    )
+    if (-not $isValidDate) { throw "Plan16 $($entry.Key) is not a valid ISO calendar date." }
+  }
+  'Plan16 frontmatter dates passed: created=2026-09-25 updated=2026-10-02'
   ```
-- Expected: `pnpm docs:check` exits `0` for frontmatter/id/filename checks, the inline validator exits `0` and prints `plan-16 metadata/date validation passed: status=blocked created=2026-09-25 updated=2026-09-30`; neither command changes files. No candidate is silently omitted; any inventory mismatch blocks further work; inventory/validation leaves no `docs/roadmap/generated.md` or other new artifact.
+- Expected: `pnpm docs:check` exits `0` for frontmatter/id/filename checks and the PowerShell snippet exits `0` with the stated message; neither command changes files. No candidate is silently omitted; any inventory mismatch blocks further work; inventory/validation leaves no `docs/roadmap/generated.md` or other new artifact.
 
 ### Task 2 — Establish authority and references
 
@@ -222,25 +178,23 @@ Files: `.hermes.md`, `AGENTS.md`, scoped `AGENTS.md`, canonical specs, all plans
 - Build a reference matrix showing source path, referring path, link type, and whether the link is load-bearing.
 - Expected: active plans remain untouched and every deletion/move candidate has an explicit reference disposition.
 
-### Task 3 — Prove integrity and safety before any destructive operation
+### Task 3 — Verify exact deletion targets immediately before cleanup
 
-Files: all candidate files; generated manifest must stay outside repository until approval.
+Files: the eight exact delete targets in the rebaseline table.
 
-- Create a SHA-256 manifest with normalized relative paths, byte size, mode/type and hash.
-- Validate JSON syntax/UTF-8 for every JSON candidate; validate Markdown/HTML/TXT UTF-8; run `git diff --check` on the pre-existing state without modifying it.
-- Compare `git ls-files` against filesystem inventory and `git status --short --untracked-files=all`; detect tracked/untracked duplicates by normalized content hash.
-- Scan candidate contents and paths for secrets, credentials, tokens, private keys, absolute local paths and unsafe symlink/junction traversal. Redact findings from reports.
-- Expected: manifest is complete, hashes are reproducible, no archive includes secrets, and any invalid/ambiguous item is `preserve/blocked`, never deleted.
+- For each target individually, recheck `Test-Path -LiteralPath`, exact tracked status via `git ls-files --error-unmatch`, and SHA-256 against the table immediately before removal.
+- Stop on any missing, untracked or hash-mismatched path; do not substitute or expand the target set.
+- Preserve the 14 listed paths and all paths outside the 8-row delete table.
+- Expected: all eight targets match their recorded hashes before removal; no archive or secret-bearing report is created.
 
-### Task 4 — Verify external archive and define approval package
+### Task 4 — Apply the existing user instruction to the exact rebaseline
 
-Files: external archive directory chosen outside repository; disposition report; SHA-256 manifest.
+Files: the eight exact delete targets and the two historical governance evidence files.
 
-- Copy only approved-to-archive candidates while preserving relative paths and metadata needed for restore.
-- Hash the archive and each archived file again; compare with the pre-archive manifest; test extraction/listing and path containment.
-- Prepare the complete user-facing disposition list: `path → action → target/archive → reason`, including all `preserve`, `inspect`, `move` and `delete` rows and unresolved findings.
-- **Explicit approval checkpoint:** stop and request the user's written approval of the exact list, archive location and any README/`.gitignore`/`AGENTS.md` changes. No delete, move or content update occurs before approval.
-- Expected: approval package is reproducible and a missing/changed approval means stop without side effects.
+- Record the exact eight paths and expected hashes; destination is none because the user directed deletion without an archive.
+- Mark only the historical references to `artifacts/task-10-fix-report.md` and `docs/audit/02-audit-report.md` in their governance evidence files; retain all other evidence.
+- Do not create an archive or request another approval for these exact removals. This task does not authorize changes to other README, policy, plan or candidate paths.
+- Expected: the table and two evidence notes match the rebaseline before the individually verified deletes.
 
 ### Task 5 — Audit every pnpm command from real manifests
 
@@ -320,14 +274,15 @@ Files: `.gitignore`, `AGENTS.md`, possibly no change if evidence does not justif
 - Add an `AGENTS.md` rule only if it states where temporary files may be created, requires cleanup or external placement, preserves source/tests and forbids destructive Git cleanup. Keep it consistent with existing instructions.
 - Expected: either a minimal justified diff or an explicit no-change decision with evidence.
 
-### Task 8 — Execute approved cleanup and verify links/status
+### Task 8 — Execute the exact cleanup and verify links/status
 
-Files: only approved candidate paths, `.gitignore`, `AGENTS.md`, README files.
+Files: only the eight exact target files and the two named governance evidence files.
 
-- After approval and archive re-hash, perform only the approved delete/move operations; preserve unrelated active plans and all non-approved candidates.
-- Re-run path/reference scans, `pnpm docs:inventory`, `pnpm docs:check`, `pnpm docs:test`, `pnpm docs:roadmap --dry-run`/canonical roadmap check, and link validation.
-- Verify archived items can be restored, deleted/moved paths are absent, no README link points at a removed path, and no new root artifact was generated unintentionally.
-- Expected: repository contains only approved changes and all surviving references resolve or are intentionally documented as historical/external.
+- Recheck each path, tracked state and exact SHA-256 immediately before its individual `Remove-Item -LiteralPath` operation; do not archive, recurse, move or delete directories.
+- Update only the two historical governance evidence references named in Task 4, preserving their surrounding evidence.
+- Verify all eight paths are absent, all 14 preservation paths remain, no protected path changed, and no surviving link points to a removed target.
+- Run relevant documentation checks after deletion; do not regenerate the canonical roadmap or change plan statuses.
+- Expected: exactly the eight listed files are deleted and only the targeted Plan16/governance documentation changes accompany them.
 
 ### Task 9 — Final documentation and repository gates
 
@@ -344,36 +299,30 @@ Behavior changes are documentation/governance behavior rather than runtime behav
 
 ## Acceptance criteria
 
-**Reconciliation 2026-09-30:** The first and third checks describe the completed draft-only phase. Check 2 is reopened because a Plan 15 file is modified in the current worktree; checks 4–13 had been marked complete without current evidence and are also reopened. The candidate inventory is stale, and no exact user approval or verified external archive is recorded. Keep this plan `blocked` and perform no delete, move, archive, README or policy implementation until the approval gate is satisfied.
+**Reconciliation 2026-10-02:** The rebaseline is 97 listed paths: 75 missing, 14 existing preservation paths and 8 exact delete targets. The user's direct instruction authorizes deleting those eight historical files with no archive or additional approval. Plan16 remains blocked because its independent README, command-audit and governance work is incomplete; this targeted cleanup does not change lifecycle status.
 
-- [x] New plan is the only file created in this draft phase; no code, existing plan, archive, delete or move was performed.
-- [ ] Следующие десять pre-existing tracked `15-*` plans остаются byte-for-byte immutable и не входят в cleanup: `docs/architecture/plans/15-01-auth-contract-and-crypto.md`, `docs/architecture/plans/15-02-auth-persistence-and-repository.md`, `docs/architecture/plans/15-03-auth-cli-and-startup.md`, `docs/architecture/plans/15-04-server-security-boundary.md`, `docs/architecture/plans/15-05-web-auth-and-sse.md`, `docs/architecture/plans/15-06-onboarding-draft-and-scheduler-guard.md`, `docs/architecture/plans/15-07-russian-ui-and-artifact-cleanup.md`, `docs/architecture/plans/15-08-verification-and-review.md`, `docs/architecture/plans/15-09-atomic-auth-v2-remediation.md`, `docs/architecture/plans/15-auth-onboarding-ui-hardening.md`.
-- [x] `docs/architecture/plans/16-documentation-cleanup-and-refresh.md` явно исключён из preservation baseline: его targeted edit является единственным изменением draft phase и не считается pre-existing immutable plan.
-- [ ] Final implementation inventory exactly matches the approved 97-entry candidate list, including every listed directory/file and tracked/ignored state, or has a documented user-approved amendment.
-- [ ] Every candidate has a disposition and reason; `preserve/inspect` items are not treated as deletion permission; for `.cuperpowers/`, `.superpowers/` and `workspace/`, archive outside repo, verify preservation, then delete only the root directory after approval.
-- [ ] SHA-256 manifest, JSON/UTF-8 validation, tracked-vs-untracked comparison, path/diff checks, reference scan and secret scan pass.
-- [ ] External archive is outside repository, path-safe, restorable and re-hashed successfully before cleanup.
-- [ ] Explicit user approval is recorded before any delete/move/README/policy implementation.
-- [ ] `README.md`, `docs/README.md` and `tools/hermes/README.md` are Russian, metadata-free and link to real current paths.
-- [ ] README documents only verified `pnpm` commands and states prerequisites/environment-dependent behavior.
-- [ ] `.gitignore` changes, if any, are narrow and do not hide source tests; `AGENTS.md` changes, if any, define safe temporary-file handling.
-- [ ] `pnpm docs:check` validates frontmatter/id/filename structure; the separate deterministic metadata/date validator validates plan-16 `created: 2026-09-25` and `updated: 2026-09-30` as ISO dates; inventory, validation and roadmap audit leave neither `docs/roadmap/generated.md` nor any other new artifact.
-- [ ] Documentation validators, quality gates, link/status checks and `git diff --check` pass; no unrelated changes remain.
+- [x] Rebaseline records the current 97-path inventory: 75 absent paths, 14 preserved paths and 8 exact tracked delete targets.
+- [x] The 14 existing preservation paths are enumerated and protected; active 15-* plans remain outside cleanup.
+- [x] The user directly instructed deletion of old materials; no external archive or additional approval is required for the exact eight targets.
+- [x] Immediately before each deletion, existence, tracked state and SHA-256 matched the exact rebaseline row.
+- [x] Deleted only the eight exact files individually; verified each is absent and all 14 preservation paths remain.
+- [x] Marked the two specified historical evidence references as deleted by this rebaseline while preserving all remaining evidence.
+- [ ] README.md, docs/README.md and tools/hermes/README.md are Russian, metadata-free and link to real current paths.
+- [ ] README documents only verified pnpm commands and states prerequisites/environment-dependent behavior.
+- [ ] .gitignore changes, if any, are narrow and do not hide source tests; AGENTS.md changes, if any, define safe temporary-file handling.
+- [x] pnpm docs:check validates frontmatter/id/filename structure; the read-only PowerShell snippet validates plan-16 created: 2026-09-25 and updated: 2026-10-02 as ISO dates; inventory and validation leave neither docs/roadmap/generated.md nor any other new artifact.
+- [ ] Documentation validators, quality gates, link/status checks and git diff --check pass; no unrelated changes remain.
 
 ## Risks and rollback
 
-| Risk | Mitigation | Rollback |
+| Risk | Mitigation | Recovery |
 |---|---|---|
-| Historical evidence is deleted as “generated” | Hash/reference/provenance inventory and explicit `preserve/inspect` disposition | Restore exact archived paths after verifying hashes; revert only approved deletion commit/diff. |
-| Archive is incomplete or modified | Per-file and archive SHA-256 before/after, extraction/path test | Stop cleanup; recreate archive; do not delete source candidates. |
-| Secret or absolute path leaks into archive/report | Secret/path scan with fail-closed disposition and redacted evidence | Destroy unsafe archive through approved secure process; preserve source and report blocker. |
-| Broad `.gitignore` hides source tests | Test against actual `apps/*/test` paths and `git check-ignore -v` | Remove narrow rule and restore tracking; never use `git clean`. |
-| README advertises stale/nonexistent command | Manifest-driven command enumeration and real exit-code log | Revert only incorrect prose and rerun docs checks. |
-| Link removal breaks active plans or docs | Reference matrix and post-cleanup link scan | Restore archived path or update only approved links. |
-| User approval becomes ambiguous after inventory changes | Freeze manifest and require written amendment for any path/hash/action change | Stop and request a new approval; no partial cleanup. |
+| Rebaseline drift or a file changes before deletion | Recheck exact path, tracked state and SHA-256 immediately before each individual removal; stop on mismatch. | Do not delete that path; refresh evidence and disposition before any further action. |
+| A historical reference appears to be a live dependency | Search and classify the exact references; update only the two named governance evidence rows as historical. | Restore the path from Git history only if a verified active consumer is found; reassess deletion scope. |
+| Cleanup reaches an unlisted path | Use individual `-LiteralPath` operations, no recursion and no wildcard expansion. | Stop immediately and preserve all unrelated paths. |
 
-Rollback is restoration from the verified external archive plus reverting approved documentation/policy diffs. Never roll back with `git reset --hard`, `git clean`, or unreviewed bulk deletion.
+No archive is created by direct user instruction. These deletions are recoverable from Git history; never use `git reset --hard`, `git clean`, recursive removal, or unreviewed bulk deletion.
 
 ## Approval gate and completion rule
 
-This plan is a draft until the user explicitly approves the complete disposition table, archive target, and proposed README/`.gitignore`/`AGENTS.md` changes. Approval must occur after Task 1–4 evidence and before Task 5–9 implementation side effects. If the user rejects or changes any row, update the inventory/disposition package and obtain approval again. Only after all acceptance criteria and gates pass may the implementation be reported complete.
+The user has directly instructed deletion of the eight exact files in the 2026-10-02 rebaseline. For those files, no archive or additional approval is required; immediately recheck exact path, tracked state and SHA-256, then delete individually. This does not authorize other deletion/move operations or README/policy edits. Plan16 remains blocked until its remaining acceptance criteria and required gates pass; do not change its status or generated roadmap as part of this targeted cleanup.
