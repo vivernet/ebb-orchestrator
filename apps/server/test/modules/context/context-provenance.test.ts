@@ -125,6 +125,17 @@ describe('domain-separated provenance digests', () => {
     acceptance_criterion_ref: 'AC-2',
   } satisfies DefectProvenancePayloadV1;
 
+  it('hashes the versioned context budget policy with its own fixed NUL-separated vector', () => {
+    const policy = { version: 1, limit: 2048 };
+    const digest = semanticDigest('digestContextBudgetPolicyV1', policy);
+
+    expect(digest).toBe('2d45639a47c6485b11fd0e701a5e678be4d1b872aa548528ee2830449bfa8514');
+    expect(semanticDigest('digestContextBudgetPolicyV1', { ...policy, limit: 2049 })).not.toBe(digest);
+    expect(() => semanticDigest('digestContextBudgetPolicyV1', { ...policy, version: 2 })).toThrow(/unsupported|invalid/i);
+    expect(() => semanticDigest('digestContextBudgetPolicyV1', { ...policy, limit: -1 })).toThrow(/unsupported|invalid/i);
+    expect(() => semanticDigest('digestContextBudgetPolicyV1', { ...policy, extra: true })).toThrow(/fields/i);
+  });
+
   it('hashes the complete validated contract and exact Request payload with fixed vectors', () => {
     expect(semanticDigest('digestTaskContractV1', contract)).toBe('b3b7b20a3da87182ed94dff59718a9880a2cf898e08b7689678da877973f9ca7');
     expect(semanticDigest('digestRequestV1', request)).toBe('3bfdc597415229d56ab736b333a0971f958224f04b5801dc6a61a4f26ba2224f');

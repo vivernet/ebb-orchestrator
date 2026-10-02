@@ -4,7 +4,7 @@ kind: plan
 status: blocked
 title: План реализации среды выполнения Orchestrator Hermes и автономной задачи
 created: 2026-09-23
-updated: 2026-09-28
+updated: 2026-10-02
 depends_on: []
 specs:
   - ../specs/01-system-design.md
@@ -30,16 +30,11 @@ evidence:
 
 **Архитектура:** Orchestrator создаёт изолированный `HERMES_HOME`, запускает Hermes в назначенном worktree и предоставляет единственный Orchestrator MCP набор инструментов. Hermes завершает run через `submit_result`; backend не парсит свободный финальный текст как результат домена.
 
-## Provider credential bridge proposal (2026-09-28)
+## Superseded historical record: provider credential bridge proposal (2026-09-28)
 
-Для acceptance запусков с OpenAI-compatible API key Orchestrator разрешает указать non-secret provider endpoint и имя записи в `SecretStore` через `EBB_HERMES_PROVIDER_BASE_URL` и `EBB_HERMES_PROVIDER_SECRET_NAME`. Значение хранится в `SecretStore` (`service=hermes-provider`) и разрешается непосредственно перед каждым run. Отсутствие или ошибка SecretStore останавливает запуск до создания процесса. Секрет создаётся через аутентифицированный `POST /api/v1/secrets` с `service=hermes-provider` и выбранным `name`; значение endpoint после сохранения возвращает только metadata.
+> This proposal is superseded by the user-approved Proposal09 direction (2026-10-02); it is not current setup guidance. Earlier drafts required a separate Ebb SecretStore entry and provider-key environment injection. Production Runs must reuse the provider/auth already configured through Hermes-native mechanisms, with an isolated per-Run profile under the auth-owning Hermes root. The old note describing `openai-codex` OAuth was a dated observation, not confirmation of current selection; Plan20 acceptance must revalidate the explicitly configured non-secret provider/model/endpoint. The runtime bridge still needs replacement under Plan20.
 
-Hermes получает ключ только через process environment `EBB_HERMES_PROVIDER_API_KEY`; созданный для run `config.yaml` содержит лишь endpoint, имя environment variable и `run.model`. Ключ не попадает в профиль, prompt, CLI args, structured result или persisted artifacts; совпадения в stdout/stderr очищаются перед сохранением. Hermes provider config не объявляет `terminal.env_passthrough`, поэтому ключ не пересылается в shell/MCP child processes по [штатной модели фильтрации Hermes](https://github.com/nousresearch/hermes-agent/blob/main/SECURITY.md#23-credential-scoping). Это всё ещё передача ключа самому Hermes процессу: trusted runtime или in-process plugin может прочитать его. Orchestrator не обещает OS-level isolation в Local Mode.
-
-Endpoint требует HTTPS; HTTP принимается только для loopback development. URL credentials, query и fragment запрещены. Secret name проверяется allowlist-шаблоном; value не включается в ошибку разрешения.
-
-Текущая активная настройка пользователя `openai-codex` — OAuth, а не API key. Этот bridge намеренно не копирует Hermes/Codex OAuth files в agent-visible profile и не реализует proxy/token broker. Поэтому исходный provider-backed acceptance для `openai-codex` остаётся заблокированным до отдельного безопасного OAuth broker/isolation решения или выбора настроенного OpenAI-compatible provider через SecretStore.
-
+**Provider/auth documentation owner:** Plan20 Task7 owns `README.md` and `docs/development/05-hermes.md` as the single source for end-to-end setup. Those instructions must explain that Hermes provider/model and native authentication are configured once through Hermes, Orchestrator Runs reuse that configured selection/auth, root `.env` contains only Ebb settings, and no duplicate Ebb SecretStore credential or provider key is required. Plan04 acceptance consumes that documented flow; it must not introduce a competing setup path.
 **Технологический стек:** Hermes CLI; stdio MCP; TypeScript/Zod контракты; Node process adapter; существующие модули Action Gateway/Git/Workflow.
 
 **Спецификация:** `docs/architecture/specs/01-system-design.md`
