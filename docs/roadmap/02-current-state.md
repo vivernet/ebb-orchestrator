@@ -73,3 +73,7 @@ updated: 2026-10-03
 - Пользователь подтвердил, что старые материалы являются мусором и должны удаляться, а не архивироваться. В рамках точного Plan16 rebaseline восемь tracked historical targets уже удалены по одному после проверки path, Git tracking и SHA-256; коммит `966f1ec` содержит эти удаления.
 - Остальные 75/97 inventory entries уже отсутствовали; 14 существующих путей — актуальные README, инструкции и активные Plan15 документы — сохранены. В этом inventory новых исторических delete targets нет, и broader filesystem cleanup не выполнялся.
 - Старые формулировки о необходимости внешнего archive target и approval rebaseline больше не являются текущими prerequisites. Plan16 остаётся `blocked` по независимым незавершённым README, command-matrix и governance acceptance criteria; статус не менялся.
+
+## Дополнение от 2026-10-03 — повторный Plan20 readiness review
+
+Новый независимый read-only review Plan20 завершился `APPROVED` после закрытия reviewer findings. Это утверждение готовности плана к реализации, не финальный review реализованного изменения. Свежие проверки: `pnpm docs:check` PASS, `pnpm docs:test` 20/20, `git diff --check` PASS, `run-process-owner.test.ts` 9/9. Статус Plan20 остаётся `in_progress`; сгенерированный реестр уже содержит эту запись. Task5A Linux acceptance остаётся `NOT RUN`: единственный WSL Ubuntu-24.04 по-прежнему `Installing`, live подходящего self-hosted runner не подтверждён. Удаление/переустановка WSL не выполнялись, ожидается решение пользователя о восстановлении до тестов.
