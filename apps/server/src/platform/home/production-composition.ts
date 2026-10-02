@@ -14,7 +14,9 @@ import { MergeService, type MergeResult } from "../../modules/git/merge-service.
 import { TaskWorkspaceProvisioner } from "../../modules/git/task-workspace-provisioner.js";
 import { EpicWorkspaceProvisioner } from "../../modules/git/epic-workspace-provisioner.js";
 import { WorktreeManager } from "../../modules/git/worktree-manager.js";
-import type { IntegrationServiceFactory, IntegrationServiceFactoryContext } from "../../modules/planning/epic-orchestrator.js";
+import type { EpicOrchestrator, IntegrationServiceFactory, IntegrationServiceFactoryContext } from "../../modules/planning/epic-orchestrator.js";
+import type { PlanningService } from "../../modules/planning/planning-service.js";
+import type { SchedulerService } from "../../modules/scheduler/scheduler-service.js";
 import type { HermesProviderBridgeConfig } from "../../modules/runtime/hermes/hermes-provider-bridge.js";
 import type { SecretStore } from "../security/secret-store.js";
 import { listActiveApprovedOnboardingRepositories } from "../../modules/projects/onboarding-service.js";
@@ -54,6 +56,35 @@ export interface ProductionStartupReconciliationOptions {
   status: StatusTrackerInterface;
   /** Project Config integrity проверяется после process-owner preflight. */
   projectConfigService: Pick<ProjectConfigService, "reconcileActiveOnStartup">;
+}
+
+/**
+ * Создаёт application-specific recovery callbacks в порядке production startup.
+ * Общий список используют и `main.ts`, и restart acceptance: это сохраняет одну
+ * проверяемую последовательность после process-owner preflight и platform recovery.
+ *
+ * @param dependencies Production services, чьи durable state reconciles выполняются до READY.
+ * @param dependencies.epicOrchestrator Epic recovery и approved-plan resume.
+ * @param dependencies.scheduler Восстановление scheduler reservations.
+ * @param dependencies.planningService Восстановление незавершённых Request planning jobs.
+ * @returns Пять callbacks для Epic runs, scheduler, Requests, execution claims и approved Epic resume.
+ */
+export function createApplicationRecoveryReconcilers(dependencies: {
+  /** Epic lifecycle recovery и возобновление approved plans. */
+  epicOrchestrator: Pick<EpicOrchestrator, "reconcileInterruptedRuns" | "reconcileInterruptedExecutionClaims" | "resumeApprovedEpics">;
+  /** Восстанавливает scheduler reservations после Run recovery. */
+  scheduler: Pick<SchedulerService, "reconcile">;
+  /** Восстанавливает незавершённые Request planning jobs. */
+  planningService: Pick<PlanningService, "reconcileInterruptedRequests">;
+}): Array<() => Promise<void>> {
+  const { epicOrchestrator, scheduler, planningService } = dependencies;
+  return [
+    async () => { epicOrchestrator.reconcileInterruptedRuns(); },
+    async () => { scheduler.reconcile(); },
+    async () => { planningService.reconcileInterruptedRequests(); },
+    async () => { epicOrchestrator.reconcileInterruptedExecutionClaims(); },
+    () => epicOrchestrator.resumeApprovedEpics(),
+  ];
 }
 
 /**

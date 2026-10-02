@@ -23,7 +23,7 @@ import { type Migration } from "./platform/database/migrator.js";
 import { applyMigrationsWithVerifiedBackup } from "./platform/database/backup-service.js";
 import { DiagnosticsService } from "./platform/diagnostics/diagnostics-service.js";
 import { resolveOrchestratorHome } from "./platform/home/orchestrator-home.js";
-import { createProductionComposition } from "./platform/home/production-composition.js";
+import { createApplicationRecoveryReconcilers, createProductionComposition } from "./platform/home/production-composition.js";
 import { SingleInstanceLock } from "./platform/process/single-instance-lock.js";
 import { SchedulerService, SchedulerSafetyWorker } from "./modules/scheduler/scheduler-service.js";
 import { resolveHermesProviderBridgeConfig } from "./modules/runtime/hermes/hermes-provider-bridge.js";
@@ -235,11 +235,7 @@ async function startLifecycle(): Promise<void> {
   ...startupReconciliation,
   additionalReconcilers: [
     ...startupReconciliation.additionalReconcilers,
-    async () => { epicOrchestrator.reconcileInterruptedRuns(); },
-    async () => { scheduler.reconcile(); },
-    async () => { planningService.reconcileInterruptedRequests(); },
-    async () => { epicOrchestrator.reconcileInterruptedExecutionClaims(); },
-    () => epicOrchestrator.resumeApprovedEpics(),
+    ...createApplicationRecoveryReconcilers({ epicOrchestrator, scheduler, planningService }),
   ],
   workers,
   signal: startupAbortController.signal,

@@ -91,7 +91,7 @@ describe("Coordinator planning background job", () => {
   }
 
   it("keeps request, reservation, and resource lock active when Coordinator stop proof is unavailable", async () => {
-    const { projectId, requestId, registry, runs } = await setup();
+    const { requestId, registry, runs } = await setup();
     vi.spyOn(runs, "executePreparedRun").mockImplementation(async (runId) => {
       db!.run("UPDATE agent_runs SET status='STARTED' WHERE id=$id", { id: runId });
       throw new Error("runtime stop is unproven");
@@ -112,7 +112,7 @@ describe("Coordinator planning background job", () => {
   });
 
   it("keeps a planning role reservation when its failed Run has no persisted stop proof", async () => {
-    const { projectId, requestId, registry, runs } = await setup();
+    const { requestId, registry, runs } = await setup();
     const execute = runs.executePreparedRun.bind(runs);
     vi.spyOn(runs, "executePreparedRun").mockImplementation(async (runId) => {
       const role = db!.get<{ role: string }>("SELECT role FROM agent_runs WHERE id=$id", { id: runId })?.role;

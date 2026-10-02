@@ -367,16 +367,19 @@ export class EpicOrchestrator {
     if (task.status === "INTEGRATED_INTO_EPIC" || task.status === "RELEASED") return;
     if (task.status === "DRAFT") this.workflow.transition(task.id, "READY");
     let result: EpicAgentResult;
+    let evidencePhase = "child_task";
     const current = this.workflow.currentStage(task.id);
     if (current === "READY") {
        result = await this.runPhase(epicId, task.id, "child_task", "developer", { phase: "child_task", role: "developer", taskId: task.id, epicId, targetBranch: branch });
     } else if (current === "DEVELOPMENT") {
-      // DEVELOPMENT является Объект durable in-flight checkpoint после Объект restart.
-      result = await this.runPhase(epicId, task.id, "child_task", "developer", { phase: "child_task_reconcile", role: "developer", taskId: task.id, epicId, targetBranch: branch });
+      // DEVELOPMENT is a durable in-flight checkpoint after process restart.
+      evidencePhase = "child_task_reconcile";
+      result = await this.runPhase(epicId, task.id, evidencePhase, "developer", { phase: evidencePhase, role: "developer", taskId: task.id, epicId, targetBranch: branch });
     } else {
-      result = this.loadPhaseResult(epicId, task.id, "child_task");
+      evidencePhase = this.hasPhase(epicId, task.id, "child_task") ? "child_task" : "child_task_reconcile";
+      result = this.loadPhaseResult(epicId, task.id, evidencePhase);
     }
-    this.requirePersistedEvidence(epicId, task.id, "child_task", result);
+    this.requirePersistedEvidence(epicId, task.id, evidencePhase, result);
     const stage = this.workflow.currentStage(task.id);
     if (stage === "DEVELOPMENT") this.workflow.transition(task.id, "REVIEW");
     if (this.workflow.currentStage(task.id) === "REVIEW") {
@@ -780,8 +783,8 @@ export class EpicOrchestrator {
 
   /**
    * Завершает устаревшие Epic phases только после owner preflight.
-   * @precondition Вызывается в lifecycle reconciliation после `preflightRunProcessOwners` и до scheduler reconciliation.
-   * @sideEffects Переводит доказанно остановленные Runs/phases в terminal state и удаляет безопасно повторяемые незавершённые checkpoints.
+   * @remarks Precondition: lifecycle reconciliation уже выполнил `preflightRunProcessOwners` и ещё не выполнил scheduler reconciliation.
+   * Переводит доказанно остановленные Runs/phases в terminal state и удаляет безопасно повторяемые незавершённые checkpoints.
    * При отсутствии STOPPED proof оставляет фазу и её reservation для следующего recovery.
    */
   reconcileInterruptedRuns(): void {

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { createProductionComposition } from "../../../src/platform/home/production-composition.js";
+import { createApplicationRecoveryReconcilers, createProductionComposition } from "../../../src/platform/home/production-composition.js";
 import { resolveOrchestratorHome } from "../../../src/platform/home/orchestrator-home.js";
 import { InMemorySecretStore } from "../../../src/platform/security/secret-store.js";
 import type { Database } from "../../../src/platform/database/database.js";
@@ -175,7 +175,6 @@ describe("production composition", () => {
         reconcile: async () => { events.push("git-reconcile"); return { state: "IN_SYNC" }; },
       },
     });
-
     await startSystem({
       instanceLock: { acquire: async () => ({ pid: 1 }), release: async () => {} },
       lockAlreadyAcquired: true,
@@ -288,6 +287,25 @@ describe("production composition", () => {
         reconcile: async () => { events.push("git-reconcile"); return { state: "IN_SYNC" }; },
       },
     });
+    const schedulerReconcile = scheduler.reconcile.bind(scheduler);
+    vi.spyOn(scheduler, "reconcile").mockImplementation(() => {
+      events.push("scheduler-reconcile");
+      return schedulerReconcile();
+    });
+    const applicationRecoveryReconcilers = createApplicationRecoveryReconcilers({
+      epicOrchestrator: {
+        reconcileInterruptedRuns: () => { events.push("epic-reconcile"); },
+        reconcileInterruptedExecutionClaims: () => { events.push("execution-claims-reconcile"); return 0; },
+        resumeApprovedEpics: async () => {
+          events.push("resume-approved-epics");
+          expect(database!.get<{ status: string }>("SELECT status FROM scheduler_reservations WHERE run_id=$runId", { runId: interruptedRun.id })?.status)
+            .toBe("RELEASED");
+          scheduler.dispatchAgentRun("recovery-run", projectId, "developer", "test");
+        },
+      },
+      scheduler,
+      planningService: { reconcileInterruptedRequests: () => { events.push("planning-reconcile"); return 0; } },
+    });
 
     await startSystem({
       instanceLock: { acquire: async () => ({ pid: 1 }), release: async () => {} },
@@ -310,19 +328,7 @@ describe("production composition", () => {
       reconcileOutbox: async () => {},
       reconcileJobs: async () => {},
       reconcileArtifacts: async () => {},
-      additionalReconcilers: [
-        async () => { await startup!.additionalReconcilers[0]!(); },
-        async () => { events.push("epic-reconcile"); },
-        async () => { events.push("scheduler-reconcile"); scheduler.reconcile(); },
-        async () => { events.push("planning-reconcile"); },
-        async () => { events.push("execution-claims-reconcile"); },
-        async () => {
-          events.push("resume-approved-epics");
-          expect(database!.get<{ status: string }>("SELECT status FROM scheduler_reservations WHERE run_id=$runId", { runId: interruptedRun.id })?.status)
-            .toBe("RELEASED");
-          scheduler.dispatchAgentRun("recovery-run", projectId, "developer", "test");
-        },
-      ],
+      additionalReconcilers: [async () => { await startup!.additionalReconcilers[0]!(); }, ...applicationRecoveryReconcilers],
       workers: [{ start: async () => { events.push("worker-start"); }, stop: async () => {} }],
     });
 
@@ -347,18 +353,8 @@ describe("production composition", () => {
       .toBe("RESERVED");
 
     const mainSource = await readFile(join(import.meta.dirname, "../../../src/main.ts"), "utf8");
-    expect(mainSource).toMatch(/additionalReconcilers:\s*\[\s*\.\.\.startupReconciliation\.additionalReconcilers,\s*async \(\) => \{\s*epicOrchestrator\.reconcileInterruptedRuns\(\);\s*\},\s*async \(\) => \{\s*scheduler\.reconcile\(\);\s*\},\s*async \(\) => \{\s*planningService\.reconcileInterruptedRequests\(\);/s);
-    const runRecoveryIndex = mainSource.indexOf("...startupReconciliation.additionalReconcilers");
-    const epicRecoveryIndex = mainSource.indexOf("epicOrchestrator.reconcileInterruptedRuns()");
-    const schedulerRecoveryIndex = mainSource.indexOf("scheduler.reconcile()");
-    const planningRecoveryIndex = mainSource.indexOf("planningService.reconcileInterruptedRequests()");
-    const executionClaimsRecoveryIndex = mainSource.indexOf("epicOrchestrator.reconcileInterruptedExecutionClaims()");
-    const resumeApprovedEpicsIndex = mainSource.indexOf("epicOrchestrator.resumeApprovedEpics()");
-    expect(runRecoveryIndex).toBeGreaterThanOrEqual(0);
-    expect(epicRecoveryIndex).toBeGreaterThan(runRecoveryIndex);
-    expect(schedulerRecoveryIndex).toBeGreaterThan(epicRecoveryIndex);
-    expect(planningRecoveryIndex).toBeGreaterThan(schedulerRecoveryIndex);
-    expect(executionClaimsRecoveryIndex).toBeGreaterThan(planningRecoveryIndex);
-    expect(resumeApprovedEpicsIndex).toBeGreaterThan(executionClaimsRecoveryIndex);
+    expect(mainSource).toMatch(/import\s*\{\s*createApplicationRecoveryReconcilers\s*,\s*createProductionComposition\s*\}\s*from\s*["']\.\/platform\/home\/production-composition\.js["']/);
+    expect(mainSource).toMatch(/additionalReconcilers:\s*\[\s*\.\.\.startupReconciliation\.additionalReconcilers,\s*\.\.\.createApplicationRecoveryReconcilers\(\{\s*epicOrchestrator,\s*scheduler,\s*planningService\s*\}\),\s*\]/s);
+    expect(mainSource).not.toMatch(/epicOrchestrator\.reconcileInterruptedRuns\(\)|epicOrchestrator\.reconcileInterruptedExecutionClaims\(\)|epicOrchestrator\.resumeApprovedEpics\(\)/);
   });
 });
