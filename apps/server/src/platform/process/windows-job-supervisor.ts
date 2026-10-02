@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { ProcessExecutor, type ProcessResult, type ProcessSession } from "./process-executor.js";
 import type { ProcessScopeIdentity, ProcessScopeObservation } from "./process-inspector.js";
-import { encodeSecretFrame, ProcessScopeLaunchNotDispatchedError, type ProcessScopeHandle, type ProcessScopeLaunchRequest, type ProcessScopeSupervisor } from "./run-scope-supervisor.js";
+import { ProcessScopeLaunchNotDispatchedError, type ProcessScopeHandle, type ProcessScopeLaunchRequest, type ProcessScopeSupervisor } from "./run-scope-supervisor.js";
 
 const STOP_TIMEOUT_MS = 30_000;
 const POLL_INTERVAL_MS = 500;
@@ -29,7 +29,6 @@ export class WindowsJobSupervisor implements ProcessScopeSupervisor {
     assertRequest(request);
     if (request.signal?.aborted) throw new ProcessScopeLaunchNotDispatchedError();
     const metadataFrame = encodeMetadataFrame(request);
-    const secretFrame = encodeSecretFrame(request.secret);
     const key = launchKey(owner);
     pendingLaunches.add(key);
     let session: ProcessSession;
@@ -59,7 +58,6 @@ export class WindowsJobSupervisor implements ProcessScopeSupervisor {
       await protocol.nextLine("EBB_HELPER_READY", 10_000);
       if (request.signal?.aborted) throw new Error("WINDOWS_PROCESS_SCOPE_LAUNCH_CANCELLED");
       session.stdin.write(metadataFrame);
-      session.stdin.write(secretFrame);
       identity = parseLiveIdentity(await protocol.nextLine("EBB_SCOPE_READY", 10_000), owner);
       await persistVerifiedIdentity(identity);
       // ResumeThread is gated by this one-byte authorization. Recheck the signal
@@ -158,15 +156,10 @@ function assertRequest(request: ProcessScopeLaunchRequest): void {
   if (!request.executable || !request.cwd || !Number.isSafeInteger(request.timeoutMs) || request.timeoutMs <= 0) {
     throw new TypeError("Invalid Windows process-scope launch request.");
   }
-  if (request.environment["EBB_HERMES_PROVIDER_API_KEY"] !== undefined) throw new Error("PROCESS_SCOPE_SECRET_MUST_USE_STDIN");
   for (const [key, value] of Object.entries(request.environment)) {
     if (!HERMES_CHILD_ENV_KEYS.has(key) || isCredentialEnvironmentKey(key) || !/^[A-Z_][A-Z0-9_]*$/.test(key) || /[\0\r\n]/.test(value)) {
       throw new Error("PROCESS_SCOPE_ENVIRONMENT_REJECTED");
     }
-  }
-  if (request.secret !== undefined && request.secret.length > 0) {
-    const metadata = [request.executable, request.cwd, ...request.args, ...Object.values(request.environment)];
-    if (metadata.some((value) => value.includes(request.secret!))) throw new Error("PROCESS_SCOPE_SECRET_MUST_USE_STDIN");
   }
 }
 

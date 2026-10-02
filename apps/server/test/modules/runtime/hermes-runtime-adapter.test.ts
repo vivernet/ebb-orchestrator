@@ -11,7 +11,6 @@ import { validatePlatform } from "../../../src/platform/config/app-config.js";
 import * as orchestratorHomeModule from "../../../src/platform/home/orchestrator-home.js";
 import { HermesCliBuilder } from "../../../src/modules/runtime/hermes/hermes-cli.js";
 import { createSqliteDatabase } from "../../../src/platform/database/sqlite-database.js";
-import { InMemorySecretStore } from "../../../src/platform/security/secret-store.js";
 import {
   ProcessExecutor,
   ExitCodeError,
@@ -99,7 +98,6 @@ class MockProcessScopeSupervisor implements ProcessScopeSupervisor {
       throw new Error("PROCESS_SCOPE_LAUNCH_CANCELLED");
     }
     const env = { ...request.environment };
-    if (request.secret !== undefined) env.EBB_HERMES_PROVIDER_API_KEY = request.secret;
     this.payloadDispatches += 1;
     const completion = this.executor.exec(request.executable, [...request.args], {
       cwd: request.cwd,
@@ -144,7 +142,13 @@ function createTestRuntimeAdapter(
   artifactStore?: MockArtifactStore,
   config?: ConstructorParameters<typeof HermesRuntimeAdapter>[2],
 ): HermesRuntimeAdapter {
-  return new HermesRuntimeAdapter(executor, artifactStore, config, new MockProcessScopeSupervisor(executor));
+  return allowTestHermesNativeAuth(new HermesRuntimeAdapter(executor, artifactStore, config, new MockProcessScopeSupervisor(executor)));
+}
+
+function allowTestHermesNativeAuth(adapter: HermesRuntimeAdapter): HermesRuntimeAdapter {
+  vi.spyOn(adapter as unknown as { assertNativeHermesAuthReady(): void }, "assertNativeHermesAuthReady")
+    .mockImplementation(() => undefined);
+  return adapter;
 }
 
 // Имитация хранилища артефактов.
@@ -306,19 +310,17 @@ describe("HermesRuntimeAdapter", () => {
       expect(mockExecutor.getCalls()).toHaveLength(0);
     });
 
-    it("resolves provider credentials per run without writing them to Hermes profile files", async () => {
+    it("fails closed until native Hermes auth is verified without reading Ebb SecretStore or launching", async () => {
       const resultDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-provider-bridge-"));
-      const secrets = new InMemorySecretStore();
+      const resolveForService = vi.fn().mockResolvedValue("legacy-credential-must-not-be-read");
       const scopeSupervisor = new MockProcessScopeSupervisor(mockExecutor);
-      await secrets.store("hermes-provider", "acceptance", "secret-value");
       adapter = new HermesRuntimeAdapter(mockExecutor, mockArtifactStore, {
         resultDirectory,
         managedWorktree: path.join(os.tmpdir(), "hermes-test-workspace"),
         checkpointDirectory: sharedCheckpointDirectory,
-        secretStore: secrets,
-        provider: { baseUrl: "https://models.example.test/v1", secretName: "acceptance" },
-      }, scopeSupervisor);
-      mockExecutor.setNextResult({ exitCode: 0, stdout: "provider secret-value", stderr: "rejected secret-value" });
+        secretStore: { resolveForService },
+        provider: { baseUrl: "https://models.example.test/v1", secretName: "legacy" },
+      } as unknown as ConstructorParameters<typeof HermesRuntimeAdapter>[2], scopeSupervisor);
       const run = {
         id: "provider-bridge-run", role: "Developer", runtime: "hermes", model: "model-x",
         taskId: null, epicId: null, status: "STARTED" as const, sessionId: null, attempt: null,
@@ -326,28 +328,12 @@ describe("HermesRuntimeAdapter", () => {
         endedAt: null, exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
       };
 
-      await adapter.startRun(run);
+      await expect(adapter.startRun(run)).rejects.toThrow("HERMES_NATIVE_AUTH_NOT_READY");
 
-      const call = mockExecutor.getCalls()[0];
-      expect(call?.options?.env?.EBB_HERMES_PROVIDER_API_KEY).toBe("secret-value");
-      const scopeRequest = scopeSupervisor.lastRequest;
-      expect(scopeRequest).toBeDefined();
-      if (!scopeRequest) throw new Error("Expected the fake process-scope supervisor to receive a launch request.");
-      expect(scopeRequest.secret).toBe("secret-value");
-      expect(scopeRequest.environment).not.toHaveProperty("EBB_HERMES_PROVIDER_API_KEY");
-      expect(scopeRequest.args.join(" ")).not.toContain("secret-value");
-      const profile = await fs.readFile(path.join(resultDirectory, "profiles", run.id, "config.yaml"), "utf8");
-      expect(profile).toContain('provider: "custom:orchestrator-managed"');
-      expect(profile).not.toContain("secret-value");
-      const artifacts = mockArtifactStore.getArtifacts(run.id);
-      expect(artifacts?.stdout).toBe("provider [REDACTED_PROVIDER_CREDENTIAL]");
-      expect(artifacts?.stderr).toBe("rejected [REDACTED_PROVIDER_CREDENTIAL]");
-      const runOutcome = await adapter.runResult(run.id);
-      expect(runOutcome.output).not.toContain("secret-value");
-      const promptPath = mockExecutor.getCalls()[0]?.args[2];
-      expect(promptPath).toBeDefined();
-      expect(await fs.readFile(promptPath!, "utf8")).not.toContain("secret-value");
-      await fs.rm(path.dirname(promptPath!), { recursive: true, force: true });
+      expect(resolveForService).not.toHaveBeenCalled();
+      expect(scopeSupervisor.launchCalls).toBe(0);
+      expect(mockExecutor.getCalls()).toHaveLength(0);
+      await expect(fs.stat(path.join(resultDirectory, "profiles", run.id))).rejects.toMatchObject({ code: "ENOENT" });
       await fs.rm(resultDirectory, { recursive: true, force: true });
     });
 
@@ -357,6 +343,7 @@ describe("HermesRuntimeAdapter", () => {
         managedWorktree: path.join(os.tmpdir(), "hermes-test-workspace"),
         checkpointDirectory: sharedCheckpointDirectory,
       }, scopeSupervisor);
+      allowTestHermesNativeAuth(adapter);
       const run = {
         id: "cancel-before-launch-run", role: "Developer", runtime: "hermes", model: "model-x",
         taskId: null, epicId: null, status: "STARTED" as const, sessionId: null, attempt: null,
@@ -385,6 +372,7 @@ describe("HermesRuntimeAdapter", () => {
         managedWorktree: path.join(os.tmpdir(), "hermes-test-workspace"),
         checkpointDirectory: sharedCheckpointDirectory,
       }, scopeSupervisor);
+      allowTestHermesNativeAuth(adapter);
       const run = {
         id: "cancel-during-launch-run", role: "Developer", runtime: "hermes", model: "model-x",
         taskId: null, epicId: null, status: "STARTED" as const, sessionId: null, attempt: null,
@@ -412,25 +400,6 @@ describe("HermesRuntimeAdapter", () => {
         supervisorPid: null, supervisorStartIdentity: null, pid: null, platform: null,
         processStartIdentity: null, executableIdentity: null, state: "STOPPING",
       })).toMatchObject({ state: "STOPPED" });
-    });
-
-    it("fails closed without spawning Hermes when the configured provider credential is absent", async () => {
-      const secrets = new InMemorySecretStore();
-      adapter = createTestRuntimeAdapter(mockExecutor, mockArtifactStore, {
-        managedWorktree: path.join(os.tmpdir(), "hermes-test-workspace"),
-        checkpointDirectory: sharedCheckpointDirectory,
-        secretStore: secrets,
-        provider: { baseUrl: "https://models.example.test/v1", secretName: "missing" },
-      });
-      const run = {
-        id: "provider-bridge-missing", role: "Developer", runtime: "hermes", model: "model-x",
-        taskId: null, epicId: null, status: "STARTED" as const, sessionId: null, attempt: null,
-        triggerReason: null, contextVersion: "v1", outputSchemaVersion: "v1", startedAt: new Date(),
-        endedAt: null, exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
-      };
-
-      await expect(adapter.startRun(run)).rejects.toThrow("Hermes provider credentials are unavailable");
-      expect(mockExecutor.getCalls()).toHaveLength(0);
     });
 
     it("uses the persisted capability workspace as the Hermes process cwd", async () => {
@@ -548,6 +517,7 @@ describe("HermesRuntimeAdapter", () => {
           resultDirectory,
           checkpointDirectory,
         }, scopeSupervisor);
+        allowTestHermesNativeAuth(adapter);
         mockExecutor.setNextResult({ exitCode: 0, stdout: "session: persisted", stderr: "" });
 
         await adapter.startRun(run);
@@ -609,6 +579,7 @@ describe("HermesRuntimeAdapter", () => {
           resultDirectory,
           checkpointDirectory,
         }, failingSupervisor);
+        allowTestHermesNativeAuth(failingAdapter);
         const ownerRead = vi.spyOn(failingAdapter as unknown as {
           readPersistedOwnerState(runId: string): string | undefined;
         }, "readPersistedOwnerState").mockImplementationOnce(() => {
@@ -674,6 +645,7 @@ describe("HermesRuntimeAdapter", () => {
           resultDirectory,
           checkpointDirectory,
         }, stopFailSupervisor);
+        allowTestHermesNativeAuth(stopFailAdapter);
         mockExecutor.setNextResult({ exitCode: 0, stdout: "session: stop-persistence", stderr: "" });
 
         await expect(stopFailAdapter.startRun(stopPersistenceRun))

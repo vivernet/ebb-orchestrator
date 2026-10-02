@@ -29,7 +29,6 @@ async function launchOwnedScope(): Promise<void> {
   if (!databasePath || !runId || !runHome || !heartbeatPath || !digestPath || !descendantPidPath || !descendantExitPath || !markerPath) {
     throw new Error("PROCESS_SCOPE_RESTART_CHILD_ARGUMENTS_INVALID");
   }
-  const secret = await readSecretLine();
   const database = createSqliteDatabase(databasePath);
   try {
     runMigrations(database, loadTestMigrations());
@@ -45,7 +44,7 @@ async function launchOwnedScope(): Promise<void> {
     });
     const supervisor = createSupervisor();
     const owner = toScopeIdentity(getRunProcessOwner(database, runId));
-    const handle = await supervisor.launch(owner, buildRequest(secret, runHome, heartbeatPath, digestPath, descendantPidPath, descendantExitPath), async (identity) => {
+    const handle = await supervisor.launch(owner, buildRequest(runHome, heartbeatPath, digestPath, descendantPidPath, descendantExitPath), async (identity) => {
       database.transaction((tx) => transitionRunProcessOwnerTx(tx, {
         runId,
         expectedState: "LAUNCHING",
@@ -128,7 +127,6 @@ function createSupervisor(): WindowsJobSupervisor | SystemdRunSupervisor {
 }
 
 function buildRequest(
-  secret: string,
   runHomeValue: string,
   heartbeat: string,
   digest: string,
@@ -159,7 +157,6 @@ function buildRequest(
     args: ["-e", payloadSource, descendantPid],
     cwd: dirname(runHomeValue),
     environment,
-    secret,
     timeoutMs: 60_000,
   };
 }
@@ -173,11 +170,9 @@ function windowsPayloadSource(heartbeat: string, digest: string, descendantPid: 
   ].join("");
   return [
     "const {spawn}=require('node:child_process');",
-    "const {createHash}=require('node:crypto');",
     "const fs=require('node:fs');",
-    "const key=process.env.EBB_HERMES_PROVIDER_API_KEY;",
-    "if(!key)process.exit(20);",
-    `fs.writeFileSync(${JSON.stringify(digest)},createHash('sha256').update(key).digest('hex'));`,
+    "if(process.env.EBB_HERMES_PROVIDER_API_KEY)process.exit(20);",
+    `fs.writeFileSync(${JSON.stringify(digest)},'provider-free-dummy-payload');`,
     `const child=spawn(process.execPath,['-e',${JSON.stringify(childPayload)},${JSON.stringify(heartbeat)}],{stdio:'ignore',windowsHide:true,detached:true});`,
     "child.once('error',()=>process.exit(21));",
     `child.once('exit',code=>fs.writeFileSync(${JSON.stringify(descendantExit)},String(code)));`,
@@ -188,11 +183,9 @@ function windowsPayloadSource(heartbeat: string, digest: string, descendantPid: 
 function linuxPayloadSource(digest: string, descendantPid: string): string {
   return [
     "const {spawn}=require('node:child_process');",
-    "const {createHash}=require('node:crypto');",
     "const {writeFileSync}=require('node:fs');",
-    "const key=process.env.EBB_HERMES_PROVIDER_API_KEY;",
-    "if(!key)process.exit(20);",
-    `writeFileSync(${JSON.stringify(digest)},createHash('sha256').update(key).digest('hex'));`,
+    "if(process.env.EBB_HERMES_PROVIDER_API_KEY)process.exit(20);",
+    `writeFileSync(${JSON.stringify(digest)},'provider-free-dummy-payload');`,
     "const child=spawn('setsid',['/bin/sh','-c','sleep 60'],{stdio:'ignore'});",
     "child.once('error',()=>process.exit(21));",
     `child.once('spawn',()=>{writeFileSync(${JSON.stringify(descendantPid)},String(child.pid));child.unref();process.stdout.write('dummy payload root complete\\n');});`,
@@ -216,20 +209,6 @@ function toScopeIdentity(owner: ReturnType<typeof getRunProcessOwner>): ProcessS
     executableIdentity: owner.executableIdentity,
     state: owner.state,
   };
-}
-
-async function readSecretLine(): Promise<string> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of process.stdin) {
-    const value = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    chunks.push(value);
-    if (Buffer.concat(chunks).byteLength > 8193) throw new Error("PROCESS_SCOPE_RESTART_SECRET_FRAME_INVALID");
-  }
-  const input = Buffer.concat(chunks).toString("utf8");
-  if (!input.endsWith("\n") || input.includes("\0") || input.indexOf("\n") !== input.length - 1) {
-    throw new Error("PROCESS_SCOPE_RESTART_SECRET_FRAME_INVALID");
-  }
-  return input.slice(0, -1);
 }
 
 void main().catch(() => {

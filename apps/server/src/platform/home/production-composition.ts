@@ -17,8 +17,6 @@ import { WorktreeManager } from "../../modules/git/worktree-manager.js";
 import type { EpicOrchestrator, IntegrationServiceFactory, IntegrationServiceFactoryContext } from "../../modules/planning/epic-orchestrator.js";
 import type { PlanningService } from "../../modules/planning/planning-service.js";
 import type { SchedulerService } from "../../modules/scheduler/scheduler-service.js";
-import type { HermesProviderBridgeConfig } from "../../modules/runtime/hermes/hermes-provider-bridge.js";
-import type { SecretStore } from "../security/secret-store.js";
 import { listActiveApprovedOnboardingRepositories } from "../../modules/projects/onboarding-service.js";
 import { StartupReconciler, failClosedStartupReconciliation } from "../process/startup-reconciler.js";
 import type { RunService } from "../../modules/runtime/run-service.js";
@@ -36,10 +34,6 @@ export interface ProductionCompositionOptions {
   database: Database;
   /** Проверенные каталоги приложения, разрешённые по конфигурации пользователя. */
   home: OrchestratorHomePaths;
-  /** Авторитетный backend хранения provider credentials. */
-  secretStore: SecretStore;
-  /** Не секретные endpoint и SecretStore name для OpenAI-compatible provider. */
-  provider?: HermesProviderBridgeConfig;
   /** Зависимость для детерминированной проверки startup recovery. */
   gitReconciler?: Pick<GitReconciler, "initialize" | "reconcile">;
   /** Платформенный supervisor можно подменить только в provider-free tests. */
@@ -103,8 +97,6 @@ export function createProductionComposition(options: ProductionCompositionOption
     databasePath: paths.hermesDatabasePath,
     resultDirectory: paths.hermesResultDirectory,
     checkpointDirectory: paths.hermesCheckpointDirectory,
-    secretStore: options.secretStore,
-    ...(options.provider ? { provider: options.provider } : {}),
   }, processScopeSupervisor);
   const taskWorkspaceProvisioner = new TaskWorkspaceProvisioner({
     database,

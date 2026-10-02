@@ -6,7 +6,6 @@ import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { createApplicationRecoveryReconcilers, createProductionComposition } from "../../../src/platform/home/production-composition.js";
 import { resolveOrchestratorHome } from "../../../src/platform/home/orchestrator-home.js";
-import { InMemorySecretStore } from "../../../src/platform/security/secret-store.js";
 import type { Database } from "../../../src/platform/database/database.js";
 import { createSqliteDatabase } from "../../../src/platform/database/sqlite-database.js";
 import { HermesRuntimeAdapter } from "../../../src/modules/runtime/hermes/hermes-runtime-adapter.js";
@@ -42,8 +41,6 @@ describe("production composition", () => {
     const composition = createProductionComposition({
       database: {} as Database,
       home,
-      secretStore: new InMemorySecretStore(),
-      provider: { baseUrl: "https://provider.example/v1", secretName: "acceptance" },
     });
 
     expect(composition.paths.taskWorktreeDirectory).toBe(join(home.worktrees, "tasks"));
@@ -70,7 +67,7 @@ describe("production composition", () => {
     temporaryRoot = await mkdtemp(join(tmpdir(), "ebb-production-composition-"));
     const home = resolveOrchestratorHome({ EBB_ORCHESTRATOR_HOME: temporaryRoot }, "win32");
     database = createSqliteDatabase(join(temporaryRoot, "composition.db"));
-    const composition = createProductionComposition({ database, home, secretStore: new InMemorySecretStore() });
+    const composition = createProductionComposition({ database, home });
     const expectedWorktree = join(composition.paths.integrationWorktreeRoot, "epic-1", "task-1");
 
     const integration = composition.integrationServiceFactory({
@@ -117,7 +114,6 @@ describe("production composition", () => {
     const composition = createProductionComposition({
       database: fakeDatabase,
       home,
-      secretStore: new InMemorySecretStore(),
       gitReconciler,
     });
     const startup = composition.createStartupReconciliation({
@@ -169,7 +165,6 @@ describe("production composition", () => {
     const composition = createProductionComposition({
       database: fakeDatabase,
       home: resolveOrchestratorHome({ EBB_ORCHESTRATOR_HOME: temporaryRoot }, "win32"),
-      secretStore: new InMemorySecretStore(),
       gitReconciler: {
         initialize: async () => { events.push("git-initialize"); },
         reconcile: async () => { events.push("git-reconcile"); return { state: "IN_SYNC" }; },
@@ -281,7 +276,6 @@ describe("production composition", () => {
     const composition = createProductionComposition({
       database,
       home: resolveOrchestratorHome({ EBB_ORCHESTRATOR_HOME: temporaryRoot }, "win32"),
-      secretStore: new InMemorySecretStore(),
       gitReconciler: {
         initialize: async () => { events.push("git-initialize"); },
         reconcile: async () => { events.push("git-reconcile"); return { state: "IN_SYNC" }; },

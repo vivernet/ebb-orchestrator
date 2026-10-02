@@ -26,7 +26,6 @@ import { resolveOrchestratorHome } from "./platform/home/orchestrator-home.js";
 import { createApplicationRecoveryReconcilers, createProductionComposition } from "./platform/home/production-composition.js";
 import { SingleInstanceLock } from "./platform/process/single-instance-lock.js";
 import { SchedulerService, SchedulerSafetyWorker } from "./modules/scheduler/scheduler-service.js";
-import { resolveHermesProviderBridgeConfig } from "./modules/runtime/hermes/hermes-provider-bridge.js";
 import {
   StatusTracker,
   startSystem,
@@ -144,7 +143,6 @@ const githubAdapter = new GitHubAdapter(new GitHubAppTokenProvider(secretStore))
 const githubSyncWorker = new GitHubSyncWorker(githubAdapter, new GitHubSyncService(githubAdapter, new SqliteSyncState(database)), new SqliteFeedbackDeliveryState(database), {
   persistFeedback: (comment) => Promise.resolve(humanFeedbackService.receiveComment(comment)),
 });
-const hermesProvider = resolveHermesProviderBridgeConfig(process.env);
 const diagnostics = new DiagnosticsService(database, {
   appVersion: process.env["EBB_ORCHESTRATOR_VERSION"] ?? "development",
   schemaVersion: Math.max(0, ...migrations.map((migration) => migration.version)),
@@ -152,8 +150,6 @@ const diagnostics = new DiagnosticsService(database, {
 const production = createProductionComposition({
   database,
   home,
-  secretStore,
-  ...(hermesProvider ? { provider: hermesProvider } : {}),
 });
 const { paths: productionPaths, runtime, artifactStore, epicWorkspaceProvisioner, taskWorkspaceProvisioner, integrationServiceFactory, epicMergeAuthority } = production;
 const workflowRegistry = new WorkflowRegistry();

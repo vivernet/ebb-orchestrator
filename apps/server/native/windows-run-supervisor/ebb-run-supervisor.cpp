@@ -26,7 +26,6 @@ namespace {
 
 constexpr DWORD kMaxMetadataBytes = 256 * 1024;
 constexpr DWORD kMaxStringBytes = 16 * 1024;
-constexpr DWORD kMaxSecretBytes = 8192;
 constexpr DWORD kMaxArgs = 512;
 constexpr DWORD kMaxEnvironment = 128;
 constexpr DWORD kStopTimeoutMs = 30'000;
@@ -72,7 +71,6 @@ struct LaunchMetadata {
   std::wstring cwd;
   std::vector<std::wstring> args;
   std::map<std::wstring, std::wstring, CaseInsensitiveLess> environment;
-  std::wstring secret;
 };
 
 struct Identity {
@@ -81,22 +79,6 @@ struct Identity {
   DWORD payloadPid = 0;
   ULONGLONG payloadCreation = 0;
   std::string executableIdentity;
-};
-
-struct SensitiveBytes {
-  std::string value;
-  ~SensitiveBytes() { if (!value.empty()) SecureZeroMemory(value.data(), value.size()); }
-};
-
-struct LaunchMetadataGuard {
-  LaunchMetadata* metadata;
-  ~LaunchMetadataGuard() {
-    if (!metadata->secret.empty()) SecureZeroMemory(metadata->secret.data(), metadata->secret.size() * sizeof(wchar_t));
-    const auto secret = metadata->environment.find(L"EBB_HERMES_PROVIDER_API_KEY");
-    if (secret != metadata->environment.end() && !secret->second.empty()) {
-      SecureZeroMemory(secret->second.data(), secret->second.size() * sizeof(wchar_t));
-    }
-  }
 };
 
 bool isHexId(const std::wstring& value) {
@@ -211,7 +193,6 @@ bool allowedEnvironmentName(const std::wstring& name) {
   };
   if (name.empty() || !((name[0] >= L'A' && name[0] <= L'Z') || name[0] == L'_')) return false;
   for (wchar_t c : name) if (!((c >= L'A' && c <= L'Z') || (c >= L'0' && c <= L'9') || c == L'_')) return false;
-  if (name == L"EBB_HERMES_PROVIDER_API_KEY") return false;
   for (const auto* candidate : allowed) if (name == candidate) return true;
   return false;
 }
@@ -234,27 +215,6 @@ bool readMetadata(LaunchMetadata* metadata) {
     if (!readString(&key, &remaining) || !readString(&value, &remaining) || !allowedEnvironmentName(key) ||
         value.find(L'\0') != std::wstring::npos || value.find(L'\r') != std::wstring::npos ||
         value.find(L'\n') != std::wstring::npos || !metadata->environment.emplace(key, value).second) return false;
-  }
-  DWORD secretLength = 0;
-  if (!readU32(&secretLength) || secretLength > kMaxSecretBytes) return false;
-  SensitiveBytes secretUtf8;
-  secretUtf8.value.assign(secretLength, '\0');
-  if (secretLength && !readExact(secretUtf8.value.data(), secretLength)) return false;
-  if (secretUtf8.value.find('\0') != std::string::npos || secretUtf8.value.find('\r') != std::string::npos || secretUtf8.value.find('\n') != std::string::npos) return false;
-  if (secretLength) {
-    const int required = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, secretUtf8.value.data(), static_cast<int>(secretLength), nullptr, 0);
-    if (required <= 0) return false;
-    metadata->secret.resize(static_cast<size_t>(required));
-    if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, secretUtf8.value.data(), static_cast<int>(secretLength), metadata->secret.data(), required)) return false;
-  }
-  if (!metadata->secret.empty()) metadata->environment.emplace(L"EBB_HERMES_PROVIDER_API_KEY", metadata->secret);
-  if (!metadata->secret.empty()) {
-    const auto containsSecret = [&](const std::wstring& value) { return value.find(metadata->secret) != std::wstring::npos; };
-    if (containsSecret(metadata->executable) || containsSecret(metadata->cwd) ||
-        std::any_of(metadata->args.begin(), metadata->args.end(), containsSecret)) return false;
-    for (const auto& [key, value] : metadata->environment) {
-      if (containsSecret(key) || (key != L"EBB_HERMES_PROVIDER_API_KEY" && containsSecret(value))) return false;
-    }
   }
   return true;
 }
@@ -489,7 +449,6 @@ bool launch(const std::wstring& id, const std::wstring& nonce, DWORD* payloadExi
   if (!mapping || mappingCreateError == ERROR_ALREADY_EXISTS) { report("MAPPING_CREATE_FAILED_OR_EXISTS"); return false; }
   if (!writeStdout("EBB_HELPER_READY\n")) return false;
   LaunchMetadata metadata;
-  LaunchMetadataGuard metadataGuard{ &metadata };
   if (!readMetadata(&metadata)) { report("LAUNCH_FRAME_INVALID"); return false; }
 
   Handle childInput, childOutput, childError;
@@ -529,7 +488,6 @@ bool launch(const std::wstring& id, const std::wstring& nonce, DWORD* payloadExi
     &startup.StartupInfo, &process);
   DeleteProcThreadAttributeList(attributeList);
   SecureZeroMemory(environment.data(), environment.size() * sizeof(wchar_t));
-  SecureZeroMemory(metadata.secret.data(), metadata.secret.size() * sizeof(wchar_t));
   if (!created) { report("CHILD_CREATE_FAILED"); return false; }
   Handle payload(process.hProcess);
   Handle primaryThread(process.hThread);

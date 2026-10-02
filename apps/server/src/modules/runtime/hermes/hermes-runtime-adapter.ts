@@ -17,8 +17,6 @@ import { createSqliteDatabase } from "../../../platform/database/sqlite-database
 import { loadValidatedCapability } from "../../execution/capability-validation.js";
 import { validatePlatform, type Platform } from "../../../platform/config/app-config.js";
 import { resolveOrchestratorHome, type HomeEnv } from "../../../platform/home/orchestrator-home.js";
-import type { SecretStore } from "../../../platform/security/secret-store.js";
-import { HERMES_PROVIDER_SECRET_ENV, HERMES_PROVIDER_SECRET_SERVICE, type HermesProviderBridgeConfig } from "./hermes-provider-bridge.js";
 import { ProcessScopeLaunchNotDispatchedError, type ProcessScopeLaunchRequest, type ProcessScopeSupervisor } from "../../../platform/process/run-scope-supervisor.js";
 import type { ProcessScopeIdentity, ProcessScopeObservation } from "../../../platform/process/process-inspector.js";
 import { getRunProcessOwner, isCanonicalRunProcessStopEvidence, prepareRunProcessOwner, transitionRunProcessOwnerTx, type RunProcessOwner, type RunProcessOwnerState } from "../run-process-owner.js";
@@ -103,8 +101,6 @@ export class HermesRuntimeAdapter implements AgentRuntime {
   private readonly databasePath: string | undefined;
   private readonly mcpCommand: string;
   private readonly mcpArgs: string[];
-  private readonly secretStore: SecretStore | undefined;
-  private readonly provider: HermesProviderBridgeConfig | undefined;
   private readonly processScopeSupervisor: ProcessScopeSupervisor | undefined;
   private readonly activeScopes = new Map<string, { owner: ProcessScopeIdentity; durable: boolean; abortController: AbortController }>();
   private readonly startingRuns = new Map<string, RunStartControl>();
@@ -127,8 +123,6 @@ export class HermesRuntimeAdapter implements AgentRuntime {
       databasePath?: string;
       mcpCommand?: string;
       mcpArgs?: string[];
-      secretStore?: SecretStore;
-      provider?: HermesProviderBridgeConfig;
     },
     processScopeSupervisor?: ProcessScopeSupervisor,
   ) {
@@ -151,10 +145,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
     this.databasePath = config?.databasePath;
     this.mcpCommand = config?.mcpCommand ?? "ebb-orchestrator-mcp";
     this.mcpArgs = config?.mcpArgs ?? [];
-    this.secretStore = config?.secretStore;
-    this.provider = config?.provider;
     this.processScopeSupervisor = processScopeSupervisor;
-    if (this.provider && !this.secretStore) throw new Error("Hermes provider bridge requires SecretStore");
     this.cliBuilder = new HermesCliBuilder();
   }
 
@@ -177,7 +168,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
   private async startRunWithControl(run: AgentRun, control: RunStartControl): Promise<void> {
     const supervisor = this.processScopeSupervisor;
     if (!supervisor) throw new Error("PROCESS_SCOPE_SUPERVISOR_REQUIRED");
-    const providerApiKey = await this.resolveProviderApiKey();
+    this.assertNativeHermesAuthReady();
     if (this.finishCancelledBeforeLaunch(run.id, control)) return;
     const abortController = control.abortController;
     const promptFile = await this.writePromptFile(run);
@@ -203,7 +194,6 @@ export class HermesRuntimeAdapter implements AgentRuntime {
       mcpArgs: [...this.mcpArgs, ...(this.databasePath ? ["--database", this.databasePath] : [])],
       resultFile: resultPath,
       ...(run.capabilityRef ? { capabilityRef: run.capabilityRef } : {}),
-      ...(this.provider ? { provider: { baseUrl: this.provider.baseUrl, model: run.model } } : {}),
     };
     await fs.writeFile(path.join(profileHome, "config.yaml"), generateConfigYaml(configOptions));
     if (this.finishCancelledBeforeLaunch(run.id, control)) return;
@@ -231,7 +221,6 @@ export class HermesRuntimeAdapter implements AgentRuntime {
         args,
         cwd: workspace,
         environment: this.buildEnvironment(run, profileHome),
-        ...(providerApiKey !== undefined ? { secret: providerApiKey } : {}),
         signal: abortController.signal,
         timeoutMs: this.timeoutMs,
       }, abortController, control);
@@ -244,7 +233,6 @@ export class HermesRuntimeAdapter implements AgentRuntime {
       return;
     }
     this.exitCodes.set(run.id, processOutput.exitCode);
-    processOutput = this.redactProviderCredential(processOutput, providerApiKey);
 
     const observedSessionId = parseSessionId(processOutput?.stdout ?? "");
     const pid = this.extractPid(processOutput?.stdout ?? "");
@@ -496,8 +484,8 @@ export class HermesRuntimeAdapter implements AgentRuntime {
    */
   async resumeRun(runId: string, options: { sessionId: string; attempt: number }): Promise<void> {
     if (this.databasePath) throw new Error("HERMES_RESUME_REQUIRES_TASK_5C");
+    this.assertNativeHermesAuthReady();
     const existingState = this.runs.get(runId) ?? await this.restoreRunState(runId, options);
-    const providerApiKey = await this.resolveProviderApiKey();
 
     const abortController = new AbortController();
 
@@ -512,7 +500,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
 
     const execOptions: ProcessOptions = {
       cwd: this.getManagedWorktree(existingState.run),
-      env: this.buildEnvironment(existingState.run, path.join(this.resultDirectory, "profiles", runId), providerApiKey),
+      env: this.buildEnvironment(existingState.run, path.join(this.resultDirectory, "profiles", runId)),
       timeout: this.timeoutMs,
       signal: abortController.signal,
     };
@@ -527,8 +515,6 @@ export class HermesRuntimeAdapter implements AgentRuntime {
       if (!processError) throw error;
       processOutput = { stdout: processError?.stdout ?? "", stderr: processError?.stderr ?? (error as Error).message, exitCode: processError?.exitCode ?? -1 };
     }
-    processOutput = this.redactProviderCredential(processOutput, providerApiKey);
-
     // Обновляет existing state in place
     existingState.run.sessionId = options.sessionId;
     existingState.run.attempt = options.attempt;
@@ -749,7 +735,7 @@ export class HermesRuntimeAdapter implements AgentRuntime {
   /**
    * Формирует environment variables for hermes process.
    */
-  private buildEnvironment(_run: AgentRun, profileHome?: string, providerApiKey?: string): Record<string, string> {
+  private buildEnvironment(_run: AgentRun, profileHome?: string): Record<string, string> {
     const allowed = new Set(["HOMEDRIVE", "HOMEPATH", "SYSTEMROOT", "TEMP", "TMP", "PATH", "NODE_PATH", "NODE_ENV", "HERMES_HOME", "HERMES_CONFIG", "HERMES_MODEL"]);
     const env: Record<string, string> = {};
     for (const key of allowed) {
@@ -766,39 +752,13 @@ export class HermesRuntimeAdapter implements AgentRuntime {
     env.HERMES_HOME = home;
     env.HOME = path.join(home, "home");
     env.HERMES_CONFIG = path.join(home, "config.yaml");
-    if (providerApiKey !== undefined) env[HERMES_PROVIDER_SECRET_ENV] = providerApiKey;
     delete env.HERMES_PROFILE;
     return env;
   }
 
-  /**
-   * Разрешает provider key только для одного запуска subprocess.
-   *
-   * Значение передаётся через отдельную environment variable provider client Hermes;
-   * оно не добавляется в config, prompt или artifacts.
-   */
-  private async resolveProviderApiKey(): Promise<string | undefined> {
-    if (!this.provider) return undefined;
-    try {
-      const value = await this.secretStore?.resolveForService(HERMES_PROVIDER_SECRET_SERVICE, this.provider.secretName);
-      if (!value?.trim() || value.length > 8192 || /[\0\r\n]/.test(value)) throw new Error("missing");
-      return value;
-    } catch {
-      throw new Error("Hermes provider credentials are unavailable");
-    }
-  }
-
-  /** Удаляет provider key из вывода до сохранения run state и artifacts. */
-  private redactProviderCredential<T extends { stdout: string; stderr: string }>(
-    output: T,
-    providerApiKey: string | undefined,
-  ): T {
-    if (!providerApiKey) return output;
-    return {
-      ...output,
-      stdout: output.stdout.split(providerApiKey).join("[REDACTED_PROVIDER_CREDENTIAL]"),
-      stderr: output.stderr.split(providerApiKey).join("[REDACTED_PROVIDER_CREDENTIAL]"),
-    };
+  /** Fail closed until Task5B verifies the configured Hermes-native auth path through the isolated profile. */
+  private assertNativeHermesAuthReady(): void {
+    throw new Error("HERMES_NATIVE_AUTH_NOT_READY");
   }
 
   /**

@@ -2,9 +2,8 @@ import { statfs } from "node:fs/promises";
 import { posix } from "node:path";
 import { ProcessExecutor, type ProcessResult, type ProcessSession } from "./process-executor.js";
 import { classifySystemdScope, inspectCgroupTree, type ProcessScopeIdentity, type ProcessScopeObservation, type SystemdScopeSnapshot } from "./process-inspector.js";
-import { encodeSecretFrame, ProcessScopeLaunchNotDispatchedError, type ProcessScopeHandle, type ProcessScopeLaunchRequest, type ProcessScopeSupervisor } from "./run-scope-supervisor.js";
+import { ProcessScopeLaunchNotDispatchedError, type ProcessScopeHandle, type ProcessScopeLaunchRequest, type ProcessScopeSupervisor } from "./run-scope-supervisor.js";
 
-const PROCESS_KEY_ENV = "EBB_HERMES_PROVIDER_API_KEY";
 const HERMES_CHILD_ENV_KEYS = new Set([
   "HOMEDRIVE", "HOMEPATH", "SYSTEMROOT", "TEMP", "TMP", "PATH", "NODE_PATH", "NODE_ENV",
   "HOME", "HERMES_HOME", "HERMES_CONFIG", "HERMES_MODEL",
@@ -14,7 +13,10 @@ const POLL_INTERVAL_MS = 500;
 
 const systemdPayloadWrapper = String.raw`
 const { spawn } = require("node:child_process");
-const KEY = "EBB_HERMES_PROVIDER_API_KEY";
+const safeEnvironmentKeys = [
+  "HOMEDRIVE", "HOMEPATH", "SYSTEMROOT", "TEMP", "TMP", "PATH", "NODE_PATH", "NODE_ENV",
+  "HOME", "HERMES_HOME", "HERMES_CONFIG", "HERMES_MODEL",
+];
 let pending = Buffer.alloc(0);
 let waiter;
 function take(size) {
@@ -37,17 +39,16 @@ process.stdin.on("data", (chunk) => {
 });
 process.stdin.on("end", () => { if (waiter) waiter.reject(new Error("scope transport closed")); });
 async function main() {
-  const header = await take(4);
-  const length = header.readUInt32BE(0);
-  if (length > 8192) throw new Error("invalid secret frame");
-  const key = (await take(length)).toString("utf8");
   const ack = await take(1);
   if (ack[0] !== 1) throw new Error("launch not authorized by durable owner");
   process.stdin.pause();
   const [file, ...args] = process.argv.slice(1);
   if (!file) throw new Error("payload executable missing");
-  const env = { ...process.env };
-  if (length > 0) env[KEY] = key;
+  const env = {};
+  for (const key of safeEnvironmentKeys) {
+    const value = process.env[key];
+    if (value !== undefined) env[key] = value;
+  }
   const child = spawn(file, args, { shell: false, cwd: process.cwd(), env, stdio: ["ignore", "inherit", "inherit"] });
   child.on("error", () => process.exit(126));
   child.on("close", (code) => process.exit(code ?? 1));
@@ -82,16 +83,13 @@ export class SystemdRunSupervisor implements ProcessScopeSupervisor {
       `--property=WorkingDirectory=${request.cwd}`,
     ];
     for (const [key, value] of Object.entries(request.environment)) {
-      if (key === PROCESS_KEY_ENV) throw new Error("PROCESS_SCOPE_SECRET_MUST_USE_STDIN");
       if (!HERMES_CHILD_ENV_KEYS.has(key) || isCredentialEnvironmentKey(key) || !/^[A-Z_][A-Z0-9_]*$/.test(key) || /[\0\r\n]/.test(value)) {
         throw new Error("PROCESS_SCOPE_ENVIRONMENT_REJECTED");
       }
       args.push(`--setenv=${key}=${value}`);
     }
     args.push("--", "node", "-e", systemdPayloadWrapper, "--", request.executable, ...request.args);
-    assertSecretAbsentFromLaunchMetadata(request);
 
-    const frame = encodeSecretFrame(request.secret);
     const managerEnvironment = this.managerEnvironment();
     const session = this.executor.startSession("systemd-run", args, {
       cwd: request.cwd, env: managerEnvironment, timeout: 0, maxBuffer: 10 * 1024 * 1024,
@@ -114,12 +112,11 @@ export class SystemdRunSupervisor implements ProcessScopeSupervisor {
 
     try {
       if (request.signal?.aborted) throw new Error("PROCESS_SCOPE_LAUNCH_CANCELLED");
-      session.stdin.write(frame);
       const observed = await this.waitUntilLive(owner, session, request.signal);
       if (observed.state !== "LIVE") throw new Error("PROCESS_SCOPE_LIVE_MEMBERSHIP_UNPROVEN");
       verifiedIdentity = observed.identity;
       await persistVerifiedIdentity(observed.identity);
-      // Hermes authorization is a separate protocol byte. Cancellation after durable
+      // Payload authorization is a separate protocol byte. Cancellation after durable
       // owner persistence but before this byte must never dispatch the payload.
       if (request.signal?.aborted) throw new Error("PROCESS_SCOPE_LAUNCH_CANCELLED");
       session.stdin.write(Buffer.from([1]));
@@ -318,13 +315,6 @@ function isCredentialEnvironmentKey(key: string): boolean {
   return /(?:TOKEN|SECRET|PASSWORD|CREDENTIAL|API[_-]?KEY)/i.test(key);
 }
 
-function assertSecretAbsentFromLaunchMetadata(request: ProcessScopeLaunchRequest): void {
-  const secret = request.secret;
-  if (secret === undefined) return;
-  const values = [request.executable, request.cwd, ...request.args, ...Object.values(request.environment)];
-  if (values.some((value) => value.includes(secret))) throw new Error("PROCESS_SCOPE_SECRET_MUST_USE_STDIN");
-}
-
 function assertLinuxOwner(owner: ProcessScopeIdentity): void {
   if (process.platform !== "linux" || owner.containmentKind !== "systemd-user-service" || !/^[a-f0-9]{64}$/.test(owner.containmentId) || !/^[a-f0-9]{64}$/.test(owner.launchNonce)) {
     throw new Error("SYSTEMD_PROCESS_SCOPE_UNSUPPORTED");
@@ -335,7 +325,6 @@ function assertRequest(request: ProcessScopeLaunchRequest): void {
   if (!request.executable || !posix.isAbsolute(request.cwd) || !Number.isSafeInteger(request.timeoutMs) || request.timeoutMs <= 0) {
     throw new TypeError("Invalid systemd process-scope launch request.");
   }
-  if (request.environment[PROCESS_KEY_ENV] !== undefined) throw new Error("PROCESS_SCOPE_SECRET_MUST_USE_STDIN");
 }
 
 function systemdUnitName(owner: ProcessScopeIdentity): string {

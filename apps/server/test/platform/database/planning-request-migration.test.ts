@@ -18,8 +18,9 @@ describe("PlanningRequest linkage migration", () => {
       expect(columns).toEqual(expect.arrayContaining(["status", "coordinator_run_id", "updated_at", "failure_code"]));
       expect(db.get<{ status: string; updated_at: string }>("SELECT status,updated_at FROM planning_requests WHERE id='request-1'"))
         .toEqual({ status: "RECEIVED", updated_at: now });
+      // Include all forward migrations after the legacy v30 fixture, including Plan20's v39 Run session capture state.
       expect(db.all<{ version: number }>("SELECT version FROM schema_migrations WHERE version>=31 ORDER BY version").map(({ version }) => version))
-        .toEqual([31, 32, 33, 34, 35, 36, 37, 38]);
+        .toEqual([31, 32, 33, 34, 35, 36, 37, 38, 39]);
     } finally {
       db.close();
     }

@@ -11,7 +11,6 @@ import { ProjectConfigService } from "../../src/modules/projects/project-config-
 import { createRunContextInput, RunService } from "../../src/modules/runtime/run-service.js";
 import type { StartRunOptions } from "../../src/modules/runtime/run-types.js";
 import { HermesRuntimeAdapter } from "../../src/modules/runtime/hermes/hermes-runtime-adapter.js";
-import { resolveHermesProviderBridgeConfig } from "../../src/modules/runtime/hermes/hermes-provider-bridge.js";
 import { getRunProcessOwner, isCanonicalRunProcessStopEvidence, transitionRunProcessOwnerTx } from "../../src/modules/runtime/run-process-owner.js";
 import { createSqliteDatabase } from "../../src/platform/database/sqlite-database.js";
 import type { Database } from "../../src/platform/database/database.js";
@@ -21,11 +20,9 @@ import type { ProcessScopeIdentity, ProcessScopeObservation } from "../../src/pl
 import type { ProcessScopeSupervisor } from "../../src/platform/process/run-scope-supervisor.js";
 import { SystemdRunSupervisor } from "../../src/platform/process/systemd-run-supervisor.js";
 import { WindowsJobSupervisor } from "../../src/platform/process/windows-job-supervisor.js";
-import { KeyringSecretStore } from "../../src/platform/security/keyring-secret-store.js";
 import { parseProjectConfigYaml } from "../../src/platform/config/project-config.js";
 import { loadTestMigrations } from "../helpers/migrations.js";
 
-const acceptanceEnabled = process.env.EBB_RUN_HERMES_SESSION_TAG_ACCEPTANCE === "1";
 const EXPECTED_HERMES_VERSION = "Hermes Agent v0.21.5+4831.g02e4118 (2026.9.24) · upstream 02e41181";
 const QUERY_TIMEOUT_MS = 5_000;
 const POLL_INTERVAL_MS = 500;
@@ -35,7 +32,7 @@ const evidencePath = process.env.EBB_HERMES_SESSION_TAG_EVIDENCE_PATH
   ? resolve(process.env.EBB_HERMES_SESSION_TAG_EVIDENCE_PATH)
   : join(repositoryRoot, "temp", "hermes-session-tag-proof", "raw-cli-output.txt");
 
-describe.skipIf(!acceptanceEnabled)("Hermes session source-tag live acceptance", () => {
+describe.skip("Hermes session source-tag live acceptance — NOT RUN until Task5B verifies Hermes-native per-Run auth", () => {
   let root = "";
   let database: Database | undefined;
   let runService: RunService | undefined;
@@ -108,16 +105,6 @@ describe.skipIf(!acceptanceEnabled)("Hermes session source-tag live acceptance",
 
   it("lists exactly one live Run session by its persisted source tag without binding or resuming it", async () => {
     expect(["win32", "linux"]).toContain(process.platform);
-    const projectEnvModule = await import(new URL("../../../../scripts/project-env.mjs", import.meta.url).href) as {
-      loadProjectEnv(options?: { envFilePath?: string }): Record<string, string | undefined>;
-    };
-    const env = projectEnvModule.loadProjectEnv({ envFilePath: join(repositoryRoot, ".env") });
-    const provider = resolveHermesProviderBridgeConfig({
-      ...(env.EBB_HERMES_PROVIDER_BASE_URL ? { EBB_HERMES_PROVIDER_BASE_URL: env.EBB_HERMES_PROVIDER_BASE_URL } : {}),
-      ...(env.EBB_HERMES_PROVIDER_SECRET_NAME ? { EBB_HERMES_PROVIDER_SECRET_NAME: env.EBB_HERMES_PROVIDER_SECRET_NAME } : {}),
-    });
-    if (!provider) throw new Error("HERMES_ACCEPTANCE_PROVIDER_BRIDGE_UNAVAILABLE");
-
     const versionResult = await executor.exec("hermes", ["--version"], {
       env: commandEnvironment(), cwd: repositoryRoot, timeout: QUERY_TIMEOUT_MS, maxBuffer: 8_192,
     }).catch(() => { throw new Error("HERMES_ACCEPTANCE_CLI_VERSION_QUERY_FAILED"); });
@@ -145,13 +132,10 @@ describe.skipIf(!acceptanceEnabled)("Hermes session source-tag live acceptance",
     runMigrations(database, loadTestMigrations());
     const taskId = await seedTaskAndApprovedConfig(database, workspace);
     supervisor = createPlatformSupervisor(executor);
-    const secretStore = new KeyringSecretStore(database);
     runService = new RunService(database, new HermesRuntimeAdapter(executor, undefined, {
       databasePath,
       resultDirectory: join(hermesHome, "runtime", "hermes", "results"),
       checkpointDirectory: join(hermesHome, "runtime", "checkpoints"),
-      secretStore,
-      provider,
       managedWorktree: workspace,
       timeoutMs: 120_000,
       environment: runtimeEnvironment(),

@@ -76,7 +76,6 @@ const request: ProcessScopeLaunchRequest = {
     SYSTEMROOT: "C:\\Windows",
     HERMES_HOME: "C:\\ebb\\hermes-home",
   },
-  secret: "WindowsScopeSecretCanary_5A",
   timeoutMs: 10_000,
 };
 
@@ -113,19 +112,20 @@ describe("WindowsJobSupervisor", () => {
     })).rejects.toThrow("WINDOWS_PROCESS_SCOPE_LAUNCH_CANCELLED");
 
     expect(executor.startSession).toHaveBeenCalledTimes(1);
-    expect(executor.writes).toHaveLength(2);
+    expect(executor.writes).toHaveLength(1);
     expect(executor.writes).not.toContainEqual(Buffer.from([1]));
   });
 
-  it("refuses a secret embedded in helper command or environment metadata", async () => {
+  it("sends only launch metadata and owner authorization to the helper", async () => {
     Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
-    const executor = new FakeExecutor();
+    const executor = new HandshakeExecutor();
     const supervisor = new WindowsJobSupervisor(executor, "native-helper.exe");
-    const unsafeRequest = { ...request, args: [...request.args, request.secret!] };
 
-    await expect(supervisor.launch(owner, unsafeRequest, async () => undefined))
-      .rejects.toThrow("PROCESS_SCOPE_SECRET_MUST_USE_STDIN");
-    expect(executor.startSession).not.toHaveBeenCalled();
+    await supervisor.launch(owner, request, async () => undefined);
+
+    expect(executor.writes).toHaveLength(2);
+    expect(executor.writes[1]).toEqual(Buffer.from([1]));
+    expect(Buffer.concat(executor.writes).toString("utf8")).not.toContain("EBB_HERMES_PROVIDER_API_KEY");
   });
 
   it("does not stop a live named Job whose persisted process identity differs", async () => {

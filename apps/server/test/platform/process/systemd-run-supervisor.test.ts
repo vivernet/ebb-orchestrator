@@ -75,7 +75,6 @@ const launchRequest: ProcessScopeLaunchRequest = {
   args: ["--safe-mode"],
   cwd: "/tmp/ebb-worktree",
   environment: { HOME: "/tmp/ebb-profile", HERMES_HOME: "/tmp/ebb-profile" },
-  secret: "SECRET_CANARY_systemd_only_stdin_91d72c",
   timeoutMs: 10_000,
 };
 
@@ -165,7 +164,7 @@ describe("SystemdRunSupervisor", () => {
     vi.unstubAllEnvs();
   });
 
-  it("holds the dummy payload behind the durable identity callback and keeps canary out of systemd argv/env", async () => {
+  it("holds the provider-free dummy payload behind owner authorization without a credential frame", async () => {
     let persistedIdentity: ProcessScopeIdentity | undefined;
     const handle = await supervisor.launch(owner, launchRequest, async (identity) => {
       persistedIdentity = identity;
@@ -183,8 +182,8 @@ describe("SystemdRunSupervisor", () => {
     expect(call?.args.join(" ")).toContain("--property=Delegate=no");
     expect(call?.args.join(" ")).toContain("--property=ProtectControlGroups=yes");
     expect(call?.args.join(" ")).toContain("--property=Restart=no");
-    expect(call?.args.join(" ")).not.toContain(launchRequest.secret);
-    expect(JSON.stringify(call?.options.env)).not.toContain(launchRequest.secret);
+    expect(call?.args.join(" ")).not.toContain("EBB_HERMES_PROVIDER_API_KEY");
+    expect(call?.args.join(" ")).not.toContain("...process.env");
     expect(call?.options.env).toMatchObject({
       PATH: "/usr/bin:/bin", HOME: "/home/test-user", XDG_RUNTIME_DIR: "/run/user/1000",
       DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1000/bus",
@@ -193,9 +192,7 @@ describe("SystemdRunSupervisor", () => {
     expect(call?.options.env).not.toHaveProperty("EBB_HERMES_PROVIDER_API_KEY");
 
     const written = Buffer.concat(executor.sessionWrites);
-    const length = written.readUInt32BE(0);
-    expect(written.subarray(4, 4 + length).toString("utf8")).toBe(launchRequest.secret);
-    expect(written.subarray(4 + length)).toEqual(Buffer.from([1]));
+    expect(written).toEqual(Buffer.from([1]));
 
     unitState = "absent";
     executor.finish();
@@ -324,9 +321,7 @@ describe("SystemdRunSupervisor", () => {
 
     expect(executor.sessionCall).toBeDefined();
     expect(executor.execCalls.some((call) => call.args.includes("stop"))).toBe(true);
-    const written = Buffer.concat(executor.sessionWrites);
-    const length = written.readUInt32BE(0);
-    expect(written.subarray(4 + length)).not.toContain(1);
+    expect(executor.sessionWrites).not.toContainEqual(Buffer.from([1]));
     expect(unitState).toBe("absent");
   });
 
@@ -347,10 +342,13 @@ describe("SystemdRunSupervisor", () => {
     expect(executor.sessionCall).toBeUndefined();
   });
 
-  it("validates the secret frame before creating a transient service", async () => {
-    const request = { ...launchRequest, secret: "invalid\nsecret" };
+  it("rejects the former provider-key environment name before creating a transient service", async () => {
+    const request = {
+      ...launchRequest,
+      environment: { ...launchRequest.environment, EBB_HERMES_PROVIDER_API_KEY: "must-not-be-forwarded" },
+    };
     await expect(supervisor.launch(owner, request, async () => undefined))
-      .rejects.toThrow("Process-scope secret frame is invalid");
+      .rejects.toThrow("PROCESS_SCOPE_ENVIRONMENT_REJECTED");
     expect(executor.sessionCall).toBeUndefined();
   });
 });

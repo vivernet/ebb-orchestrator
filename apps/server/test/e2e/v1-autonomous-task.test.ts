@@ -39,8 +39,6 @@ import type { AgentRun } from "@ebb-orchestrator/contracts";
 import type { RunOutcome } from "../../src/modules/runtime/run-types.js";
 import { HermesRuntimeAdapter } from "../../src/modules/runtime/hermes/hermes-runtime-adapter.js";
 import { ProcessExecutor } from "../../src/platform/process/process-executor.js";
-import { InMemorySecretStore } from "../../src/platform/security/secret-store.js";
-import { HERMES_PROVIDER_SECRET_SERVICE, resolveHermesProviderBridgeConfig } from "../../src/modules/runtime/hermes/hermes-provider-bridge.js";
 import { ContextBuilder } from "../../src/modules/context/context-builder.js";
 import { PromptBuilder } from "../../src/modules/runtime/prompt-builder.js";
 import type { TaskContract as PromptTaskContract } from "../../src/modules/context/context-types.js";
@@ -51,6 +49,13 @@ const execFileAsync = promisify(execFile);
 const resolve = createRequire(import.meta.url).resolve;
 const tsxLoader = pathToFileURL(resolve("tsx")).href;
 const migrations = loadTestMigrations();
+
+function requireNonBlankString(value: string | null | undefined, field: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`${field} is incomplete`);
+  }
+  return value;
+}
 
 class DeterministicRuntime implements AgentRuntime {
   active = 0;
@@ -360,22 +365,8 @@ describe("Autonomous Task End-to-End Workflow", () => {
 
   it("runs the real Hermes managed-worktree acceptance when opted in", async ({ skip }) => {
     if (process.env.RUN_HERMES_E2E !== "1") skip("opt in with RUN_HERMES_E2E=1");
-    try {
-      await execFileAsync("hermes", ["--version"]);
-    } catch {
-      skip("Hermes binary is unavailable; install/configure Hermes to run this acceptance");
-    }
-    if (!process.env.HERMES_MODEL) {
-      skip("Hermes model is unavailable; set HERMES_MODEL to a configured local/model fixture");
-    }
-    const providerBridge = resolveHermesProviderBridgeConfig(process.env);
-    const providerApiKey = process.env.EBB_HERMES_ACCEPTANCE_API_KEY;
-    if (!providerBridge || !providerApiKey) {
-      skip("Hermes acceptance requires EBB_HERMES_PROVIDER_BASE_URL, EBB_HERMES_PROVIDER_SECRET_NAME, and EBB_HERMES_ACCEPTANCE_API_KEY");
-      return;
-    }
-    const acceptanceSecretStore = new InMemorySecretStore();
-    await acceptanceSecretStore.store(HERMES_PROVIDER_SECRET_SERVICE, providerBridge.secretName, providerApiKey);
+    skip("NOT RUN: Task5B must first verify the existing Hermes-native auth path through the isolated per-Run profile; the Ebb provider-key bridge has been removed.");
+    return;
 
     const worktree = await worktreeManager.createTaskWorkspace(taskId, masterRepoPath, "master");
     const mcpCli = join(import.meta.dirname, "../../src/bin/ebb-orchestrator-mcp.ts");
@@ -389,8 +380,6 @@ describe("Autonomous Task End-to-End Workflow", () => {
       checkpointDirectory: join(tmpDir, "hermes-checkpoints"),
       timeoutMs: 180000,
       databasePath,
-      secretStore: acceptanceSecretStore,
-      provider: providerBridge,
       mcpCommand: process.execPath,
        mcpArgs: ["--import", tsxLoader, mcpCli],
     });
@@ -421,7 +410,6 @@ try { inspected = await runtime.inspectRun(run.id); } catch { /* процесс 
        if (role === "Integration") return;
        const outcome = await runtime.collectResult(run.id);
        expect(outcome.success, `${role} did not submit a successful result: ${JSON.stringify(outcome)}`).toBe(true);
-       expect(outcome.output).not.toContain(providerApiKey);
        const submitted = JSON.parse(outcome.output) as { outcome?: string; version?: string; commitSha?: string; independent?: boolean; findings?: unknown[]; evidence?: string[]; baseSha?: string; sourceSha?: string; provenance?: string[] };
       expect(submitted.outcome, `${role} submitted an invalid result`).toBeTruthy();
        expect(submitted.version).toBe("1");
@@ -478,11 +466,12 @@ try { inspected = await runtime.inspectRun(run.id); } catch { /* процесс 
        const integrationService = new IntegrationService({ worktreeDir: integrationWorkspace, database: db!, provenanceDatabasePath: databasePath, integrationRunId });
          const preparedIntegration = await integrationService.prepareIntegration(`task/${taskId}`, "master", masterRepoPath);
          await integrationService.mergePreparedSource(preparedIntegration);
-         if (!preparedIntegration.expectedTargetSha || !preparedIntegration.provenanceDatabasePath) throw new Error("Prepared Integration provenance is incomplete");
-         const integrationPrompt = new PromptBuilder().buildIntegrationPrompt({ taskContract: contract, workspace: preparedIntegration.worktreePath, targetRef: "master", checks: ["call the project.test MCP tool and verify its returned result (do not run the smoke test directly as a substitute)", "verify target and task provenance"], expectedTargetSha: preparedIntegration.expectedTargetSha, sourceSha: preparedIntegration.sourceSha, integrationAttemptId: preparedIntegration.id, provenanceDatabasePath: preparedIntegration.provenanceDatabasePath });
+         const expectedTargetSha = requireNonBlankString(preparedIntegration.expectedTargetSha, "Prepared Integration target SHA");
+         const provenanceDatabasePath = requireNonBlankString(preparedIntegration.provenanceDatabasePath, "Prepared Integration provenance database path");
+         const integrationPrompt = new PromptBuilder().buildIntegrationPrompt({ taskContract: contract, workspace: preparedIntegration.worktreePath, targetRef: "master", checks: ["call the project.test MCP tool and verify its returned result (do not run the smoke test directly as a substitute)", "verify target and task provenance"], expectedTargetSha, sourceSha: preparedIntegration.sourceSha, integrationAttemptId: preparedIntegration.id, provenanceDatabasePath });
         nextWorkspace = preparedIntegration.worktreePath;
          const integrationOptions = { runId: integrationRunId, role: "Integration", model: process.env.HERMES_MODEL ?? "default", taskId, epicId: null, triggerReason: "integration", contextVersion: "hermes-acceptance-v1", outputSchemaVersion: "1", capability: { workspace: preparedIntegration.worktreePath, allowedTools: ["workspace.read", "workspace.search", "git.diff", "project.test", "submit_result"] } } satisfies StartRunOptions;
-         const integrationRun = await runs.startRun({ ...integrationOptions, prompt: integrationPrompt, contextInput: createRunContextInput(integrationOptions, { prompt: integrationPrompt, roleInputs: { sourceSha: preparedIntegration.sourceSha, targetSha: preparedIntegration.expectedTargetSha, attemptId: preparedIntegration.id, provenanceDatabasePath: preparedIntegration.provenanceDatabasePath }, workspaceIdentity: { repository: masterRepoPath, workspace: preparedIntegration.worktreePath, worktree: preparedIntegration.id }, targetHead: preparedIntegration.expectedTargetSha, targetBranch: "master" }) });
+         const integrationRun = await runs.startRun({ ...integrationOptions, prompt: integrationPrompt, contextInput: createRunContextInput(integrationOptions, { prompt: integrationPrompt, roleInputs: { sourceSha: preparedIntegration.sourceSha, targetSha: expectedTargetSha, attemptId: preparedIntegration.id, provenanceDatabasePath }, workspaceIdentity: { repository: masterRepoPath, workspace: preparedIntegration.worktreePath, worktree: preparedIntegration.id }, targetHead: expectedTargetSha, targetBranch: "master" }) });
         workspaceByRun.set(integrationRun.id, preparedIntegration.worktreePath);
         const realIntegration = integrationService.bindIntegrationRun(preparedIntegration, integrationRun.id);
         expect(realIntegration.integrationRunId).toBe(integrationRun.id);
@@ -491,7 +480,6 @@ try { inspected = await runtime.inspectRun(run.id); } catch { /* процесс 
         });
         const integrationOutcome = await runtime.collectResult(integrationRun.id);
         expect(integrationOutcome.success).toBe(true);
-        expect(integrationOutcome.output).not.toContain(providerApiKey);
          const submitted = JSON.parse(integrationOutcome.output) as { outcome?: string; version?: string; baseSha?: string; sourceSha?: string; provenance?: string[]; evidence?: string[] };
         integrationSubmitted = submitted;
         expect(submitted.outcome).toBe("PASS");

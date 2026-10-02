@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { constants } from "node:fs";
 import { access, mkdtemp, readFile, readdir, rm, statfs } from "node:fs/promises";
@@ -17,7 +17,6 @@ import type { ProcessScopeHandle } from "../../src/platform/process/run-scope-su
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { loadTestMigrations } from "../helpers/migrations.js";
 
-const CANARY = "EbbProcessScopeCanary_5A_dummy_only_d8a5c3";
 const isLinux = process.platform === "linux";
 const isWindows = process.platform === "win32";
 const nativeAcceptanceEnabled = process.env.EBB_RUN_NATIVE_SCOPE_ACCEPTANCE === "1";
@@ -88,7 +87,7 @@ describe.skipIf(!isLinux || !nativeAcceptanceEnabled)("Linux native process-scop
 
     const runId = randomUUID();
     const runHome = join(directory, "hermes-home");
-    const payloadDigestPath = join(directory, "payload-secret-sha256.txt");
+    const payloadMarkerPath = join(directory, "payload-provider-free.txt");
     const descendantPidPath = join(directory, "setsid-descendant.pid");
     database.run(
       "INSERT INTO agent_runs(id,role,runtime,model,status,started_at) VALUES($id,'developer','hermes','dummy-5a','STARTED',$startedAt)",
@@ -104,18 +103,16 @@ describe.skipIf(!isLinux || !nativeAcceptanceEnabled)("Linux native process-scop
 
     const payload = [
       "const { spawn } = require('node:child_process');",
-      "const { createHash } = require('node:crypto');",
       "const { writeFileSync } = require('node:fs');",
-      "const key = process.env.EBB_HERMES_PROVIDER_API_KEY;",
-      "if (!key) process.exit(20);",
-      "writeFileSync(process.argv[1], createHash('sha256').update(key).digest('hex'));",
+      "if (process.env.EBB_HERMES_PROVIDER_API_KEY) process.exit(20);",
+      "writeFileSync(process.argv[1], 'provider-free-dummy-payload');",
       "const child = spawn('setsid', ['/bin/sh', '-c', 'sleep 60'], { stdio: 'ignore' });",
       "child.once('error', () => process.exit(21));",
       "child.once('spawn', () => { writeFileSync(process.argv[2], String(child.pid)); child.unref(); process.stdout.write('dummy payload root complete\\n'); });",
     ].join(" ");
     handle = await supervisor.launch(scopeIdentity, {
       executable: process.execPath,
-      args: ["-e", payload, payloadDigestPath, descendantPidPath],
+      args: ["-e", payload, payloadMarkerPath, descendantPidPath],
       cwd: directory,
       environment: {
         PATH: process.env.PATH ?? "",
@@ -123,7 +120,6 @@ describe.skipIf(!isLinux || !nativeAcceptanceEnabled)("Linux native process-scop
         HERMES_HOME: runHome,
         NODE_ENV: "test",
       },
-      secret: CANARY,
       timeoutMs: 60_000,
     }, async (identity) => {
       database!.transaction((tx) => transitionRunProcessOwnerTx(tx, {
@@ -142,9 +138,9 @@ describe.skipIf(!isLinux || !nativeAcceptanceEnabled)("Linux native process-scop
 
     const persistedOwner = getRunProcessOwner(database, runId);
     expect(persistedOwner?.state).toBe("LIVE");
-    const payloadDigest = await waitForFile(payloadDigestPath);
+    const payloadMarker = await waitForFile(payloadMarkerPath);
     const descendantPid = Number(await waitForFile(descendantPidPath));
-    expect(payloadDigest).toBe(createHash("sha256").update(CANARY).digest("hex"));
+    expect(payloadMarker).toBe("provider-free-dummy-payload");
     expect(Number.isSafeInteger(descendantPid)).toBe(true);
     expect(descendantPid).toBeGreaterThan(0);
 
@@ -174,7 +170,8 @@ describe.skipIf(!isLinux || !nativeAcceptanceEnabled)("Linux native process-scop
     expect(requiredProperties.get("Delegate")).toBe("no");
     expect(requiredProperties.get("ProtectControlGroups")).toBe("yes");
     expect(requiredProperties.get("Restart")).toBe("no");
-    expect([...requiredProperties.entries()].map(([key, value]) => `${key}=${value}`).join("\n")).not.toContain(CANARY);
+    expect([...requiredProperties.entries()].map(([key, value]) => `${key}=${value}`).join("\n"))
+      .not.toContain("EBB_HERMES_PROVIDER_API_KEY");
 
     database.transaction((tx) => transitionRunProcessOwnerTx(tx, {
       runId, expectedState: "LIVE", nextState: "STOPPING",
@@ -187,16 +184,16 @@ describe.skipIf(!isLinux || !nativeAcceptanceEnabled)("Linux native process-scop
       runId, expectedState: "STOPPING", nextState: "STOPPED", evidence: stopped.evidence,
     }));
     const completion = await handle.completion;
-    expect(`${completion.stdout}\n${completion.stderr}`).not.toContain(CANARY);
+    expect(`${completion.stdout}\n${completion.stderr}`).not.toContain("EBB_HERMES_PROVIDER_API_KEY");
 
     const journal = await executor.exec("journalctl", ["--user", "--unit", `${unitName}.service`, "--no-pager", "--output=cat"], {
       env: managerEnvironment(), timeout: 10_000,
     });
-    expect(`${journal.stdout}\n${journal.stderr}`).not.toContain(CANARY);
+    expect(`${journal.stdout}\n${journal.stderr}`).not.toContain("EBB_HERMES_PROVIDER_API_KEY");
     expect(JSON.stringify({
       runs: database.all("SELECT * FROM agent_runs"),
       owners: database.all("SELECT * FROM run_process_owners"),
-    })).not.toContain(CANARY);
+    })).not.toContain("EBB_HERMES_PROVIDER_API_KEY");
     expect(getRunProcessOwner(database, runId)?.state).toBe("STOPPED");
   }, 90_000);
 });
@@ -277,10 +274,9 @@ describe.skipIf(!isWindows || !nativeAcceptanceEnabled)("Windows native process-
 
     handle = await supervisor.launch(identity, {
       executable: process.execPath,
-      args: ["-e", "process.exit(0)"],
+      args: ["-e", "if (process.env.EBB_HERMES_PROVIDER_API_KEY) process.exit(20); process.exit(0)"],
       cwd: directory,
       environment: windowsChildEnvironment(runHome),
-      secret: CANARY,
       timeoutMs: 60_000,
     }, async (verifiedIdentity) => {
       database!.transaction((tx) => transitionRunProcessOwnerTx(tx, {
@@ -299,7 +295,7 @@ describe.skipIf(!isWindows || !nativeAcceptanceEnabled)("Windows native process-
       identity = verifiedIdentity;
     });
     const completion = await handle.completion;
-    expect(`${completion.stdout}\n${completion.stderr}`).not.toContain(CANARY);
+    expect(`${completion.stdout}\n${completion.stderr}`).not.toContain("EBB_HERMES_PROVIDER_API_KEY");
     const liveOwner = getRunProcessOwner(database, runId);
     expect(liveOwner?.state).toBe("LIVE");
     if (!liveOwner?.supervisorPid || !liveOwner.supervisorStartIdentity) throw new Error("WINDOWS_HELPER_IDENTITY_NOT_PERSISTED");
@@ -341,7 +337,7 @@ describe.skipIf(!isWindows || !nativeAcceptanceEnabled)("Windows native process-
 
     const runId = randomUUID();
     const runHome = join(directory, "hermes-home");
-    const secretDigestPath = join(directory, "payload-secret-sha256.txt");
+    const payloadMarkerPath = join(directory, "payload-provider-free.txt");
     const descendantPidPath = join(directory, "descendant.pid");
     const heartbeatPath = join(directory, "descendant-heartbeat.txt");
     const descendantExitPath = join(directory, "descendant-exit.txt");
@@ -365,11 +361,9 @@ describe.skipIf(!isWindows || !nativeAcceptanceEnabled)("Windows native process-
     ].join("");
     const parentPayload = [
       "const {spawn}=require('node:child_process');",
-      "const {createHash}=require('node:crypto');",
       "const fs=require('node:fs');",
-      "const key=process.env.EBB_HERMES_PROVIDER_API_KEY;",
-      "if(!key)process.exit(20);",
-      `fs.writeFileSync(${JSON.stringify(secretDigestPath)},createHash('sha256').update(key).digest('hex'));`,
+      "if(process.env.EBB_HERMES_PROVIDER_API_KEY)process.exit(20);",
+      `fs.writeFileSync(${JSON.stringify(payloadMarkerPath)},'provider-free-dummy-payload');`,
       `const child=spawn(process.execPath,['-e',${JSON.stringify(childPayload)},${JSON.stringify(heartbeatPath)},${JSON.stringify(descendantExitPath)}],{stdio:'ignore',windowsHide:true,detached:true});`,
       "child.once('error',()=>process.exit(21));",
       `child.once('exit',code=>fs.writeFileSync(${JSON.stringify(descendantExitPath)},String(code)));`,
@@ -380,7 +374,6 @@ describe.skipIf(!isWindows || !nativeAcceptanceEnabled)("Windows native process-
       args: ["-e", parentPayload],
       cwd: directory,
       environment: windowsChildEnvironment(runHome),
-      secret: CANARY,
       timeoutMs: 60_000,
     }, async (verifiedIdentity) => {
       database!.transaction((tx) => transitionRunProcessOwnerTx(tx, {
@@ -401,7 +394,7 @@ describe.skipIf(!isWindows || !nativeAcceptanceEnabled)("Windows native process-
 
     const persistedOwner = getRunProcessOwner(database, runId);
     expect(persistedOwner?.state).toBe("LIVE");
-    expect(await waitForFile(secretDigestPath)).toBe(createHash("sha256").update(CANARY).digest("hex"));
+    expect(await waitForFile(payloadMarkerPath)).toBe("provider-free-dummy-payload");
     const descendantPid = Number(await waitForFile(descendantPidPath));
     expect(Number.isSafeInteger(descendantPid)).toBe(true);
     expect(descendantPid).toBeGreaterThan(0);
@@ -436,14 +429,14 @@ describe.skipIf(!isWindows || !nativeAcceptanceEnabled)("Windows native process-
       runId, expectedState: "STOPPING", nextState: "STOPPED", evidence: stopped.evidence,
     }));
     const completion = await handle.completion;
-    expect(`${completion.stdout}\n${completion.stderr}`).not.toContain(CANARY);
+    expect(`${completion.stdout}\n${completion.stderr}`).not.toContain("EBB_HERMES_PROVIDER_API_KEY");
     const finalHeartbeat = await readFile(heartbeatPath, "utf8");
     await new Promise((resolve) => setTimeout(resolve, 120));
     expect(await readFile(heartbeatPath, "utf8")).toBe(finalHeartbeat);
     expect(JSON.stringify({
       runs: database.all("SELECT * FROM agent_runs"),
       owners: database.all("SELECT * FROM run_process_owners"),
-    })).not.toContain(CANARY);
+    })).not.toContain("EBB_HERMES_PROVIDER_API_KEY");
     expect(getRunProcessOwner(database, runId)?.state).toBe("STOPPED");
     const finalInspection = await reopened.inspect(stopping);
     expect(finalInspection.state).toBe("STOPPED");
@@ -478,7 +471,7 @@ async function runRestartBoundaryAcceptance(): Promise<void> {
   const databasePath = join(directory, "state.sqlite");
   const runId = randomUUID();
   const runHome = join(directory, "hermes-home");
-  const digestPath = join(directory, "payload-secret-sha256.txt");
+  const payloadMarkerPath = join(directory, "payload-provider-free.txt");
   const descendantPidPath = join(directory, "descendant.pid");
   const heartbeatPath = join(directory, "descendant-heartbeat.txt");
   const descendantExitPath = join(directory, "descendant-exit.txt");
@@ -493,23 +486,21 @@ async function runRestartBoundaryAcceptance(): Promise<void> {
 
   try {
     const launchArgs = [
-      "launch", databasePath, runId, runHome, heartbeatPath, digestPath,
+      "launch", databasePath, runId, runHome, heartbeatPath, payloadMarkerPath,
       descendantPidPath, descendantExitPath, readyPath,
     ];
     const launcherEnvironment = restartWorkerEnvironment(runHome);
-    expect(JSON.stringify(launchArgs)).not.toContain(CANARY);
-    expect(JSON.stringify(launcherEnvironment)).not.toContain(CANARY);
-    launcher = spawnRestartWorker(launchArgs, CANARY, launcherEnvironment, isLinux);
+    launcher = spawnRestartWorker(launchArgs, launcherEnvironment, isLinux);
 
     ready = JSON.parse(await waitForRestartMarker(readyPath, launcher, 60_000)) as RestartMarker;
     expect(ready.runId).toBe(runId);
     expect(ready.processId).toBe(launcher.child.pid);
     expect(ready.state).toBe(isWindows ? "UNKNOWN" : "LIVE");
-    expect(await waitForFile(digestPath)).toBe(createHash("sha256").update(CANARY).digest("hex"));
+    expect(await waitForFile(payloadMarkerPath)).toBe("provider-free-dummy-payload");
     const descendantPid = Number(await waitForFile(descendantPidPath));
     expect(Number.isSafeInteger(descendantPid)).toBe(true);
     expect(descendantPid).toBeGreaterThan(0);
-    expect(JSON.stringify(launcher.output)).not.toContain(CANARY);
+    expect(JSON.stringify(launcher.output)).not.toContain("EBB_HERMES_PROVIDER_API_KEY");
 
     let unitName: string | undefined;
     if (isWindows) {
@@ -541,7 +532,7 @@ async function runRestartBoundaryAcceptance(): Promise<void> {
     await terminateRestartLauncher(launcher, ready.processGroupId, 15_000);
     expect(launcher.child.exitCode !== null || launcher.child.signalCode !== null).toBe(true);
     expect(launcherPid).toBe(ready.processId);
-    expect(JSON.stringify(launcher.output)).not.toContain(CANARY);
+    expect(JSON.stringify(launcher.output)).not.toContain("EBB_HERMES_PROVIDER_API_KEY");
     launcher = undefined;
 
     if (isWindows) {
@@ -572,7 +563,7 @@ async function runRestartBoundaryAcceptance(): Promise<void> {
     expect(recovery.result.processId).not.toBe(ready.processId);
     expect(recovery.result.previousState).toBe(isWindows ? "UNKNOWN" : "LIVE");
     expect(recovery.result.state).toBe("STOPPED");
-    expect(JSON.stringify(recovery.output)).not.toContain(CANARY);
+    expect(JSON.stringify(recovery.output)).not.toContain("EBB_HERMES_PROVIDER_API_KEY");
 
     if (isWindows) {
       await waitFor(async () => (await processExists(descendantPid)) ? undefined : true, 15_000);
@@ -586,7 +577,7 @@ async function runRestartBoundaryAcceptance(): Promise<void> {
       const journal = await executor.exec("journalctl", ["--user", "--unit", unitName!, "--no-pager", "--output=cat"], {
         env: managerEnvironment(), timeout: 10_000,
       });
-      expect(`${journal.stdout}\n${journal.stderr}`).not.toContain(CANARY);
+      expect(`${journal.stdout}\n${journal.stderr}`).not.toContain("EBB_HERMES_PROVIDER_API_KEY");
       const clientPids = await linuxProcessesMatching(unitName!);
       expect(clientPids).toEqual([]);
     }
@@ -595,7 +586,8 @@ async function runRestartBoundaryAcceptance(): Promise<void> {
     try {
       const finalOwner = getRunProcessOwner(finalDatabase, runId);
       expect(finalOwner?.state).toBe("STOPPED");
-      expect(JSON.stringify({ owners: finalDatabase.all("SELECT * FROM run_process_owners"), runs: finalDatabase.all("SELECT * FROM agent_runs") })).not.toContain(CANARY);
+      expect(JSON.stringify({ owners: finalDatabase.all("SELECT * FROM run_process_owners"), runs: finalDatabase.all("SELECT * FROM agent_runs") }))
+        .not.toContain("EBB_HERMES_PROVIDER_API_KEY");
     } finally {
       finalDatabase.close();
     }
@@ -630,7 +622,7 @@ async function runWindowsHelperCrashBoundaryAcceptance(): Promise<void> {
   const databasePath = join(directory, "state.sqlite");
   const runId = randomUUID();
   const runHome = join(directory, "hermes-home");
-  const digestPath = join(directory, "payload-secret-sha256.txt");
+  const payloadMarkerPath = join(directory, "payload-provider-free.txt");
   const descendantPidPath = join(directory, "descendant.pid");
   const heartbeatPath = join(directory, "descendant-heartbeat.txt");
   const descendantExitPath = join(directory, "descendant-exit.txt");
@@ -646,10 +638,10 @@ async function runWindowsHelperCrashBoundaryAcceptance(): Promise<void> {
 
   try {
     const launchArgs = [
-      "launch", databasePath, runId, runHome, heartbeatPath, digestPath,
+      "launch", databasePath, runId, runHome, heartbeatPath, payloadMarkerPath,
       descendantPidPath, descendantExitPath, readyPath,
     ];
-    launcher = spawnRestartWorker(launchArgs, CANARY, restartWorkerEnvironment(runHome), false);
+    launcher = spawnRestartWorker(launchArgs, restartWorkerEnvironment(runHome), false);
     ready = JSON.parse(await waitForRestartMarker(readyPath, launcher, 60_000)) as RestartMarker;
     expect(ready.runId).toBe(runId);
     expect(ready.processId).toBe(launcher.child.pid);
@@ -659,7 +651,7 @@ async function runWindowsHelperCrashBoundaryAcceptance(): Promise<void> {
       throw new Error("WINDOWS_PERSISTED_HELPER_IDENTITY_MISSING");
     }
 
-    expect(await waitForFile(digestPath)).toBe(createHash("sha256").update(CANARY).digest("hex"));
+    expect(await waitForFile(payloadMarkerPath)).toBe("provider-free-dummy-payload");
     const launchedDescendantPid = Number(await waitForFile(descendantPidPath));
     descendantPid = launchedDescendantPid;
     expect(Number.isSafeInteger(launchedDescendantPid)).toBe(true);
@@ -736,7 +728,7 @@ async function runWindowsHelperCrashBoundaryAcceptance(): Promise<void> {
     expect(recovery.result.previousState).toBe("UNKNOWN");
     expect(recovery.result.state).toBe("STOPPED");
     expect(recovery.result.stopEvidence).toBe("WINDOWS_JOB_AND_HELPER_ABSENT");
-    expect(JSON.stringify(recovery.output)).not.toContain(CANARY);
+    expect(JSON.stringify(recovery.output)).not.toContain("EBB_HERMES_PROVIDER_API_KEY");
 
     const finalDatabase = createSqliteDatabase(databasePath);
     try {
@@ -745,7 +737,8 @@ async function runWindowsHelperCrashBoundaryAcceptance(): Promise<void> {
       expect(finalOwner?.stopEvidence).toBe("WINDOWS_JOB_AND_HELPER_ABSENT");
       expect(finalOwner?.supervisorPid).toBe(persistedOwner.supervisorPid);
       expect(finalOwner?.supervisorStartIdentity).toBe(persistedOwner.supervisorStartIdentity);
-      expect(JSON.stringify({ owners: finalDatabase.all("SELECT * FROM run_process_owners"), runs: finalDatabase.all("SELECT * FROM agent_runs") })).not.toContain(CANARY);
+      expect(JSON.stringify({ owners: finalDatabase.all("SELECT * FROM run_process_owners"), runs: finalDatabase.all("SELECT * FROM agent_runs") }))
+        .not.toContain("EBB_HERMES_PROVIDER_API_KEY");
     } finally {
       finalDatabase.close();
     }
@@ -823,7 +816,6 @@ function restartWorkerEnvironment(runHome: string): Record<string, string> {
 
 function spawnRestartWorker(
   args: string[],
-  secret: string | undefined,
   environment: Record<string, string>,
   detached: boolean,
 ): RestartWorker {
@@ -842,8 +834,7 @@ function spawnRestartWorker(
     child.once("error", rejectCompletion);
     child.once("close", (code, signal) => resolveCompletion({ code, signal }));
   });
-  if (secret === undefined) child.stdin.end();
-  else child.stdin.end(`${secret}\n`);
+  child.stdin.end();
   return { child, completion, output };
 }
 
@@ -869,7 +860,7 @@ async function runRecoveryWorker(
   markerPath: string,
   environment: Record<string, string>,
 ): Promise<{ exit: { code: number | null; signal: NodeJS.Signals | null }; result: Record<string, unknown>; output: { stdout: string; stderr: string } }> {
-  const worker = spawnRestartWorker(["recover", databasePath, runId, "", "", "", "", "", markerPath], undefined, environment, false);
+  const worker = spawnRestartWorker(["recover", databasePath, runId, "", "", "", "", "", markerPath], environment, false);
   const exit = await promiseWithTimeout(worker.completion, 60_000, "PROCESS_SCOPE_RECOVERY_EXIT_TIMEOUT");
   let marker: string;
   try { marker = await readFile(markerPath, "utf8"); }

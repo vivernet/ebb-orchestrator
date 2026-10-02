@@ -377,7 +377,7 @@ describe("production context manifest acceptance", () => {
     };
     const home = resolveOrchestratorHome({ EBB_ORCHESTRATOR_HOME: join(root, "restart-home") }, process.platform === "win32" ? "win32" : "linux");
     const production = createProductionComposition({
-      database: recoveryDb!, home, secretStore: {} as never,
+      database: recoveryDb!, home,
       gitReconciler: { initialize: async () => {}, reconcile: async () => ({ state: "IN_SYNC" as const }) },
       processScopeSupervisor: recoverySupervisor,
     });
