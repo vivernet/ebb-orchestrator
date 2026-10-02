@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from 'f
 import { dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import * as yaml from 'js-yaml';
+import { validatePlans } from './docs-governance.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const statuses = new Set(['proposed', 'planned', 'in_progress', 'blocked', 'completed', 'superseded', 'cancelled']);
@@ -93,10 +94,16 @@ const outputArg = args.find((arg) => arg.startsWith('--output='));
 const plansDir = plansArg ? resolve(plansArg.slice('--plans-root='.length)) : join(ROOT, 'docs/architecture/plans');
 const outputPath = outputArg ? outputArg.slice('--output='.length) : 'docs/roadmap/generated.md';
 const plans = collectPlans(plansDir);
-const content = generateRoadmap(plans);
-if (dryRun) {
-  console.log('=== DRY RUN MODE ===\n'); console.log(`Plans collected: ${plans.length}`); console.log(`Output: ${outputPath}`); console.log('\n--- Generated content preview ---\n'); console.log(content.slice(0, 500) + (content.length > 500 ? '...' : ''));
+const validationErrors = validatePlans(plans);
+if (validationErrors.length > 0) {
+  console.error(validationErrors.map((error) => `Roadmap validation failed: ${error}`).join('\n'));
+  process.exitCode = 1;
 } else {
-  const output = resolve(ROOT, outputPath); mkdirSync(dirname(output), { recursive: true }); writeFileSync(output, content, 'utf8');
-  console.log(`Roadmap generated: ${outputPath}`); console.log(`Plans included: ${plans.length}`);
+  const content = generateRoadmap(plans);
+  if (dryRun) {
+    console.log('=== DRY RUN MODE ===\n'); console.log(`Plans collected: ${plans.length}`); console.log(`Output: ${outputPath}`); console.log('\n--- Generated content preview ---\n'); console.log(content.slice(0, 500) + (content.length > 500 ? '...' : ''));
+  } else {
+    const output = resolve(ROOT, outputPath); mkdirSync(dirname(output), { recursive: true }); writeFileSync(output, content, 'utf8');
+    console.log(`Roadmap generated: ${outputPath}`); console.log(`Plans included: ${plans.length}`);
+  }
 }

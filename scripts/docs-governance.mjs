@@ -324,7 +324,7 @@ export function collectPlans(dir) {
 /**
  * Validate plans for uniqueness and circular dependencies
  */
-function validatePlans(plans) {
+export function validatePlans(plans) {
   const errors = [];
   
   // Check for duplicate plan IDs

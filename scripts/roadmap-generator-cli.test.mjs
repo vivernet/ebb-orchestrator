@@ -132,3 +132,60 @@ test('CLI reports plan directory traversal failures', () => {
     assert.equal(existsSync(output), false);
   } finally { rmSync(temp, { recursive: true, force: true }); }
 });
+
+test('CLI dry-run previews content without creating or changing the output file', () => {
+  const temp = mkdtempSync(join(tmpdir(), 'ebb-roadmap-dry-run-'));
+  try {
+    const plans = join(temp, 'plans');
+    const output = join(temp, 'not-created', 'roadmap.md');
+    mkdirSync(plans);
+    writeFileSync(join(plans, 'plan.md'), yaml(plan({ depends_on: [] })));
+
+    const result = spawnSync(process.execPath, [cli, `--plans-root=${plans}`, `--output=${output}`, '--dry-run'], { cwd: root, encoding: 'utf8' });
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /DRY RUN MODE/);
+    assert.match(result.stdout, /Generated content preview/);
+    assert.equal(result.stderr, '');
+    assert.equal(existsSync(output), false);
+    assert.equal(existsSync(dirname(output)), false);
+  } finally { rmSync(temp, { recursive: true, force: true }); }
+});
+
+test('CLI rejects duplicate Plan IDs before changing the output file', () => {
+  const temp = mkdtempSync(join(tmpdir(), 'ebb-roadmap-duplicate-ids-'));
+  try {
+    const plans = join(temp, 'plans');
+    const output = join(temp, 'roadmap.md');
+    const sentinel = 'keep existing roadmap\n';
+    mkdirSync(plans);
+    writeFileSync(join(plans, 'first.md'), yaml(plan({ depends_on: [] })));
+    writeFileSync(join(plans, 'second.md'), yaml(plan({ title: 'Duplicate ID Fixture', depends_on: [] })));
+    writeFileSync(output, sentinel);
+
+    const result = spawnSync(process.execPath, [cli, `--plans-root=${plans}`, `--output=${output}`], { cwd: root, encoding: 'utf8' });
+
+    assert.notEqual(result.status, 0, 'duplicate Plan IDs must fail validation');
+    assert.match(result.stderr, /Duplicate plan ID/);
+    assert.equal(readFileSync(output, 'utf8'), sentinel);
+  } finally { rmSync(temp, { recursive: true, force: true }); }
+});
+
+test('CLI rejects circular Plan dependencies before changing the output file', () => {
+  const temp = mkdtempSync(join(tmpdir(), 'ebb-roadmap-circular-deps-'));
+  try {
+    const plans = join(temp, 'plans');
+    const output = join(temp, 'roadmap.md');
+    const sentinel = 'keep existing roadmap\n';
+    mkdirSync(plans);
+    writeFileSync(join(plans, 'first.md'), yaml(plan({ depends_on: ['plan-92'] })));
+    writeFileSync(join(plans, 'second.md'), yaml(plan({ id: 'plan-92', title: 'Second Plan', depends_on: ['plan-91'] })));
+    writeFileSync(output, sentinel);
+
+    const result = spawnSync(process.execPath, [cli, `--plans-root=${plans}`, `--output=${output}`], { cwd: root, encoding: 'utf8' });
+
+    assert.notEqual(result.status, 0, 'circular dependencies must fail validation');
+    assert.match(result.stderr, /Circular dependency/);
+    assert.equal(readFileSync(output, 'utf8'), sentinel);
+  } finally { rmSync(temp, { recursive: true, force: true }); }
+});
