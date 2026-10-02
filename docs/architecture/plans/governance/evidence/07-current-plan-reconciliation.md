@@ -4,7 +4,7 @@ kind: ledger
 status: current
 title: Сверка незавершённых планов и требований
 created: 2026-09-28
-updated: 2026-10-01
+updated: 2026-10-03
 ---
 
 # Сверка незавершённых планов и требований
@@ -24,7 +24,7 @@ updated: 2026-10-01
 | `plan-09` | `in_progress` | Existing code/reviews/gates cover prior production hardening. `.github/workflows/codeql.yml` теперь настроен для JavaScript/TypeScript, но свежий independent source scan и SARIF на финальном revision отсутствуют. Dependency-audit artifact и сам workflow не являются результатом source scan. Создание/запуск remote CI после окончательной правки требует разрешённого publication path. Исторические RED/commit marks не переигрываются на уже исправленном дереве и не выполняются автоматически. |
 | `plan-12` | `completed` | Tasks 1–11 и независимый whole-plan review (PASS, 2026-09-29) закрыты. Пользователь подтвердил password/cookie auth; Plan2/3 и traceability приведены к local login/session, HttpOnly cookie, same-origin proxy, Origin/CSRF и отсутствию legacy bootstrap. Scoped suites: jobs/lifecycle/MCP — 7 файлов, 88 тестов; server auth/transport — 12; web auth/session — 13. Task 8 P2 raw `last_error` leak исправлен fixed categories/historical redaction; независимый security re-review PASS. Task 9 MCP error/log redaction review PASS. Gates: lint/typecheck/build/docs; elevated test — 97 files, 896 passed / 2 skipped, scripts 19/19. Chromium E2E — 6/6, READY/restart/controlled teardown, exit 0. Production `dist/main.js` disposable stdin smoke — PASS: READY, migrations, user setup, redaction и graceful IPC shutdown. `projects.map is not a function` вызван намеренной malformed-dashboard fixture и является FALSE_POSITIVE. Ограничение: production job producers отсутствуют; worker acceptance использует test handlers. |
 | `plan-14` | `proposed` | Docker runtime — future scope, а не незакрытая v1 реализация. Draft сам фиксирует блокеры для Hermes artifact/version/hash/architectures, provider credential bridge и CI/release scope. Не реализовывать до снятия этих требований и scope approval. |
-| `plan-16` | `blocked` | Plan inventory с 97 строками — прежний snapshot, который не совпадает с текущим деревом (`tools/hermes/README.md` отсутствует, добавлен parity fixture); embedded metadata validator тоже ждёт старые status/date. Из 13 acceptance criteria отмечены только 2; остальные 11 не подтверждены, включая archive verification и written approval. Требуются свежие inventory/hash/reference/security checks и точный disposition/archive package; внешние archive/delete/move, README и policy changes запрещены до отдельного письменного одобрения конкретного пакета. |
+| `plan-16` | `blocked` | Rebaseline 2026-10-02 сверил 97 путей: 75 отсутствовали, 14 актуальных путей сохранены, 8 точных исторических tracked-файлов сверены по hash и удалены без архива в `966f1ec`; ссылки на два исторических отчёта помечены. Эти cleanup obligations закрыты. Остаются независимые README, command-matrix и governance acceptance criteria; другие delete/move цели этим inventory не заданы. |
 | `plan-19` | `in_progress` | Status не менялся. Task 8 требует scan evidence на окончательном revision; Task 9, whole-plan reviews и финальная reconciliation ещё открыты. Plan20 implementation/acceptance и внешние Hermes/CodeQL gates продолжают блокировать lifecycle closeout. |
 | `plan-20` | `in_progress` | Task 3 прошёл acceptance и независимый review; Task 4 atomic Run/ContextManifest/owner implementation активен. Task 5 остаётся gated на реальном version-pinned Hermes session-tag proof; downstream Plan05/06/19 status handoff отложен до Task 7. |
 
@@ -34,7 +34,7 @@ updated: 2026-10-01
 
 ## Прочие планы и открытые чекбоксы
 
-- `plan-02`, `plan-03`, `plan-08-01` и другие планы со статусом `completed` содержат старые незачёркнутые procedural marks; текущие источники и тесты подтверждают существенные обязанности, но не доказывают задним числом исторические RED/GREEN и commit steps. `plan-06` остаётся `in_progress` из-за оригинальных UI obligations и open acceptance/review gates; `plan-16` заблокирован собственным approval gate.
+- `plan-02`, `plan-03`, `plan-08-01` и другие планы со статусом `completed` содержат старые незачёркнутые procedural marks; текущие источники и тесты подтверждают существенные обязанности, но не доказывают задним числом исторические RED/GREEN и commit steps. `plan-06` остаётся `in_progress` из-за оригинальных UI obligations и open acceptance/review gates; `plan-16` заблокирован из-за оставшихся README, command-matrix и governance acceptance criteria.
 - `plan-03` закрыт после замены сетевого fallback в `RepositoryDiscovery` на local-only lookup, regression, прошедших gates и независимого review `PASS`; review оставил только minor coverage note для detached local refs.
 - `plan-13` явно исторический и заменён текущим Plan-only roadmap generator/governance pipeline. Его старые задачи не являются активными; последняя dry-run сверка текущего генератора получила 33 plan и 33/33 совпадений с generated register.
 - `plan-11` заменён Plan 18: старый `tools/hermes` registry/asset-sync workflow выведен из употребления, текущий canonical source — `.agents/skills/`, а setup/check тесты проверяют актуальный контракт. Остаётся одна неоднозначность формулировки Plan 11 Task 2 Step 5: `hermes:execute` проверяет containment и существование файла, но не валидирует Plan frontmatter/lifecycle перед запуском. До уточнения исходного смысла это не считается подтверждённым дефектом и не меняет `completed`.
@@ -127,7 +127,7 @@ updated: 2026-10-01
 2. Довести managed Hermes setup до supported profile/provider или получить исправление внешней установки; не выдавать personal-profile smoke за acceptance Plan 04/05/07.
 3. Определить contract disposition исходных Plan 06 Run context/artifact UI и Settings/Usage requirements; при необходимости подготовить и согласовать отдельный proposal до persistence/API/policy изменений.
 4. После окончательных изменений выполнить source scan на финальном revision и получить требуемые Plan 09 whole-plan review; hosted CI требует отдельно разрешённого publication path.
-5. Для Plan 16 переснять весь inventory/archive manifest и представить точный список disposition, archive target и proposed documentation/policy changes; только затем запросить письменное approval до любого delete/move/README/policy side effect.
+5. Для Plan 16 завершить остающиеся README, command-matrix и governance criteria по уже выполненному rebaseline; восемь точных устаревших материалов удалены без архива в `966f1ec`. Не расширять delete/move scope за пределы зафиксированного inventory.
 6. Empty UI reference placeholders остаются вне установленных Plan acceptance criteria; их заполнение не выводится автоматически из общей просьбы закрыть планы.
 
 ## Final review continuation evidence (2026-09-30)
@@ -156,6 +156,12 @@ updated: 2026-10-01
 - Текущие refs: `develop=4336b95`, `master=d74a784`, `origin/master=6eb51ae`. Указание в предыдущем continuation, что обе локальные ветки остались на `6eb51ae`, описывало более раннюю точку после fast-forward merge; сейчас оно устарело.
 - Hermes CLI и `pnpm hermes:check` прошли вне sandbox на установленной версии `v0.21.5+4831.g02e4118`. Sandbox-side отказ объясняется отсутствием доступа к bundled Python Hermes в ограниченной среде и сам по себе не доказывает неисправность внешней установки. Wrapper tests прошли 28/28; scoped ESLint и независимый scoped review также PASS. Реальный provider-backed acceptance не запускался и не пройден; успешный `hermes:check` подтверждает CLI/setup readiness, но не работу provider. Credentials и пользовательский профиль не читались и не менялись.
 - Для Plan09 доступен настроенный hosted route в `.github/workflows/codeql.yml`: push в `master`/`develop`, PR в `master`, weekly schedule; CodeQL анализирует JavaScript/TypeScript. Однако run/result или SARIF для текущей revision `4336b95` отсутствует. Существующие `pnpm audit` JSON — dependency audit, не source scan; они не закрывают этот gate.
-- Plan16 остаётся `blocked`: нет подтверждённого rebaseline stale inventory, точного external archive destination и written approval полного disposition package. Архивирование, удаление, перемещение и иные файловые операции по этому плану не выполнять.
+- Plan16 остаётся `blocked`: на момент этой сверки не было подтверждённого rebaseline stale inventory, точного external archive destination и written approval полного disposition package. Архивирование, удаление, перемещение и иные файловые операции по этому плану не выполнялись.
 - All-plan audit пока не представляет полную requirement-by-requirement матрицу по каждому checklist item. Указанные ранее 525 unchecked historical marks требуют индивидуального evidence disposition; само число не доказывает, что все соответствующие реализации отсутствуют.
 - Текущий `docs/roadmap/generated.md` содержит 34 Plan и совпадает с frontmatter по ID/title/status; Plan09=`in_progress`, Plan16=`blocked`, Plan19/20=`in_progress`. Более ранний отчёт о 33 Plans относится к предыдущему snapshot. Metadata статусы не менялись, roadmap повторно не генерировался.
+
+## Дополнение от 2026-10-03 — решение и disposition Plan16
+
+- Пользователь подтвердил, что старые материалы должны удаляться, а не архивироваться. В рамках точного Plan16 rebaseline восемь tracked historical targets удалены по одному после проверки path, Git tracking и SHA-256; коммит `966f1ec` содержит эти удаления.
+- Остальные 75 из 97 entries уже отсутствовали; 14 существующих путей — актуальные README, инструкции и активные Plan15 документы — сохранены. В этом inventory дополнительных исторических delete targets нет; более широкая очистка файловой системы не выполнялась.
+- Старые требования к внешнему archive target и approval rebaseline больше не являются текущими prerequisites. Plan16 остаётся `blocked` только по незавершённым README, command-matrix и governance acceptance criteria; lifecycle status не менялся.
