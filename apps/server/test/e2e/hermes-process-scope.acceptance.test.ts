@@ -418,8 +418,10 @@ describe.skipIf(!isLinux || !nativeAcceptanceEnabled)("Linux native process-scop
     expect(requiredProperties.get("Delegate")).toBe("no");
     expect(requiredProperties.get("ProtectControlGroups")).toBe("yes");
     expect(requiredProperties.get("Restart")).toBe("no");
-    expect([...requiredProperties.entries()].map(([key, value]) => `${key}=${value}`).join("\n"))
-      .not.toContain("EBB_HERMES_PROVIDER_API_KEY");
+    expect(requiredProperties.has("Environment")).toBe(true);
+    const environmentContainsProviderKey = (requiredProperties.get("Environment") ?? "")
+      .includes("EBB_HERMES_PROVIDER_API_KEY");
+    expect(environmentContainsProviderKey).toBe(false);
 
     database.transaction((tx) => transitionRunProcessOwnerTx(tx, {
       runId, expectedState: "LIVE", nextState: "STOPPING",
