@@ -221,6 +221,28 @@ describe("SystemdRunSupervisor", () => {
     await expect(handle.completion).resolves.toMatchObject({ exitCode: 0 });
   });
 
+  it("disables systemd argument expansion before passing JavaScript template expressions to the payload", async () => {
+    const payloadScript = "process.stdout.write(`${process.ppid}`)";
+    const request = {
+      ...launchRequest,
+      executable: process.execPath,
+      args: ["-e", payloadScript],
+    };
+
+    const handle = await supervisor.launch(owner, request, async () => undefined);
+
+    const args = executor.sessionCall?.args ?? [];
+    const separatorIndex = args.indexOf("--");
+    const expansionOptionIndex = args.indexOf("--expand-environment=no");
+    expect(expansionOptionIndex).toBeGreaterThanOrEqual(0);
+    expect(expansionOptionIndex).toBeLessThan(separatorIndex);
+    expect(args.slice(-3)).toEqual([process.execPath, "-e", payloadScript]);
+
+    unitState = "absent";
+    executor.finish();
+    await expect(handle.completion).resolves.toMatchObject({ exitCode: 0 });
+  });
+
   it("normalizes a trailing slash in XDG_RUNTIME_DIR before validating and passing the session bus", async () => {
     vi.stubEnv("XDG_RUNTIME_DIR", "/run/user/1000/");
 

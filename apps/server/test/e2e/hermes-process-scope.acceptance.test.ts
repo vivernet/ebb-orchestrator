@@ -4,7 +4,7 @@ import { constants } from "node:fs";
 import { access, mkdtemp, open, readFile, readdir, rm, statfs, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { getRunProcessOwner, insertRunProcessOwnerTx, preflightRunProcessOwners, prepareRunProcessOwner, transitionRunProcessOwnerTx } from "../../src/modules/runtime/run-process-owner.js";
 import type { Database } from "../../src/platform/database/database.js";
 import { runMigrations } from "../../src/platform/database/migrator.js";
@@ -28,6 +28,8 @@ const WINDOWS_NATIVE_PHASE_MARKERS = [
   "POWERSHELL_SCRIPT_STARTED",
   "ADD_TYPE_STARTED",
   "ADD_TYPE_COMPLETED",
+  "ASSEMBLY_LOAD_STARTED",
+  "ASSEMBLY_LOAD_COMPLETED",
   "OPEN_PROCESS_STARTED",
   "OPEN_PROCESS_RETURNED",
   "GET_PROCESS_TIMES_STARTED",
@@ -52,6 +54,8 @@ const WINDOWS_NATIVE_PHASE_MARKER_SET = new Set<string>(WINDOWS_NATIVE_PHASE_MAR
 const WINDOWS_NATIVE_PHASE_FILE_LIMIT = 4_096;
 const WINDOWS_NATIVE_PHASE_MARKER_LIMIT = 32;
 type WindowsNativePhaseMarker = (typeof WINDOWS_NATIVE_PHASE_MARKERS)[number];
+let windowsNativeHelperDirectory: string | undefined;
+let windowsNativeHelperAssemblyPath: string | undefined;
 
 describe("managerEnvironment", () => {
   it("normalizes a trailing slash before validating the WSL session bus address", () => {
@@ -153,6 +157,24 @@ describe("Windows process-scope diagnostic context", () => {
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
+  });
+});
+
+describe("Windows native helper assembly cache contract", () => {
+  it("compiles once into an isolated temporary assembly and loads it for native operations", async () => {
+    const helperPath = fileURLToPath(new URL("../helpers/windows-process-scope-native.ps1", import.meta.url));
+    const helperSource = await readFile(helperPath, "utf8");
+    const testSource = await readFile(fileURLToPath(import.meta.url), "utf8");
+
+    expect(helperSource).toContain('"compile-helper"');
+    expect(helperSource).toContain("Add-Type -TypeDefinition $nativeMethods -OutputAssembly $resolvedAssemblyPath");
+    expect(helperSource).toContain("Add-Type -Path $resolvedAssemblyPath");
+    expect(helperSource.match(/Add-Type\s+-TypeDefinition/gu)).toHaveLength(1);
+    expect(testSource).toContain('await mkdtemp(join(tmpdir(), "ebb-windows-native-helper-"))');
+    expect(testSource).toContain('args.push("-AssemblyPath", windowsNativeHelperAssemblyPath)');
+    expect(testSource.match(/await compileWindowsNativeHelper\(\);/gu)).toHaveLength(1);
+    expect(testSource).toMatch(/afterAll\(async \(\) => \{[\s\S]*?await rm\(windowsNativeHelperDirectory, \{ recursive: true, force: true \}\)/u);
+    expect(testSource).toContain("const timeoutMs = 15_000");
   });
 });
 
@@ -433,6 +455,27 @@ describe.skipIf(!isWindows || !nativeAcceptanceEnabled)("Windows native process-
   let identity: ProcessScopeIdentity | undefined;
   const executor = new ProcessExecutor();
   const supervisor = new WindowsJobSupervisor(executor);
+
+  beforeAll(async () => {
+    const directory = await mkdtemp(join(tmpdir(), "ebb-windows-native-helper-"));
+    windowsNativeHelperDirectory = directory;
+    windowsNativeHelperAssemblyPath = join(directory, "EbbProcessScopeNative.dll");
+    try {
+      await compileWindowsNativeHelper();
+    } catch (error) {
+      await rm(directory, { recursive: true, force: true });
+      windowsNativeHelperDirectory = undefined;
+      windowsNativeHelperAssemblyPath = undefined;
+      throw error;
+    }
+  }, 60_000);
+
+  afterAll(async () => {
+    if (!windowsNativeHelperDirectory) return;
+    await rm(windowsNativeHelperDirectory, { recursive: true, force: true });
+    windowsNativeHelperDirectory = undefined;
+    windowsNativeHelperAssemblyPath = undefined;
+  });
 
   afterEach(async () => {
     let cleanupError: unknown;
@@ -1131,6 +1174,8 @@ async function runWindowsNativeScopeCommand(options: {
   if (!isWindows) throw new Error("WINDOWS_PROCESS_SCOPE_NATIVE_COMMAND_ON_NON_WINDOWS");
   const script = fileURLToPath(new URL("../helpers/windows-process-scope-native.ps1", import.meta.url));
   const args = ["-NoProfile", "-NonInteractive", "-File", script, "-Mode", options.mode, "-ProcessId", String(options.processId)];
+  if (!windowsNativeHelperAssemblyPath) throw new Error("WINDOWS_NATIVE_HELPER_ASSEMBLY_NOT_INITIALIZED");
+  args.push("-AssemblyPath", windowsNativeHelperAssemblyPath);
   if (options.expectedCreationTime !== undefined) args.push("-ExpectedCreationTime", options.expectedCreationTime);
   if (options.containmentId !== undefined) args.push("-ContainmentId", options.containmentId);
   if (options.diagnosticPath !== undefined) args.push("-DiagnosticPath", options.diagnosticPath);
@@ -1153,6 +1198,26 @@ async function runWindowsNativeScopeCommand(options: {
     const elapsedMs = Math.max(0, Date.now() - startedAt);
     throw addDiagnosticContext(error, formatWindowsNativeScopeCommandContext(options, timeoutMs, elapsedMs));
   }
+}
+
+async function compileWindowsNativeHelper(): Promise<void> {
+  if (!isWindows) throw new Error("WINDOWS_NATIVE_HELPER_COMPILE_ON_NON_WINDOWS");
+  if (!windowsNativeHelperDirectory || !windowsNativeHelperAssemblyPath) {
+    throw new Error("WINDOWS_NATIVE_HELPER_TEMP_DIRECTORY_NOT_INITIALIZED");
+  }
+  const script = fileURLToPath(new URL("../helpers/windows-process-scope-native.ps1", import.meta.url));
+  const result = await new ProcessExecutor().exec("powershell.exe", [
+    "-NoProfile", "-NonInteractive", "-File", script,
+    "-Mode", "compile-helper", "-ProcessId", "0", "-AssemblyPath", windowsNativeHelperAssemblyPath,
+  ], {
+    cwd: repositoryRoot,
+    timeout: 60_000,
+    maxBuffer: 64 * 1024,
+  });
+  if (result.stdout.trim() !== "NATIVE_HELPER_COMPILED") {
+    throw new Error(`WINDOWS_NATIVE_HELPER_COMPILE_MARKER_MISSING:${result.stdout.trim()}`);
+  }
+  await access(windowsNativeHelperAssemblyPath);
 }
 
 async function appendWindowsNativePhase(path: string, phase: WindowsNativePhaseMarker): Promise<void> {

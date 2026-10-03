@@ -1,6 +1,6 @@
 param(
   [Parameter(Mandatory = $true)]
-  [ValidateSet("is-job-member", "read-creation", "terminate-exact")]
+  [ValidateSet("compile-helper", "is-job-member", "read-creation", "terminate-exact")]
   [string] $Mode,
 
   [Parameter(Mandatory = $true)]
@@ -9,6 +9,8 @@ param(
   [string] $ExpectedCreationTime,
 
   [string] $ContainmentId,
+
+  [string] $AssemblyPath,
 
   [string] $DiagnosticPath
 )
@@ -19,6 +21,7 @@ function Write-PhaseMarker([string] $Value) {
   if ([string]::IsNullOrWhiteSpace($DiagnosticPath)) { return }
   $allowed = @(
     "POWERSHELL_SCRIPT_STARTED", "ADD_TYPE_STARTED", "ADD_TYPE_COMPLETED",
+    "ASSEMBLY_LOAD_STARTED", "ASSEMBLY_LOAD_COMPLETED",
     "OPEN_PROCESS_STARTED", "OPEN_PROCESS_RETURNED",
     "GET_PROCESS_TIMES_STARTED", "GET_PROCESS_TIMES_RETURNED"
   )
@@ -159,9 +162,28 @@ public static class EbbProcessScopeNative
 '@
 
 try {
-  Write-PhaseMarker "ADD_TYPE_STARTED"
-  Add-Type -TypeDefinition $nativeMethods
-  Write-PhaseMarker "ADD_TYPE_COMPLETED"
+  if ($Mode -eq "compile-helper") {
+    if ([string]::IsNullOrWhiteSpace($AssemblyPath)) { throw "NATIVE_HELPER_ASSEMBLY_PATH_REQUIRED" }
+    $resolvedAssemblyPath = [System.IO.Path]::GetFullPath($AssemblyPath)
+    $assemblyDirectory = [System.IO.Path]::GetDirectoryName($resolvedAssemblyPath)
+    if ([string]::IsNullOrWhiteSpace($assemblyDirectory) -or -not [System.IO.Directory]::Exists($assemblyDirectory)) {
+      throw "NATIVE_HELPER_ASSEMBLY_DIRECTORY_MISSING"
+    }
+    Write-PhaseMarker "ADD_TYPE_STARTED"
+    Add-Type -TypeDefinition $nativeMethods -OutputAssembly $resolvedAssemblyPath
+    if (-not [System.IO.File]::Exists($resolvedAssemblyPath)) { throw "NATIVE_HELPER_ASSEMBLY_NOT_CREATED" }
+    Write-PhaseMarker "ADD_TYPE_COMPLETED"
+    [Console]::Out.WriteLine("NATIVE_HELPER_COMPILED")
+    return
+  }
+
+  if ([string]::IsNullOrWhiteSpace($AssemblyPath) -or -not [System.IO.File]::Exists($AssemblyPath)) {
+    throw "NATIVE_HELPER_ASSEMBLY_MISSING"
+  }
+  $resolvedAssemblyPath = [System.IO.Path]::GetFullPath($AssemblyPath)
+  Write-PhaseMarker "ASSEMBLY_LOAD_STARTED"
+  Add-Type -Path $resolvedAssemblyPath
+  Write-PhaseMarker "ASSEMBLY_LOAD_COMPLETED"
 
   switch ($Mode) {
     "read-creation" {

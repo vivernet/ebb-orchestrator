@@ -81,7 +81,7 @@ export class SystemdRunSupervisor implements ProcessScopeSupervisor {
       .map(([key, value]) => `${key}=${value}`);
     const unitName = systemdUnitName(owner);
     const args = [
-      "--user", "--pipe", "--wait", `--unit=${unitName}`, "--slice=app.slice",
+      "--user", "--expand-environment=no", "--pipe", "--wait", `--unit=${unitName}`, "--slice=app.slice",
       "--description=ebb-orchestrator:" + owner.launchNonce,
       "--service-type=exec",
       "--property=Type=exec",
@@ -94,6 +94,8 @@ export class SystemdRunSupervisor implements ProcessScopeSupervisor {
     ];
     // systemd user services inherit the manager environment. env -i exec-replaces itself before Node
     // starts, so the wrapper's initial /proc/<pid>/environ contains only this validated allowlist.
+    // Disable systemd argument expansion so JavaScript template expressions such as `${process.ppid}`
+    // in payload arguments are passed to Node unchanged.
     args.push(
       "--", "/usr/bin/env", "-i", ...explicitWrapperEnvironment,
       process.execPath, "-e", systemdPayloadWrapper, "--", request.executable, ...request.args,
