@@ -113,24 +113,75 @@ test('scan manifest describes a run-bound evidence contract instead of a stale s
   assert.equal(manifest.scanner.artifactPattern, 'artifacts/security/pnpm-audit-prod-{revision}.json');
 });
 
-test('root test graph builds contracts before workspace tests', () => {
+test('root test graph builds the production server and contracts before workspace tests', () => {
   const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-  assert.equal(manifest.scripts.test, 'pnpm --filter @ebb-orchestrator/contracts build && pnpm -r --if-present test && node --test scripts/server-env.test.mjs scripts/run-server.test.mjs scripts/local-user-stdin-smoke.test.mjs');
+  const testScript = manifest.scripts.test;
+  const serverManifest = JSON.parse(readFileSync(join(root, 'apps/server/package.json'), 'utf8'));
+  const serverBuild = testScript.indexOf('pnpm server:build');
+  const workspaceTests = testScript.indexOf('pnpm -r --workspace-concurrency=1 --if-present test');
+  const rootTests = testScript.indexOf('node --test');
+
+  assert.equal(testScript.startsWith('pnpm server:build &&'), true, 'clean-checkout tests must build production server output first');
+  assert.ok(manifest.scripts['server:build'].includes('pnpm --filter @ebb-orchestrator/server build'));
+  assert.ok(serverManifest.scripts.build.includes('pnpm --filter @ebb-orchestrator/contracts build'), 'server build must build contracts');
+  assert.ok(serverBuild >= 0 && serverBuild < workspaceTests, 'server build must precede workspace tests');
+  assert.ok(rootTests > workspaceTests, 'root-level Node tests must run after workspace tests');
+  for (const script of [
+    'scripts/server-env.test.mjs',
+    'scripts/run-server.test.mjs',
+    'scripts/local-user-stdin-smoke.test.mjs',
+    'scripts/plan06-project-config-restart-acceptance.test.mjs',
+    'scripts/plan06-github-inbox-restart-acceptance.test.mjs',
+    'scripts/hermes-session-tag-acceptance.test.mjs',
+    'scripts/build-windows-msvc-environment.test.mjs',
+  ]) {
+    assert.ok(testScript.includes(script), `root test graph must retain ${script}`);
+  }
 });
 
-test('production workflow runs local-user stdin smoke after server build', () => {
-  const workflow = readFileSync(join(root, '.github/workflows/production-gates.yml'), 'utf8');
+test('production workflow builds the server via pnpm test and keeps stdin smoke and web build afterward', () => {
+  const source = readFileSync(join(root, '.github/workflows/production-gates.yml'), 'utf8');
+  const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+  const workflow = yaml.load(source, { schema: yaml.JSON_SCHEMA });
+  const steps = workflow.jobs['quality-security'].steps;
+  const stepIndex = (name) => steps.findIndex((step) => step.name === name);
+  const testIndex = stepIndex('Unit and integration tests');
+  const followUpIndex = stepIndex('Local-user stdin smoke and web build');
+  const harnessIndex = stepIndex('E2E harness contracts');
+  const browserIndex = stepIndex('Browser E2E');
+  const followUp = steps[followUpIndex]?.run ?? '';
 
-  const serverBuild = workflow.indexOf('pnpm server:build');
-  const stdinSmoke = workflow.indexOf('node scripts/local-user-stdin-smoke.mjs');
-  const webBuild = workflow.indexOf('pnpm web:build');
-  const harnessContracts = workflow.indexOf('node --test scripts/security-audit-evidence.test.mjs apps/web/test/e2e/credential-handoff.test.mjs');
-  const browserE2E = workflow.indexOf('pnpm --dir apps/web test:e2e');
-  assert.ok(serverBuild !== -1, 'workflow must build the server');
-  assert.ok(stdinSmoke > serverBuild, 'workflow must run stdin smoke after server build');
-  assert.ok(webBuild > stdinSmoke, 'workflow must build web before running E2E harness contracts');
-  assert.ok(harnessContracts > webBuild, 'workflow must run E2E harness contracts after both builds');
-  assert.ok(browserE2E > harnessContracts, 'workflow must run browser E2E after harness contracts');
+  assert.equal(steps[testIndex]?.run, 'pnpm test');
+  assert.ok(manifest.scripts.test.startsWith('pnpm server:build &&'), 'pnpm test must build the production server');
+  assert.ok(testIndex >= 0 && followUpIndex > testIndex, 'smoke and web build must follow pnpm test');
+  assert.ok(!followUp.includes('pnpm server:build'), 'workflow must not build the server twice');
+  assert.ok(followUp.includes('node scripts/local-user-stdin-smoke.mjs'), 'workflow must retain local-user stdin smoke');
+  assert.ok(followUp.includes('pnpm web:build'), 'workflow must retain web build');
+  assert.ok(harnessIndex > followUpIndex, 'E2E harness contracts must follow web build');
+  assert.ok(browserIndex > harnessIndex, 'browser E2E must follow harness contracts');
+});
+
+test('Linux process-scope acceptance provisions a hosted runner user systemd manager', () => {
+  const workflow = yaml.load(readFileSync(join(root, '.github/workflows/production-gates.yml'), 'utf8'), { schema: yaml.JSON_SCHEMA });
+  const job = workflow.jobs['process-scope-linux-acceptance'];
+  const steps = job.steps;
+  const stepIndex = (name) => steps.findIndex((step) => step.name === name);
+  const managerIndex = stepIndex('Start ephemeral runner user systemd manager');
+  const prerequisitesIndex = stepIndex('Verify native Linux runner prerequisites');
+  const acceptanceIndex = stepIndex('Run native provider-free process-scope acceptance');
+  const managerSetup = steps[managerIndex]?.run ?? '';
+  const prerequisites = steps[prerequisitesIndex]?.run ?? '';
+
+  assert.equal(job['runs-on'], 'ubuntu-24.04', 'Linux process-scope acceptance must use the pinned GitHub-hosted image');
+  assert.ok(managerIndex >= 0 && prerequisitesIndex > managerIndex, 'the user manager must start before prerequisite checks');
+  assert.ok(acceptanceIndex > prerequisitesIndex, 'acceptance must run only after native prerequisites pass');
+  assert.match(managerSetup, /loginctl enable-linger/u, 'the ephemeral runner user must be enabled through systemd-logind');
+  assert.match(managerSetup, /systemctl start ["']?user@\$\{uid\}\.service/u, 'the runner user systemd manager must be started');
+  assert.match(managerSetup, /XDG_RUNTIME_DIR=.*GITHUB_ENV/u, 'the runtime directory must reach later workflow steps');
+  assert.match(managerSetup, /DBUS_SESSION_BUS_ADDRESS=.*GITHUB_ENV/u, 'the user D-Bus address must reach later workflow steps');
+  assert.match(prerequisites, /cgroup2fs/u, 'the acceptance must keep its cgroup v2 assertion');
+  assert.match(prerequisites, /systemctl --user is-system-running/u, 'the acceptance must verify the user manager');
+  assert.match(prerequisites, /systemctl --user show-environment/u, 'the acceptance must verify the user D-Bus');
 });
 
 test('manual failure-path workflow mirrors production audit conditions and wires all four scenarios', () => {

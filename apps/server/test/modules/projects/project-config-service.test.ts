@@ -9,7 +9,7 @@ import { runMigrations } from "../../../src/platform/database/migrator.js";
 import { loadTestMigrations } from "../../helpers/migrations.js";
 import { ProjectConfigService } from "../../../src/modules/projects/project-config-service.js";
 import { ApprovalService } from "../../../src/modules/approvals/approval-service.js";
-import { RunService } from "../../../src/modules/runtime/run-service.js";
+import { createRunContextInput, RunService } from "../../../src/modules/runtime/run-service.js";
 import { FakeAgentRuntime } from "../../fakes/fake-agent-runtime.js";
 import { loadValidatedCapability } from "../../../src/modules/execution/capability-validation.js";
 
@@ -78,16 +78,28 @@ supportedCaptureSuite("ProjectConfigService", () => {
     fixture.db.run("INSERT INTO tasks(id,project_id,display_id,title,status,contract_json,created_at,updated_at) VALUES($id,$projectId,'T-1','Task','READY','{}',$now,$now)", { id: taskId, projectId: fixture.projectId, now });
     fixture.db.run("INSERT INTO worktrees(id,repo_path,path,branch,created_at) VALUES($id,$root,$root,$branch,$now)", { id: taskId, root: fixture.root, branch: `task/${taskId}`, now });
     const runs = new RunService(fixture.db, new FakeAgentRuntime());
-    const options = { role: "developer", model: "test", taskId, epicId: null, triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1", capability: { workspace: fixture.root } };
+    const options = {
+      role: "developer", model: "test", taskId, epicId: null, triggerReason: "task-assignment",
+      contextVersion: "1", outputSchemaVersion: "1", capability: { workspace: fixture.root }, prompt: "test Project Config binding",
+    };
+    const runOptions = {
+      ...options,
+      contextInput: createRunContextInput(options, {
+        prompt: options.prompt,
+        workspaceIdentity: { repository: fixture.root, workspace: fixture.root, worktree: taskId },
+        targetHead: null,
+        targetBranch: null,
+      }),
+    };
 
     const first = fixture.service.capture(fixture.projectId);
-    expect(() => runs.prepareRun(options)).toThrow(/approved active revision/i);
+    expect(() => runs.prepareRun(runOptions)).toThrow(/approved active revision/i);
     const active = fixture.service.approve(fixture.projectId, first.candidateId, first.manifestHash);
     writeFileSync(join(fixture.root, ".ebb-orchestrator", "project.yaml"), projectYaml("develop"));
     mkdirSync(join(fixture.root, ".ebb-orchestrator", "guidelines"));
     writeFileSync(join(fixture.root, ".ebb-orchestrator", "guidelines", "new.md"), "pending guideline");
     const pending = fixture.service.capture(fixture.projectId);
-    const run = runs.prepareRun(options);
+    const run = runs.prepareRun(runOptions);
     const persisted = fixture.db.get<{ capability_json: string }>("SELECT capability_json FROM agent_runs WHERE id=$id", { id: run.id });
     expect(JSON.parse(persisted!.capability_json).approvedProjectConfig).toMatchObject({ revisionId: active.revisionId, revisionHash: active.revisionHash, config: { project: { default_branch: "main" } } });
     expect(loadValidatedCapability(fixture.db, run.capabilityRef!).capability.approvedProjectConfig).toMatchObject({ revisionId: active.revisionId, config: { project: { default_branch: "main" } } });
@@ -102,7 +114,7 @@ supportedCaptureSuite("ProjectConfigService", () => {
     fixture.db.run("UPDATE agent_runs SET capability_json=$json WHERE id=$id", { json: persisted!.capability_json, id: run.id });
 
     const next = fixture.service.approve(fixture.projectId, pending.candidateId, pending.manifestHash);
-    const nextRun = runs.prepareRun(options);
+    const nextRun = runs.prepareRun(runOptions);
     const nextPersisted = fixture.db.get<{ capability_json: string }>("SELECT capability_json FROM agent_runs WHERE id=$id", { id: nextRun.id });
     expect(JSON.parse(nextPersisted!.capability_json).approvedProjectConfig).toMatchObject({ revisionId: next.revisionId, config: { project: { default_branch: "develop" } } });
     expect(await loadValidatedCapability(fixture.db, nextRun.capabilityRef!).getActionGateway().readFile(".ebb-orchestrator/guidelines/new.md"))

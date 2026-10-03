@@ -282,6 +282,7 @@ Do not derive identity by hashing the URL, create an Ebb HMAC/fingerprint key, a
 
 **Applicable gates:** Public API contract; privacy/access; Web E2E and Russian localization/accessibility.
 **Review Focus:** Return only safe provenance metadata; not accidentally expose existing stored prompt through this endpoint; do not claim old Runs have empty input; UI works for each of the three subject types.
+**Fresh acceptance evidence (2026-10-03, current worktree):** API suite exit 0 (22/22); operations-view component suite exit 0 (18/18); `v1-ui.spec.ts` browser suite exit 0 (6/6) on the rerun outside the restricted sandbox. The first sandbox browser attempt is not counted because the launcher failed its process teardown despite 6/6 scenarios passing. The accepted rerun verified launcher shutdown acknowledgement/exit, child termination, SQLite lock/WAL/SHM cleanup, isolated-home removal, no listener on the frontend port, and no new/retained E2E temp home. An independent read-only reviewer approved Task6 closure against these current results; API/UI source paths were unchanged in the worktree diff.
 **Completion evidence:** fresh route schema/API tests, DOM assertions, response serialization and privacy sentinel tests.
 **BLOCKED when:** safe historical availability cannot be distinguished or current API framework serializes sensitive prompt data into the projection; keep the manifest endpoint unavailable rather than leak.
 

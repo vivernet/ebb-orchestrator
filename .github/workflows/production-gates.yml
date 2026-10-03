@@ -12,7 +12,7 @@ permissions:
 jobs:
   process-scope-linux-acceptance:
     if: ${{ github.event_name == 'push' }}
-    runs-on: [self-hosted, Linux, X64, ebb-systemd-cgroup-v2]
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
       EBB_RUN_NATIVE_SCOPE_ACCEPTANCE: "1"
@@ -31,6 +31,25 @@ jobs:
           cache: pnpm
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      - name: Start ephemeral runner user systemd manager
+        shell: bash
+        run: |
+          set -euo pipefail
+          uid="$(id -u)"
+          user="$(id -un)"
+          runtime_dir="/run/user/${uid}"
+          command -v loginctl
+          command -v systemctl
+          sudo systemctl start systemd-logind.service
+          sudo loginctl enable-linger "$user"
+          sudo systemctl start "user@${uid}.service"
+          for attempt in {1..30}; do
+            if [[ -S "${runtime_dir}/bus" ]]; then break; fi
+            sleep 1
+          done
+          test -S "${runtime_dir}/bus"
+          printf 'XDG_RUNTIME_DIR=%s\n' "$runtime_dir" >> "$GITHUB_ENV"
+          printf 'DBUS_SESSION_BUS_ADDRESS=unix:path=%s/bus\n' "$runtime_dir" >> "$GITHUB_ENV"
       - name: Verify native Linux runner prerequisites
         shell: bash
         run: |
@@ -153,9 +172,8 @@ jobs:
         run: pnpm typecheck
       - name: Unit and integration tests
         run: pnpm test
-      - name: Build server and web
+      - name: Local-user stdin smoke and web build
         run: |
-          pnpm server:build
           node scripts/local-user-stdin-smoke.mjs
           pnpm web:build
       - name: E2E harness contracts

@@ -112,7 +112,6 @@ git --version
 pnpm install --frozen-lockfile
 pnpm lint
 pnpm typecheck
-pnpm server:build
 pnpm test
 ```
 
@@ -296,15 +295,15 @@ pnpm web:build
 ```
 
 `pnpm lint` запускает ESLint; `pnpm typecheck` рекурсивно проверяет workspace.
-На чистом checkout перед `pnpm test` требуется `pnpm server:build`: полный
-server suite запускает production subprocess tests. Сам root `pnpm test`
-собирает только `@ebb-orchestrator/contracts` (его `prebuild` очищает
-`packages/contracts/dist`) и не собирает server. На Windows `server:build`
-также компилирует native process supervisor; запускайте его из x64 Developer
-PowerShell/Command Prompt для установленного Visual Studio C++ Build Tools,
-чтобы `cl.exe` был доступен в `PATH` или `VCToolsInstallDir` был установлен.
-Серверные тесты создают временные fixtures/workers; `pnpm test` и сборки имеют
-побочные эффекты (`dist/`).
+Root `pnpm test` сначала запускает `pnpm server:build`, затем workspace-тесты
+и root Node tests; перед ним отдельно собирать server не требуется. Сборка
+создаёт `dist/`, а серверные тесты — временные fixtures/workers.
+
+На Windows для `pnpm server:build` нужны установленные Visual Studio C++ Build
+Tools с x64 compiler, `vswhere` и `VsDevCmd`. Helper автоматически находит
+подходящую установку через `vswhere` и загружает среду `VsDevCmd` только для
+процесса компилятора. Обычный PowerShell подходит; Developer PowerShell или
+Command Prompt вручную запускать не нужно.
 
 ### Разработка и запуск
 
@@ -376,14 +375,14 @@ pnpm --filter @ebb-orchestrator/testing typecheck
 pnpm --filter @ebb-orchestrator/testing test
 ```
 
-`test:watch`, `server:dev` и `web:dev` — долгоживущие процессы. Полный набор
-серверных тестов запускает production subprocess tests, поэтому перед ним
-выполните `pnpm server:build`: он собирает `packages/contracts/dist` и
-`apps/server/dist`, необходимые тестовым workers и production entrypoint.
-На Windows запускайте сборку из x64 Developer PowerShell/Command Prompt с
-Visual Studio C++ Build Tools. Web E2E требует браузерного окружения и создаёт
-артефакты; серверные тесты могут создавать временные каталоги и worker-процессы.
-Приведённые fixtures удаляются в `finally`/`afterEach`.
+`test:watch`, `server:dev` и `web:dev` — долгоживущие процессы. Root `pnpm test`
+сначала собирает server через `pnpm server:build`, после чего запускает
+production subprocess tests; отдельная предварительная сборка не нужна.
+На Windows сборке нужны Visual Studio C++ Build Tools с x64 compiler, `vswhere`
+и `VsDevCmd`; helper находит их автоматически, поэтому достаточно обычного
+PowerShell. Web E2E требует браузерного окружения и создаёт артефакты; серверные
+тесты могут создавать временные каталоги и worker-процессы. Приведённые
+fixtures удаляются в `finally`/`afterEach`.
 `apps/server/test/e2e/fixtures/health-service` не входит в workspace glob; его
 команды запускаются из каталога fixture отдельно:
 
@@ -600,9 +599,11 @@ pnpm --filter @ebb-orchestrator/web build
 git diff --check
 ```
 
-На чистом checkout сначала выполните `pnpm server:build`, затем `pnpm test`:
-root test сам собирает contracts, но не server. На Windows server build требует
-x64 Developer PowerShell/Command Prompt с Visual Studio C++ Build Tools.
+На чистом checkout `pnpm test` сам начинает с `pnpm server:build`, поэтому
+отдельная предварительная сборка не нужна. В Windows для неё должны быть
+установлены Visual Studio C++ Build Tools с x64 compiler, `vswhere` и
+`VsDevCmd`; helper находит toolchain и загружает его среду автоматически.
+Запускать команды из Developer PowerShell/Command Prompt не требуется.
 
 `pnpm lint` включает обязательную JSDoc-policy для production source:
 наличие комментариев у настроенных публичных классов и функций, непустые

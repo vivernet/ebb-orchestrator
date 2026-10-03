@@ -766,7 +766,7 @@ async function runWindowsHelperCrashBoundaryAcceptance(): Promise<void> {
     testError = error;
   } finally {
     const cleanupErrors: unknown[] = [];
-    if (ready?.supervisorPid && ready.supervisorStartIdentity) {
+    if (!recoverySucceeded && ready?.supervisorPid && ready.supervisorStartIdentity) {
       try {
         if (await processExists(ready.supervisorPid)) {
           await runWindowsNativeScopeCommand({
@@ -786,7 +786,7 @@ async function runWindowsHelperCrashBoundaryAcceptance(): Promise<void> {
         cleanupErrors.push(error);
       }
     }
-    if (descendantPid && descendantCreationTime) {
+    if (!recoverySucceeded && descendantPid && descendantCreationTime) {
       try {
         if (await processExists(descendantPid)) {
           await runWindowsNativeScopeCommand({
