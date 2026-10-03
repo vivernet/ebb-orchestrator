@@ -803,3 +803,30 @@ pnpm plan01:acceptance
 - `pnpm lint`, `pnpm typecheck`, `pnpm test`: PASS; 97 test files, 896 passed, 2 skipped; launcher scripts 19/19.
 - Независимый whole-plan review: PASS; подтверждено покрытие acceptance без изменения production policy.
 - Исторические procedural checkboxes выше не отмечались задним числом; их выполнение не заявляется этим completion note.
+
+## Supplemental completion evidence — 2026-10-03
+
+- Текущий checkout: HEAD `81a2f32759ca9617a33ced23c8b9b3fae1bc3652`; production source files не менялись.
+- Команда: `cmd.exe /d /s /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 && pnpm plan01:acceptance'`. Exit code `0`; acceptance marker `PLAN01_PROCESS_RECOVERY_ACCEPTANCE=PASS`.
+- Подтверждены неизменность migrations, повторная попытка pending outbox event, восстановление expired job lease, состояние `READY` после restart и отказ второго экземпляра.
+- Harness штатно остановил принадлежащие ему server processes и удалил disposable home. Post-run read-only проверки: `ebb-plan01-recovery-*` temp directories — `0`; процессы с `plan01-process-recovery-server.mjs` или `plan01-process-recovery-acceptance.mjs` — `0`.
+- Этот дополнительный run не отмечает задним числом historical procedural checkboxes выше и не меняет lifecycle/checklist status.
+
+## Disposition исторических procedural steps — 2026-10-03
+
+В плане остаются пустыми все 40 procedural checkboxes: 8 задач × 5 шагов. Текущие implementation/test artifacts сопоставлены с задачами ниже, но не доказывают исходный порядок выполнения. В частности, исторические RED-stage failures нельзя достоверно восстановить из нынешних файлов и commit history; ни один шаг не отмечается задним числом.
+
+| Задача | Текущие implementation artifacts | Текущие test/acceptance artifacts |
+|---|---|---|
+| T1 — workspace и TypeScript | `package.json`, `pnpm-workspace.yaml`, `tsconfig.base.json`, `apps/server/`, `packages/contracts/`, `packages/testing/` | `apps/server/test/bootstrap.test.ts`, `packages/contracts/test/agent-run.test.ts` |
+| T2 — home paths и config | `apps/server/src/platform/home/orchestrator-home.ts`, `apps/server/src/platform/config/` | `apps/server/test/platform/home/orchestrator-home.test.ts`, `apps/server/test/platform/config/project-config.test.ts` |
+| T3 — SQLite и migrations | `apps/server/src/platform/database/database.ts`, `sqlite-database.ts`, `migrator.ts`, `migrations/` | `apps/server/test/platform/database/migrator.test.ts`, `fresh-install-migrations.acceptance.test.ts` |
+| T4 — transactional outbox | `apps/server/src/platform/events/domain-event.ts`, `outbox-repository.ts`, `event-bus.ts`, `event-dispatcher.ts` | `apps/server/test/platform/events/outbox.test.ts`, `outbox-worker.test.ts` |
+| T5 — background jobs и leases | `apps/server/src/platform/jobs/job-types.ts`, `job-repository.ts`, `job-runner.ts` | `apps/server/test/platform/jobs/job-runner.test.ts` |
+| T6 — crash-safe artifacts | `apps/server/src/platform/artifacts/artifact-store.ts`, `artifact-repository.ts` | `apps/server/test/platform/artifacts/artifact-store.test.ts` |
+| T7 — HTTP, auth, health и SSE | `apps/server/src/app/create-app.ts`, `apps/server/src/app/routes/health.ts`, `events.ts`, `apps/server/src/platform/security/auth-service.ts`, `auth-repository.ts`, `apps/server/src/main.ts` | `apps/server/test/app/health.test.ts`, `security.test.ts`, `api.test.ts` |
+| T8 — lifecycle, lock и startup reconciliation | `apps/server/src/platform/process/system-lifecycle.ts`, `single-instance-lock.ts`, `startup-reconciler.ts`, `apps/server/src/main.ts` | `apps/server/test/platform/process/startup.test.ts`, `scripts/plan01-process-recovery-acceptance.mjs` |
+
+SHA из исходного frontmatter подтверждены через `git log` и остаются только исторической provenance: `86e1ab4` — security/Web UI hardening; `6908acd` — `SingleInstanceLock`; `1296292` — отказоустойчивость secret store; `068e12a` — Infisical adapter. Эти commits не доказывают каждую procedural step или её RED stage.
+
+Открытый shutdown blocker по `spec-01 §19.5` не закрывается этим disposition: свежий `CHANGES_REQUIRED` и ссылки на область исправления записаны в [Plan19 ledger](19-unfinished-plan-closure.md) (раздел `Plan01 whole-plan review findings`). Продолжение shutdown fix/review остаётся открытым до ожидаемого решения пользователя/координатора; lifecycle status и все checkboxes Plan01 сохранены без изменений.

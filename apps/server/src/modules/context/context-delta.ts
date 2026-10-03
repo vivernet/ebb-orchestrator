@@ -1,24 +1,13 @@
 /**
- * Контекст Delta for Orchestrator Hermes.
- * Сравнивает old manifest with current knowledge state.
- * Сообщает о NEW|UPDATED|REMOVED items.
- * Определяет if resume is safe or requires fresh session.
+ * Сравнивает манифесты контекста и сообщает о добавленных, изменённых и удалённых элементах.
+ * Результат является диагностикой и не определяет возможность возобновления Run.
  */
 
 import type { ContextManifest, ContextDelta as ContextDeltaResult } from "./context-types.js";
 
-/** Значимые fields that make resume unsafe when changed */
-const MATERIAL_FIELDS = ["taskContractVersion", "taskId", "role"] as const;
-
-/** Возобновление safety check result */
-export interface ResumeSafetyResult {
-  safe: boolean;
-  reason?: "RESUME_NOT_SAFE";
-  details?: string;
-}
-
 /**
- * Контекст Delta — compares manifests and determines resume safety.
+ * Сравнивает манифесты контекста для диагностики изменений.
+ * Этот класс не принимает решений о безопасности возобновления Run.
  */
 export class ContextDelta {
   /**
@@ -51,32 +40,6 @@ export class ContextDelta {
     }
 
     return { added, updated, removed };
-  }
-
-  /**
-   * Determine если resuming Объект сессия является безопасный указанного old и текущий manifests.
-   * возвращает RESUME_NOT_SAFE когда material contract changes являются detected.
-   */
-  isResumeSafe(
-    oldManifest: ContextManifest,
-    currentManifest: ContextManifest,
-  ): ResumeSafetyResult {
-    // Проверяет material field changes
-    for (const field of MATERIAL_FIELDS) {
-      const oldVal = oldManifest[field];
-      const newVal = currentManifest[field];
-
-      if (oldVal !== newVal) {
-        return {
-          safe: false,
-          reason: "RESUME_NOT_SAFE",
-          details: `Material field changed: ${field}`,
-        };
-      }
-    }
-
-    // Non-material changes (guidelines, findings, etc.) безопасны to resume
-    return { safe: true };
   }
 
   /**

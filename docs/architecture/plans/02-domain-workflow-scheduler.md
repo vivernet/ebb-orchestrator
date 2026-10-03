@@ -1,17 +1,17 @@
 ---
 id: plan-02
 kind: plan
-status: completed
+status: in_progress
 title: План реализации домена Orchestrator, Workflow, Scheduler и Recovery
 created: 2026-09-23
-updated: 2026-09-27
+updated: 2026-10-03
 depends_on: []
 specs:
   - ../specs/01-system-design.md
 evidence:
   - https://github.com/ebb-orchestrator/ebb-orchestrator/commit/6908acd
   - https://github.com/ebb-orchestrator/ebb-orchestrator/commit/c18264e
-  - apps/server/test/platform/scheduler/
+  - apps/server/test/modules/scheduler/
 ---
 # План реализации домена Orchestrator, Workflow, Scheduler и Recovery
 
@@ -437,7 +437,7 @@ same review finding 3 cycles -> loop detected
 - [ ] **Шаг 2: Проверить отказ**
 
 ```bash
-pnpm --filter @ebb-orchestrator/server test -- recovery.test.ts
+pnpm --filter @ebb-orchestrator/server exec vitest run test/modules/recovery/recovery.test.ts
 ```
 
 - [ ] **Шаг 3: Реализовать policy с точными счётчиками**
@@ -460,7 +460,7 @@ Recovery создаёт новый scheduler request; он никогда не �
 - [ ] **Шаг 4: Запустить тесты**
 
 ```bash
-pnpm --filter @ebb-orchestrator/server test -- recovery.test.ts
+pnpm --filter @ebb-orchestrator/server exec vitest run test/modules/recovery/recovery.test.ts
 ```
 
 - [ ] **Шаг 5: Коммит**
@@ -535,3 +535,14 @@ pnpm test
 - pause/approval/resource lock/budget placeholders produce explicit wait reasons;
 - сбои Middle приводят к эскалации до Senior только согласно policy;
 - дочерние элементы Epic становятся `INTEGRATED_INTO_EPIC` и переходят в `RELEASED` только после release Epic.
+
+## Дополнение по продолжению от 2026-10-03 — disposition whole-plan review
+
+Свежий независимый whole-plan review завершился с точным вердиктом `CHANGES_REQUIRED`. Поэтому lifecycle возвращён в `in_progress`; прежний статус и completion evidence сами по себе не закрывают обнаруженные требования. Процедурные checklist marks не менялись.
+
+- Production failure → Scheduler путь пока не подключает `RecoveryService`: в `apps/server/src/modules/recovery/recovery-service.ts` есть реализация, но поиск production source показывает только её объявление; конструктор используется тестом в `apps/server/test/modules/recovery/recovery.test.ts`, а production composition создаёт `SchedulerService` в `apps/server/src/main.ts` без wiring `RecoveryService`.
+- `apps/server/src/modules/scheduler/scheduler-policy.ts` сортирует по категории, priority и времени создания; реализации priority aging и critical-path boost там нет.
+- В этой редакции плана формулировка `simple downstream-blocked-count boost` находится в Задаче 5 (Scheduler). Authoritative spec `docs/architecture/specs/01-system-design.md` требует `priority aging` и `deterministic critical-path boost` (§ 8, пункты 494–499 на дату проверки). Соответствие между планом и спецификацией остаётся открытым; это дополнение не выбирает и не меняет scheduler policy.
+- Вложенные команды вида `pnpm --filter @ebb-orchestrator/server test -- <files>` в других задачах Plan02 всё ещё требуют точного аудита: `apps/server/package.json` задаёт `test` как `vitest run`, а приёмка плана также ссылается на корневой `pnpm test`. **Correction (2026-10-03):** два focused recovery examples в Задаче 7 исправлены на `pnpm --filter @ebb-orchestrator/server exec vitest run test/modules/recovery/recovery.test.ts`; текущий запуск из repo root завершился с exit `0`, 1 file / 16 tests passed. Это подтверждает только указанную focused suite; production recovery wiring и прочие whole-plan findings остаются открытыми.
+
+До закрытия Plan02 нужно устранить или корректно разрешить перечисленные расхождения и выполнить проверяемую acceptance/review-сверку. Одного прежнего статуса `completed` и старых completion evidence недостаточно.

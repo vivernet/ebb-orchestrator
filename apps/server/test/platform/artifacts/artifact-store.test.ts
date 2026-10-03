@@ -1,9 +1,9 @@
 import { describe, expect, it, afterEach, beforeEach } from "vitest";
-import { mkdtemp, rm, readFile } from "node:fs/promises";
+import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createSqliteDatabase } from "../../../src/platform/database/sqlite-database.js";
 import { runMigrations, type Migration } from "../../../src/platform/database/migrator.js";
 import type { Database } from "../../../src/platform/database/database.js";
@@ -182,6 +182,40 @@ describe("ArtifactStore", () => {
       { $id: record.id },
     );
     expect(row?.status).toBe("ACTIVE");
+  });
+
+  it("marks a hash-mismatched staging artifact MISSING and preserves diagnostic evidence", async () => {
+    const record = await store.writeArtifact({
+      type: "build-output",
+      contentType: "text/plain",
+      bytes: Buffer.from("original artifact content"),
+    });
+    const expectedHash = record.sha256;
+    const absolutePath = join(artifactsDir, record.storagePath);
+    const mismatchedContent = Buffer.from("unexpected replacement content");
+
+    db!.run("UPDATE artifacts SET status = 'STAGING' WHERE id = $id", {
+      $id: record.id,
+    });
+    await writeFile(absolutePath, mismatchedContent);
+
+    const result = await store.reconcileStagingArtifacts();
+    const row = db!.get<{ status: string; sha256: string; relative_path: string }>(
+      "SELECT status, sha256, relative_path FROM artifacts WHERE id = $id",
+      { $id: record.id },
+    );
+    const retainedContent = await readFile(absolutePath);
+    const actualHash = createHash("sha256").update(retainedContent).digest("hex");
+
+    expect(result).toEqual({ promoted: 0, cleaned: 1 });
+    expect(row).toEqual({
+      status: "MISSING",
+      sha256: expectedHash,
+      relative_path: record.storagePath,
+    });
+    expect(actualHash).not.toBe(expectedHash);
+    expect(retainedContent).toEqual(mismatchedContent);
+    await expect(store.openArtifact(record.id)).rejects.toThrow(/not found/i);
   });
 
   it("reconcile cleans up stale DB rows with missing files", async () => {

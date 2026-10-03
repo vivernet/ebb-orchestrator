@@ -409,8 +409,12 @@ describe("ContextBudget - Over-budget Pruning", () => {
 
 // ─── Тесты ContextDelta ─────────────────────────────────────────────────────
 
-describe("ContextDelta - Resume Delta", () => {
+describe("ContextDelta - Diagnostic Delta", () => {
   const delta = new ContextDelta();
+
+  it("does not expose resume-safety authority", () => {
+    expect("isResumeSafe" in delta).toBe(false);
+  });
 
   describe("compare", () => {
     it("detects NEW items", () => {
@@ -513,144 +517,4 @@ describe("ContextDelta - Resume Delta", () => {
     });
   });
 
-  describe("isResumeSafe", () => {
-    it("returns safe when no material changes", () => {
-      const result = delta.isResumeSafe({
-        runId: "run-1",
-        taskId: "TASK-001",
-        role: "developer",
-        taskContractVersion: "1.0",
-        guidelineIds: ["GL-001"],
-        decisionIds: [],
-        findingIds: [],
-        defectIds: [],
-        contextBuilderVersion: "1.0.0",
-        createdAt: "2026-01-01T00:00:00Z",
-      }, {
-        runId: "run-2",
-        taskId: "TASK-001",
-        role: "developer",
-        taskContractVersion: "1.0",
-        guidelineIds: ["GL-001"],
-        decisionIds: [],
-        findingIds: [],
-        defectIds: [],
-        contextBuilderVersion: "1.0.0",
-        createdAt: "2026-01-02T00:00:00Z",
-      });
-      expect(result.safe).toBe(true);
-    });
-
-    it("returns RESUME_NOT_SAFE when task contract version changed", () => {
-      const result = delta.isResumeSafe({
-        runId: "run-1",
-        taskId: "TASK-001",
-        role: "developer",
-        taskContractVersion: "1.0",
-        guidelineIds: [],
-        decisionIds: [],
-        findingIds: [],
-        defectIds: [],
-        contextBuilderVersion: "1.0.0",
-        createdAt: "2026-01-01T00:00:00Z",
-      }, {
-        runId: "run-2",
-        taskId: "TASK-001",
-        role: "developer",
-        taskContractVersion: "2.0",
-        guidelineIds: [],
-        decisionIds: [],
-        findingIds: [],
-        defectIds: [],
-        contextBuilderVersion: "1.0.0",
-        createdAt: "2026-01-02T00:00:00Z",
-      });
-      expect(result.safe).toBe(false);
-      expect(result.reason).toBe("RESUME_NOT_SAFE");
-    });
-
-    it("returns RESUME_NOT_SAFE when task ID changed", () => {
-      const result = delta.isResumeSafe({
-        runId: "run-1",
-        taskId: "TASK-001",
-        role: "developer",
-        taskContractVersion: "1.0",
-        guidelineIds: [],
-        decisionIds: [],
-        findingIds: [],
-        defectIds: [],
-        contextBuilderVersion: "1.0.0",
-        createdAt: "2026-01-01T00:00:00Z",
-      }, {
-        runId: "run-2",
-        taskId: "TASK-002",
-        role: "developer",
-        taskContractVersion: "1.0",
-        guidelineIds: [],
-        decisionIds: [],
-        findingIds: [],
-        defectIds: [],
-        contextBuilderVersion: "1.0.0",
-        createdAt: "2026-01-02T00:00:00Z",
-      });
-      expect(result.safe).toBe(false);
-      expect(result.reason).toBe("RESUME_NOT_SAFE");
-    });
-
-    it("returns RESUME_NOT_SAFE when role changed", () => {
-      const result = delta.isResumeSafe({
-        runId: "run-1",
-        taskId: "TASK-001",
-        role: "developer",
-        taskContractVersion: "1.0",
-        guidelineIds: [],
-        decisionIds: [],
-        findingIds: [],
-        defectIds: [],
-        contextBuilderVersion: "1.0.0",
-        createdAt: "2026-01-01T00:00:00Z",
-      }, {
-        runId: "run-2",
-        taskId: "TASK-001",
-        role: "reviewer",
-        taskContractVersion: "1.0",
-        guidelineIds: [],
-        decisionIds: [],
-        findingIds: [],
-        defectIds: [],
-        contextBuilderVersion: "1.0.0",
-        createdAt: "2026-01-02T00:00:00Z",
-      });
-      expect(result.safe).toBe(false);
-      expect(result.reason).toBe("RESUME_NOT_SAFE");
-    });
-
-    it("returns safe when only non-material items changed", () => {
-      const result = delta.isResumeSafe({
-        runId: "run-1",
-        taskId: "TASK-001",
-        role: "developer",
-        taskContractVersion: "1.0",
-        guidelineIds: ["GL-001"],
-        decisionIds: [],
-        findingIds: ["FIND-001"],
-        defectIds: [],
-        contextBuilderVersion: "1.0.0",
-        createdAt: "2026-01-01T00:00:00Z",
-      }, {
-        runId: "run-2",
-        taskId: "TASK-001",
-        role: "developer",
-        taskContractVersion: "1.0",
-        guidelineIds: ["GL-001", "GL-002"],
-        decisionIds: ["DEC-001"],
-        findingIds: [],
-        defectIds: [],
-        contextBuilderVersion: "1.0.0",
-        createdAt: "2026-01-02T00:00:00Z",
-      });
-// Контракт task не изменился, изменились только guidelines/findings — можно безопасно продолжить.
-      expect(result.safe).toBe(true);
-    });
-  });
 });

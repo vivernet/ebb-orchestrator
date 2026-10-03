@@ -256,6 +256,22 @@ pnpm hermes:setup
 pnpm hermes:check
 ```
 
+**Ограничение настройки provider:** полная проверенная инструкция для чистой
+установки Ebb Orchestrator, Hermes-native auth и безвредного real provider Run
+пока отсутствует. Проверка справки CLI не подтверждает рабочий wizard, выбранный
+auth path или Ebb integration. Точные шаги будут документированы после проверки
+на pinned Hermes и прохождения зависимых native acceptance gates Plan20.
+
+Учётные данные AI-провайдера принадлежат Hermes-native auth. Не копируйте их в
+корневой `.env` Ebb Orchestrator и не заводите для них записи в Ebb SecretStore.
+
+`pnpm hermes:setup` настраивает доверие к репозиторию, project discovery и
+delegation; это не настройка provider credentials. `pnpm hermes:check` проверяет
+CLI и проектные prerequisites, но не проверяет provider authentication и не
+вызывает API, то есть не является provider acceptance. Production Hermes
+per-Run auth/session acceptance остаётся `NOT RUN`: она зависит от завершения
+Plan20 Task5A, затем Task5B и Task5C. См. [Plan20](docs/architecture/plans/20-production-context-manifest.md).
+
 ## Справочник pnpm-команд
 
 Все команды ниже подтверждены текущими `package.json`. Команды запускаются из
@@ -273,10 +289,11 @@ pnpm server:build
 pnpm web:build
 ```
 
-`pnpm lint` запускает ESLint. `pnpm typecheck` и `pnpm test` рекурсивно
-запускают одноимённые scripts workspace-пакетов. `pnpm build` собирает пакеты,
-которые имеют `build`. Сборки создают `dist/`, поэтому это не read-only
-команды.
+`pnpm lint` запускает ESLint; `pnpm typecheck` рекурсивно проверяет workspace.
+`pnpm test` сначала собирает `@ebb-orchestrator/contracts`; его `prebuild`
+очищает `packages/contracts/dist`, затем запускаются тесты workspace и корня.
+Серверные тесты создают временные fixtures/workers; `pnpm test` и сборки имеют
+побочные эффекты (`dist/`).
 
 ### Разработка и запуск
 
@@ -301,11 +318,12 @@ pnpm skills:dependencies:test
 pnpm hermes:execute -- <plan-path>
 ```
 
-`hermes:setup` изменяет конфигурацию выбранного Hermes home. `hermes:check` и
-`hermes:test` проверяют prerequisites интеграции и её скрипты. `skills:test`
-проверяет canonical bundle, а `skills:dependencies:test` — обязательные workflow
-dependencies во всём tracked source. `hermes:execute`
-запускает выполнение плана и требует явного одобрения.
+`hermes:setup` изменяет настройки выбранного Hermes home; `hermes:check` проверяет
+установленный CLI и доверие к проекту, но не обращается к API провайдера.
+Успех `hermes:check` не подтверждает доступность или аутентификацию провайдера;
+`hermes:test` проверяет скрипты интеграции, а `skills:test` — canonical bundle.
+`skills:dependencies:test` проверяет workflow dependencies;
+`hermes:execute` запускает план после явного одобрения.
 
 ### Документация
 
@@ -347,10 +365,11 @@ pnpm --filter @ebb-orchestrator/testing typecheck
 pnpm --filter @ebb-orchestrator/testing test
 ```
 
-`test:watch`, `server:dev` и `web:dev` не завершаются самостоятельно. Web E2E
-требует доступного окружения браузера и создаёт тестовые артефакты. Пакет
-`apps/server/test/e2e/fixtures/health-service` не входит в workspace glob;
-его команды запускаются из каталога fixture отдельно:
+`test:watch`, `server:dev` и `web:dev` — долгоживущие процессы. Web E2E требует
+браузерного окружения и создаёт артефакты; серверные тесты могут создавать
+временные каталоги и worker-процессы. Приведённые fixtures удаляются в
+`finally`/`afterEach`. `apps/server/test/e2e/fixtures/health-service` не входит
+в workspace glob; его команды запускаются из каталога fixture отдельно:
 
 ```bash
 pnpm start
@@ -387,7 +406,9 @@ Hooks и сетевые операции являются внешними по�
 
 ### Локальная конфигурация сервера
 
-Корневой `.env` необязателен: Node загружает его до старта сервера для `pnpm server:dev`, `pnpm start` и package-команд сервера. Скопируйте шаблон и замените `EBB_ORCHESTRATOR_HOME` абсолютным путём, существующим на вашей ОС:
+Корневой `.env` необязателен: Node загружает его для `pnpm server:dev`, `pnpm start`
+и package-команд `dev`/`start`. Скопируйте `.env.example` и задайте
+`EBB_ORCHESTRATOR_HOME` абсолютным путём, допустимым для вашей ОС:
 
 ```powershell
 Copy-Item .env.example .env
@@ -397,7 +418,25 @@ Copy-Item .env.example .env
 cp .env.example .env
 ```
 
-В `.env.example` приведены только безопасные настройки: `EBB_ORCHESTRATOR_HOME` пустой (это означает использовать платформенный пользовательский каталог по умолчанию) и `PORT=3000`. Чтобы задать другое расположение, раскомментируйте и адаптируйте абсолютный путь для своей ОС в примерах Windows/macOS/Linux. Секреты не храните в `.env` или Git; production credentials задавайте через защищённое окружение или secret manager. Приоритет значений: окружение процесса, затем корневой `.env`, затем defaults приложения. Если `EBB_ORCHESTRATOR_HOME` не задан ни одним способом, используется платформенный пользовательский каталог `~/.ebb-orchestrator` (Windows: `%USERPROFILE%/.ebb-orchestrator`). При отсутствии `PORT` используется `3000`.
+В `.env.example` перечислены безопасные настройки Ebb Orchestrator: пустой
+`EBB_ORCHESTRATOR_HOME` использует платформенный каталог пользователя по умолчанию,
+а `PORT=3000` задаёт порт. Чтобы выбрать другой каталог, раскомментируйте путь
+для своей ОС в примерах Windows/macOS/Linux.
+
+Секреты интеграций Ebb Orchestrator, например GitHub или Infisical, не храните
+в `.env` или Git; в production передавайте их через защищённое окружение или
+secret manager. Настройки из корневого `.env` относятся к приложению Ebb и не
+используются для аутентификации Hermes у AI-провайдера. По
+[системному дизайну](docs/architecture/specs/01-system-design.md) выбор
+провайдера и разрешение его учётных данных принадлежат `Agent Runtime`; для
+Hermes credentials должны разрешаться его встроенным механизмом, без
+дублирования provider credentials или endpoint/key mapping в Ebb `.env` или
+`SecretStore`. [Руководство по Hermes](docs/development/05-hermes.md) описывает
+project trust и отмечает незавершённую provider acceptance; оно пока не является
+проверенным clean-checkout provider setup walkthrough.
+
+Для параметров самого приложения приоритет значений: окружение процесса, затем
+корневой `.env`, затем defaults приложения.
 
 `repo/.ebb-orchestrator/` — конфигурация подключаемого репозитория; `~/.ebb-orchestrator/` — пользовательские данные приложения, включая базу данных и runtime-файлы. Это разные каталоги с разным назначением.
 

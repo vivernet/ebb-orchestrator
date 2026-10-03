@@ -24,6 +24,8 @@ production `AgentRuntime` / `HermesRuntimeAdapter` задаётся архите
 
 ## Первоначальная настройка
 
+### Project trust и prerequisites
+
 ```bash
 pnpm hermes:setup
 pnpm hermes:check
@@ -50,6 +52,28 @@ Skills обнаруживаются непосредственно в `.agents/s
 profile assets, не синхронизируют capability registry и не перезаписывают
 profile-local skills. Проверка подтверждает конфигурацию и inventory, но фактический
 runtime skill index/provenance требует отдельной runtime acceptance проверки.
+Эти команды также не проверяют вход в AI-провайдер и не отправляют provider/API
+запрос. `pnpm hermes:check` не является provider acceptance.
+
+### Provider setup: пока не проверено
+
+Hermes-native auth является предусмотренной границей владения учётными данными:
+не копируйте provider credentials в корневой `.env` Ebb Orchestrator или Ebb
+SecretStore. Однако полный clean-checkout путь установки, выбора provider/model,
+native auth и безвредного real provider Run ещё не проверен на pinned Hermes.
+Поэтому это руководство пока не утверждает, что описывает воспроизводимую
+настройку provider с нуля.
+
+Read-only проверки `hermes model --help` и `hermes auth --help` завершились с
+exit `0` и показали справку CLI. Это подтверждает только наличие help output:
+интерактивный wizard и Hermes-native auth flow имеют статус `NOT RUN / NOT
+VERIFIED`; auth state/profile не читались и provider request не отправлялся.
+
+Production Hermes per-Run auth/session acceptance остаётся `NOT RUN / NOT
+VERIFIED` и gated на Plan20 Task5A → Task5B → Task5C. Task5B требует доказать
+безопасность native auth в изолированном per-Run profile, а Task5C — provider-backed
+same-session recovery. Подробные gates и evidence описаны в
+[Plan20](../architecture/plans/20-production-context-manifest.md).
 
 ## Запуск implementation plan
 
