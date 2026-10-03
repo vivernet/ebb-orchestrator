@@ -47,6 +47,85 @@ describe("managerEnvironment", () => {
   });
 });
 
+describe("Windows process-scope diagnostic context", () => {
+  it("adds native-command context without replacing process error fields", () => {
+    const error = Object.assign(new Error("Process timed out after 15000ms"), {
+      command: "powershell.exe",
+      exitCode: 1,
+      stdout: "partial stdout",
+      stderr: "partial stderr",
+    });
+
+    const context = formatWindowsNativeScopeCommandContext({ mode: "read-creation", processId: 42 }, 15_000, 15_012);
+    const contextual = addDiagnosticContext(error, context);
+
+    expect(contextual).toBe(error);
+    expect(contextual.message).toContain("mode=read-creation pid=42 timeoutMs=15000 elapsedMs=15012");
+    expect(contextual.command).toBe("powershell.exe");
+    expect(contextual.exitCode).toBe(1);
+    expect(contextual.stdout).toBe("partial stdout");
+    expect(contextual.stderr).toBe("partial stderr");
+  });
+});
+
+describe("Linux process-scope diagnostic formatting", () => {
+  it("bounds and redacts process completion output while reporting available signal data", () => {
+    const result = {
+      exitCode: 23,
+      stdout: `API_KEY=private-value ${"x".repeat(4_000)}`,
+      stderr: "Bearer private-token",
+    };
+    const completion = formatProcessCompletionDiagnostic(result);
+
+    expect(completion).toContain("exitCode=23");
+    expect(completion).toContain("signal=unavailable (ProcessResult does not expose it)");
+    expect(completion).not.toContain("private-value");
+    expect(completion).not.toContain("private-token");
+    expect(completion).toContain("[truncated]");
+    expect(completion.length).toBeLessThan(3_000);
+
+    const signaled = formatProcessCompletionDiagnostic({
+      ...result,
+      signal: "SIGTERM",
+    } as ProcessResult & { signal: string });
+    expect(signaled).toContain("signal=SIGTERM");
+  });
+
+  it("formats only the explicitly allowed systemd properties", () => {
+    const formatted = formatLinuxUnitProperties([
+      "ActiveState=active",
+      "Environment=API_KEY=private-value",
+      "ExecStart=/usr/bin/node secret-argument",
+      "Result=success",
+    ].join("\n"));
+
+    expect(formatted).toContain("ActiveState=active");
+    expect(formatted).toContain("Result=success");
+    expect(formatted).not.toContain("Environment");
+    expect(formatted).not.toContain("ExecStart");
+    expect(formatted).not.toContain("private-value");
+  });
+
+  it("reports the process result when completion wins before the payload marker", async () => {
+    const processHandle: ProcessScopeHandle = {
+      completion: Promise.resolve({ exitCode: 23, stdout: "payload stdout", stderr: "payload stderr" }),
+    };
+    const error = await waitForPayloadMarker(
+      join(tmpdir(), `ebb-marker-never-created-${randomUUID()}`),
+      processHandle,
+      "ebb-orchestrator-run-test",
+      new ProcessExecutor(),
+      1_000,
+    ).then(() => undefined, (reason: unknown) => reason);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("PROCESS_SCOPE_PAYLOAD_COMPLETED_BEFORE_MARKER");
+    expect((error as Error).message).toContain("exitCode=23");
+    expect((error as Error).message).toContain("stdout=\"payload stdout\"");
+    expect((error as Error).message).toContain("stderr=\"payload stderr\"");
+  });
+});
+
 describe.skipIf(!isLinux || !nativeAcceptanceEnabled)("Linux native process-scope acceptance", () => {
   let directory = "";
   let database: Database | undefined;
@@ -146,7 +225,7 @@ describe.skipIf(!isLinux || !nativeAcceptanceEnabled)("Linux native process-scop
 
     const persistedOwner = getRunProcessOwner(database, runId);
     expect(persistedOwner?.state).toBe("LIVE");
-    const payloadMarker = await waitForFile(payloadMarkerPath);
+    const payloadMarker = await waitForPayloadMarker(payloadMarkerPath, handle, unitName, executor);
     const descendantPid = Number(await waitForFile(descendantPidPath));
     const wrapperPid = Number(await waitForFile(wrapperPidPath));
     expect(payloadMarker).toBe("provider-free-dummy-payload");
@@ -719,6 +798,7 @@ async function runWindowsHelperCrashBoundaryAcceptance(): Promise<void> {
     } catch (error) {
       const stderr = (error as { stderr?: unknown }).stderr;
       if (typeof stderr === "string") mismatchedIdentityError = stderr;
+      else mismatchedIdentityError = error instanceof Error ? error.message : String(error);
     }
     expect(mismatchedIdentityError).toContain("PROCESS_CREATION_IDENTITY_MISMATCH");
     expect(await processExists(persistedOwner.supervisorPid!)).toBe(true);
@@ -776,14 +856,14 @@ async function runWindowsHelperCrashBoundaryAcceptance(): Promise<void> {
           });
         }
       } catch (error) {
-        cleanupErrors.push(error);
+        cleanupErrors.push(addDiagnosticContext(error, `WINDOWS_CLEANUP operation=terminate-helper-exact pid=${ready.supervisorPid}`));
       }
     }
     if (launcher) {
       try {
         await terminateRestartLauncher(launcher, null, 15_000);
       } catch (error) {
-        cleanupErrors.push(error);
+        cleanupErrors.push(addDiagnosticContext(error, `WINDOWS_CLEANUP operation=terminate-launcher pid=${launcher.child.pid ?? "unavailable"}`));
       }
     }
     if (!recoverySucceeded && descendantPid && descendantCreationTime) {
@@ -796,7 +876,7 @@ async function runWindowsHelperCrashBoundaryAcceptance(): Promise<void> {
           });
         }
       } catch (error) {
-        cleanupErrors.push(error);
+        cleanupErrors.push(addDiagnosticContext(error, `WINDOWS_CLEANUP operation=terminate-descendant-exact pid=${descendantPid}`));
       }
     }
     if (!recoverySucceeded) {
@@ -805,15 +885,15 @@ async function runWindowsHelperCrashBoundaryAcceptance(): Promise<void> {
         const cleanup = await runRecoveryWorker(databasePath, runId, cleanupPath, restartWorkerEnvironment(runHome));
         recoverySucceeded = cleanup.exit.code === 0 && cleanup.result.ok === true && cleanup.result.state === "STOPPED";
       } catch (error) {
-        cleanupErrors.push(error);
+        cleanupErrors.push(addDiagnosticContext(error, "WINDOWS_CLEANUP operation=run-recovery-worker"));
       }
     }
-    if (!recoverySucceeded) cleanupErrors.push(new Error("WINDOWS_HELPER_CRASH_SCOPE_CLEANUP_UNPROVEN"));
+    if (!recoverySucceeded) cleanupErrors.push(new Error("WINDOWS_HELPER_CRASH_SCOPE_CLEANUP_UNPROVEN operation=verify-recovery-stop"));
     if (recoverySucceeded) {
       try {
         await rm(directory, { recursive: true, force: true });
       } catch (error) {
-        cleanupErrors.push(error);
+        cleanupErrors.push(addDiagnosticContext(error, "WINDOWS_CLEANUP operation=remove-test-directory"));
       }
     }
     if (cleanupErrors.length > 0) {
@@ -899,11 +979,38 @@ async function runWindowsNativeScopeCommand(options: {
   const args = ["-NoProfile", "-NonInteractive", "-File", script, "-Mode", options.mode, "-ProcessId", String(options.processId)];
   if (options.expectedCreationTime !== undefined) args.push("-ExpectedCreationTime", options.expectedCreationTime);
   if (options.containmentId !== undefined) args.push("-ContainmentId", options.containmentId);
-  return new ProcessExecutor().exec("powershell.exe", args, {
-    cwd: repositoryRoot,
-    timeout: 15_000,
-    maxBuffer: 64 * 1024,
-  });
+  const timeoutMs = 15_000;
+  const startedAt = Date.now();
+  try {
+    return await new ProcessExecutor().exec("powershell.exe", args, {
+      cwd: repositoryRoot,
+      timeout: timeoutMs,
+      maxBuffer: 64 * 1024,
+    });
+  } catch (error) {
+    const elapsedMs = Math.max(0, Date.now() - startedAt);
+    throw addDiagnosticContext(error, formatWindowsNativeScopeCommandContext(options, timeoutMs, elapsedMs));
+  }
+}
+
+function formatWindowsNativeScopeCommandContext(
+  options: { mode: "is-job-member" | "read-creation" | "terminate-exact"; processId?: number },
+  timeoutMs: number,
+  elapsedMs: number,
+): string {
+  const pid = options.processId === undefined ? "unavailable" : String(options.processId);
+  return `WINDOWS_NATIVE_SCOPE_COMMAND_FAILED mode=${options.mode} pid=${pid} timeoutMs=${timeoutMs} elapsedMs=${elapsedMs}`;
+}
+
+/** Добавляет контекст тестового process-scope вызова, сохраняя исходный error и его поля stdout/stderr. */
+function addDiagnosticContext<T extends Error>(error: T, context: string): T;
+function addDiagnosticContext(error: unknown, context: string): Error;
+function addDiagnosticContext(error: unknown, context: string): Error {
+  if (!(error instanceof Error)) return new Error(`${context}: ${String(error)}`, { cause: error });
+  const previousMessage = error.message;
+  error.message = `${context}: ${previousMessage}`;
+  if (error.stack) error.stack = error.stack.replace(previousMessage, error.message);
+  return error;
 }
 
 async function waitForRestartMarker(path: string, worker: RestartWorker, timeoutMs: number): Promise<string> {
@@ -1023,6 +1130,140 @@ async function waitForFile(path: string, timeoutMs = 30_000): Promise<string> {
   return waitFor(async () => {
     try { return await readFile(path, "utf8"); } catch { return undefined; }
   }, timeoutMs);
+}
+
+const LINUX_ACCEPTANCE_DIAGNOSTIC_PROPERTIES = [
+  "ActiveState", "SubState", "MainPID", "ControlGroup", "Result", "ExecMainCode", "ExecMainStatus", "InvocationID",
+] as const;
+const PROCESS_COMPLETION_STREAM_LIMIT = 1_200;
+const LINUX_UNIT_DIAGNOSTIC_LIMIT = 10_000;
+
+async function waitForPayloadMarker(
+  path: string,
+  processHandle: ProcessScopeHandle,
+  unitName: string,
+  executor: ProcessExecutor,
+  timeoutMs = 30_000,
+): Promise<string> {
+  const markerWait = waitForFile(path, timeoutMs).then(
+    (value) => ({ kind: "marker" as const, value }),
+    (error: unknown) => ({ kind: "timeout" as const, error }),
+  );
+  const completionWait = processHandle.completion.then(
+    async (result) => {
+      const marker = await readFileIfPresent(path);
+      return marker === undefined
+        ? { kind: "completed" as const, result }
+        : { kind: "marker" as const, value: marker };
+    },
+    async (error: unknown) => {
+      const marker = await readFileIfPresent(path);
+      return marker === undefined
+        ? { kind: "completion-error" as const, error }
+        : { kind: "marker" as const, value: marker };
+    },
+  );
+
+  const outcome = await Promise.race([markerWait, completionWait]);
+  if (outcome.kind === "marker") return outcome.value;
+  if (outcome.kind === "completed") {
+    throw new Error(formatProcessCompletionDiagnostic(outcome.result), {
+      cause: new Error("PROCESS_SCOPE_PAYLOAD_COMPLETED_BEFORE_MARKER"),
+    });
+  }
+  if (outcome.kind === "completion-error") {
+    throw new Error(`PROCESS_SCOPE_COMPLETION_REJECTED_BEFORE_MARKER: ${formatDiagnosticError(outcome.error)}`, {
+      cause: outcome.error,
+    });
+  }
+
+  let diagnostics: string;
+  try {
+    diagnostics = await collectLinuxUnitDiagnostics(executor, unitName);
+  } catch (error) {
+    diagnostics = `unit diagnostics unavailable: ${formatDiagnosticError(error)}`;
+  }
+  throw new Error(`PROCESS_SCOPE_PAYLOAD_MARKER_TIMEOUT\n${diagnostics}`, { cause: outcome.error });
+}
+
+async function collectLinuxUnitDiagnostics(executor: ProcessExecutor, unitName: string): Promise<string> {
+  const exactUnitName = unitName.endsWith(".service") ? unitName : `${unitName}.service`;
+  const [properties, journal] = await Promise.all([
+    executor.exec("systemctl", [
+      "--user", "show", exactUnitName, "--no-pager",
+      ...LINUX_ACCEPTANCE_DIAGNOSTIC_PROPERTIES.map((property) => `--property=${property}`),
+    ], { env: managerEnvironment(), timeout: 5_000, maxBuffer: 6_000 })
+      .then((result) => formatLinuxUnitProperties(result.stdout))
+      .catch((error: unknown) => `unavailable: ${formatDiagnosticError(error)}`),
+    executor.exec("journalctl", [
+      "--user", `--unit=${exactUnitName}`, "--no-pager", "--output=short-iso", "--lines=40",
+    ], { env: managerEnvironment(), timeout: 5_000, maxBuffer: 8_000 })
+      .then((result) => boundedDiagnosticText(result.stdout, 6_000))
+      .catch((error: unknown) => `unavailable: ${formatDiagnosticError(error)}`),
+  ]);
+  return boundedDiagnosticText([
+    `unit=${exactUnitName}`,
+    "properties:", properties || "(no allowlisted properties returned)",
+    "journal tail (last 40 lines):", journal || "(empty)",
+  ].join("\n"), LINUX_UNIT_DIAGNOSTIC_LIMIT);
+}
+
+function formatLinuxUnitProperties(output: string): string {
+  const allowed = new Set<string>(LINUX_ACCEPTANCE_DIAGNOSTIC_PROPERTIES);
+  const lines: string[] = [];
+  for (const line of output.split(/\r?\n/u)) {
+    const separator = line.indexOf("=");
+    if (separator <= 0) continue;
+    const name = line.slice(0, separator);
+    if (!allowed.has(name)) continue;
+    lines.push(`${name}=${boundedDiagnosticText(line.slice(separator + 1), 512)}`);
+  }
+  return lines.join("\n");
+}
+
+function formatProcessCompletionDiagnostic(result: ProcessResult): string {
+  const signal = (result as ProcessResult & { signal?: unknown }).signal;
+  const signalText = typeof signal === "string" && /^[A-Z0-9]+$/u.test(signal)
+    ? signal
+    : "unavailable (ProcessResult does not expose it)";
+  return [
+    "PROCESS_SCOPE_PAYLOAD_COMPLETED_BEFORE_MARKER",
+    `exitCode=${result.exitCode}`,
+    `signal=${signalText}`,
+    `stdout=${JSON.stringify(boundedDiagnosticText(result.stdout, PROCESS_COMPLETION_STREAM_LIMIT))}`,
+    `stderr=${JSON.stringify(boundedDiagnosticText(result.stderr, PROCESS_COMPLETION_STREAM_LIMIT))}`,
+  ].join("\n");
+}
+
+function formatDiagnosticError(error: unknown): string {
+  if (error instanceof Error) {
+    return boundedDiagnosticText(`${error.name}: ${error.message}`, 1_000);
+  }
+  return boundedDiagnosticText(String(error), 1_000);
+}
+
+function boundedDiagnosticText(value: string, maxLength: number): string {
+  const redacted = value
+    .replace(/\b([A-Z0-9_]*(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)[A-Z0-9_]*)\s*([=:])\s*([^\s,;]+)/giu, "$1$2[REDACTED]")
+    .replace(/\bBearer\s+[^\s,;]+/giu, "Bearer [REDACTED]")
+    .replace(/\b(?:sk|rk)-[A-Za-z0-9_-]{12,}\b/gu, "[REDACTED_KEY]");
+  const sanitized = Array.from(redacted, (character) => {
+    const code = character.charCodeAt(0);
+    return code < 0x20 && code !== 0x09 && code !== 0x0a && code !== 0x0d || code === 0x7f
+      ? " "
+      : character;
+  }).join("");
+  if (sanitized.length <= maxLength) return sanitized;
+  const suffix = "[truncated]";
+  return `${sanitized.slice(0, Math.max(0, maxLength - suffix.length))}${suffix}`;
+}
+
+async function readFileIfPresent(path: string): Promise<string | undefined> {
+  try {
+    return await readFile(path, "utf8");
+  } catch {
+    return undefined;
+  }
 }
 
 async function waitFor<T>(read: () => Promise<T | undefined>, timeoutMs = 30_000): Promise<T> {

@@ -37,7 +37,7 @@ test('execute normal exit returns fixed redacted marker and cleans prompt', asyn
   try {
     const resultPromise = runHermesExecute({
       worktreeRoot: tempDir,
-      planPath: 'tools/hermes/fixtures/parity-plan.md',
+      planPath: 'scripts/fixtures/hermes-development-workflow-parity-plan.md',
       tmpDir: tempDir,
       timeoutMs: 100,
       spawnChild: (_command, args, options) => {

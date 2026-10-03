@@ -306,12 +306,12 @@ Plan 06 also requires its original operational/configuration UI contract: Run di
 **Depends on:** Task 3; execute separately from Task 4/5 real provider runs.
 
 **Files:**
-- Create: `tools/hermes/fixtures/parity-plan.md` как актуальный, безопасный fixture для текущего canonical `.agents/skills/` workflow; не копировать устаревший contract из исходного Plan07 без адаптации.
+- Create: `scripts/fixtures/hermes-development-workflow-parity-plan.md` как актуальный, безопасный fixture для текущего canonical `.agents/skills/` workflow; не копировать устаревший contract из исходного Plan07 без адаптации.
 - Read/Run: `docs/architecture/plans/07-hermes-development-workflow.md`, canonical `.agents/skills/`.
 - Evidence target: `docs/audit/hermes-development-workflow-parity.md`.
 - Modify migration scripts/config only after a reproduced failing contract and test-first fix; do not remove active `.opencode` workflow in this Task.
 
-**RED:** prior approved parity runner timed out/failed before a valid parity report; fixture `tools/hermes/fixtures/parity-plan.md` создан, но required two read-only subagent behavior and provider-backed parity report are unproven.
+**RED:** prior approved parity runner timed out/failed before a valid parity report; fixture `scripts/fixtures/hermes-development-workflow-parity-plan.md` создан, но required two read-only subagent behavior and provider-backed parity report are unproven.
 
 **GREEN:**
 
@@ -320,9 +320,9 @@ Run: pnpm hermes:setup
 Expected: setup validates the canonical repository-owned `.agents/skills/` inventory and configures project trust/discovery in the isolated managed profile; it does not copy those skills into Hermes profile directories.
 Run: pnpm hermes:check
 Expected: supported CLI, canonical skills inventory, project discovery/trust and delegation settings all PASS. This check does not test provider/auth/network access; provider-backed parity remains a separate acceptance gate and must have its own report.
-Run: create `tools/hermes/fixtures/parity-plan.md` with the current contracts: ровно два параллельных read-only subagents без nested delegation; только `.agents/skills/`; lint/typecheck/test/diff-check; no product-code changes, merge, push or release; report has date/branch/HEAD/commands/evidence/verdict; no automatic commit.
+Run: create `scripts/fixtures/hermes-development-workflow-parity-plan.md` with the current contracts: ровно два параллельных read-only subagents без nested delegation; только `.agents/skills/`; lint/typecheck/test/diff-check; no product-code changes, merge, push or release; report has date/branch/HEAD/commands/evidence/verdict; no automatic commit.
 Expected: fixture exists, is reviewable, excludes stale `.hermes.md` and `tools/hermes/skills/` assumptions and cannot authorize repository mutations.
-Run: pnpm hermes:execute -- tools/hermes/fixtures/parity-plan.md
+Run: pnpm hermes:execute -- scripts/fixtures/hermes-development-workflow-parity-plan.md
 Expected: parity verdict PASS, exactly two read-only subagents, no nested/third child, repository gates PASS, report committed as separate evidence, child processes and artifacts fully cleaned.
 ```
 

@@ -10,6 +10,7 @@ import { loadTestMigrations } from "../../helpers/migrations.js";
 import { ProjectConfigService } from "../../../src/modules/projects/project-config-service.js";
 import { ApprovalService } from "../../../src/modules/approvals/approval-service.js";
 import { createRunContextInput, RunService } from "../../../src/modules/runtime/run-service.js";
+import type { PersistedWorkTaskContractV1 } from "../../../src/modules/context/context-types.js";
 import { FakeAgentRuntime } from "../../fakes/fake-agent-runtime.js";
 import { loadValidatedCapability } from "../../../src/modules/execution/capability-validation.js";
 
@@ -75,7 +76,17 @@ supportedCaptureSuite("ProjectConfigService", () => {
     const fixture = createFixture();
     const taskId = randomUUID();
     const now = new Date().toISOString();
-    fixture.db.run("INSERT INTO tasks(id,project_id,display_id,title,status,contract_json,created_at,updated_at) VALUES($id,$projectId,'T-1','Task','READY','{}',$now,$now)", { id: taskId, projectId: fixture.projectId, now });
+    const taskContract: PersistedWorkTaskContractV1 = {
+      version: 1,
+      goal: "Run with the approved Project Config revision.",
+      context: "",
+      requirements: [],
+      acceptanceCriteria: [],
+      dependencies: [],
+      nonGoals: [],
+      definitionOfDone: [],
+    };
+    fixture.db.run("INSERT INTO tasks(id,project_id,display_id,title,status,contract_json,created_at,updated_at) VALUES($id,$projectId,'T-1','Task','READY',$contractJson,$now,$now)", { id: taskId, projectId: fixture.projectId, contractJson: JSON.stringify(taskContract), now });
     fixture.db.run("INSERT INTO worktrees(id,repo_path,path,branch,created_at) VALUES($id,$root,$root,$branch,$now)", { id: taskId, root: fixture.root, branch: `task/${taskId}`, now });
     const runs = new RunService(fixture.db, new FakeAgentRuntime());
     const options = {

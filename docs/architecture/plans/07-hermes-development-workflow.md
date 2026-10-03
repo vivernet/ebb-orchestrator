@@ -72,7 +72,9 @@ repo/
 ├── .hermes.md
 ├── package.json
 ├── scripts/
-│   └── hermes-dev.mjs
+│   ├── hermes-dev.mjs
+│   └── fixtures/
+│       └── hermes-development-workflow-parity-plan.md
 ├── tools/
 │   └── hermes/
 │       ├── README.md
@@ -85,8 +87,6 @@ repo/
 │       │   │   └── SKILL.md
 │       │   └── ebb-final-review/
 │       │       └── SKILL.md
-│       └── fixtures/
-│           └── parity-plan.md
 └── docs/
     └── development/
         └── hermes.md
@@ -925,7 +925,7 @@ false
 # Задача 7 — Создать parity-plan для реальной проверки нового workflow
 
 **Файл:**
-- Создать: `tools/hermes/fixtures/parity-plan.md`.
+- Создать: `scripts/fixtures/hermes-development-workflow-parity-plan.md`.
 
 Содержание:
 
@@ -1053,7 +1053,7 @@ git commit -m "build: add Hermes development workflow"
 - [ ] **Шаг 1. Запустить новый runner**
 
 ```bash
-pnpm hermes:execute -- tools/hermes/fixtures/parity-plan.md
+pnpm hermes:execute -- scripts/fixtures/hermes-development-workflow-parity-plan.md
 ```
 
 - [ ] **Шаг 2. Проверить результат**
