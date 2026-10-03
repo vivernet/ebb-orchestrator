@@ -250,12 +250,12 @@ MCP-инструменты проверяют capability и аргументы. 
 - `ebb-worktree` — проверка изолированного worktree и безопасный жизненный цикл checkout;
 - `ebb-write-plan` — создание implementation plan из подтверждённых требований и design.
 
-`pnpm hermes:setup` изменяет trust/discovery/delegation settings выбранного
-Hermes home. Для проверки setup запускайте команду только с отдельным
-изолированным Hermes home; не используйте профиль, настройки которого нельзя
-менять.
-
 Настроить Hermes project discovery и проверить prerequisites:
+
+Важно: `pnpm hermes:setup` изменяет активную конфигурацию выбранного Hermes
+home/profile (доверие к репозиторию, discovery и delegation). Чтобы сохранить
+обычный профиль Hermes и его настройки auth/credentials без изменений,
+запускайте команду только с отдельным изолированным Hermes home/копией.
 
 ```bash
 pnpm hermes:setup
@@ -320,6 +320,10 @@ pnpm start
 
 ### Hermes
 
+Внимание: `pnpm hermes:setup` изменяет выбранный Hermes home/profile. Запускайте
+его только с отдельным изолированным Hermes home/копией, чтобы сохранить
+обычный профиль Hermes и его auth/credentials без изменений.
+
 ```bash
 pnpm hermes:setup
 pnpm hermes:check
@@ -353,10 +357,6 @@ pnpm docs:rename:check
 оставшихся старых исходных путей и относительные ссылки в `docs/` и корневом
 `README.md`. Карта — исторический снимок: текущие canonical target paths не
 обязаны существовать, если документы позднее перемещались или объединялись.
-`pnpm docs:link:sync` присутствует в корневом manifest, но не реализована
-текущим диспетчером: завершается с кодом `1` и выводит usage. Не запускайте её
-как проверку документации; используйте `pnpm docs:rename:check` для актуального
-проверяемого migration-map и link gate.
 
 ### Дополнительные package scripts
 
