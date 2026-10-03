@@ -3,7 +3,7 @@ id: plan-16
 kind: plan
 status: blocked
 created: 2026-09-25
-updated: 2026-10-02
+updated: 2026-10-03
 title: Очистка и актуализация документации Ebb Orchestrator
 depends_on:
   - plan-15-07
@@ -14,7 +14,7 @@ specs:
 evidence:
   - README.md
   - docs/README.md
-  - tools/hermes/README.md
+  - docs/development/05-hermes.md
   - package.json
   - apps/server/package.json
   - apps/web/package.json
@@ -49,13 +49,15 @@ Rebaseline выполнен на develop, HEAD 7d2e8a3, 2026-10-02. Повтор
 
 **Deferred evidence inconsistency:** the previously expected `docs/development/jsdoc-style-guide.md` is absent from the repository; the existing `docs/development/07-jsdoc-style-guide.md` is not substituted as an authoritative spec in this plan. Restoring or renaming a JSDoc guide is out of scope and deferred pending a separate repository-backed requirement; no task may depend on that missing path.
 
+**Hermes documentation path correction (2026-10-03):** `tools/hermes/README.md` was intentionally deleted in commit `1b2155e` on 2026-09-28. Its user-facing Hermes setup and skills guidance was migrated to the existing canonical `docs/development/05-hermes.md`, which is linked from the root README. Do not recreate the absent tooling README; the current README targets are `README.md` and `docs/README.md`, with `docs/development/05-hermes.md` audited as a separate canonical guide.
+
 ## Scope
 
 1. Провести read-only inventory всех кандидатов и расслоить их на tracked/untracked/ignored, active/unrelated, reproducible/non-reproducible и содержащие/не содержащие секреты.
 2. Проверить целостность кандидатов: SHA-256 manifest, валидность JSON/UTF-8, diff/path checks, ссылки, tracked-vs-untracked comparison и secret/path scan.
 3. Сверить существование, tracked-состояние и SHA-256 каждого из восьми точных targets с rebaseline; удалить только их индивидуальными операциями. Archive не создавать.
 4. Проверить каждую реально существующую `pnpm`-команду по manifests/workspace/lockfile и обновить `README.md` с фактическими командами, ограничениями и expected outputs.
-5. Обновить все три project README: `README.md`, `docs/README.md`, `tools/hermes/README.md`; убрать из них frontmatter-подобные блоки, исправить stale paths, язык и ссылки.
+5. Обновить существующие project README: `README.md` и `docs/README.md`; убрать из них frontmatter-подобные блоки, исправить stale paths, язык и ссылки. Сверить команды и ссылки Hermes в существующем каноническом guide `docs/development/05-hermes.md`; не создавать `tools/hermes/README.md`.
 6. Оценить и при необходимости добавить в `.gitignore` правила для `temp/` и `test/` только с явным объяснением scope; не игнорировать source/test directories целиком.
 7. Оценить добавление в `AGENTS.md` правила для временных файлов и зафиксировать его только если оно однозначно предотвращает повторное загрязнение репозитория.
 8. Выполнить прямо разрешённое пользователем удаление только восьми перечисленных tracked-файлов; дополнительное подтверждение и archive не требуются. Другие Plan16 задачи и изменения README/policy этим разрешением не считаются выполненными.
@@ -75,7 +77,7 @@ Rebaseline выполнен на develop, HEAD 7d2e8a3, 2026-10-02. Повтор
 |---|---|---|
 | Project entrypoint | `README.md` | Установка, commands, architecture claims, runtime prerequisites; обновить только после command audit. |
 | Documentation index | `docs/README.md` | Навигация и governance; сверить с фактическими `docs/` paths и README policy. |
-| Hermes tooling docs | `tools/hermes/README.md` | Source/installed skills workflow; сверить с фактическими directories и scripts. |
+| Hermes development guide | `docs/development/05-hermes.md` | Каноническое руководство по source/installed skills; сверить с фактическими каталогами и scripts, сохраняя его корректные metadata не-README документа. |
 | Command authority | `package.json`, workspace manifests, `pnpm-workspace.yaml`, `pnpm-lock.yaml` | Канонический список `pnpm` scripts, packages, package manager и dependency graph. |
 | Documentation validators | `scripts/docs-governance.mjs`, `scripts/roadmap-generator-cli.mjs` | Метаданные, plan parsing, inventory/check/roadmap behavior; команды запускать с dry-run там, где возможно. |
 | Repository policy | `.gitignore`, `AGENTS.md`, `.hermes.md`, scoped `AGENTS.md` | Правила временных файлов, language, cleanup, gates и ownership boundaries. |
@@ -150,7 +152,7 @@ Files: repository root, `docs/architecture/plans/`, candidate paths above. Symbo
   $frontMatterResult = [regex]::Match($content, '(?s)\A---\r?\n(?<yaml>.*?)\r?\n---')
   if (-not $frontMatterResult.Success) { throw 'Plan16 YAML frontmatter is missing.' }
   $yaml = $frontMatterResult.Groups['yaml'].Value
-  $expectedDates = [ordered]@{ created = '2026-09-25'; updated = '2026-10-02' }
+  $expectedDates = [ordered]@{ created = '2026-09-25'; updated = '2026-10-03' }
   foreach ($entry in $expectedDates.GetEnumerator()) {
     if ($yaml -notmatch "(?m)^$($entry.Key):\s+$([regex]::Escape($entry.Value))\s*$") {
       throw "Plan16 $($entry.Key) does not match the expected date."
@@ -165,13 +167,13 @@ Files: repository root, `docs/architecture/plans/`, candidate paths above. Symbo
     )
     if (-not $isValidDate) { throw "Plan16 $($entry.Key) is not a valid ISO calendar date." }
   }
-  'Plan16 frontmatter dates passed: created=2026-09-25 updated=2026-10-02'
+  'Plan16 frontmatter dates passed: created=2026-09-25 updated=2026-10-03'
   ```
 - Expected: `pnpm docs:check` exits `0` for frontmatter/id/filename checks and the PowerShell snippet exits `0` with the stated message; neither command changes files. No candidate is silently omitted; any inventory mismatch blocks further work; inventory/validation leaves no `docs/roadmap/generated.md` or other new artifact.
 
 ### Task 2 — Establish authority and references
 
-Files: `.hermes.md`, `AGENTS.md`, scoped `AGENTS.md`, canonical specs, all plans, README files, scripts.
+Files: `.hermes.md`, `AGENTS.md`, scoped `AGENTS.md`, canonical specs, all plans, `README.md`, `docs/README.md`, `docs/development/05-hermes.md`, scripts.
 
 - Search references to every candidate path, report filename, plan ID and generated artifact name.
 - Treat current user requirements first, then approved specs/instructions, then current code as evidence; treat historical reports as evidence only.
@@ -198,7 +200,7 @@ Files: the eight exact delete targets and the two historical governance evidence
 
 ### Task 5 — Audit every pnpm command from real manifests
 
-Files: `package.json`, `apps/server/package.json`, `apps/web/package.json`, `packages/contracts/package.json`, `packages/testing/package.json`, `apps/server/test/e2e/fixtures/health-service/package.json`, all three README files, `pnpm-workspace.yaml`, `pnpm-lock.yaml`, referenced scripts.
+Files: `package.json`, `apps/server/package.json`, `apps/web/package.json`, `packages/contracts/package.json`, `packages/testing/package.json`, `apps/server/test/e2e/fixtures/health-service/package.json`, `README.md`, `docs/README.md`, canonical Hermes guide `docs/development/05-hermes.md`, `pnpm-workspace.yaml`, `pnpm-lock.yaml`, referenced scripts.
 
 Сначала зафиксировать этот deterministic matrix как проверяемый набор строк; после каждого запуска сохранить `cwd`, prerequisites, классификацию `read-only`/`side-effect`, exact invocation, exit code и ожидаемый результат. `pnpm docs:roadmap` по умолчанию записывает `docs/roadmap/generated.md`, поэтому для audit использовать только isolated copy рабочего дерева либо поддержанный dry-run, а затем проверять, что в исходном и isolated repo не появились неожиданные artifacts.
 
@@ -217,9 +219,9 @@ Files: `package.json`, `apps/server/package.json`, `apps/web/package.json`, `pac
 | root `package.json` | repo root | Node | read-only | `pnpm docs:inventory` | `0`; inventory printed; assert no new artifact |
 | root `package.json` | repo root | Node | read-only | `pnpm docs:check` | `0`; valid metadata/naming; assert no new artifact |
 | root `package.json` | repo root | Node | read-only (supported dry-run) | `pnpm docs:roadmap -- --dry-run` | `0`; preview is printed, `docs/roadmap/generated.md` is not written, source repo unchanged; do not probe unsupported `--help` because the CLI has no help handler and may generate the default output file |
-| root `package.json` | repo root | Node | read-only (implemented behavior) | `pnpm docs:rename:check` | `0`; exact stdout is `Rename check not yet implemented`; no artifact |
+| root `package.json` | repo root | Node | read-only | `pnpm docs:rename:check` | `0`; verified stdout: `Rename check passed: 43 migration entries, no retained legacy sources or broken relative links.`; no artifact |
 | root `package.json` | repo root | Node; command dispatcher has no `link:sync` implementation | unsupported/side-effecting request (not verified read-only) | `pnpm docs:link:sync` | `1`; exact stdout is `Usage: node docs-governance.mjs <command> [options]`, `Commands: inventory, check, roadmap, rename:check`, `Roadmap options: --dry-run, --output=<path>`; pnpm adds `[ELIFECYCLE] Command failed with exit code 1`; no sync is performed |
-| root `package.json` | repo root | Node | read-only | `pnpm docs:test` | `0`; governance tests pass; no artifact |
+| root `package.json` | repo root | Node | read-only | `pnpm docs:test` | `0`; 20/20 governance tests passed on the 2026-10-03 correction checkpoint; no artifact; rerun after remaining documentation changes |
 | root `package.json` | repo root | built server and writable `EBB_ORCHESTRATOR_HOME` | side-effect (server state) | `pnpm start` | long-running server; audit only via isolated home and health probe |
 | root `package.json` | repo root | dependencies installed | side-effect (server process) | `pnpm server:dev` | long-running `tsx watch`; not a read-only audit command |
 | root `package.json` | repo root | dependencies installed | side-effect (Vite process) | `pnpm web:dev` | long-running Vite server; not a read-only audit command |
@@ -247,24 +249,30 @@ Files: `package.json`, `apps/server/package.json`, `apps/web/package.json`, `pac
 | `README.md` | repo root | Node | read-only | `pnpm docs:inventory`; `pnpm docs:check`; `pnpm docs:test`; `pnpm hermes:check` | each exits `0` with the command's exact success output and no artifact; `pnpm hermes:setup` is excluded from this read-only set and is a separate side-effecting isolated-copy check |
 | `README.md` | repo root | Node; setup requires isolated `HERMES_HOME` | side-effect (HERMES_HOME/setup state) | `pnpm hermes:setup` | `0`; setup output includes `HERMES_CONFIG marker=SETUP_SYNCED verified=true redacted=true` and `Setup complete.`; run only in isolated copy |
 | `docs/README.md` | repo root | documentation paths | read-only | navigation links and referenced paths | no shell command; validate every listed path exists or is explicitly marked stale |
-| `tools/hermes/README.md` | repo root | Node, installed skills only for execution | side-effect/process | `pnpm hermes:setup`; `pnpm hermes:check`; `pnpm hermes:execute -- <plan>` | setup changes HERMES_HOME; check is read-only; execute requires explicit approval and isolated plan |
+| `docs/development/05-hermes.md` | repo root | Node; installed Hermes for setup/check/interactive use; explicit execution approval for plan execution | side-effect (Hermes home) | `pnpm hermes:setup` | setup changes selected `HERMES_HOME`; run only in an isolated copy and record its observed output |
+| `docs/development/05-hermes.md` | repo root | Node; configured Hermes installation | read-only | `pnpm hermes:check` | `0` when prerequisites and project trust pass; record exact output and artifact absence |
+| `docs/development/05-hermes.md` | repo root | Node | read-only | `pnpm hermes:test` | `0`; Node test summary passes; record exact output and artifact absence |
+| `docs/development/05-hermes.md` | repo root | Node | read-only | `pnpm skills:test` | `0`; canonical skills test summary passes; record exact output and artifact absence |
+| `docs/development/05-hermes.md` | repo root | Node | read-only | `pnpm skills:dependencies:test` | `0`; skill dependency test summary passes; record exact output and artifact absence |
+| `docs/development/05-hermes.md` | repo root | Node; explicit execution approval, approved plan and capabilities | side-effect/process | `pnpm hermes:execute -- docs/architecture/plans/<file>.md` | do not run during audit; record exact blocked prerequisite and command |
+| `docs/development/05-hermes.md` | repo root | Hermes installed; selected worktree | side-effect/process | `hermes --in "<worktree>" --tui` | long-running interactive process; classify as runtime launch, not read-only validation |
 
-- Матрица должна содержать также любой новый script, найденный в перечисленных manifests; отсутствие script в текущей версии фиксируется как mismatch, а не исправляется догадкой. README-команды, не являющиеся manifest scripts (например `node --version`, `git diff --check` и ссылки), остаются отдельными строками с теми же колонками.
+- Матрица должна содержать также любой новый script, найденный в перечисленных manifests; отсутствие script в текущей версии фиксируется как mismatch, а не исправляется догадкой. Команды и ссылки из обоих существующих README и канонического Hermes guide, не являющиеся manifest scripts (например `node --version`, `git diff --check`, `hermes --in` и ссылки), остаются отдельными строками с теми же колонками.
 - Проверить package filters (`@ebb-orchestrator/server`, `@ebb-orchestrator/web`) по фактическим workspace names, `packageManager`/Node engine по `package.json` и `pnpm-lock.yaml`, а также prerequisites каждого скрипта.
-- README-команды governance/Hermes разделить по фактическому риску: `pnpm docs:inventory`, `pnpm docs:check`, `pnpm docs:test` и `pnpm hermes:check` входят в read-only verified set с exact exit/output и artifact absence check; `pnpm hermes:setup` отдельно классифицируется как side-effecting (`HERMES_HOME`/setup state) и запускается только в изолированной копии; `pnpm docs:rename:check` фиксируется как implemented-but-unimplemented (`0`, `Rename check not yet implemented`); `pnpm docs:link:sync` фиксируется как unsupported (`1`, dispatcher usage output) и не считается проверенной read-only командой.
-- Expected: детерминированная матрица покрывает каждый script и каждую команду трёх README; README обновляется только по строкам с подтверждённым exit/output; после inventory/validation, включая roadmap audit, отсутствуют `docs/roadmap/generated.md` и любые другие новые artifacts в исходном repo.
+- README-команды governance/Hermes разделить по фактическому риску: `pnpm docs:inventory`, `pnpm docs:check`, `pnpm docs:test` и `pnpm hermes:check` входят в read-only verified set с exact exit/output и artifact absence check; `pnpm hermes:setup` отдельно классифицируется как side-effecting (`HERMES_HOME`/setup state) и запускается только в изолированной копии; `pnpm docs:rename:check` — реализованная read-only проверка migration map и ссылок (на correction checkpoint: exit `0`, 43 entries, no retained legacy sources or broken relative links); `pnpm docs:link:sync` остаётся unsupported (`1`, dispatcher usage output) и не считается проверенной read-only командой.
+- Expected: детерминированная матрица покрывает каждый script и каждую команду `README.md`, `docs/README.md` и `docs/development/05-hermes.md`; README обновляются только по строкам с подтверждённым exit/output, а Hermes guide сверяется с теми же evidence; после inventory/validation, включая roadmap audit, отсутствуют `docs/roadmap/generated.md` и любые другие новые artifacts в исходном repo.
 
-### Task 6 — Refresh all project README files in Russian
+### Task 6 — Refresh current project README files in Russian
 
-Files: `README.md`, `docs/README.md`, `tools/hermes/README.md`; links to canonical docs and scripts.
+Files: `README.md`, `docs/README.md`; review canonical Hermes guide `docs/development/05-hermes.md` for stale paths and commands. Do not recreate `tools/hermes/README.md`.
 
-- Remove YAML/frontmatter-like leading metadata blocks from all three README files while retaining factual Markdown content.
-- Rewrite stale plan/index references to actual paths under `docs/architecture/plans/`, preserving technical identifiers, commands and paths verbatim.
-- Align setup, development, build, docs governance, Hermes skills and quality-gate instructions with Task 5 evidence.
+- Remove YAML/frontmatter-like leading metadata blocks from the two existing README files while retaining factual Markdown content. Preserve the canonical Hermes guide's valid non-README metadata.
+- Rewrite stale plan/index references in the two README files to actual paths under `docs/architecture/plans/`, preserving technical identifiers, commands and paths verbatim; keep Hermes guidance in `docs/development/05-hermes.md`.
+- Align setup, development, build, docs governance, Hermes skills and quality-gate instructions across the two README files and the canonical Hermes guide with Task 5 evidence.
 - Synchronize `scripts/hermes-dev.test.mjs` with the canonical 11-skill registry and keep its secret-pattern assertion boundary-aware; this is a test-only governance correction required because the existing check was stale and falsely matched ordinary `task-controller` text.
 - Mark optional, unavailable or not-yet-verified features explicitly; do not turn historical audit claims into current guarantees.
-- Validate links, heading structure, UTF-8 and Russian prose; do not change production source code or active plans.
-- Expected: all project README files are Russian, metadata-free, factually linked and reproducible from the command matrix.
+- Validate links, heading structure, UTF-8 and Russian prose in both README files and the canonical Hermes guide; do not change production source code or active plans.
+- Expected: both existing README files are Russian, metadata-free, factually linked and reproducible from the command matrix; the separate canonical Hermes guide has current verified links and commands.
 
 ### Task 7 — Decide `.gitignore` and `AGENTS.md` policy narrowly
 
@@ -289,7 +297,7 @@ Files: only the eight exact target files and the two named governance evidence f
 Files: final diff and status only; no code files expected to change.
 
 - Run `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm server:build`, `pnpm web:build`, relevant docs tests and `git diff --check`; use exact commands that Task 5 proves valid.
-- Review `git diff -- README.md docs/README.md tools/hermes/README.md .gitignore AGENTS.md` and `git status --short --untracked-files=all`.
+- Review `git diff -- README.md docs/README.md docs/development/05-hermes.md .gitignore AGENTS.md` and `git status --short --untracked-files=all`.
 - Verify no secrets, no active-plan changes, no unapproved deletes/moves and no generated cleanup artifacts remain.
 - Expected: all required gates are green or documented as an environment blocker; no claim of completion is made while a required gate is red.
 
@@ -307,10 +315,10 @@ Behavior changes are documentation/governance behavior rather than runtime behav
 - [x] Immediately before each deletion, existence, tracked state and SHA-256 matched the exact rebaseline row.
 - [x] Deleted only the eight exact files individually; verified each is absent and all 14 preservation paths remain.
 - [x] Marked the two specified historical evidence references as deleted by this rebaseline while preserving all remaining evidence.
-- [ ] README.md, docs/README.md and tools/hermes/README.md are Russian, metadata-free and link to real current paths.
-- [ ] README documents only verified pnpm commands and states prerequisites/environment-dependent behavior.
+- [ ] README.md and docs/README.md are Russian, metadata-free and link to real current paths; docs/development/05-hermes.md remains the canonical Hermes guide and preserves its guideline metadata.
+- [ ] Both README files and the canonical Hermes guide document only verified pnpm commands and state prerequisites/environment-dependent behavior.
 - [ ] .gitignore changes, if any, are narrow and do not hide source tests; AGENTS.md changes, if any, define safe temporary-file handling.
-- [x] pnpm docs:check validates frontmatter/id/filename structure; the read-only PowerShell snippet validates plan-16 created: 2026-09-25 and updated: 2026-10-02 as ISO dates; inventory and validation leave neither docs/roadmap/generated.md nor any other new artifact.
+- [ ] pnpm docs:check validates frontmatter/id/filename structure; the read-only PowerShell snippet validates plan-16 created: 2026-09-25 and updated: 2026-10-03 as ISO dates; inventory and validation leave neither docs/roadmap/generated.md nor any other new artifact.
 - [ ] Documentation validators, quality gates, link/status checks and git diff --check pass; no unrelated changes remain.
 
 ## Risks and rollback
