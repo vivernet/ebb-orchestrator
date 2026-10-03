@@ -69,6 +69,16 @@ export class SystemdRunSupervisor implements ProcessScopeSupervisor {
     await this.assertNativePrerequisites();
     assertRequest(request);
     if (request.signal?.aborted) throw new ProcessScopeLaunchNotDispatchedError();
+    const baseEnvironment = this.managerEnvironment();
+    for (const [key, value] of Object.entries(request.environment)) {
+      if (!HERMES_CHILD_ENV_KEYS.has(key) || isCredentialEnvironmentKey(key) || !/^[A-Z_][A-Z0-9_]*$/.test(key) || /[\0\r\n]/.test(value)) {
+        throw new Error("PROCESS_SCOPE_ENVIRONMENT_REJECTED");
+      }
+    }
+    const wrapperEnvironment = { ...baseEnvironment, ...request.environment };
+    const explicitWrapperEnvironment = Object.entries(wrapperEnvironment)
+      .filter(([key]) => HERMES_CHILD_ENV_KEYS.has(key))
+      .map(([key, value]) => `${key}=${value}`);
     const unitName = systemdUnitName(owner);
     const args = [
       "--user", "--pipe", "--wait", `--unit=${unitName}`, "--slice=app.slice",
@@ -82,13 +92,12 @@ export class SystemdRunSupervisor implements ProcessScopeSupervisor {
       "--property=Restart=no",
       `--property=WorkingDirectory=${request.cwd}`,
     ];
-    for (const [key, value] of Object.entries(request.environment)) {
-      if (!HERMES_CHILD_ENV_KEYS.has(key) || isCredentialEnvironmentKey(key) || !/^[A-Z_][A-Z0-9_]*$/.test(key) || /[\0\r\n]/.test(value)) {
-        throw new Error("PROCESS_SCOPE_ENVIRONMENT_REJECTED");
-      }
-      args.push(`--setenv=${key}=${value}`);
-    }
-    args.push("--", "node", "-e", systemdPayloadWrapper, "--", request.executable, ...request.args);
+    // systemd user services inherit the manager environment. env -i exec-replaces itself before Node
+    // starts, so the wrapper's initial /proc/<pid>/environ contains only this validated allowlist.
+    args.push(
+      "--", "/usr/bin/env", "-i", ...explicitWrapperEnvironment,
+      process.execPath, "-e", systemdPayloadWrapper, "--", request.executable, ...request.args,
+    );
 
     const managerEnvironment = this.managerEnvironment();
     const session = this.executor.startSession("systemd-run", args, {

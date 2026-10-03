@@ -199,6 +199,28 @@ describe("SystemdRunSupervisor", () => {
     await expect(handle.completion).resolves.toMatchObject({ exitCode: 0, stdout: "dummy stdout" });
   });
 
+  it("exec-replaces env with only explicit Hermes allowlist variables before starting the wrapper", async () => {
+    const handle = await supervisor.launch(owner, launchRequest, async () => undefined);
+    const call = executor.sessionCall;
+    const commandStart = call?.args.indexOf("--") ?? -1;
+    const nodeIndex = call?.args.indexOf(process.execPath) ?? -1;
+
+    expect(commandStart).toBeGreaterThan(-1);
+    expect(call?.args.slice(commandStart, commandStart + 3)).toEqual(["--", "/usr/bin/env", "-i"]);
+    expect(nodeIndex).toBeGreaterThan(commandStart + 2);
+    expect(call?.args[nodeIndex + 1]).toBe("-e");
+    expect(call?.args).toContain("PATH=/usr/bin:/bin");
+    expect(call?.args).toContain(`HOME=${launchRequest.environment.HOME}`);
+    expect(call?.args).toContain(`HERMES_HOME=${launchRequest.environment.HERMES_HOME}`);
+    expect(call?.args.some((argument) => argument.startsWith("--setenv="))).toBe(false);
+    expect(call?.args.join(" ")).not.toContain("SECRET_CANARY_IN_PARENT");
+    expect(call?.options.env).not.toHaveProperty("UNLISTED_PROVIDER_TOKEN");
+
+    unitState = "absent";
+    executor.finish();
+    await expect(handle.completion).resolves.toMatchObject({ exitCode: 0 });
+  });
+
   it("normalizes a trailing slash in XDG_RUNTIME_DIR before validating and passing the session bus", async () => {
     vi.stubEnv("XDG_RUNTIME_DIR", "/run/user/1000/");
 

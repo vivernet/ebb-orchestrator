@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { constants } from "node:fs";
-import { access, mkdtemp, readFile, readdir, rm, statfs } from "node:fs/promises";
+import { access, mkdtemp, readFile, readdir, rm, statfs, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -89,6 +89,8 @@ describe.skipIf(!isLinux || !nativeAcceptanceEnabled)("Linux native process-scop
     const runHome = join(directory, "hermes-home");
     const payloadMarkerPath = join(directory, "payload-provider-free.txt");
     const descendantPidPath = join(directory, "setsid-descendant.pid");
+    const wrapperPidPath = join(directory, "wrapper.pid");
+    const payloadReleasePath = join(directory, "payload.release");
     database.run(
       "INSERT INTO agent_runs(id,role,runtime,model,status,started_at) VALUES($id,'developer','hermes','dummy-5a','STARTED',$startedAt)",
       { id: runId, startedAt: new Date().toISOString() },
@@ -103,16 +105,22 @@ describe.skipIf(!isLinux || !nativeAcceptanceEnabled)("Linux native process-scop
 
     const payload = [
       "const { spawn } = require('node:child_process');",
-      "const { writeFileSync } = require('node:fs');",
+      "const { existsSync, readFileSync, writeFileSync } = require('node:fs');",
       "if (process.env.EBB_HERMES_PROVIDER_API_KEY) process.exit(20);",
+      "const wrapperEntries = readFileSync(`/proc/${process.ppid}/environ`, 'utf8').split('\\0').filter(Boolean);",
+      "const wrapperKeys = new Set(wrapperEntries.map((entry) => entry.slice(0, entry.indexOf('='))));",
+      "const allowedWrapperKeys = new Set(['PATH', 'HOME', 'HERMES_HOME', 'NODE_ENV']);",
+      "if (wrapperEntries.some((entry) => !allowedWrapperKeys.has(entry.slice(0, entry.indexOf('='))))) process.exit(22);",
+      "if ([...allowedWrapperKeys].some((key) => !wrapperKeys.has(key))) process.exit(23);",
+      "if (wrapperEntries.some((entry) => entry.startsWith('EBB_HERMES_PROVIDER_API_KEY='))) process.exit(24);",
       "writeFileSync(process.argv[1], 'provider-free-dummy-payload');",
       "const child = spawn('setsid', ['/bin/sh', '-c', 'sleep 60'], { stdio: 'ignore' });",
       "child.once('error', () => process.exit(21));",
-      "child.once('spawn', () => { writeFileSync(process.argv[2], String(child.pid)); child.unref(); process.stdout.write('dummy payload root complete\\n'); });",
+      "child.once('spawn', () => { writeFileSync(process.argv[2], String(child.pid)); writeFileSync(process.argv[3], String(process.ppid)); process.stdout.write('dummy payload stdout canary\\n'); process.stderr.write('dummy payload stderr canary\\n'); const releaseCheck = setInterval(() => { if (existsSync(process.argv[4])) { clearInterval(releaseCheck); child.unref(); process.exit(0); } }, 20); });",
     ].join(" ");
     handle = await supervisor.launch(scopeIdentity, {
       executable: process.execPath,
-      args: ["-e", payload, payloadMarkerPath, descendantPidPath],
+      args: ["-e", payload, payloadMarkerPath, descendantPidPath, wrapperPidPath, payloadReleasePath],
       cwd: directory,
       environment: {
         PATH: process.env.PATH ?? "",
@@ -140,9 +148,18 @@ describe.skipIf(!isLinux || !nativeAcceptanceEnabled)("Linux native process-scop
     expect(persistedOwner?.state).toBe("LIVE");
     const payloadMarker = await waitForFile(payloadMarkerPath);
     const descendantPid = Number(await waitForFile(descendantPidPath));
+    const wrapperPid = Number(await waitForFile(wrapperPidPath));
     expect(payloadMarker).toBe("provider-free-dummy-payload");
     expect(Number.isSafeInteger(descendantPid)).toBe(true);
     expect(descendantPid).toBeGreaterThan(0);
+    expect(Number.isSafeInteger(wrapperPid)).toBe(true);
+    expect(wrapperPid).toBeGreaterThan(0);
+
+    const runningProperties = await showUnitProperties(executor, unitName, ["MainPID", "ControlGroup", "ActiveState"]);
+    expect(runningProperties.get("MainPID")).toBe(String(wrapperPid));
+    expect(runningProperties.get("ControlGroup")).toBe(persistedOwner?.systemdControlGroup);
+    expect(runningProperties.get("ActiveState")).toBe("active");
+    await writeFile(payloadReleasePath, "release");
 
     const reopenedSupervisor = new SystemdRunSupervisor(new ProcessExecutor());
     const reopenedIdentity = toScopeIdentity(persistedOwner);
@@ -185,6 +202,8 @@ describe.skipIf(!isLinux || !nativeAcceptanceEnabled)("Linux native process-scop
     }));
     const completion = await handle.completion;
     expect(`${completion.stdout}\n${completion.stderr}`).not.toContain("EBB_HERMES_PROVIDER_API_KEY");
+    expect(completion.stdout).toContain("dummy payload stdout canary");
+    expect(completion.stderr).toContain("dummy payload stderr canary");
 
     const journal = await executor.exec("journalctl", ["--user", "--unit", `${unitName}.service`, "--no-pager", "--output=cat"], {
       env: managerEnvironment(), timeout: 10_000,
