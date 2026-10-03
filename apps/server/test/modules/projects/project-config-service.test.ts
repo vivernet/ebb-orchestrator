@@ -76,6 +76,20 @@ supportedCaptureSuite("ProjectConfigService", () => {
     const fixture = createFixture();
     const taskId = randomUUID();
     const now = new Date().toISOString();
+    const onboardingApprovalId = randomUUID();
+    fixture.db.run(
+      "INSERT INTO approvals(id,type,subject_id,subject_type,status,requested_by,created_at) VALUES($id,'WORKFLOW_CHANGE',$projectId,'PROJECT','APPROVED','test',$now)",
+      { id: onboardingApprovalId, projectId: fixture.projectId, now },
+    );
+    fixture.db.run(
+      "UPDATE onboarding_configs SET facts_json=$facts,proposed_json=$proposed,status='ACTIVE',approval_id=$approvalId WHERE project_id=$projectId",
+      {
+        facts: JSON.stringify({ defaultBranch: "main" }),
+        proposed: JSON.stringify({ defaultBranch: "main" }),
+        approvalId: onboardingApprovalId,
+        projectId: fixture.projectId,
+      },
+    );
     const taskContract: PersistedWorkTaskContractV1 = {
       version: 1,
       goal: "Run with the approved Project Config revision.",
@@ -88,6 +102,10 @@ supportedCaptureSuite("ProjectConfigService", () => {
     };
     fixture.db.run("INSERT INTO tasks(id,project_id,display_id,title,status,contract_json,created_at,updated_at) VALUES($id,$projectId,'T-1','Task','READY',$contractJson,$now,$now)", { id: taskId, projectId: fixture.projectId, contractJson: JSON.stringify(taskContract), now });
     fixture.db.run("INSERT INTO worktrees(id,repo_path,path,branch,created_at) VALUES($id,$root,$root,$branch,$now)", { id: taskId, root: fixture.root, branch: `task/${taskId}`, now });
+    fixture.db.run(
+      "INSERT INTO git_operations(id,type,status,repo_path,branch_name,worktree_id,target_ref,created_at,verified_at) VALUES($id,'CREATE_WORKTREE','VERIFIED',$root,$branch,$taskId,'main',$now,$now)",
+      { id: randomUUID(), root: fixture.root, branch: `task/${taskId}`, taskId, now },
+    );
     const runs = new RunService(fixture.db, new FakeAgentRuntime());
     const options = {
       role: "developer", model: "test", taskId, epicId: null, triggerReason: "task-assignment",

@@ -8,17 +8,41 @@ param(
 
   [string] $ExpectedCreationTime,
 
-  [string] $ContainmentId
+  [string] $ContainmentId,
+
+  [string] $DiagnosticPath
 )
 
 $ErrorActionPreference = "Stop"
 
+function Write-PhaseMarker([string] $Value) {
+  if ([string]::IsNullOrWhiteSpace($DiagnosticPath)) { return }
+  $allowed = @(
+    "POWERSHELL_SCRIPT_STARTED", "ADD_TYPE_STARTED", "ADD_TYPE_COMPLETED",
+    "OPEN_PROCESS_STARTED", "OPEN_PROCESS_RETURNED",
+    "GET_PROCESS_TIMES_STARTED", "GET_PROCESS_TIMES_RETURNED"
+  )
+  if ($allowed -notcontains $Value) { return }
+  try {
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($Value + [Environment]::NewLine)
+    $stream = [System.IO.File]::Open($DiagnosticPath, [System.IO.FileMode]::Append, [System.IO.FileAccess]::Write, [System.IO.FileShare]::ReadWrite)
+    try {
+      if ($stream.Length + $bytes.Length -le 4096) { $stream.Write($bytes, 0, $bytes.Length) }
+    } finally { $stream.Dispose() }
+  } catch { }
+}
+
+Write-PhaseMarker "POWERSHELL_SCRIPT_STARTED"
+
 $nativeMethods = @'
 using System;
+using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 
 public static class EbbProcessScopeNative
 {
+    private const long MaxDiagnosticBytes = 4096;
     private const uint ProcessTerminate = 0x0001;
     private const uint ProcessQueryLimitedInformation = 0x1000;
     private const uint Synchronize = 0x00100000;
@@ -30,6 +54,20 @@ public static class EbbProcessScopeNative
     {
         public uint Low;
         public uint High;
+    }
+
+    private static void WritePhaseMarker(string path, string phase)
+    {
+        if (String.IsNullOrEmpty(path)) return;
+        try
+        {
+            byte[] bytes = Encoding.UTF8.GetBytes(phase + Environment.NewLine);
+            using (FileStream stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite))
+            {
+                if (stream.Length + bytes.Length <= MaxDiagnosticBytes) stream.Write(bytes, 0, bytes.Length);
+            }
+        }
+        catch { }
     }
 
     [DllImport("kernel32.dll", SetLastError = true)]
@@ -53,15 +91,19 @@ public static class EbbProcessScopeNative
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CloseHandle(IntPtr handle);
 
-    public static ulong CreationTime(uint processId)
+    public static ulong CreationTime(uint processId, string diagnosticPath)
     {
+        WritePhaseMarker(diagnosticPath, "OPEN_PROCESS_STARTED");
         IntPtr process = OpenProcess(ProcessQueryLimitedInformation, false, processId);
+        WritePhaseMarker(diagnosticPath, "OPEN_PROCESS_RETURNED");
         if (process == IntPtr.Zero) throw new InvalidOperationException("OPEN_PROCESS_FAILED:" + Marshal.GetLastWin32Error());
         try
         {
             FileTime creation, exit, kernel, user;
+            WritePhaseMarker(diagnosticPath, "GET_PROCESS_TIMES_STARTED");
             if (!GetProcessTimes(process, out creation, out exit, out kernel, out user))
                 throw new InvalidOperationException("GET_PROCESS_TIMES_FAILED:" + Marshal.GetLastWin32Error());
+            WritePhaseMarker(diagnosticPath, "GET_PROCESS_TIMES_RETURNED");
             return ((ulong)creation.High << 32) | creation.Low;
         }
         finally { CloseHandle(process); }
@@ -117,11 +159,13 @@ public static class EbbProcessScopeNative
 '@
 
 try {
+  Write-PhaseMarker "ADD_TYPE_STARTED"
   Add-Type -TypeDefinition $nativeMethods
+  Write-PhaseMarker "ADD_TYPE_COMPLETED"
 
   switch ($Mode) {
     "read-creation" {
-      $creationTime = [EbbProcessScopeNative]::CreationTime($ProcessId)
+      $creationTime = [EbbProcessScopeNative]::CreationTime($ProcessId, $DiagnosticPath)
       [Console]::Out.WriteLine("PROCESS_CREATION_IDENTITY=" + $creationTime.ToString([Globalization.CultureInfo]::InvariantCulture))
     }
     "is-job-member" {

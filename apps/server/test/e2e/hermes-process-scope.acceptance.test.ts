@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { constants } from "node:fs";
-import { access, mkdtemp, readFile, readdir, rm, statfs, writeFile } from "node:fs/promises";
+import { access, mkdtemp, open, readFile, readdir, rm, statfs, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { getRunProcessOwner, insertRunProcessOwnerTx, preflightRunProcessOwners, prepareRunProcessOwner, transitionRunProcessOwnerTx } from "../../src/modules/runtime/run-process-owner.js";
 import type { Database } from "../../src/platform/database/database.js";
 import { runMigrations } from "../../src/platform/database/migrator.js";
@@ -23,6 +23,35 @@ const nativeAcceptanceEnabled = process.env.EBB_RUN_NATIVE_SCOPE_ACCEPTANCE === 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
 const restartChildScript = join(repositoryRoot, "apps/server/test/helpers/hermes-process-scope-restart-child.ts");
 const tsxLoader = join(repositoryRoot, "node_modules/tsx/dist/loader.mjs");
+const WINDOWS_NATIVE_PHASE_MARKERS = [
+  "POWERSHELL_INVOCATION_STARTED",
+  "POWERSHELL_SCRIPT_STARTED",
+  "ADD_TYPE_STARTED",
+  "ADD_TYPE_COMPLETED",
+  "OPEN_PROCESS_STARTED",
+  "OPEN_PROCESS_RETURNED",
+  "GET_PROCESS_TIMES_STARTED",
+  "GET_PROCESS_TIMES_RETURNED",
+  "POWERSHELL_COMMAND_COMPLETED",
+  "CLEANUP_STARTED",
+  "CLEANUP_HELPER_TERMINATION_STARTED",
+  "CLEANUP_HELPER_TERMINATION_COMPLETED",
+  "CLEANUP_HELPER_TERMINATION_FAILED",
+  "CLEANUP_LAUNCHER_TERMINATION_STARTED",
+  "CLEANUP_LAUNCHER_TERMINATION_COMPLETED",
+  "CLEANUP_LAUNCHER_TERMINATION_FAILED",
+  "CLEANUP_RECOVERY_WORKER_STARTED",
+  "CLEANUP_RECOVERY_WORKER_COMPLETED",
+  "CLEANUP_RECOVERY_WORKER_FAILED",
+  "CLEANUP_COMPLETED",
+  "PHASE_LEDGER_OVERSIZED",
+  "PHASE_LEDGER_UNAVAILABLE",
+  "PHASE_LEDGER_EMPTY",
+] as const;
+const WINDOWS_NATIVE_PHASE_MARKER_SET = new Set<string>(WINDOWS_NATIVE_PHASE_MARKERS);
+const WINDOWS_NATIVE_PHASE_FILE_LIMIT = 4_096;
+const WINDOWS_NATIVE_PHASE_MARKER_LIMIT = 32;
+type WindowsNativePhaseMarker = (typeof WINDOWS_NATIVE_PHASE_MARKERS)[number];
 
 describe("managerEnvironment", () => {
   it("normalizes a trailing slash before validating the WSL session bus address", () => {
@@ -65,6 +94,65 @@ describe("Windows process-scope diagnostic context", () => {
     expect(contextual.exitCode).toBe(1);
     expect(contextual.stdout).toBe("partial stdout");
     expect(contextual.stderr).toBe("partial stderr");
+  });
+
+  it("reads only bounded allowlisted native phase markers", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "ebb-windows-phase-markers-"));
+    const markerPath = join(directory, "phases.log");
+    try {
+      await writeFile(markerPath, [
+        "POWERSHELL_INVOCATION_STARTED",
+        "untrusted path or output",
+        ...Array.from({ length: WINDOWS_NATIVE_PHASE_MARKER_LIMIT + 8 }, () => "OPEN_PROCESS_STARTED"),
+      ].join("\n"));
+
+      const markers = await readWindowsNativePhaseMarkers(markerPath);
+      expect(markers).toHaveLength(WINDOWS_NATIVE_PHASE_MARKER_LIMIT);
+      expect(markers.every((marker) => WINDOWS_NATIVE_PHASE_MARKER_SET.has(marker))).toBe(true);
+      expect(markers).not.toContain("untrusted path or output");
+
+      await writeFile(markerPath, "x".repeat(WINDOWS_NATIVE_PHASE_FILE_LIMIT + 1));
+      await expect(readWindowsNativePhaseMarkers(markerPath)).resolves.toEqual(["PHASE_LEDGER_OVERSIZED"]);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("attaches retained phase markers only to read-creation timeouts after cleanup", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "ebb-windows-phase-snapshot-"));
+    const markerPath = join(directory, "phases.log");
+    try {
+      await writeFile(markerPath, [
+        "OPEN_PROCESS_STARTED",
+        "GET_PROCESS_TIMES_STARTED",
+        "CLEANUP_STARTED",
+        "CLEANUP_RECOVERY_WORKER_COMPLETED",
+        "CLEANUP_COMPLETED",
+      ].join("\n"));
+      const snapshot = await readWindowsNativePhaseMarkers(markerPath);
+      await rm(directory, { recursive: true, force: true });
+
+      const readCreationError = addDiagnosticContext(
+        new Error("Process timed out after 15000ms"),
+        formatWindowsNativeScopeCommandContext({ mode: "read-creation", processId: 42 }, 15_000, 15_012),
+      );
+      expect(isWindowsNativeReadCreationTimeout(readCreationError)).toBe(true);
+      const enrichedReadCreationError = addWindowsNativePhaseContext(readCreationError, snapshot);
+      expect(enrichedReadCreationError.message).toContain(
+        "WINDOWS_NATIVE_PHASE_MARKERS=OPEN_PROCESS_STARTED,GET_PROCESS_TIMES_STARTED,CLEANUP_STARTED,CLEANUP_RECOVERY_WORKER_COMPLETED,CLEANUP_COMPLETED",
+      );
+
+      for (const mode of ["is-job-member", "terminate-exact"] as const) {
+        const otherModeError = addDiagnosticContext(
+          new Error("Process timed out after 15000ms"),
+          formatWindowsNativeScopeCommandContext({ mode, processId: 42 }, 15_000, 15_012),
+        );
+        expect(isWindowsNativeReadCreationTimeout(otherModeError)).toBe(false);
+        expect(otherModeError.message).not.toContain("WINDOWS_NATIVE_PHASE_MARKERS=");
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });
 
@@ -123,6 +211,48 @@ describe("Linux process-scope diagnostic formatting", () => {
     expect((error as Error).message).toContain("exitCode=23");
     expect((error as Error).message).toContain("stdout=\"payload stdout\"");
     expect((error as Error).message).toContain("stderr=\"payload stderr\"");
+  });
+
+  it("includes bounded unit diagnostics and preserves the cause when process completion rejects", async () => {
+    const executor = new ProcessExecutor();
+    const failure = new Error("PROCESS_SCOPE_STOP_UNPROVEN");
+    const environmentKeys = ["PATH", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"] as const;
+    const originalEnvironment = new Map(environmentKeys.map((key) => [key, process.env[key]]));
+    const execSpy = vi.spyOn(executor, "exec").mockImplementation(async (file) => ({
+      exitCode: 0,
+      stdout: file === "systemctl"
+        ? "ActiveState=failed\nResult=timeout\nEnvironment=API_KEY=private-value\n"
+        : "systemd journal diagnostic tail",
+      stderr: "",
+    }));
+    process.env.PATH = process.env.PATH ?? "/usr/bin";
+    process.env.XDG_RUNTIME_DIR = "/run/user/1002";
+    delete process.env.DBUS_SESSION_BUS_ADDRESS;
+    try {
+      const error = await waitForPayloadMarker(
+        join(tmpdir(), `ebb-marker-never-created-${randomUUID()}`),
+        { completion: Promise.reject(failure) },
+        "ebb-orchestrator-run-test",
+        executor,
+        1_000,
+      ).then(() => undefined, (reason: unknown) => reason);
+
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain("PROCESS_SCOPE_COMPLETION_REJECTED_BEFORE_MARKER");
+      expect((error as Error).message).toContain("ActiveState=failed");
+      expect((error as Error).message).toContain("Result=timeout");
+      expect((error as Error).message).toContain("systemd journal diagnostic tail");
+      expect((error as Error).message).not.toContain("private-value");
+      expect((error as Error & { cause?: unknown }).cause).toBe(failure);
+      expect(execSpy).toHaveBeenCalledTimes(2);
+    } finally {
+      execSpy.mockRestore();
+      for (const key of environmentKeys) {
+        const value = originalEnvironment.get(key);
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
   });
 });
 
@@ -717,6 +847,7 @@ async function runRestartBoundaryAcceptance(): Promise<void> {
 
 async function runWindowsHelperCrashBoundaryAcceptance(): Promise<void> {
   const directory = await mkdtemp(join(tmpdir(), "ebb-process-scope-helper-crash-win-"));
+  const windowsNativePhasePath = join(directory, "windows-native-phases.log");
   const databasePath = join(directory, "state.sqlite");
   const runId = randomUUID();
   const runHome = join(directory, "hermes-home");
@@ -733,6 +864,7 @@ async function runWindowsHelperCrashBoundaryAcceptance(): Promise<void> {
   let recoverySucceeded = false;
   let testError: unknown;
   let cleanupError: unknown;
+  let windowsNativePhaseSnapshot: WindowsNativePhaseMarker[] | undefined;
 
   try {
     const launchArgs = [
@@ -754,7 +886,11 @@ async function runWindowsHelperCrashBoundaryAcceptance(): Promise<void> {
     descendantPid = launchedDescendantPid;
     expect(Number.isSafeInteger(launchedDescendantPid)).toBe(true);
     expect(launchedDescendantPid).toBeGreaterThan(0);
-    const descendantIdentity = await runWindowsNativeScopeCommand({ mode: "read-creation", processId: launchedDescendantPid });
+    const descendantIdentity = await runWindowsNativeScopeCommand({
+      mode: "read-creation",
+      processId: launchedDescendantPid,
+      diagnosticPath: windowsNativePhasePath,
+    });
     const descendantIdentityMatch = /^PROCESS_CREATION_IDENTITY=([1-9][0-9]*)$/u.exec(descendantIdentity.stdout.trim());
     const activeDescendantCreationTime = descendantIdentityMatch?.[1];
     if (typeof activeDescendantCreationTime !== "string" || !/^[1-9][0-9]*$/u.test(activeDescendantCreationTime)) {
@@ -846,8 +982,10 @@ async function runWindowsHelperCrashBoundaryAcceptance(): Promise<void> {
     testError = error;
   } finally {
     const cleanupErrors: unknown[] = [];
+    await appendWindowsNativePhase(windowsNativePhasePath, "CLEANUP_STARTED");
     if (!recoverySucceeded && ready?.supervisorPid && ready.supervisorStartIdentity) {
       try {
+        await appendWindowsNativePhase(windowsNativePhasePath, "CLEANUP_HELPER_TERMINATION_STARTED");
         if (await processExists(ready.supervisorPid)) {
           await runWindowsNativeScopeCommand({
             mode: "terminate-exact",
@@ -855,14 +993,19 @@ async function runWindowsHelperCrashBoundaryAcceptance(): Promise<void> {
             expectedCreationTime: ready.supervisorStartIdentity,
           });
         }
+        await appendWindowsNativePhase(windowsNativePhasePath, "CLEANUP_HELPER_TERMINATION_COMPLETED");
       } catch (error) {
+        await appendWindowsNativePhase(windowsNativePhasePath, "CLEANUP_HELPER_TERMINATION_FAILED");
         cleanupErrors.push(addDiagnosticContext(error, `WINDOWS_CLEANUP operation=terminate-helper-exact pid=${ready.supervisorPid}`));
       }
     }
     if (launcher) {
       try {
+        await appendWindowsNativePhase(windowsNativePhasePath, "CLEANUP_LAUNCHER_TERMINATION_STARTED");
         await terminateRestartLauncher(launcher, null, 15_000);
+        await appendWindowsNativePhase(windowsNativePhasePath, "CLEANUP_LAUNCHER_TERMINATION_COMPLETED");
       } catch (error) {
+        await appendWindowsNativePhase(windowsNativePhasePath, "CLEANUP_LAUNCHER_TERMINATION_FAILED");
         cleanupErrors.push(addDiagnosticContext(error, `WINDOWS_CLEANUP operation=terminate-launcher pid=${launcher.child.pid ?? "unavailable"}`));
       }
     }
@@ -881,14 +1024,19 @@ async function runWindowsHelperCrashBoundaryAcceptance(): Promise<void> {
     }
     if (!recoverySucceeded) {
       try {
+        await appendWindowsNativePhase(windowsNativePhasePath, "CLEANUP_RECOVERY_WORKER_STARTED");
         const cleanupPath = join(directory, "cleanup-result.json");
         const cleanup = await runRecoveryWorker(databasePath, runId, cleanupPath, restartWorkerEnvironment(runHome));
         recoverySucceeded = cleanup.exit.code === 0 && cleanup.result.ok === true && cleanup.result.state === "STOPPED";
+        await appendWindowsNativePhase(windowsNativePhasePath, "CLEANUP_RECOVERY_WORKER_COMPLETED");
       } catch (error) {
+        await appendWindowsNativePhase(windowsNativePhasePath, "CLEANUP_RECOVERY_WORKER_FAILED");
         cleanupErrors.push(addDiagnosticContext(error, "WINDOWS_CLEANUP operation=run-recovery-worker"));
       }
     }
     if (!recoverySucceeded) cleanupErrors.push(new Error("WINDOWS_HELPER_CRASH_SCOPE_CLEANUP_UNPROVEN operation=verify-recovery-stop"));
+    await appendWindowsNativePhase(windowsNativePhasePath, "CLEANUP_COMPLETED");
+    windowsNativePhaseSnapshot = await readWindowsNativePhaseMarkers(windowsNativePhasePath);
     if (recoverySucceeded) {
       try {
         await rm(directory, { recursive: true, force: true });
@@ -899,6 +1047,11 @@ async function runWindowsHelperCrashBoundaryAcceptance(): Promise<void> {
     if (cleanupErrors.length > 0) {
       cleanupError = new AggregateError(cleanupErrors, "WINDOWS_HELPER_CRASH_SCOPE_CLEANUP_ERRORS");
     }
+  }
+
+  if (isWindowsNativeReadCreationTimeout(testError)) {
+    const phaseMarkers = windowsNativePhaseSnapshot ?? await readWindowsNativePhaseMarkers(windowsNativePhasePath);
+    testError = addWindowsNativePhaseContext(testError, phaseMarkers);
   }
 
   if (testError !== undefined && cleanupError !== undefined) {
@@ -973,24 +1126,72 @@ async function runWindowsNativeScopeCommand(options: {
   processId: number;
   expectedCreationTime?: string;
   containmentId?: string;
+  diagnosticPath?: string;
 }): Promise<ProcessResult> {
   if (!isWindows) throw new Error("WINDOWS_PROCESS_SCOPE_NATIVE_COMMAND_ON_NON_WINDOWS");
   const script = fileURLToPath(new URL("../helpers/windows-process-scope-native.ps1", import.meta.url));
   const args = ["-NoProfile", "-NonInteractive", "-File", script, "-Mode", options.mode, "-ProcessId", String(options.processId)];
   if (options.expectedCreationTime !== undefined) args.push("-ExpectedCreationTime", options.expectedCreationTime);
   if (options.containmentId !== undefined) args.push("-ContainmentId", options.containmentId);
+  if (options.diagnosticPath !== undefined) args.push("-DiagnosticPath", options.diagnosticPath);
   const timeoutMs = 15_000;
   const startedAt = Date.now();
+  if (options.diagnosticPath !== undefined) {
+    await appendWindowsNativePhase(options.diagnosticPath, "POWERSHELL_INVOCATION_STARTED");
+  }
   try {
-    return await new ProcessExecutor().exec("powershell.exe", args, {
+    const result = await new ProcessExecutor().exec("powershell.exe", args, {
       cwd: repositoryRoot,
       timeout: timeoutMs,
       maxBuffer: 64 * 1024,
     });
+    if (options.diagnosticPath !== undefined) {
+      await appendWindowsNativePhase(options.diagnosticPath, "POWERSHELL_COMMAND_COMPLETED");
+    }
+    return result;
   } catch (error) {
     const elapsedMs = Math.max(0, Date.now() - startedAt);
     throw addDiagnosticContext(error, formatWindowsNativeScopeCommandContext(options, timeoutMs, elapsedMs));
   }
+}
+
+async function appendWindowsNativePhase(path: string, phase: WindowsNativePhaseMarker): Promise<void> {
+  if (!WINDOWS_NATIVE_PHASE_MARKER_SET.has(phase)) return;
+  try {
+    const file = await open(path, "a");
+    try {
+      const bytes = Buffer.from(`${phase}\n`, "utf8");
+      if ((await file.stat()).size + bytes.byteLength <= WINDOWS_NATIVE_PHASE_FILE_LIMIT) await file.write(bytes);
+    } finally { await file.close(); }
+  } catch { /* Diagnostics must not alter acceptance behavior. */ }
+}
+
+async function readWindowsNativePhaseMarkers(path: string): Promise<WindowsNativePhaseMarker[]> {
+  let file: Awaited<ReturnType<typeof open>>;
+  try { file = await open(path, "r"); }
+  catch { return ["PHASE_LEDGER_UNAVAILABLE"]; }
+  try {
+    const buffer = Buffer.alloc(WINDOWS_NATIVE_PHASE_FILE_LIMIT + 1);
+    const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
+    if (bytesRead > WINDOWS_NATIVE_PHASE_FILE_LIMIT) return ["PHASE_LEDGER_OVERSIZED"];
+    const markers = buffer.subarray(0, bytesRead).toString("utf8").split(/\r?\n/u)
+      .filter((line): line is WindowsNativePhaseMarker => WINDOWS_NATIVE_PHASE_MARKER_SET.has(line));
+    return markers.slice(-WINDOWS_NATIVE_PHASE_MARKER_LIMIT);
+  } catch {
+    return ["PHASE_LEDGER_UNAVAILABLE"];
+  } finally {
+    await file.close().catch(() => undefined);
+  }
+}
+
+function addWindowsNativePhaseContext(error: Error, markers: readonly WindowsNativePhaseMarker[]): Error {
+  return addDiagnosticContext(error, `WINDOWS_NATIVE_PHASE_MARKERS=${markers.join(",") || "PHASE_LEDGER_EMPTY"}`);
+}
+
+function isWindowsNativeReadCreationTimeout(error: unknown): error is Error {
+  return error instanceof Error
+    && error.message.startsWith("WINDOWS_NATIVE_SCOPE_COMMAND_FAILED mode=read-creation ")
+    && error.message.includes(": Process timed out after 15000ms");
 }
 
 function formatWindowsNativeScopeCommandContext(
@@ -1172,9 +1373,18 @@ async function waitForPayloadMarker(
     });
   }
   if (outcome.kind === "completion-error") {
-    throw new Error(`PROCESS_SCOPE_COMPLETION_REJECTED_BEFORE_MARKER: ${formatDiagnosticError(outcome.error)}`, {
-      cause: outcome.error,
-    });
+    let diagnostics: string;
+    try {
+      diagnostics = await collectLinuxUnitDiagnostics(executor, unitName);
+    } catch (error) {
+      diagnostics = `unit diagnostics unavailable: ${formatDiagnosticError(error)}`;
+    }
+    throw new Error(
+      `PROCESS_SCOPE_COMPLETION_REJECTED_BEFORE_MARKER: ${formatDiagnosticError(outcome.error)}\n${diagnostics}`,
+      {
+        cause: outcome.error,
+      },
+    );
   }
 
   let diagnostics: string;
