@@ -1,10 +1,10 @@
 ---
 id: plan-01
 kind: plan
-status: completed
+status: in_progress
 title: План реализации Foundation и Persistence Orchestrator
 created: 2026-09-23
-updated: 2026-09-30
+updated: 2026-10-03
 depends_on: []
 specs:
   - ../specs/01-system-design.md
@@ -829,4 +829,8 @@ pnpm plan01:acceptance
 
 SHA из исходного frontmatter подтверждены через `git log` и остаются только исторической provenance: `86e1ab4` — security/Web UI hardening; `6908acd` — `SingleInstanceLock`; `1296292` — отказоустойчивость secret store; `068e12a` — Infisical adapter. Эти commits не доказывают каждую procedural step или её RED stage.
 
-Открытый shutdown blocker по `spec-01 §19.5` не закрывается этим disposition: свежий `CHANGES_REQUIRED` и ссылки на область исправления записаны в [Plan19 ledger](19-unfinished-plan-closure.md) (раздел `Plan01 whole-plan review findings`). Продолжение shutdown fix/review остаётся открытым до ожидаемого решения пользователя/координатора; lifecycle status и все checkboxes Plan01 сохранены без изменений.
+На момент фиксации этого disposition shutdown blocker по `spec-01 §19.5` оставался открытым: fresh `CHANGES_REQUIRED` и ссылки на область исправления записаны в [Plan19 ledger](19-unfinished-plan-closure.md) (раздел `Plan01 whole-plan review findings`). Тогда lifecycle status и checkboxes не менялись; последующая lifecycle reconciliation от 2026-10-03 перевела status в `in_progress`, не меняя procedural checkboxes.
+
+## Lifecycle reconciliation от 2026-10-03
+
+После свежего independent whole-plan review `CHANGES_REQUIRED` и обнаружения незакрытого shutdown blocker metadata `status` исправлен с `completed` на `in_progress`. Это только корректирует lifecycle classification: shutdown fix, required acceptance, broad quality gates и repeat review ещё не выполнены; исторические procedural checkboxes не отмечались задним числом и не менялись.

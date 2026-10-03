@@ -112,6 +112,7 @@ git --version
 pnpm install --frozen-lockfile
 pnpm lint
 pnpm typecheck
+pnpm server:build
 pnpm test
 ```
 
@@ -249,6 +250,11 @@ MCP-инструменты проверяют capability и аргументы. 
 - `ebb-worktree` — проверка изолированного worktree и безопасный жизненный цикл checkout;
 - `ebb-write-plan` — создание implementation plan из подтверждённых требований и design.
 
+`pnpm hermes:setup` изменяет trust/discovery/delegation settings выбранного
+Hermes home. Для проверки setup запускайте команду только с отдельным
+изолированным Hermes home; не используйте профиль, настройки которого нельзя
+менять.
+
 Настроить Hermes project discovery и проверить prerequisites:
 
 ```bash
@@ -283,15 +289,20 @@ Plan20 Task5A, затем Task5B и Task5C. См. [Plan20](docs/architecture/pla
 pnpm install --frozen-lockfile
 pnpm lint
 pnpm typecheck
+pnpm server:build
 pnpm test
 pnpm build
-pnpm server:build
 pnpm web:build
 ```
 
 `pnpm lint` запускает ESLint; `pnpm typecheck` рекурсивно проверяет workspace.
-`pnpm test` сначала собирает `@ebb-orchestrator/contracts`; его `prebuild`
-очищает `packages/contracts/dist`, затем запускаются тесты workspace и корня.
+На чистом checkout перед `pnpm test` требуется `pnpm server:build`: полный
+server suite запускает production subprocess tests. Сам root `pnpm test`
+собирает только `@ebb-orchestrator/contracts` (его `prebuild` очищает
+`packages/contracts/dist`) и не собирает server. На Windows `server:build`
+также компилирует native process supervisor; запускайте его из x64 Developer
+PowerShell/Command Prompt для установленного Visual Studio C++ Build Tools,
+чтобы `cl.exe` был доступен в `PATH` или `VCToolsInstallDir` был установлен.
 Серверные тесты создают временные fixtures/workers; `pnpm test` и сборки имеют
 побочные эффекты (`dist/`).
 
@@ -333,7 +344,6 @@ pnpm docs:check
 pnpm docs:test
 pnpm docs:roadmap -- --dry-run
 pnpm docs:rename:check
-pnpm docs:link:sync
 ```
 
 `docs:inventory`, `docs:check`, `docs:test`, `docs:rename:check` и
@@ -343,9 +353,10 @@ pnpm docs:link:sync
 оставшихся старых исходных путей и относительные ссылки в `docs/` и корневом
 `README.md`. Карта — исторический снимок: текущие canonical target paths не
 обязаны существовать, если документы позднее перемещались или объединялись.
-`docs:link:sync` присутствует в корневом manifest, но не реализована текущим
-диспетчером:
-завершается с кодом `1` и выводит usage; успешной проверкой её считать нельзя.
+`pnpm docs:link:sync` присутствует в корневом manifest, но не реализована
+текущим диспетчером: завершается с кодом `1` и выводит usage. Не запускайте её
+как проверку документации; используйте `pnpm docs:rename:check` для актуального
+проверяемого migration-map и link gate.
 
 ### Дополнительные package scripts
 
@@ -365,11 +376,16 @@ pnpm --filter @ebb-orchestrator/testing typecheck
 pnpm --filter @ebb-orchestrator/testing test
 ```
 
-`test:watch`, `server:dev` и `web:dev` — долгоживущие процессы. Web E2E требует
-браузерного окружения и создаёт артефакты; серверные тесты могут создавать
-временные каталоги и worker-процессы. Приведённые fixtures удаляются в
-`finally`/`afterEach`. `apps/server/test/e2e/fixtures/health-service` не входит
-в workspace glob; его команды запускаются из каталога fixture отдельно:
+`test:watch`, `server:dev` и `web:dev` — долгоживущие процессы. Полный набор
+серверных тестов запускает production subprocess tests, поэтому перед ним
+выполните `pnpm server:build`: он собирает `packages/contracts/dist` и
+`apps/server/dist`, необходимые тестовым workers и production entrypoint.
+На Windows запускайте сборку из x64 Developer PowerShell/Command Prompt с
+Visual Studio C++ Build Tools. Web E2E требует браузерного окружения и создаёт
+артефакты; серверные тесты могут создавать временные каталоги и worker-процессы.
+Приведённые fixtures удаляются в `finally`/`afterEach`.
+`apps/server/test/e2e/fixtures/health-service` не входит в workspace glob; его
+команды запускаются из каталога fixture отдельно:
 
 ```bash
 pnpm start
@@ -578,11 +594,15 @@ workflow не должен останавливаться только из-за
 pnpm install --frozen-lockfile
 pnpm lint
 pnpm typecheck
-pnpm test
 pnpm server:build
+pnpm test
 pnpm --filter @ebb-orchestrator/web build
 git diff --check
 ```
+
+На чистом checkout сначала выполните `pnpm server:build`, затем `pnpm test`:
+root test сам собирает contracts, но не server. На Windows server build требует
+x64 Developer PowerShell/Command Prompt с Visual Studio C++ Build Tools.
 
 `pnpm lint` включает обязательную JSDoc-policy для production source:
 наличие комментариев у настроенных публичных классов и функций, непустые

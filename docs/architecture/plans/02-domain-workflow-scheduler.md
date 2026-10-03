@@ -19,7 +19,7 @@ evidence:
 
 **Цель:** Реализовать Project/Epic/Задача domain, approvals, state machine, FakeAgentRuntime, deterministic Scheduler и Recovery так, чтобы полный workflow прогонялся без LLM и Git.
 
-**Архитектура:** Модули `work`, `workflow`, `scheduler`, `runtime`, `recovery` общаются только через public services/events. Scheduler создаёт `AgentRunRequested`, Runtime Manager исполняет его через port, Recovery возвращает новые run requests через Scheduler, а не вызывает runtime напрямую.
+**Архитектура:** Модули `work`, `workflow`, `scheduler`, `runtime`, `recovery` общаются только через public services/events. Пользовательский Task dispatch сначала сохраняется как durable `SchedulerRunRequest` (`taskId`, выбранные `role`/`model`, стабильный caller idempotency key); Scheduler арбитрирует именно эти requests и только для выбранного запроса в одной SQLite transaction подготавливает Run/manifest, резервирует capacity и создаёт outbox `AgentRunRequested`. Task Recovery создаёт новую попытку через тот же API. Все Epic phase runs (в том числе связанные с Task) и Request-planning runs остаются в своих persisted phase/job lifecycle и не входят в пользовательский Task-dispatch queue. Runtime Manager исполняет уже подготовленный Run через port.
 
 **Технологический стек:** TypeScript 7; Vitest 5; Zod 4; SQLite adapter из Plan 1.
 
@@ -292,21 +292,48 @@ git commit -m "feat: add runtime port and fake agent runtime"
 ### Задача 5: Scheduler eligibility, capacity и точные wait reasons
 
 ****Файлы:****
-- Создать: `apps/server/src/modules/scheduler/scheduler-types.ts`
-- Создать: `apps/server/src/modules/scheduler/scheduler-policy.ts`
-- Создать: `apps/server/src/modules/scheduler/resource-lock-service.ts`
-- Создать: `apps/server/src/modules/scheduler/scheduler-service.ts`
-- Создать: `apps/server/src/platform/database/migrations/005_scheduler.sql`
-- Тест: `apps/server/test/modules/scheduler/scheduler.test.ts`
+- Изменить: `apps/server/src/modules/scheduler/scheduler-types.ts`, `scheduler-policy.ts`, `scheduler-service.ts`.
+- Сохранить поведение `apps/server/src/modules/scheduler/resource-lock-service.ts` и точные `wait_reason` для UI projection.
+- Создать additive forward migration для nullable `tasks.capacity_wait_started_at`; на schema head `039` это `apps/server/src/platform/database/migrations/040_scheduler_capacity_wait_started_at.sql`. Перед реализацией повторно проверить migration head и выбрать следующий номер.
+- Не редактировать уже применённые `002_work_domain.sql`, `003_work_control.sql` и `005_scheduler.sql`.
+- Изменить тесты: `apps/server/test/modules/scheduler/scheduler.test.ts`, `apps/server/test/platform/database/context-manifest-migration.test.ts`, `apps/server/test/platform/database/fresh-install-migrations.acceptance.test.ts`.
+- Изменить/создать migration acceptance: `apps/server/test/platform/database/scheduler-migration.test.ts`.
 
 ****Интерфейсы:****
-- Создаёт: `SchedulerService.recalculate(scope?)`.
-- Создаёт: `Eligibility = RUNNABLE | WAIT(reason) | BLOCK(reason)`.
-- Создаёт: `ResourceLockService.acquire/release/reconcileDeadOwners`.
+- Обновляет порядок выдачи из существующего read-only `SchedulerService.recalculate(scope?)` согласно `spec-01 §8.1`.
+- Расширяет существующий `SchedulerService.reconcile()` как единственного owner всех start/preserve/reset writes `capacity_wait_started_at`; startup reconciliation и `SchedulerSafetyWorker` safety tick вызывают этот метод. Production event-driven queue path пока не подключён: после его wiring в Task6 он обязан вызывать `reconcile()` до ordered selection/dispatch. Source inspection показывает, что `startWorkflowRuns()` — единственный queue sort→dispatch method, но production caller у него нет.
+- Успешные dispatch transaction имеют только узкое право очистки timestamp: `SchedulerService.dispatchRunRequest()` для пользовательской Task queue и `SchedulerService.dispatchTask()` для существующего persisted Epic phase flow очищают его только вместе с commit reservation и workflow state transition. После Task6 `dispatchTask()` остаётся только Epic phase path; пользовательские Task route и Recovery используют исключительно durable RunRequest API. Ни один caller/query API не записывает поле напрямую.
+- Сохраняет существующие `Eligibility = RUNNABLE | WAIT(reason) | BLOCK(reason)`, `ResourceLockService.acquire/release/reconcileDeadOwners` и exact `wait_reason` semantics.
 
-- [ ] **Шаг 1: Написать тесты capacity/dependency**
+### Acceptance matrix (согласовать и покрыть RED-тестами до реализации)
 
-Покрыть:
+| Область | Проверяемые случаи | Ожидаемый результат |
+|---|---|---|
+| Категория | Задачи разных категорий; задача более поздней категории имеет максимальный priority/path | Всегда выбирается более ранняя категория; aging/path её не обходят |
+| Aging thresholds | Через injected clock проверить каждую базовую ступень за 1 ms до полного порога, ровно на пороге `86_400_000` ms, через 2/3 полных суток и после cap; отдельно future и malformed timestamps | +1 enum level только на точной границе полных 24h, частичный/future interval не повышает, максимум `Critical`; malformed value диагностируется и запрещает dispatch |
+| Gate eligibility | Dependency, approval, budget, resource-lock, pause/workflow gate; затем только global, project или role capacity | Non-capacity ожидание не стареет; отсчёт начинается при первой eligible-capacity observation |
+| Capacity + budget одновременно | Заполнить capacity и закрыть budget; затем открыть только budget, оставив capacity занятой | Даже если `wait_reason` сообщает capacity раньше budget, независимая gate-проверка удерживает timestamp `NULL`; после budget pass timestamp начинает возраст с нового injected UTC instant |
+| Durable/restart | Сохранить начало ожидания, перезапустить process, продолжить с контролируемым UTC clock | Возраст вычисляется от сохранённого timestamp; process-local state и `created_at` не используются |
+| Read-only/write owner | Вызвать `recalculate()`, `getEligibility()`, `getWaitReason()` и внешние route/runtime/planning query paths | Query/external paths не мутируют поле; start/preserve/reset делает только `SchedulerService.reconcile()`, кроме atomic dispatch clear |
+| Reset/preservation | Переключить capacity reason; затем добавить non-capacity gate, снять его, снова дождаться capacity; наконец dispatch | Capacity reason switch сохраняет время; non-capacity gate/reset очищает; новое ожидание получает новый timestamp; успешный dispatch очищает его вместе с reservation/state commit |
+| Legacy `NULL` | Existing task без wait-start evidence впервые наблюдается eligible и ждёт capacity | Остаётся `NULL` до observation, затем получает текущее UTC-время; исторический возраст не backfill-ится |
+| Priority/path ordering | Одинаковая категория: разные aged priorities и разные critical-path lengths | Priority сравнивается раньше пути; path влияет только при равном aged priority и не суммируется с ним |
+| Branching/path length | Один prerequisite с несколькими ветвями разной длины; unfinished blocking chain; повторить с изменённым `contract_json` | Выбирается самая длинная ветвь по `dependencies`; считаются vertices включая candidate, по 1 на задачу; `contract_json` не влияет |
+| Missing/terminal path | Изолированная leaf candidate; terminal node между unfinished tasks; попытка добавить dependency с отсутствующим endpoint | Leaf path length равна `1`; terminal node исключён и не соединяет цепочку; FK отклоняет missing endpoint, `foreign_key_check` пуст |
+| Cycles | DependencyService попыткой вставить цикл; также тестовая corrupt persisted graph | Запись цикла отклонена; обнаруженный persisted cycle даёт диагностируемую graph-integrity error, и данный reconciliation cycle ничего не dispatch-ит без изменения Task status |
+| Deterministic ties | Равны category, aged priority и path; равные candidate timestamps/ветви; сравнить две equivalent fixtures с противоположным порядком вставки | Tie-break `created_at`, затем ordinal `id`; выбранный порядок не зависит от insertion order |
+| Migration compatibility | Empty DB и populated upgrade 039→040 с существующими `context_deltas` rows | Миграция только добавляет nullable `tasks.capacity_wait_started_at`; значения старых задач остаются `NULL`, raw `context_deltas` rows/values и table SQL/columns/indexes не меняются; сохраняются `manifest_id ON DELETE CASCADE` и `previous_manifest_id ON DELETE SET NULL`, `PRAGMA foreign_key_check` пуст |
+
+Migration-specific test boundaries:
+
+- `scheduler-migration.test.ts` добавляет отдельный populated 039→040 upgrade case. Перед 040 сохранить число строк и каждую колонку каждой строки `context_deltas`, включая SQLite `typeof` и byte representation (`hex(CAST(text_column AS BLOB))` для каждого TEXT value); также сохранить `sqlite_master.sql`, `PRAGMA table_info`, `PRAGMA index_list` и `PRAGMA index_xinfo` для `context_deltas` и `context_manifests`, плюс все поля `PRAGMA foreign_key_list` у `context_deltas`. После 040 проверить побайтовое/построчное совпадение, неизменность SQL/columns/indexes обеих context tables, `manifest_id ON DELETE CASCADE`, `previous_manifest_id ON DELETE SET NULL`, ровно одну новую nullable `TEXT` колонку `tasks.capacity_wait_started_at` и пустой `PRAGMA foreign_key_check`.
+- `context-manifest-migration.test.ts` остаётся проверкой исходного диапазона 001–039. Ограничить fixture/catalog через `loadTestMigrations().filter(migration => migration.version <= 39)` и оставить assertion последовательности 1..39 и migration 039; новая 040 не должна расширять этот тест.
+- `fresh-install-migrations.acceptance.test.ts` обновляет каталог/ожидания на последовательность 001–040 (40 migrations) и проверяет, что новая установка содержит nullable `TEXT` поле `tasks.capacity_wait_started_at` и проходит `PRAGMA foreign_key_check`.
+- Migration 040 должна содержать только additive `ALTER TABLE tasks ADD COLUMN capacity_wait_started_at TEXT` (nullable); старые migration files и context tables не перестраиваются.
+
+- [ ] **Шаг 1: Написать RED-тесты eligibility, durable aging, graph scoring и migration**
+
+До реализации добавить новые assertions в указанные suites. Scheduler тесты должны покрыть:
 
 ```text
 global max 4
@@ -318,42 +345,65 @@ budget placeholder guard -> WAIT BUDGET
 approval pending -> WAIT APPROVAL
 ```
 
-Также проверить Проверить, что Reviewer находится в очереди перед четвёртым новым Developer, когда слот reviewer свободен.
+Также проверить, что Reviewer находится в очереди перед четвёртым новым Developer, когда слот reviewer свободен.
 
-- [ ] **Шаг 2: Проверить отказ**
+Дополнительно до production-кода написать регрессии для thresholds `23:59:59.999`/`24:00:00.000`, 48h/72h/cap, строгого category order, aging только после non-capacity gates, сохранения/reset across capacity reasons, process restart, read-only queries, длиннейшего branching path/terminal leaves/cycle, insertion-order ties и legacy NULL. Детерминизм проверяется в одной тестовой процедуре на двух эквивалентных fixtures, записанных в противоположном порядке; они должны дать одинаковую ordered task ID sequence и reservations. Migration suite должна до миграции доказывать ожидаемое nullable поле, empty install через 001–040 и populated upgrade 039→040 с сохранением `context_deltas` rows, table SQL/columns/indexes, обоих FK delete actions и `PRAGMA foreign_key_check`. В `context-manifest-migration.test.ts` ограничить именно historical regression catalog миграциями 001–039, чтобы она по-прежнему проверяла переход 039 без случайного захвата новых будущих migrations.
+
+Отдельная RED-регрессия должна создать ситуацию, где одновременно исчерпана global/project/role capacity и недоступен budget. Текущий `evaluateEligibilityTx()` может первым вернуть capacity `wait_reason`, но `reconcile()` обязан независимо проверить все non-capacity gates: timestamp остаётся `NULL` и не стареет до прохождения budget; если capacity всё ещё занята, стартовое время берётся из нового injected clock observation после снятия budget.
+
+- [ ] **Шаг 2: Подтвердить ожидаемый RED на новых проверках**
 
 ```bash
-pnpm --filter @ebb-orchestrator/server test -- scheduler.test.ts
+pnpm --filter @ebb-orchestrator/server exec vitest run test/modules/scheduler/scheduler.test.ts
+pnpm --filter @ebb-orchestrator/server exec vitest run test/platform/database/scheduler-migration.test.ts
+pnpm --filter @ebb-orchestrator/server exec vitest run test/platform/database/context-manifest-migration.test.ts
+pnpm --filter @ebb-orchestrator/server exec vitest run test/platform/database/fresh-install-migrations.acceptance.test.ts
 ```
 
-- [ ] **Шаг 3: Реализовать детерминированный порядок**
+Ожидается: новые policy assertions и проверка migration 040 падают на отсутствующем поле/поведении; ранее существовавшая migration-039 regression в своей ограниченной цепочке остаётся зелёной. Не использовать `skip`, ослабление assertions или искусственный fail.
 
-Ключ порядка:
+- [ ] **Шаг 3: Реализовать durable wait tracking и scoring по spec-01 §8.1**
+
+Порядок строго лексикографический; более ранний ключ никогда не обходится последующим:
 
 ```text
-1 integration/unblock
-2 reviewer
-3 QA
-4 rework
-5 new development
-6 optional/docs
+1. category: integration/unblock > reviewer > QA > rework > new development > optional/docs
+2. aged priority: Critical > High > Normal > Low
+3. critical-path length descending, only if aged priority is equal
+4. created_at ascending
+5. task id ascending (ordinal)
 ```
 
-Затем явный приоритет `Critical > High > Normal > Low`, aging, simple downstream-blocked-count boost. Сохранять wait reason для UI projection.
+Категория остаётся абсолютным первым ключом: aging и путь не могут поднять задачу через границу категории. Aged priority рассчитывается из базового ранга `Low=0`, `Normal=1`, `High=2`, `Critical=3` и durable UTC `capacity_wait_started_at`: `min(3, baseRank + max(0, floor((nowEpochMs - startedAtEpochMs) / 86_400_000)))`. Scheduler использует injected authoritative UTC clock; timestamp хранится канонически в ISO-8601 `YYYY-MM-DDTHH:mm:ss.sssZ`, для сравнения парсится в epoch milliseconds. Ровно `86_400_000` ms дают первый шаг; до точной границы шаг не начисляется. Будущий timestamp временно даёт возраст `0`; некорректный persisted timestamp даёт диагностируемую integrity error и запрещает dispatch без silent fallback.
 
-- [ ] **Шаг 4: Запустить тесты scheduler дважды со случайным порядком вставки**
+Aging начинается только после прохождения всех non-capacity gates и первой свежей eligible-capacity observation; `created_at` не заменяет неизвестный wait timestamp. Значение сохраняется при смене global/project/role capacity reason и сбрасывается при non-capacity gate. `reconcile()` проверяет каждый non-capacity gate независимо, не делая вывод по единственному `wait_reason`: если capacity заполнена одновременно с budget gate, timestamp остаётся `NULL`; только после budget pass при всё ещё заполненной capacity injected clock фиксирует новое начало ожидания. Если все gates пройдены и capacity доступна, сохранённый aged priority участвует в ordered selection; `dispatchRunRequest()` очищает timestamp вместе с успешной reservation/state transition для выбранного пользовательского request. Существующий persisted Epic phase dispatch через `dispatchTask()` имеет только такое же атомарное cleanup-исключение при успешном commit; он не создаёт и не арбитрирует пользовательский RunRequest. Старые строки с `NULL` начинают отсчёт лишь при первой подходящей observation; restart не сбрасывает возраст.
+
+Все start/preserve/reset updates выполняются в существующей `SchedulerService.reconcile()` transaction из единой durable DB snapshot и одного injected UTC instant; ошибка посреди transaction не оставляет частичную wait-state запись, повторный вызов идемпотентен. `reconcile()` вызывается при startup и existing periodic `SchedulerSafetyWorker`; event-driven queue path обязан вызывать его до сортировки/dispatch. Source inspection показывает, что `startWorkflowRuns()` содержит сортировку и batch dispatch, но не имеет production caller; подключение production queue path — отдельное требование Plan02 Task6. `recalculate()`, `getEligibility()` и `getWaitReason()` остаются read-only. В production текущие direct `dispatchTask()` callers в routes, runtime event handler и Epic orchestrator не пишут поле напрямую. `dispatchTask()` выполняет только узкую атомарную очистку после успешного reservation/state commit.
+
+После выполнения Task6 единственным атомарным dispatch path для пользовательских Task requests становится `SchedulerService.dispatchRunRequest()`; существующие targeted Task route и Recovery callers передают durable request. `SchedulerService.dispatchTask()` остаётся только для persisted Epic phase intents и может атомарно очистить timestamp лишь при успешном commit; ни один caller напрямую не пишет поле.
+
+Critical path считается по нормализованной таблице `dependencies`, а не по `contract_json`. Forward edge направлен от `depends_on_task_id` prerequisite к `task_id` dependent. Длина — число unfinished `BLOCKING` vertices в максимальной forward-chain, включая candidate task; один vertex даёт одну единицу. Считаются только незавершённые статусы Work domain; terminal `DONE`, `RELEASED`, `INTEGRATED_INTO_EPIC`, `CANCELLED`, `FAILED` не входят в путь и не соединяют его части. Лист имеет длину `1`. При равных ветвях выбор пути детерминируется лексикографической последовательностью `created_at` по возрастанию, затем `id` в ordinal-порядке; это же tie-break очереди после равного category, aged priority и path length. DependencyService отклоняет новые циклы. Обнаруженный persisted cycle выдаёт диагностируемую graph-integrity error и запрещает dispatch в данном reconciliation cycle без silent fallback или нового Task status. Missing endpoint отклоняется FK.
+
+Поле ожидания хранится в отдельной additive migration. Migration/upgrade acceptance обязан сохранить существующие строки `context_deltas` и их FK-семантику (`manifest_id ON DELETE CASCADE`, `previous_manifest_id ON DELETE SET NULL`); никакие уже применённые migrations не переписываются. Новая схема проверяется на empty DB и при upgrade populated DB, затем выполняется `foreign_key_check`.
+
+- [ ] **Шаг 4: Проверить acceptance matrix выше после GREEN**
+
+- [ ] **Шаг 5: Запустить focused Scheduler и migration acceptance suites**
 
 ```bash
-pnpm --filter @ebb-orchestrator/server test -- scheduler.test.ts --repeat=2
+pnpm --filter @ebb-orchestrator/server exec vitest run test/modules/scheduler/scheduler.test.ts
+pnpm --filter @ebb-orchestrator/server exec vitest run test/platform/database/scheduler-migration.test.ts
+pnpm --filter @ebb-orchestrator/server exec vitest run test/platform/database/context-manifest-migration.test.ts
+pnpm --filter @ebb-orchestrator/server exec vitest run test/platform/database/fresh-install-migrations.acceptance.test.ts
 ```
 
-Ожидается: выбранные runs одинаковы независимо от порядка вставки.
+Ожидается: все четыре suites завершаются с exit `0`; `context-manifest-migration.test.ts` по-прежнему доказывает migration 039 в ограниченной цепочке 001–039; новая migration suite доказывает 039→040 populated upgrade и неизменность `context_deltas`; fresh install заканчивается на 040. Scheduler suite сравнивает противоположные insertion-order fixtures и получает идентичные ordered task IDs/reservations.
 
-- [ ] **Шаг 5: Коммит**
+- [ ] **Шаг 6: Коммит**
 
 ```bash
-git add apps/server/src/modules/scheduler apps/server/src/platform/database/migrations/005_scheduler.sql apps/server/test/modules/scheduler
-git commit -m "feat: add deterministic scheduler and resource locks"
+git add apps/server/src/modules/scheduler apps/server/src/platform/database/migrations/040_scheduler_capacity_wait_started_at.sql apps/server/test/modules/scheduler apps/server/test/platform/database
+git commit -m "feat: добавить детерминированный scheduler и блокировки ресурсов"
 ```
 
 ---
@@ -363,14 +413,50 @@ git commit -m "feat: add deterministic scheduler and resource locks"
 ****Файлы:****
 - Создать: `apps/server/src/modules/runtime/run-orchestrator.ts`
 - Создать: `apps/server/src/modules/runtime/run-event-handlers.ts`
-- Изменить: `apps/server/src/modules/scheduler/scheduler-service.ts`
-- Тест: `apps/server/test/scenarios/standalone-task.fake-runtime.test.ts`
+- Создать additive migration `041_scheduler_run_requests.sql` после migration 040 из Task5: таблица durable Task-bound requests с opaque ID, обязательными `task_id`, `idempotency_key`, исходными `role`/`model`, typed origin/trigger reference, status (`PENDING`, `DISPATCHED`, `FAILED`), created/updated timestamps, nullable `run_id` и nullable stable `failure_code`; добавить unique index на `idempotency_key` во всех status и unique partial index на один `PENDING` request per Task. Перед реализацией проверить schema head и выбрать следующий номер; не переписывать migrations и не трогать `context_deltas`/`context_manifests`.
+- Изменить: `apps/server/src/modules/scheduler/scheduler-service.ts`, `apps/server/src/modules/recovery/recovery-service.ts`, `apps/server/src/modules/runtime/run-service.ts`, `apps/server/src/platform/events/event-dispatcher.ts`, `apps/server/src/platform/home/production-composition.ts` и `apps/server/src/main.ts` для durable queue producer/worker startup, event nudge, READY-gated event delivery и safety-tick recovery.
+- Перевести production Task dispatch caller `apps/server/src/app/routes/runs.ts`, его Runtime handoff `apps/server/src/modules/runtime/run-event-handlers.ts` и Task Recovery на public Scheduler request API. `/tasks/:id/dispatch` требует `Idempotency-Key`; Recovery создаёт отдельную новую Task попытку с новым source attempt key. Все Epic phase runs, включая child phases с `task_id`, и Request planning не переводить в пользовательскую Task очередь; сохранить их текущие persisted phase/job intents и собственный lifecycle.
+- Изменить `apps/server/test/scenarios/standalone-task.fake-runtime.test.ts` и `apps/server/test/platform/events/event-dispatcher.test.ts`; создать/изменить scheduler request, recovery, API и `apps/server/test/platform/database/scheduler-run-request-migration.test.ts` acceptance suites.
+- `scheduler-run-request-migration.test.ts` проверяет populated upgrade 040→041, поля/status constraint, unique partial index, FK/delete actions, старые task rows и `foreign_key_check`; `fresh-install-migrations.acceptance.test.ts` проверяет empty install 001–041. `context-manifest-migration.test.ts` остаётся ограничен historical 001–039, а `scheduler-migration.test.ts` по-прежнему покрывает 039→040.
 
 ****Интерфейсы:****
-- Потребляет: `AgentRunRequested`.
+- Создаёт durable Task-bound `SchedulerRunRequest` с оригинальными `taskId`, выбранными `role`/`model`, stable `idempotency_key` и source-backed caller reference. Глобальный unique index сохраняет idempotency key навсегда; unique partial index разрешает не более одного активного `PENDING` request на Task. Повтор с тем же ключом и теми же полями во всех состояниях возвращает прежний request/status/`run_id`; тот же ключ с другим payload получает stable conflict. Новая намеренная попытка получает новый ключ. Другой concurrent key для Task с уже активным PENDING получает `RUN_REQUEST_ALREADY_PENDING`.
+- При принятии команды API возвращает `202 Accepted` с `requestId` и status `PENDING`; `GET /api/v1/tasks/:taskId/dispatch-requests/:requestId` читает тот же durable request/status после restart. Capacity/priority wait возвращается как обычный pending projection, не как exception.
+- `SchedulerRunRequest` остаётся в `PENDING`, пока lifecycle не `READY`, его Task не станет допустимым кандидатом и request не победит общую selection. В `RECOVERING` queue worker только сохраняет wake-up и не пишет Run/manifest/reservation. `EventDispatcher` получает `canDeliver(event)` readiness policy от production composition до вызова подписчиков. Для `AgentRunRequested` при статусе не `READY` он возвращает отдельный `deferred` disposition: не вызывает consumer, не меняет `attempts`, `available_at`, `last_error` или dead-letter state и продолжает batch с другими событиями. Это не обычный успешный возврат handler и не exception. После READY startup scan, event nudge от Task/Recovery/reservation changes и existing periodic safety tick повторно вызывают queue worker; следующий outbox drain доставляет оставшееся событие. Единственное recovery исключение из общего запрета dispatch до READY — возобновление ранее approved Epic по Proposal 06: это существующий persisted phase flow, после всех reconciliations, вне пользовательской Task очереди и не изменяется Task6.
+- Queue worker читает актуальные Task gates и выбирает все schedulable pending requests по `spec-01 §8.1`. Сначала проверяет все non-capacity gates независимо от первого `wait_reason`; capacity-wait timestamp ведётся в Task5. Запрос с закрытым non-capacity gate не стареет.
+- Worker может заранее собрать только in-memory `PreparedRunContext` кандидата; это не создаёт Run/manifest. В одной SQLite write transaction `SchedulerService.dispatchRunRequest()` повторно проверяет gates и ordered winner, затем `RunService.prepareRunInTransaction(...)` сверяет `PreparedRunContext` с текущей transaction snapshot и только после совпадения сохраняет Run+ContextManifest. Далее та же transaction делает reservation, Workflow state transition, `PENDING → DISPATCHED` claim, сохраняет `run_id` и вставляет outbox `AgentRunRequested`. Run/manifest создаются после выбора winner и до reservation/event dispatch; внешне виден только полный commit. Смена ordering/input откатывает всю операцию; низкоранговые и capacity-waiting requests не создают Run или reservation.
+- Одновременные queue workers сериализуются на той же SQLite write transaction и conditional claim; повторный event/worker проход не создаёт второй Run. Ошибка до commit откатывает Run, manifest, reservation, request claim, workflow state и outbox целиком. Некорректная команда отклоняется до persistence; детерминированная integrity failure после enqueue переводит request в terminal `FAILED` с безопасным `failure_code`, transient database/process error оставляет его `PENDING`; raw exception не сохраняется и не возвращается API.
+- Только после commit Scheduler создаёт `AgentRunRequested` с точными `requestId` и `runId`. Runtime consumer повторно читает request и Run и допускает запуск только при совпадающих identities и `READY`; условный claim durable process-owner row по `run_id` предотвращает второй запуск. Если Run уже `COMPLETED`, handler применяет сохранённый outcome через unique completion projection по `run_id` без повторного Runtime вызова; если Run уже `FAILED`/`CANCELLED`, handler не запускает его, а Recovery создаёт новый request с новым source attempt key. Completion projection, Workflow transition и retry enqueue идемпотентны относительно `run_id`; повторная доставка безопасна и до, и после inbox/outbox acknowledgement.
 - Создаёт: `AgentRunStarted|Completed|Failed|Interrupted` и события стадий workflow.
+- Production queue worker впервые подключает policy к реальному потребителю; `startWorkflowRuns()` может остаться helper только если он вызывается тем же worker и проходит ту же durable request transaction. Периодический 5-секундный safety tick не считается единственным trigger, но гарантирует повторный поиск после restart или пропущенного event nudge.
+- Ни route, ни Runtime caller, ни Task Recovery не могут вызывать `dispatchTask(taskId)` в обход durable request arbitration для пользовательского Task dispatch. Epic phase runs и Request planning сохраняют существующий отдельный persisted phase/job intent; Task queue не обещает для них priority ordering или capacity wait.
+- `/tasks/:id/dispatch` требует opaque `Idempotency-Key`, который клиент сохраняет при повторе после потерянного ответа. `202 Accepted` возвращает прежние request/status/`run_id` при retry того же ключа, включая `DISPATCHED` и terminal states; ключ с другим Task/role/model/source отклоняется stable conflict. `GET /api/v1/tasks/:taskId/dispatch-requests/:requestId` возвращает durable status.
 
-- [ ] **Шаг 1: Написать полный сценарий standalone с fake runtime**
+### Production Scheduler→Runtime acceptance matrix
+
+| Сценарий | Выполнение через production Scheduler→Runtime path | Проверяемый результат |
+|---|---|---|
+| Конкурирующие requests при `capacity = 1` | Создать durable RunRequests разных категорий/priority/path и запустить production queue worker | Только top-ranked request создаёт Run+manifest, reservation и `AgentRunRequested`; остальные остаются `PENDING` без Run/reservation |
+| Строгая категория | Более поздняя категория имеет максимальный aged priority и самый длинный path | Scheduler выбирает request из более ранней категории |
+| Aged priority | В одной категории два request с разными durable capacity wait timestamps | Scheduler выбирает более высокий aged priority |
+| Critical path tie-break | В одной категории равный aged priority, разные unfinished `BLOCKING` forward-chain lengths в `dependencies` | Scheduler выбирает более длинный critical path; при разном priority path порядок не меняет |
+| Ожидание capacity/priority | Низкоранговый targeted request или request при занятой capacity поступает через production route | API отвечает `202`; request остаётся durable `PENDING`, исключений/attempt increments/dead letters нет; Run/reservation отсутствуют |
+| READY barrier | Сохранить Task RunRequest и `AgentRunRequested` во время `RECOVERING`, запустить queue/outbox workers до READY, вызвать `EventDispatcher.dispatchBatch()` при `RECOVERING` и `READY` | При `RECOVERING` Task queue runtime handler не вызывается, request остаётся pending без Run/manifest/reservation, event attempts/available_at/last_error/dead-letter не меняются; после READY request/event безопасно обрабатывается. Ранее approved Epic может resume до READY только в подтверждённом Proposal 06 recovery path и не проходит через Task queue |
+| Restart и освобождение capacity | Перезапустить Orchestrator с pending requests; освободить слот и запустить production worker | Тот же request выбирается по актуальному порядку, получает ровно один Run+manifest/reservation/outbox и становится `DISPATCHED` |
+| Параллельные workers/replay | Два worker ticks и повторно доставленный outbox event одновременно видят один request | Один условный claim и ровно одна Run/manifest/reservation; дубликаты становятся no-op |
+| Crash после commit до Runtime | Перезапустить после атомарного commit Run/request/outbox, но до event delivery | Owner preflight и Run reconciliation завершают старый Run; replay точного event не создаёт/не запускает второй Run; Recovery использует новый source attempt key |
+| Crash во время Runtime | Перезапустить во время исполнения после доказанного owner stop | Старый Run получает один terminal failure; replay не запускает его повторно; Recovery создаёт не более одного нового request для failed attempt |
+| Crash после результата до event ack | Сохранить Runtime outcome и остановить процесс до `processed_events`/outbox acknowledgement, затем доставить событие повторно | Stored outcome применяется к Workflow ровно один раз по `run_id`; следующий stage/retry не дублируется; Runtime не вызывается повторно |
+| Ошибка подготовки | Принудительно прервать Run/manifest insert внутри dispatch transaction | Нет частичного Run, manifest, reservation, Workflow transition, request claim или outbox; повтор остаётся безопасным |
+| Request identity/deduplication | Повторить команду с прежним `Idempotency-Key` до/после `DISPATCHED`, включая потерянный HTTP response; затем повторить ключ с изменёнными role/model | Идентичный вызов возвращает прежние request/status/`run_id` во всех состояниях; изменённый payload получает stable conflict; новый Run возможен только с новым ключом |
+| Task Recovery and Epic boundary | Recovery повторно создаёт Task request после persisted Run failure; production Epic flow создаёт task-bound и taskless phase runs | Recovery использует новый source attempt key и общую Task очередь; Epic phase intent/run остаётся в своём persisted lifecycle и не создаётся повторно через пользовательский queue producer |
+| Migration compatibility | Empty install и populated upgrade с ожидаемого schema head | Новая migration только создаёт request table/indexes/FKs; `context_deltas` rows/schema/indexes/FKs побайтно сохраняются; `foreign_key_check` пуст |
+
+Acceptance проходит через production composition, Task API и Task Recovery; unit-only вызов `startWorkflowRuns()` или direct handler не засчитывается. Проверки наблюдают lifecycle status, outbox attempts, request state, persisted Run+manifest+owner, reservation, workflow transition и `AgentRunRequested`, а также readback того же request после restart и lost-response replay. Epic/Request phases проверяются только на сохранение их persisted lifecycle boundary и не считаются producer coverage пользовательской Task очереди.
+
+- [ ] **Шаг 1: Написать RED для durable queue, ordered arbitration и полного standalone workflow**
+
+Сначала покрыть все строки acceptance matrix, включая READY barrier, crash/replay после каждой commit/runtime/ack границы, ожидание/restart, selected role/model persistence, error rollback, постоянную request deduplication и отсутствие prepared/failed orphan Run до arbitration. Создать отдельную populated upgrade suite 040→041 и проверить empty install 001–041; Task5 suite отдельно сохраняет проверку 039→040.
 
 Script roles:
 
@@ -383,27 +469,32 @@ Integration PASS
 
 Ожидается, что статус Задача завершится на `WAITING_FOR_APPROVAL` с ровно одним ожидающим `FINAL_MERGE` approval и без дублирующихся runs после воспроизведения всех durable events.
 
-- [ ] **Шаг 2: Проверить отказ**
+- [ ] **Шаг 2: Подтвердить ожидаемый RED до production-кода**
 
 ```bash
-pnpm --filter @ebb-orchestrator/server test -- standalone-task.fake-runtime.test.ts
+pnpm --filter @ebb-orchestrator/server exec vitest run test/scenarios/standalone-task.fake-runtime.test.ts test/modules/scheduler/
+pnpm --filter @ebb-orchestrator/server exec vitest run test/app/api.test.ts test/modules/recovery/recovery.test.ts
+pnpm --filter @ebb-orchestrator/server exec vitest run test/platform/database/scheduler-migration.test.ts test/platform/database/scheduler-run-request-migration.test.ts test/platform/database/fresh-install-migrations.acceptance.test.ts
 ```
 
-- [ ] **Шаг 3: Реализовать обработчики событий**
+- [ ] **Шаг 3: Реализовать durable RunRequest producer, queue worker и transactional runtime handoff**
 
-Только domain services могут переводить стадии. Обработчик завершения Runtime проверяет текущую стадию workflow перед применением результата. `ApprovalApproved(FINAL_MERGE)` переводит Задача в `READY_FOR_MERGE`; фактический Git merge остаётся в будущем Plan 3.
+Добавить migration 041, repository/API для request lifecycle, startup/safety-tick worker и event nudges; добавить deferred disposition для `AgentRunRequested` в outbox во время `RECOVERING`. Перевести Task HTTP/Recovery callers на request API и обеспечить стабильный `Idempotency-Key` во всех request states. В одной write transaction выполнить ordered selection → подготовить Run/manifest → reservation и Workflow transition → отметить request `DISPATCHED` → вставить `AgentRunRequested`. Runtime consumer запускает только matching committed Run после READY и идемпотентно применяет уже сохранённый outcome при replay. Epic/Request сохраняют свои persisted phase/job flows. При capacity/priority WAIT request остаётся `PENDING`, без Run и без ошибки EventDispatcher.
+
+Только domain services могут переводить стадии. Обработчик completion проверяет текущую стадию workflow перед применением результата. `ApprovalApproved(FINAL_MERGE)` переводит Task в `READY_FOR_MERGE`; фактический Git merge остаётся в будущем Plan 3.
 
 - [ ] **Шаг 4: Запустить сценарий и проверить idempotency**
 
 ```bash
-pnpm --filter @ebb-orchestrator/server test -- standalone-task.fake-runtime.test.ts outbox.test.ts
+pnpm --filter @ebb-orchestrator/server exec vitest run test/scenarios/standalone-task.fake-runtime.test.ts test/modules/scheduler/ test/modules/recovery/recovery.test.ts test/platform/events/event-dispatcher.test.ts
+pnpm --filter @ebb-orchestrator/server exec vitest run test/app/api.test.ts test/platform/database/scheduler-migration.test.ts test/platform/database/scheduler-run-request-migration.test.ts test/platform/database/fresh-install-migrations.acceptance.test.ts
 ```
 
 - [ ] **Шаг 5: Коммит**
 
 ```bash
 git add apps/server/src/modules/runtime apps/server/src/modules/scheduler apps/server/test/scenarios
-git commit -m "feat: orchestrate fake task workflow"
+git commit -m "feat: добавить durable Scheduler RunRequest очередь"
 ```
 
 ---
@@ -541,8 +632,7 @@ pnpm test
 Свежий независимый whole-plan review завершился с точным вердиктом `CHANGES_REQUIRED`. Поэтому lifecycle возвращён в `in_progress`; прежний статус и completion evidence сами по себе не закрывают обнаруженные требования. Процедурные checklist marks не менялись.
 
 - Production failure → Scheduler путь пока не подключает `RecoveryService`: в `apps/server/src/modules/recovery/recovery-service.ts` есть реализация, но поиск production source показывает только её объявление; конструктор используется тестом в `apps/server/test/modules/recovery/recovery.test.ts`, а production composition создаёт `SchedulerService` в `apps/server/src/main.ts` без wiring `RecoveryService`.
-- `apps/server/src/modules/scheduler/scheduler-policy.ts` сортирует по категории, priority и времени создания; реализации priority aging и critical-path boost там нет.
-- В этой редакции плана формулировка `simple downstream-blocked-count boost` находится в Задаче 5 (Scheduler). Authoritative spec `docs/architecture/specs/01-system-design.md` требует `priority aging` и `deterministic critical-path boost` (§ 8, пункты 494–499 на дату проверки). Соответствие между планом и спецификацией остаётся открытым; это дополнение не выбирает и не меняет scheduler policy.
+- В этой редакции плана формулировка `simple downstream-blocked-count boost` находилась в Задаче 5 (Scheduler), а `compareTasks` сортировал по категории, priority и времени создания; реализации priority aging и critical-path boost ещё не было. Это историческое состояние и reviewer finding на тот момент. Исполнимый Scheduler policy contract зафиксирован последующим решением пользователя от 2026-10-03 и приведён в `spec-01 §8.1` и обновлённой Задаче 5 ниже; implementation и acceptance остаются открытыми.
 - Вложенные команды вида `pnpm --filter @ebb-orchestrator/server test -- <files>` в других задачах Plan02 всё ещё требуют точного аудита: `apps/server/package.json` задаёт `test` как `vitest run`, а приёмка плана также ссылается на корневой `pnpm test`. **Correction (2026-10-03):** два focused recovery examples в Задаче 7 исправлены на `pnpm --filter @ebb-orchestrator/server exec vitest run test/modules/recovery/recovery.test.ts`; текущий запуск из repo root завершился с exit `0`, 1 file / 16 tests passed. Это подтверждает только указанную focused suite; production recovery wiring и прочие whole-plan findings остаются открытыми.
 
 До закрытия Plan02 нужно устранить или корректно разрешить перечисленные расхождения и выполнить проверяемую acceptance/review-сверку. Одного прежнего статуса `completed` и старых completion evidence недостаточно.

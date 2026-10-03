@@ -506,6 +506,48 @@ UI всегда показывает конкретную причину ожи�
 
 Scheduler работает event-driven, но имеет периодический safety tick для reconciliation.
 
+## 8.1. Детерминированный порядок очереди
+
+Для выбора следующей задачи Scheduler использует лексикографический порядок. Более ранний ключ всегда важнее всех последующих:
+
+1. **Категория задачи** в приведённом выше строгом порядке: integration/unblock, reviewer, QA, rework, new development, optional/docs. Aging и critical-path boost не могут переместить задачу через границу категории.
+2. **Aged priority** по убыванию: `Critical > High > Normal > Low`.
+3. **Critical-path length** по убыванию; он сравнивается только при одинаковом aged priority и не прибавляется к приоритету.
+4. `created_at` по возрастанию.
+5. `id` задачи по возрастанию в ordinal-порядке как окончательный стабильный tie-break.
+
+Базовые уровни приоритета имеют ранги `Low=0`, `Normal=1`, `High=2`, `Critical=3`. Приоритет стареет только после того, как пройдены все non-capacity gates и Scheduler наблюдает ожидание только из-за global, project или role capacity. Durable `capacity_wait_started_at` хранит начало непрерывного ожидания capacity в UTC. Число полных возрастных шагов равно `max(0, floor((nowEpochMs - startedAtEpochMs) / 86_400_000))`; aged rank равен `min(3, baseRank + число шагов)`. Будущий timestamp временно даёт ноль возрастных шагов; некорректный persisted timestamp является integrity error и запрещает dispatch без silent fallback. Следовательно, неполные 24 часа не меняют уровень, а рост никогда не превышает `Critical`.
+
+Начало ожидания фиксируется при первом eligible-capacity observation, а не выводится из `created_at`. Историческая строка без timestamp остаётся `NULL` до такого свежего наблюдения; Scheduler начинает отсчёт с него и не приписывает неизвестное прошлое ожидание. Пока задача продолжает ждать capacity, смена причины между global, project и role capacity сохраняет исходный timestamp. Появление non-capacity gate, выход из capacity wait либо dispatch очищает его. Если capacity освободилась, Scheduler использует сохранённый timestamp при выборе и очищает его атомарно с dispatch/reservation; задачи, которые продолжают ждать capacity, сохраняют свои timestamp. Restart не сбрасывает и не пересчитывает сохранённое ожидание.
+
+`capacity_wait_started_at` является nullable UTC timestamp в durable `tasks` state, сериализованный канонически как ISO-8601 `YYYY-MM-DDTHH:mm:ss.sssZ`. Scheduler получает время через injected authoritative UTC clock; для сравнения парсит timestamp в epoch milliseconds и считает порог равным ровно `86_400_000` миллисекундам. Повышение наступает на точной границе полных 24 часов; значение времени из будущего временно даёт нулевой возраст.
+
+`SchedulerService` единолично владеет всеми записями `capacity_wait_started_at`. Существующая `SchedulerService.reconcile()` transaction по gate outcome создаёт, сохраняет или сбрасывает timestamp. Она захватывает injected UTC clock один раз и читает task state, dependencies, project/workflow state, locks, approvals, budgets, reservations и limits из одной transactionally consistent DB snapshot. `reconcile()` уже вызывается при startup и из existing `SchedulerSafetyWorker` periodic safety tick. Event-driven queue-assignment path должен вызывать его до сортировки и dispatch. Текущий `startWorkflowRuns()` — единственный имеющийся queue sort→dispatch method, но у него нет production caller; Plan02 должен подключить event-driven queue path явно, а не считать эту функцию уже используемой. HTTP/runtime/planning callers не получают права записывать timestamp напрямую.
+
+`recalculate()`, `getEligibility()` и `getWaitReason()` остаются read-only projection/query API и никогда не пишут timestamp. `reconcile()` отдельно проверяет каждый non-capacity gate и не выводит его результат только из первого `wait_reason`: например, текущий `evaluateEligibilityTx()` возвращает `WAITING_FOR_CAPACITY` раньше, чем проверяет budget. При одновременных исчерпанной capacity и закрытом budget gate timestamp должен оставаться `NULL` и не стареть, пока budget не пройден; если capacity всё ещё занята, после снятия budget reconciliation начинает отсчёт с нового injected time. Restart читает значение из БД; process-local clock state не является источником истины.
+
+Узкие исключения из правила owner — `SchedulerService.dispatchRunRequest()` для пользовательского Task queue и `SchedulerService.dispatchTask()` для существующего persisted Epic phase flow могут только очистить timestamp внутри той же transaction, которая успешно commits соответствующий reservation и workflow state transition. После Task6 пользовательские Task route и Recovery обязаны использовать только `dispatchRunRequest()`; прямой `dispatchTask()` остаётся только Epic phase path и не входит в Task queue. Ни query/projection API, ни HTTP/runtime/planning caller не могут записать или очистить поле напрямую. Ошибка transaction не оставляет частичную wait-state запись, retry reconciliation идемпотентен, а неудачный dispatch не оставляет частичную очистку.
+
+Production intent для пользовательского **Task dispatch** хранится отдельно от Run как durable `SchedulerRunRequest` с opaque request ID, обязательным `task_id`, выбранными `role`/`model`, caller idempotency key и source-backed origin/trigger reference. Task Recovery создаёт новую попытку через тот же API. Epic phase runs (включая child phases, даже когда Run связан с `task_id`) и Request-planning runs сохраняют свои persisted phase/job intents и соответствующий lifecycle; они не входят в этот пользовательский Task-dispatch queue contract и не получают от него обещаний очереди/capacity-wait.
+
+HTTP submission несёт opaque `Idempotency-Key`, созданный клиентом и сохраняемый им при повторе после потерянного ответа. Один ключ навсегда указывает на один request: при совпадающем payload API возвращает исходные ID/status/`run_id` независимо от того, `PENDING`, `DISPATCHED` или terminal request; несовпадающий payload получает stable conflict. Явная новая попытка получает новый ключ и source attempt reference. Поэтому replay запроса после `DISPATCHED` не создаёт второй Run. Кроме глобальной уникальности idempotency key, partial unique index разрешает максимум один активный `PENDING` request на Task; одинаковая активная команда возвращает прежний request, конфликтующая получает stable conflict code.
+
+Запрос не создаёт PREPARED/failed Run до того, как Scheduler выбрал его по общему Task-порядку. При обычном ожидании gates, capacity или более высокоприоритетных Task requests он остаётся `PENDING` в SQLite и повторно рассматривается после startup, event nudge и периодического safety tick; ожидание capacity не выбрасывает исключение в `EventDispatcher` и не расходует его bounded delivery attempts. Queue worker может стартовать вместе с прочими workers, пока lifecycle ещё `RECOVERING`, но каждый обычный Task-queue dispatch attempt проверяет `SystemStatus === READY` и до этого не создаёт Run/manifest/reservation; отложенный safety scan подбирает сохранённые requests после READY. `AgentRunRequested` outbox delivery во время RECOVERING откладывается без изменения `attempts`/`available_at` и без dead-letter; после READY event остаётся доступным для обычной доставки.
+
+Единственное разрешённое до System READY runtime-dispatch исключение — recovery, явно одобренный Proposal 06: после process-owner STOPPED proof и всех startup reconciliations `resumeApprovedEpics()` возобновляет только ранее approved Epic по существующим persisted phase intents до `FINAL_APPROVAL`, проходя Scheduler, budgets и permissions. Этот recovery path не является пользовательским `SchedulerRunRequest`, не принимает новые/unapproved Task dispatch и не автоматизирует plan approval или final merge. Его текущую позицию до READY нельзя переносить или расширять без изменения принятого Proposal 06.
+
+Выбранный request, подготовленный Run с его единственным `ContextManifest`, reservation, workflow transition, переход request в `DISPATCHED`, `run_id` и outbox `AgentRunRequested` образуют одну SQLite transaction. Внутри неё Scheduler сначала подтверждает, что request — первый schedulable кандидат, затем Runtime preparation сохраняет Run/manifest до reservation и outbox commit. Concurrent worker, targeted caller или replay не может обойти selection или создать дубликат; ошибка transaction полностью откатывает изменения. Runtime consumer получает точный committed `request_id`/`run_id` и исполняет уже созданный Run, не создавая второй Run и не арбитрируя очередь повторно. HTTP submission возвращает `202 Accepted` с request ID/status; повторное чтение состояния обращается к тому же durable request.
+
+Обработка `AgentRunRequested` должна быть безопасна при crash/replay на каждой границе. Consumer атомарно подтверждает, что событие ссылается на тот же `run_id`, который хранит request; latest-run lookup и второй Run запрещены. До `READY` dispatcher оставляет такое событие pending без роста retry attempts. После READY событие для Run `STARTED` может запустить только этот Run с его единственным durable process-owner identity; повтор доставки не запускает второй process. Если Run уже terminal, Runtime не запускается повторно: `COMPLETED` применяет persisted outcome к Workflow через уникальную idempotency запись по `run_id`, а `FAILED`/`CANCELLED` проходит Recovery. Projection результата, Workflow transition и создание следующего retry request имеют один транзакционный/idempotency boundary, чтобы replay после записи результата не терял completion и не создавал второй retry. На restart owner preflight доказывает stop старого process до reconciliation; новый recovery attempt имеет собственный source attempt reference/idempotency key.
+
+До write transaction worker может подготовить только in-memory `PreparedRunContext`, без записи Run/manifest. Внутри `SchedulerService.dispatchRunRequest()` он повторно подтверждает queue winner и gates; `RunService.prepareRunInTransaction()` пересобирает provenance на transaction snapshot и сравнивает точные prepared bytes/identity. Несовпадение или устаревший winner откатывает операцию и оставляет request pending; stale context не превращается в Run.
+
+Изменение схемы выполняется отдельной additive forward migration; существующие migration files не переписываются. Миграция не должна удалять или пересоздавать таблицы `context_deltas`/`context_manifests` и обязана сохранять строки `context_deltas` и обе FK-семантики: `manifest_id ON DELETE CASCADE` и `previous_manifest_id ON DELETE SET NULL`.
+
+Critical path вычисляется только по нормализованной таблице `dependencies`; `contract_json` не является источником графа. В текущей схеме строка означает, что `task_id` зависит от `depends_on_task_id`, поэтому forward-направление цепочки — от prerequisite `depends_on_task_id` к dependent `task_id`. Для кандидата длина — максимальное число вершин в forward-цепочке из unfinished `BLOCKING` tasks, включая саму candidate task; каждая задача даёт ровно одну единицу. Учитываются только незавершённые вершины, а terminal tasks не входят в цепочку и не соединяют её части. При нескольких ветвях выбирается максимальная длина; одинаково длинные ветви разрешаются по последовательности вершин с `created_at` по возрастанию, затем `id` в ordinal-порядке. Лист без unfinished dependents имеет длину `1`.
+
+`DependencyService` отклоняет попытку создать цикл. Если Scheduler обнаруживает цикл в уже сохранённом графе, critical-path evaluation возвращает диагностируемую graph-integrity error и не выполняет dispatch в этом reconciliation cycle; Scheduler не подменяет ошибку нулевым boost и не вводит новый Task status. Отсутствующий endpoint не является допустимым edge: его отклоняют FK и проверка целостности БД.
+
 ---
 
 # 9. Структурированные контракты AI-ролей
@@ -1332,7 +1374,7 @@ Unprocessable durable operation уходит в dead-letter, а не блоки�
 
 ## 19.5. Согласование при запуске
 
-При startup Scheduler **не включается сразу**.
+При startup обычный пользовательский Scheduler queue **не включается сразу**. Исключение — только recovery уже approved Epic, разрешённый Proposal 06 и описанный в §8.1: он запускается после process-owner preflight и всех reconciliation, до публикации System READY, используя persisted phase intents и обычные Scheduler/budget/permission gates. Он не принимает новые requests и не выполняет approval/merge.
 
 ```text
 STARTING
@@ -1345,6 +1387,7 @@ STARTING
 → Outbox/jobs
 → GitHub state
 → SYSTEM_RECONCILED
+→ APPROVED_EPIC_RECOVERY (только ранее approved Epic, если есть)
 → READY
 ```
 
