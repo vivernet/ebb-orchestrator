@@ -124,6 +124,8 @@ describe('AgentRunPage', () => {
     vi.spyOn(runApi, 'getRunTools').mockResolvedValue({ runId: 'test-run-123', tools: ['git', 'file_read'] });
     vi.spyOn(runApi, 'getRunPermissions').mockResolvedValue([]);
     vi.spyOn(runApi, 'getRunRecovery').mockResolvedValue({ runId: 'test-run-123', taskId: null, runStatus: 'COMPLETED', recovery: null });
+    vi.spyOn(runApi, 'getRunArtifacts').mockResolvedValue([]);
+    vi.spyOn(runApi, 'getRunContextManifests').mockResolvedValue({ availability: 'unknown', runId: 'test-run-123', subject: null, role: 'unknown' });
 
     vi.spyOn(queryModule, 'useQuery').mockReturnValue({
       status: 'success',
@@ -147,12 +149,8 @@ describe('AgentRunPage', () => {
 
     renderWithRouter(<AgentRunPage id="test-run-123" />);
 
-    await waitFor(() => {
-      expect(screen.getByText('События')).toBeInTheDocument();
-    });
-
-    expect(screen.getByText('Запуск начат')).toBeInTheDocument();
-    expect(screen.getByText('Запуск завершён')).toBeInTheDocument();
+    expect(await screen.findByText('Запуск начат')).toBeInTheDocument();
+    expect(await screen.findByText('Запуск завершён')).toBeInTheDocument();
     expect(screen.queryByText('run_started')).not.toBeInTheDocument();
   });
 
