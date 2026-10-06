@@ -21,9 +21,10 @@ describe("RuntimeEventHandlers runtime dispatch", () => {
       dispatchTask: vi.fn(),
       releaseTask: vi.fn(),
     } as unknown as SchedulerService;
-    const run = { id: "run-1" };
+    const run = { id: "run-1", model: "test-model" };
     const runService = {
       prepareRun: vi.fn().mockReturnValue(run),
+      prepareRunWithHermesPreflight: vi.fn().mockResolvedValue(run),
       executePreparedRun: vi.fn().mockResolvedValue({
         run,
         outcome: { success: true, exitCode: 0, output: "accepted", diagnostics: { runId: "run-1" } },
@@ -47,7 +48,7 @@ describe("RuntimeEventHandlers runtime dispatch", () => {
       payload: { role: "Developer", model: "test-model" },
     });
 
-    expect(runService.prepareRun).toHaveBeenCalledWith(expect.objectContaining({
+    expect(runService.prepareRunWithHermesPreflight).toHaveBeenCalledWith(expect.objectContaining({
       role: "developer",
       model: "test-model",
       taskId: "task-1",
@@ -102,7 +103,7 @@ describe("RuntimeEventHandlers runtime dispatch", () => {
       type: "AgentRunRequested", aggregateId: "task-1", payload: { role: "coordinator" },
     })).rejects.toThrow("TASK_RUN_ROLE_UNSUPPORTED");
 
-    expect(runService.prepareRun).not.toHaveBeenCalled();
+    expect(runService.prepareRunWithHermesPreflight).not.toHaveBeenCalled();
     expect(scheduler.assertProjectDispatchable).not.toHaveBeenCalled();
     expect(scheduler.dispatchTask).not.toHaveBeenCalled();
   });
@@ -114,7 +115,7 @@ describe("RuntimeEventHandlers runtime dispatch", () => {
       type: "AgentRunRequested", aggregateId: "task-1", payload: { role: "reviewer", model: "test-model" },
     });
 
-    const options = vi.mocked(runService.prepareRun).mock.calls[0]?.[0];
+    const options = vi.mocked(runService.prepareRunWithHermesPreflight).mock.calls[0]?.[0];
     expect(options).toMatchObject({ role: "reviewer", contextInput: { role: "reviewer", roleInputs: { gitDiff: "fixture diff", checks: [] } } });
     expect(options?.contextInput?.prompt).toContain("Independently review");
     expect(options?.contextInput?.prompt).not.toContain("=== DEVELOPER TRANSCRIPT ===");

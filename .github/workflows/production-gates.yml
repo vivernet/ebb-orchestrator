@@ -29,6 +29,10 @@ jobs:
         with:
           node-version: "24.x"
           cache: pnpm
+      - name: Setup Python for synthetic native payload
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Start ephemeral runner user systemd manager
@@ -54,6 +58,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          systemd --version
           test "$(stat -fc '%T' /sys/fs/cgroup)" = "cgroup2fs"
           test -r /sys/fs/cgroup/cgroup.controllers
           test -n "${HOME:-}"
@@ -65,8 +70,70 @@ jobs:
           command -v journalctl
           systemctl --user is-system-running
           systemctl --user show-environment >/dev/null
+          probe_unit="ebb-process-scope-probe-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$$.service"
+          cleanup_probe() {
+            systemctl --user stop "$probe_unit" >/dev/null 2>&1 || true
+            systemctl --user reset-failed "$probe_unit" >/dev/null 2>&1 || true
+          }
+          trap cleanup_probe EXIT
+          systemd-run --user --collect --unit="$probe_unit" \
+            --property=Type=exec \
+            --property=ExitType=cgroup \
+            --property=KillMode=control-group \
+            --property=Delegate=no \
+            --property=ProtectControlGroups=yes \
+            --property=Restart=no \
+            /usr/bin/sleep 60
+          for attempt in {1..20}; do
+            if systemctl --user is-active --quiet "$probe_unit"; then break; fi
+            sleep 0.25
+          done
+          systemctl --user is-active --quiet "$probe_unit"
+          expected_properties=$'Type=exec\nExitType=cgroup\nKillMode=control-group\nDelegate=no\nProtectControlGroups=yes\nRestart=no'
+          while IFS='=' read -r property expected; do
+            actual="$(systemctl --user show "$probe_unit" --property="$property" --value)"
+            if [[ "$actual" != "$expected" ]]; then
+              printf 'Transient systemd service property mismatch: %s\n' "$property" >&2
+              exit 1
+            fi
+          done <<< "$expected_properties"
+          systemctl --user stop "$probe_unit"
+          systemctl --user reset-failed "$probe_unit" >/dev/null 2>&1 || true
+          trap - EXIT
+          for attempt in {1..20}; do
+            load_state="$(systemctl --user show "$probe_unit" --property=LoadState --value 2>/dev/null || true)"
+            if [[ -z "$load_state" || "$load_state" == "not-found" ]]; then break; fi
+            sleep 0.25
+          done
+          if [[ -n "$load_state" && "$load_state" != "not-found" ]]; then
+            printf 'Transient systemd service was not removed after the probe.\n' >&2
+            exit 1
+          fi
+      - name: Build native source-snapshot helpers
+        shell: bash
+        run: |
+          set -euo pipefail
+          compiler=c++
+          if [[ -v CXX ]]; then compiler="$CXX"; fi
+          if ! command -v "$compiler" >/dev/null 2>&1; then
+            printf 'Required C++ compiler is unavailable: %s\n' "$compiler" >&2
+            exit 1
+          fi
+          compiler_identity="$("$compiler" --version | head -n 1)"
+          printf 'Compiler identity: %s\n' "$compiler_identity" | tee -a "$GITHUB_STEP_SUMMARY"
+          printf 'Build commands: build:hermes-profile-path and build:linux-hermes-launcher\n' >> "$GITHUB_STEP_SUMMARY"
+          set +e
+          pnpm --filter @ebb-orchestrator/server build:hermes-profile-path && pnpm --filter @ebb-orchestrator/server build:linux-hermes-launcher
+          build_status=$?
+          set -e
+          printf 'Build exit code: %s\n' "$build_status" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [[ "$build_status" -ne 0 ]]; then exit "$build_status"; fi
+      - name: Run native source-snapshot GC and inventory-boundary probe
+        run: node apps/server/scripts/test-hermes-profile-path-native.mjs --source-cache-gc-only
       - name: Run native provider-free process-scope acceptance
         run: pnpm --filter @ebb-orchestrator/server exec vitest run test/e2e/hermes-process-scope.acceptance.test.ts
+      - name: Run native provider-free source-snapshot acceptance
+        run: pnpm --filter @ebb-orchestrator/server exec vitest run test/e2e/hermes-source-snapshot.acceptance.test.ts
 
   hermes-process-scope-acceptance:
     runs-on: windows-latest
@@ -86,6 +153,10 @@ jobs:
         with:
           node-version: "24.x"
           cache: pnpm
+      - name: Setup Python for synthetic native payload
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Build Windows native helper with Visual Studio 2022
@@ -105,10 +176,16 @@ jobs:
               Set-Item -Path "Env:$name" -Value $value
             }
           }
+          pnpm --filter @ebb-orchestrator/server build:hermes-profile-path
+          if ($LASTEXITCODE -ne 0) { throw "WINDOWS_HERMES_PROFILE_HELPER_BUILD_FAILED" }
           pnpm --filter @ebb-orchestrator/server build:windows-run-supervisor
           if ($LASTEXITCODE -ne 0) { throw "WINDOWS_PROCESS_SCOPE_HELPER_BUILD_FAILED" }
+      - name: Run native source-snapshot GC and inventory-boundary probe
+        run: node apps/server/scripts/test-hermes-profile-path-native.mjs --source-cache-gc-only
       - name: Run native provider-free process-scope acceptance
         run: pnpm --filter @ebb-orchestrator/server exec vitest run test/e2e/hermes-process-scope.acceptance.test.ts
+      - name: Run native provider-free source-snapshot acceptance
+        run: pnpm --filter @ebb-orchestrator/server exec vitest run test/e2e/hermes-source-snapshot.acceptance.test.ts
 
   keyring-acceptance:
     runs-on: ${{ matrix.os }}

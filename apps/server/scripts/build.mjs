@@ -2,7 +2,7 @@ import { cpSync, existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import process from "node:process";
-import { ensureWindowsRunSupervisor } from "./package-native-assets.mjs";
+import { ensureHermesProfilePathHelper, ensureLinuxHermesLauncher, ensureWindowsRunSupervisor, writeNativeHelperIntegrityAnchor } from "./package-native-assets.mjs";
 
 const appRoot = resolve(import.meta.dirname, "..");
 const distRoot = resolve(appRoot, "dist");
@@ -19,3 +19,25 @@ ensureWindowsRunSupervisor({
     windowsHide: true,
   }),
 });
+
+ensureHermesProfilePathHelper({
+  platform: process.platform,
+  serverRoot: appRoot,
+  buildHelper: () => execFileSync(process.execPath, [resolve(appRoot, "scripts/build-hermes-profile-path.mjs")], {
+    cwd: appRoot,
+    stdio: "inherit",
+    windowsHide: true,
+  }),
+});
+
+ensureLinuxHermesLauncher({
+  platform: process.platform,
+  serverRoot: appRoot,
+  buildHelper: () => execFileSync(process.execPath, [resolve(appRoot, "scripts/build-linux-hermes-launcher.mjs")], {
+    cwd: appRoot,
+    stdio: "inherit",
+    windowsHide: true,
+  }),
+});
+
+writeNativeHelperIntegrityAnchor({ serverRoot: appRoot });

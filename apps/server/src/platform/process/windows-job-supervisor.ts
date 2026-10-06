@@ -2,6 +2,8 @@ import { fileURLToPath } from "node:url";
 import { ProcessExecutor, type ProcessResult, type ProcessSession } from "./process-executor.js";
 import type { ProcessScopeIdentity, ProcessScopeObservation } from "./process-inspector.js";
 import { ProcessScopeLaunchNotDispatchedError, type ProcessScopeHandle, type ProcessScopeLaunchRequest, type ProcessScopeSupervisor } from "./run-scope-supervisor.js";
+import { consumeHermesLaunchTicket, type HermesLaunchObjectIdentity, type HermesLaunchTicketInput } from "../../modules/runtime/hermes/hermes-launch-ticket.js";
+import { createWindowsNativeHelperInvocation } from "./windows-native-helper-launcher.js";
 
 const STOP_TIMEOUT_MS = 30_000;
 const POLL_INTERVAL_MS = 500;
@@ -11,6 +13,40 @@ const HERMES_CHILD_ENV_KEYS = new Set([
   "HOME", "HERMES_HOME", "HERMES_CONFIG", "HERMES_MODEL",
 ]);
 const pendingLaunches = new Set<string>();
+const SAFE_NATIVE_HELPER_FAILURE_CODES = new Set([
+  "ARGUMENTS_INVALID", "CHILD_ATTRIBUTE_INIT_FAILED", "CHILD_CREATE_FAILED",
+  "CHILD_HANDLE_ALLOWLIST_FAILED", "CHILD_IDENTITY_PERSIST_FAILED", "CHILD_JOB_ASSIGNMENT_FAILED",
+  "CHILD_JOB_BARRIER_UNAVAILABLE", "CHILD_JOB_MEMBERSHIP_UNPROVEN", "CHILD_RESUME_API_ERROR",
+  "CHILD_RESUME_COUNT_GREATER_THAN_ONE", "CHILD_RESUME_COUNT_ZERO", "CHILD_STARTUP_FRAME_TOO_LARGE",
+  "CHILD_STDIO_FAILED", "HERMES_TICKET_OBJECT_MISMATCH", "IDENTITY_OUTPUT_FAILED",
+  "JOB_ACCOUNTING_UNAVAILABLE", "JOB_ABSENT_HELPER_IDENTITY_MISSING", "JOB_ABSENT_HELPER_INVENTORY_UNAVAILABLE",
+  "JOB_ABSENT_HELPER_STILL_LIVE", "JOB_ABSENT_LAUNCH_PENDING", "JOB_ABSENT_OWNER_STATE_UNKNOWN",
+  "JOB_ABSENT_PREPARED_HAS_HELPER_IDENTITY", "JOB_CREATE_FAILED_OR_EXISTS", "JOB_OPEN_UNAVAILABLE",
+  "JOB_POLICY_FAILED", "JOB_STOP_TIMEOUT", "JOB_TERMINATE_FAILED", "JOB_OR_IDENTITY_UNAVAILABLE",
+  "LAUNCH_ACK_REJECTED", "LAUNCH_CONTROL_CHANNEL_LOST", "LAUNCH_FRAME_INVALID",
+  "LAUNCH_PHASE_WRITE_FAILED", "MAPPING_CREATE_FAILED_OR_EXISTS", "MAPPING_OR_IDENTITY_UNAVAILABLE",
+  "PAYLOAD_EXIT_STATUS_UNAVAILABLE", "PHASE_MAPPING_CREATE_FAILED", "PHASE_UNAVAILABLE",
+]);
+const SAFE_NATIVE_HELPER_GATE_EXCEPTION_TYPES = new Set([
+  "ArgumentException", "BadImageFormatException", "CryptographicException", "FileLoadException",
+  "FileNotFoundException", "IOException", "InvalidOperationException", "MethodInvocationException",
+  "NotSupportedException", "PathTooLongException", "PlatformNotSupportedException", "ReflectionTypeLoadException",
+  "RuntimeException", "SecurityException", "SystemException", "TypeInitializationException", "TypeLoadException",
+  "UnauthorizedAccessException", "Win32Exception",
+]);
+
+/** Закрытый протокол read-only фаз native Windows launch handshake. */
+export const WINDOWS_PROCESS_SCOPE_LAUNCH_PHASES = [
+  "WAITING_FOR_ACK",
+  "ACK_ACCEPTED",
+  "RESUME_API_ERROR",
+  "RESUME_COUNT_ZERO",
+  "RESUME_COUNT_ONE",
+  "RESUME_COUNT_GREATER_THAN_ONE",
+] as const;
+
+/** Наблюдаемая фаза handshake; `UNAVAILABLE` означает, что exact native readback не подтверждён. */
+export type WindowsProcessScopeLaunchPhase = (typeof WINDOWS_PROCESS_SCOPE_LAUNCH_PHASES)[number] | "UNAVAILABLE";
 
 function launchKey(owner: ProcessScopeIdentity): string {
   return `${owner.containmentId}:${owner.launchNonce}`;
@@ -18,7 +54,11 @@ function launchKey(owner: ProcessScopeIdentity): string {
 
 /** Reopens and controls only the private named Job associated with one Run owner. */
 export class WindowsJobSupervisor implements ProcessScopeSupervisor {
-  constructor(private readonly executor = new ProcessExecutor(), private readonly helperPath = HELPER_PATH) {}
+  constructor(
+    private readonly executor = new ProcessExecutor(),
+    private readonly helperPath = HELPER_PATH,
+    private readonly createHelperInvocation: typeof createWindowsNativeHelperInvocation = createWindowsNativeHelperInvocation,
+  ) {}
 
   async launch(
     owner: ProcessScopeIdentity,
@@ -28,27 +68,36 @@ export class WindowsJobSupervisor implements ProcessScopeSupervisor {
     assertWindowsOwner(owner);
     assertRequest(request);
     if (request.signal?.aborted) throw new ProcessScopeLaunchNotDispatchedError();
-    const metadataFrame = encodeMetadataFrame(request);
+    const launchIdentity = consumeLaunchIdentity(owner, request);
+    const helperInvocation = await this.createHelperInvocation(this.helperPath, "windowsRunSupervisor", [
+      "launch", owner.containmentId, owner.launchNonce,
+    ]);
+    if (request.signal?.aborted) throw new ProcessScopeLaunchNotDispatchedError();
+    const metadataFrame = encodeMetadataFrame(request, launchIdentity);
     const key = launchKey(owner);
     pendingLaunches.add(key);
     let session: ProcessSession;
     try {
-      session = this.executor.startSession(this.helperPath, ["launch", owner.containmentId, owner.launchNonce], {
+      session = this.executor.startSession(helperInvocation.file, [...helperInvocation.args], {
         cwd: request.cwd,
+        env: { ...helperInvocation.env },
         timeout: 0,
         maxBuffer: 10 * 1024 * 1024,
+        captureOutput: request.captureOutput ?? true,
       });
     } catch (error) {
       pendingLaunches.delete(key);
       throw error;
     }
-    const protocol = new HelperProtocol(session.stdout);
     let identity: ProcessScopeIdentity | undefined;
     let stopPromise: Promise<ProcessScopeObservation> | undefined;
     const requestStop = () => {
       if (!stopPromise) stopPromise = this.stop(identity ?? owner);
       return stopPromise;
     };
+    const protocol = new HelperProtocol(session.stdout, request.onStdoutChunk, () => {
+      void requestStop().catch(() => undefined);
+    });
     const onAbort = () => {
       session.stdin.destroy();
       if (identity) void requestStop().catch(() => undefined);
@@ -63,23 +112,30 @@ export class WindowsJobSupervisor implements ProcessScopeSupervisor {
       // ResumeThread is gated by this one-byte authorization. Recheck the signal
       // after the asynchronous durable callback and before sending the byte.
       if (request.signal?.aborted) throw new Error("WINDOWS_PROCESS_SCOPE_LAUNCH_CANCELLED");
+      protocol.beginPayload();
       session.stdin.write(Buffer.from([1]));
       pendingLaunches.delete(key);
     } catch (error) {
       session.stdin.destroy();
       // Closing the protocol channel makes the suspended native helper reject the
       // launch ACK. Keep the pending marker until that exact helper has exited.
-      await session.completion.catch(() => undefined);
+      const completed = await session.completion.then((result) => result, () => undefined);
       pendingLaunches.delete(key);
       request.signal?.removeEventListener("abort", onAbort);
       const stopOwner = identity ?? owner;
       const observed = await this.waitForStopped(stopOwner, STOP_TIMEOUT_MS);
       const stopped = observed.state === "STOPPED" ? observed : await this.stop(stopOwner);
       const final = stopped.state === "STOPPED" ? stopped : await this.waitForStopped(stopOwner, STOP_TIMEOUT_MS);
+      const nativeGateFailure = error instanceof Error && error.message.startsWith("WINDOWS_HELPER_HANDSHAKE_TIMEOUT:")
+        ? parseNativeHelperGateFailure(completed?.stderr ?? "")
+        : undefined;
       if (final.state !== "STOPPED") {
         const reason = final.state === "UNKNOWN" ? final.reason : "WINDOWS_JOB_STOP_NOT_CONFIRMED";
+        // Keep the caught failure as the direct cause; replace its generic timeout with the safe gate code.
+        if (nativeGateFailure && error instanceof Error) error.message = nativeGateFailure;
         throw new Error(`WINDOWS_PROCESS_SCOPE_LAUNCH_UNPROVEN:${reason}`, { cause: error });
       }
+      if (nativeGateFailure) throw new Error(nativeGateFailure, { cause: error });
       throw error;
     }
 
@@ -88,11 +144,14 @@ export class WindowsJobSupervisor implements ProcessScopeSupervisor {
     let timedOut = false;
     const timeout = setTimeout(() => { timedOut = true; void requestStop(); }, request.timeoutMs);
     const completion = session.completion.then(async (result) => {
+      await protocol.drainPayload();
       const stopped = await this.waitForStopped(verifiedIdentity, STOP_TIMEOUT_MS);
       if (stopped.state !== "STOPPED") throw new Error("WINDOWS_PROCESS_SCOPE_STOP_UNPROVEN");
       if (timedOut) throw new Error("WINDOWS_PROCESS_SCOPE_TIMEOUT");
-      return stripHelperProtocol(result);
+      const stripped = stripHelperProtocol(result);
+      return request.captureOutput === false ? { ...stripped, stdout: "", stderr: "" } : stripped;
     }).catch(async (error: unknown) => {
+      await protocol.drainPayload().catch(() => undefined);
       const stopped = await requestStop().catch(() => ({ state: "UNKNOWN" as const, reason: "WINDOWS_JOB_STOP_FAILED" }));
       if (stopped.state !== "STOPPED") throw new Error("WINDOWS_PROCESS_SCOPE_STOP_UNPROVEN");
       throw error;
@@ -106,7 +165,7 @@ export class WindowsJobSupervisor implements ProcessScopeSupervisor {
   async inspect(owner: ProcessScopeIdentity): Promise<ProcessScopeObservation> {
     assertWindowsOwner(owner);
     try {
-      const result = await this.executor.exec(this.helperPath, [
+      const invocation = await this.createHelperInvocation(this.helperPath, "windowsRunSupervisor", [
         "inspect",
         owner.containmentId,
         owner.launchNonce,
@@ -114,10 +173,29 @@ export class WindowsJobSupervisor implements ProcessScopeSupervisor {
         owner.supervisorPid?.toString() ?? "-",
         owner.supervisorStartIdentity ?? "-",
         pendingLaunches.has(launchKey(owner)) ? "1" : "0",
-      ], { timeout: 5_000, maxBuffer: 32 * 1024 });
+      ]);
+      const result = await this.executor.exec(invocation.file, [...invocation.args], {
+        env: { ...invocation.env }, timeout: 5_000, maxBuffer: 32 * 1024,
+      });
       return parseInspection(result.stdout, owner);
     } catch {
       return { state: "UNKNOWN", reason: "WINDOWS_JOB_INSPECTION_UNAVAILABLE" };
+    }
+  }
+
+  /** Читает только nonce-связанную фазу handshake; невозможность точного readback даёт `UNAVAILABLE`. */
+  async inspectLaunchPhase(owner: ProcessScopeIdentity): Promise<WindowsProcessScopeLaunchPhase> {
+    assertWindowsOwner(owner);
+    try {
+      const invocation = await this.createHelperInvocation(this.helperPath, "windowsRunSupervisor", [
+        "phase", owner.containmentId, owner.launchNonce,
+      ]);
+      const result = await this.executor.exec(invocation.file, [...invocation.args], {
+        env: { ...invocation.env }, timeout: 5_000, maxBuffer: 4_096,
+      });
+      return parseWindowsProcessScopeLaunchPhase(result.stdout);
+    } catch {
+      return "UNAVAILABLE";
     }
   }
 
@@ -126,7 +204,12 @@ export class WindowsJobSupervisor implements ProcessScopeSupervisor {
     const before = await this.inspect(owner);
     if (before.state !== "LIVE") return before;
     try {
-      await this.executor.exec(this.helperPath, ["stop", owner.containmentId, owner.launchNonce], { timeout: STOP_TIMEOUT_MS, maxBuffer: 32 * 1024 });
+      const stopInvocation = await this.createHelperInvocation(this.helperPath, "windowsRunSupervisor", [
+        "stop", owner.containmentId, owner.launchNonce,
+      ]);
+      await this.executor.exec(stopInvocation.file, [...stopInvocation.args], {
+        env: { ...stopInvocation.env }, timeout: STOP_TIMEOUT_MS, maxBuffer: 32 * 1024,
+      });
     } catch {
       return await this.waitForStopped(before.identity, STOP_TIMEOUT_MS);
     }
@@ -143,6 +226,17 @@ export class WindowsJobSupervisor implements ProcessScopeSupervisor {
     } while (Date.now() <= deadline);
     return { state: "UNKNOWN", reason: "WINDOWS_JOB_STOP_TIMEOUT" };
   }
+}
+
+/** Разбирает только единственную строку phase protocol и закрытый набор native stages. */
+export function parseWindowsProcessScopeLaunchPhase(output: string): WindowsProcessScopeLaunchPhase {
+  const line = output.replace(/\r?\n$/u, "");
+  if (line.includes("\n") || line.includes("\r")) return "UNAVAILABLE";
+  const fields = line.split("\t");
+  if (fields.length !== 2 || fields[0] !== "PHASE") return "UNAVAILABLE";
+  return WINDOWS_PROCESS_SCOPE_LAUNCH_PHASES.includes(fields[1] as (typeof WINDOWS_PROCESS_SCOPE_LAUNCH_PHASES)[number])
+    ? fields[1] as (typeof WINDOWS_PROCESS_SCOPE_LAUNCH_PHASES)[number]
+    : "UNAVAILABLE";
 }
 
 function assertWindowsOwner(owner: ProcessScopeIdentity): void {
@@ -167,7 +261,7 @@ function isCredentialEnvironmentKey(key: string): boolean {
   return /(?:TOKEN|SECRET|PASSWORD|CREDENTIAL|API[_-]?KEY)/i.test(key);
 }
 
-function encodeMetadataFrame(request: ProcessScopeLaunchRequest): Buffer {
+function encodeMetadataFrame(request: ProcessScopeLaunchRequest, launchIdentity?: HermesLaunchTicketInput): Buffer {
   const strings = [request.executable, request.cwd, ...request.args];
   const pairs = Object.entries(request.environment);
   if (strings.length > 512 || pairs.length > 128) throw new TypeError("Windows process-scope metadata exceeds its bound.");
@@ -179,7 +273,7 @@ function encodeMetadataFrame(request: ProcessScopeLaunchRequest): Buffer {
     addU32(bytes.byteLength);
     pieces.push(bytes);
   };
-  addU32(0x45424231);
+  addU32(0x45424232);
   addU32(request.args.length);
   addU32(pairs.length);
   addString(request.executable);
@@ -190,9 +284,52 @@ function encodeMetadataFrame(request: ProcessScopeLaunchRequest): Buffer {
     addString(key);
     addString(value);
   }
+  addU32(launchIdentity ? 1 : 0);
+  if (launchIdentity) {
+    addString(launchIdentity.profileHome);
+    addString(launchIdentity.hermesExecutablePath);
+    addIdentity(launchIdentity.hermesExecutableIdentity);
+    addIdentity(launchIdentity.executableIdentity);
+    addIdentity(launchIdentity.profileHomeIdentity);
+    addString(launchIdentity.hermesSourceSnapshotKey);
+    addString(launchIdentity.hermesSourceSnapshotRoot);
+    addIdentity(launchIdentity.hermesSourceSnapshotRootIdentity);
+    addString(launchIdentity.hermesSourceManifestDigest);
+    addString(launchIdentity.hermesSourceProjectionPath);
+    addString(launchIdentity.hermesSourceProjectionSha256);
+    addU32(launchIdentity.hermesSourceProjectionSize);
+  }
   const result = Buffer.concat(pieces);
   if (result.byteLength > 256 * 1024) throw new TypeError("Windows process-scope metadata exceeds 256 KiB.");
   return result;
+
+  function addIdentity(identity: HermesLaunchObjectIdentity): void {
+    if (identity.platform !== "win32") throw new Error("WINDOWS_HERMES_LAUNCH_IDENTITY_REQUIRED");
+    addString(identity.volumeSerial);
+    addString(identity.fileId);
+  }
+}
+
+function consumeLaunchIdentity(
+  owner: ProcessScopeIdentity,
+  request: ProcessScopeLaunchRequest,
+): HermesLaunchTicketInput | undefined {
+  const requiresTicket = isHermesExecutable(request.executable);
+  if (!requiresTicket && !request.hermesLaunchTicket) return undefined;
+  const identity = consumeHermesLaunchTicket(request.hermesLaunchTicket, {
+    runId: owner.runId,
+    attempt: request.attempt === undefined ? -1 : request.attempt,
+    executable: request.executable,
+    args: request.args,
+    environment: request.environment,
+  });
+  if (identity.platform !== "win32") throw new Error("WINDOWS_HERMES_LAUNCH_PLATFORM_MISMATCH");
+  return identity;
+}
+
+function isHermesExecutable(executable: string): boolean {
+  const name = executable.split(/[\\/]/u).at(-1)?.toLocaleLowerCase("en-US");
+  return name === "hermes" || name === "hermes.exe";
 }
 
 function parseLiveIdentity(line: string, owner: ProcessScopeIdentity): ProcessScopeIdentity {
@@ -258,17 +395,99 @@ function stripHelperProtocol(result: ProcessResult): ProcessResult {
   };
 }
 
+function parseNativeHelperGateFailure(stderr: string): string | undefined {
+  const bounded = stderr.slice(-4_096);
+  for (const line of bounded.split(/\r?\n/u)) {
+    const match = /^NATIVE_HELPER_GATE_FAIL:([^:\r\n]+):([A-Za-z][A-Za-z0-9]*)$/u.exec(line);
+    if (!match || !SAFE_NATIVE_HELPER_GATE_EXCEPTION_TYPES.has(match[2]!)) continue;
+    const phase = normalizeNativeHelperGatePhase(match[1]!);
+    if (phase) return `WINDOWS_NATIVE_HELPER_GATE_FAILURE:${phase}`;
+  }
+  return undefined;
+}
+
+function normalizeNativeHelperGatePhase(phase: string): string | undefined {
+  const fixedPhases: Record<string, string> = {
+    "argument-decode": "ARGUMENT_DECODE",
+    "argument-json": "ARGUMENT_JSON",
+    "argument-validation": "ARGUMENT_VALIDATION",
+    "argument-type": "ARGUMENT_TYPE",
+    "argument-nul": "ARGUMENT_NUL",
+    "path-normalization": "PATH_NORMALIZATION",
+    "parent-directory-lock": "PARENT_DIRECTORY_LOCK",
+    "helper-file-lock": "HELPER_FILE_LOCK",
+    "integrity-check": "INTEGRITY_CHECK",
+    "process-start": "PROCESS_START",
+  };
+  const fixed = Object.prototype.hasOwnProperty.call(fixedPhases, phase) ? fixedPhases[phase] : undefined;
+  if (fixed) return fixed;
+  if (/^parent-directory-open-index-\d+-win32-\d+$/u.test(phase)) return "PARENT_DIRECTORY_OPEN";
+  if (/^parent-directory-check-win32-\d+$/u.test(phase)) return "PARENT_DIRECTORY_CHECK";
+  if (/^helper-file-open-win32-\d+$/u.test(phase)) return "HELPER_FILE_OPEN";
+  return undefined;
+}
+
 class HelperProtocol {
-  private buffered = "";
+  private buffered = Buffer.alloc(0);
+  private payloadStarted = false;
+  private payloadFailure: "CALLBACK" | "STREAM" | undefined;
+  private payloadTransportFailureQueued = false;
+  private payloadCallbacks = Promise.resolve();
   private readonly waiters: Array<{ prefix: string; resolve: (line: string) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }> = [];
 
-  constructor(stream: NodeJS.ReadableStream) {
-    stream.setEncoding("utf8");
-    stream.on("data", (chunk: string) => {
-      this.buffered += chunk;
+  constructor(
+    stream: NodeJS.ReadableStream,
+    private readonly onStdoutChunk?: (chunk: Uint8Array) => Promise<void>,
+    private readonly onPayloadError?: () => void,
+  ) {
+    stream.on("data", (chunk: Buffer | string) => {
+      const bytes = Buffer.from(chunk);
+      if (this.payloadStarted) {
+        const acceptedBeforeTransportFailure = !this.payloadTransportFailureQueued;
+        this.payloadCallbacks = this.payloadCallbacks.then(async () => {
+          if (acceptedBeforeTransportFailure && this.payloadFailure === undefined && this.onStdoutChunk) {
+            await this.onStdoutChunk(bytes);
+          }
+        }).catch(() => {
+          this.payloadFailure ??= "CALLBACK";
+          this.onPayloadError?.();
+        });
+        return;
+      }
+      this.buffered = Buffer.concat([this.buffered, bytes]);
+      if (this.buffered.byteLength > 64 * 1024) {
+        this.rejectAll("WINDOWS_HELPER_PROTOCOL_BUFFER_EXCEEDED");
+        return;
+      }
       this.flush();
     });
-    stream.on("error", () => this.rejectAll("WINDOWS_HELPER_CHANNEL_FAILED"));
+    stream.on("error", () => {
+      if (!this.payloadStarted) {
+        this.rejectAll("WINDOWS_HELPER_CHANNEL_FAILED");
+        return;
+      }
+      if (this.payloadTransportFailureQueued) return;
+      this.payloadTransportFailureQueued = true;
+      this.onPayloadError?.();
+      this.payloadCallbacks = this.payloadCallbacks.then(() => {
+        this.payloadFailure ??= "STREAM";
+      });
+    });
+  }
+
+  beginPayload(): void {
+    if (this.buffered.byteLength !== 0) throw new Error("WINDOWS_HELPER_UNEXPECTED_PRELAUNCH_OUTPUT");
+    this.payloadStarted = true;
+  }
+
+  async drainPayload(): Promise<void> {
+    let observed: Promise<void>;
+    do {
+      observed = this.payloadCallbacks;
+      await observed;
+    } while (observed !== this.payloadCallbacks);
+    if (this.payloadFailure === "STREAM") throw new Error("WINDOWS_HELPER_PAYLOAD_STREAM_FAILED");
+    if (this.payloadFailure === "CALLBACK") throw new Error("WINDOWS_HELPER_PAYLOAD_CALLBACK_FAILED");
   }
 
   nextLine(prefix: string, timeoutMs: number): Promise<string> {
@@ -276,7 +495,10 @@ class HelperProtocol {
       const timer = setTimeout(() => {
         const index = this.waiters.findIndex((waiter) => waiter.resolve === resolve);
         if (index >= 0) this.waiters.splice(index, 1);
-        reject(new Error("WINDOWS_HELPER_HANDSHAKE_TIMEOUT"));
+        const stage = prefix === "EBB_HELPER_READY" || prefix === "EBB_SCOPE_READY" ? prefix : undefined;
+        reject(new Error(stage
+          ? `WINDOWS_HELPER_HANDSHAKE_TIMEOUT:${stage}`
+          : "WINDOWS_HELPER_HANDSHAKE_TIMEOUT"));
       }, timeoutMs);
       this.waiters.push({ prefix, resolve, reject, timer });
       this.flush();
@@ -286,11 +508,20 @@ class HelperProtocol {
   private flush(): void {
     for (let index = 0; index < this.waiters.length; index += 1) {
       const waiter = this.waiters[index]!;
-      const newline = this.buffered.indexOf("\n");
+      const newline = this.buffered.indexOf(0x0a);
       if (newline < 0) return;
-      const line = this.buffered.slice(0, newline).replace(/\r$/, "");
+      const bytes = this.buffered.subarray(0, newline);
+      const line = bytes[bytes.byteLength - 1] === 0x0d
+        ? bytes.subarray(0, bytes.byteLength - 1).toString("utf8")
+        : bytes.toString("utf8");
+      if (line.startsWith("UNKNOWN\t")) {
+        const code = line.slice("UNKNOWN\t".length);
+        const safeCode = SAFE_NATIVE_HELPER_FAILURE_CODES.has(code) ? code : "INVALID_CODE";
+        this.rejectAll(`WINDOWS_HELPER_NATIVE_UNKNOWN:${safeCode}`);
+        return;
+      }
       if (!line.startsWith(waiter.prefix)) continue;
-      this.buffered = this.buffered.slice(newline + 1);
+      this.buffered = this.buffered.subarray(newline + 1);
       this.waiters.splice(index, 1);
       clearTimeout(waiter.timer);
       waiter.resolve(line);

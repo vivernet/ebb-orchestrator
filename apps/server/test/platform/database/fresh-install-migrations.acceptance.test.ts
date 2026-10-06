@@ -18,15 +18,16 @@ describe("fresh-install migration acceptance", () => {
     if (tmpDir) await rm(tmpDir, { recursive: true, force: true });
   });
 
-  it("applies migrations 001-039 and gives new process owners an UNBOUND capture state", async () => {
+  it("applies migrations 001-040 with UNBOUND capture state and a nullable exact source key", async () => {
     tmpDir = await mkdtemp(join(tmpdir(), "ebb-fresh-install-migrations-"));
     db = createSqliteDatabase(join(tmpDir, `fresh-${randomUUID()}.sqlite`));
     const migrations = loadTestMigrations();
-    const expectedVersions = Array.from({ length: 39 }, (_, index) => index + 1);
+    const expectedVersions = Array.from({ length: 40 }, (_, index) => index + 1);
 
     expect(migrations.map(({ version }) => version)).toEqual(expectedVersions);
-    expect(migrations.at(-1)?.name).toBe("039_run_session_capture_state");
-    expect(runMigrations(db, migrations).applied).toBe(39);
+    expect(migrations.at(-2)?.name).toBe("039_run_session_capture_state");
+    expect(migrations.at(-1)?.name).toBe("040_run_hermes_source_snapshot");
+    expect(runMigrations(db, migrations).applied).toBe(40);
     expect(db.all<{ version: number; name: string }>(
       "SELECT version, name FROM schema_migrations ORDER BY version",
     )).toEqual(migrations.map(({ version, name }) => ({ version, name })));
@@ -43,6 +44,9 @@ describe("fresh-install migration acceptance", () => {
       notnull: 1,
       dflt_value: "'UNBOUND'",
     });
+    expect(db.all("PRAGMA table_info(run_process_owners)")).toContainEqual(expect.objectContaining({
+      name: "hermes_source_snapshot_key", type: "TEXT", notnull: 0, dflt_value: null,
+    }));
     const ownerSchema = db.get<{ sql: string }>(
       "SELECT sql FROM sqlite_master WHERE type='table' AND name='run_process_owners'",
     )?.sql;
@@ -62,6 +66,15 @@ describe("fresh-install migration acceptance", () => {
     expect(db.get<{ capture_state: string }>(
       "SELECT capture_state FROM run_process_owners WHERE run_id='fresh-run'",
     )).toEqual({ capture_state: "UNBOUND" });
+    expect(db.get("SELECT hermes_source_snapshot_key FROM run_process_owners WHERE run_id='fresh-run'"))
+      .toEqual({ hermes_source_snapshot_key: null });
+    const sourceKey = JSON.stringify({
+      formatVersion: 1, hermesVersion: "fixture-version", manifestDigest: "a".repeat(64),
+      sourceCommit: "b".repeat(40), sourceTree: "c".repeat(40),
+    });
+    db.run("UPDATE run_process_owners SET hermes_source_snapshot_key=$sourceKey WHERE run_id='fresh-run'", { sourceKey });
+    expect(db.get("SELECT hermes_source_snapshot_key FROM run_process_owners WHERE run_id='fresh-run'"))
+      .toEqual({ hermes_source_snapshot_key: sourceKey });
     expect(() => db!.run(
       "UPDATE run_process_owners SET capture_state='UNRECOGNIZED' WHERE run_id='fresh-run'",
     )).toThrow(/CHECK constraint failed/i);

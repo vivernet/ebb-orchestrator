@@ -4,6 +4,10 @@
 
 import type { AgentRun } from "@ebb-orchestrator/contracts";
 import type { RunOutcome } from "./run-types.js";
+import type { HermesRunSelection, HermesRunSelectionPreflight } from "./hermes/hermes-run-selection.js";
+
+/** AgentRun plus its non-persisted selection for this initial, already-preflighted launch. */
+export type AgentRuntimeRun = AgentRun & { readonly hermesSelection?: HermesRunSelection };
 
 export interface AgentRuntime {
   /**
@@ -22,7 +26,10 @@ export interface AgentRuntime {
   /**
     * запускать Объект новый run с Объект указанного options.
     */
-  startRun(run: AgentRun): Promise<void>;
+  startRun(run: AgentRuntimeRun): Promise<void>;
+
+  /** Creates and verifies the exact native Hermes profile before a SQLite transaction begins. */
+  prepareHermesRunSelection?(runId: string): Promise<HermesRunSelectionPreflight>;
 
   /**
    * Возобновление a run that was paused.

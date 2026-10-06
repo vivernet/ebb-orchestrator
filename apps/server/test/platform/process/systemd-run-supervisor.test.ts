@@ -1,10 +1,12 @@
 import { PassThrough, Writable } from "node:stream";
+import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ProcessExecutor,
   type ProcessOptions,
   type ProcessResult,
   type ProcessSession,
+  type ProcessSessionOptions,
 } from "../../../src/platform/process/process-executor.js";
 import {
   SystemdRunSupervisor,
@@ -14,12 +16,14 @@ import type {
   SystemdScopeSnapshot,
 } from "../../../src/platform/process/process-inspector.js";
 import type { ProcessScopeLaunchRequest } from "../../../src/platform/process/run-scope-supervisor.js";
+import { createHermesLaunchTicket } from "../../../src/modules/runtime/hermes/hermes-launch-ticket.js";
 
 class FakeProcessExecutor extends ProcessExecutor {
   readonly execCalls: Array<{ file: string; args: string[]; options: ProcessOptions }> = [];
-  sessionCall: { file: string; args: string[]; options: ProcessOptions; session: ProcessSession } | undefined;
+  sessionCall: { file: string; args: string[]; options: ProcessSessionOptions; session: ProcessSession } | undefined;
   sessionWrites: Buffer[] = [];
   private resolveCompletion: ((result: ProcessResult) => void) | undefined;
+  private rejectCompletion: ((error: Error) => void) | undefined;
   onExec: ((file: string, args: string[]) => ProcessResult | Error | void) | undefined;
 
   override async exec(file: string, args: string[], options: ProcessOptions = {}): Promise<ProcessResult> {
@@ -30,7 +34,7 @@ class FakeProcessExecutor extends ProcessExecutor {
     return { exitCode: 0, stdout: "", stderr: "" };
   }
 
-  override startSession(file: string, args: string[], options: ProcessOptions = {}): ProcessSession {
+  override startSession(file: string, args: string[], options: ProcessSessionOptions = {}): ProcessSession {
     const stdin = new Writable({
       write: (chunk: Buffer | string, _encoding, callback) => {
         this.sessionWrites.push(Buffer.isBuffer(chunk) ? Buffer.from(chunk) : Buffer.from(chunk));
@@ -39,7 +43,10 @@ class FakeProcessExecutor extends ProcessExecutor {
     });
     const stdout = new PassThrough();
     const stderr = new PassThrough();
-    const completion = new Promise<ProcessResult>((resolve) => { this.resolveCompletion = resolve; });
+    const completion = new Promise<ProcessResult>((resolve, reject) => {
+      this.resolveCompletion = resolve;
+      this.rejectCompletion = reject;
+    });
     const session: ProcessSession = { stdin, stdout, stderr, completion, terminate: () => undefined };
     this.sessionCall = { file, args: [...args], options, session };
     return session;
@@ -48,6 +55,16 @@ class FakeProcessExecutor extends ProcessExecutor {
   finish(result: ProcessResult = { exitCode: 0, stdout: "dummy stdout", stderr: "" }): void {
     this.resolveCompletion?.(result);
   }
+
+  fail(error: Error): void {
+    this.rejectCompletion?.(error);
+  }
+}
+
+function deferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolvePromise) => { resolve = resolvePromise; });
+  return { promise, resolve };
 }
 
 const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
@@ -197,6 +214,182 @@ describe("SystemdRunSupervisor", () => {
     unitState = "absent";
     executor.finish();
     await expect(handle.completion).resolves.toMatchObject({ exitCode: 0, stdout: "dummy stdout" });
+  });
+
+  it("routes a ticketed Linux Hermes run through the pinned native launcher and verifies its digest in the wrapper", async () => {
+    const runId = "123e4567-e89b-42d3-a456-426614174000";
+    const profileHome = `/home/test-user/.hermes/profiles/ebb-orchestrator-run-${runId}`;
+    const pythonPath = "/opt/hermes/venv/bin/python";
+    const argsPrefix = ["-I", "-B", "-S", "-c", "pinned-hermes-bootstrap"];
+    const hermesSourceSnapshotKey = JSON.stringify({
+      formatVersion: 1,
+      hermesVersion: "v0.21.5+7357.g9244275",
+      manifestDigest: "a".repeat(64),
+      sourceCommit: "b".repeat(40),
+      sourceTree: "c".repeat(40),
+    });
+    const sourceSnapshotDirectoryId = createHash("sha256").update(hermesSourceSnapshotKey).digest("hex");
+    const sourceSnapshotRoot = `/var/lib/ebb/runtime/hermes/source-snapshots/${sourceSnapshotDirectoryId}`;
+    const ticket = createHermesLaunchTicket({
+      runId,
+      attempt: 0,
+      platform: "linux",
+      hermesExecutablePath: "/opt/hermes/bin/hermes",
+      hermesExecutableIdentity: { platform: "linux", device: "8", inode: "10" },
+      executablePath: pythonPath,
+      executableIdentity: { platform: "linux", device: "8", inode: "11" },
+      executableArgsPrefix: argsPrefix,
+      profileHome,
+      profileHomeIdentity: { platform: "linux", device: "8", inode: "12" },
+      hermesSourceSnapshotKey,
+      hermesSourceSnapshotRoot: sourceSnapshotRoot,
+      hermesSourceSnapshotRootIdentity: { platform: "linux", device: "8", inode: "13" },
+      hermesSourceManifestDigest: "a".repeat(64),
+      hermesSourceProjectionPath: `${sourceSnapshotRoot}.native-v1.bin`,
+      hermesSourceProjectionSha256: "d".repeat(64),
+      hermesSourceProjectionSize: 128,
+      environment: {
+        HERMES_HOME: profileHome,
+        HOME: `${profileHome}/home`,
+        HERMES_CONFIG: `${profileHome}/config.yaml`,
+      },
+    });
+    const hermesRequest: ProcessScopeLaunchRequest = {
+      ...launchRequest,
+      attempt: 0,
+      executable: pythonPath,
+      args: [...argsPrefix, "chat", "--query-file", "/tmp/request.md", "--source", runId],
+      environment: {
+        HERMES_HOME: profileHome,
+        HOME: `${profileHome}/home`,
+        HERMES_CONFIG: `${profileHome}/config.yaml`,
+      },
+      hermesLaunchTicket: ticket,
+    };
+    const launchNonce = "c".repeat(64);
+    const hermesOwner = { ...owner, runId, launchNonce };
+    const nativeHelperDigest = "d".repeat(64);
+    const helperPath = "/server/dist/native/linux-hermes-launcher/ebb-linux-hermes-launcher";
+    const digestLoader = vi.fn(async () => nativeHelperDigest);
+    supervisor = new SystemdRunSupervisor(executor, {
+      linuxHermesLauncherPath: helperPath,
+      loadLinuxHermesLauncherDigest: digestLoader,
+    });
+    vi.spyOn(supervisor as unknown as { assertNativePrerequisites(): Promise<void> }, "assertNativePrerequisites")
+      .mockResolvedValue();
+    vi.spyOn(supervisor as unknown as {
+      readSnapshot(owner: ProcessScopeIdentity, unitName: string, recordedGroup: string | null): Promise<SystemdScopeSnapshot>;
+    }, "readSnapshot").mockImplementation(async (_owner, _unitName, recordedGroup) =>
+      unitState === "live"
+        ? { ...liveSnapshot(), description: `ebb-orchestrator:${hermesOwner.launchNonce}` }
+        : absentSnapshot(recordedGroup));
+    unitState = "live";
+
+    const handle = await supervisor.launch(hermesOwner, hermesRequest, async () => undefined);
+
+    const call = executor.sessionCall;
+    expect(digestLoader).toHaveBeenCalledOnce();
+    expect(call?.args).toContain(helperPath);
+    expect(call?.args).toContain("--verified-linux-hermes-helper");
+    expect(call?.args).toContain(nativeHelperDigest);
+      expect(call?.args).toContain("--run-hermes");
+      expect(call?.args).toContain(runId);
+      expect(call?.args).toContain(launchNonce);
+      expect(call?.args).toContain(profileHome);
+      expect(call?.args).toContain(sourceSnapshotRoot);
+      expect(call?.args).toContain("13");
+      expect(call?.args).toContain(`${sourceSnapshotRoot}.native-v1.bin`);
+      expect(call?.args).toContain("d".repeat(64));
+      expect(call?.args).toContain("128");
+      expect(call?.args).toContain(hermesSourceSnapshotKey);
+    expect(call?.args).toContain("12");
+    expect(call?.args).toContain(pythonPath);
+    expect(call?.args).toContain("11");
+    expect(call?.args).toContain("pinned-hermes-bootstrap");
+    expect(call?.args).toContain("/opt/hermes/bin/hermes");
+    expect(call?.args.join(" ")).toContain("/proc/self/fd/3");
+    expect(call?.args.join(" ")).toContain("openSync");
+    expect(call?.args.join(" ")).toContain("createHash");
+    expect(call?.options.env).not.toHaveProperty("SECRET_CANARY_IN_PARENT");
+
+    unitState = "absent";
+    executor.finish();
+    await expect(handle.completion).resolves.toMatchObject({ exitCode: 0 });
+  });
+
+  it("forwards live payload chunks and suppresses all process output from its completion result", async () => {
+    const chunks: string[] = [];
+    const handle = await supervisor.launch(owner, {
+      ...launchRequest,
+      captureOutput: false,
+      onStdoutChunk: async (chunk) => { chunks.push(Buffer.from(chunk).toString("utf8")); },
+    }, async () => undefined);
+    const payload = '{"type":"system","subtype":"init","session_id":"session-live"}\n';
+    (executor.sessionCall?.session.stdout as PassThrough | undefined)?.write(Buffer.from(payload).subarray(0, 19));
+    (executor.sessionCall?.session.stdout as PassThrough | undefined)?.write(Buffer.from(payload).subarray(19));
+
+    unitState = "absent";
+    executor.finish({ exitCode: 0, stdout: payload, stderr: "private diagnostic" });
+    const result = await handle.completion;
+
+    expect(chunks.join("")).toBe(payload);
+    expect(result).toEqual({ exitCode: 0, stdout: "", stderr: "" });
+    expect(executor.sessionCall?.options.captureOutput).toBe(false);
+  });
+
+  it("rejects and stops the exact scope when stdout errors after a successful init callback", async () => {
+    const payload = '{"type":"system","subtype":"init","session_id":"session-before-error"}\n';
+    const executor = new FakeProcessExecutor();
+    const supervisor = new SystemdRunSupervisor(executor);
+    vi.spyOn(supervisor as unknown as { assertNativePrerequisites(): Promise<void> }, "assertNativePrerequisites")
+      .mockResolvedValue();
+    vi.spyOn(supervisor as unknown as {
+      readSnapshot(owner: ProcessScopeIdentity, unitName: string, recordedGroup: string | null): Promise<SystemdScopeSnapshot>;
+    }, "readSnapshot").mockImplementation(async (_owner, _unitName, recordedGroup) =>
+      unitState === "live" ? liveSnapshot() : absentSnapshot(recordedGroup));
+    executor.onExec = (file, args) => {
+      if (file === "systemctl" && args.includes("stop")) unitState = "absent";
+    };
+    const callbackDone = deferred();
+    const chunks: string[] = [];
+    const handle = await supervisor.launch(owner, {
+      ...launchRequest,
+      onStdoutChunk: async (chunk) => { chunks.push(Buffer.from(chunk).toString("utf8")); callbackDone.resolve(); },
+    }, async () => undefined);
+    const stdout = executor.sessionCall?.session.stdout as PassThrough;
+    stdout.write(payload);
+    await callbackDone.promise;
+    let escapedStreamError = false;
+    try { stdout.emit("error", new Error("injected stdout transport failure")); }
+    catch { escapedStreamError = true; }
+    executor.finish();
+
+    await expect(handle.completion).rejects.toThrow("SYSTEMD_PROCESS_STDOUT_FAILED");
+    expect(escapedStreamError).toBe(false);
+    expect(chunks.join("")).toBe(payload);
+    expect(executor.execCalls.some((call) => call.file === "systemctl" && call.args.includes("stop"))).toBe(true);
+    expect(unitState).toBe("absent");
+  });
+
+  it("drains a deferred stdout callback before rejecting completion", async () => {
+    const entered = deferred();
+    const release = deferred();
+    const handle = await supervisor.launch(owner, {
+      ...launchRequest,
+      onStdoutChunk: async () => { entered.resolve(); await release.promise; },
+    }, async () => undefined);
+    (executor.sessionCall?.session.stdout as PassThrough).write("queued payload");
+    await entered.promise;
+    executor.fail(new Error("injected wrapper completion failure"));
+    let settled = false;
+    const settledCompletion = handle.completion.then(() => { settled = true; }, () => { settled = true; });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(settled).toBe(false);
+
+    release.resolve();
+    await settledCompletion;
+    expect(settled).toBe(true);
+    expect(unitState).toBe("absent");
   });
 
   it("exec-replaces env with only explicit Hermes allowlist variables before starting the wrapper", async () => {

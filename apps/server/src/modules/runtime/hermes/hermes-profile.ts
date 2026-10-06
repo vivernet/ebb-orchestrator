@@ -93,16 +93,24 @@ export interface GenerateConfigOptions {
   resultFile?: string;
   mcpCommand?: string;
   mcpArgs?: string[];
+  /** Только bounded не-secret provider/model projection из pinned Hermes config. */
+  providerSelection?: { providerId: string; modelId: string };
 }
 
 /**
  * Формирует config.yaml content for Hermes runtime.
  *
- * Этот creates a minimal config with only Orchestrator-managed settings:
+ * Этот creates a minimal config with Orchestrator-managed settings and the exact
+ * provider/model pair already selected by the bounded Hermes-native projection:
  * - MCP server definition referencing ebb-orchestrator-mcp
  * - Terminal configuration with home_mode: profile
  */
 export function generateConfigYaml(options: GenerateConfigOptions): string {
+  if (options.providerSelection &&
+      (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(options.providerSelection.providerId) ||
+       !/^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,255}$/u.test(options.providerSelection.modelId))) {
+    throw new Error("HERMES_RUN_SELECTION_INVALID");
+  }
   const { toolsetPath, resultFile } = options;
   const defaultLauncher = defaultMcpLauncher();
   const mcpCommand = options.mcpCommand && options.mcpCommand !== "ebb-orchestrator-mcp"
@@ -123,6 +131,11 @@ export function generateConfigYaml(options: GenerateConfigOptions): string {
     ...executableArgs.map((arg) => `      - ${yamlString(arg)}`),
     "terminal:",
     "  home_mode: profile",
+    ...(options.providerSelection ? [
+      "model:",
+      `  provider: ${yamlString(options.providerSelection.providerId)}`,
+      `  default: ${yamlString(options.providerSelection.modelId)}`,
+    ] : []),
     "",
   ].join("\n");
 

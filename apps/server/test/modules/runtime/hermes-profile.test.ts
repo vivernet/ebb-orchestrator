@@ -159,6 +159,18 @@ describe("Hermes profile isolation", () => {
       expect(config).toContain("home_mode: profile");
     });
 
+    it("writes only the bounded selected Hermes provider and model into the fresh profile", () => {
+      const config = generateConfigYaml({
+        capability: { role: "Developer", workspace: "/test/workspace" },
+        toolsetPath: "/test/toolset",
+        providerSelection: { providerId: "openai-codex", modelId: "gpt-5.6-codex" },
+      });
+
+      expect(config).toContain("model:\n  provider: \"openai-codex\"\n  default: \"gpt-5.6-codex\"");
+      expect(config).not.toContain("auth.json");
+      expect(config).not.toContain("api_key");
+    });
+
     it("does not read a legacy Ebb provider bridge setting into Hermes profile configuration", () => {
       const config = generateConfigYaml(Object.assign({
         capability: { role: "Developer", workspace: "/test/workspace" },

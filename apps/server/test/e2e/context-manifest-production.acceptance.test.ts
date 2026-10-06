@@ -7,7 +7,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentRuntime } from "../../src/modules/runtime/agent-runtime.js";
 import type { AgentRun } from "@ebb-orchestrator/contracts";
 import type { RunOutcome } from "../../src/modules/runtime/run-types.js";
+import type { AgentRuntimeRun } from "../../src/modules/runtime/agent-runtime.js";
 import { RunService, createRunContextInput, taskDeveloperPrompt } from "../../src/modules/runtime/run-service.js";
+import { HERMES_PROVIDER_SELECTION_SOURCE } from "../../src/modules/runtime/hermes/hermes-provider-selection.js";
+import type { HermesRunSelection } from "../../src/modules/runtime/hermes/hermes-run-selection.js";
 import { RunContextAssembler } from "../../src/modules/runtime/run-context-assembler.js";
 import { digestRunPromptBytesV1 } from "../../src/modules/context/context-provenance.js";
 import { createApp } from "../../src/app/create-app.js";
@@ -23,6 +26,14 @@ import { createTestAuthService, TEST_COOKIE, TEST_CSRF_TOKEN } from "../helpers/
 import { WorkflowEngine } from "../../src/modules/workflow/workflow-engine.js";
 import { WorkflowRegistry } from "../../src/modules/workflow/workflow-registry.js";
 import { templates } from "../../src/modules/workflow/templates.js";
+
+const hermesSourceSnapshotKey = JSON.stringify({
+  formatVersion: 1,
+  hermesVersion: HERMES_PROVIDER_SELECTION_SOURCE.version,
+  manifestDigest: "c".repeat(64),
+  sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit,
+  sourceTree: "d".repeat(40),
+});
 import { PlanningService } from "../../src/modules/planning/planning-service.js";
 import { EpicOrchestrator, type IntegrationServiceFactoryContext } from "../../src/modules/planning/epic-orchestrator.js";
 import { DatabaseCompletionStore } from "../../src/modules/execution/mcp/submit-result-tool.js";
@@ -216,9 +227,80 @@ describe("production context manifest acceptance", () => {
     )).toMatchObject({ processed_at: null, attempts: 1 });
   });
 
+  it("uses a non-provider Hermes selection seam to hold Task, Event, and Epic producers before durable writes", async () => {
+    const fixture = setup();
+    await fixture.app.close();
+    app = undefined;
+    const runtime = new HermesSelectionMatrixRuntime(db!);
+    const harness = createHermesProducerHarness(runtime);
+    addTaskFixture(db!, root, workspace, "task-event-hermes-preflight");
+
+    const taskGate = runtime.gateNextPreflight();
+    const taskResponsePromise = harness.app.inject({
+      method: "POST", url: "/api/v1/tasks/task-acceptance/dispatch",
+      headers: { cookie: TEST_COOKIE, origin: "http://127.0.0.1:3000", "x-csrf-token": TEST_CSRF_TOKEN },
+    });
+    const taskRunId = await taskGate.entered;
+    assertNoRunProducerWrites(db!, runtime, taskRunId);
+    taskGate.release();
+    const taskResponse = await taskResponsePromise;
+    expect(taskResponse.statusCode, taskResponse.body).toBe(202);
+    await vi.waitFor(() => expect(db!.get<{ status: string }>(
+      "SELECT status FROM agent_runs WHERE id=$runId", { runId: taskRunId },
+    )).toEqual({ status: "COMPLETED" }));
+    expect(db!.get<{ model: string }>("SELECT model FROM agent_runs WHERE id=$runId", { runId: taskRunId }))
+      .toEqual({ model: runtime.selectionFor(taskRunId).modelId });
+    harness.scheduler.releaseTask("task-acceptance", 0);
+
+    const eventPath = createEventPath(runtime);
+    db!.run("UPDATE outbox_events SET processed_at=$now WHERE processed_at IS NULL", { now: new Date().toISOString() });
+    db!.transaction((tx) => appendOutboxEvent(tx, DomainEvent.create({
+      type: "AgentRunRequested", aggregateType: "TASK", aggregateId: "task-event-hermes-preflight",
+      payload: { role: "developer", model: "caller-model" },
+    })));
+    const eventGate = runtime.gateNextPreflight();
+    const eventDispatchPromise = eventPath.runtimeOrchestrator.dispatchPendingEvents(1);
+    const eventRunId = await eventGate.entered;
+    assertNoRunProducerWrites(db!, runtime, eventRunId);
+    eventGate.release();
+    await expect(eventDispatchPromise).resolves.toBe(1);
+    expect(db!.get<{ model: string }>("SELECT model FROM agent_runs WHERE id=$runId", { runId: eventRunId }))
+      .toEqual({ model: runtime.selectionFor(eventRunId).modelId });
+    expect(db!.get<{ processed_at: string | null }>(
+      "SELECT processed_at FROM outbox_events WHERE aggregate_id='task-event-hermes-preflight' AND type='AgentRunRequested'",
+    )?.processed_at).toBeTruthy();
+    eventPath.dispatchSpy.mockRestore();
+
+    const planResponse = await harness.app.inject({
+      method: "POST", url: "/api/v1/projects/project-acceptance/epics/plans",
+      headers: { cookie: TEST_COOKIE, origin: "http://127.0.0.1:3000", "x-csrf-token": TEST_CSRF_TOKEN },
+      payload: {
+        epic: { title: "Hermes preflight Epic", goal: "Exercise the production Epic producer" },
+        tasks: [{ ref: "task_preflight", title: "Preflight Task", goal: "Run the approved child phase", role: "developer", workflow: "standard", acceptanceCriteria: ["Run is preflight-bound"] }],
+      },
+    });
+    expect(planResponse.statusCode, planResponse.body).toBe(201);
+    const planId = (planResponse.json() as { plan: { id: string } }).plan.id;
+    const epicGate = runtime.gateNextPreflight();
+    const approvalPromise = harness.app.inject({
+      method: "POST", url: `/api/v1/projects/project-acceptance/epics/plans/${planId}/approve-run`,
+      headers: { cookie: TEST_COOKIE, origin: "http://127.0.0.1:3000", "x-csrf-token": TEST_CSRF_TOKEN }, payload: {},
+    });
+    const epicRunId = await epicGate.entered;
+    assertNoRunProducerWrites(db!, runtime, epicRunId);
+    epicGate.release();
+    const approvalResponse = await approvalPromise;
+    expect(approvalResponse.statusCode, approvalResponse.body).toBe(200);
+    expect(db!.get<{ model: string }>("SELECT model FROM agent_runs WHERE id=$runId", { runId: epicRunId }))
+      .toEqual({ model: runtime.selectionFor(epicRunId).modelId });
+    expect(db!.all("SELECT run_id FROM context_manifests WHERE run_id=$runId", { runId: epicRunId })).toHaveLength(1);
+    expect(db!.get<{ state: string }>("SELECT state FROM run_process_owners WHERE run_id=$runId", { runId: epicRunId }))
+      .toEqual({ state: "STOPPED" });
+  });
+
   it("binds source-backed Task, approved Epic and Request producers to persisted context manifests", async () => {
     const fixture = setup();
-    const runtime = new MatrixRuntime(db!);
+    const runtime = new HermesSelectionMatrixRuntime(db!);
     const runService = new RunService(db!, runtime);
     await fixture.app.close();
     const scheduler = new SchedulerService(db!);
@@ -234,6 +316,7 @@ describe("production context manifest acceptance", () => {
       if (typeof runId !== "string") throw new Error("Task route dispatch requires a prepared Run ID");
       const role = typeof options === "object" ? options.role : undefined;
       if (typeof role !== "string") throw new Error("Task route dispatch requires a role");
+      assertHermesSelectionDurableBeforeDispatch(db!, runtime, runId);
       expect(db!.get<{ subject_type: string; task_id: string | null; role: string }>(
         "SELECT subject_type,task_id,role FROM context_manifests WHERE run_id=$runId", { runId },
       )).toEqual({ subject_type: "TASK", task_id: taskId, role });
@@ -252,6 +335,16 @@ describe("production context manifest acceptance", () => {
     for (const template of Object.values(templates)) workflowRegistry.register(template);
     const workflow = new WorkflowEngine(db!, workflowRegistry);
     const planning = new PlanningService(db!);
+    vi.spyOn(scheduler, "dispatchTask").mockImplementation((taskId, engine, callback, options) => {
+      const runId = typeof options === "object" && options !== null ? options.runId : undefined;
+      if (typeof runId === "string") assertHermesSelectionDurableBeforeDispatch(db!, runtime, runId);
+      return SchedulerService.prototype.dispatchTask.call(scheduler, taskId, engine, callback, options);
+    });
+    vi.spyOn(scheduler, "dispatchAgentRun").mockImplementation((runId, projectId, role, model, resourceKey, options) => {
+      assertHermesSelectionDurableBeforeDispatch(db!, runtime, runId);
+      expect(model).toBe(runtime.selectionFor(runId).modelId);
+      return SchedulerService.prototype.dispatchAgentRun.call(scheduler, runId, projectId, role, model, resourceKey, options);
+    });
     const integrationAttempts: IntegrationAttempt[] = [];
     const epicOrchestrator = new EpicOrchestrator(
       db!, workflow, planning, runService, {} as never, scheduler,
@@ -579,8 +672,40 @@ describe("production context manifest acceptance", () => {
     } as const;
   }
 
-  function createEventPath() {
-    const runtime = new MatrixRuntime(db!);
+  function createHermesProducerHarness(runtime: HermesSelectionMatrixRuntime) {
+    const runService = new RunService(db!, runtime);
+    const scheduler = new SchedulerService(db!);
+    vi.spyOn(scheduler, "dispatchTask").mockImplementation((taskId, engine, callback, options) => {
+      const runId = typeof options === "object" && options !== null ? options.runId : undefined;
+      if (typeof runId === "string") assertHermesSelectionDurableBeforeDispatch(db!, runtime, runId);
+      return SchedulerService.prototype.dispatchTask.call(scheduler, taskId, engine, callback, options);
+    });
+    vi.spyOn(scheduler, "dispatchAgentRun").mockImplementation((runId, projectId, role, model, resourceKey, options) => {
+      assertHermesSelectionDurableBeforeDispatch(db!, runtime, runId);
+      expect(model).toBe(runtime.selectionFor(runId).modelId);
+      return SchedulerService.prototype.dispatchAgentRun.call(scheduler, runId, projectId, role, model, resourceKey, options);
+    });
+    const registry = new WorkflowRegistry();
+    for (const template of Object.values(templates)) registry.register(template);
+    const workflow = new WorkflowEngine(db!, registry);
+    const planning = new PlanningService(db!);
+    const integrationAttempts: IntegrationAttempt[] = [];
+    const epicOrchestrator = new EpicOrchestrator(db!, workflow, planning, runService, {} as never, scheduler, {
+      integrationServiceFactory: (context) => createMatrixIntegrationService(db!, root, context, integrationAttempts),
+      integrationWorktreeRoot: join(root, "integration-worktrees"),
+      epicWorkspaceProvisioner: new EpicWorkspaceProvisioner({ database: db!, worktreeDir: join(root, "epic-worktrees") }),
+      taskWorkspaceProvisioner: new TaskWorkspaceProvisioner({
+        database: db!, worktreeManager: new WorktreeManager({ db: db!, worktreeDir: join(root, "task-worktrees") }),
+      }),
+    });
+    const producerApp = createApp({
+      db: db!, scheduler, runService, runtime, epicOrchestrator, authService: createTestAuthService(),
+    });
+    app = producerApp;
+    return { app: producerApp, runService, scheduler, epicOrchestrator };
+  }
+
+  function createEventPath(runtime = new HermesSelectionMatrixRuntime(db!)) {
     const runService = new RunService(db!, runtime);
     const scheduler = new SchedulerService(db!);
     const dispatchSpy = vi.spyOn(scheduler, "dispatchTask").mockImplementation((taskId, engine, callback, options) => {
@@ -588,6 +713,7 @@ describe("production context manifest acceptance", () => {
       const role = typeof options === "object" && options !== null ? options.role : undefined;
       if (typeof runId !== "string") throw new Error("Event dispatch requires a prepared Run ID");
       if (typeof role !== "string") throw new Error("Event dispatch requires a role");
+      assertHermesSelectionDurableBeforeDispatch(db!, runtime, runId);
       const manifests = db!.all<{ run_id: string; subject_type: string; task_id: string | null; role: string }>(
         "SELECT run_id,subject_type,task_id,role FROM context_manifests WHERE run_id=$runId", { runId },
       );
@@ -596,7 +722,7 @@ describe("production context manifest acceptance", () => {
         "SELECT run_id,source_tag,state FROM run_process_owners WHERE run_id=$runId", { runId },
       );
       expect(owners).toEqual([{ run_id: runId, source_tag: `ebb-run:${runId}`, state: "PREPARED" }]);
-      expect(runtimeStarts).toBe(0);
+      expect(runtime.producerEvents.some((event) => event.kind === "launch" && event.runId === runId)).toBe(false);
       return SchedulerService.prototype.dispatchTask.call(scheduler, taskId, engine, callback, options);
     });
     const registry = new WorkflowRegistry();
@@ -702,6 +828,106 @@ class MatrixRuntime implements AgentRuntime {
       evidence: ["Acceptance runtime submitted evidence for the persisted attempt"],
     };
   }
+}
+
+/** Test-only preflight seam; it does not exercise provider acceptance, read credentials, create a profile, or launch an OS process. */
+class HermesSelectionMatrixRuntime extends MatrixRuntime {
+  readonly producerEvents: Array<{ kind: "preflight" | "dispatch" | "launch"; runId: string }> = [];
+  private readonly selections = new Map<string, HermesRunSelection>();
+  private nextPreflightGate: {
+    entered(runId: string): void;
+    wait: Promise<void>;
+  } | undefined;
+
+  constructor(private readonly selectionDatabase: Database) {
+    super(selectionDatabase);
+  }
+
+  gateNextPreflight(): { entered: Promise<string>; release(): void } {
+    let notifyEntered!: (runId: string) => void;
+    let release!: () => void;
+    const entered = new Promise<string>((resolve) => { notifyEntered = resolve; });
+    const wait = new Promise<void>((resolve) => { release = resolve; });
+    this.nextPreflightGate = { entered: notifyEntered, wait };
+    return { entered, release };
+  }
+
+  async prepareHermesRunSelection(runId: string) {
+    expect(this.selectionDatabase.get("SELECT id FROM agent_runs WHERE id=$runId", { runId })).toBeUndefined();
+    expect(this.selectionDatabase.get("SELECT run_id FROM context_manifests WHERE run_id=$runId", { runId })).toBeUndefined();
+    expect(this.selectionDatabase.get("SELECT run_id FROM run_process_owners WHERE run_id=$runId", { runId })).toBeUndefined();
+    const selection: HermesRunSelection = Object.freeze({
+      runId,
+      providerId: "test-provider",
+      modelId: "test-hermes-selected-model",
+      endpointIdentity: "test-endpoint-identity",
+      endpointRevision: "test-endpoint-revision",
+      sourceVersion: HERMES_PROVIDER_SELECTION_SOURCE.version,
+      sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit,
+      sourceSnapshotKey: hermesSourceSnapshotKey,
+      profileHome: join(tmpdir(), "nonexistent-hermes-selection-fixture", runId),
+    });
+    this.selections.set(runId, selection);
+    this.producerEvents.push({ kind: "preflight", runId });
+    const gate = this.nextPreflightGate;
+    this.nextPreflightGate = undefined;
+    if (gate) {
+      gate.entered(runId);
+      await gate.wait;
+    }
+    return { selection, cleanup: async () => {} };
+  }
+
+  selectionFor(runId: string): HermesRunSelection {
+    const selection = this.selections.get(runId);
+    if (!selection) throw new Error(`Hermes selection was not prepared for ${runId}`);
+    return selection;
+  }
+
+  recordDispatch(runId: string): void {
+    this.producerEvents.push({ kind: "dispatch", runId });
+  }
+
+  override async startRun(run: AgentRuntimeRun): Promise<void> {
+    const selection = this.selectionFor(run.id);
+    expect(run.hermesSelection).toEqual(selection);
+    const preflightIndex = this.producerEvents.findIndex((event) => event.kind === "preflight" && event.runId === run.id);
+    const dispatchIndex = this.producerEvents.findIndex((event) => event.kind === "dispatch" && event.runId === run.id);
+    expect(preflightIndex, `Hermes preflight must precede launch for ${run.id}`).toBeGreaterThanOrEqual(0);
+    expect(dispatchIndex, `scheduler dispatch must precede launch for ${run.id}`).toBeGreaterThanOrEqual(0);
+    expect(preflightIndex).toBeLessThan(dispatchIndex);
+    expect(this.selectionDatabase.get<{ model: string }>("SELECT model FROM agent_runs WHERE id=$runId", { runId: run.id }))
+      .toEqual({ model: selection.modelId });
+    expect(this.selectionDatabase.get("SELECT run_id FROM context_manifests WHERE run_id=$runId", { runId: run.id })).toBeDefined();
+    expect(this.selectionDatabase.get<{ state: string }>("SELECT state FROM run_process_owners WHERE run_id=$runId", { runId: run.id }))
+      .toEqual({ state: "PREPARED" });
+    this.producerEvents.push({ kind: "launch", runId: run.id });
+    await super.startRun(run);
+  }
+}
+
+function assertHermesSelectionDurableBeforeDispatch(
+  database: Database,
+  runtime: HermesSelectionMatrixRuntime,
+  runId: string,
+): void {
+  const preflightIndex = runtime.producerEvents.findIndex((event) => event.kind === "preflight" && event.runId === runId);
+  expect(preflightIndex, `Hermes selection preflight must precede dispatch for ${runId}`).toBeGreaterThanOrEqual(0);
+  const run = database.get<{ model: string }>("SELECT model FROM agent_runs WHERE id=$runId", { runId });
+  expect(run).toEqual({ model: runtime.selectionFor(runId).modelId });
+  expect(database.all("SELECT run_id FROM context_manifests WHERE run_id=$runId", { runId })).toHaveLength(1);
+  expect(database.get<{ state: string }>("SELECT state FROM run_process_owners WHERE run_id=$runId", { runId }))
+    .toEqual({ state: "PREPARED" });
+  runtime.recordDispatch(runId);
+  const dispatchIndex = runtime.producerEvents.findIndex((event) => event.kind === "dispatch" && event.runId === runId);
+  expect(preflightIndex).toBeLessThan(dispatchIndex);
+}
+
+function assertNoRunProducerWrites(database: Database, runtime: HermesSelectionMatrixRuntime, runId: string): void {
+  expect(database.get("SELECT id FROM agent_runs WHERE id=$runId", { runId })).toBeUndefined();
+  expect(database.get("SELECT run_id FROM context_manifests WHERE run_id=$runId", { runId })).toBeUndefined();
+  expect(database.get("SELECT run_id FROM run_process_owners WHERE run_id=$runId", { runId })).toBeUndefined();
+  expect(runtime.producerEvents.filter((event) => event.runId === runId).map((event) => event.kind)).toEqual(["preflight"]);
 }
 
 /** Test runtime starts no OS process; explicit fake-supervisor evidence closes PREPARED as never launched. */

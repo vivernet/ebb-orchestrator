@@ -3,7 +3,7 @@
  */
 
 import type { Database, DatabaseTx } from "../../platform/database/database.js";
-import type { AgentRuntime } from "./agent-runtime.js";
+import type { AgentRuntime, AgentRuntimeRun } from "./agent-runtime.js";
 import type { AgentRun, RunStatus, RunTrigger } from "@ebb-orchestrator/contracts";
 import type { StartRunOptions, ResumeRunOptions, RunOutcome } from "./run-types.js";
 import type { PrepareRunContextInput } from "./run-context-assembler.js";
@@ -28,6 +28,18 @@ import {
 } from "./run-process-owner.js";
 import { getOrchestratorHome } from "./hermes/hermes-profile.js";
 import { canonicalizeContextValueV1, digestRunPromptBytesV1 } from "../context/context-provenance.js";
+import type { HermesSessionCapture, HermesSessionCapturePort } from "./hermes-session-capture-port.js";
+import { bindHermesRunSelectionToOptions } from "./hermes/hermes-run-selection.js";
+import type { HermesRunSelection } from "./hermes/hermes-run-selection.js";
+
+export interface HermesRunPreflight {
+  readonly options: StartRunOptions;
+  readonly selection?: HermesRunSelection;
+  bind(options: StartRunOptions): StartRunOptions;
+  commit(): Promise<void>;
+  cleanup(): Promise<void>;
+  isCommitted(): boolean;
+}
 
 const PLANNING_TOOLS: ReadonlySet<ToolId> = new Set(['workspace.read', 'workspace.search', 'git.status', 'git.diff', 'submit_result']);
 const REQUEST_PLANNING_ROLES = new Set(['coordinator', 'product_manager', 'architect']);
@@ -115,6 +127,8 @@ export class RunTransitionConflictError extends Error {
  */
 export class RunService {
   private readonly contextAssembler: Pick<RunContextAssembler, "prepare">;
+  private readonly runSelections = new Map<string, HermesRunSelection>();
+  private readonly pendingRunSelections = new Map<string, HermesRunSelection>();
 
   constructor(
     private readonly db: Database,
@@ -122,6 +136,109 @@ export class RunService {
     contextAssembler: Pick<RunContextAssembler, "prepare"> = new RunContextAssembler(),
   ) {
     this.contextAssembler = contextAssembler;
+    const capturePort = asHermesSessionCapturePort(runtime);
+    capturePort?.setHermesSessionCaptureHandler((capture) => this.captureHermesSession(capture));
+  }
+
+  /**
+   * Записывает только allowlisted Hermes session ID, полученный от live observer точного Run owner.
+   * Корреляция и owner state перепроверяются в одной SQLite transaction; любая неоднозначность
+   * делает capture sticky INVALID и очищает binding, чтобы он не мог разрешить последующий resume.
+   *
+   * @param capture Минимальное событие observer с provenance из launch-scoped closure, не из stdout.
+   * @throws {Error} Если binding не принят или его fail-closed invalidation не удалось сохранить.
+   */
+  private async captureHermesSession(capture: HermesSessionCapture): Promise<void> {
+    if (capture.status === "invalid") {
+      let invalidated: boolean;
+      try {
+        invalidated = this.db.transaction((tx) => invalidateHermesSessionCaptureTx(tx, capture));
+      } catch {
+        throw new Error("HERMES_SESSION_CAPTURE_INVALIDATION_FAILED");
+      }
+      if (!invalidated) throw new Error("HERMES_SESSION_CAPTURE_STALE");
+      return;
+    }
+    const result = this.persistCapturedHermesSession(capture);
+    if (result !== "BOUND") throw new Error(result === "STALE" ? "HERMES_SESSION_CAPTURE_STALE" : "HERMES_SESSION_CAPTURE_INVALID");
+  }
+
+  private persistCapturedHermesSession(capture: Extract<HermesSessionCapture, { status: "captured" }>): "BOUND" | "INVALID" | "STALE" {
+    try {
+      return this.db.transaction((tx) => {
+        const row = tx.get<HermesSessionCaptureRow>(
+          `SELECT run.id AS run_id, run.status AS run_status, run.attempt AS run_attempt,
+                  run.session_id, run.output, run.ended_at,
+                  owner.source_tag, owner.hermes_home, owner.containment_kind,
+                  owner.containment_id, owner.launch_nonce, owner.state AS owner_state,
+                  owner.capture_state, owner.systemd_invocation_id, owner.systemd_control_group,
+                  owner.supervisor_pid, owner.supervisor_start_identity, owner.pid, owner.platform,
+                  owner.process_start_identity, owner.executable_identity
+             FROM agent_runs run JOIN run_process_owners owner ON owner.run_id=run.id
+            WHERE run.id=$runId`,
+          { runId: capture.runId },
+        );
+        if (!row || !isSameHermesCaptureGeneration(row, capture)) return "STALE";
+        if (row.capture_state === "INVALID") return "INVALID";
+        if (isIdempotentBoundHermesCapture(row, capture)) return "BOUND";
+        if (!isCorrelatedLiveHermesCapture(row, capture)) {
+          invalidateHermesSessionCaptureTx(tx, capture);
+          return "INVALID";
+        }
+
+        tx.run(
+          `UPDATE agent_runs SET session_id=$sessionId
+            WHERE id=$runId AND status IN ('STARTED','IN_PROGRESS')
+              AND attempt IS $attempt AND session_id IS NULL AND output IS NULL AND ended_at IS NULL`,
+          { runId: capture.runId, attempt: capture.attempt, sessionId: capture.sessionId },
+        );
+        if ((tx.get<{ changes: number }>("SELECT changes() AS changes")?.changes ?? 0) !== 1) {
+          throw new Error("HERMES_SESSION_CAPTURE_RUN_CAS_FAILED");
+        }
+
+        tx.run(
+          `UPDATE run_process_owners SET capture_state='BOUND', updated_at=$updatedAt
+            WHERE run_id=$runId AND state='LIVE' AND capture_state='UNBOUND'
+              AND source_tag=$sourceTag AND hermes_home=$hermesHome
+              AND containment_kind=$containmentKind AND containment_id=$containmentId AND launch_nonce=$launchNonce
+              AND systemd_invocation_id IS $systemdInvocationId AND systemd_control_group IS $systemdControlGroup
+              AND supervisor_pid IS $supervisorPid AND supervisor_start_identity IS $supervisorStartIdentity
+              AND pid IS $pid AND platform IS $platform AND process_start_identity IS $processStartIdentity
+              AND executable_identity IS $executableIdentity`,
+          {
+            runId: capture.runId, updatedAt: new Date().toISOString(), sourceTag: capture.sourceTag,
+            hermesHome: capture.hermesHome, containmentKind: capture.owner.containmentKind,
+            containmentId: capture.owner.containmentId, launchNonce: capture.owner.launchNonce,
+            systemdInvocationId: capture.owner.systemdInvocationId, systemdControlGroup: capture.owner.systemdControlGroup,
+            supervisorPid: capture.owner.supervisorPid, supervisorStartIdentity: capture.owner.supervisorStartIdentity,
+            pid: capture.owner.pid, platform: capture.owner.platform, processStartIdentity: capture.owner.processStartIdentity,
+            executableIdentity: capture.owner.executableIdentity,
+          },
+        );
+        if ((tx.get<{ changes: number }>("SELECT changes() AS changes")?.changes ?? 0) !== 1) {
+          throw new Error("HERMES_SESSION_CAPTURE_OWNER_CAS_FAILED");
+        }
+
+        const readback = tx.get<{ session_id: string | null; capture_state: string; owner_state: string }>(
+          `SELECT run.session_id, owner.capture_state, owner.state AS owner_state
+             FROM agent_runs run JOIN run_process_owners owner ON owner.run_id=run.id
+            WHERE run.id=$runId`,
+          { runId: capture.runId },
+        );
+        if (readback?.session_id !== capture.sessionId || readback.capture_state !== "BOUND" || readback.owner_state !== "LIVE") {
+          throw new Error("HERMES_SESSION_CAPTURE_READBACK_FAILED");
+        }
+        return "BOUND";
+      });
+    } catch {
+      try {
+        const invalidated = this.db.transaction((tx) => invalidateHermesSessionCaptureTx(tx, capture));
+        if (!invalidated) return "STALE";
+      } catch {
+        throw new Error("HERMES_SESSION_CAPTURE_INVALIDATION_FAILED");
+      }
+      return "INVALID";
+    }
   }
 
   /** Adapter используемый by MCP. Этот обновляет predicate makes acceptance atomic и one-shot. */
@@ -162,11 +279,109 @@ export class RunService {
    * Объект durable identity boundary, followed by executePreparedRun().
    */
   prepareRun(options: StartRunOptions): AgentRun {
+    if (this.runtime.prepareHermesRunSelection && (!options.runId || !this.pendingRunSelections.has(options.runId))) {
+      throw new Error("HERMES_RUN_PREFLIGHT_REQUIRED");
+    }
     const input = this.contextInput(options);
     this.assertEffectiveCapabilities(options, input);
     return this.db.transaction((tx) => {
       const prepared = this.contextAssembler.prepare(tx, input);
       return this.prepareRunInTransaction(tx, { ...options, prompt: prepared.finalPrompt }, prepared);
+    });
+  }
+
+  /**
+   * Выполняет producer transaction только после создания точного per-Run Hermes profile.
+   * До callback нет SQLite writes; при исключении очищается только пустой профиль этого Run.
+   * После успешного commit выбор остаётся в памяти для initial launch, а durable Run/manifest
+   * сохраняют тот же model и policy fingerprint для последующей проверки восстановления.
+   *
+   * @param options Caller-owned Run options; UUID при необходимости создаётся до preflight.
+   * @param action Producer transaction; `commit()` вызывается только после durable Run/manifest/owner write.
+   * @returns Результат producer после успешного callback/transaction.
+   * @throws {Error} Если bounded selection/profile preflight или producer transaction не прошли.
+   */
+  async withHermesRunPreflight<T>(
+    options: StartRunOptions,
+    action: (preflight: { options: StartRunOptions; selection?: HermesRunSelection; bind(options: StartRunOptions): StartRunOptions; commit(): Promise<void> }) => T | Promise<T>,
+  ): Promise<T> {
+    const preflight = await this.beginHermesRunPreflight(options);
+    try {
+      const result = await action({
+        options: preflight.options,
+        ...(preflight.selection ? { selection: preflight.selection } : {}),
+        bind: (options) => this.bindHermesRunSelection(options, preflight),
+        commit: preflight.commit,
+      });
+      if (preflight.selection && !preflight.isCommitted()) throw new Error("HERMES_RUN_PREFLIGHT_NOT_COMMITTED");
+      return result;
+    } catch (error) {
+      await preflight.cleanup();
+      throw error;
+    } finally {
+      if (preflight.isCommitted()) this.pendingRunSelections.delete(preflight.options.runId!);
+    }
+  }
+
+  /** Создаёт immutable profile preflight для producer-а с шагами до Run transaction. */
+  async beginHermesRunPreflight(options: StartRunOptions): Promise<HermesRunPreflight> {
+    const runId = options.runId ?? crypto.randomUUID();
+    let preflight: Awaited<ReturnType<NonNullable<AgentRuntime["prepareHermesRunSelection"]>>> | undefined;
+    let boundOptions: StartRunOptions = { ...options, runId } as StartRunOptions;
+    let committed = false;
+    let cleaned = false;
+    try {
+      if (this.runtime.prepareHermesRunSelection) {
+        preflight = await this.runtime.prepareHermesRunSelection(runId);
+        if (preflight.selection.runId !== runId) throw new Error("HERMES_RUN_SELECTION_BINDING_MISMATCH");
+        boundOptions = bindHermesRunSelectionToOptions(boundOptions, preflight.selection);
+        this.pendingRunSelections.set(runId, preflight.selection);
+      }
+      return {
+        options: boundOptions,
+        ...(preflight ? { selection: preflight.selection } : {}),
+        bind: (options: StartRunOptions) => preflight
+          ? bindHermesRunSelectionToOptions(options, preflight.selection)
+          : { ...options, runId } as StartRunOptions,
+        commit: async () => {
+          if (committed) throw new Error("HERMES_RUN_PREFLIGHT_ALREADY_COMMITTED");
+          if (cleaned) throw new Error("HERMES_RUN_PREFLIGHT_ALREADY_CLEANED");
+          await preflight?.commit?.();
+          committed = true;
+          if (preflight) this.runSelections.set(runId, preflight.selection);
+          this.pendingRunSelections.delete(runId);
+        },
+        cleanup: async () => {
+          if (cleaned || committed) return;
+          cleaned = true;
+          this.pendingRunSelections.delete(runId);
+          if (preflight) await preflight.cleanup();
+        },
+        isCommitted: () => committed,
+      };
+    } catch (error) {
+      if (preflight && !committed) await preflight.cleanup();
+      throw error;
+    }
+  }
+
+  /** Повторно привязывает уже собранный caller context к active selection. */
+  bindHermesRunSelection(options: StartRunOptions, preflight: HermesRunPreflight): StartRunOptions {
+    if (preflight.selection) return bindHermesRunSelectionToOptions(options, preflight.selection);
+    return { ...options, runId: preflight.options.runId } as StartRunOptions;
+  }
+
+  /** Полный путь подготовки для producer-ов, у которых нет дополнительных записей в их transaction. */
+  async prepareRunWithHermesPreflight(options: StartRunOptions): Promise<AgentRun> {
+    return this.withHermesRunPreflight(options, async ({ options: boundOptions, commit }) => {
+      const input = this.contextInput(boundOptions);
+      this.assertEffectiveCapabilities(boundOptions, input);
+      const run = this.db.transaction((tx) => {
+        const prepared = this.contextAssembler.prepare(tx, input);
+        return this.prepareRunInTransaction(tx, { ...boundOptions, prompt: prepared.finalPrompt }, prepared);
+      });
+      await commit();
+      return run;
     });
   }
 
@@ -177,6 +392,8 @@ export class RunService {
     preparedContext: PreparedRunContext,
     afterRunInsert?: (runId: string) => void,
   ): AgentRun {
+      const selection = options.runId ? this.pendingRunSelections.get(options.runId) : undefined;
+      if (this.runtime.prepareHermesRunSelection && !selection) throw new Error("HERMES_RUN_PREFLIGHT_REQUIRED");
       assertPreparedRunBinding(options, preparedContext);
       const input = this.contextInput(options);
       this.assertEffectiveCapabilities(options, input);
@@ -315,7 +532,13 @@ export class RunService {
       afterRunInsert?.(id);
 
       insertContextManifestTx(tx, preparedContext, id);
-      const owner = prepareRunProcessOwner(id, join(getOrchestratorHome(), "runtime", "hermes", "runs", id), currentContainmentKind());
+      if (selection && (selection.runId !== id || !selection.sourceSnapshotKey)) throw new Error("HERMES_RUN_SELECTION_BINDING_MISMATCH");
+      const owner = prepareRunProcessOwner(
+        id,
+        selection?.profileHome ?? join(getOrchestratorHome(), "runtime", "hermes", "runs", id),
+        currentContainmentKind(),
+        selection?.sourceSnapshotKey,
+      );
       insertRunProcessOwnerTx(tx, owner);
 
       return record;
@@ -323,13 +546,13 @@ export class RunService {
 
   /** запускать Объект новый run и make it runtime-ready. */
   async startRun(options: StartRunOptions): Promise<AgentRun> {
-    const record = this.prepareRun(options);
+    const record = await this.prepareRunWithHermesPreflight(options);
     // startRun является Объект runtime readiness barrier: adapters resolve только после
     // their profile/config и запуск have been prepared. Never expose Объект run
     // to callers пока который asynchronous работа является still in flight.
     try {
       this.assertDurablePreparedRun(record);
-      await this.runtime.startRun(record);
+      await this.runtime.startRun(this.runtimeRun(record));
     } catch (error) {
       this.failRun(record.id, error);
       throw error;
@@ -347,7 +570,7 @@ export class RunService {
     }
     try {
       this.assertDurablePreparedRun(run);
-      await this.runtime.startRun(run);
+      await this.runtime.startRun(this.runtimeRun(run));
       const outcome = await this.runtime.collectResult(run.id);
       await this.collectResult(run.id, outcome);
       try {
@@ -364,8 +587,14 @@ export class RunService {
 
   /** запускать, collect, и durably accept один runtime результат. */
   async execute(options: StartRunOptions): Promise<{ run: AgentRun; outcome: RunOutcome }> {
-    const run = this.prepareRun(options);
+    const run = await this.prepareRunWithHermesPreflight(options);
     return this.executePreparedRun(run.id);
+  }
+
+  private runtimeRun(run: AgentRun): AgentRuntimeRun {
+    const selection = this.runSelections.get(run.id);
+    if (this.runtime.prepareHermesRunSelection && !selection) throw new Error("HERMES_RUN_SELECTION_UNAVAILABLE");
+    return { ...run, ...(selection ? { hermesSelection: selection } : {}) };
   }
 
   private contextInput(options: StartRunOptions): NonNullable<StartRunOptions["contextInput"]> {
@@ -719,6 +948,129 @@ export class RunService {
         ...(row.capability_ref ? { capabilityRef: row.capability_ref as string } : {}),
     };
   }
+}
+
+type HermesSessionCaptureRow = {
+  run_id: string;
+  run_status: string;
+  run_attempt: number | null;
+  session_id: string | null;
+  output: string | null;
+  ended_at: string | null;
+  source_tag: string;
+  hermes_home: string;
+  containment_kind: string;
+  containment_id: string;
+  launch_nonce: string;
+  owner_state: string;
+  capture_state: string;
+  systemd_invocation_id: string | null;
+  systemd_control_group: string | null;
+  supervisor_pid: number | null;
+  supervisor_start_identity: string | null;
+  pid: number | null;
+  platform: string | null;
+  process_start_identity: string | null;
+  executable_identity: string | null;
+};
+
+function asHermesSessionCapturePort(runtime: AgentRuntime): HermesSessionCapturePort | undefined {
+  const candidate = runtime as AgentRuntime & Partial<HermesSessionCapturePort>;
+  return typeof candidate.setHermesSessionCaptureHandler === "function"
+    ? candidate as AgentRuntime & HermesSessionCapturePort
+    : undefined;
+}
+
+function isCorrelatedLiveHermesCapture(
+  row: HermesSessionCaptureRow,
+  capture: Extract<HermesSessionCapture, { status: "captured" }>,
+): boolean {
+  const owner = capture.owner;
+  return /^[A-Za-z0-9_-]{1,256}$/.test(capture.sessionId) &&
+    isSameHermesCaptureGeneration(row, capture) &&
+    (row.run_status === "STARTED" || row.run_status === "IN_PROGRESS") &&
+    row.session_id === null && row.output === null && row.ended_at === null &&
+    row.owner_state === "LIVE" && row.capture_state === "UNBOUND" &&
+    capture.sourceTag === `ebb-run:${capture.runId}` && capture.sourceTag === row.source_tag &&
+    capture.hermesHome.length > 0 && capture.hermesHome === row.hermes_home &&
+    owner.runId === row.run_id && owner.state === "LIVE" &&
+    owner.containmentKind === row.containment_kind && owner.containmentId === row.containment_id &&
+    owner.launchNonce === row.launch_nonce &&
+    owner.systemdInvocationId === row.systemd_invocation_id && owner.systemdControlGroup === row.systemd_control_group &&
+    owner.supervisorPid === row.supervisor_pid && owner.supervisorStartIdentity === row.supervisor_start_identity &&
+    owner.pid === row.pid && owner.platform === row.platform &&
+    owner.processStartIdentity === row.process_start_identity && owner.executableIdentity === row.executable_identity;
+}
+
+function isIdempotentBoundHermesCapture(
+  row: HermesSessionCaptureRow,
+  capture: Extract<HermesSessionCapture, { status: "captured" }>,
+): boolean {
+  return /^[A-Za-z0-9_-]{1,256}$/.test(capture.sessionId) &&
+    isSameHermesCaptureGeneration(row, capture) &&
+    (row.run_status === "STARTED" || row.run_status === "IN_PROGRESS") &&
+    row.session_id === capture.sessionId && row.output === null && row.ended_at === null &&
+    row.owner_state === "LIVE" && row.capture_state === "BOUND";
+}
+
+function isSameHermesCaptureGeneration(row: HermesSessionCaptureRow, capture: HermesSessionCapture): boolean {
+  const owner = capture.owner;
+  return capture.runId === row.run_id && capture.attempt === row.run_attempt &&
+    capture.sourceTag === row.source_tag && capture.sourceTag === `ebb-run:${capture.runId}` &&
+    capture.hermesHome.length > 0 && capture.hermesHome === row.hermes_home &&
+    owner.runId === row.run_id && owner.state === "LIVE" &&
+    owner.containmentKind === row.containment_kind && owner.containmentId === row.containment_id &&
+    owner.launchNonce === row.launch_nonce &&
+    owner.systemdInvocationId === row.systemd_invocation_id && owner.systemdControlGroup === row.systemd_control_group &&
+    owner.supervisorPid === row.supervisor_pid && owner.supervisorStartIdentity === row.supervisor_start_identity &&
+    owner.pid === row.pid && owner.platform === row.platform &&
+    owner.processStartIdentity === row.process_start_identity && owner.executableIdentity === row.executable_identity;
+}
+
+function invalidateHermesSessionCaptureTx(tx: DatabaseTx, capture: HermesSessionCapture): boolean {
+  const row = tx.get<HermesSessionCaptureRow>(
+    `SELECT run.id AS run_id, run.status AS run_status, run.attempt AS run_attempt,
+            run.session_id, run.output, run.ended_at,
+            owner.source_tag, owner.hermes_home, owner.containment_kind,
+            owner.containment_id, owner.launch_nonce, owner.state AS owner_state,
+            owner.capture_state, owner.systemd_invocation_id, owner.systemd_control_group,
+            owner.supervisor_pid, owner.supervisor_start_identity, owner.pid, owner.platform,
+            owner.process_start_identity, owner.executable_identity
+       FROM agent_runs run JOIN run_process_owners owner ON owner.run_id=run.id
+      WHERE run.id=$runId`,
+    { runId: capture.runId },
+  );
+  if (!row || !isSameHermesCaptureGeneration(row, capture)) return false;
+  tx.run("UPDATE agent_runs SET session_id=NULL WHERE id=$runId AND attempt IS $attempt", {
+    runId: capture.runId, attempt: capture.attempt,
+  });
+  if ((tx.get<{ changes: number }>("SELECT changes() AS changes")?.changes ?? 0) !== 1) return false;
+  if (row.capture_state === "INVALID") return true;
+  tx.run(
+    `UPDATE run_process_owners SET capture_state='INVALID', updated_at=$updatedAt
+      WHERE run_id=$runId AND capture_state <> 'INVALID'
+        AND source_tag=$sourceTag AND hermes_home=$hermesHome
+        AND containment_kind=$containmentKind AND containment_id=$containmentId AND launch_nonce=$launchNonce
+        AND systemd_invocation_id IS $systemdInvocationId AND systemd_control_group IS $systemdControlGroup
+        AND supervisor_pid IS $supervisorPid AND supervisor_start_identity IS $supervisorStartIdentity
+        AND pid IS $pid AND platform IS $platform AND process_start_identity IS $processStartIdentity
+        AND executable_identity IS $executableIdentity`,
+    {
+      runId: capture.runId, updatedAt: new Date().toISOString(),
+      sourceTag: capture.sourceTag, hermesHome: capture.hermesHome,
+      containmentKind: capture.owner.containmentKind, containmentId: capture.owner.containmentId,
+      launchNonce: capture.owner.launchNonce,
+      systemdInvocationId: capture.owner.systemdInvocationId,
+      systemdControlGroup: capture.owner.systemdControlGroup,
+      supervisorPid: capture.owner.supervisorPid,
+      supervisorStartIdentity: capture.owner.supervisorStartIdentity,
+      pid: capture.owner.pid,
+      platform: capture.owner.platform,
+      processStartIdentity: capture.owner.processStartIdentity,
+      executableIdentity: capture.owner.executableIdentity,
+    },
+  );
+  return (tx.get<{ changes: number }>("SELECT changes() AS changes")?.changes ?? 0) === 1;
 }
 
 /** Возвращает фактический allowlist после ролевого и Request planning ограничений. */

@@ -1,6 +1,6 @@
 param(
   [Parameter(Mandatory = $true)]
-  [ValidateSet("compile-helper", "is-job-member", "read-creation", "terminate-exact")]
+  [ValidateSet("compile-helper", "is-job-member", "probe-cpu", "read-creation", "terminate-exact")]
   [string] $Mode,
 
   [Parameter(Mandatory = $true)]
@@ -16,6 +16,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$ProgressPreference = "SilentlyContinue"
 
 function Write-PhaseMarker([string] $Value) {
   if ([string]::IsNullOrWhiteSpace($DiagnosticPath)) { return }
@@ -51,6 +52,8 @@ public static class EbbProcessScopeNative
     private const uint Synchronize = 0x00100000;
     private const uint JobObjectQuery = 0x0004;
     private const uint WaitObject0 = 0x00000000;
+    private const uint WaitTimeout = 0x00000102;
+    private const uint StillActive = 259;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct FileTime
@@ -73,6 +76,61 @@ public static class EbbProcessScopeNative
         catch { }
     }
 
+    private static ulong FileTimeValue(FileTime value)
+    {
+        return ((ulong)value.High << 32) | value.Low;
+    }
+
+    private static string ExactProcessState(IntPtr process)
+    {
+        // The signaled handle distinguishes a real exit code 259 from STILL_ACTIVE.
+        uint waitStatus = WaitForSingleObject(process, 0);
+        if (waitStatus == WaitObject0) return "EXITED";
+        if (waitStatus != WaitTimeout) return "UNAVAILABLE";
+        uint exitCode;
+        if (!GetExitCodeProcess(process, out exitCode)) return "UNAVAILABLE";
+        return exitCode == StillActive ? "LIVE" : "EXITED";
+    }
+
+    public static string ProbeCpuActivity(uint processId, ulong expectedCreationTime)
+    {
+        IntPtr process = IntPtr.Zero;
+        try
+        {
+            process = OpenProcess(ProcessQueryLimitedInformation | Synchronize, false, processId);
+            if (process == IntPtr.Zero) return "UNAVAILABLE";
+
+            string processState = ExactProcessState(process);
+            if (processState != "LIVE") return processState;
+
+            FileTime creation, exit, kernelBefore, userBefore;
+            if (!GetProcessTimes(process, out creation, out exit, out kernelBefore, out userBefore))
+                return ExactProcessState(process) == "EXITED" ? "EXITED" : "UNAVAILABLE";
+            if (FileTimeValue(creation) != expectedCreationTime) return "IDENTITY_MISMATCH";
+
+            System.Threading.Thread.Sleep(250);
+
+            FileTime laterCreation, laterExit, kernelAfter, userAfter;
+            if (!GetProcessTimes(process, out laterCreation, out laterExit, out kernelAfter, out userAfter))
+                return ExactProcessState(process) == "EXITED" ? "EXITED" : "UNAVAILABLE";
+            if (FileTimeValue(laterCreation) != expectedCreationTime) return "IDENTITY_MISMATCH";
+            processState = ExactProcessState(process);
+            if (processState != "LIVE") return processState;
+
+            bool kernelAdvanced = FileTimeValue(kernelAfter) > FileTimeValue(kernelBefore);
+            bool userAdvanced = FileTimeValue(userAfter) > FileTimeValue(userBefore);
+            return kernelAdvanced || userAdvanced ? "LIVE_CPU_ADVANCED" : "LIVE_CPU_IDLE";
+        }
+        catch
+        {
+            return "UNAVAILABLE";
+        }
+        finally
+        {
+            if (process != IntPtr.Zero) CloseHandle(process);
+        }
+    }
+
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern IntPtr OpenProcess(uint access, bool inheritHandle, uint processId);
 
@@ -81,6 +139,9 @@ public static class EbbProcessScopeNative
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool GetProcessTimes(IntPtr process, out FileTime creation, out FileTime exit, out FileTime kernel, out FileTime user);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetExitCodeProcess(IntPtr process, out uint exitCode);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool IsProcessInJob(IntPtr process, IntPtr job, out bool result);
@@ -190,6 +251,19 @@ try {
       $creationTime = [EbbProcessScopeNative]::CreationTime($ProcessId, $DiagnosticPath)
       [Console]::Out.WriteLine("PROCESS_CREATION_IDENTITY=" + $creationTime.ToString([Globalization.CultureInfo]::InvariantCulture))
     }
+    "probe-cpu" {
+      $probeResult = "UNAVAILABLE"
+      if ($ExpectedCreationTime -match '^[1-9][0-9]*$') {
+        try {
+          $expected = [UInt64]::Parse($ExpectedCreationTime, [Globalization.CultureInfo]::InvariantCulture)
+          $probeResult = [EbbProcessScopeNative]::ProbeCpuActivity($ProcessId, $expected)
+        } catch { $probeResult = "UNAVAILABLE" }
+      }
+      if (@("LIVE_CPU_ADVANCED", "LIVE_CPU_IDLE", "EXITED", "IDENTITY_MISMATCH", "UNAVAILABLE") -notcontains $probeResult) {
+        $probeResult = "UNAVAILABLE"
+      }
+      [Console]::Out.WriteLine($probeResult)
+    }
     "is-job-member" {
       if (-not $ContainmentId -or $ContainmentId -notmatch '^[a-f0-9]{64}$') {
         throw "CONTAINMENT_ID_INVALID"
@@ -209,6 +283,10 @@ try {
     }
   }
 } catch {
+  if ($Mode -eq "probe-cpu") {
+    [Console]::Out.WriteLine("UNAVAILABLE")
+    exit 0
+  }
   [Console]::Error.WriteLine($_.Exception.Message)
   exit 1
 }

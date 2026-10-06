@@ -7,6 +7,13 @@ export interface ProcessOptions {
   timeout?: number;
   signal?: AbortSignal;
   maxBuffer?: number;
+  /** Optional caller-bounded payload sent to child stdin; the stream is closed after the payload. */
+  input?: string;
+}
+
+export interface ProcessSessionOptions extends Omit<ProcessOptions, "input"> {
+  /** Leaves streaming listeners active but omits child output from the resolved result. */
+  captureOutput?: boolean;
 }
 
 export interface ProcessResult {
@@ -52,8 +59,8 @@ export class ProcessExecutor {
    * @returns Потоки launch protocol и Promise результата после закрытия launcher.
    * @throws {Error} При abort, превышении deadline/output buffer или ошибке запуска.
    */
-  startSession(file: string, args: string[], options: ProcessOptions = {}): ProcessSession {
-    const { cwd, env, timeout = 0, signal, maxBuffer = 10 * 1024 * 1024 } = options;
+  startSession(file: string, args: string[], options: ProcessSessionOptions = {}): ProcessSession {
+    const { cwd, env, timeout = 0, signal, maxBuffer = 10 * 1024 * 1024, captureOutput = true } = options;
     const resolvedFile = process.platform === "win32" && !file.includes(".") ? `${file}.exe` : file;
     if (signal?.aborted) throw new Error("Process aborted before spawn");
     const child = spawn(resolvedFile, args, {
@@ -66,23 +73,27 @@ export class ProcessExecutor {
 
     let stdout = "";
     let stderr = "";
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
     let exceeded = false;
     let timedOut = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     if (timeout > 0) timer = setTimeout(() => { timedOut = true; child.kill("SIGKILL"); }, timeout);
-    const append = (current: string, chunk: Buffer): string => {
-      const remaining = Math.max(0, maxBuffer - Buffer.byteLength(current, "utf8"));
-      const text = chunk.toString("utf8");
-      const encoded = Buffer.from(text, "utf8");
-      if (encoded.byteLength > remaining) exceeded = true;
-      return current + encoded.subarray(0, remaining).toString("utf8");
+    const append = (current: string, chunk: Buffer, currentBytes: number): string => {
+      const remaining = Math.max(0, maxBuffer - currentBytes);
+      if (chunk.byteLength > remaining) exceeded = true;
+      return current + chunk.subarray(0, remaining).toString("utf8");
     };
     child.stdout.on("data", (chunk: Buffer) => {
-      stdout = append(stdout, chunk);
+      if (captureOutput) stdout = append(stdout, chunk, stdoutBytes);
+      else if (chunk.byteLength > Math.max(0, maxBuffer - stdoutBytes)) exceeded = true;
+      stdoutBytes += chunk.byteLength;
       if (exceeded) child.kill("SIGKILL");
     });
     child.stderr.on("data", (chunk: Buffer) => {
-      stderr = append(stderr, chunk);
+      if (captureOutput) stderr = append(stderr, chunk, stderrBytes);
+      else if (chunk.byteLength > Math.max(0, maxBuffer - stderrBytes)) exceeded = true;
+      stderrBytes += chunk.byteLength;
       if (exceeded) child.kill("SIGKILL");
     });
     const onAbort = () => child.kill("SIGKILL");
@@ -122,6 +133,7 @@ export class ProcessExecutor {
       timeout = 300000, // 5 minutes default
       signal,
       maxBuffer = 10 * 1024 * 1024, // 10MB default
+      input,
     } = options;
 
     // На Windows добавляем .exe если расширение отсутствует
@@ -139,7 +151,6 @@ export class ProcessExecutor {
         env: childEnv,
         windowsHide: true,
       });
-
       let stdout = "";
       let stderr = "";
       let timedOut = false;
@@ -166,6 +177,11 @@ export class ProcessExecutor {
       };
 
       const timeoutId = setTimeout(onTimeout, timeout);
+      let inputError: Error | undefined;
+      if (input !== undefined && child.stdin) {
+        child.stdin.on("error", (error: Error) => { inputError = error; });
+        child.stdin.end(input);
+      }
 
       child.stdout?.on("data", (chunk: Buffer) => {
         const remaining = maxBuffer - stdout.length;
@@ -207,6 +223,10 @@ export class ProcessExecutor {
         }
         if (outputExceeded) {
           reject(new Error("output buffer exceeded"));
+          return;
+        }
+        if (inputError) {
+          reject(new Error("Process stdin input failed"));
           return;
         }
 

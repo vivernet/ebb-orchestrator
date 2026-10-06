@@ -10,6 +10,7 @@ import type { MergeService, MergeResult } from "../git/merge-service.js";
 import type { IntegrationAttempt, IntegrationService } from "../git/integration-service.js";
 import { validateRoleOutput } from "../runtime/output-validator.js";
 import { createRunContextInput, RunService, taskDeveloperPrompt, taskQaPrompt, taskReviewerPrompt } from "../runtime/run-service.js";
+import type { StartRunOptions } from "../runtime/run-types.js";
 import { promptBuilder } from "../runtime/prompt-builder.js";
 import type { TaskContract } from "../context/context-types.js";
 import { GitCli, assertSafeGitRef } from "../git/git-cli.js";
@@ -474,7 +475,12 @@ export class EpicOrchestrator {
     const phaseId = crypto.randomUUID();
     const activePhaseId = existing?.id ?? phaseId;
     const now = new Date().toISOString();
-    this.db.transaction((tx) => {
+    const runPreflight = await this.runs.beginHermesRunPreflight({
+      runId: agentRunId, role, model: "persisted", taskId: taskId ?? null, epicId,
+      triggerReason: `epic-${phase}`, contextVersion: "1", outputSchemaVersion: "1",
+    } as StartRunOptions);
+    try {
+      this.db.transaction((tx) => {
       const current = tx.get<{ id: string; agent_run_id: string; result_json: string; validated: number; status: string }>("SELECT id,agent_run_id,result_json,validated,status FROM orchestration_phase_runs WHERE epic_id=$epicId AND task_id IS $taskId AND phase=$phase", { epicId, taskId: taskId ?? null, phase });
       if (existing) {
         if (!current || current.id !== existing.id || current.agent_run_id !== existing.agent_run_id) throw new Error("Persisted Epic phase changed before retry");
@@ -485,7 +491,11 @@ export class EpicOrchestrator {
         if (current) throw new Error("Persisted Epic phase was claimed concurrently");
         tx.run("INSERT INTO orchestration_phase_runs(id,epic_id,task_id,phase,role,agent_run_id,result_json,evidence_json,validated,status,request_json,created_at) VALUES($id,$epicId,$taskId,$phase,$role,$run,'{}','{}',0,'INTENT',$request,$at)", { id: phaseId, epicId, taskId: taskId ?? null, phase, role, run: agentRunId, request: JSON.stringify(request), at: now });
       }
-    });
+      });
+    } catch (error) {
+      await runPreflight.cleanup();
+      throw error;
+    }
     let integration: { service: IntegrationService; attempt: IntegrationAttempt } | undefined;
     try {
       if (phase === "integration" && !this.integrationServiceFactory) throw new Error("EPIC_INTEGRATION_SERVICE_UNAVAILABLE");
@@ -566,7 +576,7 @@ export class EpicOrchestrator {
         prompt: runPrompt,
         capability: { workspace: capabilityWorkspace },
       } as const;
-      this.runs.prepareRun({
+      const optionsWithContext = {
         ...runOptions,
         contextInput: createRunContextInput(runOptions, {
           prompt: runPrompt,
@@ -575,7 +585,10 @@ export class EpicOrchestrator {
           targetHead,
           targetBranch,
         }),
-      });
+      } as StartRunOptions;
+      const boundRunOptions = this.runs.bindHermesRunSelection(optionsWithContext, runPreflight);
+      const preparedRun = this.runs.prepareRun(boundRunOptions);
+      await runPreflight.commit();
       this.db.run("UPDATE orchestration_phase_runs SET status='RUNNING',started_at=$at WHERE id=$id AND status='INTENT'", { id: activePhaseId, at: now });
       let execution: Awaited<ReturnType<RunService["executePreparedRun"]>>;
       if (integration) {
@@ -583,16 +596,16 @@ export class EpicOrchestrator {
         await integration.service.mergePreparedSource(bound);
         const projectId = this.db.get<{ project_id: string }>("SELECT project_id FROM epics WHERE id=$epicId", { epicId })?.project_id;
         if (!projectId) throw new Error(`Epic ${epicId} project not found`);
-        this.scheduler.dispatchAgentRun(agentRunId, projectId, role, "persisted");
+        this.scheduler.dispatchAgentRun(agentRunId, projectId, role, preparedRun.model);
         execution = await integration.service.runInIntegrationWorktree(bound, async () => this.runs.executePreparedRun(agentRunId));
       } else if (taskId && this.workflow.currentStage(taskId) === "READY") {
-        this.scheduler.dispatchTask(taskId, this.workflow, () => undefined, { triggerReason: `epic-${phase}`, role, model: "persisted", runId: agentRunId });
+        this.scheduler.dispatchTask(taskId, this.workflow, () => undefined, { triggerReason: `epic-${phase}`, role, model: preparedRun.model, runId: agentRunId });
         execution = await this.runs.executePreparedRun(agentRunId);
       }
       else {
         const projectId = this.db.get<{ project_id: string }>("SELECT project_id FROM epics WHERE id=$epicId", { epicId })?.project_id;
         if (!projectId) throw new Error(`Epic ${epicId} project not found`);
-        this.scheduler.dispatchAgentRun(agentRunId, projectId, role, "persisted");
+        this.scheduler.dispatchAgentRun(agentRunId, projectId, role, preparedRun.model);
         execution = await this.runs.executePreparedRun(agentRunId);
       }
       const result: EpicAgentResult = {
@@ -602,6 +615,13 @@ export class EpicOrchestrator {
       };
       return this.persistedPhase(epicId, taskId, phase, role, result, agentRunId, activePhaseId);
       } catch (error) {
+      if (!runPreflight.isCommitted()) {
+        await runPreflight.cleanup();
+        this.db.transaction((tx) => {
+          tx.run("UPDATE orchestration_phase_runs SET status='FAILED',ended_at=$at WHERE id=$id AND status IN ('INTENT','RUNNING')", { id: activePhaseId, at: new Date().toISOString() });
+        });
+        throw error;
+      }
       if (!this.runs.failPreparedRun(agentRunId, error)) throw new EpicRunStopUnprovenError(error);
       this.db.transaction((tx) => {
         tx.run("UPDATE orchestration_phase_runs SET status='FAILED',ended_at=$at WHERE id=$id AND status IN ('INTENT','RUNNING')", { id: activePhaseId, at: new Date().toISOString() });

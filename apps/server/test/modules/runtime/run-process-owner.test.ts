@@ -2,13 +2,22 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import type { Database } from "../../../src/platform/database/database.js";
+import type { Database, DatabaseTx } from "../../../src/platform/database/database.js";
 import { createSqliteDatabase } from "../../../src/platform/database/sqlite-database.js";
 import { runMigrations } from "../../../src/platform/database/migrator.js";
-import { insertRunProcessOwnerTx, prepareRunProcessOwner, preflightRunProcessOwners, transitionRunProcessOwnerTx } from "../../../src/modules/runtime/run-process-owner.js";
+import { getRunProcessOwner, insertRunProcessOwnerTx, prepareRunProcessOwner, preflightRunProcessOwners, transitionRunProcessOwnerTx } from "../../../src/modules/runtime/run-process-owner.js";
 import type { ProcessScopeIdentity, ProcessScopeObservation } from "../../../src/platform/process/process-inspector.js";
 import type { ProcessScopeSupervisor } from "../../../src/platform/process/run-scope-supervisor.js";
 import { loadTestMigrations } from "../../helpers/migrations.js";
+
+const snapshotIdentity = {
+  formatVersion: 1,
+  hermesVersion: "v0.21.5+7357.g9244275",
+  manifestDigest: "a".repeat(64),
+  sourceCommit: "b".repeat(40),
+  sourceTree: "c".repeat(40),
+};
+const snapshotKey = JSON.stringify(snapshotIdentity);
 
 describe("Run process owner", () => {
   let directory = "";
@@ -36,7 +45,7 @@ describe("Run process owner", () => {
     database.transaction((tx) => insertRunProcessOwnerTx(tx, prepareRunProcessOwner(runId, join(directory, "hermes", runId), "systemd-user-service")));
   }
 
-  function insertLegacyRunWithoutOwner(database: Database, runId: string, status = "STARTED"): void {
+  function insertLegacyRunWithoutOwner(database: Database | DatabaseTx, runId: string, status = "STARTED"): void {
     database.run(
       "INSERT INTO agent_runs(id,role,runtime,model,status,started_at) VALUES($id,'developer','hermes','test-model',$status,'2026-10-01T00:00:00.000Z')",
       { id: runId, status },
@@ -55,6 +64,89 @@ describe("Run process owner", () => {
       processStartIdentity: null, executableIdentity: null, state: "LAUNCHING",
     };
   }
+
+  it("atomically inserts an exact source key and retains it across every owner transition and restart", async () => {
+    const database = await setup();
+    const owner = prepareRunProcessOwner("source-run", join(directory, "hermes", "source-run"), "systemd-user-service", snapshotKey);
+    expect(owner.hermesSourceSnapshotKey).toBe(snapshotKey);
+    expect(() => database.transaction((tx) => {
+      insertLegacyRunWithoutOwner(tx, owner.runId);
+      insertRunProcessOwnerTx(tx, owner);
+      throw new Error("ROLLBACK_SOURCE_OWNER");
+    })).toThrow("ROLLBACK_SOURCE_OWNER");
+    expect(getRunProcessOwner(database, owner.runId)).toBeUndefined();
+    expect(database.get("SELECT id FROM agent_runs WHERE id='source-run'")).toBeUndefined();
+    database.transaction((tx) => {
+      insertLegacyRunWithoutOwner(tx, owner.runId);
+      insertRunProcessOwnerTx(tx, owner);
+    });
+    const identity = liveIdentity(owner.runId);
+    const steps = [
+      { expectedState: "PREPARED", nextState: "LAUNCHING" },
+      { expectedState: "LAUNCHING", nextState: "LIVE", identity },
+      { expectedState: "LIVE", nextState: "UNKNOWN", evidence: "OS_STATE_UNPROVEN" },
+      { expectedState: "UNKNOWN", nextState: "LIVE", identity },
+      { expectedState: "LIVE", nextState: "STOPPING" },
+      { expectedState: "STOPPING", nextState: "STOPPED", evidence: "SYSTEMD_CGROUP_EMPTY" },
+    ] as const;
+    for (const step of steps) {
+      database.transaction((tx) => transitionRunProcessOwnerTx(tx, { runId: owner.runId, ...step }));
+      expect(getRunProcessOwner(database, owner.runId)?.hermesSourceSnapshotKey).toBe(snapshotKey);
+    }
+    database.close();
+    db = createSqliteDatabase(join(directory, "runs.sqlite"));
+    expect(runMigrations(db, loadTestMigrations()).applied).toBe(0);
+    expect(getRunProcessOwner(db, owner.runId)).toMatchObject({ state: "STOPPED", hermesSourceSnapshotKey: snapshotKey });
+  });
+
+  it.each([
+    "", "a".repeat(64), "null", "{}", ` ${snapshotKey}`,
+    JSON.stringify({ ...snapshotIdentity, formatVersion: 2 }),
+    JSON.stringify({ ...snapshotIdentity, manifestDigest: "A".repeat(64) }),
+    JSON.stringify({ ...snapshotIdentity, sourceCommit: "b".repeat(39) }),
+    JSON.stringify({ ...snapshotIdentity, sourceTree: "c".repeat(64) }),
+    JSON.stringify({ ...snapshotIdentity, hermesVersion: "x".repeat(257) }),
+    JSON.stringify({ ...snapshotIdentity, hermesVersion: "bad\nversion" }),
+    JSON.stringify({ ...snapshotIdentity, hermesVersion: "\ud800" }),
+    JSON.stringify({ ...snapshotIdentity, credential: "forbidden-extra-field" }),
+    JSON.stringify({
+      sourceTree: snapshotIdentity.sourceTree, formatVersion: 1, hermesVersion: snapshotIdentity.hermesVersion,
+      manifestDigest: snapshotIdentity.manifestDigest, sourceCommit: snapshotIdentity.sourceCommit,
+    }),
+    snapshotKey.replace('"formatVersion":1', '"formatVersion":1,"formatVersion":1'),
+  ])("rejects a malformed supplied source key before preparation, insert and readback: %s", async (key) => {
+    const database = await setup();
+    expect(() => prepareRunProcessOwner("bad-source-run", "profile", "windows-job", key)).toThrow(TypeError);
+    insertLegacyRunWithoutOwner(database, "bad-source-run");
+    const owner = { ...prepareRunProcessOwner("bad-source-run", "profile", "windows-job"), hermesSourceSnapshotKey: key };
+    expect(() => database.transaction((tx) => insertRunProcessOwnerTx(tx, owner))).toThrow(TypeError);
+    expect(getRunProcessOwner(database, owner.runId)).toBeUndefined();
+    database.transaction((tx) => insertRunProcessOwnerTx(tx, { ...owner, hermesSourceSnapshotKey: null }));
+    database.run("UPDATE run_process_owners SET hermes_source_snapshot_key=$key WHERE run_id=$runId", { key, runId: owner.runId });
+    expect(() => getRunProcessOwner(database, owner.runId)).toThrow("RUN_PROCESS_OWNER_INVALID");
+  });
+
+  it.each([undefined, null])("keeps historical source keys NULL without deriving a binding (%s)", async (key) => {
+    const database = await setup();
+    insertLegacyRunWithoutOwner(database, "legacy-source-run");
+    const owner = prepareRunProcessOwner("legacy-source-run", "profile", "windows-job", key);
+    database.transaction((tx) => insertRunProcessOwnerTx(tx, owner));
+    expect(getRunProcessOwner(database, owner.runId)?.hermesSourceSnapshotKey).toBeNull();
+    expect(database.get("SELECT hermes_source_snapshot_key FROM run_process_owners WHERE run_id='legacy-source-run'"))
+      .toEqual({ hermes_source_snapshot_key: null });
+  });
+
+  it("accepts canonical SHA-256 Git identity and preserves escaped and Unicode version bytes", async () => {
+    const database = await setup();
+    const key = JSON.stringify({
+      ...snapshotIdentity, hermesVersion: 'fixture-версия-"quoted"-\\path',
+      sourceCommit: "b".repeat(64), sourceTree: "c".repeat(64),
+    });
+    insertLegacyRunWithoutOwner(database, "sha256-source-run");
+    database.transaction((tx) => insertRunProcessOwnerTx(tx,
+      prepareRunProcessOwner("sha256-source-run", "profile", "windows-job", key)));
+    expect(getRunProcessOwner(database, "sha256-source-run")?.hermesSourceSnapshotKey).toBe(key);
+  });
 
   it("enforces compare-and-set state transitions and keeps STOPPED terminal", async () => {
     const database = await setup();

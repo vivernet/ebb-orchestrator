@@ -10,10 +10,26 @@ import type { Database } from "../../src/platform/database/database.js";
 import { runMigrations } from "../../src/platform/database/migrator.js";
 import { createSqliteDatabase } from "../../src/platform/database/sqlite-database.js";
 import { inspectCgroupTree, type ProcessScopeIdentity } from "../../src/platform/process/process-inspector.js";
-import { ProcessExecutor, type ProcessResult } from "../../src/platform/process/process-executor.js";
+import { ExitCodeError, ProcessExecutor, type ProcessResult } from "../../src/platform/process/process-executor.js";
 import { SystemdRunSupervisor } from "../../src/platform/process/systemd-run-supervisor.js";
 import { WindowsJobSupervisor } from "../../src/platform/process/windows-job-supervisor.js";
 import type { ProcessScopeHandle } from "../../src/platform/process/run-scope-supervisor.js";
+import {
+  formatRestartChildOutputDiagnostic,
+  formatRestartChildRecoveryMarkerFailure,
+  formatRestartChildTerminalStatusDiagnostic,
+  parseRestartChildTerminalStatus,
+  restartChildTerminalStatusPath,
+  restartChildTerminalStatusForFailure,
+  serializeRestartChildTerminalStatus,
+} from "../helpers/restart-child-diagnostics.js";
+import {
+  classifyWindowsJobMembershipResult,
+  formatWindowsPayloadMarkerTimeout,
+  inspectWindowsLaunchPhaseForTimeout,
+  parseWindowsPayloadCpuActivity,
+  type WindowsPayloadMarkerTimeoutSnapshot,
+} from "../helpers/windows-payload-timeout-diagnostics.js";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { loadTestMigrations } from "../helpers/migrations.js";
 
@@ -96,8 +112,8 @@ describe("Windows process-scope diagnostic context", () => {
     expect(contextual.message).toContain("mode=read-creation pid=42 timeoutMs=15000 elapsedMs=15012");
     expect(contextual.command).toBe("powershell.exe");
     expect(contextual.exitCode).toBe(1);
-    expect(contextual.stdout).toBe("partial stdout");
-    expect(contextual.stderr).toBe("partial stderr");
+    expect(contextual.stdout === "partial stdout").toBe(true);
+    expect(contextual.stderr === "partial stderr").toBe(true);
   });
 
   it("reads only bounded allowlisted native phase markers", async () => {
@@ -160,6 +176,101 @@ describe("Windows process-scope diagnostic context", () => {
   });
 });
 
+describe("restart worker ready-marker diagnostics", () => {
+  it("reports only allowlisted child failure codes and redacted stream-presence indicators", async () => {
+    const stdoutSecret = "OPENAI_API_KEY=stdout-must-stay-private";
+    const stderrSecret = "HERMES_TOKEN=stderr-must-stay-private";
+    const worker = {
+      child: { exitCode: null, signalCode: null } as ChildProcessWithoutNullStreams,
+      completion: Promise.resolve({ code: null, signal: null }),
+      output: {
+        stdout: `stdout-head ${"s".repeat(12_000)} ${stdoutSecret}`,
+        stderr: `stderr-head ${"e".repeat(12_000)} ${stderrSecret}\nPROCESS_SCOPE_RESTART_CHILD_FAILED:WINDOWS_HELPER_NATIVE_UNKNOWN:CHILD_JOB_BARRIER_UNAVAILABLE\n`,
+      },
+    };
+
+    let message = "";
+    try {
+      await waitForRestartMarker(join(tmpdir(), `missing-restart-marker-${randomUUID()}`), worker, 120);
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(message).toContain("PROCESS_SCOPE_READY_MARKER_TIMEOUT");
+    expect(message).toContain("PROCESS_SCOPE_RESTART_CHILD_FAILED:WINDOWS_HELPER_NATIVE_UNKNOWN:CHILD_JOB_BARRIER_UNAVAILABLE");
+    expect(message).toContain("workerStdout=present-redacted");
+    expect(message).toContain("workerStderr=present-redacted");
+    expect(message).not.toContain("stdout-head");
+    expect(message).not.toContain("stderr-head");
+    expect(message).not.toContain(stdoutSecret);
+    expect(message).not.toContain(stderrSecret);
+    expect(message.length).toBeLessThan(512);
+  });
+
+  it("checks a late terminal failure before waiting for the next launch artifact", async () => {
+    const statusPath = "launcher-ready.json.terminal-status.json";
+    const statusContents: { value?: string } = {};
+    const readArtifact = async (path: string): Promise<string | undefined> => {
+      if (path === statusPath) return statusContents.value;
+      if (path === "payload-marker") return "provider-free-dummy-payload";
+      return undefined;
+    };
+
+    const marker = await waitForLaunchArtifactOrTerminalStatus("payload-marker", statusPath, 1_000, readArtifact);
+    expect(marker === "provider-free-dummy-payload").toBe(true);
+
+    statusContents.value = serializeRestartChildTerminalStatus(
+      restartChildTerminalStatusForFailure(new Error("PROCESS_SCOPE_STOP_UNPROVEN")),
+    );
+    let diagnostic = "";
+    try {
+      await waitForLaunchArtifactOrTerminalStatus("descendant-pid", statusPath, 1_000, readArtifact);
+    } catch (error) {
+      diagnostic = error instanceof Error ? error.message : "non-error-rejection";
+    }
+    expect(diagnostic === "PROCESS_SCOPE_TERMINAL_FAILURE:PROCESS_SCOPE_STOP_UNPROVEN").toBe(true);
+  });
+
+  it("accepts only the intentional helper exit status and fails fast on other terminal outcomes", async () => {
+    const statusPath = "launcher-ready.json.terminal-status.json";
+    let statusContents = serializeRestartChildTerminalStatus({ kind: "exit", exitCode: 137 });
+    const readArtifact = async (path: string): Promise<string | undefined> =>
+      path === statusPath ? statusContents : undefined;
+
+    await expect(waitForExpectedRestartChildExitStatus(statusPath, 137, 1_000, readArtifact)).resolves.toBeUndefined();
+
+    let diagnostic = "";
+    statusContents = JSON.stringify({ kind: "exit", exitCode: 0 });
+    try {
+      await waitForExpectedRestartChildExitStatus(statusPath, 137, 1_000, readArtifact);
+    } catch (error) {
+      diagnostic = error instanceof Error ? error.message : "non-error-rejection";
+    }
+    expect(diagnostic === "PROCESS_SCOPE_TERMINAL_EXIT_CODE:0").toBe(true);
+
+    diagnostic = "";
+    statusContents = serializeRestartChildTerminalStatus({ kind: "exit", exitCode: 23 });
+    try {
+      await waitForExpectedRestartChildExitStatus(statusPath, 137, 1_000, readArtifact);
+    } catch (error) {
+      diagnostic = error instanceof Error ? error.message : "non-error-rejection";
+    }
+    expect(diagnostic === "PROCESS_SCOPE_TERMINAL_EXIT_CODE:23").toBe(true);
+
+    diagnostic = "";
+    statusContents = serializeRestartChildTerminalStatus({
+      kind: "failure",
+      failureCode: "PROCESS_SCOPE_STOP_UNPROVEN",
+    });
+    try {
+      await waitForExpectedRestartChildExitStatus(statusPath, 137, 1_000, readArtifact);
+    } catch (error) {
+      diagnostic = error instanceof Error ? error.message : "non-error-rejection";
+    }
+    expect(diagnostic === "PROCESS_SCOPE_TERMINAL_FAILURE:PROCESS_SCOPE_STOP_UNPROVEN").toBe(true);
+  });
+});
+
 describe("Windows native helper assembly cache contract", () => {
   it("compiles once into an isolated temporary assembly and loads it for native operations", async () => {
     const helperPath = fileURLToPath(new URL("../helpers/windows-process-scope-native.ps1", import.meta.url));
@@ -179,19 +290,20 @@ describe("Windows native helper assembly cache contract", () => {
 });
 
 describe("Linux process-scope diagnostic formatting", () => {
-  it("bounds and redacts process completion output while reporting available signal data", () => {
+  it("reports only process completion stream presence while retaining exit and signal data", () => {
     const result = {
       exitCode: 23,
-      stdout: `API_KEY=private-value ${"x".repeat(4_000)}`,
+      stdout: `provider response private completion detail ${"x".repeat(4_000)}`,
       stderr: "Bearer private-token",
     };
     const completion = formatProcessCompletionDiagnostic(result);
 
     expect(completion).toContain("exitCode=23");
     expect(completion).toContain("signal=unavailable (ProcessResult does not expose it)");
-    expect(completion).not.toContain("private-value");
-    expect(completion).not.toContain("private-token");
-    expect(completion).toContain("[truncated]");
+    expect(completion).toContain("stdout=present-redacted");
+    expect(completion).toContain("stderr=present-redacted");
+    expect(completion.includes("provider response private completion detail")).toBe(false);
+    expect(completion.includes("private-token")).toBe(false);
     expect(completion.length).toBeLessThan(3_000);
 
     const signaled = formatProcessCompletionDiagnostic({
@@ -199,6 +311,9 @@ describe("Linux process-scope diagnostic formatting", () => {
       signal: "SIGTERM",
     } as ProcessResult & { signal: string });
     expect(signaled).toContain("signal=SIGTERM");
+    const empty = formatProcessCompletionDiagnostic({ exitCode: 0, stdout: "", stderr: "" });
+    expect(empty).toContain("stdout=empty");
+    expect(empty).toContain("stderr=empty");
   });
 
   it("formats only the explicitly allowed systemd properties", () => {
@@ -231,8 +346,10 @@ describe("Linux process-scope diagnostic formatting", () => {
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toContain("PROCESS_SCOPE_PAYLOAD_COMPLETED_BEFORE_MARKER");
     expect((error as Error).message).toContain("exitCode=23");
-    expect((error as Error).message).toContain("stdout=\"payload stdout\"");
-    expect((error as Error).message).toContain("stderr=\"payload stderr\"");
+    expect((error as Error).message).toContain("stdout=present-redacted");
+    expect((error as Error).message).toContain("stderr=present-redacted");
+    expect((error as Error).message.includes("payload stdout")).toBe(false);
+    expect((error as Error).message.includes("payload stderr")).toBe(false);
   });
 
   it("includes bounded unit diagnostics and preserves the cause when process completion rejects", async () => {
@@ -244,7 +361,7 @@ describe("Linux process-scope diagnostic formatting", () => {
       exitCode: 0,
       stdout: file === "systemctl"
         ? "ActiveState=failed\nResult=timeout\nEnvironment=API_KEY=private-value\n"
-        : "systemd journal diagnostic tail",
+        : "provider journal detail TEST_SECRET_DO_NOT_ECHO",
       stderr: "",
     }));
     process.env.PATH = process.env.PATH ?? "/usr/bin";
@@ -263,9 +380,10 @@ describe("Linux process-scope diagnostic formatting", () => {
       expect((error as Error).message).toContain("PROCESS_SCOPE_COMPLETION_REJECTED_BEFORE_MARKER");
       expect((error as Error).message).toContain("ActiveState=failed");
       expect((error as Error).message).toContain("Result=timeout");
-      expect((error as Error).message).toContain("systemd journal diagnostic tail");
-      expect((error as Error).message).not.toContain("private-value");
-      expect((error as Error & { cause?: unknown }).cause).toBe(failure);
+      expect((error as Error).message).toContain("journal=present-redacted lines=1");
+      expect((error as Error).message.includes("private-value")).toBe(false);
+      expect((error as Error).message.includes("TEST_SECRET_DO_NOT_ECHO")).toBe(false);
+      expect((error as Error & { cause?: unknown }).cause === failure).toBe(true);
       expect(execSpy).toHaveBeenCalledTimes(2);
     } finally {
       execSpy.mockRestore();
@@ -434,18 +552,18 @@ describe.skipIf(!isLinux || !nativeAcceptanceEnabled)("Linux native process-scop
       runId, expectedState: "STOPPING", nextState: "STOPPED", evidence: stopped.evidence,
     }));
     const completion = await handle.completion;
-    expect(`${completion.stdout}\n${completion.stderr}`).not.toContain("EBB_HERMES_PROVIDER_API_KEY");
-    expect(completion.stdout).toContain("dummy payload stdout canary");
-    expect(completion.stderr).toContain("dummy payload stderr canary");
+    expect(`${completion.stdout}\n${completion.stderr}`.includes("EBB_HERMES_PROVIDER_API_KEY")).toBe(false);
+    expect(completion.stdout.includes("dummy payload stdout canary")).toBe(true);
+    expect(completion.stderr.includes("dummy payload stderr canary")).toBe(true);
 
     const journal = await executor.exec("journalctl", ["--user", "--unit", `${unitName}.service`, "--no-pager", "--output=cat"], {
       env: managerEnvironment(), timeout: 10_000,
     });
-    expect(`${journal.stdout}\n${journal.stderr}`).not.toContain("EBB_HERMES_PROVIDER_API_KEY");
+    expect(`${journal.stdout}\n${journal.stderr}`.includes("EBB_HERMES_PROVIDER_API_KEY")).toBe(false);
     expect(JSON.stringify({
       runs: database.all("SELECT * FROM agent_runs"),
       owners: database.all("SELECT * FROM run_process_owners"),
-    })).not.toContain("EBB_HERMES_PROVIDER_API_KEY");
+    }).includes("EBB_HERMES_PROVIDER_API_KEY")).toBe(false);
     expect(getRunProcessOwner(database, runId)?.state).toBe("STOPPED");
   }, 90_000);
 });
@@ -568,7 +686,7 @@ describe.skipIf(!isWindows || !nativeAcceptanceEnabled)("Windows native process-
       identity = verifiedIdentity;
     });
     const completion = await handle.completion;
-    expect(`${completion.stdout}\n${completion.stderr}`).not.toContain("EBB_HERMES_PROVIDER_API_KEY");
+    expect(`${completion.stdout}\n${completion.stderr}`.includes("EBB_HERMES_PROVIDER_API_KEY")).toBe(false);
     const liveOwner = getRunProcessOwner(database, runId);
     expect(liveOwner?.state).toBe("LIVE");
     if (!liveOwner?.supervisorPid || !liveOwner.supervisorStartIdentity) throw new Error("WINDOWS_HELPER_IDENTITY_NOT_PERSISTED");
@@ -667,7 +785,23 @@ describe.skipIf(!isWindows || !nativeAcceptanceEnabled)("Windows native process-
 
     const persistedOwner = getRunProcessOwner(database, runId);
     expect(persistedOwner?.state).toBe("LIVE");
-    expect(await waitForFile(payloadMarkerPath)).toBe("provider-free-dummy-payload");
+    if (!identity) throw new Error("WINDOWS_EXPECTED_PROCESS_IDENTITY_MISSING");
+    const payloadMarker = await waitForWindowsPayloadMarkerWithDiagnostics(
+      () => waitForFile(payloadMarkerPath),
+      () => getRunProcessOwner(database!, runId),
+      {
+        runId,
+        state: "LIVE",
+        containmentId: identity.containmentId,
+        supervisorPid: identity.supervisorPid,
+        supervisorStartIdentity: identity.supervisorStartIdentity,
+        pid: identity.pid,
+        platform: identity.platform,
+        processStartIdentity: identity.processStartIdentity,
+      },
+      { payloadMarkerPath, descendantPidPath, heartbeatPath, descendantExitPath },
+    );
+    expect(payloadMarker).toBe("provider-free-dummy-payload");
     const descendantPid = Number(await waitForFile(descendantPidPath));
     expect(Number.isSafeInteger(descendantPid)).toBe(true);
     expect(descendantPid).toBeGreaterThan(0);
@@ -702,14 +836,15 @@ describe.skipIf(!isWindows || !nativeAcceptanceEnabled)("Windows native process-
       runId, expectedState: "STOPPING", nextState: "STOPPED", evidence: stopped.evidence,
     }));
     const completion = await handle.completion;
-    expect(`${completion.stdout}\n${completion.stderr}`).not.toContain("EBB_HERMES_PROVIDER_API_KEY");
+    expect((completion.stdout === "dummy payload root complete\n")).toBe(true);
+    expect(`${completion.stdout}\n${completion.stderr}`.includes("EBB_HERMES_PROVIDER_API_KEY")).toBe(false);
     const finalHeartbeat = await readFile(heartbeatPath, "utf8");
     await new Promise((resolve) => setTimeout(resolve, 120));
     expect(await readFile(heartbeatPath, "utf8")).toBe(finalHeartbeat);
     expect(JSON.stringify({
       runs: database.all("SELECT * FROM agent_runs"),
       owners: database.all("SELECT * FROM run_process_owners"),
-    })).not.toContain("EBB_HERMES_PROVIDER_API_KEY");
+    }).includes("EBB_HERMES_PROVIDER_API_KEY")).toBe(false);
     expect(getRunProcessOwner(database, runId)?.state).toBe("STOPPED");
     const finalInspection = await reopened.inspect(stopping);
     expect(finalInspection.state).toBe("STOPPED");
@@ -750,6 +885,7 @@ async function runRestartBoundaryAcceptance(): Promise<void> {
   const descendantExitPath = join(directory, "descendant-exit.txt");
   const readyPath = join(directory, "launcher-ready.json");
   const recoveryPath = join(directory, "recovery-result.json");
+  const terminalStatusPath = restartChildTerminalStatusPath(readyPath);
   const executor = new ProcessExecutor();
   let launcher: RestartWorker | undefined;
   let ready: RestartMarker | undefined;
@@ -769,18 +905,29 @@ async function runRestartBoundaryAcceptance(): Promise<void> {
     expect(ready.runId).toBe(runId);
     expect(ready.processId).toBe(launcher.child.pid);
     expect(ready.state).toBe(isWindows ? "UNKNOWN" : "LIVE");
-    expect(await waitForFile(payloadMarkerPath)).toBe("provider-free-dummy-payload");
-    const descendantPid = Number(await waitForFile(descendantPidPath));
+    const readPayloadMarker = () => waitForPayloadMarkerOrTerminalStatus(payloadMarkerPath, terminalStatusPath);
+    const payloadMarker = isWindows
+      ? await waitForWindowsPayloadMarkerWithDiagnostics(
+        readPayloadMarker,
+        () => readDurableRunProcessOwner(databasePath, runId),
+        expectedWindowsPayloadIdentityFromReady(ready),
+        { payloadMarkerPath, descendantPidPath, heartbeatPath, descendantExitPath, terminalStatusPath },
+      )
+      : await readPayloadMarker();
+    expect(payloadMarker).toBe("provider-free-dummy-payload");
+    const descendantPid = Number(await waitForLaunchArtifactOrTerminalStatus(descendantPidPath, terminalStatusPath));
     expect(Number.isSafeInteger(descendantPid)).toBe(true);
     expect(descendantPid).toBeGreaterThan(0);
-    expect(JSON.stringify(launcher.output)).not.toContain("EBB_HERMES_PROVIDER_API_KEY");
+    expect(JSON.stringify(launcher.output).includes("EBB_HERMES_PROVIDER_API_KEY")).toBe(false);
 
     let unitName: string | undefined;
     if (isWindows) {
       if (!ready.supervisorPid || !ready.supervisorStartIdentity) throw new Error("WINDOWS_HELPER_IDENTITY_NOT_PERSISTED");
-      const firstHeartbeat = await waitForFile(heartbeatPath);
-      await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));
-      expect(await readFile(heartbeatPath, "utf8")).not.toBe(firstHeartbeat);
+      const firstHeartbeat = await waitForLaunchArtifactOrTerminalStatus(heartbeatPath, terminalStatusPath);
+      const nextHeartbeat = await waitForLaunchArtifactOrTerminalStatus(
+        heartbeatPath, terminalStatusPath, 30_000, readFileIfPresent, (value) => value !== firstHeartbeat,
+      );
+      expect((nextHeartbeat !== firstHeartbeat)).toBe(true);
     } else {
       if (!ready.systemdControlGroup || !ready.systemdInvocationId || ready.processGroupId !== ready.processId) {
         throw new Error("LINUX_RESTART_IDENTITY_NOT_PERSISTED");
@@ -805,7 +952,7 @@ async function runRestartBoundaryAcceptance(): Promise<void> {
     await terminateRestartLauncher(launcher, ready.processGroupId, 15_000);
     expect(launcher.child.exitCode !== null || launcher.child.signalCode !== null).toBe(true);
     expect(launcherPid).toBe(ready.processId);
-    expect(JSON.stringify(launcher.output)).not.toContain("EBB_HERMES_PROVIDER_API_KEY");
+    expect(JSON.stringify(launcher.output).includes("EBB_HERMES_PROVIDER_API_KEY")).toBe(false);
     launcher = undefined;
 
     if (isWindows) {
@@ -829,14 +976,16 @@ async function runRestartBoundaryAcceptance(): Promise<void> {
       expect(await readLinuxProcessGroup(ready.processId).catch(() => null)).toBeNull();
     }
 
+    await assertNoRestartChildTerminalStatus(terminalStatusPath);
     const recovery = await runRecoveryWorker(databasePath, runId, recoveryPath, restartWorkerEnvironment(runHome));
+    await assertNoRestartChildTerminalStatus(terminalStatusPath);
     recoverySucceeded = recovery.exit.code === 0 && recovery.result.ok === true;
     expect(recovery.exit.code).toBe(0);
     expect(recovery.result.ok).toBe(true);
     expect(recovery.result.processId).not.toBe(ready.processId);
     expect(recovery.result.previousState).toBe(isWindows ? "UNKNOWN" : "LIVE");
     expect(recovery.result.state).toBe("STOPPED");
-    expect(JSON.stringify(recovery.output)).not.toContain("EBB_HERMES_PROVIDER_API_KEY");
+    expect(JSON.stringify(recovery.output).includes("EBB_HERMES_PROVIDER_API_KEY")).toBe(false);
 
     if (isWindows) {
       await waitFor(async () => (await processExists(descendantPid)) ? undefined : true, 15_000);
@@ -850,7 +999,7 @@ async function runRestartBoundaryAcceptance(): Promise<void> {
       const journal = await executor.exec("journalctl", ["--user", "--unit", unitName!, "--no-pager", "--output=cat"], {
         env: managerEnvironment(), timeout: 10_000,
       });
-      expect(`${journal.stdout}\n${journal.stderr}`).not.toContain("EBB_HERMES_PROVIDER_API_KEY");
+      expect(`${journal.stdout}\n${journal.stderr}`.includes("EBB_HERMES_PROVIDER_API_KEY")).toBe(false);
       const clientPids = await linuxProcessesMatching(unitName!);
       expect(clientPids).toEqual([]);
     }
@@ -902,6 +1051,7 @@ async function runWindowsHelperCrashBoundaryAcceptance(): Promise<void> {
   const descendantExitPath = join(directory, "descendant-exit.txt");
   const readyPath = join(directory, "launcher-ready.json");
   const recoveryPath = join(directory, "recovery-result.json");
+  const terminalStatusPath = restartChildTerminalStatusPath(readyPath);
   let launcher: RestartWorker | undefined;
   let ready: RestartMarker | undefined;
   let descendantPid: number | undefined;
@@ -926,8 +1076,14 @@ async function runWindowsHelperCrashBoundaryAcceptance(): Promise<void> {
       throw new Error("WINDOWS_PERSISTED_HELPER_IDENTITY_MISSING");
     }
 
-    expect(await waitForFile(payloadMarkerPath)).toBe("provider-free-dummy-payload");
-    const launchedDescendantPid = Number(await waitForFile(descendantPidPath));
+    const payloadMarker = await waitForWindowsPayloadMarkerWithDiagnostics(
+      () => waitForPayloadMarkerOrTerminalStatus(payloadMarkerPath, terminalStatusPath),
+      () => readDurableRunProcessOwner(databasePath, runId),
+      expectedWindowsPayloadIdentityFromReady(ready),
+      { payloadMarkerPath, descendantPidPath, heartbeatPath, descendantExitPath, terminalStatusPath },
+    );
+    expect(payloadMarker).toBe("provider-free-dummy-payload");
+    const launchedDescendantPid = Number(await waitForLaunchArtifactOrTerminalStatus(descendantPidPath, terminalStatusPath));
     descendantPid = launchedDescendantPid;
     expect(Number.isSafeInteger(launchedDescendantPid)).toBe(true);
     expect(launchedDescendantPid).toBeGreaterThan(0);
@@ -942,9 +1098,11 @@ async function runWindowsHelperCrashBoundaryAcceptance(): Promise<void> {
       throw new Error("WINDOWS_DESCENDANT_CREATION_IDENTITY_MISSING");
     }
     descendantCreationTime = activeDescendantCreationTime;
-    const firstHeartbeat = await waitForFile(heartbeatPath);
-    await new Promise((resolveDelay) => setTimeout(resolveDelay, 120));
-    expect(await readFile(heartbeatPath, "utf8")).not.toBe(firstHeartbeat);
+    const firstHeartbeat = await waitForLaunchArtifactOrTerminalStatus(heartbeatPath, terminalStatusPath);
+    const nextHeartbeat = await waitForLaunchArtifactOrTerminalStatus(
+      heartbeatPath, terminalStatusPath, 30_000, readFileIfPresent, (value) => value !== firstHeartbeat,
+    );
+    expect((nextHeartbeat !== firstHeartbeat)).toBe(true);
 
     const inspectDatabase = createSqliteDatabase(databasePath);
     let persistedOwner: ReturnType<typeof getRunProcessOwner>;
@@ -967,9 +1125,9 @@ async function runWindowsHelperCrashBoundaryAcceptance(): Promise<void> {
       expectedCreationTime: activeDescendantCreationTime,
       containmentId: ready.containmentId,
     });
-    expect(jobMembership.stdout.trim()).toBe("EXACT_PROCESS_JOB_MEMBERSHIP_CONFIRMED");
+    expect((jobMembership.stdout.trim() === "EXACT_PROCESS_JOB_MEMBERSHIP_CONFIRMED")).toBe(true);
 
-    let mismatchedIdentityError = "";
+    let mismatchConfirmed = false;
     try {
       await runWindowsNativeScopeCommand({
         mode: "terminate-exact",
@@ -978,10 +1136,11 @@ async function runWindowsHelperCrashBoundaryAcceptance(): Promise<void> {
       });
     } catch (error) {
       const stderr = (error as { stderr?: unknown }).stderr;
-      if (typeof stderr === "string") mismatchedIdentityError = stderr;
-      else mismatchedIdentityError = error instanceof Error ? error.message : String(error);
+      mismatchConfirmed = typeof stderr === "string"
+        ? stderr.includes("PROCESS_CREATION_IDENTITY_MISMATCH")
+        : error instanceof Error && error.message.includes("PROCESS_CREATION_IDENTITY_MISMATCH");
     }
-    expect(mismatchedIdentityError).toContain("PROCESS_CREATION_IDENTITY_MISMATCH");
+    expect(mismatchConfirmed).toBe(true);
     expect(await processExists(persistedOwner.supervisorPid!)).toBe(true);
 
     const killResult = await runWindowsNativeScopeCommand({
@@ -989,26 +1148,29 @@ async function runWindowsHelperCrashBoundaryAcceptance(): Promise<void> {
       processId: persistedOwner.supervisorPid!,
       expectedCreationTime: persistedOwner.supervisorStartIdentity!,
     });
-    expect(killResult.stdout.trim()).toBe("EXACT_PROCESS_TERMINATED");
+    expect((killResult.stdout.trim() === "EXACT_PROCESS_TERMINATED")).toBe(true);
     await waitFor(async () => (await processExists(persistedOwner.supervisorPid!)) ? undefined : true, 15_000);
     await waitFor(async () => (await processExists(launchedDescendantPid)) ? undefined : true, 15_000);
     const stoppedHeartbeat = await readFile(heartbeatPath, "utf8");
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 120));
     expect(await readFile(heartbeatPath, "utf8")).toBe(stoppedHeartbeat);
+    await waitForExpectedRestartChildExitStatus(terminalStatusPath, 137);
 
     const launcherPid = launcher.child.pid;
     await terminateRestartLauncher(launcher, null, 15_000);
     expect(launcherPid).toBe(ready.processId);
     launcher = undefined;
 
+    await waitForExpectedRestartChildExitStatus(terminalStatusPath, 137);
     const recovery = await runRecoveryWorker(databasePath, runId, recoveryPath, restartWorkerEnvironment(runHome));
+    await waitForExpectedRestartChildExitStatus(terminalStatusPath, 137);
     expect(recovery.exit.code).toBe(0);
     expect(recovery.result.ok).toBe(true);
     expect(recovery.result.processId).not.toBe(ready.processId);
     expect(recovery.result.previousState).toBe("UNKNOWN");
     expect(recovery.result.state).toBe("STOPPED");
     expect(recovery.result.stopEvidence).toBe("WINDOWS_JOB_AND_HELPER_ABSENT");
-    expect(JSON.stringify(recovery.output)).not.toContain("EBB_HERMES_PROVIDER_API_KEY");
+    expect(JSON.stringify(recovery.output).includes("EBB_HERMES_PROVIDER_API_KEY")).toBe(false);
 
     const finalDatabase = createSqliteDatabase(databasePath);
     try {
@@ -1161,13 +1323,15 @@ async function runRecoveryWorker(
   const exit = await promiseWithTimeout(worker.completion, 60_000, "PROCESS_SCOPE_RECOVERY_EXIT_TIMEOUT");
   let marker: string;
   try { marker = await readFile(markerPath, "utf8"); }
-  catch { throw new Error(`PROCESS_SCOPE_RECOVERY_MARKER_MISSING:${exit.code}:${worker.output.stderr}`); }
+  catch {
+    throw new Error(formatRestartChildRecoveryMarkerFailure(exit.code, worker.output.stdout, worker.output.stderr));
+  }
   const result = JSON.parse(marker) as Record<string, unknown>;
   return { exit, result, output: worker.output };
 }
 
 async function runWindowsNativeScopeCommand(options: {
-  mode: "is-job-member" | "read-creation" | "terminate-exact";
+  mode: "is-job-member" | "probe-cpu" | "read-creation" | "terminate-exact";
   processId: number;
   expectedCreationTime?: string;
   containmentId?: string;
@@ -1217,7 +1381,7 @@ async function compileWindowsNativeHelper(): Promise<void> {
     maxBuffer: 64 * 1024,
   });
   if (result.stdout.trim() !== "NATIVE_HELPER_COMPILED") {
-    throw new Error(`WINDOWS_NATIVE_HELPER_COMPILE_MARKER_MISSING:${result.stdout.trim()}`);
+    throw new Error("WINDOWS_NATIVE_HELPER_COMPILE_MARKER_MISSING");
   }
   await access(windowsNativeHelperAssemblyPath);
 }
@@ -1262,7 +1426,7 @@ function isWindowsNativeReadCreationTimeout(error: unknown): error is Error {
 }
 
 function formatWindowsNativeScopeCommandContext(
-  options: { mode: "is-job-member" | "read-creation" | "terminate-exact"; processId?: number },
+  options: { mode: "is-job-member" | "probe-cpu" | "read-creation" | "terminate-exact"; processId?: number },
   timeoutMs: number,
   elapsedMs: number,
 ): string {
@@ -1282,15 +1446,26 @@ function addDiagnosticContext(error: unknown, context: string): Error {
 }
 
 async function waitForRestartMarker(path: string, worker: RestartWorker, timeoutMs: number): Promise<string> {
-  return waitFor(async () => {
-    try { return await readFile(path, "utf8"); }
-    catch {
-      if (worker.child.exitCode !== null || worker.child.signalCode !== null) {
-        throw new Error(`PROCESS_SCOPE_LAUNCHER_EXITED_BEFORE_READY:${worker.child.exitCode}:${worker.output.stderr}`);
+  try {
+    return await waitFor(async () => {
+      try { return await readFile(path, "utf8"); }
+      catch {
+        if (worker.child.exitCode !== null || worker.child.signalCode !== null) {
+          throw new Error(`PROCESS_SCOPE_LAUNCHER_EXITED_BEFORE_READY:${worker.child.exitCode}:${formatRestartWorkerOutput(worker)}`);
+        }
+        return undefined;
       }
-      return undefined;
+    }, timeoutMs);
+  } catch (error) {
+    if (error instanceof Error && error.message === "PROCESS_SCOPE_ACCEPTANCE_TIMEOUT") {
+      throw new Error(`PROCESS_SCOPE_READY_MARKER_TIMEOUT:${formatRestartWorkerOutput(worker)}`, { cause: error });
     }
-  }, timeoutMs);
+    throw error;
+  }
+}
+
+function formatRestartWorkerOutput(worker: RestartWorker): string {
+  return formatRestartChildOutputDiagnostic(worker.output.stdout, worker.output.stderr);
 }
 
 function promiseWithTimeout<T>(promise: Promise<T>, timeoutMs: number, reason: string): Promise<T> {
@@ -1400,10 +1575,224 @@ async function waitForFile(path: string, timeoutMs = 30_000): Promise<string> {
   }, timeoutMs);
 }
 
+async function waitForPayloadMarkerOrTerminalStatus(
+  payloadMarkerPath: string,
+  terminalStatusPath: string,
+  timeoutMs = 30_000,
+): Promise<string> {
+  return waitForLaunchArtifactOrTerminalStatus(payloadMarkerPath, terminalStatusPath, timeoutMs);
+}
+
+async function waitForLaunchArtifactOrTerminalStatus(
+  artifactPath: string,
+  terminalStatusPath: string,
+  timeoutMs = 30_000,
+  readArtifact: (path: string) => Promise<string | undefined> = readFileIfPresent,
+  readyWhen: (value: string) => boolean = () => true,
+): Promise<string> {
+  return waitFor(async () => {
+    const statusContents = await readArtifact(terminalStatusPath);
+    if (statusContents !== undefined) {
+      throw new Error(formatRestartChildTerminalStatusDiagnostic(statusContents));
+    }
+    const artifactContents = await readArtifact(artifactPath);
+    return artifactContents !== undefined && readyWhen(artifactContents) ? artifactContents : undefined;
+  }, timeoutMs);
+}
+
+async function assertNoRestartChildTerminalStatus(terminalStatusPath: string): Promise<void> {
+  const statusContents = await readFileIfPresent(terminalStatusPath);
+  if (statusContents !== undefined) throw new Error(formatRestartChildTerminalStatusDiagnostic(statusContents));
+}
+
+async function waitForExpectedRestartChildExitStatus(
+  terminalStatusPath: string,
+  expectedExitCode: number,
+  timeoutMs = 30_000,
+  readArtifact: (path: string) => Promise<string | undefined> = readFileIfPresent,
+): Promise<void> {
+  await waitFor(async () => {
+    const statusContents = await readArtifact(terminalStatusPath);
+    if (statusContents === undefined) return undefined;
+    const status = parseRestartChildTerminalStatus(statusContents);
+    if (status?.kind === "exit" && status.exitCode === expectedExitCode) return true;
+    throw new Error(formatRestartChildTerminalStatusDiagnostic(statusContents));
+  }, timeoutMs);
+}
+
+interface WindowsExpectedPayloadIdentity {
+  runId: string;
+  state: "LIVE" | "UNKNOWN";
+  containmentId: string | null;
+  supervisorPid: number | null;
+  supervisorStartIdentity: string | null;
+  pid: number | null;
+  platform: string | null;
+  processStartIdentity?: string | null;
+}
+
+interface WindowsPayloadArtifactPaths {
+  payloadMarkerPath: string;
+  descendantPidPath: string;
+  heartbeatPath: string;
+  descendantExitPath: string;
+  terminalStatusPath?: string;
+}
+
+async function waitForWindowsPayloadMarkerWithDiagnostics(
+  readPayloadMarker: () => Promise<string>,
+  readOwner: () => ReturnType<typeof getRunProcessOwner>,
+  expected: WindowsExpectedPayloadIdentity,
+  artifactPaths: WindowsPayloadArtifactPaths,
+): Promise<string> {
+  try {
+    return await readPayloadMarker();
+  } catch (error) {
+    if (!(error instanceof Error) || error.message !== "PROCESS_SCOPE_ACCEPTANCE_TIMEOUT") throw error;
+    const snapshot = await collectWindowsPayloadMarkerTimeoutSnapshot(readOwner, expected, artifactPaths);
+    throw new Error(formatWindowsPayloadMarkerTimeout(snapshot), { cause: error });
+  }
+}
+
+async function collectWindowsPayloadMarkerTimeoutSnapshot(
+  readOwner: () => ReturnType<typeof getRunProcessOwner>,
+  expected: WindowsExpectedPayloadIdentity,
+  artifactPaths: WindowsPayloadArtifactPaths,
+): Promise<WindowsPayloadMarkerTimeoutSnapshot> {
+  let owner: ReturnType<typeof getRunProcessOwner>;
+  try { owner = readOwner(); }
+  catch { owner = undefined; }
+
+  const ownerState = owner?.state === "LIVE" || owner?.state === "UNKNOWN"
+    ? owner.state
+    : owner ? "OTHER" : "UNAVAILABLE";
+  const ownerIdentityMatches = owner !== undefined &&
+    (owner.state === "LIVE" || owner.state === "UNKNOWN") &&
+    owner.state === expected.state &&
+    owner.runId === expected.runId &&
+    owner.containmentKind === "windows-job" &&
+    owner.containmentId === expected.containmentId &&
+    owner.supervisorPid === expected.supervisorPid &&
+    owner.supervisorStartIdentity === expected.supervisorStartIdentity &&
+    owner.pid === expected.pid &&
+    owner.platform === expected.platform &&
+    (expected.processStartIdentity === undefined || owner.processStartIdentity === expected.processStartIdentity) &&
+    typeof owner.processStartIdentity === "string" && /^[1-9][0-9]*$/u.test(owner.processStartIdentity);
+
+  const phaseSupervisor = new WindowsJobSupervisor(new ProcessExecutor());
+  const phaseOwner = owner ? toScopeIdentity(owner) : undefined;
+  const [scopeInspection, jobMembership, cpuActivity, launchPhase, artifactPresence] = await Promise.all([
+    inspectExpectedWindowsScope(owner),
+    probeExpectedWindowsJobMembership(owner, expected.pid),
+    probeExpectedWindowsCpuActivity(owner, expected.pid),
+    inspectWindowsLaunchPhaseForTimeout(
+      phaseOwner,
+      (exactOwner) => phaseSupervisor.inspectLaunchPhase(exactOwner),
+    ),
+    Promise.all([
+      pathIsPresent(artifactPaths.payloadMarkerPath),
+      pathIsPresent(artifactPaths.descendantPidPath),
+      pathIsPresent(artifactPaths.heartbeatPath),
+      pathIsPresent(artifactPaths.descendantExitPath),
+      artifactPaths.terminalStatusPath === undefined ? Promise.resolve(false) : pathIsPresent(artifactPaths.terminalStatusPath),
+    ]),
+  ]);
+
+  return {
+    ownerState,
+    ownerIdentityMatches,
+    scopeInspection,
+    jobMembership,
+    cpuActivity,
+    launchPhase,
+    payloadMarkerPresent: artifactPresence[0],
+    descendantPidPresent: artifactPresence[1],
+    heartbeatPresent: artifactPresence[2],
+    descendantExitPresent: artifactPresence[3],
+    terminalStatusPresent: artifactPresence[4],
+  };
+}
+
+async function inspectExpectedWindowsScope(
+  owner: ReturnType<typeof getRunProcessOwner>,
+): Promise<"LIVE" | "STOPPED" | "UNKNOWN" | "UNAVAILABLE"> {
+  if (!owner) return "UNAVAILABLE";
+  try {
+    const observation = await new WindowsJobSupervisor(new ProcessExecutor()).inspect(toScopeIdentity(owner));
+    return observation.state === "LIVE" || observation.state === "STOPPED" || observation.state === "UNKNOWN"
+      ? observation.state
+      : "UNAVAILABLE";
+  } catch {
+    return "UNAVAILABLE";
+  }
+}
+
+async function probeExpectedWindowsJobMembership(
+  owner: ReturnType<typeof getRunProcessOwner>,
+  expectedPid: number | null,
+): Promise<WindowsPayloadMarkerTimeoutSnapshot["jobMembership"]> {
+  if (!owner || expectedPid === null || !Number.isSafeInteger(expectedPid) || expectedPid <= 0 ||
+      !owner.processStartIdentity || !/^[1-9][0-9]*$/u.test(owner.processStartIdentity) || !owner.containmentId) return "UNAVAILABLE";
+  try {
+    const result = await runWindowsNativeScopeCommand({
+      mode: "is-job-member",
+      processId: expectedPid,
+      expectedCreationTime: owner.processStartIdentity,
+      containmentId: owner.containmentId,
+    });
+    return classifyWindowsJobMembershipResult(result.exitCode, result.stdout, result.stderr);
+  } catch (error) {
+    if (error instanceof ExitCodeError) {
+      return classifyWindowsJobMembershipResult(error.exitCode, error.stdout, error.stderr);
+    }
+    return "UNAVAILABLE";
+  }
+}
+
+async function probeExpectedWindowsCpuActivity(
+  owner: ReturnType<typeof getRunProcessOwner>,
+  expectedPid: number | null,
+): Promise<WindowsPayloadMarkerTimeoutSnapshot["cpuActivity"]> {
+  if (!owner || expectedPid === null || !Number.isSafeInteger(expectedPid) || expectedPid <= 0 ||
+      !owner.processStartIdentity || !/^[1-9][0-9]*$/u.test(owner.processStartIdentity)) return "UNAVAILABLE";
+  try {
+    const result = await runWindowsNativeScopeCommand({
+      mode: "probe-cpu",
+      processId: expectedPid,
+      expectedCreationTime: owner.processStartIdentity,
+    });
+    return parseWindowsPayloadCpuActivity(result.stdout.trim());
+  } catch {
+    return "UNAVAILABLE";
+  }
+}
+
+async function pathIsPresent(path: string): Promise<boolean> {
+  try { await access(path); return true; }
+  catch { return false; }
+}
+
+function expectedWindowsPayloadIdentityFromReady(ready: RestartMarker): WindowsExpectedPayloadIdentity {
+  return {
+    runId: ready.runId,
+    state: ready.state === "UNKNOWN" ? "UNKNOWN" : "LIVE",
+    containmentId: ready.containmentId,
+    supervisorPid: ready.supervisorPid,
+    supervisorStartIdentity: ready.supervisorStartIdentity,
+    pid: ready.payloadPid,
+    platform: ready.platform,
+  };
+}
+
+function readDurableRunProcessOwner(databasePath: string, runId: string): ReturnType<typeof getRunProcessOwner> {
+  const database = createSqliteDatabase(databasePath);
+  try { return getRunProcessOwner(database, runId); }
+  finally { database.close(); }
+}
+
 const LINUX_ACCEPTANCE_DIAGNOSTIC_PROPERTIES = [
   "ActiveState", "SubState", "MainPID", "ControlGroup", "Result", "ExecMainCode", "ExecMainStatus", "InvocationID",
 ] as const;
-const PROCESS_COMPLETION_STREAM_LIMIT = 1_200;
 const LINUX_UNIT_DIAGNOSTIC_LIMIT = 10_000;
 
 async function waitForPayloadMarker(
@@ -1475,13 +1864,13 @@ async function collectLinuxUnitDiagnostics(executor: ProcessExecutor, unitName: 
     executor.exec("journalctl", [
       "--user", `--unit=${exactUnitName}`, "--no-pager", "--output=short-iso", "--lines=40",
     ], { env: managerEnvironment(), timeout: 5_000, maxBuffer: 8_000 })
-      .then((result) => boundedDiagnosticText(result.stdout, 6_000))
+      .then((result) => summarizeCapturedOutput(result.stdout))
       .catch((error: unknown) => `unavailable: ${formatDiagnosticError(error)}`),
   ]);
   return boundedDiagnosticText([
     `unit=${exactUnitName}`,
     "properties:", properties || "(no allowlisted properties returned)",
-    "journal tail (last 40 lines):", journal || "(empty)",
+    `journal=${journal || "empty"}`,
   ].join("\n"), LINUX_UNIT_DIAGNOSTIC_LIMIT);
 }
 
@@ -1507,9 +1896,16 @@ function formatProcessCompletionDiagnostic(result: ProcessResult): string {
     "PROCESS_SCOPE_PAYLOAD_COMPLETED_BEFORE_MARKER",
     `exitCode=${result.exitCode}`,
     `signal=${signalText}`,
-    `stdout=${JSON.stringify(boundedDiagnosticText(result.stdout, PROCESS_COMPLETION_STREAM_LIMIT))}`,
-    `stderr=${JSON.stringify(boundedDiagnosticText(result.stderr, PROCESS_COMPLETION_STREAM_LIMIT))}`,
+    `stdout=${summarizeCapturedOutput(result.stdout)}`,
+    `stderr=${summarizeCapturedOutput(result.stderr)}`,
   ].join("\n");
+}
+
+function summarizeCapturedOutput(output: string): string {
+  if (output.length === 0) return "empty";
+  const lines = output.split(/\r?\n/u);
+  if (lines.at(-1) === "") lines.pop();
+  return `present-redacted lines=${lines.length}`;
 }
 
 function formatDiagnosticError(error: unknown): string {

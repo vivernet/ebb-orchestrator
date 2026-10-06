@@ -14,6 +14,14 @@ import { digestRunPromptBytesV1 } from "../../../src/modules/context/context-pro
 import type { PreparedRunContext } from "../../../src/modules/context/context-types.js";
 import { transitionRunProcessOwnerTx } from "../../../src/modules/runtime/run-process-owner.js";
 
+const hermesSourceSnapshotKey = JSON.stringify({
+  formatVersion: 1,
+  hermesVersion: "v0.21.5+7357.g9244275",
+  manifestDigest: "c".repeat(64),
+  sourceCommit: "b".repeat(40),
+  sourceTree: "d".repeat(40),
+});
+
 const migrations = loadTestMigrations();
 
 describe("RunService with FakeAgentRuntime", () => {
@@ -152,6 +160,173 @@ describe("RunService with FakeAgentRuntime", () => {
 
     expect(developer.roleInputs).toEqual({});
     expect(coordinator.roleInputs).toEqual({});
+  });
+
+  it("persists the preflight-selected Hermes model and exact native profile owner before execution", async () => {
+    await setup();
+    const runId = randomUUID();
+    const profileHome = `C:\\Users\\runner\\AppData\\Local\\hermes\\profiles\\ebb-orchestrator-run-${runId}`;
+    let seenPolicy: unknown;
+    Object.assign(fakeRuntime, {
+      prepareHermesRunSelection: async (id: string) => ({
+        selection: {
+          runId: id, providerId: "openai-codex", modelId: "gpt-5.6-codex",
+          endpointIdentity: "hermes-provider:openai-codex", endpointRevision: "a".repeat(40),
+          sourceVersion: "v0.21.5+7357.g9244275", sourceCommit: "b".repeat(40), sourceSnapshotKey: hermesSourceSnapshotKey, profileHome,
+        },
+        cleanup: async () => undefined,
+      }),
+    });
+    runService = new RunService(db!, fakeRuntime, {
+      prepare: (_tx, input) => {
+        seenPolicy = input.execution.policyIdentity;
+        return preparedContext(input.prompt, input.role, input.subject);
+      },
+    });
+    const options = withTestContext({
+      runId, role: "developer", model: "scheduler-model", taskId, epicId: null,
+      triggerReason: "runtime-request", contextVersion: "1", outputSchemaVersion: "1",
+      prompt: "caller prompt", capability: { workspace: "test-worktree" },
+    });
+
+    const run = await runService.prepareRunWithHermesPreflight(options);
+    const owner = db!.get<{ hermes_home: string; hermes_source_snapshot_key: string | null }>("SELECT hermes_home,hermes_source_snapshot_key FROM run_process_owners WHERE run_id=$runId", { runId });
+
+    expect(run.model).toBe("gpt-5.6-codex");
+    expect(owner?.hermes_home).toBe(profileHome);
+    expect(owner?.hermes_source_snapshot_key).toBe(hermesSourceSnapshotKey);
+    expect(seenPolicy).toEqual({
+      providerId: "openai-codex",
+      providerPolicyId: "hermes-provider:openai-codex@" + "a".repeat(40) + ";auth=hermes-native-auth-json-root-fallback-v1@" + "b".repeat(40),
+      runtimeId: "hermes",
+      runtimePolicyId: `v0.21.5+7357.g9244275@${hermesSourceSnapshotKey};bootstrap=hermes-source-snapshot-bootstrap-v1`,
+    });
+  });
+
+  it("releases the pending source reference only after PREPARED owner commit", async () => {
+    await setup();
+    const runId = randomUUID();
+    let referenceHeld = true;
+    let durableOwnerAtRelease = false;
+    const profileHome = `C:\\hermes\\profiles\\ebb-orchestrator-run-${runId}`;
+    Object.assign(fakeRuntime, {
+      prepareHermesRunSelection: async (id: string) => ({
+        selection: {
+          runId: id, providerId: "openai-codex", modelId: "gpt-5.6-codex",
+          endpointIdentity: "hermes-provider:openai-codex", endpointRevision: "a".repeat(40),
+          sourceVersion: "v0.21.5+7357.g9244275", sourceCommit: "b".repeat(40),
+          sourceSnapshotKey: hermesSourceSnapshotKey, profileHome,
+        },
+        commit: async () => {
+          durableOwnerAtRelease = db!.get<{ state: string; hermes_source_snapshot_key: string }>(
+            "SELECT state,hermes_source_snapshot_key FROM run_process_owners WHERE run_id=$runId", { runId },
+          )?.state === "PREPARED" && db!.get<{ hermes_source_snapshot_key: string }>(
+            "SELECT hermes_source_snapshot_key FROM run_process_owners WHERE run_id=$runId", { runId },
+          )?.hermes_source_snapshot_key === hermesSourceSnapshotKey;
+          if (!durableOwnerAtRelease) throw new Error("SOURCE_OWNER_NOT_DURABLE_BEFORE_RELEASE");
+          referenceHeld = false;
+        },
+        cleanup: async () => { referenceHeld = false; },
+      }),
+    });
+    runService = new RunService(db!, fakeRuntime, {
+      prepare: (_tx, input) => preparedContext(input.prompt, input.role, input.subject),
+    });
+    await runService.prepareRunWithHermesPreflight(withTestContext({
+      runId, role: "developer", model: "persisted", taskId, epicId: null,
+      triggerReason: "runtime-request", contextVersion: "1", outputSchemaVersion: "1",
+      prompt: "caller prompt", capability: { workspace: "test-worktree" },
+    }));
+    expect(durableOwnerAtRelease).toBe(true);
+    expect(referenceHeld).toBe(false);
+    expect(db!.get<{ state: string }>("SELECT state FROM run_process_owners WHERE run_id=$runId", { runId })?.state).toBe("PREPARED");
+  });
+
+  it("rolls back Run, context manifest, and process owner together when the Hermes source key is invalid", async () => {
+    await setup();
+    const runId = randomUUID();
+    const profileHome = `C:\\hermes\\profiles\\ebb-orchestrator-run-${runId}`;
+    Object.assign(fakeRuntime, {
+      prepareHermesRunSelection: async (id: string) => ({
+        selection: {
+          runId: id, providerId: "openai-codex", modelId: "gpt-5.6-codex",
+          endpointIdentity: "hermes-provider:openai-codex", endpointRevision: "a".repeat(40),
+          sourceVersion: "v0.21.5+7357.g9244275", sourceCommit: "b".repeat(40),
+          sourceSnapshotKey: "not-canonical", profileHome,
+        },
+        cleanup: async () => undefined,
+      }),
+    });
+    runService = new RunService(db!, fakeRuntime, {
+      prepare: (_tx, input) => preparedContext(input.prompt, input.role, input.subject),
+    });
+
+    await expect(runService.prepareRunWithHermesPreflight(withTestContext({
+      runId, role: "developer", model: "scheduler-model", taskId, epicId: null,
+      triggerReason: "runtime-request", contextVersion: "1", outputSchemaVersion: "1",
+      prompt: "caller prompt", capability: { workspace: "test-worktree" },
+    }))).rejects.toThrow("Hermes source snapshot key must be the exact canonical versioned identity.");
+
+    expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM agent_runs")?.count).toBe(0);
+    expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM context_manifests")?.count).toBe(0);
+    expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM run_process_owners")?.count).toBe(0);
+  });
+
+  it("cleans up the exact empty profile when Run/manifest transaction rolls back", async () => {
+    await setup();
+    const runId = randomUUID();
+    let cleanupCalls = 0;
+    Object.assign(fakeRuntime, {
+      prepareHermesRunSelection: async (id: string) => ({
+        selection: {
+          runId: id, providerId: "openai-codex", modelId: "gpt-5.6-codex",
+          endpointIdentity: "hermes-provider:openai-codex", endpointRevision: "a".repeat(40),
+          sourceVersion: "v0.21.5+7357.g9244275", sourceCommit: "b".repeat(40), sourceSnapshotKey: hermesSourceSnapshotKey,
+          profileHome: `C:\\hermes\\profiles\\ebb-orchestrator-run-${id}`,
+        },
+        cleanup: async () => { cleanupCalls += 1; },
+      }),
+    });
+    runService = new RunService(db!, fakeRuntime, {
+      prepare: () => { throw new Error("ASSEMBLY_FAILED"); },
+    });
+
+    await expect(runService.prepareRunWithHermesPreflight(withTestContext({
+      runId, role: "developer", model: "persisted", taskId, epicId: null,
+      triggerReason: "runtime-request", contextVersion: "1", outputSchemaVersion: "1",
+      prompt: "caller prompt", capability: { workspace: "test-worktree" },
+    }))).rejects.toThrow("ASSEMBLY_FAILED");
+
+    expect(cleanupCalls).toBe(1);
+    expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM agent_runs")?.count).toBe(0);
+    expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM context_manifests")?.count).toBe(0);
+  });
+
+  it("rejects a Hermes producer that returns without committing its durable Run", async () => {
+    await setup();
+    const runId = randomUUID();
+    let cleanupCalls = 0;
+    Object.assign(fakeRuntime, {
+      prepareHermesRunSelection: async (id: string) => ({
+        selection: {
+          runId: id, providerId: "openai-codex", modelId: "gpt-5.6-codex",
+          endpointIdentity: "hermes-provider:openai-codex", endpointRevision: "a".repeat(40),
+          sourceVersion: "v0.21.5+7357.g9244275", sourceCommit: "b".repeat(40), sourceSnapshotKey: hermesSourceSnapshotKey,
+          profileHome: `C:\\hermes\\profiles\\ebb-orchestrator-run-${id}`,
+        },
+        cleanup: async () => { cleanupCalls += 1; },
+      }),
+    });
+
+    await expect(runService.withHermesRunPreflight({
+      runId, role: "developer", model: "persisted", taskId, epicId: null,
+      triggerReason: "runtime-request", contextVersion: "1", outputSchemaVersion: "1",
+      prompt: "caller prompt", capability: { workspace: "test-worktree" },
+    }, () => "producer forgot the durable transaction"))
+      .rejects.toThrow("HERMES_RUN_PREFLIGHT_NOT_COMMITTED");
+
+    expect(cleanupCalls).toBe(1);
+    expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM agent_runs")?.count).toBe(0);
   });
 
   it("persists the exact prepared prompt, one manifest, and one PREPARED owner before execution", async () => {

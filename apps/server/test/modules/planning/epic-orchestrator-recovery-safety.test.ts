@@ -120,13 +120,28 @@ type PrivateCalls = {
 
 function fakeRunService(db: ReturnType<typeof createSqliteDatabase>, failFirst = true) {
   let attempts = 0;
+  const committedPreflights = new Set<string>();
   const roles = new Map<string, string>();
   return {
-    prepareRun(options: { runId: string; role: string; taskId: string; epicId: string }) {
+    async beginHermesRunPreflight(options: { runId?: string; role: string; taskId: string | null; epicId: string; model: string }) {
+      const runId = options.runId ?? randomUUID();
+      return {
+        options: { ...options, runId },
+        bind: (boundOptions: { runId?: string }) => ({ ...boundOptions, runId }),
+        commit: async () => { committedPreflights.add(runId); },
+        cleanup: async () => {},
+        isCommitted: () => committedPreflights.has(runId),
+      };
+    },
+    bindHermesRunSelection(options: { runId?: string }, preflight: { bind(options: { runId?: string }): { runId: string } }) {
+      return preflight.bind(options);
+    },
+    prepareRun(options: { runId: string; role: string; taskId: string | null; epicId: string; model: string }) {
       roles.set(options.runId, options.role);
       db.run("INSERT INTO agent_runs(id,role,runtime,model,task_id,epic_id,status,started_at) VALUES($id,$role,'test','test',$taskId,$epicId,'STARTED',$now)", {
-        id: options.runId, role: options.role, taskId: options.taskId || null, epicId: options.epicId, now: new Date().toISOString(),
+        id: options.runId, role: options.role, taskId: options.taskId, epicId: options.epicId, now: new Date().toISOString(),
       });
+      return { id: options.runId, role: options.role, model: "test" };
     },
     async executePreparedRun(runId: string) {
       attempts += 1;

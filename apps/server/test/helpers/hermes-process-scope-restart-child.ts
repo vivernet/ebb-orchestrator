@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname } from "node:path";
 import { getRunProcessOwner, insertRunProcessOwnerTx, preflightRunProcessOwners, prepareRunProcessOwner, transitionRunProcessOwnerTx } from "../../src/modules/runtime/run-process-owner.js";
@@ -9,6 +9,12 @@ import { runMigrations } from "../../src/platform/database/migrator.js";
 import { SystemdRunSupervisor } from "../../src/platform/process/systemd-run-supervisor.js";
 import { WindowsJobSupervisor } from "../../src/platform/process/windows-job-supervisor.js";
 import { loadTestMigrations } from "./migrations.js";
+import {
+  restartChildTerminalStatusPath,
+  restartChildTerminalStatusForFailure,
+  safeRestartChildFailureCode,
+  serializeRestartChildTerminalStatus,
+} from "./restart-child-diagnostics.js";
 
 const [mode, databasePath, runId, runHome, heartbeatPath, digestPath, descendantPidPath, descendantExitPath, markerPath] = process.argv.slice(2);
 
@@ -61,7 +67,14 @@ async function launchOwnedScope(): Promise<void> {
         },
       }));
     });
-    void handle.completion.catch(() => undefined);
+    const terminalStatusPath = restartChildTerminalStatusPath(markerPath);
+    void handle.completion.then(
+      (result) => writeTerminalStatus(terminalStatusPath, {
+        kind: "exit",
+        exitCode: result.exitCode,
+      }),
+      (error: unknown) => writeTerminalStatus(terminalStatusPath, restartChildTerminalStatusForFailure(error)),
+    ).catch(() => undefined);
 
     if (process.platform === "win32") {
       database.transaction((tx) => transitionRunProcessOwnerTx(tx, {
@@ -89,6 +102,15 @@ async function launchOwnedScope(): Promise<void> {
   }
 }
 
+async function writeTerminalStatus(
+  terminalStatusPath: string,
+  status: Parameters<typeof serializeRestartChildTerminalStatus>[0],
+): Promise<void> {
+  const temporaryPath = `${terminalStatusPath}.tmp`;
+  await writeFile(temporaryPath, serializeRestartChildTerminalStatus(status));
+  await rename(temporaryPath, terminalStatusPath);
+}
+
 async function recoverOwnedScope(): Promise<void> {
   if (!databasePath || !runId || !markerPath) throw new Error("PROCESS_SCOPE_RESTART_CHILD_ARGUMENTS_INVALID");
   const database = createSqliteDatabase(databasePath);
@@ -112,8 +134,14 @@ async function recoverOwnedScope(): Promise<void> {
       systemdInvocationId: after.systemdInvocationId,
       systemdControlGroup: after.systemdControlGroup,
     }));
-  } catch {
-    await writeFile(markerPath, JSON.stringify({ ok: false, processId: process.pid, runId }));
+  } catch (error) {
+    const failureCode = safeRestartChildFailureCode(error);
+    await writeFile(markerPath, JSON.stringify({
+      ok: false,
+      processId: process.pid,
+      runId,
+      ...(failureCode ? { failureCode } : {}),
+    }));
     process.exitCode = 1;
   } finally {
     database.close();
@@ -211,7 +239,10 @@ function toScopeIdentity(owner: ReturnType<typeof getRunProcessOwner>): ProcessS
   };
 }
 
-void main().catch(() => {
-  process.stderr.write("PROCESS_SCOPE_RESTART_CHILD_FAILED\n");
+void main().catch((error: unknown) => {
+  const failureCode = safeRestartChildFailureCode(error);
+  process.stderr.write(failureCode
+    ? `PROCESS_SCOPE_RESTART_CHILD_FAILED:${failureCode}\n`
+    : "PROCESS_SCOPE_RESTART_CHILD_FAILED\n");
   process.exitCode = 1;
 });

@@ -32,17 +32,20 @@ describe("context manifest v2 migration", () => {
     if (tmpDir) await rm(tmpDir, { recursive: true, force: true });
   });
 
-  it("preserves all historical manifests and deltas while moving both delta foreign keys in place", async () => {
+  it("preserves historical manifests and delta storage through populated v036 to v040 upgrade", async () => {
     tmpDir = await mkdtemp(join(tmpdir(), "ebb-context-manifest-migration-"));
     dbPath = join(tmpDir, `migration-${randomUUID()}.sqlite`);
     db = createSqliteDatabase(dbPath);
     const migrations = loadTestMigrations();
     const migration037 = migrations.find((migration) => migration.version === 37);
     const migration039 = migrations.find((migration) => migration.version === 39);
+    const migration040 = migrations.find((migration) => migration.version === 40);
     expect(migration037?.name).toBe("037_context_manifest_v2");
     expect(migration039?.name).toBe("039_run_session_capture_state");
+    expect(migration040?.name).toBe("040_run_hermes_source_snapshot");
+    expect(migration040?.sql.trim()).toBe("ALTER TABLE run_process_owners ADD COLUMN hermes_source_snapshot_key TEXT;");
     expect(migrations.map(({ version }) => version)).toEqual(
-      Array.from({ length: 39 }, (_, index) => index + 1),
+      Array.from({ length: 40 }, (_, index) => index + 1),
     );
 
     runMigrations(db, migrations.filter((migration) => migration.version <= 36));
@@ -50,6 +53,7 @@ describe("context manifest v2 migration", () => {
     db.run("UPDATE agent_runs SET session_id='legacy-session-id' WHERE id='legacy-run-a'");
     const oldManifestRows = db.all<Row>("SELECT * FROM context_manifests ORDER BY id");
     const oldDeltaRows = db.all<Row>("SELECT * FROM context_deltas ORDER BY id");
+    const oldDeltaBytes = storedBytes(db, "context_deltas");
     const oldManifestColumns = tableColumns(db, "context_manifests");
     const oldDeltaColumns = tableColumns(db, "context_deltas");
     const oldManifestIndexes = indexes(db, "context_manifests");
@@ -74,10 +78,43 @@ describe("context manifest v2 migration", () => {
     expect(foreignKeyViolationsBefore039).toEqual([]);
     insertRawOwner(db, prepareRunProcessOwner("legacy-run-a", "C:\\legacy\\hermes\\legacy-run-a", "windows-job"));
 
+    expect(runMigrations(db, migrations.filter((migration) => migration.version <= 39)).applied).toBe(1);
+    const ownersBefore040 = db.all<Row>("SELECT * FROM run_process_owners ORDER BY run_id");
+    const ownerColumnsBefore040 = tableColumns(db, "run_process_owners");
+    expect(ownerColumnsBefore040).toContainEqual({
+      name: "capture_state", type: "TEXT", notnull: 1, dflt_value: "'UNBOUND'", pk: 0,
+    });
+    expect(tableSql(db, "run_process_owners")).toMatch(
+      /capture_state\s+TEXT\s+NOT NULL\s+DEFAULT 'UNBOUND'\s+CHECK\s*\(\s*capture_state IN\s*\('UNBOUND',\s*'BOUND',\s*'INVALID'\)\s*\)/,
+    );
+    const contextTablesBefore040 = ["context_deltas", "context_manifests", "context_manifests_legacy_v1"].map((table) => ({
+      table, rows: db!.all<Row>(`SELECT * FROM ${table} ORDER BY id`),
+      bytes: storedBytes(db!, table), columns: tableColumns(db!, table),
+      indexes: indexes(db!, table), sql: tableSql(db!, table),
+      rootPage: rootPage(db!, table), foreignKeys: foreignKeys(db!, table),
+    }));
     expect(runMigrations(db, migrations).applied).toBe(1);
+    expect(db.all("SELECT version, name FROM schema_migrations ORDER BY version"))
+      .toEqual(migrations.map(({ version, name }) => ({ version, name })));
+    expect(tableColumns(db, "run_process_owners")).toEqual([
+      ...ownerColumnsBefore040,
+      { name: "hermes_source_snapshot_key", type: "TEXT", notnull: 0, dflt_value: null, pk: 0 },
+    ]);
+    expect(db.all<Row>("SELECT * FROM run_process_owners ORDER BY run_id"))
+      .toEqual(ownersBefore040.map((owner) => ({ ...owner, hermes_source_snapshot_key: null })));
+    for (const before of contextTablesBefore040) {
+      expect(db.all<Row>(`SELECT * FROM ${before.table} ORDER BY id`)).toEqual(before.rows);
+      expect(storedBytes(db, before.table)).toEqual(before.bytes);
+      expect(tableColumns(db, before.table)).toEqual(before.columns);
+      expect(indexes(db, before.table)).toEqual(before.indexes);
+      expect(tableSql(db, before.table)).toBe(before.sql);
+      expect(rootPage(db, before.table)).toBe(before.rootPage);
+      expect(foreignKeys(db, before.table)).toEqual(before.foreignKeys);
+    }
 
     expect(db.all<Row>("SELECT * FROM context_manifests_legacy_v1 ORDER BY id")).toEqual(oldManifestRows);
     expect(db.all<Row>("SELECT * FROM context_deltas ORDER BY id")).toEqual(oldDeltaRows);
+    expect(storedBytes(db, "context_deltas")).toEqual(oldDeltaBytes);
     expect(tableColumns(db, "context_manifests_legacy_v1")).toEqual(oldManifestColumns);
     expect(tableColumns(db, "context_deltas")).toEqual(oldDeltaColumns);
     expect(indexes(db, "context_manifests_legacy_v1")).toEqual(oldManifestIndexes);
@@ -98,6 +135,8 @@ describe("context manifest v2 migration", () => {
       .toEqual(deltaForeignKeysBefore039);
     expect(db.get<{ capture_state: string }>("SELECT capture_state FROM run_process_owners WHERE run_id='legacy-run-a'"))
       .toEqual({ capture_state: "UNBOUND" });
+    expect(db.get("SELECT hermes_source_snapshot_key FROM run_process_owners WHERE run_id='legacy-run-a'"))
+      .toEqual({ hermes_source_snapshot_key: null });
     expect(db.get<{ session_id: string }>("SELECT session_id FROM agent_runs WHERE id='legacy-run-a'"))
       .toEqual({ session_id: "legacy-session-id" });
     expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM run_process_owners")?.count).toBe(1);
@@ -115,6 +154,7 @@ describe("context manifest v2 migration", () => {
     expect(runMigrations(db, migrations).applied).toBe(0);
     expect(db.all<Row>("SELECT * FROM context_manifests_legacy_v1 ORDER BY id")).toEqual(oldManifestRows);
     expect(db.all<Row>("SELECT * FROM context_deltas ORDER BY id")).toEqual(oldDeltaRows);
+    expect(storedBytes(db, "context_deltas")).toEqual(oldDeltaBytes);
     expect(db.get<{ capture_state: string }>("SELECT capture_state FROM run_process_owners WHERE run_id='legacy-run-a'"))
       .toEqual({ capture_state: "UNBOUND" });
     expect(db.all("PRAGMA foreign_key_check")).toEqual([]);
@@ -149,7 +189,7 @@ describe("context manifest v2 migration", () => {
 
     const migration038 = migrations.find((migration) => migration.version === 38);
     expect(migration038?.name).toBe("038_run_process_owner_cgroup");
-    expect(runMigrations(db, migrations).applied).toBe(2);
+    expect(runMigrations(db, migrations.filter((migration) => migration.version <= 39)).applied).toBe(2);
 
     expect(tableColumns(db, "run_process_owners").map((column) => column.name)).toContain("systemd_control_group");
     expect(db.all<Row>("SELECT * FROM context_deltas ORDER BY id")).toEqual(deltas);
@@ -502,6 +542,14 @@ function tableColumns(database: Database, table: string): Row[] {
     dflt_value: dflt_value as string | null,
     pk: pk as number,
   }));
+}
+
+function storedBytes(database: Database, table: string): Row[] {
+  const expressions = tableColumns(database, table).flatMap(({ name }) => [
+    `typeof("${name}") AS "${name}_type"`,
+    `hex(CAST("${name}" AS BLOB)) AS "${name}_bytes"`,
+  ]);
+  return database.all<Row>(`SELECT ${expressions.join(",")} FROM "${table}" ORDER BY id`);
 }
 
 function indexes(database: Database, table: string): Array<{

@@ -5,6 +5,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
 import { resolveWindowsMsvcEnvironment } from "./windows-msvc-environment.mjs";
+import { writeNativeHelperIntegrityAnchor } from "./package-native-assets.mjs";
 
 if (process.platform !== "win32") {
   throw new Error("WINDOWS_PROCESS_SCOPE_BUILD_REQUIRES_WINDOWS");
@@ -39,6 +40,7 @@ execFileSync(compiler, [
   `/Fe${executable}`,
   source,
   "kernel32.lib",
+  "advapi32.lib",
   "bcrypt.lib",
 ], {
   cwd: canonicalRepository,
@@ -49,3 +51,4 @@ execFileSync(compiler, [
 });
 
 console.log(`Built provider-free Windows process-scope helper: ${executable}`);
+writeNativeHelperIntegrityAnchor({ serverRoot: serverDirectory });

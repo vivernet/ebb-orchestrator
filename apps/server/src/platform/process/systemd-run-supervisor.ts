@@ -1,8 +1,11 @@
 import { statfs } from "node:fs/promises";
-import { posix } from "node:path";
+import { dirname, posix } from "node:path";
+import { fileURLToPath } from "node:url";
 import { ProcessExecutor, type ProcessResult, type ProcessSession } from "./process-executor.js";
 import { classifySystemdScope, inspectCgroupTree, type ProcessScopeIdentity, type ProcessScopeObservation, type SystemdScopeSnapshot } from "./process-inspector.js";
 import { ProcessScopeLaunchNotDispatchedError, type ProcessScopeHandle, type ProcessScopeLaunchRequest, type ProcessScopeSupervisor } from "./run-scope-supervisor.js";
+import { consumeHermesLaunchTicket, type HermesLaunchTicketInput } from "../../modules/runtime/hermes/hermes-launch-ticket.js";
+import { getLinuxHermesLauncherIntegrityDigest } from "./native-helper-integrity.js";
 
 const HERMES_CHILD_ENV_KEYS = new Set([
   "HOMEDRIVE", "HOMEPATH", "SYSTEMROOT", "TEMP", "TMP", "PATH", "NODE_PATH", "NODE_ENV",
@@ -13,6 +16,8 @@ const POLL_INTERVAL_MS = 500;
 
 const systemdPayloadWrapper = String.raw`
 const { spawn } = require("node:child_process");
+const { constants, fstatSync, openSync, closeSync, readFileSync } = require("node:fs");
+const { createHash } = require("node:crypto");
 const safeEnvironmentKeys = [
   "HOMEDRIVE", "HOMEPATH", "SYSTEMROOT", "TEMP", "TMP", "PATH", "NODE_PATH", "NODE_ENV",
   "HOME", "HERMES_HOME", "HERMES_CONFIG", "HERMES_MODEL",
@@ -42,23 +47,68 @@ async function main() {
   const ack = await take(1);
   if (ack[0] !== 1) throw new Error("launch not authorized by durable owner");
   process.stdin.pause();
-  const [file, ...args] = process.argv.slice(1);
+  const payload = process.argv.slice(1);
+  const verifiedHelper = payload[0] === "--verified-linux-hermes-helper";
+  let file;
+  let args;
+  let helperFd;
+  if (verifiedHelper) {
+    const [, helperPath, expectedDigest, ...helperArgs] = payload;
+    if (!helperPath || !/^[a-f0-9]{64}$/.test(expectedDigest || "")) throw new Error("native helper identity missing");
+    helperFd = openSync(helperPath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const helperStat = fstatSync(helperFd);
+    if (!helperStat.isFile() || (helperStat.mode & 0o111) === 0 || helperStat.size <= 0 || helperStat.size > 128 * 1024 * 1024) {
+      closeSync(helperFd);
+      throw new Error("native helper type rejected");
+    }
+    const digest = createHash("sha256").update(readFileSync(helperFd)).digest("hex");
+    if (digest !== expectedDigest) {
+      closeSync(helperFd);
+      throw new Error("native helper identity mismatch");
+    }
+    file = "/proc/self/fd/3";
+    args = helperArgs;
+  } else {
+    [file, ...args] = payload;
+  }
   if (!file) throw new Error("payload executable missing");
   const env = {};
   for (const key of safeEnvironmentKeys) {
     const value = process.env[key];
     if (value !== undefined) env[key] = value;
   }
-  const child = spawn(file, args, { shell: false, cwd: process.cwd(), env, stdio: ["ignore", "inherit", "inherit"] });
+  let child;
+  try {
+    child = spawn(file, args, {
+      shell: false, cwd: process.cwd(), env,
+      stdio: helperFd === undefined ? ["ignore", "inherit", "inherit"] : ["ignore", "inherit", "inherit", helperFd],
+    });
+  } finally {
+    if (helperFd !== undefined) closeSync(helperFd);
+  }
   child.on("error", () => process.exit(126));
   child.on("close", (code) => process.exit(code ?? 1));
 }
 main().catch(() => process.exit(125));
 `;
 
+interface SystemdRunSupervisorOptions {
+  linuxHermesLauncherPath?: string;
+  loadLinuxHermesLauncherDigest?: () => Promise<string>;
+}
+
 /** Linux process owner backed only by systemd user services and unified cgroup v2. */
 export class SystemdRunSupervisor implements ProcessScopeSupervisor {
-  constructor(private readonly executor = new ProcessExecutor()) {}
+  private readonly linuxHermesLauncherPath: string;
+  private readonly loadLinuxHermesLauncherDigest: () => Promise<string>;
+
+  constructor(private readonly executor = new ProcessExecutor(), options: SystemdRunSupervisorOptions = {}) {
+    this.linuxHermesLauncherPath = options.linuxHermesLauncherPath ?? posix.resolve(
+      dirname(fileURLToPath(import.meta.url)), "../../../dist/native/linux-hermes-launcher/ebb-linux-hermes-launcher",
+    );
+    this.loadLinuxHermesLauncherDigest = options.loadLinuxHermesLauncherDigest ??
+      getLinuxHermesLauncherIntegrityDigest;
+  }
 
   async launch(
     owner: ProcessScopeIdentity,
@@ -66,8 +116,10 @@ export class SystemdRunSupervisor implements ProcessScopeSupervisor {
     persistVerifiedIdentity: (identity: ProcessScopeIdentity) => Promise<void>,
   ): Promise<ProcessScopeHandle> {
     assertLinuxOwner(owner);
-    await this.assertNativePrerequisites();
     assertRequest(request);
+    const launchIdentity = consumeLaunchIdentity(owner, request);
+    if (launchIdentity && launchIdentity.platform !== "linux") throw new Error("SYSTEMD_HERMES_LAUNCH_PLATFORM_MISMATCH");
+    await this.assertNativePrerequisites();
     if (request.signal?.aborted) throw new ProcessScopeLaunchNotDispatchedError();
     const baseEnvironment = this.managerEnvironment();
     for (const [key, value] of Object.entries(request.environment)) {
@@ -80,6 +132,14 @@ export class SystemdRunSupervisor implements ProcessScopeSupervisor {
       .filter(([key]) => HERMES_CHILD_ENV_KEYS.has(key))
       .map(([key, value]) => `${key}=${value}`);
     const unitName = systemdUnitName(owner);
+    const launchPayload = launchIdentity
+      ? [
+        "--verified-linux-hermes-helper",
+        this.linuxHermesLauncherPath,
+        await this.loadLinuxHermesLauncherDigest(),
+        ...buildLinuxHermesLauncherArgs(owner, request, launchIdentity),
+      ]
+      : [request.executable, ...request.args];
     const args = [
       "--user", "--expand-environment=no", "--pipe", "--wait", `--unit=${unitName}`, "--slice=app.slice",
       "--description=ebb-orchestrator:" + owner.launchNonce,
@@ -98,15 +158,45 @@ export class SystemdRunSupervisor implements ProcessScopeSupervisor {
     // in payload arguments are passed to Node unchanged.
     args.push(
       "--", "/usr/bin/env", "-i", ...explicitWrapperEnvironment,
-      process.execPath, "-e", systemdPayloadWrapper, "--", request.executable, ...request.args,
+      process.execPath, "-e", systemdPayloadWrapper, "--", ...launchPayload,
     );
 
     const managerEnvironment = this.managerEnvironment();
     const session = this.executor.startSession("systemd-run", args, {
       cwd: request.cwd, env: managerEnvironment, timeout: 0, maxBuffer: 10 * 1024 * 1024,
+      captureOutput: request.captureOutput ?? true,
     });
     let verifiedIdentity: ProcessScopeIdentity | undefined;
     let stoppedBySignal = false;
+    let stdoutFailure: unknown;
+    let stdoutCallbacks = Promise.resolve();
+    if (request.onStdoutChunk) {
+      let stdoutTransportFailureQueued = false;
+      session.stdout.on("data", (chunk: Buffer | string) => {
+        if (stdoutTransportFailureQueued) return;
+        const bytes = Buffer.from(chunk);
+        stdoutCallbacks = stdoutCallbacks.then(async () => {
+          if (stdoutFailure === undefined) await request.onStdoutChunk!(bytes);
+        }).catch((error: unknown) => {
+          if (stdoutFailure === undefined) {
+            stdoutFailure = error;
+            stoppedBySignal = true;
+            session.stdin.destroy();
+            void this.stop(verifiedIdentity ?? owner).catch(() => undefined);
+          }
+        });
+      });
+      session.stdout.on("error", () => {
+        if (stdoutTransportFailureQueued) return;
+        stdoutTransportFailureQueued = true;
+        stoppedBySignal = true;
+        session.stdin.destroy();
+        void this.stop(verifiedIdentity ?? owner).catch(() => undefined);
+        stdoutCallbacks = stdoutCallbacks.then(() => {
+          stdoutFailure ??= new Error("SYSTEMD_PROCESS_STDOUT_FAILED");
+        });
+      });
+    }
     const onAbort = () => {
       stoppedBySignal = true;
       // Closing the wrapper transport prevents its launch-authorization read from
@@ -142,11 +232,21 @@ export class SystemdRunSupervisor implements ProcessScopeSupervisor {
 
     const scopeIdentity = verifiedIdentity;
     if (!scopeIdentity) throw new Error("PROCESS_SCOPE_LIVE_IDENTITY_MISSING");
+    const drainStdoutCallbacks = async (): Promise<void> => {
+      let observed: Promise<void>;
+      do {
+        observed = stdoutCallbacks;
+        await observed;
+      } while (observed !== stdoutCallbacks);
+    };
     const completion = session.completion.then(async (result) => {
+      await drainStdoutCallbacks();
+      if (stdoutFailure !== undefined) throw new Error("SYSTEMD_PROCESS_STDOUT_FAILED");
       const observed = await this.waitForStopped(scopeIdentity, STOP_TIMEOUT_MS);
       if (observed.state !== "STOPPED") throw new Error("PROCESS_SCOPE_STOP_UNPROVEN");
-      return result;
+      return request.captureOutput === false ? { ...result, stdout: "", stderr: "" } : result;
     }).catch(async (error: unknown) => {
+      await drainStdoutCallbacks();
       const stopped = await this.stop(scopeIdentity).catch(() => ({ state: "UNKNOWN" as const, reason: "SYSTEMD_STOP_FAILED" }));
       if (stopped.state !== "STOPPED") throw new Error("PROCESS_SCOPE_STOP_UNPROVEN");
       throw error;
@@ -336,6 +436,67 @@ function assertRequest(request: ProcessScopeLaunchRequest): void {
   if (!request.executable || !posix.isAbsolute(request.cwd) || !Number.isSafeInteger(request.timeoutMs) || request.timeoutMs <= 0) {
     throw new TypeError("Invalid systemd process-scope launch request.");
   }
+}
+
+function consumeLaunchIdentity(
+  owner: ProcessScopeIdentity,
+  request: ProcessScopeLaunchRequest,
+): HermesLaunchTicketInput | undefined {
+  const requiresTicket = isHermesExecutable(request.executable);
+  if (!requiresTicket && !request.hermesLaunchTicket) return undefined;
+  const identity = consumeHermesLaunchTicket(request.hermesLaunchTicket, {
+    runId: owner.runId,
+    attempt: request.attempt ?? null,
+    executable: request.executable,
+    args: request.args,
+    environment: request.environment,
+  });
+  if (identity.platform !== "linux") throw new Error("SYSTEMD_HERMES_LAUNCH_PLATFORM_MISMATCH");
+  return identity;
+}
+
+function buildLinuxHermesLauncherArgs(
+  owner: ProcessScopeIdentity,
+  request: ProcessScopeLaunchRequest,
+  identity: HermesLaunchTicketInput,
+): string[] {
+  if (identity.platform !== "linux" || identity.hermesExecutableIdentity.platform !== "linux" ||
+    identity.executableIdentity.platform !== "linux" || identity.profileHomeIdentity.platform !== "linux") {
+    throw new Error("SYSTEMD_HERMES_LAUNCH_PLATFORM_MISMATCH");
+  }
+  if (identity.hermesSourceSnapshotRootIdentity.platform !== "linux" ||
+      identity.hermesSourceProjectionSize > 64 * 1024 * 1024 || identity.hermesSourceSnapshotKey.length > 4096) {
+    throw new Error("SYSTEMD_HERMES_SOURCE_SNAPSHOT_INVALID");
+  }
+  return [
+    "--run-hermes",
+    identity.runId,
+    owner.launchNonce,
+    identity.profileHome,
+    identity.profileHomeIdentity.device,
+    identity.profileHomeIdentity.inode,
+    identity.hermesExecutablePath,
+    identity.hermesExecutableIdentity.device,
+    identity.hermesExecutableIdentity.inode,
+    identity.executablePath,
+    identity.executableIdentity.device,
+    identity.executableIdentity.inode,
+    identity.hermesSourceSnapshotRoot,
+    identity.hermesSourceSnapshotRootIdentity.device,
+    identity.hermesSourceSnapshotRootIdentity.inode,
+    identity.hermesSourceProjectionPath,
+    identity.hermesSourceProjectionSha256,
+    String(identity.hermesSourceProjectionSize),
+    identity.hermesSourceManifestDigest,
+    identity.hermesSourceSnapshotKey,
+    String(request.args.length),
+    ...request.args,
+  ];
+}
+
+function isHermesExecutable(executable: string): boolean {
+  const name = executable.split("/").at(-1)?.toLocaleLowerCase("en-US");
+  return name === "hermes" || name === "hermes.exe";
 }
 
 function systemdUnitName(owner: ProcessScopeIdentity): string {

@@ -25,6 +25,14 @@ import { ProjectConfigRepository } from "../../../src/modules/projects/project-c
 import { parseProjectConfigYaml } from "../../../src/platform/config/project-config.js";
 import { digestRunPromptBytesV1 } from "../../../src/modules/context/context-provenance.js";
 
+const hermesSourceSnapshotKey = JSON.stringify({
+  formatVersion: 1,
+  hermesVersion: "v0.21.5+7357.g9244275",
+  manifestDigest: "c".repeat(64),
+  sourceCommit: "b".repeat(40),
+  sourceTree: "d".repeat(40),
+});
+
 describe("Coordinator planning background job", () => {
   let db: Database | undefined;
   let root = "";
@@ -36,7 +44,7 @@ describe("Coordinator planning background job", () => {
     root = "";
   });
 
-  async function setup(output = epicOutput()) {
+  async function setup(output = epicOutput(), useHermesSelection = false) {
     root = await mkdtemp(join(tmpdir(), "ebb-coordinator-job-"));
     db = createSqliteDatabase(join(root, "state.db"));
     runMigrations(db, loadTestMigrations());
@@ -51,10 +59,31 @@ describe("Coordinator planning background job", () => {
 
     const runRef: { current?: RunService } = {};
     const outputs = new Map<string, unknown>();
+    const hermesPreflightCalls: string[] = [];
+    const hermesCleanupCalls: string[] = [];
     const runtime: AgentRuntime = {
       active: 0,
       maxActive: 1,
       calls: [],
+      ...(useHermesSelection ? {
+        prepareHermesRunSelection: async (runId: string) => {
+          hermesPreflightCalls.push(runId);
+          return {
+            selection: {
+              runId,
+              providerId: "hermes-native-openai",
+              modelId: "selected-hermes-model",
+              endpointIdentity: "hermes-provider:openai-codex",
+              endpointRevision: "a".repeat(40),
+              sourceVersion: "v0.21.5+7357.g9244275",
+              sourceCommit: "b".repeat(40),
+              sourceSnapshotKey: hermesSourceSnapshotKey,
+              profileHome: `C:\\hermes\\profiles\\ebb-orchestrator-run-${runId}`,
+            },
+            cleanup: async () => { hermesCleanupCalls.push(runId); },
+          };
+        },
+      } : {}),
       startRun: async (run: AgentRun) => {
         const result = run.role === "product_manager" ? productManagerOutput()
           : run.role === "architect" ? architectOutput()
@@ -87,7 +116,7 @@ describe("Coordinator planning background job", () => {
     const registry = new BackgroundJobRegistry();
     const scheduler = new SchedulerService(db);
     registerCoordinatorPlanningJob(registry, { db, planning, runs, scheduler });
-    return { projectId, requestId: request.id, planning, registry, runs, scheduler };
+    return { projectId, requestId: request.id, planning, registry, runs, scheduler, hermesPreflightCalls, hermesCleanupCalls };
   }
 
   it("keeps request, reservation, and resource lock active when Coordinator stop proof is unavailable", async () => {
@@ -186,6 +215,33 @@ describe("Coordinator planning background job", () => {
     planning.approvePlan(request.plan_id, "local-user", requestId);
     expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM epics")?.count).toBe(1);
     expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM tasks")?.count).toBe(2);
+  });
+
+  it("preflights a fresh Hermes profile before each Coordinator, PM, and Architect transaction", async () => {
+    const { requestId, registry, hermesPreflightCalls, hermesCleanupCalls } = await setup(epicOutput(), true);
+
+    const result = await new JobRunner(db!, registry).runOnce(new Date());
+
+    expect(result).toMatchObject({ claimed: 1, succeeded: 1, failed: 0 });
+    const runs = db!.all<{ id: string; role: string; model: string }>(
+      "SELECT id,role,model FROM agent_runs WHERE role IN ('coordinator','product_manager','architect') ORDER BY role",
+    );
+    expect(runs).toHaveLength(3);
+    expect(runs.every((run) => run.model === "selected-hermes-model")).toBe(true);
+    expect(hermesPreflightCalls).toHaveLength(3);
+    expect(new Set(hermesPreflightCalls)).toEqual(new Set(runs.map((run) => run.id)));
+    expect(hermesCleanupCalls).toEqual([]);
+    expect(db!.get<{ coordinator_run_id: string }>(
+      "SELECT coordinator_run_id FROM planning_requests WHERE id=$requestId", { requestId },
+    )?.coordinator_run_id).toBe(runs.find((run) => run.role === "coordinator")?.id);
+    expect(db!.all<{ run_id: string }>(
+      "SELECT run_id FROM planning_request_role_runs WHERE request_id=$requestId", { requestId },
+    )).toHaveLength(2);
+    for (const run of runs) {
+      expect(db!.get<{ hermes_home: string }>(
+        "SELECT hermes_home FROM run_process_owners WHERE run_id=$runId", { runId: run.id },
+      )?.hermes_home).toBe(`C:\\hermes\\profiles\\ebb-orchestrator-run-${run.id}`);
+    }
   });
 
   it("reuses a completed Coordinator Run after a crash before plan persistence", async () => {

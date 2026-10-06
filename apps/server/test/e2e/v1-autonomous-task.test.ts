@@ -365,8 +365,6 @@ describe("Autonomous Task End-to-End Workflow", () => {
 
   it("runs the real Hermes managed-worktree acceptance when opted in", async ({ skip }) => {
     if (process.env.RUN_HERMES_E2E !== "1") skip("opt in with RUN_HERMES_E2E=1");
-    skip("NOT RUN: Task5B must first verify the existing Hermes-native auth path through the isolated per-Run profile; the Ebb provider-key bridge has been removed.");
-    return;
 
     const worktree = await worktreeManager.createTaskWorkspace(taskId, masterRepoPath, "master");
     const mcpCli = join(import.meta.dirname, "../../src/bin/ebb-orchestrator-mcp.ts");

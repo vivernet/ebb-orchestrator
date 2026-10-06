@@ -14,6 +14,8 @@ export interface RunProcessOwner {
   runId: string;
   sourceTag: string;
   hermesHome: string;
+  /** Точная canonical JCS identity snapshot; NULL у исторических owners, без backfill. */
+  hermesSourceSnapshotKey?: string | null;
   containmentKind: RunContainmentKind;
   containmentId: string;
   launchNonce: string;
@@ -38,6 +40,7 @@ export interface RunProcessOwner {
  * @param runId Уникальный ID нового Run от Orchestrator.
  * @param hermesHome Стабильный Orchestrator-owned профиль Hermes именно для этого Run.
  * @param containmentKind Поддерживаемый нативный вид OS-владельца процесса.
+ * @param hermesSourceSnapshotKey Проверенный canonical source key; отсутствие допустимо для legacy mapping.
  * @returns PREPARED owner row, готовая к атомарной записи вместе с Run.
  * @throws {TypeError} Если вход не задаёт Run, profile home или поддерживаемую платформу.
  */
@@ -45,9 +48,11 @@ export function prepareRunProcessOwner(
   runId: string,
   hermesHome: string,
   containmentKind: RunContainmentKind,
+  hermesSourceSnapshotKey?: string | null,
 ): RunProcessOwner {
   assertNonEmpty(runId, 'runId');
   assertNonEmpty(hermesHome, 'hermesHome');
+  assertSourceSnapshotKey(hermesSourceSnapshotKey);
   if (containmentKind !== 'windows-job' && containmentKind !== 'systemd-user-service') {
     throw new TypeError('Run process containment kind is unsupported.');
   }
@@ -56,6 +61,7 @@ export function prepareRunProcessOwner(
     runId,
     sourceTag: `ebb-run:${runId}`,
     hermesHome,
+    hermesSourceSnapshotKey: hermesSourceSnapshotKey ?? null,
     containmentKind,
     containmentId: randomBytes(32).toString('hex'),
     launchNonce: randomBytes(32).toString('hex'),
@@ -80,17 +86,18 @@ export function prepareRunProcessOwner(
  * @param tx Активная SQLite transaction вызывающего RunService.
  * @param owner Подготовленная process-owner запись для того же Run.
  * @throws {TypeError} Если изменены детерминированный tag, стартовый state или OS observations.
+ * @throws {TypeError} Если source key не совпадает с canonical versioned identity.
  * @throws {Error} Если foreign key/unique constraints отклоняют запись.
  */
 export function insertRunProcessOwnerTx(tx: DatabaseTx, owner: RunProcessOwner): void {
   assertPreparedOwner(owner);
   tx.run(
     `INSERT INTO run_process_owners(
-      run_id, source_tag, hermes_home, containment_kind, containment_id, launch_nonce,
+      run_id, source_tag, hermes_home, hermes_source_snapshot_key, containment_kind, containment_id, launch_nonce,
       systemd_invocation_id, systemd_control_group, supervisor_pid, supervisor_start_identity, pid, platform,
       process_start_identity, executable_identity, state, stop_evidence, updated_at
     ) VALUES (
-      $runId, $sourceTag, $hermesHome, $containmentKind, $containmentId, $launchNonce,
+      $runId, $sourceTag, $hermesHome, $hermesSourceSnapshotKey, $containmentKind, $containmentId, $launchNonce,
       $systemdInvocationId, $systemdControlGroup, $supervisorPid, $supervisorStartIdentity, $pid, $platform,
       $processStartIdentity, $executableIdentity, $state, $stopEvidence, $updatedAt
     )`,
@@ -98,6 +105,7 @@ export function insertRunProcessOwnerTx(tx: DatabaseTx, owner: RunProcessOwner):
       runId: owner.runId,
       sourceTag: owner.sourceTag,
       hermesHome: owner.hermesHome,
+      hermesSourceSnapshotKey: owner.hermesSourceSnapshotKey ?? null,
       containmentKind: owner.containmentKind,
       containmentId: owner.containmentId,
       launchNonce: owner.launchNonce,
@@ -140,6 +148,7 @@ const ALLOWED_TRANSITIONS: Readonly<Record<RunProcessOwnerState, ReadonlySet<Run
  * Выполняет compare-and-set переход единственного durable OS owner.
  * Идентичность ОС записывается только из подтверждённого supervisor readback;
  * terminal `STOPPED` требует явного безопасного evidence code, а не PID/exit claim.
+ * Source snapshot key неизменен: переходы обновляют только наблюдаемую OS identity и state.
  *
  * @param tx Транзакция владельца Run.
  * @param input Run, ожидаемое/целевое состояние и подтверждённая OS identity.
@@ -245,7 +254,7 @@ export function isCanonicalRunProcessStopEvidence(value: unknown): value is stri
   return typeof value === 'string' && /^[A-Z0-9_:-]{1,96}$/.test(value);
 }
 
-/** Возвращает durable owner без доверия к непроверенным SQLite enum/string values. */
+/** Возвращает durable owner, проверяя SQLite values; historical source key остаётся NULL. */
 export function getRunProcessOwner(database: Database | DatabaseTx, runId: string): RunProcessOwner | undefined {
   const row = database.get<Record<string, unknown>>(
     "SELECT * FROM run_process_owners WHERE run_id=$runId", { runId },
@@ -388,6 +397,7 @@ function parseOwnerRow(row: Record<string, unknown>): RunProcessOwner {
     runId: required('run_id'),
     sourceTag: required('source_tag'),
     hermesHome: required('hermes_home'),
+    hermesSourceSnapshotKey: optionalString('hermes_source_snapshot_key'),
     containmentKind: kind,
     containmentId: required('containment_id'),
     launchNonce: required('launch_nonce'),
@@ -406,6 +416,9 @@ function parseOwnerRow(row: Record<string, unknown>): RunProcessOwner {
   if (owner.sourceTag !== `ebb-run:${owner.runId}` || !/^[a-f0-9]{64}$/.test(owner.containmentId) || !/^[a-f0-9]{64}$/.test(owner.launchNonce)) {
     throw new Error('RUN_PROCESS_OWNER_INVALID');
   }
+  if (owner.hermesSourceSnapshotKey !== null && !isCanonicalSourceSnapshotKey(owner.hermesSourceSnapshotKey)) {
+    throw new Error('RUN_PROCESS_OWNER_INVALID');
+  }
   return owner;
 }
 
@@ -413,6 +426,7 @@ function assertPreparedOwner(owner: RunProcessOwner): void {
   assertNonEmpty(owner.runId, 'runId');
   if (owner.sourceTag !== `ebb-run:${owner.runId}`) throw new TypeError('Run process source tag must be deterministic.');
   assertNonEmpty(owner.hermesHome, 'hermesHome');
+  assertSourceSnapshotKey(owner.hermesSourceSnapshotKey);
   if (!/^[a-f0-9]{64}$/.test(owner.containmentId)) throw new TypeError('Containment ID must be a random 256-bit lowercase hex value.');
   if (!/^[a-f0-9]{64}$/.test(owner.launchNonce)) throw new TypeError('Launch nonce must be a random 256-bit lowercase hex value.');
   if (owner.containmentKind !== 'windows-job' && owner.containmentKind !== 'systemd-user-service') {
@@ -429,4 +443,36 @@ function assertPreparedOwner(owner: RunProcessOwner): void {
 
 function assertNonEmpty(value: string, field: string): void {
   if (typeof value !== 'string' || value.trim() === '') throw new TypeError(`${field} must be a non-empty string.`);
+}
+
+function assertSourceSnapshotKey(value: string | null | undefined): void {
+  if (value !== null && value !== undefined && !isCanonicalSourceSnapshotKey(value)) {
+    throw new TypeError('Hermes source snapshot key must be the exact canonical versioned identity.');
+  }
+}
+
+/** Проверяет bounded scalar JCS identity без чтения cache, source tree или Hermes config. */
+function isCanonicalSourceSnapshotKey(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length > 4096) return false;
+  let identity: unknown;
+  try {
+    identity = JSON.parse(value);
+  } catch {
+    return false;
+  }
+  if (!identity || typeof identity !== 'object' || Array.isArray(identity)) return false;
+  const fields = identity as Record<string, unknown>;
+  const { formatVersion, hermesVersion, manifestDigest, sourceCommit, sourceTree } = fields;
+  const isGitObjectId = (id: unknown): id is string =>
+    typeof id === 'string' && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(id);
+  if (Object.keys(fields).length !== 5 || formatVersion !== 1 ||
+      typeof hermesVersion !== 'string' || hermesVersion.length === 0 || hermesVersion.length > 256 ||
+      !hermesVersion.isWellFormed() || [...hermesVersion].some((character) => {
+        const code = character.codePointAt(0)!;
+        return code < 32 || code === 127;
+      }) ||
+      typeof manifestDigest !== 'string' || !/^[a-f0-9]{64}$/.test(manifestDigest) ||
+      !isGitObjectId(sourceCommit) || !isGitObjectId(sourceTree) || sourceCommit.length !== sourceTree.length) return false;
+  // Все поля scalar; этот порядок совпадает с JCS и cache identity formatVersion=1.
+  return value === JSON.stringify({ formatVersion, hermesVersion, manifestDigest, sourceCommit, sourceTree });
 }

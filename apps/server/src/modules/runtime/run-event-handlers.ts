@@ -101,7 +101,7 @@ export class RuntimeEventHandlers {
       outputSchemaVersion: "1",
       capability: { workspace: worktree.path },
     } as const;
-    const run = this.runService.prepareRun({
+    const run = await this.runService.prepareRunWithHermesPreflight({
       ...runOptions,
       contextInput: createRunContextInput(runOptions, {
         prompt,
@@ -118,7 +118,7 @@ export class RuntimeEventHandlers {
       this.scheduler.dispatchTask(taskId, this.workflowEngine, () => undefined, {
         triggerReason: "runtime-request",
         role,
-        model,
+        model: run.model,
         runId: run.id,
       });
     } catch (error) {
@@ -126,7 +126,7 @@ export class RuntimeEventHandlers {
       throw error;
     }
 
-    this.emitAgentRunStarted(taskId, role, model);
+    this.emitAgentRunStarted(taskId, role, run.model);
     await this.executePreparedRun(taskId, run.id);
     return;
   }

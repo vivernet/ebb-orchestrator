@@ -51,6 +51,9 @@ export class HermesCliBuilder {
     // --source tool
     result.push("--source", args.source);
 
+    // The session capture contract relies on Hermes' newline-delimited event stream.
+    result.push("--format", "stream-json");
+
     // --max-turns <role-limit>
     result.push("--max-turns", String(args.maxTurns));
 

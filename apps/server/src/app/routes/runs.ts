@@ -18,6 +18,7 @@ const CONTEXT_MANIFEST_ROLES = ["coordinator", "product_manager", "architect", "
 export interface RunCommandService {
   cancelRun(id: string): unknown | Promise<unknown>;
   prepareRun?(options: StartRunOptions): AgentRun;
+  prepareRunWithHermesPreflight?(options: StartRunOptions): Promise<AgentRun>;
   executePreparedRun?(runId: string): Promise<unknown>;
   failPreparedRun?(runId: string, error: unknown): boolean;
 }
@@ -153,7 +154,7 @@ export async function runRoutes(app: FastifyInstance, deps: RunRouteDeps = {}): 
         outputSchemaVersion: "1",
         capability: { workspace: worktree.path },
       };
-      run = runService.prepareRun({
+      const preparedOptions: StartRunOptions = {
         ...runOptions,
         contextInput: createRunContextInput(runOptions, {
           prompt,
@@ -162,11 +163,14 @@ export async function runRoutes(app: FastifyInstance, deps: RunRouteDeps = {}): 
           targetHead,
           targetBranch: actualBranch,
         }),
-      });
+      };
+      run = runService.prepareRunWithHermesPreflight
+        ? await runService.prepareRunWithHermesPreflight(preparedOptions)
+        : runService.prepareRun(preparedOptions);
       deps.scheduler.dispatchTask(task.id, deps.workflow, () => undefined, {
         triggerReason: "runtime-request",
         role: options.role,
-        model: options.model,
+        model: run.model,
         runId: run.id,
       });
     } catch (error) {

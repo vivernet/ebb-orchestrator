@@ -1,13 +1,22 @@
 import type { ProcessResult } from "./process-executor.js";
 import type { ProcessInspector, ProcessScopeIdentity, ProcessScopeObservation } from "./process-inspector.js";
+import type { HermesLaunchTicket } from "../../modules/runtime/hermes/hermes-launch-ticket.js";
 
 export interface ProcessScopeLaunchRequest {
   readonly executable: string;
   readonly args: readonly string[];
   readonly cwd: string;
   readonly environment: Readonly<Record<string, string>>;
+  /** Попытка Run; обязательна при переданном Hermes launch ticket. */
+  readonly attempt?: number | null;
+  /** Opaque one-shot authorization, required for every Hermes CLI launch. */
+  readonly hermesLaunchTicket?: HermesLaunchTicket;
   readonly signal?: AbortSignal;
   readonly timeoutMs: number;
+  /** Ограниченный live consumer exact payload stdout; helper protocol bytes сюда не передаются. */
+  readonly onStdoutChunk?: (chunk: Uint8Array) => Promise<void>;
+  /** Сохранять ли stdout/stderr в ProcessResult; live observer может отключить raw retention. */
+  readonly captureOutput?: boolean;
 }
 
 export interface ProcessScopeHandle {

@@ -17,9 +17,9 @@ import type { PlanningDecisions, PlanningRequestStatus } from "./planning-types.
 export const COORDINATOR_PLANNING_JOB = "coordinator.planning";
 const payloadSchema = z.object({ requestId: z.string().min(1), projectId: z.string().min(1) }).strict();
 interface PlanningRequestRow { id: string; project_id: string; request: string; requested_by: string; status: PlanningRequestStatus; coordinator_run_id: string | null; planning_decisions_required: number; }
-interface RunRow { id: string; status: string; output: string | null; cost: number | null; }
+interface RunRow { id: string; status: string; output: string | null; cost: number | null; model?: string; }
 
-type PlanningRuns = Pick<RunService, "prepareRunInTransaction" | "executePreparedRun" | "failPreparedRun" | "cancelRun">;
+type PlanningRuns = Pick<RunService, "prepareRunInTransaction" | "executePreparedRun" | "failPreparedRun" | "cancelRun" | "withHermesRunPreflight">;
 type PlanningScheduler = Pick<SchedulerService, "dispatchAgentRun" | "releaseAgentRun">;
 type ReviewRunState = "IN_PROGRESS" | "BLOCKED";
 
@@ -53,46 +53,60 @@ async function processCoordinatorPlanningRequest(
   if (!request) throw new Error("PLANNING_REQUEST_NOT_FOUND");
   if (request.status !== "RECEIVED" && request.status !== "PLANNING") return;
 
-  let run: { id: string } | undefined;
+  let run: { id: string; model: string } | undefined;
   let output: string | undefined;
   if (request.status === "RECEIVED") {
     if (request.coordinator_run_id !== null) throw new Error("PLANNING_REQUEST_CLAIM_MISMATCH");
     context.signal.throwIfAborted();
     try {
-      run = db.transaction((tx) => {
+      const onboarding = db.get<{ repository_path: string }>(
+        `SELECT o.repository_path FROM projects p JOIN onboarding_configs o ON o.project_id=p.id
+           JOIN approvals a ON a.id=o.approval_id AND a.subject_id=p.id AND a.subject_type='PROJECT' AND a.type='WORKFLOW_CHANGE'
+          WHERE p.id=$projectId AND p.status='ACTIVE' AND o.status='ACTIVE' AND a.status='APPROVED'`,
+        { projectId: payload.projectId },
+      );
+      if (!onboarding) throw new Error("PLANNING_ONBOARDING_UNAVAILABLE");
+      const prompt = coordinatorPrompt(request.request);
+      const runOptions: StartRunOptions = {
+        role: "coordinator", model: "persisted", taskId: null, requestId: request.id, projectId: request.project_id,
+        epicId: null, triggerReason: "planning-request", contextVersion: "1", outputSchemaVersion: "1",
+        capability: { workspace: onboarding.repository_path, allowedTools: ["workspace.read", "workspace.search", "git.status", "git.diff", "submit_result"] },
+        prompt,
+      };
+      run = await runs.withHermesRunPreflight(runOptions, async (preflight) => {
+        const preparedRun = db.transaction((tx) => {
         const current = tx.get<PlanningRequestRow>("SELECT * FROM planning_requests WHERE id=$id AND project_id=$projectId", { id: payload.requestId, projectId: payload.projectId });
         if (!current || current.status !== "RECEIVED" || current.coordinator_run_id !== null) throw new Error("PLANNING_REQUEST_ALREADY_CLAIMED");
-        const onboarding = tx.get<{ repository_path: string }>(
+        const currentOnboarding = tx.get<{ repository_path: string }>(
           `SELECT o.repository_path FROM projects p JOIN onboarding_configs o ON o.project_id=p.id
              JOIN approvals a ON a.id=o.approval_id AND a.subject_id=p.id AND a.subject_type='PROJECT' AND a.type='WORKFLOW_CHANGE'
             WHERE p.id=$projectId AND p.status='ACTIVE' AND o.status='ACTIVE' AND a.status='APPROVED'`,
           { projectId: payload.projectId },
         );
-        if (!onboarding) throw new Error("PLANNING_ONBOARDING_UNAVAILABLE");
-        const prompt = coordinatorPrompt(current.request);
-        const runOptions: StartRunOptions = {
-          role: "coordinator", model: "persisted", taskId: null, requestId: current.id, projectId: current.project_id,
-          epicId: null, triggerReason: "planning-request", contextVersion: "1", outputSchemaVersion: "1",
-          capability: { workspace: onboarding.repository_path, allowedTools: ["workspace.read", "workspace.search", "git.status", "git.diff", "submit_result"] },
-          prompt,
-        };
-        const contextInput = createRunContextInput(runOptions, {
+        if (!currentOnboarding || currentOnboarding.repository_path !== preflight.options.capability?.workspace) {
+          throw new Error("PLANNING_ONBOARDING_CHANGED_DURING_PREPARATION");
+        }
+        const contextInput = createRunContextInput(preflight.options, {
           prompt,
           roleInputs: {},
-          workspaceIdentity: { repository: onboarding.repository_path, workspace: onboarding.repository_path, worktree: null },
+          workspaceIdentity: { repository: currentOnboarding.repository_path, workspace: currentOnboarding.repository_path, worktree: null },
           targetHead: null,
           targetBranch: null,
         });
-        const preparedContext = new RunContextAssembler().prepare(tx, contextInput);
+        const boundOptions = preflight.bind({ ...preflight.options, contextInput });
+        const preparedContext = new RunContextAssembler().prepare(tx, boundOptions.contextInput!);
         const prepared = runs.prepareRunInTransaction(
           tx,
-          { ...runOptions, prompt: preparedContext.finalPrompt, contextInput },
+          { ...boundOptions, prompt: preparedContext.finalPrompt },
           preparedContext,
           (runId) => {
             if (!planning.claimRequestTx(tx, current.id, runId)) throw new Error("PLANNING_REQUEST_CLAIM_RACE");
           },
         );
         return prepared;
+        });
+        await preflight.commit();
+        return preparedRun;
       });
     } catch {
       const latest = db.get<PlanningRequestRow>("SELECT * FROM planning_requests WHERE id=$id AND project_id=$projectId", { id: payload.requestId, projectId: payload.projectId });
@@ -103,7 +117,7 @@ async function processCoordinatorPlanningRequest(
     if (!request.coordinator_run_id) {
       throw new Error("PLANNING_REQUEST_CLAIM_MISMATCH");
     }
-    const previous = db.get<RunRow>("SELECT id,status,output,cost FROM agent_runs WHERE id=$id", { id: request.coordinator_run_id });
+    const previous = db.get<RunRow>("SELECT id,status,output,cost,model FROM agent_runs WHERE id=$id", { id: request.coordinator_run_id });
     if (!previous || previous.status === "FAILED" || previous.status === "CANCELLED") {
       if (previous) releaseReservation(scheduler, previous.id, 0);
       planning.failRequest(request.id, request.coordinator_run_id, "COORDINATOR_RUN_FAILED");
@@ -115,7 +129,7 @@ async function processCoordinatorPlanningRequest(
       planning.failRequest(request.id, request.coordinator_run_id, "COORDINATOR_RUN_FAILED");
       return;
     }
-    run = { id: previous.id };
+    run = { id: previous.id, model: previous.model ?? "persisted" };
     output = previous.output;
     releaseReservation(scheduler, previous.id, previous.cost ?? 0);
   }
@@ -125,7 +139,7 @@ async function processCoordinatorPlanningRequest(
   try {
     if (output === undefined) {
       context.signal.throwIfAborted();
-      scheduler.dispatchAgentRun(run.id, request.project_id, "coordinator", "persisted");
+      scheduler.dispatchAgentRun(run.id, request.project_id, "coordinator", run.model);
       reservationCreated = true;
       const abortRun = () => { void runs.cancelRun(run!.id).catch(() => {}); };
       context.signal.addEventListener("abort", abortRun, { once: true });
@@ -227,29 +241,31 @@ async function requestPlanningDecision(args: ReviewRunBaseArgs & { role: "produc
     }
     try { releaseReservation(scheduler, linked.id, linked.cost ?? 0); } catch { /* completed result remains authoritative */ }
   } else {
-    let prepared: { id: string } | undefined;
+    let prepared: { id: string; model: string } | undefined;
+    const prompt = planningRolePrompt(role, request.request, plan, productManager);
+    const runOptions: StartRunOptions = {
+      role, model: "persisted", taskId: null, requestId: request.id, projectId: request.project_id,
+      epicId: null, triggerReason: "planning-request-role", contextVersion: "1", outputSchemaVersion: "1",
+      capability: { workspace, allowedTools: ["workspace.read", "workspace.search", "git.status", "git.diff", "submit_result"] },
+      prompt,
+    };
     try {
-      prepared = db.transaction((tx) => {
+      prepared = await runs.withHermesRunPreflight(runOptions, async (preflight) => {
+        const reviewRun = db.transaction((tx) => {
         const current = tx.get<PlanningRequestRow>("SELECT * FROM planning_requests WHERE id=$id AND project_id=$projectId", { id: request.id, projectId: request.project_id });
         if (!current || current.status !== "PLANNING" || current.coordinator_run_id !== coordinatorRunId || current.planning_decisions_required !== 1) throw new Error("planning request role binding is inactive");
-        const prompt = planningRolePrompt(role, request.request, plan, productManager);
-        const runOptions: StartRunOptions = {
-          role, model: "persisted", taskId: null, requestId: current.id, projectId: current.project_id,
-          epicId: null, triggerReason: "planning-request-role", contextVersion: "1", outputSchemaVersion: "1",
-          capability: { workspace, allowedTools: ["workspace.read", "workspace.search", "git.status", "git.diff", "submit_result"] },
-          prompt,
-        };
-        const contextInput = createRunContextInput(runOptions, {
+        const contextInput = createRunContextInput(preflight.options, {
           prompt,
           roleInputs: {},
           workspaceIdentity: { repository: workspace, workspace, worktree: null },
           targetHead: null,
           targetBranch: null,
         });
-        const preparedContext = new RunContextAssembler().prepare(tx, contextInput);
+        const boundOptions = preflight.bind({ ...preflight.options, contextInput });
+        const preparedContext = new RunContextAssembler().prepare(tx, boundOptions.contextInput!);
         const run = runs.prepareRunInTransaction(
           tx,
-          { ...runOptions, prompt: preparedContext.finalPrompt, contextInput },
+          { ...boundOptions, prompt: preparedContext.finalPrompt },
           preparedContext,
           (runId) => tx.run(
             "INSERT INTO planning_request_role_runs(request_id,role,run_id,created_at) VALUES($requestId,$role,$runId,$now)",
@@ -257,6 +273,9 @@ async function requestPlanningDecision(args: ReviewRunBaseArgs & { role: "produc
           ),
         );
         return run;
+        });
+        await preflight.commit();
+        return reviewRun;
       });
     } catch {
       // A competing delivery may have won the unique request/role claim.
@@ -276,7 +295,7 @@ async function requestPlanningDecision(args: ReviewRunBaseArgs & { role: "produc
       let reservationCreated = false;
       try {
         context.signal.throwIfAborted();
-        scheduler.dispatchAgentRun(prepared.id, request.project_id, role, "persisted");
+        scheduler.dispatchAgentRun(prepared.id, request.project_id, role, prepared.model);
         reservationCreated = true;
         const execution = await runs.executePreparedRun(prepared.id);
         if (execution.outcome.validatedSubmission !== true) throw new Error("planning review result was not validated");

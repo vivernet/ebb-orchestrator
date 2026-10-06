@@ -47,10 +47,12 @@ describe("production composition", () => {
     expect(composition.paths.epicWorktreeDirectory).toBe(join(home.worktrees, "epics"));
     expect(composition.paths.integrationWorktreeRoot).toBe(join(home.worktrees, "epic-integration"));
     expect(composition.paths.hermesResultDirectory).toBe(join(home.runtime, "hermes", "results"));
+    expect(composition.paths.hermesSourceSnapshotCacheRoot).toBe(join(home.runtime, "hermes", "source-snapshots"));
     expect(composition.paths.hermesCheckpointDirectory).toBe(join(home.runtime, "checkpoints"));
     expect(composition.runtime).toBeInstanceOf(HermesRuntimeAdapter);
     expect((composition.runtime as unknown as { databasePath: string }).databasePath).toBe(home.database);
     expect((composition.runtime as unknown as { resultDirectory: string }).resultDirectory).toBe(composition.paths.hermesResultDirectory);
+    expect((composition.runtime as unknown as { hermesSourceCacheRoot: string }).hermesSourceCacheRoot).toBe(composition.paths.hermesSourceSnapshotCacheRoot);
     expect((composition.runtime as unknown as { checkpointDirectory: string }).checkpointDirectory).toBe(composition.paths.hermesCheckpointDirectory);
     expect(composition.taskWorkspaceProvisioner).toBeInstanceOf(TaskWorkspaceProvisioner);
     expect(composition.epicWorkspaceProvisioner).toBeInstanceOf(EpicWorkspaceProvisioner);

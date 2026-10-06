@@ -102,6 +102,7 @@ updated: 2026-10-03
 - Исторический CodeQL run `36944963382` охватывает только SHA `6eb51ae1ee11c37b851cf2fc492f49d8ad738844`. Для HEAD `48936eec0c6d5ee8b8c1c7693bb7778d01c4698c` и последующих source edits scan/SARIF не подтверждены; локальные CodeQL/Semgrep отсутствуют. Поддерживаемый путь — обычный push финального SHA на `master`; ручного workflow dispatch нет. Plan09 security gate остаётся открытым.
 - Plan16 точное разрешённое удаление выполнено в `966f1ec`; inventory не содержит иных целей. Оставшиеся Plan16 README, command-matrix и governance acceptance открыты, дальнейшие удаления/перемещения/архивирование не выполняются.
 - Полный all-plan audit, исключая Plan14, ещё не завершён: для каждого плана нужна проверяемая сверка requirements, implementation, tests, acceptance, evidence и open checklist. `completed` metadata не считается доказательством. Lifecycle metadata/checklists Plan05/06/19 не менялись.
+
 - `docs/roadmap/generated.md` содержит `plan-19=in_progress` и `plan-20=in_progress`; metadata статусов совпадает, поэтому реестр оставлен без регенерации.
 
 ## Дополнение от 2026-10-03 — актуальный checkpoint на HEAD `9a9a8b08d6d5f252bb75d1fb1f65a522143763e0`
@@ -113,3 +114,9 @@ updated: 2026-10-03
 - Plan09: CodeQL run `36944963382` успешно просканировал и загрузил analysis для remote `master` SHA `6eb51ae1ee11c37b851cf2fc492f49d8ad738844` (403 TypeScript, 54 JavaScript, 11 HTML, 3 workflow files), но это не текущий local SHA; current-SHA findings/read-back отсутствует. Plan09 security gate остаётся `NOT VERIFIED`.
 - Plan16 bounded README/command-matrix amendment получил scoped `APPROVED`, но весь Plan16 остаётся `blocked`: не reconciled точные README commands, `pnpm docs:link:sync` unsupported, нужен side-effect warning для `pnpm hermes:setup`, открыты остальные docs gates и whole-plan review. Server package suite прошёл после `pnpm server:build`; generated build/test directories удалены.
 - Root quality gates and browser E2E ранее прошли на HEAD `5423594`, а не на этом HEAD. На текущем checkout после ledger edits заново прошли только `pnpm docs:check`, `pnpm docs:test` (20/20), dry-run roadmap (34 Plans) и `git diff --check`; это не закрывает Plan19 Task9. Полная all-plan requirement/code/test/acceptance/evidence/checklist matrix, исключая Plan14, остаётся незавершённой. После сверки Plan01 metadata была исправлена `completed` → `in_progress`; `pnpm docs:roadmap` успешно сгенерировал 34 Plans, и read-back подтверждает Plan01, Plan16, Plan19 и Plan20 statuses.
+
+## Дополнение от 2026-10-06 — Hermes source pin
+
+- После предоставленного пользователем вывода завершённого Hermes update source pin в Ebb синхронизирован на `v0.21.5+7357.g9244275` / `9244275491ee0d5bc3481590b041114c4e1d399a`.
+- Сравнение старого и нового исходного кода подтвердило прежний `hermes chat --format stream-json`, ранний `system/init.session_id`, Hermes-native root auth fallback и неизменность source provider endpoint/env-name maps. Новая source revision становится endpoint revision; неизвестные custom/private overrides сохраняют fail-closed.
+- Это не provider-backed acceptance. Plan20 остаётся `in_progress`; Task5B live auth/session capture и Task5C durable recovery остаются открытыми. Полная матрица всех планов кроме Plan14 и точный current-SHA security scan остаются в ранее указанном порядке.
