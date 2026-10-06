@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
-import { createHermesLaunchTicket, type HermesLaunchObjectIdentity, type HermesLaunchTicket } from "../../src/modules/runtime/hermes/hermes-launch-ticket.js";
+import { createHermesLaunchTicket, type HermesLaunchObjectIdentity, type HermesLaunchTicket, type HermesLaunchTicketInput } from "../../src/modules/runtime/hermes/hermes-launch-ticket.js";
 import { ensureHermesSourceSnapshotNativeProjection, materializeHermesSourceSnapshot } from "../../src/modules/runtime/hermes/hermes-source-snapshot.js";
 import { acquireHermesSourceReferenceLock } from "../../src/modules/runtime/hermes/hermes-source-reference-lock.js";
 import { prepareRunProcessOwner } from "../../src/modules/runtime/run-process-owner.js";
@@ -15,6 +15,7 @@ import type { ProcessScopeIdentity, ProcessScopeObservation } from "../../src/pl
 import type { ProcessScopeHandle, ProcessScopeSupervisor } from "../../src/platform/process/run-scope-supervisor.js";
 import { createWindowsNativeHelperInvocation } from "../../src/platform/process/windows-native-helper-launcher.js";
 import { createPinnedGitFixture, waitForFile } from "../helpers/hermes-source-snapshot-acceptance-fixture.js";
+import { safeRestartChildFailureCode } from "../helpers/restart-child-diagnostics.js";
 
 const enabled = process.env.EBB_RUN_NATIVE_SCOPE_ACCEPTANCE === "1";
 const windows = process.platform === "win32";
@@ -24,6 +25,7 @@ const helperDirectory = resolve(repositoryRoot, "apps/server/dist/native/hermes-
 const windowsSupervisorPath = resolve(repositoryRoot, "apps/server/dist/native/windows-run-supervisor/ebb-run-supervisor.exe");
 const linuxLauncherPath = resolve(repositoryRoot, "apps/server/dist/native/linux-hermes-launcher/ebb-linux-hermes-launcher");
 const profileHelperPath = join(helperDirectory, windows ? "ebb-hermes-profile-path.exe" : "ebb-hermes-profile-path");
+type HermesLaunchEnvironment = HermesLaunchTicketInput["environment"] & Record<string, string>;
 const PINNED_VERSION = "v0.21.5+7357.g9244275";
 const SOURCE_MARKER = "snapshot-pinned-v1";
 const SOURCE_RESOURCE = "snapshot-resource-pinned-v1";
@@ -88,6 +90,7 @@ describe.skipIf(!enabled || (!windows && !linux))("Hermes native source snapshot
         const refusal = await launchAndAssertRefused({
           fixtureDirectory, snapshot: acceptedSnapshot, projectionPath: projection.path,
           expectedProjection: variant === "missing" ? originalProjection : await readFile(projection.path),
+          expectedNativeFailureCode: variant === "malformed" ? "LAUNCH_FRAME_INVALID" : "HERMES_TICKET_OBJECT_MISMATCH",
           supervisor, onUnprovenStop: () => { cleanupBlocked = true; },
         });
         expect(refusal.observation.state, `${variant} EHSP must be refused by the native parser`).toBe("STOPPED");
@@ -120,12 +123,14 @@ describe.skipIf(!enabled || (!windows && !linux))("Hermes native source snapshot
       const payload = pythonAcceptancePayload({
         snapshotRoot: snapshot.rootPath, markerPath, startGatePath, descendantPath, descendantReleasePath,
       });
+      const args = ["-I", "-B", "-S", "-c", payload];
+      const environment = hermesEnvironment(profileHome);
       const ticket = makeTicket({
         runId, attempt: 1, python, pythonIdentity, shimPath, shimIdentity, profileHome, profileIdentity,
         snapshotRoot: acceptedSnapshot.rootPath, snapshotIdentity, cacheKey: acceptedSnapshot.cacheKey,
         manifestDigest: acceptedSnapshot.manifestDigest, projectionPath: projection.path,
         projectionDigest: ticketData.digest, projectionSize: ticketData.size,
-        payload,
+        args, environment,
       });
       let handle: ProcessScopeHandle | undefined;
       let liveIdentity: ProcessScopeIdentity | undefined;
@@ -138,9 +143,9 @@ describe.skipIf(!enabled || (!windows && !linux))("Hermes native source snapshot
       try {
           handle = await supervisor.launch(scope, {
             executable: python,
-            args: ["-I", "-B", "-S", "-c", payload],
+            args,
             cwd: fixtureDirectory,
-            environment: hermesEnvironment(runHome, profileHome),
+            environment,
             attempt: 1,
             hermesLaunchTicket: ticket,
             timeoutMs: 120_000,
@@ -281,6 +286,7 @@ async function launchAndAssertRefused(input: {
   snapshot: Awaited<ReturnType<typeof materializeHermesSourceSnapshot>>;
   projectionPath: string;
   expectedProjection: Buffer;
+  expectedNativeFailureCode: "HERMES_TICKET_OBJECT_MISMATCH" | "LAUNCH_FRAME_INVALID";
   supervisor: ProcessScopeSupervisor;
   onUnprovenStop: () => void;
 }): Promise<{ observation: ProcessScopeObservation; markerPath: string }> {
@@ -301,13 +307,15 @@ async function launchAndAssertRefused(input: {
   const markerPath = join(input.fixtureDirectory, `${runId}.must-not-exist`);
   const owner = prepareRunProcessOwner(runId, profileHome, windows ? "windows-job" : "systemd-user-service", input.snapshot.cacheKey);
   const payload = `from pathlib import Path; Path(${JSON.stringify(markerPath)}).write_text('DISPATCHED', encoding='utf-8')`;
+  const args = ["-I", "-B", "-S", "-c", payload];
+  const environment = hermesEnvironment(profileHome);
   const ticketProjection = { digest: sha256(input.expectedProjection), size: input.expectedProjection.byteLength };
   const ticket = makeTicket({
     runId, attempt: 1, python, pythonIdentity, shimPath, shimIdentity, profileHome, profileIdentity,
     snapshotRoot: input.snapshot.rootPath, snapshotIdentity, cacheKey: input.snapshot.cacheKey,
     manifestDigest: input.snapshot.manifestDigest, projectionPath: input.projectionPath,
     projectionDigest: ticketProjection.digest, projectionSize: ticketProjection.size,
-    payload,
+    args, environment,
   });
   let liveIdentity: ProcessScopeIdentity | undefined;
   let handle: ProcessScopeHandle | undefined;
@@ -319,8 +327,8 @@ async function launchAndAssertRefused(input: {
   try {
     try {
       handle = await input.supervisor.launch(toScopeIdentity(owner), {
-        executable: python, args: ["-I", "-B", "-S", "-c", payload], cwd: input.fixtureDirectory,
-        environment: hermesEnvironment(runHome, profileHome), attempt: 1, hermesLaunchTicket: ticket, timeoutMs: 30_000,
+        executable: python, args, cwd: input.fixtureDirectory,
+        environment, attempt: 1, hermesLaunchTicket: ticket, timeoutMs: 30_000,
       }, async (identity) => { liveIdentity = identity; });
       const completed = await handle.completion;
       nativeRefusalEvidence = `${completed.stderr}\n${completed.stdout}`;
@@ -340,7 +348,7 @@ async function launchAndAssertRefused(input: {
       throw new Error("SOURCE_ACCEPTANCE_REFUSAL_SCOPE_STOP_UNPROVEN; fixture retained");
     }
     if (windows) {
-      expect(nativeRefusalEvidence).toContain("WINDOWS_HELPER_NATIVE_UNKNOWN:HERMES_TICKET_OBJECT_MISMATCH");
+      expect(nativeRefusalEvidence).toContain(`WINDOWS_HELPER_NATIVE_UNKNOWN:${input.expectedNativeFailureCode}`);
     } else {
       expect(nativeRefusalEvidence).toMatch(/HERMES_LINUX_LAUNCH_REFUSED:HERMES_SOURCE_(?:PROJECTION_UNAVAILABLE|SNAPSHOT_CONTENT_MISMATCH)/u);
     }
@@ -374,23 +382,23 @@ function makeTicket(input: {
   shimPath: string; shimIdentity: HermesLaunchObjectIdentity; profileHome: string;
   profileIdentity: HermesLaunchObjectIdentity; snapshotRoot: string; snapshotIdentity: HermesLaunchObjectIdentity;
   cacheKey: string; manifestDigest: string; projectionPath: string; projectionDigest: string; projectionSize: number;
-  payload: string;
+  args: string[];
+  environment: HermesLaunchEnvironment;
 }): HermesLaunchTicket {
   const platform = windows ? "win32" : "linux";
   const sourceRoot = input.snapshotRoot;
-  const profileRoot = dirname(dirname(input.profileHome));
   return createHermesLaunchTicket({
     runId: input.runId, attempt: input.attempt, platform,
     hermesExecutablePath: input.shimPath, hermesExecutableIdentity: input.shimIdentity,
     executablePath: input.python, executableIdentity: input.pythonIdentity,
-    executableArgsPrefix: ["-I", "-B", "-S", "-c", input.payload],
+    executableArgsPrefix: input.args,
     profileHome: input.profileHome, profileHomeIdentity: input.profileIdentity,
     hermesSourceSnapshotKey: input.cacheKey,
     hermesSourceSnapshotRoot: sourceRoot, hermesSourceSnapshotRootIdentity: input.snapshotIdentity,
     hermesSourceManifestDigest: input.manifestDigest,
     hermesSourceProjectionPath: input.projectionPath,
     hermesSourceProjectionSha256: input.projectionDigest, hermesSourceProjectionSize: input.projectionSize,
-    environment: { HERMES_HOME: input.profileHome, HOME: profileRoot, HERMES_CONFIG: join(input.profileHome, "config.yaml") },
+    environment: input.environment,
   });
 }
 
@@ -422,10 +430,10 @@ function pythonAcceptancePayload(input: {
   ].join("\n");
 }
 
-function hermesEnvironment(_runHome: string, profileHome: string): Record<string, string> {
+function hermesEnvironment(profileHome: string): HermesLaunchEnvironment {
   return {
     HERMES_HOME: profileHome,
-    HOME: dirname(dirname(profileHome)),
+    HOME: join(profileHome, "home"),
     HERMES_CONFIG: join(profileHome, "config.yaml"),
     ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
     ...(process.env.TEMP ? { TEMP: process.env.TEMP } : {}),
@@ -468,6 +476,8 @@ async function objectIdentity(pathname: string, kind: "file" | "directory"): Pro
 
 function collectNativeHelperEvidence(error: unknown): string {
   const evidence: string[] = [];
+  const safeFailureCode = safeRestartChildFailureCode(error);
+  if (safeFailureCode) evidence.push(safeFailureCode);
   const visited = new Set<unknown>();
   let current: unknown = error;
   while (current && !visited.has(current)) {
