@@ -11,6 +11,7 @@ import type { AgentRuntimeRun } from "../../src/modules/runtime/agent-runtime.js
 import { RunService, createRunContextInput, taskDeveloperPrompt } from "../../src/modules/runtime/run-service.js";
 import { HERMES_PROVIDER_SELECTION_SOURCE } from "../../src/modules/runtime/hermes/hermes-provider-selection.js";
 import type { HermesRunSelection } from "../../src/modules/runtime/hermes/hermes-run-selection.js";
+import { createHermesAuthRouteFixture } from "../helpers/hermes-auth-route-fixture.js";
 import { RunContextAssembler } from "../../src/modules/runtime/run-context-assembler.js";
 import { digestRunPromptBytesV1 } from "../../src/modules/context/context-provenance.js";
 import { createApp } from "../../src/app/create-app.js";
@@ -856,16 +857,19 @@ class HermesSelectionMatrixRuntime extends MatrixRuntime {
     expect(this.selectionDatabase.get("SELECT id FROM agent_runs WHERE id=$runId", { runId })).toBeUndefined();
     expect(this.selectionDatabase.get("SELECT run_id FROM context_manifests WHERE run_id=$runId", { runId })).toBeUndefined();
     expect(this.selectionDatabase.get("SELECT run_id FROM run_process_owners WHERE run_id=$runId", { runId })).toBeUndefined();
+    const authFixture = await createHermesAuthRouteFixture(runId, "openai-codex", "test-hermes-selected-model");
+    const { profileHome } = authFixture;
     const selection: HermesRunSelection = Object.freeze({
       runId,
-      providerId: "test-provider",
-      modelId: "test-hermes-selected-model",
-      endpointIdentity: "test-endpoint-identity",
-      endpointRevision: "test-endpoint-revision",
+      providerId: authFixture.providerSelection.providerId,
+      modelId: authFixture.providerSelection.modelId,
+      endpointIdentity: authFixture.providerSelection.endpointIdentity!,
+      endpointRevision: authFixture.providerSelection.endpointRevision!,
       sourceVersion: HERMES_PROVIDER_SELECTION_SOURCE.version,
       sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit,
       sourceSnapshotKey: hermesSourceSnapshotKey,
-      profileHome: join(tmpdir(), "nonexistent-hermes-selection-fixture", runId),
+      profileHome,
+      authRouteEvidence: authFixture.authRouteEvidence,
     });
     this.selections.set(runId, selection);
     this.producerEvents.push({ kind: "preflight", runId });

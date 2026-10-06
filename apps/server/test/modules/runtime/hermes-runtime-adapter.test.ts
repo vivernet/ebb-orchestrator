@@ -23,7 +23,12 @@ import type { ProcessScopeIdentity, ProcessScopeObservation } from "../../../src
 import type { ProcessScopeLaunchRequest, ProcessScopeSupervisor } from "../../../src/platform/process/run-scope-supervisor.js";
 import type { HermesSessionCapture } from "../../../src/modules/runtime/hermes-session-capture-port.js";
 import { HERMES_PROVIDER_SELECTION_SOURCE } from "../../../src/modules/runtime/hermes/hermes-provider-selection.js";
-import { HERMES_NATIVE_AUTH_POLICY_IDENTITY } from "../../../src/modules/runtime/hermes/hermes-run-selection.js";
+import { createHermesAuthRouteFixture } from "../../helpers/hermes-auth-route-fixture.js";
+import * as hermesProviderSelectionModule from "../../../src/modules/runtime/hermes/hermes-provider-selection.js";
+import * as hermesRunSelectionModule from "../../../src/modules/runtime/hermes/hermes-run-selection.js";
+import * as hermesProfileHomeModule from "../../../src/platform/home/hermes-profile-home.js";
+import * as hermesNativeHelperLauncherModule from "../../../src/platform/process/native-helper-launcher.js";
+import * as hermesNativeHelperIntegrityModule from "../../../src/platform/process/native-helper-integrity.js";
 import type { HermesRunSelection } from "../../../src/modules/runtime/hermes/hermes-run-selection.js";
 import type { HermesRunProfileConfigWriter } from "../../../src/platform/home/hermes-profile-home.js";
 
@@ -163,7 +168,7 @@ function createTestRuntimeAdapter(
     ...config,
     hermesLaunchTicketFactory: config?.hermesLaunchTicketFactory ?? testHermesLaunchTicketFactory,
     hermesRunProfileConfigWriter: config?.hermesRunProfileConfigWriter ?? testHermesRunProfileConfigWriter,
-  }, supervisor ?? new MockProcessScopeSupervisor(executor)), (run) => run.hermesSelection ?? testHermesSelection(
+  }, supervisor ?? new MockProcessScopeSupervisor(executor)), async (run) => run.hermesSelection ?? await testHermesSelection(
     run.id,
     run.model,
     config?.resultDirectory ?? path.join(os.tmpdir(), "orchestrator-hermes-results"),
@@ -219,7 +224,7 @@ const testHermesRunProfileConfigWriter: HermesRunProfileConfigWriter = async ({ 
   await fs.writeFile(path.join(profileHome, "config.yaml"), configYaml);
 };
 
-function testHermesSelection(runId: string, modelId: string, resultDirectory = path.join(os.tmpdir(), "orchestrator-hermes-results")): HermesRunSelection {
+async function testHermesSelection(runId: string, modelId: string, resultDirectory = path.join(os.tmpdir(), "orchestrator-hermes-results")): Promise<HermesRunSelection> {
   const sourceSnapshotKey = JSON.stringify({
     formatVersion: 1,
     hermesVersion: HERMES_PROVIDER_SELECTION_SOURCE.version,
@@ -227,6 +232,14 @@ function testHermesSelection(runId: string, modelId: string, resultDirectory = p
     sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit,
     sourceTree: "d".repeat(40),
   });
+  const authFixture = await createHermesAuthRouteFixture(runId, "openai-codex", modelId, resultDirectory, false, {
+    providerModule: hermesProviderSelectionModule,
+    selectionModule: hermesRunSelectionModule,
+    profileModule: hermesProfileHomeModule,
+    launcherModule: hermesNativeHelperLauncherModule,
+    integrityModule: hermesNativeHelperIntegrityModule,
+  });
+  const { profileHome } = authFixture;
   return {
     runId,
     providerId: "openai-codex",
@@ -236,13 +249,14 @@ function testHermesSelection(runId: string, modelId: string, resultDirectory = p
     sourceVersion: HERMES_PROVIDER_SELECTION_SOURCE.version,
     sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit,
     sourceSnapshotKey,
-    profileHome: path.join(resultDirectory, "profiles", `ebb-orchestrator-run-${runId}`),
+    profileHome,
+    authRouteEvidence: authFixture.authRouteEvidence,
   };
 }
 
 function allowTestHermesNativeAuth(
   adapter: HermesRuntimeAdapter,
-  selectionForRun?: (run: Parameters<HermesRuntimeAdapter["startRun"]>[0]) => HermesRunSelection | undefined,
+  selectionForRun?: (run: Parameters<HermesRuntimeAdapter["startRun"]>[0]) => HermesRunSelection | undefined | Promise<HermesRunSelection | undefined>,
 ): HermesRuntimeAdapter {
   (adapter as unknown as { hermesLaunchTicketFactory: HermesLaunchTicketFactory }).hermesLaunchTicketFactory = testHermesLaunchTicketFactory;
   const profileConfigWriter = adapter as unknown as { hermesRunProfileConfigWriter?: HermesRunProfileConfigWriter };
@@ -260,7 +274,7 @@ function allowTestHermesNativeAuth(
       endpointIdentity: string;
       endpointRevision: string;
       projectionVersion: string;
-      policyIdentity: string;
+      authRouteEvidence: HermesRunSelection["authRouteEvidence"];
     }): void;
   };
   const authGate = adapter as unknown as { assertNativeHermesAuthReady: (...args: unknown[]) => void };
@@ -272,8 +286,11 @@ function allowTestHermesNativeAuth(
     Reflect.apply(originalAuthGate, adapter, args);
   });
   const originalStart = adapter.startRun.bind(adapter);
-  vi.spyOn(adapter, "startRun").mockImplementation((run) => {
-    const selection = selectionForRun?.(run) ?? run.hermesSelection;
+  vi.spyOn(adapter, "startRun").mockImplementation(async (run) => {
+    const selectionResult = selectionForRun?.(run);
+    const selection = selectionResult && typeof selectionResult === "object" && "then" in selectionResult
+      ? await selectionResult
+      : selectionResult ?? run.hermesSelection;
     if (selection) {
       const paths = process.platform === "win32" ? path.win32 : path.posix;
       proofRegistrar.recordVerifiedHermesNativeAuthEvidence(selection, {
@@ -288,7 +305,7 @@ function allowTestHermesNativeAuth(
         endpointIdentity: selection.endpointIdentity,
         endpointRevision: selection.endpointRevision,
         projectionVersion: HERMES_PROVIDER_SELECTION_SOURCE.projectionVersion,
-        policyIdentity: HERMES_NATIVE_AUTH_POLICY_IDENTITY,
+        authRouteEvidence: selection.authRouteEvidence,
       });
     }
     return originalStart(selection ? { ...run, hermesSelection: selection } : run);
@@ -340,7 +357,6 @@ describe("HermesRuntimeAdapter", () => {
     const runId = "f672e56f-07ed-4fc4-9aca-2f91b3d7bc82";
     const hermesRoot = paths.join(os.tmpdir(), `hermes-preflight-cleanup-${runId}`);
     const cacheRoot = paths.join(os.tmpdir(), `hermes-preflight-cache-${runId}`);
-    const profileHome = paths.join(hermesRoot, "profiles", `ebb-orchestrator-run-${runId}`);
     const primaryError = new Error("TEST_AUTH_EVIDENCE_RECORD_FAILED");
     const events: string[] = [];
     const sourceSnapshot = {
@@ -349,7 +365,6 @@ describe("HermesRuntimeAdapter", () => {
       manifestDigest: "a".repeat(64),
       rootPath: paths.join(cacheRoot, "test-source-snapshot"),
     };
-    const createdProfileOptions: Array<Record<string, unknown>> = [];
     const cleanupProfileOptions: Array<Record<string, unknown>> = [];
     const releaseReference = vi.fn(async () => {
       events.push("lease-release");
@@ -366,7 +381,6 @@ describe("HermesRuntimeAdapter", () => {
     // resolves or reads a real Hermes installation, provider configuration, profile, or auth.
     vi.doUnmock("../../../src/modules/runtime/hermes/hermes-executable-resolver.js");
     vi.doUnmock("../../../src/modules/runtime/hermes/hermes-source-snapshot.js");
-    vi.doUnmock("../../../src/modules/runtime/hermes/hermes-provider-selection.js");
     vi.doUnmock("../../../src/platform/home/hermes-profile-home.js");
     vi.resetModules();
     vi.doMock("../../../src/modules/runtime/hermes/hermes-executable-resolver.js", () => ({
@@ -393,25 +407,33 @@ describe("HermesRuntimeAdapter", () => {
       materializeHermesSourceSnapshot: vi.fn(async () => sourceSnapshot),
       releaseHermesSourceSnapshotReferenceLease: releaseReference,
     }));
-    vi.doMock("../../../src/modules/runtime/hermes/hermes-provider-selection.js", () => ({
-      HERMES_PROVIDER_SELECTION_SOURCE,
-      readHermesProviderSelection: vi.fn(async () => ({
-        providerId: "openai-codex",
-        modelId: "test-model",
-        endpointIdentity: "hermes-provider:openai-codex",
-        endpointRevision: HERMES_PROVIDER_SELECTION_SOURCE.commit,
-        endpointIdentityEligible: true,
-      })),
+    vi.doMock("../../../src/platform/process/native-helper-integrity.js", () => ({
+      verifyNativeHelperIntegrity: vi.fn(async () => undefined),
     }));
-    vi.doMock("../../../src/platform/home/hermes-profile-home.js", () => ({
-      createHermesRunProfileHome: vi.fn(async (options: Record<string, unknown>) => {
-        createdProfileOptions.push(options);
-        events.push("profile-created");
-        return profileHome;
+    vi.doMock("../../../src/platform/process/native-helper-launcher.js", () => ({
+      runVerifiedNativeHelper: vi.fn(async (_helper: string, _anchor: string, args: string[]) => {
+        if (args[0] === "create-profile") events.push("profile-created");
+        return {
+          exitCode: 0,
+          stderr: "",
+          stdout: args[0] === "project-selection" ? JSON.stringify({
+            sourceVersion: HERMES_PROVIDER_SELECTION_SOURCE.version,
+            sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit,
+            projectionVersion: HERMES_PROVIDER_SELECTION_SOURCE.projectionVersion,
+            status: "EXPLICIT_SELECTION",
+            endpointOverridePresent: false,
+            providerId: "openai-codex",
+            modelId: "test-model",
+          }) : "",
+        };
       }),
-      cleanupHermesRunProfileHome: cleanupProfile,
-      writeHermesRunProfileConfig: vi.fn(),
     }));
+    vi.doMock("../../../src/platform/home/hermes-profile-home.js", async () => {
+      const actual = await vi.importActual<typeof import("../../../src/platform/home/hermes-profile-home.js")>(
+        "../../../src/platform/home/hermes-profile-home.js",
+      );
+      return { ...actual, cleanupHermesRunProfileHome: cleanupProfile };
+    });
 
     try {
       const { HermesRuntimeAdapter: IsolatedHermesRuntimeAdapter } = await import(
@@ -438,8 +460,7 @@ describe("HermesRuntimeAdapter", () => {
         "lease-release",
       ]);
       expect(cleanupProfile).toHaveBeenCalledTimes(1);
-      expect(cleanupProfileOptions).toEqual(createdProfileOptions);
-      expect(createdProfileOptions[0]).toMatchObject({ hermesRoot, runId, platform });
+      expect(cleanupProfileOptions[0]).toMatchObject({ hermesRoot, runId, platform });
       expect(releaseReference).toHaveBeenCalledTimes(1);
       expect(cleanupFailureLog).toHaveBeenCalledTimes(2);
       expect(cleanupFailureLog).toHaveBeenNthCalledWith(1,
@@ -475,7 +496,7 @@ describe("HermesRuntimeAdapter", () => {
       taskId: null, epicId: null, status: "STARTED" as const, sessionId: null, attempt: null,
       triggerReason: null, contextVersion: "v1", outputSchemaVersion: "v1", startedAt: new Date(),
       endedAt: null, exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
-      hermesSelection: testHermesSelection(runId, "model-x", resultDirectory),
+      hermesSelection: await testHermesSelection(runId, "model-x", resultDirectory),
     };
 
     try {
@@ -578,7 +599,7 @@ describe("HermesRuntimeAdapter", () => {
         platform: validatePlatform(process.platform),
       });
       await runtime.startRun({
-        id: "isolated-home-run", role: "Developer", runtime: "hermes", model: "default",
+        id: "8b758a7a-2075-4872-86b7-53369d01c04b", role: "Developer", runtime: "hermes", model: "default",
         taskId: null, epicId: null, status: "STARTED", sessionId: null, attempt: null,
         triggerReason: null, contextVersion: "v1", outputSchemaVersion: "v1", startedAt: new Date(),
         endedAt: null, exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
@@ -601,11 +622,11 @@ describe("HermesRuntimeAdapter", () => {
         checkpointDirectory: sharedCheckpointDirectory,
       });
       await expect(unscoped.startRun({
-        id: "unscoped-run", role: "Developer", runtime: "hermes", model: "model-x",
+        id: "9b2484a2-89ac-47e3-b8ad-c7e2b9a1ed11", role: "Developer", runtime: "hermes", model: "model-x",
         taskId: null, epicId: null, status: "STARTED", sessionId: null, attempt: null,
         triggerReason: null, contextVersion: "v1", outputSchemaVersion: "v1", startedAt: new Date(),
         endedAt: null, exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
-        hermesSelection: testHermesSelection("unscoped-run", "model-x"),
+        hermesSelection: await testHermesSelection("9b2484a2-89ac-47e3-b8ad-c7e2b9a1ed11", "model-x"),
       })).rejects.toThrow("PROCESS_SCOPE_SUPERVISOR_REQUIRED");
       expect(mockExecutor.getCalls()).toHaveLength(0);
     });
@@ -626,7 +647,7 @@ describe("HermesRuntimeAdapter", () => {
       adapter.setHermesSessionCaptureHandler(async (capture) => { captures.push(capture); });
       mockExecutor.setNextResult({ exitCode: 0, stdout: rawMarker, stderr: rawMarker });
       const run = {
-        id: "live-capture-run", role: "Developer", runtime: "hermes", model: "model-x",
+        id: "d439431f-2339-44b6-bd97-b072c72b447c", role: "Developer", runtime: "hermes", model: "model-x",
         taskId: null, epicId: null, status: "STARTED" as const, sessionId: null, attempt: null,
         triggerReason: null, contextVersion: "v1", outputSchemaVersion: "v1", startedAt: new Date(),
         endedAt: null, exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
@@ -681,7 +702,7 @@ describe("HermesRuntimeAdapter", () => {
         durable.captureState = "INVALID";
       });
       const run = {
-        id: "capture-retry-run", role: "Developer", runtime: "hermes", model: "model-x",
+        id: "2cb555ae-7d1f-44b2-8bc4-fc0f162c3d81", role: "Developer", runtime: "hermes", model: "model-x",
         taskId: null, epicId: null, status: "STARTED" as const, sessionId: null, attempt: null,
         triggerReason: null, contextVersion: "v1", outputSchemaVersion: "v1", startedAt: new Date(),
         endedAt: null, exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
@@ -721,7 +742,7 @@ describe("HermesRuntimeAdapter", () => {
         }
       });
       const run = {
-        id: "stream-error-run", role: "Developer", runtime: "hermes", model: "model-x",
+        id: "fb674310-1f04-4f44-9ce3-a6f1ff788a21", role: "Developer", runtime: "hermes", model: "model-x",
         taskId: null, epicId: null, status: "STARTED" as const, sessionId: null, attempt: null,
         triggerReason: null, contextVersion: "v1", outputSchemaVersion: "v1", startedAt: new Date(),
         endedAt: null, exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
@@ -746,7 +767,7 @@ describe("HermesRuntimeAdapter", () => {
         environment: { HERMES_HOME: path.join(resultDirectory, "other-profile") },
       }, supervisor);
       const run = {
-        id: "home-mismatch-run", role: "Developer", runtime: "hermes", model: "model-x",
+        id: "c044e33a-705a-4b5b-83b6-721773542a9a", role: "Developer", runtime: "hermes", model: "model-x",
         taskId: null, epicId: null, status: "STARTED" as const, sessionId: null, attempt: null,
         triggerReason: null, contextVersion: "v1", outputSchemaVersion: "v1", startedAt: new Date(),
         endedAt: null, exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
@@ -755,8 +776,11 @@ describe("HermesRuntimeAdapter", () => {
       try {
         await adapter.startRun(run);
         expect(supervisor.launchCalls).toBe(1);
-        expect(supervisor.lastRequest?.environment.HERMES_HOME)
-          .toBe(path.join(resultDirectory, "profiles", `ebb-orchestrator-run-${run.id}`));
+        const runProfileHome = path.join(resultDirectory, "profiles", `ebb-orchestrator-run-${run.id}`);
+        expect(supervisor.lastRequest?.environment.HERMES_HOME).toBe(runProfileHome);
+        expect(supervisor.lastRequest?.environment.HOME).toBe(path.join(runProfileHome, "home"));
+        expect(supervisor.lastRequest?.environment.HERMES_CONFIG).toBe(path.join(runProfileHome, "config.yaml"));
+        expect(supervisor.lastRequest?.environment.HERMES_MODEL).toBe(run.model);
         expect(supervisor.lastRequest?.environment.HERMES_HOME)
           .not.toBe(path.join(resultDirectory, "other-profile"));
       } finally {
@@ -776,11 +800,11 @@ describe("HermesRuntimeAdapter", () => {
         provider: { baseUrl: "https://models.example.test/v1", secretName: "legacy" },
       } as unknown as ConstructorParameters<typeof HermesRuntimeAdapter>[2], scopeSupervisor));
       const run = {
-        id: "provider-bridge-run", role: "Developer", runtime: "hermes", model: "model-x",
+        id: "52ed5533-5a27-4547-94a7-43f04d55df73", role: "Developer", runtime: "hermes", model: "model-x",
         taskId: null, epicId: null, status: "STARTED" as const, sessionId: null, attempt: null,
         triggerReason: null, contextVersion: "v1", outputSchemaVersion: "v1", startedAt: new Date(),
         endedAt: null, exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
-        hermesSelection: testHermesSelection("provider-bridge-run", "model-x", resultDirectory),
+        hermesSelection: await testHermesSelection("52ed5533-5a27-4547-94a7-43f04d55df73", "model-x", resultDirectory),
       };
 
       await expect(adapter.startRun(run)).resolves.toBeUndefined();
@@ -812,7 +836,7 @@ describe("HermesRuntimeAdapter", () => {
         taskId: null, epicId: null, status: "STARTED" as const, sessionId: null, attempt: null,
         triggerReason: null, contextVersion: "v1", outputSchemaVersion: "v1", startedAt: new Date(),
         endedAt: null, exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
-        hermesSelection: testHermesSelection(runId, "model-x", resultDirectory),
+        hermesSelection: await testHermesSelection(runId, "model-x", resultDirectory),
       };
 
       try {
@@ -835,11 +859,11 @@ describe("HermesRuntimeAdapter", () => {
       }, scopeSupervisor);
       allowTestHermesNativeAuth(adapter);
       const run = {
-        id: "cancel-before-launch-run", role: "Developer", runtime: "hermes", model: "model-x",
+        id: "93a15f8a-52f4-4bdb-9da2-e302095d4391", role: "Developer", runtime: "hermes", model: "model-x",
         taskId: null, epicId: null, status: "STARTED" as const, sessionId: null, attempt: null,
         triggerReason: null, contextVersion: "v1", outputSchemaVersion: "v1", startedAt: new Date(),
         endedAt: null, exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
-        hermesSelection: testHermesSelection("cancel-before-launch-run", "model-x"),
+        hermesSelection: await testHermesSelection("93a15f8a-52f4-4bdb-9da2-e302095d4391", "model-x"),
       };
 
       const starting = adapter.startRun(run);
@@ -865,11 +889,11 @@ describe("HermesRuntimeAdapter", () => {
       }, scopeSupervisor);
       allowTestHermesNativeAuth(adapter);
       const run = {
-        id: "cancel-during-launch-run", role: "Developer", runtime: "hermes", model: "model-x",
+        id: "6e9f65c6-79c8-4da9-93a7-e29a1566d4f0", role: "Developer", runtime: "hermes", model: "model-x",
         taskId: null, epicId: null, status: "STARTED" as const, sessionId: null, attempt: null,
         triggerReason: null, contextVersion: "v1", outputSchemaVersion: "v1", startedAt: new Date(),
         endedAt: null, exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
-        hermesSelection: testHermesSelection("cancel-during-launch-run", "model-x"),
+        hermesSelection: await testHermesSelection("6e9f65c6-79c8-4da9-93a7-e29a1566d4f0", "model-x"),
       };
 
       const starting = adapter.startRun(run);
@@ -947,7 +971,7 @@ describe("HermesRuntimeAdapter", () => {
       database.run(
         "INSERT INTO agent_runs (id, role, runtime, model, status, task_id, epic_id, capability_ref, capability_json) VALUES ($id, $role, $runtime, $model, $status, $task_id, $epic_id, $capability_ref, $capability_json)",
         {
-          id: "persisted-workspace-run",
+          id: "dc20d357-c4a5-4f42-a31a-320cfade61ec",
           role: "Developer",
           runtime: "hermes",
           model: "default",
@@ -956,7 +980,7 @@ describe("HermesRuntimeAdapter", () => {
           epic_id: null,
           capability_ref: "persisted-capability",
           capability_json: JSON.stringify({
-            runId: "persisted-workspace-run",
+            runId: "dc20d357-c4a5-4f42-a31a-320cfade61ec",
             capabilityRef: "persisted-capability",
             role: "developer",
             workspace,
@@ -973,7 +997,7 @@ describe("HermesRuntimeAdapter", () => {
         "INSERT INTO git_operations (id,type,status,repo_path,branch_name,worktree_id,target_ref,created_at,verified_at) VALUES ('worktree-op','CREATE_WORKTREE','VERIFIED',$repoPath,'task/persisted-task','persisted-task','master',$verifiedAt,$verifiedAt)",
         { repoPath: repository, verifiedAt },
       );
-      const persistedSelection = testHermesSelection("persisted-workspace-run", "default", resultDirectory);
+      const persistedSelection = await testHermesSelection("dc20d357-c4a5-4f42-a31a-320cfade61ec", "default", resultDirectory);
       database.run(
         `INSERT INTO run_process_owners(
           run_id,source_tag,hermes_home,containment_kind,containment_id,launch_nonce,
@@ -981,9 +1005,9 @@ describe("HermesRuntimeAdapter", () => {
           process_start_identity,executable_identity,state,stop_evidence,updated_at,hermes_source_snapshot_key
         ) VALUES($runId,$sourceTag,$hermesHome,$kind,$containmentId,$launchNonce,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'PREPARED',NULL,$now,$snapshotKey)`,
         {
-          runId: "persisted-workspace-run",
-          sourceTag: "ebb-run:persisted-workspace-run",
-          hermesHome: path.join(resultDirectory, "profiles", "ebb-orchestrator-run-persisted-workspace-run"),
+          runId: "dc20d357-c4a5-4f42-a31a-320cfade61ec",
+          sourceTag: "ebb-run:dc20d357-c4a5-4f42-a31a-320cfade61ec",
+          hermesHome: path.join(resultDirectory, "profiles", "ebb-orchestrator-run-dc20d357-c4a5-4f42-a31a-320cfade61ec"),
           snapshotKey: persistedSelection.sourceSnapshotKey,
           kind: process.platform === "win32" ? "windows-job" : "systemd-user-service",
           containmentId: "a".repeat(64),
@@ -992,7 +1016,7 @@ describe("HermesRuntimeAdapter", () => {
         },
       );
       const run = {
-        id: "persisted-workspace-run", role: "Developer", runtime: "hermes", model: "default",
+        id: "dc20d357-c4a5-4f42-a31a-320cfade61ec", role: "Developer", runtime: "hermes", model: "default",
         taskId: "persisted-task", epicId: null, status: "STARTED" as const, sessionId: null, attempt: null,
         triggerReason: null, contextVersion: "v1", outputSchemaVersion: "v1", startedAt: new Date(),
         endedAt: null, exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
@@ -1031,8 +1055,8 @@ describe("HermesRuntimeAdapter", () => {
         )).toEqual({ state: "STOPPED", stop_evidence: "TEST_SCOPE_EMPTY" });
 
         const failedRun = {
-          ...run, id: "owner-callback-failure-run", capabilityRef: "failed-capability",
-          hermesSelection: testHermesSelection("owner-callback-failure-run", "default", resultDirectory),
+          ...run, id: "837923a5-32b2-4724-8efc-0b0ef8b989bb", capabilityRef: "failed-capability",
+          hermesSelection: await testHermesSelection("837923a5-32b2-4724-8efc-0b0ef8b989bb", "default", resultDirectory),
         };
         database.run(
           "INSERT INTO agent_runs (id,role,runtime,model,status,task_id,epic_id,session_id,capability_ref,capability_json) VALUES ($id,$role,$runtime,$model,$status,$taskId,NULL,NULL,$capabilityRef,$capabilityJson)",
@@ -1101,8 +1125,8 @@ describe("HermesRuntimeAdapter", () => {
 
         database.exec("DROP TRIGGER reject_live_owner_identity");
         const stopPersistenceRun = {
-          ...run, id: "stop-proof-persistence-failure-run", capabilityRef: "stop-proof-failure-capability",
-          hermesSelection: testHermesSelection("stop-proof-persistence-failure-run", "default", resultDirectory),
+          ...run, id: "3075c8e3-dbbe-4cdb-a3e1-58c02f61720f", capabilityRef: "stop-proof-failure-capability",
+          hermesSelection: await testHermesSelection("3075c8e3-dbbe-4cdb-a3e1-58c02f61720f", "default", resultDirectory),
         };
         database.run(
           "INSERT INTO agent_runs (id,role,runtime,model,status,task_id,epic_id,session_id,capability_ref,capability_json) VALUES ($id,$role,$runtime,$model,$status,$taskId,NULL,NULL,$capabilityRef,$capabilityJson)",
@@ -1187,7 +1211,7 @@ describe("HermesRuntimeAdapter", () => {
         )
       `);
       const run = {
-        id: "missing-workspace-run", role: "Developer", runtime: "hermes", model: "default",
+        id: "ef0d8916-b3bb-4638-832e-8f8cf985e259", role: "Developer", runtime: "hermes", model: "default",
         taskId: null, epicId: null, status: "STARTED" as const, sessionId: null, attempt: null,
         triggerReason: null, contextVersion: "v1", outputSchemaVersion: "v1", startedAt: new Date(),
         endedAt: null, exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
@@ -1217,7 +1241,7 @@ describe("HermesRuntimeAdapter", () => {
         checkpointDirectory: sharedCheckpointDirectory,
       });
       const run = {
-        id: "wired-run-id", role: "Developer", runtime: "hermes", model: "default",
+        id: "d0187208-0551-45f8-b0d6-18c36d596c72", role: "Developer", runtime: "hermes", model: "default",
         taskId: null, epicId: null, status: "STARTED" as const, sessionId: null, attempt: null,
         triggerReason: null, contextVersion: "v1", outputSchemaVersion: "v1", startedAt: new Date(),
         endedAt: null, exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
@@ -1230,7 +1254,7 @@ describe("HermesRuntimeAdapter", () => {
 
     it("builds correct launch command for new run", async () => {
       const run = {
-        id: "test-run-id",
+        id: "18cb708d-4bc6-4151-829f-a5334b6068e6",
         role: "Developer",
         runtime: "hermes",
         model: "claude-3-5-sonnet",
@@ -1277,7 +1301,7 @@ describe("HermesRuntimeAdapter", () => {
 
     it("writes prompt body to file and passes with --query-file", async () => {
       const run = {
-        id: "test-run-id-2",
+        id: "3cba9cf2-8310-4d53-b6b3-d763e715e77c",
         role: "QA",
         runtime: "hermes",
         model: "claude-3",
@@ -1312,7 +1336,7 @@ describe("HermesRuntimeAdapter", () => {
 
     it("never adds --worktree flag", async () => {
       const run = {
-        id: "test-run-id-3",
+        id: "bf8c2a9b-b76b-4af0-98e6-72e683fcd012",
         role: "Developer",
         runtime: "hermes",
         model: "claude-3",
@@ -1343,7 +1367,7 @@ describe("HermesRuntimeAdapter", () => {
 
     it("never adds --yolo flag", async () => {
       const run = {
-        id: "test-run-id-4",
+        id: "fe1dc5a3-76a0-49ef-9cee-04d19ddc95a0",
         role: "Developer",
         runtime: "hermes",
         model: "claude-3",
@@ -1374,7 +1398,7 @@ describe("HermesRuntimeAdapter", () => {
 
     it("keeps post-close stdout session IDs diagnostic-only", async () => {
       const run = {
-        id: "test-run-id-5",
+        id: "2cabf888-f404-4f5e-8ed5-4a4bd0f53b33",
         role: "Developer",
         runtime: "hermes",
         model: "claude-3",
@@ -1411,7 +1435,7 @@ describe("HermesRuntimeAdapter", () => {
 
     it("captures process PID", async () => {
       const run = {
-        id: "test-run-id-6",
+        id: "8d31a54f-ec09-4262-9cbc-f0a54c0d0863",
         role: "Developer",
         runtime: "hermes",
         model: "claude-3",
@@ -1456,7 +1480,7 @@ describe("HermesRuntimeAdapter", () => {
     it("updates run state with session info", async () => {
     // Сначала запускаем выполнение.
       const startRun = {
-        id: "resume-run-id",
+        id: "9a47e3b6-4089-4c0d-b55a-9f69f4cb88c0",
         role: "Developer",
         runtime: "hermes",
         model: "claude-3",
@@ -1492,7 +1516,7 @@ describe("HermesRuntimeAdapter", () => {
 
     it("sets status to IN_PROGRESS on resume", async () => {
       const startRun = {
-        id: "resume-run-id-2",
+        id: "55b1f777-f9d4-4baf-aacb-8cb5f5925cca",
         role: "Developer",
         runtime: "hermes",
         model: "claude-3",
@@ -1528,7 +1552,7 @@ describe("HermesRuntimeAdapter", () => {
     it("sends graceful signal first", async () => {
     // Сначала запускаем выполнение.
       const startRun = {
-        id: "cancel-run-id",
+        id: "f0c1352c-4176-4355-8b4a-96dd0e09563f",
         role: "Developer",
         runtime: "hermes",
         model: "claude-3",
@@ -1563,7 +1587,7 @@ describe("HermesRuntimeAdapter", () => {
     it("returns AGENT_OUTPUT_MISSING when process exits without valid submitted result", async () => {
     // Сначала запускаем выполнение.
       const startRun = {
-        id: "missing-result-run",
+        id: "dcaebd41-2236-44ef-8e3e-4a38fdab73fd",
         role: "Developer",
         runtime: "hermes",
         model: "claude-3",
@@ -1602,7 +1626,7 @@ describe("HermesRuntimeAdapter", () => {
       const resultDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-results-"));
       await fs.writeFile(path.join(resultDirectory, "other-run.json"), JSON.stringify({ version: "1.0", outcome: "COMPLETED" }));
       const run = {
-        id: "exact-run", role: "Developer", runtime: "hermes", model: "claude-3", taskId: "task-exact",
+        id: "57742c2b-45b5-48b9-8bb9-6513fdac3be3", role: "Developer", runtime: "hermes", model: "claude-3", taskId: "task-exact",
         epicId: null, status: "STARTED" as const, sessionId: null, attempt: null, triggerReason: null,
         contextVersion: "v1", outputSchemaVersion: "v1", startedAt: new Date(), endedAt: null,
         exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
@@ -1622,7 +1646,7 @@ describe("HermesRuntimeAdapter", () => {
         sessionId: "exact-session",
         stderr: "agent failed",
         exitCode: 7,
-        artifactReferences: [path.join(resultDirectory, "exact-run.json"), `run-artifacts://${run.id}`],
+        artifactReferences: [path.join(resultDirectory, `${run.id}.json`), `run-artifacts://${run.id}`],
       });
       await fs.rm(resultDirectory, { recursive: true, force: true });
     });
@@ -1630,7 +1654,7 @@ describe("HermesRuntimeAdapter", () => {
     it("re-reads and validates the exact run result at collection time", async () => {
       const resultDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-results-recheck-"));
       const run = {
-        id: "recheck-run", role: "Developer", runtime: "hermes", model: "claude-3", taskId: "task-recheck",
+        id: "cbe20714-7be8-4d55-9a23-b4e9397ff001", role: "Developer", runtime: "hermes", model: "claude-3", taskId: "task-recheck",
         epicId: null, status: "STARTED" as const, sessionId: null, attempt: null, triggerReason: null,
         contextVersion: "v1", outputSchemaVersion: "v1", startedAt: new Date(), endedAt: null,
         exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
@@ -1658,7 +1682,7 @@ describe("HermesRuntimeAdapter", () => {
         environment: { GITHUB_TOKEN: "secret" },
       });
       await expect(restricted.startRun({
-        id: "credential-run", role: "Developer", runtime: "hermes", model: "claude-3", taskId: "task-credential",
+        id: "abcf7629-9c91-4754-8ca5-f746c566cd53", role: "Developer", runtime: "hermes", model: "claude-3", taskId: "task-credential",
         epicId: null, status: "STARTED" as const, sessionId: null, attempt: null, triggerReason: null,
         contextVersion: "v1", outputSchemaVersion: "v1", startedAt: new Date(), endedAt: null,
         exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
@@ -1669,7 +1693,7 @@ describe("HermesRuntimeAdapter", () => {
   describe("inspectRun", () => {
     it("returns current state of a run", async () => {
       const run = {
-        id: "inspect-run-id",
+        id: "ed5c0a45-a09c-4a22-8b80-d4084c01cd9f",
         role: "Developer",
         runtime: "hermes",
         model: "claude-3",

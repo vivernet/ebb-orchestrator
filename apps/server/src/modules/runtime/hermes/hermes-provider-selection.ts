@@ -81,6 +81,11 @@ const SOURCE_LITERAL_ENDPOINT_ENV_VARS: Readonly<Record<string, string>> = Objec
   'xai-oauth': 'XAI_BASE_URL',
 });
 
+const AUTH_ROUTE_ENVIRONMENT_KEYS = new Set([
+  'HOMEDRIVE', 'HOMEPATH', 'SYSTEMROOT', 'TEMP', 'TMP', 'PATH', 'NODE_PATH', 'NODE_ENV',
+  'HERMES_HOME', 'HERMES_CONFIG', 'HERMES_MODEL',
+]);
+
 export interface HermesProviderSelection {
   providerId: string;
   modelId: string;
@@ -90,6 +95,49 @@ export interface HermesProviderSelection {
   endpointIdentity: string | null;
   endpointRevision: string | null;
   reason?: 'HERMES_ENDPOINT_ID_UNAVAILABLE';
+}
+
+interface VerifiedProviderSelectionProjectionMetadata {
+  readonly runId: string;
+  readonly hermesConfigHome: string;
+  readonly hermesRunProfileHome: string;
+  readonly hermesProjectRoot: string;
+  readonly providerId: string;
+  readonly modelId: string;
+  readonly endpointIdentity: string | null;
+  readonly endpointRevision: string | null;
+  readonly sourceVersion: string;
+  readonly sourceCommit: string;
+  readonly projectionVersion: string;
+  readonly relevantEnvironment: Readonly<Record<string, string | boolean | undefined>>;
+}
+
+const verifiedProviderSelectionProjections = new WeakMap<object, VerifiedProviderSelectionProjectionMetadata>();
+
+/** True only for an immutable projection returned after the production verified native scanner. */
+export function isVerifiedHermesProviderSelectionProjection(
+  value: unknown,
+  expected: {
+    runId: string;
+    hermesConfigHome: string;
+    hermesRunProfileHome: string;
+    hermesProjectRoot: string;
+    sourceVersion: string;
+    sourceCommit: string;
+    runEnvironment: Readonly<Record<string, string | undefined>>;
+  },
+): value is HermesProviderSelection {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const metadata = verifiedProviderSelectionProjections.get(value);
+  const selection = value as HermesProviderSelection;
+  return metadata !== undefined && metadata.runId === expected.runId &&
+    metadata.hermesConfigHome === expected.hermesConfigHome &&
+    metadata.hermesRunProfileHome === expected.hermesRunProfileHome &&
+    metadata.hermesProjectRoot === expected.hermesProjectRoot &&
+    metadata.sourceVersion === expected.sourceVersion && metadata.sourceCommit === expected.sourceCommit &&
+    metadata.providerId === selection.providerId && metadata.modelId === selection.modelId &&
+    metadata.endpointIdentity === selection.endpointIdentity && metadata.endpointRevision === selection.endpointRevision &&
+    sameRelevantEnvironment(metadata.relevantEnvironment, expected.runEnvironment, metadata.providerId);
 }
 
 export interface HermesProviderSelectionReaderOptions {
@@ -172,6 +220,9 @@ export async function readHermesProviderSelection(
     throw new Error('HERMES_SELECTION_INPUT_INVALID');
   }
 
+  const runEnvironment = Object.freeze({ ...options.runEnvironment });
+  const boundOptions: HermesProviderSelectionReaderOptions = { ...options, runEnvironment };
+
   let output: string;
   try {
     const runHelper = options.runHelper ?? executeHermesProfilePathHelper;
@@ -210,10 +261,10 @@ export async function readHermesProviderSelection(
   const selectedBaseUrlEnvVar = SOURCE_LITERAL_ENDPOINT_ENV_VARS[providerId];
   if (!projection.endpointOverridePresent && SOURCE_LITERAL_ENDPOINT_PROVIDERS.has(providerId) &&
       selectedBaseUrlEnvVar !== undefined) {
-    endpointIdentityEligible = await isPinnedDefaultEndpoint(options, providerId, selectedBaseUrlEnvVar, projection.modelId);
+    endpointIdentityEligible = await isPinnedDefaultEndpoint(boundOptions, providerId, selectedBaseUrlEnvVar, projection.modelId);
   }
 
-  return {
+  const selection: HermesProviderSelection = Object.freeze({
     providerId: projection.providerId,
     modelId: projection.modelId,
     endpointOverridePresent: projection.endpointOverridePresent,
@@ -221,7 +272,22 @@ export async function readHermesProviderSelection(
     endpointIdentity: endpointIdentityEligible ? `hermes-provider:${providerId}` : null,
     endpointRevision: endpointIdentityEligible ? HERMES_PROVIDER_SELECTION_SOURCE.commit : null,
     ...(!endpointIdentityEligible ? { reason: 'HERMES_ENDPOINT_ID_UNAVAILABLE' as const } : {}),
-  };
+  });
+  if (!options.runHelper) verifiedProviderSelectionProjections.set(selection, Object.freeze({
+    runId: options.runId,
+    hermesConfigHome: options.hermesConfigHome,
+    hermesRunProfileHome: options.hermesRunProfileHome,
+    hermesProjectRoot: options.hermesProjectRoot,
+    providerId: selection.providerId,
+    modelId: selection.modelId,
+    endpointIdentity: selection.endpointIdentity,
+    endpointRevision: selection.endpointRevision,
+    sourceVersion: HERMES_PROVIDER_SELECTION_SOURCE.version,
+    sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit,
+    projectionVersion: HERMES_PROVIDER_SELECTION_SOURCE.projectionVersion,
+    relevantEnvironment: projectRelevantEnvironment(runEnvironment, selection.providerId),
+  }));
+  return selection;
 }
 
 async function executeHermesProfilePathHelper(
@@ -387,6 +453,35 @@ function containsControlCharacters(value: string): boolean {
     if (code <= 0x1f || code === 0x7f) return true;
   }
   return false;
+}
+
+function sameRelevantEnvironment(
+  left: Readonly<Record<string, string | boolean | undefined>>,
+  right: Readonly<Record<string, string | undefined>>,
+  providerId: string,
+): boolean {
+  const projected = projectRelevantEnvironment(right, providerId);
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(projected);
+  return leftKeys.length === rightKeys.length && leftKeys.every((key) =>
+    Object.prototype.hasOwnProperty.call(projected, key) && left[key] === projected[key]);
+}
+
+function projectRelevantEnvironment(
+  environment: Readonly<Record<string, string | undefined>>,
+  providerId: string,
+): Readonly<Record<string, string | boolean | undefined>> {
+  const projection: Record<string, string | boolean | undefined> = {
+    HERMES_MANAGED_DIR: Object.prototype.hasOwnProperty.call(environment, 'HERMES_MANAGED_DIR'),
+  };
+  for (const key of AUTH_ROUTE_ENVIRONMENT_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(environment, key)) projection[key] = environment[key];
+  }
+  const endpointKey = SOURCE_LITERAL_ENDPOINT_ENV_VARS[providerId.toLowerCase()];
+  if (endpointKey !== undefined && Object.prototype.hasOwnProperty.call(environment, endpointKey)) {
+    projection[endpointKey] = environment[endpointKey];
+  }
+  return Object.freeze(projection);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

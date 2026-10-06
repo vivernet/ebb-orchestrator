@@ -25,11 +25,17 @@ import {
 import { HERMES_PROVIDER_SELECTION_SOURCE, readHermesProviderSelection } from "./hermes-provider-selection.js";
 import {
   cleanupHermesRunProfileHome,
-  createHermesRunProfileHome,
+  createHermesRunProfileHomeWithReceipt,
   writeHermesRunProfileConfig,
   type HermesRunProfileConfigWriter,
 } from "../../../platform/home/hermes-profile-home.js";
-import { HERMES_NATIVE_AUTH_POLICY_IDENTITY, type HermesRunSelection, type HermesRunSelectionPreflight } from "./hermes-run-selection.js";
+import {
+  deriveHermesNativeAuthRouteEvidence,
+  isHermesNativeAuthRouteEvidence,
+  type HermesNativeAuthRouteEvidence,
+  type HermesRunSelection,
+  type HermesRunSelectionPreflight,
+} from "./hermes-run-selection.js";
 import { validateRoleOutput } from "../output-validator.js";
 import * as path from "path";
 import * as fs from "fs/promises";
@@ -88,7 +94,7 @@ interface VerifiedHermesNativeAuthEvidence {
   readonly endpointIdentity: string;
   readonly endpointRevision: string;
   readonly projectionVersion: string;
-  readonly policyIdentity: string;
+  readonly authRouteEvidence: HermesNativeAuthRouteEvidence;
 }
 
 /**
@@ -185,7 +191,7 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
     this.ignoreRules = config?.ignoreRules ?? true;
     this.managedWorktree = config?.managedWorktree;
     this.managedWorktreeForRun = config?.managedWorktreeForRun;
-    this.environment = config?.environment;
+    this.environment = config?.environment ? Object.freeze({ ...config.environment }) : undefined;
     this.resultDirectory = config?.resultDirectory ?? path.join(os.tmpdir(), "orchestrator-hermes-results");
     this.checkpointDirectory = config?.checkpointDirectory ?? (() => {
       const resolvedPlatform = config?.platform ?? validatePlatform(process.platform);
@@ -266,7 +272,7 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
       hermesRunProfileHome: plannedProfileHome,
       hermesProjectRoot: resolution.hermesProjectRoot,
       runId,
-      runEnvironment: {},
+      runEnvironment: this.environment ?? {},
       helperPath,
       platform,
     });
@@ -274,12 +280,23 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
     const helperOptions = { hermesRoot: resolution.hermesConfigHome, runId, helperPath, platform } as const;
     createdProfileOptions = helperOptions;
     let profileHome: string;
+    let profileReceipt;
     try {
-    profileHome = await createHermesRunProfileHome(helperOptions);
+    profileReceipt = await createHermesRunProfileHomeWithReceipt(helperOptions);
+    profileHome = profileReceipt.profileHome;
     profileCreated = true;
     } catch {
       throw new Error("HERMES_PROFILE_PATH_CREATE_FAILED");
     }
+    const authRouteEvidence = deriveHermesNativeAuthRouteEvidence({
+      profileReceipt,
+      providerSelection: projected,
+      authRoot: resolution.hermesConfigHome,
+      hermesProjectRoot: resolution.hermesProjectRoot,
+      sourceVersion: resolution.sourceVersion,
+      sourceCommit: resolution.sourceCommit,
+      environment: this.environment ?? {},
+    });
     const selection: HermesRunSelection = Object.freeze({
       runId,
       providerId: projected.providerId,
@@ -290,6 +307,7 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
       sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit,
       sourceSnapshotKey: sourceSnapshot.cacheKey,
       profileHome,
+      authRouteEvidence,
     });
     this.recordVerifiedHermesNativeAuthEvidence(selection, {
       authRoot: resolution.hermesConfigHome,
@@ -303,7 +321,7 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
       endpointIdentity: projected.endpointIdentity,
       endpointRevision: projected.endpointRevision,
       projectionVersion: HERMES_PROVIDER_SELECTION_SOURCE.projectionVersion,
-      policyIdentity: HERMES_NATIVE_AUTH_POLICY_IDENTITY,
+      authRouteEvidence,
     });
     let leaseReleased = false;
     const releaseReference = async () => {
@@ -412,10 +430,13 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
     });
     const environment = this.buildEnvironment(run, profileHome);
     environment.HERMES_MODEL = hermesSelection.modelId;
-    if (environment.HERMES_HOME !== preparedOwner.hermesHome) {
+    if (environment.HERMES_HOME !== preparedOwner.hermesHome ||
+        environment.HOME !== path.join(profileHome, "home") ||
+        environment.HERMES_CONFIG !== path.join(profileHome, "config.yaml") ||
+        environment.HERMES_MODEL !== hermesSelection.modelId) {
       this.markNeverLaunched(preparedOwner.runId);
       control.stopProven = true;
-      throw new Error("HERMES_PROFILE_HOME_MISMATCH");
+      throw new Error("HERMES_NATIVE_AUTH_NOT_READY");
     }
 
     if (control.cancelled || abortController.signal.aborted) {
@@ -1111,7 +1132,9 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
     const allowed = new Set(["HOMEDRIVE", "HOMEPATH", "SYSTEMROOT", "TEMP", "TMP", "PATH", "NODE_PATH", "NODE_ENV", "HERMES_HOME", "HERMES_CONFIG", "HERMES_MODEL"]);
     const env: Record<string, string> = {};
     for (const key of allowed) {
-      const value = this.environment?.[key] ?? (key === "HERMES_HOME" && profileHome ? profileHome : undefined);
+      const value = key === "HERMES_HOME" && profileHome
+        ? profileHome
+        : this.environment?.[key];
       if (value !== undefined) env[key] = value;
     }
     for (const [key, value] of Object.entries(this.environment ?? {})) {
@@ -1148,7 +1171,12 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
         selection.endpointIdentity !== `hermes-provider:${selection.providerId.toLowerCase()}` ||
         selection.endpointRevision !== HERMES_PROVIDER_SELECTION_SOURCE.commit ||
         evidence.projectionVersion !== HERMES_PROVIDER_SELECTION_SOURCE.projectionVersion ||
-        evidence.policyIdentity !== HERMES_NATIVE_AUTH_POLICY_IDENTITY ||
+        !isHermesNativeAuthRouteEvidence(selection.authRouteEvidence) ||
+        evidence.authRouteEvidence !== selection.authRouteEvidence ||
+        evidence.authRouteEvidence.authRoot !== evidence.authRoot ||
+        evidence.authRouteEvidence.profileHome !== selection.profileHome ||
+        evidence.authRouteEvidence.endpointIdentity !== selection.endpointIdentity ||
+        evidence.authRouteEvidence.endpointRevision !== selection.endpointRevision ||
         !isSupportedHermesNativeAuthSnapshot(selection.sourceSnapshotKey, evidence) ||
         (this.databasePath !== undefined && owner.hermesSourceSnapshotKey !== selection.sourceSnapshotKey) ||
         !isFreshHermesNativeProfilePath(selection.profileHome, evidence.authRoot, run.id)) {
@@ -1167,7 +1195,17 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
         selection.providerId !== evidence.providerId || selection.modelId !== evidence.modelId ||
         selection.endpointIdentity !== evidence.endpointIdentity || selection.endpointRevision !== evidence.endpointRevision ||
         evidence.projectionVersion !== HERMES_PROVIDER_SELECTION_SOURCE.projectionVersion ||
-        evidence.policyIdentity !== HERMES_NATIVE_AUTH_POLICY_IDENTITY) {
+        !isHermesNativeAuthRouteEvidence(evidence.authRouteEvidence) ||
+        evidence.authRouteEvidence.runId !== selection.runId ||
+        evidence.authRouteEvidence.authRoot !== evidence.authRoot ||
+        evidence.authRouteEvidence.profileHome !== selection.profileHome ||
+        evidence.authRouteEvidence.endpointIdentity !== selection.endpointIdentity ||
+        evidence.authRouteEvidence.endpointRevision !== selection.endpointRevision ||
+        evidence.authRouteEvidence.providerId !== selection.providerId ||
+        evidence.authRouteEvidence.modelId !== selection.modelId ||
+        evidence.authRouteEvidence.sourceVersion !== selection.sourceVersion ||
+        evidence.authRouteEvidence.sourceCommit !== selection.sourceCommit ||
+        evidence.authRouteEvidence.policyIdentity !== selection.authRouteEvidence.policyIdentity) {
       throw new Error("HERMES_NATIVE_AUTH_NOT_READY");
     }
     this.verifiedNativeAuthSelections.set(selection, Object.freeze({ ...evidence }));

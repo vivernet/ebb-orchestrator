@@ -24,12 +24,13 @@ import { ProjectConfigService } from "../../../src/modules/projects/project-conf
 import { ProjectConfigRepository } from "../../../src/modules/projects/project-config-repository.js";
 import { parseProjectConfigYaml } from "../../../src/platform/config/project-config.js";
 import { digestRunPromptBytesV1 } from "../../../src/modules/context/context-provenance.js";
+import { createHermesAuthRouteFixture } from "../../helpers/hermes-auth-route-fixture.js";
 
 const hermesSourceSnapshotKey = JSON.stringify({
   formatVersion: 1,
   hermesVersion: "v0.21.5+7357.g9244275",
   manifestDigest: "c".repeat(64),
-  sourceCommit: "b".repeat(40),
+  sourceCommit: "9244275491ee0d5bc3481590b041114c4e1d399a",
   sourceTree: "d".repeat(40),
 });
 
@@ -68,17 +69,23 @@ describe("Coordinator planning background job", () => {
       ...(useHermesSelection ? {
         prepareHermesRunSelection: async (runId: string) => {
           hermesPreflightCalls.push(runId);
+          const authFixture = await createHermesAuthRouteFixture(
+            runId, "openai-codex", "selected-hermes-model", join(root, "hermes-auth-root"),
+          );
+          const { profileHome } = authFixture;
+          const modelId = "selected-hermes-model";
           return {
             selection: {
               runId,
-              providerId: "hermes-native-openai",
-              modelId: "selected-hermes-model",
+              providerId: authFixture.providerSelection.providerId,
+              modelId,
               endpointIdentity: "hermes-provider:openai-codex",
-              endpointRevision: "a".repeat(40),
+              endpointRevision: authFixture.providerSelection.endpointRevision!,
               sourceVersion: "v0.21.5+7357.g9244275",
-              sourceCommit: "b".repeat(40),
+              sourceCommit: "9244275491ee0d5bc3481590b041114c4e1d399a",
               sourceSnapshotKey: hermesSourceSnapshotKey,
-              profileHome: `C:\\hermes\\profiles\\ebb-orchestrator-run-${runId}`,
+              profileHome,
+              authRouteEvidence: authFixture.authRouteEvidence,
             },
             cleanup: async () => { hermesCleanupCalls.push(runId); },
           };
@@ -240,7 +247,7 @@ describe("Coordinator planning background job", () => {
     for (const run of runs) {
       expect(db!.get<{ hermes_home: string }>(
         "SELECT hermes_home FROM run_process_owners WHERE run_id=$runId", { runId: run.id },
-      )?.hermes_home).toBe(`C:\\hermes\\profiles\\ebb-orchestrator-run-${run.id}`);
+      )?.hermes_home).toBe(join(root, "hermes-auth-root", "profiles", `ebb-orchestrator-run-${run.id}`));
     }
   });
 

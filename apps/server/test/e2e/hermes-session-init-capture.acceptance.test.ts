@@ -13,6 +13,7 @@ import { HermesStreamSessionObserver } from "../../src/modules/runtime/hermes/he
 import { HermesRuntimeAdapter } from "../../src/modules/runtime/hermes/hermes-runtime-adapter.js";
 import { HERMES_PROVIDER_SELECTION_SOURCE } from "../../src/modules/runtime/hermes/hermes-provider-selection.js";
 import type { HermesRunSelection } from "../../src/modules/runtime/hermes/hermes-run-selection.js";
+import { createHermesAuthRouteFixture } from "../helpers/hermes-auth-route-fixture.js";
 import { createHermesLaunchTicket } from "../../src/modules/runtime/hermes/hermes-launch-ticket.js";
 import { transitionRunProcessOwnerTx } from "../../src/modules/runtime/run-process-owner.js";
 import type { ProcessScopeIdentity, ProcessScopeObservation } from "../../src/platform/process/process-inspector.js";
@@ -204,7 +205,7 @@ describe("Hermes init capture bridge — controlled protocol fixture only", () =
     if (!(fixture.runtime instanceof HermesRuntimeAdapter)) throw new Error("SESSION_CAPTURE_FIXTURE_ADAPTER_MISSING");
     const authRoot = join(directory, "hermes-auth-root");
     const profileHome = join(authRoot, "profiles", `ebb-orchestrator-run-${fixture.run.id}`);
-    const selection = createMechanicsSelection(fixture.run.id, fixture.run.model, authRoot);
+    const selection = await createMechanicsSelection(fixture.run.id, fixture.run.model, authRoot);
     expect(selection.profileHome).toBe(profileHome);
     await fixture.runtime.startRun({ ...fixture.run, runtime: "hermes", hermesSelection: selection });
     expect(fixture.mechanicsSupervisor?.captureWhileLive).toEqual({
@@ -438,7 +439,7 @@ function createProviderFreeHermesMechanicsRuntime(database: Database, fixtureRoo
   }, supervisor);
 
   vi.spyOn(adapter, "prepareHermesRunSelection").mockImplementation(async (runId) => ({
-    selection: createMechanicsSelection(runId, "fixture-model", join(fixtureRoot, "hermes-auth-root")),
+    selection: await createMechanicsSelection(runId, "fixture-model", join(fixtureRoot, "hermes-auth-root")),
     cleanup: async () => undefined,
   }));
   // Unit mechanics only: this named test helper bypasses auth-proof verification and has no
@@ -448,7 +449,9 @@ function createProviderFreeHermesMechanicsRuntime(database: Database, fixtureRoo
   return { adapter, supervisor };
 }
 
-function createMechanicsSelection(runId: string, modelId: string, authRoot: string): HermesRunSelection {
+async function createMechanicsSelection(runId: string, modelId: string, authRoot: string): Promise<HermesRunSelection> {
+  const fixture = await createHermesAuthRouteFixture(runId, "openai-codex", modelId, authRoot);
+  const { profileHome } = fixture;
   return Object.freeze({
     runId,
     providerId: "openai-codex",
@@ -458,7 +461,8 @@ function createMechanicsSelection(runId: string, modelId: string, authRoot: stri
     sourceVersion: HERMES_PROVIDER_SELECTION_SOURCE.version,
     sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit,
     sourceSnapshotKey: createSourceSnapshotKey(),
-    profileHome: join(authRoot, "profiles", `ebb-orchestrator-run-${runId}`),
+    profileHome,
+    authRouteEvidence: fixture.authRouteEvidence,
   });
 }
 

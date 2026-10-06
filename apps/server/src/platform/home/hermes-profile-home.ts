@@ -37,6 +37,15 @@ export interface HermesRunProfileConfigWriteOptions {
   verifyHelper?: (helperPath: string, anchorName: 'hermesProfilePath') => void | Promise<void>;
 }
 
+/** Opaque runtime proof issued only after the production native helper creates the exact Run profile. */
+export interface HermesRunProfileCreationReceipt {
+  readonly runId: string;
+  readonly hermesRoot: string;
+  readonly profileHome: string;
+}
+
+const verifiedProfileCreationReceipts = new WeakMap<object, HermesRunProfileCreationReceipt>();
+
 export type HermesRunProfileConfigWriter = (
   options: HermesRunProfileConfigWriteOptions,
 ) => Promise<void>;
@@ -52,6 +61,38 @@ export type HermesRunProfileConfigWriter = (
  * @throws {Error} Если вход неоднозначен, платформа не поддерживается или нативная проверка не прошла.
  */
 export async function createHermesRunProfileHome(options: HermesProfilePathHelperOptions): Promise<string> {
+  return (await createHermesRunProfileHomeCore(options)).profileHome;
+}
+
+/**
+ * Создаёт точный per-Run profile и возвращает opaque receipt для source-backed auth projection.
+ * Receipt выдаётся только при production запуске проверенного native helper; test runner seams
+ * могут проверять результат создания, но не могут выпустить authority для binder.
+ *
+ * @param options Hermes root, Run UUID, integrity-pinned native helper и поддерживаемая платформа.
+ * @returns Точный путь профиля и неподлежащее структурной подделке подтверждение его создания.
+ * @throws {Error} Стабильный код, если валидация или создание native helper не прошли.
+ */
+export async function createHermesRunProfileHomeWithReceipt(
+  options: HermesProfilePathHelperOptions,
+): Promise<HermesRunProfileCreationReceipt> {
+  const receipt = await createHermesRunProfileHomeCore(options);
+  if (!options.runHelper && !options.verifyHelper) verifiedProfileCreationReceipts.set(receipt, receipt);
+  return receipt;
+}
+
+/** Checks exact-object provenance and Run/root/path binding without trusting caller fields alone. */
+export function isVerifiedHermesRunProfileCreationReceipt(
+  value: unknown,
+  expected: Pick<HermesRunProfileCreationReceipt, 'runId' | 'hermesRoot' | 'profileHome'>,
+): value is HermesRunProfileCreationReceipt {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const receipt = verifiedProfileCreationReceipts.get(value);
+  return receipt !== undefined && receipt.runId === expected.runId &&
+    receipt.hermesRoot === expected.hermesRoot && receipt.profileHome === expected.profileHome;
+}
+
+async function createHermesRunProfileHomeCore(options: HermesProfilePathHelperOptions): Promise<HermesRunProfileCreationReceipt> {
   const { hermesRoot, runId, helperPath, platform } = options;
   if ((platform !== 'win32' && platform !== 'linux') || !isSafeRunId(runId) ||
       !isAbsoluteForPlatform(hermesRoot, platform) || !isAbsoluteForPlatform(helperPath, platform) ||
@@ -68,7 +109,8 @@ export async function createHermesRunProfileHome(options: HermesProfilePathHelpe
     throw new Error('HERMES_PROFILE_PATH_CREATE_FAILED');
   }
 
-  return joinForPlatform(hermesRoot, 'profiles', `ebb-orchestrator-run-${runId}`, platform);
+  const profileHome = joinForPlatform(hermesRoot, 'profiles', `ebb-orchestrator-run-${runId}`, platform);
+  return Object.freeze({ runId, hermesRoot, profileHome });
 }
 
 /**

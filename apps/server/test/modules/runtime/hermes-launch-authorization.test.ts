@@ -3,6 +3,7 @@ import { randomUUID, createHash } from "node:crypto";
 import * as path from "node:path";
 import type { AgentRuntimeRun } from "../../../src/modules/runtime/agent-runtime.js";
 import { HERMES_PROVIDER_SELECTION_SOURCE } from "../../../src/modules/runtime/hermes/hermes-provider-selection.js";
+import { createHermesAuthRouteFixture } from "../../helpers/hermes-auth-route-fixture.js";
 import {
   type HermesLaunchObjectIdentity,
   type HermesLaunchTicket,
@@ -80,16 +81,18 @@ describe("production Hermes launch authorization", () => {
     const owner = prepareRunProcessOwner(runId, profileHome, platform === "win32" ? "windows-job" : "systemd-user-service", snapshotKey);
     (adapter as unknown as { loadProcessOwner: (_runId: string, _profile: string) => RunProcessOwner }).loadProcessOwner = () => owner;
 
+    const authFixture = await createHermesAuthRouteFixture(runId, "openai-codex", "selected-model", hermesRoot);
     const selection = {
       runId,
-      providerId: "openai-api",
+      providerId: "openai-codex",
       modelId: "selected-model",
-      endpointIdentity: "hermes-provider:openai-api",
+      endpointIdentity: "hermes-provider:openai-codex",
       endpointRevision: HERMES_PROVIDER_SELECTION_SOURCE.commit,
       sourceVersion: HERMES_PROVIDER_SELECTION_SOURCE.version,
       sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit,
       sourceSnapshotKey: snapshotKey,
       profileHome,
+      authRouteEvidence: authFixture.authRouteEvidence,
     } as const;
     const run = {
       id: runId,

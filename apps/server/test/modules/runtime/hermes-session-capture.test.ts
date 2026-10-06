@@ -16,6 +16,7 @@ import type { ProcessScopeIdentity } from "../../../src/platform/process/process
 import { transitionRunProcessOwnerTx } from "../../../src/modules/runtime/run-process-owner.js";
 import { HermesRuntimeAdapter } from "../../../src/modules/runtime/hermes/hermes-runtime-adapter.js";
 import { HERMES_PROVIDER_SELECTION_SOURCE } from "../../../src/modules/runtime/hermes/hermes-provider-selection.js";
+import { createHermesAuthRouteFixture } from "../../helpers/hermes-auth-route-fixture.js";
 import { createHermesLaunchTicket } from "../../../src/modules/runtime/hermes/hermes-launch-ticket.js";
 import { ProcessExecutor } from "../../../src/platform/process/process-executor.js";
 import type { ProcessScopeLaunchRequest, ProcessScopeSupervisor } from "../../../src/platform/process/run-scope-supervisor.js";
@@ -239,7 +240,7 @@ describe("Hermes live session capture bridge", () => {
          systemd_invocation_id=NULL,systemd_control_group=NULL,supervisor_pid=NULL,supervisor_start_identity=NULL,
          pid=NULL,platform=NULL,process_start_identity=NULL,executable_identity=NULL,capture_state='UNBOUND'
         WHERE run_id=$runId`,
-      { runId: fixture.run.id, home: join(resultDirectory, "profiles", fixture.run.id) },
+      { runId: fixture.run.id, home: join(resultDirectory, "profiles", `ebb-orchestrator-run-${fixture.run.id}`) },
     );
     const supervisor = new CompletionFailureSupervisor();
     const platform = process.platform === "win32" ? "win32" as const : "linux" as const;
@@ -302,6 +303,8 @@ describe("Hermes live session capture bridge", () => {
       sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit,
       sourceTree: "d".repeat(40),
     });
+    const authFixture = await createHermesAuthRouteFixture(fixture.run.id, "openai-codex", fixture.run.model, resultDirectory);
+    const { profileHome } = authFixture;
     await expect(adapter.startRun({
       ...fixture.run,
       hermesSelection: {
@@ -313,7 +316,8 @@ describe("Hermes live session capture bridge", () => {
         sourceVersion: HERMES_PROVIDER_SELECTION_SOURCE.version,
         sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit,
         sourceSnapshotKey,
-        profileHome: join(resultDirectory, "profiles", fixture.run.id),
+        profileHome,
+        authRouteEvidence: authFixture.authRouteEvidence,
       },
     })).rejects.toThrow("SIMULATED_STDOUT_TRANSPORT_FAILURE");
 
