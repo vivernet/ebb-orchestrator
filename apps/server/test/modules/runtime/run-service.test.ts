@@ -10,6 +10,7 @@ import { createRunContextInput, effectiveRunToolIds, RunService, RunTransitionCo
 import { FakeAgentRuntime } from "../../fakes/fake-agent-runtime.js";
 import type { RunOutcome, StartRunOptions } from "../../../src/modules/runtime/run-types.js";
 import { loadTestMigrations } from "../../helpers/migrations.js";
+import { createHermesAuthRouteFixture } from "../../helpers/hermes-auth-route-fixture.js";
 import { digestRunPromptBytesV1 } from "../../../src/modules/context/context-provenance.js";
 import type { PreparedRunContext } from "../../../src/modules/context/context-types.js";
 import { transitionRunProcessOwnerTx } from "../../../src/modules/runtime/run-process-owner.js";
@@ -165,14 +166,17 @@ describe("RunService with FakeAgentRuntime", () => {
   it("persists the preflight-selected Hermes model and exact native profile owner before execution", async () => {
     await setup();
     const runId = randomUUID();
-    const profileHome = `C:\\Users\\runner\\AppData\\Local\\hermes\\profiles\\ebb-orchestrator-run-${runId}`;
+    const authFixture = await createHermesAuthRouteFixture(runId, "openai-codex", "gpt-5.6-codex");
+    const profileHome = authFixture.profileHome;
     let seenPolicy: unknown;
     Object.assign(fakeRuntime, {
       prepareHermesRunSelection: async (id: string) => ({
         selection: {
-          runId: id, providerId: "openai-codex", modelId: "gpt-5.6-codex",
-          endpointIdentity: "hermes-provider:openai-codex", endpointRevision: "a".repeat(40),
-          sourceVersion: "v0.21.5+7357.g9244275", sourceCommit: "b".repeat(40), sourceSnapshotKey: hermesSourceSnapshotKey, profileHome,
+          runId: id, providerId: authFixture.providerSelection.providerId, modelId: authFixture.providerSelection.modelId,
+          endpointIdentity: authFixture.providerSelection.endpointIdentity!, endpointRevision: authFixture.providerSelection.endpointRevision!,
+          sourceVersion: authFixture.authRouteEvidence.sourceVersion, sourceCommit: authFixture.authRouteEvidence.sourceCommit,
+          sourceSnapshotKey: hermesSourceSnapshotKey, profileHome,
+          authRouteEvidence: authFixture.authRouteEvidence,
         },
         cleanup: async () => undefined,
       }),
@@ -197,9 +201,9 @@ describe("RunService with FakeAgentRuntime", () => {
     expect(owner?.hermes_source_snapshot_key).toBe(hermesSourceSnapshotKey);
     expect(seenPolicy).toEqual({
       providerId: "openai-codex",
-      providerPolicyId: "hermes-provider:openai-codex@" + "a".repeat(40) + ";auth=hermes-native-auth-json-root-fallback-v1@" + "b".repeat(40),
+      providerPolicyId: `${authFixture.providerSelection.endpointIdentity}@${authFixture.providerSelection.endpointRevision};auth=${authFixture.authRouteEvidence.policyIdentity}`,
       runtimeId: "hermes",
-      runtimePolicyId: `v0.21.5+7357.g9244275@${hermesSourceSnapshotKey};bootstrap=hermes-source-snapshot-bootstrap-v1`,
+      runtimePolicyId: `${authFixture.authRouteEvidence.sourceVersion}@${hermesSourceSnapshotKey};bootstrap=hermes-source-snapshot-bootstrap-v1`,
     });
   });
 
@@ -208,14 +212,16 @@ describe("RunService with FakeAgentRuntime", () => {
     const runId = randomUUID();
     let referenceHeld = true;
     let durableOwnerAtRelease = false;
-    const profileHome = `C:\\hermes\\profiles\\ebb-orchestrator-run-${runId}`;
+    const authFixture = await createHermesAuthRouteFixture(runId, "openai-codex", "gpt-5.6-codex");
+    const profileHome = authFixture.profileHome;
     Object.assign(fakeRuntime, {
       prepareHermesRunSelection: async (id: string) => ({
         selection: {
-          runId: id, providerId: "openai-codex", modelId: "gpt-5.6-codex",
-          endpointIdentity: "hermes-provider:openai-codex", endpointRevision: "a".repeat(40),
-          sourceVersion: "v0.21.5+7357.g9244275", sourceCommit: "b".repeat(40),
+          runId: id, providerId: authFixture.providerSelection.providerId, modelId: authFixture.providerSelection.modelId,
+          endpointIdentity: authFixture.providerSelection.endpointIdentity!, endpointRevision: authFixture.providerSelection.endpointRevision!,
+          sourceVersion: authFixture.authRouteEvidence.sourceVersion, sourceCommit: authFixture.authRouteEvidence.sourceCommit,
           sourceSnapshotKey: hermesSourceSnapshotKey, profileHome,
+          authRouteEvidence: authFixture.authRouteEvidence,
         },
         commit: async () => {
           durableOwnerAtRelease = db!.get<{ state: string; hermes_source_snapshot_key: string }>(
@@ -245,14 +251,16 @@ describe("RunService with FakeAgentRuntime", () => {
   it("rolls back Run, context manifest, and process owner together when the Hermes source key is invalid", async () => {
     await setup();
     const runId = randomUUID();
-    const profileHome = `C:\\hermes\\profiles\\ebb-orchestrator-run-${runId}`;
+    const authFixture = await createHermesAuthRouteFixture(runId, "openai-codex", "gpt-5.6-codex");
+    const profileHome = authFixture.profileHome;
     Object.assign(fakeRuntime, {
       prepareHermesRunSelection: async (id: string) => ({
         selection: {
-          runId: id, providerId: "openai-codex", modelId: "gpt-5.6-codex",
-          endpointIdentity: "hermes-provider:openai-codex", endpointRevision: "a".repeat(40),
-          sourceVersion: "v0.21.5+7357.g9244275", sourceCommit: "b".repeat(40),
+          runId: id, providerId: authFixture.providerSelection.providerId, modelId: authFixture.providerSelection.modelId,
+          endpointIdentity: authFixture.providerSelection.endpointIdentity!, endpointRevision: authFixture.providerSelection.endpointRevision!,
+          sourceVersion: authFixture.authRouteEvidence.sourceVersion, sourceCommit: authFixture.authRouteEvidence.sourceCommit,
           sourceSnapshotKey: "not-canonical", profileHome,
+          authRouteEvidence: authFixture.authRouteEvidence,
         },
         cleanup: async () => undefined,
       }),
@@ -276,13 +284,16 @@ describe("RunService with FakeAgentRuntime", () => {
     await setup();
     const runId = randomUUID();
     let cleanupCalls = 0;
+    const authFixture = await createHermesAuthRouteFixture(runId, "openai-codex", "gpt-5.6-codex");
     Object.assign(fakeRuntime, {
       prepareHermesRunSelection: async (id: string) => ({
         selection: {
-          runId: id, providerId: "openai-codex", modelId: "gpt-5.6-codex",
-          endpointIdentity: "hermes-provider:openai-codex", endpointRevision: "a".repeat(40),
-          sourceVersion: "v0.21.5+7357.g9244275", sourceCommit: "b".repeat(40), sourceSnapshotKey: hermesSourceSnapshotKey,
-          profileHome: `C:\\hermes\\profiles\\ebb-orchestrator-run-${id}`,
+          runId: id, providerId: authFixture.providerSelection.providerId, modelId: authFixture.providerSelection.modelId,
+          endpointIdentity: authFixture.providerSelection.endpointIdentity!, endpointRevision: authFixture.providerSelection.endpointRevision!,
+          sourceVersion: authFixture.authRouteEvidence.sourceVersion, sourceCommit: authFixture.authRouteEvidence.sourceCommit,
+          sourceSnapshotKey: hermesSourceSnapshotKey,
+          profileHome: authFixture.profileHome,
+          authRouteEvidence: authFixture.authRouteEvidence,
         },
         cleanup: async () => { cleanupCalls += 1; },
       }),
@@ -306,13 +317,16 @@ describe("RunService with FakeAgentRuntime", () => {
     await setup();
     const runId = randomUUID();
     let cleanupCalls = 0;
+    const authFixture = await createHermesAuthRouteFixture(runId, "openai-codex", "gpt-5.6-codex");
     Object.assign(fakeRuntime, {
       prepareHermesRunSelection: async (id: string) => ({
         selection: {
-          runId: id, providerId: "openai-codex", modelId: "gpt-5.6-codex",
-          endpointIdentity: "hermes-provider:openai-codex", endpointRevision: "a".repeat(40),
-          sourceVersion: "v0.21.5+7357.g9244275", sourceCommit: "b".repeat(40), sourceSnapshotKey: hermesSourceSnapshotKey,
-          profileHome: `C:\\hermes\\profiles\\ebb-orchestrator-run-${id}`,
+          runId: id, providerId: authFixture.providerSelection.providerId, modelId: authFixture.providerSelection.modelId,
+          endpointIdentity: authFixture.providerSelection.endpointIdentity!, endpointRevision: authFixture.providerSelection.endpointRevision!,
+          sourceVersion: authFixture.authRouteEvidence.sourceVersion, sourceCommit: authFixture.authRouteEvidence.sourceCommit,
+          sourceSnapshotKey: hermesSourceSnapshotKey,
+          profileHome: authFixture.profileHome,
+          authRouteEvidence: authFixture.authRouteEvidence,
         },
         cleanup: async () => { cleanupCalls += 1; },
       }),

@@ -44,7 +44,8 @@ describe('Linux production Hermes path contract', () => {
     expect(resolverSource).toMatch(/verifyHermesProfileHomeIdentity[\s\S]*?platform === "linux"/u);
     expect(runtimeAdapterSource).not.toMatch(/HERMES_PROFILE_PATH_PLATFORM_UNSUPPORTED|HERMES_PROFILE_CONFIG_WRITE_PLATFORM_UNSUPPORTED|HERMES_LAUNCH_PLATFORM_NOT_READY/u);
     expect(runtimeAdapterSource).toMatch(/paths\.join\(resolution\.hermesConfigHome, "profiles", `ebb-orchestrator-run-\$\{runId\}`\)/u);
-    expect(runtimeAdapterSource).toMatch(/createHermesRunProfileHome\(helperOptions\)/u);
+    expect(runtimeAdapterSource).toMatch(/createHermesRunProfileHomeWithReceipt\(helperOptions\)/u);
+    expect(runtimeAdapterSource).toMatch(/profileHome = profileReceipt\.profileHome/u);
     expect(runtimeAdapterSource).toMatch(/writeHermesRunProfileConfig\)\(\{[\s\S]*?platform,[\s\S]*?configYaml/u);
     expect(runtimeAdapterSource).toMatch(/platform: resolution\.executableIdentity\.platform/u);
     expect(runtimeAdapterSource).toMatch(/createHermesLaunchTicket\([\s\S]*?profileHomeIdentity/u);
