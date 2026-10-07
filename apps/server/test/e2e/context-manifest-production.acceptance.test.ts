@@ -32,6 +32,7 @@ const hermesSourceSnapshotKey = JSON.stringify({
   formatVersion: 1,
   hermesVersion: HERMES_PROVIDER_SELECTION_SOURCE.version,
   manifestDigest: "c".repeat(64),
+  ...(process.platform === "win32" ? { materializationPolicyVersion: 2 } : {}),
   sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit,
   sourceTree: "d".repeat(40),
 });
@@ -183,6 +184,9 @@ describe("production context manifest acceptance", () => {
         payload: { role: item.role, model: "acceptance-model" },
       }));
     });
+    db!.run("UPDATE outbox_events SET available_at=$now WHERE type='AgentRunRequested' AND processed_at IS NULL", {
+      now: new Date(Date.now() - 1_000).toISOString(),
+    });
 
     await expect(eventPath.runtimeOrchestrator.dispatchPendingEvents(3)).resolves.toBe(3);
     expect(eventPath.dispatchSpy).toHaveBeenCalledTimes(3);
@@ -259,6 +263,9 @@ describe("production context manifest acceptance", () => {
       type: "AgentRunRequested", aggregateType: "TASK", aggregateId: "task-event-hermes-preflight",
       payload: { role: "developer", model: "caller-model" },
     })));
+    db!.run("UPDATE outbox_events SET available_at=$now WHERE aggregate_id='task-event-hermes-preflight' AND type='AgentRunRequested'", {
+      now: new Date(Date.now() - 1_000).toISOString(),
+    });
     const eventGate = runtime.gateNextPreflight();
     const eventDispatchPromise = eventPath.runtimeOrchestrator.dispatchPendingEvents(1);
     const eventRunId = await eventGate.entered;
@@ -398,6 +405,7 @@ describe("production context manifest acceptance", () => {
     });
     expect(epicPlanResponse.statusCode, epicPlanResponse.body).toBe(201);
     const epicPlan = epicPlanResponse.json() as { plan: { id: string } };
+
     const interruptedChildRun = runtime.interruptNextEpicChildDeveloper();
     const interruptedApproval = runtimeApp.inject({
       method: "POST", url: `/api/v1/projects/project-acceptance/epics/plans/${epicPlan.plan.id}/approve-run`, headers, payload: {},
@@ -549,15 +557,37 @@ describe("production context manifest acceptance", () => {
     });
     expect(requestResponse.statusCode, requestResponse.body).toBe(202);
     const requestId = (requestResponse.json() as { requestId: string }).requestId;
-    const queuedJob = db!.get<{ type: string; payload_json: string }>(
-      "SELECT type,payload_json FROM background_jobs WHERE type='coordinator.planning' AND payload_json LIKE $requestId LIMIT 1",
+    const queuedJob = db!.get<{ id: string; type: string; payload_json: string }>(
+      "SELECT id,type,payload_json FROM background_jobs WHERE type='coordinator.planning' AND payload_json LIKE $requestId LIMIT 1",
       { requestId: `%${requestId}%` },
     );
     expect(queuedJob?.type).toBe("coordinator.planning");
     expect(JSON.parse(queuedJob?.payload_json ?? "{}" )).toEqual({ requestId, projectId: "project-acceptance" });
     const jobRegistry = new BackgroundJobRegistry();
     registerCoordinatorPlanningJob(jobRegistry, { db: db!, planning: recoveryPlanning, runs: recoveryRunService, scheduler: recoveryScheduler });
-    const jobResult = await new JobRunner(db!, jobRegistry).runOnce(new Date());
+    const jobRunner = new JobRunner(db!, jobRegistry);
+    const requestDispatchSpy = vi.spyOn(recoveryScheduler, "dispatchAgentRun");
+    const beforeRequestFailure = {
+      runs: db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM agent_runs")!.count,
+      manifests: db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM context_manifests")!.count,
+      owners: db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM run_process_owners")!.count,
+    };
+    db!.run("CREATE TRIGGER fail_request_coordinator_manifest BEFORE INSERT ON context_manifests BEGIN SELECT RAISE(ABORT, 'injected_request_coordinator_manifest_failure'); END");
+    const failedRequestJob = await jobRunner.runOnce(new Date());
+    db!.run("DROP TRIGGER fail_request_coordinator_manifest");
+    expect(failedRequestJob).toMatchObject({ claimed: 1, succeeded: 0, failed: 0 });
+    expect(db!.get<{ status: string; coordinator_run_id: string | null }>(
+      "SELECT status,coordinator_run_id FROM planning_requests WHERE id=$requestId", { requestId },
+    )).toEqual({ status: "RECEIVED", coordinator_run_id: null });
+    expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM agent_runs")?.count).toBe(beforeRequestFailure.runs);
+    expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM context_manifests")?.count).toBe(beforeRequestFailure.manifests);
+    expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM run_process_owners")?.count).toBe(beforeRequestFailure.owners);
+    expect(requestDispatchSpy).not.toHaveBeenCalled();
+    expect(db!.get<{ status: string; attempts: number }>(
+      "SELECT status,attempts FROM background_jobs WHERE id=$id", { id: queuedJob!.id },
+    )).toMatchObject({ status: "RETRY_WAIT", attempts: 1 });
+
+    const jobResult = await jobRunner.runOnce(new Date(Date.now() + 70_000));
     expect(jobResult).toMatchObject({ claimed: 1, succeeded: 1, failed: 0 });
     const request = db!.get<{ id: string; status: string; classification: string; planning_decisions_required: number; plan_id: string | null }>(
       "SELECT id,status,classification,planning_decisions_required,plan_id FROM planning_requests WHERE id=$requestId", { requestId },
@@ -570,10 +600,22 @@ describe("production context manifest acceptance", () => {
 
     const persisted = db!.all<{
       id: string; role: string; task_id: string | null; epic_id: string | null;
-      subject_type: string; request_id: string | null; prompt: string; prompt_hash: string;
-    }>(`SELECT r.id,r.role,r.task_id,r.epic_id,cm.subject_type,cm.request_id,r.prompt,cm.prompt_hash
+      subject_type: string; manifest_role: string; manifest_task_id: string | null;
+      manifest_epic_id: string | null; request_id: string | null; prompt: string; prompt_hash: string;
+    }>(`SELECT r.id,r.role,r.task_id,r.epic_id,cm.subject_type,cm.role AS manifest_role,
+              cm.task_id AS manifest_task_id,cm.epic_id AS manifest_epic_id,cm.request_id,r.prompt,cm.prompt_hash
           FROM agent_runs r JOIN context_manifests cm ON cm.run_id=r.id ORDER BY r.started_at,r.id`);
-    expect([...new Set(persisted.map(({ subject_type, role }) => `${subject_type}:${role}`))].sort()).toEqual([
+    for (const row of persisted) {
+      expect(row.role, `Run/manifest role parity for ${row.id}`).toBe(row.manifest_role);
+      expect(row.task_id, `Run/manifest Task subject parity for ${row.id}`).toBe(row.manifest_task_id);
+      expect(row.subject_type === "EPIC" ? row.epic_id : null, `Run/manifest Epic subject parity for ${row.id}`).toBe(row.manifest_epic_id);
+      if (row.subject_type === "REQUEST") {
+        expect(row.request_id, `Request manifest must retain its exact request ID for ${row.id}`).toBeTruthy();
+      } else {
+        expect(row.request_id, `Non-Request manifest must not carry a request ID for ${row.id}`).toBeNull();
+      }
+    }
+    expect([...new Set(persisted.map(({ subject_type, manifest_role }) => `${subject_type}:${manifest_role}`))].sort()).toEqual([
       "EPIC:architect", "EPIC:coordinator", "EPIC:integration", "EPIC:product_manager", "EPIC:qa", "EPIC:reviewer",
       "REQUEST:architect", "REQUEST:coordinator", "REQUEST:product_manager",
       "TASK:developer", "TASK:integration", "TASK:qa", "TASK:reviewer",
@@ -611,19 +653,68 @@ describe("production context manifest acceptance", () => {
       "task-http-developer", "task-http-qa", "task-http-reviewer",
     ].sort());
     for (const [label, runId] of Object.entries(producerRunIds)) {
-      const row = db!.get<{ subject_type: string; role: string; task_id: string | null; epic_id: string | null; request_id: string | null }>(
-        "SELECT subject_type,role,task_id,epic_id,request_id FROM context_manifests WHERE run_id=$runId", { runId },
+      const row = db!.get<{
+        subject_type: string; role: string; task_id: string | null; epic_id: string | null; request_id: string | null;
+        run_role: string; run_task_id: string | null; run_epic_id: string | null;
+      }>(
+        `SELECT cm.subject_type,cm.role,cm.task_id,cm.epic_id,cm.request_id,
+                r.role AS run_role,r.task_id AS run_task_id,r.epic_id AS run_epic_id
+           FROM context_manifests cm JOIN agent_runs r ON r.id=cm.run_id WHERE cm.run_id=$runId`, { runId },
       );
       expect(row, label).toBeTruthy();
       expect(db!.all("SELECT run_id FROM context_manifests WHERE run_id=$runId", { runId }), label).toHaveLength(1);
       const expected = producerSubjectRole(label, { epicId, epicTaskId, requestId: request.id });
       expect(row, label).toMatchObject(expected);
+      expect(row!.run_role, `${label}: manifest role must equal Run role`).toBe(row!.role);
+      expect(row!.run_task_id, `${label}: manifest Task ID must equal Run Task ID`).toBe(row!.task_id);
+      expect(row!.subject_type === "EPIC" ? row!.run_epic_id : null, `${label}: manifest Epic subject ID must equal Run Epic ID`)
+        .toBe(row!.epic_id);
+      const expectedRunEpicId = row!.subject_type === "TASK"
+        ? db!.get<{ epic_id: string | null }>("SELECT epic_id FROM tasks WHERE id=$taskId", { taskId: row!.task_id })?.epic_id ?? null
+        : row!.subject_type === "EPIC" ? row!.epic_id : null;
+      expect(row!.run_epic_id, `${label}: Run parent Epic association must match its exact subject`).toBe(expectedRunEpicId);
+      if (label.startsWith("request-")) {
+        expect(row!.request_id, `${label}: manifest must bind the exact Request`).toBe(request.id);
+      }
       expect(db!.get<{ run_id: string; source_tag: string; state: string }>(
         "SELECT run_id,source_tag,state FROM run_process_owners WHERE run_id=$runId", { runId },
       ), label).toEqual({ run_id: runId, source_tag: `ebb-run:${runId}`, state: "STOPPED" });
     }
     expect(taskDispatchBarrier).toHaveBeenCalledTimes(3);
     expect(integrationAttempts).toHaveLength(2);
+
+    const failedEpicPlanResponse = await runtimeApp.inject({
+      method: "POST", url: "/api/v1/projects/project-acceptance/epics/plans", headers,
+      payload: {
+        epic: { title: "Transaction failure Epic", goal: "Verify manifest failure rolls back the producer" },
+        tasks: [{ ref: "task_failure", title: "Failure Task", goal: "Exercise rollback", role: "developer", workflow: "standard", acceptanceCriteria: ["No Run is dispatched"] }],
+      },
+    });
+    expect(failedEpicPlanResponse.statusCode, failedEpicPlanResponse.body).toBe(201);
+    const failedEpicPlan = failedEpicPlanResponse.json() as { plan: { id: string } };
+    const beforeEpicFailure = {
+      runs: db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM agent_runs")!.count,
+      manifests: db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM context_manifests")!.count,
+      owners: db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM run_process_owners")!.count,
+      dispatches: vi.mocked(recoveryScheduler.dispatchAgentRun).mock.calls.length,
+    };
+    db!.run("CREATE TRIGGER fail_epic_context_manifest BEFORE INSERT ON context_manifests BEGIN SELECT RAISE(ABORT, 'injected_epic_context_manifest_failure'); END");
+    const failedEpicApproval = await runtimeApp.inject({
+      method: "POST", url: `/api/v1/projects/project-acceptance/epics/plans/${failedEpicPlan.plan.id}/approve-run`, headers, payload: {},
+    });
+    db!.run("DROP TRIGGER fail_epic_context_manifest");
+    expect(failedEpicApproval.statusCode).not.toBe(200);
+    expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM agent_runs")?.count).toBe(beforeEpicFailure.runs);
+    expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM context_manifests")?.count).toBe(beforeEpicFailure.manifests);
+    expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM run_process_owners")?.count).toBe(beforeEpicFailure.owners);
+    expect(vi.mocked(recoveryScheduler.dispatchAgentRun).mock.calls).toHaveLength(beforeEpicFailure.dispatches);
+    const failedEpicId = db!.get<{ epic_id: string }>(
+      "SELECT epic_id FROM planning_plans WHERE id=$planId", { planId: failedEpicPlan.plan.id },
+    )?.epic_id;
+    if (!failedEpicId) throw new Error("Failed Epic approval did not retain its Epic identity");
+    expect(db!.get<{ status: string }>(
+      "SELECT status FROM orchestration_phase_runs WHERE epic_id=$epicId ORDER BY created_at DESC LIMIT 1", { epicId: failedEpicId },
+    )).toEqual({ status: "FAILED" });
   });
 
   function setup() {
