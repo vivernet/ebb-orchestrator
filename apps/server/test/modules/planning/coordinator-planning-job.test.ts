@@ -30,6 +30,7 @@ const hermesSourceSnapshotKey = JSON.stringify({
   formatVersion: 1,
   hermesVersion: "v0.21.5+7357.g9244275",
   manifestDigest: "c".repeat(64),
+  ...(process.platform === "win32" ? { materializationPolicyVersion: 2 } : {}),
   sourceCommit: "9244275491ee0d5bc3481590b041114c4e1d399a",
   sourceTree: "d".repeat(40),
 });

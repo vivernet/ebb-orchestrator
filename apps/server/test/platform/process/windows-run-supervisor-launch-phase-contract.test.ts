@@ -185,7 +185,7 @@ describe("Windows native helper launch-phase diagnostic contract", () => {
 
   it("revalidates the ticket-bound volume-root identity before applying the root-only ACL exception", () => {
     const profileChain = /bool openTicketProfileChain\([\s\S]*?\n\}/u.exec(nativeSource)?.[0] ?? "";
-    const rootVerification = /const auto verifyComponent = \[&\]\(HANDLE handle, size_t index\) \{[\s\S]*?\n  \};/u.exec(profileChain)?.[0] ?? "";
+    const rootVerification = /const auto verifyComponent = \[&\]\(HANDLE handle, size_t index\) \{[\s\S]*?\n {2}\};/u.exec(profileChain)?.[0] ?? "";
 
     expect(nativeSource).toMatch(/GetFinalPathNameByHandleW\(handle[\s\S]*?FILE_NAME_NORMALIZED \| VOLUME_NAME_GUID/u);
     expect(nativeSource).toMatch(/isCanonicalVolumeGuidRootPath\(std::wstring\(finalPath\.data\(\), pathLength\)\)/u);
@@ -203,8 +203,8 @@ describe("Windows native helper launch-phase diagnostic contract", () => {
   });
 
   it("restores a fixture ACL only after authoritative STOPPED proof", () => {
-    const mutationTest = /it\("rejects a Run-profile ACL change in the suspended CreateProcessW-to-ACK window"[\s\S]*?(?=\n  it\()/u.exec(profileChainAcceptanceSource)?.[0] ?? "";
-    const fixtureTeardown = /afterAll\(async \(\) => \{[\s\S]*?\n  \}\);/u.exec(profileChainAcceptanceSource)?.[0] ?? "";
+    const mutationTest = /it\("rejects a Run-profile ACL change in the suspended CreateProcessW-to-ACK window"[\s\S]*?(?=\n {2}it\()/u.exec(profileChainAcceptanceSource)?.[0] ?? "";
+    const fixtureTeardown = /afterAll\(async \(\) => \{[\s\S]*?\n {2}\}\);/u.exec(profileChainAcceptanceSource)?.[0] ?? "";
 
     expect(mutationTest).toMatch(/let stopProven = false/u);
     expect(mutationTest).toMatch(/waitForStopped\(publishedIdentity!, 30_000\)[\s\S]*?stopProven = stopped\.state === "STOPPED"/u);
@@ -284,7 +284,7 @@ describe("Windows native helper launch-phase diagnostic contract", () => {
   });
 
   it("restores the deny-delete path-chain fixture ACL even when an assertion fails", () => {
-    const fixtureLoop = /for \(const \[label, deny, expectAccepted\] of \[[\s\S]*?\n  \}\n\n  for \(const \[label, readOnlyRight\]/u.exec(nativeHermesHarnessSource)?.[0] ?? "";
+    const fixtureLoop = /for \(const \[label, deny, expectAccepted\] of \[[\s\S]*?\n {2}\}\n\n {2}for \(const \[label, readOnlyRight\]/u.exec(nativeHermesHarnessSource)?.[0] ?? "";
     expect(fixtureLoop).toMatch(/try \{[\s\S]*?const aceResult = invoke\([\s\S]*?\} finally \{\s*if \(deny\) restoreWindowsFixtureForeignDenyDelete\(aceParent\);\s*\}/u);
     expect(nativeHermesHarnessSource).toMatch(/function restoreWindowsFixtureForeignDenyDelete\(directory\)[\s\S]*?\[directory, "\/remove:d", "\*S-1-1-0", "\/T", "\/C"\]/u);
     expect(nativeHermesHarnessSource).toMatch(/function makeWindowsFixturePrivate\(directory\)[\s\S]*?spawnSync\(powershell,[\s\S]*?cwd: serverDirectory/u);

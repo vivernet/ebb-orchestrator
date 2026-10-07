@@ -517,12 +517,25 @@ describe("Hermes shared source snapshot", () => {
       fileIdentity: { dev: identity.dev, ino: identity.ino }, formatVersion: 1, pid: 2147483647,
     }));
 
-    const recovered = await snapshotModule.ensureHermesSourceSnapshotNativeProjection({
-      cacheRoot: request.cacheRoot, cacheKey: created.cacheKey, publicationLock: fixturePublicationLock,
+    const sentinelPid = 2147483647;
+    const originalKill = process.kill.bind(process);
+    const killSpy = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+      if (pid === sentinelPid && signal === 0) {
+        throw Object.assign(new Error("fixture sentinel PID is not running"), { code: "ESRCH" });
+      }
+      return originalKill(pid, signal);
     });
-    expect(recovered.snapshot).toEqual(created);
-    expect(await lstat(projectionPath).then((stats) => stats.nlink)).toBe(1);
-    await expect(lstat(aliasPath)).rejects.toMatchObject({ code: "ENOENT" });
+    try {
+      const recovered = await snapshotModule.ensureHermesSourceSnapshotNativeProjection({
+        cacheRoot: request.cacheRoot, cacheKey: created.cacheKey, publicationLock: fixturePublicationLock,
+      });
+      expect(killSpy).toHaveBeenCalledWith(sentinelPid, 0);
+      expect(recovered.snapshot).toEqual(created);
+      expect(await lstat(projectionPath).then((stats) => stats.nlink)).toBe(1);
+      await expect(lstat(aliasPath)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      killSpy.mockRestore();
+    }
   });
 
   it("rejects additions, removals, replacements, and modified bytes in an existing cache entry", async () => {

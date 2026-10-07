@@ -126,7 +126,9 @@ export async function resolveHermesExecutable(
   const pathVerifier = bundledPathVerifierPath(platform);
   await (options.verifyNativeHelper ?? verifyNativeHelperIntegrity)(pathVerifier, "hermesProfilePath");
   const identities = new Map<string, NativeSafePathIdentity>();
-  let trustedWindowsPowerShellPath: string | undefined;
+  const trustedWindowsPowerShell = await verifyNativeWindowsSystemPowerShell(pathVerifier, cwd, runPathVerifier);
+  const trustedWindowsPowerShellPath = trustedWindowsPowerShell.path;
+  identities.set(`file:${trustedWindowsPowerShellPath.toLowerCase()}`, trustedWindowsPowerShell);
   const verifyAndRemember = async (value: string, kind: "file" | "directory"): Promise<NativeSafePathIdentity> => {
     const identity = kind === "file" && trustedWindowsPowerShellPath &&
       samePath(value, trustedWindowsPowerShellPath, "win32")
@@ -145,9 +147,6 @@ export async function resolveHermesExecutable(
   const assertIdentityGuards = async (guards: readonly PathIdentityGuard[]): Promise<void> => {
     for (const guard of guards) await verifyAndRemember(guard.path, guard.kind);
   };
-  const trustedWindowsPowerShell = await verifyNativeWindowsSystemPowerShell(pathVerifier, cwd, runPathVerifier);
-  trustedWindowsPowerShellPath = trustedWindowsPowerShell.path;
-  identities.set(`file:${trustedWindowsPowerShellPath.toLowerCase()}`, trustedWindowsPowerShell);
 
   const executableIdentity = await verifyAndRemember(executablePath, "file");
   if (executableIdentity.platform !== "win32") throw resolverError("HERMES_PATH_IDENTITY_INVALID");

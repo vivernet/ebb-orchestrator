@@ -33,6 +33,7 @@ describe("production Hermes launch authorization", () => {
       formatVersion: 1,
       hermesVersion: HERMES_PROVIDER_SELECTION_SOURCE.version,
       manifestDigest,
+      ...(platform === "win32" ? { materializationPolicyVersion: 2 } : {}),
       sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit,
       sourceTree,
     });

@@ -297,7 +297,7 @@ export async function materializeHermesSourceSnapshot(request: HermesSourceSnaps
       lease.assertHeld();
       stagingNonce = randomUUID();
       stagingPath = join(cacheRoot, ".staging-" + directoryId + "-" + stagingNonce);
-      stagingIdentity = await createSnapshotStagingDirectory(cacheRoot, stagingPath, directoryId, stagingNonce);
+      stagingIdentity = await createSnapshotStagingDirectory(cacheRoot, stagingPath);
       await writeStagingOwner(stagingPath, directoryId, stagingNonce, stagingIdentity);
       await createSnapshotDirectoryTree(stagingPath, manifest);
       const materialized = await readAndHashGitBlobs(request.gitExecutable, sourceRoot, entries, {
@@ -1218,7 +1218,7 @@ function parseStagingOwner(value: unknown): {
 }
 
 async function createSnapshotStagingDirectory(
-  cacheRoot: string, stageRoot: string, directoryId: string, nonce: string,
+  cacheRoot: string, stageRoot: string,
 ): Promise<FileIdentity | ExactFileIdentity> {
   if (process.platform !== "win32") {
     await mkdir(stageRoot, { mode: 0o700 });

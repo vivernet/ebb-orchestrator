@@ -85,7 +85,7 @@ function isObject(value: unknown): value is object {
 }
 
 /** Возвращает ожидаемый токен только при точном совпадении; остальной payload отбрасывается. */
-export function safeHermesProfileChainLaunchEvidence(error: unknown, stdout = "", stderr = "", exitCode?: number):
+export function safeHermesProfileChainLaunchEvidence(error: unknown, stdout = "", _stderr = "", exitCode?: number):
   "HERMES_TICKET_OBJECT_MISMATCH" | "LAUNCH_TICKET_PROFILE_COMPONENT_UNSAFE" | "UNEXPECTED_LAUNCH_FAILURE" {
   const trustedRefusalCodes = [
     "HERMES_TICKET_OBJECT_MISMATCH",

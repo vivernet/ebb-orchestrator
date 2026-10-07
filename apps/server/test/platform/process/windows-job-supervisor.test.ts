@@ -212,6 +212,7 @@ describe("WindowsJobSupervisor", () => {
       formatVersion: 1,
       hermesVersion: "v0.21.5+7357.g9244275",
       manifestDigest: "c".repeat(64),
+      materializationPolicyVersion: 2,
       sourceCommit: "b".repeat(40),
       sourceTree: "d".repeat(40),
     });
