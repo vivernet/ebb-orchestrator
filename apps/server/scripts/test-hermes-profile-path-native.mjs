@@ -4,7 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, isAbsolute, join, parse, relative, resolve } from "node:path";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import process from "node:process";
 import { setTimeout, clearTimeout } from "node:timers";
 import { performance } from "node:perf_hooks";
@@ -684,8 +684,15 @@ function verifyWindowsSafePathChainFixture(root) {
   makeWindowsFixtureForeignRights(chainParent, 0x001200A9);
   const safeChain = invoke(["verify-safe-path-chain", "directory", profileHome, authRoot]);
   assert.equal(safeChain.error, undefined, "native safe path-chain verifier should start");
-  assert.equal(safeChain.status, 0,
-    `foreign read-only ancestor ACE above authRoot must be accepted (${safeChain.status})`);
+  if (safeChain.status !== 0) {
+    assert.equal(safeChain.stdout, "", "a rejected temp ancestor chain must not emit a usable identity");
+    const detail = safeChain.status >= 40 && safeChain.status < 50
+      ? `COMPONENT_OPEN_FAILED_INDEX_${safeChain.status - 40}`
+      : safeChain.status >= 50 && safeChain.status < 60
+        ? `COMPONENT_ACL_STAGE_${safeChain.status - 50}`
+        : `NATIVE_EXIT_${safeChain.status}`;
+    throw new Error(`TEMP_PATH_ANCESTOR_CHAIN_NOT_ACCEPTED:${detail}`);
+  }
   assert.equal(safeChain.stderr, "", "safe path-chain verification must not emit diagnostics");
   const chainResult = JSON.parse(safeChain.stdout);
   assert.deepEqual(Object.keys(chainResult).sort(), ["profileHomePathChain", "status"].sort());
@@ -1258,10 +1265,9 @@ try {
     assert.equal(callerSelectedSystemPath.status, 2, "OS-derived verifier must reject caller-selected paths");
     assert.equal(callerSelectedSystemPath.stdout, "", "invalid system path arguments must not emit identity");
 
-    // Path-chain fixtures must not inherit unrelated USERPROFILE, repo, or system-temp ACLs:
-    // the verifier intentionally checks every lexical ancestor before authRoot. Use a unique
-    // disposable directory directly under the same volume root and mutate only its ACL.
-    const pathChainFixtureRoot = mkdtempSync(join(parse(tempRoot).root, "ebb-hermes-profile-chain-"));
+    // Keep path-chain fixtures in the system temp directory. Do not modify its ancestors; if their
+    // ACLs violate the bounded policy, the native verifier must fail closed with no identity.
+    const pathChainFixtureRoot = mkdtempSync(join(tempRoot, "ebb-hermes-profile-chain-"));
     try {
       makeWindowsFixturePrivate(pathChainFixtureRoot);
       verifyWindowsSafePathChainFixture(pathChainFixtureRoot);

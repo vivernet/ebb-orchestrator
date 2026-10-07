@@ -212,6 +212,13 @@ describe("Windows native helper launch-phase diagnostic contract", () => {
     expect(fixtureTeardown).toMatch(/waitForStopped\(identity, 30_000\)[\s\S]*?observation\.state !== "STOPPED"[\s\S]*?rm\(fixtureHome\.path/u);
   });
 
+  it("keeps native path-chain fixtures in system temp and fails clearly on unsafe temp ancestors", () => {
+    expect(nativeHermesHarnessSource).toMatch(/const tempRoot = realpathSync\(tmpdir\(\)\)/u);
+    expect(nativeHermesHarnessSource).toMatch(/const pathChainFixtureRoot = mkdtempSync\(join\(tempRoot, "ebb-hermes-profile-chain-"\)\)/u);
+    expect(nativeHermesHarnessSource).not.toMatch(/mkdtempSync\(join\(parse\(tempRoot\)\.root/u);
+    expect(nativeHermesHarnessSource).toMatch(/assert\.equal\(safeChain\.stdout, ""[\s\S]*?TEMP_PATH_ANCESTOR_CHAIN_NOT_ACCEPTED/u);
+  });
+
   it("keeps phase identity evidence acceptance-only, bounded, ordered, and outside EBBJOB1", () => {
     expect(nativeSource).toMatch(/operation == L"launch-evidence"/u);
     expect(nativeSource).toMatch(/operation == L"launch" \|\| operation == L"launch-evidence"/u);
@@ -266,7 +273,7 @@ describe("Windows native helper launch-phase diagnostic contract", () => {
     expect(fixtureSetup).toMatch(/existingRealDirectory\(userProfile\)[\s\S]*?existingRealDirectory\(localAppData\)/u);
     expect(fixtureSetup).toMatch(/relative\(userProfile, localAppData\)[\s\S]*?PROFILE_PATH_CHAIN_LOCALAPPDATA_OUTSIDE_USERPROFILE/u);
     expect(fixtureSetup).not.toMatch(/nativeIdentity\(localAppData,\s*"directory",\s*userProfile\)/u);
-    expect(fixtureSetup).toMatch(/mkdtemp\(join\(parse\(tmpdir\(\)\)\.root,\s*"ebb-orchestrator-profile-chain-e2e-"\)\)/u);
+    expect(fixtureSetup).toMatch(/mkdtemp\(join\(tmpdir\(\),\s*"ebb-orchestrator-profile-chain-e2e-"\)\)/u);
     expect(fixtureSetup).toMatch(/const homeRoot = join\(fixtureParent, "home"\)[\s\S]*?setPrivateOwnerAcl\(\[fixtureParent\]\)[\s\S]*?setPrivateOwnerAcl\(\[homeRoot\]\)[\s\S]*?nativeIdentity\(homeRoot,\s*"directory",\s*fixtureParent,\s*"strict-root"\)/u);
     expect(fixtureSetup).toMatch(/nativeIdentity\(profile,\s*"directory",\s*fixtureParent\)[\s\S]*?nativeIdentity\(home,\s*"directory",\s*fixtureParent\)/u);
     expect(fixtureSetup).toMatch(/throw new Error\(\s*`HERMES_SOURCE_SNAPSHOT_FAILED:\$\{snapshotFailurePhase \?\? "UNKNOWN"\}/u);
