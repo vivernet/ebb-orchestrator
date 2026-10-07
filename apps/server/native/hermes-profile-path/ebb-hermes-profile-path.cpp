@@ -1072,7 +1072,7 @@ int verifySafeWindowsPathChain(const std::wstring& rawPath, const std::wstring& 
   heldHandles.push_back(volume);
   FILE_ATTRIBUTE_TAG_INFO rootInfo{};
   if (!getHandleAttributes(volume, rootInfo) || (rootInfo.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 ||
-      !safePathAcl(volume, userSid, true, false, false)) {
+      !safeAncestorPathAcl(volume, userSid)) {
     closePathChainHandles(heldHandles);
     return kPathRootUnsafe;
   }

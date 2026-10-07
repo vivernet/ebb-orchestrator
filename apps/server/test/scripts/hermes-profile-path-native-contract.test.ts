@@ -97,6 +97,19 @@ describe("native Hermes profile-path safe-path acceptance reporting", () => {
     expect(plannedCase).toMatch(/planned-profile projection must not create profiles\//u);
   });
 
+  it("applies the bounded ancestor ACL policy to the Windows volume root before accepting a path-chain identity", () => {
+    const verifier = /int verifySafeWindowsPathChain\([\s\S]*?\n\}/u.exec(nativeSource)?.[0] ?? "";
+    const volumeRootGate = /HANDLE volume = CreateFileW\([\s\S]*?if \(!appendIdentity\(volume, driveRoot\)\) \{[\s\S]*?\n  \}/u.exec(verifier)?.[0] ?? "";
+
+    expect(verifier).not.toBe("");
+    expect(volumeRootGate).toMatch(/safeAncestorPathAcl\(volume, userSid/u);
+    expect(volumeRootGate).not.toMatch(/safePathAcl\(volume/u);
+    expect(volumeRootGate.indexOf("safeAncestorPathAcl(volume, userSid")).toBeLessThan(
+      volumeRootGate.indexOf("appendIdentity(volume, driveRoot)"),
+    );
+    expect(volumeRootGate).toMatch(/closePathChainHandles\(heldHandles\);\s*return kPathRootUnsafe;/u);
+  });
+
   it("checks Windows config root and config-file mutation ACLs on the handles it reads", () => {
     expect(nativeSource).toMatch(/bool openWindowsConfig\(const std::wstring& configHome, PSID userSid, HANDLE& directory, HANDLE& file\)/u);
     expect(nativeSource).toMatch(/openWindowsDirectory\(configHome, true, userSid, false, true\)/u);
