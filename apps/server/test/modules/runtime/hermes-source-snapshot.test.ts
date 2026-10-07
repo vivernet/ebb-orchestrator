@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import { deflateSync } from "node:zlib";
 import { createHash } from "node:crypto";
-import { chmod, link, lstat, mkdtemp, mkdir, readFile, readdir, rm, unlink, writeFile } from "node:fs/promises";
+import { chmod, link, lstat, mkdtemp, mkdir, readFile, readdir, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { HermesSourceSnapshotRequest } from "../../../src/modules/runtime/hermes/hermes-source-snapshot.js";
@@ -12,7 +12,7 @@ const disk = vi.hoisted(() => ({ exhausted: false, failPublication: false, occup
   failProjectionAliasUnlink: false,
   interruptGcRoot: undefined as string | undefined,
   barrier: undefined as undefined | (() => Promise<void>) }));
-const nativeHelper = vi.hoisted(() => ({ calls: 0 }));
+const nativeHelper = vi.hoisted(() => ({ calls: 0, projectionCreates: 0, stagingCreates: 0, stagingRecoveries: 0 }));
 const snapshotModulePath = "../../../src/modules/runtime/hermes/hermes-source-snapshot.js";
 const fixtureQueues = new Map<string, Promise<void>>();
 const fixtureReferenceCounts = new Map<string, number>();
@@ -90,11 +90,52 @@ beforeEach(async () => {
     };
   });
   nativeHelper.calls = 0;
+  nativeHelper.projectionCreates = 0;
+  nativeHelper.stagingCreates = 0;
+  nativeHelper.stagingRecoveries = 0;
   vi.doMock("../../../src/platform/process/native-helper-launcher.js", async (importOriginal) => {
     const actual = await importOriginal<typeof import("../../../src/platform/process/native-helper-launcher.js")>();
+    const fs = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
     return {
       ...actual,
       runVerifiedNativeHelper: async (...args: Parameters<typeof actual.runVerifiedNativeHelper>) => {
+        if (args[2][0] === "source-staging-create") {
+          const cacheRoot = args[2][1];
+          const name = args[2][2];
+          if (!cacheRoot || !name) throw new Error("FIXTURE_NATIVE_STAGING_ARGUMENTS_INVALID");
+          await fs.mkdir(join(cacheRoot, name), { mode: 0o700 });
+          const identity = await fs.lstat(join(cacheRoot, name), { bigint: true });
+          nativeHelper.stagingCreates += 1;
+          return { exitCode: 0, stdout: JSON.stringify({ dev: String(identity.dev), ino: String(identity.ino) }) + "\n", stderr: "" };
+        }
+        if (args[2][0] === "source-staging-recover") {
+          const cacheRoot = args[2][1];
+          const name = args[2][2];
+          const expected = { dev: args[2][3], ino: args[2][4] };
+          if (!cacheRoot || !name || !expected.dev || !expected.ino) throw new Error("FIXTURE_NATIVE_STAGING_RECOVERY_ARGUMENTS_INVALID");
+          const absolute = join(cacheRoot, name);
+          const details = await fs.lstat(absolute, { bigint: true });
+          if (!details.isDirectory() || details.isSymbolicLink() || String(details.dev) !== expected.dev || String(details.ino) !== expected.ino ||
+              (await fs.readdir(absolute)).length !== 0) throw new Error("FIXTURE_NATIVE_STAGING_RECOVERY_IDENTITY_MISMATCH");
+          try { await fs.lstat(absolute + ".owner"); throw new Error("FIXTURE_NATIVE_STAGING_RECOVERY_OWNER_PRESENT"); }
+          catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+          await fs.rmdir(absolute);
+          nativeHelper.stagingRecoveries += 1;
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (args[2][0] === "source-projection-create") {
+          const cacheRoot = args[2][1];
+          const name = args[2][2];
+          if (!cacheRoot || !name) throw new Error("FIXTURE_NATIVE_PROJECTION_ARGUMENTS_INVALID");
+          const handle = await fs.open(join(cacheRoot, name), "wx", 0o600);
+          try {
+            const identity = await handle.stat({ bigint: true });
+            nativeHelper.projectionCreates += 1;
+            return { exitCode: 0, stdout: JSON.stringify({ dev: String(identity.dev), ino: String(identity.ino) }) + "\n", stderr: "" };
+          } finally {
+            await handle.close();
+          }
+        }
         nativeHelper.calls += 1;
         return actual.runVerifiedNativeHelper(...args);
       },
@@ -156,6 +197,7 @@ describe("Hermes shared source snapshot", () => {
       formatVersion: 1,
       hermesVersion: "Hermes Agent test-pin",
       manifestDigest,
+      ...(process.platform === "win32" ? { materializationPolicyVersion: 2 } : {}),
       sourceCommit: fixture.commit,
       sourceTree: fixture.tree,
     });
@@ -165,6 +207,7 @@ describe("Hermes shared source snapshot", () => {
     expect(first.directoryId).toBe(sha256(cacheKey));
     expect(secondCache.cacheKey).toBe(first.cacheKey);
     expect(secondCache.directoryId).toBe(first.directoryId);
+    expect(nativeHelper.stagingCreates).toBe(process.platform === "win32" ? 2 : 0);
   });
 
   it("materializes only exact tracked regular files and validates the published tree on lookup", async () => {
@@ -185,6 +228,187 @@ describe("Hermes shared source snapshot", () => {
     expect(afterRestart).toEqual(created);
   });
 
+  it("preserves a referenced v1 Windows snapshot while publishing a distinct v2 snapshot", async () => {
+    const fixture = await createFixture({ "source.txt": { content: "legacy entry\n" } });
+    const request = requestFor(fixture, join(fixture.root, "cache"));
+    const created = await snapshotModule.materializeHermesSourceSnapshot(request);
+    const metadataPath = join(request.cacheRoot, `${created.directoryId}.manifest.json`);
+    const metadata = JSON.parse((await readFile(metadataPath)).toString("utf8")) as {
+      cacheKey: string; identity: Record<string, unknown>; manifest: unknown;
+    };
+    delete metadata.identity.materializationPolicyVersion;
+    const legacyCacheKey = canonicalJson(metadata.identity);
+    const legacyDirectoryId = sha256(legacyCacheKey);
+    const legacyRoot = join(request.cacheRoot, legacyDirectoryId);
+    const legacyMetadataPath = join(request.cacheRoot, `${legacyDirectoryId}.manifest.json`);
+    await chmod(metadataPath, 0o600);
+    await rename(created.rootPath, legacyRoot);
+    await rename(metadataPath, legacyMetadataPath);
+    metadata.cacheKey = legacyCacheKey;
+    await writeFile(legacyMetadataPath, canonicalJson(metadata));
+    const before = await readFile(legacyMetadataPath);
+    const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
+    expect(platformDescriptor?.configurable).toBe(true);
+    try {
+      Object.defineProperty(process, "platform", { ...platformDescriptor, value: "win32" });
+      const v2 = await snapshotModule.materializeHermesSourceSnapshot({
+        ...request,
+        mayCollectSnapshot: async () => false,
+        hasSnapshotReferences: async () => true,
+      });
+      expect(v2.directoryId).not.toBe(legacyDirectoryId);
+      expect(await lookupHermesSourceSnapshot({ cacheRoot: request.cacheRoot, cacheKey: legacyCacheKey }))
+        .toMatchObject({ directoryId: legacyDirectoryId });
+      expect(await readFile(legacyMetadataPath)).toEqual(before);
+      expect((await lstat(legacyRoot)).isDirectory()).toBe(true);
+      expect((await lstat(v2.rootPath)).isDirectory()).toBe(true);
+      const legacyNonce = "12345678-1234-4234-9234-123456789012";
+      const legacyOwnerPath = join(request.cacheRoot, `.staging-${legacyDirectoryId}-${legacyNonce}.owner`);
+      await writeFile(legacyOwnerPath, canonicalJson({
+        directoryId: legacyDirectoryId, nonce: legacyNonce, pid: 2147483647, startedAt: 1,
+      }), { flag: "wx" });
+      expect(await snapshotModule.materializeHermesSourceSnapshot(request)).toEqual(v2);
+      await expect(lstat(legacyOwnerPath)).rejects.toMatchObject({ code: "ENOENT" });
+      expect((await lstat(legacyRoot)).isDirectory()).toBe(true);
+    } finally {
+      if (platformDescriptor) Object.defineProperty(process, "platform", platformDescriptor);
+    }
+  });
+
+  it("collects a v1 snapshot for the same source identity when durable policy permits GC", async () => {
+    const fixture = await createFixture({ "source.txt": { content: "terminal legacy reference\n" } });
+    const request = requestFor(fixture, join(fixture.root, "cache"));
+    const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
+    expect(platformDescriptor?.configurable).toBe(true);
+    try {
+      Object.defineProperty(process, "platform", { ...platformDescriptor, value: "win32" });
+      const created = await snapshotModule.materializeHermesSourceSnapshot(request);
+      const metadataPath = join(request.cacheRoot, `${created.directoryId}.manifest.json`);
+      const metadata = JSON.parse((await readFile(metadataPath)).toString("utf8")) as {
+        cacheKey: string; identity: Record<string, unknown>; manifest: unknown;
+      };
+      delete metadata.identity.materializationPolicyVersion;
+      const legacyCacheKey = canonicalJson(metadata.identity);
+      const legacyDirectoryId = sha256(legacyCacheKey);
+      const legacyRoot = join(request.cacheRoot, legacyDirectoryId);
+      const legacyMetadataPath = join(request.cacheRoot, `${legacyDirectoryId}.manifest.json`);
+      await chmod(metadataPath, 0o600);
+      await rename(created.rootPath, legacyRoot);
+      await rename(metadataPath, legacyMetadataPath);
+      metadata.cacheKey = legacyCacheKey;
+      await writeFile(legacyMetadataPath, canonicalJson(metadata));
+      await snapshotModule.ensureHermesSourceSnapshotNativeProjection({
+        cacheRoot: request.cacheRoot, cacheKey: legacyCacheKey, publicationLock: fixturePublicationLock,
+      });
+      expect(Number((await lstat(legacyRoot)).mode & 0o777)).toBe(0o444);
+      expect(Number((await lstat(join(legacyRoot, "source.txt"))).mode & 0o777)).toBe(0o444);
+      let gcCalls = 0;
+      let v2;
+      try {
+        v2 = await snapshotModule.materializeHermesSourceSnapshot({
+          ...request,
+          mayCollectSnapshot: async () => true,
+          // Exact-key refs are absent for historical NULL-key owners; GC policy must prove them terminal first.
+          hasSnapshotReferences: async () => false,
+          removeSnapshotTree: async (root, intent) => {
+            gcCalls += 1;
+            await request.removeSnapshotTree?.(root, intent);
+          },
+        });
+      } catch (error) {
+        throw new Error(`SAME_IDENTITY_V1_GC_CALLBACKS:${gcCalls}`, { cause: error });
+      }
+      expect(gcCalls).toBe(1);
+      expect(v2.directoryId).not.toBe(legacyDirectoryId);
+      await expect(lstat(legacyRoot)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(lstat(legacyMetadataPath)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      if (platformDescriptor) Object.defineProperty(process, "platform", platformDescriptor);
+    }
+  });
+
+  it("recovers only an empty unowned Windows staging orphan by its exact identity", async () => {
+    const fixture = await createFixture({ "source.txt": { content: "orphan recovery\n" } });
+    const request = requestFor(fixture, join(fixture.root, "cache"));
+    const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
+    expect(platformDescriptor?.configurable).toBe(true);
+    const cacheRoot = request.cacheRoot;
+    await mkdir(cacheRoot, { recursive: true });
+    const directoryId = sha256(canonicalJson({ fixture: "orphan" }));
+    const nonce = "12345678-1234-4234-9234-123456789012";
+    const orphanPath = join(cacheRoot, `.staging-${directoryId}-${nonce}`);
+    await mkdir(orphanPath);
+    try {
+      Object.defineProperty(process, "platform", { ...platformDescriptor, value: "win32" });
+      const created = await snapshotModule.materializeHermesSourceSnapshot(request);
+      expect((await lstat(created.rootPath)).isDirectory()).toBe(true);
+      expect(nativeHelper.stagingRecoveries).toBe(1);
+      await expect(lstat(orphanPath)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      if (platformDescriptor) Object.defineProperty(process, "platform", platformDescriptor);
+    }
+  });
+
+  it("removes only a dead post-rename owner marker bound to the verified v2 final root", async () => {
+    const fixture = await createFixture({ "source.txt": { content: "rename crash cut\n" } });
+    const request = requestFor(fixture, join(fixture.root, "cache"));
+    const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
+    expect(platformDescriptor?.configurable).toBe(true);
+    try {
+      Object.defineProperty(process, "platform", { ...platformDescriptor, value: "win32" });
+      const original = await snapshotModule.materializeHermesSourceSnapshot(request);
+      const rootIdentity = await lstat(original.rootPath, { bigint: true });
+      const nonce = "12345678-1234-4234-9234-123456789012";
+      const ownerPath = join(request.cacheRoot, `.staging-${original.directoryId}-${nonce}.owner`);
+      await writeFile(ownerPath, canonicalJson({
+        directoryId: original.directoryId,
+        nonce,
+        pid: 2147483647,
+        startedAt: 1,
+        fileIdentity: { dev: String(rootIdentity.dev), ino: String(rootIdentity.ino) },
+      }), { flag: "wx" });
+      const next = await snapshotModule.materializeHermesSourceSnapshot({
+        ...request,
+        hermesVersion: "after-post-rename-crash",
+        mayCollectSnapshot: async () => true,
+      });
+      expect(next.directoryId).not.toBe(original.directoryId);
+      await expect(lstat(ownerPath)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      if (platformDescriptor) Object.defineProperty(process, "platform", platformDescriptor);
+    }
+  });
+
+  it.skipIf(process.platform !== "linux")("recovers a Linux post-rename owner sidecar only for the exact requested snapshot", async () => {
+    const fixture = await createFixture({ "source.txt": { content: "linux rename crash cut\n" } });
+    const request = requestFor(fixture, join(fixture.root, "cache"));
+    const original = await snapshotModule.materializeHermesSourceSnapshot(request);
+    const nonce = "12345678-1234-4234-9234-123456789012";
+    const ownerPath = join(request.cacheRoot, `.staging-${original.directoryId}-${nonce}.owner`);
+    await writeFile(ownerPath, canonicalJson({
+      directoryId: original.directoryId, nonce, pid: 2147483647, startedAt: 1,
+    }), { flag: "wx" });
+    await expect(snapshotModule.materializeHermesSourceSnapshot(request)).resolves.toEqual(original);
+    await expect(lstat(ownerPath)).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await lstat(original.rootPath)).isDirectory()).toBe(true);
+  });
+
+  it.skipIf(process.platform !== "linux")("removes a completed Linux sidecar for another requested key without deleting its snapshot", async () => {
+    const fixture = await createFixture({ "source.txt": { content: "linux other-key rename crash cut\n" } });
+    const cacheRoot = join(fixture.root, "cache");
+    const request = requestFor(fixture, cacheRoot);
+    const original = await snapshotModule.materializeHermesSourceSnapshot(request);
+    const nonce = "12345678-1234-4234-9234-123456789012";
+    const ownerPath = join(cacheRoot, `.staging-${original.directoryId}-${nonce}.owner`);
+    await writeFile(ownerPath, canonicalJson({
+      directoryId: original.directoryId, nonce, pid: 2147483647, startedAt: 1,
+    }), { flag: "wx" });
+    await expect(snapshotModule.materializeHermesSourceSnapshot({ ...request, hermesVersion: "different-source-key" }))
+      .rejects.toMatchObject({ code: "HERMES_SOURCE_SNAPSHOT_UNAVAILABLE" });
+    await expect(lstat(ownerPath)).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await lstat(original.rootPath)).isDirectory()).toBe(true);
+  });
+
   it("publishes one restart-stable native projection from the canonical manifest under the source lease", async () => {
     const fixture = await createFixture({
       "z-last.txt": { content: "last\n" },
@@ -197,6 +421,7 @@ describe("Hermes shared source snapshot", () => {
     const projection = await snapshotModule.ensureHermesSourceSnapshotNativeProjection({
       cacheRoot: request.cacheRoot, cacheKey: created.cacheKey, publicationLock: fixturePublicationLock,
     });
+    expect(nativeHelper.projectionCreates).toBe(process.platform === "win32" ? 1 : 0);
     expect(projection.snapshot).toEqual(created);
     expect(snapshotModule.isVerifiedHermesSourceSnapshot(projection.snapshot)).toBe(true);
     expect(snapshotModule.isVerifiedHermesSourceSnapshot({ ...projection.snapshot })).toBe(false);
@@ -283,7 +508,7 @@ describe("Hermes shared source snapshot", () => {
     const request = requestFor(fixture, join(fixture.root, "cache"));
     const created = await snapshotModule.materializeHermesSourceSnapshot(request);
     const projectionPath = join(request.cacheRoot, `${created.directoryId}.native-v1.bin`);
-    const nonce = "12345678-1234-1234-1234-123456789abc";
+    const nonce = "12345678-1234-4234-9234-123456789abc";
     const aliasPath = join(request.cacheRoot, `.projection-${created.directoryId}-${nonce}`);
     await link(projectionPath, aliasPath);
     const identity = await lstat(projectionPath);
@@ -432,20 +657,23 @@ describe("Hermes shared source snapshot", () => {
     expect(await snapshotModule.materializeHermesSourceSnapshot(request)).toEqual(original);
   });
 
-  it("recovers only abandoned staging owned by the exact key and preserves unrelated directories", async () => {
+  it("recovers exact dead owned staging but fails closed on unrelated malformed staging names", async () => {
     const fixture = await createFixture({ "module.py": { content: "original\n" } });
     const request = requestFor(fixture, join(fixture.root, "cache"));
     const original = await snapshotModule.materializeHermesSourceSnapshot(request);
     await removeFixture(original.rootPath);
-    const nonce = "12345678-1234-1234-1234-123456789012";
+    const nonce = "12345678-1234-4234-9234-123456789012";
     const abandoned = join(request.cacheRoot, `.staging-${original.directoryId}-${nonce}`);
     await mkdir(abandoned);
-    await writeFile(abandoned + ".owner", canonicalJson({ directoryId: original.directoryId, nonce, pid: 2147483647, startedAt: 1 }));
+    const abandonedIdentity = await lstat(abandoned, { bigint: true });
+    await writeFile(abandoned + ".owner", canonicalJson({ directoryId: original.directoryId, nonce, pid: 2147483647, startedAt: 1,
+      ...(process.platform === "win32" ? { fileIdentity: { dev: String(abandonedIdentity.dev), ino: String(abandonedIdentity.ino) } } : {}) }));
     await writeFile(join(abandoned, "partial.py"), "partial");
     const unrelated = join(request.cacheRoot, ".staging-unrelated");
     await mkdir(unrelated);
     await writeFile(join(unrelated, "keep"), "kept");
-    expect(await snapshotModule.materializeHermesSourceSnapshot(request)).toEqual(original);
+    await expect(snapshotModule.materializeHermesSourceSnapshot(request))
+      .rejects.toMatchObject({ code: "HERMES_SOURCE_SNAPSHOT_UNAVAILABLE" });
     await expect(lstat(abandoned)).rejects.toMatchObject({ code: "ENOENT" });
     expect(await readFile(join(unrelated, "keep"), "utf8")).toBe("kept");
   });
@@ -477,7 +705,7 @@ describe("Hermes shared source snapshot", () => {
     const fixture = await createFixture({ "module.py": { content: "original\n" } });
     const request = requestFor(fixture, join(fixture.root, "cache"));
     await mkdir(request.cacheRoot, { mode: 0o700 });
-    const nonce = "12345678-1234-1234-1234-123456789012";
+    const nonce = "12345678-1234-4234-9234-123456789012";
     const staging = join(request.cacheRoot, `.staging-${"f".repeat(64)}-${nonce}`);
     await mkdir(staging);
     await writeFile(join(staging, "partial"), "retained");
@@ -544,7 +772,7 @@ describe("Hermes shared source snapshot", () => {
     const request = requestFor(fixture, join(fixture.root, "cache"));
     const created = await snapshotModule.materializeHermesSourceSnapshot(request);
     const metadataPath = join(request.cacheRoot, created.directoryId + ".manifest.json");
-    const nonce = "12345678-1234-1234-1234-123456789012";
+    const nonce = "12345678-1234-4234-9234-123456789012";
     const alias = join(request.cacheRoot, `.metadata-${created.directoryId}-${nonce}`);
     const { link } = await import("node:fs/promises");
     await link(metadataPath, alias);

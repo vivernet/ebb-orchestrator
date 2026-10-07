@@ -22,6 +22,7 @@
 #include <set>
 #include <string>
 #include <sstream>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -596,6 +597,108 @@ bool safePrivateDirectoryAcl(HANDLE handle, PSID currentUser) {
   return true;
 }
 
+bool safeProtectedPrivateFileAcl(HANDLE handle, PSID currentUser) {
+  PSID owner = nullptr;
+  PACL dacl = nullptr;
+  PSECURITY_DESCRIPTOR descriptor = nullptr;
+  const DWORD result = GetSecurityInfo(handle, SE_FILE_OBJECT,
+    OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION, &owner, nullptr, &dacl, nullptr, &descriptor);
+  if (result != ERROR_SUCCESS || owner == nullptr || dacl == nullptr || descriptor == nullptr ||
+      !EqualSid(owner, currentUser)) {
+    if (descriptor) LocalFree(descriptor);
+    return false;
+  }
+  SECURITY_DESCRIPTOR_CONTROL control{};
+  DWORD revision = 0;
+  ACL_SIZE_INFORMATION info{};
+  bool valid = GetSecurityDescriptorControl(descriptor, &control, &revision) != 0 &&
+    (control & SE_DACL_PROTECTED) != 0 &&
+    GetAclInformation(dacl, &info, sizeof(info), AclSizeInformation) != 0 && info.AceCount == 1;
+  if (valid) {
+    void* rawAce = nullptr;
+    valid = GetAce(dacl, 0, &rawAce) != 0 && rawAce != nullptr;
+    if (valid) {
+      const auto* header = static_cast<ACE_HEADER*>(rawAce);
+      if (header->AceType != ACCESS_ALLOWED_ACE_TYPE || header->AceFlags != 0) {
+        valid = false;
+      } else {
+        const auto* ace = static_cast<ACCESS_ALLOWED_ACE*>(rawAce);
+        PSID trustee = const_cast<DWORD*>(&ace->SidStart);
+        valid = EqualSid(trustee, currentUser) != 0 && (ace->Mask & FILE_ALL_ACCESS) == FILE_ALL_ACCESS;
+      }
+    }
+  }
+  LocalFree(descriptor);
+  return valid;
+}
+
+bool safeProtectedPrivateStagingDirectoryAcl(HANDLE handle, PSID currentUser) {
+  PSID owner = nullptr;
+  PACL dacl = nullptr;
+  PSECURITY_DESCRIPTOR descriptor = nullptr;
+  const DWORD result = GetSecurityInfo(handle, SE_FILE_OBJECT,
+    OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION, &owner, nullptr, &dacl, nullptr, &descriptor);
+  if (result != ERROR_SUCCESS || owner == nullptr || dacl == nullptr || descriptor == nullptr ||
+      !EqualSid(owner, currentUser)) {
+    if (descriptor) LocalFree(descriptor);
+    return false;
+  }
+  SECURITY_DESCRIPTOR_CONTROL control{};
+  DWORD revision = 0;
+  ACL_SIZE_INFORMATION info{};
+  bool valid = GetSecurityDescriptorControl(descriptor, &control, &revision) != 0 &&
+    (control & SE_DACL_PROTECTED) != 0 &&
+    GetAclInformation(dacl, &info, sizeof(info), AclSizeInformation) != 0 && info.AceCount == 1;
+  if (valid) {
+    void* rawAce = nullptr;
+    valid = GetAce(dacl, 0, &rawAce) != 0 && rawAce != nullptr;
+    if (valid) {
+      const auto* header = static_cast<ACE_HEADER*>(rawAce);
+      constexpr BYTE kExpectedInheritance = OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE;
+      if (header->AceType != ACCESS_ALLOWED_ACE_TYPE || header->AceFlags != kExpectedInheritance) {
+        valid = false;
+      } else {
+        const auto* ace = static_cast<ACCESS_ALLOWED_ACE*>(rawAce);
+        PSID trustee = const_cast<DWORD*>(&ace->SidStart);
+        valid = EqualSid(trustee, currentUser) != 0 && ace->Mask == FILE_ALL_ACCESS;
+      }
+    }
+  }
+  LocalFree(descriptor);
+  return valid;
+}
+
+HANDLE createWindowsChildDirectory(HANDLE parent, const std::wstring& name,
+                                   PVOID securityDescriptor, ACCESS_MASK extraAccess,
+                                   NTSTATUS* createStatus = nullptr) {
+  if (name.empty() || name.size() > 255 || securityDescriptor == nullptr) return INVALID_HANDLE_VALUE;
+  UNICODE_STRING objectName{};
+  objectName.Buffer = const_cast<PWSTR>(name.c_str());
+  objectName.Length = static_cast<USHORT>(name.size() * sizeof(wchar_t));
+  objectName.MaximumLength = objectName.Length;
+  OBJECT_ATTRIBUTES attributes{};
+  InitializeObjectAttributes(&attributes, &objectName, OBJ_CASE_INSENSITIVE | OBJ_DONT_REPARSE, parent, securityDescriptor);
+  IO_STATUS_BLOCK ioStatus{};
+  HANDLE handle = INVALID_HANDLE_VALUE;
+  const NTSTATUS status = NtCreateFile(&handle,
+    FILE_READ_ATTRIBUTES | FILE_TRAVERSE | READ_CONTROL | DELETE | SYNCHRONIZE | extraAccess,
+    &attributes, &ioStatus, nullptr, FILE_ATTRIBUTE_DIRECTORY,
+    FILE_SHARE_READ | FILE_SHARE_WRITE,
+    FILE_CREATE,
+    FILE_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_REPARSE_POINT,
+    nullptr, 0);
+  if (createStatus) *createStatus = status;
+  if (status < 0) return INVALID_HANDLE_VALUE;
+  FILE_ATTRIBUTE_TAG_INFO tagInfo{};
+  if (!getHandleAttributes(handle, tagInfo) ||
+      (tagInfo.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0 ||
+      (tagInfo.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
+    CloseHandle(handle);
+    return INVALID_HANDLE_VALUE;
+  }
+  return handle;
+}
+
 bool safeReadOnlyFileAcl(HANDLE handle, PSID currentUser) {
   PSID owner = nullptr;
   PACL dacl = nullptr;
@@ -743,23 +846,26 @@ HANDLE openWindowsChildFile(HANDLE parent, const std::wstring& name, bool shareD
   return handle;
 }
 
-HANDLE createWindowsChildFileForWrite(HANDLE parent, const std::wstring& name) {
+HANDLE createWindowsChildFileForWrite(HANDLE parent, const std::wstring& name,
+                                      PVOID securityDescriptor = nullptr, ACCESS_MASK extraAccess = 0,
+                                      NTSTATUS* createStatus = nullptr) {
   if (name.empty() || name.size() > 255) return INVALID_HANDLE_VALUE;
   UNICODE_STRING objectName{};
   objectName.Buffer = const_cast<PWSTR>(name.c_str());
   objectName.Length = static_cast<USHORT>(name.size() * sizeof(wchar_t));
   objectName.MaximumLength = objectName.Length;
   OBJECT_ATTRIBUTES attributes{};
-  InitializeObjectAttributes(&attributes, &objectName, OBJ_CASE_INSENSITIVE | OBJ_DONT_REPARSE, parent, nullptr);
+  InitializeObjectAttributes(&attributes, &objectName, OBJ_CASE_INSENSITIVE | OBJ_DONT_REPARSE, parent, securityDescriptor);
   IO_STATUS_BLOCK ioStatus{};
   HANDLE handle = INVALID_HANDLE_VALUE;
   const NTSTATUS status = NtCreateFile(&handle,
-    GENERIC_WRITE | FILE_READ_ATTRIBUTES | READ_CONTROL | SYNCHRONIZE,
+    GENERIC_WRITE | FILE_READ_ATTRIBUTES | READ_CONTROL | SYNCHRONIZE | extraAccess,
     &attributes, &ioStatus, nullptr, FILE_ATTRIBUTE_NORMAL,
     FILE_SHARE_READ,
     FILE_CREATE,
     FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_REPARSE_POINT,
     nullptr, 0);
+  if (createStatus) *createStatus = status;
   if (status < 0) return INVALID_HANDLE_VALUE;
   FILE_ATTRIBUTE_TAG_INFO tagInfo{};
   FILE_STANDARD_INFO standardInfo{};
@@ -2292,6 +2398,200 @@ bool validSourceCacheNonce(const std::string& nonce) {
   return true;
 }
 
+#ifdef _WIN32
+bool validSourceStagingTempName(const std::string& name) {
+  constexpr std::string_view prefix = ".staging-";
+  if (name.size() != prefix.size() + 64 + 1 + 36 || name.compare(0, prefix.size(), prefix) != 0 ||
+      name[prefix.size() + 64] != '-') return false;
+  const std::string directoryId = name.substr(prefix.size(), 64);
+  if (directoryId.find_first_not_of("0123456789abcdef") != std::string::npos) return false;
+  return validSourceCacheNonce(name.substr(prefix.size() + 65));
+}
+
+bool validSourceCacheIdentityNumber(const std::string& value) {
+  if (value.empty() || value.size() > 20 || (value.size() > 1 && value.front() == '0')) return false;
+  for (const unsigned char character : value) if (character < '0' || character > '9') return false;
+  return true;
+}
+
+int recoverWindowsSourceStagingOrphan(const std::string& cacheRootUtf8, const std::string& nameUtf8,
+                                      const std::string& expectedVolume, const std::string& expectedFileId) {
+  if (!validSourceStagingTempName(nameUtf8) || !validSourceCacheIdentityNumber(expectedVolume) ||
+      !validSourceCacheIdentityNumber(expectedFileId)) return kInvalidInput;
+  const std::wstring cacheRoot = widenUtf8(cacheRootUtf8);
+  const std::wstring name = widenUtf8(nameUtf8);
+  if (cacheRoot.empty() || name.empty()) return kInvalidInput;
+
+  std::vector<unsigned char> sidStorage;
+  PSID userSid = nullptr;
+  if (!getCurrentUserSid(sidStorage, userSid)) return kPathUnsafe;
+  HANDLE cache = openWindowsDirectory(cacheRoot, true, userSid, false, true, false, FILE_LIST_DIRECTORY);
+  if (cache == INVALID_HANDLE_VALUE || !safePrivateDirectoryAcl(cache, userSid)) {
+    if (cache != INVALID_HANDLE_VALUE) CloseHandle(cache);
+    return kPathRootUnsafe;
+  }
+  const std::wstring ownerName = name + L".owner";
+  if (!windowsChildDoesNotExist(cache, ownerName)) {
+    CloseHandle(cache);
+    return kPathIdentityUnavailable;
+  }
+  HANDLE staging = openWindowsChildDirectory(cache, name, FILE_OPEN, nullptr, false, true,
+    DELETE | FILE_LIST_DIRECTORY, false);
+  if (staging == INVALID_HANDLE_VALUE) {
+    CloseHandle(cache);
+    return kPathIdentityUnavailable;
+  }
+  BY_HANDLE_FILE_INFORMATION identity{};
+  if (!safeProtectedPrivateStagingDirectoryAcl(staging, userSid) || !windowsDirectoryIsEmpty(staging) ||
+      !GetFileInformationByHandle(staging, &identity)) {
+    CloseHandle(staging);
+    CloseHandle(cache);
+    return kPathIdentityUnavailable;
+  }
+  const uint64_t actualFileIndex = (static_cast<uint64_t>(identity.nFileIndexHigh) << 32) | identity.nFileIndexLow;
+  if (std::to_string(identity.dwVolumeSerialNumber) != expectedVolume || std::to_string(actualFileIndex) != expectedFileId ||
+      !windowsChildDoesNotExist(cache, ownerName) || !windowsDirectoryIsEmpty(staging)) {
+    CloseHandle(staging);
+    CloseHandle(cache);
+    return kPathIdentityUnavailable;
+  }
+  FILE_DISPOSITION_INFO disposition{};
+  disposition.DeleteFile = TRUE;
+  const bool removed = SetFileInformationByHandle(staging, FileDispositionInfo, &disposition, sizeof(disposition)) != 0;
+  CloseHandle(staging);
+  CloseHandle(cache);
+  return removed ? kOk : kPathCreateFailed;
+}
+
+int createWindowsSourceStagingDirectory(const std::string& cacheRootUtf8, const std::string& nameUtf8) {
+  if (!validSourceStagingTempName(nameUtf8)) return kInvalidInput;
+  const std::wstring cacheRoot = widenUtf8(cacheRootUtf8);
+  const std::wstring name = widenUtf8(nameUtf8);
+  if (cacheRoot.empty() || name.empty()) return kInvalidInput;
+
+  std::vector<unsigned char> sidStorage;
+  PSID userSid = nullptr;
+  if (!getCurrentUserSid(sidStorage, userSid)) return kPathUnsafe;
+  HANDLE directory = openWindowsDirectory(cacheRoot, true, userSid, false, true, false, FILE_ADD_SUBDIRECTORY);
+  if (directory == INVALID_HANDLE_VALUE || !safePrivateDirectoryAcl(directory, userSid)) {
+    if (directory != INVALID_HANDLE_VALUE) CloseHandle(directory);
+    return kPathRootUnsafe;
+  }
+
+  LPWSTR userSidText = nullptr;
+  if (!ConvertSidToStringSidW(userSid, &userSidText)) { CloseHandle(directory); return kPathUnsafe; }
+  const std::wstring sddl = std::wstring(L"O:") + userSidText + L"D:P(A;OICI;FA;;;" + userSidText + L")";
+  LocalFree(userSidText);
+  PSECURITY_DESCRIPTOR descriptor = nullptr;
+  if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.c_str(), SDDL_REVISION_1, &descriptor, nullptr)) {
+    CloseHandle(directory);
+    return kPathUnsafe;
+  }
+
+  NTSTATUS createStatus = 0;
+  HANDLE staging = createWindowsChildDirectory(directory, name, descriptor, 0, &createStatus);
+  LocalFree(descriptor);
+  if (staging == INVALID_HANDLE_VALUE) {
+    CloseHandle(directory);
+    return createStatus == static_cast<NTSTATUS>(0xC0000035L) ? kPathExists : kPathCreateFailed;
+  }
+  if (!safeProtectedPrivateStagingDirectoryAcl(staging, userSid)) {
+    // Leave the exact newly-created directory for non-destructive orphan recovery.
+    CloseHandle(staging);
+    CloseHandle(directory);
+    return kPathCreateFailed;
+  }
+  BY_HANDLE_FILE_INFORMATION identity{};
+  if (!GetFileInformationByHandle(staging, &identity)) {
+    CloseHandle(staging);
+    CloseHandle(directory);
+    return kPathCreateFailed;
+  }
+  const uint64_t fileIndex = (static_cast<uint64_t>(identity.nFileIndexHigh) << 32) | identity.nFileIndexLow;
+  std::cout << "{\"dev\":\"" << identity.dwVolumeSerialNumber << "\",\"ino\":\"" << fileIndex << "\"}\n" << std::flush;
+  if (!std::cout) {
+    // A create without a durable receipt remains an unowned staging directory and is never path-deleted.
+    CloseHandle(staging);
+    CloseHandle(directory);
+    return kPathCreateFailed;
+  }
+  CloseHandle(staging);
+  CloseHandle(directory);
+  return kOk;
+}
+
+bool validSourceProjectionTempName(const std::string& name) {
+  constexpr std::string_view prefix = ".projection-";
+  if (name.size() != prefix.size() + 64 + 1 + 36 || name.compare(0, prefix.size(), prefix) != 0 ||
+      name[prefix.size() + 64] != '-') return false;
+  const std::string directoryId = name.substr(prefix.size(), 64);
+  if (directoryId.find_first_not_of("0123456789abcdef") != std::string::npos) return false;
+  return validSourceCacheNonce(name.substr(prefix.size() + 65));
+}
+
+int createWindowsSourceProjectionTemp(const std::string& cacheRootUtf8, const std::string& nameUtf8) {
+  if (!validSourceProjectionTempName(nameUtf8)) return kInvalidInput;
+  const std::wstring cacheRoot = widenUtf8(cacheRootUtf8);
+  const std::wstring name = widenUtf8(nameUtf8);
+  if (cacheRoot.empty() || name.empty()) return kInvalidInput;
+
+  std::vector<unsigned char> sidStorage;
+  PSID userSid = nullptr;
+  if (!getCurrentUserSid(sidStorage, userSid)) return kPathUnsafe;
+  HANDLE directory = openWindowsDirectory(cacheRoot, true, userSid, false, true, false, FILE_ADD_FILE);
+  if (directory == INVALID_HANDLE_VALUE || !safePrivateDirectoryAcl(directory, userSid)) {
+    if (directory != INVALID_HANDLE_VALUE) CloseHandle(directory);
+    return kPathRootUnsafe;
+  }
+
+  LPWSTR userSidText = nullptr;
+  if (!ConvertSidToStringSidW(userSid, &userSidText)) { CloseHandle(directory); return kPathUnsafe; }
+  const std::wstring sddl = std::wstring(L"O:") + userSidText + L"D:P(A;;FA;;;" + userSidText + L")";
+  LocalFree(userSidText);
+  PSECURITY_DESCRIPTOR descriptor = nullptr;
+  if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.c_str(), SDDL_REVISION_1, &descriptor, nullptr)) {
+    CloseHandle(directory);
+    return kPathUnsafe;
+  }
+
+  NTSTATUS createStatus = 0;
+  HANDLE file = createWindowsChildFileForWrite(directory, name, descriptor, DELETE, &createStatus);
+  LocalFree(descriptor);
+  if (file == INVALID_HANDLE_VALUE) {
+    CloseHandle(directory);
+    return createStatus == static_cast<NTSTATUS>(0xC0000035L) ? kPathExists : kPathCreateFailed;
+  }
+  if (!safeProtectedPrivateFileAcl(file, userSid)) {
+    FILE_DISPOSITION_INFO disposition{};
+    disposition.DeleteFile = TRUE;
+    SetFileInformationByHandle(file, FileDispositionInfo, &disposition, sizeof(disposition));
+    CloseHandle(file);
+    CloseHandle(directory);
+    return kPathCreateFailed;
+  }
+  BY_HANDLE_FILE_INFORMATION identity{};
+  if (!GetFileInformationByHandle(file, &identity)) {
+    FILE_DISPOSITION_INFO disposition{};
+    disposition.DeleteFile = TRUE;
+    SetFileInformationByHandle(file, FileDispositionInfo, &disposition, sizeof(disposition));
+    CloseHandle(file);
+    CloseHandle(directory);
+    return kPathCreateFailed;
+  }
+  const uint64_t fileIndex = (static_cast<uint64_t>(identity.nFileIndexHigh) << 32) | identity.nFileIndexLow;
+  std::cout << "{\"dev\":\"" << identity.dwVolumeSerialNumber << "\",\"ino\":\"" << fileIndex << "\"}\n" << std::flush;
+  if (!std::cout) {
+    // Keep the secured file as an unowned temp. Recovery must fail closed rather than path-delete it.
+    CloseHandle(file);
+    CloseHandle(directory);
+    return kPathCreateFailed;
+  }
+  CloseHandle(file);
+  CloseHandle(directory);
+  return kOk;
+}
+#endif
+
 SourcePublisherIdentity sourcePublisherIdentity(uint32_t pid) {
 #ifdef _WIN32
   HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, pid);
@@ -3049,6 +3349,18 @@ int wmain(int argc, wchar_t** argv) {
   }
   if (argc == 5 && argv[1] != nullptr && argv[2] != nullptr && argv[3] != nullptr && argv[4] != nullptr && argv[1] == std::wstring(L"source-cache-reference-lock")) {
     return holdSourceCacheReferenceLock(narrowUtf8(argv[2]), narrowUtf8(argv[3]), narrowUtf8(argv[4]));
+  }
+  if (argc == 4 && argv[1] != nullptr && argv[2] != nullptr && argv[3] != nullptr &&
+      argv[1] == std::wstring(L"source-projection-create")) {
+    return createWindowsSourceProjectionTemp(narrowUtf8(argv[2]), narrowUtf8(argv[3]));
+  }
+  if (argc == 4 && argv[1] != nullptr && argv[2] != nullptr && argv[3] != nullptr &&
+      argv[1] == std::wstring(L"source-staging-create")) {
+    return createWindowsSourceStagingDirectory(narrowUtf8(argv[2]), narrowUtf8(argv[3]));
+  }
+  if (argc == 6 && argv[1] != nullptr && argv[2] != nullptr && argv[3] != nullptr && argv[4] != nullptr && argv[5] != nullptr &&
+      argv[1] == std::wstring(L"source-staging-recover")) {
+    return recoverWindowsSourceStagingOrphan(narrowUtf8(argv[2]), narrowUtf8(argv[3]), narrowUtf8(argv[4]), narrowUtf8(argv[5]));
   }
   if (argc == 4 && argv[1] != nullptr && argv[2] != nullptr && argv[3] != nullptr && argv[1] == std::wstring(L"source-cache-gc-remove")) {
     return removeSnapshotGcTree(narrowUtf8(argv[2]), narrowUtf8(argv[3]));

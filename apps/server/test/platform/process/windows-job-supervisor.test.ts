@@ -343,6 +343,68 @@ describe("WindowsJobSupervisor", () => {
     ]]);
   });
 
+  it.each([
+    "LAUNCH_TICKET_EXECUTABLE_MISMATCH",
+    "LAUNCH_TICKET_HERMES_MISMATCH",
+    "LAUNCH_TICKET_PROFILE_CHAIN_MISMATCH",
+    "LAUNCH_TICKET_PROFILE_CHAIN_SHAPE_MISMATCH",
+    "LAUNCH_TICKET_PROFILE_PATH_BINDING_MISMATCH",
+    "LAUNCH_TICKET_PROFILE_ROOT_UNSAFE",
+    "LAUNCH_TICKET_PROFILE_COMPONENT_UNSAFE",
+    "LAUNCH_TICKET_PROFILE_TARGETS_MISMATCH",
+    "LAUNCH_TICKET_SOURCE_SNAPSHOT_MISMATCH",
+    "LAUNCH_TICKET_SOURCE_SNAPSHOT_ROOT_UNSAFE",
+    "LAUNCH_TICKET_SOURCE_SNAPSHOT_PROJECTION_UNSAFE",
+    "LAUNCH_TICKET_SOURCE_SNAPSHOT_TREE_MISMATCH",
+  ])("preserves a bounded launch-ticket validation stage code: %s", async (code) => {
+    Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+    const executor = new HandshakeExecutor("", true, `EBB_HELPER_READY\nUNKNOWN\t${code}\n`);
+    const supervisor = new WindowsJobSupervisor(executor, "native-helper.exe", createTestHelperInvocation);
+
+    await expect(supervisor.launch(owner, request, async () => undefined))
+      .rejects.toThrow(`WINDOWS_HELPER_NATIVE_UNKNOWN:${code}`);
+  });
+
+  it.each([
+    "PATH_ENUMERATION", "ENTRY_SHAPE", "FILE_ATTRIBUTES", "FILE_OPEN", "FILE_LINK_COUNT",
+    "FILE_SIZE", "FILE_DACL", "CONTENT_HASH", "CONTENT_MISMATCH", "ENUMERATION_END",
+    "ENUMERATION_COMPLETENESS", "PROJECTION_ENTRY_COLLISION",
+  ])("preserves only allowlisted source-tree detail outside the stable public code: %s", async (diagnosticStage) => {
+    Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+    const executor = new HandshakeExecutor(
+      "",
+      true,
+      `EBB_HELPER_READY\nUNKNOWN\tLAUNCH_TICKET_SOURCE_SNAPSHOT_TREE_MISMATCH\t${diagnosticStage}\n`,
+    );
+    const supervisor = new WindowsJobSupervisor(executor, "native-helper.exe", createTestHelperInvocation);
+    let failure: unknown;
+    try { await supervisor.launch(owner, request, async () => undefined); }
+    catch (error) { failure = error; }
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toBe("WINDOWS_HELPER_NATIVE_UNKNOWN:LAUNCH_TICKET_SOURCE_SNAPSHOT_TREE_MISMATCH");
+    expect((failure as Error & { diagnosticStage?: string }).diagnosticStage).toBe(diagnosticStage);
+    expect(Object.keys(failure as Error)).not.toContain("diagnosticStage");
+    expect(JSON.stringify(failure)).not.toMatch(/path|SID|ACE|Win32|private/iu);
+  });
+
+  it("ignores unrecognized source-tree stage details while preserving the public mismatch code", async () => {
+    Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+    const executor = new HandshakeExecutor(
+      "",
+      true,
+      "EBB_HELPER_READY\nUNKNOWN\tLAUNCH_TICKET_SOURCE_SNAPSHOT_TREE_MISMATCH\tC:\\private\\secret\n",
+    );
+    const supervisor = new WindowsJobSupervisor(executor, "native-helper.exe", createTestHelperInvocation);
+    let failure: unknown;
+    try { await supervisor.launch(owner, request, async () => undefined); }
+    catch (error) { failure = error; }
+
+    expect((failure as Error).message).toBe("WINDOWS_HELPER_NATIVE_UNKNOWN:LAUNCH_TICKET_SOURCE_SNAPSHOT_TREE_MISMATCH");
+    expect((failure as Error & { diagnosticStage?: string }).diagnosticStage).toBeUndefined();
+    expect((failure as Error).message).not.toContain("secret");
+  });
+
   it("does not echo an oversized native UNKNOWN code into the launch error", async () => {
     Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
     const executor = new HandshakeExecutor("", true, `UNKNOWN\t${"X".repeat(1_000)}\n`);

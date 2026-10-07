@@ -58,6 +58,43 @@ describe("Windows native helper launch-phase diagnostic contract", () => {
     vi.restoreAllMocks();
   });
 
+  it("keeps source-tree failure public code stable and returns only allowlisted internal stages", () => {
+    const reportTreeStage = /void reportSnapshotTreeFailure\(const char\* code, const char\* stage\) \{[\s\S]*?\n\}/u.exec(nativeSource)?.[0] ?? "";
+    const directoryVerifier = /bool verifySnapshotDirectory\([\s\S]*?\n\}/u.exec(nativeSource)?.[0] ?? "";
+    const snapshotVerifier = /bool verifyHermesSourceSnapshot\([\s\S]*?\n\}/u.exec(nativeSource)?.[0] ?? "";
+    expect(reportTreeStage).toMatch(/writeStdout\(std::string\("UNKNOWN\\t"\) \+ code \+ "\\t" \+ candidate \+ "\\n"\)/u);
+    expect(reportTreeStage).toMatch(/std::strcmp\(code, "LAUNCH_TICKET_SOURCE_SNAPSHOT_TREE_MISMATCH"\)/u);
+    expect(reportTreeStage).toContain("PATH_ENUMERATION");
+    expect(reportTreeStage).toContain("ENTRY_SHAPE");
+    expect(reportTreeStage).toContain("FILE_ATTRIBUTES");
+    expect(reportTreeStage).toContain("FILE_OPEN");
+    expect(reportTreeStage).toContain("FILE_LINK_COUNT");
+    expect(reportTreeStage).toContain("FILE_SIZE");
+    expect(reportTreeStage).toContain("FILE_DACL");
+    expect(reportTreeStage).toContain("CONTENT_HASH");
+    expect(reportTreeStage).toContain("CONTENT_MISMATCH");
+    expect(reportTreeStage).toContain("ENUMERATION_END");
+    expect(reportTreeStage).toContain("ENUMERATION_COMPLETENESS");
+    expect(reportTreeStage).toContain("PROJECTION_ENTRY_COLLISION");
+    expect(reportTreeStage).not.toMatch(/absolute|relative|childPath|GetLastError|GetAclInformation|SID|ACE|OutputDebugString/iu);
+    expect(directoryVerifier).toMatch(/FindFirstFileW\(pattern\.c_str\(\), &data\)[\s\S]*?setSnapshotTreeFailureStage\(failureStage, "PATH_ENUMERATION"\)/u);
+    expect(directoryVerifier).toMatch(/name\.empty\(\)[\s\S]*?setSnapshotTreeFailureStage\(failureStage, "ENTRY_SHAPE"\)/u);
+    expect(directoryVerifier).toMatch(/FILE_ATTRIBUTE_READONLY\)[\s\S]*?setSnapshotTreeFailureStage\(failureStage, "FILE_ATTRIBUTES"\)/u);
+    expect(directoryVerifier).toMatch(/if \(!file\)[\s\S]*?setSnapshotTreeFailureStage\(failureStage, "FILE_OPEN"\)/u);
+    expect(directoryVerifier).toMatch(/nNumberOfLinks != 1[\s\S]*?setSnapshotTreeFailureStage\(failureStage, "FILE_LINK_COUNT"\)/u);
+    expect(directoryVerifier).toMatch(/GetFileSizeEx[\s\S]*?setSnapshotTreeFailureStage\(failureStage, "FILE_SIZE"\)/u);
+    expect(directoryVerifier).toMatch(/validPrivateAcl\(file\.value\)[\s\S]*?setSnapshotTreeFailureStage\(failureStage, "FILE_DACL"\)/u);
+    expect(directoryVerifier).toMatch(/sha256File[\s\S]*?setSnapshotTreeFailureStage\(failureStage, "CONTENT_HASH"\)/u);
+    expect(directoryVerifier).toMatch(/memcmp\(digest, expected->second->digest, 32\)[\s\S]*?setSnapshotTreeFailureStage\(failureStage, "CONTENT_MISMATCH"\)/u);
+    expect(directoryVerifier).toMatch(/findError != ERROR_NO_MORE_FILES[\s\S]*?setSnapshotTreeFailureStage\(failureStage, "ENUMERATION_END"\)/u);
+    expect(snapshotVerifier).toMatch(/expectedFiles\.emplace\(entry\.path, &entry\)[\s\S]*?setSnapshotTreeFailureStage\(diagnosticStage, "PROJECTION_ENTRY_COLLISION"\)/u);
+    expect(snapshotVerifier).toMatch(/seenFiles\.size\(\) != expectedFiles\.size\(\)[\s\S]*?setSnapshotTreeFailureStage\(diagnosticStage, "ENUMERATION_COMPLETENESS"\)/u);
+    expect(snapshotVerifier).toMatch(/fail\("LAUNCH_TICKET_SOURCE_SNAPSHOT_TREE_MISMATCH"\)/u);
+    expect(supervisorSource).toMatch(/SAFE_SNAPSHOT_TREE_DIAGNOSTIC_STAGES = new Set\(\[[\s\S]*?PROJECTION_ENTRY_COLLISION/u);
+    expect(profileChainAcceptanceSource).toMatch(/const launchFailureCode = safeHermesLaunchFailureAssertionContext\(error\)/u);
+    expect(profileChainAcceptanceSource).toMatch(/expect\(evidence, `native refusal evidence \(\$\{launchFailureCode\}\)`\)\.toBe\("HERMES_TICKET_OBJECT_MISMATCH"\)/u);
+  });
+
   it("keeps the durable identity mapping byte-layout and name unchanged", () => {
     expect(nativeSource).toMatch(/constexpr char kMappingMagic\[\] = "EBBJOB1";/u);
     expect(nativeSource).toMatch(/std::wstring mappingName\(const std::wstring& id\) \{ return L"Local\\\\ebb-orchestrator-run-meta-" \+ id; \}/u);
@@ -216,6 +253,20 @@ describe("Windows native helper launch-phase diagnostic contract", () => {
     expect(nativeHermesHarnessSource).toMatch(/function restoreWindowsFixtureForeignDenyDelete\(directory\)[\s\S]*?\[directory, "\/remove:d", "\*S-1-1-0", "\/T", "\/C"\]/u);
     expect(nativeHermesHarnessSource).toMatch(/function makeWindowsFixturePrivate\(directory\)[\s\S]*?spawnSync\(powershell,[\s\S]*?cwd: serverDirectory/u);
     expect(nativeHermesHarnessSource).toMatch(/\$inherit = \[System\.Security\.AccessControl\.InheritanceFlags\]::None; if \(\(Get-Item -LiteralPath \$path\)\.PSIsContainer\)/u);
+  });
+
+  it("uses a Hermes-compatible executable leaf name in the Windows launch-ticket fixture", () => {
+    expect(profileChainAcceptanceSource).toMatch(/const shim = join\(root, "hermes\.exe"\)/u);
+    expect(profileChainAcceptanceSource).toMatch(/const launchFailureCode = safeHermesLaunchFailureAssertionContext\(error\)/u);
+  });
+
+  it("uses the same bounded foreign ancestor ACL policy in both Windows native helpers", () => {
+    const ancestorAclSource = /bool safeProfileAncestorAcl\([\s\S]*?(?=\nbool safePrivateProfileDirectoryAcl)/u.exec(nativeSource)?.[0] ?? "";
+    expect(nativeSource).toMatch(/#include "\.\.\/hermes-profile-path\/hermes-profile-path-acl-policy\.h"/u);
+    expect(ancestorAclSource).toMatch(/EqualSid\(trustee, owner\) \|\| trustedPathTrustee\(trustee, currentUser\)/u);
+    expect(ancestorAclSource).toMatch(/safeAncestorAcePolicy\(\s*header->AceType,\s*header->AceFlags,\s*ace->Mask,/u);
+    expect(ancestorAclSource).not.toMatch(/ace->Mask & ~ebb::hermes::profile_path::kAllowedForeignDirectoryRights/u);
+    expect(nativeSource).not.toMatch(/kForeignAncestorMask/u);
   });
 
   it("splits Job-open and mapping/identity-open inspection failures into fixed UNKNOWN codes", async () => {

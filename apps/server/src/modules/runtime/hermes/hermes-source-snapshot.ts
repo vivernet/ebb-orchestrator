@@ -57,6 +57,8 @@ export interface HermesSourceSnapshotRequest {
   readonly retainReferenceLease?: boolean;
   /** DB policy may authorize collecting the exact conflicting, unreferenced snapshot. */
   readonly mayCollectSnapshot?: (cacheKey: string) => Promise<boolean>;
+  /** Durable DB evidence that an exact legacy cache key is still referenced by a Run. */
+  readonly hasSnapshotReferences?: (cacheKey: string) => Promise<boolean>;
   /** Test seam; production always removes GC objects via verified descriptor-relative native handles. */
   readonly removeSnapshotTree?: (cacheRoot: string, intent: object) => Promise<void>;
 }
@@ -119,6 +121,7 @@ interface SnapshotIdentity {
   readonly formatVersion: typeof IDENTITY_FORMAT_VERSION;
   readonly hermesVersion: string;
   readonly manifestDigest: string;
+  readonly materializationPolicyVersion?: 2;
   readonly sourceCommit: string;
   readonly sourceTree: string;
 }
@@ -206,6 +209,7 @@ export async function materializeHermesSourceSnapshot(request: HermesSourceSnaps
       formatVersion: IDENTITY_FORMAT_VERSION,
       hermesVersion: request.hermesVersion,
       manifestDigest,
+      ...(process.platform === "win32" ? { materializationPolicyVersion: 2 as const } : {}),
       sourceCommit: request.commit,
       sourceTree: request.tree,
     };
@@ -234,6 +238,7 @@ export async function materializeHermesSourceSnapshot(request: HermesSourceSnaps
         });
       }
       if (existing) {
+        await recoverStagingArtifacts(cacheRoot);
         const snapshot = await lookupExpectedSnapshot(cacheRoot, cacheKey, metadataPath, finalPath, identity, manifest);
         markHermesSourceSnapshotDiagnosticPhase("native-projection");
         await ensureNativeProjection(cacheRoot, snapshot, manifest);
@@ -244,7 +249,7 @@ export async function materializeHermesSourceSnapshot(request: HermesSourceSnaps
     await assertAvailableSpace(cacheRoot, totalBytes(sizedEntries));
 
     let stagingPath: string | undefined;
-    let stagingIdentity: FileIdentity | undefined;
+    let stagingIdentity: FileIdentity | ExactFileIdentity | undefined;
     let stagingNonce: string | undefined;
     try {
       const raced = await lstat(finalPath).catch((error: NodeJS.ErrnoException) => {
@@ -252,6 +257,7 @@ export async function materializeHermesSourceSnapshot(request: HermesSourceSnaps
         throw error;
       });
       if (raced) {
+        await recoverStagingArtifacts(cacheRoot);
         const snapshot = await lookupExpectedSnapshot(cacheRoot, cacheKey, metadataPath, finalPath, identity, manifest);
         markHermesSourceSnapshotDiagnosticPhase("native-projection");
         await ensureNativeProjection(cacheRoot, snapshot, manifest);
@@ -272,6 +278,7 @@ export async function materializeHermesSourceSnapshot(request: HermesSourceSnaps
         throw error;
       });
       if (appeared) {
+        await recoverStagingArtifacts(cacheRoot);
         const snapshot = await lookupExpectedSnapshot(cacheRoot, cacheKey, metadataPath, finalPath, identity, manifest);
         markHermesSourceSnapshotDiagnosticPhase("native-projection");
         await ensureNativeProjection(cacheRoot, snapshot, manifest);
@@ -280,17 +287,18 @@ export async function materializeHermesSourceSnapshot(request: HermesSourceSnaps
       }
 
       lease.assertHeld();
-      await collectConflictingSnapshot(cacheRoot, directoryId, request.mayCollectSnapshot, request.removeSnapshotTree);
-      await assertSingleSnapshot(cacheRoot, directoryId);
-      await cleanStaleStagingDirectories(cacheRoot, directoryId);
+      await recoverStagingArtifacts(cacheRoot);
+      const preservedLegacySnapshots = await collectConflictingSnapshot(
+        cacheRoot, directoryId, identity, request.mayCollectSnapshot, request.hasSnapshotReferences, request.removeSnapshotTree,
+      );
+      await assertSingleSnapshot(cacheRoot, directoryId, preservedLegacySnapshots);
       await assertNoUnresolvedStaging(cacheRoot);
       await assertAvailableSpace(cacheRoot, totalBytes(sizedEntries));
       lease.assertHeld();
       stagingNonce = randomUUID();
       stagingPath = join(cacheRoot, ".staging-" + directoryId + "-" + stagingNonce);
-      await mkdir(stagingPath, { mode: 0o700 });
-      stagingIdentity = identityFromStats(await lstat(stagingPath));
-      await writeStagingOwner(stagingPath, directoryId, stagingNonce);
+      stagingIdentity = await createSnapshotStagingDirectory(cacheRoot, stagingPath, directoryId, stagingNonce);
+      await writeStagingOwner(stagingPath, directoryId, stagingNonce, stagingIdentity);
       await createSnapshotDirectoryTree(stagingPath, manifest);
       const materialized = await readAndHashGitBlobs(request.gitExecutable, sourceRoot, entries, {
         root: stagingPath,
@@ -308,8 +316,10 @@ export async function materializeHermesSourceSnapshot(request: HermesSourceSnaps
       if (await pathExists(finalPath)) throw snapshotError();
       await syncDirectory(cacheRoot);
       lease.assertHeld();
+      await assertStagingIdentity(stagingPath, stagingIdentity);
       await rename(stagingPath, finalPath);
-      await removeStagingOwner(stagingPath);
+      await assertSnapshotRootIdentity(finalPath, stagingIdentity);
+      await removeStagingOwner(stagingPath, stagingIdentity, finalPath);
       stagingPath = undefined;
       await syncDirectory(cacheRoot);
       const result = snapshotResult(cacheRoot, cacheKey, directoryId, manifestDigest);
@@ -684,22 +694,26 @@ async function pathExists(path: string): Promise<boolean> {
   });
 }
 
-async function assertSingleSnapshot(cacheRoot: string, directoryId: string): Promise<void> {
+async function assertSingleSnapshot(cacheRoot: string, directoryId: string, preservedLegacySnapshots: ReadonlySet<string>): Promise<void> {
+  let preservedCount = 0;
   for (const name of await readdir(cacheRoot)) {
-    if (/^[0-9a-f]{64}$/u.test(name) && name !== directoryId) throw snapshotError();
+    if (!/^[0-9a-f]{64}$/u.test(name) || name === directoryId) continue;
+    if (!preservedLegacySnapshots.has(name) || ++preservedCount > 1) throw snapshotError();
   }
 }
 
 async function collectConflictingSnapshot(
   cacheRoot: string,
   requestedDirectoryId: string,
+  requestedIdentity: SnapshotIdentity,
   mayCollectSnapshot: HermesSourceSnapshotRequest["mayCollectSnapshot"],
+  hasSnapshotReferences: HermesSourceSnapshotRequest["hasSnapshotReferences"],
   removeSnapshotTree: HermesSourceSnapshotRequest["removeSnapshotTree"],
-): Promise<void> {
+): Promise<ReadonlySet<string>> {
+  const preservedLegacySnapshots = new Set<string>();
   await resumeSnapshotGcIntents(cacheRoot, mayCollectSnapshot, removeSnapshotTree);
   for (const name of await readdir(cacheRoot)) {
     if (!/^[0-9a-f]{64}$/u.test(name) || name === requestedDirectoryId) continue;
-    if (!mayCollectSnapshot) throw snapshotError();
     const rootPath = join(cacheRoot, name);
     const rootBefore = await lstat(rootPath, { bigint: true });
     if (!rootBefore.isDirectory() || rootBefore.isSymbolicLink()) throw snapshotError();
@@ -711,7 +725,13 @@ async function collectConflictingSnapshot(
     if (typeof metadata.cacheKey !== "string") throw snapshotError();
     const parsed = validateMetadataAndKey(metadata, metadata.cacheKey);
     if (parsed.directoryId !== name || sha256(metadata.cacheKey) !== name) throw snapshotError();
-    const allowed = await mayCollectSnapshot(metadata.cacheKey);
+    const allowed = mayCollectSnapshot ? await mayCollectSnapshot(metadata.cacheKey) : undefined;
+    if (allowed !== true && isReferencedLegacyWindowsSnapshot(parsed.identity, requestedIdentity)) {
+      if (allowed !== false || !hasSnapshotReferences || await hasSnapshotReferences(metadata.cacheKey) !== true) throw snapshotError();
+      await verifySnapshotTree(rootPath, parsed.manifest);
+      preservedLegacySnapshots.add(name);
+      continue;
+    }
     if (allowed !== true) throw snapshotError();
 
     await verifySnapshotTree(rootPath, parsed.manifest);
@@ -753,6 +773,14 @@ async function collectConflictingSnapshot(
     const intentPath = await persistSnapshotGcIntent(cacheRoot, intent);
     await finishSnapshotGc(cacheRoot, intent, intentPath, await lstat(intentPath, { bigint: true }).then(exactIdentityFromStats), removeSnapshotTree);
   }
+  return preservedLegacySnapshots;
+}
+
+function isReferencedLegacyWindowsSnapshot(existing: SnapshotIdentity, requested: SnapshotIdentity): boolean {
+  return process.platform === "win32" && requested.materializationPolicyVersion === 2 &&
+    existing.materializationPolicyVersion === undefined && existing.formatVersion === requested.formatVersion &&
+    existing.hermesVersion === requested.hermesVersion && existing.manifestDigest === requested.manifestDigest &&
+    existing.sourceCommit === requested.sourceCommit && existing.sourceTree === requested.sourceTree;
 }
 
 /** Continues only durable, exact-key cleanup intents after reacquiring both cache locks. */
@@ -925,12 +953,15 @@ function isSnapshotGcNode(value: unknown): value is SnapshotGcNode {
   if (!identity || typeof identity !== "object" || typeof identity.dev !== "string" || !/^(?:0|[1-9]\d{0,23})$/u.test(identity.dev) ||
       typeof identity.ino !== "string" || !/^(?:0|[1-9]\d{0,23})$/u.test(identity.ino)) return false;
   if (node.kind === "directory") {
-    return node.mode === null && node.sha256 === null && (node.modeBits === 0o500 || node.modeBits === 0o555);
+    return node.mode === null && node.sha256 === null &&
+      (process.platform === "win32" ? (node.modeBits === 0o444 || node.modeBits === 0o555) :
+        (node.modeBits === 0o500 || node.modeBits === 0o555));
   }
   return node.kind === "file" && (node.mode === "100644" || node.mode === "100755") &&
     typeof node.sha256 === "string" && /^[0-9a-f]{64}$/u.test(node.sha256) &&
     (node.modeBits === 0o400 || node.modeBits === 0o444 || node.modeBits === 0o500 || node.modeBits === 0o555) &&
-    node.modeBits === (node.mode === "100755" ? (process.platform === "win32" ? 0o555 : 0o500) : (process.platform === "win32" ? 0o444 : 0o400));
+    (node.modeBits === (node.mode === "100755" ? (process.platform === "win32" ? 0o444 : 0o500) : (process.platform === "win32" ? 0o444 : 0o400)) ||
+      (process.platform === "win32" && node.mode === "100755" && node.modeBits === 0o555));
 }
 
 async function collectSnapshotGcNodes(rootPath: string, manifest: SnapshotManifest): Promise<SnapshotGcNode[]> {
@@ -968,12 +999,14 @@ async function enumerateSnapshotGcTree(
         (expectedNode.identity.dev.length > 0 && !sameExactFileIdentity(expectedNode.identity, identity))) throw snapshotError();
     const modeBits = Number(details.mode & 0o777n);
     if (kind === "directory") {
-      if (modeBits !== expectedNode.modeBits && !(allowMissing && modeBits === 0o700)) throw snapshotError();
+      const legacyWindowsReadonly = process.platform === "win32" && expectedNode.modeBits === 0o555 && modeBits === 0o444;
+      if (modeBits !== expectedNode.modeBits && !(allowMissing && modeBits === 0o700) && !legacyWindowsReadonly) throw snapshotError();
       actual.push({ ...expectedNode, identity, modeBits });
       await enumerateSnapshotGcTree(child, path, expected, actual, allowMissing);
       continue;
     }
-    if (modeBits !== expectedNode.modeBits || !expectedNode.sha256) throw snapshotError();
+    const legacyWindowsReadonly = process.platform === "win32" && expectedNode.modeBits === 0o555 && modeBits === 0o444;
+    if ((modeBits !== expectedNode.modeBits && !legacyWindowsReadonly) || !expectedNode.sha256) throw snapshotError();
     const bytes = await readStableFile(child, identity, MAX_FILE_BYTES);
     if (sha256(bytes) !== expectedNode.sha256) throw snapshotError();
     actual.push({ ...expectedNode, identity });
@@ -990,13 +1023,13 @@ function expectedSnapshotGcNodes(manifest: SnapshotManifest): Map<string, Snapsh
     for (let index = 1; index <= segments.length; index += 1) directories.add(segments.slice(0, index).join("/"));
     nodes.set(entry.path, {
       identity: { dev: "", ino: "" }, kind: "file", mode: entry.mode,
-      modeBits: entry.mode === "100755" ? (process.platform === "win32" ? 0o555 : 0o500) :
+      modeBits: entry.mode === "100755" ? (process.platform === "win32" ? 0o444 : 0o500) :
         (process.platform === "win32" ? 0o444 : 0o400), path: entry.path, sha256: entry.sha256,
     });
   }
   for (const path of directories) nodes.set(path, {
     identity: { dev: "", ino: "" }, kind: "directory", mode: null,
-    modeBits: process.platform === "win32" ? 0o555 : 0o500, path, sha256: null,
+    modeBits: process.platform === "win32" ? 0o444 : 0o500, path, sha256: null,
   });
   return nodes;
 }
@@ -1007,7 +1040,9 @@ function assertGcNodesMatchManifest(nodes: readonly SnapshotGcNode[], manifest: 
   for (const node of nodes) {
     const manifestNode = expected.get(node.path);
     if (!manifestNode || node.kind !== manifestNode.kind || node.mode !== manifestNode.mode ||
-        node.sha256 !== manifestNode.sha256 || node.modeBits !== manifestNode.modeBits) throw snapshotError();
+        node.sha256 !== manifestNode.sha256 || (node.modeBits !== manifestNode.modeBits &&
+          !(process.platform === "win32" && node.modeBits === 0o555 && manifestNode.modeBits === 0o444 &&
+            (node.kind === "directory" || node.mode === "100755")))) throw snapshotError();
     expected.delete(node.path);
   }
   if (expected.size !== 0) throw snapshotError();
@@ -1029,7 +1064,7 @@ async function removeGcTemporaryFile(path: string, expected: ExactFileIdentity):
 
 async function assertNoUnresolvedStaging(cacheRoot: string): Promise<void> {
   for (const name of await readdir(cacheRoot)) {
-    if (/^\.staging-[0-9a-f]{64}-[0-9a-f-]{36}$/u.test(name)) throw snapshotError();
+    if (name.startsWith(".staging-")) throw snapshotError();
   }
 }
 
@@ -1049,50 +1084,201 @@ function processIsAlive(pid: number): boolean {
   }
 }
 
-async function cleanStaleStagingDirectories(cacheRoot: string, directoryId: string): Promise<void> {
-  const prefix = ".staging-" + directoryId + "-";
-  for (const name of await readdir(cacheRoot)) {
-    if (!name.startsWith(prefix)) continue;
-    const nonce = name.slice(prefix.length);
-    if (!/^[0-9a-f-]{36}$/u.test(nonce)) continue;
-    const absolute = join(cacheRoot, name);
-    const details = await lstat(absolute).catch((error: NodeJS.ErrnoException) => {
+async function recoverStagingArtifacts(cacheRoot: string): Promise<void> {
+  const names = (await readdir(cacheRoot)).filter((name) => name.startsWith(".staging-"));
+  if (names.length > 128) throw snapshotError();
+  const rootPattern = /^\.staging-([0-9a-f]{64})-([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/u;
+  const sidecarPattern = /^(\.staging-[0-9a-f]{64}-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\.owner$/u;
+  const helperPath = process.platform === "win32"
+    ? fileURLToPath(new URL("../../../../dist/native/hermes-profile-path/ebb-hermes-profile-path.exe", import.meta.url))
+    : undefined;
+  for (const name of names) {
+    const rootMatch = rootPattern.exec(name);
+    const sidecarMatch = sidecarPattern.exec(name);
+    if (!rootMatch && !sidecarMatch) continue;
+    const stagingName = rootMatch ? name : sidecarMatch![1]!;
+    const stageMatch = rootPattern.exec(stagingName);
+    if (!stageMatch) continue;
+    const [, directoryId, nonce] = stageMatch;
+    const absolute = join(cacheRoot, stagingName);
+    const ownerPath = absolute + ".owner";
+    const ownerDetails = await lstat(ownerPath, { bigint: true }).catch((error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") return undefined;
       throw error;
     });
-    if (!details?.isDirectory() || details.isSymbolicLink()) continue;
-    let owner: unknown;
-    try {
-      owner = JSON.parse((await readStableFile(absolute + ".owner", undefined, 4096)).toString("utf8")) as unknown;
-    } catch {
+    const details = await lstat(absolute, { bigint: true }).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return undefined;
+      throw error;
+    });
+    if (!ownerDetails) {
+      if (!details || !rootMatch || process.platform !== "win32") continue;
+      if (!details.isDirectory() || details.isSymbolicLink()) continue;
+      const identity = exactIdentityFromStats(details);
+      await runVerifiedNativeHelper(helperPath!, "hermesProfilePath", [
+        "source-staging-recover", cacheRoot, stagingName, identity.dev, identity.ino,
+      ], { env: {}, maxBuffer: 64, timeout: 5_000 });
+      if (await pathExists(absolute)) throw snapshotError();
       continue;
     }
-    if (!isStagingOwner(owner) || owner.directoryId !== directoryId || owner.nonce !== nonce || processIsAlive(owner.pid)) continue;
-    await removeOwnedStagingTree(cacheRoot, absolute, directoryId, nonce, identityFromStats(details));
+    const owner = await readValidatedStagingOwner(ownerPath, ownerDetails);
+    if (!owner || owner.directoryId !== directoryId || owner.nonce !== nonce || processIsAlive(owner.pid)) continue;
+    if (details) {
+      if (!rootMatch || !details.isDirectory() || details.isSymbolicLink()) continue;
+      const identity = process.platform === "win32" ? exactIdentityFromStats(details) : identityFromStats(details);
+      if (process.platform === "win32" && (!owner.fileIdentity || !sameExactFileIdentity(owner.fileIdentity, identity as ExactFileIdentity))) continue;
+      await removeOwnedStagingTree(cacheRoot, absolute, directoryId!, nonce!, identity);
+      continue;
+    }
+    await removePublishedStagingOwner(cacheRoot, stagingName, ownerPath, owner, ownerDetails);
   }
 }
 
-function isStagingOwner(value: unknown): value is { directoryId: string; nonce: string; pid: number; startedAt: number } {
-  if (value === null || typeof value !== "object") return false;
-  const record = value as Record<string, unknown>;
-  return typeof record.directoryId === "string" && typeof record.nonce === "string" &&
-    typeof record.pid === "number" && Number.isInteger(record.pid) && record.pid > 0 &&
-    typeof record.startedAt === "number" && Number.isFinite(record.startedAt);
+async function readValidatedStagingOwner(
+  ownerPath: string,
+  details: Awaited<ReturnType<typeof lstat>>,
+): Promise<ReturnType<typeof parseStagingOwner> | undefined> {
+  if (!details.isFile() || details.isSymbolicLink()) return undefined;
+  try {
+    const identity = exactIdentityFromStats(details);
+    const bytes = await readStableFile(ownerPath, identity, 4096);
+    const text = bytes.toString("utf8");
+    const value: unknown = JSON.parse(text);
+    const owner = parseStagingOwner(value);
+    if (!owner || canonicalJson(owner) !== text) return undefined;
+    const current = await lstat(ownerPath, { bigint: true });
+    if (!current.isFile() || current.isSymbolicLink() || !sameExactFileIdentity(identity, exactIdentityFromStats(current))) return undefined;
+    return owner;
+  } catch {
+    return undefined;
+  }
 }
 
-async function writeStagingOwner(stageRoot: string, directoryId: string, nonce: string): Promise<void> {
+async function removePublishedStagingOwner(
+  cacheRoot: string,
+  stagingName: string,
+  ownerPath: string,
+  owner: NonNullable<ReturnType<typeof parseStagingOwner>>,
+  originalOwnerDetails: Awaited<ReturnType<typeof lstat>>,
+): Promise<void> {
+  if (!/^[0-9a-f]{64}$/u.test(owner.directoryId)) throw snapshotError();
+  const finalPath = join(cacheRoot, owner.directoryId);
+  const finalDetails = await lstat(finalPath, { bigint: true });
+  if (!finalDetails.isDirectory() || finalDetails.isSymbolicLink()) throw snapshotError();
+  const finalIdentity = exactIdentityFromStats(finalDetails);
+  if (owner.fileIdentity && !sameExactFileIdentity(owner.fileIdentity, finalIdentity)) throw snapshotError();
+  const metadataPath = metadataPathFor(cacheRoot, owner.directoryId);
+  const metadataBytes = await readStableFile(metadataPath, undefined, MAX_MANIFEST_BYTES);
+  const metadataText = metadataBytes.toString("utf8");
+  const parsedMetadata = JSON.parse(metadataText) as SnapshotMetadata;
+  if (canonicalJson(parsedMetadata) !== metadataText || typeof parsedMetadata.cacheKey !== "string") throw snapshotError();
+  const parsed = validateMetadataAndKey(parsedMetadata, parsedMetadata.cacheKey);
+  if (parsed.directoryId !== owner.directoryId ||
+      (process.platform === "win32" && owner.fileIdentity && parsed.identity.materializationPolicyVersion !== 2) ||
+      stagingName !== `.staging-${owner.directoryId}-${owner.nonce}`) throw snapshotError();
+  await verifySnapshotTree(finalPath, parsed.manifest);
+  await assertSnapshotRootIdentity(finalPath, owner.fileIdentity ?? finalIdentity);
+  const ownerIdentity = exactIdentityFromStats(originalOwnerDetails);
+  const bytes = await readStableFile(ownerPath, ownerIdentity, 4096);
+  const ownerText = bytes.toString("utf8");
+  if (canonicalJson(JSON.parse(ownerText)) !== ownerText || canonicalJson(JSON.parse(ownerText)) !== canonicalJson(owner)) throw snapshotError();
+  const currentRoot = await lstat(finalPath, { bigint: true });
+  const currentOwner = await lstat(ownerPath, { bigint: true });
+  if (!currentRoot.isDirectory() || currentRoot.isSymbolicLink() ||
+      !sameExactFileIdentity(finalIdentity, exactIdentityFromStats(currentRoot)) ||
+      !currentOwner.isFile() || currentOwner.isSymbolicLink() ||
+      !sameExactFileIdentity(ownerIdentity, exactIdentityFromStats(currentOwner))) throw snapshotError();
+  await unlink(ownerPath);
+  await syncDirectory(cacheRoot);
+}
+
+function parseStagingOwner(value: unknown): {
+  directoryId: string; nonce: string; pid: number; startedAt: number; fileIdentity?: ExactFileIdentity;
+} | undefined {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const fileIdentity = record.fileIdentity;
+  const identityRecord = typeof fileIdentity === "object" && fileIdentity !== null ? fileIdentity as Record<string, unknown> : undefined;
+  const dev = identityRecord?.dev;
+  const ino = identityRecord?.ino;
+  const hasIdentity = typeof dev === "string" && /^(?:0|[1-9]\d{0,23})$/u.test(dev) &&
+    typeof ino === "string" && /^(?:0|[1-9]\d{0,23})$/u.test(ino) && Object.keys(identityRecord ?? {}).sort().join(",") === "dev,ino";
+  const expectedKeys = hasIdentity ? "directoryId,fileIdentity,nonce,pid,startedAt" : "directoryId,nonce,pid,startedAt";
+  if (Object.keys(record).sort().join(",") !== expectedKeys ||
+      !hasIdentity && fileIdentity !== undefined || typeof record.directoryId !== "string" || !/^[0-9a-f]{64}$/u.test(record.directoryId) ||
+      typeof record.nonce !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(record.nonce) ||
+      typeof record.pid !== "number" || !Number.isInteger(record.pid) || record.pid <= 0 ||
+      typeof record.startedAt !== "number" || !Number.isFinite(record.startedAt)) return undefined;
+  return {
+    directoryId: record.directoryId,
+    nonce: record.nonce,
+    pid: record.pid,
+    startedAt: record.startedAt,
+    ...(hasIdentity ? { fileIdentity: { dev: dev as string, ino: ino as string } } : {}),
+  };
+}
+
+async function createSnapshotStagingDirectory(
+  cacheRoot: string, stageRoot: string, directoryId: string, nonce: string,
+): Promise<FileIdentity | ExactFileIdentity> {
+  if (process.platform !== "win32") {
+    await mkdir(stageRoot, { mode: 0o700 });
+    return identityFromStats(await lstat(stageRoot));
+  }
+  const helperPath = fileURLToPath(new URL("../../../../dist/native/hermes-profile-path/ebb-hermes-profile-path.exe", import.meta.url));
+  const result = await runVerifiedNativeHelper(helperPath, "hermesProfilePath", [
+    "source-staging-create", cacheRoot, basename(stageRoot),
+  ], { env: {}, maxBuffer: 256, timeout: 5_000 });
+  const nativeIdentity = parseNativeFileIdentity(result.stdout);
+  const handle = await open(stageRoot, fsConstants.O_RDONLY);
+  try {
+    const opened = await handle.stat({ bigint: true });
+    const named = await lstat(stageRoot, { bigint: true });
+    if (!opened.isDirectory() || !named.isDirectory() || named.isSymbolicLink() ||
+        !sameExactFileIdentity(nativeIdentity, exactIdentityFromStats(opened)) ||
+        !sameExactFileIdentity(nativeIdentity, exactIdentityFromStats(named))) throw snapshotError();
+  } finally {
+    await handle.close();
+  }
+  return nativeIdentity;
+}
+
+async function assertStagingIdentity(stageRoot: string, expected: FileIdentity | ExactFileIdentity): Promise<void> {
+  const handle = await open(stageRoot, fsConstants.O_RDONLY);
+  try {
+    const opened = await handle.stat({ bigint: true });
+    const named = await lstat(stageRoot, { bigint: true });
+    const openedIdentity = typeof expected.dev === "string" ? exactIdentityFromStats(opened) : identityFromStats(opened);
+    const namedIdentity = typeof expected.dev === "string" ? exactIdentityFromStats(named) : identityFromStats(named);
+    if (!opened.isDirectory() || !named.isDirectory() || named.isSymbolicLink() ||
+        !sameStableFileIdentity(expected, openedIdentity) || !sameStableFileIdentity(expected, namedIdentity)) throw snapshotError();
+  } finally {
+    await handle.close();
+  }
+}
+
+async function assertSnapshotRootIdentity(path: string, expected: FileIdentity | ExactFileIdentity): Promise<void> {
+  await assertStagingIdentity(path, expected);
+}
+
+async function writeStagingOwner(
+  stageRoot: string, directoryId: string, nonce: string, identity: FileIdentity | ExactFileIdentity,
+): Promise<void> {
   const handle = await open(stageRoot + ".owner", "wx", 0o600);
   try {
-    await handle.writeFile(canonicalJson({ directoryId, nonce, pid: process.pid, startedAt: Date.now() }), "utf8");
+    const fileIdentity = typeof identity.dev === "string" ? identity : undefined;
+    await handle.writeFile(canonicalJson({ directoryId, nonce, pid: process.pid, startedAt: Date.now(), ...(fileIdentity ? { fileIdentity } : {}) }), "utf8");
     await handle.sync();
   } finally {
     await handle.close();
   }
 }
 
-async function removeStagingOwner(stageRoot: string): Promise<void> {
+async function removeStagingOwner(
+  stageRoot: string, expectedRootIdentity?: FileIdentity | ExactFileIdentity, liveRootPath = stageRoot,
+): Promise<void> {
+  if (expectedRootIdentity) await assertSnapshotRootIdentity(liveRootPath, expectedRootIdentity);
   const path = stageRoot + ".owner";
-  const details = await lstat(path);
+  const details = await lstat(path, { bigint: process.platform === "win32" });
   if (!details.isFile() || details.isSymbolicLink()) throw snapshotError();
   await unlink(path);
 }
@@ -1102,19 +1288,21 @@ async function removeOwnedStagingTree(
   stagePath: string,
   directoryId: string,
   nonce: string,
-  expectedIdentity: FileIdentity,
+  expectedIdentity: FileIdentity | ExactFileIdentity,
 ): Promise<void> {
   if (dirname(stagePath) !== cacheRoot || basename(stagePath) !== ".staging-" + directoryId + "-" + nonce) throw snapshotError();
-  const root = await lstat(stagePath).catch((error: NodeJS.ErrnoException) => {
+  const root = await lstat(stagePath, { bigint: typeof expectedIdentity.dev === "string" }).catch((error: NodeJS.ErrnoException) => {
     if (error.code === "ENOENT") return undefined;
     throw error;
   });
   if (!root) return;
-  if (!root.isDirectory() || root.isSymbolicLink() || !sameFileIdentity(expectedIdentity, identityFromStats(root))) throw snapshotError();
+  if (!root.isDirectory() || root.isSymbolicLink() || !sameStableFileIdentity(expectedIdentity, typeof expectedIdentity.dev === "string" ? exactIdentityFromStats(root) : identityFromStats(root))) throw snapshotError();
+  if (typeof expectedIdentity.dev === "string") await assertStagingIdentity(stagePath, expectedIdentity);
   await chmod(stagePath, 0o700);
   await removeChildrenNoFollow(stagePath);
-  const current = await lstat(stagePath);
-  if (!current.isDirectory() || current.isSymbolicLink() || !sameFileIdentity(expectedIdentity, identityFromStats(current))) throw snapshotError();
+  const current = await lstat(stagePath, { bigint: typeof expectedIdentity.dev === "string" });
+  if (!current.isDirectory() || current.isSymbolicLink() || !sameStableFileIdentity(expectedIdentity, typeof expectedIdentity.dev === "string" ? exactIdentityFromStats(current) : identityFromStats(current))) throw snapshotError();
+  if (typeof expectedIdentity.dev === "string") await assertStagingIdentity(stagePath, expectedIdentity);
   await rmdir(stagePath);
   if (await pathExists(stagePath + ".owner")) await removeStagingOwner(stagePath);
 }
@@ -1218,9 +1406,24 @@ async function ensureNativeProjection(
   let temporaryCreated = false;
   let ownerCreated = false;
   try {
-    const handle = await open(temporaryPath, "wx", 0o600);
+    let nativeIdentity: ExactFileIdentity | undefined;
+    if (process.platform === "win32") {
+      const helperPath = fileURLToPath(new URL("../../../../dist/native/hermes-profile-path/ebb-hermes-profile-path.exe", import.meta.url));
+      const result = await runVerifiedNativeHelper(helperPath, "hermesProfilePath", [
+        "source-projection-create", cacheRoot, basename(temporaryPath),
+      ], { env: {}, maxBuffer: 256, timeout: 5_000 });
+      temporaryCreated = true;
+      nativeIdentity = parseNativeFileIdentity(result.stdout);
+    }
+    const handle = await open(temporaryPath, process.platform === "win32" ? "r+" : "wx", 0o600);
     temporaryCreated = true;
     try {
+      if (nativeIdentity) {
+        const openedIdentity = exactIdentityFromStats(await handle.stat({ bigint: true }));
+        const named = await lstat(temporaryPath, { bigint: true });
+        if (!named.isFile() || named.isSymbolicLink() || !sameExactFileIdentity(nativeIdentity, openedIdentity) ||
+            !sameExactFileIdentity(nativeIdentity, exactIdentityFromStats(named))) throw snapshotError();
+      }
       await handle.writeFile(bytes);
       await handle.sync();
       await handle.chmod(0o400);
@@ -1228,7 +1431,10 @@ async function ensureNativeProjection(
     } finally {
       await handle.close();
     }
-    const identity = identityFromStats(await lstat(temporaryPath));
+    const temporaryDetails = await lstat(temporaryPath, { bigint: true });
+    const identity = exactIdentityFromStats(temporaryDetails);
+    if (!temporaryDetails.isFile() || temporaryDetails.isSymbolicLink() ||
+        (nativeIdentity && !sameExactFileIdentity(nativeIdentity, identity))) throw snapshotError();
     const owner = await open(ownerPath, "wx", 0o600);
     ownerCreated = true;
     try {
@@ -1265,6 +1471,20 @@ async function ensureNativeProjection(
   const verified = await readStableFile(finalPath, identityFromStats(final), MAX_NATIVE_PROJECTION_BYTES);
   if (!verified.equals(bytes) || sha256(verified) !== digest) throw snapshotError();
   return Object.freeze({ path: finalPath, sha256: digest, size: bytes.byteLength });
+}
+
+function parseNativeFileIdentity(output: string): ExactFileIdentity {
+  try {
+    const value: unknown = JSON.parse(output);
+    if (typeof value !== "object" || value === null || Array.isArray(value)) throw snapshotError();
+    const record = value as Record<string, unknown>;
+    if (Object.keys(record).sort().join(",") !== "dev,ino" ||
+        typeof record.dev !== "string" || !/^(?:0|[1-9]\d{0,23})$/u.test(record.dev) ||
+        typeof record.ino !== "string" || !/^(?:0|[1-9]\d{0,23})$/u.test(record.ino)) throw snapshotError();
+    return { dev: record.dev, ino: record.ino };
+  } catch {
+    throw snapshotError();
+  }
 }
 
 function encodeNativeProjection(snapshot: HermesSourceSnapshot, manifest: SnapshotManifest): Buffer {
@@ -1316,20 +1536,32 @@ async function recoverNativeProjectionAliases(cacheRoot: string, directoryId: st
         typeof owner.pid !== "number" || !Number.isSafeInteger(owner.pid) || owner.pid <= 0 ||
         !owner.fileIdentity || typeof owner.fileIdentity !== "object") throw snapshotError();
     if (owner.pid !== process.pid && processIsAlive(owner.pid)) throw snapshotError();
-    const expected = owner.fileIdentity as Partial<FileIdentity>;
-    if (typeof expected.dev !== "number" || typeof expected.ino !== "number") throw snapshotError();
+    const expected = owner.fileIdentity as Partial<FileIdentity> & Partial<ExactFileIdentity>;
+    const exactIdentity = typeof expected.dev === "string" && /^(?:0|[1-9]\d{0,23})$/u.test(expected.dev) &&
+      typeof expected.ino === "string" && /^(?:0|[1-9]\d{0,23})$/u.test(expected.ino)
+      ? { dev: expected.dev, ino: expected.ino } satisfies ExactFileIdentity
+      : undefined;
+    const legacyIdentity = typeof expected.dev === "number" && Number.isSafeInteger(expected.dev) && expected.dev >= 0 &&
+      typeof expected.ino === "number" && Number.isSafeInteger(expected.ino) && expected.ino >= 0
+      ? { dev: expected.dev, ino: expected.ino } satisfies FileIdentity
+      : undefined;
+    if (!exactIdentity && !legacyIdentity) throw snapshotError();
     const temporaryPath = ownerPath.slice(0, -".owner".length);
-    const target = await lstat(targetPath).catch((error: NodeJS.ErrnoException) => {
+    const target = await lstat(targetPath, exactIdentity ? { bigint: true } : undefined).catch((error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") return undefined;
       throw error;
     });
-    const temporary = await lstat(temporaryPath).catch((error: NodeJS.ErrnoException) => {
+    const temporary = await lstat(temporaryPath, exactIdentity ? { bigint: true } : undefined).catch((error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") return undefined;
       throw error;
     });
-    const expectedIdentity = { dev: expected.dev, ino: expected.ino };
-    if (target && (!target.isFile() || target.isSymbolicLink() || !sameFileIdentity(identityFromStats(target), expectedIdentity))) throw snapshotError();
-    if (temporary && (!temporary.isFile() || temporary.isSymbolicLink() || !sameFileIdentity(identityFromStats(temporary), expectedIdentity))) throw snapshotError();
+    const matchesOwnerIdentity = (details: Awaited<ReturnType<typeof lstat>> | undefined): boolean => {
+      if (!details) return true;
+      if (exactIdentity) return sameExactFileIdentity(exactIdentity, exactIdentityFromStats(details));
+      return legacyIdentity !== undefined && sameFileIdentity(identityFromStats(details), legacyIdentity);
+    };
+    if (target && (!target.isFile() || target.isSymbolicLink() || !matchesOwnerIdentity(target))) throw snapshotError();
+    if (temporary && (!temporary.isFile() || temporary.isSymbolicLink() || !matchesOwnerIdentity(temporary))) throw snapshotError();
     if (target) {
       if (temporary) await unlink(temporaryPath);
     } else if (temporary) {
@@ -1398,6 +1630,10 @@ function validateMetadataAndKey(metadata: SnapshotMetadata, requestedKey: string
   if (!metadata || typeof metadata !== "object" || typeof metadata.cacheKey !== "string" || metadata.cacheKey !== requestedKey ||
       !metadata.identity || !metadata.manifest) throw snapshotError();
   const identity = metadata.identity as SnapshotIdentity;
+  const identityKeys = Object.keys(identity).sort(compareUtf8).join(",");
+  const hasWindowsMaterializationPolicy = identity.materializationPolicyVersion === 2;
+  if ((hasWindowsMaterializationPolicy && identityKeys !== "formatVersion,hermesVersion,manifestDigest,materializationPolicyVersion,sourceCommit,sourceTree") ||
+      (!hasWindowsMaterializationPolicy && identityKeys !== "formatVersion,hermesVersion,manifestDigest,sourceCommit,sourceTree")) throw snapshotError();
   if (identity.formatVersion !== IDENTITY_FORMAT_VERSION || typeof identity.hermesVersion !== "string" ||
       identity.hermesVersion.length === 0 || identity.hermesVersion.length > 256 ||
       hasControlCharacter(identity.hermesVersion) || !identity.hermesVersion.isWellFormed() ||

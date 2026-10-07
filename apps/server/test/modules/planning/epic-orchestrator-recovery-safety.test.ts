@@ -417,7 +417,13 @@ describe("Epic orchestrator recovery safety", () => {
       expect(f.db.get<{ status: string }>("SELECT status FROM scheduler_reservations WHERE id=$id", { id: reservation.id })?.status).toBe("RESERVED");
       expect(f.db.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_resource_locks WHERE reservation_id=$id", { id: reservation.id })?.count).toBe(1);
 
-      f.db.run("UPDATE run_process_owners SET state='STOPPED',stop_evidence='SUPERVISOR_SCOPE_EMPTY',updated_at=$now WHERE run_id=$id", { id: runId, now: new Date().toISOString() });
+      const containmentKind = f.db.get<{ containment_kind: string }>(
+        "SELECT containment_kind FROM run_process_owners WHERE run_id=$id", { id: runId },
+      )?.containment_kind;
+      const stopEvidence = containmentKind === "windows-job" ? "WINDOWS_JOB_EMPTY" : "SYSTEMD_CGROUP_EMPTY";
+      f.db.run("UPDATE run_process_owners SET state='STOPPED',stop_evidence=$stopEvidence,updated_at=$now WHERE run_id=$id", {
+        id: runId, now: new Date().toISOString(), stopEvidence,
+      });
       orchestrator.reconcileInterruptedRuns();
       expect(failPreparedRun).toHaveBeenCalledWith(runId, expect.any(Error));
       expect(f.db.get<{ count: number }>("SELECT COUNT(*) AS count FROM orchestration_phase_runs WHERE agent_run_id=$id", { id: runId })?.count).toBe(0);

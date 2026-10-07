@@ -11,7 +11,7 @@ import { ProjectConfigService } from "../../src/modules/projects/project-config-
 import { createRunContextInput, RunService } from "../../src/modules/runtime/run-service.js";
 import type { StartRunOptions } from "../../src/modules/runtime/run-types.js";
 import { HermesRuntimeAdapter } from "../../src/modules/runtime/hermes/hermes-runtime-adapter.js";
-import { getRunProcessOwner, isCanonicalRunProcessStopEvidence, transitionRunProcessOwnerTx } from "../../src/modules/runtime/run-process-owner.js";
+import { getRunProcessOwner, isAuthoritativeRunProcessStopEvidence, transitionRunProcessOwnerTx } from "../../src/modules/runtime/run-process-owner.js";
 import { createSqliteDatabase } from "../../src/platform/database/sqlite-database.js";
 import type { Database } from "../../src/platform/database/database.js";
 import { runMigrations } from "../../src/platform/database/migrator.js";
@@ -51,7 +51,7 @@ describe.skip("Hermes session source-tag live acceptance — NOT RUN until Task5
       try {
         let owner = getRunProcessOwner(database, cleanupRunId);
         if (!owner) throw new Error("HERMES_ACCEPTANCE_OWNER_MISSING");
-        if (owner.state !== "STOPPED" || !isCanonicalRunProcessStopEvidence(owner.stopEvidence)) {
+        if (owner.state !== "STOPPED" || !isAuthoritativeRunProcessStopEvidence(owner.stopEvidence, owner.containmentKind)) {
           if (owner.state === "PREPARED") {
             database.transaction((tx) => transitionRunProcessOwnerTx(tx, {
               runId: cleanupRunId, expectedState: "PREPARED", nextState: "STOPPED", evidence: "NEVER_LAUNCHED",
@@ -63,7 +63,7 @@ describe.skip("Hermes session source-tag live acceptance — NOT RUN until Task5
             owner = getRunProcessOwner(database, cleanupRunId);
           }
           if (!owner) throw new Error("HERMES_ACCEPTANCE_OWNER_MISSING");
-          if (owner.state !== "STOPPED" || !isCanonicalRunProcessStopEvidence(owner.stopEvidence)) {
+          if (owner.state !== "STOPPED" || !isAuthoritativeRunProcessStopEvidence(owner.stopEvidence, owner.containmentKind)) {
             const identity = toScopeIdentity(owner);
             let observed: ProcessScopeObservation = await supervisor.inspect(identity);
             if (observed.state === "LIVE") {
@@ -82,7 +82,7 @@ describe.skip("Hermes session source-tag live acceptance — NOT RUN until Task5
           await runService.cancelRun(cleanupRunId).catch(() => undefined);
         }
         const stopped = getRunProcessOwner(database, cleanupRunId);
-        if (!stopped || stopped.state !== "STOPPED" || !isCanonicalRunProcessStopEvidence(stopped.stopEvidence)) {
+        if (!stopped || stopped.state !== "STOPPED" || !isAuthoritativeRunProcessStopEvidence(stopped.stopEvidence, stopped.containmentKind)) {
           throw new Error("HERMES_ACCEPTANCE_CLEANUP_STOP_EVIDENCE_MISSING");
         }
         if (execution && !executionSettled) await Promise.race([execution, delay(2_000)]);
@@ -210,7 +210,7 @@ describe.skip("Hermes session source-tag live acceptance — NOT RUN until Task5
     await execution;
     const stopped = getRunProcessOwner(database, run.id);
     expect(stopped?.state).toBe("STOPPED");
-    expect(isCanonicalRunProcessStopEvidence(stopped?.stopEvidence)).toBe(true);
+    expect(isAuthoritativeRunProcessStopEvidence(stopped?.stopEvidence, stopped?.containmentKind)).toBe(true);
     expect(database.get<{ session_id: string | null }>("SELECT session_id FROM agent_runs WHERE id=$runId", { runId: run.id })?.session_id).toBeNull();
   }, 180_000);
 });

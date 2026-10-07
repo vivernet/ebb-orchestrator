@@ -18,6 +18,14 @@ const snapshotIdentity = {
   sourceTree: "c".repeat(40),
 };
 const snapshotKey = JSON.stringify(snapshotIdentity);
+const windowsSnapshotKey = JSON.stringify({
+  formatVersion: snapshotIdentity.formatVersion,
+  hermesVersion: snapshotIdentity.hermesVersion,
+  manifestDigest: snapshotIdentity.manifestDigest,
+  materializationPolicyVersion: 2,
+  sourceCommit: snapshotIdentity.sourceCommit,
+  sourceTree: snapshotIdentity.sourceTree,
+});
 
 describe("Run process owner", () => {
   let directory = "";
@@ -136,6 +144,71 @@ describe("Run process owner", () => {
       .toEqual({ hermes_source_snapshot_key: null });
   });
 
+  it("accepts only the source identity version matching the process platform", async () => {
+    const database = await setup();
+    insertLegacyRunWithoutOwner(database, "windows-policy-run");
+    const windowsOwner = prepareRunProcessOwner("windows-policy-run", "profile", "windows-job", windowsSnapshotKey);
+    database.transaction((tx) => insertRunProcessOwnerTx(tx, windowsOwner));
+    expect(getRunProcessOwner(database, "windows-policy-run")?.hermesSourceSnapshotKey).toBe(windowsSnapshotKey);
+
+    insertLegacyRunWithoutOwner(database, "linux-legacy-run");
+    const linuxOwner = prepareRunProcessOwner("linux-legacy-run", "profile-linux", "systemd-user-service", snapshotKey);
+    database.transaction((tx) => insertRunProcessOwnerTx(tx, linuxOwner));
+    expect(getRunProcessOwner(database, "linux-legacy-run")?.hermesSourceSnapshotKey).toBe(snapshotKey);
+
+    expect(() => prepareRunProcessOwner("windows-v1-run", "profile-v1", "windows-job", snapshotKey)).toThrow(TypeError);
+    expect(() => prepareRunProcessOwner("linux-v2-run", "profile-v2", "systemd-user-service", windowsSnapshotKey)).toThrow(TypeError);
+  });
+
+  it("reads and stops a legacy Windows v1 owner during recovery without allowing new v1 owners", async () => {
+    const database = await setup();
+    insertLegacyRunWithoutOwner(database, "legacy-windows-recovery", "COMPLETED");
+    const owner = prepareRunProcessOwner("legacy-windows-recovery", "legacy-profile", "windows-job");
+    database.transaction((tx) => insertRunProcessOwnerTx(tx, owner));
+    database.run("UPDATE run_process_owners SET hermes_source_snapshot_key=$key WHERE run_id=$runId", {
+      key: snapshotKey, runId: owner.runId,
+    });
+    database.transaction((tx) => transitionRunProcessOwnerTx(tx, {
+      runId: owner.runId, expectedState: "PREPARED", nextState: "LAUNCHING",
+    }));
+    const identity: ProcessScopeIdentity = {
+      runId: owner.runId,
+      containmentKind: "windows-job",
+      containmentId: owner.containmentId,
+      launchNonce: owner.launchNonce,
+      systemdInvocationId: null,
+      systemdControlGroup: null,
+      supervisorPid: 1234,
+      supervisorStartIdentity: "supervisor-start",
+      pid: 5678,
+      platform: "win32",
+      processStartIdentity: "process-start",
+      executableIdentity: "executable-id",
+      state: "LIVE",
+    };
+    database.transaction((tx) => transitionRunProcessOwnerTx(tx, {
+      runId: owner.runId, expectedState: "LAUNCHING", nextState: "LIVE", identity,
+    }));
+    const inspect = vi.fn(async (): Promise<ProcessScopeObservation> => ({ state: "LIVE", identity }));
+    const stop = vi.fn(async (): Promise<ProcessScopeObservation> => ({ state: "STOPPED", evidence: "WINDOWS_JOB_EMPTY" }));
+    const supervisor: ProcessScopeSupervisor = {
+      inspect, stop,
+      launch: async () => { throw new Error("not used"); },
+      waitForStopped: async () => ({ state: "STOPPED", evidence: "WINDOWS_JOB_EMPTY" }),
+    };
+
+    expect(getRunProcessOwner(database, owner.runId)?.hermesSourceSnapshotKey).toBe(snapshotKey);
+    await preflightRunProcessOwners(database, supervisor);
+
+    expect(inspect).toHaveBeenCalledTimes(1);
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(database.get<{ state: string; stop_evidence: string; hermes_source_snapshot_key: string }>(
+      "SELECT state,stop_evidence,hermes_source_snapshot_key FROM run_process_owners WHERE run_id=$runId",
+      { runId: owner.runId },
+    )).toEqual({ state: "STOPPED", stop_evidence: "WINDOWS_JOB_EMPTY", hermes_source_snapshot_key: snapshotKey });
+    expect(() => prepareRunProcessOwner("new-windows-v1", "new-profile", "windows-job", snapshotKey)).toThrow(TypeError);
+  });
+
   it("accepts canonical SHA-256 Git identity and preserves escaped and Unicode version bytes", async () => {
     const database = await setup();
     const key = JSON.stringify({
@@ -144,7 +217,7 @@ describe("Run process owner", () => {
     });
     insertLegacyRunWithoutOwner(database, "sha256-source-run");
     database.transaction((tx) => insertRunProcessOwnerTx(tx,
-      prepareRunProcessOwner("sha256-source-run", "profile", "windows-job", key)));
+      prepareRunProcessOwner("sha256-source-run", "profile", "systemd-user-service", key)));
     expect(getRunProcessOwner(database, "sha256-source-run")?.hermesSourceSnapshotKey).toBe(key);
   });
 
@@ -175,6 +248,62 @@ describe("Run process owner", () => {
     expect(() => database.transaction((tx) => transitionRunProcessOwnerTx(tx, {
       runId: "owner-run", expectedState: "STOPPED", nextState: "LAUNCHING",
     }))).toThrow(/TRANSITION_INVALID/);
+  });
+
+  it.each(["OS_STATE_UNPROVEN", "UNKNOWN_STOP_PROOF"])("does not persist %s as STOPPED evidence", async (evidence) => {
+      const database = await setup();
+      insertRun(database, "unproven-stop-run");
+      expect(() => database.transaction((tx) => transitionRunProcessOwnerTx(tx, {
+        runId: "unproven-stop-run", expectedState: "PREPARED", nextState: "STOPPED", evidence,
+      }))).toThrow(TypeError);
+      expect(database.get<{ state: string; stop_evidence: string | null }>(
+        "SELECT state,stop_evidence FROM run_process_owners WHERE run_id='unproven-stop-run'",
+      )).toEqual({ state: "PREPARED", stop_evidence: null });
+    });
+
+  it.each(["LIVE", "STOPPING", "UNKNOWN"] as const)("rejects no-launch proof from %s owners", async (state) => {
+    const database = await setup();
+    const runId = `forged-never-launched-${state.toLowerCase()}`;
+    insertRun(database, runId);
+    database.transaction((tx) => transitionRunProcessOwnerTx(tx, {
+      runId, expectedState: "PREPARED", nextState: "LAUNCHING",
+    }));
+    if (state === "LIVE" || state === "STOPPING") {
+      const identity = liveIdentity(runId);
+      database.transaction((tx) => transitionRunProcessOwnerTx(tx, {
+        runId, expectedState: "LAUNCHING", nextState: "LIVE", identity,
+      }));
+      if (state === "STOPPING") {
+        database.transaction((tx) => transitionRunProcessOwnerTx(tx, {
+          runId, expectedState: "LIVE", nextState: "STOPPING",
+        }));
+      }
+    } else {
+      database.transaction((tx) => transitionRunProcessOwnerTx(tx, {
+        runId, expectedState: "LAUNCHING", nextState: "UNKNOWN", evidence: "OS_STATE_UNPROVEN",
+      }));
+    }
+
+    for (const evidence of ["NEVER_LAUNCHED", "LAUNCH_NOT_DISPATCHED"]) {
+      expect(() => database.transaction((tx) => transitionRunProcessOwnerTx(tx, {
+        runId, expectedState: state, nextState: "STOPPED", evidence,
+      }))).toThrow(TypeError);
+    }
+    expect(getRunProcessOwner(database, runId)?.state).toBe(state);
+  });
+
+  it("does not allow the generic owner transition to persist launch-not-dispatched proof", async () => {
+    const database = await setup();
+    insertRun(database, "launch-not-dispatched-run");
+    database.transaction((tx) => transitionRunProcessOwnerTx(tx, {
+      runId: "launch-not-dispatched-run", expectedState: "PREPARED", nextState: "LAUNCHING",
+    }));
+
+    expect(() => database.transaction((tx) => transitionRunProcessOwnerTx(tx, {
+      runId: "launch-not-dispatched-run", expectedState: "LAUNCHING", nextState: "STOPPED",
+      evidence: "LAUNCH_NOT_DISPATCHED",
+    }))).toThrow(TypeError);
+    expect(getRunProcessOwner(database, "launch-not-dispatched-run")?.state).toBe("LAUNCHING");
   });
 
   it("stops LIVE owners and only marks them STOPPED after supervisor proof", async () => {
@@ -269,12 +398,12 @@ describe("Run process owner", () => {
       runId: "terminal-invalid-proof-run", expectedState: "PREPARED", nextState: "STOPPED", evidence: "NEVER_LAUNCHED",
     }));
     database.run("UPDATE run_process_owners SET stop_evidence='invalid evidence!' WHERE run_id='terminal-invalid-proof-run'");
-    const inspect = vi.fn(async (): Promise<ProcessScopeObservation> => ({ state: "STOPPED", evidence: "TEST_SCOPE_ABSENT" }));
+    const inspect = vi.fn(async (): Promise<ProcessScopeObservation> => ({ state: "STOPPED", evidence: "SYSTEMD_CGROUP_EMPTY" }));
     const supervisor: ProcessScopeSupervisor = {
       inspect,
-      stop: vi.fn(async (): Promise<ProcessScopeObservation> => ({ state: "STOPPED", evidence: "TEST_SCOPE_ABSENT" })),
+      stop: vi.fn(async (): Promise<ProcessScopeObservation> => ({ state: "STOPPED", evidence: "SYSTEMD_CGROUP_EMPTY" })),
       launch: async () => { throw new Error("not used"); },
-      waitForStopped: async () => ({ state: "STOPPED", evidence: "TEST_SCOPE_ABSENT" }),
+      waitForStopped: async () => ({ state: "STOPPED", evidence: "SYSTEMD_CGROUP_EMPTY" }),
     };
 
     await expect(preflightRunProcessOwners(database, supervisor))
@@ -286,12 +415,12 @@ describe("Run process owner", () => {
     const database = await setup();
     insertRun(database, "z-prepared-run");
     insertLegacyRunWithoutOwner(database, "a-ownerless-legacy-run");
-    const inspect = vi.fn(async (): Promise<ProcessScopeObservation> => ({ state: "STOPPED", evidence: "TEST_SCOPE_ABSENT" }));
+    const inspect = vi.fn(async (): Promise<ProcessScopeObservation> => ({ state: "STOPPED", evidence: "SYSTEMD_CGROUP_EMPTY" }));
     const supervisor: ProcessScopeSupervisor = {
       inspect,
-      stop: vi.fn(async (): Promise<ProcessScopeObservation> => ({ state: "STOPPED", evidence: "TEST_SCOPE_ABSENT" })),
+      stop: vi.fn(async (): Promise<ProcessScopeObservation> => ({ state: "STOPPED", evidence: "SYSTEMD_CGROUP_EMPTY" })),
       launch: async () => { throw new Error("not used"); },
-      waitForStopped: async () => ({ state: "STOPPED", evidence: "TEST_SCOPE_ABSENT" }),
+      waitForStopped: async () => ({ state: "STOPPED", evidence: "SYSTEMD_CGROUP_EMPTY" }),
     };
 
     await expect(preflightRunProcessOwners(database, supervisor))
@@ -310,6 +439,8 @@ describe("Run process owner", () => {
     { label: "NULL", evidence: null, expectedError: "MISSING" },
     { label: "blank", evidence: "", expectedError: "MISSING" },
     { label: "malformed nonblank token", evidence: "invalid evidence!", expectedError: "INVALID" },
+    { label: "UNKNOWN marker", evidence: "OS_STATE_UNPROVEN", expectedError: "INVALID" },
+    { label: "unknown bounded token", evidence: "UNKNOWN_STOP_PROOF", expectedError: "INVALID" },
   ])("fails closed before recovery side effects for $label STOPPED evidence", async ({ evidence, expectedError }) => {
     const database = await setup();
     insertRun(database, "z-stopped-unproven-run");
@@ -322,12 +453,12 @@ describe("Run process owner", () => {
     );
     insertRun(database, "a-prepared-run");
 
-    const inspect = vi.fn(async (): Promise<ProcessScopeObservation> => ({ state: "STOPPED", evidence: "TEST_SCOPE_ABSENT" }));
+    const inspect = vi.fn(async (): Promise<ProcessScopeObservation> => ({ state: "STOPPED", evidence: "SYSTEMD_CGROUP_EMPTY" }));
     const supervisor: ProcessScopeSupervisor = {
       inspect,
-      stop: vi.fn(async (): Promise<ProcessScopeObservation> => ({ state: "STOPPED", evidence: "TEST_SCOPE_ABSENT" })),
+      stop: vi.fn(async (): Promise<ProcessScopeObservation> => ({ state: "STOPPED", evidence: "SYSTEMD_CGROUP_EMPTY" })),
       launch: async () => { throw new Error("not used"); },
-      waitForStopped: async () => ({ state: "STOPPED", evidence: "TEST_SCOPE_ABSENT" }),
+      waitForStopped: async () => ({ state: "STOPPED", evidence: "SYSTEMD_CGROUP_EMPTY" }),
     };
 
     await expect(preflightRunProcessOwners(database, supervisor))

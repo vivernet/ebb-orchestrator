@@ -27,7 +27,7 @@ import type { OrchestratorHomePaths } from "./orchestrator-home.js";
 import { recoverExpiredJobs } from "../jobs/job-repository.js";
 import { preflightRunProcessOwners } from "../../modules/runtime/run-process-owner.js";
 import type { ProjectConfigService } from "../../modules/projects/project-config-service.js";
-import { mayCollectHermesSourceSnapshot } from "../../modules/runtime/hermes/hermes-source-snapshot-gc-policy.js";
+import { hasHermesSourceSnapshotReferences, mayCollectHermesSourceSnapshot } from "../../modules/runtime/hermes/hermes-source-snapshot-gc-policy.js";
 
 /** Зависимости для построения production adapters без старта процессов. */
 export interface ProductionCompositionOptions {
@@ -99,6 +99,7 @@ export function createProductionComposition(options: ProductionCompositionOption
     resultDirectory: paths.hermesResultDirectory,
     hermesSourceSnapshotCacheRoot: paths.hermesSourceSnapshotCacheRoot,
     mayCollectHermesSourceSnapshot: async (cacheKey: string) => mayCollectHermesSourceSnapshot(database, cacheKey),
+    hasHermesSourceSnapshotReferences: async (cacheKey: string) => hasHermesSourceSnapshotReferences(database, cacheKey),
     checkpointDirectory: paths.hermesCheckpointDirectory,
   }, processScopeSupervisor);
   const taskWorkspaceProvisioner = new TaskWorkspaceProvisioner({

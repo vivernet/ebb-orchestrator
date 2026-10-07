@@ -11,7 +11,11 @@ const sourceSnapshotKey = JSON.stringify({
   sourceCommit: "b".repeat(40), sourceTree: "d".repeat(40),
 });
 const sourceSnapshotDirectoryId = createHash("sha256").update(sourceSnapshotKey).digest("hex");
-const sourceSnapshotRoot = `C:\\Ebb\\runtime\\hermes\\source-snapshots\\${sourceSnapshotDirectoryId}`;
+const windowsSnapshotKey = JSON.stringify({
+  formatVersion: 1, hermesVersion: "v0.21.5+7357.g9244275", manifestDigest: "c".repeat(64),
+  materializationPolicyVersion: 2, sourceCommit: "b".repeat(40), sourceTree: "d".repeat(40),
+});
+const windowsSnapshotDirectoryId = createHash("sha256").update(windowsSnapshotKey).digest("hex");
 
 const input: HermesLaunchTicketInput = {
   runId: "123e4567-e89b-42d3-a456-426614174000",
@@ -38,11 +42,11 @@ const input: HermesLaunchTicketInput = {
       { volumeSerial: "0123456789abcdef", fileId: "b".repeat(32) },
     ],
   },
-  hermesSourceSnapshotKey: sourceSnapshotKey,
-  hermesSourceSnapshotRoot: sourceSnapshotRoot,
+  hermesSourceSnapshotKey: windowsSnapshotKey,
+  hermesSourceSnapshotRoot: `C:\\Ebb\\runtime\\hermes\\source-snapshots\\${windowsSnapshotDirectoryId}`,
   hermesSourceSnapshotRootIdentity: { platform: "win32", volumeSerial: "0123456789abcdef", fileId: "e".repeat(32) },
   hermesSourceManifestDigest: "c".repeat(64),
-  hermesSourceProjectionPath: `C:\\Ebb\\runtime\\hermes\\source-snapshots\\${sourceSnapshotDirectoryId}.native-v1.bin`,
+  hermesSourceProjectionPath: `C:\\Ebb\\runtime\\hermes\\source-snapshots\\${windowsSnapshotDirectoryId}.native-v1.bin`,
   hermesSourceProjectionSha256: "f".repeat(64),
   hermesSourceProjectionSize: 128,
   environment: {
@@ -52,7 +56,103 @@ const input: HermesLaunchTicketInput = {
   },
 };
 
+function ticketInputForKey(platform: "win32" | "linux", key: string): HermesLaunchTicketInput {
+  const directoryId = createHash("sha256").update(key).digest("hex");
+  const root = platform === "win32"
+    ? `C:\\Ebb\\runtime\\hermes\\source-snapshots\\${directoryId}`
+    : `/home/user/.cache/hermes/source-snapshots/${directoryId}`;
+  if (platform === "win32") {
+    return {
+      ...input,
+      hermesSourceSnapshotKey: key,
+      hermesSourceSnapshotRoot: root,
+      hermesSourceProjectionPath: `${root}.native-v1.bin`,
+    };
+  }
+  const { profileHomeTargetIdentities: _targets, profileHomePathChain: _chain, ...linuxBase } = input;
+  return {
+    ...linuxBase,
+    platform: "linux",
+    hermesExecutablePath: "/opt/hermes/bin/hermes",
+    hermesExecutableIdentity: { platform: "linux", device: "1", inode: "2" },
+    executablePath: "/usr/bin/python3",
+    executableIdentity: { platform: "linux", device: "1", inode: "3" },
+    profileHome: "/home/user/.hermes/profiles/ebb-orchestrator-run",
+    profileHomeIdentity: { platform: "linux", device: "1", inode: "4" },
+    hermesSourceSnapshotKey: key,
+    hermesSourceSnapshotRoot: root,
+    hermesSourceSnapshotRootIdentity: { platform: "linux", device: "1", inode: "5" },
+    hermesSourceProjectionPath: `${root}.native-v1.bin`,
+    environment: {
+      HERMES_HOME: "/home/user/.hermes/profiles/ebb-orchestrator-run",
+      HOME: "/home/user/.hermes/profiles/ebb-orchestrator-run/home",
+      HERMES_CONFIG: "/home/user/.hermes/profiles/ebb-orchestrator-run/config.yaml",
+    },
+  };
+}
+
 describe("Hermes launch ticket", () => {
+  it("accepts a canonical Windows policy-v2 source identity", () => {
+    const key = JSON.stringify({
+      formatVersion: 1,
+      hermesVersion: "v0.21.5+7357.g9244275",
+      manifestDigest: "c".repeat(64),
+      materializationPolicyVersion: 2,
+      sourceCommit: "b".repeat(40),
+      sourceTree: "d".repeat(40),
+    });
+    const directoryId = createHash("sha256").update(key).digest("hex");
+    expect(createHermesLaunchTicket({
+      ...input,
+      hermesSourceSnapshotKey: key,
+      hermesSourceSnapshotRoot: `C:\\Ebb\\runtime\\hermes\\source-snapshots\\${directoryId}`,
+      hermesSourceProjectionPath: `C:\\Ebb\\runtime\\hermes\\source-snapshots\\${directoryId}.native-v1.bin`,
+    })).toBeDefined();
+  });
+
+  it("accepts the canonical legacy five-field source identity on Linux", () => {
+    const { profileHomeTargetIdentities: _targets, profileHomePathChain: _chain, ...linuxBase } = input;
+    const ticket = createHermesLaunchTicket({
+      ...linuxBase,
+      platform: "linux",
+      hermesExecutablePath: "/opt/hermes/bin/hermes",
+      hermesExecutableIdentity: { platform: "linux", device: "1", inode: "2" },
+      executablePath: "/usr/bin/python3",
+      executableIdentity: { platform: "linux", device: "1", inode: "3" },
+      profileHome: "/home/user/.hermes/profiles/ebb-orchestrator-run",
+      profileHomeIdentity: { platform: "linux", device: "1", inode: "4" },
+      hermesSourceSnapshotKey: sourceSnapshotKey,
+      hermesSourceSnapshotRoot: `/home/user/.cache/hermes/source-snapshots/${sourceSnapshotDirectoryId}`,
+      hermesSourceSnapshotRootIdentity: { platform: "linux", device: "1", inode: "5" },
+      hermesSourceProjectionPath: `/home/user/.cache/hermes/source-snapshots/${sourceSnapshotDirectoryId}.native-v1.bin`,
+      environment: {
+        HERMES_HOME: "/home/user/.hermes/profiles/ebb-orchestrator-run",
+        HOME: "/home/user/.hermes/profiles/ebb-orchestrator-run/home",
+        HERMES_CONFIG: "/home/user/.hermes/profiles/ebb-orchestrator-run/config.yaml",
+      },
+    });
+    expect(ticket).toBeDefined();
+  });
+
+  it.each([
+    { label: "legacy v1 on Windows", platform: "win32" as const, key: sourceSnapshotKey },
+    { label: "policy v2 on Linux", platform: "linux" as const, key: JSON.stringify({
+      formatVersion: 1, hermesVersion: "v0.21.5+7357.g9244275", manifestDigest: "c".repeat(64),
+      materializationPolicyVersion: 2, sourceCommit: "b".repeat(40), sourceTree: "d".repeat(40),
+    }) },
+    { label: "unsupported policy version", platform: "win32" as const, key: JSON.stringify({
+      formatVersion: 1, hermesVersion: "v0.21.5+7357.g9244275", manifestDigest: "c".repeat(64),
+      materializationPolicyVersion: 3, sourceCommit: "b".repeat(40), sourceTree: "d".repeat(40),
+    }) },
+    { label: "unknown identity field", platform: "win32" as const, key: JSON.stringify({
+      formatVersion: 1, hermesVersion: "v0.21.5+7357.g9244275", manifestDigest: "c".repeat(64),
+      materializationPolicyVersion: 2, sourceCommit: "b".repeat(40), sourceTree: "d".repeat(40), extra: true,
+    }) },
+  ])("rejects $label", ({ platform, key }) => {
+    expect(() => createHermesLaunchTicket(ticketInputForKey(platform, key)))
+      .toThrow("HERMES_LAUNCH_TICKET_INPUT_INVALID");
+  });
+
   it("rejects a missing ticket at the process launch boundary", () => {
     expect(() => consumeHermesLaunchTicket(undefined, {
       runId: input.runId, attempt: input.attempt, executable: input.executablePath,

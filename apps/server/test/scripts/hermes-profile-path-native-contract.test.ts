@@ -160,6 +160,60 @@ describe("native Hermes profile-path safe-path acceptance reporting", () => {
     expect(finishGc).not.toMatch(/chmod\(rootPath|removeChildrenNoFollow\(rootPath|unlink\((?:projectionPath|metadataPath|intentPath)/u);
   });
 
+  it("creates Windows projection aliases with a native protected DACL before Node opens them", () => {
+    const windowsProjectionGuard = /#ifdef _WIN32\s+bool validSourceStagingTempName\([\s\S]*?int createWindowsSourceProjectionTemp\([\s\S]*?\n\}\s+#endif/u.exec(nativeSource)?.[0] ?? "";
+    const createProjection = /int createWindowsSourceProjectionTemp\([\s\S]*?\n\}/u.exec(windowsProjectionGuard)?.[0] ?? "";
+    const projection = /async function ensureNativeProjection\([\s\S]*?\n\}/u.exec(snapshotSource)?.[0] ?? "";
+    const recovery = /async function recoverNativeProjectionAliases\([\s\S]*?\n\}/u.exec(snapshotSource)?.[0] ?? "";
+    expect(windowsProjectionGuard).not.toBe("");
+    expect(createProjection).toMatch(/validSourceProjectionTempName\(nameUtf8\)/u);
+    expect(createProjection).toMatch(/openWindowsDirectory\(cacheRoot, true, userSid, false, true, false, FILE_ADD_FILE\)/u);
+    expect(createProjection).toMatch(/createWindowsChildFileForWrite\(directory, name, descriptor, DELETE, &createStatus\)/u);
+    expect(createProjection).toMatch(/safeProtectedPrivateFileAcl\(file, userSid\)/u);
+    expect(createProjection).toMatch(/GetFileInformationByHandle\(file, &identity\)/u);
+    expect(createProjection).toMatch(/unowned temp/u);
+    expect(projection).toMatch(/"source-projection-create"/u);
+    expect(projection).toMatch(/open\(temporaryPath, process\.platform === "win32" \? "r\+" : "wx"/u);
+    expect(projection).toMatch(/sameExactFileIdentity\(nativeIdentity, openedIdentity\)/u);
+    expect(projection).toMatch(/sameExactFileIdentity\(nativeIdentity, exactIdentityFromStats\(named\)\)/u);
+    expect(projection).toMatch(/await handle\.writeFile\(bytes\)[\s\S]*?await handle\.sync\(\)[\s\S]*?await handle\.chmod\(0o400\)[\s\S]*?ownerPath/u);
+    expect(projection).not.toMatch(/open\(temporaryPath, "wx"/u);
+    expect(recovery).toMatch(/name\.startsWith\(ownerPrefix\) && !name\.endsWith\("\.owner"\) && !owners\.has\(name \+ "\.owner"\)\) throw snapshotError\(\)/u);
+    expect(recovery).toMatch(/sameExactFileIdentity\(exactIdentity, exactIdentityFromStats\(details\)\)/u);
+  });
+
+  it("creates Windows snapshot staging roots with a protected inheritable DACL and versioned cache identity", () => {
+    const stagingCreate = /int createWindowsSourceStagingDirectory\([\s\S]*?\n\}/u.exec(nativeSource)?.[0] ?? "";
+    const stagingAcl = /bool safeProtectedPrivateStagingDirectoryAcl\([\s\S]*?\n\}/u.exec(nativeSource)?.[0] ?? "";
+    const stageFactory = /async function createSnapshotStagingDirectory\([\s\S]*?\n\}/u.exec(snapshotSource)?.[0] ?? "";
+    const identityValidation = snapshotSource.slice(snapshotSource.indexOf("function validateMetadataAndKey("));
+    expect(stagingCreate).toMatch(/validSourceStagingTempName\(nameUtf8\)/u);
+    expect(nativeSource).toMatch(/source-staging-create[\s\S]*?createWindowsSourceStagingDirectory/u);
+    expect(nativeSource).toMatch(/FILE_CREATE/u);
+    expect(stagingCreate).toMatch(/D:P\(A;OICI;FA;;;/u);
+    expect(stagingCreate).toMatch(/createWindowsChildDirectory\(directory, name, descriptor/u);
+    expect(stagingCreate).toMatch(/safeProtectedPrivateStagingDirectoryAcl\(staging, userSid\)/u);
+    expect(stagingCreate).toMatch(/GetFileInformationByHandle\(staging, &identity\)/u);
+    expect(stagingAcl).toMatch(/SE_DACL_PROTECTED/u);
+    expect(stagingAcl).toMatch(/OBJECT_INHERIT_ACE \| CONTAINER_INHERIT_ACE/u);
+    expect(stagingAcl).toMatch(/ace->Mask == FILE_ALL_ACCESS/u);
+    expect(stageFactory).toMatch(/"source-staging-create"/u);
+    expect(stageFactory).toMatch(/open\(stageRoot, fsConstants\.O_RDONLY\)/u);
+    expect(stageFactory).toMatch(/sameExactFileIdentity\(nativeIdentity, exactIdentityFromStats\(opened\)\)/u);
+    expect(stageFactory).toMatch(/sameExactFileIdentity\(nativeIdentity, exactIdentityFromStats\(named\)\)/u);
+    expect(snapshotSource).toMatch(/materializationPolicyVersion: 2 as const/u);
+    expect(identityValidation).toMatch(/identity\.materializationPolicyVersion === 2/u);
+    expect(identityValidation).toMatch(/identityKeys/u);
+    expect(snapshotSource).toMatch(/hasSnapshotReferences\(metadata\.cacheKey\) !== true/u);
+    expect(snapshotSource).toMatch(/isReferencedLegacyWindowsSnapshot/u);
+    expect(snapshotSource).toMatch(/source-staging-recover/u);
+    expect(snapshotSource).toMatch(/sameStableFileIdentity\(expected, openedIdentity\)/u);
+    expect(snapshotSource).toMatch(/names\.length > 128/u);
+    expect(snapshotSource).toMatch(/process\.platform === "win32" \? \{ materializationPolicyVersion: 2 as const \} : \{\}/u);
+    expect(nativeAcceptanceScript).toMatch(/verifyWindowsSourceStagingDirectory/u);
+    expect(nativeAcceptanceScript).toMatch(/--source-staging-only/u);
+  });
+
   it("preflights the whole candidate before deletion and removes intent after every sidecar", () => {
     const gc = /int removeSnapshotGcTree\([\s\S]*?\n\}/u.exec(nativeSource)?.[0] ?? "";
     expect(gc).toMatch(/preflightDirectory\(preflightDirectory, rootHandle[\s\S]*?preflightSidecars\(\)[\s\S]*?for \(const auto& object : nodes\)/u);

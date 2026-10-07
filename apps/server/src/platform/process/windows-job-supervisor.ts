@@ -112,6 +112,12 @@ const SAFE_NATIVE_HELPER_FAILURE_CODES = new Set([
   "CHILD_JOB_BARRIER_UNAVAILABLE", "CHILD_JOB_MEMBERSHIP_UNPROVEN", "CHILD_RESUME_API_ERROR",
   "CHILD_RESUME_COUNT_GREATER_THAN_ONE", "CHILD_RESUME_COUNT_ZERO", "CHILD_STARTUP_FRAME_TOO_LARGE",
   "CHILD_STDIO_FAILED", "HERMES_TICKET_OBJECT_MISMATCH", "IDENTITY_OUTPUT_FAILED",
+  "LAUNCH_TICKET_EXECUTABLE_MISMATCH", "LAUNCH_TICKET_HERMES_MISMATCH",
+  "LAUNCH_TICKET_PROFILE_CHAIN_MISMATCH", "LAUNCH_TICKET_PROFILE_CHAIN_SHAPE_MISMATCH",
+  "LAUNCH_TICKET_PROFILE_PATH_BINDING_MISMATCH", "LAUNCH_TICKET_PROFILE_ROOT_UNSAFE",
+  "LAUNCH_TICKET_PROFILE_COMPONENT_UNSAFE", "LAUNCH_TICKET_PROFILE_TARGETS_MISMATCH",
+  "LAUNCH_TICKET_SOURCE_SNAPSHOT_MISMATCH", "LAUNCH_TICKET_SOURCE_SNAPSHOT_ROOT_UNSAFE",
+  "LAUNCH_TICKET_SOURCE_SNAPSHOT_PROJECTION_UNSAFE", "LAUNCH_TICKET_SOURCE_SNAPSHOT_TREE_MISMATCH",
   "JOB_ACCOUNTING_UNAVAILABLE", "JOB_ABSENT_HELPER_IDENTITY_MISSING", "JOB_ABSENT_HELPER_INVENTORY_UNAVAILABLE",
   "JOB_ABSENT_HELPER_STILL_LIVE", "JOB_ABSENT_LAUNCH_PENDING", "JOB_ABSENT_OWNER_STATE_UNKNOWN",
   "JOB_ABSENT_PREPARED_HAS_HELPER_IDENTITY", "JOB_CREATE_FAILED_OR_EXISTS", "JOB_OPEN_UNAVAILABLE",
@@ -119,6 +125,11 @@ const SAFE_NATIVE_HELPER_FAILURE_CODES = new Set([
   "LAUNCH_ACK_REJECTED", "LAUNCH_CONTROL_CHANNEL_LOST", "LAUNCH_FRAME_INVALID",
   "LAUNCH_PHASE_WRITE_FAILED", "MAPPING_CREATE_FAILED_OR_EXISTS", "MAPPING_OR_IDENTITY_UNAVAILABLE",
   "PAYLOAD_EXIT_STATUS_UNAVAILABLE", "PHASE_MAPPING_CREATE_FAILED", "PHASE_UNAVAILABLE",
+]);
+const SAFE_SNAPSHOT_TREE_DIAGNOSTIC_STAGES = new Set([
+  "PATH_ENUMERATION", "ENTRY_SHAPE", "FILE_ATTRIBUTES", "FILE_OPEN", "FILE_LINK_COUNT",
+  "FILE_SIZE", "FILE_DACL", "CONTENT_HASH", "CONTENT_MISMATCH", "ENUMERATION_END",
+  "ENUMERATION_COMPLETENESS", "PROJECTION_ENTRY_COLLISION",
 ]);
 const SAFE_NATIVE_HELPER_GATE_EXCEPTION_TYPES = new Set([
   "ArgumentException", "BadImageFormatException", "CryptographicException", "FileLoadException",
@@ -644,9 +655,12 @@ class HelperProtocol {
         ? bytes.subarray(0, bytes.byteLength - 1).toString("utf8")
         : bytes.toString("utf8");
       if (line.startsWith("UNKNOWN\t")) {
-        const code = line.slice("UNKNOWN\t".length);
+        const fields = line.slice("UNKNOWN\t".length).split("\t");
+        const code = fields[0]!;
         const safeCode = SAFE_NATIVE_HELPER_FAILURE_CODES.has(code) ? code : "INVALID_CODE";
-        this.rejectAll(`WINDOWS_HELPER_NATIVE_UNKNOWN:${safeCode}`);
+        const diagnosticStage = code === "LAUNCH_TICKET_SOURCE_SNAPSHOT_TREE_MISMATCH" && fields.length === 2 &&
+          SAFE_SNAPSHOT_TREE_DIAGNOSTIC_STAGES.has(fields[1]!) ? fields[1] : undefined;
+        this.rejectAll(`WINDOWS_HELPER_NATIVE_UNKNOWN:${safeCode}`, diagnosticStage);
         return;
       }
       if (!line.startsWith(waiter.prefix)) continue;
@@ -658,10 +672,12 @@ class HelperProtocol {
     }
   }
 
-  private rejectAll(code: string): void {
+  private rejectAll(code: string, diagnosticStage?: string): void {
+    const failure = new Error(code);
+    if (diagnosticStage) Object.defineProperty(failure, "diagnosticStage", { value: diagnosticStage, enumerable: false });
     for (const waiter of this.waiters.splice(0)) {
       clearTimeout(waiter.timer);
-      waiter.reject(new Error(code));
+      waiter.reject(failure);
     }
   }
 }

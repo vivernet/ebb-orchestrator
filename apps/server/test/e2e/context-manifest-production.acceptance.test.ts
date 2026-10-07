@@ -453,9 +453,9 @@ describe("production context manifest acceptance", () => {
     const recoveryProjectConfig = new ProjectConfigService(recoveryDb!, new ApprovalService(recoveryDb!));
     const inspectedOwners: Array<{ runId: string; containmentId: string; launchNonce: string }> = [];
     const recoverySupervisor = {
-      inspect: async (owner: { runId: string; containmentId: string; launchNonce: string }) => {
-        const stored = recoveryDb!.get<{ run_id: string; source_tag: string; state: string; containment_id: string; launch_nonce: string }>(
-          "SELECT run_id,source_tag,state,containment_id,launch_nonce FROM run_process_owners WHERE run_id=$runId",
+      inspect: async (owner: { runId: string; containmentId: string; launchNonce: string; containmentKind: string }) => {
+        const stored = recoveryDb!.get<{ run_id: string; source_tag: string; state: string; containment_id: string; launch_nonce: string; containment_kind: string }>(
+          "SELECT run_id,source_tag,state,containment_id,launch_nonce,containment_kind FROM run_process_owners WHERE run_id=$runId",
           { runId: owner.runId },
         );
         if (!stored || stored.run_id !== owner.runId || stored.source_tag !== `ebb-run:${owner.runId}` ||
@@ -463,7 +463,7 @@ describe("production context manifest acceptance", () => {
           return { state: "UNKNOWN" as const, reason: "TEST_IDENTITY_MISMATCH" };
         }
         inspectedOwners.push({ runId: owner.runId, containmentId: owner.containmentId, launchNonce: owner.launchNonce });
-        return { state: "STOPPED" as const, evidence: "TEST_SCOPE_EMPTY" };
+        return { state: "STOPPED" as const, evidence: owner.containmentKind === "windows-job" ? "WINDOWS_JOB_EMPTY" : "SYSTEMD_CGROUP_EMPTY" };
       },
       launch: async () => { throw new Error("restart acceptance must not launch an OS process"); },
       stop: async () => ({ state: "UNKNOWN" as const, reason: "NOT_USED" }),
@@ -515,9 +515,14 @@ describe("production context manifest acceptance", () => {
     expect(recoveryStatus.get()).toBe("READY");
     expect(db!.get<{ status: string }>("SELECT status FROM agent_runs WHERE id=$runId", { runId: interruptedChildRunId }))
       .toEqual({ status: "FAILED" });
-    expect(db!.get<{ state: string; stop_evidence: string }>(
-      "SELECT state,stop_evidence FROM run_process_owners WHERE run_id=$runId", { runId: interruptedChildRunId },
-    )).toEqual({ state: "STOPPED", stop_evidence: "TEST_SCOPE_EMPTY" });
+    const stoppedOwner = db!.get<{ state: string; stop_evidence: string; containment_kind: string }>(
+      "SELECT state,stop_evidence,containment_kind FROM run_process_owners WHERE run_id=$runId", { runId: interruptedChildRunId },
+    );
+    expect(stoppedOwner).toEqual({
+      state: "STOPPED",
+      stop_evidence: stoppedOwner?.containment_kind === "windows-job" ? "WINDOWS_JOB_EMPTY" : "SYSTEMD_CGROUP_EMPTY",
+      containment_kind: stoppedOwner?.containment_kind,
+    });
     expect(taskStageBeforeResume).toBe("DEVELOPMENT");
     const reconciliationRunId = phaseRunId(recoveryDb!, epicId, epicTaskId, "child_task_reconcile");
     expect(reconciliationRunId).not.toBe(interruptedChildRunId);

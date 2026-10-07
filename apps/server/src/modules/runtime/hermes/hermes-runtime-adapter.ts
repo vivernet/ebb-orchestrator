@@ -53,7 +53,7 @@ import { validatePlatform, type Platform } from "../../../platform/config/app-co
 import { resolveOrchestratorHome, type HomeEnv } from "../../../platform/home/orchestrator-home.js";
 import { ProcessScopeLaunchNotDispatchedError, type ProcessScopeLaunchRequest, type ProcessScopeSupervisor } from "../../../platform/process/run-scope-supervisor.js";
 import type { ProcessScopeIdentity, ProcessScopeObservation } from "../../../platform/process/process-inspector.js";
-import { getRunProcessOwner, isCanonicalRunProcessStopEvidence, prepareRunProcessOwner, transitionRunProcessOwnerTx, type RunProcessOwner, type RunProcessOwnerState } from "../run-process-owner.js";
+import { getRunProcessOwner, isAuthoritativeRunProcessStopEvidence, prepareRunProcessOwner, transitionRunProcessOwnerTx, type RunProcessOwner, type RunProcessOwnerState } from "../run-process-owner.js";
 
 /**
  * В памяти run state tracking.
@@ -150,6 +150,7 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
   private readonly databasePath: string | undefined;
   private readonly hermesSourceCacheRoot: string;
   private readonly mayCollectHermesSourceSnapshot: ((cacheKey: string) => Promise<boolean>) | undefined;
+  private readonly hasHermesSourceSnapshotReferences: ((cacheKey: string) => Promise<boolean>) | undefined;
   private readonly hermesSourceReferenceLock: ((input: { cacheRoot: string; mode: "shared" | "exclusive" }) => Promise<import("./hermes-source-reference-lock.js").HermesSourceReferenceLease>) | undefined;
   private readonly mcpCommand: string;
   private readonly mcpArgs: string[];
@@ -179,6 +180,7 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
       databasePath?: string;
       hermesSourceSnapshotCacheRoot?: string;
       mayCollectHermesSourceSnapshot?: (cacheKey: string) => Promise<boolean>;
+      hasHermesSourceSnapshotReferences?: (cacheKey: string) => Promise<boolean>;
       hermesSourceReferenceLock?: (input: { cacheRoot: string; mode: "shared" | "exclusive" }) => Promise<import("./hermes-source-reference-lock.js").HermesSourceReferenceLease>;
       mcpCommand?: string;
       mcpArgs?: string[];
@@ -212,6 +214,7 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
     this.hermesSourceCacheRoot = config?.hermesSourceSnapshotCacheRoot ??
       platformPaths.join(homePaths.runtime, "hermes", "source-snapshots");
     this.mayCollectHermesSourceSnapshot = config?.mayCollectHermesSourceSnapshot;
+    this.hasHermesSourceSnapshotReferences = config?.hasHermesSourceSnapshotReferences;
     this.hermesSourceReferenceLock = config?.hermesSourceReferenceLock;
     this.mcpCommand = config?.mcpCommand ?? "ebb-orchestrator-mcp";
     this.mcpArgs = config?.mcpArgs ?? [];
@@ -265,6 +268,9 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
         : {}),
       ...(this.mayCollectHermesSourceSnapshot
         ? { mayCollectSnapshot: this.mayCollectHermesSourceSnapshot }
+        : {}),
+      ...(this.hasHermesSourceSnapshotReferences
+        ? { hasSnapshotReferences: this.hasHermesSourceSnapshotReferences }
         : {}),
     });
     const paths = platform === "win32" ? path.win32 : path.posix;
@@ -746,7 +752,7 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
       return result;
     } catch (error) {
       if (control.cancelled && error instanceof ProcessScopeLaunchNotDispatchedError) {
-        if (durable) this.transitionOwner(owner, "LAUNCHING", "STOPPED", undefined, "NEVER_LAUNCHED");
+        if (durable) this.persistLaunchNotDispatched(owner.runId, error);
         control.stopProven = true;
         throw error;
       }
@@ -810,13 +816,50 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
     }
   }
 
+  private persistLaunchNotDispatched(runId: string, launchError: unknown): void {
+    if (!(launchError instanceof ProcessScopeLaunchNotDispatchedError)) {
+      throw new TypeError("A typed supervisor no-dispatch result is required.");
+    }
+    if (!this.databasePath) return;
+    const database = createSqliteDatabase(this.databasePath);
+    try {
+      database.transaction((tx) => {
+        const current = tx.get<{
+          state: string; stop_evidence: string | null; systemd_invocation_id: string | null;
+          systemd_control_group: string | null; supervisor_pid: number | null;
+          supervisor_start_identity: string | null; pid: number | null; platform: string | null;
+          process_start_identity: string | null; executable_identity: string | null;
+        }>(`SELECT state,stop_evidence,systemd_invocation_id,systemd_control_group,supervisor_pid,
+                   supervisor_start_identity,pid,platform,process_start_identity,executable_identity
+              FROM run_process_owners WHERE run_id=$runId`, { runId });
+        if (!current) throw new Error("RUN_PROCESS_OWNER_MISSING");
+        if (current.state !== "LAUNCHING" || current.stop_evidence !== null ||
+            current.systemd_invocation_id !== null || current.systemd_control_group !== null ||
+            current.supervisor_pid !== null || current.supervisor_start_identity !== null ||
+            current.pid !== null || current.platform !== null || current.process_start_identity !== null ||
+            current.executable_identity !== null) {
+          throw new Error("RUN_PROCESS_LAUNCH_NOT_DISPATCHED_STATE_INVALID");
+        }
+        tx.run(`UPDATE run_process_owners SET state='STOPPED',stop_evidence='LAUNCH_NOT_DISPATCHED',
+                  updated_at=$updatedAt WHERE run_id=$runId AND state='LAUNCHING' AND stop_evidence IS NULL`, {
+          runId, updatedAt: new Date().toISOString(),
+        });
+        if ((tx.get<{ changes: number }>("SELECT changes() AS changes")?.changes ?? 0) !== 1) {
+          throw new Error("RUN_PROCESS_OWNER_STATE_CHANGED");
+        }
+      });
+    } finally {
+      database.close();
+    }
+  }
+
   private persistStopped(owner: ProcessScopeIdentity, evidence: string): void {
     if (!this.databasePath) return;
     let state = this.readPersistedOwnerState(owner.runId);
     if (!state) throw new Error("RUN_PROCESS_OWNER_MISSING");
     if (state === "STOPPED") {
       const persisted = this.readPersistedOwner(owner.runId);
-      if (!persisted || !isCanonicalRunProcessStopEvidence(persisted.stopEvidence)) {
+      if (!persisted || !isAuthoritativeRunProcessStopEvidence(persisted.stopEvidence, persisted.containmentKind)) {
         throw new Error("RUN_PROCESS_STOP_PROOF_INVALID");
       }
       return;
@@ -828,7 +871,7 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
     this.transitionOwner(owner, state, "STOPPED", owner, evidence);
     const persisted = this.readPersistedOwner(owner.runId);
     if (!persisted || persisted.state !== "STOPPED" || persisted.stopEvidence !== evidence ||
-        !isCanonicalRunProcessStopEvidence(persisted.stopEvidence)) {
+        !isAuthoritativeRunProcessStopEvidence(persisted.stopEvidence, persisted.containmentKind)) {
       throw new Error("RUN_PROCESS_STOP_PROOF_PERSISTENCE_FAILED");
     }
   }
@@ -863,7 +906,7 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
         database.transaction((tx) => transitionRunProcessOwnerTx(tx, {
           runId, expectedState: "PREPARED", nextState: "STOPPED", evidence: "NEVER_LAUNCHED",
         }));
-      } else if (owner.state !== "STOPPED" || !isCanonicalRunProcessStopEvidence(owner.stopEvidence)) {
+      } else if (owner.state !== "STOPPED" || !isAuthoritativeRunProcessStopEvidence(owner.stopEvidence, owner.containmentKind)) {
         throw new Error("RUN_PROCESS_SCOPE_STOP_UNPROVEN");
       }
     } finally {
@@ -884,7 +927,7 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
     const database = createSqliteDatabase(this.databasePath);
     try {
       const owner = getRunProcessOwner(database, runId);
-      if (!owner || owner.state !== "STOPPED" || !isCanonicalRunProcessStopEvidence(owner.stopEvidence)) {
+      if (!owner || owner.state !== "STOPPED" || !isAuthoritativeRunProcessStopEvidence(owner.stopEvidence, owner.containmentKind)) {
         throw new Error("PROCESS_SCOPE_STOP_UNPROVEN");
       }
     } finally {
@@ -1364,9 +1407,30 @@ function isSupportedHermesNativeAuthSnapshot(
   }
   if (typeof identity !== "object" || identity === null || Array.isArray(identity)) return false;
   const snapshot = identity as Record<string, unknown>;
-  const expectedKeys = ["formatVersion", "hermesVersion", "manifestDigest", "sourceCommit", "sourceTree"];
+  const platform = currentHermesPlatform();
+  const expectedKeys = platform === "win32"
+    ? ["formatVersion", "hermesVersion", "manifestDigest", "materializationPolicyVersion", "sourceCommit", "sourceTree"]
+    : ["formatVersion", "hermesVersion", "manifestDigest", "sourceCommit", "sourceTree"];
+  const canonicalIdentity = platform === "win32"
+    ? {
+      formatVersion: snapshot.formatVersion,
+      hermesVersion: snapshot.hermesVersion,
+      manifestDigest: snapshot.manifestDigest,
+      materializationPolicyVersion: 2,
+      sourceCommit: snapshot.sourceCommit,
+      sourceTree: snapshot.sourceTree,
+    }
+    : {
+      formatVersion: snapshot.formatVersion,
+      hermesVersion: snapshot.hermesVersion,
+      manifestDigest: snapshot.manifestDigest,
+      sourceCommit: snapshot.sourceCommit,
+      sourceTree: snapshot.sourceTree,
+    };
   return JSON.stringify(Object.keys(snapshot)) === JSON.stringify(expectedKeys) &&
+    (platform !== "win32" || snapshot.materializationPolicyVersion === 2) &&
     JSON.stringify(snapshot) === sourceSnapshotKey && snapshot.formatVersion === 1 &&
+    JSON.stringify(canonicalIdentity) === sourceSnapshotKey &&
     snapshot.hermesVersion === HERMES_PROVIDER_SELECTION_SOURCE.version &&
     snapshot.sourceCommit === HERMES_PROVIDER_SELECTION_SOURCE.commit &&
     evidence.sourceVersion === snapshot.hermesVersion && evidence.sourceCommit === snapshot.sourceCommit &&

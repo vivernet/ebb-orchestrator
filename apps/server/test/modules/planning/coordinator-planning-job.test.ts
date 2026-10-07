@@ -100,7 +100,7 @@ describe("Coordinator planning background job", () => {
         const accepted = await runRef.current!.completionStore().accept(run.capabilityRef!, { runId: run.id, role: run.role, output: result });
         if (!accepted) throw new Error("test completion submission was rejected");
         db!.transaction((tx) => transitionRunProcessOwnerTx(tx, {
-          runId: run.id, expectedState: "PREPARED", nextState: "STOPPED", evidence: "TEST_SCOPE_EMPTY",
+          runId: run.id, expectedState: "PREPARED", nextState: "STOPPED", evidence: "NEVER_LAUNCHED",
         }));
       },
       resumeRun: async () => {},
@@ -200,7 +200,7 @@ describe("Coordinator planning background job", () => {
         : db!.get<{ run_id: string }>("SELECT run_id FROM planning_request_role_runs WHERE request_id=$requestId AND role=$role", { requestId, role: run.role });
       expect(requestBinding?.run_id).toBe(run.id);
       expect(db!.get<{ source_tag: string; state: string; stop_evidence: string | null }>("SELECT source_tag,state,stop_evidence FROM run_process_owners WHERE run_id=$id", { id: run.id }))
-        .toEqual({ source_tag: `ebb-run:${run.id}`, state: "STOPPED", stop_evidence: "TEST_SCOPE_EMPTY" });
+        .toEqual({ source_tag: `ebb-run:${run.id}`, state: "STOPPED", stop_evidence: "NEVER_LAUNCHED" });
     }
     expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM run_process_owners")?.count).toBe(3);
     expect(db!.get<{ status: string }>("SELECT status FROM planning_plans")?.status).toBe("PENDING");

@@ -25,7 +25,10 @@ import {
 } from "../../src/modules/runtime/hermes/hermes-source-snapshot-diagnostics.js";
 import type { ProcessScopeIdentity } from "../../src/platform/process/process-inspector.js";
 import { createPinnedGitFixture } from "../helpers/hermes-source-snapshot-acceptance-fixture.js";
-import { safeHermesProfileChainLaunchEvidence } from "../helpers/safe-hermes-profile-chain-message.js";
+import {
+  safeHermesLaunchFailureAssertionContext,
+  safeHermesProfileChainLaunchEvidence,
+} from "../helpers/safe-hermes-profile-chain-message.js";
 
 const enabled = process.env.EBB_RUN_NATIVE_SCOPE_ACCEPTANCE === "1" && process.platform === "win32";
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
@@ -73,33 +76,41 @@ describe.skipIf(!enabled)("Windows Hermes profile path-chain production integrat
     const marker = join(fixture.root, "must-not-run.marker");
     const args = ["-I", "-B", "-S", "-c", `from pathlib import Path; Path(${JSON.stringify(marker)}).write_text('ran')`];
     const ticket = await makeTicket(fixture, args);
+    expect(await verifyHermesProfileHomePathChain(fixture.profile, fixture.authRoot))
+      .toEqual(fixture.profileHomePathChain);
     const owner = prepareRunProcessOwner(fixture.runId, fixture.profile, "windows-job", fixture.snapshot.cacheKey);
     let publishedIdentity: Awaited<ReturnType<typeof ownerIdentity>> | undefined;
     let error: unknown;
     let completion: { exitCode: number; stderr: string; stdout: string } | undefined;
+    let aclMutationAttempted = false;
 
     try {
-      const handle = await supervisor.launch(ownerIdentity(owner), {
-        executable: fixture.python, args, cwd: fixture.root, environment: fixture.environment,
-        attempt: 1, hermesLaunchTicket: ticket, timeoutMs: 30_000,
-      }, async (identity) => {
-        publishedIdentity = identity;
-        observedJobIdentities.push(identity);
-        // This callback runs after CreateProcessW(CREATE_SUSPENDED) and before the nonce ACK.
-        await addForeignWriteAce(fixture.profile);
-      });
-      completion = await handle.completion;
-    } catch (caught) {
-      error = caught;
-    }
+      try {
+        const handle = await supervisor.launch(ownerIdentity(owner), {
+          executable: fixture.python, args, cwd: fixture.root, environment: fixture.environment,
+          attempt: 1, hermesLaunchTicket: ticket, timeoutMs: 30_000,
+        }, async (identity) => {
+          publishedIdentity = identity;
+          observedJobIdentities.push(identity);
+          // This callback runs after CreateProcessW(CREATE_SUSPENDED) and before the nonce ACK.
+          aclMutationAttempted = true;
+          await addForeignWriteAce(fixture.profile);
+        });
+        completion = await handle.completion;
+      } catch (caught) {
+        error = caught;
+      }
 
-    expect(publishedIdentity, "the production supervisor must publish the suspended Job identity").toBeDefined();
-    const stopped = await supervisor.waitForStopped(publishedIdentity!, 30_000);
-    expect(stopped.state, "native refusal must prove the entire Job stopped").toBe("STOPPED");
-    expect(await exists(marker), "the suspended child must not execute after the ACL changed").toBe(false);
-    const evidence = safeHermesProfileChainLaunchEvidence(error, completion?.stdout, completion?.stderr);
-    expect(evidence).toBe("HERMES_TICKET_OBJECT_MISMATCH");
-    await restorePrivateOwnerAcl(fixture.profile);
+      const launchFailureCode = safeHermesLaunchFailureAssertionContext(error);
+      expect(publishedIdentity, `the production supervisor must publish the suspended Job identity (${launchFailureCode})`).toBeDefined();
+      const stopped = await supervisor.waitForStopped(publishedIdentity!, 30_000);
+      expect(stopped.state, "native refusal must prove the entire Job stopped").toBe("STOPPED");
+      expect(await exists(marker), "the suspended child must not execute after the ACL changed").toBe(false);
+      const evidence = safeHermesProfileChainLaunchEvidence(error, completion?.stdout, completion?.stderr, completion?.exitCode);
+      expect(evidence, `native refusal evidence (${launchFailureCode})`).toBe("HERMES_TICKET_OBJECT_MISMATCH");
+    } finally {
+      if (aclMutationAttempted) await removeForeignWriteAce(fixture.profile);
+    }
   }, 180_000);
 
   it("fails closed when the captured Run leaf is missing and an attacker races to create it", async () => {
@@ -156,8 +167,10 @@ describe.skipIf(!enabled)("Windows Hermes profile path-chain production integrat
         expect(leafRaceOutcome).toBe("NATIVE_REJECTED_BEFORE_CREATOR");
       }
       expect(await exists(marker), "neither a missing nor impostor leaf may dispatch the payload").toBe(false);
-      expect(safeHermesProfileChainLaunchEvidence(error, completion?.stdout, completion?.stderr))
-        .toBe("HERMES_TICKET_OBJECT_MISMATCH");
+      const launchFailureCode = safeHermesLaunchFailureAssertionContext(error);
+      expect(safeHermesProfileChainLaunchEvidence(error, completion?.stdout, completion?.stderr, completion?.exitCode),
+        `missing-leaf refusal evidence (${launchFailureCode})`)
+        .toBe("LAUNCH_TICKET_PROFILE_COMPONENT_UNSAFE");
     } finally {
       await requireScopesStopped(launchedIdentities);
       if (await exists(fixture.profile)) await rmdir(fixture.profile);
@@ -196,8 +209,10 @@ describe.skipIf(!enabled)("Windows Hermes profile path-chain production integrat
       await rename(originalProfile, fixture.profile);
     }
     expect(await exists(marker), "the ticket must not authorize a replacement profile").toBe(false);
-    expect(safeHermesProfileChainLaunchEvidence(error, completion?.stdout, completion?.stderr))
-      .toBe("HERMES_TICKET_OBJECT_MISMATCH");
+    const launchFailureCode = safeHermesLaunchFailureAssertionContext(error);
+    expect(safeHermesProfileChainLaunchEvidence(error, completion?.stdout, completion?.stderr, completion?.exitCode),
+      `impostor-profile refusal evidence (${launchFailureCode})`)
+      .toBe("LAUNCH_TICKET_PROFILE_COMPONENT_UNSAFE");
   }, 180_000);
 
   it("rejects an ancestor rename and reparse substitution before payload dispatch", async () => {
@@ -226,8 +241,10 @@ describe.skipIf(!enabled)("Windows Hermes profile path-chain production integrat
         error = caught;
       }
       expect(await exists(marker), "a reparse substitution must not dispatch the payload").toBe(false);
-      expect(safeHermesProfileChainLaunchEvidence(error, completion?.stdout, completion?.stderr))
-        .toBe("HERMES_TICKET_OBJECT_MISMATCH");
+      const launchFailureCode = safeHermesLaunchFailureAssertionContext(error);
+      expect(safeHermesProfileChainLaunchEvidence(error, completion?.stdout, completion?.stderr, completion?.exitCode),
+        `ancestor-substitution refusal evidence (${launchFailureCode})`)
+        .toBe("LAUNCH_TICKET_PROFILE_COMPONENT_UNSAFE");
     } finally {
       await requireScopesStopped(launchedIdentities);
       if (junctionCreated) await rmdir(junctionPath);
@@ -487,7 +504,7 @@ describe.skipIf(!enabled)("Windows Hermes profile path-chain production integrat
       await writeFile(config, "provider-free native path acceptance\n");
       await setPrivateOwnerAcl([authRoot, join(authRoot, "profiles"), profile, home, config]);
       const python = await resolvePython();
-      const shim = join(root, `hermes-${runId}.exe`);
+      const shim = join(root, "hermes.exe");
       await writeFile(shim, "synthetic launcher identity; never executed\n");
       const pythonIdentity = await nativeIdentity(python, "file");
       const hermesIdentity = await nativeIdentity(shim, "file", fixtureParent);
@@ -668,34 +685,31 @@ async function setPrivateOwnerAcl(paths: string[]): Promise<void> {
 }
 
 async function addForeignWriteAce(path: string): Promise<void> {
-  const command = [
-    "$ErrorActionPreference='Stop';",
-    "$path=[Environment]::GetEnvironmentVariable('EBB_PROFILE_FIXTURE_PATH');",
-    "$acl=Get-Acl -LiteralPath $path;",
-    "$sid=[Security.Principal.SecurityIdentifier]::new('S-1-1-0');",
-    "$rule=[Security.AccessControl.FileSystemAccessRule]::new($sid,[Security.AccessControl.FileSystemRights]::WriteData,[Security.AccessControl.AccessControlType]::Allow);",
-    "$acl.AddAccessRule($rule); Set-Acl -LiteralPath $path -AclObject $acl;",
-  ].join(" ");
-  const powershell = join(process.env.SYSTEMROOT || "C:\\Windows", "System32/WindowsPowerShell/v1.0/powershell.exe");
-  execFileSync(powershell, ["-NoProfile", "-NonInteractive", "-Command", command], {
-    shell: false, windowsHide: true, env: { SYSTEMROOT: process.env.SYSTEMROOT || "C:\\Windows", EBB_PROFILE_FIXTURE_PATH: path },
-  });
+  runFixtureIccacls(path, "grant-foreign-write");
 }
 
-async function restorePrivateOwnerAcl(path: string): Promise<void> {
-  const command = [
-    "$ErrorActionPreference='Stop';",
-    "$path=[Environment]::GetEnvironmentVariable('EBB_PROFILE_FIXTURE_PATH');",
-    "$identity=[Security.Principal.WindowsIdentity]::GetCurrent().User;",
-    "$acl=Get-Acl -LiteralPath $path; $acl.SetAccessRuleProtection($true,$false);",
-    "foreach($entry in @($acl.Access)){ $acl.RemoveAccessRuleAll($entry) };",
-    "$acl.SetOwner($identity);",
-    "$rule=[Security.AccessControl.FileSystemAccessRule]::new($identity,[Security.AccessControl.FileSystemRights]::FullControl,[Security.AccessControl.AccessControlType]::Allow);",
-    "$acl.AddAccessRule($rule); Set-Acl -LiteralPath $path -AclObject $acl;",
-  ].join(" ");
-  const powershell = join(process.env.SYSTEMROOT || "C:\\Windows", "System32/WindowsPowerShell/v1.0/powershell.exe");
-  execFileSync(powershell, ["-NoProfile", "-NonInteractive", "-Command", command], {
-    shell: false, windowsHide: true, env: { SYSTEMROOT: process.env.SYSTEMROOT || "C:\\Windows", EBB_PROFILE_FIXTURE_PATH: path },
+async function removeForeignWriteAce(path: string): Promise<void> {
+  // The fixture was initialized with a protected owner-only DACL. Remove only the one
+  // explicit Everyone grant this test may have added; do not touch owner, inheritance, or ACLs above.
+  runFixtureIccacls(path, "remove-foreign-grants");
+}
+
+type FixtureIccaclsOperation = "grant-foreign-write" | "remove-foreign-grants";
+
+function buildFixtureIccaclsInvocation(path: string, operation: FixtureIccaclsOperation): { executable: string; args: string[] } {
+  const executable = join(process.env.SYSTEMROOT || "C:\\Windows", "System32", "icacls.exe");
+  const args = operation === "grant-foreign-write"
+    ? [path, "/grant", "*S-1-1-0:(WD)"]
+    : [path, "/remove:g", "*S-1-1-0"];
+  return { executable, args };
+}
+
+function runFixtureIccacls(path: string, operation: FixtureIccaclsOperation): void {
+  const invocation = buildFixtureIccaclsInvocation(path, operation);
+  execFileSync(invocation.executable, invocation.args, {
+    shell: false,
+    windowsHide: true,
+    env: { SYSTEMROOT: process.env.SYSTEMROOT || "C:\\Windows" },
   });
 }
 
@@ -815,3 +829,19 @@ function safeNativeDiagnostic(error: unknown): string {
     ? message
     : "SECONDARY_PATH_IDENTITY_UNAVAILABLE";
 }
+
+describe("Hermes profile-chain fixture ACL command construction", () => {
+  it("targets one exact profile path with a DACL-only Everyone grant and matching cleanup", () => {
+    const target = "C:\\fixture root\\profiles\\run profile";
+    const grant = buildFixtureIccaclsInvocation(target, "grant-foreign-write");
+    const cleanup = buildFixtureIccaclsInvocation(target, "remove-foreign-grants");
+
+    expect(grant.args).toEqual([target, "/grant", "*S-1-1-0:(WD)"]);
+    expect(cleanup.args).toEqual([target, "/remove:g", "*S-1-1-0"]);
+    expect(grant.executable).toMatch(/[\\/]system32[\\/]icacls\.exe$/iu);
+    expect(cleanup.executable).toBe(grant.executable);
+    expect([...grant.args, ...cleanup.args]).not.toContain("/T");
+    expect([...grant.args, ...cleanup.args]).not.toContain("/inheritance:r");
+    expect([...grant.args, ...cleanup.args].some((argument) => /\(OI\)|\(CI\)/u.test(argument))).toBe(false);
+  });
+});

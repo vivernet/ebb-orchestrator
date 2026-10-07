@@ -5,7 +5,10 @@ import { join } from "node:path";
 import { ExitCodeError } from "../../../src/platform/process/process-executor.js";
 import { materializeHermesSourceSnapshot } from "../../../src/modules/runtime/hermes/hermes-source-snapshot.js";
 import { createPinnedGitFixture } from "../../helpers/hermes-source-snapshot-acceptance-fixture.js";
-import { safeHermesProfileChainLaunchEvidence } from "../../helpers/safe-hermes-profile-chain-message.js";
+import {
+  safeHermesLaunchFailureAssertionContext,
+  safeHermesProfileChainLaunchEvidence,
+} from "../../helpers/safe-hermes-profile-chain-message.js";
 import {
   sanitizeHermesPathIdentityDiagnostic,
   withHermesSourceSnapshotFailureObserver,
@@ -115,10 +118,11 @@ describe("Hermes source snapshot diagnostics", () => {
     expect(diagnostic).not.toMatch(/private|secret|arbitrary/iu);
   });
 
-  it("accepts only exact native tokens and discards secret-bearing errors and payload output", () => {
+  it("accepts only exact in-process errors and discards untrusted payload output", () => {
     const expectedError = safeHermesProfileChainLaunchEvidence(new Error("HERMES_TICKET_OBJECT_MISMATCH"));
     const expectedStdout = safeHermesProfileChainLaunchEvidence(undefined, "\r\nHERMES_TICKET_OBJECT_MISMATCH\r\n");
     const expectedStderr = safeHermesProfileChainLaunchEvidence(undefined, "", "HERMES_TICKET_OBJECT_MISMATCH\n");
+    const bareTokenWithNativeExit = safeHermesProfileChainLaunchEvidence(undefined, "HERMES_TICKET_OBJECT_MISMATCH", "", 3);
     const substringWithSecrets = safeHermesProfileChainLaunchEvidence(new Error(
       "C:\\private\\powershell.exe --encoded SECRET HERMES_TICKET_OBJECT_MISMATCH OPENAI_API_KEY=secret",
     ));
@@ -129,11 +133,114 @@ describe("Hermes source snapshot diagnostics", () => {
     );
 
     expect(expectedError).toBe("HERMES_TICKET_OBJECT_MISMATCH");
-    expect(expectedStdout).toBe("HERMES_TICKET_OBJECT_MISMATCH");
-    expect(expectedStderr).toBe("HERMES_TICKET_OBJECT_MISMATCH");
+    expect(expectedStdout).toBe("UNEXPECTED_LAUNCH_FAILURE");
+    expect(expectedStderr).toBe("UNEXPECTED_LAUNCH_FAILURE");
+    expect(bareTokenWithNativeExit).toBe("UNEXPECTED_LAUNCH_FAILURE");
     expect(substringWithSecrets).toBe("UNEXPECTED_LAUNCH_FAILURE");
     expect(substringWithSecrets).not.toMatch(/private|powershell|SECRET|OPENAI_API_KEY|secret/iu);
     expect(pathAndCommandPayload).toBe("UNEXPECTED_LAUNCH_FAILURE");
     expect(pathAndCommandPayload).not.toMatch(/private|payload|token|SECRET|credential|provider/iu);
+  });
+
+  it("accepts the exact native UNKNOWN record only with exit code 3", () => {
+    const record = "UNKNOWN\tHERMES_TICKET_OBJECT_MISMATCH";
+    for (const output of [record, `${record}\n`, `${record}\r\n`]) {
+      expect(safeHermesProfileChainLaunchEvidence(undefined, output, "", 3))
+        .toBe("HERMES_TICKET_OBJECT_MISMATCH");
+    }
+    for (const exitCode of [undefined, 0, 2, 4, 255]) {
+      expect(safeHermesProfileChainLaunchEvidence(undefined, record, "", exitCode))
+        .toBe("UNEXPECTED_LAUNCH_FAILURE");
+    }
+    for (const output of [
+      `\n${record}`,
+      `${record}\n\n`,
+      `${record}\nextra`,
+      `prefix${record}`,
+      `${record}suffix`,
+      "UNKNOWN\tSECRET_EXFILTRATION",
+      `C:\\private\\payload.exe\n${record}`,
+    ]) {
+      expect(safeHermesProfileChainLaunchEvidence(undefined, output, "", 3))
+        .toBe("UNEXPECTED_LAUNCH_FAILURE");
+    }
+  });
+
+  it("accepts only the exact trusted in-process native wrapper code", () => {
+    const exactWrapper = new Error("WINDOWS_HELPER_NATIVE_UNKNOWN:HERMES_TICKET_OBJECT_MISMATCH");
+    const forgedWrapper = new Error("WINDOWS_HELPER_NATIVE_UNKNOWN:SECRET_EXFILTRATION");
+    const otherNativeCode = new Error("WINDOWS_HELPER_NATIVE_UNKNOWN:LAUNCH_TICKET_EXECUTABLE_MISMATCH");
+    const prefixed = new Error("prefix WINDOWS_HELPER_NATIVE_UNKNOWN:HERMES_TICKET_OBJECT_MISMATCH");
+    const suffixed = new Error("WINDOWS_HELPER_NATIVE_UNKNOWN:HERMES_TICKET_OBJECT_MISMATCH extra");
+
+    expect(safeHermesProfileChainLaunchEvidence(exactWrapper)).toBe("HERMES_TICKET_OBJECT_MISMATCH");
+    for (const error of [forgedWrapper, otherNativeCode, prefixed, suffixed]) {
+      expect(safeHermesProfileChainLaunchEvidence(error)).toBe("UNEXPECTED_LAUNCH_FAILURE");
+    }
+  });
+
+  it("preserves the component-unsafe native refusal without relabeling other wrapper codes", () => {
+    const componentUnsafe = new Error("WINDOWS_HELPER_NATIVE_UNKNOWN:LAUNCH_TICKET_PROFILE_COMPONENT_UNSAFE");
+    const unrelatedSafeCode = new Error("WINDOWS_HELPER_NATIVE_UNKNOWN:LAUNCH_TICKET_EXECUTABLE_MISMATCH");
+    const forgedCode = new Error("WINDOWS_HELPER_NATIVE_UNKNOWN:SECRET_EXFILTRATION");
+
+    expect(safeHermesProfileChainLaunchEvidence(componentUnsafe)).toBe("LAUNCH_TICKET_PROFILE_COMPONENT_UNSAFE");
+    expect(safeHermesProfileChainLaunchEvidence(unrelatedSafeCode)).toBe("UNEXPECTED_LAUNCH_FAILURE");
+    expect(safeHermesProfileChainLaunchEvidence(forgedCode)).toBe("UNEXPECTED_LAUNCH_FAILURE");
+  });
+
+  it("adds only an allowlisted non-enumerable stage to test assertion context", () => {
+    const stableCode = "WINDOWS_HELPER_NATIVE_UNKNOWN:LAUNCH_TICKET_SOURCE_SNAPSHOT_TREE_MISMATCH";
+    const withStage = new Error(stableCode);
+    Object.defineProperty(withStage, "diagnosticStage", { value: "FILE_DACL", enumerable: false });
+    const forgedStage = new Error(stableCode);
+    Object.defineProperty(forgedStage, "diagnosticStage", { value: "C:\\private\\secret", enumerable: false });
+
+    expect(safeHermesLaunchFailureAssertionContext(withStage)).toBe(`${stableCode}:FILE_DACL`);
+    expect(Object.keys(withStage)).not.toContain("diagnosticStage");
+    expect(safeHermesLaunchFailureAssertionContext(forgedStage)).toBe(stableCode);
+    expect(safeHermesLaunchFailureAssertionContext(new Error("provider secret")))
+      .toBe("UNEXPECTED_LAUNCH_FAILURE:name=Error");
+  });
+
+  it("rejects forged code-shaped messages and bounds cause metadata depth", () => {
+    const forgedCode = new Error("WINDOWS_HELPER_NATIVE_UNKNOWN:SECRET_EXFILTRATION");
+    const deepest = Object.assign(new Error("hidden fourth cause"), { status: 4 });
+    const third = Object.assign(new Error("hidden third cause"), { cause: deepest });
+    const second = Object.assign(new Error("hidden second cause"), { cause: third });
+    const first = Object.assign(new Error("hidden first cause"), { cause: second });
+
+    const forgedContext = safeHermesLaunchFailureAssertionContext(forgedCode);
+    const boundedContext = safeHermesLaunchFailureAssertionContext(first);
+
+    expect(forgedContext).toBe("UNEXPECTED_LAUNCH_FAILURE:name=Error");
+    expect(forgedContext).not.toContain("SECRET_EXFILTRATION");
+    expect(boundedContext).toBe("UNEXPECTED_LAUNCH_FAILURE:name=Error:cause:name=Error:cause:name=Error");
+    expect(boundedContext).not.toContain("status=4");
+    expect(boundedContext).not.toMatch(/hidden|fourth|third|second|first/iu);
+  });
+
+  it("exposes only allowlisted process failure metadata and redacts messages and paths", () => {
+    const childFailure = Object.assign(new Error("C:\\private\\secret\nAPI_KEY=hidden"), {
+      status: 5,
+      code: "EPERM",
+      stdout: "raw stdout secret",
+      stderr: "raw stderr token",
+      path: "C:\\private\\icacls.exe",
+    });
+    const unknownFailure = Object.assign(new Error("private payload"), {
+      status: 999,
+      code: "C:\\private\\secret",
+      name: "CredentialError",
+      path: "C:\\private\\tool.exe",
+    });
+
+    const childContext = safeHermesLaunchFailureAssertionContext(childFailure);
+    const unknownContext = safeHermesLaunchFailureAssertionContext(unknownFailure);
+    expect(childContext).toBe("UNEXPECTED_LAUNCH_FAILURE:name=Error,status=5,code=EPERM");
+    expect(unknownContext).toBe("UNEXPECTED_LAUNCH_FAILURE:name=Error");
+    for (const context of [childContext, unknownContext]) {
+      expect(context).not.toMatch(/private|secret|API_KEY|stdout|stderr|payload|icacls|credential/iu);
+    }
   });
 });

@@ -47,7 +47,7 @@ class IntegrationRuntime implements AgentRuntime {
     };
     if (!run.capabilityRef || !(await this.completion.accept(run.capabilityRef, { runId: run.id, role: run.role, output }))) throw new Error("completion rejected");
     this.db.transaction((tx) => transitionRunProcessOwnerTx(tx, {
-      runId: run.id, expectedState: "PREPARED", nextState: "STOPPED", evidence: "FAKE_SUPERVISOR_STOPPED",
+      runId: run.id, expectedState: "PREPARED", nextState: "STOPPED", evidence: "NEVER_LAUNCHED",
     }));
   }
   async collectResult(runId: string): Promise<RunOutcome> { const output = this.completion.getSubmission(runId)?.output ?? ""; return { success: true, exitCode: 0, output, validatedSubmission: true, diagnostics: { runId, sessionId: null, stderr: "", exitCode: 0, artifactReferences: [] } }; }
@@ -174,7 +174,7 @@ describe("EpicOrchestrator child integration wiring", () => {
         const owner = db.get<{ source_tag: string; state: string; stop_evidence: string | null }>("SELECT source_tag,state,stop_evidence FROM run_process_owners WHERE run_id=$runId", { runId });
         expect(persisted?.prompt).toBe(runtime.prompts[index]);
         expect(manifest).toMatchObject({ prompt_hash: digestRunPromptBytesV1(new TextEncoder().encode(runtime.prompts[index] ?? "")), subject_type: index === 0 ? "TASK" : "EPIC", role: "integration" });
-        expect(owner).toMatchObject({ source_tag: `ebb-run:${runId}`, state: "STOPPED", stop_evidence: "FAKE_SUPERVISOR_STOPPED" });
+        expect(owner).toMatchObject({ source_tag: `ebb-run:${runId}`, state: "STOPPED", stop_evidence: "NEVER_LAUNCHED" });
       }
       expect(approvedConfig.revisionId).toMatch(/^[0-9a-f-]{36}$/);
       expect(runtime.prompts[0]).toContain("Goal: Task delivers the distinct persistence boundary");

@@ -239,6 +239,160 @@ async function verifySourceCacheLease(root) {
   }
 }
 
+function verifyWindowsSourceProjectionTemp(root) {
+  assert.equal(process.platform, "win32", "source projection DACL fixture is Windows-only");
+  const directoryId = createHash("sha256").update(randomUUID()).digest("hex");
+  const nonce = randomUUID();
+  const name = `.projection-${directoryId}-${nonce}`;
+  const target = join(root, name);
+  const beforeRootAcl = execFileSync("icacls.exe", [root], { encoding: "utf8", windowsHide: true });
+  const created = invoke(["source-projection-create", root, name]);
+  assert.equal(created.error, undefined, "native secure projection create should start");
+  assert.equal(created.status, 0, "native secure projection create should succeed");
+  assert.equal(created.stderr, "", "native secure projection create must not emit diagnostics");
+  const identity = JSON.parse(created.stdout);
+  assert.deepEqual(Object.keys(identity).sort(), ["dev", "ino"]);
+  assert.match(identity.dev, /^(?:0|[1-9]\d{0,23})$/u);
+  assert.match(identity.ino, /^(?:0|[1-9]\d{0,23})$/u);
+  const details = statSync(target, { bigint: true });
+  assert.equal(details.isFile(), true);
+  assert.equal(String(details.dev), identity.dev, "native returned volume identity must match Node handle identity");
+  assert.equal(String(details.ino), identity.ino, "native returned file identity must match Node handle identity");
+  assert.equal(details.size, 0n, "native helper must create only an empty secured file");
+
+  const collision = invoke(["source-projection-create", root, name]);
+  assert.equal(collision.error, undefined, "native collision probe should start");
+  assert.equal(collision.status, 11, "native helper must fail closed on FILE_CREATE collision");
+  assert.equal(collision.stdout, "", "collision must not claim an existing file identity");
+  assert.equal(collision.stderr, "", "collision must not disclose diagnostics");
+  assert.equal(statSync(target, { bigint: true }).size, 0n, "collision must preserve the existing file");
+  assert.equal(execFileSync("icacls.exe", [root], { encoding: "utf8", windowsHide: true }), beforeRootAcl,
+    "creating a projection file must not change cacheRoot ACL");
+  unlinkSync(target);
+}
+
+function verifyWindowsSourceStagingDirectory(root) {
+  assert.equal(process.platform, "win32", "source staging DACL fixture is Windows-only");
+  const directoryId = createHash("sha256").update(randomUUID()).digest("hex");
+  const nonce = randomUUID();
+  const name = `.staging-${directoryId}-${nonce}`;
+  const target = join(root, name);
+  const beforeRootAcl = execFileSync("icacls.exe", [root], { encoding: "utf8", windowsHide: true });
+  const created = invoke(["source-staging-create", root, name]);
+  assert.equal(created.error, undefined, "native secure staging create should start");
+  assert.equal(created.status, 0, "native secure staging create should succeed");
+  assert.equal(created.stderr, "", "native secure staging create must not emit diagnostics");
+  const identity = JSON.parse(created.stdout);
+  assert.deepEqual(Object.keys(identity).sort(), ["dev", "ino"]);
+  assert.match(identity.dev, /^(?:0|[1-9]\d{0,23})$/u);
+  assert.match(identity.ino, /^(?:0|[1-9]\d{0,23})$/u);
+  const details = statSync(target, { bigint: true });
+  assert.equal(details.isDirectory(), true);
+  assert.equal(String(details.dev), identity.dev, "native volume identity must match the opened directory identity");
+  assert.equal(String(details.ino), identity.ino, "native file identity must match the opened directory identity");
+
+  const collision = invoke(["source-staging-create", root, name]);
+  assert.equal(collision.error, undefined, "native collision probe should start");
+  assert.equal(collision.status, 11, "native helper must fail closed on FILE_CREATE collision");
+  assert.equal(collision.stdout, "", "collision must not claim an existing directory identity");
+  assert.equal(collision.stderr, "", "collision must not disclose diagnostics");
+  assert.equal(String(statSync(target, { bigint: true }).ino), identity.ino, "collision must preserve the existing directory");
+
+  const nestedDirectory = join(target, "nested");
+  const nestedFile = join(nestedDirectory, "probe.txt");
+  mkdirSync(nestedDirectory);
+  writeFileSync(nestedFile, "fixture\n", { flag: "wx" });
+  const powershell = join(process.env.SYSTEMROOT || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  const aclProbe = [
+    "$ErrorActionPreference='Stop';",
+    "$owner=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value;",
+    "$rootPath=[System.Environment]::GetEnvironmentVariable('EBB_HERMES_PROFILE_TEST_ROOT');",
+    "$paths=@($rootPath,(Join-Path $rootPath 'nested'),(Join-Path $rootPath 'nested\\probe.txt'));",
+    "$rows=@(); foreach($path in $paths){$acl=Get-Acl -LiteralPath $path;$rules=@($acl.Access);$rows+=@{owner=$acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value;protected=$acl.AreAccessRulesProtected;rules=@($rules|ForEach-Object {@{sid=$_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value;allow=($_.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Allow);inherited=$_.IsInherited;rights=[int]$_.FileSystemRights;inherit=[int]$_.InheritanceFlags;propagation=[int]$_.PropagationFlags}})}};",
+    "[pscustomobject]@{expectedOwner=$owner;rows=$rows}|ConvertTo-Json -Depth 8 -Compress;",
+  ].join(" ");
+  const aclResult = spawnSync(powershell, ["-NoProfile", "-NonInteractive", "-Command", aclProbe], {
+    cwd: serverDirectory,
+    env: { ...childEnvironment, EBB_HERMES_PROFILE_TEST_ROOT: target },
+    encoding: "utf8",
+    shell: false,
+    timeout: 5_000,
+    windowsHide: true,
+    maxBuffer: 8_192,
+  });
+  assert.equal(aclResult.error, undefined, "staging ACL verifier should start");
+  assert.equal(aclResult.status, 0, `staging ACL verifier should succeed: ${String(aclResult.stderr || "").trim()}`);
+  const acl = JSON.parse(String(aclResult.stdout).trim());
+  assert.equal(acl.rows.length, 3);
+  assert.equal(acl.rows[0].owner, acl.expectedOwner);
+  assert.equal(acl.rows[0].protected, true, "staging root DACL must be protected");
+  assert.equal(acl.rows[0].rules.length, 1, "staging root has exactly one allow ACE");
+  assert.equal(acl.rows[0].rules[0].sid, acl.expectedOwner);
+  assert.equal(acl.rows[0].rules[0].allow, true);
+  assert.equal(acl.rows[0].rules[0].inherited, false);
+  assert.equal(acl.rows[0].rules[0].inherit, 3, "staging ACE inherits to files and directories");
+  assert.equal(acl.rows[0].rules[0].propagation, 0);
+  assert.equal(acl.rows[0].rules[0].rights, 0x001f01ff, "staging ACE grants exactly FILE_ALL_ACCESS");
+  for (const child of acl.rows.slice(1)) {
+    assert.equal(child.owner, acl.expectedOwner);
+    assert.equal(child.protected, false, "nested DACL must inherit from the secured staging root");
+    assert.equal(child.rules.length, 1);
+    assert.equal(child.rules[0].sid, acl.expectedOwner);
+    assert.equal(child.rules[0].allow, true);
+    assert.equal(child.rules[0].inherited, true);
+  }
+  assert.equal(execFileSync("icacls.exe", [root], { encoding: "utf8", windowsHide: true }), beforeRootAcl,
+    "creating a staging directory must not change cacheRoot ACL");
+  rmSync(target, { recursive: true, force: false });
+
+  const orphanName = `.staging-${createHash("sha256").update(randomUUID()).digest("hex")}-${randomUUID()}`;
+  const orphanPath = join(root, orphanName);
+  const orphan = invoke(["source-staging-create", root, orphanName]);
+  assert.equal(orphan.status, 0, "fixture creates an empty native staging orphan before owner evidence");
+  const orphanIdentity = JSON.parse(orphan.stdout);
+  const recovered = invoke(["source-staging-recover", root, orphanName, orphanIdentity.dev, orphanIdentity.ino]);
+  assert.equal(recovered.status, 0, "native recovery removes only the exact empty protected orphan by handle");
+  assert.equal(recovered.stdout, "");
+  assert.equal(recovered.stderr, "");
+  assert.equal(existsSync(orphanPath), false);
+
+  const replacementName = `.staging-${createHash("sha256").update(randomUUID()).digest("hex")}-${randomUUID()}`;
+  const replacementPath = join(root, replacementName);
+  const replacement = invoke(["source-staging-create", root, replacementName]);
+  assert.equal(replacement.status, 0);
+  const replacementIdentity = JSON.parse(replacement.stdout);
+  rmSync(replacementPath, { recursive: true, force: false });
+  const replacementAgain = invoke(["source-staging-create", root, replacementName]);
+  assert.equal(replacementAgain.status, 0, "the exact staging name can be reused only after the old object is gone");
+  const replacementAgainIdentity = JSON.parse(replacementAgain.stdout);
+  assert.notDeepEqual(replacementAgainIdentity, replacementIdentity, "replacement fixture must have a distinct native identity");
+  const mismatched = invoke(["source-staging-recover", root, replacementName, replacementIdentity.dev, replacementIdentity.ino]);
+  assert.notEqual(mismatched.status, 0, "a stale identity must not remove a replacement at the same name");
+  assert.equal(statSync(replacementPath, { bigint: true }).isDirectory(), true);
+
+  const populatedName = `.staging-${createHash("sha256").update(randomUUID()).digest("hex")}-${randomUUID()}`;
+  const populatedPath = join(root, populatedName);
+  const populated = invoke(["source-staging-create", root, populatedName]);
+  assert.equal(populated.status, 0);
+  const populatedIdentity = JSON.parse(populated.stdout);
+  mkdirSync(join(populatedPath, "child"));
+  const populatedResult = invoke(["source-staging-recover", root, populatedName, populatedIdentity.dev, populatedIdentity.ino]);
+  assert.notEqual(populatedResult.status, 0, "populated staging must remain fail-closed");
+  assert.equal(existsSync(join(populatedPath, "child")), true);
+
+  const ownedName = `.staging-${createHash("sha256").update(randomUUID()).digest("hex")}-${randomUUID()}`;
+  const ownedPath = join(root, ownedName);
+  const owned = invoke(["source-staging-create", root, ownedName]);
+  assert.equal(owned.status, 0);
+  const ownedIdentity = JSON.parse(owned.stdout);
+  writeFileSync(ownedPath + ".owner", "owner marker", { flag: "wx" });
+  const ownerPresent = invoke(["source-staging-recover", root, ownedName, ownedIdentity.dev, ownedIdentity.ino]);
+  assert.notEqual(ownerPresent.status, 0, "recovery must not remove a directory after owner evidence exists");
+  assert.equal(existsSync(ownedPath), true);
+  assert.equal(execFileSync("icacls.exe", [root], { encoding: "utf8", windowsHide: true }), beforeRootAcl,
+    "staging orphan recovery must not change cacheRoot ACL");
+}
+
 function makeWindowsFixtureWorldWritable(directory) {
   const powershell = join(process.env.SYSTEMROOT || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   const command = [
@@ -928,7 +1082,41 @@ function verifySourceCacheGcInventoryBoundary(root) {
 
 if (process.platform === "win32") verifyWindowsAncestorAclPolicyUnit();
 
-if (process.argv.includes("--path-chain-only")) {
+if (process.argv.includes("--source-staging-only")) {
+  let primaryError;
+  try {
+    if (process.platform !== "win32") throw new Error("HERMES_SOURCE_STAGING_TEST_WINDOWS_ONLY");
+    makeWindowsFixturePrivate(canonicalSandbox);
+    verifyWindowsSourceStagingDirectory(canonicalSandbox);
+  } catch (error) {
+    primaryError = error;
+  } finally {
+    try { rmSync(canonicalSandbox, { recursive: true, force: true }); }
+    catch (cleanupError) {
+      if (primaryError) process.stderr.write(`Native staging fixture cleanup also failed: ${String(cleanupError)}\n`);
+      else primaryError = cleanupError;
+    }
+  }
+  if (primaryError) throw primaryError;
+  process.stdout.write("Native Windows source staging directory contract passed.\n");
+} else if (process.argv.includes("--source-projection-only")) {
+  let primaryError;
+  try {
+    if (process.platform !== "win32") throw new Error("HERMES_SOURCE_PROJECTION_TEST_WINDOWS_ONLY");
+    makeWindowsFixturePrivate(canonicalSandbox);
+    verifyWindowsSourceProjectionTemp(canonicalSandbox);
+  } catch (error) {
+    primaryError = error;
+  } finally {
+    try { rmSync(canonicalSandbox, { recursive: true, force: true }); }
+    catch (cleanupError) {
+      if (primaryError) process.stderr.write(`Native projection fixture cleanup also failed: ${String(cleanupError)}\n`);
+      else primaryError = cleanupError;
+    }
+  }
+  if (primaryError) throw primaryError;
+  process.stdout.write("Native Windows source projection temp contract passed.\n");
+} else if (process.argv.includes("--path-chain-only")) {
   let primaryError;
   try {
     if (process.platform !== "win32") throw new Error("HERMES_PROFILE_PATH_CHAIN_TEST_WINDOWS_ONLY");

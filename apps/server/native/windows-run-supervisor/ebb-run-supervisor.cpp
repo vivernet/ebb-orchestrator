@@ -15,6 +15,7 @@
 #include <sddl.h>
 #include <io.h>
 #include <fcntl.h>
+#include "../hermes-profile-path/hermes-profile-path-acl-policy.h"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -602,22 +603,49 @@ bool openSnapshotRootChain(const LaunchMetadata& metadata, std::vector<Handle>* 
   return handles->size() > 0;
 }
 
+void setSnapshotTreeFailureStage(const char** failureStage, const char* stage) {
+  if (failureStage && *failureStage == nullptr) *failureStage = stage;
+}
+
+void reportSnapshotTreeFailure(const char* code, const char* stage) {
+  static constexpr const char* allowed[] = {
+    "PATH_ENUMERATION", "ENTRY_SHAPE", "FILE_ATTRIBUTES", "FILE_OPEN", "FILE_LINK_COUNT",
+    "FILE_SIZE", "FILE_DACL", "CONTENT_HASH", "CONTENT_MISMATCH", "ENUMERATION_END",
+    "ENUMERATION_COMPLETENESS", "PROJECTION_ENTRY_COLLISION",
+  };
+  if (!code || std::strcmp(code, "LAUNCH_TICKET_SOURCE_SNAPSHOT_TREE_MISMATCH") != 0) {
+    report(code ? code : "LAUNCH_TICKET_SOURCE_SNAPSHOT_MISMATCH");
+    return;
+  }
+  for (const char* candidate : allowed) {
+    if (stage && std::strcmp(stage, candidate) == 0) {
+      writeStdout(std::string("UNKNOWN\t") + code + "\t" + candidate + "\n");
+      return;
+    }
+  }
+  report(code);
+}
+
 bool verifySnapshotDirectory(const std::wstring& absolute, const std::wstring& relative,
   const std::map<std::wstring, SnapshotEntry*, CaseInsensitiveLess>& expectedFiles,
   const std::map<std::wstring, bool, CaseInsensitiveLess>& expectedDirectories,
   std::map<std::wstring, bool, CaseInsensitiveLess>* seenFiles,
   std::map<std::wstring, bool, CaseInsensitiveLess>* seenDirectories,
-  std::vector<Handle>* handles, ULONGLONG* totalBytes) {
+  std::vector<Handle>* handles, ULONGLONG* totalBytes, const char** failureStage) {
   WIN32_FIND_DATAW data{};
   const std::wstring pattern = absolute + L"\\*";
   HANDLE search = FindFirstFileW(pattern.c_str(), &data);
-  if (search == INVALID_HANDLE_VALUE) return false;
+  if (search == INVALID_HANDLE_VALUE) {
+    setSnapshotTreeFailureStage(failureStage, "PATH_ENUMERATION");
+    return false;
+  }
   bool valid = true;
   do {
     const std::wstring name(data.cFileName);
     if (name == L"." || name == L"..") continue;
     if (name.empty() || name.find_first_of(L"/\\<>:\"|?*") != std::wstring::npos ||
         name.back() == L'.' || name.back() == L' ' || (data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
+      setSnapshotTreeFailureStage(failureStage, "ENTRY_SHAPE");
       valid = false;
       break;
     }
@@ -625,38 +653,83 @@ bool verifySnapshotDirectory(const std::wstring& absolute, const std::wstring& r
     const std::wstring childPath = absolute + L"\\" + name;
     if ((data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
       if (expectedDirectories.find(path) == expectedDirectories.end() || !seenDirectories->emplace(path, true).second) {
+        setSnapshotTreeFailureStage(failureStage, "PATH_ENUMERATION");
         valid = false;
         break;
       }
       Handle directory;
-      if (!openSnapshotDirectory(childPath, true, true, &directory)) { valid = false; break; }
+      if (!openSnapshotDirectory(childPath, true, true, &directory)) {
+        setSnapshotTreeFailureStage(failureStage, "PATH_ENUMERATION");
+        valid = false;
+        break;
+      }
       handles->push_back(std::move(directory));
       if (!verifySnapshotDirectory(childPath, path, expectedFiles, expectedDirectories,
-          seenFiles, seenDirectories, handles, totalBytes)) { valid = false; break; }
+          seenFiles, seenDirectories, handles, totalBytes, failureStage)) { valid = false; break; }
     } else {
       const auto expected = expectedFiles.find(path);
       if ((data.dwFileAttributes & FILE_ATTRIBUTE_NORMAL) == 0 &&
-          (data.dwFileAttributes & FILE_ATTRIBUTE_READONLY) == 0) { valid = false; break; }
-      if (expected == expectedFiles.end() || !seenFiles->emplace(path, true).second ||
-          (data.dwFileAttributes & FILE_ATTRIBUTE_READONLY) == 0) { valid = false; break; }
+          (data.dwFileAttributes & FILE_ATTRIBUTE_READONLY) == 0) {
+        setSnapshotTreeFailureStage(failureStage, "FILE_ATTRIBUTES");
+        valid = false;
+        break;
+      }
+      if (expected == expectedFiles.end() || !seenFiles->emplace(path, true).second) {
+        setSnapshotTreeFailureStage(failureStage, "PATH_ENUMERATION");
+        valid = false;
+        break;
+      }
+      if ((data.dwFileAttributes & FILE_ATTRIBUTE_READONLY) == 0) {
+        setSnapshotTreeFailureStage(failureStage, "FILE_ATTRIBUTES");
+        valid = false;
+        break;
+      }
       Handle file(CreateFileW(childPath.c_str(), GENERIC_READ | FILE_READ_ATTRIBUTES,
         FILE_SHARE_READ, nullptr, OPEN_EXISTING,
         FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_SEQUENTIAL_SCAN, nullptr));
-      if (!file) { valid = false; break; }
+      if (!file) {
+        setSnapshotTreeFailureStage(failureStage, "FILE_OPEN");
+        valid = false;
+        break;
+      }
       FILE_ATTRIBUTE_TAG_INFO attributes{};
       BY_HANDLE_FILE_INFORMATION details{};
       LARGE_INTEGER size{};
       if (!GetFileInformationByHandleEx(file.value, FileAttributeTagInfo, &attributes, sizeof(attributes)) ||
           (attributes.FileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_READONLY)) != FILE_ATTRIBUTE_READONLY ||
-          !GetFileInformationByHandle(file.value, &details) || details.nNumberOfLinks != 1 ||
-          !GetFileSizeEx(file.value, &size) || size.QuadPart < 0 || static_cast<ULONGLONG>(size.QuadPart) > kMaxSnapshotFileBytes ||
-          *totalBytes > kMaxSnapshotTotalBytes - static_cast<ULONGLONG>(size.QuadPart) || !validPrivateAcl(file.value)) {
+          !GetFileInformationByHandle(file.value, &details)) {
+        setSnapshotTreeFailureStage(failureStage, "FILE_ATTRIBUTES");
+        valid = false;
+        break;
+      }
+      if (details.nNumberOfLinks != 1) {
+        setSnapshotTreeFailureStage(failureStage, "FILE_LINK_COUNT");
+        valid = false;
+        break;
+      }
+      if (!GetFileSizeEx(file.value, &size) || size.QuadPart < 0 ||
+          static_cast<ULONGLONG>(size.QuadPart) > kMaxSnapshotFileBytes ||
+          *totalBytes > kMaxSnapshotTotalBytes - static_cast<ULONGLONG>(size.QuadPart)) {
+        setSnapshotTreeFailureStage(failureStage, "FILE_SIZE");
+        valid = false;
+        break;
+      }
+      if (!validPrivateAcl(file.value)) {
+        setSnapshotTreeFailureStage(failureStage, "FILE_DACL");
         valid = false;
         break;
       }
       unsigned char digest[32]{};
-      if (!sha256File(file.value, static_cast<ULONGLONG>(size.QuadPart), digest) ||
-          std::memcmp(digest, expected->second->digest, 32) != 0) { valid = false; break; }
+      if (!sha256File(file.value, static_cast<ULONGLONG>(size.QuadPart), digest)) {
+        setSnapshotTreeFailureStage(failureStage, "CONTENT_HASH");
+        valid = false;
+        break;
+      }
+      if (std::memcmp(digest, expected->second->digest, 32) != 0) {
+        setSnapshotTreeFailureStage(failureStage, "CONTENT_MISMATCH");
+        valid = false;
+        break;
+      }
       *totalBytes += static_cast<ULONGLONG>(size.QuadPart);
       expected->second->seen = true;
       handles->push_back(std::move(file));
@@ -664,18 +737,29 @@ bool verifySnapshotDirectory(const std::wstring& absolute, const std::wstring& r
   } while (FindNextFileW(search, &data));
   const DWORD findError = GetLastError();
   FindClose(search);
+  if (findError != ERROR_NO_MORE_FILES) setSnapshotTreeFailureStage(failureStage, "ENUMERATION_END");
   return valid && findError == ERROR_NO_MORE_FILES;
 }
 
-bool verifyHermesSourceSnapshot(const LaunchMetadata& metadata, std::vector<Handle>* heldHandles) {
+bool verifyHermesSourceSnapshot(const LaunchMetadata& metadata, std::vector<Handle>* heldHandles,
+                               const char** failureCode = nullptr, const char** failureStage = nullptr) {
+  const char* localFailureStage = nullptr;
+  const char** diagnosticStage = failureStage ? failureStage : &localFailureStage;
+  const auto fail = [failureCode](const char* code) {
+    if (failureCode) *failureCode = code;
+    return false;
+  };
   std::vector<Handle> currentHandles;
-  if (!openSnapshotRootChain(metadata, &currentHandles)) return false;
+  if (!openSnapshotRootChain(metadata, &currentHandles)) return fail("LAUNCH_TICKET_SOURCE_SNAPSHOT_ROOT_UNSAFE");
   std::vector<SnapshotEntry> entries;
-  if (!readProjection(metadata, &entries, &currentHandles)) return false;
+  if (!readProjection(metadata, &entries, &currentHandles)) return fail("LAUNCH_TICKET_SOURCE_SNAPSHOT_PROJECTION_UNSAFE");
   std::map<std::wstring, SnapshotEntry*, CaseInsensitiveLess> expectedFiles;
   std::map<std::wstring, bool, CaseInsensitiveLess> expectedDirectories;
   for (SnapshotEntry& entry : entries) {
-    if (!expectedFiles.emplace(entry.path, &entry).second) return false;
+    if (!expectedFiles.emplace(entry.path, &entry).second) {
+      setSnapshotTreeFailureStage(diagnosticStage, "PROJECTION_ENTRY_COLLISION");
+      return fail("LAUNCH_TICKET_SOURCE_SNAPSHOT_TREE_MISMATCH");
+    }
     size_t separator = entry.path.find(L'/');
     while (separator != std::wstring::npos) {
       if (!expectedDirectories.emplace(entry.path.substr(0, separator), true).second) {
@@ -687,10 +771,19 @@ bool verifyHermesSourceSnapshot(const LaunchMetadata& metadata, std::vector<Hand
   std::map<std::wstring, bool, CaseInsensitiveLess> seenFiles;
   std::map<std::wstring, bool, CaseInsensitiveLess> seenDirectories;
   ULONGLONG totalBytes = 0;
-  if (!verifySnapshotDirectory(metadata.hermesSourceSnapshotRoot, L"", expectedFiles, expectedDirectories,
-      &seenFiles, &seenDirectories, &currentHandles, &totalBytes) ||
-      seenFiles.size() != expectedFiles.size() || seenDirectories.size() != expectedDirectories.size()) return false;
-  for (const SnapshotEntry& entry : entries) if (!entry.seen) return false;
+  const bool treeValid = verifySnapshotDirectory(metadata.hermesSourceSnapshotRoot, L"", expectedFiles, expectedDirectories,
+      &seenFiles, &seenDirectories, &currentHandles, &totalBytes, diagnosticStage);
+  if (!treeValid ||
+      seenFiles.size() != expectedFiles.size() || seenDirectories.size() != expectedDirectories.size()) {
+    if (*diagnosticStage == nullptr) setSnapshotTreeFailureStage(diagnosticStage, "ENUMERATION_COMPLETENESS");
+    return fail("LAUNCH_TICKET_SOURCE_SNAPSHOT_TREE_MISMATCH");
+  }
+  for (const SnapshotEntry& entry : entries) {
+    if (!entry.seen) {
+      setSnapshotTreeFailureStage(diagnosticStage, "ENUMERATION_COMPLETENESS");
+      return fail("LAUNCH_TICKET_SOURCE_SNAPSHOT_TREE_MISMATCH");
+    }
+  }
   if (heldHandles) {
     for (Handle& handle : currentHandles) heldHandles->push_back(std::move(handle));
   }
@@ -972,8 +1065,6 @@ bool safeProfileAncestorAcl(HANDLE handle, PSID currentUser) {
       !trustedPathOwner(owner, currentUser)) return false;
   ACL_SIZE_INFORMATION info{};
   if (!GetAclInformation(dacl, &info, sizeof(info), AclSizeInformation)) return false;
-  constexpr ACCESS_MASK kForeignAncestorMask = FILE_ADD_FILE | FILE_ADD_SUBDIRECTORY |
-    FILE_TRAVERSE | FILE_READ_ATTRIBUTES | READ_CONTROL | SYNCHRONIZE;
   for (DWORD index = 0; index < info.AceCount; ++index) {
     void* rawAce = nullptr;
     if (!GetAce(dacl, index, &rawAce)) return false;
@@ -981,8 +1072,10 @@ bool safeProfileAncestorAcl(HANDLE handle, PSID currentUser) {
     if (header->AceType == ACCESS_ALLOWED_ACE_TYPE) {
       const auto* ace = static_cast<ACCESS_ALLOWED_ACE*>(rawAce);
       PSID trustee = const_cast<DWORD*>(&ace->SidStart);
-      if (!trustedPathTrustee(trustee, currentUser) && (ace->Mask & ~kForeignAncestorMask) != 0) return false;
-    } else if (header->AceType != ACCESS_DENIED_ACE_TYPE && header->AceType != SYSTEM_AUDIT_ACE_TYPE) {
+      const bool trusted = EqualSid(trustee, owner) || trustedPathTrustee(trustee, currentUser);
+      if (!ebb::hermes::profile_path::safeAncestorAcePolicy(
+          header->AceType, header->AceFlags, ace->Mask, trusted)) return false;
+    } else if (!ebb::hermes::profile_path::safeAncestorAcePolicy(header->AceType, header->AceFlags, 0, false)) {
       return false;
     }
   }
@@ -1128,13 +1221,20 @@ bool openTicketHermesLauncher(const LaunchMetadata& metadata, Handle* handle) {
     ticketFileIdentity(handle->value, metadata.hermesVolumeSerial, metadata.hermesFileId);
 }
 
-bool openTicketProfileChain(const LaunchMetadata& metadata, std::vector<Handle>* handles) {
+bool openTicketProfileChain(const LaunchMetadata& metadata, std::vector<Handle>* handles,
+                            const char** failureCode = nullptr) {
+  const auto fail = [failureCode](const char* code) {
+    if (failureCode) *failureCode = code;
+    return false;
+  };
   std::wstring volumeRoot;
   std::vector<std::wstring> components;
   if (metadata.profilePathChain.size() < 4 ||
       !splitCanonicalProfilePath(metadata.profileHome, &volumeRoot, &components) ||
       components.size() + 1 != metadata.profilePathChain.size() ||
-      metadata.authRootIndex + 3 != metadata.profilePathChain.size()) return false;
+      metadata.authRootIndex + 3 != metadata.profilePathChain.size()) {
+    return fail("LAUNCH_TICKET_PROFILE_CHAIN_SHAPE_MISMATCH");
+  }
 
   std::wstring canonicalAuthRoot = metadata.profileHome;
   if (canonicalAuthRoot.size() >= 4 && canonicalAuthRoot.compare(0, 4, L"\\\\?\\") == 0) canonicalAuthRoot.erase(0, 4);
@@ -1142,15 +1242,17 @@ bool openTicketProfileChain(const LaunchMetadata& metadata, std::vector<Handle>*
   for (DWORD index = 1; index <= metadata.authRootIndex; ++index) {
     prefixLength += components[index - 1].size() + (index == 1 ? 0 : 1);
   }
-  if (prefixLength > canonicalAuthRoot.size()) return false;
+  if (prefixLength > canonicalAuthRoot.size()) return fail("LAUNCH_TICKET_PROFILE_PATH_BINDING_MISMATCH");
   canonicalAuthRoot.resize(prefixLength);
   std::wstring expectedProfile = canonicalAuthRoot + L"\\profiles\\ebb-orchestrator-run-" + metadata.runId;
   if (_wcsicmp(expectedProfile.c_str(), (metadata.profileHome.size() >= 4 && metadata.profileHome.compare(0, 4, L"\\\\?\\") == 0
-      ? metadata.profileHome.substr(4) : metadata.profileHome).c_str()) != 0) return false;
+      ? metadata.profileHome.substr(4) : metadata.profileHome).c_str()) != 0) {
+    return fail("LAUNCH_TICKET_PROFILE_PATH_BINDING_MISMATCH");
+  }
 
   std::vector<unsigned char> sidStorage;
   PSID currentUser = nullptr;
-  if (!currentProcessUserSid(&sidStorage, &currentUser)) return false;
+  if (!currentProcessUserSid(&sidStorage, &currentUser)) return fail("LAUNCH_TICKET_PROFILE_ROOT_UNSAFE");
   const auto verifyComponent = [&](HANDLE handle, size_t index) {
     const auto& expected = metadata.profilePathChain[index];
     if (!ticketFileIdentity(handle, expected.first, expected.second)) return false;
@@ -1162,24 +1264,29 @@ bool openTicketProfileChain(const LaunchMetadata& metadata, std::vector<Handle>*
   Handle volumeRootHandle(CreateFileW(volumeRoot.c_str(), FILE_READ_ATTRIBUTES | FILE_TRAVERSE | READ_CONTROL | SYNCHRONIZE,
     FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
     FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
-  if (!volumeRootHandle) return false;
+  if (!volumeRootHandle) return fail("LAUNCH_TICKET_PROFILE_ROOT_UNSAFE");
   FILE_ATTRIBUTE_TAG_INFO rootTag{};
   if (!GetFileInformationByHandleEx(volumeRootHandle.value, FileAttributeTagInfo, &rootTag, sizeof(rootTag)) ||
       (rootTag.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0 ||
       (rootTag.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 ||
-      !verifyComponent(volumeRootHandle.value, 0)) return false;
+      !verifyComponent(volumeRootHandle.value, 0)) return fail("LAUNCH_TICKET_PROFILE_ROOT_UNSAFE");
   handles->push_back(std::move(volumeRootHandle));
 
   for (size_t index = 0; index < components.size(); ++index) {
     HANDLE child = INVALID_HANDLE_VALUE;
-    if (!openProfileDirectoryRelative(handles->back().value, components[index], &child)) return false;
+    if (!openProfileDirectoryRelative(handles->back().value, components[index], &child)) {
+      return fail("LAUNCH_TICKET_PROFILE_COMPONENT_UNSAFE");
+    }
     Handle directory(child);
     const size_t chainIndex = index + 1;
-    if (!verifyComponent(directory.value, chainIndex)) return false;
+    if (!verifyComponent(directory.value, chainIndex)) return fail("LAUNCH_TICKET_PROFILE_COMPONENT_UNSAFE");
     handles->push_back(std::move(directory));
   }
-  return handles->size() == metadata.profilePathChain.size() &&
-    ticketFileIdentity(handles->back().value, metadata.profileVolumeSerial, metadata.profileFileId);
+  if (handles->size() != metadata.profilePathChain.size() ||
+      !ticketFileIdentity(handles->back().value, metadata.profileVolumeSerial, metadata.profileFileId)) {
+    return fail("LAUNCH_TICKET_PROFILE_COMPONENT_UNSAFE");
+  }
+  return true;
 }
 
 bool openTicketProfileTargets(const LaunchMetadata& metadata, const std::vector<Handle>& profileChain,
@@ -1495,12 +1602,27 @@ bool launch(const std::wstring& id, const std::wstring& nonce, DWORD* payloadExi
   Handle ticketProfileConfig;
   std::vector<Handle> ticketProfileChain;
   std::vector<Handle> snapshotHandles;
-  if (metadata.hasHermesLaunchIdentity &&
-      (!openTicketExecutable(metadata, &ticketExecutable) || !openTicketHermesLauncher(metadata, &ticketHermes) ||
-       !openTicketProfileChain(metadata, &ticketProfileChain) ||
-       !openTicketProfileTargets(metadata, ticketProfileChain, &ticketProfileHomeDirectory, &ticketProfileConfig) ||
-       !verifyHermesSourceSnapshot(metadata, &snapshotHandles))) {
-    report("HERMES_TICKET_OBJECT_MISMATCH"); return false;
+  if (metadata.hasHermesLaunchIdentity) {
+    if (!openTicketExecutable(metadata, &ticketExecutable)) { report("LAUNCH_TICKET_EXECUTABLE_MISMATCH"); return false; }
+    if (!openTicketHermesLauncher(metadata, &ticketHermes)) { report("LAUNCH_TICKET_HERMES_MISMATCH"); return false; }
+    const char* profileChainFailure = nullptr;
+    if (!openTicketProfileChain(metadata, &ticketProfileChain, &profileChainFailure)) {
+      report(profileChainFailure ? profileChainFailure : "LAUNCH_TICKET_PROFILE_CHAIN_MISMATCH");
+      return false;
+    }
+    if (!openTicketProfileTargets(metadata, ticketProfileChain, &ticketProfileHomeDirectory, &ticketProfileConfig)) {
+      report("LAUNCH_TICKET_PROFILE_TARGETS_MISMATCH"); return false;
+    }
+    const char* snapshotFailure = nullptr;
+    const char* snapshotFailureStage = nullptr;
+    if (!verifyHermesSourceSnapshot(metadata, &snapshotHandles, &snapshotFailure, &snapshotFailureStage)) {
+      if (snapshotFailure && std::strcmp(snapshotFailure, "LAUNCH_TICKET_SOURCE_SNAPSHOT_TREE_MISMATCH") == 0) {
+        reportSnapshotTreeFailure(snapshotFailure, snapshotFailureStage);
+      } else {
+        report(snapshotFailure ? snapshotFailure : "LAUNCH_TICKET_SOURCE_SNAPSHOT_MISMATCH");
+      }
+      return false;
+    }
   }
   if (acceptanceEvidence) {
     std::string digest;

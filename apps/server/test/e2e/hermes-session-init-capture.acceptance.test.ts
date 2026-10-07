@@ -76,7 +76,7 @@ class ControlledCaptureSupervisor implements ProcessScopeSupervisor {
 
     return {
       completion: Promise.resolve({ exitCode: 0, stdout: "", stderr: "" }).then((result) => {
-        this.observation = { state: "STOPPED", evidence: "TEST_SCOPE_EMPTY" };
+        this.observation = { state: "STOPPED", evidence: this.stoppedEvidence() };
         return result;
       }),
     };
@@ -87,8 +87,12 @@ class ControlledCaptureSupervisor implements ProcessScopeSupervisor {
   }
 
   async stop(): Promise<ProcessScopeObservation> {
-    this.observation = { state: "STOPPED", evidence: "TEST_SCOPE_EMPTY" };
+    this.observation = { state: "STOPPED", evidence: this.stoppedEvidence() };
     return this.observation;
+  }
+
+  private stoppedEvidence(): string {
+    return process.platform === "win32" ? "WINDOWS_JOB_EMPTY" : "SYSTEMD_CGROUP_EMPTY";
   }
 
   async waitForStopped(): Promise<ProcessScopeObservation> {
@@ -383,6 +387,7 @@ function createSourceSnapshotKey(): string {
     formatVersion: 1,
     hermesVersion: HERMES_PROVIDER_SELECTION_SOURCE.version,
     manifestDigest: "c".repeat(64),
+    ...(process.platform === "win32" ? { materializationPolicyVersion: 2 } : {}),
     sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit,
     sourceTree: "d".repeat(40),
   });

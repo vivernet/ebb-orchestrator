@@ -56,14 +56,18 @@ class CompletionFailureSupervisor implements ProcessScopeSupervisor {
   }
 
   async inspect(): Promise<ProcessScopeObservation> {
-    if (this.stopped) return { state: "STOPPED", evidence: "TEST_SCOPE_EMPTY" };
+    if (this.stopped) return { state: "STOPPED", evidence: this.stoppedEvidence() };
     return this.liveIdentity ? { state: "LIVE", identity: this.liveIdentity } : { state: "UNKNOWN", reason: "TEST_OWNER_MISSING" };
   }
 
   async stop(owner: ProcessScopeIdentity): Promise<ProcessScopeObservation> {
     this.stopCalls.push(owner);
     this.stopped = true;
-    return { state: "STOPPED", evidence: "TEST_SCOPE_EMPTY" };
+    return { state: "STOPPED", evidence: this.stoppedEvidence() };
+  }
+
+  private stoppedEvidence(): string {
+    return this.liveIdentity?.containmentKind === "windows-job" ? "WINDOWS_JOB_EMPTY" : "SYSTEMD_CGROUP_EMPTY";
   }
 
   async waitForStopped(): Promise<ProcessScopeObservation> {
@@ -255,6 +259,7 @@ describe("Hermes live session capture bridge", () => {
           formatVersion: 1,
           hermesVersion: HERMES_PROVIDER_SELECTION_SOURCE.version,
           manifestDigest: "c".repeat(64),
+          ...(platform === "win32" ? { materializationPolicyVersion: 2 } : {}),
           sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit,
           sourceTree: "d".repeat(40),
         });
@@ -306,6 +311,7 @@ describe("Hermes live session capture bridge", () => {
       formatVersion: 1,
       hermesVersion: HERMES_PROVIDER_SELECTION_SOURCE.version,
       manifestDigest: "c".repeat(64),
+      ...(platform === "win32" ? { materializationPolicyVersion: 2 } : {}),
       sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit,
       sourceTree: "d".repeat(40),
     });
@@ -373,7 +379,13 @@ describe("Hermes live session capture bridge", () => {
 
   it("invalidates a late callback for the same owner after the process has stopped", async () => {
     const fixture = await setup();
-    database!.run("UPDATE run_process_owners SET state='STOPPED',stop_evidence='TEST_SCOPE_EMPTY' WHERE run_id=$runId", { runId: fixture.run.id });
+    const containmentKind = database!.get<{ containment_kind: string }>(
+      "SELECT containment_kind FROM run_process_owners WHERE run_id=$runId", { runId: fixture.run.id },
+    )?.containment_kind;
+    const stopEvidence = containmentKind === "windows-job" ? "WINDOWS_JOB_EMPTY" : "SYSTEMD_CGROUP_EMPTY";
+    database!.run("UPDATE run_process_owners SET state='STOPPED',stop_evidence=$stopEvidence WHERE run_id=$runId", {
+      runId: fixture.run.id, stopEvidence,
+    });
     await expect(fixture.runtime.handler!({
       runId: fixture.run.id, attempt: null, sourceTag: fixture.owner.source_tag, hermesHome: fixture.owner.hermes_home,
       owner: fixture.liveIdentity, status: "captured", sessionId: "late-session",

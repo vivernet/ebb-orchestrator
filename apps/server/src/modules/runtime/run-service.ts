@@ -22,7 +22,7 @@ import { getContextManifest, insertContextManifestTx } from "../context/context-
 import {
   getRunProcessOwner,
   insertRunProcessOwnerTx,
-  isCanonicalRunProcessStopEvidence,
+  isAuthoritativeRunProcessStopEvidence,
   prepareRunProcessOwner,
   transitionRunProcessOwnerTx,
 } from "./run-process-owner.js";
@@ -763,7 +763,7 @@ export class RunService {
     try { owner = getRunProcessOwner(this.db, runId); }
     catch { return false; }
     if (this.isTerminalState(current.status)) {
-      return !owner || (owner.state === "STOPPED" && isCanonicalRunProcessStopEvidence(owner.stopEvidence));
+      return !owner || (owner.state === "STOPPED" && isAuthoritativeRunProcessStopEvidence(owner.stopEvidence, owner.containmentKind));
     }
     if (!("STARTED" === current.status || "IN_PROGRESS" === current.status || "COMPLETING" === current.status)) return false;
     if (!owner) return false;
@@ -776,7 +776,7 @@ export class RunService {
     }
     try { owner = getRunProcessOwner(this.db, runId); }
     catch { return false; }
-    if (!owner || owner.state !== "STOPPED" || !isCanonicalRunProcessStopEvidence(owner.stopEvidence)) {
+    if (!owner || owner.state !== "STOPPED" || !isAuthoritativeRunProcessStopEvidence(owner.stopEvidence, owner.containmentKind)) {
       // Keep the Run, capability, and scheduler reservation active until startup preflight
       // obtains authoritative proof that the exact OS scope is empty.
       return false;
@@ -822,7 +822,7 @@ export class RunService {
       }
       if (stopProofRequired) {
         const owner = getRunProcessOwner(tx, runId);
-        if (!owner || owner.state !== "STOPPED" || !isCanonicalRunProcessStopEvidence(owner.stopEvidence)) {
+        if (!owner || owner.state !== "STOPPED" || !isAuthoritativeRunProcessStopEvidence(owner.stopEvidence, owner.containmentKind)) {
           throw new Error(`RUN_PROCESS_SCOPE_STOP_UNPROVEN:${runId}`);
         }
       }
@@ -859,7 +859,7 @@ export class RunService {
         throw new Error(`Run ${runId} requires persisted COMPLETING status from authenticated submit_result`);
       }
       const owner = getRunProcessOwner(tx, runId);
-      if (!owner || owner.state !== "STOPPED" || !isCanonicalRunProcessStopEvidence(owner.stopEvidence)) {
+      if (!owner || owner.state !== "STOPPED" || !isAuthoritativeRunProcessStopEvidence(owner.stopEvidence, owner.containmentKind)) {
         throw new Error(`RUN_PROCESS_SCOPE_STOP_UNPROVEN:${runId}`);
       }
       const submission = this.completionStore().getSubmission?.(runId);

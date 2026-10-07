@@ -19,6 +19,7 @@ const hermesSourceSnapshotKey = JSON.stringify({
   formatVersion: 1,
   hermesVersion: "v0.21.5+7357.g9244275",
   manifestDigest: "c".repeat(64),
+  ...(process.platform === "win32" ? { materializationPolicyVersion: 2 } : {}),
   sourceCommit: "b".repeat(40),
   sourceTree: "d".repeat(40),
 });
@@ -1060,7 +1061,13 @@ describe("RunService with FakeAgentRuntime", () => {
       role: "developer", model: "gpt-4", taskId, epicId,
       triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
     });
-    db!.run("UPDATE run_process_owners SET state='STOPPED',stop_evidence='SUPERVISOR_SCOPE_EMPTY' WHERE run_id=$runId", { runId: run.id });
+    const containmentKind = db!.get<{ containment_kind: string }>(
+      "SELECT containment_kind FROM run_process_owners WHERE run_id=$runId", { runId: run.id },
+    )?.containment_kind;
+    const stopEvidence = containmentKind === "windows-job" ? "WINDOWS_JOB_EMPTY" : "SYSTEMD_CGROUP_EMPTY";
+    db!.run("UPDATE run_process_owners SET state='STOPPED',stop_evidence=$stopEvidence WHERE run_id=$runId", {
+      runId: run.id, stopEvidence,
+    });
     db!.run("UPDATE agent_runs SET status='FAILED',ended_at=$now WHERE id=$runId", { runId: run.id, now: new Date().toISOString() });
 
     expect(runService.failPreparedRun(run.id, new Error("integration cleanup retry"))).toBe(true);

@@ -20,7 +20,8 @@ import {
   type ProcessResult,
 } from "../../../src/platform/process/process-executor.js";
 import type { ProcessScopeIdentity, ProcessScopeObservation } from "../../../src/platform/process/process-inspector.js";
-import type { ProcessScopeLaunchRequest, ProcessScopeSupervisor } from "../../../src/platform/process/run-scope-supervisor.js";
+import { ProcessScopeLaunchNotDispatchedError, type ProcessScopeLaunchRequest, type ProcessScopeSupervisor } from "../../../src/platform/process/run-scope-supervisor.js";
+import { insertRunProcessOwnerTx, prepareRunProcessOwner } from "../../../src/modules/runtime/run-process-owner.js";
 import type { HermesSessionCapture } from "../../../src/modules/runtime/hermes-session-capture-port.js";
 import { HERMES_PROVIDER_SELECTION_SOURCE } from "../../../src/modules/runtime/hermes/hermes-provider-selection.js";
 import { createHermesAuthRouteFixture } from "../../helpers/hermes-auth-route-fixture.js";
@@ -131,18 +132,18 @@ class MockProcessScopeSupervisor implements ProcessScopeSupervisor {
       }
       throw error;
     }).finally(() => {
-      this.observations.set(owner.containmentId, { state: "STOPPED", evidence: "TEST_SCOPE_EMPTY" });
+      this.observations.set(owner.containmentId, { state: "STOPPED", evidence: stoppedEvidence(owner) });
     });
     return { completion };
   }
 
   async inspect(owner: ProcessScopeIdentity): Promise<ProcessScopeObservation> {
-    return this.observations.get(owner.containmentId) ?? { state: "STOPPED", evidence: "TEST_SCOPE_ABSENT" };
+    return this.observations.get(owner.containmentId) ?? { state: "STOPPED", evidence: stoppedEvidence(owner) };
   }
 
   async stop(owner: ProcessScopeIdentity): Promise<ProcessScopeObservation> {
     this.stopCalls.push(owner);
-    const stopped: ProcessScopeObservation = { state: "STOPPED", evidence: "TEST_SCOPE_EMPTY" };
+    const stopped: ProcessScopeObservation = { state: "STOPPED", evidence: stoppedEvidence(owner) };
     this.observations.set(owner.containmentId, stopped);
     return stopped;
   }
@@ -150,6 +151,10 @@ class MockProcessScopeSupervisor implements ProcessScopeSupervisor {
   async waitForStopped(owner: ProcessScopeIdentity): Promise<ProcessScopeObservation> {
     return this.inspect(owner);
   }
+}
+
+function stoppedEvidence(owner: ProcessScopeIdentity): string {
+  return owner.containmentKind === "windows-job" ? "WINDOWS_JOB_EMPTY" : "SYSTEMD_CGROUP_EMPTY";
 }
 
 function deferred<T = void>() {
@@ -192,6 +197,7 @@ const testHermesLaunchTicketFactory: HermesLaunchTicketFactory = async (input) =
     formatVersion: 1,
     hermesVersion: HERMES_PROVIDER_SELECTION_SOURCE.version,
     manifestDigest: "c".repeat(64),
+    ...(process.platform === "win32" ? { materializationPolicyVersion: 2 } : {}),
     sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit,
     sourceTree: "d".repeat(40),
   });
@@ -235,6 +241,7 @@ async function testHermesSelection(runId: string, modelId: string, resultDirecto
     formatVersion: 1,
     hermesVersion: HERMES_PROVIDER_SELECTION_SOURCE.version,
     manifestDigest: "c".repeat(64),
+    ...(process.platform === "win32" ? { materializationPolicyVersion: 2 } : {}),
     sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit,
     sourceTree: "d".repeat(40),
   });
@@ -943,6 +950,85 @@ describe("HermesRuntimeAdapter", () => {
       })).toMatchObject({ state: "STOPPED" });
     });
 
+    it("persists LAUNCH_NOT_DISPATCHED only after the typed supervisor no-dispatch result", async () => {
+      const root = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-launch-no-dispatch-"));
+      const databasePath = path.join(root, "state.sqlite");
+      const database = createSqliteDatabase(databasePath);
+      database.exec(`CREATE TABLE run_process_owners (
+        run_id TEXT PRIMARY KEY, source_tag TEXT NOT NULL, hermes_home TEXT NOT NULL,
+        containment_kind TEXT NOT NULL, containment_id TEXT NOT NULL, launch_nonce TEXT NOT NULL,
+        systemd_invocation_id TEXT, systemd_control_group TEXT, supervisor_pid INTEGER,
+        supervisor_start_identity TEXT, pid INTEGER, platform TEXT, process_start_identity TEXT,
+        executable_identity TEXT, state TEXT NOT NULL, stop_evidence TEXT, updated_at TEXT NOT NULL,
+        hermes_source_snapshot_key TEXT
+      )`);
+      const runId = "09ef53bd-819b-43a0-aabd-286c15e0d36f";
+      const resultDirectory = path.join(root, "results");
+      const selection = await testHermesSelection(runId, "model-x", resultDirectory);
+      const preparedOwner = prepareRunProcessOwner(runId, selection.profileHome,
+        process.platform === "win32" ? "windows-job" : "systemd-user-service", selection.sourceSnapshotKey);
+      database.transaction((tx) => insertRunProcessOwnerTx(tx, preparedOwner));
+
+      const launchEntered = deferred<void>();
+      const releaseLaunch = deferred<void>();
+      const supervisor: ProcessScopeSupervisor = {
+        launch: async () => {
+          launchEntered.resolve();
+          await releaseLaunch.promise;
+          throw new ProcessScopeLaunchNotDispatchedError();
+        },
+        inspect: async () => ({ state: "UNKNOWN", reason: "NOT_USED" }),
+        stop: async () => ({ state: "UNKNOWN", reason: "NOT_USED" }),
+        waitForStopped: async () => ({ state: "UNKNOWN", reason: "NOT_USED" }),
+      };
+      adapter = new HermesRuntimeAdapter(mockExecutor, mockArtifactStore, {
+        databasePath, managedWorktree: path.join(root, "workspace"), resultDirectory,
+        checkpointDirectory: sharedCheckpointDirectory,
+      }, supervisor);
+      (adapter as unknown as { getManagedWorktree(run: { id: string }): string }).getManagedWorktree = () => path.join(root, "workspace");
+      allowTestHermesNativeAuth(adapter);
+      expect(() => (adapter as unknown as {
+        persistLaunchNotDispatched(id: string, error: unknown): void;
+      }).persistLaunchNotDispatched(runId, new Error("forged generic Error"))).toThrow(TypeError);
+      expect(database.get<{ state: string; stop_evidence: string | null }>(
+        "SELECT state,stop_evidence FROM run_process_owners WHERE run_id=$runId", { runId },
+      )).toEqual({ state: "PREPARED", stop_evidence: null });
+      const run = {
+        id: runId, role: "Developer", runtime: "hermes", model: "model-x", taskId: null, epicId: null,
+        status: "STARTED" as const, sessionId: null, attempt: null, triggerReason: null,
+        contextVersion: "v1", outputSchemaVersion: "v1", startedAt: new Date(), endedAt: null,
+        exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
+        hermesSelection: selection,
+      };
+
+      try {
+        const started = adapter.startRun(run).then(
+          () => ({ status: "completed" as const }),
+          (error: unknown) => ({ status: "failed" as const, error }),
+        );
+        const launchGate = await Promise.race([
+          launchEntered.promise.then(() => "launch" as const),
+          started.then((result) => ({ status: "start-settled" as const, result })),
+          new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 10_000)),
+        ]);
+        if (launchGate !== "launch") {
+          if (launchGate === "timeout") throw new Error("TEST_LAUNCH_NOT_REACHED_IN_TIME");
+          throw new Error("TEST_START_SETTLED_BEFORE_SUPERVISOR_LAUNCH", { cause: launchGate.result.status === "failed" ? launchGate.result.error : undefined });
+        }
+        const cancelled = adapter.cancelRun(runId);
+        releaseLaunch.resolve();
+        const [startResult] = await Promise.all([started, cancelled]);
+
+        expect(startResult.status).toBe("completed");
+        expect(database.get<{ state: string; stop_evidence: string | null }>(
+          "SELECT state,stop_evidence FROM run_process_owners WHERE run_id=$runId", { runId },
+        )).toEqual({ state: "STOPPED", stop_evidence: "LAUNCH_NOT_DISPATCHED" });
+      } finally {
+        database.close();
+        await fs.rm(root, { recursive: true, force: true });
+      }
+    });
+
     it("uses the persisted capability workspace as the Hermes process cwd", async () => {
       const root = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-persisted-workspace-"));
       const workspace = path.join(root, "managed-worktree");
@@ -1077,7 +1163,7 @@ describe("HermesRuntimeAdapter", () => {
         )?.session_id).toBeNull();
         expect(database.get<{ state: string; stop_evidence: string | null }>(
           "SELECT state,stop_evidence FROM run_process_owners WHERE run_id=$runId", { runId: run.id },
-        )).toEqual({ state: "STOPPED", stop_evidence: "TEST_SCOPE_EMPTY" });
+        )).toEqual({ state: "STOPPED", stop_evidence: stoppedEvidence(scopeSupervisor.lastLiveIdentity!) });
 
         const failedRun = {
           ...run, id: "837923a5-32b2-4724-8efc-0b0ef8b989bb", capabilityRef: "failed-capability",
@@ -1141,7 +1227,7 @@ describe("HermesRuntimeAdapter", () => {
         const stoppedScope = failingSupervisor.stopCalls[0];
         expect(stoppedScope).toMatchObject({ runId: failedRun.id, containmentId: "c".repeat(64) });
         if (!stoppedScope) throw new Error("Expected the exact scope to be stopped.");
-        await expect(failingSupervisor.inspect(stoppedScope)).resolves.toMatchObject({ state: "STOPPED", evidence: "TEST_SCOPE_EMPTY" });
+        await expect(failingSupervisor.inspect(stoppedScope)).resolves.toMatchObject({ state: "STOPPED", evidence: stoppedEvidence(stoppedScope) });
         expect(failingSupervisor.payloadDispatches).toBe(0);
         expect(mockExecutor.getCalls()).toHaveLength(1);
         expect(database.get<{ state: string; stop_evidence: string | null }>(

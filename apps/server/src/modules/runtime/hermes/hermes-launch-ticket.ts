@@ -273,15 +273,25 @@ function isCanonicalSnapshotTicketBinding(input: HermesLaunchTicketInput): boole
   const key = input.hermesSourceSnapshotKey;
   if (typeof key !== "string" || key.length > 4096) return false;
   try {
-    const parsed = JSON.parse(key) as Record<string, unknown>;
+    const value: unknown = JSON.parse(key);
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const parsed = value as Record<string, unknown>;
     const { formatVersion, hermesVersion, manifestDigest: keyDigest, sourceCommit, sourceTree } = parsed;
-    return Object.keys(parsed).length === 5 && formatVersion === 1 &&
-      typeof hermesVersion === "string" && hermesVersion.length > 0 && hermesVersion.length <= 256 &&
+    const expectedKeys = input.platform === "win32"
+      ? "formatVersion,hermesVersion,manifestDigest,materializationPolicyVersion,sourceCommit,sourceTree"
+      : "formatVersion,hermesVersion,manifestDigest,sourceCommit,sourceTree";
+    if (Object.keys(parsed).sort().join(",") !== expectedKeys || formatVersion !== 1 ||
+        (input.platform === "win32" && parsed.materializationPolicyVersion !== 2) ||
+        (input.platform === "linux" && Object.hasOwn(parsed, "materializationPolicyVersion"))) return false;
+    const canonicalIdentity = input.platform === "win32"
+      ? { formatVersion, hermesVersion, manifestDigest: keyDigest, materializationPolicyVersion: 2, sourceCommit, sourceTree }
+      : { formatVersion, hermesVersion, manifestDigest: keyDigest, sourceCommit, sourceTree };
+    return typeof hermesVersion === "string" && hermesVersion.length > 0 && hermesVersion.length <= 256 &&
       typeof keyDigest === "string" && /^[a-f0-9]{64}$/u.test(keyDigest) && keyDigest === input.hermesSourceManifestDigest &&
       typeof sourceCommit === "string" && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(sourceCommit) &&
       typeof sourceTree === "string" && sourceTree.length === sourceCommit.length &&
       /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(sourceTree) &&
-      key === JSON.stringify({ formatVersion, hermesVersion, manifestDigest: keyDigest, sourceCommit, sourceTree }) &&
+      key === JSON.stringify(canonicalIdentity) &&
       snapshotPathsMatch(input, createHash("sha256").update(key, "utf8").digest("hex"));
   } catch {
     return false;

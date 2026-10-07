@@ -52,10 +52,10 @@ export function prepareRunProcessOwner(
 ): RunProcessOwner {
   assertNonEmpty(runId, 'runId');
   assertNonEmpty(hermesHome, 'hermesHome');
-  assertSourceSnapshotKey(hermesSourceSnapshotKey);
   if (containmentKind !== 'windows-job' && containmentKind !== 'systemd-user-service') {
     throw new TypeError('Run process containment kind is unsupported.');
   }
+  assertSourceSnapshotKey(hermesSourceSnapshotKey, containmentKind);
 
   return {
     runId,
@@ -170,8 +170,11 @@ export function transitionRunProcessOwnerTx(
     evidence?: string;
   },
 ): void {
-  const current = tx.get<{ state: string }>(
-    'SELECT state FROM run_process_owners WHERE run_id=$runId', { runId: input.runId },
+  if (input.evidence === 'LAUNCH_NOT_DISPATCHED') {
+    throw new TypeError('LAUNCH_NOT_DISPATCHED can only be persisted by the Hermes launch adapter.');
+  }
+  const current = tx.get<{ state: string; containment_kind: string }>(
+    'SELECT state,containment_kind FROM run_process_owners WHERE run_id=$runId', { runId: input.runId },
   );
   if (!current) throw new Error('RUN_PROCESS_OWNER_MISSING');
   if (current.state !== input.expectedState) throw new Error('RUN_PROCESS_OWNER_STATE_CHANGED');
@@ -179,7 +182,10 @@ export function transitionRunProcessOwnerTx(
     throw new Error('RUN_PROCESS_OWNER_TRANSITION_INVALID');
   }
   if (input.nextState === 'STOPPED' || input.nextState === 'UNKNOWN') {
-    assertEvidence(input.evidence);
+    if (input.nextState === 'STOPPED') {
+      assertStoppedEvidence(input.evidence, current.containment_kind, input.expectedState);
+    }
+    else assertEvidence(input.evidence);
   } else if (input.evidence !== undefined) {
     throw new TypeError('Stop evidence is only valid for STOPPED or UNKNOWN transitions.');
   }
@@ -249,9 +255,33 @@ function assertEvidence(value: string | undefined): asserts value is string {
   }
 }
 
-/** Проверяет канонический bounded evidence, которым durable owner подтверждает пустую OS scope. */
+function assertStoppedEvidence(
+  value: string | undefined,
+  containmentKind: string,
+  expectedState: RunProcessOwnerState,
+): asserts value is string {
+  if (!isAuthoritativeRunProcessStopEvidence(value, containmentKind)) {
+    throw new TypeError('Process-owner STOPPED transition requires authoritative OS evidence.');
+  }
+  if ((value === 'NEVER_LAUNCHED' && expectedState !== 'PREPARED') ||
+      value === 'LAUNCH_NOT_DISPATCHED') {
+    throw new TypeError('Process-owner STOPPED evidence does not match the owner state being stopped.');
+  }
+}
+
+/** Проверяет синтаксис bounded evidence token; это само по себе не доказывает STOPPED. */
 export function isCanonicalRunProcessStopEvidence(value: unknown): value is string {
   return typeof value === 'string' && /^[A-Z0-9_:-]{1,96}$/.test(value);
+}
+
+/** Проверяет, что durable evidence пришло из одного из production STOPPED readback путей. */
+export function isAuthoritativeRunProcessStopEvidence(value: unknown, containmentKind: unknown): value is string {
+  if (!isCanonicalRunProcessStopEvidence(value) ||
+      (containmentKind !== 'windows-job' && containmentKind !== 'systemd-user-service')) return false;
+  if (value === 'NEVER_LAUNCHED' || value === 'LAUNCH_NOT_DISPATCHED') return true;
+  return containmentKind === 'windows-job'
+    ? value === 'WINDOWS_JOB_EMPTY' || value === 'WINDOWS_JOB_AND_HELPER_ABSENT'
+    : value === 'SYSTEMD_CGROUP_EMPTY' || value === 'UNIT_ABSENT_NO_PENDING_CGROUP_ABSENT';
 }
 
 /** Возвращает durable owner, проверяя SQLite values; historical source key остаётся NULL. */
@@ -295,7 +325,7 @@ export async function preflightRunProcessOwners(
   );
   if (stoppedWithoutProof) throw new Error(`RUN_PROCESS_STOP_PROOF_MISSING:${stoppedWithoutProof.runId}`);
   const stoppedWithInvalidProof = owners.find((owner) =>
-    owner.state === 'STOPPED' && !isCanonicalRunProcessStopEvidence(owner.stopEvidence),
+    owner.state === 'STOPPED' && !isAuthoritativeRunProcessStopEvidence(owner.stopEvidence, owner.containmentKind),
   );
   if (stoppedWithInvalidProof) throw new Error(`RUN_PROCESS_STOP_PROOF_INVALID:${stoppedWithInvalidProof.runId}`);
 
@@ -416,7 +446,8 @@ function parseOwnerRow(row: Record<string, unknown>): RunProcessOwner {
   if (owner.sourceTag !== `ebb-run:${owner.runId}` || !/^[a-f0-9]{64}$/.test(owner.containmentId) || !/^[a-f0-9]{64}$/.test(owner.launchNonce)) {
     throw new Error('RUN_PROCESS_OWNER_INVALID');
   }
-  if (owner.hermesSourceSnapshotKey !== null && !isCanonicalSourceSnapshotKey(owner.hermesSourceSnapshotKey)) {
+  if (owner.hermesSourceSnapshotKey !== null &&
+      !isCanonicalSourceSnapshotKey(owner.hermesSourceSnapshotKey, kind === 'windows-job' ? 'win32' : 'linux', true)) {
     throw new Error('RUN_PROCESS_OWNER_INVALID');
   }
   return owner;
@@ -426,7 +457,7 @@ function assertPreparedOwner(owner: RunProcessOwner): void {
   assertNonEmpty(owner.runId, 'runId');
   if (owner.sourceTag !== `ebb-run:${owner.runId}`) throw new TypeError('Run process source tag must be deterministic.');
   assertNonEmpty(owner.hermesHome, 'hermesHome');
-  assertSourceSnapshotKey(owner.hermesSourceSnapshotKey);
+  assertSourceSnapshotKey(owner.hermesSourceSnapshotKey, owner.containmentKind);
   if (!/^[a-f0-9]{64}$/.test(owner.containmentId)) throw new TypeError('Containment ID must be a random 256-bit lowercase hex value.');
   if (!/^[a-f0-9]{64}$/.test(owner.launchNonce)) throw new TypeError('Launch nonce must be a random 256-bit lowercase hex value.');
   if (owner.containmentKind !== 'windows-job' && owner.containmentKind !== 'systemd-user-service') {
@@ -445,14 +476,19 @@ function assertNonEmpty(value: string, field: string): void {
   if (typeof value !== 'string' || value.trim() === '') throw new TypeError(`${field} must be a non-empty string.`);
 }
 
-function assertSourceSnapshotKey(value: string | null | undefined): void {
-  if (value !== null && value !== undefined && !isCanonicalSourceSnapshotKey(value)) {
+function assertSourceSnapshotKey(value: string | null | undefined, containmentKind: RunContainmentKind): void {
+  const platform = containmentKind === 'windows-job' ? 'win32' : 'linux';
+  if (value !== null && value !== undefined && !isCanonicalSourceSnapshotKey(value, platform)) {
     throw new TypeError('Hermes source snapshot key must be the exact canonical versioned identity.');
   }
 }
 
 /** Проверяет bounded scalar JCS identity без чтения cache, source tree или Hermes config. */
-function isCanonicalSourceSnapshotKey(value: unknown): value is string {
+function isCanonicalSourceSnapshotKey(
+  value: unknown,
+  platform: 'win32' | 'linux',
+  allowLegacyWindowsRecovery = false,
+): value is string {
   if (typeof value !== 'string' || value.length > 4096) return false;
   let identity: unknown;
   try {
@@ -462,10 +498,16 @@ function isCanonicalSourceSnapshotKey(value: unknown): value is string {
   }
   if (!identity || typeof identity !== 'object' || Array.isArray(identity)) return false;
   const fields = identity as Record<string, unknown>;
-  const { formatVersion, hermesVersion, manifestDigest, sourceCommit, sourceTree } = fields;
+  const { formatVersion, hermesVersion, manifestDigest, materializationPolicyVersion, sourceCommit, sourceTree } = fields;
+  const legacyWindowsIdentity = platform === 'win32' && allowLegacyWindowsRecovery &&
+    Object.keys(fields).sort().join(',') === 'formatVersion,hermesVersion,manifestDigest,sourceCommit,sourceTree';
+  const expectedKeys = platform === 'win32' && !legacyWindowsIdentity
+    ? 'formatVersion,hermesVersion,manifestDigest,materializationPolicyVersion,sourceCommit,sourceTree'
+    : 'formatVersion,hermesVersion,manifestDigest,sourceCommit,sourceTree';
   const isGitObjectId = (id: unknown): id is string =>
     typeof id === 'string' && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(id);
-  if (Object.keys(fields).length !== 5 || formatVersion !== 1 ||
+  if (Object.keys(fields).sort().join(',') !== expectedKeys || formatVersion !== 1 ||
+      (platform === 'win32' && !legacyWindowsIdentity && materializationPolicyVersion !== 2) ||
       typeof hermesVersion !== 'string' || hermesVersion.length === 0 || hermesVersion.length > 256 ||
       !hermesVersion.isWellFormed() || [...hermesVersion].some((character) => {
         const code = character.codePointAt(0)!;
@@ -473,6 +515,9 @@ function isCanonicalSourceSnapshotKey(value: unknown): value is string {
       }) ||
       typeof manifestDigest !== 'string' || !/^[a-f0-9]{64}$/.test(manifestDigest) ||
       !isGitObjectId(sourceCommit) || !isGitObjectId(sourceTree) || sourceCommit.length !== sourceTree.length) return false;
-  // Все поля scalar; этот порядок совпадает с JCS и cache identity formatVersion=1.
-  return value === JSON.stringify({ formatVersion, hermesVersion, manifestDigest, sourceCommit, sourceTree });
+  // Порядок совпадает с JCS; Windows policy-v2 key не переиспользуется на Linux и наоборот.
+  const canonicalIdentity = platform === 'win32' && !legacyWindowsIdentity
+    ? { formatVersion, hermesVersion, manifestDigest, materializationPolicyVersion: 2, sourceCommit, sourceTree }
+    : { formatVersion, hermesVersion, manifestDigest, sourceCommit, sourceTree };
+  return value === JSON.stringify(canonicalIdentity);
 }
