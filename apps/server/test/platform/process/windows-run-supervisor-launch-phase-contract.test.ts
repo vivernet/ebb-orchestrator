@@ -191,6 +191,19 @@ describe("Windows native helper launch-phase diagnostic contract", () => {
     expect(liveTest).toMatch(/finalObservation\.state\s*!==\s*"STOPPED"[\s\S]*?PROFILE_PATH_CHAIN_LIVE_FIXTURE_STOP_UNPROVEN/u);
   });
 
+  it("roots strict native ACL verification and recursive cleanup inside the disposable fixture", () => {
+    const fixtureSetup = /async function makeFixture\([\s\S]*?(?=\n\s{2}\}\n\}\);)/u.exec(profileChainAcceptanceSource)?.[0] ?? "";
+    expect(fixtureSetup).toMatch(/existingRealDirectory\(userProfile\)[\s\S]*?existingRealDirectory\(localAppData\)/u);
+    expect(fixtureSetup).toMatch(/relative\(userProfile, localAppData\)[\s\S]*?PROFILE_PATH_CHAIN_LOCALAPPDATA_OUTSIDE_USERPROFILE/u);
+    expect(fixtureSetup).not.toMatch(/nativeIdentity\(localAppData,\s*"directory",\s*userProfile\)/u);
+    expect(fixtureSetup).toMatch(/mkdtemp\(join\(tmpdir\(\),\s*"ebb-orchestrator-profile-chain-e2e-"\)\)/u);
+    expect(fixtureSetup).toMatch(/const homeRoot = join\(fixtureParent, "home"\)[\s\S]*?setPrivateOwnerAcl\(\[fixtureParent\]\)[\s\S]*?setPrivateOwnerAcl\(\[homeRoot\]\)[\s\S]*?nativeIdentity\(homeRoot,\s*"directory",\s*fixtureParent,\s*"strict-root"\)/u);
+    expect(fixtureSetup).toMatch(/nativeIdentity\(profile,\s*"directory",\s*fixtureParent\)[\s\S]*?nativeIdentity\(home,\s*"directory",\s*fixtureParent\)/u);
+    expect(profileChainAcceptanceSource).toMatch(/identityPoint === "strict-root"[\s\S]*?chain\?\.authRootIndex[\s\S]*?chain\?\.components\?\.\[chain\.authRootIndex!\]/u);
+    expect(profileChainAcceptanceSource).toMatch(/waitForStopped\(identity,\s*30_000\)[\s\S]*?nativeIdentity\(\s*fixtureHome\.identityProbe,\s*"directory",\s*fixtureHome\.strictRoot,\s*"strict-root",?\s*\)[\s\S]*?rm\(fixtureHome\.path,\s*\{\s*recursive:\s*true/u);
+    expect(fixtureSetup).toMatch(/rmdir\(homeRoot\)[\s\S]*?rmdir\(fixtureParent\)/u);
+  });
+
   it("splits Job-open and mapping/identity-open inspection failures into fixed UNKNOWN codes", async () => {
     Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
     expect(nativeSource).toMatch(/JOB_OPEN_UNAVAILABLE/u);

@@ -36,7 +36,12 @@ const pinnedHermesVersion = "v0.21.5+7357.g9244275";
 describe.skipIf(!enabled)("Windows Hermes profile path-chain production integration", () => {
   const executor = new ProcessExecutor();
   const supervisor = new WindowsJobSupervisor(executor, supervisorHelper);
-  const fixtureHomes: Array<{ path: string; strictRoot: string; identity: HermesLaunchObjectIdentity | undefined }> = [];
+  const fixtureHomes: Array<{
+    path: string;
+    identityProbe: string;
+    strictRoot: string;
+    identity: HermesLaunchObjectIdentity | undefined;
+  }> = [];
   const observedJobIdentities: ProcessScopeIdentity[] = [];
 
   afterAll(async () => {
@@ -53,7 +58,9 @@ describe.skipIf(!enabled)("Windows Hermes profile path-chain production integrat
     }
     for (const fixtureHome of fixtureHomes.reverse()) {
       if (!fixtureHome.identity) throw new Error("PROFILE_PATH_CHAIN_FIXTURE_CLEANUP_IDENTITY_UNPROVEN");
-      const currentIdentity = await nativeIdentity(fixtureHome.path, "directory", fixtureHome.strictRoot);
+      const currentIdentity = await nativeIdentity(
+        fixtureHome.identityProbe, "directory", fixtureHome.strictRoot, "strict-root",
+      );
       if (!sameNativeIdentity(currentIdentity, fixtureHome.identity)) {
         throw new Error("PROFILE_PATH_CHAIN_FIXTURE_CLEANUP_IDENTITY_CHANGED");
       }
@@ -291,10 +298,10 @@ describe.skipIf(!enabled)("Windows Hermes profile path-chain production integrat
       expect(await verifyHermesProfileHomePathChain(fixture.profile, fixture.authRoot))
         .toEqual(fixture.profileHomePathChain);
       expect(sameNativeIdentity(
-        await nativeIdentity(fixture.home, "directory", fixture.authRoot), fixture.targetIdentities.home,
+        await nativeIdentity(fixture.home, "directory", fixture.strictBoundary), fixture.targetIdentities.home,
       )).toBe(true);
       expect(sameNativeIdentity(
-        await nativeIdentity(fixture.config, "file", fixture.authRoot), fixture.targetIdentities.config,
+        await nativeIdentity(fixture.config, "file", fixture.strictBoundary), fixture.targetIdentities.config,
       )).toBe(true);
       profileRenameDenied = await renameDenied(fixture.profile, `${fixture.profile}.during-launch`);
       const profiles = join(fixture.authRoot, "profiles");
@@ -332,9 +339,9 @@ describe.skipIf(!enabled)("Windows Hermes profile path-chain production integrat
         await verifyHermesProfileHomePathChain(fixture.profile, fixture.authRoot)
           .then((chain) => JSON.stringify(chain) === JSON.stringify(fixture.profileHomePathChain), () => false);
       if (liveAncestorSubstitution === "RENAME_DENIED") {
-        expect(sameNativeIdentity(await nativeIdentity(fixture.profile, "directory", fixture.authRoot), fixture.profileIdentity)).toBe(true);
-        expect(sameNativeIdentity(await nativeIdentity(fixture.home, "directory", fixture.authRoot), fixture.targetIdentities.home)).toBe(true);
-        expect(sameNativeIdentity(await nativeIdentity(fixture.config, "file", fixture.authRoot), fixture.targetIdentities.config)).toBe(true);
+        expect(sameNativeIdentity(await nativeIdentity(fixture.profile, "directory", fixture.strictBoundary), fixture.profileIdentity)).toBe(true);
+        expect(sameNativeIdentity(await nativeIdentity(fixture.home, "directory", fixture.strictBoundary), fixture.targetIdentities.home)).toBe(true);
+        expect(sameNativeIdentity(await nativeIdentity(fixture.config, "file", fixture.strictBoundary), fixture.targetIdentities.config)).toBe(true);
       }
     } catch (error) {
       actionFailure = error;
@@ -371,17 +378,22 @@ describe.skipIf(!enabled)("Windows Hermes profile path-chain production integrat
       .toBe(true);
     expect(liveChainStillMatches, "the captured chain identities must still match while the production Job is LIVE").toBe(true);
     expect(await readFile(marker, "utf8")).toBe("started");
-    expect(sameNativeIdentity(await nativeIdentity(fixture.profile, "directory", fixture.authRoot), fixture.profileIdentity),
+    expect(sameNativeIdentity(await nativeIdentity(fixture.profile, "directory", fixture.strictBoundary), fixture.profileIdentity),
       "the exact captured Run leaf identity must remain the same through STOPPED cleanup").toBe(true);
     expect(await verifyHermesProfileHomePathChain(fixture.profile, fixture.authRoot)).toEqual(fixture.profileHomePathChain);
-    expect(sameNativeIdentity(await nativeIdentity(fixture.home, "directory", fixture.authRoot), fixture.targetIdentities.home)).toBe(true);
-    expect(sameNativeIdentity(await nativeIdentity(fixture.config, "file", fixture.authRoot), fixture.targetIdentities.config)).toBe(true);
+    expect(sameNativeIdentity(await nativeIdentity(fixture.home, "directory", fixture.strictBoundary), fixture.targetIdentities.home)).toBe(true);
+    expect(sameNativeIdentity(await nativeIdentity(fixture.config, "file", fixture.strictBoundary), fixture.targetIdentities.config)).toBe(true);
     // Namespace locking is not a same-user ACL freeze; cleanup starts only after STOPPED.
     await rm(fixture.config);
   }, 180_000);
 
   async function makeFixture(
-    homes: Array<{ path: string; strictRoot: string; identity: HermesLaunchObjectIdentity | undefined }>,
+    homes: Array<{
+      path: string;
+      identityProbe: string;
+      strictRoot: string;
+      identity: HermesLaunchObjectIdentity | undefined;
+    }>,
   ) {
     const localAppData = process.env.LOCALAPPDATA;
     const userProfile = process.env.USERPROFILE;
@@ -394,16 +406,27 @@ describe.skipIf(!enabled)("Windows Hermes profile path-chain production integrat
         isAbsolute(localAppDataRelative)) {
       throw new Error("PROFILE_PATH_CHAIN_LOCALAPPDATA_OUTSIDE_USERPROFILE");
     }
-    // Establish LOCALAPPDATA as a real, owner-private boundary before creating the unique home.
-    await nativeIdentity(localAppData, "directory", userProfile);
-    const homeRoot = join(localAppData, `ebb-orchestrator-profile-chain-e2e-${randomUUID()}`);
-    await mkdir(homeRoot);
-    const managedHome = { path: homeRoot, strictRoot: localAppData, identity: undefined as HermesLaunchObjectIdentity | undefined };
+    // Keep every ACL mutation and strict native path-chain check inside a unique temporary root.
+    // The actual USERPROFILE/LOCALAPPDATA values above are only checked for real-directory status
+    // and lexical containment; they are not modified or subjected to the fixture ACL policy.
+    const fixtureParent = await mkdtemp(join(tmpdir(), "ebb-orchestrator-profile-chain-e2e-"));
+    const homeRoot = join(fixtureParent, "home");
+    const managedHome = {
+      path: fixtureParent,
+      identityProbe: homeRoot,
+      strictRoot: fixtureParent,
+      identity: undefined as HermesLaunchObjectIdentity | undefined,
+    };
     const previousHomeOverride = process.env.EBB_ORCHESTRATOR_HOME;
     try {
-      // The unique disposable home is the only location where this acceptance changes ACLs.
+      // This temporary parent is the sole fixture-owned cleanup unit and strict chain boundary.
+      await setPrivateOwnerAcl([fixtureParent]);
+      await mkdir(homeRoot);
       await setPrivateOwnerAcl([homeRoot]);
-      managedHome.identity = await nativeIdentity(homeRoot, "directory", localAppData);
+      // Capture the temporary strict-boundary directory from a verified descendant chain. Do not
+      // use legacy verify-safe-path on fixtureParent: that command applies strict ACL checks to
+      // real temporary-directory ancestors outside this fixture.
+      managedHome.identity = await nativeIdentity(homeRoot, "directory", fixtureParent, "strict-root");
       homes.push(managedHome);
       process.env.EBB_ORCHESTRATOR_HOME = homeRoot;
       const productionHome = resolveOrchestratorHome(process.env, "win32");
@@ -412,19 +435,19 @@ describe.skipIf(!enabled)("Windows Hermes profile path-chain production integrat
         throw new Error("PROFILE_PATH_CHAIN_FIXTURE_HOME_RESOLUTION_MISMATCH");
       }
 
-      // Build production descendants only after the unique private root passed native chain
-      // verification with LOCALAPPDATA as the explicit strict boundary.
+      // Build the production cache beneath the isolated home; all strict checks below retain the
+      // temporary fixture parent as their boundary and therefore include the complete owned path.
       const cacheParent = dirname(productionCacheRoot);
       const runtimeRoot = dirname(cacheParent);
       await mkdir(runtimeRoot);
       await setPrivateOwnerAcl([runtimeRoot]);
-      await nativeIdentity(runtimeRoot, "directory", homeRoot);
+      await nativeIdentity(runtimeRoot, "directory", fixtureParent);
       await mkdir(cacheParent);
       await setPrivateOwnerAcl([cacheParent]);
-      await nativeIdentity(cacheParent, "directory", homeRoot);
+      await nativeIdentity(cacheParent, "directory", fixtureParent);
       await mkdir(productionCacheRoot);
       await setPrivateOwnerAcl([productionCacheRoot]);
-      await nativeIdentity(productionCacheRoot, "directory", homeRoot);
+      await nativeIdentity(productionCacheRoot, "directory", fixtureParent);
 
       // Materialize the fixture as a disposable child of the cache derived from the real path
       // resolver and production-path adapter.
@@ -432,7 +455,7 @@ describe.skipIf(!enabled)("Windows Hermes profile path-chain production integrat
       const cacheRoot = root;
       expect(dirname(cacheRoot), "native source cache must be a child of the production cache root").toBe(productionCacheRoot);
       await setPrivateOwnerAcl([cacheRoot]);
-      await nativeIdentity(cacheRoot, "directory", homeRoot);
+      await nativeIdentity(cacheRoot, "directory", fixtureParent);
       const sourceFixture = await createPinnedGitFixture(root);
       const git = "git.exe";
       let snapshot: Awaited<ReturnType<typeof materializeHermesSourceSnapshot>>;
@@ -446,7 +469,7 @@ describe.skipIf(!enabled)("Windows Hermes profile path-chain production integrat
           }),
         );
       } catch (snapshotError) {
-        const diagnosticCode = await nativeIdentity(cacheRoot, "directory", homeRoot)
+        const diagnosticCode = await nativeIdentity(cacheRoot, "directory", fixtureParent)
           .then(() => undefined, (diagnosticError: unknown) => safeNativeDiagnostic(diagnosticError));
         if (diagnosticCode) {
           throw new Error(
@@ -469,17 +492,17 @@ describe.skipIf(!enabled)("Windows Hermes profile path-chain production integrat
       const shim = join(root, `hermes-${runId}.exe`);
       await writeFile(shim, "synthetic launcher identity; never executed\n");
       const pythonIdentity = await nativeIdentity(python, "file");
-      const hermesIdentity = await nativeIdentity(shim, "file", root);
-      const profileIdentity = await nativeIdentity(profile, "directory", authRoot);
+      const hermesIdentity = await nativeIdentity(shim, "file", fixtureParent);
+      const profileIdentity = await nativeIdentity(profile, "directory", fixtureParent);
       const targetIdentities = {
-        home: await nativeIdentity(home, "directory", authRoot),
-        config: await nativeIdentity(config, "file", authRoot),
+        home: await nativeIdentity(home, "directory", fixtureParent),
+        config: await nativeIdentity(config, "file", fixtureParent),
       };
       const profileHomePathChain = await verifyHermesProfileHomePathChain(profile, authRoot);
       if (profileIdentity.platform !== "win32") throw new Error("PROFILE_PATH_CHAIN_WINDOWS_IDENTITY_REQUIRED");
       expect(profileHomePathChain?.components.at(-1), "captured chain leaf must equal the separately captured Run-profile identity")
         .toEqual({ volumeSerial: profileIdentity.volumeSerial, fileId: profileIdentity.fileId });
-      const snapshotIdentity = await nativeIdentity(snapshot.rootPath, "directory", homeRoot);
+      const snapshotIdentity = await nativeIdentity(snapshot.rootPath, "directory", fixtureParent);
       const environment = {
         HERMES_HOME: profile,
         HOME: home,
@@ -490,15 +513,16 @@ describe.skipIf(!enabled)("Windows Hermes profile path-chain production integrat
         ...(process.env.TMP ? { TMP: process.env.TMP } : {}),
       };
       return {
-        root, runId, authRoot, profile, home, config, python, shim, snapshot, projection,
+        root, runId, authRoot, strictBoundary: fixtureParent, profile, home, config, python, shim, snapshot, projection,
         pythonIdentity, hermesIdentity, profileIdentity, targetIdentities, profileHomePathChain,
         snapshotIdentity, environment,
       };
     } catch (error) {
       if (!managedHome.identity) {
-        // Before identity capture this path is still an empty directory. Never recurse here;
-        // retain it if a non-recursive removal cannot prove that it is empty.
+        // Before boundary identity capture only these two empty directories exist. Remove them
+        // child-first, non-recursively; retain either one if it is no longer proven empty.
         await rmdir(homeRoot).catch(() => undefined);
+        await rmdir(fixtureParent).catch(() => undefined);
       }
       throw error;
     } finally {
@@ -551,6 +575,7 @@ async function nativeIdentity(
   path: string,
   kind: "file" | "directory",
   strictRoot?: string,
+  identityPoint: "leaf" | "strict-root" = "leaf",
 ): Promise<HermesLaunchObjectIdentity> {
   const args = strictRoot
     ? kind === "directory"
@@ -572,10 +597,16 @@ async function nativeIdentity(
       kind?: string;
       volumeSerial?: string;
       fileId?: string;
-      profileHomePathChain?: { components?: Array<{ volumeSerial?: string; fileId?: string }> };
+      profileHomePathChain?: {
+        authRootIndex?: number;
+        components?: Array<{ volumeSerial?: string; fileId?: string }>;
+      };
     };
+    const chain = parsed.profileHomePathChain;
     const identity = strictRoot && kind === "directory"
-      ? parsed.profileHomePathChain?.components?.at(-1)
+      ? identityPoint === "strict-root"
+        ? Number.isSafeInteger(chain?.authRootIndex) ? chain?.components?.[chain.authRootIndex!] : undefined
+        : chain?.components?.at(-1)
       : parsed;
     const expectedStatus = strictRoot ? kind === "file" ? "SAFE_PATH_FILE_CHAIN" : "SAFE_PATH_CHAIN" : "SAFE_PATH";
     if (parsed.status !== expectedStatus || (!strictRoot && parsed.kind !== kind) ||
