@@ -375,6 +375,11 @@ pnpm --filter @ebb-orchestrator/testing typecheck
 pnpm --filter @ebb-orchestrator/testing test
 ```
 
+Перед отдельным запуском `pnpm --filter @ebb-orchestrator/server test` выполните
+`pnpm server:build`: filtered test command сам не создаёт необходимые
+`packages/contracts/dist` и `apps/server/dist`. Корневой `pnpm test` уже начинает
+с этой сборки.
+
 `test:watch`, `server:dev` и `web:dev` — долгоживущие процессы. Root `pnpm test`
 сначала собирает server через `pnpm server:build`, после чего запускает
 production subprocess tests; отдельная предварительная сборка не нужна.
