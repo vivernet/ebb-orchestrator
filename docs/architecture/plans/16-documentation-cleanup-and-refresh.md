@@ -3,7 +3,7 @@ id: plan-16
 kind: plan
 status: blocked
 created: 2026-09-25
-updated: 2026-10-06
+updated: 2026-10-07
 title: Очистка и актуализация документации Ebb Orchestrator
 depends_on:
   - plan-15-07
@@ -152,7 +152,7 @@ Files: repository root, `docs/architecture/plans/`, candidate paths above. Symbo
   $frontMatterResult = [regex]::Match($content, '(?s)\A---\r?\n(?<yaml>.*?)\r?\n---')
   if (-not $frontMatterResult.Success) { throw 'Plan16 YAML frontmatter is missing.' }
   $yaml = $frontMatterResult.Groups['yaml'].Value
-  $expectedDates = [ordered]@{ created = '2026-09-25'; updated = '2026-10-06' }
+  $expectedDates = [ordered]@{ created = '2026-09-25'; updated = '2026-10-07' }
   foreach ($entry in $expectedDates.GetEnumerator()) {
     if ($yaml -notmatch "(?m)^$($entry.Key):\s+$([regex]::Escape($entry.Value))\s*$") {
       throw "Plan16 $($entry.Key) does not match the expected date."
@@ -167,7 +167,7 @@ Files: repository root, `docs/architecture/plans/`, candidate paths above. Symbo
     )
     if (-not $isValidDate) { throw "Plan16 $($entry.Key) is not a valid ISO calendar date." }
   }
-  'Plan16 frontmatter dates passed: created=2026-09-25 updated=2026-10-06'
+  'Plan16 frontmatter dates passed: created=2026-09-25 updated=2026-10-07'
   ```
 - Expected: `pnpm docs:check` exits `0` for frontmatter/id/filename checks and the PowerShell snippet exits `0` with the stated message; neither command changes files. No candidate is silently omitted; any inventory mismatch blocks further work; inventory/validation leaves no `docs/roadmap/generated.md` or other new artifact.
 
@@ -401,10 +401,10 @@ Behavior changes are documentation/governance behavior rather than runtime behav
 - [x] Immediately before each deletion, existence, tracked state and SHA-256 matched the exact rebaseline row.
 - [x] Deleted only the eight exact files individually; verified each is absent and all 14 preservation paths remain.
 - [x] Marked the two specified historical evidence references as deleted by this rebaseline while preserving all remaining evidence.
-- [ ] README.md and docs/README.md are Russian, metadata-free and link to real current paths; docs/development/05-hermes.md remains the canonical Hermes guide and preserves its guideline metadata.
+- [x] README.md and docs/README.md are Russian, metadata-free and link to real current paths; docs/development/05-hermes.md remains the canonical Hermes guide and preserves its guideline metadata.
 - [ ] Both README files and the canonical Hermes guide document only verified pnpm commands and state prerequisites/environment-dependent behavior.
-- [ ] .gitignore changes, if any, are narrow and do not hide source tests; AGENTS.md changes, if any, define safe temporary-file handling.
-- [ ] pnpm docs:check validates frontmatter/id/filename structure; the read-only PowerShell snippet validates plan-16 created: 2026-09-25 and updated: 2026-10-06 as ISO dates; inventory and validation leave neither docs/roadmap/generated.md nor any other new artifact.
+- [x] .gitignore changes, if any, are narrow and do not hide source tests; AGENTS.md changes, if any, define safe temporary-file handling.
+- [x] pnpm docs:check validates frontmatter/id/filename structure; the read-only PowerShell snippet validates plan-16 created: 2026-09-25 and updated: 2026-10-07 as ISO dates; inventory and validation leave neither docs/roadmap/generated.md nor any other new artifact.
 - [ ] Documentation validators, quality gates, link/status checks and git diff --check pass; no unrelated changes remain.
 
 ## Risks and rollback
