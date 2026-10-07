@@ -16,6 +16,10 @@ const supervisorSource = readFileSync(
   new URL("../../../src/platform/process/windows-job-supervisor.ts", import.meta.url),
   "utf8",
 );
+const profileChainAcceptanceSource = readFileSync(
+  new URL("../../e2e/hermes-profile-path-chain.acceptance.test.ts", import.meta.url),
+  "utf8",
+);
 
 class PhaseExecutor extends ProcessExecutor {
   readonly calls: string[][] = [];
@@ -110,6 +114,81 @@ describe("Windows native helper launch-phase diagnostic contract", () => {
     ]) expect(encoder).toContain(field);
     expect(encoder).not.toContain("encodeNativeProjection");
     expect(encoder).toContain("256 * 1024");
+  });
+
+  it("parses the complete bounded EBB3 launch frame before accepting launch acknowledgement", () => {
+    expect(nativeSource).toMatch(/magic\s*!=\s*0x45424233/u);
+    expect(nativeSource).toMatch(/frameByteLength/u);
+    expect(nativeSource).toMatch(/kMaxMetadataBytes/u);
+    expect(nativeSource).toMatch(/remaining\s*==\s*0/u);
+    expect(nativeSource).toMatch(/readMetadata\(&metadata\)[\s\S]*?LAUNCH_FRAME_INVALID/u);
+    expect(nativeSource).toMatch(/readMetadata\(&metadata\)[\s\S]*?readLaunchAcknowledgement\(nonce\)/u);
+    const encoder = /function encodeMetadataFrame\([\s\S]*?\n\}/u.exec(supervisorSource)?.[0] ?? "";
+    expect(encoder).toMatch(/addU32\(0x45424233\)[\s\S]*?frameLengthOffset[\s\S]*?result\.writeUInt32BE\(result\.byteLength/u);
+  });
+
+  it("opens and verifies every Hermes profile component relative to a held no-reparse parent", () => {
+    expect(nativeSource).toMatch(/OBJ_CASE_INSENSITIVE\s*\|\s*OBJ_DONT_REPARSE/u);
+    expect(nativeSource).toMatch(/NtCreateFileProc/u);
+    expect(nativeSource).toMatch(/openProfileDirectoryRelative\(handles->back\(\)\.value, components\[index\]/u);
+    expect(nativeSource).toMatch(/profilePathChain\.size\(\)[\s\S]*?ticketFileIdentity\(handle, expected\.first, expected\.second\)/u);
+    expect(nativeSource).toMatch(/FILE_SHARE_READ\s*\|\s*FILE_SHARE_WRITE, FILE_OPEN/u);
+    expect(nativeSource).toMatch(/safeProfileAncestorAcl/u);
+    expect(nativeSource).toMatch(/safePrivateProfileDirectoryAcl/u);
+    expect(nativeSource).toMatch(/metadata\.authRootIndex\s*\+\s*3\s*!=\s*metadata\.profilePathChain\.size\(\)/u);
+    expect(nativeSource).toContain("EBBACK01");
+    expect(supervisorSource).toContain("encodeLaunchAcknowledgement(owner.launchNonce)");
+    expect(nativeSource).toMatch(/ticketPathsStillMatch\(metadata,[\s\S]*?ResumeThread/u);
+    expect(nativeSource).toMatch(/std::vector<Handle>\s+ticketProfileChain;[\s\S]*?for\s*\(;;\)[\s\S]*?active == 0/u);
+  });
+
+  it("keeps phase identity evidence acceptance-only, bounded, ordered, and outside EBBJOB1", () => {
+    expect(nativeSource).toMatch(/operation == L"launch-evidence"/u);
+    expect(nativeSource).toMatch(/operation == L"launch" \|\| operation == L"launch-evidence"/u);
+    expect(nativeSource).toMatch(/std::vector<std::string> evidenceRecords/u);
+    expect(nativeSource).toMatch(/EBB_EVIDENCE\\tV1\\t/u);
+    expect(nativeSource).toMatch(/evidenceRecords\.size\(\) != 5/u);
+    expect(nativeSource).toMatch(/FRAME_DECODED_EXPECTED[\s\S]*?SUPERVISOR_OPEN[\s\S]*?PRE_CREATE[\s\S]*?PRE_RESUME[\s\S]*?STOPPED_HELD/u);
+    expect(nativeSource).toMatch(/chain-v[\s\S]*component-count=/u);
+    expect(nativeSource).toMatch(/GetFileInformationByHandleEx\(handle, FileIdInfo/u);
+    expect(nativeSource).toMatch(/heldPathChainCommitment\("SUPERVISOR_OPEN"/u);
+    expect(nativeSource).toMatch(/heldPathChainCommitment\("STOPPED_HELD"/u);
+    expect(nativeSource).toMatch(/for \(const auto& record : evidenceRecords\) envelope \+= record/u);
+    expect(nativeSource).toMatch(/EBB_EVIDENCE_END_V1:/u);
+    expect(nativeSource).toMatch(/if \(active == 0\) break;[\s\S]*?STOPPED_HELD[\s\S]*?writeStdout\(envelope\)/u);
+
+    const preCreateOffset = nativeSource.indexOf('&digest, "PRE_CREATE"');
+    const createOffset = nativeSource.indexOf("CreateProcessW(metadata.executable.c_str()", preCreateOffset);
+    expect(preCreateOffset).toBeGreaterThan(-1);
+    expect(createOffset).toBeGreaterThan(preCreateOffset);
+    expect(nativeSource.slice(preCreateOffset, createOffset)).not.toMatch(/Sleep\(|WaitFor|await|callback/iu);
+
+    const preResumeOffset = nativeSource.indexOf('acceptanceEvidence ? "PRE_RESUME"');
+    const resumeOffset = nativeSource.indexOf("ResumeThread(primaryThread.value)", preResumeOffset);
+    expect(preResumeOffset).toBeGreaterThan(-1);
+    expect(resumeOffset).toBeGreaterThan(preResumeOffset);
+    const resumeGate = nativeSource.slice(preResumeOffset, resumeOffset);
+    expect(resumeGate).toMatch(/return false;\s*\}\s*const DWORD previousSuspendCount = $/u);
+    expect(resumeGate.slice(resumeGate.lastIndexOf("return false;"))).not.toMatch(/Sleep\(|WaitFor|await|callback/iu);
+    expect(nativeSource).toMatch(/std::string\("EBB-PATH-CHAIN-EVIDENCE-V1\\n"\)[\s\S]*?stage[\s\S]*?runId[\s\S]*?metadata\.profilePathChain/u);
+    expect(nativeSource).toMatch(/addEvidenceRecord\([\s\S]*?ownerAscii[\s\S]*?runId[\s\S]*?nonceAscii[\s\S]*?digest/u);
+    expect(nativeSource).toMatch(/constexpr char kMappingMagic\[\] = "EBBJOB1";/u);
+  });
+
+  it("strips acceptance evidence before returning process output and limits it to one exact launch", () => {
+    expect(supervisorSource).toMatch(/this\.acceptanceEvidence \? "launch-evidence" : "launch"/u);
+    expect(supervisorSource).toMatch(/this\.acceptanceEvidenceUsed \|\|/u);
+    expect(supervisorSource).toMatch(/this\.acceptanceEvidence\.parser\.write[\s\S]*?parser\.finish\(\)[\s\S]*?stdout: evidence\.payloadOutput/u);
+    expect(supervisorSource).toMatch(/request\.onStdoutChunk \|\| request\.captureOutput === false/u);
+    expect(supervisorSource).toMatch(/fields\.length !== 7[\s\S]*?fields\[3\] !== binding\.containmentId[\s\S]*?fields\[4\] !== binding\.runId[\s\S]*?fields\[5\] !== binding\.launchNonce/u);
+    expect(supervisorSource).toMatch(/records\.length !== WINDOWS_PATH_CHAIN_EVIDENCE_STAGES\.length/u);
+  });
+
+  it("releases the LIVE dummy payload on marker failure and waits for STOPPED before fixture restoration", () => {
+    const liveTest = /it\("keeps the production Job live until release and performs fixture cleanup only after STOPPED"([\s\S]*?)\n\s{2}\}, 180_000\)/u.exec(profileChainAcceptanceSource)?.[1] ?? "";
+    expect(liveTest).toMatch(/try \{\s*await waitForFile\(marker\);[\s\S]*?catch \(error\) \{\s*actionFailure = error;\s*\} finally \{[\s\S]*?writeFile\(release, "release"\)/u);
+    expect(liveTest).toMatch(/handle\.completion[\s\S]*?waitForStopped\(identity!, 30_000\)[\s\S]*?if \(liveAncestorSubstitution === "JUNCTION_INSTALLED"\)[\s\S]*?rmdir\(profilesPath\)/u);
+    expect(liveTest).toMatch(/finalObservation\.state\s*!==\s*"STOPPED"[\s\S]*?PROFILE_PATH_CHAIN_LIVE_FIXTURE_STOP_UNPROVEN/u);
   });
 
   it("splits Job-open and mapping/identity-open inspection failures into fixed UNKNOWN codes", async () => {

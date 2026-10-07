@@ -46,6 +46,7 @@ describe("bindHermesRunSelectionToOptions", () => {
       sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit,
       sourceSnapshotKey,
       profileHome: fixture.profileHome,
+      ...(fixture.profileHomePathChain ? { profileHomePathChain: fixture.profileHomePathChain } : {}),
       authRouteEvidence: fixture.authRouteEvidence,
     };
 
@@ -151,7 +152,9 @@ describe("bindHermesRunSelectionToOptions", () => {
       runId, providerId: fixture.providerSelection.providerId, modelId: fixture.providerSelection.modelId,
       endpointIdentity: fixture.providerSelection.endpointIdentity!, endpointRevision: fixture.providerSelection.endpointRevision!,
       sourceVersion: HERMES_PROVIDER_SELECTION_SOURCE.version, sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit,
-      sourceSnapshotKey, profileHome: fixture.profileHome, authRouteEvidence: fixture.authRouteEvidence,
+      sourceSnapshotKey, profileHome: fixture.profileHome,
+      ...(fixture.profileHomePathChain ? { profileHomePathChain: fixture.profileHomePathChain } : {}),
+      authRouteEvidence: fixture.authRouteEvidence,
     };
 
     expect(() => bindHermesRunSelectionToOptions(startOptions(runId), {

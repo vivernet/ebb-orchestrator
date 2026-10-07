@@ -400,6 +400,10 @@ function createProviderFreeHermesMechanicsRuntime(database: Database, fixtureRoo
   const objectIdentity = platform === "win32"
     ? { platform, volumeSerial: "0123456789abcdef", fileId: "0123456789abcdef0123456789abcdef" } as const
     : { platform, device: "1", inode: "1" } as const;
+  const profileHomeTargetIdentities = platform === "win32" ? {
+    home: { ...objectIdentity, fileId: "7".repeat(32) },
+    config: { ...objectIdentity, fileId: "8".repeat(32) },
+  } : undefined;
   const argsPrefix = ["-I", "-B", "-S", "-c", "mechanics-only bootstrap"];
   const sourceSnapshotKey = createSourceSnapshotKey();
   const snapshotDirectoryId = createHash("sha256").update(sourceSnapshotKey).digest("hex");
@@ -422,6 +426,8 @@ function createProviderFreeHermesMechanicsRuntime(database: Database, fixtureRoo
         executableArgsPrefix: argsPrefix,
         profileHome: input.profileHome,
         profileHomeIdentity: objectIdentity,
+        ...(profileHomeTargetIdentities ? { profileHomeTargetIdentities } : {}),
+        ...(input.profileHomePathChain ? { profileHomePathChain: input.profileHomePathChain } : {}),
         hermesSourceSnapshotKey: sourceSnapshotKey,
         hermesSourceSnapshotRoot: join(fixtureRoot, "source-snapshots", snapshotDirectoryId),
         hermesSourceSnapshotRootIdentity: objectIdentity,
@@ -462,6 +468,7 @@ async function createMechanicsSelection(runId: string, modelId: string, authRoot
     sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit,
     sourceSnapshotKey: createSourceSnapshotKey(),
     profileHome,
+    ...(fixture.profileHomePathChain ? { profileHomePathChain: fixture.profileHomePathChain } : {}),
     authRouteEvidence: fixture.authRouteEvidence,
   });
 }

@@ -5,7 +5,7 @@ import process from "node:process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { HERMES_PROVIDER_SELECTION_SOURCE } from "./hermes-provider-selection.js";
-import type { HermesLaunchObjectIdentity } from "./hermes-launch-ticket.js";
+import type { HermesLaunchObjectIdentity, HermesWindowsPathIdentityChain } from "./hermes-launch-ticket.js";
 import { isVerifiedHermesSourceSnapshot, type HermesSourceSnapshot } from "./hermes-source-snapshot.js";
 import { ProcessExecutor, type ProcessOptions, type ProcessResult } from "../../../platform/process/process-executor.js";
 import { verifyNativeHelperIntegrity } from "../../../platform/process/native-helper-integrity.js";
@@ -21,6 +21,7 @@ const TRUSTED_GIT_SIGNER_SUBJECT = "CN=Johannes Schindelin, O=Johannes Schindeli
 const TRUSTED_GIT_SIGNER_THUMBPRINT = "3EB14A3AEF84B7153E139397F0A49E2FAC662B0E";
 const PATH_VERIFIER_TIMEOUT_MS = 5_000;
 const PATH_VERIFIER_MAX_BUFFER = 1_024;
+const PATH_CHAIN_VERIFIER_MAX_BUFFER = 8_192;
 
 interface WindowsNativeSafePathIdentity {
   readonly platform: "win32";
@@ -538,6 +539,72 @@ export async function verifyHermesProfileHomeIdentity(profileHome: string): Prom
   return Object.freeze({ platform: "win32", volumeSerial: identity.volumeSerial, fileId: identity.fileId });
 }
 
+/** Фиксирует приватные native identity точных `home` и `config.yaml` после их создания для Windows Run. */
+export async function verifyHermesRunProfileTargetIdentities(profileHome: string): Promise<{
+  readonly home: HermesLaunchObjectIdentity;
+  readonly config: HermesLaunchObjectIdentity;
+}> {
+  if (currentPlatform() !== "win32" || !path.win32.isAbsolute(profileHome) || hasControlCharacters(profileHome)) {
+    throw resolverError("HERMES_PATH_UNSAFE");
+  }
+  const canonicalProfile = await canonicalExistingDirectory(profileHome, path.win32);
+  const expectedHome = path.win32.join(canonicalProfile, "home");
+  const expectedConfig = path.win32.join(canonicalProfile, "config.yaml");
+  const helperPath = bundledPathVerifierPath("win32");
+  await verifyNativeHelperIntegrity(helperPath, "hermesProfilePath");
+  const runner = createNativePathVerifierRunner();
+  const [home, config] = await Promise.all([
+    verifyNativeSafePath(helperPath, expectedHome, "directory", process.cwd(), runner, "win32"),
+    verifyNativeSafePath(helperPath, expectedConfig, "file", process.cwd(), runner, "win32"),
+  ]);
+  if (home.platform !== "win32" || config.platform !== "win32") throw resolverError("HERMES_PATH_IDENTITY_INVALID");
+  return Object.freeze({
+    home: Object.freeze({ platform: "win32", volumeSerial: home.volumeSerial, fileId: home.fileId }),
+    config: Object.freeze({ platform: "win32", volumeSerial: config.volumeSerial, fileId: config.fileId }),
+  });
+}
+
+/** Повторно фиксирует все native directory identities от volume root до точного Run profile на Windows. */
+export async function verifyHermesProfileHomePathChain(
+  profileHome: string,
+  authRoot: string,
+): Promise<HermesWindowsPathIdentityChain | undefined> {
+  if (currentPlatform() !== "win32") return undefined;
+  const paths = path.win32;
+  if (!paths.isAbsolute(profileHome) || !paths.isAbsolute(authRoot) || hasControlCharacters(profileHome) ||
+      hasControlCharacters(authRoot)) throw resolverError("HERMES_PATH_UNSAFE");
+  const helperPath = bundledPathVerifierPath("win32");
+  await verifyNativeHelperIntegrity(helperPath, "hermesProfilePath");
+  const canonicalProfileHome = await canonicalExistingDirectory(profileHome, paths);
+  const canonicalAuthRoot = await canonicalExistingDirectory(authRoot, paths);
+  let result: ProcessResult;
+  try {
+    result = await createNativePathVerifierRunner()(helperPath, [
+      "verify-safe-path-chain", "directory", canonicalProfileHome, canonicalAuthRoot,
+    ], {
+      shell: false,
+      cwd: process.cwd(),
+      env: (() => {
+        const systemRoot = process.env.SystemRoot ?? process.env.WINDIR ?? "";
+        return systemRoot
+          ? { SystemRoot: systemRoot, WINDIR: systemRoot, PATH: paths.join(systemRoot, "System32") }
+          : {};
+      })(),
+      timeout: PATH_VERIFIER_TIMEOUT_MS,
+      maxBuffer: PATH_CHAIN_VERIFIER_MAX_BUFFER,
+    });
+  } catch {
+    throw resolverError("HERMES_PATH_TRUST_UNAVAILABLE");
+  }
+  if (result.exitCode !== 0 || result.stderr !== "" || result.stdout.length > PATH_CHAIN_VERIFIER_MAX_BUFFER) {
+    throw resolverError("HERMES_PATH_UNSAFE");
+  }
+  const line = result.stdout.endsWith("\r\n") ? result.stdout.slice(0, -2) :
+    result.stdout.endsWith("\n") ? result.stdout.slice(0, -1) : result.stdout;
+  if (!line || line.includes("\n") || line.includes("\r")) throw resolverError("HERMES_PATH_IDENTITY_INVALID");
+  return parseNativeSafePathIdentityChain(line, canonicalProfileHome, canonicalAuthRoot, "win32");
+}
+
 function currentPlatform(): "win32" | "linux" {
   if (process.platform === "win32") return "win32";
   if (process.platform === "linux") return "linux";
@@ -687,6 +754,72 @@ export function parseNativeSafePathIdentity(
     path: identity.path,
     volumeSerial: identity.volumeSerial,
     fileId: identity.fileId,
+  });
+}
+
+/** Проверяет точную форму native identity chain и его lexical-привязку к auth-root и Run profile. */
+export function parseNativeSafePathIdentityChain(
+  line: string,
+  profileHome: string,
+  authRoot: string,
+  platform: "win32",
+): HermesWindowsPathIdentityChain {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line) as unknown;
+  } catch {
+    throw resolverError("HERMES_PATH_IDENTITY_INVALID");
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw resolverError("HERMES_PATH_IDENTITY_INVALID");
+  }
+  const result = parsed as Record<string, unknown>;
+  if (Object.keys(result).sort().join(",") !== "profileHomePathChain,status" || result.status !== "SAFE_PATH_CHAIN" ||
+      typeof result.profileHomePathChain !== "object" || result.profileHomePathChain === null ||
+      Array.isArray(result.profileHomePathChain)) throw resolverError("HERMES_PATH_IDENTITY_INVALID");
+  const rawChain = result.profileHomePathChain as Record<string, unknown>;
+  if (Object.keys(rawChain).sort().join(",") !== "authRootIndex,components,version" || rawChain.version !== 1 ||
+      !Number.isSafeInteger(rawChain.authRootIndex) || !Array.isArray(rawChain.components) ||
+      rawChain.components.length < 2 || rawChain.components.length > 64) {
+    throw resolverError("HERMES_PATH_IDENTITY_INVALID");
+  }
+  const components: Array<{ volumeSerial: string; fileId: string }> = [];
+  for (const component of rawChain.components) {
+    if (typeof component !== "object" || component === null || Array.isArray(component) ||
+        Object.keys(component).sort().join(",") !== "fileId,volumeSerial") {
+      throw resolverError("HERMES_PATH_IDENTITY_INVALID");
+    }
+    const identity = component as Record<string, unknown>;
+    if (typeof identity.volumeSerial !== "string" || !/^[a-f0-9]{16}$/u.test(identity.volumeSerial) ||
+        typeof identity.fileId !== "string" || !/^[a-f0-9]{32}$/u.test(identity.fileId)) {
+      throw resolverError("HERMES_PATH_IDENTITY_INVALID");
+    }
+    components.push(Object.freeze({ volumeSerial: identity.volumeSerial, fileId: identity.fileId }));
+  }
+  const paths = path.win32;
+  const normalizedHome = paths.normalize(profileHome);
+  const normalizedRoot = paths.normalize(authRoot);
+  const volumeRoot = paths.parse(normalizedHome).root;
+  const relativeProfile = paths.relative(volumeRoot, normalizedHome);
+  const profileParts = relativeProfile.split(/[\\/]+/u).filter(Boolean);
+  const relativeAuthRoot = paths.relative(volumeRoot, normalizedRoot);
+  const authRootParts = relativeAuthRoot.split(/[\\/]+/u).filter(Boolean);
+  const runId = paths.basename(normalizedHome).slice("ebb-orchestrator-run-".length);
+  const expectedHome = paths.join(normalizedRoot, "profiles", `ebb-orchestrator-run-${runId}`);
+  const volumeSerial = components[0]?.volumeSerial;
+  if (!paths.isAbsolute(normalizedHome) || !paths.isAbsolute(normalizedRoot) || !volumeRoot ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(runId) ||
+      !samePath(expectedHome, normalizedHome, platform) ||
+      !samePath(paths.resolve(normalizedRoot), normalizedRoot, platform) ||
+      components.length !== profileParts.length + 1 || rawChain.authRootIndex !== authRootParts.length ||
+      rawChain.authRootIndex <= 0 || rawChain.authRootIndex >= components.length ||
+      !volumeSerial || components.some((component) => component.volumeSerial !== volumeSerial)) {
+    throw resolverError("HERMES_PATH_IDENTITY_INVALID");
+  }
+  return Object.freeze({
+    version: 1,
+    authRootIndex: rawChain.authRootIndex as number,
+    components: Object.freeze(components),
   });
 }
 

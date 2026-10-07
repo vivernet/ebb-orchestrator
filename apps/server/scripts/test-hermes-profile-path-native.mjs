@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
 import { createHash, randomUUID } from "node:crypto";
-import { spawn, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
@@ -9,6 +9,7 @@ import process from "node:process";
 import { setTimeout, clearTimeout } from "node:timers";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath, URL } from "node:url";
+import { resolveWindowsMsvcEnvironment } from "./windows-msvc-environment.mjs";
 
 if (process.platform !== "win32" && process.platform !== "linux") {
   throw new Error("HERMES_PROFILE_PATH_NATIVE_TEST_UNSUPPORTED_PLATFORM");
@@ -20,6 +21,8 @@ assert.match(nativeSource, /bool parseSelection\(const std::function<int\(\)>& n
   "selection parsing must consume the opened config stream rather than a materialized config string");
 assert.match(nativeSource, /bool readWindowsConfig\(const std::wstring& configHome, Selection& selection\)/u);
 assert.match(nativeSource, /bool readPosixConfig\(const std::string& home, Selection& selection\)/u);
+assert.match(nativeSource, /int verifySafeWindowsFilePathChain\(const std::wstring& rawPath, const std::wstring& rawStrictRoot\)/u,
+  "file identities beneath a managed root must use a held no-follow path chain and an explicit strict boundary");
 assert.match(nativeSource, /captureValue = inModel && indent == 2 && \(candidateKey == "provider" \|\| candidateKey == "default"\)/u,
   "only the selected provider and model scalar values may be retained by the YAML scanner");
 const executable = join(serverDirectory, "dist", "native", "hermes-profile-path",
@@ -267,6 +270,132 @@ function makeWindowsFixtureWorldWritable(directory) {
   assert.equal(result.status, 0, `Windows fixture should receive an Everyone-writable DACL: ${errorText}`);
 }
 
+function makeWindowsFixtureForeignAddChildOnly(directory) {
+  const powershell = join(process.env.SYSTEMROOT || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  const identity = spawnSync(powershell, ["-NoProfile", "-NonInteractive", "-Command", "[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value"], {
+    env: childEnvironment,
+    encoding: "utf8",
+    shell: false,
+    timeout: 5_000,
+    windowsHide: true,
+    maxBuffer: 4_096,
+  });
+  assert.equal(identity.error, undefined, "Windows fixture identity process should start");
+  assert.equal(identity.status, 0, `Windows fixture identity lookup should succeed: ${String(identity.stderr || "")}`);
+  const ownerSid = String(identity.stdout || "").trim();
+  assert.match(ownerSid, /^S-1-5-(?:\d+-)+\d+$/u, "Windows fixture owner identity must be a SID");
+  const icacls = join(process.env.SYSTEMROOT || "C:\\Windows", "System32", "icacls.exe");
+  const result = spawnSync(icacls, [directory, "/inheritance:r", "/grant:r", `*${ownerSid}:(F)`, "*S-1-1-0:(WD,AD,X,RA,RC,S)"], {
+    env: childEnvironment,
+    encoding: "utf8",
+    shell: false,
+    timeout: 5_000,
+    windowsHide: true,
+    maxBuffer: 4_096,
+  });
+  assert.equal(result.error, undefined, "Windows limited-add-child ACL fixture process should start");
+  const errorText = `${String(result.stdout || "")} ${String(result.stderr || "")}`.replaceAll(directory, "<test-root>").trim();
+  assert.equal(result.status, 0, `Windows fixture should receive only the documented non-mutating/add-child rights: ${errorText}`);
+}
+
+function makeWindowsFixtureForeignRights(directory, rightsMask) {
+  const extraBits = (rightsMask & ~0x001200A6) >>> 0;
+  const extraAce = new Map([
+    [0x00000001, "RD"], [0x00000008, "REA"], [0x00010000, "D"], [0x00000040, "DC"],
+    [0x00040000, "WDAC"], [0x00080000, "WO"], [0x80000000, "R"], [0x40000000, "W"],
+    [0x20000000, "RX"], [0x10000000, "F"],
+  ]).get(extraBits);
+  assert.ok(extraAce, `unsupported Windows ACL test mask 0x${extraBits.toString(16)}`);
+  const icacls = join(process.env.SYSTEMROOT || "C:\\Windows", "System32", "icacls.exe");
+  const result = spawnSync(icacls, [directory, "/grant", `*S-1-1-0:(WD,AD,X,RA,RC,S,${extraAce})`], {
+    env: childEnvironment, encoding: "utf8", shell: false, timeout: 5_000, windowsHide: true, maxBuffer: 4_096,
+  });
+  assert.equal(result.error, undefined, "Windows foreign-rights fixture process should start");
+  const errorText = `${String(result.stdout || "")} ${String(result.stderr || "")}`.replaceAll(directory, "<test-root>").trim();
+  assert.equal(result.status, 0, `Windows fixture should receive the selected foreign ACE: ${errorText}`);
+}
+
+function makeWindowsFixtureForeignReadExecute(directory, inheritOnly) {
+  const powershell = join(process.env.SYSTEMROOT || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  const propagation = inheritOnly
+    ? "[System.Security.AccessControl.PropagationFlags]::InheritOnly"
+    : "[System.Security.AccessControl.PropagationFlags]::None";
+  const command = [
+    "$ErrorActionPreference = 'Stop';",
+    "$path = [System.Environment]::GetEnvironmentVariable('EBB_HERMES_PROFILE_TEST_ROOT');",
+    "$acl = Get-Acl -LiteralPath $path;",
+    "$everyone = [System.Security.Principal.SecurityIdentifier]::new('S-1-1-0');",
+    "$inherit = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit;",
+    `$propagation = ${propagation};`,
+    "$rule = [System.Security.AccessControl.FileSystemAccessRule]::new($everyone, [System.Security.AccessControl.FileSystemRights]::ReadAndExecute, $inherit, $propagation, [System.Security.AccessControl.AccessControlType]::Allow);",
+    "$acl.AddAccessRule($rule);",
+    "Set-Acl -LiteralPath $path -AclObject $acl;",
+  ].join(" ");
+  const result = spawnSync(powershell, ["-NoProfile", "-NonInteractive", "-Command", command], {
+    env: { ...childEnvironment, EBB_HERMES_PROFILE_TEST_ROOT: directory },
+    encoding: "utf8",
+    shell: false,
+    timeout: 5_000,
+    windowsHide: true,
+    maxBuffer: 4_096,
+  });
+  assert.equal(result.error, undefined, "Windows read-execute fixture process should start");
+  const errorText = String(result.stderr || "").replaceAll(directory, "<test-root>").trim();
+  assert.equal(result.status, 0, `Windows fixture should receive the selected foreign read-execute ACE: ${errorText}`);
+}
+
+function makeWindowsFixtureForeignDenyDelete(directory) {
+  const powershell = join(process.env.SYSTEMROOT || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  const command = [
+    "$ErrorActionPreference = 'Stop';",
+    "$path = [System.Environment]::GetEnvironmentVariable('EBB_HERMES_PROFILE_TEST_ROOT');",
+    "$acl = Get-Acl -LiteralPath $path;",
+    "$everyone = [System.Security.Principal.SecurityIdentifier]::new('S-1-1-0');",
+    "$rule = [System.Security.AccessControl.FileSystemAccessRule]::new($everyone, [System.Security.AccessControl.FileSystemRights]::Delete, [System.Security.AccessControl.AccessControlType]::Deny);",
+    "$acl.AddAccessRule($rule);",
+    "Set-Acl -LiteralPath $path -AclObject $acl;",
+  ].join(" ");
+  const result = spawnSync(powershell, ["-NoProfile", "-NonInteractive", "-Command", command], {
+    env: { ...childEnvironment, EBB_HERMES_PROFILE_TEST_ROOT: directory },
+    encoding: "utf8",
+    shell: false,
+    timeout: 5_000,
+    windowsHide: true,
+    maxBuffer: 4_096,
+  });
+  assert.equal(result.error, undefined, "Windows deny-ACE fixture process should start");
+  const errorText = String(result.stderr || "").replaceAll(directory, "<test-root>").trim();
+  assert.equal(result.status, 0, `Windows fixture should receive an effective foreign delete-deny ACE: ${errorText}`);
+}
+
+function verifyWindowsAncestorAclPolicyUnit() {
+  const source = join(serverDirectory, "native", "hermes-profile-path", "acl-policy-test.cpp");
+  const executable = join(canonicalSandbox, "ebb-hermes-profile-path-acl-policy-test.exe");
+  const objectFile = join(canonicalSandbox, "ebb-hermes-profile-path-acl-policy-test.obj");
+  const { compiler, environment } = resolveWindowsMsvcEnvironment({ exists: existsSync });
+  execFileSync(compiler, [
+    "/nologo", "/std:c++17", "/EHsc", "/W4", "/DUNICODE", "/D_UNICODE", "/D_WIN32_WINNT=0x0A00",
+    `/Fo${objectFile}`, `/Fe${executable}`, source,
+  ], {
+    cwd: serverDirectory,
+    env: environment,
+    shell: false,
+    windowsHide: true,
+  });
+  const result = spawnSync(executable, [], {
+    cwd: canonicalSandbox,
+    env: childEnvironment,
+    encoding: "utf8",
+    shell: false,
+    timeout: 5_000,
+    windowsHide: true,
+    maxBuffer: 2_048,
+  });
+  assert.equal(result.error, undefined, "native ancestor ACL policy unit test should start");
+  assert.equal(result.status, 0, `native ancestor ACL policy assertions should pass: ${String(result.stderr || "").trim()}`);
+  assert.equal(result.stdout.trim(), "Native ancestor ACL policy unit cases passed.");
+}
+
 function makeWindowsFixtureFileWorldWritable(filePath) {
   const powershell = join(process.env.SYSTEMROOT || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   const command = [
@@ -335,6 +464,201 @@ function invoke(args, input, timeout = 5_000) {
     maxBuffer: 8_192,
     ...(input !== undefined ? { input } : {}),
   });
+}
+
+function verifyWindowsSafePathChainFixture(root) {
+  assert.equal(process.platform, "win32", "path-chain fixture is Windows-only");
+  const systemRoot = process.env.SYSTEMROOT || "C:\\Windows";
+  const systemChild = join(systemRoot, "System32");
+  const safeVolumeRootChain = invoke(["verify-safe-path-chain", "directory", systemChild, systemRoot]);
+  assert.equal(safeVolumeRootChain.error, undefined, "safe volume-root policy fixture should start");
+  assert.equal(safeVolumeRootChain.status, 0, "existing volume safe-root policy should remain accepted");
+  assert.equal(safeVolumeRootChain.stderr, "", "safe volume-root chain must not emit diagnostics");
+  const safeVolumeChain = JSON.parse(safeVolumeRootChain.stdout).profileHomePathChain;
+  assert.equal(safeVolumeChain.authRootIndex, 1, "strict root may be the first directory after volume root");
+  assert.equal(safeVolumeChain.components.length, 3, "volume-root chain contains root, strict root, and descendant identities");
+  for (const identity of safeVolumeChain.components) {
+    assert.match(identity.volumeSerial, /^[a-f0-9]{16}$/u);
+    assert.match(identity.fileId, /^[a-f0-9]{32}$/u);
+  }
+  assert.equal(new Set(safeVolumeChain.components.map((identity) => identity.volumeSerial)).size, 1,
+    "volume-root policy chain must retain one volume identity");
+  const strictRootIdentity = invoke(["verify-safe-path", "directory", systemChild]);
+  assert.equal(strictRootIdentity.status, 0, "legacy single-path identity fixture should accept the chain leaf");
+  const strictRootFileIdentity = JSON.parse(strictRootIdentity.stdout);
+  assert.deepEqual(safeVolumeChain.components.at(-1), {
+    volumeSerial: strictRootFileIdentity.volumeSerial,
+    fileId: strictRootFileIdentity.fileId,
+  }, "chain terminal identity agrees with existing native path identity contract");
+  const invalidBoundary = invoke(["verify-safe-path-chain", "directory", systemChild, systemChild]);
+  assert.equal(invalidBoundary.error, undefined, "strict-root boundary validation should start");
+  assert.equal(invalidBoundary.status, 2, "authRootIndex must be an interior chain entry, not the profile leaf");
+  assert.equal(invalidBoundary.stdout, "", "invalid strict-root boundary must not emit identities");
+  const invalidKind = invoke(["verify-safe-path-chain", "file", systemChild, systemRoot]);
+  assert.equal(invalidKind.status, 2, "profile path-chain capture accepts directory chains only");
+  assert.equal(invalidKind.stdout, "", "unsupported path-chain kinds must not emit identities");
+  const systemFile = join(systemChild, "kernel32.dll");
+  const invalidFileBoundary = invoke(["verify-safe-file-chain", systemFile, systemFile]);
+  assert.equal(invalidFileBoundary.status, 2, "file strict root must be a proper directory ancestor, not the file leaf");
+  assert.equal(invalidFileBoundary.stdout, "", "invalid file strict-root boundary must not emit identity");
+
+  const chainParent = join(root, "path-chain-parent");
+  const authRoot = join(chainParent, "auth-root");
+  const profileHome = join(authRoot, "profiles", "ebb-orchestrator-run-chain-fixture");
+  mkdirSync(profileHome, { recursive: true });
+  for (const directory of [chainParent, authRoot, join(authRoot, "profiles"), profileHome]) {
+    makeWindowsFixturePrivate(directory);
+  }
+  makeWindowsFixtureForeignAddChildOnly(chainParent);
+  const safeChain = invoke(["verify-safe-path-chain", "directory", profileHome, authRoot]);
+  assert.equal(safeChain.error, undefined, "native safe path-chain verifier should start");
+  assert.equal(safeChain.status, 0,
+    `foreign add-child-only ACE on an ancestor above authRoot must be accepted (${safeChain.status})`);
+  assert.equal(safeChain.stderr, "", "safe path-chain verification must not emit diagnostics");
+  const chainResult = JSON.parse(safeChain.stdout);
+  assert.deepEqual(Object.keys(chainResult).sort(), ["profileHomePathChain", "status"].sort());
+  assert.equal(chainResult.status, "SAFE_PATH_CHAIN");
+  const pathChain = chainResult.profileHomePathChain;
+  assert.deepEqual(Object.keys(pathChain).sort(), ["authRootIndex", "components", "version"].sort());
+  assert.equal(pathChain.version, 1);
+  const rootComponentCount = root.slice(3).split("\\").filter(Boolean).length;
+  assert.equal(pathChain.authRootIndex, 1 + rootComponentCount + 2,
+    "authRootIndex identifies the exact auth-root directory in volume-root-first order");
+  assert.equal(pathChain.components.length, 1 + rootComponentCount + 4,
+    "identity chain includes volume root then every component through profileHome");
+  assert.ok(pathChain.components.every((identity) => {
+    assert.deepEqual(Object.keys(identity).sort(), ["fileId", "volumeSerial"].sort());
+    assert.match(identity.volumeSerial, /^[a-f0-9]{16}$/u);
+    assert.match(identity.fileId, /^[a-f0-9]{32}$/u);
+    return true;
+  }));
+  assert.equal(new Set(pathChain.components.map((identity) => identity.volumeSerial)).size, 1,
+    "all component identities must belong to the same volume");
+  assert.ok(pathChain.authRootIndex > 0 && pathChain.authRootIndex < pathChain.components.length,
+    "authRootIndex is an interior component because the Run profile leaf must be beneath authRoot");
+
+  for (const inheritOnly of [true, false]) {
+    const genericParent = join(root, `path-chain-generic-${inheritOnly ? "inherit-only" : "effective"}`);
+    const genericAuthRoot = join(genericParent, "auth-root");
+    const genericProfile = join(genericAuthRoot, "profiles", `ebb-orchestrator-run-generic-${inheritOnly ? "inherit-only" : "effective"}`);
+    mkdirSync(genericProfile, { recursive: true });
+    for (const directory of [genericParent, genericAuthRoot, join(genericAuthRoot, "profiles"), genericProfile]) {
+      makeWindowsFixturePrivate(directory);
+    }
+    makeWindowsFixtureForeignReadExecute(genericParent, inheritOnly);
+    const genericResult = invoke(["verify-safe-path-chain", "directory", genericProfile, genericAuthRoot]);
+    assert.equal(genericResult.error, undefined, "native read-execute path-chain verifier should start");
+    if (inheritOnly) {
+      assert.equal(genericResult.status, 0,
+        "foreign READ|EXECUTE ACE marked INHERIT_ONLY must not apply to the current ancestor");
+      assert.equal(JSON.parse(genericResult.stdout).status, "SAFE_PATH_CHAIN");
+    } else {
+      assert.notEqual(genericResult.status, 0,
+        "the same foreign read-execute rights must remain denied when the ACE applies to the current ancestor");
+      assert.equal(genericResult.stdout, "", "effective read-execute rejection must not emit an identity chain");
+    }
+  }
+
+  for (const [label, deny, expectAccepted] of [
+    ["deny-delete", true, true],
+    ["allow-delete", false, false],
+  ]) {
+    const aceParent = join(root, `path-chain-ace-${label}`);
+    const aceAuthRoot = join(aceParent, "auth-root");
+    const aceProfile = join(aceAuthRoot, "profiles", `ebb-orchestrator-run-${label}`);
+    mkdirSync(aceProfile, { recursive: true });
+    for (const directory of [aceParent, aceAuthRoot, join(aceAuthRoot, "profiles"), aceProfile]) {
+      makeWindowsFixturePrivate(directory);
+    }
+    if (deny) makeWindowsFixtureForeignDenyDelete(aceParent);
+    else makeWindowsFixtureForeignRights(aceParent, 0x001200A6 | 0x00010000);
+    const aceResult = invoke(["verify-safe-path-chain", "directory", aceProfile, aceAuthRoot]);
+    assert.equal(aceResult.error, undefined, `${label} native path-chain verifier should start`);
+    if (expectAccepted) {
+      assert.equal(aceResult.status, 0, `${label} non-granting ACE must preserve accepted ancestor behavior`);
+      assert.equal(JSON.parse(aceResult.stdout).status, "SAFE_PATH_CHAIN");
+    } else {
+      assert.notEqual(aceResult.status, 0, `${label} effective foreign ACE must fail closed`);
+      assert.equal(aceResult.stdout, "", `${label} rejection must not emit a usable identity chain`);
+    }
+  }
+
+  for (const [label, readOnlyRight] of [
+    ["file-list-directory", 0x00000001], ["file-read-ea", 0x00000008],
+  ]) {
+    const readOnlyParent = join(root, `path-chain-readonly-${label}`);
+    const readOnlyAuthRoot = join(readOnlyParent, "auth-root");
+    const readOnlyProfile = join(readOnlyAuthRoot, "profiles", `ebb-orchestrator-run-${label}`);
+    mkdirSync(readOnlyProfile, { recursive: true });
+    for (const directory of [readOnlyParent, readOnlyAuthRoot, join(readOnlyAuthRoot, "profiles"), readOnlyProfile]) {
+      makeWindowsFixturePrivate(directory);
+    }
+    makeWindowsFixtureForeignRights(readOnlyParent, 0x001200A6 | readOnlyRight);
+    const acceptedReadOnly = invoke(["verify-safe-path-chain", "directory", readOnlyProfile, readOnlyAuthRoot]);
+    assert.equal(acceptedReadOnly.error, undefined, `foreign ${label} ACE verifier should start`);
+    assert.equal(acceptedReadOnly.status, 0,
+      `foreign ${label} ACE above authRoot must be accepted as bounded read-only access (${acceptedReadOnly.status})`);
+    assert.equal(acceptedReadOnly.stderr, "", `accepted foreign ${label} ACE must not emit diagnostics`);
+    assert.equal(JSON.parse(acceptedReadOnly.stdout).status, "SAFE_PATH_CHAIN",
+      `accepted foreign ${label} ACE must produce a validated path chain`);
+  }
+
+  const configPath = join(profileHome, "config.yaml");
+  writeFileSync(configPath, "provider-free fixture\n");
+  makeWindowsFixturePrivate(configPath);
+  const lowercaseDriveFilePath = configPath.replace(/^([A-Z]):/iu, (_match, drive) => `${drive.toLowerCase()}:`);
+  const safeFileChain = invoke(["verify-safe-file-chain", lowercaseDriveFilePath, authRoot]);
+  assert.equal(safeFileChain.error, undefined, "native file path-chain verifier should start");
+  assert.equal(safeFileChain.status, 0,
+    `file-chain verification must accept drive-letter casing and limited ancestor rights (${safeFileChain.status})`);
+  assert.equal(safeFileChain.stderr, "", "safe file-chain verification must not emit diagnostics");
+  const fileIdentity = JSON.parse(safeFileChain.stdout);
+  assert.deepEqual(Object.keys(fileIdentity).sort(), ["fileId", "kind", "status", "volumeSerial"].sort());
+  assert.equal(fileIdentity.status, "SAFE_PATH_FILE_CHAIN");
+  assert.equal(fileIdentity.kind, "file");
+  assert.match(fileIdentity.volumeSerial, /^[a-f0-9]{16}$/u);
+  assert.match(fileIdentity.fileId, /^[a-f0-9]{32}$/u);
+
+  const fileReparsePath = join(profileHome, "config-reparse.yaml");
+  symlinkSync(configPath, fileReparsePath, "file");
+  const rejectedFileReparse = invoke(["verify-safe-file-chain", fileReparsePath, authRoot]);
+  assert.equal(rejectedFileReparse.error, undefined, "native file-leaf reparse verifier should start");
+  assert.notEqual(rejectedFileReparse.status, 0, "a reparse-point file leaf must be rejected");
+  assert.equal(rejectedFileReparse.stdout, "", "rejected file reparse leaf must not emit an identity");
+  unlinkSync(fileReparsePath);
+
+  makeWindowsFixtureForeignAddChildOnly(profileHome);
+  const unsafeStrictFileParent = invoke(["verify-safe-file-chain", configPath, authRoot]);
+  assert.notEqual(unsafeStrictFileParent.status, 0,
+    "foreign add-child ACE on a strict descendant directory must be rejected for a file leaf");
+  assert.equal(unsafeStrictFileParent.stdout, "", "strict file-parent rejection must not emit identity");
+  makeWindowsFixturePrivate(profileHome);
+
+  for (const [label, extraRight] of [
+    ["delete", 0x00010000], ["file-delete-child", 0x00000040],
+    ["write-dac", 0x00040000], ["write-owner", 0x00080000],
+    ["generic-read", 0x80000000], ["generic-write", 0x40000000],
+    ["generic-execute", 0x20000000], ["generic-all", 0x10000000],
+  ]) {
+    const unsafeParent = join(root, `path-chain-unsafe-${label}`);
+    const unsafeAuthRoot = join(unsafeParent, "auth-root");
+    const unsafeProfile = join(unsafeAuthRoot, "profiles", `ebb-orchestrator-run-${label}`);
+    mkdirSync(unsafeProfile, { recursive: true });
+    for (const directory of [unsafeParent, unsafeAuthRoot, join(unsafeAuthRoot, "profiles"), unsafeProfile]) {
+      makeWindowsFixturePrivate(directory);
+    }
+    makeWindowsFixtureForeignRights(unsafeParent, 0x001200A6 | extraRight);
+    const rejected = invoke(["verify-safe-path-chain", "directory", unsafeProfile, unsafeAuthRoot]);
+    assert.notEqual(rejected.status, 0, `foreign ${label} right must be rejected on a lexical ancestor`);
+    assert.equal(rejected.stdout, "", `foreign ${label} rejection must not emit a usable identity chain`);
+  }
+
+  makeWindowsFixtureForeignAddChildOnly(authRoot);
+  const unsafeAuthRootChain = invoke(["verify-safe-path-chain", "directory", profileHome, authRoot]);
+  assert.equal(unsafeAuthRootChain.error, undefined, "unsafe auth-root chain verifier should start");
+  assert.notEqual(unsafeAuthRootChain.status, 0,
+    "foreign add-child ACE on authRoot itself must be rejected by strict ACL policy");
+  assert.equal(unsafeAuthRootChain.stdout, "", "unsafe strict-root ACL must not emit an identity chain");
 }
 
 async function verifySourceCacheGcHandles(root) {
@@ -605,7 +929,26 @@ function verifySourceCacheGcInventoryBoundary(root) {
   process.stdout.write(`Native GC parser boundary passed: 200000 nodes (${Math.round(boundaryDurationMs)}ms), 200001 rejected (${Math.round(overflowDurationMs)}ms), ${inventoryBytes} encoded bytes.\n`);
 }
 
-if (process.argv.includes("--source-cache-gc-only")) {
+if (process.platform === "win32") verifyWindowsAncestorAclPolicyUnit();
+
+if (process.argv.includes("--path-chain-only")) {
+  let primaryError;
+  try {
+    if (process.platform !== "win32") throw new Error("HERMES_PROFILE_PATH_CHAIN_TEST_WINDOWS_ONLY");
+    makeWindowsFixturePrivate(canonicalSandbox);
+    verifyWindowsSafePathChainFixture(canonicalSandbox);
+  } catch (error) {
+    primaryError = error;
+  } finally {
+    try { rmSync(canonicalSandbox, { recursive: true, force: true }); }
+    catch (cleanupError) {
+      if (primaryError) process.stderr.write(`Native path-chain fixture cleanup also failed: ${String(cleanupError)}\n`);
+      else primaryError = cleanupError;
+    }
+  }
+  if (primaryError) throw primaryError;
+  process.stdout.write("Native Hermes profile path-chain contract passed.\n");
+} else if (process.argv.includes("--source-cache-gc-only")) {
   let primaryError;
   try {
     chmodSync(canonicalSandbox, 0o700);
@@ -663,6 +1006,18 @@ try {
     assert.equal(systemIdentity.path, `\\\\?\\${realpathSync(process.env.SYSTEMROOT || "C:\\Windows")}`);
     assert.match(systemIdentity.volumeSerial, /^[a-f0-9]{16}$/u);
     assert.match(systemIdentity.fileId, /^[a-f0-9]{32}$/u);
+
+    // Run this regression in the repository's ignored temp directory. Restricted Windows runners
+    // may deny writes directly under USERPROFILE or assign broader ACLs to the system temp root.
+    const repositoryTemp = resolve(serverDirectory, "../../temp");
+    mkdirSync(repositoryTemp, { recursive: true });
+    const pathChainFixtureRoot = mkdtempSync(join(repositoryTemp, "ebb-hermes-profile-chain-"));
+    try {
+      makeWindowsFixturePrivate(pathChainFixtureRoot);
+      verifyWindowsSafePathChainFixture(pathChainFixtureRoot);
+    } finally {
+      rmSync(pathChainFixtureRoot, { recursive: true, force: true });
+    }
 
     const safeDirectory = invoke(["verify-safe-path", "directory", canonicalSandbox]);
     assert.equal(safeDirectory.error, undefined, "native safe-path directory verifier should start");

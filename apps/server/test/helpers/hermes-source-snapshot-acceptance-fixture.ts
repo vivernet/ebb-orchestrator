@@ -22,6 +22,11 @@ export async function createPinnedGitFixture(root: string): Promise<PinnedGitFix
     ...process.env,
     GIT_CONFIG_NOSYSTEM: "1",
     GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : "/dev/null",
+    ...(process.platform === "win32" ? {
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: "core.excludesFile",
+      GIT_CONFIG_VALUE_0: "NUL",
+    } : {}),
     GIT_AUTHOR_NAME: "Ebb acceptance fixture",
     GIT_AUTHOR_EMAIL: "fixture@example.invalid",
     GIT_COMMITTER_NAME: "Ebb acceptance fixture",

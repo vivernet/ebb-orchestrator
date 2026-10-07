@@ -56,11 +56,14 @@ describe("restart child failure diagnostics", () => {
   it("matches the native Windows report and UNKNOWN code sets exactly", async () => {
     const nativeSource = await readFile(new URL("../../native/windows-run-supervisor/ebb-run-supervisor.cpp", import.meta.url), "utf8");
     const supervisorSource = await readFile(new URL("../../src/platform/process/windows-job-supervisor.ts", import.meta.url), "utf8");
-    const reportCodes = [...nativeSource.matchAll(/report\("([A-Z0-9_]+)"\)/gu)].map((match) => match[1]!);
+    const reportCodes = [...nativeSource.matchAll(/report\("([A-Z0-9_]+)"\)/gu)]
+      .map((match) => match[1]!)
+      .filter((code) => !code.startsWith("TEST_"));
     const unknownCodes = [...nativeSource.matchAll(/UNKNOWN\\t([A-Z0-9_]+)/gu)].map((match) => match[1]!);
 
     expect(reportCodes.length).toBeGreaterThan(0);
     expect(unknownCodes.length).toBeGreaterThan(0);
+    expect(safeRestartChildFailureCode(new Error("TEST_PROFILE_UNSAFE"))).toBeUndefined();
     for (const code of new Set(reportCodes)) {
       expect(safeRestartChildFailureCode(new Error(code))).toBe(code);
       expect(safeRestartChildFailureCode(new Error(`WINDOWS_HELPER_NATIVE_UNKNOWN:${code}`)))

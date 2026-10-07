@@ -15,7 +15,13 @@ import {
   createHermesLaunchTicket,
   type HermesLaunchTicketFactory,
 } from "./hermes-launch-ticket.js";
-import { buildHermesSnapshotRuntimeArgs, resolveHermesExecutable, verifyHermesProfileHomeIdentity } from "./hermes-executable-resolver.js";
+import {
+  buildHermesSnapshotRuntimeArgs,
+  resolveHermesExecutable,
+  verifyHermesProfileHomeIdentity,
+  verifyHermesProfileHomePathChain,
+  verifyHermesRunProfileTargetIdentities,
+} from "./hermes-executable-resolver.js";
 import {
   ensureHermesSourceSnapshotNativeProjection,
   isVerifiedHermesSourceSnapshot,
@@ -288,6 +294,7 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
     } catch {
       throw new Error("HERMES_PROFILE_PATH_CREATE_FAILED");
     }
+    const profileHomePathChain = await verifyHermesProfileHomePathChain(profileHome, resolution.hermesConfigHome);
     const authRouteEvidence = deriveHermesNativeAuthRouteEvidence({
       profileReceipt,
       providerSelection: projected,
@@ -296,6 +303,7 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
       sourceVersion: resolution.sourceVersion,
       sourceCommit: resolution.sourceCommit,
       environment: this.environment ?? {},
+      ...(profileHomePathChain ? { profileHomePathChain } : {}),
     });
     const selection: HermesRunSelection = Object.freeze({
       runId,
@@ -307,6 +315,7 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
       sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit,
       sourceSnapshotKey: sourceSnapshot.cacheKey,
       profileHome,
+      ...(profileHomePathChain ? { profileHomePathChain } : {}),
       authRouteEvidence,
     });
     this.recordVerifiedHermesNativeAuthEvidence(selection, {
@@ -571,11 +580,13 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
     profileHome: string,
     environment: Record<string, string>,
   ) {
+    const selection = run.hermesSelection;
     const input = {
       runId: run.id,
       attempt: run.attempt,
       cwd,
       profileHome,
+      ...(selection?.profileHomePathChain ? { profileHomePathChain: selection.profileHomePathChain } : {}),
       environment: {
         HERMES_HOME: environment.HERMES_HOME!,
         HOME: environment.HOME!,
@@ -583,7 +594,6 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
       },
     };
     if (this.hermesLaunchTicketFactory) return this.hermesLaunchTicketFactory(input);
-    const selection = run.hermesSelection;
     if (!selection || selection.runId !== run.id || !selection.sourceSnapshotKey) {
       throw new Error("HERMES_RUN_SELECTION_UNAVAILABLE");
     }
@@ -615,6 +625,14 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
       sourceCommit: selection.sourceCommit,
     });
     const profileHomeIdentity = await verifyHermesProfileHomeIdentity(profileHome);
+    const profileHomeTargetIdentities = platform === "win32"
+      ? await verifyHermesRunProfileTargetIdentities(profileHome)
+      : undefined;
+    const profileHomePathChain = await verifyHermesProfileHomePathChain(profileHome, resolution.hermesConfigHome);
+    if (JSON.stringify(profileHomePathChain) !== JSON.stringify(selection.profileHomePathChain) ||
+        JSON.stringify(profileHomePathChain) !== JSON.stringify(selection.authRouteEvidence.profileHomePathChain)) {
+      throw new Error("HERMES_PROFILE_PATH_CHAIN_MISMATCH");
+    }
     const ticket = createHermesLaunchTicket({
       ...input,
       platform: resolution.executableIdentity.platform,
@@ -624,6 +642,8 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
       executableIdentity: resolution.runtimeExecutableIdentity,
       executableArgsPrefix,
       profileHomeIdentity,
+      ...(profileHomeTargetIdentities ? { profileHomeTargetIdentities } : {}),
+      ...(profileHomePathChain ? { profileHomePathChain } : {}),
       hermesSourceSnapshotKey: snapshot.cacheKey,
       hermesSourceSnapshotRoot: snapshot.rootPath,
       hermesSourceSnapshotRootIdentity: sourceSnapshotRootIdentity,
@@ -1175,6 +1195,7 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
         evidence.authRouteEvidence !== selection.authRouteEvidence ||
         evidence.authRouteEvidence.authRoot !== evidence.authRoot ||
         evidence.authRouteEvidence.profileHome !== selection.profileHome ||
+        JSON.stringify(evidence.authRouteEvidence.profileHomePathChain) !== JSON.stringify(selection.profileHomePathChain) ||
         evidence.authRouteEvidence.endpointIdentity !== selection.endpointIdentity ||
         evidence.authRouteEvidence.endpointRevision !== selection.endpointRevision ||
         !isSupportedHermesNativeAuthSnapshot(selection.sourceSnapshotKey, evidence) ||
@@ -1199,6 +1220,7 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
         evidence.authRouteEvidence.runId !== selection.runId ||
         evidence.authRouteEvidence.authRoot !== evidence.authRoot ||
         evidence.authRouteEvidence.profileHome !== selection.profileHome ||
+        JSON.stringify(evidence.authRouteEvidence.profileHomePathChain) !== JSON.stringify(selection.profileHomePathChain) ||
         evidence.authRouteEvidence.endpointIdentity !== selection.endpointIdentity ||
         evidence.authRouteEvidence.endpointRevision !== selection.endpointRevision ||
         evidence.authRouteEvidence.providerId !== selection.providerId ||

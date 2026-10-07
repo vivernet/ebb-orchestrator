@@ -65,7 +65,19 @@ describe("production Hermes launch authorization", () => {
         gitExecutable: paths.join(root, platform === "win32" ? "git.exe" : "git"),
       })),
       buildHermesSnapshotRuntimeArgs: vi.fn(() => ["-I", "-B", "-S", "-c", "pass"]),
-      verifyHermesProfileHomeIdentity: vi.fn(async () => objectIdentity),
+      verifyHermesProfileHomeIdentity: vi.fn(async (targetPath: string) => {
+        if (platform !== "win32" || paths.normalize(targetPath) === paths.normalize(snapshotRoot)) return objectIdentity;
+        return { ...objectIdentity, ...authFixture.profileHomePathChain!.components.at(-1)! };
+      }),
+      verifyHermesRunProfileTargetIdentities: vi.fn(async () => ({
+        home: platform === "win32"
+          ? { platform: "win32", volumeSerial: "0123456789abcdef", fileId: "7".repeat(32) }
+          : objectIdentity,
+        config: platform === "win32"
+          ? { platform: "win32", volumeSerial: "0123456789abcdef", fileId: "8".repeat(32) }
+          : objectIdentity,
+      })),
+      verifyHermesProfileHomePathChain: vi.fn(async () => authFixture.profileHomePathChain),
     }));
     vi.doMock("../../../src/modules/runtime/hermes/hermes-source-snapshot.js", () => ({
       ensureHermesSourceSnapshotNativeProjection: vi.fn(async () => ({
@@ -92,6 +104,7 @@ describe("production Hermes launch authorization", () => {
       sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit,
       sourceSnapshotKey: snapshotKey,
       profileHome,
+      ...(authFixture.profileHomePathChain ? { profileHomePathChain: authFixture.profileHomePathChain } : {}),
       authRouteEvidence: authFixture.authRouteEvidence,
     } as const;
     const run = {

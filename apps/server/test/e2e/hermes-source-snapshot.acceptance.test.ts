@@ -14,6 +14,7 @@ import { WindowsJobSupervisor } from "../../src/platform/process/windows-job-sup
 import type { ProcessScopeIdentity, ProcessScopeObservation } from "../../src/platform/process/process-inspector.js";
 import type { ProcessScopeHandle, ProcessScopeSupervisor } from "../../src/platform/process/run-scope-supervisor.js";
 import { createWindowsNativeHelperInvocation } from "../../src/platform/process/windows-native-helper-launcher.js";
+import { verifyHermesProfileHomePathChain } from "../../src/modules/runtime/hermes/hermes-executable-resolver.js";
 import { createPinnedGitFixture, waitForFile } from "../helpers/hermes-source-snapshot-acceptance-fixture.js";
 import { safeRestartChildFailureCode } from "../helpers/restart-child-diagnostics.js";
 
@@ -103,6 +104,10 @@ describe.skipIf(!enabled || (!windows && !linux))("Hermes native source snapshot
       const runHome = join(fixtureDirectory, "hermes-root");
       const profileHome = join(runHome, "profiles", `ebb-orchestrator-run-${runId}`);
       await mkdir(profileHome, { recursive: true, mode: 0o700 });
+      const profileHomeDirectory = join(profileHome, "home");
+      const profileConfig = join(profileHome, "config.yaml");
+      await mkdir(profileHomeDirectory, { recursive: true, mode: 0o700 });
+      await writeFile(profileConfig, "fixture Hermes profile; provider-free\n", { mode: 0o600 });
       const python = await resolvePython();
       const pythonIdentity = await objectIdentity(python, "file");
       const shimDirectory = join(fixtureDirectory, `shim-${runId}`);
@@ -112,6 +117,10 @@ describe.skipIf(!enabled || (!windows && !linux))("Hermes native source snapshot
       if (linux) await chmod(shimPath, 0o700);
       const shimIdentity = await objectIdentity(shimPath, "file");
       const profileIdentity = await objectIdentity(profileHome, "directory");
+      const profileHomeTargetIdentities = windows ? {
+        home: await objectIdentity(profileHomeDirectory, "directory"),
+        config: await objectIdentity(profileConfig, "file"),
+      } : undefined;
       const snapshotIdentity = await objectIdentity(snapshot.rootPath, "directory");
       const ticketData = { digest: sha256(originalProjection), size: originalProjection.byteLength };
       const owner = prepareRunProcessOwner(runId, profileHome, windows ? "windows-job" : "systemd-user-service", snapshot.cacheKey);
@@ -127,6 +136,8 @@ describe.skipIf(!enabled || (!windows && !linux))("Hermes native source snapshot
       const environment = hermesEnvironment(profileHome);
       const ticket = makeTicket({
         runId, attempt: 1, python, pythonIdentity, shimPath, shimIdentity, profileHome, profileIdentity,
+        ...(profileHomeTargetIdentities ? { profileHomeTargetIdentities } : {}),
+        ...(windows ? { profileHomePathChain: await verifyHermesProfileHomePathChain(profileHome, runHome) } : {}),
         snapshotRoot: acceptedSnapshot.rootPath, snapshotIdentity, cacheKey: acceptedSnapshot.cacheKey,
         manifestDigest: acceptedSnapshot.manifestDigest, projectionPath: projection.path,
         projectionDigest: ticketData.digest, projectionSize: ticketData.size,
@@ -294,6 +305,10 @@ async function launchAndAssertRefused(input: {
   const runHome = join(input.fixtureDirectory, `refusal-root-${runId}`);
   const profileHome = join(runHome, "profiles", `ebb-orchestrator-run-${runId}`);
   await mkdir(profileHome, { recursive: true, mode: 0o700 });
+  const profileHomeDirectory = join(profileHome, "home");
+  const profileConfig = join(profileHome, "config.yaml");
+  await mkdir(profileHomeDirectory, { recursive: true, mode: 0o700 });
+  await writeFile(profileConfig, "fixture Hermes profile; provider-free\n", { mode: 0o600 });
   const python = await resolvePython();
   const pythonIdentity = await objectIdentity(python, "file");
   const shimDirectory = join(input.fixtureDirectory, `shim-${runId}`);
@@ -303,6 +318,10 @@ async function launchAndAssertRefused(input: {
   if (linux) await chmod(shimPath, 0o700);
   const shimIdentity = await objectIdentity(shimPath, "file");
   const profileIdentity = await objectIdentity(profileHome, "directory");
+  const profileHomeTargetIdentities = windows ? {
+    home: await objectIdentity(profileHomeDirectory, "directory"),
+    config: await objectIdentity(profileConfig, "file"),
+  } : undefined;
   const snapshotIdentity = await objectIdentity(input.snapshot.rootPath, "directory");
   const markerPath = join(input.fixtureDirectory, `${runId}.must-not-exist`);
   const owner = prepareRunProcessOwner(runId, profileHome, windows ? "windows-job" : "systemd-user-service", input.snapshot.cacheKey);
@@ -312,6 +331,8 @@ async function launchAndAssertRefused(input: {
   const ticketProjection = { digest: sha256(input.expectedProjection), size: input.expectedProjection.byteLength };
   const ticket = makeTicket({
     runId, attempt: 1, python, pythonIdentity, shimPath, shimIdentity, profileHome, profileIdentity,
+    ...(profileHomeTargetIdentities ? { profileHomeTargetIdentities } : {}),
+    ...(windows ? { profileHomePathChain: await verifyHermesProfileHomePathChain(profileHome, runHome) } : {}),
     snapshotRoot: input.snapshot.rootPath, snapshotIdentity, cacheKey: input.snapshot.cacheKey,
     manifestDigest: input.snapshot.manifestDigest, projectionPath: input.projectionPath,
     projectionDigest: ticketProjection.digest, projectionSize: ticketProjection.size,
@@ -380,7 +401,10 @@ async function launchAndAssertRefused(input: {
 function makeTicket(input: {
   runId: string; attempt: number; python: string; pythonIdentity: HermesLaunchObjectIdentity;
   shimPath: string; shimIdentity: HermesLaunchObjectIdentity; profileHome: string;
-  profileIdentity: HermesLaunchObjectIdentity; snapshotRoot: string; snapshotIdentity: HermesLaunchObjectIdentity;
+  profileIdentity: HermesLaunchObjectIdentity;
+  profileHomeTargetIdentities?: NonNullable<HermesLaunchTicketInput["profileHomeTargetIdentities"]>;
+  profileHomePathChain?: HermesLaunchTicketInput["profileHomePathChain"];
+  snapshotRoot: string; snapshotIdentity: HermesLaunchObjectIdentity;
   cacheKey: string; manifestDigest: string; projectionPath: string; projectionDigest: string; projectionSize: number;
   args: string[];
   environment: HermesLaunchEnvironment;
@@ -393,6 +417,8 @@ function makeTicket(input: {
     executablePath: input.python, executableIdentity: input.pythonIdentity,
     executableArgsPrefix: input.args,
     profileHome: input.profileHome, profileHomeIdentity: input.profileIdentity,
+    ...(input.profileHomeTargetIdentities ? { profileHomeTargetIdentities: input.profileHomeTargetIdentities } : {}),
+    ...(input.profileHomePathChain ? { profileHomePathChain: input.profileHomePathChain } : {}),
     hermesSourceSnapshotKey: input.cacheKey,
     hermesSourceSnapshotRoot: sourceRoot, hermesSourceSnapshotRootIdentity: input.snapshotIdentity,
     hermesSourceManifestDigest: input.manifestDigest,

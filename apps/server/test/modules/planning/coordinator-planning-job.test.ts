@@ -85,6 +85,7 @@ describe("Coordinator planning background job", () => {
               sourceCommit: "9244275491ee0d5bc3481590b041114c4e1d399a",
               sourceSnapshotKey: hermesSourceSnapshotKey,
               profileHome,
+              ...(authFixture.profileHomePathChain ? { profileHomePathChain: authFixture.profileHomePathChain } : {}),
               authRouteEvidence: authFixture.authRouteEvidence,
             },
             cleanup: async () => { hermesCleanupCalls.push(runId); },

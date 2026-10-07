@@ -9,6 +9,7 @@ import {
   isVerifiedHermesRunProfileCreationReceipt,
   type HermesRunProfileCreationReceipt,
 } from "../../../platform/home/hermes-profile-home.js";
+import type { HermesWindowsPathIdentityChain } from "./hermes-launch-ticket.js";
 
 export const HERMES_SNAPSHOT_BOOTSTRAP_POLICY_IDENTITY = "hermes-source-snapshot-bootstrap-v1";
 export const HERMES_AUTH_ENVIRONMENT_POLICY_REVISION = "run-env-provenance-bound-v2";
@@ -25,6 +26,7 @@ export interface HermesNativeAuthRouteEvidence {
   readonly runId: string;
   readonly authRoot: string;
   readonly profileHome: string;
+  readonly profileHomePathChain?: HermesWindowsPathIdentityChain;
   readonly providerId: string;
   readonly modelId: string;
   readonly endpointIdentity: string;
@@ -55,6 +57,7 @@ export interface HermesNativeAuthRouteEvidence {
  * @param input.sourceVersion Pinned Hermes version.
  * @param input.sourceCommit Pinned Hermes source commit.
  * @param input.environment Injected child environment; only allowlisted keys are accepted.
+ * @param input.profileHomePathChain Native-verified Windows identity chain for the fresh Run profile home.
  * @returns Непубличное evidence с версионированной policy identity без secret values и account IDs.
  * @throws {Error} Для неподдерживаемого pin, пути, env key, профиля или plugin configuration.
  */
@@ -66,6 +69,7 @@ export function deriveHermesNativeAuthRouteEvidence(input: {
   sourceVersion: string;
   sourceCommit: string;
   environment: Readonly<Record<string, string>>;
+  profileHomePathChain?: HermesWindowsPathIdentityChain;
 }): HermesNativeAuthRouteEvidence {
   const runId = input.profileReceipt.runId;
   const profileHome = input.profileReceipt.profileHome;
@@ -76,6 +80,8 @@ export function deriveHermesNativeAuthRouteEvidence(input: {
       input.sourceCommit !== HERMES_PROVIDER_SELECTION_SOURCE.commit ||
       !input.providerSelection.endpointIdentityEligible ||
       !input.providerSelection.endpointIdentity || !input.providerSelection.endpointRevision ||
+      (process.platform === "win32" && input.profileHomePathChain === undefined) ||
+      (process.platform !== "win32" && input.profileHomePathChain !== undefined) ||
       !isVerifiedHermesRunProfileCreationReceipt(input.profileReceipt, { runId, hermesRoot: input.authRoot, profileHome }) ||
       !isVerifiedHermesProviderSelectionProjection(input.providerSelection, {
         runId,
@@ -103,6 +109,7 @@ export function deriveHermesNativeAuthRouteEvidence(input: {
     sourceCommit: input.sourceCommit,
     environmentPolicyRevision: HERMES_AUTH_ENVIRONMENT_POLICY_REVISION,
     profilePolicyRevision: HERMES_AUTH_PROFILE_POLICY_REVISION,
+    ...(input.profileHomePathChain ? { profileHomePathChain: clonePathIdentityChain(input.profileHomePathChain) } : {}),
     route: "GLOBAL_DEFAULT_AUTH_JSON_FALLBACK",
     profileState: "FRESH_EMPTY_RUN_PROFILE",
     pluginState: "NO_RUN_PROFILE_PLUGIN_CONFIG",
@@ -110,6 +117,14 @@ export function deriveHermesNativeAuthRouteEvidence(input: {
   });
   verifiedAuthRouteEvidence.add(evidence);
   return evidence;
+}
+
+function clonePathIdentityChain(chain: HermesWindowsPathIdentityChain): HermesWindowsPathIdentityChain {
+  return Object.freeze({
+    version: chain.version,
+    authRootIndex: chain.authRootIndex,
+    components: Object.freeze(chain.components.map((component) => Object.freeze({ ...component }))),
+  });
 }
 
 /** Re-derives the policy instead of accepting a caller-supplied auth marker. */
@@ -130,6 +145,7 @@ export interface HermesRunSelection {
   /** Exact canonical JCS snapshot key persisted on the durable Run process owner. */
   readonly sourceSnapshotKey: string;
   readonly profileHome: string;
+  readonly profileHomePathChain?: HermesWindowsPathIdentityChain;
   readonly authRouteEvidence: HermesNativeAuthRouteEvidence;
 }
 
@@ -158,6 +174,7 @@ export function bindHermesRunSelectionToOptions<T extends StartRunOptions>(
   if (!isHermesNativeAuthRouteEvidence(selection.authRouteEvidence) ||
       selection.authRouteEvidence.runId !== selection.runId ||
       selection.authRouteEvidence.profileHome !== selection.profileHome ||
+      !samePathIdentityChain(selection.authRouteEvidence.profileHomePathChain, selection.profileHomePathChain) ||
       selection.authRouteEvidence.providerId !== selection.providerId ||
       selection.authRouteEvidence.modelId !== selection.modelId ||
       selection.authRouteEvidence.endpointIdentity !== selection.endpointIdentity ||
@@ -199,6 +216,13 @@ export function bindHermesRunSelectionToOptions<T extends StartRunOptions>(
       },
     } } : {}),
   };
+}
+
+function samePathIdentityChain(
+  left: HermesWindowsPathIdentityChain | undefined,
+  right: HermesWindowsPathIdentityChain | undefined,
+): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 function buildAuthPolicyIdentity(sourceCommit: string): string {

@@ -16,8 +16,9 @@ const serverDirectory = resolve(scriptDirectory, "..");
 const repositoryDirectory = resolve(serverDirectory, "..", "..");
 const source = join(serverDirectory, "native", "windows-run-supervisor", "ebb-run-supervisor.cpp");
 const outputDirectory = join(serverDirectory, "dist", "native", "windows-run-supervisor");
-const executable = join(outputDirectory, "ebb-run-supervisor.exe");
-const objectFile = join(outputDirectory, "ebb-run-supervisor.obj");
+const frameAcceptance = process.argv.includes("--frame-acceptance");
+const executable = join(outputDirectory, frameAcceptance ? "ebb-run-supervisor-frame-test.exe" : "ebb-run-supervisor.exe");
+const objectFile = join(outputDirectory, frameAcceptance ? "ebb-run-supervisor-frame-test.obj" : "ebb-run-supervisor.obj");
 const canonicalRepository = realpathSync(repositoryDirectory);
 if (!existsSync(source)) {
   throw new Error("WINDOWS_PROCESS_SCOPE_BUILD_TOOLS_OR_SOURCE_UNAVAILABLE");
@@ -36,6 +37,7 @@ execFileSync(compiler, [
   "/DWIN32_LEAN_AND_MEAN",
   "/DNOMINMAX",
   "/D_WIN32_WINNT=0x0A00",
+  ...(frameAcceptance ? ["/DEBB_ENABLE_NATIVE_FRAME_ACCEPTANCE"] : []),
   `/Fo${objectFile}`,
   `/Fe${executable}`,
   source,
@@ -50,5 +52,5 @@ execFileSync(compiler, [
   windowsHide: true,
 });
 
-console.log(`Built provider-free Windows process-scope helper: ${executable}`);
-writeNativeHelperIntegrityAnchor({ serverRoot: serverDirectory });
+console.log(`Built provider-free Windows ${frameAcceptance ? "frame acceptance" : "process-scope"} helper: ${executable}`);
+if (!frameAcceptance) writeNativeHelperIntegrityAnchor({ serverRoot: serverDirectory });

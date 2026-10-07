@@ -8,6 +8,99 @@ import { createWindowsNativeHelperInvocation } from "./windows-native-helper-lau
 const STOP_TIMEOUT_MS = 30_000;
 const POLL_INTERVAL_MS = 500;
 const HELPER_PATH = fileURLToPath(new URL("../../../dist/native/windows-run-supervisor/ebb-run-supervisor.exe", import.meta.url));
+export const WINDOWS_PATH_CHAIN_EVIDENCE_STAGES = [
+  "FRAME_DECODED_EXPECTED", "SUPERVISOR_OPEN", "PRE_CREATE", "PRE_RESUME", "STOPPED_HELD",
+] as const;
+const EVIDENCE_FOOTER_PREFIX = Buffer.from("EBB_EVIDENCE_END_V1:", "ascii");
+export type WindowsPathChainEvidenceStage = (typeof WINDOWS_PATH_CHAIN_EVIDENCE_STAGES)[number];
+export interface WindowsPathChainEvidenceRecord {
+  readonly stage: WindowsPathChainEvidenceStage;
+  readonly commitment: string;
+}
+export interface WindowsPathChainEvidenceBinding {
+  readonly containmentId: string;
+  readonly runId: string;
+  readonly launchNonce: string;
+  readonly expectedDigests: Readonly<Record<WindowsPathChainEvidenceStage, string>>;
+}
+
+/** Acceptance-only parser for the bounded, post-STOPPED native identity proof. */
+export class WindowsPathChainEvidenceParser {
+  private readonly chunks: Buffer[] = [];
+  private totalBytes = 0;
+  private failed = false;
+  private completedResult: { readonly records: readonly WindowsPathChainEvidenceRecord[]; readonly payloadOutput: string } | undefined;
+
+  constructor(private readonly binding: WindowsPathChainEvidenceBinding) {
+    if (!/^[a-f0-9]{64}$/u.test(binding.containmentId) || !/^[a-f0-9]{64}$/u.test(binding.launchNonce) ||
+        !/^[A-Za-z0-9._-]{1,128}$/u.test(binding.runId) ||
+        WINDOWS_PATH_CHAIN_EVIDENCE_STAGES.some((stage) => !/^[a-f0-9]{64}$/u.test(binding.expectedDigests[stage]))) {
+      throw new Error("WINDOWS_PATH_CHAIN_EVIDENCE_EXPECTATION_INVALID");
+    }
+  }
+
+  write(chunk: Uint8Array): void {
+    if (this.failed || this.completedResult) throw new Error("WINDOWS_PATH_CHAIN_EVIDENCE_INVALID");
+    this.totalBytes += chunk.byteLength;
+    if (this.totalBytes > 10 * 1024 * 1024) this.reject();
+    this.chunks.push(Buffer.from(chunk));
+  }
+
+  get result(): { readonly records: readonly WindowsPathChainEvidenceRecord[]; readonly payloadOutput: string } | undefined {
+    return this.completedResult;
+  }
+
+  finish(): { readonly records: readonly WindowsPathChainEvidenceRecord[]; readonly payloadOutput: string } {
+    if (this.failed || this.completedResult) throw new Error("WINDOWS_PATH_CHAIN_EVIDENCE_INVALID");
+    const bytes = Buffer.concat(this.chunks, this.totalBytes);
+    const footerSize = EVIDENCE_FOOTER_PREFIX.byteLength + 8;
+    if (bytes.byteLength < footerSize) this.reject();
+    const footerStart = bytes.byteLength - footerSize;
+    const footer = bytes.subarray(footerStart);
+    if (!footer.subarray(0, EVIDENCE_FOOTER_PREFIX.byteLength).equals(EVIDENCE_FOOTER_PREFIX) ||
+        !/^[a-f0-9]{8}$/u.test(footer.subarray(EVIDENCE_FOOTER_PREFIX.byteLength).toString("ascii"))) this.reject();
+    const recordBytes = Number.parseInt(footer.subarray(EVIDENCE_FOOTER_PREFIX.byteLength).toString("ascii"), 16);
+    if (recordBytes < 1 || recordBytes > WINDOWS_PATH_CHAIN_EVIDENCE_STAGES.length * 512 || recordBytes > footerStart) this.reject();
+    const evidenceStart = footerStart - recordBytes;
+    const payload = bytes.subarray(0, evidenceStart);
+    if (payload.includes(Buffer.from("EBB_EVIDENCE", "ascii"))) this.reject();
+
+    const records: WindowsPathChainEvidenceRecord[] = [];
+    const envelope = bytes.subarray(evidenceStart, footerStart);
+    let lineStart = 0;
+    for (let index = 0; index < envelope.byteLength; index += 1) {
+      if (envelope[index] !== 0x0a) continue;
+      records.push(parseEvidenceLine(envelope.subarray(lineStart, index), this.binding, records.length));
+      if (records.length > WINDOWS_PATH_CHAIN_EVIDENCE_STAGES.length) this.reject();
+      lineStart = index + 1;
+    }
+    if (lineStart !== envelope.byteLength || records.length !== WINDOWS_PATH_CHAIN_EVIDENCE_STAGES.length) this.reject();
+    this.completedResult = {
+      records,
+      payloadOutput: payload.toString("utf8"),
+    };
+    return this.completedResult;
+  }
+
+  private reject(): never {
+    this.failed = true;
+    throw new Error("WINDOWS_PATH_CHAIN_EVIDENCE_INVALID");
+  }
+}
+
+function parseEvidenceLine(
+  line: Buffer,
+  binding: WindowsPathChainEvidenceBinding,
+  index: number,
+): WindowsPathChainEvidenceRecord {
+  if (line.byteLength > 512 || line.some((byte) => byte > 0x7f)) throw new Error("WINDOWS_PATH_CHAIN_EVIDENCE_INVALID");
+  const fields = line.toString("ascii").split("\t");
+  const stage = WINDOWS_PATH_CHAIN_EVIDENCE_STAGES[index];
+  if (fields.length !== 7 || fields[0] !== "EBB_EVIDENCE" || fields[1] !== "V1" || !stage || fields[2] !== stage ||
+      fields[3] !== binding.containmentId || fields[4] !== binding.runId || fields[5] !== binding.launchNonce ||
+      fields[6] !== binding.expectedDigests[stage]) throw new Error("WINDOWS_PATH_CHAIN_EVIDENCE_INVALID");
+  return { stage, commitment: fields[6] };
+}
 const HERMES_CHILD_ENV_KEYS = new Set([
   "HOMEDRIVE", "HOMEPATH", "SYSTEMROOT", "TEMP", "TMP", "PATH", "NODE_PATH", "NODE_ENV",
   "HOME", "HERMES_HOME", "HERMES_CONFIG", "HERMES_MODEL",
@@ -54,10 +147,12 @@ function launchKey(owner: ProcessScopeIdentity): string {
 
 /** Reopens and controls only the private named Job associated with one Run owner. */
 export class WindowsJobSupervisor implements ProcessScopeSupervisor {
+  private acceptanceEvidenceUsed = false;
   constructor(
     private readonly executor = new ProcessExecutor(),
     private readonly helperPath = HELPER_PATH,
     private readonly createHelperInvocation: typeof createWindowsNativeHelperInvocation = createWindowsNativeHelperInvocation,
+    private readonly acceptanceEvidence?: { readonly binding: WindowsPathChainEvidenceBinding; readonly parser: WindowsPathChainEvidenceParser },
   ) {}
 
   async launch(
@@ -69,8 +164,15 @@ export class WindowsJobSupervisor implements ProcessScopeSupervisor {
     assertRequest(request);
     if (request.signal?.aborted) throw new ProcessScopeLaunchNotDispatchedError();
     const launchIdentity = consumeLaunchIdentity(owner, request);
+    if (this.acceptanceEvidence && (this.acceptanceEvidenceUsed || !launchIdentity || request.onStdoutChunk || request.captureOutput === false ||
+        this.acceptanceEvidence.binding.containmentId !== owner.containmentId ||
+        this.acceptanceEvidence.binding.launchNonce !== owner.launchNonce ||
+        this.acceptanceEvidence.binding.runId !== owner.runId || launchIdentity.runId !== owner.runId)) {
+      throw new Error("WINDOWS_PATH_CHAIN_EVIDENCE_ACCEPTANCE_BINDING_INVALID");
+    }
+    if (this.acceptanceEvidence) this.acceptanceEvidenceUsed = true;
     const helperInvocation = await this.createHelperInvocation(this.helperPath, "windowsRunSupervisor", [
-      "launch", owner.containmentId, owner.launchNonce,
+      this.acceptanceEvidence ? "launch-evidence" : "launch", owner.containmentId, owner.launchNonce,
     ]);
     if (request.signal?.aborted) throw new ProcessScopeLaunchNotDispatchedError();
     const metadataFrame = encodeMetadataFrame(request, launchIdentity);
@@ -109,11 +211,11 @@ export class WindowsJobSupervisor implements ProcessScopeSupervisor {
       session.stdin.write(metadataFrame);
       identity = parseLiveIdentity(await protocol.nextLine("EBB_SCOPE_READY", 10_000), owner);
       await persistVerifiedIdentity(identity);
-      // ResumeThread is gated by this one-byte authorization. Recheck the signal
-      // after the asynchronous durable callback and before sending the byte.
+      // ResumeThread is gated by a fixed nonce-bound ACK frame. Recheck the signal
+      // after the asynchronous durable callback and before sending the frame.
       if (request.signal?.aborted) throw new Error("WINDOWS_PROCESS_SCOPE_LAUNCH_CANCELLED");
       protocol.beginPayload();
-      session.stdin.write(Buffer.from([1]));
+      session.stdin.write(encodeLaunchAcknowledgement(owner.launchNonce));
       pendingLaunches.delete(key);
     } catch (error) {
       session.stdin.destroy();
@@ -148,7 +250,12 @@ export class WindowsJobSupervisor implements ProcessScopeSupervisor {
       const stopped = await this.waitForStopped(verifiedIdentity, STOP_TIMEOUT_MS);
       if (stopped.state !== "STOPPED") throw new Error("WINDOWS_PROCESS_SCOPE_STOP_UNPROVEN");
       if (timedOut) throw new Error("WINDOWS_PROCESS_SCOPE_TIMEOUT");
-      const stripped = stripHelperProtocol(result);
+      let stripped = stripHelperProtocol(result);
+      if (this.acceptanceEvidence) {
+        this.acceptanceEvidence.parser.write(Buffer.from(stripped.stdout, "utf8"));
+        const evidence = this.acceptanceEvidence.parser.finish();
+        stripped = { ...stripped, stdout: evidence.payloadOutput };
+      }
       return request.captureOutput === false ? { ...stripped, stdout: "", stderr: "" } : stripped;
     }).catch(async (error: unknown) => {
       await protocol.drainPayload().catch(() => undefined);
@@ -228,6 +335,11 @@ export class WindowsJobSupervisor implements ProcessScopeSupervisor {
   }
 }
 
+function encodeLaunchAcknowledgement(nonce: string): Buffer {
+  if (!/^[a-f0-9]{64}$/.test(nonce)) throw new Error("WINDOWS_LAUNCH_NONCE_INVALID");
+  return Buffer.from(`EBBACK01${nonce}`, "ascii");
+}
+
 /** Разбирает только единственную строку phase protocol и закрытый набор native stages. */
 export function parseWindowsProcessScopeLaunchPhase(output: string): WindowsProcessScopeLaunchPhase {
   const line = output.replace(/\r?\n$/u, "");
@@ -273,7 +385,9 @@ function encodeMetadataFrame(request: ProcessScopeLaunchRequest, launchIdentity?
     addU32(bytes.byteLength);
     pieces.push(bytes);
   };
-  addU32(0x45424232);
+  addU32(0x45424233);
+  const frameLengthOffset = pieces.reduce((length, piece) => length + piece.byteLength, 0);
+  addU32(0);
   addU32(request.args.length);
   addU32(pairs.length);
   addString(request.executable);
@@ -291,6 +405,20 @@ function encodeMetadataFrame(request: ProcessScopeLaunchRequest, launchIdentity?
     addIdentity(launchIdentity.hermesExecutableIdentity);
     addIdentity(launchIdentity.executableIdentity);
     addIdentity(launchIdentity.profileHomeIdentity);
+    const profileHomeTargetIdentities = launchIdentity.profileHomeTargetIdentities;
+    if (!profileHomeTargetIdentities) throw new Error("WINDOWS_HERMES_PROFILE_TARGET_IDENTITIES_REQUIRED");
+    addIdentity(profileHomeTargetIdentities.home);
+    addIdentity(profileHomeTargetIdentities.config);
+    addString(launchIdentity.runId);
+    const profileHomePathChain = launchIdentity.profileHomePathChain;
+    if (!profileHomePathChain) throw new Error("WINDOWS_HERMES_PROFILE_PATH_CHAIN_REQUIRED");
+    addU32(profileHomePathChain.version);
+    addU32(profileHomePathChain.authRootIndex);
+    addU32(profileHomePathChain.components.length);
+    for (const component of profileHomePathChain.components) {
+      addString(component.volumeSerial);
+      addString(component.fileId);
+    }
     addString(launchIdentity.hermesSourceSnapshotKey);
     addString(launchIdentity.hermesSourceSnapshotRoot);
     addIdentity(launchIdentity.hermesSourceSnapshotRootIdentity);
@@ -301,6 +429,7 @@ function encodeMetadataFrame(request: ProcessScopeLaunchRequest, launchIdentity?
   }
   const result = Buffer.concat(pieces);
   if (result.byteLength > 256 * 1024) throw new TypeError("Windows process-scope metadata exceeds 256 KiB.");
+  result.writeUInt32BE(result.byteLength, frameLengthOffset);
   return result;
 
   function addIdentity(identity: HermesLaunchObjectIdentity): void {

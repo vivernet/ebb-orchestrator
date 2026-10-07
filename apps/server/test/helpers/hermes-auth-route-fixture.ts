@@ -27,6 +27,23 @@ export async function createHermesAuthRouteFixture(
   const authRoot = authRootOverride ?? (platform === 'win32' ? 'C:\\test-hermes' : '/tmp/test-hermes');
   const helperPath = paths.join(authRoot, platform === 'win32' ? 'helper.exe' : 'helper');
   const profileHome = paths.join(authRoot, 'profiles', `ebb-orchestrator-run-${runId}`);
+  const profileHomePathChain = platform === 'win32'
+    ? (() => {
+      const root = path.win32.parse(profileHome).root;
+      const pathParts = path.win32.relative(root, profileHome).split(/[\\/]+/u).filter(Boolean);
+      const authRootIndex = path.win32.relative(root, authRoot).split(/[\\/]+/u).filter(Boolean).length;
+      return {
+        version: 1 as const,
+        authRootIndex,
+        components: Array.from({ length: pathParts.length + 1 }, (_unused, index) => ({
+          volumeSerial: '0123456789abcdef',
+          fileId: index === pathParts.length
+            ? '0123456789abcdef0123456789abcdef'
+            : `${index}`.padStart(32, '0'),
+        })),
+      };
+    })()
+    : undefined;
   const launcher = moduleOverrides?.launcherModule ?? await import('../../src/platform/process/native-helper-launcher.js');
   const integrity = moduleOverrides?.integrityModule ?? await import('../../src/platform/process/native-helper-integrity.js');
   const launcherMock = vi.spyOn(launcher, 'runVerifiedNativeHelper');
@@ -66,6 +83,11 @@ export async function createHermesAuthRouteFixture(
     sourceVersion: providerModule.HERMES_PROVIDER_SELECTION_SOURCE.version,
     sourceCommit: providerModule.HERMES_PROVIDER_SELECTION_SOURCE.commit,
     environment: runEnvironment as Readonly<Record<string, string>>,
+    ...(profileHomePathChain ? { profileHomePathChain } : {}),
   });
-  return { authRoot, profileHome, providerSelection, profileReceipt, authRouteEvidence, hermesProjectRoot: paths.join(authRoot, 'source'), runEnvironment };
+  return {
+    authRoot, profileHome, providerSelection, profileReceipt, authRouteEvidence,
+    ...(profileHomePathChain ? { profileHomePathChain } : {}),
+    hermesProjectRoot: paths.join(authRoot, 'source'), runEnvironment,
+  };
 }

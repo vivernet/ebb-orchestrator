@@ -279,8 +279,8 @@ Plan20 Task5A, затем Task5B и Task5C. См. [Plan20](docs/architecture/pla
 
 ## Справочник pnpm-команд
 
-Все команды ниже подтверждены текущими `package.json`. Команды запускаются из
-корня, если не указано иное.
+Package scripts ниже сверены с `package.json`; `pnpm install --frozen-lockfile` — команда pnpm, не script проекта.
+Команды запускаются из корня, если не указано иное.
 
 ### Установка, проверки и сборка
 

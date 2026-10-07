@@ -869,6 +869,7 @@ class HermesSelectionMatrixRuntime extends MatrixRuntime {
       sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit,
       sourceSnapshotKey: hermesSourceSnapshotKey,
       profileHome,
+      ...(authFixture.profileHomePathChain ? { profileHomePathChain: authFixture.profileHomePathChain } : {}),
       authRouteEvidence: authFixture.authRouteEvidence,
     });
     this.selections.set(runId, selection);

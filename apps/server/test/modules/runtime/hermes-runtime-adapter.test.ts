@@ -183,6 +183,10 @@ const testHermesLaunchTicketFactory: HermesLaunchTicketFactory = async (input) =
   const objectIdentity = platform === "win32"
     ? { platform, volumeSerial: "0123456789abcdef", fileId: "0123456789abcdef0123456789abcdef" } as const
     : { platform, device: "1", inode: "1" } as const;
+  const profileHomeTargetIdentities = platform === "win32" ? {
+    home: { ...objectIdentity, fileId: "7".repeat(32) },
+    config: { ...objectIdentity, fileId: "8".repeat(32) },
+  } : undefined;
   const argsPrefix = ["-I", "-B", "-S", "-c", "test bootstrap"];
   const sourceSnapshotKey = JSON.stringify({
     formatVersion: 1,
@@ -207,6 +211,8 @@ const testHermesLaunchTicketFactory: HermesLaunchTicketFactory = async (input) =
       executableArgsPrefix: argsPrefix,
       profileHome: input.profileHome,
       profileHomeIdentity: objectIdentity,
+      ...(profileHomeTargetIdentities ? { profileHomeTargetIdentities } : {}),
+      ...(input.profileHomePathChain ? { profileHomePathChain: input.profileHomePathChain } : {}),
       hermesSourceSnapshotKey: sourceSnapshotKey,
       hermesSourceSnapshotRoot: sourceSnapshotRoot,
       hermesSourceSnapshotRootIdentity: objectIdentity,
@@ -250,6 +256,7 @@ async function testHermesSelection(runId: string, modelId: string, resultDirecto
     sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit,
     sourceSnapshotKey,
     profileHome,
+    ...(authFixture.profileHomePathChain ? { profileHomePathChain: authFixture.profileHomePathChain } : {}),
     authRouteEvidence: authFixture.authRouteEvidence,
   };
 }
@@ -400,6 +407,24 @@ describe("HermesRuntimeAdapter", () => {
       })),
       buildHermesSnapshotRuntimeArgs: vi.fn(),
       verifyHermesProfileHomeIdentity: vi.fn(),
+      verifyHermesRunProfileTargetIdentities: vi.fn(async () => ({
+        home: { platform: "win32", volumeSerial: "0123456789abcdef", fileId: "7".repeat(32) },
+        config: { platform: "win32", volumeSerial: "0123456789abcdef", fileId: "8".repeat(32) },
+      })),
+      verifyHermesProfileHomePathChain: vi.fn(async (profileHome: string, authRoot: string) => {
+        if (platform !== "win32") return undefined;
+        const root = path.win32.parse(profileHome).root;
+        const profileParts = path.win32.relative(root, profileHome).split(/[\\/]+/u).filter(Boolean);
+        const authRootIndex = path.win32.relative(root, authRoot).split(/[\\/]+/u).filter(Boolean).length;
+        return {
+          version: 1 as const,
+          authRootIndex,
+          components: Array.from({ length: profileParts.length + 1 }, (_unused, index) => ({
+            volumeSerial: "0123456789abcdef",
+            fileId: index === profileParts.length ? "f".repeat(32) : `${index}`.padStart(32, "0"),
+          })),
+        };
+      }),
     }));
     vi.doMock("../../../src/modules/runtime/hermes/hermes-source-snapshot.js", () => ({
       ensureHermesSourceSnapshotNativeProjection: vi.fn(),

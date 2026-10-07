@@ -15,6 +15,10 @@ import {
   isHermesSourceSnapshotGcNodeInventoryWithinLimits, isHermesSourceSnapshotRelativePathValid,
 } from "./hermes-source-snapshot-gc-limits.js";
 import { runVerifiedNativeHelper } from "../../../platform/process/native-helper-launcher.js";
+import {
+  markHermesSourceSnapshotDiagnosticPhase,
+  reportHermesSourceSnapshotFailurePhase,
+} from "./hermes-source-snapshot-diagnostics.js";
 
 const IDENTITY_FORMAT_VERSION = 1;
 const MANIFEST_FORMAT_VERSION = 1;
@@ -180,13 +184,17 @@ export async function materializeHermesSourceSnapshot(request: HermesSourceSnaps
   let referenceLease: HermesSourceReferenceLease | undefined;
   let retainReferenceLease = false;
   try {
+    markHermesSourceSnapshotDiagnosticPhase("validate");
     validateRequest(request);
     const sourceRoot = await validateManagedDirectory(request.sourceRoot, false);
     const cacheRoot = await validateManagedDirectory(request.cacheRoot, true, true);
+    markHermesSourceSnapshotDiagnosticPhase("reference-lock");
     referenceLease = await (request.referenceLock ?? acquireHermesSourceReferenceLock)({ cacheRoot, mode: "shared" });
     referenceLease.assertHeld();
+    markHermesSourceSnapshotDiagnosticPhase("publication-lock");
     lease = await (request.publicationLock ?? acquireHermesSourcePublicationLock)({ cacheRoot });
     lease.assertHeld();
+    markHermesSourceSnapshotDiagnosticPhase("source-git");
     const resolvedTree = await resolveCommitTree(request.gitExecutable, sourceRoot, request.commit);
     if (resolvedTree !== request.tree) throw snapshotError();
     const entries = await listPinnedTree(request.gitExecutable, sourceRoot, request.commit);
@@ -205,6 +213,7 @@ export async function materializeHermesSourceSnapshot(request: HermesSourceSnaps
     const directoryId = sha256(cacheKey);
     const finalPath = join(cacheRoot, directoryId);
     const metadataPath = metadataPathFor(cacheRoot, directoryId);
+    markHermesSourceSnapshotDiagnosticPhase("snapshot-publish");
     let existing = await lstat(finalPath).catch((error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") return undefined;
       throw error;
@@ -226,6 +235,7 @@ export async function materializeHermesSourceSnapshot(request: HermesSourceSnaps
       }
       if (existing) {
         const snapshot = await lookupExpectedSnapshot(cacheRoot, cacheKey, metadataPath, finalPath, identity, manifest);
+        markHermesSourceSnapshotDiagnosticPhase("native-projection");
         await ensureNativeProjection(cacheRoot, snapshot, manifest);
         retainReferenceLease = request.retainReferenceLease === true;
         return retainSnapshotReferenceLease(snapshot, referenceLease, retainReferenceLease);
@@ -243,6 +253,7 @@ export async function materializeHermesSourceSnapshot(request: HermesSourceSnaps
       });
       if (raced) {
         const snapshot = await lookupExpectedSnapshot(cacheRoot, cacheKey, metadataPath, finalPath, identity, manifest);
+        markHermesSourceSnapshotDiagnosticPhase("native-projection");
         await ensureNativeProjection(cacheRoot, snapshot, manifest);
         retainReferenceLease = request.retainReferenceLease === true;
         return retainSnapshotReferenceLease(snapshot, referenceLease, retainReferenceLease);
@@ -262,6 +273,7 @@ export async function materializeHermesSourceSnapshot(request: HermesSourceSnaps
       });
       if (appeared) {
         const snapshot = await lookupExpectedSnapshot(cacheRoot, cacheKey, metadataPath, finalPath, identity, manifest);
+        markHermesSourceSnapshotDiagnosticPhase("native-projection");
         await ensureNativeProjection(cacheRoot, snapshot, manifest);
         retainReferenceLease = request.retainReferenceLease === true;
         return retainSnapshotReferenceLease(snapshot, referenceLease, retainReferenceLease);
@@ -302,6 +314,7 @@ export async function materializeHermesSourceSnapshot(request: HermesSourceSnaps
       await syncDirectory(cacheRoot);
       const result = snapshotResult(cacheRoot, cacheKey, directoryId, manifestDigest);
       await verifySnapshotTree(result.rootPath, manifest);
+      markHermesSourceSnapshotDiagnosticPhase("native-projection");
       await ensureNativeProjection(cacheRoot, result, manifest);
       lease.assertHeld();
       retainReferenceLease = request.retainReferenceLease === true;
@@ -315,6 +328,7 @@ export async function materializeHermesSourceSnapshot(request: HermesSourceSnaps
       throw error;
     }
   } catch {
+    reportHermesSourceSnapshotFailurePhase();
     throw snapshotError();
   } finally {
     try {

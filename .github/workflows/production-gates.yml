@@ -184,6 +184,12 @@ jobs:
         run: node apps/server/scripts/test-hermes-profile-path-native.mjs --source-cache-gc-only
       - name: Run native provider-free process-scope acceptance
         run: pnpm --filter @ebb-orchestrator/server exec vitest run test/e2e/hermes-process-scope.acceptance.test.ts
+      - name: Run executable EBB3 frame and nonce-ACK acceptance
+        run: node apps/server/scripts/test-windows-run-supervisor-frame.mjs
+      - name: Run native provider-free Hermes profile-target handle acceptance
+        run: node apps/server/scripts/test-windows-run-supervisor-targets.mjs
+      - name: Run production Hermes profile path-chain integration acceptance
+        run: pnpm --filter @ebb-orchestrator/server exec vitest run test/e2e/hermes-profile-path-chain.acceptance.test.ts
       - name: Run native provider-free source-snapshot acceptance
         run: pnpm --filter @ebb-orchestrator/server exec vitest run test/e2e/hermes-source-snapshot.acceptance.test.ts
 

@@ -7,6 +7,19 @@ export type HermesLaunchObjectIdentity =
   | { readonly platform: "win32"; readonly volumeSerial: string; readonly fileId: string }
   | { readonly platform: "linux"; readonly device: string; readonly inode: string };
 
+export interface HermesWindowsPathComponentIdentity {
+  readonly volumeSerial: string;
+  readonly fileId: string;
+}
+
+export interface HermesWindowsPathIdentityChain {
+  readonly version: 1;
+  /** Индекс auth-root в `components`; volume root всегда занимает индекс 0. */
+  readonly authRootIndex: number;
+  /** Идентичности каталогов в lexical-порядке от volume root до Run profile включительно. */
+  readonly components: readonly HermesWindowsPathComponentIdentity[];
+}
+
 export interface HermesLaunchTicketInput {
   readonly runId: string;
   readonly attempt: number | null;
@@ -21,6 +34,13 @@ export interface HermesLaunchTicketInput {
   readonly executableArgsPrefix: readonly string[];
   readonly profileHome: string;
   readonly profileHomeIdentity: HermesLaunchObjectIdentity;
+  /** Native no-follow identities for the Run's `home` directory and `config.yaml` file on Windows. */
+  readonly profileHomeTargetIdentities?: {
+    readonly home: HermesLaunchObjectIdentity;
+    readonly config: HermesLaunchObjectIdentity;
+  };
+  /** Run-bound native identities from volume root through auth root and the exact Run profile. */
+  readonly profileHomePathChain?: HermesWindowsPathIdentityChain;
   /** Exact canonical JCS identity persisted on this Run's process owner. */
   readonly hermesSourceSnapshotKey: string;
   /** Read-only source tree root plus the native directory identity captured immediately before ticket creation. */
@@ -43,6 +63,7 @@ export interface HermesLaunchTicketFactoryInput {
   readonly attempt: number | null;
   readonly cwd: string;
   readonly profileHome: string;
+  readonly profileHomePathChain?: HermesWindowsPathIdentityChain;
   readonly environment: {
     readonly HERMES_HOME: string;
     readonly HOME: string;
@@ -88,7 +109,14 @@ const ticketStates = new WeakMap<HermesLaunchTicket, TicketState>();
 export function createHermesLaunchTicket(input: HermesLaunchTicketInput): HermesLaunchTicket {
   assertTicketInput(input);
   const ticket = Object.freeze(Object.create(null)) as HermesLaunchTicket;
-  ticketStates.set(ticket, { ...input, environment: Object.freeze({ ...input.environment }), consumed: false });
+  ticketStates.set(ticket, {
+    ...input,
+    ...(input.profileHomePathChain
+      ? { profileHomePathChain: cloneWindowsPathIdentityChain(input.profileHomePathChain) }
+      : {}),
+    environment: Object.freeze({ ...input.environment }),
+    consumed: false,
+  });
   return ticket;
 }
 
@@ -129,6 +157,13 @@ export function consumeHermesLaunchTicket(
     executableArgsPrefix: Object.freeze([...state.executableArgsPrefix]),
     profileHome: state.profileHome,
     profileHomeIdentity: Object.freeze({ ...state.profileHomeIdentity }),
+    ...(state.profileHomeTargetIdentities ? { profileHomeTargetIdentities: Object.freeze({
+      home: Object.freeze({ ...state.profileHomeTargetIdentities.home }),
+      config: Object.freeze({ ...state.profileHomeTargetIdentities.config }),
+    }) } : {}),
+    ...(state.profileHomePathChain
+      ? { profileHomePathChain: cloneWindowsPathIdentityChain(state.profileHomePathChain) }
+      : {}),
     hermesSourceSnapshotKey: state.hermesSourceSnapshotKey,
     hermesSourceSnapshotRoot: state.hermesSourceSnapshotRoot,
     hermesSourceSnapshotRootIdentity: Object.freeze({ ...state.hermesSourceSnapshotRootIdentity }),
@@ -162,10 +197,76 @@ function assertTicketInput(input: HermesLaunchTicketInput): void {
       !paths.isAbsolute(input.environment.HOME) || !paths.isAbsolute(input.environment.HERMES_CONFIG) ||
       !isValidObjectIdentity(input.hermesExecutableIdentity) || !isValidObjectIdentity(input.executableIdentity) ||
       !isValidObjectIdentity(input.profileHomeIdentity) ||
+      (input.platform === "win32" && !isValidProfileHomeTargetIdentities(input.profileHomeTargetIdentities, input.profileHomeIdentity)) ||
+      (input.platform === "linux" && input.profileHomeTargetIdentities !== undefined) ||
+      (input.platform === "win32" && !isValidWindowsPathIdentityChain(input.profileHomePathChain, input)) ||
+      (input.platform === "linux" && input.profileHomePathChain !== undefined) ||
       !isValidObjectIdentity(input.hermesSourceSnapshotRootIdentity) ||
       input.executableArgsPrefix.some((arg) => typeof arg !== "string" || arg.includes("\0"))) {
     throw new Error("HERMES_LAUNCH_TICKET_INPUT_INVALID");
   }
+}
+
+function isValidProfileHomeTargetIdentities(
+  value: unknown,
+  profileIdentity: HermesLaunchObjectIdentity,
+): value is NonNullable<HermesLaunchTicketInput["profileHomeTargetIdentities"]> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const targets = value as Record<string, unknown>;
+  if (Object.keys(targets).sort().join(",") !== "config,home") return false;
+  for (const key of ["home", "config"] as const) {
+    const identity = targets[key];
+    if (typeof identity !== "object" || identity === null || Array.isArray(identity) ||
+        Object.keys(identity).sort().join(",") !== "fileId,platform,volumeSerial" ||
+        !isValidObjectIdentity(identity as HermesLaunchObjectIdentity) ||
+        (identity as HermesLaunchObjectIdentity).platform !== "win32" ||
+        (identity as Extract<HermesLaunchObjectIdentity, { platform: "win32" }>).volumeSerial !==
+          (profileIdentity as Extract<HermesLaunchObjectIdentity, { platform: "win32" }>).volumeSerial) return false;
+  }
+  return (targets.home as Extract<HermesLaunchObjectIdentity, { platform: "win32" }>).fileId !==
+    (targets.config as Extract<HermesLaunchObjectIdentity, { platform: "win32" }>).fileId;
+}
+
+function isValidWindowsPathIdentityChain(value: unknown, input: HermesLaunchTicketInput): value is HermesWindowsPathIdentityChain {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const chain = value as Record<string, unknown>;
+  if (Object.keys(chain).sort().join(",") !== "authRootIndex,components,version" || chain.version !== 1 ||
+      !Number.isSafeInteger(chain.authRootIndex) || !Array.isArray(chain.components) ||
+      chain.components.length < 2 || chain.components.length > 64) return false;
+  const components = chain.components as unknown[];
+  if (!components.every((component) => {
+    if (typeof component !== "object" || component === null || Array.isArray(component) ||
+        Object.keys(component).sort().join(",") !== "fileId,volumeSerial") return false;
+    const record = component as Record<string, unknown>;
+    return typeof record.volumeSerial === "string" && /^[a-f0-9]{16}$/u.test(record.volumeSerial) &&
+      typeof record.fileId === "string" && /^[a-f0-9]{32}$/u.test(record.fileId);
+  })) return false;
+  const typedComponents = components as HermesWindowsPathComponentIdentity[];
+  if (!typedComponents.every((component) => component.volumeSerial === typedComponents[0]?.volumeSerial)) return false;
+  if (input.profileHomeIdentity.platform !== "win32") return false;
+  const profileHomeIdentity = input.profileHomeIdentity;
+  const root = path.win32.parse(input.profileHome).root;
+  const relative = path.win32.relative(root, input.profileHome);
+  const pathParts = relative.split(/[\\/]+/u).filter(Boolean);
+  const authRoot = path.win32.dirname(path.win32.dirname(input.profileHome));
+  const authRootParts = path.win32.relative(root, authRoot).split(/[\\/]+/u).filter(Boolean);
+  const runProfileName = `ebb-orchestrator-run-${input.runId}`;
+  const canonicalProfile = path.win32.join(authRoot, "profiles", runProfileName);
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(input.runId) &&
+    path.win32.isAbsolute(root) && path.win32.normalize(canonicalProfile).toLocaleLowerCase("en-US") ===
+      path.win32.normalize(input.profileHome).toLocaleLowerCase("en-US") &&
+    components.length === pathParts.length + 1 && chain.authRootIndex === authRootParts.length &&
+    chain.authRootIndex > 0 && chain.authRootIndex < components.length &&
+    typedComponents.at(-1)?.volumeSerial === profileHomeIdentity.volumeSerial.toLowerCase() &&
+    typedComponents.at(-1)?.fileId === profileHomeIdentity.fileId.toLowerCase();
+}
+
+function cloneWindowsPathIdentityChain(chain: HermesWindowsPathIdentityChain): HermesWindowsPathIdentityChain {
+  return Object.freeze({
+    version: chain.version,
+    authRootIndex: chain.authRootIndex,
+    components: Object.freeze(chain.components.map((component) => Object.freeze({ ...component }))),
+  });
 }
 
 function isCanonicalSnapshotTicketBinding(input: HermesLaunchTicketInput): boolean {

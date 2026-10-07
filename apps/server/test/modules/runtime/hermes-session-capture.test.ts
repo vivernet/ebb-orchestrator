@@ -262,6 +262,10 @@ describe("Hermes live session capture bridge", () => {
         const sourceSnapshotRoot = join(tempDirectory, "source-snapshots", snapshotId);
         const sourceProjectionPath = join(tempDirectory, "source-snapshots", `${snapshotId}.native-v1.bin`);
         const argsPrefix = ["-I", "-B", "-S", "-c", "test bootstrap"];
+        const profileHomeTargetIdentities = platform === "win32" ? {
+          home: { ...objectIdentity, fileId: "7".repeat(32) },
+          config: { ...objectIdentity, fileId: "8".repeat(32) },
+        } : undefined;
         return {
           executablePath: join(tmpdir(), platform === "win32" ? "python.exe" : "python3"),
           argsPrefix,
@@ -276,6 +280,8 @@ describe("Hermes live session capture bridge", () => {
             executableArgsPrefix: argsPrefix,
             profileHome: input.profileHome,
             profileHomeIdentity: objectIdentity,
+            ...(profileHomeTargetIdentities ? { profileHomeTargetIdentities } : {}),
+            ...(input.profileHomePathChain ? { profileHomePathChain: input.profileHomePathChain } : {}),
             hermesSourceSnapshotKey: sourceSnapshotKey,
             hermesSourceSnapshotRoot: sourceSnapshotRoot,
             hermesSourceSnapshotRootIdentity: objectIdentity,
@@ -317,6 +323,7 @@ describe("Hermes live session capture bridge", () => {
         sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit,
         sourceSnapshotKey,
         profileHome,
+        ...(authFixture.profileHomePathChain ? { profileHomePathChain: authFixture.profileHomePathChain } : {}),
         authRouteEvidence: authFixture.authRouteEvidence,
       },
     })).rejects.toThrow("SIMULATED_STDOUT_TRANSPORT_FAILURE");

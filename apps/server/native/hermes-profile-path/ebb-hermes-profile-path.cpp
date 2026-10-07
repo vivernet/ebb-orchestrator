@@ -31,6 +31,7 @@
 #include <aclapi.h>
 #include <sddl.h>
 #include <lmcons.h>
+#include "hermes-profile-path-acl-policy.h"
 
 #else
 #include <cerrno>
@@ -60,6 +61,8 @@ constexpr int kPathComponentUnsafe = 50;
 constexpr int kPathIdentityUnavailable = 34;
 constexpr size_t kMaxConfigBytes = 256 * 1024;
 constexpr size_t kMaxRunProfileConfigBytes = 64 * 1024;
+constexpr size_t kMaxPathChainComponents = 64;
+constexpr size_t kMaxPathChainJsonBytes = 8 * 1024;
 constexpr const char* kHermesVersion = "v0.21.5+7357.g9244275";
 constexpr const char* kHermesCommit = "9244275491ee0d5bc3481590b041114c4e1d399a";
 constexpr const char* kProjectionVersion = "hermes-config-selection-v1";
@@ -651,6 +654,37 @@ bool safePathAcl(HANDLE handle, PSID currentUser, bool directory, bool protectDi
   return true;
 }
 
+bool safeAncestorPathAcl(HANDLE handle, PSID currentUser, int* failureStage = nullptr) {
+  PSID owner = nullptr;
+  PACL dacl = nullptr;
+  const DWORD result = GetSecurityInfo(handle, SE_FILE_OBJECT,
+    OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION, &owner, nullptr, &dacl, nullptr, nullptr);
+  if (result != ERROR_SUCCESS || owner == nullptr || dacl == nullptr) { if (failureStage) *failureStage = 1; return false; }
+  if (!trustedPathOwner(owner, currentUser)) { if (failureStage) *failureStage = 2; return false; }
+  ACL_SIZE_INFORMATION aclInfo{};
+  if (!GetAclInformation(dacl, &aclInfo, sizeof(aclInfo), AclSizeInformation)) { if (failureStage) *failureStage = 3; return false; }
+  for (DWORD i = 0; i < aclInfo.AceCount; ++i) {
+    void* rawAce = nullptr;
+    if (!GetAce(dacl, i, &rawAce)) { if (failureStage) *failureStage = 4; return false; }
+    const auto* header = static_cast<ACE_HEADER*>(rawAce);
+    if (header->AceType == ACCESS_ALLOWED_ACE_TYPE) {
+      const auto* ace = static_cast<ACCESS_ALLOWED_ACE*>(rawAce);
+      PSID trustee = const_cast<DWORD*>(&ace->SidStart);
+      const bool trusted = EqualSid(trustee, owner) || EqualSid(trustee, currentUser) ||
+        IsWellKnownSid(trustee, WinLocalSystemSid) || IsWellKnownSid(trustee, WinBuiltinAdministratorsSid) ||
+        IsWellKnownSid(trustee, WinCreatorOwnerSid);
+      if (!ebb::hermes::profile_path::safeAncestorAcePolicy(header->AceType, header->AceFlags, ace->Mask, trusted)) {
+        if (failureStage) *failureStage = 5;
+        return false;
+      }
+    } else if (!ebb::hermes::profile_path::safeAncestorAcePolicy(header->AceType, header->AceFlags, 0, false)) {
+      if (failureStage) *failureStage = 6;
+      return false;
+    }
+  }
+  return true;
+}
+
 HANDLE openWindowsChildDirectory(HANDLE parent, const std::wstring& name, ULONG disposition,
                                  PVOID securityDescriptor = nullptr, bool canCreateChild = false,
                                  bool checkSecurity = false, ACCESS_MASK extraAccess = 0,
@@ -683,7 +717,7 @@ HANDLE openWindowsChildDirectory(HANDLE parent, const std::wstring& name, ULONG 
   return handle;
 }
 
-HANDLE openWindowsChildFile(HANDLE parent, const std::wstring& name) {
+HANDLE openWindowsChildFile(HANDLE parent, const std::wstring& name, bool shareDelete = true) {
   if (name.empty() || name.size() > 255) return INVALID_HANDLE_VALUE;
   UNICODE_STRING objectName{};
   objectName.Buffer = const_cast<PWSTR>(name.c_str());
@@ -696,7 +730,7 @@ HANDLE openWindowsChildFile(HANDLE parent, const std::wstring& name) {
   const NTSTATUS status = NtCreateFile(&handle,
     FILE_READ_ATTRIBUTES | READ_CONTROL | SYNCHRONIZE,
     &attributes, &ioStatus, nullptr, FILE_ATTRIBUTE_NORMAL,
-    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+    FILE_SHARE_READ | FILE_SHARE_WRITE | (shareDelete ? FILE_SHARE_DELETE : 0),
     FILE_OPEN,
     FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_REPARSE_POINT,
     nullptr, 0);
@@ -837,6 +871,250 @@ int verifySafeWindowsPath(const std::wstring& rawPath, const std::wstring& rawKi
   if (!identityValid) return kPathIdentityUnavailable;
   printSafePathIdentity(directory ? "directory" : "file", canonicalPath, volumeSerial, fileId);
   return kOk;
+}
+
+struct PathChainIdentity {
+  std::string volumeSerial;
+  std::string fileId;
+};
+
+bool windowsPathComponentsEqual(const std::vector<std::wstring>& left,
+                                const std::vector<std::wstring>& right,
+                                size_t count) {
+  if (left.size() < count || right.size() < count) return false;
+  for (size_t index = 0; index < count; ++index) {
+    if (CompareStringOrdinal(left[index].c_str(), static_cast<int>(left[index].size()),
+                             right[index].c_str(), static_cast<int>(right[index].size()), TRUE) != CSTR_EQUAL) return false;
+  }
+  return true;
+}
+
+void closePathChainHandles(std::vector<HANDLE>& handles) {
+  for (auto handle = handles.rbegin(); handle != handles.rend(); ++handle) {
+    if (*handle != nullptr && *handle != INVALID_HANDLE_VALUE) CloseHandle(*handle);
+  }
+  handles.clear();
+}
+
+int verifySafeWindowsPathChain(const std::wstring& rawPath, const std::wstring& rawKind,
+                               const std::wstring& rawStrictRoot) {
+  if (rawKind != L"directory") return kInvalidInput;
+  std::vector<std::wstring> components;
+  std::vector<std::wstring> strictComponents;
+  std::wstring driveRoot;
+  std::wstring strictDriveRoot;
+  if (!parseWindowsPath(rawPath, components, driveRoot) || components.empty() ||
+      !parseWindowsPath(rawStrictRoot, strictComponents, strictDriveRoot) || strictComponents.empty() ||
+      components.size() + 1 > kMaxPathChainComponents || strictComponents.size() >= components.size() ||
+      CompareStringOrdinal(driveRoot.c_str(), static_cast<int>(driveRoot.size()),
+                           strictDriveRoot.c_str(), static_cast<int>(strictDriveRoot.size()), TRUE) != CSTR_EQUAL ||
+      !windowsPathComponentsEqual(components, strictComponents, strictComponents.size())) return kInvalidInput;
+
+  std::vector<unsigned char> sidStorage;
+  PSID userSid = nullptr;
+  if (!getCurrentUserSid(sidStorage, userSid)) return kPathUnsafe;
+  std::vector<HANDLE> heldHandles;
+  heldHandles.reserve(components.size() + 1);
+  HANDLE volume = CreateFileW(driveRoot.c_str(), FILE_READ_ATTRIBUTES | FILE_TRAVERSE | READ_CONTROL,
+    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+    FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+  if (volume == INVALID_HANDLE_VALUE) return kPathRootOpenFailed;
+  heldHandles.push_back(volume);
+  FILE_ATTRIBUTE_TAG_INFO rootInfo{};
+  if (!getHandleAttributes(volume, rootInfo) || (rootInfo.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 ||
+      !safePathAcl(volume, userSid, true, false, false)) {
+    closePathChainHandles(heldHandles);
+    return kPathRootUnsafe;
+  }
+  const size_t authRootIndex = strictComponents.size();
+  std::vector<PathChainIdentity> identities;
+  identities.reserve(components.size() + 1);
+  auto appendIdentity = [&](HANDLE handle, const std::wstring& expectedCanonicalPath) -> bool {
+    std::string canonicalPath;
+    std::string volumeSerial;
+    std::string fileId;
+    if (!getSafeHandleIdentity(handle, canonicalPath, volumeSerial, fileId) ||
+        volumeSerial.size() != 16 || fileId.size() != 32) return false;
+    const std::wstring canonicalWidePath = widenUtf8(canonicalPath);
+    if (canonicalWidePath.empty() ||
+        CompareStringOrdinal(canonicalWidePath.c_str(), static_cast<int>(canonicalWidePath.size()),
+                             expectedCanonicalPath.c_str(), static_cast<int>(expectedCanonicalPath.size()), TRUE) != CSTR_EQUAL) return false;
+    if (!identities.empty() && identities.front().volumeSerial != volumeSerial) return false;
+    identities.push_back({std::move(volumeSerial), std::move(fileId)});
+    return true;
+  };
+  if (!appendIdentity(volume, driveRoot)) {
+    closePathChainHandles(heldHandles);
+    return kPathIdentityUnavailable;
+  }
+
+  HANDLE parent = volume;
+  std::wstring expectedCanonicalPath = driveRoot;
+  for (size_t index = 0; index < components.size(); ++index) {
+    HANDLE next = openWindowsChildDirectory(parent, components[index], FILE_OPEN, nullptr, false, true,
+      0, index + 1 < authRootIndex /* pin the protected auth-root subtree against rename */);
+    if (next == INVALID_HANDLE_VALUE) {
+      closePathChainHandles(heldHandles);
+      return kPathComponentOpenFailed + static_cast<int>(index);
+    }
+    heldHandles.push_back(next);
+    if (expectedCanonicalPath.empty() || expectedCanonicalPath.back() != L'\\') expectedCanonicalPath.push_back(L'\\');
+    expectedCanonicalPath.append(components[index]);
+    int aclFailureStage = 0;
+    const size_t chainIndex = index + 1;
+    const bool aclSafe = chainIndex < authRootIndex
+      ? safeAncestorPathAcl(next, userSid, &aclFailureStage)
+      : safePathAcl(next, userSid, true, true, index + 1 == components.size(), &aclFailureStage);
+    if (!aclSafe) {
+      closePathChainHandles(heldHandles);
+      return kPathComponentUnsafe + aclFailureStage;
+    }
+    if (!appendIdentity(next, expectedCanonicalPath)) {
+      closePathChainHandles(heldHandles);
+      return kPathIdentityUnavailable;
+    }
+    parent = next;
+  }
+
+  // Refuse an unexpectedly large serialization instead of emitting an unbounded helper response.
+  const size_t estimatedJsonBytes = 128 + identities.size() * 120;
+  if (estimatedJsonBytes > kMaxPathChainJsonBytes) {
+    closePathChainHandles(heldHandles);
+    return kPathIdentityUnavailable;
+  }
+  std::cout << "{\"status\":\"SAFE_PATH_CHAIN\",\"profileHomePathChain\":{\"version\":1,\"authRootIndex\":"
+            << authRootIndex << ",\"components\":[";
+  for (size_t index = 0; index < identities.size(); ++index) {
+    if (index != 0) std::cout << ',';
+    std::cout << "{\"volumeSerial\":\"" << identities[index].volumeSerial
+              << "\",\"fileId\":\"" << identities[index].fileId << "\"}";
+  }
+  std::cout << "]}}\n";
+  const bool outputOk = static_cast<bool>(std::cout);
+  closePathChainHandles(heldHandles);
+  return outputOk ? kOk : kPathIdentityUnavailable;
+}
+
+// Verifies a file leaf beneath an explicit strict-root boundary. Ancestors before that boundary
+// receive the limited traversal policy; the boundary, descendants, and file leaf remain strict.
+// Every directory is opened relative to its held no-follow parent handle, and the leaf identity is
+// derived from the held file handle so path replacement cannot change the reported identity.
+int verifySafeWindowsFilePathChain(const std::wstring& rawPath, const std::wstring& rawStrictRoot) {
+  std::vector<std::wstring> components;
+  std::vector<std::wstring> strictComponents;
+  std::wstring driveRoot;
+  std::wstring strictDriveRoot;
+  if (!parseWindowsPath(rawPath, components, driveRoot) || components.size() < 2 ||
+      !parseWindowsPath(rawStrictRoot, strictComponents, strictDriveRoot) || strictComponents.empty() ||
+      components.size() > kMaxPathChainComponents || strictComponents.size() >= components.size() ||
+      CompareStringOrdinal(driveRoot.c_str(), static_cast<int>(driveRoot.size()),
+                           strictDriveRoot.c_str(), static_cast<int>(strictDriveRoot.size()), TRUE) != CSTR_EQUAL ||
+      !windowsPathComponentsEqual(components, strictComponents, strictComponents.size())) return kInvalidInput;
+
+  std::vector<unsigned char> sidStorage;
+  PSID userSid = nullptr;
+  if (!getCurrentUserSid(sidStorage, userSid)) return kPathUnsafe;
+  std::vector<HANDLE> heldHandles;
+  heldHandles.reserve(components.size());
+  HANDLE volume = CreateFileW(driveRoot.c_str(), FILE_READ_ATTRIBUTES | FILE_TRAVERSE | READ_CONTROL,
+    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+    FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+  if (volume == INVALID_HANDLE_VALUE) return kPathRootOpenFailed;
+  heldHandles.push_back(volume);
+  FILE_ATTRIBUTE_TAG_INFO rootInfo{};
+  if (!getHandleAttributes(volume, rootInfo) || (rootInfo.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 ||
+      !safePathAcl(volume, userSid, true, false, false)) {
+    closePathChainHandles(heldHandles);
+    return kPathRootUnsafe;
+  }
+  std::string volumeCanonicalPath;
+  std::string expectedVolumeSerial;
+  std::string volumeFileId;
+  if (!getSafeHandleIdentity(volume, volumeCanonicalPath, expectedVolumeSerial, volumeFileId)) {
+    closePathChainHandles(heldHandles);
+    return kPathIdentityUnavailable;
+  }
+  const std::wstring volumeCanonicalWidePath = widenUtf8(volumeCanonicalPath);
+  if (expectedVolumeSerial.size() != 16 || volumeFileId.size() != 32 || volumeCanonicalWidePath.empty() ||
+      CompareStringOrdinal(volumeCanonicalWidePath.c_str(),
+        static_cast<int>(volumeCanonicalWidePath.size()),
+        driveRoot.c_str(), static_cast<int>(driveRoot.size()), TRUE) != CSTR_EQUAL) {
+    closePathChainHandles(heldHandles);
+    return kPathIdentityUnavailable;
+  }
+
+  const size_t strictRootIndex = strictComponents.size();
+  HANDLE parent = volume;
+  std::wstring expectedCanonicalPath = driveRoot;
+  for (size_t index = 0; index + 1 < components.size(); ++index) {
+    HANDLE next = openWindowsChildDirectory(parent, components[index], FILE_OPEN, nullptr, false, true,
+      0, index + 1 < strictRootIndex);
+    if (next == INVALID_HANDLE_VALUE) {
+      closePathChainHandles(heldHandles);
+      return kPathComponentOpenFailed + static_cast<int>(index);
+    }
+    heldHandles.push_back(next);
+    if (expectedCanonicalPath.empty() || expectedCanonicalPath.back() != L'\\') expectedCanonicalPath.push_back(L'\\');
+    expectedCanonicalPath.append(components[index]);
+    int aclFailureStage = 0;
+    const size_t chainIndex = index + 1;
+    const bool aclSafe = chainIndex < strictRootIndex
+      ? safeAncestorPathAcl(next, userSid, &aclFailureStage)
+      : safePathAcl(next, userSid, true, true, false, &aclFailureStage);
+    if (!aclSafe) {
+      closePathChainHandles(heldHandles);
+      return kPathComponentUnsafe + aclFailureStage;
+    }
+    std::string canonicalPath;
+    std::string volumeSerial;
+    std::string fileId;
+    if (!getSafeHandleIdentity(next, canonicalPath, volumeSerial, fileId) ||
+        volumeSerial != expectedVolumeSerial ||
+        volumeSerial.size() != 16 || fileId.size() != 32) {
+      closePathChainHandles(heldHandles);
+      return kPathIdentityUnavailable;
+    }
+    const std::wstring canonicalWidePath = widenUtf8(canonicalPath);
+    if (canonicalWidePath.empty() ||
+        CompareStringOrdinal(canonicalWidePath.c_str(), static_cast<int>(canonicalWidePath.size()),
+                             expectedCanonicalPath.c_str(), static_cast<int>(expectedCanonicalPath.size()), TRUE) != CSTR_EQUAL) {
+      closePathChainHandles(heldHandles);
+      return kPathIdentityUnavailable;
+    }
+    parent = next;
+  }
+
+  HANDLE leaf = openWindowsChildFile(parent, components.back(), false);
+  if (leaf == INVALID_HANDLE_VALUE) {
+    closePathChainHandles(heldHandles);
+    return kPathComponentOpenFailed + static_cast<int>(components.size() - 1);
+  }
+  heldHandles.push_back(leaf);
+  int leafAclFailureStage = 0;
+  if (!safePathAcl(leaf, userSid, false, false, false, &leafAclFailureStage)) {
+    closePathChainHandles(heldHandles);
+    return kPathComponentUnsafe + leafAclFailureStage;
+  }
+  if (expectedCanonicalPath.empty() || expectedCanonicalPath.back() != L'\\') expectedCanonicalPath.push_back(L'\\');
+  expectedCanonicalPath.append(components.back());
+  std::string canonicalPath;
+  std::string volumeSerial;
+  std::string fileId;
+  const bool identityValid = getSafeHandleIdentity(leaf, canonicalPath, volumeSerial, fileId) &&
+    volumeSerial == expectedVolumeSerial && volumeSerial.size() == 16 && fileId.size() == 32;
+  const std::wstring canonicalWidePath = widenUtf8(canonicalPath);
+  const bool canonicalMatches = !canonicalWidePath.empty() &&
+    CompareStringOrdinal(canonicalWidePath.c_str(), static_cast<int>(canonicalWidePath.size()),
+                         expectedCanonicalPath.c_str(), static_cast<int>(expectedCanonicalPath.size()), TRUE) == CSTR_EQUAL;
+  if (!identityValid || !canonicalMatches) {
+    closePathChainHandles(heldHandles);
+    return kPathIdentityUnavailable;
+  }
+  std::cout << "{\"status\":\"SAFE_PATH_FILE_CHAIN\",\"kind\":\"file\",\"volumeSerial\":\""
+            << volumeSerial << "\",\"fileId\":\"" << fileId << "\"}\n";
+  const bool outputOk = static_cast<bool>(std::cout);
+  closePathChainHandles(heldHandles);
+  return outputOk ? kOk : kPathIdentityUnavailable;
 }
 
 HANDLE openWindowsDirectory(const std::wstring& rawPath, bool requireCurrentOwner, PSID currentUser,
@@ -2811,6 +3089,12 @@ int wmain(int argc, wchar_t** argv) {
   }
   if (argc == 4 && argv[1] != nullptr && argv[1] == std::wstring(L"verify-safe-path")) {
     return verifySafeWindowsPath(argv[3], argv[2]);
+  }
+  if (argc == 5 && argv[1] != nullptr && argv[1] == std::wstring(L"verify-safe-path-chain")) {
+    return verifySafeWindowsPathChain(argv[3], argv[2], argv[4]);
+  }
+  if (argc == 4 && argv[1] != nullptr && argv[1] == std::wstring(L"verify-safe-file-chain")) {
+    return verifySafeWindowsFilePathChain(argv[2], argv[3]);
   }
   return kInvalidInput;
 }

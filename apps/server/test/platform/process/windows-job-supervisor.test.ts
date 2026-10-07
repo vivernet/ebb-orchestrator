@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
 import { PassThrough, Writable } from "node:stream";
 import { ProcessExecutor, type ProcessOptions, type ProcessResult, type ProcessSession } from "../../../src/platform/process/process-executor.js";
 import { WindowsJobSupervisor } from "../../../src/platform/process/windows-job-supervisor.js";
+import { createHermesLaunchTicket } from "../../../src/modules/runtime/hermes/hermes-launch-ticket.js";
 import { safeRestartChildFailureCode } from "../../helpers/restart-child-diagnostics.js";
 import type { ProcessScopeIdentity } from "../../../src/platform/process/process-inspector.js";
 import type { ProcessScopeLaunchRequest } from "../../../src/platform/process/run-scope-supervisor.js";
@@ -50,7 +52,7 @@ class HandshakeExecutor extends ProcessExecutor {
       write: (chunk: Buffer | string, _encoding, callback) => {
         const bytes = Buffer.isBuffer(chunk) ? Buffer.from(chunk) : Buffer.from(chunk);
         this.writes.push(bytes);
-        if (bytes.length === 1 && bytes[0] === 1) {
+        if (bytes.equals(Buffer.from(`EBBACK01${owner.launchNonce}`, "ascii"))) {
           if (this.payload) {
             const splitAt = Math.max(1, Math.floor(this.payload.length / 2));
             stdout.write(this.payload.slice(0, splitAt));
@@ -170,7 +172,7 @@ describe("WindowsJobSupervisor", () => {
     expect(executor.startSession).not.toHaveBeenCalled();
   });
 
-  it("does not send the ResumeThread authorization byte when cancellation arrives during owner persistence", async () => {
+  it("does not send the ResumeThread authorization frame when cancellation arrives during owner persistence", async () => {
     Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
     const executor = new HandshakeExecutor();
     const supervisor = new WindowsJobSupervisor(executor, "native-helper.exe", createTestHelperInvocation);
@@ -182,10 +184,10 @@ describe("WindowsJobSupervisor", () => {
 
     expect(executor.startSession).toHaveBeenCalledTimes(1);
     expect(executor.writes).toHaveLength(1);
-    expect(executor.writes).not.toContainEqual(Buffer.from([1]));
+    expect(executor.writes).not.toContainEqual(Buffer.from(`EBBACK01${owner.launchNonce}`, "ascii"));
   });
 
-  it("sends only launch metadata and owner authorization to the helper", async () => {
+  it("sends only launch metadata and the nonce-bound owner authorization frame to the helper", async () => {
     Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
     const executor = new HandshakeExecutor();
     const supervisor = new WindowsJobSupervisor(executor, "native-helper.exe", createTestHelperInvocation);
@@ -193,8 +195,121 @@ describe("WindowsJobSupervisor", () => {
     await supervisor.launch(owner, request, async () => undefined);
 
     expect(executor.writes).toHaveLength(2);
-    expect(executor.writes[1]).toEqual(Buffer.from([1]));
+    expect(executor.writes[1]).toEqual(Buffer.from(`EBBACK01${owner.launchNonce}`, "ascii"));
     expect(Buffer.concat(executor.writes).toString("utf8")).not.toContain("EBB_HERMES_PROVIDER_API_KEY");
+  });
+
+  it("serializes the Run-bound EBB3 profile identity chain before source snapshot metadata", async () => {
+    Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+    const runId = "123e4567-e89b-42d3-a456-426614174000";
+    const profileHome = `C:\\ebb\\profiles\\ebb-orchestrator-run-${runId}`;
+    const objectIdentity = (fileId: string) => ({
+      platform: "win32" as const,
+      volumeSerial: "0123456789abcdef",
+      fileId,
+    });
+    const sourceSnapshotKey = JSON.stringify({
+      formatVersion: 1,
+      hermesVersion: "v0.21.5+7357.g9244275",
+      manifestDigest: "c".repeat(64),
+      sourceCommit: "b".repeat(40),
+      sourceTree: "d".repeat(40),
+    });
+    const sourceSnapshotId = createHash("sha256").update(sourceSnapshotKey).digest("hex");
+    const argsPrefix = ["-I", "-B", "-S", "-c", "snapshot-bootstrap"];
+    const launchTicket = createHermesLaunchTicket({
+      runId,
+      attempt: 0,
+      platform: "win32",
+      hermesExecutablePath: "C:\\ebb\\bin\\hermes.exe",
+      hermesExecutableIdentity: objectIdentity("1".repeat(32)),
+      executablePath: "C:\\ebb\\runtime\\python.exe",
+      executableIdentity: objectIdentity("2".repeat(32)),
+      executableArgsPrefix: argsPrefix,
+      profileHome,
+      profileHomeIdentity: objectIdentity("4".repeat(32)),
+      profileHomeTargetIdentities: {
+        home: objectIdentity("6".repeat(32)),
+        config: objectIdentity("7".repeat(32)),
+      },
+      profileHomePathChain: {
+        version: 1,
+        authRootIndex: 1,
+        components: [
+          { volumeSerial: "0123456789abcdef", fileId: "0".repeat(32) },
+          { volumeSerial: "0123456789abcdef", fileId: "1".repeat(32) },
+          { volumeSerial: "0123456789abcdef", fileId: "2".repeat(32) },
+          { volumeSerial: "0123456789abcdef", fileId: "4".repeat(32) },
+        ],
+      },
+      hermesSourceSnapshotKey: sourceSnapshotKey,
+      hermesSourceSnapshotRoot: `C:\\ebb\\source-snapshots\\${sourceSnapshotId}`,
+      hermesSourceSnapshotRootIdentity: objectIdentity("5".repeat(32)),
+      hermesSourceManifestDigest: "c".repeat(64),
+      hermesSourceProjectionPath: `C:\\ebb\\source-snapshots\\${sourceSnapshotId}.native-v1.bin`,
+      hermesSourceProjectionSha256: "f".repeat(64),
+      hermesSourceProjectionSize: 256,
+      environment: {
+        HERMES_HOME: profileHome,
+        HOME: `${profileHome}\\home`,
+        HERMES_CONFIG: `${profileHome}\\config.yaml`,
+      },
+    });
+    const executor = new HandshakeExecutor();
+    const supervisor = new WindowsJobSupervisor(executor, "native-helper.exe", createTestHelperInvocation);
+
+    await supervisor.launch({ ...owner, runId }, {
+      ...request,
+      attempt: 0,
+      executable: "C:\\ebb\\runtime\\python.exe",
+      args: [...argsPrefix, "chat"],
+      environment: {
+        HERMES_HOME: profileHome,
+        HOME: `${profileHome}\\home`,
+        HERMES_CONFIG: `${profileHome}\\config.yaml`,
+      },
+      hermesLaunchTicket: launchTicket,
+    }, async () => undefined);
+
+    const frame = executor.writes[0]!;
+    let offset = 0;
+    const readU32 = () => { const value = frame.readUInt32BE(offset); offset += 4; return value; };
+    const readString = () => { const length = readU32(); const value = frame.toString("utf8", offset, offset + length); offset += length; return value; };
+    const skipIdentity = () => { readString(); readString(); };
+    const readIdentity = () => [readString(), readString()];
+    expect(readU32()).toBe(0x45424233);
+    const declaredFrameLength = readU32();
+    expect(declaredFrameLength).toBe(frame.length);
+    const argCount = readU32();
+    const environmentCount = readU32();
+    readString();
+    readString();
+    for (let index = 0; index < argCount; index += 1) readString();
+    for (let index = 0; index < environmentCount; index += 1) { readString(); readString(); }
+    expect(readU32()).toBe(1);
+    expect(readString()).toBe(profileHome);
+    readString();
+    skipIdentity();
+    skipIdentity();
+    skipIdentity();
+    expect(readIdentity()).toEqual(["0123456789abcdef", "6".repeat(32)]);
+    expect(readIdentity()).toEqual(["0123456789abcdef", "7".repeat(32)]);
+    expect(readString()).toBe(runId);
+    expect(readU32()).toBe(1);
+    expect(readU32()).toBe(1);
+    expect(readU32()).toBe(4);
+    for (const component of ["0", "1", "2", "4"]) {
+      expect(readString()).toBe("0123456789abcdef");
+      expect(readString()).toBe(component.repeat(32));
+    }
+    expect(readString()).toBe(sourceSnapshotKey);
+    readString();
+    skipIdentity();
+    readString();
+    readString();
+    readString();
+    readU32();
+    expect(offset).toBe(frame.length);
   });
 
   it("fails immediately on a native UNKNOWN frame before the launch handshake", async () => {
@@ -222,7 +337,7 @@ describe("WindowsJobSupervisor", () => {
     expect((failure as Error).message).toBe("WINDOWS_HELPER_NATIVE_UNKNOWN:CHILD_CREATE_FAILED");
     expect((failure as Error).message).not.toContain("UNSUPPORTED_NATIVE_DIAGNOSTIC");
     expect(executor.session?.stdin.destroyed).toBe(true);
-    expect(executor.writes.some((write) => write.equals(Buffer.from([1])))).toBe(false);
+    expect(executor.writes.some((write) => write.subarray(0, 8).equals(Buffer.from("EBBACK01")))).toBe(false);
     expect(executor.execCalls).toEqual([[
       "inspect", owner.containmentId, owner.launchNonce, "LAUNCHING", "-", "-", "0",
     ]]);

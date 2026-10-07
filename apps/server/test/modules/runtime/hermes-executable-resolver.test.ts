@@ -448,6 +448,33 @@ describe("pinned Hermes executable resolver", () => {
       "directory", linuxPath, linuxPath, "linux",
     )).toThrow("HERMES_PATH_IDENTITY_INVALID");
   });
+
+  it("parses the exact native Windows profile path identity chain and auth-root boundary", () => {
+    const profileHome = "C:\\Users\\alice\\AppData\\Local\\hermes\\profiles\\ebb-orchestrator-run-123e4567-e89b-42d3-a456-426614174000";
+    const authRoot = "C:\\Users\\alice\\AppData\\Local\\hermes";
+    const components = [
+      { volumeSerial: "0123456789abcdef", fileId: "0".repeat(32) },
+      ..."Users\\alice\\AppData\\Local\\hermes\\profiles".split("\\").map((_part, index) => ({
+        volumeSerial: "0123456789abcdef",
+        fileId: `${index + 1}`.padStart(32, "0"),
+      })),
+      { volumeSerial: "0123456789abcdef", fileId: "f".repeat(32) },
+    ];
+    const valid = JSON.stringify({
+      status: "SAFE_PATH_CHAIN",
+      profileHomePathChain: { version: 1, authRootIndex: 5, components },
+    });
+    expect(resolverModule.parseNativeSafePathIdentityChain(valid, profileHome, authRoot, "win32"))
+      .toMatchObject({ version: 1, authRootIndex: 5, components });
+    expect(() => resolverModule.parseNativeSafePathIdentityChain(
+      JSON.stringify({ status: "SAFE_PATH_CHAIN", profileHomePathChain: { version: 1, authRootIndex: 6, components } }),
+      profileHome, authRoot, "win32",
+    )).toThrow("HERMES_PATH_IDENTITY_INVALID");
+    expect(() => resolverModule.parseNativeSafePathIdentityChain(
+      JSON.stringify({ status: "SAFE_PATH_CHAIN", profileHomePathChain: { version: 1, authRootIndex: 5, components, extra: true } }),
+      profileHome, authRoot, "win32",
+    )).toThrow("HERMES_PATH_IDENTITY_INVALID");
+  });
 });
 
 describe.skipIf(process.platform !== "win32")("pinned Windows Hermes executable resolver", () => {
