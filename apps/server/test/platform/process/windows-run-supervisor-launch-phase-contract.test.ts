@@ -20,6 +20,10 @@ const profileChainAcceptanceSource = readFileSync(
   new URL("../../e2e/hermes-profile-path-chain.acceptance.test.ts", import.meta.url),
   "utf8",
 );
+const nativeHermesHarnessSource = readFileSync(
+  new URL("../../../scripts/test-hermes-profile-path-native.mjs", import.meta.url),
+  "utf8",
+);
 
 class PhaseExecutor extends ProcessExecutor {
   readonly calls: string[][] = [];
@@ -196,12 +200,22 @@ describe("Windows native helper launch-phase diagnostic contract", () => {
     expect(fixtureSetup).toMatch(/existingRealDirectory\(userProfile\)[\s\S]*?existingRealDirectory\(localAppData\)/u);
     expect(fixtureSetup).toMatch(/relative\(userProfile, localAppData\)[\s\S]*?PROFILE_PATH_CHAIN_LOCALAPPDATA_OUTSIDE_USERPROFILE/u);
     expect(fixtureSetup).not.toMatch(/nativeIdentity\(localAppData,\s*"directory",\s*userProfile\)/u);
-    expect(fixtureSetup).toMatch(/mkdtemp\(join\(tmpdir\(\),\s*"ebb-orchestrator-profile-chain-e2e-"\)\)/u);
+    expect(fixtureSetup).toMatch(/mkdtemp\(join\(parse\(tmpdir\(\)\)\.root,\s*"ebb-orchestrator-profile-chain-e2e-"\)\)/u);
     expect(fixtureSetup).toMatch(/const homeRoot = join\(fixtureParent, "home"\)[\s\S]*?setPrivateOwnerAcl\(\[fixtureParent\]\)[\s\S]*?setPrivateOwnerAcl\(\[homeRoot\]\)[\s\S]*?nativeIdentity\(homeRoot,\s*"directory",\s*fixtureParent,\s*"strict-root"\)/u);
     expect(fixtureSetup).toMatch(/nativeIdentity\(profile,\s*"directory",\s*fixtureParent\)[\s\S]*?nativeIdentity\(home,\s*"directory",\s*fixtureParent\)/u);
+    expect(fixtureSetup).toMatch(/throw new Error\(\s*`HERMES_SOURCE_SNAPSHOT_FAILED:\$\{snapshotFailurePhase \?\? "UNKNOWN"\}/u);
+    expect(fixtureSetup).not.toContain("throw snapshotError;");
     expect(profileChainAcceptanceSource).toMatch(/identityPoint === "strict-root"[\s\S]*?chain\?\.authRootIndex[\s\S]*?chain\?\.components\?\.\[chain\.authRootIndex!\]/u);
     expect(profileChainAcceptanceSource).toMatch(/waitForStopped\(identity,\s*30_000\)[\s\S]*?nativeIdentity\(\s*fixtureHome\.identityProbe,\s*"directory",\s*fixtureHome\.strictRoot,\s*"strict-root",?\s*\)[\s\S]*?rm\(fixtureHome\.path,\s*\{\s*recursive:\s*true/u);
     expect(fixtureSetup).toMatch(/rmdir\(homeRoot\)[\s\S]*?rmdir\(fixtureParent\)/u);
+  });
+
+  it("restores the deny-delete path-chain fixture ACL even when an assertion fails", () => {
+    const fixtureLoop = /for \(const \[label, deny, expectAccepted\] of \[[\s\S]*?\n  \}\n\n  for \(const \[label, readOnlyRight\]/u.exec(nativeHermesHarnessSource)?.[0] ?? "";
+    expect(fixtureLoop).toMatch(/try \{[\s\S]*?const aceResult = invoke\([\s\S]*?\} finally \{\s*if \(deny\) restoreWindowsFixtureForeignDenyDelete\(aceParent\);\s*\}/u);
+    expect(nativeHermesHarnessSource).toMatch(/function restoreWindowsFixtureForeignDenyDelete\(directory\)[\s\S]*?\[directory, "\/remove:d", "\*S-1-1-0", "\/T", "\/C"\]/u);
+    expect(nativeHermesHarnessSource).toMatch(/function makeWindowsFixturePrivate\(directory\)[\s\S]*?spawnSync\(powershell,[\s\S]*?cwd: serverDirectory/u);
+    expect(nativeHermesHarnessSource).toMatch(/\$inherit = \[System\.Security\.AccessControl\.InheritanceFlags\]::None; if \(\(Get-Item -LiteralPath \$path\)\.PSIsContainer\)/u);
   });
 
   it("splits Job-open and mapping/identity-open inspection failures into fixed UNKNOWN codes", async () => {

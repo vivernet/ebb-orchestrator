@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { access, lstat, mkdir, mkdtemp, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, parse, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import { consumeHermesLaunchTicket, createHermesLaunchTicket, type HermesLaunchObjectIdentity } from "../../src/modules/runtime/hermes/hermes-launch-ticket.js";
@@ -406,10 +406,10 @@ describe.skipIf(!enabled)("Windows Hermes profile path-chain production integrat
         isAbsolute(localAppDataRelative)) {
       throw new Error("PROFILE_PATH_CHAIN_LOCALAPPDATA_OUTSIDE_USERPROFILE");
     }
-    // Keep every ACL mutation and strict native path-chain check inside a unique temporary root.
-    // The actual USERPROFILE/LOCALAPPDATA values above are only checked for real-directory status
-    // and lexical containment; they are not modified or subjected to the fixture ACL policy.
-    const fixtureParent = await mkdtemp(join(tmpdir(), "ebb-orchestrator-profile-chain-e2e-"));
+    // Keep the strict chain short and fixture-local: temp/profile ancestors can grant unrelated
+    // principals mutation rights, which the production verifier must reject. Create one unique
+    // disposable directory directly under the same volume root; never change ACLs on its parents.
+    const fixtureParent = await mkdtemp(join(parse(tmpdir()).root, "ebb-orchestrator-profile-chain-e2e-"));
     const homeRoot = join(fixtureParent, "home");
     const managedHome = {
       path: fixtureParent,
@@ -471,13 +471,11 @@ describe.skipIf(!enabled)("Windows Hermes profile path-chain production integrat
       } catch (snapshotError) {
         const diagnosticCode = await nativeIdentity(cacheRoot, "directory", fixtureParent)
           .then(() => undefined, (diagnosticError: unknown) => safeNativeDiagnostic(diagnosticError));
-        if (diagnosticCode) {
-          throw new Error(
-            `HERMES_SOURCE_SNAPSHOT_FAILED:${snapshotFailurePhase ?? "UNKNOWN"};SECONDARY_CACHE_IDENTITY:${diagnosticCode}`,
-            { cause: snapshotError },
-          );
-        }
-        throw snapshotError;
+        const secondaryIdentity = diagnosticCode ? `;SECONDARY_CACHE_IDENTITY:${diagnosticCode}` : "";
+        throw new Error(
+          `HERMES_SOURCE_SNAPSHOT_FAILED:${snapshotFailurePhase ?? "UNKNOWN"}${secondaryIdentity}`,
+          { cause: snapshotError },
+        );
       }
       const { projection } = await ensureHermesSourceSnapshotNativeProjection({ cacheRoot, cacheKey: snapshot.cacheKey });
       const runId = randomUUID();

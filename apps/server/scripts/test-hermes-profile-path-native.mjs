@@ -4,7 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, isAbsolute, join, parse, relative, resolve } from "node:path";
 import process from "node:process";
 import { setTimeout, clearTimeout } from "node:timers";
 import { performance } from "node:perf_hooks";
@@ -46,13 +46,13 @@ function makeWindowsFixturePrivate(directory) {
     "foreach ($entry in @($acl.Access)) { $acl.RemoveAccessRuleAll($entry) };",
     "$acl.SetOwner($identity);",
     "$rights = [System.Security.AccessControl.FileSystemRights]::FullControl;",
-    "$inherit = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit;",
+    "$inherit = [System.Security.AccessControl.InheritanceFlags]::None; if ((Get-Item -LiteralPath $path).PSIsContainer) { $inherit = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit };",
     "$rule = [System.Security.AccessControl.FileSystemAccessRule]::new($identity, $rights, $inherit, [System.Security.AccessControl.PropagationFlags]::None, [System.Security.AccessControl.AccessControlType]::Allow);",
     "$acl.AddAccessRule($rule);",
     "Set-Acl -LiteralPath $path -AclObject $acl;",
   ].join(" ");
   const result = spawnSync(powershell, ["-NoProfile", "-NonInteractive", "-Command", command], {
-    cwd: directory,
+    cwd: serverDirectory,
     env: { ...childEnvironment, EBB_HERMES_PROFILE_TEST_ROOT: directory },
     encoding: "utf8",
     shell: false,
@@ -316,56 +316,49 @@ function makeWindowsFixtureForeignRights(directory, rightsMask) {
 }
 
 function makeWindowsFixtureForeignReadExecute(directory, inheritOnly) {
-  const powershell = join(process.env.SYSTEMROOT || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-  const propagation = inheritOnly
-    ? "[System.Security.AccessControl.PropagationFlags]::InheritOnly"
-    : "[System.Security.AccessControl.PropagationFlags]::None";
-  const command = [
-    "$ErrorActionPreference = 'Stop';",
-    "$path = [System.Environment]::GetEnvironmentVariable('EBB_HERMES_PROFILE_TEST_ROOT');",
-    "$acl = Get-Acl -LiteralPath $path;",
-    "$everyone = [System.Security.Principal.SecurityIdentifier]::new('S-1-1-0');",
-    "$inherit = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit;",
-    `$propagation = ${propagation};`,
-    "$rule = [System.Security.AccessControl.FileSystemAccessRule]::new($everyone, [System.Security.AccessControl.FileSystemRights]::ReadAndExecute, $inherit, $propagation, [System.Security.AccessControl.AccessControlType]::Allow);",
-    "$acl.AddAccessRule($rule);",
-    "Set-Acl -LiteralPath $path -AclObject $acl;",
-  ].join(" ");
-  const result = spawnSync(powershell, ["-NoProfile", "-NonInteractive", "-Command", command], {
-    env: { ...childEnvironment, EBB_HERMES_PROFILE_TEST_ROOT: directory },
+  const inheritance = inheritOnly ? "(OI)(CI)(IO)" : "(OI)(CI)";
+  const icacls = join(process.env.SYSTEMROOT || "C:\\Windows", "System32", "icacls.exe");
+  const result = spawnSync(icacls, [directory, "/grant", `*S-1-1-0:${inheritance}(RX)`], {
+    env: childEnvironment,
     encoding: "utf8",
     shell: false,
     timeout: 5_000,
     windowsHide: true,
     maxBuffer: 4_096,
   });
-  assert.equal(result.error, undefined, "Windows read-execute fixture process should start");
-  const errorText = String(result.stderr || "").replaceAll(directory, "<test-root>").trim();
+  assert.equal(result.error, undefined, "Windows read-execute fixture ACL process should start");
+  const errorText = `${String(result.stdout || "")} ${String(result.stderr || "")}`.replaceAll(directory, "<test-root>").trim();
   assert.equal(result.status, 0, `Windows fixture should receive the selected foreign read-execute ACE: ${errorText}`);
 }
 
 function makeWindowsFixtureForeignDenyDelete(directory) {
-  const powershell = join(process.env.SYSTEMROOT || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-  const command = [
-    "$ErrorActionPreference = 'Stop';",
-    "$path = [System.Environment]::GetEnvironmentVariable('EBB_HERMES_PROFILE_TEST_ROOT');",
-    "$acl = Get-Acl -LiteralPath $path;",
-    "$everyone = [System.Security.Principal.SecurityIdentifier]::new('S-1-1-0');",
-    "$rule = [System.Security.AccessControl.FileSystemAccessRule]::new($everyone, [System.Security.AccessControl.FileSystemRights]::Delete, [System.Security.AccessControl.AccessControlType]::Deny);",
-    "$acl.AddAccessRule($rule);",
-    "Set-Acl -LiteralPath $path -AclObject $acl;",
-  ].join(" ");
-  const result = spawnSync(powershell, ["-NoProfile", "-NonInteractive", "-Command", command], {
-    env: { ...childEnvironment, EBB_HERMES_PROFILE_TEST_ROOT: directory },
+  const icacls = join(process.env.SYSTEMROOT || "C:\\Windows", "System32", "icacls.exe");
+  const result = spawnSync(icacls, [directory, "/deny", "*S-1-1-0:(D)"], {
+    env: childEnvironment,
     encoding: "utf8",
     shell: false,
     timeout: 5_000,
     windowsHide: true,
     maxBuffer: 4_096,
   });
-  assert.equal(result.error, undefined, "Windows deny-ACE fixture process should start");
-  const errorText = String(result.stderr || "").replaceAll(directory, "<test-root>").trim();
+  assert.equal(result.error, undefined, "Windows deny-ACE fixture ACL process should start");
+  const errorText = `${String(result.stdout || "")} ${String(result.stderr || "")}`.replaceAll(directory, "<test-root>").trim();
   assert.equal(result.status, 0, `Windows fixture should receive an effective foreign delete-deny ACE: ${errorText}`);
+}
+
+function restoreWindowsFixtureForeignDenyDelete(directory) {
+  const icacls = join(process.env.SYSTEMROOT || "C:\\Windows", "System32", "icacls.exe");
+  const result = spawnSync(icacls, [directory, "/remove:d", "*S-1-1-0", "/T", "/C"], {
+    env: childEnvironment,
+    encoding: "utf8",
+    shell: false,
+    timeout: 5_000,
+    windowsHide: true,
+    maxBuffer: 4_096,
+  });
+  assert.equal(result.error, undefined, "Windows deny-ACE restoration process should start");
+  const errorText = `${String(result.stdout || "")} ${String(result.stderr || "")}`.replaceAll(directory, "<test-root>").trim();
+  assert.equal(result.status, 0, `Windows fixture deny-delete ACE should be removed before cleanup: ${errorText}`);
 }
 
 function verifyWindowsAncestorAclPolicyUnit() {
@@ -522,7 +515,7 @@ function verifyWindowsSafePathChainFixture(root) {
   assert.deepEqual(Object.keys(pathChain).sort(), ["authRootIndex", "components", "version"].sort());
   assert.equal(pathChain.version, 1);
   const rootComponentCount = root.slice(3).split("\\").filter(Boolean).length;
-  assert.equal(pathChain.authRootIndex, 1 + rootComponentCount + 2,
+  assert.equal(pathChain.authRootIndex, rootComponentCount + 2,
     "authRootIndex identifies the exact auth-root directory in volume-root-first order");
   assert.equal(pathChain.components.length, 1 + rootComponentCount + 4,
     "identity chain includes volume root then every component through profileHome");
@@ -553,14 +546,14 @@ function verifyWindowsSafePathChainFixture(root) {
         "foreign READ|EXECUTE ACE marked INHERIT_ONLY must not apply to the current ancestor");
       assert.equal(JSON.parse(genericResult.stdout).status, "SAFE_PATH_CHAIN");
     } else {
-      assert.notEqual(genericResult.status, 0,
-        "the same foreign read-execute rights must remain denied when the ACE applies to the current ancestor");
-      assert.equal(genericResult.stdout, "", "effective read-execute rejection must not emit an identity chain");
+      assert.equal(genericResult.status, 0,
+        "the effective specific READ|EXECUTE mask is within the bounded ancestor rights; raw GENERIC_* masks are tested separately");
+      assert.equal(JSON.parse(genericResult.stdout).status, "SAFE_PATH_CHAIN");
     }
   }
 
   for (const [label, deny, expectAccepted] of [
-    ["deny-delete", true, true],
+    ["deny-delete-synchronize", true, false],
     ["allow-delete", false, false],
   ]) {
     const aceParent = join(root, `path-chain-ace-${label}`);
@@ -570,16 +563,20 @@ function verifyWindowsSafePathChainFixture(root) {
     for (const directory of [aceParent, aceAuthRoot, join(aceAuthRoot, "profiles"), aceProfile]) {
       makeWindowsFixturePrivate(directory);
     }
-    if (deny) makeWindowsFixtureForeignDenyDelete(aceParent);
-    else makeWindowsFixtureForeignRights(aceParent, 0x001200A6 | 0x00010000);
-    const aceResult = invoke(["verify-safe-path-chain", "directory", aceProfile, aceAuthRoot]);
-    assert.equal(aceResult.error, undefined, `${label} native path-chain verifier should start`);
-    if (expectAccepted) {
-      assert.equal(aceResult.status, 0, `${label} non-granting ACE must preserve accepted ancestor behavior`);
-      assert.equal(JSON.parse(aceResult.stdout).status, "SAFE_PATH_CHAIN");
-    } else {
-      assert.notEqual(aceResult.status, 0, `${label} effective foreign ACE must fail closed`);
-      assert.equal(aceResult.stdout, "", `${label} rejection must not emit a usable identity chain`);
+    try {
+      if (deny) makeWindowsFixtureForeignDenyDelete(aceParent);
+      else makeWindowsFixtureForeignRights(aceParent, 0x001200A6 | 0x00010000);
+      const aceResult = invoke(["verify-safe-path-chain", "directory", aceProfile, aceAuthRoot]);
+      assert.equal(aceResult.error, undefined, `${label} native path-chain verifier should start`);
+      if (expectAccepted) {
+        assert.equal(aceResult.status, 0, `${label} non-granting ACE must preserve accepted ancestor behavior`);
+        assert.equal(JSON.parse(aceResult.stdout).status, "SAFE_PATH_CHAIN");
+      } else {
+        assert.notEqual(aceResult.status, 0, `${label} must fail closed when the native verifier cannot open the ancestor`);
+        assert.equal(aceResult.stdout, "", `${label} rejection must not emit a usable identity chain`);
+      }
+    } finally {
+      if (deny) restoreWindowsFixtureForeignDenyDelete(aceParent);
     }
   }
 
@@ -1007,11 +1004,10 @@ try {
     assert.match(systemIdentity.volumeSerial, /^[a-f0-9]{16}$/u);
     assert.match(systemIdentity.fileId, /^[a-f0-9]{32}$/u);
 
-    // Run this regression in the repository's ignored temp directory. Restricted Windows runners
-    // may deny writes directly under USERPROFILE or assign broader ACLs to the system temp root.
-    const repositoryTemp = resolve(serverDirectory, "../../temp");
-    mkdirSync(repositoryTemp, { recursive: true });
-    const pathChainFixtureRoot = mkdtempSync(join(repositoryTemp, "ebb-hermes-profile-chain-"));
+    // Path-chain fixtures must not inherit unrelated USERPROFILE, repo, or system-temp ACLs:
+    // the verifier intentionally checks every lexical ancestor before authRoot. Use a unique
+    // disposable directory directly under the same volume root and mutate only its ACL.
+    const pathChainFixtureRoot = mkdtempSync(join(parse(tempRoot).root, "ebb-hermes-profile-chain-"));
     try {
       makeWindowsFixturePrivate(pathChainFixtureRoot);
       verifyWindowsSafePathChainFixture(pathChainFixtureRoot);

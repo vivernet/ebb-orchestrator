@@ -2484,18 +2484,23 @@ int holdSourceCacheReferenceLock(const std::string& root, const std::string& mod
   if (!ConvertSidToStringSidW(userSid, &sidText)) { CloseHandle(directory); return kPathUnsafe; }
   const std::wstring sddl = std::wstring(L"O:") + sidText + L"D:P(A;;FA;;;" + sidText + L")";
   LocalFree(sidText);
+  PSECURITY_DESCRIPTOR descriptor = nullptr;
+  if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.c_str(), SDDL_REVISION_1, &descriptor, nullptr)) {
+    CloseHandle(directory); return kPathUnsafe;
+  }
   std::wstring name = L".source-cache.ref.lock";
   UNICODE_STRING objectName{};
   objectName.Buffer = name.data();
   objectName.Length = static_cast<USHORT>(name.size() * sizeof(wchar_t));
   objectName.MaximumLength = objectName.Length;
   OBJECT_ATTRIBUTES attributes{};
-  InitializeObjectAttributes(&attributes, &objectName, OBJ_CASE_INSENSITIVE | OBJ_DONT_REPARSE, directory, nullptr);
+  InitializeObjectAttributes(&attributes, &objectName, OBJ_CASE_INSENSITIVE | OBJ_DONT_REPARSE, directory, descriptor);
   IO_STATUS_BLOCK ioStatus{};
   HANDLE file = INVALID_HANDLE_VALUE;
   const NTSTATUS status = NtCreateFile(&file, GENERIC_READ | GENERIC_WRITE | READ_CONTROL | SYNCHRONIZE,
     &attributes, &ioStatus, nullptr, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ | FILE_SHARE_WRITE,
     FILE_OPEN_IF, FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_REPARSE_POINT, nullptr, 0);
+  LocalFree(descriptor);
   FILE_ATTRIBUTE_TAG_INFO attributesInfo{};
   FILE_STANDARD_INFO standard{};
   if (status < 0 || !getHandleAttributes(file, attributesInfo) ||
