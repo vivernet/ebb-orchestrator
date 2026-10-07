@@ -453,20 +453,34 @@ function makeWindowsFixtureForeignAddChildOnly(directory) {
 }
 
 function makeWindowsFixtureForeignRights(directory, rightsMask) {
-  const extraBits = (rightsMask & ~0x001200A6) >>> 0;
-  const extraAce = new Map([
-    [0x00000001, "RD"], [0x00000008, "REA"], [0x00010000, "D"], [0x00000040, "DC"],
+  const extraBits = (rightsMask & ~0x001200A0) >>> 0;
+  const extraRights = [
+    [0x00000001, "RD"], [0x00000008, "REA"], [0x00000002, "WD"], [0x00000004, "AD"],
+    [0x00010000, "D"], [0x00000040, "DC"],
     [0x00040000, "WDAC"], [0x00080000, "WO"], [0x80000000, "R"], [0x40000000, "W"],
     [0x20000000, "RX"], [0x10000000, "F"],
-  ]).get(extraBits);
-  assert.ok(extraAce, `unsupported Windows ACL test mask 0x${extraBits.toString(16)}`);
+  ];
+  const extraAces = extraRights.filter(([bit]) => (extraBits & bit) === bit).map(([, ace]) => ace);
+  const recognizedExtraBits = extraRights.reduce((mask, [bit]) => mask | bit, 0);
+  assert.equal(extraBits & ~recognizedExtraBits, 0, `unsupported Windows ACL test mask 0x${extraBits.toString(16)}`);
   const icacls = join(process.env.SYSTEMROOT || "C:\\Windows", "System32", "icacls.exe");
-  const result = spawnSync(icacls, [directory, "/grant", `*S-1-1-0:(WD,AD,X,RA,RC,S,${extraAce})`], {
+  const rights = ["X", "RA", "RC", "S", ...extraAces].join(",");
+  const result = spawnSync(icacls, [directory, "/grant", `*S-1-1-0:(${rights})`], {
     env: childEnvironment, encoding: "utf8", shell: false, timeout: 5_000, windowsHide: true, maxBuffer: 4_096,
   });
   assert.equal(result.error, undefined, "Windows foreign-rights fixture process should start");
   const errorText = `${String(result.stdout || "")} ${String(result.stderr || "")}`.replaceAll(directory, "<test-root>").trim();
   assert.equal(result.status, 0, `Windows fixture should receive the selected foreign ACE: ${errorText}`);
+}
+
+function makeWindowsFixtureTrustedInstallerAce(directory) {
+  const icacls = join(process.env.SYSTEMROOT || "C:\\Windows", "System32", "icacls.exe");
+  const result = spawnSync(icacls, [directory, "/grant", "*S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464:(F)"], {
+    env: childEnvironment, encoding: "utf8", shell: false, timeout: 5_000, windowsHide: true, maxBuffer: 4_096,
+  });
+  assert.equal(result.error, undefined, "disposable TrustedInstaller ACE fixture process should start");
+  const errorText = `${String(result.stdout || "")} ${String(result.stderr || "")}`.replaceAll(directory, "<test-root>").trim();
+  assert.equal(result.status, 0, `disposable fixture should receive TrustedInstaller FullControl ACE: ${errorText}`);
 }
 
 function makeWindowsFixtureForeignReadExecute(directory, inheritOnly) {
@@ -656,11 +670,11 @@ function verifyWindowsSafePathChainFixture(root) {
   for (const directory of [chainParent, authRoot, join(authRoot, "profiles"), profileHome]) {
     makeWindowsFixturePrivate(directory);
   }
-  makeWindowsFixtureForeignAddChildOnly(chainParent);
+  makeWindowsFixtureForeignRights(chainParent, 0x001200A9);
   const safeChain = invoke(["verify-safe-path-chain", "directory", profileHome, authRoot]);
   assert.equal(safeChain.error, undefined, "native safe path-chain verifier should start");
   assert.equal(safeChain.status, 0,
-    `foreign add-child-only ACE on an ancestor above authRoot must be accepted (${safeChain.status})`);
+    `foreign read-only ancestor ACE above authRoot must be accepted (${safeChain.status})`);
   assert.equal(safeChain.stderr, "", "safe path-chain verification must not emit diagnostics");
   const chainResult = JSON.parse(safeChain.stdout);
   assert.deepEqual(Object.keys(chainResult).sort(), ["profileHomePathChain", "status"].sort());
@@ -719,7 +733,7 @@ function verifyWindowsSafePathChainFixture(root) {
     }
     try {
       if (deny) makeWindowsFixtureForeignDenyDelete(aceParent);
-      else makeWindowsFixtureForeignRights(aceParent, 0x001200A6 | 0x00010000);
+      else makeWindowsFixtureForeignRights(aceParent, 0x001200A0 | 0x00010000);
       const aceResult = invoke(["verify-safe-path-chain", "directory", aceProfile, aceAuthRoot]);
       assert.equal(aceResult.error, undefined, `${label} native path-chain verifier should start`);
       if (expectAccepted) {
@@ -744,7 +758,7 @@ function verifyWindowsSafePathChainFixture(root) {
     for (const directory of [readOnlyParent, readOnlyAuthRoot, join(readOnlyAuthRoot, "profiles"), readOnlyProfile]) {
       makeWindowsFixturePrivate(directory);
     }
-    makeWindowsFixtureForeignRights(readOnlyParent, 0x001200A6 | readOnlyRight);
+    makeWindowsFixtureForeignRights(readOnlyParent, 0x001200A0 | readOnlyRight);
     const acceptedReadOnly = invoke(["verify-safe-path-chain", "directory", readOnlyProfile, readOnlyAuthRoot]);
     assert.equal(acceptedReadOnly.error, undefined, `foreign ${label} ACE verifier should start`);
     assert.equal(acceptedReadOnly.status, 0,
@@ -752,6 +766,29 @@ function verifyWindowsSafePathChainFixture(root) {
     assert.equal(acceptedReadOnly.stderr, "", `accepted foreign ${label} ACE must not emit diagnostics`);
     assert.equal(JSON.parse(acceptedReadOnly.stdout).status, "SAFE_PATH_CHAIN",
       `accepted foreign ${label} ACE must produce a validated path chain`);
+  }
+
+  for (const [strictComponent, mutationRight, mutationName] of [
+    ["auth-root", 0x00000002, "FILE_ADD_FILE"],
+    ["profiles", 0x00000004, "FILE_ADD_SUBDIRECTORY"],
+    ["run-profile", 0x00000002, "FILE_ADD_FILE"],
+  ]) {
+    const strictParent = join(root, `path-chain-strict-mutation-${strictComponent}`);
+    const strictAuthRoot = join(strictParent, "auth-root");
+    const strictProfiles = join(strictAuthRoot, "profiles");
+    const strictProfile = join(strictProfiles, `ebb-orchestrator-run-${strictComponent}`);
+    mkdirSync(strictProfile, { recursive: true });
+    for (const directory of [strictParent, strictAuthRoot, strictProfiles, strictProfile]) {
+      makeWindowsFixturePrivate(directory);
+    }
+    const target = strictComponent === "auth-root" ? strictAuthRoot
+      : strictComponent === "profiles" ? strictProfiles : strictProfile;
+    makeWindowsFixtureForeignRights(target, 0x001200A0 | mutationRight);
+    const rejectedMutation = invoke(["verify-safe-path-chain", "directory", strictProfile, strictAuthRoot]);
+    assert.equal(rejectedMutation.error, undefined, `strict ${strictComponent} mutation verifier should start`);
+    assert.notEqual(rejectedMutation.status, 0,
+      `${mutationName} foreign rights must be rejected at/below authRoot (${strictComponent})`);
+    assert.equal(rejectedMutation.stdout, "", `strict ${strictComponent} mutation rejection must not emit identities`);
   }
 
   const configPath = join(profileHome, "config.yaml");
@@ -786,6 +823,7 @@ function verifyWindowsSafePathChainFixture(root) {
   makeWindowsFixturePrivate(profileHome);
 
   for (const [label, extraRight] of [
+    ["file-add-file", 0x00000002], ["file-add-subdirectory", 0x00000004],
     ["delete", 0x00010000], ["file-delete-child", 0x00000040],
     ["write-dac", 0x00040000], ["write-owner", 0x00080000],
     ["generic-read", 0x80000000], ["generic-write", 0x40000000],
@@ -798,7 +836,7 @@ function verifyWindowsSafePathChainFixture(root) {
     for (const directory of [unsafeParent, unsafeAuthRoot, join(unsafeAuthRoot, "profiles"), unsafeProfile]) {
       makeWindowsFixturePrivate(directory);
     }
-    makeWindowsFixtureForeignRights(unsafeParent, 0x001200A6 | extraRight);
+    makeWindowsFixtureForeignRights(unsafeParent, 0x001200A0 | extraRight);
     const rejected = invoke(["verify-safe-path-chain", "directory", unsafeProfile, unsafeAuthRoot]);
     assert.notEqual(rejected.status, 0, `foreign ${label} right must be rejected on a lexical ancestor`);
     assert.equal(rejected.stdout, "", `foreign ${label} rejection must not emit a usable identity chain`);
@@ -1192,6 +1230,23 @@ try {
     assert.match(systemIdentity.volumeSerial, /^[a-f0-9]{16}$/u);
     assert.match(systemIdentity.fileId, /^[a-f0-9]{32}$/u);
 
+    const systemPowerShellIdentity = invoke(["verify-windows-system-powershell"]);
+    assert.equal(systemPowerShellIdentity.error, undefined, "native OS-derived PowerShell verifier should start");
+    assert.equal(systemPowerShellIdentity.status, 0,
+      `OS-derived PowerShell path should pass its scoped TrustedInstaller policy (exit ${systemPowerShellIdentity.status})`);
+    assert.equal(systemPowerShellIdentity.stderr, "", "system PowerShell verification must not emit diagnostics");
+    const powerShellIdentity = JSON.parse(systemPowerShellIdentity.stdout);
+    assert.deepEqual(Object.keys(powerShellIdentity).sort(), ["fileId", "kind", "path", "status", "volumeSerial"].sort());
+    assert.equal(powerShellIdentity.status, "SAFE_PATH");
+    assert.equal(powerShellIdentity.kind, "file");
+    assert.match(powerShellIdentity.path.replace(/^\\\\\?\\/u, ""), /\\System32\\WindowsPowerShell\\v1\.0\\powershell\.exe$/iu,
+      "native path must be derived from the Windows system directory API");
+    assert.match(powerShellIdentity.volumeSerial, /^[a-f0-9]{16}$/u);
+    assert.match(powerShellIdentity.fileId, /^[a-f0-9]{32}$/u);
+    const callerSelectedSystemPath = invoke(["verify-windows-system-powershell", safePathTarget]);
+    assert.equal(callerSelectedSystemPath.status, 2, "OS-derived verifier must reject caller-selected paths");
+    assert.equal(callerSelectedSystemPath.stdout, "", "invalid system path arguments must not emit identity");
+
     // Path-chain fixtures must not inherit unrelated USERPROFILE, repo, or system-temp ACLs:
     // the verifier intentionally checks every lexical ancestor before authRoot. Use a unique
     // disposable directory directly under the same volume root and mutate only its ACL.
@@ -1232,6 +1287,16 @@ try {
       assert.equal(unsafeDirectory.error, undefined, "native unsafe path verifier should start");
       assert.notEqual(unsafeDirectory.status, 0, "foreign-writable directory path must be rejected");
       assert.equal(unsafeDirectory.stdout, "", "rejected safe-path verification must not emit identity");
+
+      const trustedInstallerFixture = join(canonicalSandbox, "trusted-installer-ace-fixture");
+      mkdirSync(trustedInstallerFixture);
+      makeWindowsFixturePrivate(trustedInstallerFixture);
+      makeWindowsFixtureTrustedInstallerAce(trustedInstallerFixture);
+      const strictTrustedInstallerFixture = invoke(["verify-safe-path", "directory", trustedInstallerFixture]);
+      assert.equal(strictTrustedInstallerFixture.error, undefined, "strict arbitrary-path verifier should start");
+      assert.notEqual(strictTrustedInstallerFixture.status, 0,
+        "TrustedInstaller FullControl ACE remains rejected outside the OS-derived PowerShell chain");
+      assert.equal(strictTrustedInstallerFixture.stdout, "", "rejected arbitrary path must not emit identity");
 
       const junctionDestination = join(canonicalSandbox, "junction-destination");
       mkdirSync(junctionDestination);

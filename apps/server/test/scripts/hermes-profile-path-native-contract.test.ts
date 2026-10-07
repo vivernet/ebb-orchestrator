@@ -9,6 +9,10 @@ const nativeSource = readFileSync(
   new URL("../../native/hermes-profile-path/ebb-hermes-profile-path.cpp", import.meta.url),
   "utf8",
 );
+const aclPolicyHeader = readFileSync(
+  new URL("../../native/hermes-profile-path/hermes-profile-path-acl-policy.h", import.meta.url),
+  "utf8",
+);
 const snapshotSource = readFileSync(
   new URL("../../src/modules/runtime/hermes/hermes-source-snapshot.ts", import.meta.url),
   "utf8",
@@ -62,6 +66,16 @@ describe("native Hermes profile-path safe-path acceptance reporting", () => {
     expect(nativeAcceptanceScript).toMatch(/spawnSync\("mkfifo", \[fifoPath\], \{[\s\S]*?shell: false[\s\S]*?\}\)/u);
     expect(nativeAcceptanceScript).toMatch(/verify-safe-path", "file", fifoPath[\s\S]*?notEqual\(fifoResult\.status, 0[\s\S]*?fifoResult\.stdout, ""/u);
     expect(nativeAcceptanceScript).toMatch(/verify-safe-path", "file", "\/dev\/null"[\s\S]*?notEqual\(characterDeviceResult\.status, 0[\s\S]*?characterDeviceResult\.stdout, ""/u);
+  });
+
+  it("scopes the TrustedInstaller exception to the native OS-derived PowerShell dependency path", () => {
+    expect(nativeSource).toMatch(/GetSystemDirectoryW\(/u);
+    expect(nativeSource).toMatch(/verifySafeWindowsPath\(powerShellPath, L"file", systemComponents\.size\(\), trustedInstallerSid\)/u);
+    expect(nativeSource).toMatch(/argc == 2[^\n]*verify-windows-system-powershell[\s\S]*?verifyWindowsSystemPowerShell\(\)/u);
+    expect(nativeSource).toMatch(/safeWindowsPowerShellTrustedInstallerAcePolicy\([\s\S]*?header->AceFlags[\s\S]*?ace->Mask/u);
+    expect(aclPolicyHeader).toMatch(/\(aceFlags & INHERIT_ONLY_ACE\) == 0 && \(aceFlags & INHERITED_ACE\) != 0/u);
+    expect(nativeAcceptanceScript).toMatch(/verify-windows-system-powershell[\s\S]*?OS-derived PowerShell path should pass[\s\S]*?caller-selected paths/u);
+    expect(nativeAcceptanceScript).toMatch(/TrustedInstaller FullControl ACE remains rejected outside the OS-derived PowerShell chain/u);
   });
 
   it("binds endpoint projection to the exact planned Hermes Run profile without creating it", () => {

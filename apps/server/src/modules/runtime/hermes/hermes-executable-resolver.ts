@@ -85,6 +85,12 @@ export interface HermesExecutableResolverOptions {
     args: string[],
     options: HermesResolverCommandOptions,
   ) => Promise<ProcessResult>;
+  /** Отдельный test seam для path verifier; production по умолчанию запускает integrity-checked native helper. */
+  readonly runNativePathVerifier?: (
+    file: string,
+    args: string[],
+    options: HermesResolverCommandOptions,
+  ) => Promise<ProcessResult>;
   /** Узкий seam для тестов; production проверяет helper по parent-code SHA anchor. */
   readonly verifyNativeHelper?: typeof verifyNativeHelperIntegrity;
 }
@@ -116,12 +122,20 @@ export async function resolveHermesExecutable(
   const executablePath = await resolveUniqueHermesLauncher(pathEntries, cwd, paths);
   const layout = await resolveWindowsInstallLayout(executablePath, cwd);
   const runCommand = options.runCommand ?? createProcessRunner();
-  const runPathVerifier = options.runCommand ?? createNativePathVerifierRunner();
+  const runPathVerifier = options.runNativePathVerifier ?? createNativePathVerifierRunner();
   const pathVerifier = bundledPathVerifierPath(platform);
   await (options.verifyNativeHelper ?? verifyNativeHelperIntegrity)(pathVerifier, "hermesProfilePath");
   const identities = new Map<string, NativeSafePathIdentity>();
+  let trustedWindowsPowerShellPath: string | undefined;
   const verifyAndRemember = async (value: string, kind: "file" | "directory"): Promise<NativeSafePathIdentity> => {
-    const identity = await verifyNativeSafePath(pathVerifier, value, kind, cwd, runPathVerifier);
+    const identity = kind === "file" && trustedWindowsPowerShellPath &&
+      samePath(value, trustedWindowsPowerShellPath, "win32")
+      ? await verifyNativeWindowsSystemPowerShell(pathVerifier, cwd, runPathVerifier)
+      : samePath(value, layout.hermesHome, "win32")
+        ? await verifyNativeSafePath(pathVerifier, value, kind, cwd, runPathVerifier)
+        : isWithin(layout.hermesHome, value, paths)
+          ? await verifyWindowsHermesInstallPath(pathVerifier, value, kind, layout.hermesHome, runPathVerifier)
+          : await verifyNativeSafePath(pathVerifier, value, kind, cwd, runPathVerifier);
     const key = `${kind}:${value.toLowerCase()}`;
     const known = identities.get(key);
     if (known && !sameNativeIdentity(known, identity)) throw resolverError("HERMES_PATH_IDENTITY_CHANGED");
@@ -131,6 +145,9 @@ export async function resolveHermesExecutable(
   const assertIdentityGuards = async (guards: readonly PathIdentityGuard[]): Promise<void> => {
     for (const guard of guards) await verifyAndRemember(guard.path, guard.kind);
   };
+  const trustedWindowsPowerShell = await verifyNativeWindowsSystemPowerShell(pathVerifier, cwd, runPathVerifier);
+  trustedWindowsPowerShellPath = trustedWindowsPowerShell.path;
+  identities.set(`file:${trustedWindowsPowerShellPath.toLowerCase()}`, trustedWindowsPowerShell);
 
   const executableIdentity = await verifyAndRemember(executablePath, "file");
   if (executableIdentity.platform !== "win32") throw resolverError("HERMES_PATH_IDENTITY_INVALID");
@@ -151,7 +168,9 @@ export async function resolveHermesExecutable(
   }
   await verifyAndRemember(runtimeDependencyRoot, "directory");
   await verifyWindowsCommandSidecar(paths.join(paths.dirname(executablePath), "hermes.cmd"), pythonPath, launcher.scriptBytes);
-  const git = await resolveTrustedWindowsGit(pathEntries, runCommand, verifyAndRemember, assertIdentityGuards);
+  const git = await resolveTrustedWindowsGit(
+    pathEntries, runCommand, verifyAndRemember, assertIdentityGuards, trustedWindowsPowerShellPath,
+  );
   const gitPath = git.path;
   const env = buildProbeEnvironment([paths.dirname(gitPath), paths.dirname(pythonPath)], platform);
 
@@ -197,7 +216,7 @@ async function resolveLinuxHermesExecutable(
   const pathEntries = await resolvePathEntries(pathValue, cwd, paths);
   const executablePath = await resolveUniqueLinuxHermesLauncher(pathEntries, cwd);
   const runCommand = options.runCommand ?? createProcessRunner();
-  const runPathVerifier = options.runCommand ?? createNativePathVerifierRunner();
+  const runPathVerifier = options.runNativePathVerifier ?? createNativePathVerifierRunner();
   const pathVerifier = bundledPathVerifierPath(platform);
   await (options.verifyNativeHelper ?? verifyNativeHelperIntegrity)(pathVerifier, "hermesProfilePath");
   const identities = new Map<string, NativeSafePathIdentity>();
@@ -593,8 +612,8 @@ export async function verifyHermesProfileHomePathChain(
       timeout: PATH_VERIFIER_TIMEOUT_MS,
       maxBuffer: PATH_CHAIN_VERIFIER_MAX_BUFFER,
     });
-  } catch {
-    throw resolverError("HERMES_PATH_TRUST_UNAVAILABLE");
+  } catch (error) {
+    throw nativePathVerifierFailure(error);
   }
   if (result.exitCode !== 0 || result.stderr !== "" || result.stdout.length > PATH_CHAIN_VERIFIER_MAX_BUFFER) {
     throw resolverError("HERMES_PATH_UNSAFE");
@@ -678,8 +697,8 @@ async function verifyNativeSafePath(
       timeout: PATH_VERIFIER_TIMEOUT_MS,
       maxBuffer: PATH_VERIFIER_MAX_BUFFER,
     });
-  } catch {
-    throw resolverError("HERMES_PATH_TRUST_UNAVAILABLE");
+  } catch (error) {
+    throw nativePathVerifierFailure(error);
   }
   if (result.exitCode !== 0 || result.stderr !== "" || result.stdout.length > PATH_VERIFIER_MAX_BUFFER) {
     throw resolverError("HERMES_PATH_UNSAFE");
@@ -699,6 +718,163 @@ async function verifyNativeSafePath(
   return parseNativeSafePathIdentity(line, kind, value, await realpath(value).catch(() => {
     throw resolverError("HERMES_PATH_UNSAFE");
   }), platform);
+}
+
+/** Проверяет PowerShell через OS-derived native path; TrustedInstaller разрешён только в этом dependency chain. */
+async function verifyNativeWindowsSystemPowerShell(
+  verifierPath: string,
+  cwd: string,
+  runner: NonNullable<HermesExecutableResolverOptions["runCommand"]>,
+): Promise<WindowsNativeSafePathIdentity> {
+  let result: ProcessResult;
+  try {
+    result = await runner(verifierPath, ["verify-windows-system-powershell"], {
+      shell: false,
+      cwd,
+      timeout: PATH_VERIFIER_TIMEOUT_MS,
+      maxBuffer: PATH_VERIFIER_MAX_BUFFER,
+    });
+  } catch (error) {
+    throw nativePathVerifierFailure(error);
+  }
+  if (result.exitCode !== 0 || result.stderr !== "" || result.stdout.length > PATH_VERIFIER_MAX_BUFFER) {
+    throw resolverError("HERMES_PATH_UNSAFE");
+  }
+  const line = result.stdout.endsWith("\r\n") ? result.stdout.slice(0, -2) :
+    result.stdout.endsWith("\n") ? result.stdout.slice(0, -1) : result.stdout;
+  if (!line || line.includes("\n") || line.includes("\r")) throw resolverError("HERMES_PATH_IDENTITY_INVALID");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line) as unknown;
+  } catch {
+    throw resolverError("HERMES_PATH_IDENTITY_INVALID");
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw resolverError("HERMES_PATH_IDENTITY_INVALID");
+  }
+  const reported = parsed as Record<string, unknown>;
+  if (Object.keys(reported).sort().join(",") !== "fileId,kind,path,status,volumeSerial" ||
+      reported.status !== "SAFE_PATH" || reported.kind !== "file" || typeof reported.path !== "string" ||
+      !path.win32.isAbsolute(reported.path) || !reported.path.replace(/^\\\\\?\\/u, "")
+        .toLowerCase().endsWith("\\system32\\windowspowershell\\v1.0\\powershell.exe") ||
+      typeof reported.volumeSerial !== "string" || !/^[a-f0-9]{16}$/u.test(reported.volumeSerial) ||
+      typeof reported.fileId !== "string" || !/^[a-f0-9]{32}$/u.test(reported.fileId)) {
+    throw resolverError("HERMES_PATH_IDENTITY_INVALID");
+  }
+  const reportedPath = reported.path.startsWith("\\\\?\\") ? reported.path.slice(4) : reported.path;
+  const canonicalPath = await realpath(reportedPath).catch(() => { throw resolverError("HERMES_PATH_UNSAFE"); });
+  if (!samePath(reportedPath, canonicalPath, "win32")) throw resolverError("HERMES_PATH_IDENTITY_INVALID");
+  const identity = parseNativeSafePathIdentity(line, "file", canonicalPath, canonicalPath, "win32");
+  if (identity.platform !== "win32") throw resolverError("HERMES_PATH_IDENTITY_INVALID");
+  return Object.freeze({ ...identity, path: canonicalPath });
+}
+
+async function verifyWindowsHermesInstallPath(
+  verifierPath: string,
+  value: string,
+  kind: "file" | "directory",
+  hermesHome: string,
+  runner: NonNullable<HermesExecutableResolverOptions["runCommand"]>,
+): Promise<WindowsNativeSafePathIdentity> {
+  const canonicalPath = await realpath(value).catch(() => { throw resolverError("HERMES_PATH_UNSAFE"); });
+  const canonicalRoot = await realpath(hermesHome).catch(() => { throw resolverError("HERMES_PATH_UNSAFE"); });
+  if (!samePath(canonicalPath, value, "win32") || !samePath(canonicalRoot, hermesHome, "win32") ||
+      !isWithin(canonicalRoot, canonicalPath, path.win32) || samePath(canonicalRoot, canonicalPath, "win32")) {
+    throw resolverError("HERMES_PATH_UNSAFE");
+  }
+  const systemRoot = process.env.SystemRoot ?? process.env.WINDIR ?? "";
+  const args = kind === "directory"
+    ? ["verify-safe-path-chain", "directory", canonicalPath, canonicalRoot]
+    : ["verify-safe-file-chain", canonicalPath, canonicalRoot];
+  let result: ProcessResult;
+  try {
+    result = await runner(verifierPath, args, {
+      shell: false,
+      cwd: process.cwd(),
+      env: systemRoot
+        ? { SystemRoot: systemRoot, WINDIR: systemRoot, PATH: path.win32.join(systemRoot, "System32") }
+        : {},
+      timeout: PATH_VERIFIER_TIMEOUT_MS,
+      maxBuffer: PATH_CHAIN_VERIFIER_MAX_BUFFER,
+    });
+  } catch (error) {
+    throw nativePathVerifierFailure(error);
+  }
+  if (result.exitCode !== 0 || result.stderr !== "" || result.stdout.length > PATH_CHAIN_VERIFIER_MAX_BUFFER) {
+    throw resolverError("HERMES_PATH_UNSAFE");
+  }
+  const line = result.stdout.endsWith("\r\n") ? result.stdout.slice(0, -2) :
+    result.stdout.endsWith("\n") ? result.stdout.slice(0, -1) : result.stdout;
+  if (!line || line.includes("\n") || line.includes("\r")) throw resolverError("HERMES_PATH_IDENTITY_INVALID");
+  if (kind === "directory") return parseNativeHermesDirectoryPathChain(line, canonicalPath, canonicalRoot);
+  return parseNativeHermesFilePathChain(line, canonicalPath);
+}
+
+function parseNativeHermesDirectoryPathChain(
+  line: string,
+  targetPath: string,
+  strictRoot: string,
+): WindowsNativeSafePathIdentity {
+  let parsed: unknown;
+  try { parsed = JSON.parse(line) as unknown; } catch { throw resolverError("HERMES_PATH_IDENTITY_INVALID"); }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw resolverError("HERMES_PATH_IDENTITY_INVALID");
+  const result = parsed as Record<string, unknown>;
+  if (Object.keys(result).sort().join(",") !== "profileHomePathChain,status" || result.status !== "SAFE_PATH_CHAIN" ||
+      !result.profileHomePathChain || typeof result.profileHomePathChain !== "object" || Array.isArray(result.profileHomePathChain)) {
+    throw resolverError("HERMES_PATH_IDENTITY_INVALID");
+  }
+  const chain = result.profileHomePathChain as Record<string, unknown>;
+  if (Object.keys(chain).sort().join(",") !== "authRootIndex,components,version" || chain.version !== 1 ||
+      !Number.isSafeInteger(chain.authRootIndex) || !Array.isArray(chain.components) || chain.components.length > 64) {
+    throw resolverError("HERMES_PATH_IDENTITY_INVALID");
+  }
+  const paths = path.win32;
+  const normalizedTarget = paths.normalize(targetPath);
+  const normalizedRoot = paths.normalize(strictRoot);
+  const volumeRoot = paths.parse(normalizedTarget).root;
+  const targetParts = paths.relative(volumeRoot, normalizedTarget).split(/[\\/]+/u).filter(Boolean);
+  const rootParts = paths.relative(volumeRoot, normalizedRoot).split(/[\\/]+/u).filter(Boolean);
+  const relativeToRoot = paths.relative(normalizedRoot, normalizedTarget);
+  const expectedComponents = targetParts.length + 1;
+  if (!paths.isAbsolute(normalizedTarget) || !paths.isAbsolute(normalizedRoot) || !volumeRoot ||
+      !samePath(paths.resolve(normalizedTarget), normalizedTarget, "win32") ||
+      !samePath(paths.resolve(normalizedRoot), normalizedRoot, "win32") ||
+      relativeToRoot === "" || relativeToRoot === ".." || relativeToRoot.startsWith(`..${paths.sep}`) || paths.isAbsolute(relativeToRoot) ||
+      chain.components.length !== expectedComponents || chain.authRootIndex !== rootParts.length ||
+      !Number.isSafeInteger(chain.authRootIndex) || (chain.authRootIndex as number) <= 0 ||
+      (chain.authRootIndex as number) >= expectedComponents) {
+    throw resolverError("HERMES_PATH_IDENTITY_INVALID");
+  }
+  const components = chain.components.map((component) => {
+    if (!component || typeof component !== "object" || Array.isArray(component) ||
+        Object.keys(component).sort().join(",") !== "fileId,volumeSerial") throw resolverError("HERMES_PATH_IDENTITY_INVALID");
+    const identity = component as Record<string, unknown>;
+    if (typeof identity.volumeSerial !== "string" || !/^[a-f0-9]{16}$/u.test(identity.volumeSerial) ||
+        typeof identity.fileId !== "string" || !/^[a-f0-9]{32}$/u.test(identity.fileId)) {
+      throw resolverError("HERMES_PATH_IDENTITY_INVALID");
+    }
+    return { volumeSerial: identity.volumeSerial, fileId: identity.fileId };
+  });
+  const volumeSerial = components[0]?.volumeSerial;
+  const leaf = components.at(-1);
+  if (!volumeSerial || !leaf || components.some((component) => component.volumeSerial !== volumeSerial)) {
+    throw resolverError("HERMES_PATH_IDENTITY_INVALID");
+  }
+  return Object.freeze({ platform: "win32", kind: "directory", path: normalizedTarget, volumeSerial, fileId: leaf.fileId });
+}
+
+function parseNativeHermesFilePathChain(line: string, targetPath: string): WindowsNativeSafePathIdentity {
+  let parsed: unknown;
+  try { parsed = JSON.parse(line) as unknown; } catch { throw resolverError("HERMES_PATH_IDENTITY_INVALID"); }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw resolverError("HERMES_PATH_IDENTITY_INVALID");
+  const result = parsed as Record<string, unknown>;
+  if (Object.keys(result).sort().join(",") !== "fileId,kind,status,volumeSerial" || result.status !== "SAFE_PATH_FILE_CHAIN" ||
+      result.kind !== "file" || typeof result.volumeSerial !== "string" || !/^[a-f0-9]{16}$/u.test(result.volumeSerial) ||
+      typeof result.fileId !== "string" || !/^[a-f0-9]{32}$/u.test(result.fileId)) {
+    throw resolverError("HERMES_PATH_IDENTITY_INVALID");
+  }
+  return Object.freeze({ platform: "win32", kind: "file", path: path.win32.normalize(targetPath),
+    volumeSerial: result.volumeSerial, fileId: result.fileId });
 }
 
 /** Проверяет точную JSON-форму path identity, возвращаемую Windows/Linux native helper. */
@@ -846,9 +1022,9 @@ async function resolveTrustedWindowsGit(
   runCommand: NonNullable<HermesExecutableResolverOptions["runCommand"]>,
   verifyAndRemember: (value: string, kind: "file" | "directory") => Promise<NativeSafePathIdentity>,
   assertIdentityGuards: (guards: readonly PathIdentityGuard[]) => Promise<void>,
+  powershell: string,
 ): Promise<{ path: string; powershell: string }> {
   const trusted: string[] = [];
-  const powershell = await resolveWindowsPowerShell();
   await verifyAndRemember(powershell, "file");
   for (const directory of pathEntries) {
     const candidate = path.win32.join(directory, "git.exe");
@@ -871,19 +1047,6 @@ async function resolveTrustedWindowsGit(
   }
   if (trusted.length === 0) throw resolverError("HERMES_GIT_UNTRUSTED");
   return { path: trusted[0]!, powershell };
-}
-
-async function resolveWindowsPowerShell(): Promise<string> {
-  const systemRoot = process.env.SystemRoot ?? process.env.WINDIR;
-  if (!systemRoot || !path.win32.isAbsolute(systemRoot)) throw resolverError("HERMES_GIT_TRUST_UNAVAILABLE");
-  const expected = path.win32.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-  const canonical = await realpath(expected).catch(() => { throw resolverError("HERMES_GIT_TRUST_UNAVAILABLE"); });
-  const details = await lstat(expected).catch(() => { throw resolverError("HERMES_GIT_TRUST_UNAVAILABLE"); });
-  if (!details.isFile() || details.isSymbolicLink() || !samePath(canonical, expected, "win32") ||
-      !isWithin(path.win32.resolve(systemRoot), canonical, path.win32)) {
-    throw resolverError("HERMES_GIT_TRUST_UNAVAILABLE");
-  }
-  return canonical;
 }
 
 /** Проверяет подпись Git через Windows Authenticode/WinVerifyTrust, не интерполируя путь в script. */
@@ -943,9 +1106,14 @@ export function isPinnedGitAuthenticodeEvidence(stdout: string, exitCode: number
 /** Проверяет подпись указанного Windows Git без запуска Git, Hermes или загрузки provider configuration. */
 export async function verifyPinnedWindowsGitSignature(candidate: string): Promise<boolean> {
   if (process.platform !== "win32" || !path.win32.isAbsolute(candidate) || hasControlCharacters(candidate)) return false;
-  const powershell = await resolveWindowsPowerShell().catch(() => undefined);
-  if (!powershell) return false;
-  return verifyAuthenticode(powershell, candidate, createProcessRunner());
+  const helperPath = bundledPathVerifierPath("win32");
+  try {
+    await verifyNativeHelperIntegrity(helperPath, "hermesProfilePath");
+    const identity = await verifyNativeWindowsSystemPowerShell(helperPath, process.cwd(), createNativePathVerifierRunner());
+    return verifyAuthenticode(identity.path, candidate, createProcessRunner());
+  } catch {
+    return false;
+  }
 }
 
 async function canonicalExistingDirectory(value: string, paths: PlatformPaths): Promise<string> {
@@ -1428,6 +1596,20 @@ function hasControlCharacters(value: string): boolean {
     if (code <= 0x1f || code === 0x7f) return true;
   }
   return false;
+}
+
+function nativePathVerifierFailure(error: unknown): Error {
+  if (!(error instanceof Error) || error.name !== "ExitCodeError") {
+    return resolverError("HERMES_PATH_TRUST_UNAVAILABLE");
+  }
+  const exitCode = (error as Error & { readonly exitCode?: unknown }).exitCode;
+  if (typeof exitCode !== "number" || !Number.isSafeInteger(exitCode)) {
+    return resolverError("HERMES_PATH_TRUST_UNAVAILABLE");
+  }
+  // Native path verifier exit codes are stable policy/input rejections; gate, integrity,
+  // launch, timeout, and unknown exit failures remain an unavailable trust boundary.
+  const policyRejection = [2, 10, 30, 31, 34, 40].includes(exitCode) || (exitCode >= 50 && exitCode <= 56);
+  return resolverError(policyRejection ? "HERMES_PATH_UNSAFE" : "HERMES_PATH_TRUST_UNAVAILABLE");
 }
 
 function resolverError(code: string): Error {

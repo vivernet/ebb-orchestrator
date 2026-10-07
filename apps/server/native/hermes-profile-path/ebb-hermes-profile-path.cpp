@@ -725,7 +725,8 @@ bool safeReadOnlyFileAcl(HANDLE handle, PSID currentUser) {
 }
 
 bool safePathAcl(HANDLE handle, PSID currentUser, bool directory, bool protectDirectoryContents,
-                 bool includeInheritedAces = false, int* failureStage = nullptr) {
+                 bool includeInheritedAces = false, int* failureStage = nullptr,
+                 bool exactSystemPowerShellChain = false, PSID trustedInstallerSid = nullptr) {
   PSID owner = nullptr;
   PACL dacl = nullptr;
   const DWORD result = GetSecurityInfo(handle, SE_FILE_OBJECT,
@@ -749,7 +750,19 @@ bool safePathAcl(HANDLE handle, PSID currentUser, bool directory, bool protectDi
       const bool trusted = EqualSid(trustee, owner) || EqualSid(trustee, currentUser) ||
         IsWellKnownSid(trustee, WinLocalSystemSid) || IsWellKnownSid(trustee, WinBuiltinAdministratorsSid) ||
         IsWellKnownSid(trustee, WinCreatorOwnerSid);
-      if (!trusted && (ace->Mask & mutationRights) != 0) { if (failureStage) *failureStage = 5; return false; }
+      const bool trustedInstallerException = trustedInstallerSid != nullptr &&
+        !trusted && EqualSid(trustee, trustedInstallerSid) &&
+        ebb::hermes::profile_path::safeWindowsPowerShellTrustedInstallerAcePolicy(
+          exactSystemPowerShellChain, true, header->AceType, header->AceFlags, ace->Mask);
+      if (exactSystemPowerShellChain && !trusted && trustedInstallerSid != nullptr &&
+          EqualSid(trustee, trustedInstallerSid) && !trustedInstallerException) {
+        if (failureStage) *failureStage = 5;
+        return false;
+      }
+      if (!trusted && !trustedInstallerException && (ace->Mask & mutationRights) != 0) {
+        if (failureStage) *failureStage = 5;
+        return false;
+      }
     } else if (header->AceType != ACCESS_DENIED_ACE_TYPE && header->AceType != SYSTEM_AUDIT_ACE_TYPE) {
       if (failureStage) *failureStage = 6; return false;
     }
@@ -927,7 +940,9 @@ void printSafePathIdentity(const std::string& kind, const std::string& canonical
             << "\",\"volumeSerial\":\"" << volumeSerial << "\",\"fileId\":\"" << fileId << "\"}\n";
 }
 
-int verifySafeWindowsPath(const std::wstring& rawPath, const std::wstring& rawKind) {
+int verifySafeWindowsPath(const std::wstring& rawPath, const std::wstring& rawKind,
+                          size_t trustedInstallerFromIndex = static_cast<size_t>(-1),
+                          PSID trustedInstallerSid = nullptr) {
   const bool directory = rawKind == L"directory";
   if (!directory && rawKind != L"file") return kInvalidInput;
   std::vector<std::wstring> components;
@@ -958,7 +973,8 @@ int verifySafeWindowsPath(const std::wstring& rawPath, const std::wstring& rawKi
     int aclFailureStage = 0;
     const bool componentIsDirectory = !final || directory;
     const bool aclSafe = next != INVALID_HANDLE_VALUE &&
-      safePathAcl(next, userSid, componentIsDirectory, componentIsDirectory, final && directory, &aclFailureStage);
+      safePathAcl(next, userSid, componentIsDirectory, componentIsDirectory, final && directory, &aclFailureStage,
+        trustedInstallerSid != nullptr && index >= trustedInstallerFromIndex, trustedInstallerSid);
     if (next == INVALID_HANDLE_VALUE || !aclSafe) {
       if (next != INVALID_HANDLE_VALUE) CloseHandle(next);
       CloseHandle(current);
@@ -977,6 +993,34 @@ int verifySafeWindowsPath(const std::wstring& rawPath, const std::wstring& rawKi
   if (!identityValid) return kPathIdentityUnavailable;
   printSafePathIdentity(directory ? "directory" : "file", canonicalPath, volumeSerial, fileId);
   return kOk;
+}
+
+int verifyWindowsSystemPowerShell() {
+  std::vector<wchar_t> systemDirectoryBuffer(MAX_PATH + 1);
+  UINT systemDirectoryLength = GetSystemDirectoryW(
+    systemDirectoryBuffer.data(), static_cast<UINT>(systemDirectoryBuffer.size()));
+  if (systemDirectoryLength == 0) return kPathUnsafe;
+  if (systemDirectoryLength >= systemDirectoryBuffer.size()) {
+    systemDirectoryBuffer.resize(static_cast<size_t>(systemDirectoryLength) + 1);
+    systemDirectoryLength = GetSystemDirectoryW(
+      systemDirectoryBuffer.data(), static_cast<UINT>(systemDirectoryBuffer.size()));
+    if (systemDirectoryLength == 0 || systemDirectoryLength >= systemDirectoryBuffer.size()) return kPathUnsafe;
+  }
+  std::wstring systemDirectory(systemDirectoryBuffer.data(), systemDirectoryLength);
+  while (!systemDirectory.empty() && systemDirectory.back() == L'\\') systemDirectory.pop_back();
+  std::vector<std::wstring> systemComponents;
+  std::wstring systemDriveRoot;
+  if (systemDirectory.empty() ||
+      !parseWindowsPath(systemDirectory, systemComponents, systemDriveRoot) || systemComponents.empty()) return kInvalidInput;
+
+  std::wstring powerShellPath = systemDirectory;
+  powerShellPath.append(L"\\WindowsPowerShell\\v1.0\\powershell.exe");
+  PSID trustedInstallerSid = nullptr;
+  if (!ConvertStringSidToSidW(L"S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464",
+      &trustedInstallerSid)) return kPathUnsafe;
+  const int result = verifySafeWindowsPath(powerShellPath, L"file", systemComponents.size(), trustedInstallerSid);
+  LocalFree(trustedInstallerSid);
+  return result;
 }
 
 struct PathChainIdentity {
@@ -3406,6 +3450,9 @@ int wmain(int argc, wchar_t** argv) {
   }
   if (argc == 4 && argv[1] != nullptr && argv[1] == std::wstring(L"verify-safe-path")) {
     return verifySafeWindowsPath(argv[3], argv[2]);
+  }
+  if (argc == 2 && argv[1] != nullptr && argv[1] == std::wstring(L"verify-windows-system-powershell")) {
+    return verifyWindowsSystemPowerShell();
   }
   if (argc == 5 && argv[1] != nullptr && argv[1] == std::wstring(L"verify-safe-path-chain")) {
     return verifySafeWindowsPathChain(argv[3], argv[2], argv[4]);

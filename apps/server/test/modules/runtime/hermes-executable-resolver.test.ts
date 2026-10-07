@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { access, mkdtemp, mkdir, rm, writeFile, chmod } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { delimiter, join, resolve } from "node:path";
-import type { ProcessResult } from "../../../src/platform/process/process-executor.js";
+import { delimiter, join, resolve, win32 } from "node:path";
+import { ExitCodeError, type ProcessResult } from "../../../src/platform/process/process-executor.js";
 import { HERMES_PROVIDER_SELECTION_SOURCE } from "../../../src/modules/runtime/hermes/hermes-provider-selection.js";
 import type { HermesSourceSnapshot } from "../../../src/modules/runtime/hermes/hermes-source-snapshot.js";
 import type { HermesResolverCommandOptions } from "../../../src/modules/runtime/hermes/hermes-executable-resolver.js";
@@ -150,10 +150,61 @@ function makeRunner(input: {
   diffExitCode?: number;
   dirtyStatus?: string;
   untrustedGitPaths?: string[];
+  pathChainResponse?: string;
 }): { runner: Runner; calls: Array<{ file: string; args: string[]; options: HermesResolverCommandOptions }> } {
   const calls: Array<{ file: string; args: string[]; options: HermesResolverCommandOptions }> = [];
   const runner: Runner = async (file: string, args: string[], options: HermesResolverCommandOptions): Promise<ProcessResult> => {
     calls.push({ file, args: [...args], options });
+    if (args[0] === "verify-windows-system-powershell") {
+      if (args.length !== 1) return { exitCode: 2, stdout: "", stderr: "" };
+      const systemPowerShellPath = win32.join(
+        process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe",
+      );
+      return {
+        exitCode: 0,
+        stdout: JSON.stringify({
+          status: "SAFE_PATH", kind: "file", path: `\\\\?\\${systemPowerShellPath}`,
+          volumeSerial: "0123456789abcdef", fileId: "1".repeat(32),
+        }) + "\n",
+        stderr: "",
+      };
+    }
+    if (args[0] === "verify-safe-path-chain") {
+      const target = args[2];
+      const strictRoot = args[3];
+      if (input.pathChainResponse !== undefined) {
+        return { exitCode: 0, stdout: input.pathChainResponse, stderr: "" };
+      }
+      if (args[1] !== "directory" || !target || !strictRoot) throw new Error("UNEXPECTED_TEST_PATH_CHAIN_VERIFICATION");
+      const parts = target.slice(3).split(/[\\/]+/u).filter(Boolean);
+      const strictParts = strictRoot.slice(3).split(/[\\/]+/u).filter(Boolean);
+      const components = Array.from({ length: parts.length + 1 }, (_unused, index) => ({
+        volumeSerial: "0123456789abcdef",
+        fileId: index.toString(16).padStart(32, "0"),
+      }));
+      return {
+        exitCode: 0,
+        stdout: JSON.stringify({
+          status: "SAFE_PATH_CHAIN",
+          profileHomePathChain: { version: 1, authRootIndex: strictParts.length, components },
+        }) + "\n",
+        stderr: "",
+      };
+    }
+    if (args[0] === "verify-safe-file-chain") {
+      const target = args[1];
+      if (!target) throw new Error("UNEXPECTED_TEST_FILE_CHAIN_VERIFICATION");
+      return {
+        exitCode: 0,
+        stdout: JSON.stringify({
+          status: "SAFE_PATH_FILE_CHAIN",
+          kind: "file",
+          volumeSerial: "0123456789abcdef",
+          fileId: [...target.toLowerCase()].reduce((sum, character) => sum + character.charCodeAt(0), 0).toString(16).padStart(32, "0"),
+        }) + "\n",
+        stderr: "",
+      };
+    }
     if (args[0] === "verify-safe-path") {
       const kind = args[1];
       const target = args[2];
@@ -221,6 +272,7 @@ async function findGitCandidate(): Promise<{ executable: string; directory: stri
 
 const resolveHermesExecutableForTests = (options: ResolverOptions) => resolverModule.resolveHermesExecutable({
   ...options,
+  ...(options.runCommand ? { runNativePathVerifier: options.runCommand } : {}),
   verifyNativeHelper: async () => undefined,
 });
 
@@ -535,13 +587,86 @@ describe.skipIf(process.platform !== "win32")("pinned Windows Hermes executable 
     expect(signatureCall?.options.env?.EBB_HERMES_TRUST_CANDIDATE).toBe(trustedGit.executable);
     expect(signatureCall?.args[4]).toContain("Get-AuthenticodeSignature");
     expect(signatureCall?.args[4]).toContain("SignerCertificate.Thumbprint");
+    expect(signatureCall?.file).toBe(win32.join(
+      process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe",
+    ));
     expect(signatureCall?.options.shell).toBe(false);
     expect(signatureCall?.options.env?.EBB_HERMES_TRUST_CANDIDATE).toBe(trustedGit.executable);
     const pathVerifierCalls = calls.filter((call) => call.args[0] === "verify-safe-path");
-    expect(pathVerifierCalls.length).toBeGreaterThan(0);
     expect(pathVerifierCalls.every((call) => call.options.shell === false && call.options.timeout === 5_000)).toBe(true);
-    expect(pathVerifierCalls.some((call) => call.args[1] === "file" && call.args[2] === paths.executablePath)).toBe(true);
-    expect(pathVerifierCalls.some((call) => call.args[1] === "directory" && call.args[2] === paths.sourceRoot)).toBe(true);
+    expect(pathVerifierCalls.some((call) => [paths.home, paths.executablePath, paths.sourceRoot, paths.pythonPath, resolve(paths.pythonPath, "..")].includes(call.args[2] ?? ""))).toBe(false);
+    const systemPowerShellCalls = calls.filter((call) => call.args[0] === "verify-windows-system-powershell");
+    expect(systemPowerShellCalls.length).toBeGreaterThan(1);
+    expect(systemPowerShellCalls.every((call) => call.args.length === 1 && call.options.shell === false)).toBe(true);
+    expect(pathVerifierCalls.some((call) => /\\WindowsPowerShell\\v1\.0\\powershell\.exe$/iu.test(call.args[2] ?? ""))).toBe(false);
+    const directoryChainCalls = calls.filter((call) => call.args[0] === "verify-safe-path-chain");
+    expect(directoryChainCalls.some((call) => call.args[1] === "directory" && call.args[2] === paths.sourceRoot && call.args[3] === paths.home)).toBe(true);
+    expect(directoryChainCalls.some((call) => call.args[1] === "directory" && call.args[2] === resolve(paths.pythonPath, "..") && call.args[3] === paths.home)).toBe(true);
+    const fileChainCalls = calls.filter((call) => call.args[0] === "verify-safe-file-chain");
+    expect(fileChainCalls.some((call) => call.args[1] === paths.executablePath && call.args[2] === paths.home)).toBe(true);
+    expect(fileChainCalls.some((call) => call.args[1] === paths.pythonPath && call.args[2] === paths.home)).toBe(true);
+  });
+
+  it("fails closed when the Hermes directory-chain response does not match its requested path", async () => {
+    const paths = await fixture();
+    const malformedResponse = JSON.stringify({
+      status: "SAFE_PATH_CHAIN",
+      profileHomePathChain: { version: 1, authRootIndex: 1, components: [] },
+    }) + "\n";
+    const { runner, calls } = makeRunner({ ...paths, pathChainResponse: malformedResponse });
+
+    await expect(resolveHermesExecutableForTests({
+      cwd: paths.cwd,
+      pathValue: pathValue(paths.bin),
+      platform: "win32",
+      runCommand: runner,
+    })).rejects.toThrow("HERMES_PATH_IDENTITY_INVALID");
+    expect(calls.some((call) => call.args[0] === "verify-safe-path-chain" && call.args[2] === paths.sourceRoot)).toBe(true);
+  });
+
+  it("fails closed when the native Hermes directory-chain response exceeds 64 components", async () => {
+    const paths = await fixture();
+    const oversizedResponse = JSON.stringify({
+      status: "SAFE_PATH_CHAIN",
+      profileHomePathChain: {
+        version: 1,
+        authRootIndex: 1,
+        components: Array.from({ length: 65 }, (_unused, index) => ({
+          volumeSerial: "0123456789abcdef",
+          fileId: index.toString(16).padStart(32, "0"),
+        })),
+      },
+    }) + "\n";
+    const { runner } = makeRunner({ ...paths, pathChainResponse: oversizedResponse });
+
+    await expect(resolveHermesExecutableForTests({
+      cwd: paths.cwd,
+      pathValue: pathValue(paths.bin),
+      platform: "win32",
+      runCommand: runner,
+    })).rejects.toThrow("HERMES_PATH_IDENTITY_INVALID");
+  });
+
+  it.each([
+    ["native path-policy exit", new ExitCodeError("native verifier", 55, "", "untrusted diagnostic"), "HERMES_PATH_UNSAFE"],
+    ["native helper gate failure", new Error("NATIVE_HELPER_GATE_FAIL:parent-directory-open-index-1-win32-5:InvalidOperationException"), "HERMES_PATH_TRUST_UNAVAILABLE"],
+  ])("maps %s to a stable path-trust error", async (_name, nativeFailure, expectedCode) => {
+    const paths = await fixture();
+    const trustedGit = await findGitCandidate();
+    const { runner } = makeRunner(paths);
+    const pathVerifier: Runner = async (file, args, options) => {
+      if (args[0] === "verify-safe-path-chain") throw nativeFailure;
+      return runner(file, args, options);
+    };
+
+    await expect(resolverModule.resolveHermesExecutable({
+      cwd: paths.cwd,
+      pathValue: pathValue(paths.bin, trustedGit.directory),
+      platform: "win32",
+      runCommand: runner,
+      runNativePathVerifier: pathVerifier,
+      verifyNativeHelper: async () => undefined,
+    })).rejects.toThrow(expectedCode);
   });
 
   it("skips a substituted writable PATH Git and invokes the identified protected absolute binary", async () => {
