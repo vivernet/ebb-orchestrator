@@ -99,15 +99,33 @@ describe("native Hermes profile-path safe-path acceptance reporting", () => {
 
   it("applies the bounded ancestor ACL policy to the Windows volume root before accepting a path-chain identity", () => {
     const verifier = /int verifySafeWindowsPathChain\([\s\S]*?\n\}/u.exec(nativeSource)?.[0] ?? "";
-    const volumeRootGate = /HANDLE volume = CreateFileW\([\s\S]*?if \(!appendIdentity\(volume, driveRoot\)\) \{[\s\S]*?\n  \}/u.exec(verifier)?.[0] ?? "";
+    const volumeRootGate = /HANDLE volume = CreateFileW\([\s\S]*?if \(!appendIdentity\(volume, driveRoot\)/u.exec(verifier)?.[0] ?? "";
 
     expect(verifier).not.toBe("");
-    expect(volumeRootGate).toMatch(/safeAncestorPathAcl\(volume, userSid/u);
+    expect(volumeRootGate).toMatch(/getVerifiedVolumeRootIdentity\(volume, verifiedRootVolumeSerial, verifiedRootFileId\)/u);
+    expect(volumeRootGate).toMatch(/safeAncestorPathAcl\(volume, userSid, nullptr, true\)/u);
     expect(volumeRootGate).not.toMatch(/safePathAcl\(volume/u);
-    expect(volumeRootGate.indexOf("safeAncestorPathAcl(volume, userSid")).toBeLessThan(
-      volumeRootGate.indexOf("appendIdentity(volume, driveRoot)"),
+    expect(volumeRootGate.indexOf("getVerifiedVolumeRootIdentity(volume")).toBeLessThan(
+      volumeRootGate.indexOf("safeAncestorPathAcl(volume, userSid"),
     );
     expect(volumeRootGate).toMatch(/closePathChainHandles\(heldHandles\);\s*return kPathRootUnsafe;/u);
+    expect(nativeSource).toMatch(/GetFinalPathNameByHandleW\(handle[\s\S]*?FILE_NAME_NORMALIZED \| VOLUME_NAME_GUID/u);
+    expect(nativeSource).toMatch(/isCanonicalVolumeGuidRootPath\(std::wstring\(finalPath\.data\(\), pathLength\)\)/u);
+    expect(nativeSource).toMatch(/constexpr size_t kGuidLength = 36/u);
+    expect(nativeSource).toMatch(/CompareStringOrdinal\(path\.data\(\),[\s\S]*?kPrefix/u);
+  });
+
+  it("applies the same verified volume-root exception to Hermes file chains without changing their strict root", () => {
+    const verifier = /int verifySafeWindowsFilePathChain\([\s\S]*?\n\}/u.exec(nativeSource)?.[0] ?? "";
+    const volumeRootGate = /HANDLE volume = CreateFileW\([\s\S]*?const size_t strictRootIndex/u.exec(verifier)?.[0] ?? "";
+
+    expect(verifier).not.toBe("");
+    expect(volumeRootGate).toMatch(/getVerifiedVolumeRootIdentity\(volume, verifiedRootVolumeSerial, verifiedRootFileId\)/u);
+    expect(volumeRootGate).toMatch(/safeAncestorPathAcl\(volume, userSid, nullptr, true\)/u);
+    expect(volumeRootGate).not.toMatch(/safePathAcl\(volume/u);
+    expect(volumeRootGate).toMatch(/expectedVolumeSerial != verifiedRootVolumeSerial[\s\S]*?volumeFileId != verifiedRootFileId/u);
+    expect(verifier).toMatch(/chainIndex < strictRootIndex\s*\?\s*safeAncestorPathAcl\(next, userSid, &aclFailureStage\)\s*:\s*safePathAcl\(next, userSid, true, true, false, &aclFailureStage\)/u);
+    expect(verifier).toMatch(/volumeSerial != expectedVolumeSerial/u);
   });
 
   it("checks Windows config root and config-file mutation ACLs on the handles it reads", () => {

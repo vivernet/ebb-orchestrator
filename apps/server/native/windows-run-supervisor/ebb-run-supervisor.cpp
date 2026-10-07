@@ -1057,7 +1057,7 @@ bool trustedPathTrustee(PSID trustee, PSID currentUser) {
     IsWellKnownSid(trustee, WinBuiltinAdministratorsSid) || IsWellKnownSid(trustee, WinCreatorOwnerSid);
 }
 
-bool safeProfileAncestorAcl(HANDLE handle, PSID currentUser) {
+bool safeProfileAncestorAcl(HANDLE handle, PSID currentUser, bool verifiedVolumeRootIndex = false) {
   PSID owner = nullptr;
   PACL dacl = nullptr;
   if (GetSecurityInfo(handle, SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
@@ -1074,12 +1074,39 @@ bool safeProfileAncestorAcl(HANDLE handle, PSID currentUser) {
       PSID trustee = const_cast<DWORD*>(&ace->SidStart);
       const bool trusted = EqualSid(trustee, owner) || trustedPathTrustee(trustee, currentUser);
       if (!ebb::hermes::profile_path::safeAncestorAcePolicy(
-          header->AceType, header->AceFlags, ace->Mask, trusted)) return false;
+          header->AceType, header->AceFlags, ace->Mask, trusted, verifiedVolumeRootIndex)) return false;
     } else if (!ebb::hermes::profile_path::safeAncestorAcePolicy(header->AceType, header->AceFlags, 0, false)) {
       return false;
     }
   }
   return true;
+}
+
+bool isCanonicalVolumeGuidRootPath(const std::wstring& path) {
+  constexpr wchar_t kPrefix[] = L"\\\\?\\Volume{";
+  constexpr size_t kPrefixLength = (sizeof(kPrefix) / sizeof(kPrefix[0])) - 1;
+  constexpr size_t kGuidLength = 36;
+  if (path.size() != kPrefixLength + kGuidLength + 2 ||
+      CompareStringOrdinal(path.data(), static_cast<int>(kPrefixLength), kPrefix,
+                           static_cast<int>(kPrefixLength), TRUE) != CSTR_EQUAL ||
+      path[kPrefixLength + kGuidLength] != L'}' || path.back() != L'\\') return false;
+  for (size_t index = 0; index < kGuidLength; ++index) {
+    const wchar_t character = path[kPrefixLength + index];
+    const bool separator = index == 8 || index == 13 || index == 18 || index == 23;
+    const bool hexadecimal = (character >= L'0' && character <= L'9') ||
+      (character >= L'a' && character <= L'f') || (character >= L'A' && character <= L'F');
+    if ((separator && character != L'-') || (!separator && !hexadecimal)) return false;
+  }
+  return true;
+}
+
+bool verifiedVolumeRootHandle(HANDLE handle, const std::wstring& expectedVolume, const std::wstring& expectedFileId) {
+  std::array<wchar_t, 32768> finalPath{};
+  const DWORD pathLength = GetFinalPathNameByHandleW(handle, finalPath.data(),
+    static_cast<DWORD>(finalPath.size()), FILE_NAME_NORMALIZED | VOLUME_NAME_GUID);
+  return pathLength != 0 && pathLength < finalPath.size() &&
+    isCanonicalVolumeGuidRootPath(std::wstring(finalPath.data(), pathLength)) &&
+    ticketFileIdentity(handle, expectedVolume, expectedFileId);
 }
 
 bool safePrivateProfileDirectoryAcl(HANDLE handle, PSID currentUser) {
@@ -1255,8 +1282,11 @@ bool openTicketProfileChain(const LaunchMetadata& metadata, std::vector<Handle>*
   if (!currentProcessUserSid(&sidStorage, &currentUser)) return fail("LAUNCH_TICKET_PROFILE_ROOT_UNSAFE");
   const auto verifyComponent = [&](HANDLE handle, size_t index) {
     const auto& expected = metadata.profilePathChain[index];
+    if (index == 0) {
+      return verifiedVolumeRootHandle(handle, expected.first, expected.second) &&
+        safeProfileAncestorAcl(handle, currentUser, true);
+    }
     if (!ticketFileIdentity(handle, expected.first, expected.second)) return false;
-    if (index == 0) return safeProfileAncestorAcl(handle, currentUser);
     if (index < metadata.authRootIndex) return safeProfileAncestorAcl(handle, currentUser);
     return safePrivateProfileDirectoryAcl(handle, currentUser);
   };

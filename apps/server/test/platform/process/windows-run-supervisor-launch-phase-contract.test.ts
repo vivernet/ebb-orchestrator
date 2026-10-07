@@ -183,6 +183,35 @@ describe("Windows native helper launch-phase diagnostic contract", () => {
     expect(nativeSource).toMatch(/std::vector<Handle>\s+ticketProfileChain;[\s\S]*?for\s*\(;;\)[\s\S]*?active == 0/u);
   });
 
+  it("revalidates the ticket-bound volume-root identity before applying the root-only ACL exception", () => {
+    const profileChain = /bool openTicketProfileChain\([\s\S]*?\n\}/u.exec(nativeSource)?.[0] ?? "";
+    const rootVerification = /const auto verifyComponent = \[&\]\(HANDLE handle, size_t index\) \{[\s\S]*?\n  \};/u.exec(profileChain)?.[0] ?? "";
+
+    expect(nativeSource).toMatch(/GetFinalPathNameByHandleW\(handle[\s\S]*?FILE_NAME_NORMALIZED \| VOLUME_NAME_GUID/u);
+    expect(nativeSource).toMatch(/isCanonicalVolumeGuidRootPath\(std::wstring\(finalPath\.data\(\), pathLength\)\)/u);
+    expect(profileChain).toMatch(/verifiedVolumeRootHandle\(handle, expected\.first, expected\.second\)/u);
+    expect(profileChain).toMatch(/safeProfileAncestorAcl\(handle, currentUser, true\)/u);
+    expect(rootVerification.indexOf("verifiedVolumeRootHandle")).toBeLessThan(
+      rootVerification.indexOf("safeProfileAncestorAcl(handle, currentUser, true"),
+    );
+    expect(rootVerification).toMatch(/if \(index < metadata\.authRootIndex\) return safeProfileAncestorAcl\(handle, currentUser\)/u);
+    expect(rootVerification).not.toMatch(/index < metadata\.authRootIndex\) return safeProfileAncestorAcl\(handle, currentUser, true/u);
+    expect(profileChain.indexOf("verifyComponent(volumeRootHandle.value, 0)")).toBeLessThan(
+      profileChain.indexOf("handles->push_back(std::move(volumeRootHandle))"),
+    );
+    expect(nativeSource).toMatch(/heldPathChainCommitment\("STOPPED_HELD"/u);
+  });
+
+  it("restores a fixture ACL only after authoritative STOPPED proof", () => {
+    const mutationTest = /it\("rejects a Run-profile ACL change in the suspended CreateProcessW-to-ACK window"[\s\S]*?(?=\n  it\()/u.exec(profileChainAcceptanceSource)?.[0] ?? "";
+    const fixtureTeardown = /afterAll\(async \(\) => \{[\s\S]*?\n  \}\);/u.exec(profileChainAcceptanceSource)?.[0] ?? "";
+
+    expect(mutationTest).toMatch(/let stopProven = false/u);
+    expect(mutationTest).toMatch(/waitForStopped\(publishedIdentity!, 30_000\)[\s\S]*?stopProven = stopped\.state === "STOPPED"/u);
+    expect(mutationTest).toMatch(/if \(aclMutationAttempted && stopProven\) await removeForeignWriteAce\(fixture\.profile\)/u);
+    expect(fixtureTeardown).toMatch(/waitForStopped\(identity, 30_000\)[\s\S]*?observation\.state !== "STOPPED"[\s\S]*?rm\(fixtureHome\.path/u);
+  });
+
   it("keeps phase identity evidence acceptance-only, bounded, ordered, and outside EBBJOB1", () => {
     expect(nativeSource).toMatch(/operation == L"launch-evidence"/u);
     expect(nativeSource).toMatch(/operation == L"launch" \|\| operation == L"launch-evidence"/u);

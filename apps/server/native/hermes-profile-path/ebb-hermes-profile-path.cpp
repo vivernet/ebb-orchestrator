@@ -770,7 +770,8 @@ bool safePathAcl(HANDLE handle, PSID currentUser, bool directory, bool protectDi
   return true;
 }
 
-bool safeAncestorPathAcl(HANDLE handle, PSID currentUser, int* failureStage = nullptr) {
+bool safeAncestorPathAcl(HANDLE handle, PSID currentUser, int* failureStage = nullptr,
+                         bool verifiedVolumeRootIndex = false) {
   PSID owner = nullptr;
   PACL dacl = nullptr;
   const DWORD result = GetSecurityInfo(handle, SE_FILE_OBJECT,
@@ -789,7 +790,8 @@ bool safeAncestorPathAcl(HANDLE handle, PSID currentUser, int* failureStage = nu
       const bool trusted = EqualSid(trustee, owner) || EqualSid(trustee, currentUser) ||
         IsWellKnownSid(trustee, WinLocalSystemSid) || IsWellKnownSid(trustee, WinBuiltinAdministratorsSid) ||
         IsWellKnownSid(trustee, WinCreatorOwnerSid);
-      if (!ebb::hermes::profile_path::safeAncestorAcePolicy(header->AceType, header->AceFlags, ace->Mask, trusted)) {
+      if (!ebb::hermes::profile_path::safeAncestorAcePolicy(
+            header->AceType, header->AceFlags, ace->Mask, trusted, verifiedVolumeRootIndex)) {
         if (failureStage) *failureStage = 5;
         return false;
       }
@@ -912,6 +914,47 @@ bool getSafeHandleIdentity(HANDLE handle, std::string& canonicalPath, std::strin
     fileId.push_back(hex[byte & 0x0f]);
   }
   return true;
+}
+
+bool isCanonicalVolumeGuidRootPath(const std::wstring& path) {
+  constexpr wchar_t kPrefix[] = L"\\\\?\\Volume{";
+  constexpr size_t kPrefixLength = (sizeof(kPrefix) / sizeof(kPrefix[0])) - 1;
+  constexpr size_t kGuidLength = 36;
+  if (path.size() != kPrefixLength + kGuidLength + 2 ||
+      CompareStringOrdinal(path.data(), static_cast<int>(kPrefixLength), kPrefix,
+                           static_cast<int>(kPrefixLength), TRUE) != CSTR_EQUAL ||
+      path[kPrefixLength + kGuidLength] != L'}' || path.back() != L'\\') return false;
+  for (size_t index = 0; index < kGuidLength; ++index) {
+    const wchar_t character = path[kPrefixLength + index];
+    const bool separator = index == 8 || index == 13 || index == 18 || index == 23;
+    const bool hexadecimal = (character >= L'0' && character <= L'9') ||
+      (character >= L'a' && character <= L'f') || (character >= L'A' && character <= L'F');
+    if ((separator && character != L'-') || (!separator && !hexadecimal)) return false;
+  }
+  return true;
+}
+
+bool getVerifiedVolumeRootIdentity(HANDLE handle, std::string& volumeSerial, std::string& fileId) {
+  std::array<wchar_t, 32768> finalPath{};
+  const DWORD pathLength = GetFinalPathNameByHandleW(handle, finalPath.data(),
+    static_cast<DWORD>(finalPath.size()), FILE_NAME_NORMALIZED | VOLUME_NAME_GUID);
+  if (pathLength == 0 || pathLength >= finalPath.size() ||
+      !isCanonicalVolumeGuidRootPath(std::wstring(finalPath.data(), pathLength))) return false;
+
+  FILE_ID_INFO identity{};
+  if (!GetFileInformationByHandleEx(handle, FileIdInfo, &identity, sizeof(identity))) return false;
+  char volumeBuffer[17]{};
+  std::snprintf(volumeBuffer, sizeof(volumeBuffer), "%016llx",
+    static_cast<unsigned long long>(identity.VolumeSerialNumber));
+  volumeSerial = volumeBuffer;
+  static constexpr char hex[] = "0123456789abcdef";
+  fileId.clear();
+  fileId.reserve(sizeof(identity.FileId.Identifier) * 2);
+  for (const unsigned char byte : identity.FileId.Identifier) {
+    fileId.push_back(hex[byte >> 4]);
+    fileId.push_back(hex[byte & 0x0f]);
+  }
+  return volumeSerial.size() == 16 && fileId.size() == 32;
 }
 
 std::string jsonEscape(const std::string& value) {
@@ -1072,7 +1115,14 @@ int verifySafeWindowsPathChain(const std::wstring& rawPath, const std::wstring& 
   heldHandles.push_back(volume);
   FILE_ATTRIBUTE_TAG_INFO rootInfo{};
   if (!getHandleAttributes(volume, rootInfo) || (rootInfo.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 ||
-      !safeAncestorPathAcl(volume, userSid)) {
+      (rootInfo.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+    closePathChainHandles(heldHandles);
+    return kPathRootUnsafe;
+  }
+  std::string verifiedRootVolumeSerial;
+  std::string verifiedRootFileId;
+  if (!getVerifiedVolumeRootIdentity(volume, verifiedRootVolumeSerial, verifiedRootFileId) ||
+      !safeAncestorPathAcl(volume, userSid, nullptr, true)) {
     closePathChainHandles(heldHandles);
     return kPathRootUnsafe;
   }
@@ -1093,7 +1143,8 @@ int verifySafeWindowsPathChain(const std::wstring& rawPath, const std::wstring& 
     identities.push_back({std::move(volumeSerial), std::move(fileId)});
     return true;
   };
-  if (!appendIdentity(volume, driveRoot)) {
+  if (!appendIdentity(volume, driveRoot) || identities.front().volumeSerial != verifiedRootVolumeSerial ||
+      identities.front().fileId != verifiedRootFileId) {
     closePathChainHandles(heldHandles);
     return kPathIdentityUnavailable;
   }
@@ -1173,7 +1224,14 @@ int verifySafeWindowsFilePathChain(const std::wstring& rawPath, const std::wstri
   heldHandles.push_back(volume);
   FILE_ATTRIBUTE_TAG_INFO rootInfo{};
   if (!getHandleAttributes(volume, rootInfo) || (rootInfo.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 ||
-      !safePathAcl(volume, userSid, true, false, false)) {
+      (rootInfo.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+    closePathChainHandles(heldHandles);
+    return kPathRootUnsafe;
+  }
+  std::string verifiedRootVolumeSerial;
+  std::string verifiedRootFileId;
+  if (!getVerifiedVolumeRootIdentity(volume, verifiedRootVolumeSerial, verifiedRootFileId) ||
+      !safeAncestorPathAcl(volume, userSid, nullptr, true)) {
     closePathChainHandles(heldHandles);
     return kPathRootUnsafe;
   }
@@ -1185,7 +1243,9 @@ int verifySafeWindowsFilePathChain(const std::wstring& rawPath, const std::wstri
     return kPathIdentityUnavailable;
   }
   const std::wstring volumeCanonicalWidePath = widenUtf8(volumeCanonicalPath);
-  if (expectedVolumeSerial.size() != 16 || volumeFileId.size() != 32 || volumeCanonicalWidePath.empty() ||
+  if (expectedVolumeSerial.size() != 16 || volumeFileId.size() != 32 ||
+      expectedVolumeSerial != verifiedRootVolumeSerial || volumeFileId != verifiedRootFileId ||
+      volumeCanonicalWidePath.empty() ||
       CompareStringOrdinal(volumeCanonicalWidePath.c_str(),
         static_cast<int>(volumeCanonicalWidePath.size()),
         driveRoot.c_str(), static_cast<int>(driveRoot.size()), TRUE) != CSTR_EQUAL) {

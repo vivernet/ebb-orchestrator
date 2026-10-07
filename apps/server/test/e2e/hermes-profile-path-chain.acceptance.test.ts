@@ -83,6 +83,7 @@ describe.skipIf(!enabled)("Windows Hermes profile path-chain production integrat
     let error: unknown;
     let completion: { exitCode: number; stderr: string; stdout: string } | undefined;
     let aclMutationAttempted = false;
+    let stopProven = false;
 
     try {
       try {
@@ -104,12 +105,14 @@ describe.skipIf(!enabled)("Windows Hermes profile path-chain production integrat
       const launchFailureCode = safeHermesLaunchFailureAssertionContext(error);
       expect(publishedIdentity, `the production supervisor must publish the suspended Job identity (${launchFailureCode})`).toBeDefined();
       const stopped = await supervisor.waitForStopped(publishedIdentity!, 30_000);
+      stopProven = stopped.state === "STOPPED";
       expect(stopped.state, "native refusal must prove the entire Job stopped").toBe("STOPPED");
       expect(await exists(marker), "the suspended child must not execute after the ACL changed").toBe(false);
       const evidence = safeHermesProfileChainLaunchEvidence(error, completion?.stdout, completion?.stderr, completion?.exitCode);
       expect(evidence, `native refusal evidence (${launchFailureCode})`).toBe("HERMES_TICKET_OBJECT_MISMATCH");
     } finally {
-      if (aclMutationAttempted) await removeForeignWriteAce(fixture.profile);
+      // If STOPPED cannot be proven, preserve the mutated fixture for diagnosis/recovery.
+      if (aclMutationAttempted && stopProven) await removeForeignWriteAce(fixture.profile);
     }
   }, 180_000);
 

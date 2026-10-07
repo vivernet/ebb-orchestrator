@@ -659,6 +659,17 @@ function verifyWindowsSafePathChainFixture(root) {
   assert.equal(invalidKind.status, 2, "profile path-chain capture accepts directory chains only");
   assert.equal(invalidKind.stdout, "", "unsupported path-chain kinds must not emit identities");
   const systemFile = join(systemChild, "kernel32.dll");
+  const safeVolumeFileChain = invoke(["verify-safe-file-chain", systemFile, systemRoot]);
+  assert.equal(safeVolumeFileChain.error, undefined, "safe volume-root file-chain verifier should start");
+  assert.equal(safeVolumeFileChain.status, 0,
+    "Hermes source/runtime file chains must apply the verified root-only ACL exception before their unchanged strict root");
+  assert.equal(safeVolumeFileChain.stderr, "", "safe volume-root file chain must not emit diagnostics");
+  const safeVolumeFileIdentity = JSON.parse(safeVolumeFileChain.stdout);
+  assert.equal(safeVolumeFileIdentity.status, "SAFE_PATH_FILE_CHAIN");
+  assert.equal(safeVolumeFileIdentity.kind, "file");
+  assert.equal(safeVolumeFileIdentity.volumeSerial, safeVolumeChain.components[0].volumeSerial,
+    "file-chain leaf identity must remain bound to the verified volume-root serial");
+  assert.match(safeVolumeFileIdentity.fileId, /^[a-f0-9]{32}$/u);
   const invalidFileBoundary = invoke(["verify-safe-file-chain", systemFile, systemFile]);
   assert.equal(invalidFileBoundary.status, 2, "file strict root must be a proper directory ancestor, not the file leaf");
   assert.equal(invalidFileBoundary.stdout, "", "invalid file strict-root boundary must not emit identity");

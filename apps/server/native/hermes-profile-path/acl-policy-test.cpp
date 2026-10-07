@@ -24,43 +24,51 @@ int main() {
   constexpr BYTE foreignAllow = ACCESS_ALLOWED_ACE_TYPE;
 
   if (!expect("foreign FILE_LIST_DIRECTORY allowed",
-      safeAncestorAcePolicy(foreignAllow, effective, FILE_LIST_DIRECTORY, false), true) ||
+      safeAncestorAcePolicy(foreignAllow, effective, FILE_LIST_DIRECTORY, false, false), true) ||
       !expect("foreign FILE_READ_EA allowed",
-      safeAncestorAcePolicy(foreignAllow, effective, FILE_READ_EA, false), true) ||
+      safeAncestorAcePolicy(foreignAllow, effective, FILE_READ_EA, false, false), true) ||
       !expect("foreign add-file denied",
-      safeAncestorAcePolicy(foreignAllow, effective, FILE_ADD_FILE, false), false) ||
+      safeAncestorAcePolicy(foreignAllow, effective, FILE_ADD_FILE, false, true), false) ||
       !expect("foreign add-subdirectory denied",
-      safeAncestorAcePolicy(foreignAllow, effective, FILE_ADD_SUBDIRECTORY, false), false) ||
+      safeAncestorAcePolicy(foreignAllow, effective, FILE_ADD_SUBDIRECTORY, false, false), false) ||
+      !expect("foreign add-subdirectory allowed at verified volume-root index",
+      safeAncestorAcePolicy(foreignAllow, effective, FILE_ADD_SUBDIRECTORY, false, true), true) ||
+      !expect("foreign inherited add-subdirectory denied at non-root index",
+      safeAncestorAcePolicy(foreignAllow, inheritedEffective, FILE_ADD_SUBDIRECTORY, false, false), false) ||
+      !expect("foreign inherited add-subdirectory allowed only at verified root index",
+      safeAncestorAcePolicy(foreignAllow, inheritedEffective, FILE_ADD_SUBDIRECTORY, false, true), true) ||
+      !expect("volume-root add-subdirectory plus add-file denied",
+      safeAncestorAcePolicy(foreignAllow, effective, FILE_ADD_SUBDIRECTORY | FILE_ADD_FILE, false, true), false) ||
       !expect("foreign bounded traversal rights allowed",
-      safeAncestorAcePolicy(foreignAllow, effective, FILE_TRAVERSE | FILE_READ_ATTRIBUTES | READ_CONTROL | SYNCHRONIZE, false), true) ||
+      safeAncestorAcePolicy(foreignAllow, effective, FILE_TRAVERSE | FILE_READ_ATTRIBUTES | READ_CONTROL | SYNCHRONIZE, false, false), true) ||
       !expect("foreign delete denied",
-      safeAncestorAcePolicy(foreignAllow, effective, DELETE, false), false) ||
+      safeAncestorAcePolicy(foreignAllow, effective, DELETE, false, true), false) ||
       !expect("foreign write-DACL denied",
-      safeAncestorAcePolicy(foreignAllow, effective, WRITE_DAC, false), false) ||
+      safeAncestorAcePolicy(foreignAllow, effective, WRITE_DAC, false, true), false) ||
       !expect("foreign generic read denied",
-      safeAncestorAcePolicy(foreignAllow, effective, GENERIC_READ, false), false) ||
+      safeAncestorAcePolicy(foreignAllow, effective, GENERIC_READ, false, true), false) ||
       !expect("foreign generic write denied",
-      safeAncestorAcePolicy(foreignAllow, effective, GENERIC_WRITE, false), false) ||
+      safeAncestorAcePolicy(foreignAllow, effective, GENERIC_WRITE, false, true), false) ||
       !expect("foreign generic execute denied",
-      safeAncestorAcePolicy(foreignAllow, effective, GENERIC_EXECUTE, false), false) ||
+      safeAncestorAcePolicy(foreignAllow, effective, GENERIC_EXECUTE, false, true), false) ||
       !expect("foreign generic all denied",
-      safeAncestorAcePolicy(foreignAllow, effective, GENERIC_ALL, false), false) ||
+      safeAncestorAcePolicy(foreignAllow, effective, GENERIC_ALL, false, true), false) ||
       !expect("trusted allow ACE remains trusted",
-      safeAncestorAcePolicy(foreignAllow, effective, GENERIC_ALL, true), true) ||
+      safeAncestorAcePolicy(foreignAllow, effective, GENERIC_ALL, true, false), true) ||
       !expect("inherit-only generic ACE is ignored for current ancestor",
-      safeAncestorAcePolicy(foreignAllow, inheritOnly, GENERIC_READ | GENERIC_EXECUTE, false), true) ||
+      safeAncestorAcePolicy(foreignAllow, inheritOnly, GENERIC_READ | GENERIC_EXECUTE, false, false), true) ||
       !expect("effective compound ACE denied",
-      safeAncestorAcePolicy(0x04, effective, FILE_LIST_DIRECTORY, false), false) ||
+      safeAncestorAcePolicy(0x04, effective, FILE_LIST_DIRECTORY, false, true), false) ||
       !expect("effective callback ACE denied",
-      safeAncestorAcePolicy(0x09, effective, FILE_LIST_DIRECTORY, false), false) ||
+      safeAncestorAcePolicy(0x09, effective, FILE_LIST_DIRECTORY, false, true), false) ||
       !expect("effective unknown ACE denied",
-      safeAncestorAcePolicy(0x7f, effective, 0, false), false) ||
+      safeAncestorAcePolicy(0x7f, effective, 0, false, true), false) ||
       !expect("inherit-only unknown ACE does not apply here",
-      safeAncestorAcePolicy(0x7f, inheritOnly, 0, false), true) ||
+      safeAncestorAcePolicy(0x7f, inheritOnly, 0, false, true), true) ||
       !expect("foreign ACCESS_DENIED delete ACE remains non-granting",
-      safeAncestorAcePolicy(ACCESS_DENIED_ACE_TYPE, effective, DELETE | GENERIC_WRITE, false), true) ||
+      safeAncestorAcePolicy(ACCESS_DENIED_ACE_TYPE, effective, DELETE | GENERIC_WRITE, false, true), true) ||
       !expect("foreign SYSTEM_AUDIT ACE remains non-granting",
-      safeAncestorAcePolicy(SYSTEM_AUDIT_ACE_TYPE, effective, GENERIC_ALL, false), true) ||
+      safeAncestorAcePolicy(SYSTEM_AUDIT_ACE_TYPE, effective, GENERIC_ALL, false, true), true) ||
       !expect("TrustedInstaller full control allowed only in exact system PowerShell chain",
       safeWindowsPowerShellTrustedInstallerAcePolicy(true, true, ACCESS_ALLOWED_ACE_TYPE, inheritedEffective, FILE_ALL_ACCESS), true) ||
       !expect("TrustedInstaller generic all allowed only in exact system PowerShell chain",

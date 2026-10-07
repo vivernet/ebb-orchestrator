@@ -6,6 +6,8 @@ namespace ebb::hermes::profile_path {
 
 constexpr ACCESS_MASK kAllowedForeignDirectoryRights =
   FILE_TRAVERSE | FILE_LIST_DIRECTORY | FILE_READ_EA | FILE_READ_ATTRIBUTES | READ_CONTROL | SYNCHRONIZE;
+constexpr ACCESS_MASK kAllowedForeignVolumeRootDirectoryRights =
+  kAllowedForeignDirectoryRights | FILE_ADD_SUBDIRECTORY;
 
 /**
  * Determines whether one ACE is compatible with the bounded policy for a lexical ancestor above auth-root.
@@ -13,10 +15,14 @@ constexpr ACCESS_MASK kAllowedForeignDirectoryRights =
  * are checked. Effective foreign allow ACEs may contain only the explicit read/traversal rights above; deny and
  * audit ACEs grant no access, while unrecognized effective ACE types fail closed.
  */
-inline constexpr bool safeAncestorAcePolicy(BYTE aceType, BYTE aceFlags, ACCESS_MASK mask, bool trusted) noexcept {
+inline constexpr bool safeAncestorAcePolicy(BYTE aceType, BYTE aceFlags, ACCESS_MASK mask, bool trusted,
+                                            bool verifiedVolumeRootIndex = false) noexcept {
   if ((aceFlags & INHERIT_ONLY_ACE) != 0) return true;
   if (aceType == ACCESS_ALLOWED_ACE_TYPE) {
-    return trusted || (mask & ~kAllowedForeignDirectoryRights) == 0;
+    const ACCESS_MASK allowedRights = verifiedVolumeRootIndex
+      ? kAllowedForeignVolumeRootDirectoryRights
+      : kAllowedForeignDirectoryRights;
+    return trusted || (mask & ~allowedRights) == 0;
   }
   if (aceType == ACCESS_DENIED_ACE_TYPE || aceType == SYSTEM_AUDIT_ACE_TYPE) return true;
   return false;
