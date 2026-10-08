@@ -143,6 +143,59 @@ bool directoryPermissionsAreSafe(const struct stat& info, uid_t expectedOwner, b
   return !requireOwner && info.st_uid == 0 && (info.st_mode & S_ISVTX) != 0;
 }
 
+const char* cacheRootOpenErrorBucket(int error) {
+  switch (error) {
+    case ENOENT: return "NO_ENTRY";
+    case EACCES:
+    case EPERM: return "ACCESS_DENIED";
+    case ELOOP:
+    case ENOTDIR: return "SYMLINK_OR_NOT_DIR";
+    case ENAMETOOLONG: return "PATH_TOO_LONG";
+    default: return "OTHER";
+  }
+}
+
+std::string cacheRootComponentIndex(size_t index) {
+  constexpr size_t kMaxReportedComponentIndex = 15;
+  return index > kMaxReportedComponentIndex ? "16_PLUS" : std::to_string(index);
+}
+
+int openCacheRootDirectory(const std::string& value) {
+  std::vector<std::string> components;
+  if (!parseAbsolutePath(value, components)) {
+    writeRefusal("HERMES_SOURCE_CACHE_ROOT_PATH_INVALID"); return -1;
+  }
+  FileDescriptor current(open("/", O_PATH | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW));
+  if (!current) {
+    const int openError = errno;
+    const std::string diagnostic = std::string("HERMES_SOURCE_CACHE_ROOT_BASE_OPEN_FAILED_") + cacheRootOpenErrorBucket(openError);
+    writeRefusal(diagnostic.c_str()); return -1;
+  }
+  for (size_t index = 0; index < components.size(); ++index) {
+    const std::string indexToken = cacheRootComponentIndex(index);
+    FileDescriptor next(openat(current.get(), components[index].c_str(), O_PATH | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW));
+    if (!next) {
+      const int openError = errno;
+      const std::string diagnostic = std::string("HERMES_SOURCE_CACHE_ROOT_COMPONENT_OPEN_FAILED_") +
+        indexToken + "_" + cacheRootOpenErrorBucket(openError);
+      writeRefusal(diagnostic.c_str()); return -1;
+    }
+    struct stat info{};
+    if (fstat(next.get(), &info) != 0) {
+      const std::string diagnostic = std::string("HERMES_SOURCE_CACHE_ROOT_COMPONENT_METADATA_UNAVAILABLE_") + indexToken;
+      writeRefusal(diagnostic.c_str()); return -1;
+    }
+    const bool finalComponent = index + 1 == components.size();
+    if (!directoryPermissionsAreSafe(info, geteuid(), finalComponent)) {
+      const std::string diagnostic = finalComponent ? std::string("HERMES_SOURCE_CACHE_ROOT_FINAL_OWNER_MODE_UNSAFE")
+        : std::string("HERMES_SOURCE_CACHE_ROOT_COMPONENT_OWNER_MODE_UNSAFE_") + indexToken;
+      writeRefusal(diagnostic.c_str()); return -1;
+    }
+    current = std::move(next);
+  }
+  return current.release();
+}
+
 int openAbsoluteDirectory(const std::string& value, bool requireOwner) {
   std::vector<std::string> components;
   if (!parseAbsolutePath(value, components)) return -1;
@@ -346,14 +399,14 @@ bool verifySnapshotTree(int root, const std::map<std::string, SnapshotEntry>& en
 }
 
 int acquireSnapshotLease(const std::string& cacheRoot) {
-  FileDescriptor directory(openAbsoluteDirectory(cacheRoot, true));
-  if (!directory) { writeRefusal("HERMES_SOURCE_CACHE_ROOT_OPEN_FAILED"); return -1; }
+  FileDescriptor directory(openCacheRootDirectory(cacheRoot));
+  if (!directory) return -1;
   struct stat rootInfo{};
   if (fstat(directory.get(), &rootInfo) != 0) {
     writeRefusal("HERMES_SOURCE_CACHE_ROOT_METADATA_UNAVAILABLE"); return -1;
   }
   if ((rootInfo.st_mode & 0777) != 0700) {
-    writeRefusal("HERMES_SOURCE_CACHE_ROOT_MODE_UNSAFE"); return -1;
+    writeRefusal("HERMES_SOURCE_CACHE_ROOT_FINAL_OWNER_MODE_UNSAFE"); return -1;
   }
   FileDescriptor lock(openat(directory.get(), ".source-cache.ref.lock", O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK));
   if (!lock) { writeRefusal("HERMES_SOURCE_CACHE_REF_LOCK_OPEN_FAILED"); return -1; }

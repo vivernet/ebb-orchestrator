@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import { ProcessExecutor, type ProcessResult, type ProcessSession } from "./process-executor.js";
+import { ExitCodeError, ProcessExecutor, type ProcessResult, type ProcessSession } from "./process-executor.js";
 import type { ProcessScopeIdentity, ProcessScopeObservation } from "./process-inspector.js";
 import { ProcessScopeLaunchNotDispatchedError, type ProcessScopeHandle, type ProcessScopeLaunchRequest, type ProcessScopeSupervisor } from "./run-scope-supervisor.js";
 import { consumeHermesLaunchTicket, type HermesLaunchObjectIdentity, type HermesLaunchTicketInput } from "../../modules/runtime/hermes/hermes-launch-ticket.js";
@@ -8,6 +8,10 @@ import { createWindowsNativeHelperInvocation } from "./windows-native-helper-lau
 const STOP_TIMEOUT_MS = 30_000;
 const POLL_INTERVAL_MS = 500;
 const HELPER_READY_TIMEOUT_MS = 60_000;
+const INSPECTION_TIMEOUT_MS = 5_000;
+const WINDOWS_INSPECTION_SPAWN_ERROR_CODES = new Set([
+  "EACCES", "E2BIG", "EMFILE", "ENFILE", "ENOENT", "ENOTDIR", "EPERM",
+]);
 const HELPER_PATH = fileURLToPath(new URL("../../../dist/native/windows-run-supervisor/ebb-run-supervisor.exe", import.meta.url));
 export const WINDOWS_PATH_CHAIN_EVIDENCE_STAGES = [
   "FRAME_DECODED_EXPECTED", "SUPERVISOR_OPEN", "PRE_CREATE", "PRE_RESUME", "STOPPED_HELD",
@@ -358,10 +362,10 @@ export class WindowsJobSupervisor implements ProcessScopeSupervisor {
     let result: ProcessResult;
     try {
       result = await this.executor.exec(invocation.file, [...invocation.args], {
-        env: { ...invocation.env }, timeout: 5_000, maxBuffer: 32 * 1024,
+        env: { ...invocation.env }, timeout: INSPECTION_TIMEOUT_MS, maxBuffer: 32 * 1024,
       });
-    } catch {
-      return { state: "UNKNOWN", reason: "WINDOWS_JOB_INSPECTION_PROCESS_EXECUTION_UNAVAILABLE" };
+    } catch (error) {
+      return { state: "UNKNOWN", reason: classifyInspectionExecutionFailure(error) };
     }
 
     let observation: ProcessScopeObservation;
@@ -435,6 +439,49 @@ export class WindowsJobSupervisor implements ProcessScopeSupervisor {
     } while (Date.now() <= deadline);
     return { state: "UNKNOWN", reason: "WINDOWS_JOB_STOP_TIMEOUT" };
   }
+}
+
+function classifyInspectionExecutionFailure(error: unknown): string {
+  if (error instanceof ExitCodeError) {
+    for (const line of error.stderr.split(/\r?\n/u)) {
+      const gateFailure = parseNativeHelperFailureLine(line);
+      if (gateFailure) {
+        const gateReason = mapInspectionGateFailurePhase(gateFailure.phase);
+        if (gateReason) return gateReason;
+      }
+    }
+    if (error.stdout.split(/\r?\n/u).some((line) => {
+      const match = /^UNKNOWN\t([A-Z0-9_]+)$/u.exec(line);
+      return match !== null && SAFE_NATIVE_HELPER_FAILURE_CODES.has(match[1]!);
+    })) return "WINDOWS_JOB_INSPECTION_NATIVE_REFUSAL";
+    if (error.exitCode === 127) return "WINDOWS_JOB_INSPECTION_HELPER_INTEGRITY_MISMATCH";
+    return "WINDOWS_JOB_INSPECTION_PROCESS_EXIT_NONZERO";
+  }
+  if (error instanceof Error) {
+    if (error.message === `Process timed out after ${INSPECTION_TIMEOUT_MS}ms`) {
+      return "WINDOWS_JOB_INSPECTION_PROCESS_TIMEOUT";
+    }
+    if (error.message === "output buffer exceeded") return "WINDOWS_JOB_INSPECTION_OUTPUT_LIMIT";
+    if (error.message === "Process aborted before spawn" || error.message === "Process aborted" || error.name === "AbortError") {
+      return "WINDOWS_JOB_INSPECTION_PROCESS_ABORTED";
+    }
+    if ("code" in error && typeof error.code === "string" && WINDOWS_INSPECTION_SPAWN_ERROR_CODES.has(error.code)) {
+      return "WINDOWS_JOB_INSPECTION_PROCESS_SPAWN_FAILED";
+    }
+  }
+  return "WINDOWS_JOB_INSPECTION_PROCESS_EXECUTION_UNAVAILABLE";
+}
+
+function mapInspectionGateFailurePhase(phase: string): string | undefined {
+  if (phase.startsWith("ARGUMENT_")) return "WINDOWS_JOB_INSPECTION_HELPER_ARGUMENT_GATE_FAILED";
+  if (phase === "PATH_NORMALIZATION" || phase.startsWith("PARENT_DIRECTORY_")) {
+    return "WINDOWS_JOB_INSPECTION_HELPER_PATH_GATE_FAILED";
+  }
+  if (phase.startsWith("HELPER_FILE_")) return "WINDOWS_JOB_INSPECTION_HELPER_FILE_GATE_FAILED";
+  if (phase === "INTEGRITY_CHECK") return "WINDOWS_JOB_INSPECTION_HELPER_INTEGRITY_GATE_FAILED";
+  if (phase === "PROCESS_START") return "WINDOWS_JOB_INSPECTION_HELPER_PROCESS_START_GATE_FAILED";
+  if (phase.startsWith("LAUNCH_")) return "WINDOWS_JOB_INSPECTION_NATIVE_LAUNCH_FAILED";
+  return undefined;
 }
 
 function encodeLaunchAcknowledgement(nonce: string): Buffer {

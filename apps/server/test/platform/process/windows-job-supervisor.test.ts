@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { PassThrough, Writable } from "node:stream";
-import { ProcessExecutor, type ProcessOptions, type ProcessResult, type ProcessSession, type ProcessSessionOptions } from "../../../src/platform/process/process-executor.js";
+import { ExitCodeError, ProcessExecutor, type ProcessOptions, type ProcessResult, type ProcessSession, type ProcessSessionOptions } from "../../../src/platform/process/process-executor.js";
 import { WindowsJobSupervisor } from "../../../src/platform/process/windows-job-supervisor.js";
 import { createHermesLaunchTicket } from "../../../src/modules/runtime/hermes/hermes-launch-ticket.js";
 import { safeRestartChildFailureCode } from "../../helpers/restart-child-diagnostics.js";
@@ -903,6 +903,36 @@ describe("WindowsJobSupervisor", () => {
 
     expect(observation).toEqual({ state: "UNKNOWN", reason: "WINDOWS_JOB_INSPECTION_PROCESS_EXECUTION_UNAVAILABLE" });
     expect(JSON.stringify(observation)).not.toContain(secret);
+  });
+
+  it.each([
+    ["inspection timeout", new Error("Process timed out after 5000ms"), "WINDOWS_JOB_INSPECTION_PROCESS_TIMEOUT"],
+    ["output limit", new Error("output buffer exceeded"), "WINDOWS_JOB_INSPECTION_OUTPUT_LIMIT"],
+    ["abort before spawn", new Error("Process aborted before spawn"), "WINDOWS_JOB_INSPECTION_PROCESS_ABORTED"],
+    ["runtime abort", Object.assign(new Error("private abort detail"), { name: "AbortError" }), "WINDOWS_JOB_INSPECTION_PROCESS_ABORTED"],
+    ["nonzero helper process", new ExitCodeError("C:\\private\\native-helper.exe secret-argument", 126, "private stdout", "OPENAI_API_KEY=secret"), "WINDOWS_JOB_INSPECTION_PROCESS_EXIT_NONZERO"],
+    ["known native gate phase", new ExitCodeError("private command", 126, "", "NATIVE_HELPER_GATE_FAIL:parent-directory-open-index-1-win32-5:InvalidOperationException\r\nC:\\private\\OPENAI_API_KEY=secret"), "WINDOWS_JOB_INSPECTION_HELPER_PATH_GATE_FAILED"],
+    ["argument gate phase", new ExitCodeError("private command", 126, "", "NATIVE_HELPER_GATE_FAIL:argument-validation:InvalidOperationException\nC:\\private\\OPENAI_API_KEY=secret"), "WINDOWS_JOB_INSPECTION_HELPER_ARGUMENT_GATE_FAILED"],
+    ["helper-file gate phase", new ExitCodeError("private command", 126, "", "NATIVE_HELPER_GATE_FAIL:helper-file-lock:UnauthorizedAccessException\nC:\\private\\OPENAI_API_KEY=secret"), "WINDOWS_JOB_INSPECTION_HELPER_FILE_GATE_FAILED"],
+    ["integrity gate phase", new ExitCodeError("private command", 126, "", "NATIVE_HELPER_GATE_FAIL:integrity-check:CryptographicException\nC:\\private\\OPENAI_API_KEY=secret"), "WINDOWS_JOB_INSPECTION_HELPER_INTEGRITY_GATE_FAILED"],
+    ["process-start gate phase", new ExitCodeError("private command", 126, "", "NATIVE_HELPER_GATE_FAIL:process-start:Win32Exception\nC:\\private\\OPENAI_API_KEY=secret"), "WINDOWS_JOB_INSPECTION_HELPER_PROCESS_START_GATE_FAILED"],
+    ["native launch phase", new ExitCodeError("private command", 126, "", "NATIVE_HELPER_LAUNCH_FAIL:JOB_POLICY_FAILED\nC:\\private\\OPENAI_API_KEY=secret"), "WINDOWS_JOB_INSPECTION_NATIVE_LAUNCH_FAILED"],
+    ["known native refusal", new ExitCodeError("private command", 4, "UNKNOWN\tJOB_ACCOUNTING_UNAVAILABLE\n", "private stderr"), "WINDOWS_JOB_INSPECTION_NATIVE_REFUSAL"],
+    ["helper digest mismatch", new ExitCodeError("private command", 127, "", "private stderr"), "WINDOWS_JOB_INSPECTION_HELPER_INTEGRITY_MISMATCH"],
+    ["unrecognized native gate detail", new ExitCodeError("private command", 126, "", "NATIVE_HELPER_GATE_FAIL:private-path:SecretException\n"), "WINDOWS_JOB_INSPECTION_PROCESS_EXIT_NONZERO"],
+    ["unknown gate phase", new ExitCodeError("private command", 126, "", "NATIVE_HELPER_GATE_FAIL:private-phase:InvalidOperationException\nC:\\private\\OPENAI_API_KEY=secret"), "WINDOWS_JOB_INSPECTION_PROCESS_EXIT_NONZERO"],
+    ["known spawn error", Object.assign(new Error("spawn C:\\private\\powershell.exe ENOENT"), { code: "ENOENT" }), "WINDOWS_JOB_INSPECTION_PROCESS_SPAWN_FAILED"],
+    ["unknown process error", Object.assign(new Error("private process detail"), { code: "EUNKNOWN_PRIVATE" }), "WINDOWS_JOB_INSPECTION_PROCESS_EXECUTION_UNAVAILABLE"],
+  ])("keeps inspection execution failure as UNKNOWN and exposes only a fixed %s code", async (_label, failure, expectedReason) => {
+    Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+    const executor = new ProcessExecutor();
+    vi.spyOn(executor, "exec").mockRejectedValue(failure);
+    const supervisor = new WindowsJobSupervisor(executor, "native-helper.exe", createTestHelperInvocation);
+
+    const observation = await supervisor.inspect(owner);
+
+    expect(observation).toEqual({ state: "UNKNOWN", reason: expectedReason });
+    expect(JSON.stringify(observation)).not.toMatch(/private|secret|OPENAI_API_KEY|C:\\\\|native-helper|powershell/i);
   });
 
   it("reports only the fixed output-parse inspection stage when native identity output is malformed", async () => {

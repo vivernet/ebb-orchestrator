@@ -38,6 +38,22 @@ describe("Linux Hermes native launch boundary source contract", () => {
     expect(launcherSource).toContain("HERMES_SOURCE_SNAPSHOT_CONTENT_MISMATCH");
   });
 
+  it("diagnoses cache-root traversal with bounded categories without changing path checks", () => {
+    expect(launcherSource).toContain("int openCacheRootDirectory(const std::string& value)");
+    expect(launcherSource).toContain("HERMES_SOURCE_CACHE_ROOT_PATH_INVALID");
+    expect(launcherSource).toContain("HERMES_SOURCE_CACHE_ROOT_COMPONENT_OPEN_FAILED_");
+    expect(launcherSource).toContain("HERMES_SOURCE_CACHE_ROOT_COMPONENT_METADATA_UNAVAILABLE_");
+    expect(launcherSource).toContain("HERMES_SOURCE_CACHE_ROOT_COMPONENT_OWNER_MODE_UNSAFE_");
+    expect(launcherSource).toContain("HERMES_SOURCE_CACHE_ROOT_FINAL_OWNER_MODE_UNSAFE");
+    expect(launcherSource).toContain("case ENOENT: return \"NO_ENTRY\"");
+    expect(launcherSource).toContain("case EACCES:");
+    expect(launcherSource).toContain("case ELOOP:");
+    expect(launcherSource).toContain("case ENAMETOOLONG: return \"PATH_TOO_LONG\"");
+    expect(launcherSource).toContain("constexpr size_t kMaxReportedComponentIndex = 15");
+    expect(launcherSource).toContain("directoryPermissionsAreSafe(info, geteuid(), finalComponent)");
+    expect(launcherSource).toContain("O_PATH | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW" );
+  });
+
   it("builds only on Linux and has no shell compiler invocation", () => {
     expect(buildScript).toContain("process.platform !== \"linux\"");
     expect(buildScript).toContain("\"-std=c++17\"");

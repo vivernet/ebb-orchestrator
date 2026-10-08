@@ -68,6 +68,19 @@ const SAFE_PROCESS_SCOPE_OBSERVATION_REASONS = new Set([
   "WINDOWS_JOB_INSPECTION_UNAVAILABLE",
   "WINDOWS_JOB_INSPECTION_HELPER_INVOCATION_UNAVAILABLE",
   "WINDOWS_JOB_INSPECTION_PROCESS_EXECUTION_UNAVAILABLE",
+  "WINDOWS_JOB_INSPECTION_PROCESS_TIMEOUT",
+  "WINDOWS_JOB_INSPECTION_OUTPUT_LIMIT",
+  "WINDOWS_JOB_INSPECTION_PROCESS_ABORTED",
+  "WINDOWS_JOB_INSPECTION_PROCESS_EXIT_NONZERO",
+  "WINDOWS_JOB_INSPECTION_PROCESS_SPAWN_FAILED",
+  "WINDOWS_JOB_INSPECTION_HELPER_ARGUMENT_GATE_FAILED",
+  "WINDOWS_JOB_INSPECTION_HELPER_PATH_GATE_FAILED",
+  "WINDOWS_JOB_INSPECTION_HELPER_FILE_GATE_FAILED",
+  "WINDOWS_JOB_INSPECTION_HELPER_INTEGRITY_GATE_FAILED",
+  "WINDOWS_JOB_INSPECTION_HELPER_INTEGRITY_MISMATCH",
+  "WINDOWS_JOB_INSPECTION_HELPER_PROCESS_START_GATE_FAILED",
+  "WINDOWS_JOB_INSPECTION_NATIVE_LAUNCH_FAILED",
+  "WINDOWS_JOB_INSPECTION_NATIVE_REFUSAL",
   "WINDOWS_JOB_INSPECTION_OUTPUT_PARSE_FAILED",
   "WINDOWS_JOB_STOP_FAILED",
   "WINDOWS_JOB_STOP_TIMEOUT",
@@ -680,6 +693,21 @@ function safeLinuxRefusalEvidence(stderr: string, stdout: string): string | unde
     : undefined;
 }
 
+const linuxCacheRootIndexTokens = [...Array.from({ length: 16 }, (_, index) => String(index)), "16_PLUS"];
+const linuxCacheRootOpenErrorBuckets = ["NO_ENTRY", "ACCESS_DENIED", "SYMLINK_OR_NOT_DIR", "PATH_TOO_LONG", "OTHER"];
+const linuxCacheRootDiagnosticCodes = new Set([
+  "HERMES_SOURCE_CACHE_ROOT_PATH_INVALID",
+  "HERMES_SOURCE_CACHE_ROOT_FINAL_OWNER_MODE_UNSAFE",
+  "HERMES_SOURCE_CACHE_ROOT_METADATA_UNAVAILABLE",
+  ...linuxCacheRootOpenErrorBuckets.map((bucket) => `HERMES_SOURCE_CACHE_ROOT_BASE_OPEN_FAILED_${bucket}`),
+  ...linuxCacheRootIndexTokens.flatMap((index) => [
+    `HERMES_SOURCE_CACHE_ROOT_COMPONENT_METADATA_UNAVAILABLE_${index}`,
+    `HERMES_SOURCE_CACHE_ROOT_COMPONENT_OWNER_MODE_UNSAFE_${index}`,
+    ...linuxCacheRootOpenErrorBuckets.map((bucket) =>
+      `HERMES_SOURCE_CACHE_ROOT_COMPONENT_OPEN_FAILED_${index}_${bucket}`),
+  ]),
+]);
+
 const linuxNativeRefusalCodes = new Set([
   "HERMES_SOURCE_CACHE_ROOT_OPEN_FAILED",
   "HERMES_SOURCE_CACHE_ROOT_METADATA_UNAVAILABLE",
@@ -709,6 +737,7 @@ const linuxNativeRefusalCodes = new Set([
   "HERMES_PROCESS_SUBREAPER_UNAVAILABLE",
   "HERMES_PYTHON_FORK_FAILED",
   "HERMES_EXECVEAT_FAILED",
+  ...linuxCacheRootDiagnosticCodes,
 ]);
 
 function knownLinuxRefusalCode(line: string): string | undefined {
@@ -811,6 +840,31 @@ describe("safe native refusal output diagnostics", () => {
       "HERMES_LINUX_LAUNCH_REFUSED:HERMES_SOURCE_SNAPSHOT_CONTENT_MISMATCH\n",
       "",
     )).toBe("HERMES_LINUX_LAUNCH_REFUSED:HERMES_SOURCE_SNAPSHOT_CONTENT_MISMATCH");
+  });
+
+  it("reports bounded cache-root path-walk diagnostics as known unexpected refusals only", () => {
+    const diagnosticCodes = [
+      "HERMES_SOURCE_CACHE_ROOT_PATH_INVALID",
+      "HERMES_SOURCE_CACHE_ROOT_BASE_OPEN_FAILED_ACCESS_DENIED",
+      "HERMES_SOURCE_CACHE_ROOT_COMPONENT_OPEN_FAILED_0_NO_ENTRY",
+      "HERMES_SOURCE_CACHE_ROOT_COMPONENT_OPEN_FAILED_16_PLUS_SYMLINK_OR_NOT_DIR",
+      "HERMES_SOURCE_CACHE_ROOT_COMPONENT_METADATA_UNAVAILABLE_3",
+      "HERMES_SOURCE_CACHE_ROOT_COMPONENT_OWNER_MODE_UNSAFE_2",
+      "HERMES_SOURCE_CACHE_ROOT_FINAL_OWNER_MODE_UNSAFE",
+    ];
+
+    for (const code of diagnosticCodes) {
+      const refusal = `HERMES_LINUX_LAUNCH_REFUSED:${code}`;
+      const summary = safeNativeRefusalOutputSummary({ exitCode: 65, stdout: "", stderr: `${refusal}\n` });
+      expect(summary).toContain(`knownLinuxRefusalCodes={${refusal}}`);
+      expect(summary).toContain("allowlistedRefusalMatches=0");
+      expect(safeLinuxRefusalEvidence(`${refusal}\n`, "")).toBeUndefined();
+    }
+
+    const unboundedDiagnostic = "HERMES_LINUX_LAUNCH_REFUSED:HERMES_SOURCE_CACHE_ROOT_COMPONENT_OPEN_FAILED_999_ERRNO_13";
+    const summary = safeNativeRefusalOutputSummary({ exitCode: 65, stdout: "", stderr: `${unboundedDiagnostic}\n` });
+    expect(summary).toContain("knownLinuxRefusalCodes={none}");
+    expect(safeLinuxRefusalEvidence(`${unboundedDiagnostic}\n`, "")).toBeUndefined();
   });
 
   it("hides unknown uppercase codes and raw secret text", () => {
