@@ -987,7 +987,7 @@ async function verifyPosixCleanupParentSwapRefusal(root) {
   assert.equal(compile.status, 0, `test-hook helper should compile (stderr: ${compile.stderr})`);
 
   const child = spawn(testHelper, ["cleanup-profile", hermesRoot, runId], {
-    shell: false, windowsHide: true, env: { ...childEnvironment, EBB_PROFILE_PATH_TEST_PAUSE_AFTER_CLEANUP_INVENTORY: "1" },
+    shell: false, windowsHide: true, env: { ...childEnvironment, EBB_PROFILE_PATH_TEST_PAUSE_AFTER_CLEANUP_VALIDATION: "1" },
     stdio: ["pipe", "pipe", "pipe"],
   });
   let output = "";
@@ -998,8 +998,8 @@ async function verifyPosixCleanupParentSwapRefusal(root) {
   child.stderr.on("data", (chunk) => { stderr += chunk; });
   const awaitReady = async () => {
     const deadline = Date.now() + 10_000;
-    while (!output.includes("CLEANUP_PROFILE_INVENTORY_READY\n")) {
-      if (Date.now() >= deadline || child.exitCode !== null) throw new Error("POSIX cleanup race helper missed inventory barrier");
+    while (!output.includes("CLEANUP_PROFILE_VALIDATION_READY\n")) {
+      if (Date.now() >= deadline || child.exitCode !== null) throw new Error("POSIX cleanup race helper missed validation barrier");
       await new Promise((resolveDelay) => setTimeout(resolveDelay, 10));
     }
   };

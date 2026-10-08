@@ -62,6 +62,11 @@ function readSessionAfterOrchestratorRestart(dbPath: string, orchestratorHome: s
         WINDIR: process.env.WINDIR,
         TEMP: process.env.TEMP,
         TMP: process.env.TMP,
+        // Production composition creates HermesRuntimeAdapter, which resolves its
+        // cache/checkpoint paths from process.env even though `home` is passed
+        // explicitly to the composition. Keep this restart process isolated from
+        // the host profile while giving it the same deterministic test home.
+        EBB_ORCHESTRATOR_HOME: orchestratorHome,
       },
       stdio: ["ignore", "pipe", "pipe"],
     });

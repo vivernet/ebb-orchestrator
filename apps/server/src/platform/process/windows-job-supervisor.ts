@@ -7,6 +7,7 @@ import { createWindowsNativeHelperInvocation } from "./windows-native-helper-lau
 
 const STOP_TIMEOUT_MS = 30_000;
 const POLL_INTERVAL_MS = 500;
+const HELPER_READY_TIMEOUT_MS = 60_000;
 const HELPER_PATH = fileURLToPath(new URL("../../../dist/native/windows-run-supervisor/ebb-run-supervisor.exe", import.meta.url));
 export const WINDOWS_PATH_CHAIN_EVIDENCE_STAGES = [
   "FRAME_DECODED_EXPECTED", "SUPERVISOR_OPEN", "PRE_CREATE", "PRE_RESUME", "STOPPED_HELD",
@@ -244,7 +245,7 @@ export class WindowsJobSupervisor implements ProcessScopeSupervisor {
     request.signal?.addEventListener("abort", onAbort, { once: true });
     let helperReady = false;
     try {
-      await protocol.nextLine("EBB_HELPER_READY", 10_000);
+      await protocol.nextLine("EBB_HELPER_READY", HELPER_READY_TIMEOUT_MS);
       helperReady = true;
       diagnosticTrace?.mark("READY");
       // The PowerShell gate fails before READY. After the trusted helper handoff, stderr belongs

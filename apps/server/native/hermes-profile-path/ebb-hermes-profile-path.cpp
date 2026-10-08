@@ -2753,6 +2753,15 @@ int cleanupPosixProfile(const std::string& root, const std::string& runId) {
     for (int handle : parentHandles) close(handle);
     if (!same) { closeNodes(); close(profileFd); close(profilesFd); return kPathUnsafe; }
   }
+#ifdef EBB_PROFILE_PATH_TEST_HOOKS
+  if (std::getenv("EBB_PROFILE_PATH_TEST_PAUSE_AFTER_CLEANUP_VALIDATION") != nullptr) {
+    std::cout << "CLEANUP_PROFILE_VALIDATION_READY\n" << std::flush;
+    char resume = 0;
+    if (!std::cin.get(resume) || resume != '\n') {
+      closeNodes(); close(profileFd); close(profilesFd); return kPathUnsafe;
+    }
+  }
+#endif
   std::stable_sort(nodes.begin(), nodes.end(), [](const ProfileNode& left, const ProfileNode& right) {
     return left.depth > right.depth;
   });

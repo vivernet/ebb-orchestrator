@@ -42,6 +42,7 @@ class HandshakeExecutor extends ProcessExecutor {
     private readonly completionStderr = "",
     private readonly inspectionOutput = "STOPPED\tJOB_EMPTY\n",
     private readonly completeOnInputClose = true,
+    private readonly readyDelayMs = 0,
   ) { super(); }
   override startSession = vi.fn<ProcessExecutor["startSession"]>((_file, _args, options: ProcessSessionOptions = {}) => {
     const completion = new Promise<ProcessResult>((resolve, reject) => {
@@ -79,13 +80,17 @@ class HandshakeExecutor extends ProcessExecutor {
     const session: ProcessSession = { stdin, stdout, stderr, completion, terminate: () => undefined };
     this.session = session;
     queueMicrotask(() => {
-      if (this.completionStderr) stderr.write(this.completionStderr);
-      if (this.preHandshakeOutput !== undefined) {
-        stdout.write(this.preHandshakeOutput);
-        return;
-      }
-      stdout.write("EBB_HELPER_READY\n");
-      stdout.write(`EBB_SCOPE_READY\t${owner.containmentId}\t${owner.launchNonce}\t41\t100000000\t42\t200000000\tsha256:${"c".repeat(64)}\n`);
+      const writeHandshake = () => {
+        if (this.completionStderr) stderr.write(this.completionStderr);
+        if (this.preHandshakeOutput !== undefined) {
+          stdout.write(this.preHandshakeOutput);
+          return;
+        }
+        stdout.write("EBB_HELPER_READY\n");
+        stdout.write(`EBB_SCOPE_READY\t${owner.containmentId}\t${owner.launchNonce}\t41\t100000000\t42\t200000000\tsha256:${"c".repeat(64)}\n`);
+      };
+      if (this.readyDelayMs > 0) setTimeout(writeHandshake, this.readyDelayMs);
+      else writeHandshake();
     });
     return session;
   });
@@ -219,6 +224,22 @@ describe("WindowsJobSupervisor", () => {
     expect(executor.writes).toHaveLength(2);
     expect(executor.writes[1]).toEqual(Buffer.from(`EBBACK01${owner.launchNonce}`, "ascii"));
     expect(Buffer.concat(executor.writes).toString("utf8")).not.toContain("EBB_HERMES_PROVIDER_API_KEY");
+  });
+
+  it("accepts the exact initial READY marker when native gate startup is delayed but bounded", async () => {
+    Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+    vi.useFakeTimers();
+    const executor = new HandshakeExecutor("", true, undefined, "", "STOPPED\tJOB_EMPTY\n", true, 25_000);
+    const supervisor = new WindowsJobSupervisor(executor, "native-helper.exe", createTestHelperInvocation);
+    const outcome = supervisor.launch(owner, request, async () => undefined).then(
+      () => ({ kind: "success" as const }),
+      (error: unknown) => ({ kind: "failure" as const, error }),
+    );
+
+    await vi.advanceTimersByTimeAsync(25_000);
+    expect(await outcome).toEqual({ kind: "success" });
+    expect(executor.writes).toHaveLength(2);
+    expect(executor.writes[1]).toEqual(Buffer.from(`EBBACK01${owner.launchNonce}`, "ascii"));
   });
 
   it("serializes the Run-bound EBB3 profile identity chain before source snapshot metadata", async () => {
@@ -451,7 +472,7 @@ describe("WindowsJobSupervisor", () => {
       (error: unknown) => ({ kind: "failure" as const, error }),
     );
     await Promise.resolve();
-    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.advanceTimersByTimeAsync(_description === "before helper-ready" ? 60_000 : 10_000);
 
     const result = await outcome;
     expect(result.kind).toBe("failure");
@@ -471,7 +492,7 @@ describe("WindowsJobSupervisor", () => {
       (error: unknown) => ({ kind: "failure" as const, error }),
     );
     await Promise.resolve();
-    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.advanceTimersByTimeAsync(60_000);
     const result = await outcome;
     const message = result.kind === "failure" ? (result.error as Error).message : "";
 
@@ -513,7 +534,7 @@ describe("WindowsJobSupervisor", () => {
       (error: unknown) => ({ kind: "failure" as const, error }),
     );
     await Promise.resolve();
-    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.advanceTimersByTimeAsync(60_000);
     const result = await outcome;
     const failure = result.kind === "failure" ? result.error : undefined;
 
@@ -544,7 +565,7 @@ describe("WindowsJobSupervisor", () => {
       (error: unknown) => ({ kind: "failure" as const, error }),
     );
     await Promise.resolve();
-    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.advanceTimersByTimeAsync(60_000);
     const result = await outcome;
     const failure = result.kind === "failure" ? result.error : undefined;
 
@@ -569,7 +590,7 @@ describe("WindowsJobSupervisor", () => {
       (error: unknown) => ({ kind: "failure" as const, error }),
     );
     await Promise.resolve();
-    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.advanceTimersByTimeAsync(60_000);
     const result = await outcome;
     const failure = result.kind === "failure" ? result.error : undefined;
 
@@ -592,7 +613,7 @@ describe("WindowsJobSupervisor", () => {
       (error: unknown) => ({ kind: "failure" as const, error }),
     );
     await Promise.resolve();
-    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.advanceTimersByTimeAsync(60_000);
     const result = await outcome;
     const failure = result.kind === "failure" ? result.error : undefined;
 
@@ -619,7 +640,7 @@ describe("WindowsJobSupervisor", () => {
       (error: unknown) => ({ kind: "failure" as const, error }),
     );
     await Promise.resolve();
-    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.advanceTimersByTimeAsync(60_000);
     const result = await outcome;
     const failure = result.kind === "failure" ? result.error : undefined;
 
@@ -666,7 +687,7 @@ describe("WindowsJobSupervisor", () => {
       (error: unknown) => ({ kind: "failure" as const, error }),
     );
     await Promise.resolve();
-    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.advanceTimersByTimeAsync(60_000);
     const result = await outcome;
     const failure = result.kind === "failure" ? result.error : undefined;
 
@@ -692,7 +713,7 @@ describe("WindowsJobSupervisor", () => {
       (error: unknown) => ({ kind: "failure" as const, error }),
     );
     await Promise.resolve();
-    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.advanceTimersByTimeAsync(60_000);
     const result = await outcome;
     const failure = result.kind === "failure" ? result.error : undefined;
 
@@ -720,7 +741,7 @@ describe("WindowsJobSupervisor", () => {
       (error: unknown) => ({ kind: "failure" as const, error }),
     );
     await Promise.resolve();
-    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.advanceTimersByTimeAsync(60_000);
     const result = await outcome;
     const failure = result.kind === "failure" ? result.error : undefined;
 
