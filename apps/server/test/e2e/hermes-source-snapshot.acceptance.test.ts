@@ -420,6 +420,7 @@ async function launchAndAssertRefused(input: {
   let primaryFailure: unknown;
   let cleanupFailure: unknown;
   let result: { observation: ProcessScopeObservation; markerPath: string } | undefined;
+  let refusalOutput: { exitCode: number; stderr: string; stdout: string } | undefined;
   try {
     try {
       handle = await input.supervisor.launch(toScopeIdentity(owner), {
@@ -427,6 +428,7 @@ async function launchAndAssertRefused(input: {
         environment, attempt: 1, hermesLaunchTicket: ticket, timeoutMs: 30_000,
       }, async (identity) => { liveIdentity = identity; });
       const completed = await handle.completion;
+      refusalOutput = completed;
       nativeRefusalEvidence = linux
         ? safeLinuxRefusalEvidence(completed.stderr, completed.stdout) ?? "UNEXPECTED_NATIVE_REFUSAL_OUTPUT"
         : safeWindowsRefusalEvidence(completed.stderr, completed.stdout) ?? "UNEXPECTED_NATIVE_REFUSAL_OUTPUT";
@@ -451,7 +453,7 @@ async function launchAndAssertRefused(input: {
         `WINDOWS_HELPER_NATIVE_UNKNOWN:${input.expectedNativeFailureCode}`,
       );
     } else {
-      expect(nativeRefusalEvidence, `${input.variant} EHSP refusal evidence`).toBe(
+      expect(nativeRefusalEvidence, `${input.variant} EHSP refusal evidence; ${safeNativeRefusalOutputSummary(refusalOutput)}`).toBe(
         `HERMES_LINUX_LAUNCH_REFUSED:${input.expectedLinuxFailureCode}`,
       );
     }
@@ -674,6 +676,73 @@ function safeLinuxRefusalEvidence(stderr: string, stdout: string): string | unde
     ? lines[0]
     : undefined;
 }
+
+function safeNativeRefusalOutputSummary(output: { exitCode: number; stderr: string; stdout: string } | undefined): string {
+  if (!output) return "nativeOutput={available=no,childExitCode=unavailable}";
+  const stdoutLines = diagnosticLines(output.stdout);
+  const stderrLines = diagnosticLines(output.stderr);
+  const allLines = [...stdoutLines, ...stderrLines].filter((line) => line.length > 0);
+  const exactRefusal = /^HERMES_LINUX_LAUNCH_REFUSED:HERMES_SOURCE_(?:PROJECTION_UNAVAILABLE|SNAPSHOT_CONTENT_MISMATCH)$/u;
+  const allowlistedRefusalMatches = allLines.filter((line) => exactRefusal.test(line)).length;
+  const shapeCounts = new Map<string, number>();
+  for (const line of allLines) {
+    if (exactRefusal.test(line)) continue;
+    const shape = classifyNativeOutputLineShape(line);
+    shapeCounts.set(shape, (shapeCounts.get(shape) ?? 0) + 1);
+  }
+  const shapes = [...shapeCounts.entries()].sort(([left], [right]) => left.localeCompare(right))
+    .map(([shape, count]) => `${shape}:${count}`).join(",") || "none";
+  return `nativeOutput={available=yes,childExitCode=${Number.isInteger(output.exitCode) ? output.exitCode : "unknown"},` +
+    `stdoutNonEmpty=${output.stdout.length > 0 ? "yes" : "no"},stdoutLineCount=${stdoutLines.length},` +
+    `stderrNonEmpty=${output.stderr.length > 0 ? "yes" : "no"},stderrLineCount=${stderrLines.length},` +
+    `allowlistedRefusalMatches=${allowlistedRefusalMatches},otherLineShapes={${shapes}}}`;
+}
+
+function diagnosticLines(value: string): string[] {
+  if (value.length === 0) return [];
+  const lines = value.split(/\r?\n/u);
+  if (lines.at(-1) === "") lines.pop();
+  return lines;
+}
+
+function classifyNativeOutputLineShape(line: string): string {
+  if (/^[A-Z][A-Z0-9_]*(?:\t[A-Z0-9_:-]+)+$/u.test(line)) return "tab-delimited-code";
+  if (/^[A-Z][A-Z0-9_]*(?::[A-Z0-9_.-]+)*$/u.test(line)) return "uppercase-code";
+  if (/^(?:\{|\[)/u.test(line)) return "json-or-array-shaped";
+  if (/^[A-Za-z][A-Za-z0-9_-]*=/u.test(line)) return "key-value-shaped";
+  return "other-text-shaped";
+}
+
+describe("safe native refusal output diagnostics", () => {
+  it("summarizes child output shape without including raw output", () => {
+    const rawPath = "C:\\private\\fixture\\source.py";
+    const rawSecret = "provider-token-do-not-log";
+    const summary = safeNativeRefusalOutputSummary({
+      exitCode: 55,
+      stdout: `${rawPath}\n`,
+      stderr: `token=${rawSecret}\n`,
+    });
+
+    expect(summary).toContain("childExitCode=55");
+    expect(summary).toContain("stdoutNonEmpty=yes,stdoutLineCount=1");
+    expect(summary).toContain("stderrNonEmpty=yes,stderrLineCount=1");
+    expect(summary).toContain("allowlistedRefusalMatches=0");
+    expect(summary).toContain("otherLineShapes={key-value-shaped:1,other-text-shaped:1}");
+    expect(summary).not.toContain(rawPath);
+    expect(summary).not.toContain(rawSecret);
+  });
+
+  it("counts only exact allowlisted refusal lines", () => {
+    const summary = safeNativeRefusalOutputSummary({
+      exitCode: 1,
+      stdout: "HERMES_LINUX_LAUNCH_REFUSED:HERMES_SOURCE_PROJECTION_UNAVAILABLE\n",
+      stderr: "HERMES_LINUX_LAUNCH_REFUSED:HERMES_SOURCE_PROJECTION_UNAVAILABLE:extra\n",
+    });
+
+    expect(summary).toContain("allowlistedRefusalMatches=1");
+    expect(summary).toContain("otherLineShapes={other-text-shaped:1}");
+  });
+});
 
 function safeWindowsRefusalEvidence(stderr: string, stdout: string): string | undefined {
   const lines = [stderr, stdout].flatMap((stream) => stream.split(/\r?\n/u)).filter((line) => line.length > 0);
