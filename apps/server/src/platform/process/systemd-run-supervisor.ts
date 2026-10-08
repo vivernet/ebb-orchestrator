@@ -1,7 +1,7 @@
 import { statfs } from "node:fs/promises";
 import { dirname, posix } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ProcessExecutor, type ProcessResult, type ProcessSession } from "./process-executor.js";
+import { ExitCodeError, ProcessExecutor, type ProcessResult, type ProcessSession } from "./process-executor.js";
 import { classifySystemdScope, inspectCgroupTree, type ProcessScopeIdentity, type ProcessScopeObservation, type SystemdScopeSnapshot } from "./process-inspector.js";
 import { ProcessScopeLaunchNotDispatchedError, type ProcessScopeHandle, type ProcessScopeLaunchRequest, type ProcessScopeSupervisor } from "./run-scope-supervisor.js";
 import { consumeHermesLaunchTicket, type HermesLaunchTicketInput } from "../../modules/runtime/hermes/hermes-launch-ticket.js";
@@ -27,8 +27,37 @@ type SystemdInspectionFailureCode =
   | "SYSTEMD_UNIT_CONTROL_GROUP_UNAVAILABLE"
   | "SYSTEMD_PENDING_JOB_QUERY_UNAVAILABLE";
 
+type SystemdPrerequisiteFailureCode =
+  | "SYSTEMD_CGROUP_STATFS_UNAVAILABLE"
+  | "SYSTEMD_CGROUP_V2_REQUIRED"
+  | "SYSTEMD_MANAGER_ENVIRONMENT_INVALID"
+  | "SYSTEMD_MANAGER_STATUS_CHECK_UNAVAILABLE"
+  | "SYSTEMD_MANAGER_STATE_INITIALIZING"
+  | "SYSTEMD_MANAGER_STATE_STARTING"
+  | "SYSTEMD_MANAGER_STATE_DEGRADED"
+  | "SYSTEMD_MANAGER_STATE_MAINTENANCE"
+  | "SYSTEMD_MANAGER_STATE_STOPPING"
+  | "SYSTEMD_MANAGER_STATE_OFFLINE"
+  | "SYSTEMD_MANAGER_STATE_UNKNOWN";
+
+const SYSTEMD_MANAGER_STATE_REASONS: Readonly<Record<string, SystemdPrerequisiteFailureCode>> = {
+  initializing: "SYSTEMD_MANAGER_STATE_INITIALIZING",
+  starting: "SYSTEMD_MANAGER_STATE_STARTING",
+  degraded: "SYSTEMD_MANAGER_STATE_DEGRADED",
+  maintenance: "SYSTEMD_MANAGER_STATE_MAINTENANCE",
+  stopping: "SYSTEMD_MANAGER_STATE_STOPPING",
+  offline: "SYSTEMD_MANAGER_STATE_OFFLINE",
+  unknown: "SYSTEMD_MANAGER_STATE_UNKNOWN",
+};
+
 class SystemdInspectionFailure extends Error {
   constructor(readonly diagnosticCode: SystemdInspectionFailureCode) {
+    super(diagnosticCode);
+  }
+}
+
+class SystemdPrerequisiteFailure extends Error {
+  constructor(readonly diagnosticCode: SystemdPrerequisiteFailureCode) {
     super(diagnosticCode);
   }
 }
@@ -281,8 +310,11 @@ export class SystemdRunSupervisor implements ProcessScopeSupervisor {
     assertLinuxOwner(owner);
     try {
       await this.assertNativePrerequisites();
-    } catch {
-      return { state: "UNKNOWN", reason: "SYSTEMD_PREREQUISITE_CHECK_UNAVAILABLE" };
+    } catch (error: unknown) {
+      const reason = error instanceof SystemdPrerequisiteFailure
+        ? error.diagnosticCode
+        : "SYSTEMD_PREREQUISITE_CHECK_UNAVAILABLE";
+      return { state: "UNKNOWN", reason };
     }
     try {
       const unitName = systemdUnitName(owner);
@@ -353,9 +385,31 @@ export class SystemdRunSupervisor implements ProcessScopeSupervisor {
   }
 
   private async assertNativePrerequisites(): Promise<void> {
-    const filesystem = await statfs("/sys/fs/cgroup");
-    if (filesystem.type !== 0x63677270) throw new Error("CGROUP_V2_REQUIRED");
-    await this.execManager("systemctl", ["--user", "is-system-running"], { timeout: 5_000 });
+    let filesystem: Awaited<ReturnType<typeof statfs>>;
+    try {
+      filesystem = await statfs("/sys/fs/cgroup");
+    } catch {
+      throw new SystemdPrerequisiteFailure("SYSTEMD_CGROUP_STATFS_UNAVAILABLE");
+    }
+    if (filesystem.type !== 0x63677270) throw new SystemdPrerequisiteFailure("SYSTEMD_CGROUP_V2_REQUIRED");
+
+    let environment: Record<string, string>;
+    try {
+      environment = this.managerEnvironment();
+    } catch {
+      throw new SystemdPrerequisiteFailure("SYSTEMD_MANAGER_ENVIRONMENT_INVALID");
+    }
+    try {
+      await this.executor.exec("systemctl", ["--user", "is-system-running"], { timeout: 5_000, env: environment });
+    } catch (error: unknown) {
+      const state = error instanceof ExitCodeError ? error.stdout.trim() : "";
+      const stateReason = Object.hasOwn(SYSTEMD_MANAGER_STATE_REASONS, state)
+        ? SYSTEMD_MANAGER_STATE_REASONS[state]
+        : undefined;
+      throw new SystemdPrerequisiteFailure(
+        stateReason ?? "SYSTEMD_MANAGER_STATUS_CHECK_UNAVAILABLE",
+      );
+    }
   }
 
   private async readSnapshot(owner: ProcessScopeIdentity, unitName: string, recordedGroup: string | null): Promise<SystemdScopeSnapshot> {

@@ -1,7 +1,9 @@
 import { PassThrough, Writable } from "node:stream";
 import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { statfs } from "node:fs/promises";
 import {
+  ExitCodeError,
   ProcessExecutor,
   type ProcessOptions,
   type ProcessResult,
@@ -17,6 +19,11 @@ import type {
 } from "../../../src/platform/process/process-inspector.js";
 import type { ProcessScopeLaunchRequest } from "../../../src/platform/process/run-scope-supervisor.js";
 import { createHermesLaunchTicket } from "../../../src/modules/runtime/hermes/hermes-launch-ticket.js";
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...actual, statfs: vi.fn() };
+});
 
 class FakeProcessExecutor extends ProcessExecutor {
   readonly execCalls: Array<{ file: string; args: string[]; options: ProcessOptions }> = [];
@@ -160,6 +167,7 @@ describe("SystemdRunSupervisor", () => {
     vi.stubEnv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus");
     vi.stubEnv("LANG", "en_US.UTF-8");
     vi.stubEnv("LC_ALL", "C.UTF-8");
+    vi.mocked(statfs).mockResolvedValue({ type: 0x63677270 } as Awaited<ReturnType<typeof statfs>>);
     vi.stubEnv("SECRET_CANARY_IN_PARENT", "MUST_NOT_BE_INHERITED");
     unitState = "live";
     executor = new FakeProcessExecutor();
@@ -573,6 +581,94 @@ describe("SystemdRunSupervisor", () => {
     expect(observation).toEqual({ state: "UNKNOWN", reason: "SYSTEMD_PREREQUISITE_CHECK_UNAVAILABLE" });
     expect(JSON.stringify(observation)).not.toMatch(/secret|private|stderr|home/u);
   });
+
+  it.each([
+    {
+      name: "cgroup statfs failure",
+      configure: () => vi.mocked(statfs).mockRejectedValue(new Error("private /sys/fs/cgroup failure")),
+      expectedReason: "SYSTEMD_CGROUP_STATFS_UNAVAILABLE",
+    },
+    {
+      name: "cgroup v2 mismatch",
+      configure: () => vi.mocked(statfs).mockResolvedValue({ type: 0x1234 } as Awaited<ReturnType<typeof statfs>>),
+      expectedReason: "SYSTEMD_CGROUP_V2_REQUIRED",
+    },
+    {
+      name: "manager environment validation failure",
+      configure: () => vi.stubEnv("XDG_RUNTIME_DIR", "relative-private-runtime"),
+      expectedReason: "SYSTEMD_MANAGER_ENVIRONMENT_INVALID",
+    },
+    {
+      name: "systemd manager status check failure",
+      configure: () => {
+        executor.onExec = (_file, args) => args[1] === "is-system-running"
+          ? new Error("private stderr /home/secret")
+          : undefined;
+      },
+      expectedReason: "SYSTEMD_MANAGER_STATUS_CHECK_UNAVAILABLE",
+    },
+  ])("reports a sanitized prerequisite reason for $name", async ({ configure, expectedReason }) => {
+    vi.spyOn(supervisor as unknown as { assertNativePrerequisites(): Promise<void> }, "assertNativePrerequisites")
+      .mockRestore();
+    configure();
+
+    const observation = await supervisor.inspect({ ...owner, systemdControlGroup: exactControlGroup });
+
+    expect(observation).toEqual({ state: "UNKNOWN", reason: expectedReason });
+    expect(JSON.stringify(observation)).not.toMatch(/private|secret|stderr|home|runtime/iu);
+  });
+
+  it.each([
+    ["initializing", "SYSTEMD_MANAGER_STATE_INITIALIZING"],
+    ["starting", "SYSTEMD_MANAGER_STATE_STARTING"],
+    ["degraded", "SYSTEMD_MANAGER_STATE_DEGRADED"],
+    ["maintenance", "SYSTEMD_MANAGER_STATE_MAINTENANCE"],
+    ["stopping", "SYSTEMD_MANAGER_STATE_STOPPING"],
+    ["offline", "SYSTEMD_MANAGER_STATE_OFFLINE"],
+    ["unknown", "SYSTEMD_MANAGER_STATE_UNKNOWN"],
+  ])("maps the exact systemd manager state %s to a fixed diagnostic", async (state, expectedReason) => {
+    vi.spyOn(supervisor as unknown as { assertNativePrerequisites(): Promise<void> }, "assertNativePrerequisites")
+      .mockRestore();
+    executor.onExec = (_file, args) => args[1] === "is-system-running"
+      ? new ExitCodeError("systemctl", 1, `  ${state}  \n`, "private stderr")
+      : undefined;
+
+    const observation = await supervisor.inspect({ ...owner, systemdControlGroup: exactControlGroup });
+
+    expect(observation).toEqual({ state: "UNKNOWN", reason: expectedReason });
+    expect(JSON.stringify(observation)).not.toContain(`  ${state}  `);
+    expect(JSON.stringify(observation)).not.toMatch(/private|stderr/iu);
+  });
+
+  it("uses the generic systemd manager status-check code for arbitrary exit output", async () => {
+    vi.spyOn(supervisor as unknown as { assertNativePrerequisites(): Promise<void> }, "assertNativePrerequisites")
+      .mockRestore();
+    executor.onExec = (_file, args) => args[1] === "is-system-running"
+      ? new ExitCodeError("systemctl", 1, "custom /home/private detail", "private stderr")
+      : undefined;
+
+    const observation = await supervisor.inspect({ ...owner, systemdControlGroup: exactControlGroup });
+
+    expect(observation).toEqual({ state: "UNKNOWN", reason: "SYSTEMD_MANAGER_STATUS_CHECK_UNAVAILABLE" });
+    expect(JSON.stringify(observation)).not.toMatch(/custom|private|stderr|home/iu);
+  });
+
+  it.each(["__proto__", "constructor", "toString"])(
+    "does not treat inherited property %s as a systemd state",
+    async (state) => {
+      vi.spyOn(supervisor as unknown as { assertNativePrerequisites(): Promise<void> }, "assertNativePrerequisites")
+        .mockRestore();
+      executor.onExec = (_file, args) => args[1] === "is-system-running"
+        ? new ExitCodeError("systemctl", 1, state, "private stderr")
+        : undefined;
+
+      const observation = await supervisor.inspect({ ...owner, systemdControlGroup: exactControlGroup });
+
+      expect(observation).toEqual({ state: "UNKNOWN", reason: "SYSTEMD_MANAGER_STATUS_CHECK_UNAVAILABLE" });
+      expect(JSON.stringify(observation)).not.toContain(state);
+      expect(JSON.stringify(observation)).not.toContain("private");
+    },
+  );
 
   it("keeps retrying the phase-specific inspection errors that can occur during unit activation", async () => {
     const identity: ProcessScopeIdentity = {
