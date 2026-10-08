@@ -44,10 +44,15 @@ const SAFE_PROCESS_SCOPE_OBSERVATION_REASONS = new Set([
   "SYSTEMD_IDENTITY_MISMATCH",
   "SYSTEMD_INSPECTION_UNAVAILABLE",
   "SYSTEMD_MANAGER_QUERY_UNAVAILABLE",
+  "SYSTEMD_PENDING_JOB_QUERY_UNAVAILABLE",
+  "SYSTEMD_PREREQUISITE_CHECK_UNAVAILABLE",
+  "SYSTEMD_SCOPE_READBACK_UNAVAILABLE",
   "SYSTEMD_STOP_FAILED",
   "SYSTEMD_STOP_IDENTITY_MISMATCH",
   "SYSTEMD_STOP_TIMEOUT",
   "SYSTEMD_UNIT_ABSENCE_UNPROVEN",
+  "SYSTEMD_UNIT_CONTROL_GROUP_UNAVAILABLE",
+  "SYSTEMD_UNIT_LOAD_STATE_UNVERIFIED",
   "WINDOWS_JOB_IDENTITY_MISMATCH",
   "WINDOWS_JOB_IDENTITY_UNPROVEN",
   "WINDOWS_JOB_INSPECTION_UNAVAILABLE",
@@ -479,6 +484,28 @@ function refusalScopeStopUnprovenError(
     `observation=${observation.state}; reason=${reason}; liveIdentityPersisted=${liveIdentity ? "yes" : "no"}`,
   );
 }
+
+describe("process scope refusal diagnostics", () => {
+  for (const reason of [
+    "SYSTEMD_PREREQUISITE_CHECK_UNAVAILABLE",
+    "SYSTEMD_UNIT_LOAD_STATE_UNVERIFIED",
+    "SYSTEMD_UNIT_CONTROL_GROUP_UNAVAILABLE",
+    "SYSTEMD_PENDING_JOB_QUERY_UNAVAILABLE",
+    "SYSTEMD_SCOPE_READBACK_UNAVAILABLE",
+  ]) {
+    it(`preserves the fixed safe reason ${reason}`, () => {
+      const diagnostic = refusalScopeStopUnprovenError(undefined, { state: "UNKNOWN", reason }, undefined);
+      expect(diagnostic.message).toContain(`reason=${reason}`);
+    });
+  }
+
+  it("hides an unrecognized observation reason", () => {
+    const diagnostic = refusalScopeStopUnprovenError(undefined, {
+      state: "UNKNOWN", reason: "arbitrary process output",
+    }, undefined);
+    expect(diagnostic.message).toContain("reason=NONE");
+  });
+});
 
 function makeTicket(input: {
   runId: string; attempt: number; python: string; pythonIdentity: HermesLaunchObjectIdentity;
