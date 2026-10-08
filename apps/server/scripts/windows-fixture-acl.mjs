@@ -1,4 +1,5 @@
 import { spawnSync as nodeSpawnSync } from "node:child_process";
+import { lstatSync } from "node:fs";
 import { join } from "node:path";
 
 const WINDOWS_FIXTURE_ACL_TIMEOUT_MS = 30_000;
@@ -42,6 +43,16 @@ function readRecognizedPhases(output) {
  * @param {{serverDirectory: string, systemRoot?: string, spawnSync?: typeof nodeSpawnSync}} options Настройки harness; spawnSync нужен для изолированной проверки диагностики.
  */
 export function makeWindowsFixturePrivate(directory, { serverDirectory, systemRoot, spawnSync = nodeSpawnSync }) {
+  let target;
+  try {
+    target = lstatSync(directory);
+  } catch {
+    throw new Error("WINDOWS_FIXTURE_ACL_UNSAFE_TARGET");
+  }
+  if (target.isSymbolicLink() || (!target.isDirectory() && !target.isFile())) {
+    throw new Error("WINDOWS_FIXTURE_ACL_UNSAFE_TARGET");
+  }
+  const isDirectory = target.isDirectory();
   const powershell = join(systemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   const command = [
     "$ErrorActionPreference = 'Stop';",
@@ -65,7 +76,8 @@ export function makeWindowsFixturePrivate(directory, { serverDirectory, systemRo
     "$phase.Invoke('SET_OWNER_COMPLETED');",
     "$rights = [System.Security.AccessControl.FileSystemRights]::FullControl;",
     "$phase.Invoke('TARGET_TYPE_STARTED');",
-    "$inherit = [System.Security.AccessControl.InheritanceFlags]::None; if ((Get-Item -LiteralPath $path).PSIsContainer) { $inherit = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit };",
+    "$isDirectory = [System.Environment]::GetEnvironmentVariable('EBB_HERMES_PROFILE_TEST_IS_DIRECTORY');",
+    "$inherit = [System.Security.AccessControl.InheritanceFlags]::None; if ($isDirectory -eq '1') { $inherit = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit };",
     "$phase.Invoke('TARGET_TYPE_RESOLVED');",
     "$rule = [System.Security.AccessControl.FileSystemAccessRule]::new($identity, $rights, $inherit, [System.Security.AccessControl.PropagationFlags]::None, [System.Security.AccessControl.AccessControlType]::Allow);",
     "$phase.Invoke('RULE_CREATED');",
@@ -78,7 +90,11 @@ export function makeWindowsFixturePrivate(directory, { serverDirectory, systemRo
   ].join(" ");
   const result = spawnSync(powershell, ["-NoProfile", "-NonInteractive", "-Command", command], {
     cwd: serverDirectory,
-    env: { ...(systemRoot ? { SYSTEMROOT: systemRoot } : {}), EBB_HERMES_PROFILE_TEST_ROOT: directory },
+    env: {
+      ...(systemRoot ? { SYSTEMROOT: systemRoot } : {}),
+      EBB_HERMES_PROFILE_TEST_ROOT: directory,
+      EBB_HERMES_PROFILE_TEST_IS_DIRECTORY: isDirectory ? "1" : "0",
+    },
     encoding: "utf8",
     shell: false,
     timeout: WINDOWS_FIXTURE_ACL_TIMEOUT_MS,
