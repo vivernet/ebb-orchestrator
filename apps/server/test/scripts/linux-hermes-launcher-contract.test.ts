@@ -43,8 +43,6 @@ describe("Linux Hermes native launch boundary source contract", () => {
     expect(launcherSource).toContain("HERMES_SOURCE_CACHE_ROOT_PATH_INVALID");
     expect(launcherSource).toContain("HERMES_SOURCE_CACHE_ROOT_COMPONENT_OPEN_FAILED_");
     expect(launcherSource).toContain("HERMES_SOURCE_CACHE_ROOT_COMPONENT_METADATA_UNAVAILABLE_");
-    expect(launcherSource).toContain("HERMES_SOURCE_CACHE_ROOT_COMPONENT_OWNER_MODE_UNSAFE_");
-    expect(launcherSource).toContain("HERMES_SOURCE_CACHE_ROOT_FINAL_OWNER_MODE_UNSAFE");
     expect(launcherSource).toContain("case ENOENT: return \"NO_ENTRY\"");
     expect(launcherSource).toContain("case EACCES:");
     expect(launcherSource).toContain("case ELOOP:");
@@ -52,6 +50,20 @@ describe("Linux Hermes native launch boundary source contract", () => {
     expect(launcherSource).toContain("constexpr size_t kMaxReportedComponentIndex = 15");
     expect(launcherSource).toContain("directoryPermissionsAreSafe(info, geteuid(), finalComponent)");
     expect(launcherSource).toContain("O_PATH | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW" );
+  });
+
+  it("splits cache-root permission refusals without weakening the shared predicate", () => {
+    expect(launcherSource).toContain("HERMES_SOURCE_CACHE_ROOT_COMPONENT_NONROOT_WRITABLE_");
+    expect(launcherSource).toContain("HERMES_SOURCE_CACHE_ROOT_COMPONENT_ROOT_WRITABLE_WITHOUT_STICKY_");
+    expect(launcherSource).toContain("HERMES_SOURCE_CACHE_ROOT_FINAL_OWNER_MISMATCH");
+    expect(launcherSource).toContain("HERMES_SOURCE_CACHE_ROOT_FINAL_WRITABLE_MODE");
+    expect(launcherSource).toContain("HERMES_SOURCE_CACHE_ROOT_FINAL_MODE_NOT_0700");
+    expect(launcherSource).toContain("std::string cacheRootPermissionFailure(");
+    expect(launcherSource).toContain("HERMES_SOURCE_CACHE_ROOT_COMPONENT_ROOT_WRITABLE_WITHOUT_STICKY_");
+    expect(launcherSource).toContain("HERMES_SOURCE_CACHE_ROOT_COMPONENT_NONROOT_WRITABLE_");
+    expect(launcherSource).toContain("if (info.st_uid != expectedOwner) return \"HERMES_SOURCE_CACHE_ROOT_FINAL_OWNER_MISMATCH\"");
+    expect(launcherSource).toContain("if (requireOwner && info.st_uid != expectedOwner) return false;");
+    expect(launcherSource).toContain("return !requireOwner && info.st_uid == 0 && (info.st_mode & S_ISVTX) != 0;");
   });
 
   it("builds only on Linux and has no shell compiler invocation", () => {

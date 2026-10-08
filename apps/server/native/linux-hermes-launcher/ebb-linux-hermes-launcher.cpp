@@ -143,6 +143,17 @@ bool directoryPermissionsAreSafe(const struct stat& info, uid_t expectedOwner, b
   return !requireOwner && info.st_uid == 0 && (info.st_mode & S_ISVTX) != 0;
 }
 
+std::string cacheRootPermissionFailure(const struct stat& info, uid_t expectedOwner, bool finalComponent, const std::string& indexToken) {
+  if (finalComponent) {
+    if (info.st_uid != expectedOwner) return "HERMES_SOURCE_CACHE_ROOT_FINAL_OWNER_MISMATCH";
+    return "HERMES_SOURCE_CACHE_ROOT_FINAL_WRITABLE_MODE";
+  }
+  if (info.st_uid == 0) {
+    return std::string("HERMES_SOURCE_CACHE_ROOT_COMPONENT_ROOT_WRITABLE_WITHOUT_STICKY_") + indexToken;
+  }
+  return std::string("HERMES_SOURCE_CACHE_ROOT_COMPONENT_NONROOT_WRITABLE_") + indexToken;
+}
+
 const char* cacheRootOpenErrorBucket(int error) {
   switch (error) {
     case ENOENT: return "NO_ENTRY";
@@ -187,8 +198,7 @@ int openCacheRootDirectory(const std::string& value) {
     }
     const bool finalComponent = index + 1 == components.size();
     if (!directoryPermissionsAreSafe(info, geteuid(), finalComponent)) {
-      const std::string diagnostic = finalComponent ? std::string("HERMES_SOURCE_CACHE_ROOT_FINAL_OWNER_MODE_UNSAFE")
-        : std::string("HERMES_SOURCE_CACHE_ROOT_COMPONENT_OWNER_MODE_UNSAFE_") + indexToken;
+      const std::string diagnostic = cacheRootPermissionFailure(info, geteuid(), finalComponent, indexToken);
       writeRefusal(diagnostic.c_str()); return -1;
     }
     current = std::move(next);
@@ -406,7 +416,7 @@ int acquireSnapshotLease(const std::string& cacheRoot) {
     writeRefusal("HERMES_SOURCE_CACHE_ROOT_METADATA_UNAVAILABLE"); return -1;
   }
   if ((rootInfo.st_mode & 0777) != 0700) {
-    writeRefusal("HERMES_SOURCE_CACHE_ROOT_FINAL_OWNER_MODE_UNSAFE"); return -1;
+    writeRefusal("HERMES_SOURCE_CACHE_ROOT_FINAL_MODE_NOT_0700"); return -1;
   }
   FileDescriptor lock(openat(directory.get(), ".source-cache.ref.lock", O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK));
   if (!lock) { writeRefusal("HERMES_SOURCE_CACHE_REF_LOCK_OPEN_FAILED"); return -1; }
