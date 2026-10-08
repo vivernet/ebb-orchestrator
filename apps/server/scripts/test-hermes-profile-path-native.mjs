@@ -1071,7 +1071,16 @@ async function verifySourceCacheGcHandles(root) {
 
   const extraId = createHash("sha256").update(randomUUID()).digest("hex");
   const extra = makeCandidate(extraId);
-  writeFileSync(join(extra.snapshotRoot, "pkg", "unexpected.py"), "unowned\n", { mode: 0o400 });
+  const extraPkgRoot = join(extra.snapshotRoot, "pkg");
+  const unexpectedPath = join(extraPkgRoot, "unexpected.py");
+  chmodSync(extraPkgRoot, 0o700);
+  writeFileSync(unexpectedPath, "unowned\n", { mode: 0o400 });
+  chmodSync(unexpectedPath, 0o400);
+  chmodSync(extraPkgRoot, 0o500);
+  if (process.platform !== "win32") {
+    assert.equal(statSync(extraPkgRoot).mode & 0o777, 0o500,
+      "unknown-entry fixture restores the original sealed nested-directory mode before native GC");
+  }
   const refusedExtra = invoke(["source-cache-gc-remove", cacheRoot, extraId], extra.rows);
   assert.equal(refusedExtra.error, undefined);
   assert.notEqual(refusedExtra.status, 0, "native snapshot GC must fail closed if an unknown object appears after prevalidation");
