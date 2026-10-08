@@ -1062,7 +1062,7 @@ async function resolveGit(): Promise<string> {
 }
 
 async function resolvePython(): Promise<string> {
-  const candidates = windows ? ["python", "py"] : ["python3", "python"];
+  const candidates = windows ? ["python", "py"] : ["/usr/bin/python3", "python3", "python"];
   for (const candidate of candidates) {
     try {
       const args = candidate === "py" ? ["-3", "-c", "import sys;print(sys.executable)"] : ["-c", "import sys;print(sys.executable)"];

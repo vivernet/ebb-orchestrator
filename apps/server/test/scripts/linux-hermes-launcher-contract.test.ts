@@ -80,6 +80,7 @@ describe("Linux Hermes native launch boundary source contract", () => {
   });
 
   it("pins the acceptance interpreter to its canonical executable path", () => {
+    expect(sourceSnapshotAcceptance).toContain('const candidates = windows ? ["python", "py"] : ["/usr/bin/python3", "python3", "python"]');
     expect(sourceSnapshotAcceptance).toContain("const canonicalExecutable = linux && executable");
     expect(sourceSnapshotAcceptance).toContain("? await realpath(executable)");
     expect(sourceSnapshotAcceptance).toContain(": executable || undefined");
