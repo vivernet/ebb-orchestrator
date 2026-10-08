@@ -3393,7 +3393,7 @@ int removeSnapshotGcTree(const std::string& cacheRoot, const std::string& direct
   }
   CloseHandle(cache); return ok ? kOk : failureCode;
 #else
-  const int cache = openAbsoluteDirectory(cacheRoot, true);
+  const int cache = openPosixDirectory(cacheRoot, true);
   struct stat cacheInfo{};
   if (cache < 0 || fstat(cache, &cacheInfo) != 0 || (cacheInfo.st_mode & 0777) != 0700) { if (cache >= 0) close(cache); return kPathUnsafe; }
   struct stat rootInfo{};

@@ -261,6 +261,9 @@ describe("native Hermes profile-path safe-path acceptance reporting", () => {
 
   it("preflights the whole candidate before deletion and removes intent after every sidecar", () => {
     const gc = /int removeSnapshotGcTree\([\s\S]*?\n\}/u.exec(nativeSource)?.[0] ?? "";
+    const posixGcBranch = /#else([\s\S]*?)#endif/u.exec(gc)?.[1] ?? "";
+    expect(posixGcBranch).toMatch(/openPosixDirectory\(cacheRoot, true\)/u);
+    expect(posixGcBranch).not.toMatch(/openAbsoluteDirectory/u);
     expect(gc).toMatch(/preflightDirectory\(preflightDirectory, rootHandle[\s\S]*?preflightSidecars\(\)[\s\S]*?for \(const auto& object : nodes\)/u);
     expect(gc).toMatch(/preflightPosixGcDirectory\(root[\s\S]*?preflightPosixGcSidecars\([\s\S]*?for \(const auto& object : nodes\)/u);
     expect(gc).toMatch(/for \(const auto& object : nodes\)[\s\S]*?removeHandle\(rootHandle, objects\.front\(\), true\)[\s\S]*?directoryId \+ "\.manifest\.json"[\s\S]*?directoryId \+ "\.native-v1\.bin"[\s\S]*?"\.gc-" \+ directoryId \+ "\.intent\.json"/u);
