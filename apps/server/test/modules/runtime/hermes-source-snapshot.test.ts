@@ -284,6 +284,7 @@ describe("Hermes shared source snapshot", () => {
     try {
       Object.defineProperty(process, "platform", { ...platformDescriptor, value: "win32" });
       const created = await snapshotModule.materializeHermesSourceSnapshot(request);
+      if (hostPlatform !== "win32") await chmod(join(created.rootPath, "source.txt"), 0o444);
       const metadataPath = join(request.cacheRoot, `${created.directoryId}.manifest.json`);
       const metadata = JSON.parse((await readFile(metadataPath)).toString("utf8")) as {
         cacheKey: string; identity: Record<string, unknown>; manifest: unknown;
@@ -356,11 +357,14 @@ describe("Hermes shared source snapshot", () => {
   it("removes only a dead post-rename owner marker bound to the verified v2 final root", async () => {
     const fixture = await createFixture({ "source.txt": { content: "rename crash cut\n" } });
     const request = requestFor(fixture, join(fixture.root, "cache"));
+    const hostPlatform = process.platform;
     const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
     expect(platformDescriptor?.configurable).toBe(true);
     try {
       Object.defineProperty(process, "platform", { ...platformDescriptor, value: "win32" });
       const original = await snapshotModule.materializeHermesSourceSnapshot(request);
+      if (hostPlatform !== "win32") await chmod(join(original.rootPath, "source.txt"), 0o444);
+      expect(Number((await lstat(join(original.rootPath, "source.txt"))).mode & 0o777)).toBe(0o444);
       const rootIdentity = await lstat(original.rootPath, { bigint: true });
       const nonce = "12345678-1234-4234-9234-123456789012";
       const ownerPath = join(request.cacheRoot, `.staging-${original.directoryId}-${nonce}.owner`);

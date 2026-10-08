@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
 import { createHash, randomUUID } from "node:crypto";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import process from "node:process";
@@ -1032,10 +1032,16 @@ async function verifySourceCacheGcHandles(root) {
 
   const replacedId = createHash("sha256").update(randomUUID()).digest("hex");
   const replaced = makeCandidate(replacedId);
+  chmodSync(replaced.snapshotRoot, 0o700);
   chmodSync(join(replaced.snapshotRoot, "top.py"), 0o600);
   unlinkSync(join(replaced.snapshotRoot, "top.py"));
   writeFileSync(join(replaced.snapshotRoot, "top.py"), "replacement\n", { mode: 0o400 });
   chmodSync(join(replaced.snapshotRoot, "top.py"), 0o400);
+  chmodSync(replaced.snapshotRoot, 0o500);
+  if (process.platform !== "win32") {
+    assert.equal(statSync(replaced.snapshotRoot).mode & 0o777, 0o500,
+      "replacement-identity probe restores the original sealed snapshot-root mode before native GC");
+  }
   const refused = invoke(["source-cache-gc-remove", cacheRoot, replacedId], replaced.rows);
   assert.equal(refused.error, undefined);
   assert.notEqual(refused.status, 0, "native snapshot GC must refuse a replacement identity");
@@ -1062,6 +1068,18 @@ async function verifySourceCacheGcHandles(root) {
   }
   assert.deepEqual(preflightFailures, [], "native GC preflight must finish for the whole tree and sidecars before any deletion");
   assert.equal(existsSync(join(cacheRoot, `.gc-${extraId}.intent.json`)), true, "durable intent must remain for safe retry");
+}
+
+/** Makes only real directories in the private POSIX test fixture removable. */
+function preparePosixFixtureDirectoriesForCleanup(directory) {
+  chmodSync(directory, 0o700);
+  for (const name of readdirSync(directory)) {
+    const child = join(directory, name);
+    const details = lstatSync(child);
+    if (details.isDirectory() && !details.isSymbolicLink()) {
+      preparePosixFixtureDirectoriesForCleanup(child);
+    }
+  }
 }
 
 function verifySourceCacheGcInventoryBoundary(root) {
@@ -1182,7 +1200,10 @@ if (process.argv.includes("--source-staging-only")) {
   } catch (error) {
     primaryError = error;
   } finally {
-    try { rmSync(canonicalSandbox, { recursive: true, force: true }); }
+    try {
+      if (process.platform !== "win32") preparePosixFixtureDirectoriesForCleanup(canonicalSandbox);
+      rmSync(canonicalSandbox, { recursive: true, force: true });
+    }
     catch (cleanupError) {
       if (primaryError) process.stderr.write(`Native GC fixture cleanup also failed: ${String(cleanupError)}\n`);
       else primaryError = cleanupError;
