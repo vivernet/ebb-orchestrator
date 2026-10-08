@@ -273,10 +273,10 @@ describe.skipIf(!enabled || (!windows && !linux))("Hermes native source snapshot
         }
         try {
         if (!liveIdentity) throw new Error("SOURCE_ACCEPTANCE_LIVE_IDENTITY_MISSING");
-        await waitForFile(descendantPath, 15_000);
+        await waitForFileWhileScopeRuns(descendantPath, 15_000, handle, supervisor, liveIdentity);
         await writeFile(fixture.originalModulePath, "VALUE = 'mutable-checkout-v2'\n");
         await writeFile(startGatePath, "go");
-        await waitForFile(markerPath, 15_000);
+        await waitForFileWhileScopeRuns(markerPath, 15_000, handle, supervisor, liveIdentity);
         const marker = JSON.parse(await readFile(markerPath, "utf8")) as Record<string, unknown>;
         expect(marker.importedValue).toBe(SOURCE_MARKER);
         expect(marker.adjacentResourceValue).toBe(SOURCE_RESOURCE);
@@ -609,6 +609,42 @@ function pythonAcceptancePayload(input: {
     `pathlib.Path(${JSON.stringify(input.markerPath)}).write_text(json.dumps({'importedValue': marker_module.VALUE, 'adjacentResourceValue': adjacent_resource_value, 'snapshotHasPycache': snapshot_has_pycache, 'snapshotWriteBlocked': write_blocked, 'snapshotDeleteBlocked': delete_blocked}), encoding='utf-8')`,
     "sys.exit(0)",
   ].join("\n");
+}
+
+/** Ждёт fixture marker одновременно с завершением scope, чтобы ранний native refusal не терялся за timeout. */
+async function waitForFileWhileScopeRuns(
+  pathname: string,
+  timeoutMs: number,
+  handle: ProcessScopeHandle,
+  supervisor: ProcessScopeSupervisor,
+  identity: ProcessScopeIdentity,
+): Promise<void> {
+  const markerResult = waitForFile(pathname, timeoutMs).then(
+    () => ({ kind: "marker" as const }),
+    (error: unknown) => ({ kind: "timeout" as const, error }),
+  );
+  const completionResult = handle.completion.then(
+    (result) => ({ kind: "completed" as const, result }),
+    (error: unknown) => ({ kind: "failed" as const, error }),
+  );
+  const result = await Promise.race([markerResult, completionResult]);
+  if (result.kind === "marker") return;
+  if (result.kind === "completed") {
+    throw new Error(`SOURCE_ACCEPTANCE_SCOPE_EXITED_BEFORE_MARKER:${safeNativeRefusalOutputSummary(result.result)}`);
+  }
+  if (result.kind === "failed") {
+    throw new Error(`SOURCE_ACCEPTANCE_SCOPE_FAILED_BEFORE_MARKER:${safeHermesLaunchFailureAssertionContext(result.error)}`);
+  }
+
+  const observation = await supervisor.inspect(identity).catch(() => ({ state: "UNKNOWN" as const }));
+  const processState = observation.state === "UNKNOWN"
+    ? "UNKNOWN"
+    : observation.state;
+  const stateSuffix = observation.state === "UNKNOWN" && "reason" in observation &&
+      typeof observation.reason === "string" && SAFE_PROCESS_SCOPE_OBSERVATION_REASONS.has(observation.reason)
+    ? `:${observation.reason}`
+    : "";
+  throw new Error(`SOURCE_ACCEPTANCE_MARKER_TIMEOUT:${processState}${stateSuffix}`, { cause: result.error });
 }
 
 function hermesEnvironment(profileHome: string): HermesLaunchEnvironment {
