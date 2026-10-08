@@ -184,7 +184,7 @@ describe.skipIf(!enabled || (!windows && !linux))("Hermes native source snapshot
           expectedNativeFailureCode: variant === "hash"
             ? "LAUNCH_TICKET_SOURCE_SNAPSHOT_TREE_MISMATCH:CONTENT_MISMATCH"
             : "LAUNCH_TICKET_SOURCE_SNAPSHOT_PROJECTION_UNSAFE",
-          expectedLinuxFailureCode: variant === "missing"
+          expectedLinuxFailureCode: variant === "missing" || variant === "malformed"
             ? "HERMES_SOURCE_PROJECTION_UNAVAILABLE"
             : "HERMES_SOURCE_SNAPSHOT_CONTENT_MISMATCH",
           supervisor, onUnprovenStop: () => { cleanupBlocked = true; },
