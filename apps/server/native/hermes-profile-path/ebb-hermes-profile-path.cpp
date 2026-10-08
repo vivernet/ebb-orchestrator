@@ -597,6 +597,41 @@ bool safePrivateDirectoryAcl(HANDLE handle, PSID currentUser) {
   return true;
 }
 
+bool safeProtectedPrivateFixtureDirectoryAcl(HANDLE handle, PSID currentUser) {
+  PSID owner = nullptr;
+  PACL dacl = nullptr;
+  PSECURITY_DESCRIPTOR descriptor = nullptr;
+  const DWORD result = GetSecurityInfo(handle, SE_FILE_OBJECT,
+    OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION, &owner, nullptr, &dacl, nullptr, &descriptor);
+  if (result != ERROR_SUCCESS || owner == nullptr || dacl == nullptr || descriptor == nullptr ||
+      !EqualSid(owner, currentUser)) {
+    if (descriptor) LocalFree(descriptor);
+    return false;
+  }
+  SECURITY_DESCRIPTOR_CONTROL control{};
+  DWORD revision = 0;
+  ACL_SIZE_INFORMATION info{};
+  bool valid = GetSecurityDescriptorControl(descriptor, &control, &revision) != 0 &&
+    (control & SE_DACL_PROTECTED) != 0 &&
+    GetAclInformation(dacl, &info, sizeof(info), AclSizeInformation) != 0 && info.AceCount == 1;
+  if (valid) {
+    void* rawAce = nullptr;
+    valid = GetAce(dacl, 0, &rawAce) != 0 && rawAce != nullptr;
+    if (valid) {
+      const auto* header = static_cast<ACE_HEADER*>(rawAce);
+      constexpr BYTE kInheritance = OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE;
+      valid = header->AceType == ACCESS_ALLOWED_ACE_TYPE && header->AceFlags == kInheritance;
+      if (valid) {
+        const auto* ace = static_cast<ACCESS_ALLOWED_ACE*>(rawAce);
+        PSID trustee = const_cast<DWORD*>(&ace->SidStart);
+        valid = EqualSid(trustee, currentUser) != 0 && ace->Mask == FILE_ALL_ACCESS;
+      }
+    }
+  }
+  LocalFree(descriptor);
+  return valid;
+}
+
 bool safeProtectedPrivateFileAcl(HANDLE handle, PSID currentUser) {
   PSID owner = nullptr;
   PACL dacl = nullptr;
@@ -835,7 +870,8 @@ HANDLE openWindowsChildDirectory(HANDLE parent, const std::wstring& name, ULONG 
   return handle;
 }
 
-HANDLE openWindowsChildFile(HANDLE parent, const std::wstring& name, bool shareDelete = true) {
+HANDLE openWindowsChildFile(HANDLE parent, const std::wstring& name, bool shareDelete = true,
+                            ACCESS_MASK extraAccess = 0) {
   if (name.empty() || name.size() > 255) return INVALID_HANDLE_VALUE;
   UNICODE_STRING objectName{};
   objectName.Buffer = const_cast<PWSTR>(name.c_str());
@@ -846,7 +882,7 @@ HANDLE openWindowsChildFile(HANDLE parent, const std::wstring& name, bool shareD
   IO_STATUS_BLOCK ioStatus{};
   HANDLE handle = INVALID_HANDLE_VALUE;
   const NTSTATUS status = NtCreateFile(&handle,
-    FILE_READ_ATTRIBUTES | READ_CONTROL | SYNCHRONIZE,
+    FILE_READ_ATTRIBUTES | READ_CONTROL | SYNCHRONIZE | extraAccess,
     &attributes, &ioStatus, nullptr, FILE_ATTRIBUTE_NORMAL,
     FILE_SHARE_READ | FILE_SHARE_WRITE | (shareDelete ? FILE_SHARE_DELETE : 0),
     FILE_OPEN,
@@ -1145,6 +1181,7 @@ int verifySafeWindowsPathChain(const std::wstring& rawPath, const std::wstring& 
   };
   if (!appendIdentity(volume, driveRoot) || identities.front().volumeSerial != verifiedRootVolumeSerial ||
       identities.front().fileId != verifiedRootFileId) {
+    std::cerr << "SAFE_PATH_CHAIN_IDENTITY_UNAVAILABLE:ROOT\n";
     closePathChainHandles(heldHandles);
     return kPathIdentityUnavailable;
   }
@@ -1175,6 +1212,7 @@ int verifySafeWindowsPathChain(const std::wstring& rawPath, const std::wstring& 
       return kPathComponentUnsafe + aclFailureStage;
     }
     if (!appendIdentity(next, expectedCanonicalPath)) {
+      std::cerr << "SAFE_PATH_CHAIN_IDENTITY_UNAVAILABLE:COMPONENT_INDEX_" << chainIndex << "\n";
       closePathChainHandles(heldHandles);
       return kPathIdentityUnavailable;
     }
@@ -1184,6 +1222,7 @@ int verifySafeWindowsPathChain(const std::wstring& rawPath, const std::wstring& 
   // Refuse an unexpectedly large serialization instead of emitting an unbounded helper response.
   const size_t estimatedJsonBytes = 128 + identities.size() * 120;
   if (estimatedJsonBytes > kMaxPathChainJsonBytes) {
+    std::cerr << "SAFE_PATH_CHAIN_IDENTITY_UNAVAILABLE:SERIALIZATION_LIMIT\n";
     closePathChainHandles(heldHandles);
     return kPathIdentityUnavailable;
   }
@@ -1522,8 +1561,11 @@ bool windowsChildDoesNotExist(HANDLE directory, const std::wstring& name);
 
 bool windowsDirectoryIsEmpty(HANDLE directory) {
   std::array<unsigned char, 4096> buffer{};
+  bool restart = true;
   for (;;) {
-    if (!GetFileInformationByHandleEx(directory, FileIdBothDirectoryInfo, buffer.data(),
+    const auto infoClass = restart ? FileIdBothDirectoryRestartInfo : FileIdBothDirectoryInfo;
+    restart = false;
+    if (!GetFileInformationByHandleEx(directory, infoClass, buffer.data(),
         static_cast<DWORD>(buffer.size()))) {
       return GetLastError() == ERROR_NO_MORE_FILES;
     }
@@ -1535,6 +1577,345 @@ bool windowsDirectoryIsEmpty(HANDLE directory) {
       entry = reinterpret_cast<FILE_ID_BOTH_DIR_INFO*>(reinterpret_cast<unsigned char*>(entry) + entry->NextEntryOffset);
     }
   }
+}
+
+struct WindowsFixtureTreeNode {
+  std::wstring name;
+  std::string volumeSerial;
+  std::string fileId;
+  HANDLE handle = INVALID_HANDLE_VALUE;
+  bool directory = false;
+  size_t depth = 0;
+};
+
+int identifyWindowsFixtureTree(const std::string& rawRoot) {
+  if (rawRoot.size() > kMaxPathChainJsonBytes) return kInvalidInput;
+  const std::wstring rootPath = widenUtf8(rawRoot);
+  std::vector<std::wstring> components;
+  std::wstring driveRoot;
+  if (rootPath.empty() || !parseWindowsPath(rootPath, components, driveRoot) || components.empty() ||
+      components.size() > kMaxPathChainComponents) return kInvalidInput;
+  std::vector<unsigned char> sidStorage;
+  PSID userSid = nullptr;
+  if (!getCurrentUserSid(sidStorage, userSid)) return kPathUnsafe;
+  std::vector<HANDLE> handles;
+  HANDLE volume = CreateFileW(driveRoot.c_str(), FILE_READ_ATTRIBUTES | FILE_TRAVERSE | READ_CONTROL,
+    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+    FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+  if (volume == INVALID_HANDLE_VALUE) return kPathRootOpenFailed;
+  handles.push_back(volume);
+  FILE_ATTRIBUTE_TAG_INFO volumeInfo{};
+  std::string canonicalPath, expectedVolumeSerial, ignoredFileId;
+  if (!getHandleAttributes(volume, volumeInfo) || (volumeInfo.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 ||
+      (volumeInfo.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0 ||
+      !getVerifiedVolumeRootIdentity(volume, expectedVolumeSerial, ignoredFileId)) {
+    for (HANDLE handle : handles) CloseHandle(handle);
+    return kPathRootUnsafe;
+  }
+  HANDLE root = INVALID_HANDLE_VALUE;
+  for (size_t index = 0; index < components.size(); ++index) {
+    HANDLE next = openWindowsChildDirectory(handles.back(), components[index], FILE_OPEN, nullptr, false, true, 0, false);
+    if (next == INVALID_HANDLE_VALUE) {
+      for (HANDLE handle : handles) CloseHandle(handle);
+      return kPathComponentOpenFailed + static_cast<int>(index);
+    }
+    handles.push_back(next);
+    std::string componentPath, componentVolumeSerial, componentFileId;
+    if (!getSafeHandleIdentity(next, componentPath, componentVolumeSerial, componentFileId) ||
+        componentVolumeSerial != expectedVolumeSerial) {
+      for (HANDLE handle : handles) CloseHandle(handle);
+      return kPathIdentityUnavailable;
+    }
+    if (index + 1 == components.size()) root = next;
+  }
+  FILE_ATTRIBUTE_TAG_INFO rootInfo{};
+  std::string fileId;
+  if (root == INVALID_HANDLE_VALUE || !getHandleAttributes(root, rootInfo) ||
+      (rootInfo.FileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) != FILE_ATTRIBUTE_DIRECTORY ||
+      !safeProtectedPrivateFixtureDirectoryAcl(root, userSid) ||
+      !getSafeHandleIdentity(root, canonicalPath, expectedVolumeSerial, fileId) ||
+      expectedVolumeSerial.size() != 16 || fileId.size() != 32 || canonicalPath.empty() ||
+      canonicalPath.size() > (kMaxPathChainJsonBytes - 128) / 6) {
+    for (HANDLE handle : handles) CloseHandle(handle);
+    return kPathIdentityUnavailable;
+  }
+  printSafePathIdentity("directory", canonicalPath, expectedVolumeSerial, fileId);
+  const bool outputOk = static_cast<bool>(std::cout);
+  for (HANDLE handle : handles) CloseHandle(handle);
+  return outputOk ? kOk : kPathIdentityUnavailable;
+}
+
+int removeWindowsFixtureTree(const std::string& rawRoot, const std::string& expectedVolumeSerial,
+                             const std::string& expectedFileId) {
+  // Keep cleanup refusals phase-specific for the opt-in acceptance harness. These statuses carry
+  // no path or security descriptor data and let the harness distinguish preflight from mutation.
+  constexpr int kFixtureCollectUnsafe = 51;
+  constexpr int kFixtureLinkPreflightUnsafe = 52;
+  constexpr int kFixtureNodeIdentityUnsafe = 53;
+  constexpr int kFixtureNodeLinkUnsafe = 54;
+  constexpr int kFixtureReadAttributesUnsafe = 55;
+  constexpr int kFixtureSetAttributesUnsafe = 56;
+  constexpr int kFixtureRootEmptyUnsafe = 58;
+  constexpr int kFixtureRootIdentityUnsafe = 59;
+  constexpr int kFixtureRootDispositionUnsafe = 60;
+  constexpr int kFixtureCollectBoundsUnsafe = 61;
+  constexpr int kFixtureCollectEnumerationUnsafe = 62;
+  constexpr int kFixtureCollectNameUnsafe = 63;
+  constexpr int kFixtureCollectReparseUnsafe = 64;
+  constexpr int kFixtureCollectOpenUnsafe = 65;
+  constexpr int kFixtureCollectAttributesUnavailable = 67;
+  constexpr int kFixtureCollectTypeMismatch = 68;
+  constexpr int kFixtureCollectOpenedReparseUnsafe = 69;
+  constexpr int kFixtureCollectLinkCountUnsafe = 70;
+  constexpr int kFixtureCollectIdentityUnavailable = 71;
+  constexpr int kFixtureCollectVolumeMismatch = 72;
+  constexpr int kFixtureCollectFileIdInvalid = 73;
+  constexpr int kFixtureCollectAclUnsafe = 74;
+  constexpr int kFixtureDispositionFileAccessDenied = 75;
+  constexpr int kFixtureDispositionSharingViolation = 76;
+  constexpr int kFixtureDispositionDirectoryNotEmpty = 77;
+  constexpr int kFixtureDispositionInvalidParameter = 78;
+  constexpr int kFixtureDispositionOtherFailure = 79;
+  constexpr int kFixtureDispositionDirectoryAccessDenied = 80;
+  constexpr size_t kFixtureNodeLimit = 100000;
+  constexpr size_t kFixtureNameBytesLimit = 8 * 1024 * 1024;
+  struct CaseInsensitiveOrdinalLess {
+    bool operator()(const std::wstring& left, const std::wstring& right) const {
+      return CompareStringOrdinal(left.c_str(), static_cast<int>(left.size()),
+        right.c_str(), static_cast<int>(right.size()), TRUE) == CSTR_LESS_THAN;
+    }
+  };
+  const auto isLowerHex = [](const std::string& value, size_t size) {
+    return value.size() == size && value.find_first_not_of("0123456789abcdef") == std::string::npos;
+  };
+  if (rawRoot.empty() || rawRoot.size() > kMaxPathChainJsonBytes ||
+      !isLowerHex(expectedVolumeSerial, 16) || !isLowerHex(expectedFileId, 32)) return kInvalidInput;
+  const std::wstring rootPath = widenUtf8(rawRoot);
+  std::vector<std::wstring> components;
+  std::wstring driveRoot;
+  if (rootPath.empty() || !parseWindowsPath(rootPath, components, driveRoot) || components.empty() ||
+      components.size() > kMaxPathChainComponents) return kInvalidInput;
+
+  std::vector<unsigned char> sidStorage;
+  PSID userSid = nullptr;
+  if (!getCurrentUserSid(sidStorage, userSid)) return kPathUnsafe;
+  std::vector<HANDLE> pathHandles;
+  std::vector<WindowsFixtureTreeNode> nodes;
+  auto closeHandles = [&]() {
+    for (auto& node : nodes) if (node.handle != INVALID_HANDLE_VALUE) CloseHandle(node.handle);
+    for (HANDLE handle : pathHandles) if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
+  };
+  HANDLE volume = CreateFileW(driveRoot.c_str(), FILE_READ_ATTRIBUTES | FILE_TRAVERSE | READ_CONTROL,
+    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+    FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+  if (volume == INVALID_HANDLE_VALUE) return kPathRootOpenFailed;
+  pathHandles.push_back(volume);
+  FILE_ATTRIBUTE_TAG_INFO volumeInfo{};
+  if (!getHandleAttributes(volume, volumeInfo) || (volumeInfo.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 ||
+      (volumeInfo.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+    closeHandles();
+    return kPathRootUnsafe;
+  }
+
+  HANDLE root = INVALID_HANDLE_VALUE;
+  for (size_t index = 0; index < components.size(); ++index) {
+    const bool final = index + 1 == components.size();
+    HANDLE next = openWindowsChildDirectory(pathHandles.back(), components[index], FILE_OPEN, nullptr, false, true,
+      final ? DELETE | FILE_LIST_DIRECTORY | FILE_WRITE_ATTRIBUTES : 0, false);
+    if (next == INVALID_HANDLE_VALUE) {
+      closeHandles();
+      return kPathComponentOpenFailed + static_cast<int>(index);
+    }
+    pathHandles.push_back(next);
+    if (final) root = next;
+  }
+
+  std::string rootCanonicalPath, rootVolumeSerial, rootFileId;
+  const bool rootIdentityValid = root != INVALID_HANDLE_VALUE &&
+    getSafeHandleIdentity(root, rootCanonicalPath, rootVolumeSerial, rootFileId) &&
+    rootVolumeSerial == expectedVolumeSerial && rootFileId == expectedFileId;
+  FILE_ATTRIBUTE_TAG_INFO rootInfo{};
+  if (!rootIdentityValid || !getHandleAttributes(root, rootInfo) ||
+      (rootInfo.FileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) != FILE_ATTRIBUTE_DIRECTORY ||
+      !safeProtectedPrivateFixtureDirectoryAcl(root, userSid)) {
+    closeHandles();
+    return kPathIdentityUnavailable;
+  }
+
+  size_t aggregateNameBytes = 0;
+  int collectFailure = kFixtureCollectUnsafe;
+  const auto collect = [&](auto&& self, HANDLE parent, size_t depth) -> bool {
+    if (depth > kMaxPathChainComponents || nodes.size() >= kFixtureNodeLimit) {
+      collectFailure = kFixtureCollectBoundsUnsafe;
+      return false;
+    }
+    std::vector<unsigned char> buffer(64 * 1024);
+    std::set<std::wstring, CaseInsensitiveOrdinalLess> seenNames;
+    bool restart = true;
+    for (;;) {
+      const auto infoClass = restart ? FileIdBothDirectoryRestartInfo : FileIdBothDirectoryInfo;
+      restart = false;
+      if (!GetFileInformationByHandleEx(parent, infoClass, buffer.data(), static_cast<DWORD>(buffer.size()))) {
+        if (GetLastError() == ERROR_NO_MORE_FILES) return true;
+        collectFailure = kFixtureCollectEnumerationUnsafe;
+        return false;
+      }
+      auto* entry = reinterpret_cast<FILE_ID_BOTH_DIR_INFO*>(buffer.data());
+      for (;;) {
+          const std::wstring name(entry->FileName, entry->FileNameLength / sizeof(wchar_t));
+          if (name != L"." && name != L"..") {
+            if (name.empty() || name.size() > 255 || name.find(L'\\') != std::wstring::npos ||
+              name.find(L'/') != std::wstring::npos || name.find(L'\0') != std::wstring::npos) {
+            collectFailure = kFixtureCollectNameUnsafe;
+            return false;
+          }
+          if (nodes.size() >= kFixtureNodeLimit) {
+            collectFailure = kFixtureCollectBoundsUnsafe;
+            return false;
+          }
+          if (!seenNames.insert(name).second) {
+            collectFailure = kFixtureCollectNameUnsafe;
+            return false;
+          }
+          aggregateNameBytes += name.size() * sizeof(wchar_t);
+          if (aggregateNameBytes > kFixtureNameBytesLimit) {
+            collectFailure = kFixtureCollectBoundsUnsafe;
+            return false;
+          }
+          const bool directory = (entry->FileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+          if ((entry->FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
+            collectFailure = kFixtureCollectReparseUnsafe;
+            return false;
+          }
+          HANDLE child = directory
+            ? openWindowsChildDirectory(parent, name, FILE_OPEN, nullptr, false, true,
+                DELETE | FILE_LIST_DIRECTORY | FILE_WRITE_ATTRIBUTES, false)
+            : openWindowsChildFile(parent, name, false, DELETE | FILE_WRITE_ATTRIBUTES);
+          if (child == INVALID_HANDLE_VALUE) {
+            collectFailure = kFixtureCollectOpenUnsafe;
+            return false;
+          }
+          FILE_ATTRIBUTE_TAG_INFO tag{};
+          std::string canonicalPath, childVolumeSerial, childFileId;
+          const auto rejectChild = [&](int failure) {
+            CloseHandle(child);
+            collectFailure = failure;
+            return false;
+          };
+          if (!getHandleAttributes(child, tag)) return rejectChild(kFixtureCollectAttributesUnavailable);
+          if (((tag.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) != directory) {
+            return rejectChild(kFixtureCollectTypeMismatch);
+          }
+          if ((tag.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
+            return rejectChild(kFixtureCollectOpenedReparseUnsafe);
+          }
+          if (!directory) {
+            FILE_STANDARD_INFO standard{};
+            if (!GetFileInformationByHandleEx(child, FileStandardInfo, &standard, sizeof(standard)) ||
+                standard.NumberOfLinks != 1) return rejectChild(kFixtureCollectLinkCountUnsafe);
+          }
+          if (!getSafeHandleIdentity(child, canonicalPath, childVolumeSerial, childFileId)) {
+            return rejectChild(kFixtureCollectIdentityUnavailable);
+          }
+          if (childVolumeSerial != expectedVolumeSerial) return rejectChild(kFixtureCollectVolumeMismatch);
+          if (childFileId.size() != 32) return rejectChild(kFixtureCollectFileIdInvalid);
+          if (!safePrivateDirectoryAcl(child, userSid)) return rejectChild(kFixtureCollectAclUnsafe);
+          nodes.push_back({name, std::move(childVolumeSerial), std::move(childFileId), child, directory, depth});
+          const size_t nodeIndex = nodes.size() - 1;
+          if (directory && !self(self, nodes[nodeIndex].handle, depth + 1)) return false;
+        }
+        if (entry->NextEntryOffset == 0) break;
+        entry = reinterpret_cast<FILE_ID_BOTH_DIR_INFO*>(reinterpret_cast<unsigned char*>(entry) + entry->NextEntryOffset);
+      }
+    }
+  };
+  if (!collect(collect, root, 1)) {
+    closeHandles();
+    return collectFailure;
+  }
+
+  // Recheck every regular file after the full-tree preflight and before the first deletion or
+  // attribute change. A hardlink to an entry outside the disposable fixture must retain the tree.
+  for (const auto& node : nodes) {
+    if (node.directory) continue;
+    FILE_STANDARD_INFO standard{};
+    if (!GetFileInformationByHandleEx(node.handle, FileStandardInfo, &standard, sizeof(standard)) ||
+        standard.NumberOfLinks != 1) {
+      closeHandles();
+      return kFixtureLinkPreflightUnsafe;
+    }
+  }
+
+  std::vector<size_t> removalOrder(nodes.size());
+  for (size_t index = 0; index < nodes.size(); ++index) removalOrder[index] = index;
+  std::stable_sort(removalOrder.begin(), removalOrder.end(), [&](size_t left, size_t right) {
+    return nodes[left].depth > nodes[right].depth;
+  });
+  for (const size_t index : removalOrder) {
+    auto& node = nodes[index];
+    std::string canonicalPath, volumeSerial, fileId;
+    FILE_ATTRIBUTE_TAG_INFO tag{};
+    if (!getSafeHandleIdentity(node.handle, canonicalPath, volumeSerial, fileId) ||
+        volumeSerial != node.volumeSerial || fileId != node.fileId ||
+        !getHandleAttributes(node.handle, tag) || (tag.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 ||
+        (((tag.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) != node.directory) ||
+        !safePrivateDirectoryAcl(node.handle, userSid) ||
+        (node.directory && !windowsDirectoryIsEmpty(node.handle))) {
+      closeHandles();
+      return kFixtureNodeIdentityUnsafe;
+    }
+    if (!node.directory) {
+      FILE_STANDARD_INFO standard{};
+      if (!GetFileInformationByHandleEx(node.handle, FileStandardInfo, &standard, sizeof(standard)) ||
+          standard.NumberOfLinks != 1) {
+        closeHandles();
+        return kFixtureNodeLinkUnsafe;
+      }
+    }
+    if ((tag.FileAttributes & FILE_ATTRIBUTE_READONLY) != 0) {
+      FILE_BASIC_INFO basic{};
+      if (!GetFileInformationByHandleEx(node.handle, FileBasicInfo, &basic, sizeof(basic))) {
+        closeHandles(); return kFixtureReadAttributesUnsafe;
+      }
+      basic.FileAttributes &= ~FILE_ATTRIBUTE_READONLY;
+      if (!SetFileInformationByHandle(node.handle, FileBasicInfo, &basic, sizeof(basic))) {
+        closeHandles(); return kFixtureSetAttributesUnsafe;
+      }
+    }
+    FILE_DISPOSITION_INFO disposition{};
+    disposition.DeleteFile = TRUE;
+    if (!SetFileInformationByHandle(node.handle, FileDispositionInfo, &disposition, sizeof(disposition))) {
+      const DWORD error = GetLastError();
+      closeHandles();
+      if (error == ERROR_ACCESS_DENIED) {
+        return node.directory ? kFixtureDispositionDirectoryAccessDenied : kFixtureDispositionFileAccessDenied;
+      }
+      if (error == ERROR_SHARING_VIOLATION) return kFixtureDispositionSharingViolation;
+      if (error == ERROR_DIR_NOT_EMPTY) return kFixtureDispositionDirectoryNotEmpty;
+      if (error == ERROR_INVALID_PARAMETER) return kFixtureDispositionInvalidParameter;
+      return kFixtureDispositionOtherFailure;
+    }
+    CloseHandle(node.handle);
+    node.handle = INVALID_HANDLE_VALUE;
+  }
+  if (!windowsDirectoryIsEmpty(root) || !safeProtectedPrivateFixtureDirectoryAcl(root, userSid)) {
+    closeHandles();
+    return kFixtureRootEmptyUnsafe;
+  }
+  std::string finalCanonicalPath, finalVolumeSerial, finalFileId;
+  if (!getSafeHandleIdentity(root, finalCanonicalPath, finalVolumeSerial, finalFileId) ||
+      finalVolumeSerial != expectedVolumeSerial || finalFileId != expectedFileId) {
+    closeHandles();
+    return kFixtureRootIdentityUnsafe;
+  }
+  FILE_DISPOSITION_INFO rootDisposition{};
+  rootDisposition.DeleteFile = TRUE;
+  if (!SetFileInformationByHandle(root, FileDispositionInfo, &rootDisposition, sizeof(rootDisposition))) {
+    closeHandles();
+    return kFixtureRootDispositionUnsafe;
+  }
+  closeHandles();
+  return kOk;
 }
 
 int cleanupWindowsProfile(const std::string& rootUtf8, const std::string& runId) {
@@ -3448,10 +3829,38 @@ int cleanupProfile(const std::string& root, const std::string& runId) {
 #endif
 }
 
+int removeFixtureTree(const std::string& root, const std::string& volumeSerial, const std::string& fileId) {
+#ifdef _WIN32
+  return removeWindowsFixtureTree(root, volumeSerial, fileId);
+#else
+  (void)root;
+  (void)volumeSerial;
+  (void)fileId;
+  return kPathUnsafe;
+#endif
+}
+
+int identifyFixtureTree(const std::string& root) {
+#ifdef _WIN32
+  return identifyWindowsFixtureTree(root);
+#else
+  (void)root;
+  return kPathUnsafe;
+#endif
+}
+
 } // namespace
 
 #ifdef _WIN32
 int wmain(int argc, wchar_t** argv) {
+  if (argc == 3 && argv[1] != nullptr && argv[2] != nullptr &&
+      argv[1] == std::wstring(L"fixture-tree-identity")) {
+    return identifyFixtureTree(narrowUtf8(argv[2]));
+  }
+  if (argc == 5 && argv[1] != nullptr && argv[2] != nullptr && argv[3] != nullptr && argv[4] != nullptr &&
+      argv[1] == std::wstring(L"fixture-tree-remove")) {
+    return removeFixtureTree(narrowUtf8(argv[2]), narrowUtf8(argv[3]), narrowUtf8(argv[4]));
+  }
   if (argc == 5 && argv[1] != nullptr && argv[2] != nullptr && argv[3] != nullptr && argv[4] != nullptr && argv[1] == std::wstring(L"source-cache-lock")) {
     return holdSourceCacheLock(narrowUtf8(argv[2]), narrowUtf8(argv[3]), narrowUtf8(argv[4]));
   }
@@ -3528,6 +3937,10 @@ int wmain(int argc, wchar_t** argv) {
 }
 #else
 int main(int argc, char** argv) {
+  if (argc == 3 && std::string(argv[1]) == "fixture-tree-identity") return identifyFixtureTree(argv[2]);
+  if (argc == 5 && std::string(argv[1]) == "fixture-tree-remove") {
+    return removeFixtureTree(argv[2], argv[3], argv[4]);
+  }
   if (argc == 5 && std::string(argv[1]) == "source-cache-lock") return holdSourceCacheLock(argv[2], argv[3], argv[4]);
   if (argc == 5 && std::string(argv[1]) == "source-cache-reference-lock") return holdSourceCacheReferenceLock(argv[2], argv[3], argv[4]);
   if (argc == 4 && std::string(argv[1]) == "source-cache-gc-remove") return removeSnapshotGcTree(argv[2], argv[3]);

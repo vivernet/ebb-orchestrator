@@ -65,6 +65,13 @@ export function sanitizeHermesPathIdentityDiagnostic(error: unknown): string {
         Number(componentAclFailure[1]) <= 64) {
       return `SECONDARY_PATH_COMPONENT_ACL_UNSAFE:INDEX_${componentAclFailure[1]}:STAGE_${componentAclFailure[2]}`;
     }
+    const identityFailure = error.stderr.split(/\r?\n/u)
+      .map((line) => /^SAFE_PATH_CHAIN_IDENTITY_UNAVAILABLE:(ROOT|COMPONENT_INDEX_([1-9][0-9]?)|SERIALIZATION_LIMIT)$/u.exec(line))
+      .find((match) => match !== null);
+    if (identityFailure && error.exitCode === 34 &&
+        (identityFailure[1] !== `COMPONENT_INDEX_${identityFailure[2]}` || Number(identityFailure[2]) <= 64)) {
+      return `SECONDARY_PATH_IDENTITY_UNAVAILABLE:${identityFailure[1]}`;
+    }
   }
   return "SECONDARY_PATH_IDENTITY_UNAVAILABLE";
 }

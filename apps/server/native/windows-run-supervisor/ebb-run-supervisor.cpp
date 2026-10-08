@@ -1877,7 +1877,8 @@ bool inspect(
   DWORD helperPid,
   ULONGLONG helperCreation,
   bool hasHelperIdentity,
-  bool launchPending
+  bool launchPending,
+  bool attemptSettled
 ) {
   Handle job(OpenJobObjectW(JOB_OBJECT_QUERY | JOB_OBJECT_TERMINATE | SYNCHRONIZE, FALSE, jobName(id).c_str()));
   if (!job) {
@@ -1885,6 +1886,7 @@ bool inspect(
     if (error != ERROR_FILE_NOT_FOUND) return writeStdout("UNKNOWN\tJOB_OPEN_UNAVAILABLE\n");
     if (launchPending) return writeStdout("UNKNOWN\tJOB_ABSENT_LAUNCH_PENDING\n");
     if (ownerState == L"PREPARED") {
+      if (attemptSettled && !hasHelperIdentity) return writeStdout("STOPPED\tJOB_ABSENT_ATTEMPT_SETTLED\n");
       return hasHelperIdentity
         ? writeStdout("UNKNOWN\tJOB_ABSENT_PREPARED_HAS_HELPER_IDENTITY\n")
         : writeStdout("STOPPED\tOWNER_NEVER_LAUNCHED\n");
@@ -1893,7 +1895,11 @@ bool inspect(
         ownerState != L"STOPPED" && ownerState != L"UNKNOWN") {
       return writeStdout("UNKNOWN\tJOB_ABSENT_OWNER_STATE_UNKNOWN\n");
     }
-    if (!hasHelperIdentity) return writeStdout("UNKNOWN\tJOB_ABSENT_HELPER_IDENTITY_MISSING\n");
+    if (!hasHelperIdentity) {
+      return attemptSettled
+        ? writeStdout("STOPPED\tJOB_ABSENT_ATTEMPT_SETTLED\n")
+        : writeStdout("UNKNOWN\tJOB_ABSENT_HELPER_IDENTITY_MISSING\n");
+    }
     bool helperAbsent = false;
     if (!processInventoryConfirmsHelperAbsent(helperPid, helperCreation, &helperAbsent)) {
       return writeStdout("UNKNOWN\tJOB_ABSENT_HELPER_INVENTORY_UNAVAILABLE\n");
@@ -2047,18 +2053,24 @@ int run(int argc, wchar_t** argv) {
     if (!launch(argv[2], argv[3], &payloadExitCode, operation == L"launch-evidence")) return 3;
     return static_cast<int>(payloadExitCode);
   }
-  if (operation == L"inspect" && argc == 8 && isHexId(argv[2]) && isHexId(argv[3]) && isOwnerState(argv[4])) {
+  if (operation == L"inspect" && argc == 9 && isHexId(argv[2]) && isHexId(argv[3]) && isOwnerState(argv[4])) {
     DWORD helperPid = 0;
     ULONGLONG helperCreation = 0;
     bool hasHelperIdentity = false;
     const std::wstring pendingText(argv[7]);
     const bool launchPending = pendingText == L"1";
+    const std::wstring attemptSettledText(argv[8]);
+    const bool attemptSettled = attemptSettledText == L"1";
     if (!parseHelperIdentity(argv[5], argv[6], &helperPid, &helperCreation, &hasHelperIdentity)) {
       report("ARGUMENTS_INVALID");
       return 2;
     }
-    if (pendingText != L"0" && pendingText != L"1") { report("ARGUMENTS_INVALID"); return 2; }
-    return inspect(argv[2], argv[3], argv[4], helperPid, helperCreation, hasHelperIdentity, launchPending) ? 0 : 4;
+    if ((pendingText != L"0" && pendingText != L"1") ||
+        (attemptSettledText != L"0" && attemptSettledText != L"1") || (launchPending && attemptSettled)) {
+      report("ARGUMENTS_INVALID"); return 2;
+    }
+    return inspect(argv[2], argv[3], argv[4], helperPid, helperCreation, hasHelperIdentity,
+      launchPending, attemptSettled) ? 0 : 4;
   }
   if (operation == L"phase" && argc == 4 && isHexId(argv[2]) && isHexId(argv[3])) {
     return inspectLaunchPhase(argv[2], argv[3]) ? 0 : 4;

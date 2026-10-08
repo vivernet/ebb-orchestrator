@@ -67,6 +67,18 @@ describe("restart child failure diagnostics", () => {
     ]) expect(safeRestartChildFailureCode(new Error(unsafe))).toBeUndefined();
   });
 
+  it("preserves only fixed native handshake trace stages, bounded timings, allowlisted codes, and booleans", () => {
+    const safe = "WINDOWS_NATIVE_HELPER_DIAGNOSTIC:PHASE_UNCLASSIFIED:TYPE_UNCLASSIFIED:EXIT_3:READY_ABSENT:STAGES=INVOCATION@0,SESSION@2,OUT@3,TIMEOUT@10000,SETTLED@10001:OUTCODE=UNKNOWN_JOB_CREATE_FAILED_OR_EXISTS:OUTB=1:ERRB=0:DONE=1:OUTEND=1:ERREND=1";
+    expect(safeRestartChildFailureCode(new Error(safe))).toBe(safe);
+    for (const unsafe of [
+      safe.replace("INVOCATION@0", "C:\\private@0"),
+      safe.replace("UNKNOWN_JOB_CREATE_FAILED_OR_EXISTS", "UNKNOWN_PROVIDER_SECRET"),
+      safe.replace("TIMEOUT@10000", "TIMEOUT@60001"),
+      safe.replace("OUTB=1", "OUTB=true"),
+      safe.replace("OUTEND=1", "OUTEND=1:OPENAI_API_KEY=secret"),
+    ]) expect(safeRestartChildFailureCode(new Error(unsafe))).toBeUndefined();
+  });
+
   it("matches the native Windows report and UNKNOWN code sets exactly", async () => {
     const nativeSource = await readFile(new URL("../../native/windows-run-supervisor/ebb-run-supervisor.cpp", import.meta.url), "utf8");
     const supervisorSource = await readFile(new URL("../../src/platform/process/windows-job-supervisor.ts", import.meta.url), "utf8");

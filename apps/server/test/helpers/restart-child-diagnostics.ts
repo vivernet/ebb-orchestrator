@@ -276,7 +276,7 @@ function extractRestartChildFailureDiagnostic(output: string): string | undefine
 }
 
 function parseSafeErrorCode(message: string): string | undefined {
-  if (message.length > 256) return undefined;
+  if (message.length > 768) return undefined;
   if (SAFE_RESTART_CHILD_ERROR_CODES.has(message)) return message;
   if (isSafeNativeHelperDiagnostic(message)) return message;
 
@@ -299,8 +299,28 @@ function isAllowlistedCode(code: string): boolean {
 }
 
 function isSafeNativeHelperDiagnostic(value: string): boolean {
-  const match = /^WINDOWS_NATIVE_HELPER_DIAGNOSTIC:PHASE_([A-Z_]+):TYPE_([A-Z0-9_]+):EXIT_(\d{1,3}|UNAVAILABLE):READY_(PRESENT|ABSENT)$/u.exec(value);
-  if (!match || !SAFE_NATIVE_HELPER_DIAGNOSTIC_PHASES.has(match[1]!) ||
-      !SAFE_NATIVE_HELPER_DIAGNOSTIC_TYPES.has(match[2]!)) return false;
-  return match[3] === "UNAVAILABLE" || Number(match[3]) <= 255;
+  const fields = value.split(":");
+  if ((fields.length !== 5 && fields.length !== 12) || fields[0] !== "WINDOWS_NATIVE_HELPER_DIAGNOSTIC") return false;
+  const phase = /^PHASE_([A-Z_]+)$/u.exec(fields[1] ?? "")?.[1];
+  const exceptionType = /^TYPE_([A-Z0-9_]+)$/u.exec(fields[2] ?? "")?.[1];
+  const exitCode = /^EXIT_(\d{1,3}|UNAVAILABLE)$/u.exec(fields[3] ?? "")?.[1];
+  if (!phase || !SAFE_NATIVE_HELPER_DIAGNOSTIC_PHASES.has(phase) || !exceptionType ||
+      !SAFE_NATIVE_HELPER_DIAGNOSTIC_TYPES.has(exceptionType) || !exitCode ||
+      (exitCode !== "UNAVAILABLE" && Number(exitCode) > 255) ||
+      (fields[4] !== "READY_PRESENT" && fields[4] !== "READY_ABSENT")) return false;
+  if (fields.length === 5) return true;
+
+  const stagesField = /^STAGES=(.+)$/u.exec(fields[5] ?? "")?.[1];
+  const stdoutCode = /^OUTCODE=(.+)$/u.exec(fields[6] ?? "")?.[1];
+  if (!stagesField || !stdoutCode || !/^OUTB=[01]$/u.test(fields[7] ?? "") ||
+      !/^ERRB=[01]$/u.test(fields[8] ?? "") || !/^DONE=[01]$/u.test(fields[9] ?? "") ||
+      !/^OUTEND=[01]$/u.test(fields[10] ?? "") || !/^ERREND=[01]$/u.test(fields[11] ?? "")) return false;
+  const stageNames = new Set(["INVOCATION", "SESSION", "OUT", "ERR", "READY", "SCOPE", "TIMEOUT", "SETTLED", "OUT_END", "ERR_END"]);
+  const stageTokens = stagesField === "NONE" ? [] : stagesField.split(",");
+  if (stageTokens.length > stageNames.size || stageTokens.some((token) => {
+    const match = /^([A-Z_]+)@(\d{1,5})$/u.exec(token);
+    return !match || !stageNames.has(match[1]!) || Number(match[2]) > 60_000;
+  }) || new Set(stageTokens.map((token) => token.split("@")[0])).size !== stageTokens.length) return false;
+  if (["NONE", "PARTIAL", "UNRECOGNIZED", "OVERSIZED", "READY", "SCOPE"].includes(stdoutCode)) return true;
+  return stdoutCode.startsWith("UNKNOWN_") && SAFE_NATIVE_HELPER_FAILURE_DETAILS.has(stdoutCode.slice("UNKNOWN_".length));
 }

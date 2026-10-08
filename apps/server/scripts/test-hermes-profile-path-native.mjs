@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
 import { createHash, randomUUID } from "node:crypto";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import process from "node:process";
@@ -1095,6 +1095,94 @@ async function verifySourceCacheGcHandles(root) {
   assert.equal(existsSync(join(cacheRoot, `.gc-${extraId}.intent.json`)), true, "durable intent must remain for safe retry");
 }
 
+function verifyWindowsFixtureTreeRemoval(root) {
+  const capture = (directory) => {
+    const result = invoke(["fixture-tree-identity", directory]);
+    assert.equal(result.error, undefined, "fixture root identity probe should start");
+    assert.equal(result.status, 0, "fixture root identity probe should pass");
+    const identity = JSON.parse(result.stdout);
+    assert.equal(identity.status, "SAFE_PATH");
+    assert.equal(identity.kind, "directory");
+    assert.match(identity.volumeSerial, /^[a-f0-9]{16}$/u);
+    assert.match(identity.fileId, /^[a-f0-9]{32}$/u);
+    return { volumeSerial: identity.volumeSerial, fileId: identity.fileId };
+  };
+  const runRemoval = (directory, identity) => invoke([
+    "fixture-tree-remove", directory, identity.volumeSerial, identity.fileId,
+  ]);
+  const makeTree = (name) => {
+    const directory = join(root, name);
+    const nested = join(directory, "nested");
+    mkdirSync(directory);
+    mkdirSync(nested);
+    const file = join(nested, "fixture.txt");
+    writeFileSync(file, "provider-free fixture\n");
+    for (const path of [directory, nested, file]) makeWindowsFixturePrivate(path);
+    return { directory, nested, file, identity: capture(directory) };
+  };
+
+  const success = makeTree("fixture-remove-success");
+  const removed = runRemoval(success.directory, success.identity);
+  assert.equal(removed.error, undefined, "native fixture tree remover should start");
+  assert.equal(removed.status, 0, `native fixture tree remover should remove the verified tree: ${String(removed.stderr || "")}`);
+  assert.equal(existsSync(success.directory), false, "successful handle-relative removal should remove the fixture root");
+
+  const mismatch = makeTree("fixture-remove-mismatch");
+  const wrongIdentity = { ...mismatch.identity, fileId: `${mismatch.identity.fileId[0] === "0" ? "1" : "0"}${mismatch.identity.fileId.slice(1)}` };
+  const refusedMismatch = runRemoval(mismatch.directory, wrongIdentity);
+  assert.equal(refusedMismatch.error, undefined);
+  assert.notEqual(refusedMismatch.status, 0, "native fixture remover must refuse a mismatched captured root identity");
+  assert.equal(existsSync(mismatch.file), true, "identity mismatch must retain every fixture child");
+  const removedMismatchFixture = runRemoval(mismatch.directory, mismatch.identity);
+  assert.equal(removedMismatchFixture.status, 0, "the exact identity should still permit fixture cleanup");
+  assert.equal(existsSync(mismatch.directory), false);
+
+  const hardlink = makeTree("fixture-remove-hardlink");
+  const outsideSentinel = join(root, "fixture-remove-hardlink-outside-sentinel.txt");
+  writeFileSync(outsideSentinel, "outside hardlink sentinel\n");
+  makeWindowsFixturePrivate(outsideSentinel);
+  const hardlinkPath = join(hardlink.nested, "outside-sentinel-link.txt");
+  linkSync(outsideSentinel, hardlinkPath);
+  const sentinelMetadata = () => {
+    const info = lstatSync(outsideSentinel, { bigint: true });
+    return {
+      dev: String(info.dev), ino: String(info.ino), nlink: String(info.nlink), size: String(info.size),
+      mode: String(info.mode), mtimeNs: String(info.mtimeNs), ctimeNs: String(info.ctimeNs),
+    };
+  };
+  const beforeSentinel = sentinelMetadata();
+  assert.equal(beforeSentinel.nlink, "2", "the hardlink-to-outside sentinel must have exactly two names");
+  const refusedHardlink = runRemoval(hardlink.directory, hardlink.identity);
+  assert.equal(refusedHardlink.error, undefined);
+  assert.notEqual(refusedHardlink.status, 0, "native fixture remover must reject a hardlink-to-outside sentinel");
+  assert.equal(existsSync(hardlink.file), true, "hardlink refusal must happen before deleting known fixture children");
+  assert.equal(existsSync(hardlinkPath), true, "hardlink refusal must retain the offending fixture entry");
+  assert.equal(readFileSync(outsideSentinel, "utf8"), "outside hardlink sentinel\n",
+    "hardlink refusal must preserve outside sentinel content");
+  assert.deepEqual(sentinelMetadata(), beforeSentinel,
+    "hardlink refusal must preserve outside sentinel identity, link count, attributes, and timestamps");
+
+  const reparse = makeTree("fixture-remove-reparse");
+  const externalTarget = join(root, "fixture-remove-external-target");
+  mkdirSync(externalTarget);
+  writeFileSync(join(externalTarget, "must-survive.txt"), "external sentinel\n");
+  makeWindowsFixturePrivate(externalTarget);
+  symlinkSync(externalTarget, join(reparse.directory, "unexpected-junction"), "junction");
+  const refusedReparse = runRemoval(reparse.directory, reparse.identity);
+  assert.equal(refusedReparse.error, undefined);
+  assert.notEqual(refusedReparse.status, 0, "native fixture remover must reject a reparse child during preflight");
+  assert.equal(existsSync(reparse.file), true, "reparse refusal must happen before deleting known fixture children");
+  assert.equal(existsSync(join(reparse.directory, "unexpected-junction")), true, "reparse refusal must retain the offending entry");
+  assert.equal(readFileSync(join(externalTarget, "must-survive.txt"), "utf8"), "external sentinel\n",
+    "the native remover must never traverse or alter a reparse target");
+  return {
+    retainedHardlinkRoot: hardlink.directory,
+    outsideSentinel,
+    retainedReparseRoot: reparse.directory,
+    externalTarget,
+  };
+}
+
 /** Makes only real directories in the private POSIX test fixture removable. */
 function preparePosixFixtureDirectoriesForCleanup(directory) {
   chmodSync(directory, 0o700);
@@ -1163,6 +1251,9 @@ function verifySourceCacheGcInventoryBoundary(root) {
   process.stdout.write(`Native GC parser boundary passed: 200000 nodes (${Math.round(boundaryDurationMs)}ms), 200001 rejected (${Math.round(overflowDurationMs)}ms), ${inventoryBytes} encoded bytes.\n`);
 }
 
+if (process.platform === "win32" && process.argv.includes("--fixture-tree-remove-only")) {
+  makeWindowsFixturePrivate(canonicalSandbox);
+}
 if (process.platform === "win32") verifyWindowsAncestorAclPolicyUnit();
 
 if (process.argv.includes("--source-staging-only")) {
@@ -1236,6 +1327,16 @@ if (process.argv.includes("--source-staging-only")) {
     }
   }
   if (primaryError) throw primaryError;
+} else if (process.argv.includes("--fixture-tree-remove-only")) {
+  if (process.platform !== "win32") throw new Error("HERMES_FIXTURE_TREE_REMOVE_TEST_WINDOWS_ONLY");
+  makeWindowsFixturePrivate(canonicalSandbox);
+  try {
+    const retained = verifyWindowsFixtureTreeRemoval(canonicalSandbox);
+    process.stdout.write(`Native Windows fixture-tree removal contract passed; refused hardlink tree retained at ${retained.retainedHardlinkRoot} with outside sentinel ${retained.outsideSentinel}; refused reparse tree retained at ${retained.retainedReparseRoot}.\n`);
+  } catch (error) {
+    process.stderr.write(`Native fixture-removal sandbox retained for diagnosis: ${canonicalSandbox}\n`);
+    throw error;
+  }
 } else if (process.argv.includes("--source-cache-lock-only")) {
   let primaryError;
   try {

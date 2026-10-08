@@ -576,6 +576,17 @@ describe.skipIf(!isWindows || !nativeAcceptanceEnabled)("Windows native process-
   const executor = new ProcessExecutor();
   const supervisor = new WindowsJobSupervisor(executor);
 
+  it("keeps diagnostic opt-in in the restart-worker environment, outside the Hermes launch allowlist", () => {
+    const launchEnvironment = windowsChildEnvironment(join(tmpdir(), "ebb-windows-trace-test"));
+    const workerEnvironment = restartWorkerEnvironment(join(tmpdir(), "ebb-windows-trace-test"));
+
+    expect(Object.keys(launchEnvironment).every((key) => [
+      "HERMES_HOME", "NODE_ENV", "PATH", "SYSTEMROOT", "TEMP", "TMP", "HOMEDRIVE", "HOMEPATH",
+    ].includes(key))).toBe(true);
+    expect(launchEnvironment).not.toHaveProperty("EBB_WINDOWS_NATIVE_HANDSHAKE_TRACE");
+    expect(workerEnvironment.EBB_WINDOWS_NATIVE_HANDSHAKE_TRACE).toBe("1");
+  });
+
   beforeAll(async () => {
     const directory = await mkdtemp(join(tmpdir(), "ebb-windows-native-helper-"));
     windowsNativeHelperDirectory = directory;
@@ -1269,7 +1280,11 @@ async function runWindowsHelperCrashBoundaryAcceptance(): Promise<void> {
 }
 
 function restartWorkerEnvironment(runHome: string): Record<string, string> {
-  if (isWindows) return { ...windowsChildEnvironment(runHome), NODE_ENV: "test" };
+  if (isWindows) {
+    const environment: Record<string, string> = { ...windowsChildEnvironment(runHome), NODE_ENV: "test" };
+    if (nativeAcceptanceEnabled) environment.EBB_WINDOWS_NATIVE_HANDSHAKE_TRACE = "1";
+    return environment;
+  }
   return { ...managerEnvironment(), NODE_ENV: "test", HERMES_HOME: runHome };
 }
 

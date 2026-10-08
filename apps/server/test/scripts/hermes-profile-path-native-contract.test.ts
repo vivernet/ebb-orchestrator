@@ -9,6 +9,10 @@ const nativeSource = readFileSync(
   new URL("../../native/hermes-profile-path/ebb-hermes-profile-path.cpp", import.meta.url),
   "utf8",
 );
+const pathChainAcceptance = readFileSync(
+  new URL("../e2e/hermes-profile-path-chain.acceptance.test.ts", import.meta.url),
+  "utf8",
+);
 const aclPolicyHeader = readFileSync(
   new URL("../../native/hermes-profile-path/hermes-profile-path-acl-policy.h", import.meta.url),
   "utf8",
@@ -208,6 +212,55 @@ describe("native Hermes profile-path safe-path acceptance reporting", () => {
     expect(cleanup).toMatch(/SetFileInformationByHandle\(handle, FileDispositionInfo/u);
     expect(finishGc).toMatch(/removeSnapshotGcTreeByVerifiedNativeHandles/u);
     expect(finishGc).not.toMatch(/chmod\(rootPath|removeChildrenNoFollow\(rootPath|unlink\((?:projectionPath|metadataPath|intentPath)/u);
+  });
+
+  it("removes Windows acceptance fixtures only through STOPPED-gated native identity handles", () => {
+    const fixtureRemoval = /int removeWindowsFixtureTree\([\s\S]*?\n\}/u.exec(nativeSource)?.[0] ?? "";
+    const fixtureIdentity = /int identifyWindowsFixtureTree\([\s\S]*?\n\}/u.exec(nativeSource)?.[0] ?? "";
+    const fixtureAcl = /bool safeProtectedPrivateFixtureDirectoryAcl\([\s\S]*?\n\}/u.exec(nativeSource)?.[0] ?? "";
+    const cleanup = /afterAll\(async \(\) => \{([\s\S]*?)\n {2}\}, 300_000\);/u.exec(pathChainAcceptance)?.[1] ?? "";
+    expect(fixtureRemoval).not.toBe("");
+    expect(fixtureRemoval).toMatch(/openWindowsChildDirectory\(/u);
+    expect(nativeSource).toMatch(/HANDLE openWindowsChildDirectory\([\s\S]*?OBJ_DONT_REPARSE[\s\S]*?FILE_OPEN_REPARSE_POINT/u);
+    expect(fixtureRemoval).toMatch(/safePrivateDirectoryAcl/u);
+    expect(fixtureRemoval).toMatch(/SetFileInformationByHandle\([\s\S]*?FileDispositionInfo/u);
+    expect(fixtureRemoval).toMatch(/if \(!SetFileInformationByHandle\(node\.handle, FileDispositionInfo[\s\S]*?const DWORD error = GetLastError\(\);\s*closeHandles\(\);[\s\S]*?ERROR_ACCESS_DENIED[\s\S]*?ERROR_SHARING_VIOLATION[\s\S]*?ERROR_DIR_NOT_EMPTY[\s\S]*?ERROR_INVALID_PARAMETER[\s\S]*?kFixtureDispositionOtherFailure/u);
+    expect(fixtureRemoval).toMatch(/kFixtureDispositionFileAccessDenied = 75[\s\S]*?kFixtureDispositionSharingViolation = 76[\s\S]*?kFixtureDispositionDirectoryNotEmpty = 77[\s\S]*?kFixtureDispositionInvalidParameter = 78[\s\S]*?kFixtureDispositionOtherFailure = 79[\s\S]*?kFixtureDispositionDirectoryAccessDenied = 80/u);
+    expect(fixtureRemoval).toMatch(/if \(error == ERROR_ACCESS_DENIED\)\s*\{\s*return node\.directory \? kFixtureDispositionDirectoryAccessDenied : kFixtureDispositionFileAccessDenied;/u);
+    expect(fixtureRemoval).toMatch(/FileIdBothDirectory/u);
+    expect(fixtureRemoval).toMatch(/if \(!directory\) \{[\s\S]*?FILE_STANDARD_INFO standard\{\}[\s\S]*?GetFileInformationByHandleEx\(child, FileStandardInfo[\s\S]*?standard\.NumberOfLinks != 1\)[\s\S]*?kFixtureCollectLinkCountUnsafe/u);
+    expect(fixtureRemoval).toMatch(/kFixtureCollectLinkCountUnsafe[\s\S]*?nodes\.push_back/u);
+    expect(fixtureRemoval).toMatch(/NumberOfLinks != 1[\s\S]*?SetFileInformationByHandle\(node\.handle, FileBasicInfo/u);
+    expect(fixtureRemoval).toMatch(/if \(\(tag\.FileAttributes & FILE_ATTRIBUTE_READONLY\) != 0\) \{\s*FILE_BASIC_INFO basic\{\};[\s\S]*?basic\.FileAttributes &= ~FILE_ATTRIBUTE_READONLY;[\s\S]*?SetFileInformationByHandle\(node\.handle, FileBasicInfo/u);
+    expect(fixtureRemoval).not.toMatch(/if \(!node\.directory && \(tag\.FileAttributes & FILE_ATTRIBUTE_READONLY\)/u);
+    expect(fixtureIdentity).toMatch(/openWindowsChildDirectory/u);
+    expect(fixtureIdentity).toMatch(/expectedVolumeSerial/u);
+    expect(fixtureIdentity).toMatch(/safeProtectedPrivateFixtureDirectoryAcl/u);
+    expect(fixtureIdentity).toMatch(/printSafePathIdentity\("directory"/u);
+    expect(fixtureIdentity).not.toMatch(/SetFileInformationByHandle|SetSecurityInfo|SetNamedSecurityInfo|CreateDirectory|FILE_CREATE/u);
+    expect(fixtureAcl).toMatch(/SE_DACL_PROTECTED/u);
+    expect(fixtureAcl).toMatch(/info\.AceCount == 1/u);
+    expect(fixtureAcl).toMatch(/EqualSid\(trustee, currentUser\)[\s\S]*?ace->Mask == FILE_ALL_ACCESS/u);
+    expect(cleanup).toMatch(/observation\.state !== "STOPPED"[\s\S]*?fixtureHome\.identity/u);
+    expect(cleanup).toMatch(/fixtureHome\.launchAttempted && \(fixtureHome\.unprovenLaunch[\s\S]*?fixtureHome\.launchAttempts\.some\(\(attempt\) => !attempt\.identity\)[\s\S]*?FIXTURE_CLEANUP_STOP_UNPROVEN/u);
+    expect(cleanup).toMatch(/removeWindowsFixtureTree\(fixtureHome\.path, fixtureHome\.identity\)/u);
+    expect(pathChainAcceptance).toMatch(/fixture-tree-remove/u);
+    expect(pathChainAcceptance.match(/setPrivateOwnerAcl\(\[[^\]]+\], systemPaths, true\)/gu))
+      .toEqual(["setPrivateOwnerAcl([cacheRoot], systemPaths, true)"]);
+    expect(pathChainAcceptance).toMatch(/EBB_PROFILE_FIXTURE_INHERIT_CHILDREN[\s\S]*?ContainerInherit[\s\S]*?ObjectInherit/u);
+    expect(pathChainAcceptance).toMatch(/InheritanceFlags -ne \$inheritance/u);
+    expect(cleanup).not.toMatch(/\brm\s*\(|\brmdir\s*\(/u);
+    expect(cleanup.indexOf("observation.state !== \"STOPPED\""))
+      .toBeLessThan(cleanup.indexOf("removeWindowsFixtureTree("));
+    expect(cleanup.indexOf("if (!fixtureHome.identity)"))
+      .toBeLessThan(cleanup.indexOf("removeWindowsFixtureTree("));
+    expect(nativeAcceptanceScript).toMatch(/--fixture-tree-remove-only[\s\S]*?verifyWindowsFixtureTreeRemoval/u);
+    expect(nativeAcceptanceScript).toMatch(/fixture-tree-identity/u);
+    expect(nativeAcceptanceScript).toMatch(/mismatched captured root identity/u);
+    expect(nativeAcceptanceScript).toMatch(/reject a reparse child during preflight/u);
+    expect(nativeAcceptanceScript).toMatch(/hardlink-to-outside sentinel/u);
+    expect(nativeAcceptanceScript).toMatch(/const sentinelMetadata = \(\) => \{[\s\S]*?nlink[\s\S]*?mtimeNs[\s\S]*?ctimeNs/u);
+    expect(nativeAcceptanceScript).toMatch(/reject a hardlink-to-outside sentinel[\s\S]*?before deleting known fixture children/u);
   });
 
   it("creates Windows projection aliases with a native protected DACL before Node opens them", () => {

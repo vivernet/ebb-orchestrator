@@ -34,7 +34,6 @@ type SystemdPrerequisiteFailureCode =
   | "SYSTEMD_MANAGER_STATUS_CHECK_UNAVAILABLE"
   | "SYSTEMD_MANAGER_STATE_INITIALIZING"
   | "SYSTEMD_MANAGER_STATE_STARTING"
-  | "SYSTEMD_MANAGER_STATE_DEGRADED"
   | "SYSTEMD_MANAGER_STATE_MAINTENANCE"
   | "SYSTEMD_MANAGER_STATE_STOPPING"
   | "SYSTEMD_MANAGER_STATE_OFFLINE"
@@ -43,7 +42,6 @@ type SystemdPrerequisiteFailureCode =
 const SYSTEMD_MANAGER_STATE_REASONS: Readonly<Record<string, SystemdPrerequisiteFailureCode>> = {
   initializing: "SYSTEMD_MANAGER_STATE_INITIALIZING",
   starting: "SYSTEMD_MANAGER_STATE_STARTING",
-  degraded: "SYSTEMD_MANAGER_STATE_DEGRADED",
   maintenance: "SYSTEMD_MANAGER_STATE_MAINTENANCE",
   stopping: "SYSTEMD_MANAGER_STATE_STOPPING",
   offline: "SYSTEMD_MANAGER_STATE_OFFLINE",
@@ -385,13 +383,13 @@ export class SystemdRunSupervisor implements ProcessScopeSupervisor {
   }
 
   private async assertNativePrerequisites(): Promise<void> {
-    let filesystem: Awaited<ReturnType<typeof statfs>>;
+    let filesystemType: number;
     try {
-      filesystem = await statfs("/sys/fs/cgroup");
+      filesystemType = await this.cgroupFilesystemType();
     } catch {
       throw new SystemdPrerequisiteFailure("SYSTEMD_CGROUP_STATFS_UNAVAILABLE");
     }
-    if (filesystem.type !== 0x63677270) throw new SystemdPrerequisiteFailure("SYSTEMD_CGROUP_V2_REQUIRED");
+    if (filesystemType !== 0x63677270) throw new SystemdPrerequisiteFailure("SYSTEMD_CGROUP_V2_REQUIRED");
 
     let environment: Record<string, string>;
     try {
@@ -400,16 +398,21 @@ export class SystemdRunSupervisor implements ProcessScopeSupervisor {
       throw new SystemdPrerequisiteFailure("SYSTEMD_MANAGER_ENVIRONMENT_INVALID");
     }
     try {
-      await this.executor.exec("systemctl", ["--user", "is-system-running"], { timeout: 5_000, env: environment });
+      const result = await this.executor.exec("systemctl", ["--user", "is-system-running"], { timeout: 5_000, env: environment });
+      const state = result.stdout.trim();
+      if (result.exitCode === 0 && state === "running") return;
+      if (result.exitCode !== 0 && state === "degraded") return;
+      throw new SystemdPrerequisiteFailure(systemdManagerStatusFailureCode(result.stdout));
     } catch (error: unknown) {
-      const state = error instanceof ExitCodeError ? error.stdout.trim() : "";
-      const stateReason = Object.hasOwn(SYSTEMD_MANAGER_STATE_REASONS, state)
-        ? SYSTEMD_MANAGER_STATE_REASONS[state]
-        : undefined;
-      throw new SystemdPrerequisiteFailure(
-        stateReason ?? "SYSTEMD_MANAGER_STATUS_CHECK_UNAVAILABLE",
-      );
+      if (error instanceof SystemdPrerequisiteFailure) throw error;
+      if (error instanceof ExitCodeError && error.stdout.trim() === "degraded") return;
+      const statusOutput = error instanceof ExitCodeError ? error.stdout : "";
+      throw new SystemdPrerequisiteFailure(systemdManagerStatusFailureCode(statusOutput));
     }
+  }
+
+  private async cgroupFilesystemType(): Promise<number> {
+    return (await statfs("/sys/fs/cgroup")).type;
   }
 
   private async readSnapshot(owner: ProcessScopeIdentity, unitName: string, recordedGroup: string | null): Promise<SystemdScopeSnapshot> {
@@ -507,6 +510,15 @@ export class SystemdRunSupervisor implements ProcessScopeSupervisor {
     }
     return env;
   }
+}
+
+function systemdManagerStatusFailureCode(stdout: string): SystemdPrerequisiteFailureCode {
+  const state = stdout.trim();
+  if (Object.hasOwn(SYSTEMD_MANAGER_STATE_REASONS, state)) {
+    const reason = SYSTEMD_MANAGER_STATE_REASONS[state];
+    if (reason) return reason;
+  }
+  return "SYSTEMD_MANAGER_STATUS_CHECK_UNAVAILABLE";
 }
 
 function isCredentialEnvironmentKey(key: string): boolean {

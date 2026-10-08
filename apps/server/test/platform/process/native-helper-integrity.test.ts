@@ -44,10 +44,16 @@ describe("packaged native helper integrity", () => {
       const id = "a".repeat(64);
       const nonce = "b".repeat(64);
       const result = await runVerifiedNativeHelper(packagedWindowsSupervisor, "windowsRunSupervisor", [
-        "inspect", id, nonce, "PREPARED", "-", "-", "0",
+        "inspect", id, nonce, "PREPARED", "-", "-", "0", "0",
       ], { timeout: 5_000, maxBuffer: 8_192 });
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain("STOPPED\tOWNER_NEVER_LAUNCHED");
+
+      const attempted = await runVerifiedNativeHelper(packagedWindowsSupervisor, "windowsRunSupervisor", [
+        "inspect", id, nonce, "PREPARED", "-", "-", "0", "1",
+      ], { timeout: 5_000, maxBuffer: 8_192 });
+      expect(attempted.exitCode).toBe(0);
+      expect(attempted.stdout).toContain("STOPPED\tJOB_ABSENT_ATTEMPT_SETTLED");
     },
   );
 });

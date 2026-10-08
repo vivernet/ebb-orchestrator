@@ -41,6 +41,7 @@ class HandshakeExecutor extends ProcessExecutor {
     private readonly preHandshakeOutput?: string,
     private readonly completionStderr = "",
     private readonly inspectionOutput = "STOPPED\tJOB_EMPTY\n",
+    private readonly completeOnInputClose = true,
   ) { super(); }
   override startSession = vi.fn<ProcessExecutor["startSession"]>((_file, _args, options: ProcessSessionOptions = {}) => {
     const completion = new Promise<ProcessResult>((resolve, reject) => {
@@ -66,11 +67,15 @@ class HandshakeExecutor extends ProcessExecutor {
     });
     const stderr = new PassThrough();
     this.stderrStream = stderr;
-    stdin.once("close", () => this.complete({
-      exitCode: 3,
-      stdout: "",
-      stderr: options.captureOutput === false ? "" : this.completionStderr,
-    }));
+    stdin.once("close", () => {
+      if (this.completeOnInputClose) {
+        this.complete({
+          exitCode: 3,
+          stdout: "",
+          stderr: options.captureOutput === false ? "" : this.completionStderr,
+        });
+      }
+    });
     const session: ProcessSession = { stdin, stdout, stderr, completion, terminate: () => undefined };
     this.session = session;
     queueMicrotask(() => {
@@ -104,6 +109,11 @@ class HandshakeExecutor extends ProcessExecutor {
 
   writeStderr(chunk: string): void {
     this.stderrStream?.write(chunk);
+  }
+
+  endStreams(): void {
+    this.stdoutStream?.end();
+    this.stderrStream?.end();
   }
 }
 
@@ -151,6 +161,7 @@ const createTestHelperInvocation = async (
 describe("WindowsJobSupervisor", () => {
   afterEach(() => {
     if (originalPlatform) Object.defineProperty(process, "platform", originalPlatform);
+    vi.unstubAllEnvs();
     vi.useRealTimers();
     vi.restoreAllMocks();
   });
@@ -351,7 +362,7 @@ describe("WindowsJobSupervisor", () => {
     expect(executor.session?.stdin.destroyed).toBe(true);
     expect(executor.writes.some((write) => write.subarray(0, 8).equals(Buffer.from("EBBACK01")))).toBe(false);
     expect(executor.execCalls).toEqual([[
-      "inspect", owner.containmentId, owner.launchNonce, "LAUNCHING", "-", "-", "0",
+      "inspect", owner.containmentId, owner.launchNonce, "LAUNCHING", "-", "-", "0", "1",
     ]]);
   });
 
@@ -445,6 +456,34 @@ describe("WindowsJobSupervisor", () => {
     const result = await outcome;
     expect(result.kind).toBe("failure");
     expect(result.kind === "failure" ? (result.error as Error).message : undefined).toBe(expectedCode);
+  });
+
+  it("reports acceptance-only bounded native handshake timings without echoing stream content", async () => {
+    Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+    vi.stubEnv("EBB_WINDOWS_NATIVE_HANDSHAKE_TRACE", "1");
+    vi.useFakeTimers();
+    const privateText = "UNKNOWN\tC:\\private\\provider-token OPENAI_API_KEY=must-not-leak";
+    const stderr = "NATIVE_HELPER_GATE_FAIL:integrity-check:CryptographicException\r\nC:\\private\\provider-token OPENAI_API_KEY=must-not-leak";
+    const executor = new HandshakeExecutor("", true, privateText, stderr);
+    const supervisor = new WindowsJobSupervisor(executor, "native-helper.exe", createTestHelperInvocation);
+    const outcome = supervisor.launch(owner, request, async () => undefined).then(
+      () => ({ kind: "success" as const }),
+      (error: unknown) => ({ kind: "failure" as const, error }),
+    );
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(10_000);
+    const result = await outcome;
+    const message = result.kind === "failure" ? (result.error as Error).message : "";
+
+    expect(message).toMatch(/^WINDOWS_NATIVE_HELPER_DIAGNOSTIC:PHASE_INTEGRITY_CHECK:TYPE_CRYPTOGRAPHIC_EXCEPTION:EXIT_3:READY_ABSENT:/u);
+    expect(message).toContain("STAGES=INVOCATION@");
+    expect(message).toContain(":OUTCODE=PARTIAL:OUTB=1:ERRB=1:DONE=1:OUTEND=0:ERREND=0");
+    expect(message).not.toContain("C:\\private");
+    expect(message).not.toContain("provider-token");
+    expect(message).not.toContain("OPENAI_API_KEY");
+    expect(safeRestartChildFailureCode(result.kind === "failure" ? result.error : undefined)).toBe(
+      `${message}>WINDOWS_HELPER_HANDSHAKE_TIMEOUT:EBB_HELPER_READY`,
+    );
   });
 
   it("does not surface an unknown uppercase stdout line as a native failure code", async () => {
@@ -783,7 +822,7 @@ describe("WindowsJobSupervisor", () => {
       state: "UNKNOWN", reason: "WINDOWS_JOB_IDENTITY_MISMATCH",
     });
     expect(executor.calls).toEqual([[
-      "inspect", owner.containmentId, owner.launchNonce, "LAUNCHING", "41", "100", "0",
+      "inspect", owner.containmentId, owner.launchNonce, "LAUNCHING", "41", "100", "0", "0",
     ]]);
   });
 
@@ -802,7 +841,7 @@ describe("WindowsJobSupervisor", () => {
       state: "UNKNOWN", reason: "WINDOWS_JOB_ABSENT_HELPER_STILL_LIVE",
     });
     expect(executor.calls).toEqual([[
-      "inspect", owner.containmentId, owner.launchNonce, "STOPPING", "41", "123456789", "0",
+      "inspect", owner.containmentId, owner.launchNonce, "STOPPING", "41", "123456789", "0", "0",
     ]]);
   });
 
@@ -815,7 +854,7 @@ describe("WindowsJobSupervisor", () => {
       state: "UNKNOWN", reason: "WINDOWS_JOB_ABSENT_HELPER_IDENTITY_MISSING",
     });
     expect(executor.calls).toEqual([[
-      "inspect", owner.containmentId, owner.launchNonce, "LAUNCHING", "-", "-", "0",
+      "inspect", owner.containmentId, owner.launchNonce, "LAUNCHING", "-", "-", "0", "0",
     ]]);
   });
 
@@ -830,5 +869,124 @@ describe("WindowsJobSupervisor", () => {
       supervisorPid: 41,
       supervisorStartIdentity: "123456789",
     })).resolves.toEqual({ state: "STOPPED", evidence: "WINDOWS_JOB_AND_HELPER_ABSENT" });
+  });
+
+  it("preserves the never-launched proof for a genuinely PREPARED owner", async () => {
+    Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+    const executor = new InspectionExecutor("STOPPED\tOWNER_NEVER_LAUNCHED\n");
+    const supervisor = new WindowsJobSupervisor(executor, "native-helper.exe", createTestHelperInvocation);
+
+    await expect(supervisor.inspect({ ...owner, state: "PREPARED" })).resolves.toEqual({
+      state: "STOPPED", evidence: "NEVER_LAUNCHED",
+    });
+    expect(executor.calls[0]?.[0]).toBe("inspect");
+  });
+
+  it("does not accept OWNER_NEVER_LAUNCHED after startSession was attempted", async () => {
+    Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+    class SpawnAttemptExecutor extends InspectionExecutor {
+      override startSession = vi.fn<ProcessExecutor["startSession"]>(() => { throw new Error("spawn failed"); });
+    }
+    const executor = new SpawnAttemptExecutor("STOPPED\tOWNER_NEVER_LAUNCHED\n");
+    const supervisor = new WindowsJobSupervisor(executor, "native-helper.exe", createTestHelperInvocation);
+
+    await expect(supervisor.launch({ ...owner, state: "PREPARED" }, request, async () => undefined))
+      .rejects.toThrow("spawn failed");
+    await expect(supervisor.inspect({ ...owner, state: "PREPARED" })).resolves.toEqual({
+      state: "UNKNOWN", reason: "WINDOWS_ATTEMPT_NEVER_LAUNCHED_CONFLICT",
+    });
+    expect(executor.calls[0]?.at(-2)).toBe("1");
+    expect(executor.calls[0]?.at(-1)).toBe("0");
+  });
+
+  it("returns attempt-scope STOPPED only after the exact ProcessSession settles and native absence is exact", async () => {
+    Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+    const executor = new HandshakeExecutor(
+      "", true, "EBB_HELPER_READY\nNOT_A_SCOPE\n", "", "STOPPED\tJOB_ABSENT_ATTEMPT_SETTLED\n",
+    );
+    const supervisor = new WindowsJobSupervisor(executor, "native-helper.exe", createTestHelperInvocation);
+    const observations: unknown[] = [];
+    const inspect = supervisor.inspect.bind(supervisor);
+    vi.spyOn(supervisor, "inspect").mockImplementation(async (input) => {
+      const observation = await inspect(input);
+      observations.push(observation);
+      return observation;
+    });
+
+    await expect(supervisor.launch({ ...owner, state: "PREPARED" }, request, async () => undefined)).rejects.toThrow();
+    expect(observations).toContainEqual({ state: "STOPPED", evidence: "WINDOWS_ATTEMPT_SCOPE_ABSENT" });
+    expect(executor.execCalls.some((args) => args[0] === "inspect" && args.at(-1) === "1")).toBe(true);
+    await expect(supervisor.waitForStopped({ ...owner, state: "PREPARED" }, 0)).resolves.toEqual({
+      state: "STOPPED", evidence: "WINDOWS_ATTEMPT_SCOPE_ABSENT",
+    });
+    expect(executor.execCalls.filter((args) => args[0] === "inspect")).toHaveLength(2);
+  });
+
+  it("does not accept JOB_EMPTY while the exact launcher ProcessSession is still pending", async () => {
+    Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+    const executor = new HandshakeExecutor("", false, undefined, "", "STOPPED\tJOB_EMPTY\n", false);
+    const supervisor = new WindowsJobSupervisor(executor, "native-helper.exe", createTestHelperInvocation);
+    const handle = await supervisor.launch({ ...owner, state: "PREPARED" }, request, async () => undefined);
+
+    await expect(supervisor.inspect({ ...owner, state: "PREPARED" })).resolves.toEqual({
+      state: "UNKNOWN", reason: "WINDOWS_ATTEMPT_SESSION_PENDING",
+    });
+
+    executor.complete();
+    executor.endStreams();
+    await expect(handle.completion).resolves.toMatchObject({ exitCode: 0 });
+  });
+
+  it.each([
+    ["absent while no ProcessSession exists", "STOPPED\tJOB_ABSENT_NO_HELPER\n", "WINDOWS_ATTEMPT_SESSION_PENDING"],
+    ["native inspection unavailable", "not-an-inspection\n", "WINDOWS_JOB_IDENTITY_UNPROVEN"],
+    ["Job still live", ["LIVE", owner.containmentId, owner.launchNonce, "41", "100", "42", "200", `sha256:${"c".repeat(64)}`].join("\t") + "\n", "WINDOWS_ATTEMPT_JOB_STILL_LIVE"],
+  ])("fails closed after a failed spawn attempt when %s", async (_description, output, reason) => {
+    Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+    class SpawnAttemptExecutor extends InspectionExecutor {
+      override startSession = vi.fn<ProcessExecutor["startSession"]>(() => { throw new Error("spawn failed"); });
+    }
+    const executor = new SpawnAttemptExecutor(output);
+    const supervisor = new WindowsJobSupervisor(executor, "native-helper.exe", createTestHelperInvocation);
+    await expect(supervisor.launch({ ...owner, state: "PREPARED" }, request, async () => undefined)).rejects.toThrow();
+
+    const observation = await supervisor.inspect({ ...owner, state: "PREPARED" });
+    if (reason) expect(observation).toEqual({ state: "UNKNOWN", reason });
+    else expect(observation.state).toBe("LIVE");
+    expect(observation.state).not.toBe("STOPPED");
+  });
+
+  it("rejects an absence observation for a different nonce after a local attempt", async () => {
+    Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+    class SpawnAttemptExecutor extends InspectionExecutor {
+      override startSession = vi.fn<ProcessExecutor["startSession"]>(() => { throw new Error("spawn failed"); });
+    }
+    const executor = new SpawnAttemptExecutor("STOPPED\tJOB_ABSENT_NO_HELPER\n");
+    const supervisor = new WindowsJobSupervisor(executor, "native-helper.exe", createTestHelperInvocation);
+    await expect(supervisor.launch({ ...owner, state: "PREPARED" }, request, async () => undefined)).rejects.toThrow();
+
+    await expect(supervisor.inspect({ ...owner, launchNonce: "d".repeat(64) })).resolves.toEqual({
+      state: "UNKNOWN", reason: "WINDOWS_ATTEMPT_NONCE_MISMATCH",
+    });
+    expect(executor.calls).toHaveLength(0);
+  });
+
+  it("rejects trailing or extra native lines from attempt-scope absence evidence", async () => {
+    Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+    const executor = new HandshakeExecutor(
+      "", true, "EBB_HELPER_READY\nNOT_A_SCOPE\n", "", "STOPPED\tJOB_ABSENT_ATTEMPT_SETTLED\nUNEXPECTED\n",
+    );
+    const supervisor = new WindowsJobSupervisor(executor, "native-helper.exe", createTestHelperInvocation);
+    const observations: unknown[] = [];
+    const inspect = supervisor.inspect.bind(supervisor);
+    vi.spyOn(supervisor, "inspect").mockImplementation(async (input) => {
+      const observation = await inspect(input);
+      observations.push(observation);
+      return observation;
+    });
+
+    await expect(supervisor.launch({ ...owner, state: "PREPARED" }, request, async () => undefined)).rejects.toThrow();
+    expect(observations).toContainEqual({ state: "UNKNOWN", reason: "WINDOWS_ATTEMPT_ABSENCE_EVIDENCE_MALFORMED" });
+    expect(observations).not.toContainEqual({ state: "STOPPED", evidence: "WINDOWS_ATTEMPT_SCOPE_ABSENT" });
   });
 });

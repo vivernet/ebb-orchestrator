@@ -1,7 +1,6 @@
 import { PassThrough, Writable } from "node:stream";
 import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { statfs } from "node:fs/promises";
 import {
   ExitCodeError,
   ProcessExecutor,
@@ -20,11 +19,6 @@ import type {
 import type { ProcessScopeLaunchRequest } from "../../../src/platform/process/run-scope-supervisor.js";
 import { createHermesLaunchTicket } from "../../../src/modules/runtime/hermes/hermes-launch-ticket.js";
 
-vi.mock("node:fs/promises", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:fs/promises")>();
-  return { ...actual, statfs: vi.fn() };
-});
-
 class FakeProcessExecutor extends ProcessExecutor {
   readonly execCalls: Array<{ file: string; args: string[]; options: ProcessOptions }> = [];
   sessionCall: { file: string; args: string[]; options: ProcessSessionOptions; session: ProcessSession } | undefined;
@@ -38,6 +32,9 @@ class FakeProcessExecutor extends ProcessExecutor {
     const result = this.onExec?.(file, args);
     if (result instanceof Error) throw result;
     if (result) return result;
+    if (file === "systemctl" && args[1] === "is-system-running") {
+      return { exitCode: 0, stdout: "running\n", stderr: "" };
+    }
     return { exitCode: 0, stdout: "", stderr: "" };
   }
 
@@ -167,11 +164,12 @@ describe("SystemdRunSupervisor", () => {
     vi.stubEnv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus");
     vi.stubEnv("LANG", "en_US.UTF-8");
     vi.stubEnv("LC_ALL", "C.UTF-8");
-    vi.mocked(statfs).mockResolvedValue({ type: 0x63677270 } as Awaited<ReturnType<typeof statfs>>);
     vi.stubEnv("SECRET_CANARY_IN_PARENT", "MUST_NOT_BE_INHERITED");
     unitState = "live";
     executor = new FakeProcessExecutor();
     supervisor = new SystemdRunSupervisor(executor);
+    vi.spyOn(supervisor as unknown as { cgroupFilesystemType(): Promise<number> }, "cgroupFilesystemType")
+      .mockResolvedValue(0x63677270);
     vi.spyOn(supervisor as unknown as { assertNativePrerequisites(): Promise<void> }, "assertNativePrerequisites")
       .mockResolvedValue();
     vi.spyOn(supervisor as unknown as {
@@ -585,12 +583,18 @@ describe("SystemdRunSupervisor", () => {
   it.each([
     {
       name: "cgroup statfs failure",
-      configure: () => vi.mocked(statfs).mockRejectedValue(new Error("private /sys/fs/cgroup failure")),
+      configure: () => {
+        const filesystemProbe = supervisor as unknown as { cgroupFilesystemType(): Promise<number> };
+        vi.mocked(filesystemProbe.cgroupFilesystemType).mockRejectedValue(new Error("private /sys/fs/cgroup failure"));
+      },
       expectedReason: "SYSTEMD_CGROUP_STATFS_UNAVAILABLE",
     },
     {
       name: "cgroup v2 mismatch",
-      configure: () => vi.mocked(statfs).mockResolvedValue({ type: 0x1234 } as Awaited<ReturnType<typeof statfs>>),
+      configure: () => {
+        const filesystemProbe = supervisor as unknown as { cgroupFilesystemType(): Promise<number> };
+        vi.mocked(filesystemProbe.cgroupFilesystemType).mockResolvedValue(0x1234);
+      },
       expectedReason: "SYSTEMD_CGROUP_V2_REQUIRED",
     },
     {
@@ -621,7 +625,6 @@ describe("SystemdRunSupervisor", () => {
   it.each([
     ["initializing", "SYSTEMD_MANAGER_STATE_INITIALIZING"],
     ["starting", "SYSTEMD_MANAGER_STATE_STARTING"],
-    ["degraded", "SYSTEMD_MANAGER_STATE_DEGRADED"],
     ["maintenance", "SYSTEMD_MANAGER_STATE_MAINTENANCE"],
     ["stopping", "SYSTEMD_MANAGER_STATE_STOPPING"],
     ["offline", "SYSTEMD_MANAGER_STATE_OFFLINE"],
@@ -653,6 +656,30 @@ describe("SystemdRunSupervisor", () => {
     expect(JSON.stringify(observation)).not.toMatch(/custom|private|stderr|home/iu);
   });
 
+  it.each(["result", "ExitCodeError"] as const)(
+    "accepts degraded only as manager responsiveness for a %s result, then requires identity readback",
+    async (failureKind) => {
+      vi.spyOn(supervisor as unknown as { assertNativePrerequisites(): Promise<void> }, "assertNativePrerequisites")
+        .mockRestore();
+      const snapshotReader = supervisor as unknown as {
+        readSnapshot(owner: ProcessScopeIdentity, unitName: string, recordedGroup: string | null): Promise<SystemdScopeSnapshot>;
+      };
+      const readSnapshot = vi.mocked(snapshotReader.readSnapshot);
+      readSnapshot.mockResolvedValue({ ...liveSnapshot(), description: "ebb-orchestrator:other-owner" });
+      executor.onExec = (_file, args) => args[1] === "is-system-running"
+        ? failureKind === "result"
+          ? { exitCode: 1, stdout: "degraded\n", stderr: "private stderr" }
+          : new ExitCodeError("systemctl", 1, "degraded\n", "private stderr")
+        : undefined;
+
+      const observation = await supervisor.inspect({ ...owner, systemdControlGroup: exactControlGroup });
+
+      expect(readSnapshot).toHaveBeenCalledOnce();
+      expect(observation).toEqual({ state: "UNKNOWN", reason: "SYSTEMD_IDENTITY_MISMATCH" });
+      expect(JSON.stringify(observation)).not.toMatch(/private|stderr/iu);
+    },
+  );
+
   it.each(["__proto__", "constructor", "toString"])(
     "does not treat inherited property %s as a systemd state",
     async (state) => {
@@ -667,6 +694,45 @@ describe("SystemdRunSupervisor", () => {
       expect(observation).toEqual({ state: "UNKNOWN", reason: "SYSTEMD_MANAGER_STATUS_CHECK_UNAVAILABLE" });
       expect(JSON.stringify(observation)).not.toContain(state);
       expect(JSON.stringify(observation)).not.toContain("private");
+    },
+  );
+
+  it("accepts exact running success but still requires identity readback", async () => {
+    vi.spyOn(supervisor as unknown as { assertNativePrerequisites(): Promise<void> }, "assertNativePrerequisites")
+      .mockRestore();
+    const snapshotReader = supervisor as unknown as {
+      readSnapshot(owner: ProcessScopeIdentity, unitName: string, recordedGroup: string | null): Promise<SystemdScopeSnapshot>;
+    };
+    const readSnapshot = vi.mocked(snapshotReader.readSnapshot);
+    readSnapshot.mockResolvedValue({ ...liveSnapshot(), description: "ebb-orchestrator:other-owner" });
+    executor.onExec = (_file, args) => args[1] === "is-system-running"
+      ? { exitCode: 0, stdout: "running\n", stderr: "" }
+      : undefined;
+
+    const observation = await supervisor.inspect({ ...owner, systemdControlGroup: exactControlGroup });
+
+    expect(readSnapshot).toHaveBeenCalledOnce();
+    expect(observation).toEqual({ state: "UNKNOWN", reason: "SYSTEMD_IDENTITY_MISMATCH" });
+  });
+
+  it.each(["", "unrecognized-state"])(
+    "fails closed when exit zero has empty or unknown status output (%j)",
+    async (stdout) => {
+      vi.spyOn(supervisor as unknown as { assertNativePrerequisites(): Promise<void> }, "assertNativePrerequisites")
+        .mockRestore();
+      const snapshotReader = supervisor as unknown as {
+        readSnapshot(owner: ProcessScopeIdentity, unitName: string, recordedGroup: string | null): Promise<SystemdScopeSnapshot>;
+      };
+      const readSnapshot = vi.mocked(snapshotReader.readSnapshot);
+      executor.onExec = (_file, args) => args[1] === "is-system-running"
+        ? { exitCode: 0, stdout, stderr: "private stderr" }
+        : undefined;
+
+      const observation = await supervisor.inspect({ ...owner, systemdControlGroup: exactControlGroup });
+
+      expect(readSnapshot).not.toHaveBeenCalled();
+      expect(observation).toEqual({ state: "UNKNOWN", reason: "SYSTEMD_MANAGER_STATUS_CHECK_UNAVAILABLE" });
+      expect(JSON.stringify(observation)).not.toMatch(/private|stderr|unrecognized/iu);
     },
   );
 

@@ -105,7 +105,10 @@ const HERMES_CHILD_ENV_KEYS = new Set([
   "HOMEDRIVE", "HOMEPATH", "SYSTEMROOT", "TEMP", "TMP", "PATH", "NODE_PATH", "NODE_ENV",
   "HOME", "HERMES_HOME", "HERMES_CONFIG", "HERMES_MODEL",
 ]);
-const pendingLaunches = new Set<string>();
+interface LocalLaunchAttempt {
+  session?: ProcessSession;
+  completionSettled: boolean;
+}
 const SAFE_NATIVE_HELPER_FAILURE_CODES = new Set([
   "ARGUMENTS_INVALID", "CHILD_ATTRIBUTE_INIT_FAILED", "CHILD_CREATE_FAILED",
   "CHILD_HANDLE_ALLOWLIST_FAILED", "CHILD_IDENTITY_PERSIST_FAILED", "CHILD_JOB_ASSIGNMENT_FAILED",
@@ -159,6 +162,10 @@ function launchKey(owner: ProcessScopeIdentity): string {
 /** Reopens and controls only the private named Job associated with one Run owner. */
 export class WindowsJobSupervisor implements ProcessScopeSupervisor {
   private acceptanceEvidenceUsed = false;
+  private readonly pendingLaunches = new Set<string>();
+  /** Keeps local attempt state so PREPARED cannot erase a spawn attempted by this supervisor. */
+  private readonly launchAttempts = new Map<string, LocalLaunchAttempt>();
+  private readonly launchAttemptNonces = new Map<string, string>();
   constructor(
     private readonly executor = new ProcessExecutor(),
     private readonly helperPath = HELPER_PATH,
@@ -182,30 +189,47 @@ export class WindowsJobSupervisor implements ProcessScopeSupervisor {
       throw new Error("WINDOWS_PATH_CHAIN_EVIDENCE_ACCEPTANCE_BINDING_INVALID");
     }
     if (this.acceptanceEvidence) this.acceptanceEvidenceUsed = true;
+    const diagnosticTrace = process.env.EBB_WINDOWS_NATIVE_HANDSHAKE_TRACE === "1"
+      ? new NativeHelperHandshakeTrace()
+      : undefined;
     const helperInvocation = await this.createHelperInvocation(this.helperPath, "windowsRunSupervisor", [
       this.acceptanceEvidence ? "launch-evidence" : "launch", owner.containmentId, owner.launchNonce,
     ]);
+    diagnosticTrace?.mark("INVOCATION");
     if (request.signal?.aborted) throw new ProcessScopeLaunchNotDispatchedError();
     const metadataFrame = encodeMetadataFrame(request, launchIdentity);
     const key = launchKey(owner);
-    pendingLaunches.add(key);
-    let session: ProcessSession;
-    try {
-      session = this.executor.startSession(helperInvocation.file, [...helperInvocation.args], {
-        cwd: request.cwd,
-        env: { ...helperInvocation.env },
-        timeout: 0,
-        maxBuffer: 10 * 1024 * 1024,
-        captureOutput: request.captureOutput ?? true,
-      });
-    } catch (error) {
-      pendingLaunches.delete(key);
-      throw error;
+    if (this.launchAttempts.has(key) || this.launchAttemptNonces.has(owner.containmentId)) {
+      throw new Error("WINDOWS_PROCESS_SCOPE_LAUNCH_ATTEMPT_ALREADY_RECORDED");
     }
+    const attempt: LocalLaunchAttempt = { completionSettled: false };
+    this.launchAttempts.set(key, attempt);
+    this.launchAttemptNonces.set(owner.containmentId, owner.launchNonce);
+    this.pendingLaunches.add(key);
+    // Keep the attempt markers if startSession throws: without a ProcessSession there is no
+    // completion signal, so later observations must fail closed for this owner.
+    const session = this.executor.startSession(helperInvocation.file, [...helperInvocation.args], {
+      cwd: request.cwd,
+      env: { ...helperInvocation.env },
+      timeout: 0,
+      maxBuffer: 10 * 1024 * 1024,
+      captureOutput: request.captureOutput ?? true,
+    });
+    attempt.session = session;
     let identity: ProcessScopeIdentity | undefined;
     let stopPromise: Promise<ProcessScopeObservation> | undefined;
     const terminalFailureCapture = new NativeHelperTerminalFailureCapture();
     session.stderr.on("data", (chunk: Buffer | string) => terminalFailureCapture.write(chunk));
+    session.stdout.on("data", (chunk: Buffer | string) => diagnosticTrace?.observeStdout(chunk));
+    session.stderr.on("data", () => diagnosticTrace?.markStderrByte());
+    session.stdout.on("end", () => diagnosticTrace?.mark("OUT_END"));
+    session.stderr.on("end", () => diagnosticTrace?.mark("ERR_END"));
+    diagnosticTrace?.mark("SESSION");
+    let sessionSettled = false;
+    void session.completion.then(
+      () => { sessionSettled = true; attempt.completionSettled = true; },
+      () => { sessionSettled = true; attempt.completionSettled = true; },
+    );
     const requestStop = () => {
       if (!stopPromise) stopPromise = this.stop(identity ?? owner);
       return stopPromise;
@@ -222,32 +246,47 @@ export class WindowsJobSupervisor implements ProcessScopeSupervisor {
     try {
       await protocol.nextLine("EBB_HELPER_READY", 10_000);
       helperReady = true;
+      diagnosticTrace?.mark("READY");
       // The PowerShell gate fails before READY. After the trusted helper handoff, stderr belongs
       // to the child payload and must never be considered a gate diagnostic.
       terminalFailureCapture.stop();
       if (request.signal?.aborted) throw new Error("WINDOWS_PROCESS_SCOPE_LAUNCH_CANCELLED");
       session.stdin.write(metadataFrame);
       identity = parseLiveIdentity(await protocol.nextLine("EBB_SCOPE_READY", 10_000), owner);
+      diagnosticTrace?.mark("SCOPE");
       await persistVerifiedIdentity(identity);
       // ResumeThread is gated by a fixed nonce-bound ACK frame. Recheck the signal
       // after the asynchronous durable callback and before sending the frame.
       if (request.signal?.aborted) throw new Error("WINDOWS_PROCESS_SCOPE_LAUNCH_CANCELLED");
       protocol.beginPayload();
       session.stdin.write(encodeLaunchAcknowledgement(owner.launchNonce));
-      pendingLaunches.delete(key);
+      this.pendingLaunches.delete(key);
     } catch (error) {
+      diagnosticTrace?.mark("TIMEOUT");
       session.stdin.destroy();
       // Closing the protocol channel makes the suspended native helper reject the
       // launch ACK. Keep the pending marker until that exact helper has exited.
       const completed = await session.completion.then((result) => result, () => undefined);
-      pendingLaunches.delete(key);
+      diagnosticTrace?.mark("SETTLED");
       request.signal?.removeEventListener("abort", onAbort);
       const stopOwner = identity ?? owner;
-      const observed = await this.waitForStopped(stopOwner, STOP_TIMEOUT_MS);
-      const stopped = observed.state === "STOPPED" ? observed : await this.stop(stopOwner);
-      const final = stopped.state === "STOPPED" ? stopped : await this.waitForStopped(stopOwner, STOP_TIMEOUT_MS);
+      let final: ProcessScopeObservation;
+      try {
+        const observed = await this.waitForStopped(stopOwner, STOP_TIMEOUT_MS);
+        const stopped = observed.state === "STOPPED" ? observed : await this.stop(stopOwner);
+        final = stopped.state === "STOPPED" ? stopped : await this.waitForStopped(stopOwner, STOP_TIMEOUT_MS);
+      } finally {
+        // Preserve the pending marker until the exact session is settled and the native
+        // nonce-bound absence readback has completed (or failed closed).
+        this.pendingLaunches.delete(key);
+      }
       const nativeGateDiagnostic = error instanceof Error && error.message.startsWith("WINDOWS_HELPER_HANDSHAKE_TIMEOUT:")
-        ? formatNativeHelperTerminalDiagnostic(terminalFailureCapture.failure, completed?.exitCode, helperReady)
+        ? formatNativeHelperTerminalDiagnostic(
+          terminalFailureCapture.failure,
+          completed?.exitCode,
+          helperReady,
+          diagnosticTrace?.format(sessionSettled),
+        )
         : undefined;
       if (final.state !== "STOPPED") {
         const reason = final.state === "UNKNOWN" ? final.reason : "WINDOWS_JOB_STOP_NOT_CONFIRMED";
@@ -255,6 +294,8 @@ export class WindowsJobSupervisor implements ProcessScopeSupervisor {
         if (nativeGateDiagnostic && error instanceof Error) error.message = nativeGateDiagnostic;
         throw new Error(`WINDOWS_PROCESS_SCOPE_LAUNCH_UNPROVEN:${reason}`, { cause: error });
       }
+      // Retain the immutable local attempt binding after a rejected launch. Callers may
+      // need a later fresh STOP inspection before tearing down their owned fixture.
       if (nativeGateDiagnostic) throw new Error(nativeGateDiagnostic, { cause: error });
       throw error;
     }
@@ -267,6 +308,8 @@ export class WindowsJobSupervisor implements ProcessScopeSupervisor {
       await protocol.drainPayload();
       const stopped = await this.waitForStopped(verifiedIdentity, STOP_TIMEOUT_MS);
       if (stopped.state !== "STOPPED") throw new Error("WINDOWS_PROCESS_SCOPE_STOP_UNPROVEN");
+      this.launchAttempts.delete(launchKey(verifiedIdentity));
+      this.launchAttemptNonces.delete(verifiedIdentity.containmentId);
       if (timedOut) throw new Error("WINDOWS_PROCESS_SCOPE_TIMEOUT");
       let stripped = stripHelperProtocol(result);
       if (this.acceptanceEvidence) {
@@ -279,6 +322,8 @@ export class WindowsJobSupervisor implements ProcessScopeSupervisor {
       await protocol.drainPayload().catch(() => undefined);
       const stopped = await requestStop().catch(() => ({ state: "UNKNOWN" as const, reason: "WINDOWS_JOB_STOP_FAILED" }));
       if (stopped.state !== "STOPPED") throw new Error("WINDOWS_PROCESS_SCOPE_STOP_UNPROVEN");
+      this.launchAttempts.delete(launchKey(verifiedIdentity));
+      this.launchAttemptNonces.delete(verifiedIdentity.containmentId);
       throw error;
     }).finally(() => {
       clearTimeout(timeout);
@@ -289,6 +334,10 @@ export class WindowsJobSupervisor implements ProcessScopeSupervisor {
 
   async inspect(owner: ProcessScopeIdentity): Promise<ProcessScopeObservation> {
     assertWindowsOwner(owner);
+    const attemptedNonce = this.launchAttemptNonces.get(owner.containmentId);
+    if (attemptedNonce && attemptedNonce !== owner.launchNonce) {
+      return { state: "UNKNOWN", reason: "WINDOWS_ATTEMPT_NONCE_MISMATCH" };
+    }
     try {
       const invocation = await this.createHelperInvocation(this.helperPath, "windowsRunSupervisor", [
         "inspect",
@@ -297,12 +346,32 @@ export class WindowsJobSupervisor implements ProcessScopeSupervisor {
         owner.state,
         owner.supervisorPid?.toString() ?? "-",
         owner.supervisorStartIdentity ?? "-",
-        pendingLaunches.has(launchKey(owner)) ? "1" : "0",
+        this.pendingLaunches.has(launchKey(owner)) && !this.launchAttempts.get(launchKey(owner))?.completionSettled ? "1" : "0",
+        this.launchAttempts.get(launchKey(owner))?.session && this.launchAttempts.get(launchKey(owner))?.completionSettled ? "1" : "0",
       ]);
       const result = await this.executor.exec(invocation.file, [...invocation.args], {
         env: { ...invocation.env }, timeout: 5_000, maxBuffer: 32 * 1024,
       });
-      return parseInspection(result.stdout, owner);
+      const attempt = this.launchAttempts.get(launchKey(owner));
+      const observation = parseInspection(result.stdout, owner);
+      if (attempt && observation.state === "LIVE" &&
+          (this.pendingLaunches.has(launchKey(owner)) || !attempt.session || attempt.completionSettled)) {
+        return { state: "UNKNOWN", reason: "WINDOWS_ATTEMPT_JOB_STILL_LIVE" };
+      }
+      if (attempt && observation.state === "STOPPED") {
+        if (observation.evidence === "WINDOWS_ATTEMPT_SCOPE_ABSENT") {
+          if (!attempt.session || !attempt.completionSettled || !isExactJobAbsentAttemptSettled(result.stdout)) {
+            return { state: "UNKNOWN", reason: "WINDOWS_ATTEMPT_ABSENCE_EVIDENCE_MALFORMED" };
+          }
+        } else if (observation.evidence === "NEVER_LAUNCHED") {
+          return { state: "UNKNOWN", reason: "WINDOWS_ATTEMPT_NEVER_LAUNCHED_CONFLICT" };
+        } else if (!attempt.session || !attempt.completionSettled) {
+          // JOB_EMPTY and helper-absent responses describe the native Job only. They do not
+          // prove that this exact launcher ProcessSession has settled after a spawn attempt.
+          return { state: "UNKNOWN", reason: "WINDOWS_ATTEMPT_SESSION_PENDING" };
+        }
+      }
+      return observation;
     } catch {
       return { state: "UNKNOWN", reason: "WINDOWS_JOB_INSPECTION_UNAVAILABLE" };
     }
@@ -509,6 +578,9 @@ function parseInspection(output: string, owner: ProcessScopeIdentity): ProcessSc
   const fields = line.split("\t");
   if (fields[0] === "STOPPED" && fields[1] === "JOB_EMPTY") return { state: "STOPPED", evidence: "WINDOWS_JOB_EMPTY" };
   if (fields[0] === "STOPPED" && fields[1] === "OWNER_NEVER_LAUNCHED") return { state: "STOPPED", evidence: "NEVER_LAUNCHED" };
+  if (fields[0] === "STOPPED" && fields[1] === "JOB_ABSENT_ATTEMPT_SETTLED") {
+    return { state: "STOPPED", evidence: "WINDOWS_ATTEMPT_SCOPE_ABSENT" };
+  }
   if (fields[0] === "STOPPED" && fields[1] === "JOB_ABSENT_NO_HELPER") {
     return { state: "STOPPED", evidence: "WINDOWS_JOB_AND_HELPER_ABSENT" };
   }
@@ -529,6 +601,10 @@ function parseInspection(output: string, owner: ProcessScopeIdentity): ProcessSc
   return { state: "UNKNOWN", reason: "WINDOWS_JOB_IDENTITY_UNPROVEN" };
 }
 
+function isExactJobAbsentAttemptSettled(output: string): boolean {
+  return /^STOPPED\tJOB_ABSENT_ATTEMPT_SETTLED\r?\n?$/u.test(output);
+}
+
 function parsePid(value: string | undefined): number | null {
   if (!value || !/^[1-9]\d*$/.test(value)) return null;
   const pid = Number(value);
@@ -545,6 +621,106 @@ function stripHelperProtocol(result: ProcessResult): ProcessResult {
 interface NativeHelperTerminalFailure {
   readonly phase: string;
   readonly exceptionType: string;
+}
+
+type NativeHelperTraceStage = "INVOCATION" | "SESSION" | "OUT" | "ERR" | "READY" | "SCOPE" | "TIMEOUT" | "SETTLED" | "OUT_END" | "ERR_END";
+type NativeHelperStdoutCode = "NONE" | "PARTIAL" | "UNRECOGNIZED" | "OVERSIZED" | "READY" | "SCOPE" | `UNKNOWN_${string}`;
+
+/** Keeps only fixed timing stages and an allowlisted first stdout marker for native acceptance diagnostics. */
+class NativeHelperHandshakeTrace {
+  private static readonly MAX_FIRST_LINE_BYTES = 256;
+  private static readonly MAX_ELAPSED_MS = 60_000;
+  private readonly startedAt = Date.now();
+  private readonly stageTimes = new Map<NativeHelperTraceStage, number>();
+  private firstLine: number[] = [];
+  private firstLineComplete = false;
+  private firstLineOverflowed = false;
+  private stdoutCode: NativeHelperStdoutCode = "NONE";
+  private stdoutByteSeen = false;
+  private stderrByteSeen = false;
+
+  mark(stage: NativeHelperTraceStage): void {
+    if (!this.stageTimes.has(stage)) {
+      this.stageTimes.set(stage, Math.min(NativeHelperHandshakeTrace.MAX_ELAPSED_MS, Math.max(0, Date.now() - this.startedAt)));
+    }
+  }
+
+  observeStdout(chunk: Buffer | string): void {
+    const bytes = typeof chunk === "string" ? Buffer.from(chunk, "utf8") : chunk;
+    if (bytes.byteLength > 0 && !this.stdoutByteSeen) {
+      this.stdoutByteSeen = true;
+      this.mark("OUT");
+    }
+    if (this.firstLineComplete) return;
+    for (const byte of bytes) {
+      if (byte === 0x0a) {
+        this.firstLineComplete = true;
+        this.classifyFirstLine();
+        return;
+      }
+      if (this.firstLine.length >= NativeHelperHandshakeTrace.MAX_FIRST_LINE_BYTES) {
+        this.firstLineOverflowed = true;
+        this.firstLine = [];
+        this.firstLineComplete = true;
+        this.stdoutCode = "OVERSIZED";
+        return;
+      }
+      this.firstLine.push(byte);
+    }
+  }
+
+  markStderrByte(): void {
+    if (this.stderrByteSeen) return;
+    this.stderrByteSeen = true;
+    this.mark("ERR");
+  }
+
+  format(sessionSettled: boolean): string {
+    const stages = [...this.stageTimes.entries()]
+      .sort((left, right) => left[1] - right[1])
+      .map(([stage, elapsed]) => `${stage}@${elapsed}`)
+      .join(",") || "NONE";
+    const stdoutCode = this.firstLineComplete
+      ? this.stdoutCode
+      : this.firstLine.length > 0 ? "PARTIAL" : "NONE";
+    return [
+      `STAGES=${stages}`,
+      `OUTCODE=${stdoutCode}`,
+      `OUTB=${this.stdoutByteSeen ? 1 : 0}`,
+      `ERRB=${this.stderrByteSeen ? 1 : 0}`,
+      `DONE=${sessionSettled ? 1 : 0}`,
+      `OUTEND=${this.stageTimes.has("OUT_END") ? 1 : 0}`,
+      `ERREND=${this.stageTimes.has("ERR_END") ? 1 : 0}`,
+    ].join(":");
+  }
+
+  private classifyFirstLine(): void {
+    if (this.firstLineOverflowed) {
+      this.stdoutCode = "OVERSIZED";
+      return;
+    }
+    if (this.firstLine.some((byte) => byte > 0x7f)) {
+      this.stdoutCode = "UNRECOGNIZED";
+      this.firstLine = [];
+      return;
+    }
+    const line = Buffer.from(this.firstLine).toString("ascii").replace(/\r$/u, "");
+    this.firstLine = [];
+    if (line === "EBB_HELPER_READY") {
+      this.stdoutCode = "READY";
+      return;
+    }
+    if (line.startsWith("EBB_SCOPE_READY\t") && line.split("\t").length === 8) {
+      this.stdoutCode = "SCOPE";
+      return;
+    }
+    const unknown = /^UNKNOWN\t([A-Z0-9_]+)$/u.exec(line);
+    if (unknown && SAFE_NATIVE_HELPER_FAILURE_CODES.has(unknown[1]!)) {
+      this.stdoutCode = `UNKNOWN_${unknown[1]}`;
+      return;
+    }
+    this.stdoutCode = "UNRECOGNIZED";
+  }
 }
 
 class NativeHelperTerminalFailureCapture {
@@ -615,17 +791,20 @@ function formatNativeHelperTerminalDiagnostic(
   gateFailure: NativeHelperTerminalFailure | undefined,
   exitCode: number | undefined,
   helperReady: boolean,
+  trace?: string,
 ): string {
   const safeExit = typeof exitCode === "number" && Number.isSafeInteger(exitCode) && exitCode >= 0 && exitCode <= 255
     ? `EXIT_${exitCode}`
     : "EXIT_UNAVAILABLE";
-  return [
+  const fields = [
     "WINDOWS_NATIVE_HELPER_DIAGNOSTIC",
     `PHASE_${gateFailure?.phase ?? "UNCLASSIFIED"}`,
     `TYPE_${gateFailure?.exceptionType ?? "UNCLASSIFIED"}`,
     safeExit,
     helperReady ? "READY_PRESENT" : "READY_ABSENT",
-  ].join(":");
+  ];
+  if (trace) fields.push(trace);
+  return fields.join(":");
 }
 
 function normalizeNativeHelperGateExceptionType(exceptionType: string): string {

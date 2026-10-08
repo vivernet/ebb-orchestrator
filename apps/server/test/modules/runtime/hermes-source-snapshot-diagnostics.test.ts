@@ -152,6 +152,36 @@ describe("Hermes source snapshot diagnostics", () => {
     expect(diagnostic).not.toMatch(/private|powershell|SECRET|SID|ACE|mask/iu);
   });
 
+  it("reports only a bounded path-chain identity failure location", () => {
+    const diagnostic = sanitizeHermesPathIdentityDiagnostic(new ExitCodeError(
+      "C:\\private\\powershell.exe -EncodedCommand SECRET",
+      34,
+      "C:\\private\\stdout",
+      "SAFE_PATH_CHAIN_IDENTITY_UNAVAILABLE:COMPONENT_INDEX_12",
+    ));
+
+    expect(diagnostic).toBe("SECONDARY_PATH_IDENTITY_UNAVAILABLE:COMPONENT_INDEX_12");
+    expect(diagnostic).not.toMatch(/private|powershell|SECRET|stdout/iu);
+  });
+
+  it.each([
+    ["SAFE_PATH_CHAIN_IDENTITY_UNAVAILABLE:ROOT", "SECONDARY_PATH_IDENTITY_UNAVAILABLE:ROOT"],
+    ["SAFE_PATH_CHAIN_IDENTITY_UNAVAILABLE:COMPONENT_INDEX_64", "SECONDARY_PATH_IDENTITY_UNAVAILABLE:COMPONENT_INDEX_64"],
+    ["SAFE_PATH_CHAIN_IDENTITY_UNAVAILABLE:SERIALIZATION_LIMIT", "SECONDARY_PATH_IDENTITY_UNAVAILABLE:SERIALIZATION_LIMIT"],
+  ])("maps only exact bounded identity diagnostic %s", (stderr, expected) => {
+    expect(sanitizeHermesPathIdentityDiagnostic(new ExitCodeError("helper", 34, "", stderr))).toBe(expected);
+  });
+
+  it.each([
+    [34, "SAFE_PATH_CHAIN_IDENTITY_UNAVAILABLE:COMPONENT_INDEX_65"],
+    [34, "SAFE_PATH_CHAIN_IDENTITY_UNAVAILABLE:COMPONENT_INDEX_01"],
+    [34, "SAFE_PATH_CHAIN_IDENTITY_UNAVAILABLE:COMPONENT_INDEX_1:C:\\private"],
+    [35, "SAFE_PATH_CHAIN_IDENTITY_UNAVAILABLE:ROOT"],
+  ])("collapses malformed or exit-mismatched identity diagnostic %s / %s", (exitCode, stderr) => {
+    expect(sanitizeHermesPathIdentityDiagnostic(new ExitCodeError("helper", exitCode, "", stderr)))
+      .toBe("SECONDARY_PATH_IDENTITY_UNAVAILABLE");
+  });
+
   it("passes through only exact bounded component ACL diagnostics", () => {
     expect(isSafeHermesPathComponentAclDiagnostic("SECONDARY_PATH_COMPONENT_ACL_UNSAFE:INDEX_1:STAGE_5")).toBe(true);
     expect(isSafeHermesPathComponentAclDiagnostic("SECONDARY_PATH_COMPONENT_ACL_UNSAFE:INDEX_64:STAGE_6")).toBe(true);
