@@ -358,7 +358,12 @@ describe("Run process owner", () => {
     )).toEqual({ state: "UNKNOWN", stop_evidence: "OS_STATE_UNPROVEN" });
   });
 
-  it("preserves only an exact Windows inspection reason for restart diagnostics", async () => {
+  it.each([
+    "WINDOWS_JOB_INSPECTION_HELPER_INVOCATION_UNAVAILABLE",
+    "WINDOWS_JOB_INSPECTION_PROCESS_EXECUTION_UNAVAILABLE",
+    "WINDOWS_JOB_INSPECTION_OUTPUT_PARSE_FAILED",
+    "WINDOWS_JOB_ACCOUNTING_UNAVAILABLE",
+  ])("preserves only the exact Windows inspection reason %s for restart diagnostics", async (reason) => {
     const database = await setup();
     const runId = "run-id-must-not-reach-diagnostic";
     insertRun(database, runId, "STARTED", "windows-job");
@@ -366,7 +371,7 @@ describe("Run process owner", () => {
       runId, expectedState: "PREPARED", nextState: "LAUNCHING",
     }));
     const supervisor: ProcessScopeSupervisor = {
-      inspect: async () => ({ state: "UNKNOWN", reason: "WINDOWS_JOB_INSPECTION_UNAVAILABLE" }),
+      inspect: async () => ({ state: "UNKNOWN", reason }),
       stop: async () => ({ state: "UNKNOWN", reason: "unused" }),
       launch: async () => { throw new Error("not used"); },
       waitForStopped: async () => ({ state: "UNKNOWN", reason: "unused" }),
@@ -378,7 +383,7 @@ describe("Run process owner", () => {
 
     expect(failure).toBeInstanceOf(Error);
     expect((failure as Error).message).toBe(`RUN_PROCESS_SCOPE_UNKNOWN:${runId}`);
-    expect(safeRestartChildFailureCode(failure)).toBe("WINDOWS_JOB_INSPECTION_UNAVAILABLE");
+    expect(safeRestartChildFailureCode(failure)).toBe(reason);
     expect(safeRestartChildFailureCode(failure)).not.toContain(runId);
   });
 

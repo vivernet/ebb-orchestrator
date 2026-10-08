@@ -879,6 +879,45 @@ describe("WindowsJobSupervisor", () => {
     ]]);
   });
 
+  it("reports only the fixed helper-invocation inspection stage when invocation creation throws", async () => {
+    Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+    const secret = "C:\\private\\OPENAI_API_KEY=must-not-appear";
+    const createInvocation = async () => { throw new Error(`untrusted helper path ${secret}`); };
+    const supervisor = new WindowsJobSupervisor(new InspectionExecutor(""), "native-helper.exe", createInvocation);
+
+    const observation = await supervisor.inspect(owner);
+
+    expect(observation).toEqual({ state: "UNKNOWN", reason: "WINDOWS_JOB_INSPECTION_HELPER_INVOCATION_UNAVAILABLE" });
+    expect(JSON.stringify(observation)).not.toContain(secret);
+  });
+
+  it("reports only the fixed process-execution inspection stage when helper execution throws", async () => {
+    Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+    const secret = "OPENAI_API_KEY=must-not-appear";
+    class RejectingInspectionExecutor extends ProcessExecutor {
+      override async exec(): Promise<ProcessResult> { throw new Error(`native stderr: ${secret}`); }
+    }
+    const supervisor = new WindowsJobSupervisor(new RejectingInspectionExecutor(), "native-helper.exe", createTestHelperInvocation);
+
+    const observation = await supervisor.inspect(owner);
+
+    expect(observation).toEqual({ state: "UNKNOWN", reason: "WINDOWS_JOB_INSPECTION_PROCESS_EXECUTION_UNAVAILABLE" });
+    expect(JSON.stringify(observation)).not.toContain(secret);
+  });
+
+  it("reports only the fixed output-parse inspection stage when native identity output is malformed", async () => {
+    Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+    const secret = "OPENAI_API_KEY=must-not-appear";
+    const malformedLiveOutput = ["LIVE", owner.containmentId, owner.launchNonce, secret, "100", "42", "200", `sha256:${"c".repeat(64)}`].join("\t");
+    const executor = new InspectionExecutor(`${malformedLiveOutput}\n`);
+    const supervisor = new WindowsJobSupervisor(executor, "native-helper.exe", createTestHelperInvocation);
+
+    const observation = await supervisor.inspect(owner);
+
+    expect(observation).toEqual({ state: "UNKNOWN", reason: "WINDOWS_JOB_INSPECTION_OUTPUT_PARSE_FAILED" });
+    expect(JSON.stringify(observation)).not.toContain(secret);
+  });
+
   it("accepts STOPPED only from the helper's verified absent-Job proof", async () => {
     Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
     const executor = new InspectionExecutor("STOPPED\tJOB_ABSENT_NO_HELPER\n");

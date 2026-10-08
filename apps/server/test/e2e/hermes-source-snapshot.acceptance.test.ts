@@ -66,6 +66,9 @@ const SAFE_PROCESS_SCOPE_OBSERVATION_REASONS = new Set([
   "WINDOWS_JOB_IDENTITY_MISMATCH",
   "WINDOWS_JOB_IDENTITY_UNPROVEN",
   "WINDOWS_JOB_INSPECTION_UNAVAILABLE",
+  "WINDOWS_JOB_INSPECTION_HELPER_INVOCATION_UNAVAILABLE",
+  "WINDOWS_JOB_INSPECTION_PROCESS_EXECUTION_UNAVAILABLE",
+  "WINDOWS_JOB_INSPECTION_OUTPUT_PARSE_FAILED",
   "WINDOWS_JOB_STOP_FAILED",
   "WINDOWS_JOB_STOP_TIMEOUT",
 ]);
@@ -678,7 +681,14 @@ function safeLinuxRefusalEvidence(stderr: string, stdout: string): string | unde
 }
 
 const linuxNativeRefusalCodes = new Set([
-  "HERMES_SOURCE_CACHE_LEASE_UNAVAILABLE",
+  "HERMES_SOURCE_CACHE_ROOT_OPEN_FAILED",
+  "HERMES_SOURCE_CACHE_ROOT_METADATA_UNAVAILABLE",
+  "HERMES_SOURCE_CACHE_ROOT_MODE_UNSAFE",
+  "HERMES_SOURCE_CACHE_REF_LOCK_OPEN_FAILED",
+  "HERMES_SOURCE_CACHE_REF_LOCK_METADATA_INVALID",
+  "HERMES_SOURCE_CACHE_REF_LOCK_MODE_UNSAFE",
+  "HERMES_SOURCE_CACHE_REF_LOCK_BUSY",
+  "HERMES_SOURCE_CACHE_REF_LOCK_FAILED",
   "HERMES_SOURCE_SNAPSHOT_IDENTITY_MISMATCH",
   "HERMES_SOURCE_PROJECTION_UNAVAILABLE",
   "HERMES_SOURCE_SNAPSHOT_CONTENT_MISMATCH",
@@ -780,7 +790,7 @@ describe("safe native refusal output diagnostics", () => {
   });
 
   it("reports a known Linux refusal code without accepting it as expected evidence", () => {
-    const refusal = "HERMES_LINUX_LAUNCH_REFUSED:HERMES_SOURCE_SNAPSHOT_IDENTITY_MISMATCH";
+    const refusal = "HERMES_LINUX_LAUNCH_REFUSED:HERMES_SOURCE_CACHE_REF_LOCK_BUSY";
     const summary = safeNativeRefusalOutputSummary({
       exitCode: 65,
       stdout: "",
@@ -790,6 +800,17 @@ describe("safe native refusal output diagnostics", () => {
     expect(summary).toContain(`knownLinuxRefusalCodes={${refusal}}`);
     expect(summary).toContain("allowlistedRefusalMatches=0");
     expect(summary).toContain("otherLineShapes={none}");
+  });
+
+  it("keeps cache lease diagnostics outside accepted EHSP refusal evidence", () => {
+    expect(safeLinuxRefusalEvidence(
+      "HERMES_LINUX_LAUNCH_REFUSED:HERMES_SOURCE_CACHE_REF_LOCK_BUSY\n",
+      "",
+    )).toBeUndefined();
+    expect(safeLinuxRefusalEvidence(
+      "HERMES_LINUX_LAUNCH_REFUSED:HERMES_SOURCE_SNAPSHOT_CONTENT_MISMATCH\n",
+      "",
+    )).toBe("HERMES_LINUX_LAUNCH_REFUSED:HERMES_SOURCE_SNAPSHOT_CONTENT_MISMATCH");
   });
 
   it("hides unknown uppercase codes and raw secret text", () => {

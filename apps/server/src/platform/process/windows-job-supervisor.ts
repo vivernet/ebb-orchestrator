@@ -339,8 +339,9 @@ export class WindowsJobSupervisor implements ProcessScopeSupervisor {
     if (attemptedNonce && attemptedNonce !== owner.launchNonce) {
       return { state: "UNKNOWN", reason: "WINDOWS_ATTEMPT_NONCE_MISMATCH" };
     }
+    let invocation: Awaited<ReturnType<typeof createWindowsNativeHelperInvocation>>;
     try {
-      const invocation = await this.createHelperInvocation(this.helperPath, "windowsRunSupervisor", [
+      invocation = await this.createHelperInvocation(this.helperPath, "windowsRunSupervisor", [
         "inspect",
         owner.containmentId,
         owner.launchNonce,
@@ -350,32 +351,45 @@ export class WindowsJobSupervisor implements ProcessScopeSupervisor {
         this.pendingLaunches.has(launchKey(owner)) && !this.launchAttempts.get(launchKey(owner))?.completionSettled ? "1" : "0",
         this.launchAttempts.get(launchKey(owner))?.session && this.launchAttempts.get(launchKey(owner))?.completionSettled ? "1" : "0",
       ]);
-      const result = await this.executor.exec(invocation.file, [...invocation.args], {
+    } catch {
+      return { state: "UNKNOWN", reason: "WINDOWS_JOB_INSPECTION_HELPER_INVOCATION_UNAVAILABLE" };
+    }
+
+    let result: ProcessResult;
+    try {
+      result = await this.executor.exec(invocation.file, [...invocation.args], {
         env: { ...invocation.env }, timeout: 5_000, maxBuffer: 32 * 1024,
       });
-      const attempt = this.launchAttempts.get(launchKey(owner));
-      const observation = parseInspection(result.stdout, owner);
-      if (attempt && observation.state === "LIVE" &&
-          (this.pendingLaunches.has(launchKey(owner)) || !attempt.session || attempt.completionSettled)) {
-        return { state: "UNKNOWN", reason: "WINDOWS_ATTEMPT_JOB_STILL_LIVE" };
-      }
-      if (attempt && observation.state === "STOPPED") {
-        if (observation.evidence === "WINDOWS_ATTEMPT_SCOPE_ABSENT") {
-          if (!attempt.session || !attempt.completionSettled || !isExactJobAbsentAttemptSettled(result.stdout)) {
-            return { state: "UNKNOWN", reason: "WINDOWS_ATTEMPT_ABSENCE_EVIDENCE_MALFORMED" };
-          }
-        } else if (observation.evidence === "NEVER_LAUNCHED") {
-          return { state: "UNKNOWN", reason: "WINDOWS_ATTEMPT_NEVER_LAUNCHED_CONFLICT" };
-        } else if (!attempt.session || !attempt.completionSettled) {
-          // JOB_EMPTY and helper-absent responses describe the native Job only. They do not
-          // prove that this exact launcher ProcessSession has settled after a spawn attempt.
-          return { state: "UNKNOWN", reason: "WINDOWS_ATTEMPT_SESSION_PENDING" };
-        }
-      }
-      return observation;
     } catch {
-      return { state: "UNKNOWN", reason: "WINDOWS_JOB_INSPECTION_UNAVAILABLE" };
+      return { state: "UNKNOWN", reason: "WINDOWS_JOB_INSPECTION_PROCESS_EXECUTION_UNAVAILABLE" };
     }
+
+    let observation: ProcessScopeObservation;
+    try {
+      observation = parseInspection(result.stdout, owner);
+    } catch {
+      return { state: "UNKNOWN", reason: "WINDOWS_JOB_INSPECTION_OUTPUT_PARSE_FAILED" };
+    }
+
+    const attempt = this.launchAttempts.get(launchKey(owner));
+    if (attempt && observation.state === "LIVE" &&
+        (this.pendingLaunches.has(launchKey(owner)) || !attempt.session || attempt.completionSettled)) {
+      return { state: "UNKNOWN", reason: "WINDOWS_ATTEMPT_JOB_STILL_LIVE" };
+    }
+    if (attempt && observation.state === "STOPPED") {
+      if (observation.evidence === "WINDOWS_ATTEMPT_SCOPE_ABSENT") {
+        if (!attempt.session || !attempt.completionSettled || !isExactJobAbsentAttemptSettled(result.stdout)) {
+          return { state: "UNKNOWN", reason: "WINDOWS_ATTEMPT_ABSENCE_EVIDENCE_MALFORMED" };
+        }
+      } else if (observation.evidence === "NEVER_LAUNCHED") {
+        return { state: "UNKNOWN", reason: "WINDOWS_ATTEMPT_NEVER_LAUNCHED_CONFLICT" };
+      } else if (!attempt.session || !attempt.completionSettled) {
+        // JOB_EMPTY and helper-absent responses describe the native Job only. They do not
+        // prove that this exact launcher ProcessSession has settled after a spawn attempt.
+        return { state: "UNKNOWN", reason: "WINDOWS_ATTEMPT_SESSION_PENDING" };
+      }
+    }
+    return observation;
   }
 
   /** Читает только nonce-связанную фазу handshake; невозможность точного readback даёт `UNAVAILABLE`. */

@@ -347,12 +347,31 @@ bool verifySnapshotTree(int root, const std::map<std::string, SnapshotEntry>& en
 
 int acquireSnapshotLease(const std::string& cacheRoot) {
   FileDescriptor directory(openAbsoluteDirectory(cacheRoot, true));
+  if (!directory) { writeRefusal("HERMES_SOURCE_CACHE_ROOT_OPEN_FAILED"); return -1; }
   struct stat rootInfo{};
-  if (!directory || fstat(directory.get(), &rootInfo) != 0 || (rootInfo.st_mode & 0777) != 0700) return -1;
+  if (fstat(directory.get(), &rootInfo) != 0) {
+    writeRefusal("HERMES_SOURCE_CACHE_ROOT_METADATA_UNAVAILABLE"); return -1;
+  }
+  if ((rootInfo.st_mode & 0777) != 0700) {
+    writeRefusal("HERMES_SOURCE_CACHE_ROOT_MODE_UNSAFE"); return -1;
+  }
   FileDescriptor lock(openat(directory.get(), ".source-cache.ref.lock", O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK));
+  if (!lock) { writeRefusal("HERMES_SOURCE_CACHE_REF_LOCK_OPEN_FAILED"); return -1; }
   struct stat lockInfo{};
-  if (!lock || fstat(lock.get(), &lockInfo) != 0 || !S_ISREG(lockInfo.st_mode) || lockInfo.st_uid != geteuid() ||
-      lockInfo.st_nlink != 1 || (lockInfo.st_mode & 0777) != 0600 || flock(lock.get(), LOCK_SH | LOCK_NB) != 0) return -1;
+  if (fstat(lock.get(), &lockInfo) != 0 || !S_ISREG(lockInfo.st_mode) || lockInfo.st_uid != geteuid() ||
+      lockInfo.st_nlink != 1) {
+    writeRefusal("HERMES_SOURCE_CACHE_REF_LOCK_METADATA_INVALID"); return -1;
+  }
+  if ((lockInfo.st_mode & 0777) != 0600) {
+    writeRefusal("HERMES_SOURCE_CACHE_REF_LOCK_MODE_UNSAFE"); return -1;
+  }
+  if (flock(lock.get(), LOCK_SH | LOCK_NB) != 0) {
+    const int flockError = errno;
+    writeRefusal(flockError == EWOULDBLOCK || flockError == EAGAIN
+      ? "HERMES_SOURCE_CACHE_REF_LOCK_BUSY"
+      : "HERMES_SOURCE_CACHE_REF_LOCK_FAILED");
+    return -1;
+  }
   return lock.release();
 }
 
@@ -515,7 +534,7 @@ int launchHermes(int argc, char** argv) {
   if (projectionPath.substr(0, projectionPath.rfind('/')) != cacheRootPath) return kInvalidInput;
 
   FileDescriptor cacheLease(acquireSnapshotLease(cacheRootPath));
-  if (!cacheLease) { writeRefusal("HERMES_SOURCE_CACHE_LEASE_UNAVAILABLE"); return kPathRejected; }
+  if (!cacheLease) return kPathRejected;
   FileDescriptor snapshotFd(openAbsoluteDirectory(snapshotRootPath, true));
   struct stat snapshotInfo{};
   if (!snapshotFd || fstat(snapshotFd.get(), &snapshotInfo) != 0 || (snapshotInfo.st_mode & 0777) != 0500 ||
