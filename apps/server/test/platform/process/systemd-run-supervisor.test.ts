@@ -229,7 +229,7 @@ describe("SystemdRunSupervisor", () => {
     const argsPrefix = ["-I", "-B", "-S", "-c", "pinned-hermes-bootstrap"];
     const hermesSourceSnapshotKey = JSON.stringify({
       formatVersion: 1,
-      hermesVersion: "v0.21.5+7357.g9244275",
+      hermesVersion: "v0.21.5+9117.g08165d5",
       manifestDigest: "a".repeat(64),
       sourceCommit: "b".repeat(40),
       sourceTree: "c".repeat(40),

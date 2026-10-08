@@ -161,6 +161,9 @@ function fakeRunService(db: ReturnType<typeof createSqliteDatabase>, failFirst =
       db.run("UPDATE agent_runs SET status='FAILED',ended_at=$now,exit_code=-1 WHERE id=$id AND status IN ('STARTED','IN_PROGRESS','COMPLETING')", { id: runId, now: new Date().toISOString() });
       return (db.get<{ status: string }>("SELECT status FROM agent_runs WHERE id=$id", { id: runId })?.status) === "FAILED";
     },
+    // The fake runtime has no native per-Run Hermes profile to remove. Keep the
+    // production cleanup call observable while modeling its harmless no-op result.
+    cleanupTerminalHermesProfile: vi.fn(async () => false),
   } as unknown as RunService;
 }
 
@@ -228,7 +231,8 @@ describe("Epic orchestrator recovery safety", () => {
   it("retries a terminal failed phase in the same orchestrator and reuses the unique phase row", async () => {
     const f = await approvedEpic();
     try {
-      const orchestrator = new EpicOrchestrator(f.db, f.workflow, f.planning, fakeRunService(f.db), {} as never, f.scheduler, f.workspaceOptions);
+      const runs = fakeRunService(f.db);
+      const orchestrator = new EpicOrchestrator(f.db, f.workflow, f.planning, runs, {} as never, f.scheduler, f.workspaceOptions);
       const calls = orchestrator as unknown as PrivateCalls;
       f.workflow.transition(f.taskId, "READY");
       const request = { phase: "child_task", role: "developer", taskId: f.taskId, epicId: f.epicId };
@@ -247,11 +251,17 @@ describe("Epic orchestrator recovery safety", () => {
       expect(f.db.get<{ count: number }>("SELECT COUNT(*) AS count FROM orchestration_phase_runs WHERE epic_id=$epicId AND task_id=$taskId AND phase='child_task'", { epicId: f.epicId, taskId: f.taskId })?.count).toBe(1);
       expect(f.db.get<{ id: string; status: string; validated: number }>("SELECT id,status,validated FROM orchestration_phase_runs WHERE epic_id=$epicId AND task_id=$taskId AND phase='child_task'", { epicId: f.epicId, taskId: f.taskId }))
         .toEqual({ id: failed!.id, status: "COMPLETED", validated: 1 });
+      const retriedRun = f.db.get<{ agent_run_id: string }>("SELECT agent_run_id FROM orchestration_phase_runs WHERE id=$id", { id: failed!.id });
+      expect(retriedRun?.agent_run_id).toBeTruthy();
+      expect(retriedRun?.agent_run_id).not.toBe(failed!.agent_run_id);
       expect(f.db.get<{ count: number }>("SELECT COUNT(*) AS count FROM agent_runs WHERE epic_id=$id AND role='developer'", { id: f.epicId })?.count).toBe(2);
       expect(f.db.get<{ status: string }>("SELECT status FROM agent_runs WHERE id=$id", { id: failed!.agent_run_id })?.status).toBe("FAILED");
       const projectId = f.db.get<{ project_id: string }>("SELECT project_id FROM epics WHERE id=$id", { id: f.epicId })?.project_id;
       if (!projectId) throw new Error("Epic project is missing");
       expect(f.db.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_reservations WHERE status='RESERVED' AND project_id=$id", { id: projectId })?.count).toBe(0);
+      expect(runs.cleanupTerminalHermesProfile).toHaveBeenCalledTimes(2);
+      expect(runs.cleanupTerminalHermesProfile).toHaveBeenNthCalledWith(1, failed!.agent_run_id);
+      expect(runs.cleanupTerminalHermesProfile).toHaveBeenNthCalledWith(2, retriedRun!.agent_run_id);
     } finally {
       f.db.close();
     }

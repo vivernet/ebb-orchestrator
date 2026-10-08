@@ -51,6 +51,34 @@ export interface BackgroundWorker {
   stop(): Promise<void>;
 }
 
+/** Доверенные имена recovery-фаз, единственные допустимые значения для startup-логов. */
+export const RECOVERY_PHASE_NAMES = [
+  "preflight_recovery",
+  "reconcile_project_config",
+  "reconcile_outbox",
+  "reconcile_jobs",
+  "reconcile_artifacts",
+  "production_startup_reconciliation",
+  "reconcile_epic_runs",
+  "reconcile_scheduler",
+  "cleanup_terminal_hermes_profiles",
+  "reconcile_planning_requests",
+  "reconcile_execution_claims",
+  "resume_approved_epics",
+  "invalid_recovery_step",
+] as const;
+
+export type RecoveryPhaseName = (typeof RECOVERY_PHASE_NAMES)[number];
+const recoveryPhaseNameSet: ReadonlySet<string> = new Set(RECOVERY_PHASE_NAMES);
+
+/** Именованный дополнительный шаг recovery, выполняемый до запуска workers. */
+export interface NamedRecoveryStep {
+  /** Стабильный идентификатор фазы для безопасной startup-диагностики. */
+  name: RecoveryPhaseName;
+  /** Выполняет одну фазу восстановления. */
+  run(): Promise<void>;
+}
+
 /**
  * Все dependencies needed to bring the system online.
  */
@@ -74,7 +102,7 @@ export interface SystemLifecycleDeps {
   reconcileOutbox(): Promise<void>;
   reconcileJobs(): Promise<void>;
   reconcileArtifacts(): Promise<void>;
-  additionalReconcilers: Array<() => Promise<void>>;
+  additionalReconcilers: NamedRecoveryStep[];
   workers: BackgroundWorker[];
   /** Прерывает startup между фазами и откатывает уже запущенные workers. */
   signal?: AbortSignal;
@@ -84,14 +112,15 @@ function assertStartupActive(signal?: AbortSignal): void {
   if (signal?.aborted) throw signal.reason ?? new Error("Startup interrupted before READY");
 }
 
-async function runRecoveryStep(step: string, reconcile: () => Promise<void>): Promise<void> {
+async function runRecoveryStep(step: RecoveryPhaseName, reconcile: () => Promise<void>): Promise<void> {
   try {
     await reconcile();
   } catch (error) {
     // Не выводим message/error object: reconciliation может содержать secrets
     // или raw repository/model output. Диагностика ограничена фиксированным шагом.
     const errorKind = error instanceof Error ? "error" : "non_error";
-    console.error(`[orchestrator] startup reconciliation failed: step=${step}; error_kind=${errorKind}`);
+    const safeStep = recoveryPhaseNameSet.has(step) ? step : "invalid_recovery_step";
+    console.error(`[orchestrator] startup reconciliation failed: step=${safeStep}; error_kind=${errorKind}`);
     throw error;
   }
 }
@@ -123,7 +152,7 @@ export async function startSystem(deps: SystemLifecycleDeps): Promise<void> {
     await runRecoveryStep("reconcile_artifacts", deps.reconcileArtifacts);
     assertStartupActive(deps.signal);
     for (const reconcile of deps.additionalReconcilers) {
-      await reconcile();
+      await runRecoveryStep(reconcile.name, () => reconcile.run());
       assertStartupActive(deps.signal);
     }
   } catch (error) {

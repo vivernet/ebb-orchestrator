@@ -19,7 +19,7 @@ const payloadSchema = z.object({ requestId: z.string().min(1), projectId: z.stri
 interface PlanningRequestRow { id: string; project_id: string; request: string; requested_by: string; status: PlanningRequestStatus; coordinator_run_id: string | null; planning_decisions_required: number; }
 interface RunRow { id: string; status: string; output: string | null; cost: number | null; model?: string; }
 
-type PlanningRuns = Pick<RunService, "prepareRunInTransaction" | "executePreparedRun" | "failPreparedRun" | "cancelRun" | "withHermesRunPreflight">;
+type PlanningRuns = Pick<RunService, "prepareRunInTransaction" | "executePreparedRun" | "failPreparedRun" | "cancelRun" | "withHermesRunPreflight"> & Partial<Pick<RunService, "cleanupTerminalHermesProfile">>;
 type PlanningScheduler = Pick<SchedulerService, "dispatchAgentRun" | "releaseAgentRun">;
 type ReviewRunState = "IN_PROGRESS" | "BLOCKED";
 
@@ -119,19 +119,19 @@ async function processCoordinatorPlanningRequest(
     }
     const previous = db.get<RunRow>("SELECT id,status,output,cost,model FROM agent_runs WHERE id=$id", { id: request.coordinator_run_id });
     if (!previous || previous.status === "FAILED" || previous.status === "CANCELLED") {
-      if (previous) releaseReservation(scheduler, previous.id, 0);
+      if (previous) await releaseReservation(scheduler, runs, previous.id, 0);
       planning.failRequest(request.id, request.coordinator_run_id, "COORDINATOR_RUN_FAILED");
       return;
     }
     if (["STARTED", "IN_PROGRESS", "COMPLETING"].includes(previous.status)) return;
     if (previous.status !== "COMPLETED" || !previous.output) {
-      releaseReservation(scheduler, previous.id, 0);
+      await releaseReservation(scheduler, runs, previous.id, 0);
       planning.failRequest(request.id, request.coordinator_run_id, "COORDINATOR_RUN_FAILED");
       return;
     }
     run = { id: previous.id, model: previous.model ?? "persisted" };
     output = previous.output;
-    releaseReservation(scheduler, previous.id, previous.cost ?? 0);
+    await releaseReservation(scheduler, runs, previous.id, previous.cost ?? 0);
   }
 
   if (!run) throw new Error("PLANNING_RUN_NOT_PREPARED");
@@ -149,7 +149,7 @@ async function processCoordinatorPlanningRequest(
         const saved = db.get<RunRow>("SELECT id,status,output,cost FROM agent_runs WHERE id=$id", { id: run.id });
         if (!saved || saved.status !== "COMPLETED" || saved.output !== execution.outcome.output) throw new Error("COORDINATOR_RESULT_NOT_DURABLE");
         output = saved.output;
-        releaseReservation(scheduler, run.id, saved.cost ?? execution.run.cost ?? 0);
+        await releaseReservation(scheduler, runs, run.id, saved.cost ?? execution.run.cost ?? 0);
         reservationCreated = false;
       } finally {
         context.signal.removeEventListener("abort", abortRun);
@@ -206,19 +206,20 @@ async function processCoordinatorPlanningRequest(
         current = db.get<RunRow>("SELECT id,status,output,cost FROM agent_runs WHERE id=$id", { id: run.id });
       }
       if (current && ["STARTED", "IN_PROGRESS", "COMPLETING"].includes(current.status)) throw error;
-      if (reservationCreated) releaseReservation(scheduler, run.id, 0);
+      if (reservationCreated) await releaseReservation(scheduler, runs, run.id, 0);
       throw error;
     }
     if (current?.status === "COMPLETED") throw error;
     if (current && ["STARTED", "IN_PROGRESS", "COMPLETING"].includes(current.status) && !runs.failPreparedRun(run.id, error)) return;
-    if (reservationCreated) releaseReservation(scheduler, run.id, 0);
+    if (reservationCreated) await releaseReservation(scheduler, runs, run.id, 0);
     planning.failRequest(request.id, run.id, "PLANNING_DISPATCH_FAILED");
   }
 }
 
-function releaseReservation(scheduler: PlanningScheduler, runId: string, actualCost: number): void {
+async function releaseReservation(scheduler: PlanningScheduler, runs: PlanningRuns, runId: string, actualCost: number): Promise<void> {
   const release = scheduler.releaseAgentRun(runId, actualCost);
   if (release.status === "BLOCKED_OWNERSHIP_DRIFT") throw new Error("SCHEDULER_RESERVATION_OWNERSHIP_DRIFT");
+  await runs.cleanupTerminalHermesProfile?.(runId);
 }
 
 async function requestPlanningDecision(args: ReviewRunBaseArgs & { role: "product_manager" }): Promise<ProductDefinition | ReviewRunState>;
@@ -236,10 +237,10 @@ async function requestPlanningDecision(args: ReviewRunBaseArgs & { role: "produc
   if (linked) {
     if (["STARTED", "IN_PROGRESS", "COMPLETING"].includes(linked.status)) return "IN_PROGRESS";
     if (linked.status !== "COMPLETED" || !linked.output) {
-      try { releaseReservation(scheduler, linked.id, 0); } catch { /* startup reconciliation may have already released it */ }
+      try { await releaseReservation(scheduler, runs, linked.id, 0); } catch { /* startup reconciliation may have already released it */ }
       return "BLOCKED";
     }
-    try { releaseReservation(scheduler, linked.id, linked.cost ?? 0); } catch { /* completed result remains authoritative */ }
+    try { await releaseReservation(scheduler, runs, linked.id, linked.cost ?? 0); } catch { /* completed result remains authoritative */ }
   } else {
     let prepared: { id: string; model: string } | undefined;
     const prompt = planningRolePrompt(role, request.request, plan, productManager);
@@ -288,7 +289,7 @@ async function requestPlanningDecision(args: ReviewRunBaseArgs & { role: "produc
       if (!linked) return "BLOCKED";
       if (["STARTED", "IN_PROGRESS", "COMPLETING"].includes(linked.status)) return "IN_PROGRESS";
       if (linked.status !== "COMPLETED" || !linked.output) return "BLOCKED";
-      try { releaseReservation(scheduler, linked.id, linked.cost ?? 0); } catch { /* another worker or startup recovery already released it */ }
+      try { await releaseReservation(scheduler, runs, linked.id, linked.cost ?? 0); } catch { /* another worker or startup recovery already released it */ }
     }
     if (!linked) {
       if (!prepared) return "BLOCKED";
@@ -302,7 +303,7 @@ async function requestPlanningDecision(args: ReviewRunBaseArgs & { role: "produc
         const saved = db.get<RunRow>("SELECT id,status,output,cost FROM agent_runs WHERE id=$id", { id: prepared.id });
         if (!saved || saved.status !== "COMPLETED" || !saved.output || saved.output !== execution.outcome.output) throw new Error("planning review result was not durable");
         linked = saved;
-        releaseReservation(scheduler, linked.id, linked.cost ?? execution.run.cost ?? 0);
+        await releaseReservation(scheduler, runs, linked.id, linked.cost ?? execution.run.cost ?? 0);
         reservationCreated = false;
       } catch (error) {
         let failed = db.get<RunRow>("SELECT id,status,output,cost FROM agent_runs WHERE id=$id", { id: prepared.id });
@@ -313,13 +314,13 @@ async function requestPlanningDecision(args: ReviewRunBaseArgs & { role: "produc
           }
           if (failed && ["STARTED", "IN_PROGRESS", "COMPLETING"].includes(failed.status)) return "IN_PROGRESS";
           if (reservationCreated) {
-            try { releaseReservation(scheduler, prepared.id, 0); } catch { /* restart reconciliation releases the durable reservation */ }
+            try { await releaseReservation(scheduler, runs, prepared.id, 0); } catch { /* restart reconciliation releases the durable reservation */ }
           }
           throw error;
         }
         if (failed && ["STARTED", "IN_PROGRESS", "COMPLETING"].includes(failed.status) && !runs.failPreparedRun(prepared.id, error)) return "IN_PROGRESS";
         if (reservationCreated) {
-          try { releaseReservation(scheduler, prepared.id, 0); } catch { /* restart reconciliation releases the durable reservation */ }
+          try { await releaseReservation(scheduler, runs, prepared.id, 0); } catch { /* restart reconciliation releases the durable reservation */ }
         }
         return "BLOCKED";
       }

@@ -122,7 +122,10 @@ export class RuntimeEventHandlers {
         runId: run.id,
       });
     } catch (error) {
-      if (this.runService.failPreparedRun(run.id, error)) this.scheduler.releaseTask(taskId, 0);
+      if (this.runService.failPreparedRun(run.id, error)) {
+        this.scheduler.releaseTask(taskId, 0);
+        await this.runService.cleanupTerminalHermesProfile(run.id);
+      }
       throw error;
     }
 
@@ -136,8 +139,12 @@ export class RuntimeEventHandlers {
     try {
       const execution = await this.runService!.executePreparedRun(runId);
       this.handleRuntimeCompletion(runId, execution.outcome);
+      await this.runService!.cleanupTerminalHermesProfile(runId);
     } catch (error) {
-      if (this.runService!.failPreparedRun(runId, error)) this.scheduler.releaseTask(taskId, 0);
+      if (this.runService!.failPreparedRun(runId, error)) {
+        this.scheduler.releaseTask(taskId, 0);
+        await this.runService!.cleanupTerminalHermesProfile(runId);
+      }
       throw error;
     }
   }

@@ -4,6 +4,7 @@
 
 export interface LaunchArgs {
   queryFile: string;
+  provider: string;
   model: string;
   toolsets: string[];
   worktree: string;
@@ -29,10 +30,16 @@ export class HermesCliBuilder {
    * Формирует аргументы запуска для Объект новый hermes run.
    */
   buildLaunchArgs(args: LaunchArgs): string[] {
+    if (args.provider.toLowerCase() === "moa" || args.model.toLowerCase().startsWith("moa:")) {
+      throw new Error("HERMES_RUN_SELECTION_INVALID");
+    }
     const result: string[] = ["chat"];
 
     // --query-file <prompt-file>
     result.push("--query-file", args.queryFile);
+
+    // Pin both route dimensions explicitly so Hermes config/env defaults cannot pick another provider.
+    result.push("--provider", args.provider);
 
     // --model <resolved-model>
     result.push("--model", args.model);

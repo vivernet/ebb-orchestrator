@@ -4,8 +4,8 @@ import process from 'node:process';
 import { runVerifiedNativeHelper } from '../../../platform/process/native-helper-launcher.js';
 
 export const HERMES_PROVIDER_SELECTION_SOURCE = Object.freeze({
-  version: 'v0.21.5+7357.g9244275',
-  commit: '9244275491ee0d5bc3481590b041114c4e1d399a',
+  version: 'v0.21.5+9117.g08165d5',
+  commit: '08165d58931841cee713468ae89032af7c57060a',
   projectionVersion: 'hermes-config-selection-v1',
   endpointProjectionVersion: 'hermes-endpoint-projection-v1',
 });

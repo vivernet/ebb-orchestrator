@@ -16,10 +16,11 @@ describe("RuntimeEventHandlers runtime dispatch", () => {
           : sql.includes("FROM git_operations") ? { target_ref: "HEAD" } : undefined),
     } as unknown as Database;
     const workflow = {} as WorkflowEngine;
+    const releaseTaskMock = vi.fn();
     const scheduler = {
       assertProjectDispatchable: vi.fn(),
       dispatchTask: vi.fn(),
-      releaseTask: vi.fn(),
+      releaseTask: releaseTaskMock,
     } as unknown as SchedulerService;
     const run = { id: "run-1", model: "test-model" };
     const runService = {
@@ -30,13 +31,14 @@ describe("RuntimeEventHandlers runtime dispatch", () => {
         outcome: { success: true, exitCode: 0, output: "accepted", diagnostics: { runId: "run-1" } },
       }),
       failPreparedRun: vi.fn().mockReturnValue(true),
+      cleanupTerminalHermesProfile: vi.fn().mockResolvedValue(undefined),
     } as unknown as RunService;
     const git = { run: vi.fn(async (_path: string, args: string[]) => ({
       exitCode: 0, stdout: args[0] === "symbolic-ref" ? worktree.branch : args[0] === "diff" ? "fixture diff" : "a".repeat(40), stderr: "",
     })) };
     const handlers = new RuntimeEventHandlers(db, workflow, scheduler, runService, git);
     vi.spyOn(handlers, "handleRuntimeCompletion").mockImplementation(() => undefined);
-    return { db, workflow, scheduler, runService, handlers, git };
+    return { db, workflow, scheduler, runService, handlers, git, releaseTaskMock };
   }
 
   it("persists one run identity, binds it to the scheduler reservation, and executes it", async () => {
@@ -70,7 +72,7 @@ describe("RuntimeEventHandlers runtime dispatch", () => {
   });
 
   it("fails the same prepared run and releases its reservation when launch fails", async () => {
-    const { scheduler, runService, handlers } = setup();
+    const { scheduler, runService, handlers, releaseTaskMock } = setup();
     vi.mocked(runService.executePreparedRun).mockRejectedValueOnce(new Error("launcher unavailable"));
 
     await expect(handlers.handleAgentRunRequested({
@@ -81,6 +83,10 @@ describe("RuntimeEventHandlers runtime dispatch", () => {
 
     expect(runService.failPreparedRun).toHaveBeenCalledWith("run-1", expect.any(Error));
     expect(scheduler.releaseTask).toHaveBeenCalledWith("task-1", 0);
+    expect(runService.cleanupTerminalHermesProfile).toHaveBeenCalledWith("run-1");
+    expect(releaseTaskMock.mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(runService.cleanupTerminalHermesProfile).mock.invocationCallOrder[0]!,
+    );
   });
 
   it("retains task reservation when launch failure has no persisted stop proof", async () => {
@@ -94,6 +100,7 @@ describe("RuntimeEventHandlers runtime dispatch", () => {
 
     expect(runService.failPreparedRun).toHaveBeenCalledWith("run-1", expect.any(Error));
     expect(scheduler.releaseTask).not.toHaveBeenCalled();
+    expect(runService.cleanupTerminalHermesProfile).not.toHaveBeenCalled();
   });
 
   it("rejects unsupported Task roles before scheduler or Run preparation", async () => {

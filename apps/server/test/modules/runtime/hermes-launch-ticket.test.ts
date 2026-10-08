@@ -7,12 +7,12 @@ import {
 } from "../../../src/modules/runtime/hermes/hermes-launch-ticket.js";
 
 const sourceSnapshotKey = JSON.stringify({
-  formatVersion: 1, hermesVersion: "v0.21.5+7357.g9244275", manifestDigest: "c".repeat(64),
+  formatVersion: 1, hermesVersion: "v0.21.5+9117.g08165d5", manifestDigest: "c".repeat(64),
   sourceCommit: "b".repeat(40), sourceTree: "d".repeat(40),
 });
 const sourceSnapshotDirectoryId = createHash("sha256").update(sourceSnapshotKey).digest("hex");
 const windowsSnapshotKey = JSON.stringify({
-  formatVersion: 1, hermesVersion: "v0.21.5+7357.g9244275", manifestDigest: "c".repeat(64),
+  formatVersion: 1, hermesVersion: "v0.21.5+9117.g08165d5", manifestDigest: "c".repeat(64),
   materializationPolicyVersion: 2, sourceCommit: "b".repeat(40), sourceTree: "d".repeat(40),
 });
 const windowsSnapshotDirectoryId = createHash("sha256").update(windowsSnapshotKey).digest("hex");
@@ -95,7 +95,7 @@ describe("Hermes launch ticket", () => {
   it("accepts a canonical Windows policy-v2 source identity", () => {
     const key = JSON.stringify({
       formatVersion: 1,
-      hermesVersion: "v0.21.5+7357.g9244275",
+      hermesVersion: "v0.21.5+9117.g08165d5",
       manifestDigest: "c".repeat(64),
       materializationPolicyVersion: 2,
       sourceCommit: "b".repeat(40),
@@ -137,15 +137,15 @@ describe("Hermes launch ticket", () => {
   it.each([
     { label: "legacy v1 on Windows", platform: "win32" as const, key: sourceSnapshotKey },
     { label: "policy v2 on Linux", platform: "linux" as const, key: JSON.stringify({
-      formatVersion: 1, hermesVersion: "v0.21.5+7357.g9244275", manifestDigest: "c".repeat(64),
+      formatVersion: 1, hermesVersion: "v0.21.5+9117.g08165d5", manifestDigest: "c".repeat(64),
       materializationPolicyVersion: 2, sourceCommit: "b".repeat(40), sourceTree: "d".repeat(40),
     }) },
     { label: "unsupported policy version", platform: "win32" as const, key: JSON.stringify({
-      formatVersion: 1, hermesVersion: "v0.21.5+7357.g9244275", manifestDigest: "c".repeat(64),
+      formatVersion: 1, hermesVersion: "v0.21.5+9117.g08165d5", manifestDigest: "c".repeat(64),
       materializationPolicyVersion: 3, sourceCommit: "b".repeat(40), sourceTree: "d".repeat(40),
     }) },
     { label: "unknown identity field", platform: "win32" as const, key: JSON.stringify({
-      formatVersion: 1, hermesVersion: "v0.21.5+7357.g9244275", manifestDigest: "c".repeat(64),
+      formatVersion: 1, hermesVersion: "v0.21.5+9117.g08165d5", manifestDigest: "c".repeat(64),
       materializationPolicyVersion: 2, sourceCommit: "b".repeat(40), sourceTree: "d".repeat(40), extra: true,
     }) },
   ])("rejects $label", ({ platform, key }) => {

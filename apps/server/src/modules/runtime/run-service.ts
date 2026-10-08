@@ -15,7 +15,7 @@ import { appendOutboxEvent } from "../../platform/events/outbox-repository.js";
 import { DomainEvent } from "../../platform/events/domain-event.js";
 import { approvedProjectConfigSnapshotTx } from "../projects/project-config-service.js";
 import { realpathSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import * as path from "node:path";
 import { RunContextAssembler } from "./run-context-assembler.js";
 import type { PreparedRunContext } from "../context/context-types.js";
 import { getContextManifest, insertContextManifestTx } from "../context/context-manifest-repository.js";
@@ -44,8 +44,31 @@ export interface HermesRunPreflight {
 const PLANNING_TOOLS: ReadonlySet<ToolId> = new Set(['workspace.read', 'workspace.search', 'git.status', 'git.diff', 'submit_result']);
 const REQUEST_PLANNING_ROLES = new Set(['coordinator', 'product_manager', 'architect']);
 
+function isCanonicalHermesRunProfilePath(profileHome: string, runId: string): boolean {
+  const paths = process.platform === "win32" ? path.win32 : path.posix;
+  if (!paths.isAbsolute(profileHome)) return false;
+  for (let index = 0; index < profileHome.length; index += 1) {
+    const characterCode = profileHome.charCodeAt(index);
+    if (characterCode <= 0x1f || characterCode === 0x7f) return false;
+  }
+  if (process.platform === "win32") {
+    const drivePath = profileHome.startsWith("\\\\?\\") ? profileHome.slice(4) : profileHome;
+    if (!/^[a-z]:\\/iu.test(drivePath)) return false;
+    const components = drivePath.slice(3).split("\\");
+    if (components.some((component) => component === "." || component === ".." || /[/:]/u.test(component))) return false;
+  }
+  const normalizedHome = paths.normalize(profileHome);
+  const profilesDirectory = paths.dirname(normalizedHome);
+  if (paths.basename(profilesDirectory).toLowerCase() !== "profiles") return false;
+  const expected = paths.join(paths.dirname(profilesDirectory), "profiles", `ebb-orchestrator-run-${runId}`);
+  const matches = process.platform === "win32"
+    ? normalizedHome.toLowerCase() === expected.toLowerCase()
+    : normalizedHome === expected;
+  return matches && (process.platform === "win32" ? profileHome.toLowerCase() === normalizedHome.toLowerCase() : profileHome === normalizedHome);
+}
+
 function sameRepositoryPath(left: string, right: string): boolean {
-  if (!isAbsolute(left) || !isAbsolute(right)) return false;
+  if (!path.isAbsolute(left) || !path.isAbsolute(right)) return false;
   try {
     const canonicalLeft = realpathSync(left);
     const canonicalRight = realpathSync(right);
@@ -263,6 +286,62 @@ export class RunService {
       { ended_at: now, output: "Run interrupted by orchestrator restart" },
     );
     return this.db.get<{ changes: number }>("SELECT changes() AS changes")?.changes ?? 0;
+  }
+
+  /**
+   * Удаляет per-Run Hermes profile только после durable terminalization, authoritative STOPPED,
+   * снятия Scheduler reservation/resource lock и отзыва capability. Ошибка нативной очистки
+   * оставляет owner row как retry identity; startup reconciliation повторяет тот же exact cleanup.
+   *
+   * @param runId Канонический persistent Run UUID.
+   * @returns `true`, если exact Run profile очищен или уже отсутствовал; `false`, если gate не готов.
+   */
+  async cleanupTerminalHermesProfile(runId: string): Promise<boolean> {
+    if (!this.runtime.cleanupTerminalHermesProfile) return false;
+    const eligible = this.db.transaction((tx) => {
+      const run = tx.get<{ status: string; task_id: string | null; capability_ref: string | null }>(
+        "SELECT status,task_id,capability_ref FROM agent_runs WHERE id=$runId", { runId },
+      );
+      const owner = getRunProcessOwner(tx, runId);
+      if (!run || !this.isTerminalState(run.status as RunStatus) || !owner || owner.state !== "STOPPED" ||
+          !isAuthoritativeRunProcessStopEvidence(owner.stopEvidence, owner.containmentKind) ||
+          !isCanonicalHermesRunProfilePath(owner.hermesHome, runId)) return false;
+      const params = { runId, taskId: run.task_id };
+      const reservation = tx.get<{ present: number }>(
+        `SELECT 1 AS present FROM scheduler_reservations
+          WHERE status='RESERVED' AND (run_id=$runId OR subject_id=$runId
+            OR ($taskId IS NOT NULL AND kind='TASK' AND subject_id=$taskId)) LIMIT 1`, params,
+      );
+      const resourceLock = tx.get<{ present: number }>(
+        `SELECT 1 AS present FROM scheduler_resource_locks lock_row
+          JOIN scheduler_reservations reservation ON reservation.id=lock_row.reservation_id
+          WHERE reservation.run_id=$runId OR reservation.subject_id=$runId
+            OR ($taskId IS NOT NULL AND reservation.kind='TASK' AND reservation.subject_id=$taskId) LIMIT 1`, params,
+      );
+      if (reservation || resourceLock) return false;
+      tx.run(
+        `UPDATE agent_runs SET capability_ref=NULL,capability_json=NULL
+          WHERE id=$runId AND status IN ('COMPLETED','FAILED','CANCELLED')`, { runId },
+      );
+      return (tx.get<{ changes: number }>("SELECT changes() AS changes")?.changes ?? 0) === 1 || run.capability_ref === null;
+    });
+    if (!eligible) return false;
+    await this.runtime.cleanupTerminalHermesProfile(runId);
+    return true;
+  }
+
+  /** Retries safe cleanup for terminal owners left by interruption or an earlier native failure. */
+  async reconcileTerminalHermesProfiles(): Promise<number> {
+    if (!this.runtime.cleanupTerminalHermesProfile) return 0;
+    const rows = this.db.all<{ run_id: string }>(
+      `SELECT owner.run_id FROM run_process_owners owner JOIN agent_runs run ON run.id=owner.run_id
+        WHERE run.status IN ('COMPLETED','FAILED','CANCELLED') ORDER BY owner.run_id`,
+    );
+    let cleaned = 0;
+    for (const row of rows) {
+      if (await this.cleanupTerminalHermesProfile(row.run_id)) cleaned += 1;
+    }
+    return cleaned;
   }
 
   getCapabilityReference(runId: string): string {
@@ -535,7 +614,7 @@ export class RunService {
       if (selection && (selection.runId !== id || !selection.sourceSnapshotKey)) throw new Error("HERMES_RUN_SELECTION_BINDING_MISMATCH");
       const owner = prepareRunProcessOwner(
         id,
-        selection?.profileHome ?? join(getOrchestratorHome(), "runtime", "hermes", "runs", id),
+        selection?.profileHome ?? path.join(getOrchestratorHome(), "runtime", "hermes", "runs", id),
         currentContainmentKind(),
         selection?.sourceSnapshotKey,
       );

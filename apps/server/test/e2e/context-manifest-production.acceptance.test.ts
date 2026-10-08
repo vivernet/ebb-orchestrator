@@ -55,7 +55,7 @@ import { DomainEvent } from "../../src/platform/events/domain-event.js";
 import { RuntimeOrchestrator } from "../../src/modules/runtime/run-orchestrator.js";
 import { createApplicationRecoveryReconcilers, createProductionComposition } from "../../src/platform/home/production-composition.js";
 import { resolveOrchestratorHome } from "../../src/platform/home/orchestrator-home.js";
-import { startSystem, StatusTracker } from "../../src/platform/process/system-lifecycle.js";
+import { startSystem, StatusTracker, type NamedRecoveryStep } from "../../src/platform/process/system-lifecycle.js";
 
 let runtimeStarts = 0;
 
@@ -490,18 +490,22 @@ describe("production context manifest acceptance", () => {
       projectConfigService: recoveryProjectConfig,
     });
     let taskStageBeforeResume: string | undefined;
-    const applicationRecoveryReconcilers = createApplicationRecoveryReconcilers({
+    const applicationRecoveryReconcilers: NamedRecoveryStep[] = createApplicationRecoveryReconcilers({
+      runService: recoveryRunService,
       epicOrchestrator: recoveryEpicOrchestrator,
       scheduler: recoveryScheduler,
       planningService: recoveryPlanning,
-    }).map((reconcile, index) => async () => {
-      if (index === 4) {
-        taskStageBeforeResume = recoveryDb!.get<{ status: string }>(
-          "SELECT status FROM tasks WHERE id=$taskId", { taskId: epicTaskId },
-        )?.status;
-      }
-      await reconcile();
-    });
+    }).map((reconcile, index): NamedRecoveryStep => ({
+      name: reconcile.name,
+      run: async () => {
+        if (index === 4) {
+          taskStageBeforeResume = recoveryDb!.get<{ status: string }>(
+            "SELECT status FROM tasks WHERE id=$taskId", { taskId: epicTaskId },
+          )?.status;
+        }
+        await reconcile.run();
+      },
+    }));
     await startSystem({
       instanceLock: { acquire: async () => ({ pid: process.pid }), release: async () => {} },
       lockAlreadyAcquired: true,

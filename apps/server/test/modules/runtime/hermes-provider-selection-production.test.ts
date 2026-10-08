@@ -10,8 +10,8 @@ describe("Hermes provider selection production helper gate", () => {
     vi.resetModules();
     nativeHelper.calls = [];
     nativeHelper.stdout = JSON.stringify({
-      sourceVersion: "v0.21.5+7357.g9244275",
-      sourceCommit: "9244275491ee0d5bc3481590b041114c4e1d399a",
+      sourceVersion: "v0.21.5+9117.g08165d5",
+      sourceCommit: "08165d58931841cee713468ae89032af7c57060a",
       projectionVersion: "hermes-config-selection-v1",
       status: "EXPLICIT_SELECTION",
       providerId: "fireworks",

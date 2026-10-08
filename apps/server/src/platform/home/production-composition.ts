@@ -21,7 +21,7 @@ import { listActiveApprovedOnboardingRepositories } from "../../modules/projects
 import { StartupReconciler, failClosedStartupReconciliation } from "../process/startup-reconciler.js";
 import type { RunService } from "../../modules/runtime/run-service.js";
 import type { EventDispatcher } from "../events/event-dispatcher.js";
-import type { StatusTrackerInterface } from "../process/system-lifecycle.js";
+import type { NamedRecoveryStep, StatusTrackerInterface } from "../process/system-lifecycle.js";
 import { createProductionPaths } from "./production-paths.js";
 import type { OrchestratorHomePaths } from "./orchestrator-home.js";
 import { recoverExpiredJobs } from "../jobs/job-repository.js";
@@ -44,7 +44,7 @@ export interface ProductionCompositionOptions {
 /** Зависимости application services, необходимые для startup recovery callbacks. */
 export interface ProductionStartupReconciliationOptions {
   /** Сервис runs уже создан после применения migrations. */
-  runService: Pick<RunService, "reconcileInterruptedRuns">;
+  runService: Pick<RunService, "reconcileInterruptedRuns"> & Partial<Pick<RunService, "reconcileTerminalHermesProfiles">>;
   /** Dispatcher уже привязан к application EventBus. */
   eventDispatcher: Pick<EventDispatcher, "dispatchBatch">;
   /** Lifecycle status изменяется только startup coordinator. */
@@ -59,26 +59,30 @@ export interface ProductionStartupReconciliationOptions {
  * проверяемую последовательность после process-owner preflight и platform recovery.
  *
  * @param dependencies Production services, чьи durable state reconciles выполняются до READY.
+ * @param dependencies.runService Run profile cleanup после reconciliation scheduler reservations и resource locks.
  * @param dependencies.epicOrchestrator Epic recovery и approved-plan resume.
  * @param dependencies.scheduler Восстановление scheduler reservations.
  * @param dependencies.planningService Восстановление незавершённых Request planning jobs.
- * @returns Пять callbacks для Epic runs, scheduler, Requests, execution claims и approved Epic resume.
+ * @returns Шесть именованных recovery steps для Epic runs, scheduler, profile cleanup, Requests, execution claims и approved Epic resume.
  */
 export function createApplicationRecoveryReconcilers(dependencies: {
+  /** Run cleanup after scheduler reservations and resource locks are reconciled. */
+  runService: Pick<RunService, "reconcileTerminalHermesProfiles">;
   /** Epic lifecycle recovery и возобновление approved plans. */
   epicOrchestrator: Pick<EpicOrchestrator, "reconcileInterruptedRuns" | "reconcileInterruptedExecutionClaims" | "resumeApprovedEpics">;
   /** Восстанавливает scheduler reservations после Run recovery. */
   scheduler: Pick<SchedulerService, "reconcile">;
   /** Восстанавливает незавершённые Request planning jobs. */
   planningService: Pick<PlanningService, "reconcileInterruptedRequests">;
-}): Array<() => Promise<void>> {
-  const { epicOrchestrator, scheduler, planningService } = dependencies;
+}): NamedRecoveryStep[] {
+  const { epicOrchestrator, scheduler, planningService, runService } = dependencies;
   return [
-    async () => { epicOrchestrator.reconcileInterruptedRuns(); },
-    async () => { scheduler.reconcile(); },
-    async () => { planningService.reconcileInterruptedRequests(); },
-    async () => { epicOrchestrator.reconcileInterruptedExecutionClaims(); },
-    () => epicOrchestrator.resumeApprovedEpics(),
+    { name: "reconcile_epic_runs", run: async () => { epicOrchestrator.reconcileInterruptedRuns(); } },
+    { name: "reconcile_scheduler", run: async () => { scheduler.reconcile(); } },
+    { name: "cleanup_terminal_hermes_profiles", run: async () => { await runService.reconcileTerminalHermesProfiles(); } },
+    { name: "reconcile_planning_requests", run: async () => { planningService.reconcileInterruptedRequests(); } },
+    { name: "reconcile_execution_claims", run: async () => { epicOrchestrator.reconcileInterruptedExecutionClaims(); } },
+    { name: "resume_approved_epics", run: () => epicOrchestrator.resumeApprovedEpics() },
   ];
 }
 
@@ -161,13 +165,15 @@ export function createProductionComposition(options: ProductionCompositionOption
         database.transaction((tx) => recoverExpiredJobs(tx, new Date()));
       },
       reconcileArtifacts: async () => { await artifactStore.reconcileStagingArtifacts(); },
-      additionalReconcilers: [async () => {
-        const report = await reconciler.run();
-        if (report.errors.length) {
-          console.error(`[ebb-orchestrator] reconciliation errors: ${report.errors.length}`);
-          for (const error of report.errors) console.error(`  ${error.message}`);
-        }
-        await failClosedStartupReconciliation(report, recovery.status);
+      additionalReconcilers: [{
+        name: "production_startup_reconciliation" as const,
+        run: async () => {
+          const report = await reconciler.run();
+          if (report.errors.length) {
+            console.error(`[ebb-orchestrator] reconciliation errors: ${report.errors.length}`);
+          }
+          await failClosedStartupReconciliation(report, recovery.status);
+        },
       }],
     };
   };

@@ -117,7 +117,7 @@ describe("startup lifecycle", () => {
       reconcileOutbox: async () => { calls.push("outbox"); },
       reconcileJobs: async () => { calls.push("jobs"); },
       reconcileArtifacts: async () => { calls.push("artifacts"); },
-      additionalReconcilers: [async () => { calls.push("additional"); }],
+      additionalReconcilers: [{ name: "reconcile_epic_runs", run: async () => { calls.push("additional"); } }],
       workers: [{ start: async () => { calls.push("worker"); }, stop: async () => {} }],
     } as SystemLifecycleDeps & { preflightRecovery: () => Promise<void>; reconcileProjectConfig: () => Promise<void> };
 
@@ -154,11 +154,13 @@ describe("startup lifecycle", () => {
       reconcileJobs: async () => {},
       reconcileArtifacts: async () => {},
       additionalReconcilers: [
-        async () => {
-          steps.push("custom reconciler 1");
+        {
+          name: "reconcile_epic_runs",
+          run: async () => { steps.push("custom reconciler 1"); },
         },
-        async () => {
-          steps.push("custom reconciler 2");
+        {
+          name: "reconcile_scheduler",
+          run: async () => { steps.push("custom reconciler 2"); },
         },
       ],
       workers: [],
@@ -276,11 +278,14 @@ describe("startup lifecycle", () => {
       reconcileOutbox: async () => {},
       reconcileJobs: async () => {},
       reconcileArtifacts: async () => {},
-      additionalReconcilers: [async () => {
-        await failClosedStartupReconciliation(
-          { reconcilersRun: 1, errors: [new Error("reconciliation failed")] },
-          status,
-        );
+      additionalReconcilers: [{
+        name: "production_startup_reconciliation",
+        run: async () => {
+          await failClosedStartupReconciliation(
+            { reconcilersRun: 1, errors: [new Error("reconciliation failed")] },
+            status,
+          );
+        },
       }],
       workers: [{ start: workerStart, stop: async () => {} }],
     };
@@ -320,6 +325,72 @@ describe("startup lifecycle", () => {
       const diagnostics = errorSpy.mock.calls.flat().join(" ");
       expect(diagnostics).toContain("step=reconcile_jobs");
       expect(diagnostics).not.toContain(secretLikeMessage);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("logs a named safe diagnostic and stays degraded when an additional recovery callback fails", async () => {
+    const status = new StatusTracker();
+    const workerStart = vi.fn(async () => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const secretLikeMessage = "repository-token=secret-model-output";
+    const resumeApprovedEpics = async () => { throw new Error(secretLikeMessage); };
+    const deps: SystemLifecycleDeps = {
+      instanceLock: { acquire: async () => ({ pid: 1 }), release: async () => {} },
+      database: { open: async () => {}, close: () => {} },
+      migrator: { run: async () => {} },
+      status,
+      preflightRecovery: async () => {},
+      reconcileProjectConfig: async () => {},
+      reconcileOutbox: async () => {},
+      reconcileJobs: async () => {},
+      reconcileArtifacts: async () => {},
+      additionalReconcilers: [{ name: "resume_approved_epics", run: resumeApprovedEpics }],
+      workers: [{ start: workerStart, stop: async () => {} }],
+    };
+
+    try {
+      await startSystem(deps);
+
+      expect(status.get()).toBe("DEGRADED");
+      expect(workerStart).not.toHaveBeenCalled();
+      const diagnostics = errorSpy.mock.calls.flat().join(" ");
+      expect(diagnostics).toContain("startup reconciliation failed: step=resume_approved_epics; error_kind=error");
+      expect(diagnostics).not.toContain(secretLikeMessage);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("replaces an invalid recovery phase name instead of interpolating hostile text into logs", async () => {
+    const status = new StatusTracker();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const hostilePhaseName = "resume_approved_epics\ninjected-token=classified";
+    const deps: SystemLifecycleDeps = {
+      instanceLock: { acquire: async () => ({ pid: 1 }), release: async () => {} },
+      database: { open: async () => {}, close: () => {} },
+      migrator: { run: async () => {} },
+      status,
+      preflightRecovery: async () => {},
+      reconcileProjectConfig: async () => {},
+      reconcileOutbox: async () => {},
+      reconcileJobs: async () => {},
+      reconcileArtifacts: async () => {},
+      additionalReconcilers: [{
+        name: hostilePhaseName as unknown as SystemLifecycleDeps["additionalReconcilers"][number]["name"],
+        run: async () => { throw new Error("private recovery detail"); },
+      }],
+      workers: [],
+    };
+
+    try {
+      await startSystem(deps);
+
+      expect(status.get()).toBe("DEGRADED");
+      expect(errorSpy.mock.calls).toEqual([[
+        "[orchestrator] startup reconciliation failed: step=invalid_recovery_step; error_kind=error",
+      ]]);
     } finally {
       errorSpy.mockRestore();
     }

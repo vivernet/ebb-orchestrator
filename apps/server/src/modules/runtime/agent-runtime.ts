@@ -31,6 +31,9 @@ export interface AgentRuntime {
   /** Creates and verifies the exact native Hermes profile before a SQLite transaction begins. */
   prepareHermesRunSelection?(runId: string): Promise<HermesRunSelectionPreflight>;
 
+  /** Removes only the terminal Run's exact Hermes profile after RunService cleanup gates pass. */
+  cleanupTerminalHermesProfile?(runId: string): Promise<void>;
+
   /**
    * Возобновление a run that was paused.
    */

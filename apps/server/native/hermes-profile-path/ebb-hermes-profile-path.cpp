@@ -64,8 +64,8 @@ constexpr size_t kMaxConfigBytes = 256 * 1024;
 constexpr size_t kMaxRunProfileConfigBytes = 64 * 1024;
 constexpr size_t kMaxPathChainComponents = 64;
 constexpr size_t kMaxPathChainJsonBytes = 8 * 1024;
-constexpr const char* kHermesVersion = "v0.21.5+7357.g9244275";
-constexpr const char* kHermesCommit = "9244275491ee0d5bc3481590b041114c4e1d399a";
+constexpr const char* kHermesVersion = "v0.21.5+9117.g08165d5";
+constexpr const char* kHermesCommit = "08165d58931841cee713468ae89032af7c57060a";
 constexpr const char* kProjectionVersion = "hermes-config-selection-v1";
 constexpr const char* kEndpointProjectionVersion = "hermes-endpoint-projection-v1";
 constexpr size_t kMaxDotEnvBytes = 256 * 1024;
@@ -1925,18 +1925,18 @@ int cleanupWindowsProfile(const std::string& rootUtf8, const std::string& runId)
   std::vector<unsigned char> sidStorage;
   PSID userSid = nullptr;
   if (!getCurrentUserSid(sidStorage, userSid)) return kPathUnsafe;
-  HANDLE rootHandle = openWindowsDirectory(root, true, userSid, false, true);
+  HANDLE rootHandle = openWindowsDirectory(root, true, userSid, false, true, false);
   if (rootHandle == INVALID_HANDLE_VALUE || !safeDirectoryAcl(rootHandle, userSid, true)) {
     if (rootHandle != INVALID_HANDLE_VALUE) CloseHandle(rootHandle);
     return kPathUnsafe;
   }
-  HANDLE profiles = openWindowsChildDirectory(rootHandle, L"profiles", FILE_OPEN, nullptr, false, true);
-  CloseHandle(rootHandle);
+  struct RootHandleGuard {
+    HANDLE handle;
+    ~RootHandleGuard() { if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle); }
+  } rootGuard{rootHandle};
+  HANDLE profiles = openWindowsChildDirectory(rootHandle, L"profiles", FILE_OPEN, nullptr, false, true, 0, false);
   if (profiles == INVALID_HANDLE_VALUE) {
-    HANDLE safeRoot = openWindowsDirectory(root, true, userSid, false, true);
-    if (safeRoot == INVALID_HANDLE_VALUE) return kPathUnsafe;
-    const bool absent = windowsChildDoesNotExist(safeRoot, L"profiles");
-    CloseHandle(safeRoot);
+    const bool absent = windowsChildDoesNotExist(rootHandle, L"profiles");
     return absent ? kOk : kPathUnsafe;
   }
   if (!safeDirectoryAcl(profiles, userSid, true) || !safePrivateDirectoryAcl(profiles, userSid)) {
@@ -1945,24 +1945,154 @@ int cleanupWindowsProfile(const std::string& rootUtf8, const std::string& runId)
   }
   const std::wstring leaf = widenUtf8("ebb-orchestrator-run-" + runId);
   HANDLE profile = openWindowsChildDirectory(profiles, leaf, FILE_OPEN, nullptr, false, true,
-    DELETE | FILE_LIST_DIRECTORY);
+    DELETE | FILE_LIST_DIRECTORY | FILE_WRITE_ATTRIBUTES, false);
   if (profile == INVALID_HANDLE_VALUE) {
     const bool absent = windowsChildDoesNotExist(profiles, leaf);
     CloseHandle(profiles);
     return absent ? kOk : kPathUnsafe;
   }
-  if (!safeDirectoryAcl(profile, userSid, true) || !safePrivateDirectoryAcl(profile, userSid) ||
-      !windowsDirectoryIsEmpty(profile)) {
-    CloseHandle(profile);
-    CloseHandle(profiles);
-    return kPathUnsafe;
+  if (!safeDirectoryAcl(profile, userSid, true) || !safePrivateDirectoryAcl(profile, userSid)) {
+    CloseHandle(profile); CloseHandle(profiles); return kPathUnsafe;
   }
-  FILE_DISPOSITION_INFO disposition{};
-  disposition.DeleteFile = TRUE;
+  std::string profileCanonical, profileVolumeSerial, profileFileId;
+  if (!getSafeHandleIdentity(profile, profileCanonical, profileVolumeSerial, profileFileId) ||
+      profileVolumeSerial.size() != 16 || profileFileId.size() != 32) {
+    CloseHandle(profile); CloseHandle(profiles); return kPathUnsafe;
+  }
+  constexpr size_t kNodeLimit = 100000;
+  constexpr size_t kNameBytesLimit = 8 * 1024 * 1024;
+  struct CaseInsensitiveOrdinalLess {
+    bool operator()(const std::wstring& left, const std::wstring& right) const {
+      return CompareStringOrdinal(left.c_str(), static_cast<int>(left.size()),
+        right.c_str(), static_cast<int>(right.size()), TRUE) == CSTR_LESS_THAN;
+    }
+  };
+  size_t aggregateNameBytes = 0;
+  // Entries retain a direct parent handle so a deeply nested child can be deleted relative to
+  // the already-held directory chain without reopening any caller-derived filesystem path.
+  struct HeldNode { WindowsFixtureTreeNode node; HANDLE parent; };
+  std::vector<HeldNode> heldNodes;
+  // Capture the complete tree before deleting anything; unsafe content retains the whole profile.
+  std::function<bool(HANDLE, size_t)> collectBound = [&](HANDLE parent, size_t depth) -> bool {
+    if (depth > kMaxPathChainComponents || heldNodes.size() >= kNodeLimit) return false;
+    std::vector<unsigned char> buffer(64 * 1024);
+    std::set<std::wstring, CaseInsensitiveOrdinalLess> seenNames;
+    bool restart = true;
+    for (;;) {
+      if (!GetFileInformationByHandleEx(parent, restart ? FileIdBothDirectoryRestartInfo : FileIdBothDirectoryInfo,
+          buffer.data(), static_cast<DWORD>(buffer.size()))) return GetLastError() == ERROR_NO_MORE_FILES;
+      restart = false;
+      auto* entry = reinterpret_cast<FILE_ID_BOTH_DIR_INFO*>(buffer.data());
+      for (;;) {
+        const std::wstring name(entry->FileName, entry->FileNameLength / sizeof(wchar_t));
+        if (name != L"." && name != L"..") {
+          if (name.empty() || name.size() > 255 || name.find(L'\\') != std::wstring::npos ||
+              name.find(L'/') != std::wstring::npos || name.find(L'\0') != std::wstring::npos ||
+              !seenNames.insert(name).second || heldNodes.size() >= kNodeLimit ||
+              aggregateNameBytes + name.size() * sizeof(wchar_t) > kNameBytesLimit ||
+              (entry->FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) return false;
+          aggregateNameBytes += name.size() * sizeof(wchar_t);
+          const bool directory = (entry->FileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+          HANDLE child = directory
+            ? openWindowsChildDirectory(parent, name, FILE_OPEN, nullptr, false, true,
+                DELETE | FILE_LIST_DIRECTORY | FILE_WRITE_ATTRIBUTES, false)
+            : openWindowsChildFile(parent, name, false, DELETE | FILE_WRITE_ATTRIBUTES);
+          FILE_ATTRIBUTE_TAG_INFO tag{};
+          std::string canonical, volumeSerial, fileId;
+          if (child == INVALID_HANDLE_VALUE || !getHandleAttributes(child, tag) ||
+              (tag.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 ||
+              (((tag.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) != directory) ||
+              !safePrivateDirectoryAcl(child, userSid) ||
+              !getSafeHandleIdentity(child, canonical, volumeSerial, fileId) ||
+              volumeSerial != profileVolumeSerial || fileId.size() != 32) {
+            if (child != INVALID_HANDLE_VALUE) CloseHandle(child); return false;
+          }
+          if (!directory) {
+            FILE_STANDARD_INFO standard{};
+            if (!GetFileInformationByHandleEx(child, FileStandardInfo, &standard, sizeof(standard)) ||
+                standard.NumberOfLinks != 1) { CloseHandle(child); return false; }
+          }
+          heldNodes.push_back({{name, std::move(volumeSerial), std::move(fileId), child, directory, depth}, parent});
+          if (directory && !collectBound(child, depth + 1)) return false;
+        }
+        if (entry->NextEntryOffset == 0) break;
+        entry = reinterpret_cast<FILE_ID_BOTH_DIR_INFO*>(reinterpret_cast<unsigned char*>(entry) + entry->NextEntryOffset);
+      }
+    }
+  };
+  if (!collectBound(profile, 1)) {
+    for (auto& item : heldNodes) CloseHandle(item.node.handle);
+    CloseHandle(profile); CloseHandle(profiles); return kPathUnsafe;
+  }
+#ifdef EBB_PROFILE_PATH_TEST_HOOKS
+  if (std::getenv("EBB_PROFILE_PATH_TEST_PAUSE_AFTER_CLEANUP_INVENTORY") != nullptr) {
+    std::cout << "CLEANUP_PROFILE_INVENTORY_READY\n" << std::flush;
+    char resume = 0;
+    if (!std::cin.get(resume) || resume != '\n') {
+      for (auto& item : heldNodes) CloseHandle(item.node.handle);
+      CloseHandle(profile); CloseHandle(profiles); return kPathUnsafe;
+    }
+  }
+#endif
+  std::stable_sort(heldNodes.begin(), heldNodes.end(), [](const HeldNode& left, const HeldNode& right) {
+    return left.node.depth > right.node.depth;
+  });
+  // The complete inventory already retains each no-delete-sharing handle relative to its held
+  // parent. Reopening a name would conflict with those DELETE handles and weaken the identity chain.
+  for (auto& item : heldNodes) {
+    auto& node = item.node;
+    std::string canonical, volumeSerial, fileId;
+    FILE_ATTRIBUTE_TAG_INFO tag{};
+    if (!getSafeHandleIdentity(node.handle, canonical, volumeSerial, fileId) ||
+        volumeSerial != node.volumeSerial || fileId != node.fileId ||
+        !getHandleAttributes(node.handle, tag) || (tag.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 ||
+        (((tag.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) != node.directory) ||
+        !safePrivateDirectoryAcl(node.handle, userSid) ||
+        (node.directory && !windowsDirectoryIsEmpty(node.handle))) {
+      for (auto& held : heldNodes) if (held.node.handle != INVALID_HANDLE_VALUE) CloseHandle(held.node.handle);
+      CloseHandle(profile); CloseHandle(profiles); return kPathUnsafe;
+    }
+    if (!node.directory) {
+      FILE_STANDARD_INFO standard{};
+      if (!GetFileInformationByHandleEx(node.handle, FileStandardInfo, &standard, sizeof(standard)) ||
+          standard.NumberOfLinks != 1) {
+        for (auto& held : heldNodes) if (held.node.handle != INVALID_HANDLE_VALUE) CloseHandle(held.node.handle);
+        CloseHandle(profile); CloseHandle(profiles); return kPathUnsafe;
+      }
+    }
+    if ((tag.FileAttributes & FILE_ATTRIBUTE_READONLY) != 0) {
+      FILE_BASIC_INFO basic{};
+      if (!GetFileInformationByHandleEx(node.handle, FileBasicInfo, &basic, sizeof(basic))) {
+        for (auto& held : heldNodes) if (held.node.handle != INVALID_HANDLE_VALUE) CloseHandle(held.node.handle);
+        CloseHandle(profile); CloseHandle(profiles); return kPathUnsafe;
+      }
+      basic.FileAttributes &= ~FILE_ATTRIBUTE_READONLY;
+      if (!SetFileInformationByHandle(node.handle, FileBasicInfo, &basic, sizeof(basic))) {
+        for (auto& held : heldNodes) if (held.node.handle != INVALID_HANDLE_VALUE) CloseHandle(held.node.handle);
+        CloseHandle(profile); CloseHandle(profiles); return kPathUnsafe;
+      }
+    }
+    FILE_DISPOSITION_INFO disposition{}; disposition.DeleteFile = TRUE;
+    if (!SetFileInformationByHandle(node.handle, FileDispositionInfo, &disposition, sizeof(disposition))) {
+      for (auto& held : heldNodes) if (held.node.handle != INVALID_HANDLE_VALUE) CloseHandle(held.node.handle);
+      CloseHandle(profile); CloseHandle(profiles); return kPathUnsafe;
+    }
+    CloseHandle(node.handle); node.handle = INVALID_HANDLE_VALUE;
+  }
+  if (!windowsDirectoryIsEmpty(profile) || !safeDirectoryAcl(profile, userSid, true) ||
+      !safePrivateDirectoryAcl(profile, userSid)) {
+    CloseHandle(profile); CloseHandle(profiles); return kPathUnsafe;
+  }
+  std::string finalCanonical, finalVolumeSerial, finalFileId;
+  if (!getSafeHandleIdentity(profile, finalCanonical, finalVolumeSerial, finalFileId) ||
+      finalVolumeSerial != profileVolumeSerial || finalFileId != profileFileId) {
+    CloseHandle(profile); CloseHandle(profiles); return kPathUnsafe;
+  }
+  FILE_DISPOSITION_INFO disposition{}; disposition.DeleteFile = TRUE;
   const bool deleted = SetFileInformationByHandle(profile, FileDispositionInfo, &disposition, sizeof(disposition)) != 0;
-  CloseHandle(profile);
-  CloseHandle(profiles);
-  return deleted ? kOk : kPathCreateFailed;
+  for (auto& held : heldNodes) if (held.node.handle != INVALID_HANDLE_VALUE) CloseHandle(held.node.handle);
+  CloseHandle(profile); CloseHandle(profiles);
+  return deleted ? kOk : kPathUnsafe;
 }
 
 bool openWindowsConfig(const std::wstring& configHome, PSID userSid, HANDLE& directory, HANDLE& file) {
@@ -2490,32 +2620,171 @@ int cleanupPosixProfile(const std::string& root, const std::string& runId) {
     close(profilesFd);
     return absent ? kOk : kPathUnsafe;
   }
+  struct ProfileNode { std::string path; dev_t device; ino_t inode; bool directory; size_t depth; int handle; };
+  constexpr size_t kNodeLimit = 100000;
+  constexpr size_t kNameBytesLimit = 8 * 1024 * 1024;
+  std::vector<ProfileNode> nodes;
+  size_t aggregateNameBytes = 0;
+  const auto closeNodes = [&]() { for (auto& node : nodes) if (node.handle >= 0) { close(node.handle); node.handle = -1; } };
   struct stat profileInfo{};
-  if (!safeDirectoryStat(profileFd, true) || fstat(profileFd, &profileInfo) != 0 || (profileInfo.st_mode & 0077) != 0) {
-    close(profileFd);
-    close(profilesFd);
-    return kPathUnsafe;
+  if (!safeDirectoryStat(profileFd, true) || fstat(profileFd, &profileInfo) != 0 ||
+      (profileInfo.st_mode & 0077) != 0 || profileInfo.st_dev != profilesInfo.st_dev) {
+    close(profileFd); close(profilesFd); return kPathUnsafe;
   }
-  const int scanFd = dup(profileFd);
-  DIR* entries = scanFd >= 0 ? fdopendir(scanFd) : nullptr;
-  bool empty = entries != nullptr;
-  if (entries != nullptr) {
-    while (const dirent* entry = readdir(entries)) {
-      if (std::string(entry->d_name) != "." && std::string(entry->d_name) != "..") { empty = false; break; }
+  const auto collect = [&](auto&& self, int parent, const std::string& prefix, size_t depth) -> bool {
+    if (depth > 256 || nodes.size() >= kNodeLimit) return false;
+    const int scanFd = dup(parent);
+    if (scanFd < 0) return false;
+    DIR* entries = fdopendir(scanFd);
+    if (!entries) { close(scanFd); return false; }
+    std::set<std::string> names;
+    bool ok = true;
+    for (;;) {
+      errno = 0;
+      const dirent* entry = readdir(entries);
+      if (entry == nullptr) { if (errno != 0) ok = false; break; }
+      const std::string name(entry->d_name);
+      if (name == "." || name == "..") continue;
+      if (name.empty() || name.size() > 255 || name.find('/') != std::string::npos ||
+          name.find('\\0') != std::string::npos || !names.insert(name).second ||
+          nodes.size() >= kNodeLimit || aggregateNameBytes + name.size() > kNameBytesLimit) { ok = false; break; }
+      aggregateNameBytes += name.size();
+      struct stat named{};
+      if (fstatat(parent, name.c_str(), &named, AT_SYMLINK_NOFOLLOW) != 0 ||
+          (!S_ISDIR(named.st_mode) && !S_ISREG(named.st_mode)) || S_ISLNK(named.st_mode) ||
+          named.st_uid != geteuid() || named.st_dev != profileInfo.st_dev || (named.st_mode & 0077) != 0 ||
+          (S_ISREG(named.st_mode) && named.st_nlink != 1)) { ok = false; break; }
+      const bool directory = S_ISDIR(named.st_mode);
+      const int child = openat(parent, name.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK |
+        (directory ? O_DIRECTORY : 0));
+      struct stat held{};
+      if (child < 0 || fstat(child, &held) != 0 || held.st_dev != named.st_dev || held.st_ino != named.st_ino ||
+          held.st_uid != geteuid() || held.st_dev != profileInfo.st_dev ||
+          ((directory && (!S_ISDIR(held.st_mode) || (held.st_mode & 0077) != 0)) ||
+           (!directory && (!S_ISREG(held.st_mode) || held.st_nlink != 1 || (held.st_mode & 0077) != 0)))) {
+        if (child >= 0) close(child);
+        ok = false; break;
+      }
+      const std::string relativePath = prefix.empty() ? name : prefix + "/" + name;
+      nodes.push_back({relativePath, held.st_dev, held.st_ino, directory, depth, child});
+      if (directory && !self(self, child, relativePath, depth + 1)) { ok = false; break; }
     }
     closedir(entries);
-  } else if (scanFd >= 0) {
-    close(scanFd);
+    return ok;
+  };
+  if (!collect(collect, profileFd, "", 1)) {
+    closeNodes(); close(profileFd); close(profilesFd); return kPathUnsafe;
   }
-  struct stat pathInfo{};
-  const bool sameProfile = fstatat(profilesFd, leaf.c_str(), &pathInfo, AT_SYMLINK_NOFOLLOW) == 0 &&
-    S_ISDIR(pathInfo.st_mode) && pathInfo.st_dev == profileInfo.st_dev && pathInfo.st_ino == profileInfo.st_ino;
-  close(profileFd);
-  if (!empty || !sameProfile) { close(profilesFd); return kPathUnsafe; }
-  const int result = unlinkat(profilesFd, leaf.c_str(), AT_REMOVEDIR);
-  const int status = result == 0 || errno == ENOENT ? kOk : kPathUnsafe;
-  close(profilesFd);
-  return status;
+#ifdef EBB_PROFILE_PATH_TEST_HOOKS
+  if (std::getenv("EBB_PROFILE_PATH_TEST_PAUSE_AFTER_CLEANUP_INVENTORY") != nullptr) {
+    std::cout << "CLEANUP_PROFILE_INVENTORY_READY\n" << std::flush;
+    char resume = 0;
+    if (!std::cin.get(resume) || resume != '\n') {
+      closeNodes(); close(profileFd); close(profilesFd); return kPathUnsafe;
+    }
+  }
+#endif
+  const auto findExpectedDirectory = [&](const std::string& directoryPath, struct stat& expected) -> bool {
+    if (directoryPath.empty()) { expected = profileInfo; return true; }
+    const auto found = std::find_if(nodes.begin(), nodes.end(), [&](const ProfileNode& candidate) {
+      return candidate.directory && candidate.path == directoryPath;
+    });
+    if (found == nodes.end()) return false;
+    expected.st_dev = found->device;
+    expected.st_ino = found->inode;
+    expected.st_uid = geteuid();
+    expected.st_mode = S_IFDIR | 0700;
+    return true;
+  };
+  const auto openVerifiedParent = [&](const std::string& parentPath, std::vector<int>& parentHandles) -> int {
+    int parent = profileFd;
+    std::string currentPath;
+    size_t cursor = 0;
+    while (!parentPath.empty() && cursor < parentPath.size()) {
+      const size_t end = parentPath.find('/', cursor);
+      const std::string component = parentPath.substr(cursor,
+        end == std::string::npos ? parentPath.size() - cursor : end - cursor);
+      currentPath = currentPath.empty() ? component : currentPath + "/" + component;
+      struct stat expected{};
+      if (!findExpectedDirectory(currentPath, expected)) return -1;
+      const int next = openat(parent, component.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+      struct stat actual{};
+      if (next < 0 || fstat(next, &actual) != 0) {
+        if (next >= 0) close(next);
+#ifdef EBB_PROFILE_PATH_TEST_HOOKS
+        std::cout << "CLEANUP_PARENT_REOPEN_FAILED\n" << std::flush;
+#endif
+        return -1;
+      }
+      if (actual.st_dev != expected.st_dev || actual.st_ino != expected.st_ino) {
+        close(next);
+#ifdef EBB_PROFILE_PATH_TEST_HOOKS
+        std::cout << "CLEANUP_PARENT_IDENTITY_MISMATCH\n" << std::flush;
+#endif
+        return -1;
+      }
+      if (actual.st_uid != geteuid() || !S_ISDIR(actual.st_mode) || (actual.st_mode & 0077) != 0) {
+        close(next);
+#ifdef EBB_PROFILE_PATH_TEST_HOOKS
+        std::cout << "CLEANUP_PARENT_POLICY_REJECTED\n" << std::flush;
+#endif
+        return -1;
+      }
+      parentHandles.push_back(next);
+      parent = next;
+      if (end == std::string::npos) break;
+      cursor = end + 1;
+    }
+    return parent;
+  };
+  // Revalidate every name-to-handle binding before the first unlink. Hardlinks, reparse/symlink
+  // entries, special files, changed identities, and non-private objects retain the whole tree.
+  for (const auto& node : nodes) {
+    const size_t slash = node.path.find_last_of('/');
+    const std::string parentPath = slash == std::string::npos ? "" : node.path.substr(0, slash);
+    const std::string name = slash == std::string::npos ? node.path : node.path.substr(slash + 1);
+    std::vector<int> parentHandles;
+    const int parent = openVerifiedParent(parentPath, parentHandles);
+    struct stat named{}, held{};
+    const bool same = parent >= 0 && fstatat(parent, name.c_str(), &named, AT_SYMLINK_NOFOLLOW) == 0 &&
+      fstat(node.handle, &held) == 0 && named.st_dev == node.device && named.st_ino == node.inode &&
+      held.st_dev == node.device && held.st_ino == node.inode && named.st_uid == geteuid() &&
+      (node.directory ? S_ISDIR(named.st_mode) : (S_ISREG(named.st_mode) && named.st_nlink == 1));
+    for (int handle : parentHandles) close(handle);
+    if (!same) { closeNodes(); close(profileFd); close(profilesFd); return kPathUnsafe; }
+  }
+  std::stable_sort(nodes.begin(), nodes.end(), [](const ProfileNode& left, const ProfileNode& right) {
+    return left.depth > right.depth;
+  });
+  bool removed = true;
+  for (auto& node : nodes) {
+    const size_t slash = node.path.find_last_of('/');
+    const std::string parentPath = slash == std::string::npos ? "" : node.path.substr(0, slash);
+    const std::string name = slash == std::string::npos ? node.path : node.path.substr(slash + 1);
+    std::vector<int> parentHandles;
+    const int parent = openVerifiedParent(parentPath, parentHandles);
+    struct stat named{}, held{};
+    // Reopened parent components are rebound to the inventory identities immediately before
+    // this name-based unlink. POSIX has no unlink-by-open-handle primitive, so a hostile process
+    // with the same UID can still race the final fstatat/unlinkat pair; see Plan20/spec limit.
+    const bool identityMatches = parent >= 0 && fstatat(parent, name.c_str(), &named, AT_SYMLINK_NOFOLLOW) == 0 &&
+      fstat(node.handle, &held) == 0 && named.st_dev == node.device && named.st_ino == node.inode &&
+      held.st_dev == node.device && held.st_ino == node.inode && named.st_uid == geteuid() &&
+      (node.directory ? S_ISDIR(held.st_mode) : (S_ISREG(held.st_mode) && held.st_nlink == 1));
+    const int unlinkFlags = node.directory ? AT_REMOVEDIR : 0;
+    if (!identityMatches || unlinkat(parent, name.c_str(), unlinkFlags) != 0) removed = false;
+    for (int handle : parentHandles) close(handle);
+    if (!removed) break;
+    close(node.handle); node.handle = -1;
+  }
+  closeNodes();
+  if (!removed) { close(profileFd); close(profilesFd); return kPathUnsafe; }
+  struct stat namedProfile{};
+  const bool sameProfile = fstatat(profilesFd, leaf.c_str(), &namedProfile, AT_SYMLINK_NOFOLLOW) == 0 &&
+    S_ISDIR(namedProfile.st_mode) && namedProfile.st_dev == profileInfo.st_dev && namedProfile.st_ino == profileInfo.st_ino;
+  const int profileDelete = sameProfile ? unlinkat(profilesFd, leaf.c_str(), AT_REMOVEDIR) : -1;
+  close(profileFd); close(profilesFd);
+  return profileDelete == 0 ? kOk : kPathUnsafe;
 }
 
 bool readPosixConfig(const std::string& home, Selection& selection) {

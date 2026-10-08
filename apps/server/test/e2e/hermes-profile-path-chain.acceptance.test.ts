@@ -37,7 +37,7 @@ const enabled = process.env.EBB_RUN_NATIVE_SCOPE_ACCEPTANCE === "1" && process.p
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
 const profileHelper = join(repo, "apps/server/dist/native/hermes-profile-path/ebb-hermes-profile-path.exe");
 const supervisorHelper = join(repo, "apps/server/dist/native/windows-run-supervisor/ebb-run-supervisor.exe");
-const pinnedHermesVersion = "v0.21.5+7357.g9244275";
+const pinnedHermesVersion = "v0.21.5+9117.g08165d5";
 
 interface VerifiedWindowsSystemPaths {
   readonly powershell: string;

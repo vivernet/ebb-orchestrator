@@ -228,3 +228,7 @@ Expected: все gates exits `0`, кроме явно одобренных/envir
 ## Execution approval
 
 План прошёл независимый `ebb-review-plan` со статусом `APPROVED`; пользователь одобрил реализацию 2026-09-28. Четыре read-only prompt-smoke запроса были отдельно одобрены в OpenAI Codex `gpt-6-luna`; после обнаружения session persistence пользователь прямо попросил остановить дальнейшие проверки работы Hermes. Поэтому четыре prompt smoke waived/not run; запросы провайдеру не отправлялись.
+
+## Post-completion inventory reconciliation (2026-10-08)
+
+План завершил миграцию первоначального canonical bundle из 19 skills. После его завершения, в commit `08abb3903e26324837dc3e195d7b0cd3d04ebecb` от 2026-10-01, пользовательское сообщение подтвердило добавление одного нового skill; commit добавил `.agents/skills/ebb-database-engineering/` и согласованно обновил README, Hermes guide и inventory tests. Поэтому текущий canonical inventory содержит 20 skills. Этот последующий approved addition не меняет исторический scope и результаты acceptance Plan18: требования «ровно 19» описывают завершённый bundle на момент выполнения, а не текущий расширенный inventory. Текущий состав 20 проверяется `scripts/ebb-skills.test.mjs` и `scripts/hermes-dev.mjs`; README и `docs/development/05-hermes.md` также указывают 20. Статус плана и исторические checklist/evidence выше не изменены.

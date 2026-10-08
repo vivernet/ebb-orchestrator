@@ -200,16 +200,16 @@ describe("EpicOrchestrator child integration wiring", () => {
       expect(db.get<{ workspace: string }>("SELECT json_extract(capability_json,'$.workspace') AS workspace FROM agent_runs WHERE id=$runId", { runId: finalRun.agent_run_id })?.workspace).toBe(attempts[1]?.worktreePath);
       const finalPhase = db.get<{ id: string }>("SELECT id FROM orchestration_phase_runs WHERE epic_id=$epicId AND task_id IS NULL AND phase='integration'", { epicId });
       if (!finalPhase) throw new Error("Epic-level Integration phase was not persisted");
-      const persistedPhase = orchestrator as unknown as { persistedPhase: (epic: string, task: undefined, phase: string, role: string, result: { accepted: boolean; output: unknown }, runId: string, phaseId: string) => unknown };
+      const persistedPhase = orchestrator as unknown as { persistedPhase: (epic: string, task: undefined, phase: string, role: string, result: { accepted: boolean; output: unknown }, runId: string, phaseId: string) => Promise<unknown> };
       for (const invalid of [
         { baseSha: "d".repeat(40), sourceSha: "c".repeat(40), provenance: [`integration_attempt:${attempts[1]?.id}`] },
         { baseSha: "b".repeat(40), sourceSha: "e".repeat(40), provenance: [`integration_attempt:${attempts[1]?.id}`] },
         { baseSha: "b".repeat(40), sourceSha: "c".repeat(40), provenance: ["integration_attempt:other-attempt"] },
       ]) {
-        expect(() => persistedPhase.persistedPhase(epicId, undefined, "integration", "integration", {
+        await expect(persistedPhase.persistedPhase(epicId, undefined, "integration", "integration", {
           accepted: true,
           output: { version: "1.0", outcome: "PASS", ...invalid, evidence: ["verification evidence"] },
-        }, finalRun.agent_run_id, finalPhase.id)).toThrow(/exact verified persisted attempt and SHAs/);
+        }, finalRun.agent_run_id, finalPhase.id)).rejects.toThrow(/exact verified persisted attempt and SHAs/);
       }
       expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_reservations WHERE status='RESERVED'")?.count).toBe(0);
     } finally {

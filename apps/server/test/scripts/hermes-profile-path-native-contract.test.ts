@@ -39,8 +39,8 @@ describe("native Hermes profile-path safe-path acceptance reporting", () => {
       new URL("../../src/modules/runtime/hermes/hermes-provider-selection.ts", import.meta.url),
       "utf8",
     );
-    const pinnedVersion = "v0.21.5+7357.g9244275";
-    const pinnedCommit = "9244275491ee0d5bc3481590b041114c4e1d399a";
+    const pinnedVersion = "v0.21.5+9117.g08165d5";
+    const pinnedCommit = "08165d58931841cee713468ae89032af7c57060a";
 
     expect(providerSelectionSource).toContain(`version: '${pinnedVersion}'`);
     expect(providerSelectionSource).toContain(`commit: '${pinnedCommit}'`);
@@ -212,6 +212,20 @@ describe("native Hermes profile-path safe-path acceptance reporting", () => {
     expect(cleanup).toMatch(/SetFileInformationByHandle\(handle, FileDispositionInfo/u);
     expect(finishGc).toMatch(/removeSnapshotGcTreeByVerifiedNativeHandles/u);
     expect(finishGc).not.toMatch(/chmod\(rootPath|removeChildrenNoFollow\(rootPath|unlink\((?:projectionPath|metadataPath|intentPath)/u);
+  });
+
+  it("keeps every Windows Run-profile cleanup identity handle closed to delete sharing", () => {
+    const cleanup = /int cleanupWindowsProfile\([\s\S]*?\n\}/u.exec(nativeSource)?.[0] ?? "";
+    const inventory = /HANDLE child = directory[\s\S]*?\n\s*FILE_ATTRIBUTE_TAG_INFO/u.exec(cleanup)?.[0] ?? "";
+
+    expect(cleanup).not.toBe("");
+    expect(cleanup).toMatch(/openWindowsDirectory\(root, true, userSid, false, true, false\)/u);
+    expect(cleanup).toMatch(/openWindowsChildDirectory\(rootHandle, L"profiles", FILE_OPEN, nullptr, false, true, 0, false\)/u);
+    expect(cleanup).toMatch(/openWindowsChildDirectory\(profiles, leaf, FILE_OPEN, nullptr, false, true,[\s\S]*?DELETE \| FILE_LIST_DIRECTORY \| FILE_WRITE_ATTRIBUTES, false\)/u);
+    expect(inventory).not.toBe("");
+    expect(inventory).toMatch(/openWindowsChildDirectory\(parent, name, FILE_OPEN, nullptr, false, true,[\s\S]*?DELETE \| FILE_LIST_DIRECTORY \| FILE_WRITE_ATTRIBUTES, false\)/u);
+    expect(inventory).toMatch(/openWindowsChildFile\(parent, name, false, DELETE \| FILE_WRITE_ATTRIBUTES\)/u);
+    expect(cleanup).not.toMatch(/HANDLE rebound = node\.directory|openWindowsChildFile\(item\.parent, node\.name/u);
   });
 
   it("removes Windows acceptance fixtures only through STOPPED-gated native identity handles", () => {

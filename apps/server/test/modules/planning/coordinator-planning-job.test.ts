@@ -28,10 +28,10 @@ import { createHermesAuthRouteFixture } from "../../helpers/hermes-auth-route-fi
 
 const hermesSourceSnapshotKey = JSON.stringify({
   formatVersion: 1,
-  hermesVersion: "v0.21.5+7357.g9244275",
+  hermesVersion: "v0.21.5+9117.g08165d5",
   manifestDigest: "c".repeat(64),
   ...(process.platform === "win32" ? { materializationPolicyVersion: 2 } : {}),
-  sourceCommit: "9244275491ee0d5bc3481590b041114c4e1d399a",
+  sourceCommit: "08165d58931841cee713468ae89032af7c57060a",
   sourceTree: "d".repeat(40),
 });
 
@@ -82,8 +82,8 @@ describe("Coordinator planning background job", () => {
               modelId,
               endpointIdentity: "hermes-provider:openai-codex",
               endpointRevision: authFixture.providerSelection.endpointRevision!,
-              sourceVersion: "v0.21.5+7357.g9244275",
-              sourceCommit: "9244275491ee0d5bc3481590b041114c4e1d399a",
+              sourceVersion: "v0.21.5+9117.g08165d5",
+              sourceCommit: "08165d58931841cee713468ae89032af7c57060a",
               sourceSnapshotKey: hermesSourceSnapshotKey,
               profileHome,
               ...(authFixture.profileHomePathChain ? { profileHomePathChain: authFixture.profileHomePathChain } : {}),

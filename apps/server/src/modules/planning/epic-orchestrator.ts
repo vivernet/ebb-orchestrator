@@ -613,7 +613,7 @@ export class EpicOrchestrator {
         output: JSON.parse(execution.outcome.output),
         usage: { cost: execution.run.cost ?? 0 },
       };
-      return this.persistedPhase(epicId, taskId, phase, role, result, agentRunId, activePhaseId);
+      return await this.persistedPhase(epicId, taskId, phase, role, result, agentRunId, activePhaseId);
       } catch (error) {
       if (!runPreflight.isCommitted()) {
         await runPreflight.cleanup();
@@ -627,6 +627,7 @@ export class EpicOrchestrator {
         tx.run("UPDATE orchestration_phase_runs SET status='FAILED',ended_at=$at WHERE id=$id AND status IN ('INTENT','RUNNING')", { id: activePhaseId, at: new Date().toISOString() });
       });
       this.scheduler.releaseAgentRun(agentRunId, 0);
+      await this.runs.cleanupTerminalHermesProfile(agentRunId);
       throw error;
     }
   }
@@ -746,7 +747,7 @@ export class EpicOrchestrator {
     };
   }
 
-  private persistedPhase(epicId: string, taskId: string | undefined, phase: string, role: string, result: EpicAgentResult, agentRunId: string, phaseId: string): EpicAgentResult {
+  private async persistedPhase(epicId: string, taskId: string | undefined, phase: string, role: string, result: EpicAgentResult, agentRunId: string, phaseId: string): Promise<EpicAgentResult> {
     const now = new Date().toISOString();
     const validation = validateRoleOutput(role, result.output);
     if (!validation.valid) throw new Error(`Epic ${role} result rejected: ${validation.error}`);
@@ -794,6 +795,7 @@ export class EpicOrchestrator {
     });
     this.scheduler.releaseAgentRun(agentRunId, result.usage?.cost ?? 0);
     if (taskId) this.scheduler.releaseTask(taskId, result.usage?.cost ?? 0);
+    await this.runs.cleanupTerminalHermesProfile(agentRunId);
     return normalized;
   }
 

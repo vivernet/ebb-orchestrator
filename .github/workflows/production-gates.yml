@@ -128,6 +128,8 @@ jobs:
           set -e
           printf 'Build exit code: %s\n' "$build_status" | tee -a "$GITHUB_STEP_SUMMARY"
           if [[ "$build_status" -ne 0 ]]; then exit "$build_status"; fi
+      - name: Run native POSIX terminal Hermes cleanup race acceptance
+        run: node apps/server/scripts/test-hermes-profile-path-native.mjs --posix-cleanup-race-only
       - name: Run native source-snapshot GC and inventory-boundary probe
         run: node apps/server/scripts/test-hermes-profile-path-native.mjs --source-cache-gc-only
       - name: Run native provider-free process-scope acceptance

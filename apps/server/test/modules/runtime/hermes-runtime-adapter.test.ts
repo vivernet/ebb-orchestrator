@@ -21,7 +21,7 @@ import {
 } from "../../../src/platform/process/process-executor.js";
 import type { ProcessScopeIdentity, ProcessScopeObservation } from "../../../src/platform/process/process-inspector.js";
 import { ProcessScopeLaunchNotDispatchedError, type ProcessScopeLaunchRequest, type ProcessScopeSupervisor } from "../../../src/platform/process/run-scope-supervisor.js";
-import { insertRunProcessOwnerTx, prepareRunProcessOwner } from "../../../src/modules/runtime/run-process-owner.js";
+import { insertRunProcessOwnerTx, prepareRunProcessOwner, transitionRunProcessOwnerTx } from "../../../src/modules/runtime/run-process-owner.js";
 import type { HermesSessionCapture } from "../../../src/modules/runtime/hermes-session-capture-port.js";
 import { HERMES_PROVIDER_SELECTION_SOURCE } from "../../../src/modules/runtime/hermes/hermes-provider-selection.js";
 import { createHermesAuthRouteFixture } from "../../helpers/hermes-auth-route-fixture.js";
@@ -1400,6 +1400,8 @@ describe("HermesRuntimeAdapter", () => {
       expect(args).toContain("--query-file");
       expect(args).toContain("--model");
       expect(args).toContain("claude-3-5-sonnet");
+      expect(args.slice(args.indexOf("--provider"), args.indexOf("--provider") + 2))
+        .toEqual(["--provider", "openai-codex"]);
       expect(args).toContain("--toolsets");
       expect(args).toContain("mcp-orchestrator");
       expect(args).toContain("--in");
@@ -1847,6 +1849,7 @@ describe("HermesRuntimeAdapter", () => {
       const builder = new HermesCliBuilder();
       const args = builder.buildLaunchArgs({
         queryFile: "/tmp/prompt.txt",
+        provider: "openai-codex",
         model: "claude-3-5-sonnet",
         toolsets: ["mcp-orchestrator"],
         worktree: "/managed/worktree",
@@ -1860,6 +1863,10 @@ describe("HermesRuntimeAdapter", () => {
       expect(args).toContain("/tmp/prompt.txt");
       expect(args).toContain("--model");
       expect(args).toContain("claude-3-5-sonnet");
+      expect(args).toContain("--provider");
+      expect(args).toContain("openai-codex");
+      expect(args.slice(args.indexOf("--provider"), args.indexOf("--provider") + 2))
+        .toEqual(["--provider", "openai-codex"]);
       expect(args).toContain("--toolsets");
       expect(args).toContain("mcp-orchestrator");
       expect(args).toContain("--in");
@@ -1888,5 +1895,132 @@ describe("HermesRuntimeAdapter", () => {
       expect(args).toContain("--in");
       expect(args).toContain("/managed/worktree");
     });
+
+    it("rejects Hermes virtual-provider syntax that can override the explicit provider", () => {
+      const builder = new HermesCliBuilder();
+      expect(() => builder.buildLaunchArgs({
+        queryFile: "/tmp/prompt.txt",
+        provider: "openai-codex",
+        model: "moa:balanced",
+        toolsets: ["mcp-orchestrator"],
+        worktree: "/managed/worktree",
+        ignoreRules: false,
+        source: "tool",
+        maxTurns: 20,
+      })).toThrow("HERMES_RUN_SELECTION_INVALID");
+    });
+  });
+});
+
+describe("Hermes terminal profile cleanup STOP gate", () => {
+  const runId = "f672e56f-07ed-4fc4-9aca-2f91b3d7bc82";
+  let root: string;
+  let databasePath: string;
+  let database: ReturnType<typeof createSqliteDatabase>;
+  let identity!: ProcessScopeIdentity;
+  let supervisor: ProcessScopeSupervisor;
+  let executor: MockProcessExecutor;
+  let artifacts: MockArtifactStore;
+  let waitForStopped: ProcessScopeSupervisor["waitForStopped"];
+  let cleanupProfile: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(async () => {
+    executor = new MockProcessExecutor();
+    artifacts = new MockArtifactStore();
+    root = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-cleanup-stop-gate-"));
+    databasePath = path.join(root, "state.sqlite");
+    database = createSqliteDatabase(databasePath);
+    database.exec(`
+      CREATE TABLE agent_runs (id TEXT PRIMARY KEY, status TEXT NOT NULL, capability_ref TEXT, task_id TEXT);
+      CREATE TABLE run_process_owners (
+        run_id TEXT PRIMARY KEY, source_tag TEXT NOT NULL, hermes_home TEXT NOT NULL,
+        containment_kind TEXT NOT NULL, containment_id TEXT NOT NULL, launch_nonce TEXT NOT NULL,
+        systemd_invocation_id TEXT, systemd_control_group TEXT, supervisor_pid INTEGER,
+        supervisor_start_identity TEXT, pid INTEGER, platform TEXT, process_start_identity TEXT,
+        executable_identity TEXT, state TEXT NOT NULL, stop_evidence TEXT, updated_at TEXT NOT NULL,
+        hermes_source_snapshot_key TEXT
+      );
+      CREATE TABLE scheduler_reservations (id TEXT PRIMARY KEY, status TEXT, run_id TEXT, subject_id TEXT, kind TEXT);
+      CREATE TABLE scheduler_resource_locks (reservation_id TEXT);
+    `);
+    const hermesHome = path.join(root, "profiles", `ebb-orchestrator-run-${runId}`);
+    const owner = prepareRunProcessOwner(runId, hermesHome,
+      process.platform === "win32" ? "windows-job" : "systemd-user-service");
+    database.run("INSERT INTO agent_runs (id,status,capability_ref,task_id) VALUES ($runId,'COMPLETED',NULL,NULL)", { runId });
+    database.transaction((tx) => {
+      insertRunProcessOwnerTx(tx, owner);
+      transitionRunProcessOwnerTx(tx, { runId, expectedState: "PREPARED", nextState: "STOPPED", evidence: "NEVER_LAUNCHED" });
+    });
+    identity = {
+      runId,
+      containmentKind: owner.containmentKind,
+      containmentId: owner.containmentId,
+      launchNonce: owner.launchNonce,
+      systemdInvocationId: null,
+      systemdControlGroup: null,
+      supervisorPid: null,
+      supervisorStartIdentity: null,
+      pid: null,
+      platform: null,
+      processStartIdentity: null,
+      executableIdentity: null,
+      state: "STOPPED",
+    };
+    waitForStopped = vi.fn(async (_owner: ProcessScopeIdentity, _timeoutMs?: number): Promise<ProcessScopeObservation> => ({
+      state: "STOPPED" as const,
+      evidence: owner.containmentKind === "windows-job" ? "WINDOWS_JOB_EMPTY" : "SYSTEMD_CGROUP_EMPTY",
+    }));
+    supervisor = {
+      launch: async () => { throw new Error("unused"); },
+      inspect: async () => ({ state: "UNKNOWN", reason: "unused" }),
+      stop: async () => ({ state: "UNKNOWN", reason: "unused" }),
+      waitForStopped,
+    };
+    cleanupProfile = vi.spyOn(hermesProfileHomeModule, "cleanupHermesRunProfileHome").mockResolvedValue(undefined);
+  });
+
+  afterEach(async () => {
+    cleanupProfile.mockRestore();
+    database.close();
+    await fs.rm(root, { recursive: true, force: true });
+  });
+
+  it("waits for fresh STOP evidence for the exact persisted owner before removing its profile", async () => {
+    const adapter = new HermesRuntimeAdapter(executor, artifacts, { databasePath }, supervisor);
+
+    await adapter.cleanupTerminalHermesProfile(runId);
+
+    expect(vi.mocked(waitForStopped)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(waitForStopped)).toHaveBeenCalledWith(identity, 30_000);
+    expect(cleanupProfile).toHaveBeenCalledTimes(1);
+    expect(cleanupProfile.mock.invocationCallOrder[0]).toBeGreaterThan(vi.mocked(waitForStopped).mock.invocationCallOrder[0]!);
+  });
+
+  it.each([
+    ["LIVE", { state: "LIVE", identity: { ...identity, state: "LIVE" } }],
+    ["UNKNOWN", { state: "UNKNOWN", reason: "UNPROVEN" }],
+    ["malformed STOP evidence", { state: "STOPPED", evidence: "not-safe-evidence" }],
+    ["historical non-OS STOP evidence", { state: "STOPPED", evidence: "NEVER_LAUNCHED" }],
+    ["wrong-containment evidence", { state: "STOPPED", evidence: process.platform === "win32" ? "SYSTEMD_CGROUP_EMPTY" : "WINDOWS_JOB_EMPTY" }],
+  ] as const)("does not remove the profile when fresh supervisor evidence is %s", async (_label, observation) => {
+    const supervisor: ProcessScopeSupervisor = {
+      launch: async () => { throw new Error("unused"); },
+      inspect: async () => ({ state: "UNKNOWN", reason: "unused" }),
+      stop: async () => ({ state: "UNKNOWN", reason: "unused" }),
+      waitForStopped: vi.fn(async () => observation as ProcessScopeObservation),
+    };
+    const adapter = new HermesRuntimeAdapter(executor, artifacts, { databasePath }, supervisor);
+
+    await expect(adapter.cleanupTerminalHermesProfile(runId)).rejects.toThrow("HERMES_PROFILE_CLEANUP_STOP_UNPROVEN");
+
+    expect(cleanupProfile).not.toHaveBeenCalled();
+  });
+
+  it("fails closed without a process-scope supervisor", async () => {
+    const adapter = new HermesRuntimeAdapter(executor, artifacts, { databasePath });
+
+    await expect(adapter.cleanupTerminalHermesProfile(runId)).rejects.toThrow("HERMES_PROFILE_CLEANUP_STOP_UNPROVEN");
+
+    expect(cleanupProfile).not.toHaveBeenCalled();
   });
 });

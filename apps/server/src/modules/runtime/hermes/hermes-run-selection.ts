@@ -13,7 +13,7 @@ import type { HermesWindowsPathIdentityChain } from "./hermes-launch-ticket.js";
 
 export const HERMES_SNAPSHOT_BOOTSTRAP_POLICY_IDENTITY = "hermes-source-snapshot-bootstrap-v1";
 export const HERMES_AUTH_ENVIRONMENT_POLICY_REVISION = "run-env-provenance-bound-v2";
-export const HERMES_AUTH_PROFILE_POLICY_REVISION = "fresh-run-profile-v1";
+export const HERMES_AUTH_PROFILE_POLICY_REVISION = "fresh-run-profile-explicit-provider-no-fallback-v2";
 
 const AUTH_ENVIRONMENT_KEYS = new Set([
   "HOMEDRIVE", "HOMEPATH", "SYSTEMROOT", "TEMP", "TMP", "PATH", "NODE_PATH", "NODE_ENV",
@@ -42,8 +42,10 @@ export interface HermesNativeAuthRouteEvidence {
 }
 
 /**
- * Source contract для Hermes `v0.21.5+7357.g9244275`: active-profile auth проверяется перед root
- * fallback (`hermes_cli/auth.py:496-549`, `830-847`, `952-977`). Новый profile создаётся пустым;
+ * Source contract для Hermes `v0.21.5+9117.g08165d5`: active-profile auth проверяется перед root
+ * fallback (`hermes_cli/auth.py:496-549`, `830-847`, `952-977`). Auth при этом не credential-isolated:
+ * Hermes может прочитать read-only global-root `auth.json`/credential pool per-provider и записать
+ * refresh обратно в выбранное Hermes-хранилище. Новый profile создаётся пустым;
  * Hermes dotenv остаётся привязан к HERMES_HOME и pinned source `PROJECT_ROOT`, чей snapshot строится
  * из Git tree (`hermes_cli/main.py:423,712`); child env и профиль не содержат provider env/plugin
  * источников. Это подтверждает только поддерживаемый root auth-store route, не наличие или выбор

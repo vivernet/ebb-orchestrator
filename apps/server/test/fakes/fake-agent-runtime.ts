@@ -60,6 +60,13 @@ export class FakeAgentRuntime implements AgentRuntime {
   }
 
   /**
+   * Имитирует удаление профиля завершённого Hermes Run без файловых операций.
+   */
+  async cleanupTerminalHermesProfile(_runId: string): Promise<void> {
+    // Фейковый runtime не владеет профилями Hermes.
+  }
+
+  /**
  * Проверяет состояние run.
    */
   async inspectRun(_runId: string): Promise<AgentRun> {

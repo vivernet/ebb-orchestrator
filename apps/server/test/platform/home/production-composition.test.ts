@@ -128,7 +128,7 @@ describe("production composition", () => {
     await startup.reconcileOutbox();
     await startup.reconcileJobs();
     await startup.reconcileArtifacts();
-    for (const reconcile of startup.additionalReconcilers) await reconcile();
+    for (const reconcile of startup.additionalReconcilers) await reconcile.run();
 
     expect(events).toEqual([
       "outbox",
@@ -191,7 +191,10 @@ describe("production composition", () => {
       reconcileOutbox: async () => { await startup!.reconcileOutbox(); },
       reconcileJobs: async () => { await startup!.reconcileJobs(); },
       reconcileArtifacts: async () => { await startup!.reconcileArtifacts(); },
-      additionalReconcilers: [async () => { await startup!.additionalReconcilers[0]!(); }],
+      additionalReconcilers: [{
+        name: "production_startup_reconciliation",
+        run: async () => { await startup!.additionalReconcilers[0]!.run(); },
+      }],
       workers: [{ start: async () => { events.push("worker-start"); }, stop: async () => {} }],
     });
 
@@ -288,7 +291,9 @@ describe("production composition", () => {
       events.push("scheduler-reconcile");
       return schedulerReconcile();
     });
+    const reconcileTerminalHermesProfiles = vi.fn(async () => { events.push("terminal-profiles-cleanup"); return 0; });
     const applicationRecoveryReconcilers = createApplicationRecoveryReconcilers({
+      runService: { reconcileTerminalHermesProfiles },
       epicOrchestrator: {
         reconcileInterruptedRuns: () => { events.push("epic-reconcile"); },
         reconcileInterruptedExecutionClaims: () => { events.push("execution-claims-reconcile"); return 0; },
@@ -302,6 +307,14 @@ describe("production composition", () => {
       scheduler,
       planningService: { reconcileInterruptedRequests: () => { events.push("planning-reconcile"); return 0; } },
     });
+    expect(applicationRecoveryReconcilers.map(({ name }) => name)).toEqual([
+      "reconcile_epic_runs",
+      "reconcile_scheduler",
+      "cleanup_terminal_hermes_profiles",
+      "reconcile_planning_requests",
+      "reconcile_execution_claims",
+      "resume_approved_epics",
+    ]);
 
     await startSystem({
       instanceLock: { acquire: async () => ({ pid: 1 }), release: async () => {} },
@@ -324,7 +337,10 @@ describe("production composition", () => {
       reconcileOutbox: async () => {},
       reconcileJobs: async () => {},
       reconcileArtifacts: async () => {},
-      additionalReconcilers: [async () => { await startup!.additionalReconcilers[0]!(); }, ...applicationRecoveryReconcilers],
+      additionalReconcilers: [
+        { name: "production_startup_reconciliation", run: async () => { await startup!.additionalReconcilers[0]!.run(); } },
+        ...applicationRecoveryReconcilers,
+      ],
       workers: [{ start: async () => { events.push("worker-start"); }, stop: async () => {} }],
     });
 
@@ -336,6 +352,7 @@ describe("production composition", () => {
       "runs",
       "epic-reconcile",
       "scheduler-reconcile",
+      "terminal-profiles-cleanup",
       "planning-reconcile",
       "execution-claims-reconcile",
       "resume-approved-epics",
@@ -343,6 +360,8 @@ describe("production composition", () => {
       "status:READY",
     ]);
     expect(currentStatus).toBe("READY");
+    expect(reconcileTerminalHermesProfiles).toHaveBeenCalledOnce();
+    expect(events.indexOf("scheduler-reconcile")).toBeLessThan(events.indexOf("terminal-profiles-cleanup"));
     expect(database.get<{ status: string }>("SELECT status FROM agent_runs WHERE id=$id", { id: interruptedRun.id })?.status)
       .toBe("FAILED");
     expect(database.get<{ status: string }>("SELECT status FROM scheduler_reservations WHERE subject_id='recovery-run'")?.status)
@@ -350,7 +369,7 @@ describe("production composition", () => {
 
     const mainSource = await readFile(join(import.meta.dirname, "../../../src/main.ts"), "utf8");
     expect(mainSource).toMatch(/import\s*\{\s*createApplicationRecoveryReconcilers\s*,\s*createProductionComposition\s*\}\s*from\s*["']\.\/platform\/home\/production-composition\.js["']/);
-    expect(mainSource).toMatch(/additionalReconcilers:\s*\[\s*\.\.\.startupReconciliation\.additionalReconcilers,\s*\.\.\.createApplicationRecoveryReconcilers\(\{\s*epicOrchestrator,\s*scheduler,\s*planningService\s*\}\),\s*\]/s);
+    expect(mainSource).toMatch(/additionalReconcilers:\s*\[\s*\.\.\.startupReconciliation\.additionalReconcilers,\s*\.\.\.createApplicationRecoveryReconcilers\(\{\s*epicOrchestrator,\s*scheduler,\s*planningService,\s*runService\s*\}\),\s*\]/s);
     expect(mainSource).not.toMatch(/epicOrchestrator\.reconcileInterruptedRuns\(\)|epicOrchestrator\.reconcileInterruptedExecutionClaims\(\)|epicOrchestrator\.resumeApprovedEpics\(\)/);
   });
 });

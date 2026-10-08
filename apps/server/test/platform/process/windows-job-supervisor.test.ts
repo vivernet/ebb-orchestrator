@@ -232,7 +232,7 @@ describe("WindowsJobSupervisor", () => {
     });
     const sourceSnapshotKey = JSON.stringify({
       formatVersion: 1,
-      hermesVersion: "v0.21.5+7357.g9244275",
+      hermesVersion: "v0.21.5+9117.g08165d5",
       manifestDigest: "c".repeat(64),
       materializationPolicyVersion: 2,
       sourceCommit: "b".repeat(40),

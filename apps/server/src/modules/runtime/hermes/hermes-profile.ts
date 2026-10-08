@@ -108,7 +108,9 @@ export interface GenerateConfigOptions {
 export function generateConfigYaml(options: GenerateConfigOptions): string {
   if (options.providerSelection &&
       (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(options.providerSelection.providerId) ||
-       !/^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,255}$/u.test(options.providerSelection.modelId))) {
+       !/^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,255}$/u.test(options.providerSelection.modelId) ||
+       options.providerSelection.providerId.toLowerCase() === "moa" ||
+       options.providerSelection.modelId.toLowerCase().startsWith("moa:"))) {
     throw new Error("HERMES_RUN_SELECTION_INVALID");
   }
   const { toolsetPath, resultFile } = options;

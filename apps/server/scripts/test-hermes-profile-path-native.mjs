@@ -666,7 +666,8 @@ function verifyWindowsSafePathChainFixture(root) {
       : safeChain.status >= 50 && safeChain.status < 60
         ? `COMPONENT_ACL_STAGE_${safeChain.status - 50}`
         : `NATIVE_EXIT_${safeChain.status}`;
-    throw new Error(`TEMP_PATH_ANCESTOR_CHAIN_NOT_ACCEPTED:${detail}`);
+    const diagnostic = String(safeChain.stderr || "").match(/SAFE_PATH_CHAIN_COMPONENT_ACL_UNSAFE:INDEX_\d+:STAGE_\d+/u)?.[0];
+    throw new Error(`TEMP_PATH_ANCESTOR_CHAIN_NOT_ACCEPTED:${detail}${diagnostic ? `:${diagnostic}` : ""}`);
   }
   assert.equal(safeChain.stderr, "", "safe path-chain verification must not emit diagnostics");
   const chainResult = JSON.parse(safeChain.stdout);
@@ -841,6 +842,196 @@ function verifyWindowsSafePathChainFixture(root) {
   assert.notEqual(unsafeAuthRootChain.status, 0,
     "foreign add-child ACE on authRoot itself must be rejected by strict ACL policy");
   assert.equal(unsafeAuthRootChain.stdout, "", "unsafe strict-root ACL must not emit an identity chain");
+}
+
+function verifyRecursiveProfileCleanup(root) {
+  const hermesRoot = join(root, "hermes-root");
+  mkdirSync(hermesRoot);
+  const runId = randomUUID();
+  const created = invoke(["create-profile", hermesRoot, runId]);
+  assert.equal(created.error, undefined, "native create-profile process should start");
+  assert.equal(created.status, 0, `native create-profile should create a private profile (exit ${created.status})`);
+  const profile = join(hermesRoot, "profiles", `ebb-orchestrator-run-${runId}`);
+  const nested = join(profile, "home", "sessions", "nested");
+  mkdirSync(nested, { recursive: true, mode: 0o700 });
+  const insideFile = join(nested, "session.db");
+  writeFileSync(insideFile, "disposable session fixture", { encoding: "utf8", mode: 0o600 });
+  const outsideSentinel = join(root, "outside-profile-sentinel.txt");
+  writeFileSync(outsideSentinel, "must survive", { encoding: "utf8", mode: 0o600 });
+  const reparseTarget = join(root, "outside-profile-target");
+  mkdirSync(reparseTarget, { recursive: true, mode: 0o700 });
+  writeFileSync(join(reparseTarget, "sentinel.txt"), "outside", { encoding: "utf8", mode: 0o600 });
+  const reparseEntry = join(profile, "home", "external-link");
+  symlinkSync(reparseTarget, reparseEntry, process.platform === "win32" ? "junction" : undefined);
+  const reparseCleanup = invoke(["cleanup-profile", hermesRoot, runId]);
+  assert.equal(reparseCleanup.error, undefined, "native cleanup with a reparse entry should start");
+  assert.notEqual(reparseCleanup.status, 0, "native cleanup must refuse a reparse/symlink entry");
+  assert.equal(existsSync(join(reparseTarget, "sentinel.txt")), true, "reparse refusal must preserve outside target contents");
+  assert.equal(existsSync(insideFile), true, "preflight refusal must retain all Run profile contents");
+  rmSync(reparseEntry, { recursive: true, force: true });
+
+  const outsideHardlink = join(root, "outside-profile-hardlink.txt");
+  linkSync(insideFile, outsideHardlink);
+  const hardlinkCleanup = invoke(["cleanup-profile", hermesRoot, runId]);
+  assert.equal(hardlinkCleanup.error, undefined, "native cleanup with a hardlink should start");
+  assert.notEqual(hardlinkCleanup.status, 0, "native cleanup must refuse a file linked outside the Run profile");
+  assert.equal(existsSync(outsideHardlink), true, "hardlink refusal must retain the outside link");
+  assert.equal(readFileSync(outsideHardlink, "utf8"), "disposable session fixture", "outside hardlink content must be preserved");
+  unlinkSync(outsideHardlink);
+  const cleaned = invoke(["cleanup-profile", hermesRoot, runId]);
+  assert.equal(cleaned.error, undefined, "native cleanup of a private Run profile tree should start");
+  assert.equal(cleaned.status, 0, `native cleanup should remove the exact Run profile tree (exit ${cleaned.status})`);
+  assert.equal(existsSync(profile), false, "native cleanup should remove only the exact Run-owned profile leaf");
+  assert.equal(readFileSync(outsideSentinel, "utf8"), "must survive", "cleanup must preserve adjacent outside sentinels");
+  assert.equal(readFileSync(join(reparseTarget, "sentinel.txt"), "utf8"), "outside", "cleanup must not traverse reparse targets");
+  const cleanedAgain = invoke(["cleanup-profile", hermesRoot, runId]);
+  assert.equal(cleanedAgain.error, undefined, "idempotent cleanup should start");
+  assert.equal(cleanedAgain.status, 0, "cleanup of an absent Run profile should be idempotent");
+  assert.equal(existsSync(join(hermesRoot, "profiles")), true, "cleanup must preserve shared profiles/ parent");
+}
+
+async function verifyWindowsCleanupRenameBlocked(root) {
+  assert.equal(process.platform, "win32", "Windows cleanup rename fixture is Windows-only");
+  const hermesRoot = join(root, "windows-cleanup-race-hermes-root");
+  mkdirSync(hermesRoot);
+  const runId = randomUUID();
+  const create = invoke(["create-profile", hermesRoot, runId]);
+  assert.equal(create.error, undefined, "native helper should create the cleanup race Run profile");
+  assert.equal(create.status, 0, "cleanup race Run profile creation should succeed");
+  const profile = join(hermesRoot, "profiles", `ebb-orchestrator-run-${runId}`);
+  const nested = join(profile, "home", "sessions");
+  mkdirSync(nested, { recursive: true, mode: 0o700 });
+  const file = join(nested, "session.db");
+  writeFileSync(file, "held by production cleanup inventory", { mode: 0o600 });
+
+  const testHelper = join(root, "ebb-hermes-profile-path-cleanup-race-test.exe");
+  const objectFile = join(root, "ebb-hermes-profile-path-cleanup-race-test.obj");
+  const { compiler, environment } = resolveWindowsMsvcEnvironment({ exists: existsSync });
+  execFileSync(compiler, [
+    "/nologo", "/std:c++17", "/EHsc", "/W4", "/DUNICODE", "/D_UNICODE", "/D_WIN32_WINNT=0x0A00",
+    "/DEBB_PROFILE_PATH_TEST_HOOKS", `/Fo${objectFile}`, `/Fe${testHelper}`,
+    join(serverDirectory, "native", "hermes-profile-path", "ebb-hermes-profile-path.cpp"),
+    "advapi32.lib", "kernel32.lib", "ntdll.lib",
+  ], { cwd: serverDirectory, env: environment, shell: false, windowsHide: true });
+
+  const child = spawn(testHelper, ["cleanup-profile", hermesRoot, runId], {
+    shell: false, windowsHide: true,
+    env: { ...childEnvironment, EBB_PROFILE_PATH_TEST_PAUSE_AFTER_CLEANUP_INVENTORY: "1" },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  let output = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => { output += chunk; });
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  const awaitReady = async () => {
+    const deadline = Date.now() + 10_000;
+    while (!output.includes("CLEANUP_PROFILE_INVENTORY_READY")) {
+      if (Date.now() >= deadline || child.exitCode !== null) throw new Error("Windows cleanup missed the inventory barrier");
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 10));
+    }
+  };
+  const closePromise = new Promise((resolveClose, rejectClose) => {
+    child.once("error", rejectClose);
+    child.once("close", (code) => resolveClose(code));
+  });
+  try {
+    await awaitReady();
+    let renameError;
+    const renamed = `${file}.renamed`;
+    try {
+      renameSync(file, renamed);
+      renameSync(renamed, file);
+    } catch (error) {
+      renameError = error;
+    }
+    assert.ok(renameError, "a cleanup-held no-delete-sharing identity handle must block renaming its inventoried file");
+    assert.ok(["EACCES", "EBUSY", "EPERM"].includes(renameError.code),
+      `rename should fail because the production cleanup handle denies delete sharing (got ${renameError.code})`);
+    assert.equal(existsSync(file), true, "the blocked rename must leave the inventoried file in place");
+
+    child.stdin.end("\n");
+    const exitCode = await closePromise;
+    assert.equal(stderr, "", "native cleanup race helper must not emit diagnostics");
+    assert.equal(exitCode, 0, `cleanup should complete after the rename attempt (exit ${exitCode})`);
+    assert.equal(existsSync(profile), false, "cleanup should remove only the inventoried Run profile after releasing the barrier");
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill("SIGKILL");
+      await closePromise.catch(() => undefined);
+    }
+  }
+  process.stdout.write("Native Windows cleanup no-delete-sharing rename race passed.\n");
+}
+
+async function verifyPosixCleanupParentSwapRefusal(root) {
+  assert.equal(process.platform, "linux", "POSIX cleanup identity-race fixture is Linux-only");
+  const hermesRoot = join(root, "hermes-root");
+  mkdirSync(hermesRoot, { mode: 0o700 });
+  const runId = randomUUID();
+  const profile = join(hermesRoot, "profiles", `ebb-orchestrator-run-${runId}`);
+  const create = invoke(["create-profile", hermesRoot, runId]);
+  assert.equal(create.error, undefined);
+  assert.equal(create.status, 0, "native helper should create the private Run profile");
+  const originalHome = join(profile, "home");
+  const originalFile = join(originalHome, "sessions", "original.txt");
+  mkdirSync(join(originalHome, "sessions"), { recursive: true, mode: 0o700 });
+  writeFileSync(originalFile, "original inventory object", { mode: 0o600 });
+
+  const testHelper = join(root, "ebb-hermes-profile-path-test-hooks");
+  const compile = spawnSync("c++", ["-std=c++17", "-O2", "-Wall", "-Wextra", "-Wpedantic",
+    "-DEBB_PROFILE_PATH_TEST_HOOKS", join(serverDirectory, "native", "hermes-profile-path", "ebb-hermes-profile-path.cpp"),
+    "-o", testHelper], { shell: false, windowsHide: true, encoding: "utf8", env: childEnvironment, timeout: 120_000 });
+  assert.equal(compile.error, undefined, "test-hook native helper compiler should start");
+  assert.equal(compile.status, 0, `test-hook helper should compile (stderr: ${compile.stderr})`);
+
+  const child = spawn(testHelper, ["cleanup-profile", hermesRoot, runId], {
+    shell: false, windowsHide: true, env: { ...childEnvironment, EBB_PROFILE_PATH_TEST_PAUSE_AFTER_CLEANUP_INVENTORY: "1" },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  let output = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => { output += chunk; });
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  const awaitReady = async () => {
+    const deadline = Date.now() + 10_000;
+    while (!output.includes("CLEANUP_PROFILE_INVENTORY_READY\n")) {
+      if (Date.now() >= deadline || child.exitCode !== null) throw new Error("POSIX cleanup race helper missed inventory barrier");
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 10));
+    }
+  };
+  let exitCode;
+  try {
+    await awaitReady();
+    const renamedHome = join(profile, "home-original");
+    renameSync(originalHome, renamedHome);
+    mkdirSync(originalHome, { mode: 0o700 });
+    const impostorSentinel = join(originalHome, "impostor.txt");
+    writeFileSync(impostorSentinel, "must survive identity refusal", { mode: 0o600 });
+    child.stdin.end("\n");
+    exitCode = await new Promise((resolveExit, rejectExit) => {
+      child.once("error", rejectExit);
+      child.once("close", (code) => resolveExit(code));
+    });
+    assert.equal(stderr, "", "native race refusal must not emit diagnostics");
+    assert.notEqual(exitCode, 0, "changed parent identity must refuse cleanup before unlink");
+    assert.match(output, /CLEANUP_PARENT_IDENTITY_MISMATCH\n/u,
+      "fixture must reach openVerifiedParent and refuse specifically on the collected parent identity mismatch");
+    assert.equal(readFileSync(join(renamedHome, "sessions", "original.txt"), "utf8"), "original inventory object",
+      "the inventoried tree must survive a parent-name replacement");
+    assert.equal(readFileSync(join(originalHome, "impostor.txt"), "utf8"), "must survive identity refusal",
+      "the replacement tree must remain untouched");
+    assert.equal(existsSync(profile), true, "cleanup refusal must retain the Run profile root");
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill("SIGKILL");
+      await new Promise((resolveClose) => child.once("close", resolveClose));
+    }
+  }
+  process.stdout.write("Native POSIX recursive cleanup parent-identity swap refusal passed.\n");
 }
 
 async function verifySourceCacheGcHandles(root) {
@@ -1254,7 +1445,8 @@ function verifySourceCacheGcInventoryBoundary(root) {
 if (process.platform === "win32" && process.argv.includes("--fixture-tree-remove-only")) {
   makeWindowsFixturePrivate(canonicalSandbox);
 }
-if (process.platform === "win32") verifyWindowsAncestorAclPolicyUnit();
+if (process.platform === "win32" && !process.argv.includes("--cleanup-profile-only") &&
+    !process.argv.includes("--path-chain-only")) verifyWindowsAncestorAclPolicyUnit();
 
 if (process.argv.includes("--source-staging-only")) {
   let primaryError;
@@ -1307,6 +1499,44 @@ if (process.argv.includes("--source-staging-only")) {
   }
   if (primaryError) throw primaryError;
   process.stdout.write("Native Hermes profile path-chain contract passed.\n");
+} else if (process.argv.includes("--cleanup-profile-only")) {
+  let primaryError;
+  try {
+    chmodSync(canonicalSandbox, 0o700);
+    if (process.platform === "win32") makeWindowsFixturePrivate(canonicalSandbox);
+    verifyRecursiveProfileCleanup(canonicalSandbox);
+    if (process.platform === "win32") await verifyWindowsCleanupRenameBlocked(canonicalSandbox);
+  } catch (error) {
+    primaryError = error;
+  } finally {
+    try {
+      if (process.platform !== "win32") preparePosixFixtureDirectoriesForCleanup(canonicalSandbox);
+      rmSync(canonicalSandbox, { recursive: true, force: true });
+    } catch (cleanupError) {
+      if (primaryError) process.stderr.write(`Native profile cleanup fixture cleanup also failed: ${String(cleanupError)}\n`);
+      else primaryError = cleanupError;
+    }
+  }
+  if (primaryError) throw primaryError;
+  process.stdout.write("Native recursive Hermes Run-profile cleanup contract passed.\n");
+} else if (process.argv.includes("--posix-cleanup-race-only")) {
+  let primaryError;
+  try {
+    if (process.platform !== "linux") throw new Error("HERMES_POSIX_CLEANUP_RACE_TEST_LINUX_ONLY");
+    chmodSync(canonicalSandbox, 0o700);
+    await verifyPosixCleanupParentSwapRefusal(canonicalSandbox);
+  } catch (error) {
+    primaryError = error;
+  } finally {
+    try {
+      preparePosixFixtureDirectoriesForCleanup(canonicalSandbox);
+      rmSync(canonicalSandbox, { recursive: true, force: true });
+    } catch (cleanupError) {
+      if (primaryError) process.stderr.write(`Native POSIX cleanup race fixture cleanup also failed: ${String(cleanupError)}\n`);
+      else primaryError = cleanupError;
+    }
+  }
+  if (primaryError) throw primaryError;
 } else if (process.argv.includes("--source-cache-gc-only")) {
   let primaryError;
   try {
@@ -1584,17 +1814,38 @@ try {
   assert.equal(existsSync(join(hermesRoot, "profiles", `ebb-orchestrator-run-${uppercaseRunId}`)), false,
     "invalid UUID must be rejected before any profile directory is created");
 
-  const preservedContentPath = join(profile, "rollback-marker");
-  writeFileSync(preservedContentPath, "preserve non-empty profile", { encoding: "utf8", mode: 0o600 });
-  const nonEmptyCleanup = invoke(["cleanup-profile", hermesRoot, runId]);
-  assert.equal(nonEmptyCleanup.error, undefined, "native cleanup of a non-empty profile should start");
-  assert.notEqual(nonEmptyCleanup.status, 0, "native cleanup must refuse a non-empty Run profile");
-  assert.equal(existsSync(preservedContentPath), true, "refused cleanup must preserve all unexpected content");
-  rmSync(preservedContentPath);
+  const cleanupFixture = join(profile, "home", "sessions", "nested");
+  mkdirSync(cleanupFixture, { recursive: true, mode: 0o700 });
+  const insideFile = join(cleanupFixture, "session.db");
+  writeFileSync(insideFile, "disposable session fixture", { encoding: "utf8", mode: 0o600 });
+  const outsideSentinel = join(canonicalSandbox, "outside-profile-sentinel.txt");
+  writeFileSync(outsideSentinel, "must survive", { encoding: "utf8", mode: 0o600 });
+  const reparseTarget = join(canonicalSandbox, "outside-profile-target");
+  mkdirSync(reparseTarget, { recursive: true, mode: 0o700 });
+  writeFileSync(join(reparseTarget, "sentinel.txt"), "outside", { encoding: "utf8", mode: 0o600 });
+  const reparseEntry = join(profile, "home", "external-link");
+  symlinkSync(reparseTarget, reparseEntry, process.platform === "win32" ? "junction" : undefined);
+  const reparseCleanup = invoke(["cleanup-profile", hermesRoot, runId]);
+  assert.equal(reparseCleanup.error, undefined, "native cleanup with a reparse entry should start");
+  assert.notEqual(reparseCleanup.status, 0, "native cleanup must refuse a reparse/symlink entry");
+  assert.equal(existsSync(join(reparseTarget, "sentinel.txt")), true, "reparse refusal must preserve outside target contents");
+  assert.equal(existsSync(insideFile), true, "preflight refusal must retain all Run profile contents");
+  rmSync(reparseEntry, { recursive: true, force: true });
+
+  const outsideHardlink = join(canonicalSandbox, "outside-profile-hardlink.txt");
+  linkSync(insideFile, outsideHardlink);
+  const hardlinkCleanup = invoke(["cleanup-profile", hermesRoot, runId]);
+  assert.equal(hardlinkCleanup.error, undefined, "native cleanup with a hardlink should start");
+  assert.notEqual(hardlinkCleanup.status, 0, "native cleanup must refuse a file linked outside the Run profile");
+  assert.equal(existsSync(outsideHardlink), true, "hardlink refusal must retain the outside link");
+  assert.equal(readFileSync(outsideHardlink, "utf8"), "disposable session fixture", "outside hardlink content must be preserved");
+  unlinkSync(outsideHardlink);
   const cleaned = invoke(["cleanup-profile", hermesRoot, runId]);
-  assert.equal(cleaned.error, undefined, "native cleanup of the exact empty profile should start");
-  assert.equal(cleaned.status, 0, "native cleanup should remove the exact empty Run profile");
-  assert.equal(existsSync(profile), false, "native cleanup should remove only the Run-owned profile leaf");
+  assert.equal(cleaned.error, undefined, "native cleanup of a private Run profile tree should start");
+  assert.equal(cleaned.status, 0, "native cleanup should remove the exact Run profile tree");
+  assert.equal(existsSync(profile), false, "native cleanup should remove only the exact Run-owned profile leaf");
+  assert.equal(readFileSync(outsideSentinel, "utf8"), "must survive", "cleanup must preserve adjacent outside sentinels");
+  assert.equal(readFileSync(join(reparseTarget, "sentinel.txt"), "utf8"), "outside", "cleanup must not traverse reparse targets");
   const cleanedAgain = invoke(["cleanup-profile", hermesRoot, runId]);
   assert.equal(cleanedAgain.error, undefined, "idempotent cleanup should start");
   assert.equal(cleanedAgain.status, 0, "cleanup of an absent Run profile should be idempotent");
@@ -1685,8 +1936,8 @@ try {
     assert.equal(result.status, 0, `${note}: fail-closed selection result should be data`);
     assert.equal(result.stderr, "", `${note}: selection data must not be logged`);
     assert.deepEqual(JSON.parse(result.stdout), {
-      sourceVersion: "v0.21.5+7357.g9244275",
-      sourceCommit: "9244275491ee0d5bc3481590b041114c4e1d399a",
+      sourceVersion: "v0.21.5+9117.g08165d5",
+      sourceCommit: "08165d58931841cee713468ae89032af7c57060a",
       projectionVersion: "hermes-config-selection-v1",
       status: "UNAVAILABLE",
       reason,
@@ -1698,8 +1949,8 @@ try {
     assert.equal(result.status, 0, `${note}: endpoint projection should complete as data`);
     assert.equal(result.stderr, "", `${note}: endpoint projection must not log values`);
     assert.deepEqual(JSON.parse(result.stdout), {
-      sourceVersion: "v0.21.5+7357.g9244275",
-      sourceCommit: "9244275491ee0d5bc3481590b041114c4e1d399a",
+      sourceVersion: "v0.21.5+9117.g08165d5",
+      sourceCommit: "08165d58931841cee713468ae89032af7c57060a",
       projectionVersion: "hermes-endpoint-projection-v1",
       status: "PINNED_DEFAULT",
       providerId: "openai-api",
@@ -1713,8 +1964,8 @@ try {
     assert.equal(result.status, 0, `${note}: fail-closed result should be data`);
     assert.equal(result.stderr, "", `${note}: endpoint projection must not log values`);
     assert.deepEqual(JSON.parse(result.stdout), {
-      sourceVersion: "v0.21.5+7357.g9244275",
-      sourceCommit: "9244275491ee0d5bc3481590b041114c4e1d399a",
+      sourceVersion: "v0.21.5+9117.g08165d5",
+      sourceCommit: "08165d58931841cee713468ae89032af7c57060a",
       projectionVersion: "hermes-endpoint-projection-v1",
       status: "UNAVAILABLE",
       reason: "HERMES_ENDPOINT_ID_UNAVAILABLE",
@@ -1727,8 +1978,8 @@ try {
   assert.equal(selected.error, undefined, "native Run-bound project-selection process should start");
   assert.equal(selected.status, 0, "native Run-bound project-selection should complete as data");
   assert.deepEqual(JSON.parse(selected.stdout), {
-    sourceVersion: "v0.21.5+7357.g9244275",
-    sourceCommit: "9244275491ee0d5bc3481590b041114c4e1d399a",
+    sourceVersion: "v0.21.5+9117.g08165d5",
+    sourceCommit: "08165d58931841cee713468ae89032af7c57060a",
     projectionVersion: "hermes-config-selection-v1",
     status: "EXPLICIT_SELECTION",
     providerId: "openai-api",
@@ -1858,8 +2109,8 @@ try {
   assert.equal(projectionResult.stderr, "", `native projection must not log config data: ${String(projectionResult.stderr).trim()}`);
   const projection = JSON.parse(projectionResult.stdout);
   assert.deepEqual(projection, {
-    sourceVersion: "v0.21.5+7357.g9244275",
-    sourceCommit: "9244275491ee0d5bc3481590b041114c4e1d399a",
+    sourceVersion: "v0.21.5+9117.g08165d5",
+    sourceCommit: "08165d58931841cee713468ae89032af7c57060a",
     projectionVersion: "hermes-config-selection-v1",
     status: "EXPLICIT_SELECTION",
     providerId: "example-provider",
@@ -1880,8 +2131,8 @@ try {
   assert.equal(unsupported.error, undefined, "native unsupported-layer check should start");
   assert.equal(unsupported.status, 0, "native unsupported-layer check should fail closed as data");
   assert.deepEqual(JSON.parse(unsupported.stdout), {
-    sourceVersion: "v0.21.5+7357.g9244275",
-    sourceCommit: "9244275491ee0d5bc3481590b041114c4e1d399a",
+    sourceVersion: "v0.21.5+9117.g08165d5",
+    sourceCommit: "08165d58931841cee713468ae89032af7c57060a",
     projectionVersion: "hermes-config-selection-v1",
     status: "UNAVAILABLE",
     reason: "HERMES_SELECTION_CONFIG_UNSUPPORTED",
@@ -1902,8 +2153,8 @@ try {
     assert.equal(unsupportedConfigLayer.error, undefined, `${unsupportedLayer} layer check should start`);
     assert.equal(unsupportedConfigLayer.status, 0, `${unsupportedLayer} layer must fail closed as data`);
     assert.deepEqual(JSON.parse(unsupportedConfigLayer.stdout), {
-      sourceVersion: "v0.21.5+7357.g9244275",
-      sourceCommit: "9244275491ee0d5bc3481590b041114c4e1d399a",
+      sourceVersion: "v0.21.5+9117.g08165d5",
+      sourceCommit: "08165d58931841cee713468ae89032af7c57060a",
       projectionVersion: "hermes-config-selection-v1",
       status: "UNAVAILABLE",
       reason: "HERMES_SELECTION_CONFIG_UNSUPPORTED",

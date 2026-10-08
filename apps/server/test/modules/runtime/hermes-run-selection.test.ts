@@ -57,6 +57,8 @@ describe("bindHermesRunSelectionToOptions", () => {
     expect(bound.contextInput?.versions).toMatchObject({ runtime: "hermes", runtimeVersion: selection.sourceVersion, model: selection.modelId });
     expect(bound.contextInput?.execution.policyIdentity.providerPolicyId)
       .toContain(`auth=hermes-native-global-default-auth-v2@${selection.sourceCommit}`);
+    expect(bound.contextInput?.execution.policyIdentity.providerPolicyId)
+      .toContain("profile=fresh-run-profile-explicit-provider-no-fallback-v2");
     expect(bound.contextInput?.prompt).toBe(options.contextInput?.prompt);
   });
 

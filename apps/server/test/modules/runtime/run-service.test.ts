@@ -1,4 +1,4 @@
-import { describe, expect, it, afterEach, beforeEach } from "vitest";
+import { describe, expect, it, afterEach, beforeEach, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -17,7 +17,7 @@ import { transitionRunProcessOwnerTx } from "../../../src/modules/runtime/run-pr
 
 const hermesSourceSnapshotKey = JSON.stringify({
   formatVersion: 1,
-  hermesVersion: "v0.21.5+7357.g9244275",
+  hermesVersion: "v0.21.5+9117.g08165d5",
   manifestDigest: "c".repeat(64),
   ...(process.platform === "win32" ? { materializationPolicyVersion: 2 } : {}),
   sourceCommit: "b".repeat(40),
@@ -62,6 +62,7 @@ describe("RunService with FakeAgentRuntime", () => {
     db.run("INSERT INTO projects(id,name,display_name,status,created_at,updated_at) VALUES($id,'runtime','Runtime','ACTIVE',$now,$now)", { id: _projectId, now });
     db.run("INSERT INTO tasks(id,project_id,display_id,title,status,contract_json,required,created_at,updated_at) VALUES($id,$projectId,'TASK-RUN','Runtime task','READY','{}',1,$now,$now)", { id: taskId, projectId: _projectId, now });
     fakeRuntime = new FakeAgentRuntime();
+    fakeRuntime.cleanupTerminalHermesProfile = vi.fn(async () => undefined);
     runService = new RunService(db, fakeRuntime, {
       prepare: (_tx, input) => preparedContext(input.prompt, input.role, input.subject),
     });
@@ -1051,8 +1052,122 @@ describe("RunService with FakeAgentRuntime", () => {
     });
     db!.run("UPDATE agent_runs SET status='FAILED',ended_at=$now WHERE id=$runId", { runId: run.id, now: new Date().toISOString() });
 
+    await expect(runService.cleanupTerminalHermesProfile(run.id)).resolves.toBe(false);
+    expect(fakeRuntime.cleanupTerminalHermesProfile).not.toHaveBeenCalled();
+    expect(db!.get<{ capability_ref: string | null }>(
+      "SELECT capability_ref FROM agent_runs WHERE id=$runId", { runId: run.id },
+    )?.capability_ref).toBe(run.capabilityRef);
     expect(runService.failPreparedRun(run.id, new Error("integration cleanup retry"))).toBe(false);
     expect(db!.get<{ status: string }>("SELECT status FROM agent_runs WHERE id=$runId", { runId: run.id })?.status).toBe("FAILED");
+  });
+
+  it.each(["legacy fallback", "corrupt profile"] as const)(
+    "skips terminal profile cleanup for %s owner paths without filesystem action",
+    async (label) => {
+      await setup();
+      const run = prepareRun({
+        role: "developer", model: "gpt-4", taskId, epicId,
+        triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
+      });
+      const containmentKind = db!.get<{ containment_kind: string }>(
+        "SELECT containment_kind FROM run_process_owners WHERE run_id=$runId", { runId: run.id },
+      )?.containment_kind;
+      const stopEvidence = containmentKind === "windows-job" ? "WINDOWS_JOB_EMPTY" : "SYSTEMD_CGROUP_EMPTY";
+      const hermesHome = label === "legacy fallback"
+        ? join(tmpDir, "runtime", "hermes", "runs", run.id)
+        : join(tmpDir, "auth", "profiles", `unexpected-${run.id}`);
+      db!.run("UPDATE run_process_owners SET state='STOPPED',stop_evidence=$stopEvidence,hermes_home=$hermesHome WHERE run_id=$runId", {
+        runId: run.id, stopEvidence, hermesHome,
+      });
+      db!.run("UPDATE agent_runs SET status='FAILED',ended_at=$now WHERE id=$runId", { runId: run.id, now: new Date().toISOString() });
+
+      await expect(runService.cleanupTerminalHermesProfile(run.id)).resolves.toBe(false);
+      expect(fakeRuntime.cleanupTerminalHermesProfile).not.toHaveBeenCalled();
+      expect(db!.get<{ capability_ref: string | null }>(
+        "SELECT capability_ref FROM agent_runs WHERE id=$runId", { runId: run.id },
+      )?.capability_ref).toBe(run.capabilityRef);
+    },
+  );
+
+  it.each(["\u0000", "\u001f", "\u007f"])("rejects Run profile paths containing control code %s", async (control) => {
+    await setup();
+    const run = prepareRun({
+      role: "developer", model: "gpt-4", taskId, epicId,
+      triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
+    });
+    const containmentKind = db!.get<{ containment_kind: string }>(
+      "SELECT containment_kind FROM run_process_owners WHERE run_id=$runId", { runId: run.id },
+    )?.containment_kind;
+    const stopEvidence = containmentKind === "windows-job" ? "WINDOWS_JOB_EMPTY" : "SYSTEMD_CGROUP_EMPTY";
+    const hermesHome = join(tmpDir, "auth", "profiles", `ebb-orchestrator-run-${run.id}${control}`);
+    db!.run("UPDATE run_process_owners SET state='STOPPED',stop_evidence=$stopEvidence,hermes_home=$hermesHome WHERE run_id=$runId", {
+      runId: run.id, stopEvidence, hermesHome,
+    });
+    db!.run("UPDATE agent_runs SET status='FAILED',ended_at=$now WHERE id=$runId", { runId: run.id, now: new Date().toISOString() });
+
+    await expect(runService.cleanupTerminalHermesProfile(run.id)).resolves.toBe(false);
+    expect(fakeRuntime.cleanupTerminalHermesProfile).not.toHaveBeenCalled();
+  });
+
+  it.skipIf(process.platform !== "win32")("rejects a UNC canonical-looking profile path before terminal cleanup", async () => {
+    await setup();
+    const run = prepareRun({
+      role: "developer", model: "gpt-4", taskId, epicId,
+      triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
+    });
+    const containmentKind = db!.get<{ containment_kind: string }>(
+      "SELECT containment_kind FROM run_process_owners WHERE run_id=$runId", { runId: run.id },
+    )?.containment_kind;
+    const stopEvidence = containmentKind === "windows-job" ? "WINDOWS_JOB_EMPTY" : "SYSTEMD_CGROUP_EMPTY";
+    db!.run("UPDATE run_process_owners SET state='STOPPED',stop_evidence=$stopEvidence,hermes_home=$hermesHome WHERE run_id=$runId", {
+      runId: run.id,
+      stopEvidence,
+      hermesHome: `\\\\server\\share\\profiles\\ebb-orchestrator-run-${run.id}`,
+    });
+    db!.run("UPDATE agent_runs SET status='FAILED',ended_at=$now WHERE id=$runId", { runId: run.id, now: new Date().toISOString() });
+
+    await expect(runService.cleanupTerminalHermesProfile(run.id)).resolves.toBe(false);
+    expect(fakeRuntime.cleanupTerminalHermesProfile).not.toHaveBeenCalled();
+    expect(db!.get<{ capability_ref: string | null }>(
+      "SELECT capability_ref FROM agent_runs WHERE id=$runId", { runId: run.id },
+    )?.capability_ref).toBe(run.capabilityRef);
+  });
+
+  it("retains the Run profile while scheduler ownership remains and revokes capability before safe cleanup", async () => {
+    await setup();
+    const run = prepareRun({
+      role: "developer", model: "gpt-4", taskId, epicId,
+      triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
+    });
+    const containmentKind = db!.get<{ containment_kind: string }>(
+      "SELECT containment_kind FROM run_process_owners WHERE run_id=$runId", { runId: run.id },
+    )?.containment_kind;
+    const stopEvidence = containmentKind === "windows-job" ? "WINDOWS_JOB_EMPTY" : "SYSTEMD_CGROUP_EMPTY";
+    db!.run("UPDATE run_process_owners SET state='STOPPED',stop_evidence=$stopEvidence WHERE run_id=$runId", {
+      runId: run.id, stopEvidence,
+    });
+    db!.run("UPDATE run_process_owners SET hermes_home=$hermesHome WHERE run_id=$runId", {
+      runId: run.id,
+      hermesHome: join(tmpDir, "auth", "profiles", `ebb-orchestrator-run-${run.id}`),
+    });
+    db!.run("UPDATE agent_runs SET status='FAILED',ended_at=$now WHERE id=$runId", { runId: run.id, now: new Date().toISOString() });
+    db!.run(
+      `INSERT INTO scheduler_reservations(id,kind,subject_id,project_id,owner_id,reserved_at,status,role,model,run_id)
+       VALUES($id,'PHASE',$subjectId,$projectId,$ownerId,$at,'RESERVED','developer','gpt-4',$runId)`,
+      { id: randomUUID(), subjectId: run.id, projectId: _projectId, ownerId: `run:${run.id}`, at: new Date().toISOString(), runId: run.id },
+    );
+
+    await expect(runService.cleanupTerminalHermesProfile(run.id)).resolves.toBe(false);
+    expect(fakeRuntime.cleanupTerminalHermesProfile).not.toHaveBeenCalled();
+    expect(db!.get<{ capability_ref: string | null }>("SELECT capability_ref FROM agent_runs WHERE id=$runId", { runId: run.id })?.capability_ref)
+      .toBe(run.capabilityRef);
+
+    db!.run("DELETE FROM scheduler_reservations WHERE run_id=$runId", { runId: run.id });
+    await expect(runService.cleanupTerminalHermesProfile(run.id)).resolves.toBe(true);
+    expect(fakeRuntime.cleanupTerminalHermesProfile).toHaveBeenCalledWith(run.id);
+    expect(db!.get<{ capability_ref: string | null; capability_json: string | null }>(
+      "SELECT capability_ref,capability_json FROM agent_runs WHERE id=$runId", { runId: run.id },
+    )).toEqual({ capability_ref: null, capability_json: null });
   });
 
   it("allows terminal cleanup only when the persisted owner has canonical STOPPED evidence", async () => {

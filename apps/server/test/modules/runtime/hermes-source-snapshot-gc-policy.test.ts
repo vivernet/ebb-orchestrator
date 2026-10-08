@@ -8,7 +8,7 @@ import { loadTestMigrations } from "../../helpers/migrations.js";
 
 const cacheKey = JSON.stringify({
   formatVersion: 1,
-  hermesVersion: "v0.21.5+7357.g9244275",
+  hermesVersion: "v0.21.5+9117.g08165d5",
   manifestDigest: "a".repeat(64),
   sourceCommit: "b".repeat(40),
   sourceTree: "c".repeat(40),
@@ -103,7 +103,7 @@ describe("Hermes snapshot GC reference policy", () => {
   it("accepts a real Windows STOPPED proof for a Windows v2 snapshot key", () => {
     const db = setup();
     const windowsKey = JSON.stringify({
-      formatVersion: 1, hermesVersion: "v0.21.5+7357.g9244275", manifestDigest: "a".repeat(64),
+      formatVersion: 1, hermesVersion: "v0.21.5+9117.g08165d5", manifestDigest: "a".repeat(64),
       materializationPolicyVersion: 2, sourceCommit: "b".repeat(40), sourceTree: "c".repeat(40),
     });
     insertRun(db, "windows-stopped-run", "COMPLETED", windowsKey, "STOPPED", "WINDOWS_JOB_EMPTY", "windows-job");

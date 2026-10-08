@@ -377,6 +377,79 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
     }
   }
 
+  /** Удаляет только точный Run profile после отзыва capability, terminal status и освобождения
+   * Scheduler reservation/locks; непосредственно перед удалением повторно проверяет STOP
+   * supervisor для durable owner и принимает только нативное OS evidence. */
+  async cleanupTerminalHermesProfile(runId: string): Promise<void> {
+    if (!this.databasePath || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(runId)) {
+      throw new Error("HERMES_PROFILE_CLEANUP_BINDING_INVALID");
+    }
+    const database = createSqliteDatabase(this.databasePath);
+    let hermesHome: string;
+    let persistedOwner: RunProcessOwner;
+    try {
+      const run = database.get<{ status: string; capability_ref: string | null; task_id: string | null }>(
+        "SELECT status,capability_ref,task_id FROM agent_runs WHERE id=$runId", { runId },
+      );
+      const owner = getRunProcessOwner(database, runId);
+      if (!run || !["COMPLETED", "FAILED", "CANCELLED"].includes(run.status) || run.capability_ref !== null ||
+          !owner || owner.state !== "STOPPED" ||
+          !isAuthoritativeRunProcessStopEvidence(owner.stopEvidence, owner.containmentKind)) {
+        throw new Error("HERMES_PROFILE_CLEANUP_GATE_NOT_SATISFIED");
+      }
+      const reservation = database.get<{ present: number }>(
+        `SELECT 1 AS present FROM scheduler_reservations
+          WHERE status='RESERVED' AND (run_id=$runId OR subject_id=$runId
+            OR ($taskId IS NOT NULL AND kind='TASK' AND subject_id=$taskId)) LIMIT 1`, { runId, taskId: run.task_id },
+      );
+      const lock = database.get<{ present: number }>(
+        `SELECT 1 AS present FROM scheduler_resource_locks lock_row
+          JOIN scheduler_reservations reservation ON reservation.id=lock_row.reservation_id
+          WHERE reservation.run_id=$runId OR reservation.subject_id=$runId
+            OR ($taskId IS NOT NULL AND reservation.kind='TASK' AND reservation.subject_id=$taskId) LIMIT 1`,
+        { runId, taskId: run.task_id },
+      );
+      if (reservation || lock) throw new Error("HERMES_PROFILE_CLEANUP_GATE_NOT_SATISFIED");
+      hermesHome = owner.hermesHome;
+      persistedOwner = owner;
+    } finally {
+      database.close();
+    }
+    const platform = currentHermesPlatform();
+    const paths = platform === "win32" ? path.win32 : path.posix;
+    const expectedLeaf = `ebb-orchestrator-run-${runId}`;
+    const profilesDirectory = paths.dirname(hermesHome);
+    const authRoot = paths.dirname(profilesDirectory);
+    const exactProfile = paths.join(authRoot, "profiles", expectedLeaf);
+    const samePath = platform === "win32"
+      ? paths.normalize(hermesHome).toLowerCase() === paths.normalize(exactProfile).toLowerCase()
+      : paths.normalize(hermesHome) === paths.normalize(exactProfile);
+    if (!samePath || paths.basename(profilesDirectory).toLowerCase() !== "profiles") {
+      throw new Error("HERMES_PROFILE_CLEANUP_BINDING_INVALID");
+    }
+    const supervisor = this.processScopeSupervisor;
+    if (!supervisor) throw new Error("HERMES_PROFILE_CLEANUP_STOP_UNPROVEN");
+    let freshStop: ProcessScopeObservation;
+    try {
+      freshStop = await supervisor.waitForStopped(ownerToScopeIdentity(persistedOwner), 30_000);
+    } catch {
+      throw new Error("HERMES_PROFILE_CLEANUP_STOP_UNPROVEN");
+    }
+    const hasFreshNativeStopEvidence = freshStop && typeof freshStop === "object" && freshStop.state === "STOPPED" &&
+      (persistedOwner.containmentKind === "windows-job"
+        ? freshStop.evidence === "WINDOWS_JOB_EMPTY" || freshStop.evidence === "WINDOWS_JOB_AND_HELPER_ABSENT"
+        : freshStop.evidence === "SYSTEMD_CGROUP_EMPTY" || freshStop.evidence === "UNIT_ABSENT_NO_PENDING_CGROUP_ABSENT");
+    if (!hasFreshNativeStopEvidence) {
+      throw new Error("HERMES_PROFILE_CLEANUP_STOP_UNPROVEN");
+    }
+    await cleanupHermesRunProfileHome({
+      hermesRoot: authRoot,
+      runId,
+      helperPath: hermesProfilePathHelperPath(platform),
+      platform,
+    });
+  }
+
   /** Подключает awaited RunService sink для allowlisted live Hermes session evidence. */
   setHermesSessionCaptureHandler(handler: (capture: HermesSessionCapture) => Promise<void>): void {
     if (this.hermesSessionCaptureHandler && this.hermesSessionCaptureHandler !== handler) {
@@ -436,6 +509,7 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
 
     const args = this.cliBuilder.buildLaunchArgs({
       queryFile: promptFile,
+      provider: hermesSelection.providerId,
       model: hermesSelection.modelId,
       toolsets: this.toolsets,
       worktree: workspace,

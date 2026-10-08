@@ -167,8 +167,17 @@ describe("Hermes profile isolation", () => {
       });
 
       expect(config).toContain("model:\n  provider: \"openai-codex\"\n  default: \"gpt-5.6-codex\"");
+      expect(config).not.toMatch(/^(?:fallback_providers|fallback_model|providers|custom_providers|model_aliases):/mu);
       expect(config).not.toContain("auth.json");
       expect(config).not.toContain("api_key");
+    });
+
+    it("rejects a Hermes virtual model route that takes precedence over the selected provider", () => {
+      expect(() => generateConfigYaml({
+        capability: { role: "Developer", workspace: "/test/workspace" },
+        toolsetPath: "/test/toolset",
+        providerSelection: { providerId: "openai-codex", modelId: "moa:balanced" },
+      })).toThrow("HERMES_RUN_SELECTION_INVALID");
     });
 
     it("does not read a legacy Ebb provider bridge setting into Hermes profile configuration", () => {

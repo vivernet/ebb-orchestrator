@@ -121,6 +121,11 @@ updated: 2026-10-07
 - Сравнение старого и нового исходного кода подтвердило прежний `hermes chat --format stream-json`, ранний `system/init.session_id`, Hermes-native root auth fallback и неизменность source provider endpoint/env-name maps. Новая source revision становится endpoint revision; неизвестные custom/private overrides сохраняют fail-closed.
 - Это не provider-backed acceptance. Plan20 остаётся `in_progress`; Task5B live auth/session capture и Task5C durable recovery остаются открытыми. Полная матрица всех планов кроме Plan14 и точный current-SHA security scan остаются в ранее указанном порядке.
 
+## Дополнение от 2026-10-08 — актуальный Hermes source pin
+
+- Read-only source audit подтверждает установленный Hermes checkout `v0.21.5+9117.g08165d5`, commit `08165d58931841cee713468ae89032af7c57060a`; active Plan20/source-dependent contracts обновляются на этот pin.
+- Исторические записи о версиях, фактически установленных ранее, остаются неизменными. Эта сверка не запускала provider и не подтверждает live provider acceptance.
+
 ## Дополнение от 2026-10-07 — Plan16 documentation scout
 
 - Read-only review на `a9148f6` проверил `README.md`, `docs/README.md` и `docs/development/05-hermes.md`: документы на русском, без metadata в README, canonical Hermes guide сохраняет guideline metadata; 25 относительных Markdown-ссылок не имеют сломанных целей. Указанные `pnpm` scripts сопоставляются с package manifests; `pnpm docs:link:sync` отдельно обозначена как неподдерживаемая команда, не являющаяся проверкой.

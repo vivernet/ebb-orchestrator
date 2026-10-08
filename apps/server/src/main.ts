@@ -231,7 +231,7 @@ async function startLifecycle(): Promise<void> {
   ...startupReconciliation,
   additionalReconcilers: [
     ...startupReconciliation.additionalReconcilers,
-    ...createApplicationRecoveryReconcilers({ epicOrchestrator, scheduler, planningService }),
+    ...createApplicationRecoveryReconcilers({ epicOrchestrator, scheduler, planningService, runService }),
   ],
   workers,
   signal: startupAbortController.signal,
