@@ -53,6 +53,20 @@ describe("restart child failure diagnostics", () => {
       .toBeUndefined();
   });
 
+  it("preserves only bounded native helper terminal phase, exception, exit status, and READY evidence", () => {
+    const safe = "WINDOWS_NATIVE_HELPER_DIAGNOSTIC:PHASE_PROCESS_START:TYPE_WIN32_EXCEPTION:EXIT_126:READY_ABSENT";
+    expect(safeRestartChildFailureCode(new Error(safe))).toBe(safe);
+    expect(safeRestartChildFailureCode(new Error(
+      "WINDOWS_NATIVE_HELPER_DIAGNOSTIC:PHASE_UNCLASSIFIED:TYPE_UNCLASSIFIED:EXIT_0:READY_PRESENT",
+    ))).toBe("WINDOWS_NATIVE_HELPER_DIAGNOSTIC:PHASE_UNCLASSIFIED:TYPE_UNCLASSIFIED:EXIT_0:READY_PRESENT");
+    for (const unsafe of [
+      "WINDOWS_NATIVE_HELPER_DIAGNOSTIC:PHASE_C:\\PRIVATE:TYPE_WIN32_EXCEPTION:EXIT_126:READY_ABSENT",
+      "WINDOWS_NATIVE_HELPER_DIAGNOSTIC:PHASE_PROCESS_START:TYPE_PROVIDER_SECRET:EXIT_126:READY_ABSENT",
+      "WINDOWS_NATIVE_HELPER_DIAGNOSTIC:PHASE_PROCESS_START:TYPE_WIN32_EXCEPTION:EXIT_999:READY_ABSENT",
+      "WINDOWS_NATIVE_HELPER_DIAGNOSTIC:PHASE_PROCESS_START:TYPE_WIN32_EXCEPTION:EXIT_126:READY_UNKNOWN",
+    ]) expect(safeRestartChildFailureCode(new Error(unsafe))).toBeUndefined();
+  });
+
   it("matches the native Windows report and UNKNOWN code sets exactly", async () => {
     const nativeSource = await readFile(new URL("../../native/windows-run-supervisor/ebb-run-supervisor.cpp", import.meta.url), "utf8");
     const supervisorSource = await readFile(new URL("../../src/platform/process/windows-job-supervisor.ts", import.meta.url), "utf8");

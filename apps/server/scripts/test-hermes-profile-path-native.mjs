@@ -914,6 +914,9 @@ async function verifySourceCacheGcHandles(root) {
 
   const partialId = createHash("sha256").update(randomUUID()).digest("hex");
   const partial = makeCandidate(partialId);
+  // Model an interruption after GC has prepared both directories for removal.
+  chmodSync(partial.snapshotRoot, 0o700);
+  chmodSync(join(partial.snapshotRoot, "pkg"), 0o700);
   unlinkSync(join(partial.snapshotRoot, "top.py"));
   const recovered = invoke(["source-cache-gc-remove", cacheRoot, partialId], partial.rows);
   assert.equal(recovered.error, undefined);

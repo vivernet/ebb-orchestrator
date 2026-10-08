@@ -4,7 +4,7 @@ import { deflateSync } from "node:zlib";
 import { createHash } from "node:crypto";
 import { chmod, link, lstat, mkdtemp, mkdir, readFile, readdir, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, parse, relative, sep } from "node:path";
 import type { HermesSourceSnapshotRequest } from "../../../src/modules/runtime/hermes/hermes-source-snapshot.js";
 type HermesSourceSnapshotModule = typeof import("../../../src/modules/runtime/hermes/hermes-source-snapshot.js");
 
@@ -278,6 +278,7 @@ describe("Hermes shared source snapshot", () => {
   it("collects a v1 snapshot for the same source identity when durable policy permits GC", async () => {
     const fixture = await createFixture({ "source.txt": { content: "terminal legacy reference\n" } });
     const request = requestFor(fixture, join(fixture.root, "cache"));
+    const hostPlatform = process.platform;
     const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
     expect(platformDescriptor?.configurable).toBe(true);
     try {
@@ -300,7 +301,10 @@ describe("Hermes shared source snapshot", () => {
       await snapshotModule.ensureHermesSourceSnapshotNativeProjection({
         cacheRoot: request.cacheRoot, cacheKey: legacyCacheKey, publicationLock: fixturePublicationLock,
       });
-      expect(Number((await lstat(legacyRoot)).mode & 0o777)).toBe(0o444);
+      // The test below simulates Windows policy, but the backing filesystem can be POSIX.
+      // POSIX needs execute permission to traverse a directory, so its sealed directory
+      // mode is 0500; Windows uses the read-only directory mode 0444.
+      expect(Number((await lstat(legacyRoot)).mode & 0o777)).toBe(hostPlatform === "win32" ? 0o444 : 0o500);
       expect(Number((await lstat(join(legacyRoot, "source.txt"))).mode & 0o777)).toBe(0o444);
       let gcCalls = 0;
       let v2;
@@ -511,10 +515,10 @@ describe("Hermes shared source snapshot", () => {
     const nonce = "12345678-1234-4234-9234-123456789abc";
     const aliasPath = join(request.cacheRoot, `.projection-${created.directoryId}-${nonce}`);
     await link(projectionPath, aliasPath);
-    const identity = await lstat(projectionPath);
+    const identity = await lstat(projectionPath, { bigint: true });
     await writeFile(aliasPath + ".owner", JSON.stringify({
       directoryId: created.directoryId, nonce,
-      fileIdentity: { dev: identity.dev, ino: identity.ino }, formatVersion: 1, pid: 2147483647,
+      fileIdentity: { dev: String(identity.dev), ino: String(identity.ino) }, formatVersion: 1, pid: 2147483647,
     }));
 
     const sentinelPid = 2147483647;
@@ -965,9 +969,18 @@ describe("Hermes shared source snapshot", () => {
     const cacheRoot = join(fixture.root, "cache");
     const first = await snapshotModule.materializeHermesSourceSnapshot(requestFor(fixture, cacheRoot));
     await writeFixtureGcIntent(cacheRoot, first);
+    // Keep the original inode allocated while creating the replacement. This prevents
+    // filesystems from immediately reusing it after removal and makes the identity
+    // change in this recovery test deterministic.
+    const replacementPath = `${first.rootPath}.replacement`;
+    await mkdir(replacementPath);
+    const originalIdentity = await lstat(first.rootPath, { bigint: true });
+    const replacementIdentity = await lstat(replacementPath, { bigint: true });
+    expect({ dev: replacementIdentity.dev, ino: replacementIdentity.ino })
+      .not.toEqual({ dev: originalIdentity.dev, ino: originalIdentity.ino });
     await chmod(first.rootPath, 0o700);
     await rm(first.rootPath, { recursive: true });
-    await mkdir(first.rootPath);
+    await rename(replacementPath, first.rootPath);
 
     const nextRequest = { ...requestFor(fixture, cacheRoot), hermesVersion: "Hermes Agent next-pin" };
     await expect(snapshotModule.materializeHermesSourceSnapshot({
@@ -975,6 +988,67 @@ describe("Hermes shared source snapshot", () => {
       mayCollectSnapshot: async (key) => key === first.cacheKey,
     })).rejects.toMatchObject({ code: "HERMES_SOURCE_SNAPSHOT_UNAVAILABLE" });
     expect(await readdir(cacheRoot)).toContain(`.gc-${first.directoryId}.intent.json`);
+  });
+
+  it("refuses a non-directory snapshot root during fixture cleanup", async () => {
+    const fixture = await createFixture({ "module.py": { content: "snapshot\n" } });
+    const cacheRoot = join(fixture.root, "cache");
+    const request = requestFor(fixture, cacheRoot);
+    const first = await snapshotModule.materializeHermesSourceSnapshot(request);
+    await chmod(first.rootPath, 0o700);
+    await rm(first.rootPath, { recursive: true });
+    await writeFile(first.rootPath, "keep this file\n");
+
+    await expect(request.removeSnapshotTree?.(cacheRoot, { directoryId: first.directoryId }))
+      .rejects.toThrow("snapshot fixture cleanup path contains a symbolic link or non-directory");
+    await expect(readFile(first.rootPath, "utf8")).resolves.toBe("keep this file\n");
+  });
+
+  it.skipIf(process.platform === "win32")("refuses a symlink snapshot root during fixture cleanup", async () => {
+    const fixture = await createFixture({ "module.py": { content: "snapshot\n" } });
+    const cacheRoot = join(fixture.root, "cache");
+    const request = requestFor(fixture, cacheRoot);
+    const first = await snapshotModule.materializeHermesSourceSnapshot(request);
+    const outside = join(fixture.root, "outside");
+    await mkdir(outside);
+    await writeFile(join(outside, "keep.txt"), "outside target\n");
+    await chmod(first.rootPath, 0o700);
+    await rm(first.rootPath, { recursive: true });
+    await import("node:fs/promises").then(({ symlink }) => symlink(outside, first.rootPath));
+
+    await expect(request.removeSnapshotTree?.(cacheRoot, { directoryId: first.directoryId }))
+      .rejects.toThrow("snapshot fixture cleanup path contains a symbolic link or non-directory");
+    await expect(readFile(join(outside, "keep.txt"), "utf8")).resolves.toBe("outside target\n");
+    expect((await lstat(first.rootPath)).isSymbolicLink()).toBe(true);
+  });
+
+  it("refuses a symlink cache root before removing an outside snapshot or sidecars", async () => {
+    const fixture = await createFixture({ "module.py": { content: "snapshot\n" } });
+    const cacheRoot = join(fixture.root, "cache");
+    const request = requestFor(fixture, cacheRoot);
+    const first = await snapshotModule.materializeHermesSourceSnapshot(request);
+    const outside = join(fixture.root, "outside");
+    const movedCache = join(fixture.root, "cache-original");
+    const outsideSnapshot = join(outside, first.directoryId);
+    await mkdir(outsideSnapshot, { recursive: true });
+    await writeFile(join(outsideSnapshot, "keep.txt"), "outside snapshot\n");
+    const outsideSidecars = [
+      `${first.directoryId}.native-v1.bin`,
+      `${first.directoryId}.manifest.json`,
+      `.gc-${first.directoryId}.intent.json`,
+    ];
+    for (const name of outsideSidecars) await writeFile(join(outside, name), `preserve ${name}\n`);
+    await rename(cacheRoot, movedCache);
+    await import("node:fs/promises").then(({ symlink }) =>
+      symlink(outside, cacheRoot, process.platform === "win32" ? "junction" : "dir"));
+
+    await expect(request.removeSnapshotTree?.(cacheRoot, { directoryId: first.directoryId }))
+      .rejects.toThrow("snapshot fixture cleanup path contains a symbolic link or non-directory");
+    await expect(readFile(join(outsideSnapshot, "keep.txt"), "utf8")).resolves.toBe("outside snapshot\n");
+    for (const name of outsideSidecars) {
+      await expect(readFile(join(outside, name), "utf8")).resolves.toBe(`preserve ${name}\n`);
+    }
+    expect((await lstat(cacheRoot)).isSymbolicLink()).toBe(true);
   });
 
   it("fails closed when a surviving snapshot file was changed after GC interruption", async () => {
@@ -1358,13 +1432,63 @@ function requestFor(fixture: Fixture, cacheRoot: string): HermesSourceSnapshotRe
     tree: fixture.tree,
     removeSnapshotTree: async (root, value) => {
       const intent = value as { directoryId: string; projectionIdentity: unknown };
-      await rm(join(root, intent.directoryId), { recursive: true, force: true });
+      const snapshotRoot = join(root, intent.directoryId);
+      await assertFixturePathHasNoSymlinkComponents(root);
+      await makeSnapshotTreeWritableForFixtureCleanup(snapshotRoot);
+      await assertFixturePathHasNoSymlinkComponents(root);
+      await assertFixturePathHasNoSymlinkComponents(snapshotRoot, true);
+      await rm(snapshotRoot, { recursive: true, force: true });
       for (const path of [join(root, `${intent.directoryId}.native-v1.bin`), join(root, `${intent.directoryId}.manifest.json`),
         join(root, `.gc-${intent.directoryId}.intent.json`)]) {
+        await assertFixturePathHasNoSymlinkComponents(root);
         await unlink(path).catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; });
       }
     },
   };
+}
+
+async function assertFixturePathHasNoSymlinkComponents(path: string, allowMissingFinal = false): Promise<void> {
+  if (!isAbsolute(path)) throw new Error("snapshot fixture cleanup path must be absolute");
+  const root = parse(path).root;
+  if (!root) throw new Error("snapshot fixture cleanup path has no filesystem root");
+  let current = root;
+  const components = relative(root, path).split(sep).filter(Boolean);
+  for (const [index, component] of components.entries()) {
+    current = join(current, component);
+    const details = await lstat(current).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT" && allowMissingFinal && index === components.length - 1) return undefined;
+      throw error;
+    });
+    if (!details) return;
+    if (!details.isDirectory() || details.isSymbolicLink()) {
+      throw new Error("snapshot fixture cleanup path contains a symbolic link or non-directory");
+    }
+  }
+}
+
+/** Restore POSIX directory write permission before removing a test snapshot sealed at 0500. */
+async function makeSnapshotTreeWritableForFixtureCleanup(root: string): Promise<void> {
+  await assertFixturePathHasNoSymlinkComponents(root, true);
+  const rootDetails = await lstat(root).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return undefined;
+    throw error;
+  });
+  if (!rootDetails) return;
+  if (!rootDetails.isDirectory() || rootDetails.isSymbolicLink()) {
+    throw new Error("snapshot fixture cleanup root is not a regular directory");
+  }
+  const visit = async (directory: string): Promise<void> => {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const childPath = join(directory, entry.name);
+      const details = await lstat(childPath);
+      if (details.isSymbolicLink()) throw new Error("snapshot fixture cleanup refused a symbolic link");
+      if (details.isDirectory()) await visit(childPath);
+      else if (details.isFile()) await chmod(childPath, 0o600);
+      else throw new Error("snapshot fixture cleanup found a non-regular entry");
+    }
+    await chmod(directory, 0o700);
+  };
+  await visit(root);
 }
 
 async function pathExistsForTest(path: string): Promise<boolean> {

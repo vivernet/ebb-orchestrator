@@ -189,6 +189,11 @@ jobs:
       - name: Run native provider-free Hermes profile-target handle acceptance
         run: node apps/server/scripts/test-windows-run-supervisor-targets.mjs
       - name: Run production Hermes profile path-chain integration acceptance
+        env:
+          # The user's TEMP tree can grant foreign principals write access, which the
+          # strict ancestor policy correctly rejects. The test creates a fresh private
+          # fixture directly under the system volume root without changing its ACL.
+          EBB_PROFILE_CHAIN_FIXTURE_ROOT: 'C:\\'
         run: pnpm --filter @ebb-orchestrator/server exec vitest run test/e2e/hermes-profile-path-chain.acceptance.test.ts
       - name: Run native provider-free source-snapshot acceptance
         run: pnpm --filter @ebb-orchestrator/server exec vitest run test/e2e/hermes-source-snapshot.acceptance.test.ts

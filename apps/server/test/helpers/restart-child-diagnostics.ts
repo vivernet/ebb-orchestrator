@@ -144,6 +144,20 @@ const SAFE_WRAPPER_NATIVE_DETAILS = new Map<string, ReadonlySet<string>>([
   ])],
 ]);
 
+const SAFE_NATIVE_HELPER_DIAGNOSTIC_PHASES = new Set([
+  "UNCLASSIFIED", "ARGUMENT_DECODE", "ARGUMENT_JSON", "ARGUMENT_VALIDATION", "ARGUMENT_TYPE", "ARGUMENT_NUL",
+  "PATH_NORMALIZATION", "PARENT_DIRECTORY_LOCK", "PARENT_DIRECTORY_OPEN", "PARENT_DIRECTORY_CHECK",
+  "HELPER_FILE_LOCK", "HELPER_FILE_OPEN", "INTEGRITY_CHECK", "PROCESS_START",
+]);
+const SAFE_NATIVE_HELPER_DIAGNOSTIC_TYPES = new Set([
+  "UNCLASSIFIED", "ARGUMENT_EXCEPTION", "BAD_IMAGE_FORMAT_EXCEPTION", "CRYPTOGRAPHIC_EXCEPTION",
+  "FILE_LOAD_EXCEPTION", "FILE_NOT_FOUND_EXCEPTION", "IO_EXCEPTION", "INVALID_OPERATION_EXCEPTION",
+  "METHOD_INVOCATION_EXCEPTION", "NOT_SUPPORTED_EXCEPTION", "PATH_TOO_LONG_EXCEPTION",
+  "PLATFORM_NOT_SUPPORTED_EXCEPTION", "REFLECTION_TYPE_LOAD_EXCEPTION", "RUNTIME_EXCEPTION",
+  "SECURITY_EXCEPTION", "SYSTEM_EXCEPTION", "TYPE_INITIALIZATION_EXCEPTION", "TYPE_LOAD_EXCEPTION",
+  "UNAUTHORIZED_ACCESS_EXCEPTION", "WIN32_EXCEPTION",
+]);
+
 const MAX_CAUSE_DEPTH = 8;
 const MAX_REPORTED_CODES = 2;
 
@@ -264,6 +278,7 @@ function extractRestartChildFailureDiagnostic(output: string): string | undefine
 function parseSafeErrorCode(message: string): string | undefined {
   if (message.length > 256) return undefined;
   if (SAFE_RESTART_CHILD_ERROR_CODES.has(message)) return message;
+  if (isSafeNativeHelperDiagnostic(message)) return message;
 
   const separator = message.indexOf(":");
   if (separator <= 0 || message.indexOf(":", separator + 1) !== -1) return undefined;
@@ -275,9 +290,17 @@ function parseSafeErrorCode(message: string): string | undefined {
 
 function isAllowlistedCode(code: string): boolean {
   if (SAFE_RESTART_CHILD_ERROR_CODES.has(code)) return true;
+  if (isSafeNativeHelperDiagnostic(code)) return true;
   const separator = code.indexOf(":");
   if (separator <= 0 || code.indexOf(":", separator + 1) !== -1) return false;
   const wrapper = code.slice(0, separator);
   const detail = code.slice(separator + 1);
   return SAFE_RESTART_CHILD_ERROR_CODES.has(wrapper) && (SAFE_WRAPPER_NATIVE_DETAILS.get(wrapper)?.has(detail) ?? false);
+}
+
+function isSafeNativeHelperDiagnostic(value: string): boolean {
+  const match = /^WINDOWS_NATIVE_HELPER_DIAGNOSTIC:PHASE_([A-Z_]+):TYPE_([A-Z0-9_]+):EXIT_(\d{1,3}|UNAVAILABLE):READY_(PRESENT|ABSENT)$/u.exec(value);
+  if (!match || !SAFE_NATIVE_HELPER_DIAGNOSTIC_PHASES.has(match[1]!) ||
+      !SAFE_NATIVE_HELPER_DIAGNOSTIC_TYPES.has(match[2]!)) return false;
+  return match[3] === "UNAVAILABLE" || Number(match[3]) <= 255;
 }

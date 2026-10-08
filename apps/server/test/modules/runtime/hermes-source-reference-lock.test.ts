@@ -1,6 +1,9 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
+import { resolve } from "node:path";
 import { PassThrough } from "node:stream";
+
+const CACHE_ROOT = resolve("private", "source-cache");
 
 const gate = vi.hoisted(() => ({ invocation: vi.fn(), spawn: vi.fn() }));
 vi.mock("../../../src/platform/process/windows-native-helper-launcher.js", () => ({ createWindowsNativeHelperInvocation: gate.invocation }));
@@ -50,11 +53,11 @@ afterAll(() => {
 
 describe("Hermes source reference lock adapter", () => {
   it.each(["shared", "exclusive"] as const)("holds and explicitly releases a %s lease", async (mode) => {
-    const pending = acquire({ cacheRoot: "C:\\private\\source-cache", mode });
+    const pending = acquire({ cacheRoot: CACHE_ROOT, mode });
     await vi.waitFor(() => expect(gate.spawn).toHaveBeenCalledOnce());
     const argv = gate.invocation.mock.calls[0]?.[2] as string[];
     expect(argv).toHaveLength(4);
-    expect(argv.slice(0, 3)).toEqual(["source-cache-reference-lock", "C:\\private\\source-cache", mode]);
+    expect(argv.slice(0, 3)).toEqual(["source-cache-reference-lock", CACHE_ROOT, mode]);
     expect(argv[3]).toMatch(/^[0-9a-f-]{36}$/u);
     child.stdout.write("SOURCE_CACHE_LOCK_READY\n");
     const lease = await pending;
@@ -68,7 +71,7 @@ describe("Hermes source reference lock adapter", () => {
   });
 
   it("fails closed on malformed helper readiness", async () => {
-    const pending = acquire({ cacheRoot: "C:\\private\\source-cache", mode: "exclusive" });
+    const pending = acquire({ cacheRoot: CACHE_ROOT, mode: "exclusive" });
     const rejected = expect(pending).rejects.toThrow("HERMES_SOURCE_REFERENCE_LOCK_UNAVAILABLE");
     await vi.waitFor(() => expect(gate.spawn).toHaveBeenCalledOnce());
     child.stdout.write("UNTRUSTED_READY\n");

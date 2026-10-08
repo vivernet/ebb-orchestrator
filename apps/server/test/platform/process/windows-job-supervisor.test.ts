@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { PassThrough, Writable } from "node:stream";
-import { ProcessExecutor, type ProcessOptions, type ProcessResult, type ProcessSession } from "../../../src/platform/process/process-executor.js";
+import { ProcessExecutor, type ProcessOptions, type ProcessResult, type ProcessSession, type ProcessSessionOptions } from "../../../src/platform/process/process-executor.js";
 import { WindowsJobSupervisor } from "../../../src/platform/process/windows-job-supervisor.js";
 import { createHermesLaunchTicket } from "../../../src/modules/runtime/hermes/hermes-launch-ticket.js";
 import { safeRestartChildFailureCode } from "../../helpers/restart-child-diagnostics.js";
@@ -32,6 +32,7 @@ class HandshakeExecutor extends ProcessExecutor {
   readonly execCalls: string[][] = [];
   session: ProcessSession | undefined;
   private stdoutStream: PassThrough | undefined;
+  private stderrStream: PassThrough | undefined;
   private resolveCompletion: ((result: ProcessResult) => void) | undefined;
   private rejectCompletion: ((error: Error) => void) | undefined;
   constructor(
@@ -41,7 +42,7 @@ class HandshakeExecutor extends ProcessExecutor {
     private readonly completionStderr = "",
     private readonly inspectionOutput = "STOPPED\tJOB_EMPTY\n",
   ) { super(); }
-  override startSession = vi.fn<ProcessExecutor["startSession"]>(() => {
+  override startSession = vi.fn<ProcessExecutor["startSession"]>((_file, _args, options: ProcessSessionOptions = {}) => {
     const completion = new Promise<ProcessResult>((resolve, reject) => {
       this.resolveCompletion = resolve;
       this.rejectCompletion = reject;
@@ -64,10 +65,16 @@ class HandshakeExecutor extends ProcessExecutor {
       },
     });
     const stderr = new PassThrough();
-    stdin.once("close", () => this.complete({ exitCode: 3, stdout: "", stderr: this.completionStderr }));
+    this.stderrStream = stderr;
+    stdin.once("close", () => this.complete({
+      exitCode: 3,
+      stdout: "",
+      stderr: options.captureOutput === false ? "" : this.completionStderr,
+    }));
     const session: ProcessSession = { stdin, stdout, stderr, completion, terminate: () => undefined };
     this.session = session;
     queueMicrotask(() => {
+      if (this.completionStderr) stderr.write(this.completionStderr);
       if (this.preHandshakeOutput !== undefined) {
         stdout.write(this.preHandshakeOutput);
         return;
@@ -93,6 +100,10 @@ class HandshakeExecutor extends ProcessExecutor {
 
   writeStdout(chunk: string): void {
     this.stdoutStream?.write(chunk);
+  }
+
+  writeStderr(chunk: string): void {
+    this.stderrStream?.write(chunk);
   }
 }
 
@@ -416,9 +427,9 @@ describe("WindowsJobSupervisor", () => {
   });
 
   it.each([
-    ["before helper-ready", "", "WINDOWS_HELPER_HANDSHAKE_TIMEOUT:EBB_HELPER_READY"],
-    ["after helper-ready", "EBB_HELPER_READY\n", "WINDOWS_HELPER_HANDSHAKE_TIMEOUT:EBB_SCOPE_READY"],
-  ])("identifies the native handshake stage that timed out %s", async (_description, preHandshakeOutput, expectedCode) => {
+    ["before helper-ready", "", "WINDOWS_NATIVE_HELPER_DIAGNOSTIC:PHASE_UNCLASSIFIED:TYPE_UNCLASSIFIED:EXIT_3:READY_ABSENT"],
+    ["after helper-ready", "EBB_HELPER_READY\n", "WINDOWS_NATIVE_HELPER_DIAGNOSTIC:PHASE_UNCLASSIFIED:TYPE_UNCLASSIFIED:EXIT_3:READY_PRESENT"],
+  ])("reports bounded terminal facts when the native handshake stage times out %s", async (_description, preHandshakeOutput, expectedCode) => {
     Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
     vi.useFakeTimers();
     const executor = new HandshakeExecutor("", true, preHandshakeOutput);
@@ -468,9 +479,84 @@ describe("WindowsJobSupervisor", () => {
     const failure = result.kind === "failure" ? result.error : undefined;
 
     expect(failure).toBeInstanceOf(Error);
-    expect((failure as Error).message).toBe("WINDOWS_NATIVE_HELPER_GATE_FAILURE:INTEGRITY_CHECK");
+    expect((failure as Error).message).toBe(
+      "WINDOWS_NATIVE_HELPER_DIAGNOSTIC:PHASE_INTEGRITY_CHECK:TYPE_CRYPTOGRAPHIC_EXCEPTION:EXIT_3:READY_ABSENT",
+    );
     expect((failure as Error).message).not.toContain("CryptographicException");
     expect((failure as Error).message).not.toContain("OPENAI_API_KEY");
+  });
+
+  it("retains only an allowlisted gate failure from stderr when output capture is disabled", async () => {
+    Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+    vi.useFakeTimers();
+    const secret = "C:\\private\\provider-token";
+    const rawStderr = `NATIVE_HELPER_GATE_FAIL:process-start:Win32Exception\r\n${secret} OPENAI_API_KEY=must-not-leak`;
+    const executor = new HandshakeExecutor("", true, "", rawStderr);
+    const supervisor = new WindowsJobSupervisor(executor, "native-helper.exe", createTestHelperInvocation);
+
+    const outcome = supervisor.launch(owner, { ...request, captureOutput: false }, async () => undefined).then(
+      () => ({ kind: "success" as const }),
+      (error: unknown) => ({ kind: "failure" as const, error }),
+    );
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(10_000);
+    const result = await outcome;
+    const failure = result.kind === "failure" ? result.error : undefined;
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toBe(
+      "WINDOWS_NATIVE_HELPER_DIAGNOSTIC:PHASE_PROCESS_START:TYPE_WIN32_EXCEPTION:EXIT_3:READY_ABSENT",
+    );
+    expect((await executor.session?.completion)?.stderr).toBe("");
+    expect((failure as Error).message).not.toContain(secret);
+    expect((failure as Error).message).not.toContain("OPENAI_API_KEY");
+    expect(safeRestartChildFailureCode(failure)).toBe(
+      `${(failure as Error).message}>WINDOWS_HELPER_HANDSHAKE_TIMEOUT:EBB_HELPER_READY`,
+    );
+  });
+
+  it("does not accept a READY marker with a suffix as handshake evidence", async () => {
+    Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+    vi.useFakeTimers();
+    const executor = new HandshakeExecutor("", true, "EBB_HELPER_READY_EXTRA\n");
+    const supervisor = new WindowsJobSupervisor(executor, "native-helper.exe", createTestHelperInvocation);
+
+    const outcome = supervisor.launch(owner, request, async () => undefined).then(
+      () => ({ kind: "success" as const }),
+      (error: unknown) => ({ kind: "failure" as const, error }),
+    );
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(10_000);
+    const result = await outcome;
+    const failure = result.kind === "failure" ? result.error : undefined;
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toBe(
+      "WINDOWS_NATIVE_HELPER_DIAGNOSTIC:PHASE_UNCLASSIFIED:TYPE_UNCLASSIFIED:EXIT_3:READY_ABSENT",
+    );
+  });
+
+  it("stops parsing gate markers after exact READY so payload stderr cannot spoof the gate failure", async () => {
+    Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+    vi.useFakeTimers();
+    const executor = new HandshakeExecutor("", true, "EBB_HELPER_READY\n");
+    const supervisor = new WindowsJobSupervisor(executor, "native-helper.exe", createTestHelperInvocation);
+
+    const outcome = supervisor.launch(owner, request, async () => undefined).then(
+      () => ({ kind: "success" as const }),
+      (error: unknown) => ({ kind: "failure" as const, error }),
+    );
+    for (let attempt = 0; attempt < 10 && executor.writes.length === 0; attempt += 1) await Promise.resolve();
+    expect(executor.writes).toHaveLength(1);
+    executor.writeStderr("NATIVE_HELPER_GATE_FAIL:process-start:Win32Exception\r\n");
+    await vi.advanceTimersByTimeAsync(10_000);
+    const result = await outcome;
+    const failure = result.kind === "failure" ? result.error : undefined;
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toBe(
+      "WINDOWS_NATIVE_HELPER_DIAGNOSTIC:PHASE_UNCLASSIFIED:TYPE_UNCLASSIFIED:EXIT_3:READY_PRESENT",
+    );
   });
 
   it("does not echo an arbitrary gate phase or secret-shaped stderr", async () => {
@@ -491,7 +577,9 @@ describe("WindowsJobSupervisor", () => {
     const failure = result.kind === "failure" ? result.error : undefined;
 
     expect(failure).toBeInstanceOf(Error);
-    expect((failure as Error).message).toBe("WINDOWS_HELPER_HANDSHAKE_TIMEOUT:EBB_HELPER_READY");
+    expect((failure as Error).message).toBe(
+      "WINDOWS_NATIVE_HELPER_DIAGNOSTIC:PHASE_UNCLASSIFIED:TYPE_UNCLASSIFIED:EXIT_3:READY_ABSENT",
+    );
     expect((failure as Error).message).not.toContain("sk-secret-value");
     expect((failure as Error).message).not.toContain("ProviderSecretValue");
   });
@@ -519,7 +607,7 @@ describe("WindowsJobSupervisor", () => {
       "WINDOWS_PROCESS_SCOPE_LAUNCH_UNPROVEN:WINDOWS_JOB_ABSENT_HELPER_IDENTITY_MISSING",
     );
     expect(safeRestartChildFailureCode(failure)).toBe(
-      "WINDOWS_PROCESS_SCOPE_LAUNCH_UNPROVEN:WINDOWS_JOB_ABSENT_HELPER_IDENTITY_MISSING>WINDOWS_NATIVE_HELPER_GATE_FAILURE:INTEGRITY_CHECK",
+      "WINDOWS_PROCESS_SCOPE_LAUNCH_UNPROVEN:WINDOWS_JOB_ABSENT_HELPER_IDENTITY_MISSING>WINDOWS_NATIVE_HELPER_DIAGNOSTIC:PHASE_INTEGRITY_CHECK:TYPE_CRYPTOGRAPHIC_EXCEPTION:EXIT_3:READY_ABSENT",
     );
     expect(safeRestartChildFailureCode(failure)).not.toContain("WINDOWS_HELPER_HANDSHAKE_TIMEOUT");
     expect((failure as Error).message).not.toContain("OPENAI_API_KEY");
@@ -543,7 +631,9 @@ describe("WindowsJobSupervisor", () => {
     const failure = result.kind === "failure" ? result.error : undefined;
 
     expect(failure).toBeInstanceOf(Error);
-    expect((failure as Error).message).toBe("WINDOWS_HELPER_HANDSHAKE_TIMEOUT:EBB_HELPER_READY");
+    expect((failure as Error).message).toBe(
+      "WINDOWS_NATIVE_HELPER_DIAGNOSTIC:PHASE_UNCLASSIFIED:TYPE_UNCLASSIFIED:EXIT_3:READY_ABSENT",
+    );
     expect((failure as Error).message).not.toContain("NATIVE_HELPER_GATE_FAILURE");
   });
 

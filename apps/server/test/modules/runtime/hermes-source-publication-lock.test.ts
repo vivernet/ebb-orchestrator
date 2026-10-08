@@ -1,7 +1,10 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
+import { resolve } from "node:path";
 import { PassThrough } from "node:stream";
 type AcquirePublicationLock = typeof import("../../../src/modules/runtime/hermes/hermes-source-publication-lock.js")["acquireHermesSourcePublicationLock"];
+
+const CACHE_ROOT = resolve("private", "source-cache");
 
 const gate = vi.hoisted(() => ({ invocation: vi.fn(), spawn: vi.fn() }));
 vi.mock("../../../src/platform/process/windows-native-helper-launcher.js", () => ({ createWindowsNativeHelperInvocation: gate.invocation }));
@@ -56,7 +59,7 @@ afterAll(() => {
 
 describe("verified Hermes source publication lease adapter", () => {
   it("waits for exact bounded READY and explicitly releases the same Node owner nonce", async () => {
-    const pending = acquireHermesSourcePublicationLock({ cacheRoot: "C:\\private\\source-cache" });
+    const pending = acquireHermesSourcePublicationLock({ cacheRoot: CACHE_ROOT });
     await vi.waitFor(() => expect(gate.spawn).toHaveBeenCalledOnce());
     child.stdout.write("SOURCE_CACHE_");
     child.stdout.write("LOCK_READY\r\n");
@@ -64,7 +67,7 @@ describe("verified Hermes source publication lease adapter", () => {
     lease.assertHeld();
     expect(gate.invocation.mock.calls[0]?.[1]).toBe("hermesProfilePath");
     const argv = gate.invocation.mock.calls[0]?.[2] as string[];
-    expect(argv.slice(0, 3)).toEqual(["source-cache-lock", "C:\\private\\source-cache", String(process.pid)]);
+    expect(argv.slice(0, 3)).toEqual(["source-cache-lock", CACHE_ROOT, String(process.pid)]);
     expect(argv[3]).toMatch(/^[0-9a-f-]{36}$/u);
     const released = lease.release();
     expect(lease.release()).toBe(released);
@@ -75,7 +78,7 @@ describe("verified Hermes source publication lease adapter", () => {
   });
 
   it.each(["wrong", "overflow", "stderr", "closed"])("fails closed on %s before READY", async (fault) => {
-    const pending = acquireHermesSourcePublicationLock({ cacheRoot: "C:\\private\\source-cache" });
+    const pending = acquireHermesSourcePublicationLock({ cacheRoot: CACHE_ROOT });
     const rejected = expect(pending).rejects.toThrow("HERMES_SOURCE_PUBLICATION_LOCK_UNAVAILABLE");
     await vi.waitFor(() => expect(gate.spawn).toHaveBeenCalledOnce());
     if (fault === "wrong") child.stdout.write("UNTRUSTED_READY\n");
@@ -88,7 +91,7 @@ describe("verified Hermes source publication lease adapter", () => {
 
   it("cancels only acquisition and awaits helper EOF shutdown", async () => {
     const controller = new AbortController();
-    const pending = acquireHermesSourcePublicationLock({ cacheRoot: "C:\\private\\source-cache", signal: controller.signal });
+    const pending = acquireHermesSourcePublicationLock({ cacheRoot: CACHE_ROOT, signal: controller.signal });
     const rejected = expect(pending).rejects.toThrow("HERMES_SOURCE_PUBLICATION_LOCK_UNAVAILABLE");
     await vi.waitFor(() => expect(gate.spawn).toHaveBeenCalledOnce());
     controller.abort();
@@ -98,7 +101,7 @@ describe("verified Hermes source publication lease adapter", () => {
   });
 
   it("detects helper death while held and never reports successful release", async () => {
-    const pending = acquireHermesSourcePublicationLock({ cacheRoot: "C:\\private\\source-cache" });
+    const pending = acquireHermesSourcePublicationLock({ cacheRoot: CACHE_ROOT });
     await vi.waitFor(() => expect(gate.spawn).toHaveBeenCalledOnce());
     child.stdout.write("SOURCE_CACHE_LOCK_READY\n");
     const lease = await pending;
@@ -109,7 +112,7 @@ describe("verified Hermes source publication lease adapter", () => {
 
   it("fails closed before spawn when the parent-code helper integrity gate is unavailable", async () => {
     gate.invocation.mockRejectedValueOnce(new Error("missing trusted anchor"));
-    await expect(acquireHermesSourcePublicationLock({ cacheRoot: "C:\\private\\source-cache" }))
+    await expect(acquireHermesSourcePublicationLock({ cacheRoot: CACHE_ROOT }))
       .rejects.toThrow("HERMES_SOURCE_PUBLICATION_LOCK_UNAVAILABLE");
     expect(gate.spawn).not.toHaveBeenCalled();
   });

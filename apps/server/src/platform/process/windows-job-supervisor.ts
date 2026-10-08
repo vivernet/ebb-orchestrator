@@ -204,6 +204,8 @@ export class WindowsJobSupervisor implements ProcessScopeSupervisor {
     }
     let identity: ProcessScopeIdentity | undefined;
     let stopPromise: Promise<ProcessScopeObservation> | undefined;
+    const gateFailureCapture = new NativeHelperGateFailureCapture();
+    session.stderr.on("data", (chunk: Buffer | string) => gateFailureCapture.write(chunk));
     const requestStop = () => {
       if (!stopPromise) stopPromise = this.stop(identity ?? owner);
       return stopPromise;
@@ -216,8 +218,13 @@ export class WindowsJobSupervisor implements ProcessScopeSupervisor {
       if (identity) void requestStop().catch(() => undefined);
     };
     request.signal?.addEventListener("abort", onAbort, { once: true });
+    let helperReady = false;
     try {
       await protocol.nextLine("EBB_HELPER_READY", 10_000);
+      helperReady = true;
+      // The PowerShell gate fails before READY. After the trusted helper handoff, stderr belongs
+      // to the child payload and must never be considered a gate diagnostic.
+      gateFailureCapture.stop();
       if (request.signal?.aborted) throw new Error("WINDOWS_PROCESS_SCOPE_LAUNCH_CANCELLED");
       session.stdin.write(metadataFrame);
       identity = parseLiveIdentity(await protocol.nextLine("EBB_SCOPE_READY", 10_000), owner);
@@ -239,16 +246,16 @@ export class WindowsJobSupervisor implements ProcessScopeSupervisor {
       const observed = await this.waitForStopped(stopOwner, STOP_TIMEOUT_MS);
       const stopped = observed.state === "STOPPED" ? observed : await this.stop(stopOwner);
       const final = stopped.state === "STOPPED" ? stopped : await this.waitForStopped(stopOwner, STOP_TIMEOUT_MS);
-      const nativeGateFailure = error instanceof Error && error.message.startsWith("WINDOWS_HELPER_HANDSHAKE_TIMEOUT:")
-        ? parseNativeHelperGateFailure(completed?.stderr ?? "")
+      const nativeGateDiagnostic = error instanceof Error && error.message.startsWith("WINDOWS_HELPER_HANDSHAKE_TIMEOUT:")
+        ? formatNativeHelperTerminalDiagnostic(gateFailureCapture.failure, completed?.exitCode, helperReady)
         : undefined;
       if (final.state !== "STOPPED") {
         const reason = final.state === "UNKNOWN" ? final.reason : "WINDOWS_JOB_STOP_NOT_CONFIRMED";
-        // Keep the caught failure as the direct cause; replace its generic timeout with the safe gate code.
-        if (nativeGateFailure && error instanceof Error) error.message = nativeGateFailure;
+        // Keep the caught failure as the direct cause; replace its generic timeout with safe terminal facts.
+        if (nativeGateDiagnostic && error instanceof Error) error.message = nativeGateDiagnostic;
         throw new Error(`WINDOWS_PROCESS_SCOPE_LAUNCH_UNPROVEN:${reason}`, { cause: error });
       }
-      if (nativeGateFailure) throw new Error(nativeGateFailure, { cause: error });
+      if (nativeGateDiagnostic) throw new Error(nativeGateDiagnostic, { cause: error });
       throw error;
     }
 
@@ -535,15 +542,79 @@ function stripHelperProtocol(result: ProcessResult): ProcessResult {
   };
 }
 
-function parseNativeHelperGateFailure(stderr: string): string | undefined {
-  const bounded = stderr.slice(-4_096);
-  for (const line of bounded.split(/\r?\n/u)) {
-    const match = /^NATIVE_HELPER_GATE_FAIL:([^:\r\n]+):([A-Za-z][A-Za-z0-9]*)$/u.exec(line);
-    if (!match || !SAFE_NATIVE_HELPER_GATE_EXCEPTION_TYPES.has(match[2]!)) continue;
-    const phase = normalizeNativeHelperGatePhase(match[1]!);
-    if (phase) return `WINDOWS_NATIVE_HELPER_GATE_FAILURE:${phase}`;
+interface NativeHelperGateFailure {
+  readonly phase: string;
+  readonly exceptionType: string;
+}
+
+class NativeHelperGateFailureCapture {
+  private line = "";
+  private lineOverflowed = false;
+  private accepting = true;
+  private parsedFailure: NativeHelperGateFailure | undefined;
+  private static readonly MAX_LINE_CHARACTERS = 192;
+
+  get failure(): NativeHelperGateFailure | undefined {
+    return this.parsedFailure;
   }
-  return undefined;
+
+  stop(): void {
+    this.accepting = false;
+    this.line = "";
+    this.lineOverflowed = false;
+  }
+
+  /** Keeps only the recognized normalized marker, never retaining raw stderr after each line. */
+  write(chunk: Buffer | string): void {
+    if (!this.accepting) return;
+    const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+    for (const character of text) {
+      if (character === "\n") {
+        if (!this.lineOverflowed) {
+          const parsed = parseNativeHelperGateFailureLine(this.line.replace(/\r$/u, ""));
+          if (parsed) this.parsedFailure = parsed;
+        }
+        this.line = "";
+        this.lineOverflowed = false;
+        continue;
+      }
+      if (this.lineOverflowed) continue;
+      if (this.line.length >= NativeHelperGateFailureCapture.MAX_LINE_CHARACTERS) {
+        this.line = "";
+        this.lineOverflowed = true;
+        continue;
+      }
+      this.line += character;
+    }
+  }
+}
+
+function parseNativeHelperGateFailureLine(line: string): NativeHelperGateFailure | undefined {
+  const match = /^NATIVE_HELPER_GATE_FAIL:([^:\r\n]+):([A-Za-z][A-Za-z0-9]*)$/u.exec(line);
+  if (!match || !SAFE_NATIVE_HELPER_GATE_EXCEPTION_TYPES.has(match[2]!)) return undefined;
+  const phase = normalizeNativeHelperGatePhase(match[1]!);
+  return phase ? { phase, exceptionType: normalizeNativeHelperGateExceptionType(match[2]!) } : undefined;
+}
+
+function formatNativeHelperTerminalDiagnostic(
+  gateFailure: NativeHelperGateFailure | undefined,
+  exitCode: number | undefined,
+  helperReady: boolean,
+): string {
+  const safeExit = typeof exitCode === "number" && Number.isSafeInteger(exitCode) && exitCode >= 0 && exitCode <= 255
+    ? `EXIT_${exitCode}`
+    : "EXIT_UNAVAILABLE";
+  return [
+    "WINDOWS_NATIVE_HELPER_DIAGNOSTIC",
+    `PHASE_${gateFailure?.phase ?? "UNCLASSIFIED"}`,
+    `TYPE_${gateFailure?.exceptionType ?? "UNCLASSIFIED"}`,
+    safeExit,
+    helperReady ? "READY_PRESENT" : "READY_ABSENT",
+  ].join(":");
+}
+
+function normalizeNativeHelperGateExceptionType(exceptionType: string): string {
+  return exceptionType.replace(/([a-z0-9])([A-Z])/gu, "$1_$2").toUpperCase();
 }
 
 function normalizeNativeHelperGatePhase(phase: string): string | undefined {
@@ -663,7 +734,7 @@ class HelperProtocol {
         this.rejectAll(`WINDOWS_HELPER_NATIVE_UNKNOWN:${safeCode}`, diagnosticStage);
         return;
       }
-      if (!line.startsWith(waiter.prefix)) continue;
+      if (!matchesHelperProtocolLine(waiter.prefix, line)) continue;
       this.buffered = this.buffered.subarray(newline + 1);
       this.waiters.splice(index, 1);
       clearTimeout(waiter.timer);
@@ -680,6 +751,12 @@ class HelperProtocol {
       waiter.reject(failure);
     }
   }
+}
+
+function matchesHelperProtocolLine(prefix: string, line: string): boolean {
+  if (prefix === "EBB_HELPER_READY") return line === prefix;
+  if (prefix === "EBB_SCOPE_READY") return line.startsWith(`${prefix}\t`);
+  return line === prefix || line.startsWith(`${prefix}\t`);
 }
 
 function delay(ms: number): Promise<void> {
