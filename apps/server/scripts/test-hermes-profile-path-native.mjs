@@ -854,7 +854,12 @@ async function verifySourceCacheGcHandles(root) {
   assert.equal(traversal.status, 2, "native snapshot GC must reject traversal paths before opening any object");
   const makeCandidate = (id) => {
     const snapshotRoot = join(cacheRoot, id);
-    mkdirSync(join(snapshotRoot, "pkg"), { recursive: true, mode: 0o500 });
+    // Build the tree while its directories are writable; seal them only after
+    // all children have been created, before recording the identity inventory.
+    mkdirSync(snapshotRoot, { mode: 0o700 });
+    chmodSync(snapshotRoot, 0o700);
+    mkdirSync(join(snapshotRoot, "pkg"), { mode: 0o700 });
+    chmodSync(join(snapshotRoot, "pkg"), 0o700);
     writeFileSync(join(snapshotRoot, "pkg", "module.py"), "pinned\n", { mode: 0o400 });
     writeFileSync(join(snapshotRoot, "top.py"), "top\n", { mode: 0o400 });
     chmodSync(join(snapshotRoot, "pkg", "module.py"), 0o400);
