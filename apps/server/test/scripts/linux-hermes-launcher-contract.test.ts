@@ -20,6 +20,15 @@ describe("Linux Hermes native launch boundary source contract", () => {
 
   it("mounts a private per-Run profile view and keeps the Hermes lexical profile path", () => {
     expect(launcherSource).toContain("unshare(CLONE_NEWUSER | CLONE_NEWNS)");
+    for (const code of [
+      "HERMES_PRIVATE_NAMESPACE_UNSHARE_UNAVAILABLE",
+      "HERMES_PRIVATE_NAMESPACE_SETGROUPS_MAP_UNAVAILABLE",
+      "HERMES_PRIVATE_NAMESPACE_UID_MAP_UNAVAILABLE",
+      "HERMES_PRIVATE_NAMESPACE_GID_MAP_UNAVAILABLE",
+      "HERMES_PRIVATE_NAMESPACE_SETRESGID_UNAVAILABLE",
+      "HERMES_PRIVATE_NAMESPACE_SETRESUID_UNAVAILABLE",
+      "HERMES_PRIVATE_NAMESPACE_MOUNT_PROPAGATION_UNAVAILABLE",
+    ]) expect(launcherSource).toContain(code);
     expect(launcherSource).toContain("attachPrivateProfilesTmpfs(profilesFd.get())");
     expect(launcherSource).toContain("attachDetachedMount(profileTree.get(), profileTargetFd.get())");
     expect(launcherSource).toContain("mountedProfileInfo.st_dev != profileInfo.st_dev");

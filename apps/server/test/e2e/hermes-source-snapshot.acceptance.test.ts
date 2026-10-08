@@ -775,7 +775,13 @@ const linuxNativeRefusalCodes = new Set([
   "HERMES_ENTRYPOINT_IDENTITY_MISMATCH",
   "HERMES_PYTHON_IDENTITY_MISMATCH",
   "HERMES_NAMESPACE_CREDENTIALS_UNSUPPORTED",
-  "HERMES_PRIVATE_MOUNT_NAMESPACE_UNAVAILABLE",
+  "HERMES_PRIVATE_NAMESPACE_UNSHARE_UNAVAILABLE",
+  "HERMES_PRIVATE_NAMESPACE_SETGROUPS_MAP_UNAVAILABLE",
+  "HERMES_PRIVATE_NAMESPACE_UID_MAP_UNAVAILABLE",
+  "HERMES_PRIVATE_NAMESPACE_GID_MAP_UNAVAILABLE",
+  "HERMES_PRIVATE_NAMESPACE_SETRESGID_UNAVAILABLE",
+  "HERMES_PRIVATE_NAMESPACE_SETRESUID_UNAVAILABLE",
+  "HERMES_PRIVATE_NAMESPACE_MOUNT_PROPAGATION_UNAVAILABLE",
   "HERMES_PRIVATE_PROFILES_MOUNT_UNAVAILABLE",
   "HERMES_SOURCE_SNAPSHOT_READONLY_MOUNT_UNAVAILABLE",
   "HERMES_SOURCE_SNAPSHOT_MOUNT_VERIFICATION_FAILED",
@@ -916,6 +922,26 @@ describe("safe native refusal output diagnostics", () => {
     const summary = safeNativeRefusalOutputSummary({ exitCode: 65, stdout: "", stderr: `${unboundedDiagnostic}\n` });
     expect(summary).toContain("knownLinuxRefusalCodes={none}");
     expect(safeLinuxRefusalEvidence(`${unboundedDiagnostic}\n`, "")).toBeUndefined();
+  });
+
+  it("reports fixed private namespace failure stages without exposing raw output", () => {
+    const diagnosticCodes = [
+      "HERMES_PRIVATE_NAMESPACE_UNSHARE_UNAVAILABLE",
+      "HERMES_PRIVATE_NAMESPACE_SETGROUPS_MAP_UNAVAILABLE",
+      "HERMES_PRIVATE_NAMESPACE_UID_MAP_UNAVAILABLE",
+      "HERMES_PRIVATE_NAMESPACE_GID_MAP_UNAVAILABLE",
+      "HERMES_PRIVATE_NAMESPACE_SETRESGID_UNAVAILABLE",
+      "HERMES_PRIVATE_NAMESPACE_SETRESUID_UNAVAILABLE",
+      "HERMES_PRIVATE_NAMESPACE_MOUNT_PROPAGATION_UNAVAILABLE",
+    ];
+
+    for (const code of diagnosticCodes) {
+      const refusal = `HERMES_LINUX_LAUNCH_REFUSED:${code}`;
+      const summary = safeNativeRefusalOutputSummary({ exitCode: 70, stdout: "", stderr: `${refusal}\n` });
+      expect(summary).toContain(`knownLinuxRefusalCodes={${refusal}}`);
+      expect(summary).toContain("allowlistedRefusalMatches=0");
+      expect(safeLinuxRefusalEvidence(`${refusal}\n`, "")).toBeUndefined();
+    }
   });
 
   it("hides unknown uppercase codes and raw secret text", () => {

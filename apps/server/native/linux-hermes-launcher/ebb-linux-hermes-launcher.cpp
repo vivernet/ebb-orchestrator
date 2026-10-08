@@ -465,13 +465,21 @@ bool writeProcMap(const char* path, const std::string& mapping) {
   return written == static_cast<ssize_t>(mapping.size());
 }
 
-bool enterPrivateMountNamespace(uid_t hostUid, gid_t hostGid) {
-  if (unshare(CLONE_NEWUSER | CLONE_NEWNS) != 0) return false;
-  if (!writeProcMap("/proc/self/setgroups", "deny\n") ||
-      !writeProcMap("/proc/self/uid_map", "0 " + std::to_string(hostUid) + " 1\n") ||
-      !writeProcMap("/proc/self/gid_map", "0 " + std::to_string(hostGid) + " 1\n") ||
-      setresgid(0, 0, 0) != 0 || setresuid(0, 0, 0) != 0) return false;
-  return mount(nullptr, "/", nullptr, MS_REC | MS_PRIVATE, nullptr) == 0;
+const char* enterPrivateMountNamespace(uid_t hostUid, gid_t hostGid) {
+  if (unshare(CLONE_NEWUSER | CLONE_NEWNS) != 0) return "HERMES_PRIVATE_NAMESPACE_UNSHARE_UNAVAILABLE";
+  if (!writeProcMap("/proc/self/setgroups", "deny\n")) return "HERMES_PRIVATE_NAMESPACE_SETGROUPS_MAP_UNAVAILABLE";
+  if (!writeProcMap("/proc/self/uid_map", "0 " + std::to_string(hostUid) + " 1\n")) {
+    return "HERMES_PRIVATE_NAMESPACE_UID_MAP_UNAVAILABLE";
+  }
+  if (!writeProcMap("/proc/self/gid_map", "0 " + std::to_string(hostGid) + " 1\n")) {
+    return "HERMES_PRIVATE_NAMESPACE_GID_MAP_UNAVAILABLE";
+  }
+  if (setresgid(0, 0, 0) != 0) return "HERMES_PRIVATE_NAMESPACE_SETRESGID_UNAVAILABLE";
+  if (setresuid(0, 0, 0) != 0) return "HERMES_PRIVATE_NAMESPACE_SETRESUID_UNAVAILABLE";
+  if (mount(nullptr, "/", nullptr, MS_REC | MS_PRIVATE, nullptr) != 0) {
+    return "HERMES_PRIVATE_NAMESPACE_MOUNT_PROPAGATION_UNAVAILABLE";
+  }
+  return nullptr;
 }
 
 int detachedBind(int sourceFd) {
@@ -650,8 +658,8 @@ int launchHermes(int argc, char** argv) {
     writeRefusal("HERMES_NAMESPACE_CREDENTIALS_UNSUPPORTED"); return kNamespaceUnavailable;
   }
 
-  if (!enterPrivateMountNamespace(getuid(), getgid())) {
-    writeRefusal("HERMES_PRIVATE_MOUNT_NAMESPACE_UNAVAILABLE"); return kNamespaceUnavailable;
+  if (const char* namespaceFailure = enterPrivateMountNamespace(getuid(), getgid())) {
+    writeRefusal(namespaceFailure); return kNamespaceUnavailable;
   }
   if (!attachPrivateProfilesTmpfs(profilesFd.get())) {
     writeRefusal("HERMES_PRIVATE_PROFILES_MOUNT_UNAVAILABLE"); return kMountUnavailable;
