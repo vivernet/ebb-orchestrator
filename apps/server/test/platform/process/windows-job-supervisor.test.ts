@@ -486,6 +486,60 @@ describe("WindowsJobSupervisor", () => {
     expect((failure as Error).message).not.toContain("OPENAI_API_KEY");
   });
 
+  it.each([
+    ["JOB_CREATE_FAILED_OR_EXISTS", "LAUNCH_JOB_CREATE"],
+    ["JOB_POLICY_FAILED", "LAUNCH_JOB_POLICY"],
+    ["MAPPING_CREATE_FAILED_OR_EXISTS", "LAUNCH_MAPPING_CREATE"],
+    ["HELPER_READY_WRITE_FAILED", "LAUNCH_READY_WRITE"],
+  ])("reports only the allowlisted pre-READY native failure %s", async (nativeFailure, phase) => {
+    Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+    vi.useFakeTimers();
+    const secret = "C:\\private\\provider-token";
+    const executor = new HandshakeExecutor(
+      "", true, "", `NATIVE_HELPER_LAUNCH_FAIL:${nativeFailure}\r\n${secret} OPENAI_API_KEY=must-not-leak`,
+    );
+    const supervisor = new WindowsJobSupervisor(executor, "native-helper.exe", createTestHelperInvocation);
+
+    const outcome = supervisor.launch(owner, request, async () => undefined).then(
+      () => ({ kind: "success" as const }),
+      (error: unknown) => ({ kind: "failure" as const, error }),
+    );
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(10_000);
+    const result = await outcome;
+    const failure = result.kind === "failure" ? result.error : undefined;
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toBe(
+      `WINDOWS_NATIVE_HELPER_DIAGNOSTIC:PHASE_${phase}:TYPE_NATIVE_LAUNCH_FAILURE:EXIT_3:READY_ABSENT`,
+    );
+    expect((failure as Error).message).not.toContain(secret);
+    expect((failure as Error).message).not.toContain("OPENAI_API_KEY");
+  });
+
+  it("does not surface unrecognized native launch markers or their raw content", async () => {
+    Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+    vi.useFakeTimers();
+    const executor = new HandshakeExecutor(
+      "", true, "", "NATIVE_HELPER_LAUNCH_FAIL:C:\\private\\secret\n",
+    );
+    const supervisor = new WindowsJobSupervisor(executor, "native-helper.exe", createTestHelperInvocation);
+
+    const outcome = supervisor.launch(owner, request, async () => undefined).then(
+      () => ({ kind: "success" as const }),
+      (error: unknown) => ({ kind: "failure" as const, error }),
+    );
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(10_000);
+    const result = await outcome;
+    const failure = result.kind === "failure" ? result.error : undefined;
+
+    expect((failure as Error).message).toBe(
+      "WINDOWS_NATIVE_HELPER_DIAGNOSTIC:PHASE_UNCLASSIFIED:TYPE_UNCLASSIFIED:EXIT_3:READY_ABSENT",
+    );
+    expect((failure as Error).message).not.toContain("secret");
+  });
+
   it("retains only an allowlisted gate failure from stderr when output capture is disabled", async () => {
     Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
     vi.useFakeTimers();
@@ -549,6 +603,7 @@ describe("WindowsJobSupervisor", () => {
     for (let attempt = 0; attempt < 10 && executor.writes.length === 0; attempt += 1) await Promise.resolve();
     expect(executor.writes).toHaveLength(1);
     executor.writeStderr("NATIVE_HELPER_GATE_FAIL:process-start:Win32Exception\r\n");
+    executor.writeStderr("NATIVE_HELPER_LAUNCH_FAIL:JOB_CREATE_FAILED_OR_EXISTS\r\n");
     await vi.advanceTimersByTimeAsync(10_000);
     const result = await outcome;
     const failure = result.kind === "failure" ? result.error : undefined;

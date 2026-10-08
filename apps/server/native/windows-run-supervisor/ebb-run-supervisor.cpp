@@ -293,6 +293,14 @@ void report(const char* code) {
   writeStdout(std::string("UNKNOWN\t") + code + "\n");
 }
 
+// Fixed pre-READY diagnostics remain available when the stdout protocol pipe itself fails.
+// Values passed here are compile-time allowlisted operation labels; never include Win32 text or paths.
+void reportEarlyLaunchFailure(const char* code) {
+  const std::string line = std::string("NATIVE_HELPER_LAUNCH_FAIL:") + code + "\n";
+  DWORD written = 0;
+  WriteFile(GetStdHandle(STD_ERROR_HANDLE), line.data(), static_cast<DWORD>(line.size()), &written, nullptr);
+}
+
 bool readExact(void* buffer, DWORD size) {
   auto* bytes = static_cast<unsigned char*>(buffer);
   DWORD offset = 0;
@@ -1604,16 +1612,31 @@ bool launch(const std::wstring& id, const std::wstring& nonce, DWORD* payloadExi
   SetLastError(ERROR_SUCCESS);
   Handle job(CreateJobObjectW(nullptr, jobName(id).c_str()));
   const DWORD jobCreateError = GetLastError();
-  if (!job || jobCreateError == ERROR_ALREADY_EXISTS) { report("JOB_CREATE_FAILED_OR_EXISTS"); return false; }
+  if (!job || jobCreateError == ERROR_ALREADY_EXISTS) {
+    report("JOB_CREATE_FAILED_OR_EXISTS");
+    reportEarlyLaunchFailure("JOB_CREATE_FAILED_OR_EXISTS");
+    return false;
+  }
   JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
   limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-  if (!SetInformationJobObject(job.value, JobObjectExtendedLimitInformation, &limits, sizeof(limits))) { report("JOB_POLICY_FAILED"); return false; }
+  if (!SetInformationJobObject(job.value, JobObjectExtendedLimitInformation, &limits, sizeof(limits))) {
+    report("JOB_POLICY_FAILED");
+    reportEarlyLaunchFailure("JOB_POLICY_FAILED");
+    return false;
+  }
 
   SetLastError(ERROR_SUCCESS);
   Handle mapping(CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(MappingData), mappingName(id).c_str()));
   const DWORD mappingCreateError = GetLastError();
-  if (!mapping || mappingCreateError == ERROR_ALREADY_EXISTS) { report("MAPPING_CREATE_FAILED_OR_EXISTS"); return false; }
-  if (!writeStdout("EBB_HELPER_READY\n")) return false;
+  if (!mapping || mappingCreateError == ERROR_ALREADY_EXISTS) {
+    report("MAPPING_CREATE_FAILED_OR_EXISTS");
+    reportEarlyLaunchFailure("MAPPING_CREATE_FAILED_OR_EXISTS");
+    return false;
+  }
+  if (!writeStdout("EBB_HELPER_READY\n")) {
+    reportEarlyLaunchFailure("HELPER_READY_WRITE_FAILED");
+    return false;
+  }
   LaunchMetadata metadata;
   if (!readMetadata(&metadata)) { report("LAUNCH_FRAME_INVALID"); return false; }
   if (acceptanceEvidence && !metadata.hasHermesLaunchIdentity) { report("LAUNCH_FRAME_INVALID"); return false; }

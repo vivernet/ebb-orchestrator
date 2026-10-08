@@ -19,6 +19,7 @@ import { verifyHermesProfileHomePathChain } from "../../src/modules/runtime/herm
 import { createProductionPaths } from "../../src/platform/home/production-paths.js";
 import { resolveOrchestratorHome } from "../../src/platform/home/orchestrator-home.js";
 import {
+  isSafeHermesPathComponentAclDiagnostic,
   sanitizeHermesPathIdentityDiagnostic,
   withHermesSourceSnapshotFailureObserver,
   type HermesSourceSnapshotDiagnosticPhase,
@@ -459,7 +460,15 @@ describe.skipIf(!enabled)("Windows Hermes profile path-chain production integrat
       // Capture the temporary strict-boundary directory from a verified descendant chain. Do not
       // use legacy verify-safe-path on fixtureParent: that command applies strict ACL checks to
       // real temporary-directory ancestors outside this fixture.
-      managedHome.identity = await nativeIdentity(homeRoot, "directory", fixtureParent, "strict-root");
+      try {
+        managedHome.identity = await nativeIdentity(homeRoot, "directory", fixtureParent, "strict-root");
+      } catch (error) {
+        // The fixture is not registered for afterAll cleanup until the native identity is proven.
+        // Remove only the two empty directories created above; never recurse or follow a replacement.
+        if (await existingRealDirectory(homeRoot)) await rmdir(homeRoot);
+        if (await existingRealDirectory(fixtureParent)) await rmdir(fixtureParent);
+        throw error;
+      }
       homes.push(managedHome);
       process.env.EBB_ORCHESTRATOR_HOME = homeRoot;
       const productionHome = resolveOrchestratorHome(process.env, "win32");
@@ -647,15 +656,15 @@ async function nativeIdentity(
     }
     return { platform: "win32", volumeSerial: identity.volumeSerial, fileId: identity.fileId };
   } catch (error) {
-    if (error instanceof Error && /^(?:VERIFIED_HELPER_LAUNCHER_REJECTED|SECONDARY_PATH_ROOT_ACL_UNSAFE|SECONDARY_PATH_IDENTITY_UNAVAILABLE|PROFILE_PATH_CHAIN_NATIVE_IDENTITY_INVALID)$/u.test(error.message)) {
+    if (error instanceof Error && (/^(?:VERIFIED_HELPER_LAUNCHER_REJECTED|SECONDARY_PATH_ROOT_ACL_UNSAFE|SECONDARY_PATH_IDENTITY_UNAVAILABLE|PROFILE_PATH_CHAIN_NATIVE_IDENTITY_INVALID)$/u.test(error.message) ||
+        isSafeHermesPathComponentAclDiagnostic(error.message))) {
       throw error;
     }
     const diagnostic = safeNativeDiagnostic(error);
-    if (error instanceof Error) {
-      error.message = diagnostic;
-      error.stack = `${error.name}: ${diagnostic}`;
-    }
-    throw new Error(diagnostic, { cause: error });
+    // ExitCodeError contains the full PowerShell invocation (including its encoded command).
+    // Preserve only a fixed safe failure as the cause; never expose the original command.
+    const sanitizedError = new Error(diagnostic, { cause: new Error("NATIVE_HELPER_FAILURE") });
+    throw sanitizedError;
   }
 }
 
@@ -867,7 +876,8 @@ function sameNativeIdentity(left: HermesLaunchObjectIdentity, right: HermesLaunc
 function safeNativeDiagnostic(error: unknown): string {
   if (error instanceof ExitCodeError) return sanitizeHermesPathIdentityDiagnostic(error);
   const message = error instanceof Error ? error.message : "";
-  return /^(?:VERIFIED_HELPER_LAUNCHER_REJECTED|SECONDARY_PATH_ROOT_ACL_UNSAFE|SECONDARY_PATH_IDENTITY_UNAVAILABLE)$/u.test(message)
+  return (/^(?:VERIFIED_HELPER_LAUNCHER_REJECTED|SECONDARY_PATH_ROOT_ACL_UNSAFE|SECONDARY_PATH_IDENTITY_UNAVAILABLE)$/u.test(message) ||
+      isSafeHermesPathComponentAclDiagnostic(message))
     ? message
     : "SECONDARY_PATH_IDENTITY_UNAVAILABLE";
 }

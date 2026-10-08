@@ -109,6 +109,11 @@ describe("native Hermes profile-path safe-path acceptance reporting", () => {
       volumeRootGate.indexOf("safeAncestorPathAcl(volume, userSid"),
     );
     expect(volumeRootGate).toMatch(/closePathChainHandles\(heldHandles\);\s*return kPathRootUnsafe;/u);
+    expect(verifier).toMatch(/if \(!appendIdentity\(volume, driveRoot\) \|\| identities\.front\(\)\.volumeSerial != verifiedRootVolumeSerial \|\|\s*identities\.front\(\)\.fileId != verifiedRootFileId\)/u);
+    expect(verifier.indexOf("appendIdentity(volume, driveRoot)")).toBeLessThan(
+      verifier.indexOf("for (size_t index = 0; index < identities.size(); ++index)"),
+    );
+    expect(verifier).toMatch(/authRootIndex[\s\S]*?<< authRootIndex/u);
     expect(nativeSource).toMatch(/GetFinalPathNameByHandleW\(handle[\s\S]*?FILE_NAME_NORMALIZED \| VOLUME_NAME_GUID/u);
     expect(nativeSource).toMatch(/isCanonicalVolumeGuidRootPath\(std::wstring\(finalPath\.data\(\), pathLength\)\)/u);
     expect(nativeSource).toMatch(/constexpr size_t kGuidLength = 36/u);

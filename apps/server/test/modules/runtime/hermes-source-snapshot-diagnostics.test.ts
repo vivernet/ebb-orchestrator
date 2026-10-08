@@ -10,6 +10,10 @@ import {
   safeHermesProfileChainLaunchEvidence,
 } from "../../helpers/safe-hermes-profile-chain-message.js";
 import {
+  HERMES_SOURCE_SNAPSHOT_DIAGNOSTIC_PHASES,
+  isSafeHermesPathComponentAclDiagnostic,
+  markHermesSourceSnapshotDiagnosticPhase,
+  reportHermesSourceSnapshotFailurePhase,
   sanitizeHermesPathIdentityDiagnostic,
   withHermesSourceSnapshotFailureObserver,
   type HermesSourceSnapshotDiagnosticPhase,
@@ -37,6 +41,61 @@ describe("Hermes source snapshot diagnostics", () => {
     });
     expect(String(error)).not.toContain("private-fixture");
     expect(observedPhase).toBe("validate");
+  });
+
+  it("reports only fixed native-projection subphases and collapses operation details", async () => {
+    const projectionStages = [
+      "native-projection-helper-create",
+      "native-projection-open-verify-temp",
+      "native-projection-write-seal",
+      "native-projection-owner-publish-link",
+      "native-projection-alias-cleanup",
+      "native-projection-final-verify",
+    ] as const;
+    expect([...HERMES_SOURCE_SNAPSHOT_DIAGNOSTIC_PHASES]).toEqual(expect.arrayContaining([...projectionStages]));
+
+    for (const stage of projectionStages) {
+      let observedPhase: HermesSourceSnapshotDiagnosticPhase | undefined;
+      let callbackArgumentCount = -1;
+      const error = await withHermesSourceSnapshotFailureObserver(
+        (...args) => {
+          callbackArgumentCount = args.length;
+          [observedPhase] = args;
+        },
+        async () => {
+          markHermesSourceSnapshotDiagnosticPhase(stage);
+          try {
+            throw Object.assign(new Error("C:\\private\\cache\\secret"), {
+              path: "C:\\private\\projection.bin",
+              stderr: "raw native stderr and credential",
+            });
+          } catch {
+            reportHermesSourceSnapshotFailurePhase();
+            throw Object.assign(new Error("HERMES_SOURCE_SNAPSHOT_UNAVAILABLE"), {
+              code: "HERMES_SOURCE_SNAPSHOT_UNAVAILABLE",
+            });
+          }
+        },
+      ).catch((caught: unknown) => caught);
+
+      expect(observedPhase).toBe(stage);
+      expect(callbackArgumentCount).toBe(1);
+      expect(error).toMatchObject({
+        code: "HERMES_SOURCE_SNAPSHOT_UNAVAILABLE",
+        message: "HERMES_SOURCE_SNAPSHOT_UNAVAILABLE",
+      });
+      expect(String(error)).not.toMatch(/private|projection\.bin|stderr|credential/iu);
+    }
+
+    let observedForgedPhase: HermesSourceSnapshotDiagnosticPhase | undefined;
+    await withHermesSourceSnapshotFailureObserver(
+      (phase) => { observedForgedPhase = phase; },
+      async () => {
+        markHermesSourceSnapshotDiagnosticPhase("C:\\private\\secret" as HermesSourceSnapshotDiagnosticPhase);
+        reportHermesSourceSnapshotFailurePhase();
+      },
+    );
+    expect(observedForgedPhase).toBe("validate");
   });
 
   it("reports the source-git phase without exposing the failing tree identity", async () => {
@@ -79,6 +138,45 @@ describe("Hermes source snapshot diagnostics", () => {
 
     expect(diagnostic).toBe("SECONDARY_PATH_IDENTITY_UNAVAILABLE");
     expect(diagnostic).not.toMatch(/private|powershell|SECRET|SID|ACL details/iu);
+  });
+
+  it("reports only a bounded path-chain component and ACL stage for a matching native failure", () => {
+    const diagnostic = sanitizeHermesPathIdentityDiagnostic(new ExitCodeError(
+      "C:\\private\\powershell.exe -EncodedCommand SECRET",
+      55,
+      "",
+      "SAFE_PATH_CHAIN_COMPONENT_ACL_UNSAFE:INDEX_1:STAGE_5",
+    ));
+
+    expect(diagnostic).toBe("SECONDARY_PATH_COMPONENT_ACL_UNSAFE:INDEX_1:STAGE_5");
+    expect(diagnostic).not.toMatch(/private|powershell|SECRET|SID|ACE|mask/iu);
+  });
+
+  it("passes through only exact bounded component ACL diagnostics", () => {
+    expect(isSafeHermesPathComponentAclDiagnostic("SECONDARY_PATH_COMPONENT_ACL_UNSAFE:INDEX_1:STAGE_5")).toBe(true);
+    expect(isSafeHermesPathComponentAclDiagnostic("SECONDARY_PATH_COMPONENT_ACL_UNSAFE:INDEX_64:STAGE_6")).toBe(true);
+    for (const value of [
+      "SECONDARY_PATH_COMPONENT_ACL_UNSAFE:INDEX_0:STAGE_5",
+      "SECONDARY_PATH_COMPONENT_ACL_UNSAFE:INDEX_65:STAGE_5",
+      "SECONDARY_PATH_COMPONENT_ACL_UNSAFE:INDEX_01:STAGE_5",
+      "SECONDARY_PATH_COMPONENT_ACL_UNSAFE:INDEX_1:STAGE_7",
+      "SECONDARY_PATH_COMPONENT_ACL_UNSAFE:INDEX_1:STAGE_5:C:\\private",
+    ]) {
+      expect(isSafeHermesPathComponentAclDiagnostic(value)).toBe(false);
+    }
+  });
+
+  it("rejects malformed, out-of-range, or exit-code-mismatched path-chain diagnostics", () => {
+    for (const [exitCode, stderr] of [
+      [55, "SAFE_PATH_CHAIN_COMPONENT_ACL_UNSAFE:INDEX_65:STAGE_5"],
+      [55, "SAFE_PATH_CHAIN_COMPONENT_ACL_UNSAFE:INDEX_0:STAGE_5"],
+      [55, "SAFE_PATH_CHAIN_COMPONENT_ACL_UNSAFE:INDEX_1:STAGE_4"],
+      [55, "SAFE_PATH_CHAIN_COMPONENT_ACL_UNSAFE:INDEX_01:STAGE_5"],
+      [55, "SAFE_PATH_CHAIN_COMPONENT_ACL_UNSAFE:INDEX_1:STAGE_7"],
+    ] as const) {
+      expect(sanitizeHermesPathIdentityDiagnostic(new ExitCodeError("helper", exitCode, "", stderr)))
+        .toBe("SECONDARY_PATH_IDENTITY_UNAVAILABLE");
+    }
   });
 
   it("distinguishes verified-helper launcher rejection without returning its phase details", () => {

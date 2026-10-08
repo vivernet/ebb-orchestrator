@@ -1167,6 +1167,10 @@ int verifySafeWindowsPathChain(const std::wstring& rawPath, const std::wstring& 
       ? safeAncestorPathAcl(next, userSid, &aclFailureStage)
       : safePathAcl(next, userSid, true, true, index + 1 == components.size(), &aclFailureStage);
     if (!aclSafe) {
+      // Keep diagnostics bounded: identify only the path-chain component and fixed ACL stage.
+      // The path, SID, ACE, and access mask remain private and the verifier stays fail-closed.
+      std::cerr << "SAFE_PATH_CHAIN_COMPONENT_ACL_UNSAFE:INDEX_" << chainIndex
+                << ":STAGE_" << aclFailureStage << "\n";
       closePathChainHandles(heldHandles);
       return kPathComponentUnsafe + aclFailureStage;
     }

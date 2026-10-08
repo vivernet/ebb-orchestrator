@@ -503,6 +503,146 @@ describe("SystemdRunSupervisor", () => {
     expect(executor.execCalls).toHaveLength(1);
   });
 
+  it("fails launch immediately when systemctl show cannot verify the unit, without persisting identity or authorizing payload", async () => {
+    const snapshotReader = supervisor as unknown as {
+      readSnapshot(owner: ProcessScopeIdentity, unitName: string, recordedGroup: string | null): Promise<SystemdScopeSnapshot>;
+    };
+    vi.mocked(snapshotReader.readSnapshot).mockRestore();
+    executor.onExec = (_file, args) => args[1] === "show"
+      ? new Error("private manager endpoint /run/user/1000/bus unavailable")
+      : undefined;
+    const persistIdentity = vi.fn(async () => undefined);
+
+    await expect(supervisor.launch(owner, launchRequest, persistIdentity))
+      .rejects.toThrow("PROCESS_SCOPE_LAUNCH_IDENTITY_UNVERIFIED");
+
+    expect(persistIdentity).not.toHaveBeenCalled();
+    expect(Buffer.concat(executor.sessionWrites)).not.toContain(1);
+    expect(executor.execCalls.filter((call) => call.args[1] === "show")).toHaveLength(2);
+    expect(executor.execCalls.filter((call) => call.args[1] === "list-jobs")).toHaveLength(0);
+  });
+
+  it("retries a list-jobs inspection failure and authorizes only after LIVE membership is verified", async () => {
+    const snapshotReader = supervisor as unknown as {
+      readSnapshot(owner: ProcessScopeIdentity, unitName: string, recordedGroup: string | null): Promise<SystemdScopeSnapshot>;
+    };
+    vi.mocked(snapshotReader.readSnapshot).mockRestore();
+    let pendingJobQueries = 0;
+    executor.onExec = (_file, args) => {
+      if (args[1] === "show") return { exitCode: 0, stdout: "LoadState=not-found\n", stderr: "" };
+      if (args[1] === "list-jobs") {
+        pendingJobQueries += 1;
+        return pendingJobQueries === 1
+          ? new Error("temporary private manager transport error")
+          : { exitCode: 0, stdout: "", stderr: "" };
+      }
+      return undefined;
+    };
+    const identity: ProcessScopeIdentity = {
+      ...owner,
+      systemdInvocationId: "12345678123456781234567812345678",
+      systemdControlGroup: exactControlGroup,
+      pid: 4321,
+      platform: "linux",
+      state: "LIVE",
+    };
+    const inspectLiveIdentity = supervisor.inspect.bind(supervisor);
+    const inspectSpy = vi.spyOn(supervisor, "inspect");
+    inspectSpy.mockImplementationOnce((input) => inspectLiveIdentity(input));
+    inspectSpy.mockResolvedValueOnce({ state: "LIVE", identity });
+    const persistenceOrder: string[] = [];
+
+    const handle = await supervisor.launch(owner, launchRequest, async () => {
+      persistenceOrder.push("identity-persisted");
+    });
+
+    expect(pendingJobQueries).toBe(1);
+    expect(persistenceOrder).toEqual(["identity-persisted"]);
+    expect(Buffer.concat(executor.sessionWrites)).toEqual(Buffer.from([1]));
+    unitState = "absent";
+    executor.finish();
+    await expect(handle.completion).resolves.toMatchObject({ exitCode: 0 });
+  });
+
+  it("reports prerequisite inspection failures with a fixed code and no exception details", async () => {
+    vi.spyOn(supervisor as unknown as { assertNativePrerequisites(): Promise<void> }, "assertNativePrerequisites")
+      .mockRejectedValue(new Error("secret /home/private stderr payload"));
+
+    const observation = await supervisor.inspect({ ...owner, systemdControlGroup: exactControlGroup });
+
+    expect(observation).toEqual({ state: "UNKNOWN", reason: "SYSTEMD_PREREQUISITE_CHECK_UNAVAILABLE" });
+    expect(JSON.stringify(observation)).not.toMatch(/secret|private|stderr|home/u);
+  });
+
+  it("keeps retrying the phase-specific inspection errors that can occur during unit activation", async () => {
+    const identity: ProcessScopeIdentity = {
+      ...owner,
+      systemdInvocationId: "12345678123456781234567812345678",
+      systemdControlGroup: exactControlGroup,
+      pid: 4321,
+      platform: "linux",
+      state: "LIVE",
+    };
+    vi.spyOn(supervisor, "inspect")
+      .mockResolvedValueOnce({ state: "UNKNOWN", reason: "SYSTEMD_UNIT_CONTROL_GROUP_UNAVAILABLE" })
+      .mockResolvedValueOnce({ state: "LIVE", identity });
+
+    const persisted = vi.fn(async () => undefined);
+    const handle = await supervisor.launch(owner, launchRequest, persisted);
+
+    expect(persisted).toHaveBeenCalledWith(identity);
+    expect(Buffer.concat(executor.sessionWrites)).toEqual(Buffer.from([1]));
+    unitState = "absent";
+    executor.finish();
+    await expect(handle.completion).resolves.toMatchObject({ exitCode: 0 });
+  });
+
+  it("reports an unexpected systemd load state with a fixed readback code", async () => {
+    const snapshotReader = supervisor as unknown as {
+      readSnapshot(owner: ProcessScopeIdentity, unitName: string, recordedGroup: string | null): Promise<SystemdScopeSnapshot>;
+    };
+    vi.mocked(snapshotReader.readSnapshot).mockRestore();
+    executor.onExec = (_file, args) => args[1] === "show"
+      ? { exitCode: 0, stdout: "LoadState=unloading\n", stderr: "secret stderr" }
+      : undefined;
+
+    const observation = await supervisor.inspect({ ...owner, systemdControlGroup: exactControlGroup });
+
+    expect(observation).toEqual({ state: "UNKNOWN", reason: "SYSTEMD_UNIT_LOAD_STATE_UNVERIFIED" });
+    expect(JSON.stringify(observation)).not.toMatch(/secret|stderr|unloading/u);
+  });
+
+  it("reports an empty loaded-unit ControlGroup without inferring STOPPED", async () => {
+    const snapshotReader = supervisor as unknown as {
+      readSnapshot(owner: ProcessScopeIdentity, unitName: string, recordedGroup: string | null): Promise<SystemdScopeSnapshot>;
+    };
+    vi.mocked(snapshotReader.readSnapshot).mockRestore();
+    executor.onExec = (_file, args) => args[1] === "show"
+      ? { exitCode: 0, stdout: "LoadState=loaded\nActiveState=failed\nControlGroup=\n", stderr: "" }
+      : undefined;
+
+    const observation = await supervisor.inspect({ ...owner, systemdControlGroup: exactControlGroup });
+
+    expect(observation).toEqual({ state: "UNKNOWN", reason: "SYSTEMD_UNIT_CONTROL_GROUP_UNAVAILABLE" });
+  });
+
+  it("reports pending-job inspection failures with a fixed code and no command details", async () => {
+    const snapshotReader = supervisor as unknown as {
+      readSnapshot(owner: ProcessScopeIdentity, unitName: string, recordedGroup: string | null): Promise<SystemdScopeSnapshot>;
+    };
+    vi.mocked(snapshotReader.readSnapshot).mockRestore();
+    executor.onExec = (_file, args) => {
+      if (args[1] === "show") return { exitCode: 0, stdout: "LoadState=not-found\n", stderr: "" };
+      if (args[1] === "list-jobs") return new Error("secret unit path /private/unit stderr");
+      return undefined;
+    };
+
+    const observation = await supervisor.inspect({ ...owner, systemdControlGroup: exactControlGroup });
+
+    expect(observation).toEqual({ state: "UNKNOWN", reason: "SYSTEMD_PENDING_JOB_QUERY_UNAVAILABLE" });
+    expect(JSON.stringify(observation)).not.toMatch(/secret|private|stderr/u);
+  });
+
   it("treats the exact unit in systemctl list-jobs column two as pending", async () => {
     const snapshotReader = supervisor as unknown as {
       readSnapshot(owner: ProcessScopeIdentity, unitName: string, recordedGroup: string | null): Promise<SystemdScopeSnapshot>;

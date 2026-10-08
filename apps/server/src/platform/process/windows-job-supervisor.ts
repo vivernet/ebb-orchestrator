@@ -204,8 +204,8 @@ export class WindowsJobSupervisor implements ProcessScopeSupervisor {
     }
     let identity: ProcessScopeIdentity | undefined;
     let stopPromise: Promise<ProcessScopeObservation> | undefined;
-    const gateFailureCapture = new NativeHelperGateFailureCapture();
-    session.stderr.on("data", (chunk: Buffer | string) => gateFailureCapture.write(chunk));
+    const terminalFailureCapture = new NativeHelperTerminalFailureCapture();
+    session.stderr.on("data", (chunk: Buffer | string) => terminalFailureCapture.write(chunk));
     const requestStop = () => {
       if (!stopPromise) stopPromise = this.stop(identity ?? owner);
       return stopPromise;
@@ -224,7 +224,7 @@ export class WindowsJobSupervisor implements ProcessScopeSupervisor {
       helperReady = true;
       // The PowerShell gate fails before READY. After the trusted helper handoff, stderr belongs
       // to the child payload and must never be considered a gate diagnostic.
-      gateFailureCapture.stop();
+      terminalFailureCapture.stop();
       if (request.signal?.aborted) throw new Error("WINDOWS_PROCESS_SCOPE_LAUNCH_CANCELLED");
       session.stdin.write(metadataFrame);
       identity = parseLiveIdentity(await protocol.nextLine("EBB_SCOPE_READY", 10_000), owner);
@@ -247,7 +247,7 @@ export class WindowsJobSupervisor implements ProcessScopeSupervisor {
       const stopped = observed.state === "STOPPED" ? observed : await this.stop(stopOwner);
       const final = stopped.state === "STOPPED" ? stopped : await this.waitForStopped(stopOwner, STOP_TIMEOUT_MS);
       const nativeGateDiagnostic = error instanceof Error && error.message.startsWith("WINDOWS_HELPER_HANDSHAKE_TIMEOUT:")
-        ? formatNativeHelperTerminalDiagnostic(gateFailureCapture.failure, completed?.exitCode, helperReady)
+        ? formatNativeHelperTerminalDiagnostic(terminalFailureCapture.failure, completed?.exitCode, helperReady)
         : undefined;
       if (final.state !== "STOPPED") {
         const reason = final.state === "UNKNOWN" ? final.reason : "WINDOWS_JOB_STOP_NOT_CONFIRMED";
@@ -542,19 +542,19 @@ function stripHelperProtocol(result: ProcessResult): ProcessResult {
   };
 }
 
-interface NativeHelperGateFailure {
+interface NativeHelperTerminalFailure {
   readonly phase: string;
   readonly exceptionType: string;
 }
 
-class NativeHelperGateFailureCapture {
+class NativeHelperTerminalFailureCapture {
   private line = "";
   private lineOverflowed = false;
   private accepting = true;
-  private parsedFailure: NativeHelperGateFailure | undefined;
+  private parsedFailure: NativeHelperTerminalFailure | undefined;
   private static readonly MAX_LINE_CHARACTERS = 192;
 
-  get failure(): NativeHelperGateFailure | undefined {
+  get failure(): NativeHelperTerminalFailure | undefined {
     return this.parsedFailure;
   }
 
@@ -571,7 +571,7 @@ class NativeHelperGateFailureCapture {
     for (const character of text) {
       if (character === "\n") {
         if (!this.lineOverflowed) {
-          const parsed = parseNativeHelperGateFailureLine(this.line.replace(/\r$/u, ""));
+          const parsed = parseNativeHelperFailureLine(this.line.replace(/\r$/u, ""));
           if (parsed) this.parsedFailure = parsed;
         }
         this.line = "";
@@ -579,7 +579,7 @@ class NativeHelperGateFailureCapture {
         continue;
       }
       if (this.lineOverflowed) continue;
-      if (this.line.length >= NativeHelperGateFailureCapture.MAX_LINE_CHARACTERS) {
+      if (this.line.length >= NativeHelperTerminalFailureCapture.MAX_LINE_CHARACTERS) {
         this.line = "";
         this.lineOverflowed = true;
         continue;
@@ -589,15 +589,30 @@ class NativeHelperGateFailureCapture {
   }
 }
 
-function parseNativeHelperGateFailureLine(line: string): NativeHelperGateFailure | undefined {
+function parseNativeHelperFailureLine(line: string): NativeHelperTerminalFailure | undefined {
   const match = /^NATIVE_HELPER_GATE_FAIL:([^:\r\n]+):([A-Za-z][A-Za-z0-9]*)$/u.exec(line);
-  if (!match || !SAFE_NATIVE_HELPER_GATE_EXCEPTION_TYPES.has(match[2]!)) return undefined;
-  const phase = normalizeNativeHelperGatePhase(match[1]!);
-  return phase ? { phase, exceptionType: normalizeNativeHelperGateExceptionType(match[2]!) } : undefined;
+  if (match && SAFE_NATIVE_HELPER_GATE_EXCEPTION_TYPES.has(match[2]!)) {
+    const phase = normalizeNativeHelperGatePhase(match[1]!);
+    return phase ? { phase, exceptionType: normalizeNativeHelperGateExceptionType(match[2]!) } : undefined;
+  }
+
+  const launchFailure = /^NATIVE_HELPER_LAUNCH_FAIL:([A-Z0-9_]+)$/u.exec(line);
+  if (!launchFailure) return undefined;
+  const code = launchFailure[1]!;
+  if (!Object.prototype.hasOwnProperty.call(SAFE_NATIVE_HELPER_LAUNCH_FAILURE_PHASES, code)) return undefined;
+  const phase = SAFE_NATIVE_HELPER_LAUNCH_FAILURE_PHASES[code];
+  return phase ? { phase, exceptionType: "NATIVE_LAUNCH_FAILURE" } : undefined;
 }
 
+const SAFE_NATIVE_HELPER_LAUNCH_FAILURE_PHASES: Readonly<Record<string, string>> = Object.freeze({
+  JOB_CREATE_FAILED_OR_EXISTS: "LAUNCH_JOB_CREATE",
+  JOB_POLICY_FAILED: "LAUNCH_JOB_POLICY",
+  MAPPING_CREATE_FAILED_OR_EXISTS: "LAUNCH_MAPPING_CREATE",
+  HELPER_READY_WRITE_FAILED: "LAUNCH_READY_WRITE",
+});
+
 function formatNativeHelperTerminalDiagnostic(
-  gateFailure: NativeHelperGateFailure | undefined,
+  gateFailure: NativeHelperTerminalFailure | undefined,
   exitCode: number | undefined,
   helperReady: boolean,
 ): string {

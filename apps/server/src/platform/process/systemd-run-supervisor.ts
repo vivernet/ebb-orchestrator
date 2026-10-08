@@ -13,6 +13,25 @@ const HERMES_CHILD_ENV_KEYS = new Set([
 ]);
 const STOP_TIMEOUT_MS = 30_000;
 const POLL_INTERVAL_MS = 500;
+const TRANSIENT_SCOPE_INSPECTION_REASONS = new Set([
+  "SYSTEMD_PREREQUISITE_CHECK_UNAVAILABLE",
+  "SYSTEMD_UNIT_LOAD_STATE_UNVERIFIED",
+  "SYSTEMD_UNIT_CONTROL_GROUP_UNAVAILABLE",
+  "SYSTEMD_PENDING_JOB_QUERY_UNAVAILABLE",
+  "SYSTEMD_SCOPE_READBACK_UNAVAILABLE",
+  "CGROUP_READ_UNAVAILABLE",
+]);
+
+type SystemdInspectionFailureCode =
+  | "SYSTEMD_UNIT_LOAD_STATE_UNVERIFIED"
+  | "SYSTEMD_UNIT_CONTROL_GROUP_UNAVAILABLE"
+  | "SYSTEMD_PENDING_JOB_QUERY_UNAVAILABLE";
+
+class SystemdInspectionFailure extends Error {
+  constructor(readonly diagnosticCode: SystemdInspectionFailureCode) {
+    super(diagnosticCode);
+  }
+}
 
 const systemdPayloadWrapper = String.raw`
 const { spawn } = require("node:child_process");
@@ -262,11 +281,18 @@ export class SystemdRunSupervisor implements ProcessScopeSupervisor {
     assertLinuxOwner(owner);
     try {
       await this.assertNativePrerequisites();
+    } catch {
+      return { state: "UNKNOWN", reason: "SYSTEMD_PREREQUISITE_CHECK_UNAVAILABLE" };
+    }
+    try {
       const unitName = systemdUnitName(owner);
       const snapshot = await this.readSnapshot(owner, unitName, owner.systemdControlGroup);
       return classifySystemdScope(owner, snapshot);
-    } catch {
-      return { state: "UNKNOWN", reason: "SYSTEMD_INSPECTION_UNAVAILABLE" };
+    } catch (error) {
+      const reason = error instanceof SystemdInspectionFailure
+        ? error.diagnosticCode
+        : "SYSTEMD_SCOPE_READBACK_UNAVAILABLE";
+      return { state: "UNKNOWN", reason };
     }
   }
 
@@ -317,9 +343,10 @@ export class SystemdRunSupervisor implements ProcessScopeSupervisor {
       const observed = await this.inspect(owner);
       if (observed.state === "LIVE") return observed;
       if (observed.state === "UNKNOWN" && observed.reason !== "SYSTEMD_UNIT_ABSENCE_UNPROVEN") {
-        // During first activation the cgroup may not yet exist; all other ambiguity is fail-closed.
-        const transient = observed.reason === "SYSTEMD_INSPECTION_UNAVAILABLE" || observed.reason === "CGROUP_READ_UNAVAILABLE";
-        if (!transient) throw new Error("PROCESS_SCOPE_LAUNCH_IDENTITY_UNVERIFIED");
+        // Keep retrying the same inspection failures that were transient before diagnostics were split.
+        if (!TRANSIENT_SCOPE_INSPECTION_REASONS.has(observed.reason)) {
+          throw new Error("PROCESS_SCOPE_LAUNCH_IDENTITY_UNVERIFIED");
+        }
       }
     } while (Date.now() < deadline);
     throw new Error("PROCESS_SCOPE_LAUNCH_TIMEOUT");
@@ -353,9 +380,11 @@ export class SystemdRunSupervisor implements ProcessScopeSupervisor {
       return emptySystemdSnapshot(pendingJob, recordedGroup, tree.exists, tree.readable, true,
         tree.processIds, null, "persisted-owner", tree.populated);
     }
-    if (loadState !== "loaded") throw new Error("SYSTEMD_UNIT_LOAD_STATE_UNVERIFIED");
+    if (loadState !== "loaded") throw new SystemdInspectionFailure("SYSTEMD_UNIT_LOAD_STATE_UNVERIFIED");
     const controlGroup = values.get("ControlGroup") || null;
-    if (!controlGroup || !posix.isAbsolute(controlGroup)) throw new Error("SYSTEMD_CONTROL_GROUP_UNAVAILABLE");
+    if (!controlGroup || !posix.isAbsolute(controlGroup)) {
+      throw new SystemdInspectionFailure("SYSTEMD_UNIT_CONTROL_GROUP_UNAVAILABLE");
+    }
     const tree = await inspectCgroupTree(controlGroup);
     return {
       managerQuerySucceeded: true,
@@ -383,8 +412,12 @@ export class SystemdRunSupervisor implements ProcessScopeSupervisor {
   }
 
   private async isUnitPending(unitName: string): Promise<boolean> {
-    const result = await this.execManager("systemctl", ["--user", "list-jobs", "--no-legend", "--no-pager"], { timeout: 5_000 });
-    return result.stdout.split(/\r?\n/).some((line) => line.trim().split(/\s+/)[1] === unitName);
+    try {
+      const result = await this.execManager("systemctl", ["--user", "list-jobs", "--no-legend", "--no-pager"], { timeout: 5_000 });
+      return result.stdout.split(/\r?\n/).some((line) => line.trim().split(/\s+/)[1] === unitName);
+    } catch {
+      throw new SystemdInspectionFailure("SYSTEMD_PENDING_JOB_QUERY_UNAVAILABLE");
+    }
   }
 
   private async execManager(file: string, args: string[], options: { timeout: number }): Promise<ProcessResult> {

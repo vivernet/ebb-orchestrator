@@ -1385,10 +1385,13 @@ async function ensureNativeProjection(
   snapshot: HermesSourceSnapshot,
   manifest: SnapshotManifest,
 ): Promise<HermesSourceSnapshotNativeProjection> {
+  markHermesSourceSnapshotDiagnosticPhase("native-projection-final-verify");
   const bytes = encodeNativeProjection(snapshot, manifest);
   const digest = sha256(bytes);
   const finalPath = nativeProjectionPathFor(cacheRoot, snapshot.directoryId);
+  markHermesSourceSnapshotDiagnosticPhase("native-projection-alias-cleanup");
   await recoverNativeProjectionAliases(cacheRoot, snapshot.directoryId);
+  markHermesSourceSnapshotDiagnosticPhase("native-projection-final-verify");
   const existing = await lstat(finalPath).catch((error: NodeJS.ErrnoException) => {
     if (error.code === "ENOENT") return undefined;
     throw error;
@@ -1408,6 +1411,7 @@ async function ensureNativeProjection(
   try {
     let nativeIdentity: ExactFileIdentity | undefined;
     if (process.platform === "win32") {
+      markHermesSourceSnapshotDiagnosticPhase("native-projection-helper-create");
       const helperPath = fileURLToPath(new URL("../../../../dist/native/hermes-profile-path/ebb-hermes-profile-path.exe", import.meta.url));
       const result = await runVerifiedNativeHelper(helperPath, "hermesProfilePath", [
         "source-projection-create", cacheRoot, basename(temporaryPath),
@@ -1415,6 +1419,7 @@ async function ensureNativeProjection(
       temporaryCreated = true;
       nativeIdentity = parseNativeFileIdentity(result.stdout);
     }
+    markHermesSourceSnapshotDiagnosticPhase("native-projection-open-verify-temp");
     const handle = await open(temporaryPath, process.platform === "win32" ? "r+" : "wx", 0o600);
     temporaryCreated = true;
     try {
@@ -1424,6 +1429,7 @@ async function ensureNativeProjection(
         if (!named.isFile() || named.isSymbolicLink() || !sameExactFileIdentity(nativeIdentity, openedIdentity) ||
             !sameExactFileIdentity(nativeIdentity, exactIdentityFromStats(named))) throw snapshotError();
       }
+      markHermesSourceSnapshotDiagnosticPhase("native-projection-write-seal");
       await handle.writeFile(bytes);
       await handle.sync();
       await handle.chmod(0o400);
@@ -1435,6 +1441,7 @@ async function ensureNativeProjection(
     const identity = exactIdentityFromStats(temporaryDetails);
     if (!temporaryDetails.isFile() || temporaryDetails.isSymbolicLink() ||
         (nativeIdentity && !sameExactFileIdentity(nativeIdentity, identity))) throw snapshotError();
+    markHermesSourceSnapshotDiagnosticPhase("native-projection-owner-publish-link");
     const owner = await open(ownerPath, "wx", 0o600);
     ownerCreated = true;
     try {
@@ -1445,6 +1452,7 @@ async function ensureNativeProjection(
     }
     await syncDirectory(cacheRoot);
     try {
+      markHermesSourceSnapshotDiagnosticPhase("native-projection-owner-publish-link");
       await link(temporaryPath, finalPath);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
@@ -1454,6 +1462,7 @@ async function ensureNativeProjection(
     }
     // Keep the identity-owner until alias cleanup succeeds. A crash or EIO is recoverable only
     // when the owner proves that both names are the exact file created for this key.
+    markHermesSourceSnapshotDiagnosticPhase("native-projection-alias-cleanup");
     await unlink(temporaryPath);
     temporaryCreated = false;
     await unlink(ownerPath);
@@ -1466,6 +1475,7 @@ async function ensureNativeProjection(
     throw error;
   }
 
+  markHermesSourceSnapshotDiagnosticPhase("native-projection-final-verify");
   const final = await lstat(finalPath);
   if (!final.isFile() || final.isSymbolicLink() || final.nlink !== 1 || final.size !== bytes.byteLength) throw snapshotError();
   const verified = await readStableFile(finalPath, identityFromStats(final), MAX_NATIVE_PROJECTION_BYTES);

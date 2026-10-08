@@ -2,13 +2,24 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { ExitCodeError } from "../../../platform/process/process-executor.js";
 
 /** Фиксированные внутренние этапы без путей и низкоуровневых ошибок. */
-export type HermesSourceSnapshotDiagnosticPhase =
-  | "validate"
-  | "reference-lock"
-  | "publication-lock"
-  | "source-git"
-  | "snapshot-publish"
-  | "native-projection";
+export const HERMES_SOURCE_SNAPSHOT_DIAGNOSTIC_PHASES = [
+  "validate",
+  "reference-lock",
+  "publication-lock",
+  "source-git",
+  "snapshot-publish",
+  "native-projection",
+  "native-projection-helper-create",
+  "native-projection-open-verify-temp",
+  "native-projection-write-seal",
+  "native-projection-owner-publish-link",
+  "native-projection-alias-cleanup",
+  "native-projection-final-verify",
+] as const;
+
+export type HermesSourceSnapshotDiagnosticPhase = typeof HERMES_SOURCE_SNAPSHOT_DIAGNOSTIC_PHASES[number];
+
+const diagnosticPhases = new Set<string>(HERMES_SOURCE_SNAPSHOT_DIAGNOSTIC_PHASES);
 
 interface DiagnosticContext {
   phase: HermesSourceSnapshotDiagnosticPhase;
@@ -31,7 +42,7 @@ export function withHermesSourceSnapshotFailureObserver<T>(
 /** Устанавливает одну разрешённую coarse phase для активного test observer. @internal */
 export function markHermesSourceSnapshotDiagnosticPhase(phase: HermesSourceSnapshotDiagnosticPhase): void {
   const context = diagnosticContext.getStore();
-  if (context) context.phase = phase;
+  if (context && diagnosticPhases.has(phase)) context.phase = phase;
 }
 
 /** Передаёт test observer только фиксированную фазу и игнорирует ошибки observer. @internal */
@@ -47,8 +58,21 @@ export function sanitizeHermesPathIdentityDiagnostic(error: unknown): string {
   if (error instanceof ExitCodeError) {
     if (isVerifiedHelperLauncherRejection(error)) return "VERIFIED_HELPER_LAUNCHER_REJECTED";
     if (error.exitCode === 31) return "SECONDARY_PATH_ROOT_ACL_UNSAFE";
+    const componentAclFailure = error.stderr.split(/\r?\n/u)
+      .map((line) => /^SAFE_PATH_CHAIN_COMPONENT_ACL_UNSAFE:INDEX_([1-9][0-9]?):STAGE_([1-6])$/u.exec(line))
+      .find((match) => match !== null);
+    if (componentAclFailure && error.exitCode === 50 + Number(componentAclFailure[2]) &&
+        Number(componentAclFailure[1]) <= 64) {
+      return `SECONDARY_PATH_COMPONENT_ACL_UNSAFE:INDEX_${componentAclFailure[1]}:STAGE_${componentAclFailure[2]}`;
+    }
   }
   return "SECONDARY_PATH_IDENTITY_UNAVAILABLE";
+}
+
+/** Проверяет динамический компонентный код ACL на точный allowlist без свободного текста. @internal */
+export function isSafeHermesPathComponentAclDiagnostic(value: string): boolean {
+  const match = /^SECONDARY_PATH_COMPONENT_ACL_UNSAFE:INDEX_([1-9][0-9]?):STAGE_([1-6])$/u.exec(value);
+  return match !== null && Number(match[1]) <= 64;
 }
 
 function isVerifiedHelperLauncherRejection(error: ExitCodeError): boolean {

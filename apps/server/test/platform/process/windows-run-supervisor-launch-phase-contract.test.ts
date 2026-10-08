@@ -103,6 +103,22 @@ describe("Windows native helper launch-phase diagnostic contract", () => {
     expect(profileChainAcceptanceSource).toMatch(/expect\(evidence, `native refusal evidence \(\$\{launchFailureCode\}\)`\)\.toBe\("HERMES_TICKET_OBJECT_MISMATCH"\)/u);
   });
 
+  it("emits fixed stderr markers for native launch setup failures before READY", () => {
+    const earlyFailureWriter = /void reportEarlyLaunchFailure\(const char\* code\) \{[\s\S]*?\n\}/u.exec(nativeSource)?.[0] ?? "";
+    expect(earlyFailureWriter).toMatch(/NATIVE_HELPER_LAUNCH_FAIL:/u);
+    expect(earlyFailureWriter).toMatch(/GetStdHandle\(STD_ERROR_HANDLE\)/u);
+    expect(earlyFailureWriter).not.toMatch(/GetLastError|absolute|relative|path|ACE|SID/iu);
+
+    expect(nativeSource).toMatch(/if \(!job \|\| jobCreateError == ERROR_ALREADY_EXISTS\) \{\s*report\("JOB_CREATE_FAILED_OR_EXISTS"\);\s*reportEarlyLaunchFailure\("JOB_CREATE_FAILED_OR_EXISTS"\);\s*return false;/u);
+    expect(nativeSource).toMatch(/if \(!SetInformationJobObject\(job\.value, JobObjectExtendedLimitInformation, &limits, sizeof\(limits\)\)\) \{\s*report\("JOB_POLICY_FAILED"\);\s*reportEarlyLaunchFailure\("JOB_POLICY_FAILED"\);\s*return false;/u);
+    expect(nativeSource).toMatch(/if \(!mapping \|\| mappingCreateError == ERROR_ALREADY_EXISTS\) \{\s*report\("MAPPING_CREATE_FAILED_OR_EXISTS"\);\s*reportEarlyLaunchFailure\("MAPPING_CREATE_FAILED_OR_EXISTS"\);\s*return false;/u);
+    expect(nativeSource).toMatch(/if \(!writeStdout\("EBB_HELPER_READY\\n"\)\) \{\s*reportEarlyLaunchFailure\("HELPER_READY_WRITE_FAILED"\);\s*return false;/u);
+    expect(supervisorSource).toMatch(/JOB_CREATE_FAILED_OR_EXISTS: "LAUNCH_JOB_CREATE"/u);
+    expect(supervisorSource).toMatch(/JOB_POLICY_FAILED: "LAUNCH_JOB_POLICY"/u);
+    expect(supervisorSource).toMatch(/MAPPING_CREATE_FAILED_OR_EXISTS: "LAUNCH_MAPPING_CREATE"/u);
+    expect(supervisorSource).toMatch(/HELPER_READY_WRITE_FAILED: "LAUNCH_READY_WRITE"/u);
+  });
+
   it("keeps the durable identity mapping byte-layout and name unchanged", () => {
     expect(nativeSource).toMatch(/constexpr char kMappingMagic\[\] = "EBBJOB1";/u);
     expect(nativeSource).toMatch(/std::wstring mappingName\(const std::wstring& id\) \{ return L"Local\\\\ebb-orchestrator-run-meta-" \+ id; \}/u);
