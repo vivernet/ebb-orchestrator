@@ -270,11 +270,24 @@ describe("Windows native helper launch-phase diagnostic contract", () => {
 
   it("roots strict native ACL verification and recursive cleanup inside the disposable fixture", () => {
     const fixtureSetup = /async function makeFixture\([\s\S]*?(?=\n\s{2}\}\n\}\);)/u.exec(profileChainAcceptanceSource)?.[0] ?? "";
+    const fixtureCreator = /async function createPrivateOwnerFixtureDirectory\(path: string\): Promise<void> \{[\s\S]*?(?=\n\}\n\nasync function addForeignWriteAce)/u.exec(profileChainAcceptanceSource)?.[0] ?? "";
     expect(fixtureSetup).toMatch(/existingRealDirectory\(userProfile\)[\s\S]*?existingRealDirectory\(localAppData\)/u);
     expect(fixtureSetup).toMatch(/relative\(userProfile, localAppData\)[\s\S]*?PROFILE_PATH_CHAIN_LOCALAPPDATA_OUTSIDE_USERPROFILE/u);
     expect(fixtureSetup).not.toMatch(/nativeIdentity\(localAppData,\s*"directory",\s*userProfile\)/u);
-    expect(fixtureSetup).toMatch(/mkdtemp\(join\(tmpdir\(\),\s*"ebb-orchestrator-profile-chain-e2e-"\)\)/u);
-    expect(fixtureSetup).toMatch(/const homeRoot = join\(fixtureParent, "home"\)[\s\S]*?setPrivateOwnerAcl\(\[fixtureParent\]\)[\s\S]*?setPrivateOwnerAcl\(\[homeRoot\]\)[\s\S]*?nativeIdentity\(homeRoot,\s*"directory",\s*fixtureParent,\s*"strict-root"\)/u);
+    expect(fixtureSetup).toMatch(/const fixtureRootOverride = process\.env\.EBB_PROFILE_CHAIN_FIXTURE_ROOT;[\s\S]*?const fixtureRoot = fixtureRootOverride \? resolve\(fixtureRootOverride\) : tmpdir\(\);/u);
+    expect(fixtureSetup).toMatch(/const systemRootPath = process\.env\.SystemRoot \?\? process\.env\.SYSTEMROOT;[\s\S]*?const systemVolumeRoot = systemRootPath \? parse\(resolve\(systemRootPath\)\)\.root : undefined;/u);
+    expect(fixtureSetup).toMatch(/if \(fixtureRootOverride && \(!isAbsolute\(fixtureRootOverride\) \|\| !\/\^\[A-Za-z\]:\\\\\$\/u\.test\(fixtureRoot\) \|\|[\s\S]*?fixtureRoot\.toLowerCase\(\) !== systemVolumeRoot\.toLowerCase\(\)\)\) \{\s*throw new Error\("PROFILE_PATH_CHAIN_FIXTURE_ROOT_MUST_BE_LOCAL_SYSTEM_VOLUME_ROOT"\);/u);
+    expect(fixtureSetup).toMatch(/if \(!\(await existingRealDirectory\(fixtureRoot\)\)\) throw new Error\("PROFILE_PATH_CHAIN_FIXTURE_ROOT_UNAVAILABLE"\);/u);
+    expect(fixtureSetup).toMatch(/const fixtureParent = join\(fixtureRoot, `ebb-orchestrator-profile-chain-e2e-\$\{randomUUID\(\)\}`\);/u);
+    expect(fixtureSetup).toMatch(/await createPrivateOwnerFixtureDirectory\(fixtureParent\);[\s\S]*?await mkdir\(homeRoot\);[\s\S]*?await setPrivateOwnerAcl\(\[homeRoot\]\)[\s\S]*?nativeIdentity\(homeRoot,\s*"directory",\s*fixtureParent,\s*"strict-root"\)/u);
+    expect(fixtureCreator).toMatch(/\$identity=\[Security\.Principal\.WindowsIdentity\]::GetCurrent\(\)\.User;/u);
+    expect(fixtureCreator).toMatch(/\$acl\.SetAccessRuleProtection\(\$true,\$false\); \$acl\.SetOwner\(\$identity\);/u);
+    expect(fixtureCreator).toMatch(/\$rule=\[Security\.AccessControl\.FileSystemAccessRule\]::new\(\$identity,\[Security\.AccessControl\.FileSystemRights\]::FullControl,\[Security\.AccessControl\.AccessControlType\]::Allow\);[\s\S]*?\$acl\.AddAccessRule\(\$rule\);/u);
+    expect(fixtureCreator).toMatch(/\$directory=\[IO\.DirectoryInfo\]::new\(\$path\); \$directory\.Create\(\$acl\);[\s\S]*?\$verified=\$directory\.GetAccessControl\(\);/u);
+    expect(fixtureCreator).toMatch(/\$verified\.AreAccessRulesProtected[\s\S]*?GetOwner\(\[Security\.Principal\.SecurityIdentifier\]\)\.Value -ne \$identity\.Value/u);
+    expect(fixtureCreator).toMatch(/\$rules=@\(\$verified\.Access\);[\s\S]*?\$rules\.Count -ne 1[\s\S]*?IdentityReference\.Translate\(\[Security\.Principal\.SecurityIdentifier\]\)\.Value -ne \$identity\.Value[\s\S]*?AccessControlType -ne \[Security\.AccessControl\.AccessControlType\]::Allow[\s\S]*?\[int\]\$rules\[0\]\.FileSystemRights -ne 0x001F01FF[\s\S]*?InheritanceFlags -ne \[Security\.AccessControl\.InheritanceFlags\]::None[\s\S]*?PropagationFlags -ne \[Security\.AccessControl\.PropagationFlags\]::None[\s\S]*?IsInherited/u);
+    expect(fixtureSetup).not.toMatch(/mkdtemp\(join\(tmpdir\(\),\s*"ebb-orchestrator-profile-chain-e2e-"\)\)/u);
+    expect(fixtureSetup).not.toMatch(/setPrivateOwnerAcl\(\[fixtureParent\]\)/u);
     expect(fixtureSetup).toMatch(/nativeIdentity\(profile,\s*"directory",\s*fixtureParent\)[\s\S]*?nativeIdentity\(home,\s*"directory",\s*fixtureParent\)/u);
     expect(fixtureSetup).toMatch(/throw new Error\(\s*`HERMES_SOURCE_SNAPSHOT_FAILED:\$\{snapshotFailurePhase \?\? "UNKNOWN"\}/u);
     expect(fixtureSetup).not.toContain("throw snapshotError;");

@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { access, lstat, mkdir, mkdtemp, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, parse, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import { consumeHermesLaunchTicket, createHermesLaunchTicket, type HermesLaunchObjectIdentity } from "../../src/modules/runtime/hermes/hermes-launch-ticket.js";
@@ -67,6 +67,9 @@ describe.skipIf(!enabled)("Windows Hermes profile path-chain production integrat
       if (!sameNativeIdentity(currentIdentity, fixtureHome.identity)) {
         throw new Error("PROFILE_PATH_CHAIN_FIXTURE_CLEANUP_IDENTITY_CHANGED");
       }
+      // Recursive path cleanup follows the documented hostile-same-user limitation: a concurrent
+      // process under this same Windows identity is outside the test's threat model. Identity loss
+      // or mismatch fails closed above and retains the fixture.
       await rm(fixtureHome.path, { recursive: true, force: true });
     }
   });
@@ -426,9 +429,19 @@ describe.skipIf(!enabled)("Windows Hermes profile path-chain production integrat
         isAbsolute(localAppDataRelative)) {
       throw new Error("PROFILE_PATH_CHAIN_LOCALAPPDATA_OUTSIDE_USERPROFILE");
     }
-    // Keep the fixture inside the system temp directory. Its existing ancestors remain untouched;
-    // the native verifier must reject the chain if any ancestor violates the bounded ACL policy.
-    const fixtureParent = await mkdtemp(join(tmpdir(), "ebb-orchestrator-profile-chain-e2e-"));
+    // Keep fixture placement independent from TEMP/TMP: the native PowerShell launcher needs a
+    // user-writable temp directory for Add-Type, while this opt-in root override can place the
+    // disposable path-chain directly under a volume root whose bounded exception is policy-approved.
+    const fixtureRootOverride = process.env.EBB_PROFILE_CHAIN_FIXTURE_ROOT;
+    const fixtureRoot = fixtureRootOverride ? resolve(fixtureRootOverride) : tmpdir();
+    const systemRootPath = process.env.SystemRoot ?? process.env.SYSTEMROOT;
+    const systemVolumeRoot = systemRootPath ? parse(resolve(systemRootPath)).root : undefined;
+    if (fixtureRootOverride && (!isAbsolute(fixtureRootOverride) || !/^[A-Za-z]:\\$/u.test(fixtureRoot) ||
+        !systemVolumeRoot || fixtureRoot.toLowerCase() !== systemVolumeRoot.toLowerCase())) {
+      throw new Error("PROFILE_PATH_CHAIN_FIXTURE_ROOT_MUST_BE_LOCAL_SYSTEM_VOLUME_ROOT");
+    }
+    if (!(await existingRealDirectory(fixtureRoot))) throw new Error("PROFILE_PATH_CHAIN_FIXTURE_ROOT_UNAVAILABLE");
+    const fixtureParent = join(fixtureRoot, `ebb-orchestrator-profile-chain-e2e-${randomUUID()}`);
     const homeRoot = join(fixtureParent, "home");
     const managedHome = {
       path: fixtureParent,
@@ -438,8 +451,9 @@ describe.skipIf(!enabled)("Windows Hermes profile path-chain production integrat
     };
     const previousHomeOverride = process.env.EBB_ORCHESTRATOR_HOME;
     try {
-      // This temporary parent is the sole fixture-owned cleanup unit and strict chain boundary.
-      await setPrivateOwnerAcl([fixtureParent]);
+      // Apply the protected owner-only DACL in the CreateDirectory call itself. The volume-root
+      // inheritance must never expose a newly created fixture before it becomes the strict boundary.
+      await createPrivateOwnerFixtureDirectory(fixtureParent);
       await mkdir(homeRoot);
       await setPrivateOwnerAcl([homeRoot]);
       // Capture the temporary strict-boundary directory from a verified descendant chain. Do not
@@ -684,6 +698,32 @@ async function setPrivateOwnerAcl(paths: string[]): Promise<void> {
       shell: false, windowsHide: true, env: { SYSTEMROOT: process.env.SYSTEMROOT || "C:\\Windows", EBB_PROFILE_FIXTURE_PATH: path },
     });
   }
+}
+
+async function createPrivateOwnerFixtureDirectory(path: string): Promise<void> {
+  const command = [
+    "$ErrorActionPreference='Stop';",
+    "$path=[Environment]::GetEnvironmentVariable('EBB_PROFILE_FIXTURE_PATH');",
+    "$identity=[Security.Principal.WindowsIdentity]::GetCurrent().User;",
+    "if ([IO.Directory]::Exists($path)) { throw 'FIXTURE_PATH_ALREADY_EXISTS' };",
+    "$acl=New-Object Security.AccessControl.DirectorySecurity;",
+    "$acl.SetAccessRuleProtection($true,$false); $acl.SetOwner($identity);",
+    "$rule=[Security.AccessControl.FileSystemAccessRule]::new($identity,[Security.AccessControl.FileSystemRights]::FullControl,[Security.AccessControl.AccessControlType]::Allow);",
+    "$acl.AddAccessRule($rule);",
+    "$directory=[IO.DirectoryInfo]::new($path); $directory.Create($acl);",
+    "$verified=$directory.GetAccessControl();",
+    "if (-not $verified.AreAccessRulesProtected -or $verified.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $identity.Value) { throw 'FIXTURE_DACL_VERIFICATION_FAILED' };",
+    "$rules=@($verified.Access);",
+    "if ($rules.Count -ne 1 -or $rules[0].IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -ne $identity.Value -or $rules[0].AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow -or [int]$rules[0].FileSystemRights -ne 0x001F01FF -or $rules[0].InheritanceFlags -ne [Security.AccessControl.InheritanceFlags]::None -or $rules[0].PropagationFlags -ne [Security.AccessControl.PropagationFlags]::None -or $rules[0].IsInherited) { throw 'FIXTURE_DACL_VERIFICATION_FAILED' };",
+  ].join(" ");
+  const powershell = join(process.env.SYSTEMROOT || "C:\\Windows", "System32/WindowsPowerShell/v1.0/powershell.exe");
+  execFileSync(powershell, ["-NoProfile", "-NonInteractive", "-Command", command], {
+    shell: false,
+    windowsHide: true,
+    timeout: 10_000,
+    maxBuffer: 4096,
+    env: { SYSTEMROOT: process.env.SYSTEMROOT || "C:\\Windows", EBB_PROFILE_FIXTURE_PATH: path },
+  });
 }
 
 async function addForeignWriteAce(path: string): Promise<void> {

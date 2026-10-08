@@ -1,3 +1,12 @@
+---
+id: fixture-hermes-development-workflow-parity
+kind: plan
+status: proposed
+title: Fixture плана для проверки Hermes development workflow parity
+created: 2026-10-08
+updated: 2026-10-08
+---
+
 # План проверки Hermes development workflow
 
 ## Цель и границы
