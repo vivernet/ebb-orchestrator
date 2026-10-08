@@ -30,6 +30,17 @@ function runPowerShell(command, extraEnvironment = {}) {
   });
 }
 
+function protectPrivateFixtureObject(pathname) {
+  runPowerShell([
+    "$ErrorActionPreference = 'Stop';",
+    "$path = [System.Environment]::GetEnvironmentVariable('EBB_TARGET_OBJECT');",
+    "$identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().User;",
+    "$acl = Get-Acl -LiteralPath $path;",
+    "$acl.SetOwner($identity);",
+    "Set-Acl -LiteralPath $path -AclObject $acl;",
+  ].join(" "), { EBB_TARGET_OBJECT: pathname });
+}
+
 function identityVector(path) {
   const result = spawnSync(executable, ["identify-targets", path], {
     cwd: repositoryDirectory, encoding: "utf8", env: { SYSTEMROOT: process.env.SYSTEMROOT || "C:\\Windows" },
@@ -80,6 +91,10 @@ try {
     mkdirSync(fixtureHome, { recursive: true });
     writeFileSync(fixtureConfig, "model:\n  provider: fixture\n  default: fixture\n", { flag: "wx" });
     writeFileSync(fixtureReplacement, "fixture replacement\n", { flag: "wx" });
+    protectPrivateFixtureObject(fixtureProfile);
+    protectPrivateFixtureObject(fixtureHome);
+    protectPrivateFixtureObject(fixtureConfig);
+    protectPrivateFixtureObject(fixtureReplacement);
     return { fixtureProfile, fixtureHome, fixtureConfig, fixtureReplacement };
   };
 
