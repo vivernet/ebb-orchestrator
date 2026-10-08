@@ -689,12 +689,26 @@ async function objectIdentity(pathname: string, kind: "file" | "directory", stri
   } catch (error) {
     throw new Error(`SOURCE_ACCEPTANCE_NATIVE_IDENTITY_UNAVAILABLE:${collectNativeHelperEvidence(error)}`, { cause: error });
   }
-  if (result.exitCode !== 0 || result.stderr !== "") throw new Error("SOURCE_ACCEPTANCE_NATIVE_IDENTITY_UNAVAILABLE");
+  if (result.exitCode !== 0 || result.stderr !== "") {
+    const refusal = safeWindowsPathRefusalEvidence(result.stderr);
+    throw new Error(`SOURCE_ACCEPTANCE_NATIVE_IDENTITY_UNAVAILABLE${refusal ? `:${refusal}` : ""}`);
+  }
   const parsed = JSON.parse(result.stdout.trim()) as { volumeSerial?: string; fileId?: string; kind?: string; status?: string };
   if (parsed.status !== expectedStatus || parsed.kind !== kind || !parsed.volumeSerial || !parsed.fileId) {
     throw new Error("SOURCE_ACCEPTANCE_NATIVE_IDENTITY_INVALID");
   }
   return { platform: "win32", volumeSerial: parsed.volumeSerial, fileId: parsed.fileId };
+}
+
+function safeWindowsPathRefusalEvidence(stderr: string): string | undefined {
+  const lines = stderr.split(/\r?\n/u).filter((line) => line.length > 0);
+  if (lines.length !== 1) return undefined;
+  const index = "(?:[0-9]|[1-5][0-9]|6[0-3]|64_PLUS)";
+  const pattern = new RegExp(
+    `^VERIFY_SAFE_PATH_REFUSED:(?:USER_IDENTITY|ROOT_OPEN|ROOT_IDENTITY|ROOT_ACL|OBJECT_IDENTITY|COMPONENT_OPEN:INDEX_${index}|COMPONENT_ACL:INDEX_${index}:ACL_STAGE_[1-6])$`,
+    "u",
+  );
+  return pattern.test(lines[0]!) ? lines[0] : undefined;
 }
 
 function collectNativeHelperEvidence(error: unknown): string {

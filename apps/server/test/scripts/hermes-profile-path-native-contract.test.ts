@@ -21,6 +21,10 @@ const snapshotSource = readFileSync(
   new URL("../../src/modules/runtime/hermes/hermes-source-snapshot.ts", import.meta.url),
   "utf8",
 );
+const snapshotAcceptanceSource = readFileSync(
+  new URL("../e2e/hermes-source-snapshot.acceptance.test.ts", import.meta.url),
+  "utf8",
+);
 const snapshotGcLimits = readFileSync(
   new URL("../../src/modules/runtime/hermes/hermes-source-snapshot-gc-limits.ts", import.meta.url),
   "utf8",
@@ -56,6 +60,17 @@ describe("native Hermes profile-path safe-path acceptance reporting", () => {
     expect(code41Handler).toMatch(/safe-path acceptance was not verified[\s\S]*41/iu);
     expect(code41Handler).not.toMatch(/process\.stdout\.write/u);
     expect(code41Handler).not.toMatch(/READ_CONTROL/iu);
+  });
+
+  it("emits and accepts only bounded safe-path refusal diagnostics", () => {
+    expect(nativeSource).toMatch(/void printSafePathRefusal\([\s\S]*?VERIFY_SAFE_PATH_REFUSED:[\s\S]*?kMaxPathChainComponents[\s\S]*?64_PLUS[\s\S]*?aclStage <= 6/u);
+    expect(nativeSource).toMatch(/printSafePathRefusal\("COMPONENT_ACL", index, aclFailureStage\)/u);
+    expect(nativeSource).not.toMatch(/printSafePathRefusal\([^\n]*(?:rawPath|Sid|Mask|GetLastError)/iu);
+    const sanitizer = /function safeWindowsPathRefusalEvidence\([\s\S]*?\n\}/u.exec(snapshotAcceptanceSource)?.[0] ?? "";
+    expect(sanitizer).toContain("VERIFY_SAFE_PATH_REFUSED:");
+    expect(sanitizer).toMatch(/lines\.length !== 1/u);
+    expect(sanitizer).toMatch(/64_PLUS/u);
+    expect(sanitizer).not.toMatch(/stderr\.match\(/u);
   });
 
   it("routes Linux path verification through the descriptor-bound verifier and exercises its identities", () => {

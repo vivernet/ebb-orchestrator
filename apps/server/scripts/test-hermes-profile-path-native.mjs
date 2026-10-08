@@ -1665,6 +1665,9 @@ try {
       assert.equal(unsafeDirectory.error, undefined, "native unsafe path verifier should start");
       assert.notEqual(unsafeDirectory.status, 0, "foreign-writable directory path must be rejected");
       assert.equal(unsafeDirectory.stdout, "", "rejected safe-path verification must not emit identity");
+      assert.match(unsafeDirectory.stderr, /^VERIFY_SAFE_PATH_REFUSED:COMPONENT_ACL:INDEX_\d+:ACL_STAGE_5\r?\n$/u,
+        "rejected path should report only the fixed component and ACL stage");
+      assert.equal(unsafeDirectory.stderr.includes(unsafePathRoot), false, "safe-path diagnostics must not disclose the path");
 
       const trustedInstallerFixture = join(canonicalSandbox, "trusted-installer-ace-fixture");
       mkdirSync(trustedInstallerFixture);
@@ -1675,6 +1678,7 @@ try {
       assert.notEqual(strictTrustedInstallerFixture.status, 0,
         "TrustedInstaller FullControl ACE remains rejected outside the OS-derived PowerShell chain");
       assert.equal(strictTrustedInstallerFixture.stdout, "", "rejected arbitrary path must not emit identity");
+      assert.match(strictTrustedInstallerFixture.stderr, /^VERIFY_SAFE_PATH_REFUSED:COMPONENT_ACL:INDEX_\d+:ACL_STAGE_5\r?\n$/u);
 
       const junctionDestination = join(canonicalSandbox, "junction-destination");
       mkdirSync(junctionDestination);

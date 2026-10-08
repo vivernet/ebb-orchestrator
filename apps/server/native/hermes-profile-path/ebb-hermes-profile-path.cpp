@@ -1019,6 +1019,16 @@ void printSafePathIdentity(const std::string& kind, const std::string& canonical
             << "\",\"volumeSerial\":\"" << volumeSerial << "\",\"fileId\":\"" << fileId << "\"}\n";
 }
 
+void printSafePathRefusal(const char* stage, size_t componentIndex = static_cast<size_t>(-1),
+                          int aclStage = 0) {
+  std::cerr << "VERIFY_SAFE_PATH_REFUSED:" << stage;
+  if (componentIndex != static_cast<size_t>(-1)) {
+    std::cerr << ":INDEX_" << (componentIndex < kMaxPathChainComponents ? std::to_string(componentIndex) : "64_PLUS");
+  }
+  if (aclStage > 0 && aclStage <= 6) std::cerr << ":ACL_STAGE_" << aclStage;
+  std::cerr << "\n";
+}
+
 int verifySafeWindowsPath(const std::wstring& rawPath, const std::wstring& rawKind,
                           size_t trustedInstallerFromIndex = static_cast<size_t>(-1),
                           PSID trustedInstallerSid = nullptr) {
@@ -1029,19 +1039,27 @@ int verifySafeWindowsPath(const std::wstring& rawPath, const std::wstring& rawKi
   if (!parseWindowsPath(rawPath, components, driveRoot) || components.empty()) return kInvalidInput;
   std::vector<unsigned char> sidStorage;
   PSID userSid = nullptr;
-  if (!getCurrentUserSid(sidStorage, userSid)) return kPathUnsafe;
+  if (!getCurrentUserSid(sidStorage, userSid)) {
+    printSafePathRefusal("USER_IDENTITY");
+    return kPathUnsafe;
+  }
   HANDLE current = CreateFileW(driveRoot.c_str(), FILE_READ_ATTRIBUTES | FILE_TRAVERSE | READ_CONTROL,
     FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
     FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
-  if (current == INVALID_HANDLE_VALUE) return kPathRootOpenFailed;
+  if (current == INVALID_HANDLE_VALUE) {
+    printSafePathRefusal("ROOT_OPEN");
+    return kPathRootOpenFailed;
+  }
   FILE_ATTRIBUTE_TAG_INFO rootInfo{};
   if (!getHandleAttributes(current, rootInfo) || (rootInfo.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
     CloseHandle(current);
+    printSafePathRefusal("ROOT_IDENTITY");
     return kPathRootUnsafe;
   }
   // The volume root permits creating unrelated top-level directories; it must still deny foreign delete/write-DACL rights.
   if (!safePathAcl(current, userSid, true, false, false)) {
     CloseHandle(current);
+    printSafePathRefusal("ROOT_ACL");
     return kPathRootUnsafe;
   }
   for (size_t index = 0; index < components.size(); ++index) {
@@ -1057,8 +1075,12 @@ int verifySafeWindowsPath(const std::wstring& rawPath, const std::wstring& rawKi
     if (next == INVALID_HANDLE_VALUE || !aclSafe) {
       if (next != INVALID_HANDLE_VALUE) CloseHandle(next);
       CloseHandle(current);
-      return next == INVALID_HANDLE_VALUE ? kPathComponentOpenFailed + static_cast<int>(index) :
-        kPathComponentUnsafe + aclFailureStage;
+      if (next == INVALID_HANDLE_VALUE) {
+        printSafePathRefusal("COMPONENT_OPEN", index);
+        return kPathComponentOpenFailed + static_cast<int>(index);
+      }
+      printSafePathRefusal("COMPONENT_ACL", index, aclFailureStage);
+      return kPathComponentUnsafe + aclFailureStage;
     }
     CloseHandle(current);
     current = next;
@@ -1069,7 +1091,10 @@ int verifySafeWindowsPath(const std::wstring& rawPath, const std::wstring& rawKi
   std::string fileId;
   const bool identityValid = getSafeHandleIdentity(current, canonicalPath, volumeSerial, fileId);
   CloseHandle(current);
-  if (!identityValid) return kPathIdentityUnavailable;
+  if (!identityValid) {
+    printSafePathRefusal("OBJECT_IDENTITY");
+    return kPathIdentityUnavailable;
+  }
   printSafePathIdentity(directory ? "directory" : "file", canonicalPath, volumeSerial, fileId);
   return kOk;
 }
