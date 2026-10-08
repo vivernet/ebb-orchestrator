@@ -187,7 +187,7 @@ export class SystemdRunSupervisor implements ProcessScopeSupervisor {
       ]
       : [request.executable, ...request.args];
     const args = [
-      "--user", "--expand-environment=no", "--pipe", "--wait", `--unit=${unitName}`, "--slice=app.slice",
+      "--user", "--expand-environment=no", "--pipe", "--wait", "--collect", `--unit=${unitName}`, "--slice=app.slice",
       "--description=ebb-orchestrator:" + owner.launchNonce,
       "--service-type=exec",
       "--property=Type=exec",
@@ -349,7 +349,8 @@ export class SystemdRunSupervisor implements ProcessScopeSupervisor {
     const deadline = Date.now() + timeoutMs;
     do {
       const last = await this.inspect(owner);
-      if (last.state === "STOPPED" || last.state === "UNKNOWN") return last;
+      if (last.state === "STOPPED") return last;
+      if (last.state === "UNKNOWN" && !TRANSIENT_SCOPE_INSPECTION_REASONS.has(last.reason)) return last;
       if (Date.now() + POLL_INTERVAL_MS > deadline) break;
       await delay(POLL_INTERVAL_MS);
     } while (Date.now() <= deadline);

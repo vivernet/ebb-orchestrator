@@ -30,6 +30,10 @@ import {
   parseWindowsPayloadCpuActivity,
   type WindowsPayloadMarkerTimeoutSnapshot,
 } from "../helpers/windows-payload-timeout-diagnostics.js";
+import {
+  isWindowsNativeReadCreationTimeout,
+  windowsNativeScopeCommandTimeoutMs,
+} from "../helpers/windows-native-scope-timeout.js";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { loadTestMigrations } from "../helpers/migrations.js";
 
@@ -98,18 +102,18 @@ describe("managerEnvironment", () => {
 
 describe("Windows process-scope diagnostic context", () => {
   it("adds native-command context without replacing process error fields", () => {
-    const error = Object.assign(new Error("Process timed out after 15000ms"), {
+    const error = Object.assign(new Error("Process timed out after 60000ms"), {
       command: "powershell.exe",
       exitCode: 1,
       stdout: "partial stdout",
       stderr: "partial stderr",
     });
 
-    const context = formatWindowsNativeScopeCommandContext({ mode: "read-creation", processId: 42 }, 15_000, 15_012);
+    const context = formatWindowsNativeScopeCommandContext({ mode: "read-creation", processId: 42 }, 60_000, 60_012);
     const contextual = addDiagnosticContext(error, context);
 
     expect(contextual).toBe(error);
-    expect(contextual.message).toContain("mode=read-creation pid=42 timeoutMs=15000 elapsedMs=15012");
+    expect(contextual.message).toContain("mode=read-creation pid=42 timeoutMs=60000 elapsedMs=60012");
     expect(contextual.command).toBe("powershell.exe");
     expect(contextual.exitCode).toBe(1);
     expect(contextual.stdout === "partial stdout").toBe(true);
@@ -153,8 +157,8 @@ describe("Windows process-scope diagnostic context", () => {
       await rm(directory, { recursive: true, force: true });
 
       const readCreationError = addDiagnosticContext(
-        new Error("Process timed out after 15000ms"),
-        formatWindowsNativeScopeCommandContext({ mode: "read-creation", processId: 42 }, 15_000, 15_012),
+        new Error("Process timed out after 60000ms"),
+        formatWindowsNativeScopeCommandContext({ mode: "read-creation", processId: 42 }, 60_000, 60_012),
       );
       expect(isWindowsNativeReadCreationTimeout(readCreationError)).toBe(true);
       const enrichedReadCreationError = addWindowsNativePhaseContext(readCreationError, snapshot);
@@ -285,7 +289,7 @@ describe("Windows native helper assembly cache contract", () => {
     expect(testSource).toContain('args.push("-AssemblyPath", windowsNativeHelperAssemblyPath)');
     expect(testSource.match(/await compileWindowsNativeHelper\(\);/gu)).toHaveLength(1);
     expect(testSource).toMatch(/afterAll\(async \(\) => \{[\s\S]*?await rm\(windowsNativeHelperDirectory, \{ recursive: true, force: true \}\)/u);
-    expect(testSource).toContain("const timeoutMs = 15_000");
+    expect(testSource).toContain("windowsNativeScopeCommandTimeoutMs(options.mode)");
   });
 });
 
@@ -1360,7 +1364,7 @@ async function runWindowsNativeScopeCommand(options: {
   if (options.expectedCreationTime !== undefined) args.push("-ExpectedCreationTime", options.expectedCreationTime);
   if (options.containmentId !== undefined) args.push("-ContainmentId", options.containmentId);
   if (options.diagnosticPath !== undefined) args.push("-DiagnosticPath", options.diagnosticPath);
-  const timeoutMs = 15_000;
+  const timeoutMs = windowsNativeScopeCommandTimeoutMs(options.mode);
   const startedAt = Date.now();
   if (options.diagnosticPath !== undefined) {
     await appendWindowsNativePhase(options.diagnosticPath, "POWERSHELL_INVOCATION_STARTED");
@@ -1432,12 +1436,6 @@ async function readWindowsNativePhaseMarkers(path: string): Promise<WindowsNativ
 
 function addWindowsNativePhaseContext(error: Error, markers: readonly WindowsNativePhaseMarker[]): Error {
   return addDiagnosticContext(error, `WINDOWS_NATIVE_PHASE_MARKERS=${markers.join(",") || "PHASE_LEDGER_EMPTY"}`);
-}
-
-function isWindowsNativeReadCreationTimeout(error: unknown): error is Error {
-  return error instanceof Error
-    && error.message.startsWith("WINDOWS_NATIVE_SCOPE_COMMAND_FAILED mode=read-creation ")
-    && error.message.includes(": Process timed out after 15000ms");
 }
 
 function formatWindowsNativeScopeCommandContext(

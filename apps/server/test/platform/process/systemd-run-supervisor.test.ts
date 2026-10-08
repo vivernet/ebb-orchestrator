@@ -183,6 +183,7 @@ describe("SystemdRunSupervisor", () => {
 
   afterEach(() => {
     if (originalPlatform) Object.defineProperty(process, "platform", originalPlatform);
+    vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
   });
@@ -205,6 +206,7 @@ describe("SystemdRunSupervisor", () => {
     expect(call?.args.join(" ")).toContain("--property=Delegate=no");
     expect(call?.args.join(" ")).toContain("--property=ProtectControlGroups=yes");
     expect(call?.args.join(" ")).toContain("--property=Restart=no");
+    expect(call?.args).toContain("--collect");
     expect(call?.args.join(" ")).not.toContain("EBB_HERMES_PROVIDER_API_KEY");
     expect(call?.args.join(" ")).not.toContain("...process.env");
     expect(call?.options.env).toMatchObject({
@@ -786,6 +788,29 @@ describe("SystemdRunSupervisor", () => {
     const observation = await supervisor.inspect({ ...owner, systemdControlGroup: exactControlGroup });
 
     expect(observation).toEqual({ state: "UNKNOWN", reason: "SYSTEMD_UNIT_CONTROL_GROUP_UNAVAILABLE" });
+  });
+
+  it("retries transient empty ControlGroup readback while waiting for cgroup-backed STOPPED proof", async () => {
+    vi.useFakeTimers();
+    const inspect = vi.spyOn(supervisor, "inspect")
+      .mockResolvedValueOnce({ state: "UNKNOWN", reason: "SYSTEMD_UNIT_CONTROL_GROUP_UNAVAILABLE" })
+      .mockResolvedValueOnce({ state: "STOPPED", evidence: "SYSTEMD_CGROUP_EMPTY" });
+
+    const waiting = supervisor.waitForStopped(owner, 2_000);
+    await vi.advanceTimersByTimeAsync(500);
+    await expect(waiting).resolves.toEqual({ state: "STOPPED", evidence: "SYSTEMD_CGROUP_EMPTY" });
+    expect(inspect).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not convert a persistent empty ControlGroup into STOPPED when bounded polling expires", async () => {
+    vi.useFakeTimers();
+    const inspect = vi.spyOn(supervisor, "inspect")
+      .mockResolvedValue({ state: "UNKNOWN", reason: "SYSTEMD_UNIT_CONTROL_GROUP_UNAVAILABLE" });
+
+    const waiting = supervisor.waitForStopped(owner, 1_000);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await expect(waiting).resolves.toEqual({ state: "UNKNOWN", reason: "SYSTEMD_STOP_TIMEOUT" });
+    expect(inspect).toHaveBeenCalledTimes(3);
   });
 
   it("reports pending-job inspection failures with a fixed code and no command details", async () => {
