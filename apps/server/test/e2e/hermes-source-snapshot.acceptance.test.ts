@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { access, chmod, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { access, chmod, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -69,6 +69,8 @@ const SAFE_PROCESS_SCOPE_OBSERVATION_REASONS = new Set([
   "WINDOWS_JOB_INSPECTION_HELPER_INVOCATION_UNAVAILABLE",
   "WINDOWS_JOB_INSPECTION_PROCESS_EXECUTION_UNAVAILABLE",
   "WINDOWS_JOB_INSPECTION_PROCESS_TIMEOUT",
+  "WINDOWS_JOB_INSPECTION_HELPER_TIMEOUT",
+  "WINDOWS_JOB_INSPECTION_HELPER_CLEANUP_UNPROVEN",
   "WINDOWS_JOB_INSPECTION_OUTPUT_LIMIT",
   "WINDOWS_JOB_INSPECTION_PROCESS_ABORTED",
   "WINDOWS_JOB_INSPECTION_PROCESS_EXIT_NONZERO",
@@ -133,7 +135,13 @@ describe.skipIf(!enabled || (!windows && !linux))("Hermes native source snapshot
         serverDirectory: resolve(repositoryRoot, "apps/server"), systemPowerShellPath,
       });
     } else {
-      fixtureDirectory = await mkdtemp(join(tmpdir(), "ebb-hermes-source-acceptance-"));
+      const canonicalRepositoryRoot = await realpath(repositoryRoot);
+      const canonicalRepositoryTempDirectory = join(canonicalRepositoryRoot, "temp");
+      await mkdir(canonicalRepositoryTempDirectory, { recursive: true, mode: 0o700 });
+      const currentUid = process.getuid?.();
+      if (!linux || currentUid === undefined) throw new Error("SOURCE_ACCEPTANCE_REPOSITORY_TEMP_UNSAFE");
+      await assertLinuxRepositoryPathIsSafe(canonicalRepositoryRoot, canonicalRepositoryTempDirectory, currentUid);
+      fixtureDirectory = await mkdtemp(join(canonicalRepositoryTempDirectory, "ebb-hermes-source-acceptance-"));
     }
     fixtureDirectoryIdentity = await objectIdentity(fixtureDirectory, "directory");
     const fixture = await createPinnedGitFixture(fixtureDirectory);
@@ -950,6 +958,25 @@ function safeErrorCode(error: unknown): string {
 
 function isErrno(error: unknown, code: string): boolean {
   return error !== null && typeof error === "object" && "code" in error && error.code === code;
+}
+
+async function assertLinuxRepositoryPathIsSafe(repositoryRootPath: string, tempDirectory: string, currentUid: number): Promise<void> {
+  if (await realpath(repositoryRootPath) !== repositoryRootPath) throw new Error("SOURCE_ACCEPTANCE_REPOSITORY_TEMP_UNSAFE");
+  if (await realpath(tempDirectory) !== tempDirectory) throw new Error("SOURCE_ACCEPTANCE_REPOSITORY_TEMP_UNSAFE");
+  let directory = tempDirectory;
+  while (true) {
+    const details = await lstat(directory);
+    if (!details.isDirectory() || details.isSymbolicLink()) throw new Error("SOURCE_ACCEPTANCE_REPOSITORY_TEMP_UNSAFE");
+    const writableByOthers = (details.mode & 0o022) !== 0;
+    if (directory === tempDirectory) {
+      if (details.uid !== currentUid || writableByOthers) throw new Error("SOURCE_ACCEPTANCE_REPOSITORY_TEMP_UNSAFE");
+    } else if (writableByOthers && !(details.uid === 0 && (details.mode & 0o1000) !== 0)) {
+      throw new Error("SOURCE_ACCEPTANCE_REPOSITORY_TEMP_UNSAFE");
+    }
+    const parent = dirname(directory);
+    if (parent === directory) break;
+    directory = parent;
+  }
 }
 
 function sameObjectIdentity(left: HermesLaunchObjectIdentity, right: HermesLaunchObjectIdentity): boolean {

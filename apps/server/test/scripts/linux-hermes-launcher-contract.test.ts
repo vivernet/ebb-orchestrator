@@ -6,6 +6,7 @@ const launcherSource = readFileSync(
   "utf8",
 );
 const buildScript = readFileSync(new URL("../../scripts/build-linux-hermes-launcher.mjs", import.meta.url), "utf8");
+const sourceSnapshotAcceptance = readFileSync(new URL("../e2e/hermes-source-snapshot.acceptance.test.ts", import.meta.url), "utf8");
 
 describe("Linux Hermes native launch boundary source contract", () => {
   it("pins the Python ELF and refuses shell or PATH-based Hermes execution", () => {
@@ -64,6 +65,16 @@ describe("Linux Hermes native launch boundary source contract", () => {
     expect(launcherSource).toContain("if (info.st_uid != expectedOwner) return \"HERMES_SOURCE_CACHE_ROOT_FINAL_OWNER_MISMATCH\"");
     expect(launcherSource).toContain("if (requireOwner && info.st_uid != expectedOwner) return false;");
     expect(launcherSource).toContain("return !requireOwner && info.st_uid == 0 && (info.st_mode & S_ISVTX) != 0;");
+  });
+
+  it("keeps Linux source-snapshot acceptance fixtures under the repository temp root", () => {
+    expect(sourceSnapshotAcceptance).toContain("const canonicalRepositoryRoot = await realpath(repositoryRoot)");
+    expect(sourceSnapshotAcceptance).toContain('const canonicalRepositoryTempDirectory = join(canonicalRepositoryRoot, "temp")');
+    expect(sourceSnapshotAcceptance).toContain("await assertLinuxRepositoryPathIsSafe(canonicalRepositoryRoot, canonicalRepositoryTempDirectory, currentUid)");
+    expect(sourceSnapshotAcceptance).toContain("directory === tempDirectory");
+    expect(sourceSnapshotAcceptance).toContain("details.uid === 0 && (details.mode & 0o1000) !== 0");
+    expect(sourceSnapshotAcceptance).toContain('mkdtemp(join(canonicalRepositoryTempDirectory, "ebb-hermes-source-acceptance-"))');
+    expect(sourceSnapshotAcceptance).not.toContain('mkdtemp(join(tmpdir(), "ebb-hermes-source-acceptance-"))');
   });
 
   it("builds only on Linux and has no shell compiler invocation", () => {

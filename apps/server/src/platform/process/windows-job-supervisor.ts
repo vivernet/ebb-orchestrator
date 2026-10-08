@@ -8,7 +8,8 @@ import { createWindowsNativeHelperInvocation } from "./windows-native-helper-lau
 const STOP_TIMEOUT_MS = 30_000;
 const POLL_INTERVAL_MS = 500;
 const HELPER_READY_TIMEOUT_MS = 60_000;
-const INSPECTION_TIMEOUT_MS = 5_000;
+// Leaves time for PowerShell startup/Add-Type while the gate's helper deadline remains 10 seconds.
+const INSPECTION_TIMEOUT_MS = 30_000;
 const WINDOWS_INSPECTION_SPAWN_ERROR_CODES = new Set([
   "EACCES", "E2BIG", "EMFILE", "ENFILE", "ENOENT", "ENOTDIR", "EPERM",
 ]);
@@ -143,7 +144,7 @@ const SAFE_NATIVE_HELPER_GATE_EXCEPTION_TYPES = new Set([
   "ArgumentException", "BadImageFormatException", "CryptographicException", "FileLoadException",
   "FileNotFoundException", "IOException", "InvalidOperationException", "MethodInvocationException",
   "NotSupportedException", "PathTooLongException", "PlatformNotSupportedException", "ReflectionTypeLoadException",
-  "RuntimeException", "SecurityException", "SystemException", "TypeInitializationException", "TypeLoadException",
+  "RuntimeException", "SecurityException", "SystemException", "TimeoutException", "TypeInitializationException", "TypeLoadException",
   "UnauthorizedAccessException", "Win32Exception",
 ]);
 
@@ -480,6 +481,13 @@ function mapInspectionGateFailurePhase(phase: string): string | undefined {
   if (phase.startsWith("HELPER_FILE_")) return "WINDOWS_JOB_INSPECTION_HELPER_FILE_GATE_FAILED";
   if (phase === "INTEGRITY_CHECK") return "WINDOWS_JOB_INSPECTION_HELPER_INTEGRITY_GATE_FAILED";
   if (phase === "PROCESS_START") return "WINDOWS_JOB_INSPECTION_HELPER_PROCESS_START_GATE_FAILED";
+  if (phase === "INSPECTION_TIMEOUT") return "WINDOWS_JOB_INSPECTION_HELPER_TIMEOUT";
+  if (phase === "INSPECTION_RESUME" || phase === "INSPECTION_JOB_CREATE" || phase === "INSPECTION_PROCESS_CREATE") {
+    return "WINDOWS_JOB_INSPECTION_HELPER_PROCESS_START_GATE_FAILED";
+  }
+  if (phase === "INSPECTION_CLEANUP_UNPROVEN") {
+    return "WINDOWS_JOB_INSPECTION_HELPER_CLEANUP_UNPROVEN";
+  }
   if (phase.startsWith("LAUNCH_")) return "WINDOWS_JOB_INSPECTION_NATIVE_LAUNCH_FAILED";
   return undefined;
 }
@@ -885,6 +893,12 @@ function normalizeNativeHelperGatePhase(phase: string): string | undefined {
     "helper-file-lock": "HELPER_FILE_LOCK",
     "integrity-check": "INTEGRITY_CHECK",
     "process-start": "PROCESS_START",
+    "inspection-process-create": "INSPECTION_PROCESS_CREATE",
+    "inspection-resume": "INSPECTION_RESUME",
+    "inspection-job-create": "INSPECTION_JOB_CREATE",
+    "inspection-job-assign": "INSPECTION_JOB_ASSIGN",
+    "inspection-timeout": "INSPECTION_TIMEOUT",
+    "inspection-cleanup-unproven": "INSPECTION_CLEANUP_UNPROVEN",
   };
   const fixed = Object.prototype.hasOwnProperty.call(fixedPhases, phase) ? fixedPhases[phase] : undefined;
   if (fixed) return fixed;

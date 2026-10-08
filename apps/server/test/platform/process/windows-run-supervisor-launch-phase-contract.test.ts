@@ -368,10 +368,10 @@ describe("Windows native helper launch-phase diagnostic contract", () => {
   });
 
   it("creates the Windows source-snapshot fixture with an atomic private DACL at volume root", () => {
-    expect(sourceSnapshotAcceptanceSource).toMatch(/const systemPowerShellPath = await resolveVerifiedSystemPowerShellPath\(\);[\s\S]*?const volumeRoot = win32\.parse\(systemPowerShellPath\)\.root;[\s\S]*?fixtureDirectory = candidate;\s*createWindowsPrivateFixtureDirectory\(candidate,\s*\{\s*serverDirectory:[\s\S]*?systemPowerShellPath/u);
+    expect(sourceSnapshotAcceptanceSource).toMatch(/if \(windows\) \{[\s\S]*?const systemPowerShellPath = await resolveVerifiedSystemPowerShellPath\(\);[\s\S]*?const volumeRoot = win32\.parse\(systemPowerShellPath\)\.root;[\s\S]*?fixtureDirectory = candidate;\s*createWindowsPrivateFixtureDirectory\(candidate,\s*\{\s*serverDirectory:[\s\S]*?systemPowerShellPath[\s\S]*?\}\);\s*\} else \{[\s\S]*?mkdtemp\(join\(canonicalRepositoryTempDirectory, "ebb-hermes-source-acceptance-"\)\)/u);
     expect(sourceSnapshotAcceptanceSource).toMatch(/async function resolveVerifiedSystemPowerShellPath\(\)[\s\S]*?runVerifiedNativeHelper\(profileHelperPath, "hermesProfilePath", \["verify-windows-system-powershell"\][\s\S]*?\^\[A-Za-z\]:\\\\\$[\s\S]*?endsWith\("\\\\system32\\\\windowspowershell\\\\v1\.0\\\\powershell\.exe"\)/u);
     expect(sourceSnapshotAcceptanceSource).not.toContain("EBB_PROFILE_CHAIN_FIXTURE_ROOT");
-    expect(sourceSnapshotAcceptanceSource).toMatch(/fixtureDirectory = await mkdtemp\(join\(tmpdir\(\), "ebb-hermes-source-acceptance-"\)\);[\s\S]*?fixtureDirectoryIdentity = await objectIdentity\(fixtureDirectory, "directory"\);/u);
+    expect(sourceSnapshotAcceptanceSource).toMatch(/fixtureDirectory = await mkdtemp\(join\(canonicalRepositoryTempDirectory, "ebb-hermes-source-acceptance-"\)\);[\s\S]*?fixtureDirectoryIdentity = await objectIdentity\(fixtureDirectory, "directory"\);/u);
     expect(sourceSnapshotAcceptanceSource).toMatch(/const cacheRoot = join\(fixtureDirectory, "source-cache"\);\s*await mkdir\(cacheRoot,[\s\S]*?objectIdentity\(cacheRoot, "directory"\)/u);
     expect(sourceSnapshotAcceptanceSource).not.toMatch(/makeWindowsFixturePrivate\(fixtureDirectory/u);
     expect(sourceSnapshotAcceptanceSource).not.toMatch(/makeWindowsFixturePrivate\(cacheRoot/u);

@@ -906,7 +906,7 @@ describe("WindowsJobSupervisor", () => {
   });
 
   it.each([
-    ["inspection timeout", new Error("Process timed out after 5000ms"), "WINDOWS_JOB_INSPECTION_PROCESS_TIMEOUT"],
+    ["inspection timeout", new Error("Process timed out after 30000ms"), "WINDOWS_JOB_INSPECTION_PROCESS_TIMEOUT"],
     ["output limit", new Error("output buffer exceeded"), "WINDOWS_JOB_INSPECTION_OUTPUT_LIMIT"],
     ["abort before spawn", new Error("Process aborted before spawn"), "WINDOWS_JOB_INSPECTION_PROCESS_ABORTED"],
     ["runtime abort", Object.assign(new Error("private abort detail"), { name: "AbortError" }), "WINDOWS_JOB_INSPECTION_PROCESS_ABORTED"],
@@ -916,6 +916,10 @@ describe("WindowsJobSupervisor", () => {
     ["helper-file gate phase", new ExitCodeError("private command", 126, "", "NATIVE_HELPER_GATE_FAIL:helper-file-lock:UnauthorizedAccessException\nC:\\private\\OPENAI_API_KEY=secret"), "WINDOWS_JOB_INSPECTION_HELPER_FILE_GATE_FAILED"],
     ["integrity gate phase", new ExitCodeError("private command", 126, "", "NATIVE_HELPER_GATE_FAIL:integrity-check:CryptographicException\nC:\\private\\OPENAI_API_KEY=secret"), "WINDOWS_JOB_INSPECTION_HELPER_INTEGRITY_GATE_FAILED"],
     ["process-start gate phase", new ExitCodeError("private command", 126, "", "NATIVE_HELPER_GATE_FAIL:process-start:Win32Exception\nC:\\private\\OPENAI_API_KEY=secret"), "WINDOWS_JOB_INSPECTION_HELPER_PROCESS_START_GATE_FAILED"],
+    ["bounded helper timeout", new ExitCodeError("private command", 126, "", "NATIVE_HELPER_GATE_FAIL:inspection-timeout:TimeoutException\nC:\\private\\OPENAI_API_KEY=secret"), "WINDOWS_JOB_INSPECTION_HELPER_TIMEOUT"],
+    ["helper cleanup unproven", new ExitCodeError("private command", 126, "", "NATIVE_HELPER_GATE_FAIL:inspection-cleanup-unproven:InvalidOperationException\nC:\\private\\OPENAI_API_KEY=secret"), "WINDOWS_JOB_INSPECTION_HELPER_CLEANUP_UNPROVEN"],
+    ["inspection process creation refused", new ExitCodeError("private command", 126, "", "NATIVE_HELPER_GATE_FAIL:inspection-process-create:InvalidOperationException\nC:\\private\\OPENAI_API_KEY=secret"), "WINDOWS_JOB_INSPECTION_HELPER_PROCESS_START_GATE_FAILED"],
+    ["inspection resume refused", new ExitCodeError("private command", 126, "", "NATIVE_HELPER_GATE_FAIL:inspection-resume:InvalidOperationException\nC:\\private\\OPENAI_API_KEY=secret"), "WINDOWS_JOB_INSPECTION_HELPER_PROCESS_START_GATE_FAILED"],
     ["native launch phase", new ExitCodeError("private command", 126, "", "NATIVE_HELPER_LAUNCH_FAIL:JOB_POLICY_FAILED\nC:\\private\\OPENAI_API_KEY=secret"), "WINDOWS_JOB_INSPECTION_NATIVE_LAUNCH_FAILED"],
     ["known native refusal", new ExitCodeError("private command", 4, "UNKNOWN\tJOB_ACCOUNTING_UNAVAILABLE\n", "private stderr"), "WINDOWS_JOB_INSPECTION_NATIVE_REFUSAL"],
     ["helper digest mismatch", new ExitCodeError("private command", 127, "", "private stderr"), "WINDOWS_JOB_INSPECTION_HELPER_INTEGRITY_MISMATCH"],
