@@ -1,6 +1,7 @@
 export interface WindowsFixtureAclOptions {
   serverDirectory: string;
   systemRoot?: string;
+  systemPowerShellPath?: string;
   spawnSync?: (
     command: string,
     args: string[],
@@ -31,3 +32,13 @@ export interface WindowsFixtureAclOptions {
  * @throws {Error} Если PowerShell не запустился, завершился с ошибкой или превысил ограничение времени.
  */
 export function makeWindowsFixturePrivate(directory: string, options: WindowsFixtureAclOptions): void;
+
+/**
+ * Создаёт непосредственный потомок volume root с protected owner-only DACL до появления каталога.
+ *
+ * @param directory Абсолютный путь к новому каталогу — ровно один компонент под volume root.
+ * @param options Настройки acceptance harness и изолированного тестирования.
+ * @returns Проверенный путь созданного каталога.
+ * @throws {Error} Если путь небезопасен, цель уже существует, PowerShell завершился с ошибкой или истёк timeout.
+ */
+export function createWindowsPrivateFixtureDirectory(directory: string, options: WindowsFixtureAclOptions): string;

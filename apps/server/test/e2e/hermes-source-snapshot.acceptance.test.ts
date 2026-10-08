@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import { access, chmod, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
+import { createWindowsPrivateFixtureDirectory } from "../../scripts/windows-fixture-acl.mjs";
 import { createHermesLaunchTicket, type HermesLaunchObjectIdentity, type HermesLaunchTicket, type HermesLaunchTicketInput } from "../../src/modules/runtime/hermes/hermes-launch-ticket.js";
 import { ensureHermesSourceSnapshotNativeProjection, materializeHermesSourceSnapshot } from "../../src/modules/runtime/hermes/hermes-source-snapshot.js";
 import { acquireHermesSourceReferenceLock } from "../../src/modules/runtime/hermes/hermes-source-reference-lock.js";
@@ -14,9 +15,12 @@ import { WindowsJobSupervisor } from "../../src/platform/process/windows-job-sup
 import type { ProcessScopeIdentity, ProcessScopeObservation } from "../../src/platform/process/process-inspector.js";
 import type { ProcessScopeHandle, ProcessScopeSupervisor } from "../../src/platform/process/run-scope-supervisor.js";
 import { createWindowsNativeHelperInvocation } from "../../src/platform/process/windows-native-helper-launcher.js";
+import { runVerifiedNativeHelper } from "../../src/platform/process/native-helper-launcher.js";
 import { verifyHermesProfileHomePathChain } from "../../src/modules/runtime/hermes/hermes-executable-resolver.js";
+import { withHermesSourceSnapshotFailureObserver, type HermesSourceSnapshotDiagnosticPhase } from "../../src/modules/runtime/hermes/hermes-source-snapshot-diagnostics.js";
 import { createPinnedGitFixture, waitForFile } from "../helpers/hermes-source-snapshot-acceptance-fixture.js";
 import { safeRestartChildFailureCode } from "../helpers/restart-child-diagnostics.js";
+import { safeHermesLaunchFailureAssertionContext } from "../helpers/safe-hermes-profile-chain-message.js";
 
 const enabled = process.env.EBB_RUN_NATIVE_SCOPE_ACCEPTANCE === "1";
 const windows = process.platform === "win32";
@@ -30,6 +34,26 @@ type HermesLaunchEnvironment = HermesLaunchTicketInput["environment"] & Record<s
 const PINNED_VERSION = "v0.21.5+7357.g9244275";
 const SOURCE_MARKER = "snapshot-pinned-v1";
 const SOURCE_RESOURCE = "snapshot-resource-pinned-v1";
+const SAFE_PROCESS_SCOPE_OBSERVATION_REASONS = new Set([
+  "CGROUP_READ_UNAVAILABLE",
+  "REFUSAL_CLEANUP_UNKNOWN",
+  "SYSTEMD_CGROUP_UNIT_STATE_MISMATCH",
+  "SYSTEMD_CONTAINMENT_PROPERTY_MISMATCH",
+  "SYSTEMD_CONTROL_GROUP_READBACK_MISMATCH",
+  "SYSTEMD_EMPTY_ACTIVE_UNIT",
+  "SYSTEMD_IDENTITY_MISMATCH",
+  "SYSTEMD_INSPECTION_UNAVAILABLE",
+  "SYSTEMD_MANAGER_QUERY_UNAVAILABLE",
+  "SYSTEMD_STOP_FAILED",
+  "SYSTEMD_STOP_IDENTITY_MISMATCH",
+  "SYSTEMD_STOP_TIMEOUT",
+  "SYSTEMD_UNIT_ABSENCE_UNPROVEN",
+  "WINDOWS_JOB_IDENTITY_MISMATCH",
+  "WINDOWS_JOB_IDENTITY_UNPROVEN",
+  "WINDOWS_JOB_INSPECTION_UNAVAILABLE",
+  "WINDOWS_JOB_STOP_FAILED",
+  "WINDOWS_JOB_STOP_TIMEOUT",
+]);
 
 describe.skipIf(!enabled || (!windows && !linux))("Hermes native source snapshot acceptance", () => {
   const executor = new ProcessExecutor();
@@ -42,10 +66,11 @@ describe.skipIf(!enabled || (!windows && !linux))("Hermes native source snapshot
 
   afterAll(async () => {
     if (!fixtureDirectory) return;
-    if (cleanupBlocked) throw new Error(`SOURCE_ACCEPTANCE_FIXTURE_RETAINED_STOP_NOT_PROVEN:${fixtureDirectory}`);
+    if (cleanupBlocked) throw new Error("SOURCE_ACCEPTANCE_FIXTURE_RETAINED_STOP_NOT_PROVEN");
+    if (!fixtureDirectoryIdentity) throw new Error("SOURCE_ACCEPTANCE_FIXTURE_IDENTITY_UNPROVEN_RETAINED");
     const currentIdentity = await objectIdentity(fixtureDirectory, "directory");
-    if (!fixtureDirectoryIdentity || !sameObjectIdentity(currentIdentity, fixtureDirectoryIdentity)) {
-      throw new Error(`SOURCE_ACCEPTANCE_FIXTURE_IDENTITY_CHANGED_RETAINED:${fixtureDirectory}`);
+    if (!sameObjectIdentity(currentIdentity, fixtureDirectoryIdentity)) {
+      throw new Error("SOURCE_ACCEPTANCE_FIXTURE_IDENTITY_CHANGED_RETAINED");
     }
     let cleanupStage = "make-removable";
     try {
@@ -67,15 +92,38 @@ describe.skipIf(!enabled || (!windows && !linux))("Hermes native source snapshot
   });
 
   it("verifies EHSP before dispatch, pins imports, and holds the exact native scope and cache lease", async () => {
-    fixtureDirectory = await mkdtemp(join(tmpdir(), "ebb-hermes-source-acceptance-"));
+    if (windows) {
+      const systemPowerShellPath = await resolveVerifiedSystemPowerShellPath();
+      const volumeRoot = win32.parse(systemPowerShellPath).root;
+      if (!volumeRoot || !/^[A-Za-z]:\\$/u.test(volumeRoot)) throw new Error("SOURCE_ACCEPTANCE_FIXTURE_VOLUME_ROOT_UNAVAILABLE");
+      const candidate = win32.join(volumeRoot, `ebb-hermes-source-acceptance-${randomUUID()}`);
+      fixtureDirectory = candidate;
+      createWindowsPrivateFixtureDirectory(candidate, {
+        serverDirectory: resolve(repositoryRoot, "apps/server"), systemPowerShellPath,
+      });
+    } else {
+      fixtureDirectory = await mkdtemp(join(tmpdir(), "ebb-hermes-source-acceptance-"));
+    }
     fixtureDirectoryIdentity = await objectIdentity(fixtureDirectory, "directory");
     const fixture = await createPinnedGitFixture(fixtureDirectory);
     const cacheRoot = join(fixtureDirectory, "source-cache");
     await mkdir(cacheRoot, { recursive: true, mode: 0o700 });
-      const snapshot = await materializeHermesSourceSnapshot({
-        gitExecutable: await resolveGit(), sourceRoot: fixture.sourceRoot, cacheRoot,
-        hermesVersion: PINNED_VERSION, commit: fixture.commit, tree: fixture.tree,
-      });
+    const cacheRootIdentity = await objectIdentity(cacheRoot, "directory");
+    expect(cacheRootIdentity.platform).toBe(windows ? "win32" : "linux");
+      let snapshotFailurePhase: HermesSourceSnapshotDiagnosticPhase | undefined;
+      let snapshot: Awaited<ReturnType<typeof materializeHermesSourceSnapshot>>;
+      const gitExecutable = await resolveGit();
+      try {
+        snapshot = await withHermesSourceSnapshotFailureObserver(
+          (phase) => { snapshotFailurePhase = phase; },
+          () => materializeHermesSourceSnapshot({
+            gitExecutable, sourceRoot: fixture.sourceRoot, cacheRoot,
+            hermesVersion: PINNED_VERSION, commit: fixture.commit, tree: fixture.tree,
+          }),
+        );
+      } catch {
+        throw new Error(`SOURCE_ACCEPTANCE_SNAPSHOT_FAILED:${snapshotFailurePhase ?? "UNKNOWN"}`);
+      }
       await writeFile(fixture.originalResourcePath, "checkout-resource-mutated-v2\n", { encoding: "utf8" });
       const projectionResult = await ensureHermesSourceSnapshotNativeProjection({ cacheRoot, cacheKey: snapshot.cacheKey });
       const acceptedSnapshot = projectionResult.snapshot;
@@ -90,8 +138,16 @@ describe.skipIf(!enabled || (!windows && !linux))("Hermes native source snapshot
         await replaceProjection(projection.path, originalProjection, variant);
         const refusal = await launchAndAssertRefused({
           fixtureDirectory, snapshot: acceptedSnapshot, projectionPath: projection.path,
-          expectedProjection: variant === "missing" ? originalProjection : await readFile(projection.path),
-          expectedNativeFailureCode: variant === "malformed" ? "LAUNCH_FRAME_INVALID" : "HERMES_TICKET_OBJECT_MISMATCH",
+          variant,
+          expectedProjection: variant === "missing" || variant === "malformed"
+            ? originalProjection
+            : await readFile(projection.path),
+          expectedNativeFailureCode: variant === "hash"
+            ? "LAUNCH_TICKET_SOURCE_SNAPSHOT_TREE_MISMATCH:CONTENT_MISMATCH"
+            : "LAUNCH_TICKET_SOURCE_SNAPSHOT_PROJECTION_UNSAFE",
+          expectedLinuxFailureCode: variant === "missing"
+            ? "HERMES_SOURCE_PROJECTION_UNAVAILABLE"
+            : "HERMES_SOURCE_SNAPSHOT_CONTENT_MISMATCH",
           supervisor, onUnprovenStop: () => { cleanupBlocked = true; },
         });
         expect(refusal.observation.state, `${variant} EHSP must be refused by the native parser`).toBe("STOPPED");
@@ -109,7 +165,7 @@ describe.skipIf(!enabled || (!windows && !linux))("Hermes native source snapshot
       await mkdir(profileHomeDirectory, { recursive: true, mode: 0o700 });
       await writeFile(profileConfig, "fixture Hermes profile; provider-free\n", { mode: 0o600 });
       const python = await resolvePython();
-      const pythonIdentity = await objectIdentity(python, "file");
+      const pythonIdentity = await objectIdentity(python, "file", windows ? dirname(python) : undefined);
       const shimDirectory = join(fixtureDirectory, `shim-${runId}`);
       await mkdir(shimDirectory, { recursive: true });
       const shimPath = join(shimDirectory, windows ? "hermes.exe" : "hermes");
@@ -296,8 +352,11 @@ async function launchAndAssertRefused(input: {
   fixtureDirectory: string;
   snapshot: Awaited<ReturnType<typeof materializeHermesSourceSnapshot>>;
   projectionPath: string;
+  variant: "changed" | "missing" | "extra" | "hash" | "malformed";
   expectedProjection: Buffer;
-  expectedNativeFailureCode: "HERMES_TICKET_OBJECT_MISMATCH" | "LAUNCH_FRAME_INVALID";
+  expectedNativeFailureCode: "LAUNCH_TICKET_SOURCE_SNAPSHOT_PROJECTION_UNSAFE" |
+    "LAUNCH_TICKET_SOURCE_SNAPSHOT_TREE_MISMATCH:CONTENT_MISMATCH";
+  expectedLinuxFailureCode: "HERMES_SOURCE_PROJECTION_UNAVAILABLE" | "HERMES_SOURCE_SNAPSHOT_CONTENT_MISMATCH";
   supervisor: ProcessScopeSupervisor;
   onUnprovenStop: () => void;
 }): Promise<{ observation: ProcessScopeObservation; markerPath: string }> {
@@ -310,7 +369,7 @@ async function launchAndAssertRefused(input: {
   await mkdir(profileHomeDirectory, { recursive: true, mode: 0o700 });
   await writeFile(profileConfig, "fixture Hermes profile; provider-free\n", { mode: 0o600 });
   const python = await resolvePython();
-  const pythonIdentity = await objectIdentity(python, "file");
+  const pythonIdentity = await objectIdentity(python, "file", windows ? dirname(python) : undefined);
   const shimDirectory = join(input.fixtureDirectory, `shim-${runId}`);
   await mkdir(shimDirectory, { recursive: true });
   const shimPath = join(shimDirectory, windows ? "hermes.exe" : "hermes");
@@ -342,6 +401,7 @@ async function launchAndAssertRefused(input: {
   let handle: ProcessScopeHandle | undefined;
   let observation: ProcessScopeObservation = { state: "UNKNOWN", reason: "REFUSAL_NOT_OBSERVED" };
   let nativeRefusalEvidence: string;
+  let launchFailure: unknown;
   let primaryFailure: unknown;
   let cleanupFailure: unknown;
   let result: { observation: ProcessScopeObservation; markerPath: string } | undefined;
@@ -352,10 +412,13 @@ async function launchAndAssertRefused(input: {
         environment, attempt: 1, hermesLaunchTicket: ticket, timeoutMs: 30_000,
       }, async (identity) => { liveIdentity = identity; });
       const completed = await handle.completion;
-      nativeRefusalEvidence = `${completed.stderr}\n${completed.stdout}`;
+      nativeRefusalEvidence = linux
+        ? safeLinuxRefusalEvidence(completed.stderr, completed.stdout) ?? "UNEXPECTED_NATIVE_REFUSAL_OUTPUT"
+        : safeWindowsRefusalEvidence(completed.stderr, completed.stdout) ?? "UNEXPECTED_NATIVE_REFUSAL_OUTPUT";
       expect(completed.exitCode, "native verifier must reject the projection before Python dispatch").not.toBe(0);
     } catch (error) {
       // Windows can refuse before publishing a live identity; Linux may report through cgroup exit.
+      launchFailure = error;
       nativeRefusalEvidence = collectNativeHelperEvidence(error);
     }
     if (liveIdentity) observation = await input.supervisor.waitForStopped(liveIdentity, 30_000);
@@ -366,12 +429,16 @@ async function launchAndAssertRefused(input: {
     }
     if (observation.state !== "STOPPED") {
       input.onUnprovenStop();
-      throw new Error("SOURCE_ACCEPTANCE_REFUSAL_SCOPE_STOP_UNPROVEN; fixture retained");
+      throw refusalScopeStopUnprovenError(launchFailure, observation, liveIdentity);
     }
     if (windows) {
-      expect(nativeRefusalEvidence).toContain(`WINDOWS_HELPER_NATIVE_UNKNOWN:${input.expectedNativeFailureCode}`);
+      expect(nativeRefusalEvidence, `${input.variant} EHSP refusal evidence`).toBe(
+        `WINDOWS_HELPER_NATIVE_UNKNOWN:${input.expectedNativeFailureCode}`,
+      );
     } else {
-      expect(nativeRefusalEvidence).toMatch(/HERMES_LINUX_LAUNCH_REFUSED:HERMES_SOURCE_(?:PROJECTION_UNAVAILABLE|SNAPSHOT_CONTENT_MISMATCH)/u);
+      expect(nativeRefusalEvidence, `${input.variant} EHSP refusal evidence`).toBe(
+        `HERMES_LINUX_LAUNCH_REFUSED:${input.expectedLinuxFailureCode}`,
+      );
     }
     result = { observation, markerPath };
   } catch (error) {
@@ -382,7 +449,7 @@ async function launchAndAssertRefused(input: {
       const stopped = await input.supervisor.waitForStopped(liveIdentity, 30_000);
       if (stopped.state !== "STOPPED") {
         input.onUnprovenStop();
-        cleanupFailure = new Error("SOURCE_ACCEPTANCE_REFUSAL_SCOPE_STOP_UNPROVEN; fixture retained");
+        cleanupFailure = refusalScopeStopUnprovenError(launchFailure, stopped, liveIdentity);
       }
     }
   } catch (error) {
@@ -396,6 +463,21 @@ async function launchAndAssertRefused(input: {
   if (cleanupFailure !== undefined) throw cleanupFailure;
   if (!result) throw new Error("SOURCE_ACCEPTANCE_REFUSAL_RESULT_UNAVAILABLE");
   return result;
+}
+
+function refusalScopeStopUnprovenError(
+  launchFailure: unknown,
+  observation: ProcessScopeObservation,
+  liveIdentity: ProcessScopeIdentity | undefined,
+): Error {
+  const failureCode = safeRestartChildFailureCode(launchFailure) ?? "NONE";
+  const reason = observation.state === "UNKNOWN" && SAFE_PROCESS_SCOPE_OBSERVATION_REASONS.has(observation.reason)
+    ? observation.reason
+    : "NONE";
+  return new Error(
+    `SOURCE_ACCEPTANCE_REFUSAL_SCOPE_STOP_UNPROVEN; fixture retained; launchFailure=${failureCode}; ` +
+    `observation=${observation.state}; reason=${reason}; liveIdentityPersisted=${liveIdentity ? "yes" : "no"}`,
+  );
 }
 
 function makeTicket(input: {
@@ -477,13 +559,19 @@ async function snapshotContainsPycache(rootPath: string): Promise<boolean> {
   return false;
 }
 
-async function objectIdentity(pathname: string, kind: "file" | "directory"): Promise<HermesLaunchObjectIdentity> {
+async function objectIdentity(pathname: string, kind: "file" | "directory", strictRoot?: string): Promise<HermesLaunchObjectIdentity> {
   if (linux) {
     const details = await stat(pathname, { bigint: true });
     if (kind === "file" ? !details.isFile() : !details.isDirectory()) throw new Error("SOURCE_ACCEPTANCE_OBJECT_TYPE_INVALID");
     return { platform: "linux", device: String(details.dev), inode: String(details.ino) };
   }
-  const invocation = await createWindowsNativeHelperInvocation(profileHelperPath, "hermesProfilePath", ["verify-safe-path", kind, pathname]);
+  const args = strictRoot
+    ? kind === "file"
+      ? ["verify-safe-file-chain", pathname, strictRoot]
+      : ["verify-safe-path-chain", kind, pathname, strictRoot]
+    : ["verify-safe-path", kind, pathname];
+  const expectedStatus = strictRoot ? "SAFE_PATH_FILE_CHAIN" : "SAFE_PATH";
+  const invocation = await createWindowsNativeHelperInvocation(profileHelperPath, "hermesProfilePath", args);
   let result: ProcessResult;
   try {
     result = await new ProcessExecutor().exec(invocation.file, [...invocation.args], {
@@ -494,7 +582,7 @@ async function objectIdentity(pathname: string, kind: "file" | "directory"): Pro
   }
   if (result.exitCode !== 0 || result.stderr !== "") throw new Error("SOURCE_ACCEPTANCE_NATIVE_IDENTITY_UNAVAILABLE");
   const parsed = JSON.parse(result.stdout.trim()) as { volumeSerial?: string; fileId?: string; kind?: string; status?: string };
-  if (parsed.status !== "SAFE_PATH" || parsed.kind !== kind || !parsed.volumeSerial || !parsed.fileId) {
+  if (parsed.status !== expectedStatus || parsed.kind !== kind || !parsed.volumeSerial || !parsed.fileId) {
     throw new Error("SOURCE_ACCEPTANCE_NATIVE_IDENTITY_INVALID");
   }
   return { platform: "win32", volumeSerial: parsed.volumeSerial, fileId: parsed.fileId };
@@ -514,17 +602,81 @@ function collectNativeHelperEvidence(error: unknown): string {
         const gateFailure = candidate.stderr.match(/NATIVE_HELPER_GATE_FAIL:[A-Za-z0-9_-]+:[A-Za-z0-9_]+/u)?.[0];
         if (gateFailure) evidence.push(gateFailure);
       }
+      const processOutput = current as { stderr?: unknown; stdout?: unknown };
+      const linuxRefusal = safeLinuxRefusalEvidence(
+        typeof processOutput.stderr === "string" ? processOutput.stderr : "",
+        typeof processOutput.stdout === "string" ? processOutput.stdout : "",
+      );
+      if (linuxRefusal) evidence.push(linuxRefusal);
+      const windowsRefusal = safeWindowsRefusalEvidence(
+        typeof processOutput.stderr === "string" ? processOutput.stderr : "",
+        typeof processOutput.stdout === "string" ? processOutput.stdout : "",
+      );
+      if (windowsRefusal) evidence.push(windowsRefusal);
       current = candidate.cause;
     } else break;
   }
   if (evidence.length > 0) return [...new Set(evidence)].join("|");
-  if (error instanceof Error) {
-    const exitCode = error && typeof error === "object" && "exitCode" in error && typeof error.exitCode === "number"
-      ? `:EXIT_${error.exitCode}`
-      : "";
-    return `${error.name || "Error"}${exitCode}:NO_SAFE_GATE_DIAGNOSTIC`;
+  return safeHermesLaunchFailureAssertionContext(error);
+}
+
+function safeLinuxRefusalEvidence(stderr: string, stdout: string): string | undefined {
+  const lines = [stderr, stdout].flatMap((stream) => stream.split(/\r?\n/u)).filter((line) => line.length > 0);
+  if (lines.length !== 1) return undefined;
+  return /^HERMES_LINUX_LAUNCH_REFUSED:HERMES_SOURCE_(?:PROJECTION_UNAVAILABLE|SNAPSHOT_CONTENT_MISMATCH)$/u.test(lines[0]!)
+    ? lines[0]
+    : undefined;
+}
+
+function safeWindowsRefusalEvidence(stderr: string, stdout: string): string | undefined {
+  const lines = [stderr, stdout].flatMap((stream) => stream.split(/\r?\n/u)).filter((line) => line.length > 0);
+  if (lines.length !== 1) return undefined;
+  const line = lines[0]!;
+  const direct = /^WINDOWS_HELPER_NATIVE_UNKNOWN:(LAUNCH_TICKET_SOURCE_SNAPSHOT_PROJECTION_UNSAFE|LAUNCH_TICKET_SOURCE_SNAPSHOT_TREE_MISMATCH(?::CONTENT_MISMATCH)?)$/u.exec(line);
+  if (direct) return line;
+  const native = /^UNKNOWN\t(LAUNCH_TICKET_SOURCE_SNAPSHOT_PROJECTION_UNSAFE|LAUNCH_TICKET_SOURCE_SNAPSHOT_TREE_MISMATCH)(?:\t(CONTENT_MISMATCH))?$/u.exec(line);
+  if (!native) return undefined;
+  return `WINDOWS_HELPER_NATIVE_UNKNOWN:${native[1]}${native[2] ? `:${native[2]}` : ""}`;
+}
+
+async function resolveVerifiedSystemPowerShellPath(): Promise<string> {
+  let result: ProcessResult;
+  try {
+    result = await runVerifiedNativeHelper(profileHelperPath, "hermesProfilePath", ["verify-windows-system-powershell"], {
+      cwd: repositoryRoot, timeout: 15_000, maxBuffer: 8_192,
+    });
+  } catch {
+    throw new Error("SOURCE_ACCEPTANCE_SYSTEM_POWERSHELL_VERIFICATION_FAILED");
   }
-  return "NATIVE_HELPER_FAILURE_UNKNOWN";
+  if (result.exitCode !== 0 || result.stderr !== "" || result.stdout.length > 8_192) {
+    throw new Error("SOURCE_ACCEPTANCE_SYSTEM_POWERSHELL_VERIFICATION_FAILED");
+  }
+  const line = result.stdout.endsWith("\r\n") ? result.stdout.slice(0, -2)
+    : result.stdout.endsWith("\n") ? result.stdout.slice(0, -1) : result.stdout;
+  if (!line || line.includes("\n") || line.includes("\r")) {
+    throw new Error("SOURCE_ACCEPTANCE_SYSTEM_POWERSHELL_IDENTITY_INVALID");
+  }
+  let parsed: unknown;
+  try { parsed = JSON.parse(line) as unknown; } catch {
+    throw new Error("SOURCE_ACCEPTANCE_SYSTEM_POWERSHELL_IDENTITY_INVALID");
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("SOURCE_ACCEPTANCE_SYSTEM_POWERSHELL_IDENTITY_INVALID");
+  }
+  const identity = parsed as Record<string, unknown>;
+  if (Object.keys(identity).sort().join(",") !== "fileId,kind,path,status,volumeSerial" ||
+      identity.status !== "SAFE_PATH" || identity.kind !== "file" || typeof identity.path !== "string" ||
+      typeof identity.fileId !== "string" || !/^[a-f0-9]{32}$/u.test(identity.fileId) ||
+      typeof identity.volumeSerial !== "string" || !/^[a-f0-9]{16}$/u.test(identity.volumeSerial)) {
+    throw new Error("SOURCE_ACCEPTANCE_SYSTEM_POWERSHELL_IDENTITY_INVALID");
+  }
+  const reportedPath = identity.path.startsWith("\\\\?\\") ? identity.path.slice(4) : identity.path;
+  const root = win32.parse(reportedPath).root;
+  if (!/^[A-Za-z]:\\$/u.test(root) || !win32.isAbsolute(reportedPath) ||
+      !reportedPath.toLowerCase().endsWith("\\system32\\windowspowershell\\v1.0\\powershell.exe")) {
+    throw new Error("SOURCE_ACCEPTANCE_SYSTEM_POWERSHELL_IDENTITY_INVALID");
+  }
+  return reportedPath;
 }
 
 function safeErrorCode(error: unknown): string {

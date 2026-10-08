@@ -20,6 +20,10 @@ const profileChainAcceptanceSource = readFileSync(
   new URL("../../e2e/hermes-profile-path-chain.acceptance.test.ts", import.meta.url),
   "utf8",
 );
+const sourceSnapshotAcceptanceSource = readFileSync(
+  new URL("../../e2e/hermes-source-snapshot.acceptance.test.ts", import.meta.url),
+  "utf8",
+);
 const nativeHermesHarnessSource = readFileSync(
   new URL("../../../scripts/test-hermes-profile-path-native.mjs", import.meta.url),
   "utf8",
@@ -300,6 +304,37 @@ describe("Windows native helper launch-phase diagnostic contract", () => {
     expect(fixtureSetup).toMatch(/rmdir\(homeRoot\)[\s\S]*?rmdir\(fixtureParent\)/u);
   });
 
+  it("creates the Windows source-snapshot fixture with an atomic private DACL at volume root", () => {
+    expect(sourceSnapshotAcceptanceSource).toMatch(/const systemPowerShellPath = await resolveVerifiedSystemPowerShellPath\(\);[\s\S]*?const volumeRoot = win32\.parse\(systemPowerShellPath\)\.root;[\s\S]*?fixtureDirectory = candidate;\s*createWindowsPrivateFixtureDirectory\(candidate,\s*\{\s*serverDirectory:[\s\S]*?systemPowerShellPath/u);
+    expect(sourceSnapshotAcceptanceSource).toMatch(/async function resolveVerifiedSystemPowerShellPath\(\)[\s\S]*?runVerifiedNativeHelper\(profileHelperPath, "hermesProfilePath", \["verify-windows-system-powershell"\][\s\S]*?\^\[A-Za-z\]:\\\\\$[\s\S]*?endsWith\("\\\\system32\\\\windowspowershell\\\\v1\.0\\\\powershell\.exe"\)/u);
+    expect(sourceSnapshotAcceptanceSource).not.toContain("EBB_PROFILE_CHAIN_FIXTURE_ROOT");
+    expect(sourceSnapshotAcceptanceSource).toMatch(/fixtureDirectory = await mkdtemp\(join\(tmpdir\(\), "ebb-hermes-source-acceptance-"\)\);[\s\S]*?fixtureDirectoryIdentity = await objectIdentity\(fixtureDirectory, "directory"\);/u);
+    expect(sourceSnapshotAcceptanceSource).toMatch(/const cacheRoot = join\(fixtureDirectory, "source-cache"\);\s*await mkdir\(cacheRoot,[\s\S]*?objectIdentity\(cacheRoot, "directory"\)/u);
+    expect(sourceSnapshotAcceptanceSource).not.toMatch(/makeWindowsFixturePrivate\(fixtureDirectory/u);
+    expect(sourceSnapshotAcceptanceSource).not.toMatch(/makeWindowsFixturePrivate\(cacheRoot/u);
+    expect(sourceSnapshotAcceptanceSource).toMatch(/objectIdentity\(python, "file", windows \? dirname\(python\) : undefined\)/u);
+    expect(sourceSnapshotAcceptanceSource).toMatch(/const args = strictRoot[\s\S]*?kind === "file"[\s\S]*?verify-safe-file-chain/u);
+    expect(sourceSnapshotAcceptanceSource).toMatch(/withHermesSourceSnapshotFailureObserver\([\s\S]*?snapshotFailurePhase = phase[\s\S]*?materializeHermesSourceSnapshot\([\s\S]*?SOURCE_ACCEPTANCE_SNAPSHOT_FAILED:\$\{snapshotFailurePhase \?\? "UNKNOWN"\}/u);
+    expect(sourceSnapshotAcceptanceSource).toMatch(/function collectNativeHelperEvidence\([\s\S]*?if \(evidence\.length > 0\)[\s\S]*?return safeHermesLaunchFailureAssertionContext\(error\);/u);
+    expect(sourceSnapshotAcceptanceSource).toMatch(/for \(const variant of \["changed", "missing", "extra", "hash", "malformed"\] as const\)[\s\S]*?expectedProjection: variant === "missing" \|\| variant === "malformed"[\s\S]*?expectedNativeFailureCode: variant === "hash"[\s\S]*?LAUNCH_TICKET_SOURCE_SNAPSHOT_TREE_MISMATCH:CONTENT_MISMATCH[\s\S]*?LAUNCH_TICKET_SOURCE_SNAPSHOT_PROJECTION_UNSAFE/u);
+    expect(sourceSnapshotAcceptanceSource).toMatch(/expectedLinuxFailureCode: variant === "missing"[\s\S]*?HERMES_SOURCE_PROJECTION_UNAVAILABLE[\s\S]*?HERMES_SOURCE_SNAPSHOT_CONTENT_MISMATCH/u);
+    expect(sourceSnapshotAcceptanceSource).toMatch(/expect\(nativeRefusalEvidence, `\$\{input\.variant\} EHSP refusal evidence`\)\.toBe\([\s\S]*?WINDOWS_HELPER_NATIVE_UNKNOWN:\$\{input\.expectedNativeFailureCode\}/u);
+    expect(sourceSnapshotAcceptanceSource).toMatch(/expect\(nativeRefusalEvidence, `\$\{input\.variant\} EHSP refusal evidence`\)\.toBe\([\s\S]*?HERMES_LINUX_LAUNCH_REFUSED:\$\{input\.expectedLinuxFailureCode\}/u);
+    expect(sourceSnapshotAcceptanceSource).toMatch(/expect\(refusal\.observation\.state[\s\S]*?\.toBe\("STOPPED"\)[\s\S]*?markerExists\(refusal\.markerPath\)[\s\S]*?\.toBe\(false\)/u);
+    const atomicFixtureCreator = /export function createWindowsPrivateFixtureDirectory[\s\S]*?(?=\n\})/u.exec(windowsFixtureAclSource)?.[0] ?? "";
+    expect(atomicFixtureCreator).not.toBe("");
+    expect(atomicFixtureCreator).toContain("win32.dirname(normalized)");
+    expect(atomicFixtureCreator).toContain("!/^[A-Za-z]:");
+    expect(atomicFixtureCreator).toContain("normalizedPowerShellPath");
+    expect(atomicFixtureCreator).toContain("$directory.Create($acl)");
+    expect(atomicFixtureCreator).toContain("$directory.GetAccessControl()");
+    expect(atomicFixtureCreator).toContain("InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit");
+    expect(atomicFixtureCreator).toContain("$rules[0].InheritanceFlags -ne $inherit");
+    expect(atomicFixtureCreator).toContain("WINDOWS_FIXTURE_PRIVATE_CREATE_FAILED");
+    expect(windowsFixtureAclSource).not.toMatch(/createWindowsPrivateFixtureDirectory[\s\S]*?SetAccessControl/u);
+    expect(sourceSnapshotAcceptanceSource).toMatch(/function safeWindowsRefusalEvidence\(stderr: string, stdout: string\)[\s\S]*?lines\.length !== 1[\s\S]*?WINDOWS_HELPER_NATIVE_UNKNOWN:[\s\S]*?UNKNOWN\\t\(LAUNCH_TICKET_SOURCE_SNAPSHOT_PROJECTION_UNSAFE\|LAUNCH_TICKET_SOURCE_SNAPSHOT_TREE_MISMATCH\)/u);
+  });
+
   it("restores the deny-delete path-chain fixture ACL even when an assertion fails", () => {
     const fixtureLoop = /for \(const \[label, deny, expectAccepted\] of \[[\s\S]*?\n {2}\}\n\n {2}for \(const \[label, readOnlyRight\]/u.exec(nativeHermesHarnessSource)?.[0] ?? "";
     expect(fixtureLoop).toMatch(/try \{[\s\S]*?const aceResult = invoke\([\s\S]*?\} finally \{\s*if \(deny\) restoreWindowsFixtureForeignDenyDelete\(aceParent\);\s*\}/u);
@@ -311,6 +346,10 @@ describe("Windows native helper launch-phase diagnostic contract", () => {
     expect(windowsFixtureAclSource).toMatch(/const isDirectory = target\.isDirectory\(\)/u);
     expect(windowsFixtureAclSource).toMatch(/\$isDirectory = \[System\.Environment\]::GetEnvironmentVariable\('EBB_HERMES_PROFILE_TEST_IS_DIRECTORY'\)/u);
     expect(windowsFixtureAclSource).toMatch(/\$inherit = \[System\.Security\.AccessControl\.InheritanceFlags\]::None; if \(\$isDirectory -eq '1'\) \{ \$inherit = \[System\.Security\.AccessControl\.InheritanceFlags\]::ContainerInherit -bor \[System\.Security\.AccessControl\.InheritanceFlags\]::ObjectInherit \}/u);
+    expect(windowsFixtureAclSource).toMatch(/if \(\$isDirectory -eq '1'\) \{ \[System\.IO\.DirectoryInfo\]::new\(\$path\) \} else \{ \[System\.IO\.FileInfo\]::new\(\$path\) \}/u);
+    expect(windowsFixtureAclSource).toMatch(/\$acl = \$item\.GetAccessControl\(\);/u);
+    expect(windowsFixtureAclSource).toMatch(/\$item\.SetAccessControl\(\$acl\);/u);
+    expect(windowsFixtureAclSource).not.toMatch(/Get-Acl|Set-Acl/u);
     const aclChildEnvironment = /env: \{([\s\S]*?)\n\s*\},/u.exec(windowsFixtureAclSource)?.[1] ?? "";
     expect(aclChildEnvironment).toMatch(/EBB_HERMES_PROFILE_TEST_ROOT: directory/u);
     expect(aclChildEnvironment).toMatch(/EBB_HERMES_PROFILE_TEST_IS_DIRECTORY: isDirectory \? "1" : "0"/u);
