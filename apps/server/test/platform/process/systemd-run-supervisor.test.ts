@@ -207,6 +207,7 @@ describe("SystemdRunSupervisor", () => {
     expect(call?.args.join(" ")).toContain("--property=ProtectControlGroups=yes");
     expect(call?.args.join(" ")).toContain("--property=Restart=no");
     expect(call?.args).toContain("--collect");
+    expect(call?.args).toContain("--quiet");
     expect(call?.args.join(" ")).not.toContain("EBB_HERMES_PROVIDER_API_KEY");
     expect(call?.args.join(" ")).not.toContain("...process.env");
     expect(call?.options.env).toMatchObject({

@@ -187,7 +187,7 @@ export class SystemdRunSupervisor implements ProcessScopeSupervisor {
       ]
       : [request.executable, ...request.args];
     const args = [
-      "--user", "--expand-environment=no", "--pipe", "--wait", "--collect", `--unit=${unitName}`, "--slice=app.slice",
+      "--user", "--expand-environment=no", "--pipe", "--wait", "--quiet", "--collect", `--unit=${unitName}`, "--slice=app.slice",
       "--description=ebb-orchestrator:" + owner.launchNonce,
       "--service-type=exec",
       "--property=Type=exec",

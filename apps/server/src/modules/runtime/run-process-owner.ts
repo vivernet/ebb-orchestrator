@@ -3,6 +3,28 @@ import type { Database, DatabaseTx } from '../../platform/database/database.js';
 import type { ProcessScopeSupervisor } from '../../platform/process/run-scope-supervisor.js';
 import type { ProcessScopeObservation } from '../../platform/process/process-inspector.js';
 
+const SAFE_WINDOWS_SCOPE_UNKNOWN_REASONS = new Set([
+  'WINDOWS_ATTEMPT_NONCE_MISMATCH',
+  'WINDOWS_ATTEMPT_JOB_STILL_LIVE',
+  'WINDOWS_ATTEMPT_ABSENCE_EVIDENCE_MALFORMED',
+  'WINDOWS_ATTEMPT_NEVER_LAUNCHED_CONFLICT',
+  'WINDOWS_ATTEMPT_SESSION_PENDING',
+  'WINDOWS_JOB_INSPECTION_UNAVAILABLE',
+  'WINDOWS_JOB_STOP_TIMEOUT',
+  'WINDOWS_JOB_IDENTITY_MISMATCH',
+  'WINDOWS_JOB_IDENTITY_UNPROVEN',
+  'WINDOWS_PHASE_UNAVAILABLE',
+  'WINDOWS_JOB_OPEN_UNAVAILABLE',
+  'WINDOWS_JOB_ABSENT_LAUNCH_PENDING',
+  'WINDOWS_JOB_ABSENT_PREPARED_HAS_HELPER_IDENTITY',
+  'WINDOWS_JOB_ABSENT_OWNER_STATE_UNKNOWN',
+  'WINDOWS_JOB_ABSENT_HELPER_IDENTITY_MISSING',
+  'WINDOWS_JOB_ABSENT_HELPER_INVENTORY_UNAVAILABLE',
+  'WINDOWS_JOB_ABSENT_HELPER_STILL_LIVE',
+  'WINDOWS_MAPPING_OR_IDENTITY_UNAVAILABLE',
+  'WINDOWS_JOB_ACCOUNTING_UNAVAILABLE',
+]);
+
 export type RunContainmentKind = 'windows-job' | 'systemd-user-service';
 export type RunProcessOwnerState = 'PREPARED' | 'LAUNCHING' | 'LIVE' | 'STOPPING' | 'STOPPED' | 'UNKNOWN';
 
@@ -345,7 +367,10 @@ export async function preflightRunProcessOwners(
     }
     if (observation.state === 'UNKNOWN') {
       markOwnerUnknown(database, owner);
-      throw new Error(`RUN_PROCESS_SCOPE_UNKNOWN:${owner.runId}`);
+      const safeReason = owner.containmentKind === 'windows-job' && SAFE_WINDOWS_SCOPE_UNKNOWN_REASONS.has(observation.reason)
+        ? new Error(observation.reason)
+        : undefined;
+      throw new Error(`RUN_PROCESS_SCOPE_UNKNOWN:${owner.runId}`, safeReason ? { cause: safeReason } : undefined);
     }
 
     let liveIdentity = observation.identity;

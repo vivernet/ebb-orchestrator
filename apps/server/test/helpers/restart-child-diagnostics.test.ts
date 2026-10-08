@@ -23,6 +23,13 @@ describe("restart child failure diagnostics", () => {
     expect(safeRestartChildFailureCode(new Error("CHILD_JOB_BARRIER_UNAVAILABLE"))).toBe("CHILD_JOB_BARRIER_UNAVAILABLE");
   });
 
+  it("preserves the exact Windows job identity-unproven recovery reason", () => {
+    const failure = new Error("RUN_PROCESS_SCOPE_UNKNOWN:dynamic-run-id", {
+      cause: new Error("WINDOWS_JOB_IDENTITY_UNPROVEN"),
+    });
+    expect(safeRestartChildFailureCode(failure)).toBe("WINDOWS_JOB_IDENTITY_UNPROVEN");
+  });
+
   it("does not echo a secret or arbitrary message from an Error or its cause", () => {
     const secret = "sk-test-never-echo-this-value";
     const cause = new Error(`WINDOWS_HELPER_NATIVE_UNKNOWN:${secret}`);

@@ -6,6 +6,7 @@ import type { Database, DatabaseTx } from "../../../src/platform/database/databa
 import { createSqliteDatabase } from "../../../src/platform/database/sqlite-database.js";
 import { runMigrations } from "../../../src/platform/database/migrator.js";
 import { getRunProcessOwner, insertRunProcessOwnerTx, prepareRunProcessOwner, preflightRunProcessOwners, transitionRunProcessOwnerTx } from "../../../src/modules/runtime/run-process-owner.js";
+import { safeRestartChildFailureCode } from "../../helpers/restart-child-diagnostics.js";
 import type { ProcessScopeIdentity, ProcessScopeObservation } from "../../../src/platform/process/process-inspector.js";
 import type { ProcessScopeSupervisor } from "../../../src/platform/process/run-scope-supervisor.js";
 import { loadTestMigrations } from "../../helpers/migrations.js";
@@ -45,12 +46,12 @@ describe("Run process owner", () => {
     return db;
   }
 
-  function insertRun(database: Database, runId: string, status = "STARTED"): void {
+  function insertRun(database: Database, runId: string, status = "STARTED", containmentKind: "systemd-user-service" | "windows-job" = "systemd-user-service"): void {
     database.run(
       "INSERT INTO agent_runs(id,role,runtime,model,status,started_at) VALUES($id,'developer','hermes','test-model',$status,'2026-10-01T00:00:00.000Z')",
       { id: runId, status },
     );
-    database.transaction((tx) => insertRunProcessOwnerTx(tx, prepareRunProcessOwner(runId, join(directory, "hermes", runId), "systemd-user-service")));
+    database.transaction((tx) => insertRunProcessOwnerTx(tx, prepareRunProcessOwner(runId, join(directory, "hermes", runId), containmentKind)));
   }
 
   function insertLegacyRunWithoutOwner(database: Database | DatabaseTx, runId: string, status = "STARTED"): void {
@@ -355,6 +356,59 @@ describe("Run process owner", () => {
     expect(database.get<{ state: string; stop_evidence: string | null }>(
       "SELECT state,stop_evidence FROM run_process_owners WHERE run_id='unknown-run'",
     )).toEqual({ state: "UNKNOWN", stop_evidence: "OS_STATE_UNPROVEN" });
+  });
+
+  it("preserves only an exact Windows inspection reason for restart diagnostics", async () => {
+    const database = await setup();
+    const runId = "run-id-must-not-reach-diagnostic";
+    insertRun(database, runId, "STARTED", "windows-job");
+    database.transaction((tx) => transitionRunProcessOwnerTx(tx, {
+      runId, expectedState: "PREPARED", nextState: "LAUNCHING",
+    }));
+    const supervisor: ProcessScopeSupervisor = {
+      inspect: async () => ({ state: "UNKNOWN", reason: "WINDOWS_JOB_INSPECTION_UNAVAILABLE" }),
+      stop: async () => ({ state: "UNKNOWN", reason: "unused" }),
+      launch: async () => { throw new Error("not used"); },
+      waitForStopped: async () => ({ state: "UNKNOWN", reason: "unused" }),
+    };
+
+    let failure: unknown;
+    try { await preflightRunProcessOwners(database, supervisor); }
+    catch (error) { failure = error; }
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toBe(`RUN_PROCESS_SCOPE_UNKNOWN:${runId}`);
+    expect(safeRestartChildFailureCode(failure)).toBe("WINDOWS_JOB_INSPECTION_UNAVAILABLE");
+    expect(safeRestartChildFailureCode(failure)).not.toContain(runId);
+  });
+
+  it.each([
+    "WINDOWS_JOB_INSPECTION_UNAVAILABLE token=secret",
+    "WINDOWS_JOB_INSPECTION_UNAVAILABLE:C:\\private\\path",
+    "WINDOWS_UNRECOGNIZED_NATIVE_REASON",
+  ])("does not forward an unrecognized Windows observation reason: %s", async (reason) => {
+    const database = await setup();
+    const runId = "run-id-must-not-reach-diagnostic";
+    insertRun(database, runId, "STARTED", "windows-job");
+    database.transaction((tx) => transitionRunProcessOwnerTx(tx, {
+      runId, expectedState: "PREPARED", nextState: "LAUNCHING",
+    }));
+    const supervisor: ProcessScopeSupervisor = {
+      inspect: async () => ({ state: "UNKNOWN", reason }),
+      stop: async () => ({ state: "UNKNOWN", reason: "unused" }),
+      launch: async () => { throw new Error("not used"); },
+      waitForStopped: async () => ({ state: "UNKNOWN", reason: "unused" }),
+    };
+
+    let failure: unknown;
+    try { await preflightRunProcessOwners(database, supervisor); }
+    catch (error) { failure = error; }
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toBe(`RUN_PROCESS_SCOPE_UNKNOWN:${runId}`);
+    expect((failure as Error).cause).toBeUndefined();
+    expect(safeRestartChildFailureCode(failure)).toBeUndefined();
+    expect(JSON.stringify(failure)).not.toContain(reason);
   });
 
   it("recovers stale non-STOPPED owners attached to terminal Runs before startup continues", async () => {
