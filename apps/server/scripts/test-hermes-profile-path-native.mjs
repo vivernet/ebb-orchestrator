@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
 import { createHash, randomUUID } from "node:crypto";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import process from "node:process";
@@ -1032,12 +1032,28 @@ async function verifySourceCacheGcHandles(root) {
 
   const replacedId = createHash("sha256").update(randomUUID()).digest("hex");
   const replaced = makeCandidate(replacedId);
+  const originalTopPath = join(replaced.snapshotRoot, "top.py");
+  const replacementTopPath = join(replaced.snapshotRoot, `.replacement-${randomUUID()}.tmp`);
   chmodSync(replaced.snapshotRoot, 0o700);
-  chmodSync(join(replaced.snapshotRoot, "top.py"), 0o600);
-  unlinkSync(join(replaced.snapshotRoot, "top.py"));
-  writeFileSync(join(replaced.snapshotRoot, "top.py"), "replacement\n", { mode: 0o400 });
-  chmodSync(join(replaced.snapshotRoot, "top.py"), 0o400);
+  writeFileSync(replacementTopPath, "replacement\n", { mode: 0o400 });
+  chmodSync(replacementTopPath, 0o400);
+  const originalTopIdentity = lstatSync(originalTopPath, { bigint: true });
+  const replacementTopIdentity = lstatSync(replacementTopPath, { bigint: true });
+  assert.notDeepEqual(
+    { dev: String(replacementTopIdentity.dev), ino: String(replacementTopIdentity.ino) },
+    { dev: String(originalTopIdentity.dev), ino: String(originalTopIdentity.ino) },
+    "replacement file must have a distinct identity while the original file is still allocated",
+  );
+  chmodSync(originalTopPath, 0o600);
+  unlinkSync(originalTopPath);
+  renameSync(replacementTopPath, originalTopPath);
   chmodSync(replaced.snapshotRoot, 0o500);
+  const installedTopIdentity = lstatSync(originalTopPath, { bigint: true });
+  assert.notDeepEqual(
+    { dev: String(installedTopIdentity.dev), ino: String(installedTopIdentity.ino) },
+    { dev: String(originalTopIdentity.dev), ino: String(originalTopIdentity.ino) },
+    "renamed replacement must retain its distinct identity for the native GC preflight",
+  );
   if (process.platform !== "win32") {
     assert.equal(statSync(replaced.snapshotRoot).mode & 0o777, 0o500,
       "replacement-identity probe restores the original sealed snapshot-root mode before native GC");

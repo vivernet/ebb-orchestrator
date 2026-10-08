@@ -168,17 +168,21 @@ test('Linux process-scope acceptance provisions a hosted runner user systemd man
   const stepIndex = (name) => steps.findIndex((step) => step.name === name);
   const managerIndex = stepIndex('Start ephemeral runner user systemd manager');
   const prerequisitesIndex = stepIndex('Verify native Linux runner prerequisites');
-  const launcherBuildIndex = stepIndex('Build native Linux Hermes launcher');
+  const buildIndex = stepIndex('Build native source-snapshot helpers');
+  const gcProbeIndex = stepIndex('Run native source-snapshot GC and inventory-boundary probe');
   const acceptanceIndex = stepIndex('Run native provider-free process-scope acceptance');
+  const snapshotAcceptanceIndex = stepIndex('Run native provider-free source-snapshot acceptance');
   const managerSetup = steps[managerIndex]?.run ?? '';
   const prerequisites = steps[prerequisitesIndex]?.run ?? '';
-  const launcherBuild = steps[launcherBuildIndex]?.run ?? '';
+  const nativeBuild = steps[buildIndex]?.run ?? '';
 
   assert.equal(job['runs-on'], 'ubuntu-24.04', 'Linux process-scope acceptance must use the pinned GitHub-hosted image');
   assert.match(job.if, /github\.event_name == 'push'/u, 'Linux acceptance must retain its push-only trigger');
   assert.equal(Object.keys(workflow.jobs).filter((name) => name === 'process-scope-linux-acceptance').length, 1, 'the existing Linux job must be extended in place');
   assert.ok(managerIndex >= 0 && prerequisitesIndex > managerIndex, 'the user manager must start before prerequisite checks');
-  assert.ok(launcherBuildIndex > prerequisitesIndex && acceptanceIndex > launcherBuildIndex, 'launcher build must run after prerequisites and before acceptance');
+  assert.ok(buildIndex > prerequisitesIndex && gcProbeIndex > buildIndex && acceptanceIndex > gcProbeIndex,
+    'both native helpers must build after prerequisites, then GC and process-scope acceptance must run in order');
+  assert.ok(snapshotAcceptanceIndex > acceptanceIndex, 'source-snapshot acceptance must follow the process-scope acceptance');
   assert.match(managerSetup, /loginctl enable-linger/u, 'the ephemeral runner user must be enabled through systemd-logind');
   assert.match(managerSetup, /systemctl start ["']?user@\$\{uid\}\.service/u, 'the runner user systemd manager must be started');
   assert.match(managerSetup, /XDG_RUNTIME_DIR=.*GITHUB_ENV/u, 'the runtime directory must reach later workflow steps');
@@ -198,11 +202,13 @@ test('Linux process-scope acceptance provisions a hosted runner user systemd man
   assert.match(prerequisites, /Type=exec/u);
   assert.match(prerequisites, /systemctl --user stop ["']?\$probe_unit/u, 'the probe must stop its exact transient service');
   assert.match(prerequisites, /systemctl --user reset-failed ["']?\$probe_unit/u, 'the probe must remove the transient service');
-  assert.match(launcherBuild, /pnpm --filter @ebb-orchestrator\/server build:linux-hermes-launcher/u);
-  assert.match(launcherBuild, /compiler.*--version/u);
-  assert.match(launcherBuild, /build_status/u);
+  assert.match(nativeBuild, /pnpm --filter @ebb-orchestrator\/server build:hermes-profile-path && pnpm --filter @ebb-orchestrator\/server build:linux-hermes-launcher/u,
+    'the shared helper step must build both the profile-path and Linux launcher helpers');
+  assert.match(nativeBuild, /compiler.*--version/u);
+  assert.match(nativeBuild, /build_status/u);
   assert.equal(steps[acceptanceIndex]?.run, 'pnpm --filter @ebb-orchestrator/server exec vitest run test/e2e/hermes-process-scope.acceptance.test.ts');
-  assert.ok(!steps.some((step) => (step.run ?? '').includes('hermes-source-snapshot.acceptance.test.ts')), 'Task5B source snapshot acceptance must stay out before its dependency gate');
+  assert.equal(steps[snapshotAcceptanceIndex]?.run,
+    'pnpm --filter @ebb-orchestrator/server exec vitest run test/e2e/hermes-source-snapshot.acceptance.test.ts');
 });
 
 test('manual failure-path workflow mirrors production audit conditions and wires all four scenarios', () => {
