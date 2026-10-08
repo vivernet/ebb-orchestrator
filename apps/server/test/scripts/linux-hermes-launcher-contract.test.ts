@@ -30,6 +30,8 @@ describe("Linux Hermes native launch boundary source contract", () => {
   it("verifies the bounded source projection and holds a read-only source lease through descendants", () => {
     expect(launcherSource).toContain("parseSnapshotProjection");
     expect(launcherSource).toContain("verifySnapshotTree");
+    expect(launcherSource).toContain('FileDescriptor scanFd(openat(directory, ".", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW))');
+    expect(launcherSource).not.toMatch(/bool verifySnapshotDirectory\([\s\S]*?FileDescriptor scanFd\(dup\(directory\)\)/u);
     expect(launcherSource).toContain("O_NOFOLLOW");
     expect(launcherSource).toContain("MOUNT_ATTR_RDONLY");
     expect(launcherSource).toContain("flock(lock.get(), LOCK_SH | LOCK_NB)");

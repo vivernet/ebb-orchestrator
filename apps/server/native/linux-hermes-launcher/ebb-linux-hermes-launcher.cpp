@@ -371,7 +371,8 @@ bool hashSnapshotFile(int file, const struct stat& before, const std::array<uint
 
 bool verifySnapshotDirectory(int directory, const std::string& prefix, const std::map<std::string, SnapshotEntry>& entries,
                              std::unordered_set<std::string>& seen, uint64_t& totalBytes) {
-  FileDescriptor scanFd(dup(directory));
+  // Callers may pass O_PATH handles from openAbsoluteDirectory(); fdopendir needs a readable descriptor.
+  FileDescriptor scanFd(openat(directory, ".", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW));
   if (!scanFd) return false;
   DIR* raw = fdopendir(scanFd.release());
   if (!raw) return false;
