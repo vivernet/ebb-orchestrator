@@ -306,7 +306,16 @@ describe("Windows native helper launch-phase diagnostic contract", () => {
     expect(nativeHermesHarnessSource).toMatch(/function restoreWindowsFixtureForeignDenyDelete\(directory\)[\s\S]*?\[directory, "\/remove:d", "\*S-1-1-0", "\/T", "\/C"\]/u);
     expect(nativeHermesHarnessSource).toMatch(/function makeWindowsFixturePrivate\(directory\)[\s\S]*?setWindowsFixturePrivate\(directory, \{ serverDirectory, systemRoot: process\.env\.SYSTEMROOT \}\)/u);
     expect(windowsFixtureAclSource).toMatch(/spawnSync\(powershell,[\s\S]*?cwd: serverDirectory/u);
-    expect(windowsFixtureAclSource).toMatch(/\$inherit = \[System\.Security\.AccessControl\.InheritanceFlags\]::None; if \(\(Get-Item -LiteralPath \$path\)\.PSIsContainer\)/u);
+    expect(windowsFixtureAclSource).toMatch(/target = lstatSync\(directory\)/u);
+    expect(windowsFixtureAclSource).toMatch(/target\.isSymbolicLink\(\) \|\| \(!target\.isDirectory\(\) && !target\.isFile\(\)\)/u);
+    expect(windowsFixtureAclSource).toMatch(/const isDirectory = target\.isDirectory\(\)/u);
+    expect(windowsFixtureAclSource).toMatch(/\$isDirectory = \[System\.Environment\]::GetEnvironmentVariable\('EBB_HERMES_PROFILE_TEST_IS_DIRECTORY'\)/u);
+    expect(windowsFixtureAclSource).toMatch(/\$inherit = \[System\.Security\.AccessControl\.InheritanceFlags\]::None; if \(\$isDirectory -eq '1'\) \{ \$inherit = \[System\.Security\.AccessControl\.InheritanceFlags\]::ContainerInherit -bor \[System\.Security\.AccessControl\.InheritanceFlags\]::ObjectInherit \}/u);
+    const aclChildEnvironment = /env: \{([\s\S]*?)\n\s*\},/u.exec(windowsFixtureAclSource)?.[1] ?? "";
+    expect(aclChildEnvironment).toMatch(/EBB_HERMES_PROFILE_TEST_ROOT: directory/u);
+    expect(aclChildEnvironment).toMatch(/EBB_HERMES_PROFILE_TEST_IS_DIRECTORY: isDirectory \? "1" : "0"/u);
+    expect(aclChildEnvironment).not.toMatch(/\.\.\.process\.env/u);
+    expect(windowsFixtureAclSource).not.toMatch(/Get-Item/u);
     expect(windowsFixtureAclSource).toMatch(/timeout: WINDOWS_FIXTURE_ACL_TIMEOUT_MS/u);
   });
 

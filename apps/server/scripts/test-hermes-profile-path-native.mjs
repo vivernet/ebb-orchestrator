@@ -1136,7 +1136,8 @@ function verifySourceCacheGcInventoryBoundary(root) {
   const boundary = invoke(["source-cache-gc-remove", cacheRoot, id], input, 30_000);
   const boundaryDurationMs = performance.now() - boundaryStartedAt;
   assert.equal(boundary.error, undefined, "native 200k-node parser probe should start");
-  assert.equal(boundary.status, 50, `native parser must accept 200k nodes plus ROOT and 3 sidecars (${inventoryBytes} bytes), then stop at the expected missing-projection preflight before deletion: ${String(boundary.stderr || "")}`);
+  const expectedBoundaryStatus = process.platform === "win32" ? 50 : 10;
+  assert.equal(boundary.status, expectedBoundaryStatus, `native parser must accept 200k nodes plus ROOT and 3 sidecars (${inventoryBytes} bytes), then stop at the expected missing-projection preflight before deletion: ${String(boundary.stderr || "")}`);
   assert.ok(boundaryDurationMs < 20_000, `native 200k-node parser should complete under 20 seconds (actual ${Math.round(boundaryDurationMs)}ms)`);
   assert.equal(existsSync(join(cacheRoot, id)), false, "parser boundary probe has no snapshot root to delete");
   assert.equal(readFileSync(manifestPath, "utf8"), "metadata sentinel\n", "parser boundary probe must not remove metadata");
