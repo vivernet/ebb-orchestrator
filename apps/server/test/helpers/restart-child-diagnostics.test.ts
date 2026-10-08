@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import {
   formatRestartChildRecoveryMarkerFailure,
+  formatRestartChildRecoveryFailureDiagnostic,
   formatRestartChildTerminalStatusDiagnostic,
   parseRestartChildTerminalStatus,
   restartChildTerminalStatusPath,
@@ -11,6 +12,26 @@ import {
 } from "./restart-child-diagnostics.js";
 
 describe("restart child failure diagnostics", () => {
+  it("shows only an allowlisted recovery marker code and bounded exit status", () => {
+    expect(formatRestartChildRecoveryFailureDiagnostic(1, {
+      ok: false,
+      failureCode: "WINDOWS_JOB_IDENTITY_UNPROVEN",
+      stderr: "OPENAI_API_KEY=must-not-appear",
+      runId: "private-run-id",
+    })).toBe("PROCESS_SCOPE_RECOVERY_FAILED:WINDOWS_JOB_IDENTITY_UNPROVEN:EXIT_1");
+
+    const arbitrary = "OPENAI_API_KEY=must-not-appear";
+    const hidden = formatRestartChildRecoveryFailureDiagnostic(0x1_0000_0000, {
+      ok: false,
+      failureCode: arbitrary,
+      message: arbitrary,
+    });
+    expect(hidden).toBe("PROCESS_SCOPE_RECOVERY_FAILED:UNKNOWN:EXIT_UNKNOWN");
+    expect(hidden).not.toContain(arbitrary);
+    expect(formatRestartChildRecoveryFailureDiagnostic(null, { ok: false, failureCode: "NOT_ALLOWLISTED" }))
+      .toBe("PROCESS_SCOPE_RECOVERY_FAILED:UNKNOWN:EXIT_UNKNOWN");
+  });
+
   it("reports only bounded allowlisted codes from a short Error cause chain", () => {
     const nativeFailure = new Error("WINDOWS_HELPER_NATIVE_UNKNOWN:CHILD_JOB_BARRIER_UNAVAILABLE");
     const wrappedFailure = new Error("WINDOWS_PROCESS_SCOPE_LAUNCH_UNPROVEN:WINDOWS_JOB_STOP_NOT_CONFIRMED", {

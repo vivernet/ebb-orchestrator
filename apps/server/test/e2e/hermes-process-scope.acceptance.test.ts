@@ -16,6 +16,7 @@ import { WindowsJobSupervisor } from "../../src/platform/process/windows-job-sup
 import type { ProcessScopeHandle } from "../../src/platform/process/run-scope-supervisor.js";
 import {
   formatRestartChildOutputDiagnostic,
+  formatRestartChildRecoveryFailureDiagnostic,
   formatRestartChildRecoveryMarkerFailure,
   formatRestartChildTerminalStatusDiagnostic,
   parseRestartChildTerminalStatus,
@@ -995,7 +996,7 @@ async function runRestartBoundaryAcceptance(): Promise<void> {
     const recovery = await runRecoveryWorker(databasePath, runId, recoveryPath, restartWorkerEnvironment(runHome));
     await assertNoRestartChildTerminalStatus(terminalStatusPath);
     recoverySucceeded = recovery.exit.code === 0 && recovery.result.ok === true;
-    expect(recovery.exit.code).toBe(0);
+    expect(recovery.exit.code, formatRestartChildRecoveryFailureDiagnostic(recovery.exit.code, recovery.result)).toBe(0);
     expect(recovery.result.ok).toBe(true);
     expect(recovery.result.processId).not.toBe(ready.processId);
     expect(recovery.result.previousState).toBe(isWindows ? "UNKNOWN" : "LIVE");

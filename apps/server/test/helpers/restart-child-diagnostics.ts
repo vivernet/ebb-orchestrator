@@ -279,6 +279,23 @@ export function formatRestartChildRecoveryMarkerFailure(
   return `PROCESS_SCOPE_RECOVERY_MARKER_MISSING:${exitCode}:${formatRestartChildOutputDiagnostic(stdout, stderr)}`;
 }
 
+/** Formats only an allowlisted recovery marker code and a bounded worker exit status. */
+export function formatRestartChildRecoveryFailureDiagnostic(
+  exitCode: number | null,
+  result: unknown,
+): string {
+  const boundedExitCode = Number.isSafeInteger(exitCode) && exitCode !== null && exitCode >= 0 && exitCode <= 0xFFFF_FFFF
+    ? exitCode
+    : "UNKNOWN";
+  if (typeof result === "object" && result !== null && !Array.isArray(result)) {
+    const failureCode = (result as Record<string, unknown>).failureCode;
+    if ((result as Record<string, unknown>).ok === false && typeof failureCode === "string" && isSafeRestartChildFailureCode(failureCode)) {
+      return `PROCESS_SCOPE_RECOVERY_FAILED:${failureCode}:EXIT_${boundedExitCode}`;
+    }
+  }
+  return `PROCESS_SCOPE_RECOVERY_FAILED:UNKNOWN:EXIT_${boundedExitCode}`;
+}
+
 function extractRestartChildFailureDiagnostic(output: string): string | undefined {
   for (const line of output.split(/\r?\n/u)) {
     if (line === "PROCESS_SCOPE_RESTART_CHILD_FAILED") return line;

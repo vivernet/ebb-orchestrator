@@ -677,6 +677,37 @@ function safeLinuxRefusalEvidence(stderr: string, stdout: string): string | unde
     : undefined;
 }
 
+const linuxNativeRefusalCodes = new Set([
+  "HERMES_SOURCE_CACHE_LEASE_UNAVAILABLE",
+  "HERMES_SOURCE_SNAPSHOT_IDENTITY_MISMATCH",
+  "HERMES_SOURCE_PROJECTION_UNAVAILABLE",
+  "HERMES_SOURCE_SNAPSHOT_CONTENT_MISMATCH",
+  "HERMES_ROOT_PATH_UNSAFE",
+  "HERMES_PROFILES_PATH_UNSAFE",
+  "HERMES_PROFILE_PATH_UNSAFE",
+  "HERMES_PROFILE_IDENTITY_MISMATCH",
+  "HERMES_ENTRYPOINT_IDENTITY_MISMATCH",
+  "HERMES_PYTHON_IDENTITY_MISMATCH",
+  "HERMES_NAMESPACE_CREDENTIALS_UNSUPPORTED",
+  "HERMES_PRIVATE_MOUNT_NAMESPACE_UNAVAILABLE",
+  "HERMES_PRIVATE_PROFILES_MOUNT_UNAVAILABLE",
+  "HERMES_SOURCE_SNAPSHOT_READONLY_MOUNT_UNAVAILABLE",
+  "HERMES_SOURCE_SNAPSHOT_MOUNT_VERIFICATION_FAILED",
+  "HERMES_PRIVATE_PROFILE_MOUNTPOINT_UNAVAILABLE",
+  "HERMES_PROFILE_MOUNT_UNAVAILABLE",
+  "HERMES_PROFILE_MOUNT_IDENTITY_MISMATCH",
+  "HERMES_PROCESS_SUBREAPER_UNAVAILABLE",
+  "HERMES_PYTHON_FORK_FAILED",
+  "HERMES_EXECVEAT_FAILED",
+]);
+
+function knownLinuxRefusalCode(line: string): string | undefined {
+  const prefix = "HERMES_LINUX_LAUNCH_REFUSED:";
+  if (!line.startsWith(prefix)) return undefined;
+  const code = line.slice(prefix.length);
+  return linuxNativeRefusalCodes.has(code) ? line : undefined;
+}
+
 function safeNativeRefusalOutputSummary(output: { exitCode: number; stderr: string; stdout: string } | undefined): string {
   if (!output) return "nativeOutput={available=no,childExitCode=unavailable}";
   const stdoutLines = diagnosticLines(output.stdout);
@@ -684,9 +715,13 @@ function safeNativeRefusalOutputSummary(output: { exitCode: number; stderr: stri
   const allLines = [...stdoutLines, ...stderrLines].filter((line) => line.length > 0);
   const exactRefusal = /^HERMES_LINUX_LAUNCH_REFUSED:HERMES_SOURCE_(?:PROJECTION_UNAVAILABLE|SNAPSHOT_CONTENT_MISMATCH)$/u;
   const allowlistedRefusalMatches = allLines.filter((line) => exactRefusal.test(line)).length;
+  const knownLinuxRefusals = [...new Set(allLines.flatMap((line) => {
+    const refusal = knownLinuxRefusalCode(line);
+    return refusal ? [refusal] : [];
+  }))].sort();
   const shapeCounts = new Map<string, number>();
   for (const line of allLines) {
-    if (exactRefusal.test(line)) continue;
+    if (knownLinuxRefusalCode(line)) continue;
     const shape = classifyNativeOutputLineShape(line);
     shapeCounts.set(shape, (shapeCounts.get(shape) ?? 0) + 1);
   }
@@ -695,7 +730,8 @@ function safeNativeRefusalOutputSummary(output: { exitCode: number; stderr: stri
   return `nativeOutput={available=yes,childExitCode=${Number.isInteger(output.exitCode) ? output.exitCode : "unknown"},` +
     `stdoutNonEmpty=${output.stdout.length > 0 ? "yes" : "no"},stdoutLineCount=${stdoutLines.length},` +
     `stderrNonEmpty=${output.stderr.length > 0 ? "yes" : "no"},stderrLineCount=${stderrLines.length},` +
-    `allowlistedRefusalMatches=${allowlistedRefusalMatches},otherLineShapes={${shapes}}}`;
+    `allowlistedRefusalMatches=${allowlistedRefusalMatches},` +
+    `knownLinuxRefusalCodes={${knownLinuxRefusals.join(",") || "none"}},otherLineShapes={${shapes}}}`;
 }
 
 function diagnosticLines(value: string): string[] {
@@ -741,6 +777,34 @@ describe("safe native refusal output diagnostics", () => {
 
     expect(summary).toContain("allowlistedRefusalMatches=1");
     expect(summary).toContain("otherLineShapes={other-text-shaped:1}");
+  });
+
+  it("reports a known Linux refusal code without accepting it as expected evidence", () => {
+    const refusal = "HERMES_LINUX_LAUNCH_REFUSED:HERMES_SOURCE_SNAPSHOT_IDENTITY_MISMATCH";
+    const summary = safeNativeRefusalOutputSummary({
+      exitCode: 65,
+      stdout: "",
+      stderr: `${refusal}\n`,
+    });
+
+    expect(summary).toContain(`knownLinuxRefusalCodes={${refusal}}`);
+    expect(summary).toContain("allowlistedRefusalMatches=0");
+    expect(summary).toContain("otherLineShapes={none}");
+  });
+
+  it("hides unknown uppercase codes and raw secret text", () => {
+    const unknownCode = "HERMES_PRIVATE_UNRECOGNIZED_FAILURE";
+    const rawSecret = "provider-token-do-not-log";
+    const summary = safeNativeRefusalOutputSummary({
+      exitCode: 65,
+      stdout: `${unknownCode}\n`,
+      stderr: `token=${rawSecret}\n`,
+    });
+
+    expect(summary).not.toContain(unknownCode);
+    expect(summary).not.toContain(rawSecret);
+    expect(summary).toContain("knownLinuxRefusalCodes={none}");
+    expect(summary).toContain("otherLineShapes={key-value-shaped:1,uppercase-code:1}");
   });
 });
 
