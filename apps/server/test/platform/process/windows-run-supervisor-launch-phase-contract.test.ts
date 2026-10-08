@@ -24,6 +24,10 @@ const nativeHermesHarnessSource = readFileSync(
   new URL("../../../scripts/test-hermes-profile-path-native.mjs", import.meta.url),
   "utf8",
 );
+const windowsFixtureAclSource = readFileSync(
+  new URL("../../../scripts/windows-fixture-acl.mjs", import.meta.url),
+  "utf8",
+);
 
 class PhaseExecutor extends ProcessExecutor {
   readonly calls: string[][] = [];
@@ -300,8 +304,10 @@ describe("Windows native helper launch-phase diagnostic contract", () => {
     const fixtureLoop = /for \(const \[label, deny, expectAccepted\] of \[[\s\S]*?\n {2}\}\n\n {2}for \(const \[label, readOnlyRight\]/u.exec(nativeHermesHarnessSource)?.[0] ?? "";
     expect(fixtureLoop).toMatch(/try \{[\s\S]*?const aceResult = invoke\([\s\S]*?\} finally \{\s*if \(deny\) restoreWindowsFixtureForeignDenyDelete\(aceParent\);\s*\}/u);
     expect(nativeHermesHarnessSource).toMatch(/function restoreWindowsFixtureForeignDenyDelete\(directory\)[\s\S]*?\[directory, "\/remove:d", "\*S-1-1-0", "\/T", "\/C"\]/u);
-    expect(nativeHermesHarnessSource).toMatch(/function makeWindowsFixturePrivate\(directory\)[\s\S]*?spawnSync\(powershell,[\s\S]*?cwd: serverDirectory/u);
-    expect(nativeHermesHarnessSource).toMatch(/\$inherit = \[System\.Security\.AccessControl\.InheritanceFlags\]::None; if \(\(Get-Item -LiteralPath \$path\)\.PSIsContainer\)/u);
+    expect(nativeHermesHarnessSource).toMatch(/function makeWindowsFixturePrivate\(directory\)[\s\S]*?setWindowsFixturePrivate\(directory, \{ serverDirectory, systemRoot: process\.env\.SYSTEMROOT \}\)/u);
+    expect(windowsFixtureAclSource).toMatch(/spawnSync\(powershell,[\s\S]*?cwd: serverDirectory/u);
+    expect(windowsFixtureAclSource).toMatch(/\$inherit = \[System\.Security\.AccessControl\.InheritanceFlags\]::None; if \(\(Get-Item -LiteralPath \$path\)\.PSIsContainer\)/u);
+    expect(windowsFixtureAclSource).toMatch(/timeout: WINDOWS_FIXTURE_ACL_TIMEOUT_MS/u);
   });
 
   it("uses a Hermes-compatible executable leaf name in the Windows launch-ticket fixture", () => {

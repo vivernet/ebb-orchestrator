@@ -10,6 +10,7 @@ import { setTimeout, clearTimeout } from "node:timers";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath, URL } from "node:url";
 import { resolveWindowsMsvcEnvironment } from "./windows-msvc-environment.mjs";
+import { makeWindowsFixturePrivate as setWindowsFixturePrivate } from "./windows-fixture-acl.mjs";
 
 if (process.platform !== "win32" && process.platform !== "linux") {
   throw new Error("HERMES_PROFILE_PATH_NATIVE_TEST_UNSUPPORTED_PLATFORM");
@@ -36,33 +37,7 @@ const childEnvironment = process.platform === "win32"
   : { PATH: "/usr/bin:/bin" };
 
 function makeWindowsFixturePrivate(directory) {
-  const powershell = join(process.env.SYSTEMROOT || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-  const command = [
-    "$ErrorActionPreference = 'Stop';",
-    "$path = [System.Environment]::GetEnvironmentVariable('EBB_HERMES_PROFILE_TEST_ROOT');",
-    "$identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().User;",
-    "$acl = Get-Acl -LiteralPath $path;",
-    "$acl.SetAccessRuleProtection($true, $false);",
-    "foreach ($entry in @($acl.Access)) { $acl.RemoveAccessRuleAll($entry) };",
-    "$acl.SetOwner($identity);",
-    "$rights = [System.Security.AccessControl.FileSystemRights]::FullControl;",
-    "$inherit = [System.Security.AccessControl.InheritanceFlags]::None; if ((Get-Item -LiteralPath $path).PSIsContainer) { $inherit = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit };",
-    "$rule = [System.Security.AccessControl.FileSystemAccessRule]::new($identity, $rights, $inherit, [System.Security.AccessControl.PropagationFlags]::None, [System.Security.AccessControl.AccessControlType]::Allow);",
-    "$acl.AddAccessRule($rule);",
-    "Set-Acl -LiteralPath $path -AclObject $acl;",
-  ].join(" ");
-  const result = spawnSync(powershell, ["-NoProfile", "-NonInteractive", "-Command", command], {
-    cwd: serverDirectory,
-    env: { ...childEnvironment, EBB_HERMES_PROFILE_TEST_ROOT: directory },
-    encoding: "utf8",
-    shell: false,
-    timeout: 5_000,
-    windowsHide: true,
-    maxBuffer: 4_096,
-  });
-  assert.equal(result.error, undefined, "Windows fixture ACL setup process should start");
-  const errorText = String(result.stderr || "").replaceAll(directory, "<test-root>").trim();
-  assert.equal(result.status, 0, `Windows fixture root should have a current-user-only ACL: ${errorText}`);
+  return setWindowsFixturePrivate(directory, { serverDirectory, systemRoot: process.env.SYSTEMROOT });
 }
 
 async function verifySourceCacheLease(root) {
