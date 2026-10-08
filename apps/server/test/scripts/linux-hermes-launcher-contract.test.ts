@@ -79,6 +79,14 @@ describe("Linux Hermes native launch boundary source contract", () => {
     expect(sourceSnapshotAcceptance).not.toContain('mkdtemp(join(tmpdir(), "ebb-hermes-source-acceptance-"))');
   });
 
+  it("pins the acceptance interpreter to its canonical executable path", () => {
+    expect(sourceSnapshotAcceptance).toContain("const canonicalExecutable = linux && executable");
+    expect(sourceSnapshotAcceptance).toContain("? await realpath(executable)");
+    expect(sourceSnapshotAcceptance).toContain(": executable || undefined");
+    expect(sourceSnapshotAcceptance).toContain("await stat(canonicalExecutable)");
+    expect(sourceSnapshotAcceptance).toContain("return canonicalExecutable");
+  });
+
   it("builds only on Linux and has no shell compiler invocation", () => {
     expect(buildScript).toContain("process.platform !== \"linux\"");
     expect(buildScript).toContain("\"-std=c++17\"");

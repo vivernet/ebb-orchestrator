@@ -1069,7 +1069,10 @@ async function resolvePython(): Promise<string> {
       const result = await new ProcessExecutor().exec(candidate, args, { cwd: tmpdir(), env: processEnvironment(), timeout: 5_000, maxBuffer: 4096 });
       if (result.exitCode === 0) {
         const executable = result.stdout.trim();
-        if (executable && (await stat(executable).catch(() => undefined))?.isFile()) return executable;
+        const canonicalExecutable = linux && executable
+          ? await realpath(executable).catch(() => undefined)
+          : executable || undefined;
+        if (canonicalExecutable && (await stat(canonicalExecutable).catch(() => undefined))?.isFile()) return canonicalExecutable;
       }
     } catch { /* Try the next hosted-runner interpreter name. */ }
   }
