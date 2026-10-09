@@ -4,7 +4,7 @@ import { deflateSync } from "node:zlib";
 import { createHash } from "node:crypto";
 import { chmod, link, lstat, mkdtemp, mkdir, readFile, readdir, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, parse, relative, sep } from "node:path";
+import { isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 import type { HermesSourceSnapshotRequest } from "../../../src/modules/runtime/hermes/hermes-source-snapshot.js";
 type HermesSourceSnapshotModule = typeof import("../../../src/modules/runtime/hermes/hermes-source-snapshot.js");
 
@@ -562,7 +562,7 @@ describe("Hermes shared source snapshot", () => {
   it("rejects a corrupt local Git blob before publishing any cache entry", async () => {
     const fixture = await createFixture({ "pkg/module.py": { content: "answer = 42\n" } });
     const blob = git(fixture.sourceRoot, ["rev-parse", `${fixture.commit}:pkg/module.py`]).trim();
-    const objectPath = join(fixture.sourceRoot, ".git", "objects", blob.slice(0, 2), blob.slice(2));
+    const objectPath = looseObjectPathFor(fixture.sourceRoot, blob);
     await chmod(objectPath, 0o600);
     await writeFile(objectPath, "corrupt loose object");
     const cacheRoot = join(fixture.root, "cache");
@@ -631,15 +631,35 @@ describe("Hermes shared source snapshot", () => {
     expect(await readdir(cacheRoot)).toEqual([]);
   });
 
-  it.each(["tree", "commit"])("rejects corrupted %s objects even when Git still parses them", async (kind) => {
-    const fixture = await createFixture({ "module.py": { content: "original\n" } });
-    const oid = kind === "tree" ? fixture.tree : fixture.commit;
-    const raw = execFileSync("git", ["-C", fixture.sourceRoot, "cat-file", kind, oid]);
-    const altered = kind === "tree" ? Buffer.from(raw) : Buffer.from(raw.toString("utf8").replace("fixture source", "changed source"));
-    if (kind === "tree") altered[altered.indexOf(Buffer.from("module.py"))] = "n".charCodeAt(0);
-    const objectPath = join(fixture.sourceRoot, ".git", "objects", oid.slice(0, 2), oid.slice(2));
+  it("authenticates Git SHA-256 commit and tree object identifiers", async () => {
+    const fixture = await createFixture({ "pkg/module.py": { content: "sha256 source\n" } }, "sha256");
+    expect(fixture.commit).toMatch(/^[0-9a-f]{64}$/u);
+    expect(fixture.tree).toMatch(/^[0-9a-f]{64}$/u);
+    const snapshot = await snapshotModule.materializeHermesSourceSnapshot(requestFor(fixture, join(fixture.root, "cache")));
+    expect(await readFile(join(snapshot.rootPath, "pkg/module.py"), "utf8")).toBe("sha256 source\n");
+  });
+
+  it.each(["tree", "nested tree", "commit"])("rejects corrupted %s objects even when Git still parses them", async (kind) => {
+    const fixture = await createFixture(kind === "nested tree"
+      ? { "pkg/module.py": { content: "original\n" } }
+      : { "module.py": { content: "original\n" } });
+    const objectType = kind === "commit" ? "commit" : "tree";
+    const oid = kind === "commit" ? fixture.commit
+      : kind === "nested tree" ? git(fixture.sourceRoot, ["rev-parse", `${fixture.commit}:pkg`]).trim()
+        : fixture.tree;
+    const raw = execFileSync("git", ["-C", fixture.sourceRoot, "cat-file", objectType, oid]);
+    const altered = objectType === "tree"
+      ? Buffer.from(raw)
+      : Buffer.from(raw.toString("utf8").replace("fixture source", "changed source"));
+    if (objectType === "tree") {
+      const filenameOffset = altered.indexOf(Buffer.from("module.py"));
+      expect(filenameOffset).toBeGreaterThanOrEqual(0);
+      altered[filenameOffset] = "n".charCodeAt(0);
+    }
+    const objectPath = looseObjectPathFor(fixture.sourceRoot, oid);
+    expect((await lstat(objectPath)).isFile()).toBe(true);
     await chmod(objectPath, 0o600);
-    await writeFile(objectPath, deflateSync(Buffer.concat([Buffer.from(`${kind} ${altered.length}\0`), altered])));
+    await writeFile(objectPath, deflateSync(Buffer.concat([Buffer.from(`${objectType} ${altered.length}\0`), altered])));
     await expect(snapshotModule.materializeHermesSourceSnapshot(requestFor(fixture, join(fixture.root, "cache"))))
       .rejects.toMatchObject({ code: "HERMES_SOURCE_SNAPSHOT_UNAVAILABLE" });
   });
@@ -1363,12 +1383,17 @@ interface Fixture {
   readonly tree: string;
 }
 
-async function createFixture(files: Record<string, { content: string; executable?: boolean }>): Promise<Fixture> {
+async function createFixture(
+  files: Record<string, { content: string; executable?: boolean }>,
+  objectFormat: "sha1" | "sha256" = "sha1",
+): Promise<Fixture> {
   const root = await mkdtemp(join(tmpdir(), "ebb-hermes-source-snapshot-"));
   roots.push(root);
   const sourceRoot = join(root, "source");
   await mkdir(sourceRoot, { recursive: true });
-  git(sourceRoot, ["init", "-q"]);
+  git(sourceRoot, ["init", "-q", ...(objectFormat === "sha256" ? ["--object-format=sha256"] : [])]);
+  git(sourceRoot, ["config", "gc.auto", "0"]);
+  git(sourceRoot, ["config", "maintenance.auto", "false"]);
   git(sourceRoot, ["config", "user.name", "Snapshot Test"]);
   git(sourceRoot, ["config", "user.email", "snapshot@example.invalid"]);
   for (const [relativePath, file] of Object.entries(files)) {
@@ -1513,6 +1538,11 @@ function git(cwd: string, args: string[], input?: Buffer): string {
       GIT_TERMINAL_PROMPT: "0",
     },
   });
+}
+
+function looseObjectPathFor(sourceRoot: string, oid: string): string {
+  const gitPath = git(sourceRoot, ["rev-parse", "--git-path", join("objects", oid.slice(0, 2), oid.slice(2))]).trim();
+  return resolve(sourceRoot, gitPath);
 }
 
 function canonicalJson(value: unknown): string {

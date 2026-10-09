@@ -200,7 +200,7 @@ export async function materializeHermesSourceSnapshot(request: HermesSourceSnaps
     markHermesSourceSnapshotDiagnosticPhase("source-git");
     const resolvedTree = await resolveCommitTree(request.gitExecutable, sourceRoot, request.commit);
     if (resolvedTree !== request.tree) throw snapshotError();
-    const entries = await listPinnedTree(request.gitExecutable, sourceRoot, request.commit);
+    const entries = await listPinnedTree(request.gitExecutable, sourceRoot, resolvedTree);
     validateTreeEntries(entries);
     const sizedEntries = await readAndHashGitBlobs(request.gitExecutable, sourceRoot, entries);
     const manifest = makeManifest(sizedEntries);
@@ -489,41 +489,78 @@ async function validateManagedDirectory(value: string, create: boolean, privateR
 }
 
 async function resolveCommitTree(git: string, sourceRoot: string, commit: string): Promise<string> {
-  const type = (await captureGit(git, sourceRoot, ["cat-file", "-t", commit], 128)).trim();
-  if (type !== "commit") throw snapshotError();
-  const result = (await captureGit(git, sourceRoot, ["rev-parse", "--verify", "--end-of-options", commit + "^{tree}"], 256)).trim();
-  if (!isGitObjectId(result) || result.length !== commit.length) throw snapshotError();
-  return result;
+  const commitBytes = await readVerifiedGitObject(git, sourceRoot, "commit", commit, MAX_TREE_OUTPUT_BYTES);
+  const firstLineEnd = commitBytes.indexOf(0x0a);
+  if (firstLineEnd < 0) throw snapshotError();
+  const treeMatch = /^tree ([0-9a-f]{40}|[0-9a-f]{64})$/u.exec(commitBytes.subarray(0, firstLineEnd).toString("ascii"));
+  const tree = treeMatch?.[1];
+  if (!tree || tree.length !== commit.length) throw snapshotError();
+  return tree;
+}
+
+/** Читает Git object и сверяет его object ID до использования содержимого. */
+async function readVerifiedGitObject(
+  git: string,
+  sourceRoot: string,
+  type: "commit" | "tree",
+  oid: string,
+  maxBytes: number,
+): Promise<Buffer> {
+  const bytes = await captureGitBytes(git, sourceRoot, ["cat-file", type, oid], maxBytes);
+  const objectHash = createHash(oid.length === 40 ? "sha1" : "sha256");
+  objectHash.update(`${type} ${bytes.byteLength}\0`, "ascii");
+  objectHash.update(bytes);
+  if (objectHash.digest("hex") !== oid) throw snapshotError();
+  return bytes;
 }
 
 async function assertSourceTreeUnchanged(git: string, sourceRoot: string, commit: string, expectedTree: string): Promise<void> {
   if (await resolveCommitTree(git, sourceRoot, commit) !== expectedTree) throw snapshotError();
 }
 
-async function listPinnedTree(git: string, sourceRoot: string, commit: string): Promise<GitTreeEntry[]> {
-  const output = await captureGitBytes(git, sourceRoot, ["ls-tree", "-r", "-z", "--full-tree", commit], MAX_TREE_OUTPUT_BYTES);
+async function listPinnedTree(git: string, sourceRoot: string, rootTree: string): Promise<GitTreeEntry[]> {
   const entries: GitTreeEntry[] = [];
-  let start = 0;
-  while (start < output.length) {
-    const end = output.indexOf(0, start);
-    if (end < 0) throw snapshotError();
-    const record = output.subarray(start, end);
-    start = end + 1;
-    const tab = record.indexOf(0x09);
-    if (tab < 0 || tab === record.length - 1) throw snapshotError();
-    const prefix = record.subarray(0, tab).toString("ascii");
-    const match = /^([0-7]{6}) (blob|tree|commit) ([0-9a-f]{40}|[0-9a-f]{64})$/u.exec(prefix);
-    if (!match) throw snapshotError();
-    let relativePath: string;
-    try {
-      relativePath = new TextDecoder("utf-8", { fatal: true }).decode(record.subarray(tab + 1));
-    } catch {
-      throw snapshotError();
+  const treeStack: Array<{ oid: string; prefix: string }> = [{ oid: rootTree, prefix: "" }];
+  const oidBytes = rootTree.length / 2;
+  let totalTreeBytes = 0;
+  let totalListingBytes = 0;
+  let directoryCount = 0;
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  while (treeStack.length > 0) {
+    const current = treeStack.pop()!;
+    const bytes = await readVerifiedGitObject(git, sourceRoot, "tree", current.oid, MAX_TREE_OUTPUT_BYTES);
+    totalTreeBytes += bytes.byteLength;
+    if (!Number.isSafeInteger(totalTreeBytes) || totalTreeBytes > MAX_TREE_OUTPUT_BYTES) throw snapshotError();
+    let start = 0;
+    while (start < bytes.length) {
+      const space = bytes.indexOf(0x20, start);
+      if (space <= start) throw snapshotError();
+      const nul = bytes.indexOf(0x00, space + 1);
+      if (nul < 0 || nul === space + 1 || bytes.length - (nul + 1) < oidBytes) throw snapshotError();
+      const mode = bytes.subarray(start, space).toString("ascii");
+      let name: string;
+      try {
+        name = decoder.decode(bytes.subarray(space + 1, nul));
+      } catch {
+        throw snapshotError();
+      }
+      if (!name || name.includes("/")) throw snapshotError();
+      const oid = bytes.subarray(nul + 1, nul + 1 + oidBytes).toString("hex");
+      start = nul + 1 + oidBytes;
+      const path = current.prefix ? `${current.prefix}/${name}` : name;
+      if (mode === "40000") {
+        validateRelativePath(path);
+        directoryCount += 1;
+        if (directoryCount > HERMES_SOURCE_SNAPSHOT_GC_LIMITS.directories) throw snapshotError();
+        treeStack.push({ oid, prefix: path });
+        continue;
+      }
+      entries.push({ mode, type: mode === "160000" ? "commit" : "blob", oid, path });
+      if (entries.length > MAX_FILE_COUNT) throw snapshotError();
+      totalListingBytes += Buffer.byteLength(`${mode} ${mode === "160000" ? "commit" : "blob"} ${oid}\t${path}`) + 1;
+      if (!Number.isSafeInteger(totalListingBytes) || totalListingBytes > MAX_TREE_OUTPUT_BYTES) throw snapshotError();
     }
-    entries.push({ mode: match[1]!, type: match[2]!, oid: match[3]!, path: relativePath });
-    if (entries.length > MAX_FILE_COUNT) throw snapshotError();
   }
-  if (output.length > 0 && output[output.length - 1] !== 0) throw snapshotError();
   return entries;
 }
 
@@ -1880,9 +1917,6 @@ function snapshotError(): HermesSourceSnapshotError {
   return new HermesSourceSnapshotError();
 }
 
-async function captureGit(git: string, cwd: string, args: string[], maxBytes: number): Promise<string> {
-  return (await captureGitBytes(git, cwd, args, maxBytes)).toString("utf8");
-}
 async function captureGitBytes(git: string, cwd: string, args: string[], maxBytes: number): Promise<Buffer> {
   const child = spawn(git, ["-C", cwd, ...args], {
     shell: false, windowsHide: true, stdio: ["ignore", "pipe", "pipe"], env: gitEnvironment(),
