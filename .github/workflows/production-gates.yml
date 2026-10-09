@@ -100,12 +100,14 @@ jobs:
           systemctl --user stop "$probe_unit"
           systemctl --user reset-failed "$probe_unit" >/dev/null 2>&1 || true
           trap - EXIT
+          probe_removed=no
           for attempt in {1..20}; do
-            load_state="$(systemctl --user show "$probe_unit" --property=LoadState --value 2>/dev/null || true)"
-            if [[ -z "$load_state" || "$load_state" == "not-found" ]]; then break; fi
+            if load_state="$(systemctl --user show "$probe_unit" --property=LoadState --value 2>/dev/null)"; then
+              if [[ "$load_state" == "not-found" ]]; then probe_removed=yes; break; fi
+            fi
             sleep 0.25
           done
-          if [[ -n "$load_state" && "$load_state" != "not-found" ]]; then
+          if [[ "$probe_removed" != yes ]]; then
             printf 'Transient systemd service was not removed after the probe.\n' >&2
             exit 1
           fi

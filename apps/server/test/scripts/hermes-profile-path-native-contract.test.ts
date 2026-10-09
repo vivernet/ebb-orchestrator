@@ -275,7 +275,10 @@ describe("native Hermes profile-path safe-path acceptance reporting", () => {
     expect(cleanup).toMatch(/removeWindowsFixtureTree\(fixtureHome\.path, fixtureHome\.identity\)/u);
     expect(pathChainAcceptance).toMatch(/fixture-tree-remove/u);
     expect(pathChainAcceptance.match(/setPrivateOwnerAcl\(\[[^\]]+\], systemPaths, true\)/gu))
-      .toEqual(["setPrivateOwnerAcl([cacheRoot], systemPaths, true)"]);
+      .toEqual([
+        "setPrivateOwnerAcl([cacheRoot], systemPaths, true)",
+        "setPrivateOwnerAcl([stagedRoot], systemPaths, true)",
+      ]);
     expect(pathChainAcceptance).toMatch(/EBB_PROFILE_FIXTURE_INHERIT_CHILDREN[\s\S]*?ContainerInherit[\s\S]*?ObjectInherit/u);
     expect(pathChainAcceptance).toMatch(/InheritanceFlags -ne \$inheritance/u);
     expect(cleanup).not.toMatch(/\brm\s*\(|\brmdir\s*\(/u);

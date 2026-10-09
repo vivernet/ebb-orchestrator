@@ -48,6 +48,7 @@ umask 077
 mkdir -m 700 -- "$state_dir"
 trap cleanup EXIT
 "${CXX:-c++}" -std=c++17 -O2 -Wall -Wextra -Wpedantic \
+  "-DEBB_NAMESPACE_PROBE_PROFILE_NAME=\"ebb-hermes-probe-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}\"" \
   scripts/linux-hermes-namespace-probe.cpp -o "${state_dir}/probe"
 
 restriction() {
@@ -58,6 +59,16 @@ restriction() {
 }
 before_restriction="$(restriction)"
 printf 'HERMES_NATIVE_NAMESPACE_APPARMOR_RESTRICTION=%s\n' "$before_restriction"
+
+validate_probe_output() {
+  local label='(UNCONFINED|EXPECTED_PROFILE|RESTRICTED_USERNS|OTHER|UNAVAILABLE)'
+  local context_pattern="^HERMES_NATIVE_NAMESPACE_CONTEXT:BEFORE=${label}:AFTER=${label}:NNP=(-1|0|1):SECCOMP=(-1|0|1|2)$"
+  probe_context="${probe_output%%$'\n'*}"
+  probe_result="${probe_output#*$'\n'}"
+  [[ "$probe_output" == *$'\n'* && "$probe_context" =~ $context_pattern &&
+     "$probe_result" =~ ^HERMES_NATIVE_NAMESPACE_PROBE:(PASS|HERMES_PRIVATE_NAMESPACE_(UNSHARE|SETGROUPS_MAP|UID_MAP|GID_MAP|SETRESGID|SETRESUID|MOUNT_PROPAGATION)_UNAVAILABLE):ERRNO=[0-9]+$ ]] ||
+    fail HERMES_NAMESPACE_SETUP_PROBE_OUTPUT_INVALID
+}
 
 run_probe() {
   local unit="ebb-hermes-userns-probe-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$$.service"
@@ -70,8 +81,7 @@ run_probe() {
   set -e
   probe_output="$(cat "${state_dir}/probe-output")"
   # Не выводить raw systemd/compiler/kernel diagnostics в refusal evidence.
-  [[ "$probe_output" =~ ^HERMES_NATIVE_NAMESPACE_PROBE:(PASS|HERMES_PRIVATE_NAMESPACE_[A-Z_]+):ERRNO=[0-9]+$ ]] ||
-    fail HERMES_NAMESPACE_SETUP_PROBE_OUTPUT_INVALID
+  validate_probe_output
   printf '%s\n' "$probe_output"
   # --collect может уже удалить unit: stop/reset не являются removal proof.
   # Их отсутствие допустимо только после успешного show с точным not-found.
@@ -88,14 +98,14 @@ run_probe() {
 }
 
 run_probe
-if [[ "$probe_status" == 0 && "$probe_output" == HERMES_NATIVE_NAMESPACE_PROBE:PASS:ERRNO=0 ]]; then
+if [[ "$probe_status" == 0 && "$probe_result" == HERMES_NATIVE_NAMESPACE_PROBE:PASS:ERRNO=0 ]]; then
   # Runner уже поддерживает contract: никаких AppArmor changes.
   cleanup
   trap - EXIT
   exit 0
 fi
 [[ "$probe_status" == 70 && "$before_restriction" == 1 &&
-   "$probe_output" =~ ^HERMES_NATIVE_NAMESPACE_PROBE:HERMES_PRIVATE_NAMESPACE_UNSHARE_UNAVAILABLE:ERRNO=(1|13)$ ]] ||
+   "$probe_result" =~ ^HERMES_NATIVE_NAMESPACE_PROBE:HERMES_PRIVATE_NAMESPACE_UNSHARE_UNAVAILABLE:ERRNO=(1|13)$ ]] ||
   fail HERMES_NAMESPACE_SETUP_UNSUPPORTED_REFUSAL
 [[ "$(cat /sys/module/apparmor/parameters/enabled)" == Y ]] ||
   fail HERMES_NAMESPACE_SETUP_APPARMOR_NOT_ACTIVE
@@ -115,7 +125,23 @@ touch "${state_dir}/profile-load-attempted"
 sudo apparmor_parser -a "$profile_file"
 [[ "$(restriction)" == "$before_restriction" ]] || fail HERMES_NAMESPACE_SETUP_GLOBAL_RESTRICTION_CHANGED
 run_probe
-[[ "$probe_status" == 0 && "$probe_output" == HERMES_NATIVE_NAMESPACE_PROBE:PASS:ERRNO=0 ]] ||
+if [[ "$probe_status" != 0 ]]; then
+  # Диагностический control с тем же production call; его PASS не заменяет unit contract.
+  unit_context="$probe_context"
+  set +e
+  "${state_dir}/probe" >"${state_dir}/probe-output" 2>&1
+  direct_status=$?
+  set -e
+  probe_output="$(cat "${state_dir}/probe-output")"
+  validate_probe_output
+  printf 'HERMES_NATIVE_NAMESPACE_DIRECT_CONTROL:EXIT=%s\n' "$direct_status"
+  printf '%s\n' "$probe_output"
+  [[ "$unit_context" == HERMES_NATIVE_NAMESPACE_CONTEXT:BEFORE=EXPECTED_PROFILE:* ]] ||
+    fail HERMES_NAMESPACE_SETUP_EXPECTED_PROFILE_NOT_ATTACHED
+  fail HERMES_NAMESPACE_SETUP_SCOPED_PROFILE_DID_NOT_RESOLVE_REFUSAL
+fi
+[[ "$probe_status" == 0 && "$probe_result" == HERMES_NATIVE_NAMESPACE_PROBE:PASS:ERRNO=0 &&
+   "$probe_context" == HERMES_NATIVE_NAMESPACE_CONTEXT:BEFORE=EXPECTED_PROFILE:* ]] ||
   fail HERMES_NAMESPACE_SETUP_SCOPED_PROFILE_DID_NOT_RESOLVE_REFUSAL
 printf 'HERMES_NATIVE_NAMESPACE_SCOPED_APPARMOR_PROFILE=VERIFIED\n'
 # Профили остаются до real native acceptance; always-step удаляет их после STOPPED.

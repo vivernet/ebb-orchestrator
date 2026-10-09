@@ -10,6 +10,44 @@ const workflow = yaml.load(readFileSync(new URL('../.github/workflows/production
 const prerequisite = readFileSync(new URL('./linux-hermes-namespace-prerequisite.sh', import.meta.url), 'utf8');
 const probe = readFileSync(new URL('./linux-hermes-namespace-probe.cpp', import.meta.url), 'utf8');
 
+const contextLine = 'HERMES_NATIVE_NAMESPACE_CONTEXT:BEFORE=UNCONFINED:AFTER=EXPECTED_PROFILE:NNP=0:SECCOMP=0';
+
+function validateOutput(output) {
+  const bash = process.platform === 'win32' ? 'C:/Program Files/Git/bin/bash.exe' : '/bin/bash';
+  const start = prerequisite.indexOf('validate_probe_output() {');
+  const end = prerequisite.indexOf('\n}\n', start) + 2;
+  assert.ok(start >= 0 && end > start, 'production parser must validate bounded context and exact result');
+  return spawnSync(bash, ['--noprofile', '--norc', '-c', `set -euo pipefail
+fail() { printf '%s\\n' "$1" >&2; exit 1; }
+${prerequisite.slice(start, end)}
+probe_output="$FIXTURE_OUTPUT"
+validate_probe_output
+`], { encoding: 'utf8', shell: false, timeout: 5_000, env: { ...process.env, FIXTURE_OUTPUT: output } });
+}
+
+test('bounded namespace context accepts fixed labels and numeric flags while rejecting raw or extra output', () => {
+  const valid = `${contextLine}\nHERMES_NATIVE_NAMESPACE_PROBE:PASS:ERRNO=0`;
+  assert.equal(validateOutput(valid).status, 0);
+  for (const invalid of [valid + '\nprivate-path', valid.replace('NNP=0', 'NNP=2'),
+    valid.replace('SECCOMP=0', 'SECCOMP=3'), valid.replace('BEFORE=UNCONFINED', 'BEFORE=/private/path'),
+    valid.replace('PASS:ERRNO=0', 'UNKNOWN:ERRNO=0')]) {
+    const result = validateOutput(invalid);
+    assert.equal(result.status, 1);
+    assert.equal(result.stdout, '');
+    assert.match(result.stderr, /^HERMES_NAMESPACE_SETUP_PROBE_OUTPUT_INVALID\s*$/u);
+  }
+});
+
+test('probe preserves production errno before classifying post-call AppArmor label and diagnostics never change policy', () => {
+  assert.match(probe, /PR_GET_NO_NEW_PRIVS/u);
+  assert.match(probe, /PR_GET_SECCOMP/u);
+  assert.match(probe, /EBB_NAMESPACE_PROBE_PROFILE_NAME/u);
+  assert.ok(probe.indexOf('const int failureErrno') < probe.indexOf('const char* afterLabel'));
+  assert.doesNotMatch(probe, /PR_SET_|aa_change|setns\(/u);
+  assert.match(prerequisite, /HERMES_NAMESPACE_SETUP_EXPECTED_PROFILE_NOT_ATTACHED/u);
+  assert.match(prerequisite, /HERMES_NATIVE_NAMESPACE_DIRECT_CONTROL/u);
+});
+
 test('Linux acceptance proves namespace prerequisites after native build and tears down its profile even on failure', () => {
   const job = workflow.jobs['process-scope-linux-acceptance'];
   const index = (name) => job.steps.findIndex((step) => step.name === name);
@@ -69,13 +107,15 @@ function runProbeWithManagerResult(showOutput, showStatus, stopStatus = 1) {
   const start = prerequisite.indexOf('run_probe() {');
   const end = prerequisite.indexOf('\n}\n\nrun_probe', start) + 2;
   assert.ok(start >= 0 && end > start, 'extract the actual prerequisite function');
+  const parserStart = prerequisite.indexOf('validate_probe_output() {');
+  const parserEnd = prerequisite.indexOf('\n}\n', parserStart) + 2;
   const harness = `set -euo pipefail
 GITHUB_RUN_ID=123
 GITHUB_RUN_ATTEMPT=1
 state_dir="$(mktemp -d)"
 trap 'rm -f -- "$state_dir/probe-output"; rmdir -- "$state_dir"' EXIT
 fail() { printf '%s\\n' "$1" >&2; exit 1; }
-systemd-run() { printf 'HERMES_NATIVE_NAMESPACE_PROBE:PASS:ERRNO=0\\n'; return 0; }
+systemd-run() { printf '%s\\n' '${contextLine}' 'HERMES_NATIVE_NAMESPACE_PROBE:PASS:ERRNO=0'; return 0; }
 systemctl() {
   if [[ "$2" == show ]]; then
     printf '%s' '${showOutput}'; return ${showStatus};
@@ -84,6 +124,7 @@ systemctl() {
   return ${stopStatus}
 }
 sleep() { :; }
+${prerequisite.slice(parserStart, parserEnd)}
 ${prerequisite.slice(start, end)}
 run_probe
 `;
@@ -111,5 +152,26 @@ test('successful explicit not-found proves auto-collected probe removal despite 
   const result = runProbeWithManagerResult('not-found', 0);
   assert.equal(result.status, 0);
   assert.equal(result.stderr, '');
-  assert.equal(result.stdout, 'HERMES_NATIVE_NAMESPACE_PROBE:PASS:ERRNO=0\n');
+  assert.equal(result.stdout, `${contextLine}\nHERMES_NATIVE_NAMESPACE_PROBE:PASS:ERRNO=0\n`);
+});
+
+test('workflow prerequisite removal requires successful explicit not-found from manager', () => {
+  const step = workflow.jobs['process-scope-linux-acceptance'].steps.find((entry) => entry.name === 'Verify native Linux runner prerequisites');
+  assert.doesNotMatch(step.run, /load_state=.*\|\| true/u);
+  assert.doesNotMatch(step.run, /-z "\$load_state"/u);
+  assert.match(step.run, /if load_state=.*systemctl --user show/u);
+  assert.match(step.run, /if \[\[ "\$probe_removed" != yes \]\]/u);
+  const bash = process.platform === 'win32' ? 'C:/Program Files/Git/bin/bash.exe' : '/bin/bash';
+  const start = step.run.indexOf('probe_removed=no');
+  assert.ok(start >= 0);
+  for (const [output, status, expected] of [['', 0, 1], ['not-found', 1, 1], ['not-found', 0, 0]]) {
+    const result = spawnSync(bash, ['--noprofile', '--norc', '-c', `set -euo pipefail
+probe_unit=fixture.service
+systemctl() { printf '%s' "$FIXTURE_OUTPUT"; return "$FIXTURE_STATUS"; }
+sleep() { :; }
+${step.run.slice(start)}
+`], { encoding: 'utf8', shell: false, timeout: 5_000,
+      env: { ...process.env, FIXTURE_OUTPUT: output, FIXTURE_STATUS: String(status) } });
+    assert.equal(result.status, expected, `manager output ${JSON.stringify(output)} with exit ${status}`);
+  }
 });
