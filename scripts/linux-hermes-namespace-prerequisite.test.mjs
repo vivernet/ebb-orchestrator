@@ -41,7 +41,37 @@ test('negative namespace control stays unprofiled after exact profile loading', 
   assert.match(prerequisite, /HERMES_NAMESPACE_SETUP_NEGATIVE_CONTROL_UNEXPECTED/u);
 });
 
-test('actual embedded SNAPSHOT reads newline fields and nested profiles while rejecting malformed reads and revision races', () => {
+test('authority failures report a bounded exact phase and sanitized error without raw stderr', () => {
+  assert.match(prerequisite, /PHASE=/u);
+  const result = policyFixture(String.raw`
+import contextlib, io
+for phase in ['SNAPSHOT', 'PARSER_PREFLIGHT', 'PARSER_ADD']:
+    subprocess.run = lambda *args, **kwargs: type('Result', (), {'returncode': 1, 'stdout': b'',
+      'stderr': b'private-path secret-value\nValueError: HERMES_SNAPSHOT_RAW_HASH_LINK_INVALID:ERRNO=0\n'})()
+    stderr = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(stderr): command(['fixture'], phase=phase)
+    except Refusal as error:
+        message = str(error)
+        assert 'PHASE='+phase in message and 'EXIT=1' in message
+        assert 'private-path' not in message+stderr.getvalue() and 'secret-value' not in message+stderr.getvalue()
+        if phase == 'SNAPSHOT': assert 'DETAIL=RAW_HASH_LINK_INVALID:ERRNO=0' in message
+    else: raise AssertionError('failed authority command accepted')
+assert authority_detail('SNAPSHOT', b'ValueError: HERMES_SNAPSHOT_READ_PROFILE_SHA256_INVALID:ERRNO=0\n') == 'READ_PROFILE_SHA256_INVALID:ERRNO=0'
+assert authority_detail('SNAPSHOT', b'ValueError: HERMES_SNAPSHOT_READ_NS_LEVEL_UNAVAILABLE:ERRNO=2\n') == 'READ_NS_LEVEL_UNAVAILABLE:ERRNO=2'
+for raw in [b'secret-value\x1b[31m', b'a'*65537, b'HERMES_SNAPSHOT_PRIVATE_PATH:ERRNO=0\n']:
+    detail = authority_detail('SNAPSHOT', raw)
+    assert detail in ['UNCLASSIFIED:ERRNO=0', 'DIAGNOSTIC_UNAVAILABLE:ERRNO=0']
+subprocess.run = lambda *args, **kwargs: (_ for _ in ()).throw(subprocess.TimeoutExpired('private-path', 120, stderr=b'secret-value'))
+try: command(['fixture'], phase='PARSER_PREFLIGHT')
+except Refusal as error:
+    assert str(error) == 'HERMES_NAMESPACE_SETUP_AUTHORITY_COMMAND_FAILED:PHASE=PARSER_PREFLIGHT:EXIT=TIMEOUT:DETAIL=TIMEOUT:ERRNO=0'
+else: raise AssertionError('timeout accepted')
+`);
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test('actual embedded SNAPSHOT reads nested profile raw hashes with exact link depth and rejects malformed reads and revision races', () => {
   const result = policyFixture(String.raw`
 import contextlib, io, types
 original_os = sys.modules['os']
@@ -53,12 +83,14 @@ class Entry:
     def is_dir(self, follow_symlinks):
         assert follow_symlinks is False
         return True
-def execute_snapshot(override=None, revision_race=False, raw_hash=False, raw_target=None):
+def execute_snapshot(override=None, revision_race=False, raw_hash=False, raw_target=None, magic_policy=False, nested_raw_hash=False):
     files = {base+'/.ns_level': b'0\n', base+'/.ns_name': b'root\n',
              base+'/.ns_stacked': b'no\n', base+'/.stacked': b'no\n', base+'/revision': b'7\n',
              parent+'/name': b'parent\n', parent+'/attach': b'/usr/bin/parent\n', parent+'/sha256': b'a'*64+b'\n',
              child+'/name': b'child\n', child+'/attach': b'child\n', child+'/sha256': b'b'*64+b'\n'}
-    raw_path = base+'/policy/raw_data/load.1/sha256'
+    raw_path = base+'/policy/raw_data/17/sha256'
+    raw_owner = child if nested_raw_hash else parent
+    valid_link = '../../../../raw_data/17/sha256' if nested_raw_hash else '../../raw_data/17/sha256'
     if raw_hash: files[raw_path] = b'c'*64+b'\n'
     if override: files.update(override)
     directories = {base+'/policy/profiles': [Entry(parent)], parent+'/profiles': [Entry(child)]}
@@ -80,8 +112,14 @@ def execute_snapshot(override=None, revision_race=False, raw_hash=False, raw_tar
         return value
     seam.open, seam.read, seam.close = open_fixture, read_fixture, lambda descriptor: descriptors.pop(descriptor)
     seam.scandir = lambda path: directories[path]
-    seam.path = types.SimpleNamespace(exists=lambda path: path in directories or (raw_hash and path == parent+'/raw_sha256'),
-                                     realpath=lambda path: raw_target or raw_path)
+    seam.path = types.SimpleNamespace(exists=lambda path: path in directories or (raw_hash and path == raw_owner+'/raw_sha256'),
+                                     realpath=lambda path: base+'/apparmorfs:[123]/raw_data/17/sha256' if magic_policy else raw_target or raw_path)
+    def readlink_fixture(path):
+        assert path == raw_owner+'/raw_sha256'
+        target = raw_target or valid_link
+        reads.append('LINK='+target)
+        return target
+    seam.readlink = readlink_fixture
     output = io.StringIO()
     sys.modules['os'] = seam
     try:
@@ -96,12 +134,26 @@ assert snapshot_result == {'namespace': 'root', 'revision': 7, 'profiles': {
 assert reads.count(base+'/revision') == 2 and child+'/attach' in reads
 snapshot_result, raw_reads = execute_snapshot(raw_hash=True)
 assert snapshot_result['profiles']['parent']['raw_sha256'] == 'c'*64
-assert base+'/policy/raw_data/load.1/sha256' in raw_reads
-for raw_target in ['/private/sha256', base+'/policy/raw_data/load.1/other', base+'/policy/raw_data/x/../sha256']:
+assert base+'/policy/raw_data/17/sha256' in raw_reads
+snapshot_result, _ = execute_snapshot(raw_hash=True, magic_policy=True)
+assert snapshot_result['profiles']['parent']['raw_sha256'] == 'c'*64
+snapshot_result, nested_reads = execute_snapshot(raw_hash=True, magic_policy=True, nested_raw_hash=True)
+assert snapshot_result['profiles']['parent//child'] == {'attach': 'child', 'hash': 'b'*64, 'raw_sha256': 'c'*64}
+assert 'raw_sha256' not in snapshot_result['profiles']['parent']
+assert 'LINK=../../../../raw_data/17/sha256' in nested_reads
+assert nested_reads.count(base+'/policy/raw_data/17/sha256') == 1
+for wrong_depth in ['../../raw_data/17/sha256', '../../../../../../raw_data/17/sha256']:
+    try: execute_snapshot(raw_hash=True, nested_raw_hash=True, raw_target=wrong_depth)
+    except ValueError as error:
+        assert str(error) == 'HERMES_SNAPSHOT_RAW_HASH_LINK_INVALID:ERRNO=0'
+        continue
+    raise AssertionError('nested raw hash accepted wrong relative depth')
+for raw_target in ['/private/sha256', '../../raw_data/17/other', '../../raw_data/x/../sha256',
+                   '../../raw_data/17/sha256\n', '../../../../raw_data/17/sha256']:
     try: execute_snapshot(raw_hash=True, raw_target=raw_target)
     except ValueError: continue
     raise AssertionError('out-of-bound raw hash path accepted')
-try: execute_snapshot({base+'/policy/raw_data/load.1/sha256': b'invalid\n'}, raw_hash=True)
+try: execute_snapshot({base+'/policy/raw_data/17/sha256': b'invalid\n'}, raw_hash=True)
 except ValueError: pass
 else: raise AssertionError('malformed raw hash accepted')
 for invalid in [b'', b'x'*8192, b'parent\nother\n', b'parent\x00\n', b'\xff\n']:
@@ -336,7 +388,7 @@ test('actual setup requires positive exact labels and a separate namespace-denie
   const bash = process.platform === 'win32' ? 'C:/Program Files/Git/bin/bash.exe' : '/bin/bash';
   const start = prerequisite.indexOf('\nrun_probe\nif');
   assert.ok(start >= 0);
-  for (const fixture of ['pass', 'negative-pass', 'negative-profile', 'negative-errno', 'positive-label', 'restriction-changed']) {
+  for (const fixture of ['pass', 'restricted-pass', 'negative-baseline-label-change', 'negative-pass', 'negative-profile', 'negative-errno', 'positive-label', 'restriction-changed']) {
     const result = spawnSync(bash, ['--noprofile', '--norc', '-c', `set -euo pipefail
 calls=0
 before_restriction=1
@@ -351,6 +403,7 @@ run_probe() {
   probe_status=70
   probe_result=HERMES_NATIVE_NAMESPACE_PROBE:HERMES_PRIVATE_NAMESPACE_UNSHARE_UNAVAILABLE:ERRNO=13
   probe_context=HERMES_NATIVE_NAMESPACE_CONTEXT:BEFORE=UNCONFINED:AFTER=UNCONFINED:NNP=0:SECCOMP=0
+  if [[ "$FIXTURE" == restricted-pass ]]; then probe_context=HERMES_NATIVE_NAMESPACE_CONTEXT:BEFORE=RESTRICTED_USERNS:AFTER=RESTRICTED_USERNS:NNP=0:SECCOMP=0; fi
   if [[ "$calls" == 2 ]]; then
     [[ "$#" == 0 ]] || fail POSITIVE_MODE_INVALID
     probe_status=0
@@ -361,13 +414,15 @@ run_probe() {
     [[ "$#" == 1 && "$1" == --negative-control ]] || fail NEGATIVE_MODE_INVALID
     if [[ "$FIXTURE" == negative-pass ]]; then probe_status=0; probe_result=HERMES_NATIVE_NAMESPACE_PROBE:PASS:ERRNO=0; fi
     if [[ "$FIXTURE" == negative-profile ]]; then probe_context=HERMES_NATIVE_NAMESPACE_CONTEXT:BEFORE=EXPECTED_PROFILE:AFTER=EXPECTED_PROFILE:NNP=0:SECCOMP=0; fi
+    if [[ "$FIXTURE" == negative-baseline-label-change ]]; then probe_context=HERMES_NATIVE_NAMESPACE_CONTEXT:BEFORE=RESTRICTED_USERNS:AFTER=RESTRICTED_USERNS:NNP=0:SECCOMP=0; fi
     if [[ "$FIXTURE" == negative-errno ]]; then probe_result=HERMES_NATIVE_NAMESPACE_PROBE:HERMES_PRIVATE_NAMESPACE_UNSHARE_UNAVAILABLE:ERRNO=5; fi
   fi
 }
 ${prerequisite.slice(start)}
 `], { encoding: 'utf8', shell: false, timeout: 5_000, env: { ...process.env, FIXTURE: fixture } });
-    assert.equal(result.status, fixture === 'pass' ? 0 : 1, `${fixture}: ${result.stderr}`);
-    if (fixture === 'pass') assert.match(result.stdout, /SCOPED_APPARMOR_PROFILE=VERIFIED/u);
+    const expected = ['pass', 'restricted-pass'].includes(fixture) ? 0 : 1;
+    assert.equal(result.status, expected, `${fixture}: ${result.stderr}`);
+    if (expected === 0) assert.match(result.stdout, /SCOPED_APPARMOR_PROFILE=VERIFIED/u);
     else assert.doesNotMatch(result.stdout, /SCOPED_APPARMOR_PROFILE=VERIFIED/u);
   }
 });

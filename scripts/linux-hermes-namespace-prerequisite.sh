@@ -41,10 +41,38 @@ def require(condition, code):
     if not condition:
         raise Refusal(code)
 
-def command(args, policy=None):
-    result = subprocess.run(args, input=policy, capture_output=True, timeout=120, check=False)
-    require(result.returncode == 0, 'HERMES_NAMESPACE_SETUP_AUTHORITY_COMMAND_FAILED')
+def authority_detail(phase, stderr):
+    # Только фиксированные markers/errno. Raw command stderr содержит paths и
+    # profile names и никогда не становится пользовательским diagnostic output.
+    if not isinstance(stderr, bytes) or len(stderr) > 65536:
+        return 'DIAGNOSTIC_UNAVAILABLE:ERRNO=0'
+    if phase == 'SNAPSHOT':
+        marker = re.search(rb'HERMES_SNAPSHOT_(?P<detail>READ_(?:NS_LEVEL|NS_NAME|NS_STACKED|STACKED|REVISION|PROFILE_NAME|PROFILE_ATTACH|PROFILE_SHA256|RAW_SHA256)_(?:UNAVAILABLE|INVALID)|NAMESPACE_INVALID|RAW_HASH_LINK_INVALID|RAW_HASH_INVALID):ERRNO=(?P<errno>[0-9]{1,4})(?:\n|$)', stderr)
+        if marker:
+            return marker.group('detail').decode('ascii')+':ERRNO='+marker.group('errno').decode('ascii')
+    if b'a password is required' in stderr or b'password is required' in stderr:
+        return 'SUDO_AUTHENTICATION_REQUIRED:ERRNO=0'
+    if b'Permission denied' in stderr:
+        return 'PERMISSION_DENIED:ERRNO=13'
+    if b'Could not open' in stderr and b'abi/4.0' in stderr:
+        return 'POLICY_ABI_UNAVAILABLE:ERRNO=2'
+    return 'UNCLASSIFIED:ERRNO=0'
+
+def command(args, policy=None, phase=None):
+    require(phase in ('SNAPSHOT', 'PARSER_PREFLIGHT', 'PARSER_ADD'), 'HERMES_NAMESPACE_SETUP_AUTHORITY_PHASE_INVALID')
+    print('HERMES_NAMESPACE_AUTHORITY:PHASE='+phase+':STATUS=STARTED', file=sys.stderr)
+    try:
+        result = subprocess.run(args, input=policy, capture_output=True, timeout=120, check=False)
+    except subprocess.TimeoutExpired:
+        raise Refusal('HERMES_NAMESPACE_SETUP_AUTHORITY_COMMAND_FAILED:PHASE='+phase+':EXIT=TIMEOUT:DETAIL=TIMEOUT:ERRNO=0')
+    except OSError as error:
+        number = error.errno if isinstance(error.errno, int) and 0 <= error.errno <= 4095 else 0
+        raise Refusal('HERMES_NAMESPACE_SETUP_AUTHORITY_COMMAND_FAILED:PHASE='+phase+':EXIT=UNAVAILABLE:DETAIL=EXEC_UNAVAILABLE:ERRNO='+str(number))
+    if result.returncode != 0:
+        raise Refusal('HERMES_NAMESPACE_SETUP_AUTHORITY_COMMAND_FAILED:PHASE='+phase+':EXIT='+str(result.returncode)+
+                      ':DETAIL='+authority_detail(phase, getattr(result, 'stderr', b'')))
     require(len(result.stdout) <= 8 * 1024 * 1024, 'HERMES_NAMESPACE_SETUP_AUTHORITY_OUTPUT_INVALID')
+    print('HERMES_NAMESPACE_AUTHORITY:PHASE='+phase+':STATUS=PASS', file=sys.stderr)
     return result.stdout
 
 def check_attachments(profiles, targets):
@@ -77,18 +105,23 @@ def check_change(before, after, name, target, binary_digest):
 SNAPSHOT = r'''
 import json, os, re, stat
 base = '/sys/kernel/security/apparmor'
-def read(path):
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-    try: value = os.read(fd, 8192)
-    finally: os.close(fd)
-    if not value or len(value) == 8192: raise ValueError('incomplete')
-    text = value.decode('utf-8').removesuffix('\n')
-    if '\n' in text or '\x00' in text: raise ValueError('invalid')
+def read(path, field):
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        try: value = os.read(fd, 8192)
+        finally: os.close(fd)
+    except OSError as error:
+        number = error.errno if isinstance(error.errno, int) and 0 <= error.errno <= 4095 else 0
+        raise ValueError('HERMES_SNAPSHOT_READ_'+field+'_UNAVAILABLE:ERRNO='+str(number)) from None
+    if not value or len(value) == 8192: raise ValueError('HERMES_SNAPSHOT_READ_'+field+'_INVALID:ERRNO=0')
+    try: text = value.decode('utf-8').removesuffix('\n')
+    except UnicodeDecodeError: raise ValueError('HERMES_SNAPSHOT_READ_'+field+'_INVALID:ERRNO=0') from None
+    if '\n' in text or '\x00' in text: raise ValueError('HERMES_SNAPSHOT_READ_'+field+'_INVALID:ERRNO=0')
     return text
 def identity():
-    if read(base+'/.ns_level') != '0' or read(base+'/.ns_name') != 'root': raise ValueError('namespace')
-    if read(base+'/.ns_stacked') != 'no' or read(base+'/.stacked') != 'no': raise ValueError('stacked')
-    value = read(base+'/revision')
+    if read(base+'/.ns_level', 'NS_LEVEL') != '0' or read(base+'/.ns_name', 'NS_NAME') != 'root': raise ValueError('HERMES_SNAPSHOT_NAMESPACE_INVALID:ERRNO=0')
+    if read(base+'/.ns_stacked', 'NS_STACKED') != 'no' or read(base+'/.stacked', 'STACKED') != 'no': raise ValueError('stacked')
+    value = read(base+'/revision', 'REVISION')
     if not re.fullmatch('[0-9]+', value): raise ValueError('revision')
     return int(value)
 before = identity()
@@ -98,7 +131,7 @@ def walk(directory, parent=''):
     if len(entries) > 4096: raise ValueError('bound')
     for entry in entries:
         if not entry.is_dir(follow_symlinks=False): raise ValueError('type')
-        local_name, attach, digest = [read(entry.path+'/'+field) for field in ('name', 'attach', 'sha256')]
+        local_name, attach, digest = [read(entry.path+'/'+field, 'PROFILE_'+field.upper()) for field in ('name', 'attach', 'sha256')]
         name = parent+local_name
         if not name or name in profiles or not re.fullmatch('[a-f0-9]{40}|[a-f0-9]{64}', digest): raise ValueError('profile')
         profiles[name] = {'attach': attach, 'hash': digest}
@@ -106,10 +139,16 @@ def walk(directory, parent=''):
         # serialized load, unlike sha256 (version + unpacked profile payload).
         raw_hash = entry.path+'/raw_sha256'
         if os.path.exists(raw_hash):
-            resolved = os.path.realpath(raw_hash)
-            if not re.fullmatch(re.escape(base)+r'/policy/raw_data/[^/]+/sha256', resolved): raise ValueError('raw hash path')
-            raw_digest = read(resolved)
-            if not re.fullmatch('[a-f0-9]{64}', raw_digest): raise ValueError('raw hash')
+            # /policy is a kernel magic link into apparmorfs, not an ordinary
+            # filesystem symlink. realpath cannot preserve that mount lookup.
+            # Validate the kernel raw hash link's exact relative depth, then use
+            # the same namespace's /policy lookup and a nofollow final file.
+            link = os.readlink(raw_hash)
+            prefix = '../../'*(parent.count('//')+1)
+            match = re.fullmatch(re.escape(prefix)+r'raw_data/([0-9]+)/sha256', link)
+            if match is None: raise ValueError('HERMES_SNAPSHOT_RAW_HASH_LINK_INVALID:ERRNO=0')
+            raw_digest = read(base+'/policy/raw_data/'+match.group(1)+'/sha256', 'RAW_SHA256')
+            if not re.fullmatch('[a-f0-9]{64}', raw_digest): raise ValueError('HERMES_SNAPSHOT_RAW_HASH_INVALID:ERRNO=0')
             profiles[name]['raw_sha256'] = raw_digest
         child = entry.path+'/profiles'
         if os.path.exists(child): walk(child, name+'//')
@@ -121,7 +160,7 @@ print(json.dumps({'namespace':'root', 'revision':after, 'profiles':profiles}, so
 
 def snapshot():
     # Privileged read only kernel-policy query; raw names never leave private state.
-    data = command(['sudo', '-n', 'python3', '-I', '-S', '-c', SNAPSHOT])
+    data = command(['sudo', '-n', 'python3', '-I', '-S', '-c', SNAPSHOT], phase='SNAPSHOT')
     return json.loads(data)
 
 def profile_targets(state, launcher, run_id, attempt):
@@ -143,7 +182,7 @@ def policy_bytes(name, target):
 def compile_policy(policy):
     require(isinstance(policy, bytes) and 0 < len(policy) <= 4096,
             'HERMES_NAMESPACE_SETUP_PROFILE_CONTENT_INVALID')
-    binary = command(['sudo', '-n', 'apparmor_parser', '--skip-kernel-load', '--skip-cache', '--stdout'], policy)
+    binary = command(['sudo', '-n', 'apparmor_parser', '--skip-kernel-load', '--skip-cache', '--stdout'], policy, phase='PARSER_PREFLIGHT')
     require(binary, 'HERMES_NAMESPACE_SETUP_PROFILE_PREFLIGHT_INVALID')
     return hashlib.sha256(binary).hexdigest()
 
@@ -194,7 +233,7 @@ def prepare(state, launcher, run_id, attempt):
         require(snapshot() == previous, 'HERMES_NAMESPACE_SETUP_POLICY_REVISION_RACE')
         open(os.path.join(state, name+'.attempted'), 'x').close()
         # Тот же immutable bytes object, проверенный parser; pathname не открывается.
-        command(['sudo', '-n', 'apparmor_parser', '--add', '--skip-cache'], policy)
+        command(['sudo', '-n', 'apparmor_parser', '--add', '--skip-cache'], policy, phase='PARSER_ADD')
         current = snapshot()
         check_change(previous, current, name, target, binary_digest)
         open(os.path.join(state, name+'.loaded'), 'x').close()
@@ -375,6 +414,10 @@ fi
 [[ "$probe_status" == 70 && "$before_restriction" == 1 &&
    "$probe_result" =~ ^HERMES_NATIVE_NAMESPACE_PROBE:HERMES_PRIVATE_NAMESPACE_UNSHARE_UNAVAILABLE:ERRNO=(1|13)$ ]] ||
   fail HERMES_NAMESPACE_SETUP_UNSUPPORTED_REFUSAL
+[[ "$probe_context" == HERMES_NATIVE_NAMESPACE_CONTEXT:BEFORE=UNCONFINED:AFTER=UNCONFINED:NNP=0:SECCOMP=0 ||
+   "$probe_context" == HERMES_NATIVE_NAMESPACE_CONTEXT:BEFORE=RESTRICTED_USERNS:AFTER=RESTRICTED_USERNS:NNP=0:SECCOMP=0 ]] ||
+  fail HERMES_NAMESPACE_SETUP_BASELINE_CONTEXT_UNSUPPORTED
+baseline_context="$probe_context"
 [[ "$(cat /sys/module/apparmor/parameters/enabled)" == Y ]] ||
   fail HERMES_NAMESPACE_SETUP_APPARMOR_NOT_ACTIVE
 command -v apparmor_parser >/dev/null || fail HERMES_NAMESPACE_SETUP_APPARMOR_PARSER_UNAVAILABLE
@@ -387,7 +430,7 @@ run_probe
   fail HERMES_NAMESPACE_SETUP_SCOPED_PROFILE_DID_NOT_RESOLVE_REFUSAL
 run_probe --negative-control
 [[ "$probe_status" == 70 &&
-   "$probe_context" == HERMES_NATIVE_NAMESPACE_CONTEXT:BEFORE=UNCONFINED:AFTER=UNCONFINED:* &&
+   "$probe_context" == "$baseline_context" &&
    "$probe_result" =~ ^HERMES_NATIVE_NAMESPACE_PROBE:HERMES_PRIVATE_NAMESPACE_UNSHARE_UNAVAILABLE:ERRNO=(1|13)$ ]] ||
   fail HERMES_NAMESPACE_SETUP_NEGATIVE_CONTROL_UNEXPECTED
 [[ "$(restriction)" == "$before_restriction" ]] || fail HERMES_NAMESPACE_SETUP_GLOBAL_RESTRICTION_CHANGED
