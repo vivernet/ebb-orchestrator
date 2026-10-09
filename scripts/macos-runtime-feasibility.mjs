@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { closeSync, constants, fstatSync, fsyncSync, lstatSync, mkdtempSync, openSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, fstatSync, fsyncSync, lstatSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -212,6 +212,28 @@ export function parseJobRejection(text, owner, binary, phase) {
   if (phase === 'registered' && pid || phase === 'running' && !pid) return 'pid-shape';
   return null;
 }
+/** Canonical root задаётся до любых fixture paths; identities принадлежат тому же созданному private directory. */
+export function canonicalFixtureRoot(directory) {
+  const canonical = realpathSync(directory);
+  const stat = lstatSync(canonical);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('FIXTURE_ROOT_TYPE');
+  return canonical;
+}
+/** Diagnostic не принимает aliases: только собственный literal/canonical plist можно сравнивать по identity. */
+export function registrationPathEvidence(text, owner) {
+  const observed = text.match(/^\s*path = (.+)$/m)?.[1];
+  const literalMatch = observed === owner.plist;
+  let canonicalMatch = false;
+  try {
+    const canonical = realpathSync(owner.plist);
+    canonicalMatch = observed === canonical;
+    let sameFileIdentity = null;
+    if (literalMatch || canonicalMatch) sameFileIdentity = objectIdentity(owner.plist, 'file') === objectIdentity(canonical, 'file');
+    return { literalMatch, canonicalMatch, sameFileIdentity,
+      category: literalMatch && sameFileIdentity ? 'LITERAL_SAME_FILE'
+        : canonicalMatch && sameFileIdentity ? 'CANONICAL_ALIAS_SAME_FILE' : 'MISMATCH' };
+  } catch { return { literalMatch, canonicalMatch, sameFileIdentity: null, category: 'OWNED_FILE_UNAVAILABLE' }; }
+}
 function xml(value) { return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;'); }
 /** Новый disposable user-domain fixture явно выбирает Background; restart/demand policy остаётся закрытой. */
 export function fixturePlist(label, binary, args) {
@@ -290,7 +312,8 @@ async function managerRead(owner, binary, phase, absent) {
   const parseRejection = result.status === 0 ? parseJobRejection(result.stdout, owner, binary, phase) : null;
   const healthAfter = await health(owner.domain);
   return { classification: classifyManagerResult(normalized(result, owner.label), { matches: Boolean(job), absent, healthBefore, healthAfter }),
-    pid: job?.pid ?? null, status: result.status, error: result.error, healthBefore, healthAfter, parseRejection };
+    pid: job?.pid ?? null, status: result.status, error: result.error, healthBefore, healthAfter, parseRejection,
+    pathEvidence: result.status === 0 ? registrationPathEvidence(result.stdout, owner) : null };
 }
 function safeOwnerFile(path, expected) {
   if (objectIdentity(path, 'file') === '') throw new Error('OWNER_IDENTITY');
@@ -714,7 +737,7 @@ async function phase2(output) {
     Object.assign(report, { phaseVerdict: 'NOT_RUN', reason: 'MACOS_REQUIRED' });
     writeFileSync(output, `${JSON.stringify(report, null, 2)}\n`); process.exitCode = 1; return;
   }
-  const directory = mkdtempSync(join(tmpdir(), 'ebb-macos-phase2-'));
+  const directory = canonicalFixtureRoot(mkdtempSync(join(tmpdir(), 'ebb-macos-phase2-')));
   let binary;
   try {
     report.sourceSHA = run('/usr/bin/git', ['rev-parse', 'HEAD']).stdout;

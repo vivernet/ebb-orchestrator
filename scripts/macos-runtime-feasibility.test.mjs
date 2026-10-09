@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, symlinkSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -84,6 +84,29 @@ test('registration rejection evidence uses fixed categories and never exposes se
     assert.equal(rejection, category); assert.doesNotMatch(rejection, /PRIVATE/);
   }
   assert.equal(parseJobRejection(text, owner, '/tmp/binary', 'running'), 'pid-shape');
+});
+
+test('fixture root canonicalization and path evidence retain strict equality and exact private-file identity', async () => {
+  const { canonicalFixtureRoot, registrationPathEvidence, parseJobRejection } = await import('./macos-runtime-feasibility.mjs');
+  assert.equal(typeof canonicalFixtureRoot, 'function'); assert.equal(typeof registrationPathEvidence, 'function');
+  const directory = mkdtempSync(join(tmpdir(), 'ebb-canonical-root-'));
+  try {
+    const original = join(directory, 'original'); mkdirSync(original);
+    const alias = join(directory, 'alias'); symlinkSync(original, alias, process.platform === 'win32' ? 'junction' : 'dir');
+    const canonical = canonicalFixtureRoot(alias);
+    const originalCanonical = canonicalFixtureRoot(original);
+    assert.equal(canonical, originalCanonical);
+    const plist = join(alias, 'g.plist'), actual = join(canonical, 'g.plist'); writeFileSync(plist, 'fixture', { mode: 0o600 });
+    const evidence = registrationPathEvidence(` path = ${actual}`, { plist });
+    assert.equal(evidence.literalMatch, false); assert.equal(evidence.canonicalMatch, true);
+    assert.equal(evidence.sameFileIdentity, process.platform === 'win32' ? null : true);
+    assert.equal(evidence.category, process.platform === 'win32' ? 'OWNED_FILE_UNAVAILABLE' : 'CANONICAL_ALIAS_SAME_FILE');
+    assert.doesNotMatch(JSON.stringify(evidence), /original|alias|g\.plist/);
+    const mismatch = registrationPathEvidence(' path = /unrelated/private', { plist });
+    assert.equal(mismatch.category, 'MISMATCH'); assert.equal(mismatch.sameFileIdentity, null);
+    assert.equal(parseJobRejection('user/501/g = {\n program = binary\n path = /wrong\n}',
+      { domain: 'user/501', label: 'g', plist: actual }, 'binary', 'registered'), 'path');
+  } finally { rmSync(directory, { recursive: true }); }
 });
 
 test('Phase2 non-Darwin reports NOT_RUN with schema v2, never simulation PASS', { skip: process.platform === 'darwin' }, () => {
