@@ -49,7 +49,7 @@ mkdir -m 700 -- "$state_dir"
 trap cleanup EXIT
 "${CXX:-c++}" -std=c++17 -O2 -Wall -Wextra -Wpedantic \
   "-DEBB_NAMESPACE_PROBE_PROFILE_NAME=\"ebb-hermes-probe-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}\"" \
-  scripts/linux-hermes-namespace-probe.cpp -o "${state_dir}/probe"
+  scripts/linux-hermes-namespace-probe.cpp -o "${state_dir}/probe" -lapparmor
 
 restriction() {
   local value
@@ -66,17 +66,21 @@ validate_probe_output() {
   probe_context="${probe_output%%$'\n'*}"
   probe_result="${probe_output#*$'\n'}"
   [[ "$probe_output" == *$'\n'* && "$probe_context" =~ $context_pattern &&
-     "$probe_result" =~ ^HERMES_NATIVE_NAMESPACE_PROBE:(PASS|HERMES_PRIVATE_NAMESPACE_(UNSHARE|SETGROUPS_MAP|UID_MAP|GID_MAP|SETRESGID|SETRESUID|MOUNT_PROPAGATION)_UNAVAILABLE):ERRNO=[0-9]+$ ]] ||
+     "$probe_result" =~ ^HERMES_NATIVE_NAMESPACE_PROBE:(PASS|HERMES_APPARMOR_PROFILE_TRANSITION_(UNAVAILABLE|LABEL_MISMATCH)|HERMES_PRIVATE_NAMESPACE_(UNSHARE|SETGROUPS_MAP|UID_MAP|GID_MAP|SETRESGID|SETRESUID|MOUNT_PROPAGATION)_UNAVAILABLE):ERRNO=[0-9]+$ ]] ||
     fail HERMES_NAMESPACE_SETUP_PROBE_OUTPUT_INVALID
 }
 
 run_probe() {
+  local probe_args=()
+  [[ "$#" == 0 || ( "$#" == 1 && "$1" == --apply-exact-profile ) ]] ||
+    fail HERMES_NAMESPACE_SETUP_PROBE_MODE_INVALID
+  if [[ "$#" == 1 ]]; then probe_args=(--apply-exact-profile); fi
   local unit="ebb-hermes-userns-probe-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$$.service"
   set +e
   systemd-run --user --quiet --wait --pipe --collect --unit="$unit" \
     --property=Type=exec --property=ExitType=cgroup --property=KillMode=control-group \
     --property=Delegate=no --property=ProtectControlGroups=yes --property=Restart=no \
-    "${state_dir}/probe" >"${state_dir}/probe-output" 2>&1
+    "${state_dir}/probe" "${probe_args[@]}" >"${state_dir}/probe-output" 2>&1
   probe_status=$?
   set -e
   probe_output="$(cat "${state_dir}/probe-output")"
@@ -136,8 +140,17 @@ if [[ "$probe_status" != 0 ]]; then
   validate_probe_output
   printf 'HERMES_NATIVE_NAMESPACE_DIRECT_CONTROL:EXIT=%s\n' "$direct_status"
   printf '%s\n' "$probe_output"
-  [[ "$unit_context" == HERMES_NATIVE_NAMESPACE_CONTEXT:BEFORE=EXPECTED_PROFILE:* ]] ||
-    fail HERMES_NAMESPACE_SETUP_EXPECTED_PROFILE_NOT_ATTACHED
+  if [[ "$unit_context" != HERMES_NATIVE_NAMESPACE_CONTEXT:BEFORE=EXPECTED_PROFILE:* ]]; then
+    # Documented application-directed transition: только bounded diagnostic.
+    # Его PASS не заменяет ещё не реализованный production helper transition.
+    run_probe --apply-exact-profile
+    printf 'HERMES_NATIVE_NAMESPACE_APPLICATION_TRANSITION:EXIT=%s\n' "$probe_status"
+    if [[ "$probe_status" == 0 && "$probe_result" == HERMES_NATIVE_NAMESPACE_PROBE:PASS:ERRNO=0 &&
+          "$probe_context" == HERMES_NATIVE_NAMESPACE_CONTEXT:BEFORE=*:AFTER=EXPECTED_PROFILE:* ]]; then
+      fail HERMES_NAMESPACE_SETUP_EXPLICIT_TRANSITION_VERIFIED_PRODUCTION_NOT_IMPLEMENTED
+    fi
+    fail HERMES_NAMESPACE_SETUP_EXPLICIT_TRANSITION_DID_NOT_RESOLVE_REFUSAL
+  fi
   fail HERMES_NAMESPACE_SETUP_SCOPED_PROFILE_DID_NOT_RESOLVE_REFUSAL
 fi
 [[ "$probe_status" == 0 && "$probe_result" == HERMES_NATIVE_NAMESPACE_PROBE:PASS:ERRNO=0 &&

@@ -2,6 +2,7 @@
 #define main ebbLinuxHermesLauncherMain
 #include "../apps/server/native/linux-hermes-launcher/ebb-linux-hermes-launcher.cpp"
 #undef main
+#include <sys/apparmor.h>
 
 #ifndef EBB_NAMESPACE_PROBE_PROFILE_NAME
 #error Expected per-run AppArmor profile name must be provided by the prerequisite compiler invocation
@@ -24,12 +25,24 @@ const char* labelClass() {
   return "OTHER";
 }
 
-int main() {
+int main(int argc, char** argv) {
   if (geteuid() == 0) return kInvalidInput;
+  const bool applyExactProfile = argc == 2 && std::string(argv[1]) == "--apply-exact-profile";
+  if (argc != 1 && !applyExactProfile) return kInvalidInput;
   const char* beforeLabel = labelClass();
   const int noNewPrivileges = prctl(PR_GET_NO_NEW_PRIVS, 0, 0, 0, 0);
   const int seccomp = prctl(PR_GET_SECCOMP, 0, 0, 0, 0);
-  const char* failure = enterPrivateMountNamespace(getuid(), getgid());
+  // Только compile-bound профиль этого probe; произвольный target не принимается.
+  const char* failure = nullptr;
+  if (applyExactProfile) {
+    if (aa_change_profile(EBB_NAMESPACE_PROBE_PROFILE_NAME) < 0) {
+      failure = "HERMES_APPARMOR_PROFILE_TRANSITION_UNAVAILABLE";
+    } else if (std::string(labelClass()) != "EXPECTED_PROFILE") {
+      errno = EACCES;
+      failure = "HERMES_APPARMOR_PROFILE_TRANSITION_LABEL_MISMATCH";
+    }
+  }
+  if (!failure) failure = enterPrivateMountNamespace(getuid(), getgid());
   const int failureErrno = failure ? errno : 0;
   const char* afterLabel = labelClass();
   std::printf("HERMES_NATIVE_NAMESPACE_CONTEXT:BEFORE=%s:AFTER=%s:NNP=%d:SECCOMP=%d\n",

@@ -1,0 +1,35 @@
+name: macOS runtime feasibility Phase 1
+on:
+  workflow_dispatch:
+  push:
+    branches: [develop]
+    paths:
+      - .github/workflows/macos-runtime-feasibility.yml
+      - scripts/macos-runtime-feasibility.cpp
+      - scripts/macos-runtime-feasibility.mjs
+      - scripts/macos-runtime-feasibility.test.mjs
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Prepare report directory
+        run: mkdir -p temp
+      - name: Compile and probe exact owned child
+        run: node scripts/macos-runtime-feasibility.mjs temp/macos-runtime-feasibility.json
+      - name: Preserve bounded feasibility evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-runtime-feasibility-phase1
+          path: temp/macos-runtime-feasibility.json
+          if-no-files-found: error
+          retention-days: 7

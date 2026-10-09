@@ -132,6 +132,12 @@ jobs:
           if [[ "$build_status" -ne 0 ]]; then exit "$build_status"; fi
       - name: Validate Linux namespace prerequisite contract
         run: node --test scripts/linux-hermes-namespace-prerequisite.test.mjs
+      - name: Install documented AppArmor application transition API
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libapparmor-dev
       - name: Verify and prepare exact Linux helper user namespace permission
         shell: bash
         run: bash scripts/linux-hermes-namespace-prerequisite.sh setup
