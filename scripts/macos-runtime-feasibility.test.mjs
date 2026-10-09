@@ -123,6 +123,31 @@ test('streaming domain experiment discards inventory and fails closed on limit a
   assert.equal(timed.healthy, false); assert.equal(timed.error, 'TIMEOUT');
 });
 
+test('actual health authority accepts complete 82KB same-user stream and rejects malformed/truncated or other domains', async () => {
+  const { health } = await import('./macos-runtime-feasibility.mjs');
+  const { spawn } = await import('node:child_process');
+  assert.equal(typeof health, 'function');
+  let calls = 0;
+  const start = text => () => {
+    calls++;
+    const child = spawn(process.execPath, ['-e', "process.stdin.on('data',chunk=>process.stdout.write(chunk))"],
+      { shell: false, stdio: ['pipe', 'pipe', 'pipe'] });
+    child.stdin.end(text); return child;
+  };
+  const evidence = [];
+  assert.equal(await health('user/501', evidence, { start: start('user/501 = {\n' + 'X'.repeat(82240) + '\n}\n') }), true);
+  assert.ok(evidence[0].stdoutBytes > 65536);
+  for (const text of ['user/501 = {\ntruncated', 'gui/501 = {\n}', 'user/501 = {\n} trailing']) {
+    assert.equal(await health('user/501', [], { start: start(text) }), false);
+  }
+  const before = calls;
+  for (const domain of ['gui/501', 'system', 'user/other']) assert.equal(await health(domain, [], { start: start('') }), false);
+  assert.equal(calls, before);
+  assert.equal(await health('user/501', [], { limit: 20, start: start('user/501 = {' + 'X'.repeat(100) + '}') }), false);
+  assert.equal(await health('user/501', [], { deadline: 20, start: () => spawn(process.execPath, ['-e', 'setTimeout(()=>{},1000)'],
+    { shell: false, stdio: ['ignore', 'pipe', 'pipe'] }) }), false);
+});
+
 test('feasibility verdict requires entire matrix and rejects retained UNKNOWN or failed sentinel cleanup', async () => {
   const { feasibilityVerdict } = await import('./macos-runtime-feasibility.mjs');
   assert.equal(feasibilityVerdict([]), 'NOT_VERIFIED');

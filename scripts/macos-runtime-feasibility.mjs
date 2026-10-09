@@ -218,7 +218,7 @@ export function domainHealthEvidence(result, domain) {
     stdoutBytes: result.stdoutBytes ?? Buffer.byteLength(result.stdout ?? ''), stderrBytes: result.stderrBytes ?? Buffer.byteLength(result.stderr ?? ''),
     healthy: !result.error && !result.signal && status === 0 && headerMatched && trailerMatched };
 }
-/** Read-only same-domain experiment: bounded streaming discards inventory and never supplies dispatch authority. */
+/** Read-only same-domain health: bounded streaming discards inventory; ошибки и неполный результат закрывают manager proof. */
 export function streamDomainHealth(domain, { deadline = 5000, limit = 2 * 1024 * 1024,
   start = () => spawn('/bin/launchctl', ['print', domain], { shell: false, stdio: ['ignore', 'pipe', 'pipe'] }) } = {}) {
   return new Promise(resolveProbe => {
@@ -246,9 +246,10 @@ export function streamDomainHealth(domain, { deadline = 5000, limit = 2 * 1024 *
     });
   });
 }
-function health(domain, evidence) {
-  const result = run('/bin/launchctl', ['print', domain], 5000);
-  const summary = domainHealthEvidence(result, domain);
+/** Authority требует полного bounded same-user stream; другие domain types никогда не запрашиваются. */
+export async function health(domain, evidence, options) {
+  if (!/^user\/(0|[1-9]\d*)$/.test(domain)) return false;
+  const summary = await streamDomainHealth(domain, options);
   if (evidence) evidence.push({ domainKind: domain.split('/')[0], ...summary });
   return summary.healthy;
 }
@@ -256,11 +257,11 @@ function normalized(result, label) {
   return { status: result.status, signal: result.signal, error: result.error,
     stdout: result.stdout.replaceAll(label, '<label>'), stderr: result.stderr.replaceAll(label, '<label>') };
 }
-function managerRead(owner, binary, phase, absent) {
-  const healthBefore = health(owner.domain);
+async function managerRead(owner, binary, phase, absent) {
+  const healthBefore = await health(owner.domain);
   const result = run('/bin/launchctl', ['print', `${owner.domain}/${owner.label}`], 5000);
   const job = result.status === 0 ? parseJob(result.stdout, owner, binary, phase) : null;
-  const healthAfter = health(owner.domain);
+  const healthAfter = await health(owner.domain);
   return { classification: classifyManagerResult(normalized(result, owner.label), { matches: Boolean(job), absent, healthBefore, healthAfter }),
     pid: job?.pid ?? null, status: result.status, error: result.error, healthBefore, healthAfter };
 }
@@ -358,16 +359,10 @@ async function exercise(binary, directory, scenario, report, selectedGeneration 
       outcome.stop = 'NEVER_LAUNCHED'; outcome.verdict = 'PASS'; return;
     }
     outcome.managerHealth = [];
-    if (!health(domain, outcome.managerHealth)) {
-      outcome.managerHealthExperiment = { domainKind: 'user', purpose: 'READ_ONLY_DIAGNOSTIC_NO_AUTHORITY',
-        original: outcome.managerHealth[0], streaming: await streamDomainHealth(domain) };
-      outcome.managerHealthExperiment.rootCause = outcome.managerHealth[0].error === 'BUFFER_LIMIT'
-        && outcome.managerHealthExperiment.streaming.healthy ? 'CONFIRMED_64K_CAPTURE_LIMIT' : 'NOT_CONFIRMED';
-      throw new Error('DOMAIN_UNAVAILABLE');
-    }
+    if (!await health(domain, outcome.managerHealth)) throw new Error('DOMAIN_UNAVAILABLE');
     const negativeLabel = `com.ebb.phase2.absent.${randomUUID()}`;
     const negative = run('/bin/launchctl', ['print', `${domain}/${negativeLabel}`], 5000);
-    if (!health(domain) || negative.status === 0 || negative.error || negative.signal || !negative.stderr.includes(negativeLabel)) throw new Error('ABSENCE_CALIBRATION');
+    if (!await health(domain) || negative.status === 0 || negative.error || negative.signal || !negative.stderr.includes(negativeLabel)) throw new Error('ABSENCE_CALIBRATION');
     absent = normalized(negative, negativeLabel);
     if (objectIdentity(socket, 'socket') !== owner.socketIdentity || objectIdentity(plist, 'file') !== owner.plistIdentity
       || createHash('sha256').update(readFileSync(plist)).digest('hex') !== owner.plistDigest) throw new Error('ARTIFACT_CHANGED');
@@ -375,7 +370,7 @@ async function exercise(binary, directory, scenario, report, selectedGeneration 
     const bootstrap = run('/bin/launchctl', ['bootstrap', domain, plist], 5000);
     registered = true; outcome.bootstrap = { status: bootstrap.status, error: bootstrap.error };
     if (bootstrap.status !== 0 || bootstrap.error || bootstrap.signal) throw new Error('BOOTSTRAP_UNCERTAIN');
-    const registration = managerRead(owner, binary, 'registered', absent); outcome.registration = registration;
+    const registration = await managerRead(owner, binary, 'registered', absent); outcome.registration = registration;
     if (registration.classification !== 'MATCH' || registration.pid !== null) throw new Error('REGISTRATION_UNVERIFIED');
     matching = true;
     const kick = run('/bin/launchctl', ['kickstart', `${domain}/${label}`], 5000);
@@ -394,7 +389,7 @@ async function exercise(binary, directory, scenario, report, selectedGeneration 
       }
     }
     await prepareHandoff('crash-after-dispatch');
-    const running = managerRead(owner, binary, 'running', absent); outcome.running = running;
+    const running = await managerRead(owner, binary, 'running', absent); outcome.running = running;
     if (running.classification !== 'MATCH' || running.pid !== ready.root.pid) { matching = false; throw new Error('ROOT_READBACK_UNVERIFIED'); }
     const fresh = native(binary, ['identity', String(ready.root.pid)]);
     if (fresh.status !== 0 || fresh.value.boot !== owner.boot || JSON.stringify(fresh.value.identity) !== JSON.stringify(ready.root)
@@ -447,12 +442,12 @@ async function exercise(binary, directory, scenario, report, selectedGeneration 
       }
       checkpoint('crash-after-ack');
     }
-    const beforeBootout = managerRead(owner, binary, 'static', absent);
+    const beforeBootout = await managerRead(owner, binary, 'static', absent);
     // После root-exit менеджер может не иметь PID, но exact static binding всё ещё обязана совпасть.
     if (beforeBootout.classification !== 'MATCH') { matching = false; throw new Error('CLOSURE_BINDING_UNVERIFIED'); }
     const bootout = run('/bin/launchctl', ['bootout', `${domain}/${label}`], 5000);
     outcome.bootout = { status: bootout.status, error: bootout.error };
-    const closure = managerRead(owner, binary, 'registered', absent); outcome.closure = closure;
+    const closure = await managerRead(owner, binary, 'registered', absent); outcome.closure = closure;
     if (bootout.status !== 0 || bootout.error || closure.classification !== 'ABSENT') throw new Error('DISPATCH_NOT_CLOSED');
     outcome.dispatch = 'CLOSED'; registered = false;
     safeOwnerFile(journal, owner);
@@ -481,7 +476,7 @@ async function exercise(binary, directory, scenario, report, selectedGeneration 
     }
     // UNKNOWN retains owner. Exact matched job teardown is safety cleanup, never STOP evidence.
     if (registered && matching) {
-      const readback = managerRead(owner, binary, 'static', absent);
+      const readback = await managerRead(owner, binary, 'static', absent);
       if (readback.classification === 'MATCH') run('/bin/launchctl', ['bootout', `${domain}/${label}`], 5000);
     }
     if (['STOPPED', 'NEVER_LAUNCHED'].includes(owner.state)) {
@@ -544,7 +539,7 @@ async function recoverFault(binary, directory, generation, scenario, report) {
       owner = transitionOwner(owner, owner.revision, 'NEVER_LAUNCHED'); publishOwner(journal, owner);
       outcome.stop = 'NEVER_LAUNCHED'; outcome.release = false; outcome.verdict = 'PASS';
     } else if (owner.state === 'LAUNCHING') {
-      const current = managerRead(owner, binary, 'running'); outcome.recovery.current = current;
+      const current = await managerRead(owner, binary, 'running'); outcome.recovery.current = current;
       const authenticated = barrierTransferMatches(leaseEvent, owner, current);
       if (!authenticated) {
         outcome.stop = 'UNKNOWN'; outcome.release = false; outcome.verdict = 'NOT_VERIFIED';
@@ -575,17 +570,17 @@ async function recoverFault(binary, directory, generation, scenario, report) {
       }
       if (!checkSentinel(binary, owner)) throw new Error('RECOVERY_SENTINEL_MEMBERSHIP');
       const negativeLabel = `com.ebb.phase2.absent.${randomUUID()}`;
-      if (!health(owner.domain)) throw new Error('RECOVERY_DOMAIN_UNAVAILABLE');
+      if (!await health(owner.domain)) throw new Error('RECOVERY_DOMAIN_UNAVAILABLE');
       const absentResult = run('/bin/launchctl', ['print', `${owner.domain}/${negativeLabel}`], 5000);
-      if (!health(owner.domain) || absentResult.status === 0 || absentResult.error || absentResult.signal
+      if (!await health(owner.domain) || absentResult.status === 0 || absentResult.error || absentResult.signal
         || !absentResult.stderr.includes(negativeLabel)) throw new Error('RECOVERY_ABSENCE_CALIBRATION');
       const absent = normalized(absentResult, negativeLabel);
-      const current = managerRead(owner, binary, 'static', absent);
+      const current = await managerRead(owner, binary, 'static', absent);
       if (current.classification === 'MATCH') {
         const result = run('/bin/launchctl', ['bootout', `${owner.domain}/${owner.label}`], 5000);
         if (result.status !== 0 || result.error || result.signal) throw new Error('RECOVERY_BOOTOUT');
       } else if (current.classification !== 'ABSENT') throw new Error('RECOVERY_JOB_BINDING');
-      const closure = managerRead(owner, binary, 'static', absent); outcome.recovery.closure = closure;
+      const closure = await managerRead(owner, binary, 'static', absent); outcome.recovery.closure = closure;
       if (closure.classification !== 'ABSENT') throw new Error('RECOVERY_DISPATCH_OPEN');
       outcome.dispatch = 'CLOSED';
       const stop = native(binary, ['stop', owner.coalition], 31_000); outcome.recovery.kernelStop = stop.value;
