@@ -1,8 +1,15 @@
-name: macOS runtime feasibility Phase 1
+name: macOS runtime feasibility
 on:
   workflow_dispatch:
   push:
-    branches: [develop]
+    branches: [master, develop]
+    paths:
+      - .github/workflows/macos-runtime-feasibility.yml
+      - scripts/macos-runtime-feasibility.cpp
+      - scripts/macos-runtime-feasibility.mjs
+      - scripts/macos-runtime-feasibility.test.mjs
+  pull_request:
+    branches: [master, develop]
     paths:
       - .github/workflows/macos-runtime-feasibility.yml
       - scripts/macos-runtime-feasibility.cpp
@@ -20,16 +27,28 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '24'
+      - name: Run source contract tests
+        run: node --test scripts/macos-runtime-feasibility.test.mjs
       - name: Prepare report directory
         run: mkdir -p temp
       - name: Compile and probe exact owned child
         run: node scripts/macos-runtime-feasibility.mjs temp/macos-runtime-feasibility.json
+      - name: Build and run packaged native Phase2 fixture
+        run: node scripts/macos-runtime-feasibility.mjs temp/macos-runtime-feasibility-phase2.json --phase2
       - name: Preserve bounded feasibility evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: macos-runtime-feasibility-phase1
           path: temp/macos-runtime-feasibility.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Preserve bounded Phase2 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-runtime-feasibility-phase2
+          path: temp/macos-runtime-feasibility-phase2.json
           if-no-files-found: error
           retention-days: 7
