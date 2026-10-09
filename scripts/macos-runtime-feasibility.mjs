@@ -244,6 +244,14 @@ export function closureReadbackEvidence(result) {
     status: safe.status, signal: safe.signal, error: safe.error,
     healthBefore: result.healthBefore === true, healthAfter: result.healthAfter === true };
 }
+/** ABSENT закрывает только future dispatch при prior exact registration и проверенной one-shot policy; STOP требует kernel accounting. */
+export function dispatchClosureKind({ registration, kickstart, readback, policyVerified }) {
+  if (readback?.classification === 'MATCH') return 'BOOTOUT_REQUIRED';
+  if (readback?.classification !== 'ABSENT' || readback.healthBefore !== true || readback.healthAfter !== true
+    || registration?.classification !== 'MATCH' || registration.pid !== null
+    || kickstart?.status !== 0 || kickstart.error || kickstart.signal || policyVerified !== true) return 'UNKNOWN';
+  return 'ALREADY_CLOSED';
+}
 function xml(value) { return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;'); }
 /** Новый disposable user-domain fixture явно выбирает Background; restart/demand policy остаётся закрытой. */
 export function fixturePlist(label, binary, args) {
@@ -441,7 +449,7 @@ async function exercise(binary, directory, scenario, report, selectedGeneration 
     if (registration.classification !== 'MATCH' || registration.pid !== null) throw new Error('REGISTRATION_UNVERIFIED');
     matching = true;
     const kick = run('/bin/launchctl', ['kickstart', `${domain}/${label}`], 5000);
-    outcome.kickstart = { status: kick.status, error: kick.error };
+    outcome.kickstart = { status: kick.status, error: kick.error, signal: kick.signal };
     if (kick.status !== 0 || kick.error || kick.signal) throw new Error('DISPATCH_UNCERTAIN');
     const ready = await controller.next();
     if (ready.event !== 'READY' || ready.frame?.protocol !== 2 || ready.frame.nonce !== nonce || ready.frame.generation !== generation
@@ -511,12 +519,20 @@ async function exercise(binary, directory, scenario, report, selectedGeneration 
     }
     const beforeBootout = await managerRead(owner, binary, 'static', absent);
     outcome.beforeBootout = closureReadbackEvidence(beforeBootout);
-    // После root-exit менеджер может не иметь PID, но exact static binding всё ещё обязана совпасть.
-    if (beforeBootout.classification !== 'MATCH') { matching = false; throw new Error('CLOSURE_BINDING_UNVERIFIED'); }
-    const bootout = run('/bin/launchctl', ['bootout', `${domain}/${label}`], 5000);
-    outcome.bootout = { status: bootout.status, error: bootout.error };
-    const closure = await managerRead(owner, binary, 'registered', absent); outcome.closure = closure;
-    if (bootout.status !== 0 || bootout.error || closure.classification !== 'ABSENT') throw new Error('DISPATCH_NOT_CLOSED');
+    safeOwnerFile(journal, owner);
+    const expectedPlist = fixturePlist(label, binary, owner.args);
+    const policyVerified = objectIdentity(plist, 'file') === owner.plistIdentity
+      && readFileSync(plist, 'utf8') === expectedPlist
+      && createHash('sha256').update(expectedPlist).digest('hex') === owner.plistDigest;
+    outcome.closureProofKind = dispatchClosureKind({ registration: outcome.registration, kickstart: outcome.kickstart,
+      readback: beforeBootout, policyVerified });
+    if (outcome.closureProofKind === 'UNKNOWN') { matching = false; throw new Error('CLOSURE_BINDING_UNVERIFIED'); }
+    if (outcome.closureProofKind === 'BOOTOUT_REQUIRED') {
+      const bootout = run('/bin/launchctl', ['bootout', `${domain}/${label}`], 5000);
+      outcome.bootout = { status: bootout.status, error: bootout.error };
+      const closure = await managerRead(owner, binary, 'registered', absent); outcome.closure = closure;
+      if (bootout.status !== 0 || bootout.error || bootout.signal || closure.classification !== 'ABSENT') throw new Error('DISPATCH_NOT_CLOSED');
+    } else outcome.closure = beforeBootout;
     outcome.dispatch = 'CLOSED'; registered = false;
     safeOwnerFile(journal, owner);
     if (native(binary, ['clock']).value.boot !== owner.boot) throw new Error('BOOT_CHANGED');

@@ -100,6 +100,25 @@ test('closure readback evidence is recorded before fail-closed binding gate with
     < source.indexOf("throw new Error('CLOSURE_BINDING_UNVERIFIED')"));
 });
 
+test('qualified one-shot job absence closes dispatch only and never proves coalition STOPPED', async () => {
+  const { dispatchClosureKind } = await import('./macos-runtime-feasibility.mjs');
+  assert.equal(typeof dispatchClosureKind, 'function');
+  const proof = { registration: { classification: 'MATCH', pid: null },
+    kickstart: { status: 0, error: null, signal: null }, policyVerified: true,
+    readback: { classification: 'ABSENT', healthBefore: true, healthAfter: true } };
+  assert.equal(dispatchClosureKind(proof), 'ALREADY_CLOSED');
+  for (const changed of [{ ...proof, policyVerified: false }, { ...proof, registration: { classification: 'WRONG_GENERATION', pid: null } },
+    { ...proof, registration: { classification: 'MATCH', pid: 1 } }, { ...proof, kickstart: { status: 1 } },
+    { ...proof, kickstart: { status: 0, signal: 'SIGTERM' } }, { ...proof, kickstart: { status: 0, error: 'ETIMEDOUT' } },
+    { ...proof, readback: { classification: 'ABSENT', healthBefore: false, healthAfter: true } },
+    { ...proof, readback: { classification: 'UNKNOWN' } }, { ...proof, readback: { classification: 'WRONG_GENERATION' } }]) {
+    assert.equal(dispatchClosureKind(changed), 'UNKNOWN');
+  }
+  assert.equal(dispatchClosureKind({ ...proof, readback: { classification: 'MATCH' } }), 'BOOTOUT_REQUIRED');
+  const source = readFileSync('scripts/macos-runtime-feasibility.mjs', 'utf8');
+  assert.match(source, /stopProof\(final\.value, owner, native\(binary, \['clock'\]\)\.value\.boot, outcome\.dispatch\)/);
+});
+
 test('fixture root canonicalization and path evidence retain strict equality and exact private-file identity', async () => {
   const { canonicalFixtureRoot, registrationPathEvidence, parseJobRejection } = await import('./macos-runtime-feasibility.mjs');
   assert.equal(typeof canonicalFixtureRoot, 'function'); assert.equal(typeof registrationPathEvidence, 'function');
