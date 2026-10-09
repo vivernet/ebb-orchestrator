@@ -5,7 +5,7 @@ kind: roadmap
 title: Ebb Orchestrator Roadmap
 summary: Generated from Plan metadata and dependencies
 created: 2026-09-16
-updated: 2026-10-09
+updated: 2026-10-10
 ---
 
 # Ebb Orchestrator Roadmap
@@ -47,6 +47,7 @@ updated: 2026-10-09
 | plan-18 | completed | Автономный набор Ebb skills и очистка Hermes tooling |
 | plan-19 | in_progress | План разблокирования и завершения открытых планов v1 |
 | plan-20 | in_progress | Production ContextManifest lifecycle for every Run binding |
+| plan-21 | proposed | Проверяемое Linux AppArmor attachment evidence |
 | plan-00 | completed | Documentation Governance Refactoring |
 | plan-00-02 | completed | Проверка и исправление политики AGENTS |
 | plan-00-05 | completed | Интеграция политик документации и governance |

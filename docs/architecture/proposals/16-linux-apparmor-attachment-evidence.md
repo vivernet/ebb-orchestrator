@@ -4,12 +4,12 @@ kind: proposal
 title: Versioned Linux AppArmor attachment evidence for Plan20
 status: draft
 created: 2026-10-09
-updated: 2026-10-09
+updated: 2026-10-10
 ---
 
 # Proposal 16 — Linux AppArmor attachment evidence
 
-> **Статус:** draft для независимого security/architecture review и решения пользователя. Это не implementation plan и не разрешение заменить текущий fail-closed gate.
+> **Статус:** пользователь выбрал Option C как направление design. Это не approval конкретного implementation plan и не разрешение менять текущий fail-closed gate до прохождения raw-ABI feasibility, независимого review и отдельного approval плана.
 
 ## 1. Цель и границы
 
@@ -45,7 +45,7 @@ Map every live `raw_sha256` to a reproducibly compiled, exact source/profile cer
 
 ### C — Versioned, conservative xmatch evidence component (рекомендация для дальнейшего design)
 
-Parse bounded kernel-exported raw policy data, authenticate it against each profile's `raw_sha256` and a stable namespace/revision snapshot, decode only explicitly reviewed representations, and reproduce the kernel attachment **pathname** matcher for exact target path bytes. Return one of `NO_PATH_MATCH`, `PATH_MATCH`, or `UNSUPPORTED` per profile/path.
+Parse bounded kernel-exported raw policy data, authenticate each serialized export/load against its authoritative `raw_sha256` at the granularity proven by the ABI, and separately prove how exports map to live profiles within a stable namespace/revision snapshot. Decode only explicitly reviewed representations and reproduce the kernel attachment **pathname** matcher for exact target path bytes. Return one of `NO_PATH_MATCH`, `PATH_MATCH`, or `UNSUPPORTED` per profile/path. Never assign a load-level digest to each profile unless the ABI proves that relationship.
 
 The gate accepts an unknown foreign attachment only if every supported compiled representation returns `NO_PATH_MATCH` for every exact helper/probe path. `PATH_MATCH`, malformed/truncated data, unsupported ABI/table/flag/encoding, changed namespace revision, missing export, timeout, or resource cap returns refusal. A path match is rejected conservatively without attempting to model xattr matching or winner priority. The implementation must mirror the kernel's `aa_dfa_leftmatch` semantics, including optional equivalence classes, loop handling, diff/default transitions, and version-specific permission decoding; a regular-expression or approximate glob implementation is not acceptable.
 
@@ -61,34 +61,31 @@ If C is selected for implementation planning, the component is a pure bounded ev
 evaluateAttachmentEvidence(snapshot, targetPathBytes[]) -> {
   evidenceVersion,
   namespaceRevision,
-  profiles: [{ rawSha256, targetResults: [NO_PATH_MATCH | PATH_MATCH | UNSUPPORTED] }]
+  exports: [{ rawSha256, mappedProfileCount }],
+  profiles: [{ exportMappingEvidence, targetResults: [NO_PATH_MATCH | PATH_MATCH | UNSUPPORTED] }]
 }
 ```
 
-Inputs must come from one bounded live AppArmor policy snapshot. The evaluator must authenticate profile identity and binary digest, reject duplicate/missing/raw fields and trailing data, enforce caps on profile count, bytes, DFA states/transitions, paths and total work, and pin the exact parser/feature/kernel source revisions represented by the fixture suite. Kernel/OS version text alone is not an ABI certificate. All raw policy bytes stay in memory and are never logged, persisted, or uploaded as artifacts. Output uses only digests, allowlisted classifications and bounded reason codes.
+Inputs must come from one bounded live AppArmor policy snapshot. The acquisition boundary must authenticate serialized export bytes to their authoritative digest and establish export-to-profile mapping separately; the evaluator receives that authenticated mapping and rejects duplicate/missing/raw fields and trailing data. It enforces caps on profile count, bytes, DFA states/transitions, paths and total work, and pins the exact parser/feature/kernel source revisions represented by the fixture suite. Kernel/OS version text alone is not an ABI certificate. All raw policy bytes stay in memory and are never logged, persisted, or uploaded as artifacts. Output uses only digests, allowlisted classifications and bounded reason codes.
 
 The first implementation plan must explicitly select its supported raw ABI/DFA/permission encodings based on evidence from the actual CI runner. Unknown formats always remain fail-closed; there is no fallback to names, partial source certificates, parser labels, or runtime label observations.
 
 ## 5. Feasibility evidence and conditions for acceptance
 
-The first item below is a **pre-design feasibility prerequisite**: collect enough information to decide whether Option C has a bounded, reviewable ABI scope. It does not require implementing a decoder. The remaining items are **implementation acceptance/readiness conditions** and apply only if the user separately selects C and approves a detailed implementation plan. They are not prerequisites for approving that plan, and passing design review does not count them as completed evidence.
+The first item below is a **pre-approval feasibility prerequisite**: collect enough information to establish whether the selected Option C has a bounded, reviewable ABI scope. It does not require implementing a decoder. The remaining items are **implementation acceptance/readiness conditions** and apply only after approval of a detailed implementation plan. They are not prerequisites for approving that plan, and passing design review does not count them as completed evidence.
 
-- **Before selecting/approving C:** capture ephemeral raw-policy fixtures for the exact hosted runner without retaining policy bytes in logs/artifacts; record only version/ABI identifiers and digests. If fixtures cannot be safely captured and reviewed, do not approve an implementation plan for C; keep the gate blocked or choose A/current refusal.
+- **Before approving an implementation plan for C:** add and review a maintained, metadata-first, read-only feasibility check to the existing Linux production workflow. It must capture enough exact hosted-runner raw-policy evidence to establish source/ABI identity, digest-to-export cardinality, and a separate export-to-profile mapping without retaining policy bytes in logs/artifacts; record only allowlisted version/ABI identifiers, bounded counts, classifications and digests. The retired one-shot F0 run is not to be recreated or retried. If evidence cannot be safely captured and reviewed, do not approve the implementation plan; retain the current fail-closed gate.
 - **Before Linux production acceptance/readiness:** build an independent differential oracle from the exact reviewed kernel matcher source; compare boundary paths, UTF-8/opaque bytes policy, exact and non-matching paths, optional equivalence classes, loops, diff/default chains, legacy/indexed permissions, malformed/truncated payloads, and resource limits.
 - **Before Linux production acceptance/readiness:** demonstrate hash/revision binding against the live kernel snapshot and deterministic refusal when policy changes during collection.
 - **Before Linux production acceptance/readiness:** independently review parser memory/resource bounds, input trust, version dispatch, exact matcher semantics, and test vectors.
 - **Before Linux production acceptance/readiness:** run provider-free hosted Linux acceptance on the pinned/reviewed supported ABI; prove child-scope STOPPED and cleanup only after STOPPED. No mocked/seeded test may substitute for the live kernel gate.
 - Keep Linux native acceptance `NOT RUN` until the full runner acceptance succeeds. Never count this proposal or its parser unit fixtures as PASS.
 
-## 6. Open decision
+## 6. User decision and remaining gate
 
-After the review and raw-ABI feasibility evidence, choose whether to:
+The user selected **Option C: a conservative, versioned xmatch evaluator**, with fail-closed behavior for unknown formats. In response to the Linux acceptance clarification, the user confirmed this approach should target ordinary Linux systems by adding a verified rules parser, with separate security review and refusal for unknown formats. Digest binding must follow the actual export/load ABI granularity, with live export-to-profile mapping proven independently. This selects the architecture direction and accepts its maintenance/security burden; it does not approve code changes, runner ownership changes, or a specific implementation plan.
 
-1. approve the additional versioned xmatch evaluator (C) and its maintenance/security burden;
-2. keep Linux support fail-closed on unknown host profiles and adopt a separately managed, specifically validated runner (A); or
-3. retain the current refusal until the necessary evidence/infrastructure exists.
-
-Do not implement C or change runner ownership until this decision and a separate detailed implementation plan are approved. No Plan20/Plan19 status is changed here.
+Before implementation-plan approval, complete the raw-ABI feasibility evidence in §5, fill the plan's exact ABI/encoding/limits from that evidence, and obtain a fresh independent security/architecture review. The retired one-shot F0 capture is not to be recreated or retried; use a maintained, metadata-first, read-only probe in the existing Linux production workflow. Then present the complete reviewed plan for the user's approval. If feasibility fails, retain the current refusal and return with evidence; do not silently switch to Option A or weaken the gate. No Plan20/Plan19 status is changed here.
 
 ## 7. Primary references
 

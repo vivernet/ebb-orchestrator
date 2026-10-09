@@ -480,7 +480,9 @@ test('Linux acceptance records success after all native gates and always verifie
   assert.ok(cleanup > acceptance, 'profile cleanup must follow all native acceptances');
   assert.ok(index('Record successful Linux owned-scope acceptances') > acceptance);
   assert.ok(index('Record successful Linux owned-scope acceptances') < cleanup);
-  assert.equal(job.steps[cleanup].if, '${{ always() }}');
+  assert.equal(job.steps[setup].id, 'linux-namespace-setup');
+  assert.equal(job.steps.filter((step) => step.id === 'linux-namespace-setup').length, 1);
+  assert.equal(job.steps[cleanup].if, "${{ always() && steps.linux-namespace-setup.outcome != 'skipped' }}");
   assert.equal(job.steps[setup].run, 'bash scripts/linux-hermes-namespace-prerequisite.sh setup');
   assert.equal(job.steps[cleanup].run, 'bash scripts/linux-hermes-namespace-prerequisite.sh cleanup');
   assert.equal(job['runs-on'], 'ubuntu-24.04');
