@@ -148,6 +148,29 @@ test('actual health authority accepts complete 82KB same-user stream and rejects
     { shell: false, stdio: ['ignore', 'pipe', 'pipe'] }) }), false);
 });
 
+test('bootstrap diagnostics sanitize output and new user fixture declares only Background session', async () => {
+  const { bootstrapEvidence, fixturePlist } = await import('./macos-runtime-feasibility.mjs');
+  assert.equal(typeof bootstrapEvidence, 'function'); assert.equal(typeof fixturePlist, 'function');
+  for (const [stderr, category] of [['Bootstrap failed: 5: Input/output error PRIVATE', 'IO_ERROR'],
+    ['Permission denied PRIVATE', 'PERMISSION'], ['Invalid property list PRIVATE', 'INVALID_PLIST'],
+    ['Service already exists PRIVATE', 'SERVICE_EXISTS'], ['PRIVATE unknown', 'UNKNOWN']]) {
+    const evidence = bootstrapEvidence({ status: 5, signal: null, error: null, stdout: 'PRIVATE', stderr });
+    assert.equal(evidence.stderrCategory, category); assert.equal(evidence.status, 5);
+    assert.doesNotMatch(JSON.stringify(evidence), /PRIVATE|stdout"|stderr"/);
+  }
+  const plist = fixturePlist('label', '/tmp/binary', ['/tmp/binary', 'fixture', 'g', 'n']);
+  assert.match(plist, /<key>LimitLoadToSessionType<\/key><string>Background<\/string>/);
+  for (const key of ['RunAtLoad', 'KeepAlive']) assert.match(plist, new RegExp(`<key>${key}</key><false/>`));
+  for (const key of ['LaunchOnlyOnce', 'AbandonProcessGroup']) assert.match(plist, new RegExp(`<key>${key}</key><true/>`));
+  assert.doesNotMatch(plist, /Aqua|SessionCreate|MachServices|StartInterval|WatchPaths/);
+  const source = readFileSync('scripts/macos-runtime-feasibility.mjs', 'utf8');
+  assert.match(source, /run\('\/usr\/bin\/plutil', \['-lint', '--', plist\], 5000\)/);
+  const bootstrapFailure = source.slice(source.indexOf('if (bootstrap.status !== 0'), source.indexOf('const registration = await managerRead'));
+  assert.match(bootstrapFailure, /bootstrapFailureReadback = await managerRead\(owner, binary, 'static', absent\)/);
+  assert.ok(bootstrapFailure.indexOf('bootstrapFailureReadback') < bootstrapFailure.indexOf("throw new Error('BOOTSTRAP_UNCERTAIN')"));
+  assert.doesNotMatch(bootstrapFailure, /transitionOwner|bootout|rmSync/);
+});
+
 test('feasibility verdict requires entire matrix and rejects retained UNKNOWN or failed sentinel cleanup', async () => {
   const { feasibilityVerdict } = await import('./macos-runtime-feasibility.mjs');
   assert.equal(feasibilityVerdict([]), 'NOT_VERIFIED');

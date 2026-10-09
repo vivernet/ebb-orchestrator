@@ -203,6 +203,22 @@ export function parseJob(text, owner, binary, phase) {
   return pid && Number.isSafeInteger(Number(pid)) ? { pid: Number(pid) } : null;
 }
 function xml(value) { return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;'); }
+/** Новый disposable user-domain fixture явно выбирает Background; restart/demand policy остаётся закрытой. */
+export function fixturePlist(label, binary, args) {
+  // Apple DTS: https://developer.apple.com/forums/thread/696859 — omitted session defaults to Aqua.
+  return `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>Label</key><string>${xml(label)}</string><key>Program</key><string>${xml(binary)}</string><key>ProgramArguments</key><array>${args.map(arg => `<string>${xml(arg)}</string>`).join('')}</array><key>LimitLoadToSessionType</key><string>Background</string><key>RunAtLoad</key><false/><key>KeepAlive</key><false/><key>LaunchOnlyOnce</key><true/><key>AbandonProcessGroup</key><true/></dict></plist>`;
+}
+/** Bootstrap/plutil evidence содержит только process metadata и allowlisted category; вывод и пути отбрасываются. */
+export function bootstrapEvidence(result) {
+  const safe = domainHealthEvidence(result, 'NO_DOMAIN');
+  const text = result.stderr ?? '';
+  const stderrCategory = !text ? 'EMPTY' : /input\/output error|\bi\/o error\b/i.test(text) ? 'IO_ERROR'
+    : /permission denied|operation not permitted/i.test(text) ? 'PERMISSION'
+      : /invalid.*plist|invalid.*property list|parse error|unexpected character/i.test(text) ? 'INVALID_PLIST'
+        : /service.*already exists|already bootstrapped/i.test(text) ? 'SERVICE_EXISTS' : 'UNKNOWN';
+  return { status: safe.status, signal: safe.signal, error: safe.error,
+    stdoutBytes: safe.stdoutBytes, stderrBytes: safe.stderrBytes, stderrCategory };
+}
 /** Сохраняет только bounded manager-health признаки; inventory и произвольные diagnostics не покидают parser. */
 export function domainHealthEvidence(result, domain) {
   const text = typeof result.stdout === 'string' ? result.stdout.trim() : '';
@@ -340,7 +356,7 @@ async function exercise(binary, directory, scenario, report, selectedGeneration 
     await new Promise(resolveDelay => setTimeout(resolveDelay, 10));
   }
   if (!sentinelBinding) throw new Error('SENTINEL_IDENTITY');
-  const contents = `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>Label</key><string>${label}</string><key>Program</key><string>${xml(binary)}</string><key>ProgramArguments</key><array>${args.map(arg => `<string>${xml(arg)}</string>`).join('')}</array><key>RunAtLoad</key><false/><key>KeepAlive</key><false/><key>LaunchOnlyOnce</key><true/><key>AbandonProcessGroup</key><true/></dict></plist>`;
+  const contents = fixturePlist(label, binary, args);
   writeFileSync(plist, contents, { flag: 'wx', mode: 0o600 });
   owner = transitionOwner(owner, owner.revision, 'PREPARED', { socketIdentity: objectIdentity(socket, 'socket'),
     lockIdentity: objectIdentity(`${socket}.lock`, 'file'), controller: listen.controller,
@@ -349,6 +365,9 @@ async function exercise(binary, directory, scenario, report, selectedGeneration 
   publishOwner(journal, owner); outcome.durableStates.push('PREPARED_ARTIFACTS_BOUND');
   let registered = false, matching = false, absent;
   try {
+    const validation = run('/usr/bin/plutil', ['-lint', '--', plist], 5000);
+    outcome.plistValidation = bootstrapEvidence(validation);
+    if (validation.status !== 0 || validation.error || validation.signal) throw new Error('PLIST_INVALID_OR_UNAVAILABLE');
     const contention = native(binary, ['try-lease', `${socket}.lock`]);
     outcome.nativeLockContention = contention.value;
     if (contention.value.acquired !== false || contention.value.contended !== true) throw new Error('LEASE_NOT_EXCLUSIVE');
@@ -368,8 +387,12 @@ async function exercise(binary, directory, scenario, report, selectedGeneration 
       || createHash('sha256').update(readFileSync(plist)).digest('hex') !== owner.plistDigest) throw new Error('ARTIFACT_CHANGED');
     owner = transitionOwner(owner, owner.revision, 'LAUNCHING'); publishOwner(journal, owner); outcome.durableStates.push('LAUNCHING');
     const bootstrap = run('/bin/launchctl', ['bootstrap', domain, plist], 5000);
-    registered = true; outcome.bootstrap = { status: bootstrap.status, error: bootstrap.error };
-    if (bootstrap.status !== 0 || bootstrap.error || bootstrap.signal) throw new Error('BOOTSTRAP_UNCERTAIN');
+    registered = true; outcome.bootstrap = bootstrapEvidence(bootstrap);
+    if (bootstrap.status !== 0 || bootstrap.error || bootstrap.signal) {
+      outcome.bootstrapFailureReadback = await managerRead(owner, binary, 'static', absent);
+      // Nonzero bootstrap never proves NEVER_LAUNCHED, even when the exact job is currently absent.
+      throw new Error('BOOTSTRAP_UNCERTAIN');
+    }
     const registration = await managerRead(owner, binary, 'registered', absent); outcome.registration = registration;
     if (registration.classification !== 'MATCH' || registration.pid !== null) throw new Error('REGISTRATION_UNVERIFIED');
     matching = true;
