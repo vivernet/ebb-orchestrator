@@ -2,15 +2,17 @@
 id: proposal-12
 kind: proposal
 title: Narrow operator-only Windows profile ACL remediation prerequisite
-status: accepted
+status: superseded
 created: 2026-10-08
 accepted: 2026-10-08
-updated: 2026-10-08
+updated: 2026-10-09
 ---
 
 # Proposal 12 — Narrow operator-only Windows profile ACL remediation prerequisite
 
-**Status:** Accepted as an operator-only remediation contract under the user's explicit authorization to make the changes necessary to complete the Goal. This approval does not authorize Orchestrator, test helpers, or unattended scripts to edit ACLs; it does not change the native verifier; and no host ACL has been changed by this proposal.
+**Status:** Superseded on 2026-10-09 by the user's later decision. The prior acceptance of operator remediation is withdrawn: deletion of an ACL ACE and removal of any account's access are forbidden; the host ACL must be preserved. This proposal grants no active authority to inspect for, prepare, apply, or roll back an ACL change. The installed `HERMES_PATH_UNSAFE` gate is treated as an incompatibility between the current Ebb contract and the host path. A read-only architecture investigation is underway; any revised contract requires independent design review before code changes. The previously accepted state and the detailed remediation text below are retained as historical record only and are inactive.
+
+> **Historical / inactive proposal text follows.** The alternative selection, preconditions, backup/apply/rollback procedure, and verification strategy below describe the withdrawn 2026-10-08 operator-remediation proposal. They are not current instructions or authorization. Do not perform host ACL edits or access removal under this proposal.
 
 ## Goal and non-goals
 

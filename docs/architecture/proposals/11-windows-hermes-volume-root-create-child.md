@@ -5,10 +5,14 @@ title: Bounded Windows Hermes volume-root child-directory right
 status: accepted
 created: 2026-10-07
 accepted: 2026-10-08
-updated: 2026-10-08
+updated: 2026-10-09
 ---
 
 # Proposal 11 — Bounded Windows Hermes volume-root child-directory right
+
+**Текущий статус (2026-10-09):** Пользователь явно потребовал убрать host ACL admission requirement и сохранить разрешения хоста. [Proposal13](13-local-mode-host-permission-compatibility.md) supersedes rights allowlist, root-only exception и ссылки на operator remediation Proposal12 ниже. Native nofollow/identity, held handles, suspended launch и exact STOPPED obligations сохраняются. Новый независимый Plan20/security review обязателен до implementation bounded Task5B-H Windows/Linux host fix. Required macOS Task5A-M design/review/implementation/native gates — отдельная ветвь, не prerequisite 5B-H; overall Task5/Plan20 completion всё равно требует Windows/Linux/macOS platform acceptance.
+
+**Исторический контракт 2026-10-08:** Оставшийся текст фиксирует прежнее решение и не является актуальным разрешением на host ACL inspection, rejection, inventory или remediation.
 
 **Status:** Accepted security-contract amendment for Plan20 Task5 on 2026-10-08. Ebb production code and test helpers never modify host ACLs. A separate operator-only current-profile remediation is specified by Proposal12; it does not relax this verifier contract. This accepts only the Proposal11 contract; it does not approve Plan20 implementation or establish acceptance evidence. A fresh independent Plan20 review with no blocking findings is required before implementation starts. Provider-free native acceptance remains mandatory before any provider-backed launch.
 

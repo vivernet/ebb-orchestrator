@@ -4,7 +4,7 @@ kind: plan
 status: in_progress
 title: План разблокирования и завершения открытых планов v1
 created: 2026-09-29
-updated: 2026-10-03
+updated: 2026-10-09
 depends_on: []
 specs:
   - ../specs/01-system-design.md
@@ -595,3 +595,28 @@ Expected: exit code 0; `git status --short` lists only reviewed intended evidenc
 - Чтобы получить Linux evidence без WSL, provider-free job перенесена на GitHub-hosted `ubuntu-24.04`; workflow поднимает transient runner-user systemd manager, задаёт `XDG_RUNTIME_DIR`/D-Bus и сохраняет явные cgroup-v2/systemd prerequisite checks. Независимый review workflow и assertions — `APPROVED`. Реальный hosted Linux native acceptance ещё не запускался; Task5A остаётся открытой до нового Actions run с успешным acceptance.
 - Task6 разрешено выполнять параллельно с Task5A, поскольку его зависимости — только Tasks2 и 4. На текущем дереве API acceptance прошла 22/22, component — 18/18, browser — 6/6 с exit 0 и доказанным process/home/port teardown на повторном запуске вне sandbox; первый запуск не принят из-за teardown denial. Независимый read-only reviewer одобрил scoped closure Task6. Task5B/5C по-прежнему ожидают полного Task5A PASS, Task7 — Tasks0–6 и реального provider-backed Run. Plan05/06/19 lifecycle статусы не менялись.
 - Plan09 source-scan gate остаётся `NOT VERIFIED` для финального SHA: успешный старый CodeQL run не покрывает текущие изменения; `pnpm audit` его не заменяет. Plan19 Tasks8–9 и whole-plan reviews остаются впереди.
+
+## Дополнение от 2026-10-09 — hosted evidence и текущие Plan20 gates на `83bb892`
+
+Этот dated checkpoint supersedes более ранние записи только для указанных run и ревизии. Исторические snapshots сохранены; они не являются свежим evidence для текущего состояния.
+
+- Read-back Git: `develop` и `origin/develop` совпадают на `83bb8926be7841fb365332650340d326d7c0175e`.
+- Production gates run `37862703264` на этом SHA завершился `FAILURE`. Node 24/26 quality-security, dependency audit, browser и Windows/Ubuntu keyring gates прошли; это не меняет итоговый статус run.
+- Windows native build/GC/process-scope/frame-ACK/profile-target gates прошли. Отдельный Windows profile path-chain acceptance отказал на внешней setup-python tool-cache ACL marker `INDEX0`, stage 5; fixture-only recovery выполняется. Этот результат не является отказом process-scope acceptance и не разрешает менять host ACL.
+- Linux source-snapshot acceptance завершился до child marker на `unshare` namespace setup; errno неизвестен. Ограниченный runner-prerequisite patch проходит независимый review; hosted Linux acceptance PASS ещё нет.
+- CodeQL run `37862703303` успешно просканировал и загрузил анализ для точного SHA `83bb8926be7841fb365332650340d326d7c0175e`. Успешный scan/upload не устанавливает отсутствие findings и не является их disposition.
+- Свежая проверка установленного Hermes production resolver под обычным пользователем остаётся fail-closed: `HERMES_PATH_UNSAFE` из-за sanitized foreign-mutation ancestry denial. Native Windows PowerShell acceptance прошла. Проверенный Hermes source совпадает с clean commit `08165d58931841cee713468ae89032af7c57060a`, но resolver ещё не завершает требуемую provenance chain. Provider-backed capture — `NOT RUN`; host ACL не менялся. Решением пользователя от 2026-10-09 удаление ACL ACE и снятие доступа запрещены; ACL нужно сохранять. Предыдущая операторская remediation в Proposal12 отозвана и помечена `superseded`. Установленный gate рассматривается как несовместимость текущего Ebb contract с host path; read-only architecture investigation идёт отдельно, независимый design review обязателен до любого изменения кода.
+- Plan20 Task5A имеет положительные Windows process-scope шаги, но полное platform acceptance открыто: Windows path-chain gate не прошёл, hosted Linux acceptance после namespace failure не получена. Task5B real Hermes auth/session capture, Task5C recovery, Task7 closure/API/UI/docs acceptance и Plan20 whole-plan review остаются открытыми.
+- После `83bb892` в рабочем дереве есть workflow/test изменения и новые Linux namespace helper файлы под ответственностью других owners. Они не входят в evidence выше; review/acceptance этих edits ожидаются. Не приписывать им PASS до read-back результата владельцев.
+- Далее: закрыть Plan20 gates/review; провести собственные provider/platform acceptance и whole-plan reviews Plan04/05/06/07; disposition findings CodeQL на финальном source SHA (и повторить scan после исправлений); затем Task9 — сверить evidence/checklists/reviews всех незавершённых планов кроме Plan14 и выполнить финальный Plan19 review. Lifecycle статусы и checklists этим checkpoint не меняются.
+
+## Дополнение от 2026-10-09 — обновлённый hosted checkpoint `4e87d26`
+
+Эта запись уточняет CI evidence после `83bb892`; прежние snapshots сохраняются как история. Она не закрывает lifecycle tasks или checklist items.
+
+- На `8c44de6` Linux source acceptance run `37864962696` остановился на namespace prerequisite до source child marker: `unshare` вернул `ERRNO 1` как до, так и после применения AppArmor profile. Полная source acceptance — `NOT RUN`; это не PASS и не доказательство успешного namespace isolation.
+- На `b2fbb25` Production gates run `37880160803` завершился `FAIL`: в Node 24/26 quality-security suite было по одному source-contract failure (остальные 1,749 passed и 41 skipped в каждой матрице); web — 219/219 и keyring gates прошли. Windows fixture acceptance: 32 passed, 2 failed на private `FILE_DACL` и `STOP_UNPROVEN` cleanup. Run не является полностью зелёным.
+- Исправление диагностики и узкого source-contract assertion вошло в `4e87d26` (`4e87d261d48552aefbf30886cf5ab8ee3dd13e7a`) и было независимо проверено; предыдущий Windows fixture PASS не превращает два оставшихся отказа в PASS. Свежий Production gates run `37880854058` и CodeQL run `37880854063` для этого SHA подтверждены как `in_progress`; current CI outcome ещё не получен.
+- Proposal13 и amendment Plan20 прошли независимые scoped reviews без blocking findings. Task5B-H Windows/Linux implementation начата соответствующими native/TypeScript owners. Это bounded implementation status, а не acceptance evidence. Task5A-M остаётся открытым и требует отдельного Darwin design и обязательных независимых architecture/security reviews до реализации; coalition/SPI пока только feasibility candidate, не доказанный containment/STOPPED contract. Пользователь потребовал поддержку macOS, поэтому macOS нельзя объявлять поддержанной до её собственных gates.
+- Запрещено выполнять host ACL inventory, mutation или remediation. ACL сохраняются. Proposal12 остаётся `superseded`; этот статус не разрешает использовать прежние operator remediation steps. Private Run/source state, no-follow, identity, source integrity и authoritative STOPPED-before-cleanup требования сохраняются согласно reviewed Proposal13.
+- Hermes/provider capture и provider-backed acceptance остаются `NOT RUN`; никакие provider result, credential evidence или full source acceptance PASS этим checkpoint не утверждаются. Plan20, Plan19 и остальные lifecycle statuses/checklists не меняются.

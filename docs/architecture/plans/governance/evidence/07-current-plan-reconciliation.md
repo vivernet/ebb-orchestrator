@@ -4,12 +4,12 @@ kind: ledger
 status: current
 title: Сверка незавершённых планов и требований
 created: 2026-09-28
-updated: 2026-10-06
+updated: 2026-10-09
 ---
 
 # Сверка незавершённых планов и требований
 
-Дата исходной полной сверки: 2026-09-30. Проверены все `kind: plan` в `docs/architecture/plans/`, их открытые обязательства и указанные ими последующие evidence. Последнее дополнение до текущей сверки датировано 2026-10-03. Статус `superseded` не считается завершением. Кодовое наличие, исторические чекбоксы и старые отчёты сами по себе не подтверждают актуальный запуск или внешнее acceptance.
+Дата исходной полной сверки: 2026-09-30. Полная all-plan матрица остаётся предыдущим snapshot и не повторялась этим дополнением. Последняя точечная read-back сверка датирована 2026-10-09 и приведена в конце файла; она supersedes прежние latest claims только по указанным run/ревизиям. Исторические snapshots сохранены как история. Статус `superseded` не считается завершением. Кодовое наличие, исторические чекбоксы и старые отчёты сами по себе не подтверждают актуальный запуск или внешнее acceptance.
 
 ## Текущее решение по Plan lifecycle
 
@@ -628,3 +628,27 @@ Plan01 metadata переведена из `completed` в `in_progress` посл�
 - Read-only scout для текущего `develop` HEAD `d3068ca850962cf7f7f49915462475b8548e96c2` подтвердил: единственный настроенный source scanner — hosted CodeQL workflow `.github/workflows/codeql.yml`; он запускается на push в `master`/`develop`, pull request в `master` и weekly schedule, без `workflow_dispatch`. Локальных CodeQL/Semgrep, repo-local source-scan script и сохранённого SARIF для текущего SHA нет.
 - Известный успешный hosted CodeQL run `37288692311` относится к старому `b6a55f10`, а не текущему checkout. `pnpm audit` — dependency audit и не покрывает source-scan requirement. Поэтому Plan09 и Plan19 Task8 остаются `NOT VERIFIED` для текущего SHA; findings/disposition для него не установлены. Скан, сетевой запрос, push и PR не выполнялись.
 - После source freeze и final review требуется обычное разрешённое CI publication event на точном финальном SHA, затем read-back успешного CodeQL run/analysis и disposition каждого finding. Plan19 запрещает публиковать ветку только ради запуска scan.
+
+## Дополнение от 2026-10-09 — точечный read-back текущего Plan19/20 checkpoint
+
+Эта запись уточняет статусы и evidence на `83bb8926be7841fb365332650340d326d7c0175e`. Старые строки выше остаются историческими наблюдениями и superseded там, где ниже явно указана более новая ревизия. Полная сверка всех планов не выполнялась.
+
+- `develop` и `origin/develop` совпадают на SHA `83bb8926be7841fb365332650340d326d7c0175e`. Production gates run `37862703264` на этом SHA завершился `FAILURE`; Node 24/26 quality-security, dependency audit, browser, Windows keyring и Ubuntu keyring steps прошли. Отдельные зелёные steps не меняют итог run.
+- В том же Production run Windows native build/GC/process-scope/frame-ACK/profile-target steps прошли; отдельный profile path-chain acceptance отказал по внешнему setup-python tool-cache ACL marker `INDEX0`, stage 5. Fixture-only recovery выполняется. Это не основание менять host ACL.
+- Hosted Linux source-snapshot acceptance завершился на `unshare` до child marker; errno неизвестен. Ограниченный runner-prerequisite patch проходит independent review; hosted Linux PASS пока отсутствует.
+- CodeQL run `37862703303` успешно завершил scan и upload для точного текущего SHA. Требуются finding read-back/disposition; успешный upload не равен no-findings и сам по себе не закрывает Plan09/Plan19 Task8.
+- Свежий запуск installed Hermes production resolver под обычным пользователем завершился fail-closed `HERMES_PATH_UNSAFE` из-за sanitized foreign-mutation ancestry denial. Native Windows PowerShell acceptance прошла. Source checkout совпадает с чистым `08165d58931841cee713468ae89032af7c57060a`, но resolver не завершает нужную provenance цепочку. Hermes/provider capture — `NOT RUN`; host ACL неизменён. Решением пользователя от 2026-10-09 удаление ACL ACE и снятие доступа запрещены; ACL требуется сохранять. Предыдущая Proposal12 operator remediation отозвана/`superseded`. Read-only architecture investigation рассматривает установленный gate как несовместимость текущего Ebb contract с host path; independent design review обязателен до изменения кода.
+- Plan20 Task5A остаётся открытым до полного platform evidence: Windows path-chain не прошёл, Linux hosted acceptance после namespace failure не прошла. Task5B real provider/session capture, Task5C durable same-session recovery, Task7 acceptance matrix/API/UI/restart/docs и Plan20 whole-plan review также открыты. Не считать production-free fixtures или отдельные process-scope steps полным Task5 acceptance.
+- Worktree changes после указанного SHA (workflow/test и новые Linux namespace helper files) принадлежат активным owners и не входят в evidence выше; ждут review/acceptance read-back. Эта запись не утверждает их результат.
+- После Plan20 gates нужны собственные acceptance и whole-plan reviews Plan04/05/06/07; затем Plan09 findings disposition для scan точного финального SHA и повторный scan после исправлений; последним — Task9 audit всех незавершённых планов, кроме Plan14, и final Plan19 review. Plan14 не менялся; lifecycle statuses и checklists этим дополнением не менялись.
+
+## Дополнение от 2026-10-09 — hosted checkpoint и Proposal13 handoff на `4e87d26`
+
+Это уточнение supersedes claims о текущем состоянии из checkpoint `83bb892` только по перечисленным событиям. Оно сохраняет исторические результаты и не закрывает плановые gates.
+
+- Linux source acceptance run `37864962696` на `8c44de6` остановился на namespace prerequisite: `unshare` вернул `ERRNO 1` до и после применения AppArmor profile, до child marker. Source acceptance — `NOT RUN`; полный Linux gate не прошёл.
+- Production gates run `37880160803` на `b2fbb25` завершился `FAIL`. На Node 24/26 в каждой quality-security матрице был один source-contract failure при 1,749 passing и 41 skipped; web — 219/219, keyring gates — PASS. Windows fixture acceptance — 32 PASS, 2 FAIL (`FILE_DACL` и `STOP_UNPROVEN` cleanup). Не считать run fully green.
+- Диагностическая правка и узкий source-contract fix вошли в `4e87d261d48552aefbf30886cf5ab8ee3dd13e7a` и прошли независимую scoped проверку. Production gates `37880854058` и CodeQL `37880854063` на этом SHA подтверждены как `in_progress`; итог свежего CI ожидается. Это не меняет прежний результат Windows fixture run `37880160803`.
+- Independent scoped review Proposal13/Plan20 amendment завершился без blocking findings. Task5B-H Windows/Linux implementation начата native и TypeScript owners; это не native acceptance или provider evidence. Task5A-M остаётся обязательной отдельной macOS design/review/implementation/acceptance последовательностью. Требование пользователя включает macOS; coalition/SPI пока только feasibility candidate, его containment и authoritative STOPPED contract не доказаны. macOS readiness не заявлять.
+- Host ACL inventory, mutation и remediation не разрешены; ACL должны сохраняться. Proposal12 `superseded`. Защита Ebb-private Run/source state, no-follow, identity/source checks и authoritative STOPPED-before-cleanup остаются обязательными. Hermes/provider capture и provider-backed acceptance — `NOT RUN`; никакого полного source-acceptance PASS этим evidence не установлено.
+- Plan20 остаётся `in_progress`; Plan19 closure, Task9 all-plan audit и lifecycle/checklist closure остаются открытыми. Эта запись не меняет статусы или checkboxes.
