@@ -143,6 +143,7 @@ if (process.platform !== 'darwin') {
 function run(command, args, timeout = 30_000) {
   const result = spawnSync(command, args, { encoding: 'utf8', shell: false, timeout, maxBuffer: 64 * 1024 });
   return { status: result.status, signal: result.signal, error: result.error?.code,
+    stdoutBytes: Buffer.byteLength(result.stdout ?? ''), stderrBytes: Buffer.byteLength(result.stderr ?? ''),
     stdout: result.stdout?.trim() ?? '', stderr: result.stderr?.trim() ?? '' };
 }
 
@@ -202,10 +203,54 @@ export function parseJob(text, owner, binary, phase) {
   return pid && Number.isSafeInteger(Number(pid)) ? { pid: Number(pid) } : null;
 }
 function xml(value) { return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;'); }
-function health(domain) {
+/** Сохраняет только bounded manager-health признаки; inventory и произвольные diagnostics не покидают parser. */
+export function domainHealthEvidence(result, domain) {
+  const text = typeof result.stdout === 'string' ? result.stdout.trim() : '';
+  const headerMatched = text.startsWith(`${domain} = {`);
+  const trailerMatched = text.endsWith('}');
+  const error = result.error ? result.error === 'ETIMEDOUT' ? 'TIMEOUT' : result.error === 'ENOBUFS' ? 'BUFFER_LIMIT' : 'PROCESS_ERROR' : null;
+  const signal = result.signal ? ['SIGTERM', 'SIGKILL', 'SIGABRT'].includes(result.signal) ? result.signal : 'OTHER_SIGNAL' : null;
+  const status = Number.isSafeInteger(result.status) ? result.status : null;
+  const stderrCategory = !result.stderr ? 'EMPTY'
+    : /could not find domain|domain does not exist|no such process/i.test(result.stderr) ? 'DOMAIN_UNAVAILABLE'
+      : /permission denied|operation not permitted/i.test(result.stderr) ? 'ACCESS_DENIED' : 'OTHER';
+  return { status, signal, error, headerMatched, trailerMatched, stderrCategory,
+    stdoutBytes: result.stdoutBytes ?? Buffer.byteLength(result.stdout ?? ''), stderrBytes: result.stderrBytes ?? Buffer.byteLength(result.stderr ?? ''),
+    healthy: !result.error && !result.signal && status === 0 && headerMatched && trailerMatched };
+}
+/** Read-only same-domain experiment: bounded streaming discards inventory and never supplies dispatch authority. */
+export function streamDomainHealth(domain, { deadline = 5000, limit = 2 * 1024 * 1024,
+  start = () => spawn('/bin/launchctl', ['print', domain], { shell: false, stdio: ['ignore', 'pipe', 'pipe'] }) } = {}) {
+  return new Promise(resolveProbe => {
+    const expected = Buffer.from(`${domain} = {`);
+    let prefix = Buffer.alloc(0), last = null, stdoutBytes = 0, stderrBytes = 0, failure = null;
+    let child;
+    try { child = start(); } catch { resolveProbe({ healthy: false, error: 'PROCESS_ERROR', status: null, signal: null,
+      stdoutBytes, stderrBytes, headerMatched: false, trailerMatched: false, stderrCategory: 'DISCARDED' }); return; }
+    const fail = category => { failure ??= category; child.kill('SIGKILL'); };
+    const timer = setTimeout(() => fail('TIMEOUT'), deadline);
+    child.stdout.on('data', chunk => {
+      stdoutBytes += chunk.length;
+      if (stdoutBytes + stderrBytes > limit) { fail('BUFFER_LIMIT'); return; }
+      if (prefix.length < expected.length) prefix = Buffer.concat([prefix, chunk.subarray(0, expected.length - prefix.length)]);
+      for (const byte of chunk) if (![9, 10, 11, 12, 13, 32].includes(byte)) last = byte;
+    });
+    child.stderr.on('data', chunk => { stderrBytes += chunk.length; if (stdoutBytes + stderrBytes > limit) fail('BUFFER_LIMIT'); });
+    child.on('error', () => { failure ??= 'PROCESS_ERROR'; });
+    child.on('close', (status, signal) => {
+      clearTimeout(timer);
+      const headerMatched = prefix.equals(expected), trailerMatched = last === 125;
+      resolveProbe({ status, signal: signal ? ['SIGTERM', 'SIGKILL', 'SIGABRT'].includes(signal) ? signal : 'OTHER_SIGNAL' : null,
+        error: failure, stdoutBytes, stderrBytes, headerMatched, trailerMatched, stderrCategory: 'DISCARDED',
+        healthy: !failure && !signal && status === 0 && headerMatched && trailerMatched });
+    });
+  });
+}
+function health(domain, evidence) {
   const result = run('/bin/launchctl', ['print', domain], 5000);
-  // Domain inventory is discarded. Только header/status используются для health.
-  return !result.error && !result.signal && result.status === 0 && result.stdout.startsWith(`${domain} = {`) && result.stdout.endsWith('}');
+  const summary = domainHealthEvidence(result, domain);
+  if (evidence) evidence.push({ domainKind: domain.split('/')[0], ...summary });
+  return summary.healthy;
 }
 function normalized(result, label) {
   return { status: result.status, signal: result.signal, error: result.error,
@@ -312,7 +357,14 @@ async function exercise(binary, directory, scenario, report, selectedGeneration 
       owner = transitionOwner(owner, owner.revision, 'NEVER_LAUNCHED'); publishOwner(journal, owner);
       outcome.stop = 'NEVER_LAUNCHED'; outcome.verdict = 'PASS'; return;
     }
-    if (!health(domain)) throw new Error('DOMAIN_UNAVAILABLE');
+    outcome.managerHealth = [];
+    if (!health(domain, outcome.managerHealth)) {
+      outcome.managerHealthExperiment = { domainKind: 'user', purpose: 'READ_ONLY_DIAGNOSTIC_NO_AUTHORITY',
+        original: outcome.managerHealth[0], streaming: await streamDomainHealth(domain) };
+      outcome.managerHealthExperiment.rootCause = outcome.managerHealth[0].error === 'BUFFER_LIMIT'
+        && outcome.managerHealthExperiment.streaming.healthy ? 'CONFIRMED_64K_CAPTURE_LIMIT' : 'NOT_CONFIRMED';
+      throw new Error('DOMAIN_UNAVAILABLE');
+    }
     const negativeLabel = `com.ebb.phase2.absent.${randomUUID()}`;
     const negative = run('/bin/launchctl', ['print', `${domain}/${negativeLabel}`], 5000);
     if (!health(domain) || negative.status === 0 || negative.error || negative.signal || !negative.stderr.includes(negativeLabel)) throw new Error('ABSENCE_CALIBRATION');

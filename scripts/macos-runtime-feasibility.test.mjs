@@ -90,6 +90,39 @@ test('manager result classifier rejects unavailable, wrong generation and vacuou
   assert.equal(classifyManagerResult({ status: 0, signal: null, stdout: '', stderr: '' }, { matches: false }), 'WRONG_GENERATION');
 });
 
+test('domain health evidence is bounded and never serializes launchctl inventory or arbitrary errors', async () => {
+  const { domainHealthEvidence } = await import('./macos-runtime-feasibility.mjs');
+  assert.equal(typeof domainHealthEvidence, 'function');
+  const result = { status: 0, signal: null, error: null,
+    stdout: 'user/501 = {\n services = { PRIVATE_INVENTORY }\n}', stderr: '' };
+  const valid = domainHealthEvidence(result, 'user/501');
+  assert.equal(valid.healthy, true); assert.equal(valid.headerMatched, true); assert.equal(valid.trailerMatched, true);
+  assert.doesNotMatch(JSON.stringify(valid), /PRIVATE_INVENTORY|stdout"|stderr"/);
+  for (const changed of [{ ...result, status: 113, stderr: 'Could not find domain for SECRET' },
+    { ...result, error: 'SECRET_ERROR' }, { ...result, signal: 'SIGTERM' },
+    { ...result, stdout: 'gui/501 = {\n}' }, { ...result, stdout: 'user/501 = {\n} trailing' }]) {
+    const evidence = domainHealthEvidence(changed, 'user/501');
+    assert.equal(evidence.healthy, false);
+    assert.doesNotMatch(JSON.stringify(evidence), /SECRET|services|PRIVATE|trailing/);
+  }
+  assert.equal(domainHealthEvidence({ ...result, error: 'ETIMEDOUT' }, 'user/501').error, 'TIMEOUT');
+  assert.equal(domainHealthEvidence({ ...result, error: 'ENOBUFS' }, 'user/501').error, 'BUFFER_LIMIT');
+});
+
+test('streaming domain experiment discards inventory and fails closed on limit and timeout', async () => {
+  const { streamDomainHealth } = await import('./macos-runtime-feasibility.mjs');
+  const { spawn } = await import('node:child_process');
+  assert.equal(typeof streamDomainHealth, 'function');
+  const start = source => () => spawn(process.execPath, ['-e', source], { shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
+  const success = await streamDomainHealth('user/501', { start: start("process.stdout.write('user/501 = {\\n' + 'PRIVATE'.repeat(12000) + '\\n}\\n')") });
+  assert.equal(success.healthy, true); assert.ok(success.stdoutBytes > 65536);
+  assert.doesNotMatch(JSON.stringify(success), /PRIVATE|stdout"|stderr"/);
+  const limited = await streamDomainHealth('user/501', { limit: 100, start: start("process.stdout.write('user/501 = {'+'X'.repeat(1000)+'}')") });
+  assert.equal(limited.healthy, false); assert.equal(limited.error, 'BUFFER_LIMIT');
+  const timed = await streamDomainHealth('user/501', { deadline: 30, start: start('setTimeout(()=>{},1000)') });
+  assert.equal(timed.healthy, false); assert.equal(timed.error, 'TIMEOUT');
+});
+
 test('feasibility verdict requires entire matrix and rejects retained UNKNOWN or failed sentinel cleanup', async () => {
   const { feasibilityVerdict } = await import('./macos-runtime-feasibility.mjs');
   assert.equal(feasibilityVerdict([]), 'NOT_VERIFIED');
