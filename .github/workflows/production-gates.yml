@@ -149,7 +149,10 @@ jobs:
         run: pnpm --filter @ebb-orchestrator/server exec vitest run test/e2e/hermes-process-scope.acceptance.test.ts
       - name: Run native provider-free source-snapshot acceptance
         run: pnpm --filter @ebb-orchestrator/server exec vitest run test/e2e/hermes-source-snapshot.acceptance.test.ts
-      - name: Remove ephemeral Linux helper AppArmor profiles
+      - name: Record successful Linux owned-scope acceptances
+        shell: bash
+        run: bash scripts/linux-hermes-namespace-prerequisite.sh acceptance-completed
+      - name: Verify Linux owned-scope teardown and retain profiles until runner disposal
         if: ${{ always() }}
         shell: bash
         run: bash scripts/linux-hermes-namespace-prerequisite.sh cleanup
