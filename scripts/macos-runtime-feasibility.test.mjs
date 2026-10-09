@@ -65,6 +65,27 @@ test('job readback distinguishes inactive registration from current root and rej
   assert.equal(parseJob(body.replace('launch only once', 'keepalive'), owner, '/tmp/binary', 'registered'), null);
 });
 
+test('registration rejection evidence uses fixed categories and never exposes service output', async () => {
+  const { parseJobRejection } = await import('./macos-runtime-feasibility.mjs');
+  assert.equal(typeof parseJobRejection, 'function');
+  const owner = { domain: 'user/501', label: 'label', plist: '/tmp/fixture.plist', args: ['/tmp/binary', 'nonce'] };
+  const text = 'user/501/label = {\n program = /tmp/binary\n path = /tmp/fixture.plist\n domain = user/501 [100]\n arguments = {\n /tmp/binary\n nonce\n }\n properties = launch only once | abandon process group\n}';
+  assert.equal(parseJobRejection(text, owner, '/tmp/binary', 'registered'), null);
+  const cases = [['prefix', text.replace('user/501/label', 'PRIVATE')], ['trailer', text + 'PRIVATE'],
+    ['program', text.replace('program = /tmp/binary', 'program = PRIVATE')],
+    ['path', text.replace('path = /tmp/fixture.plist', 'path = PRIVATE')],
+    ['domain', text.replace('domain = user/501', 'domain = PRIVATE')],
+    ['arguments', text.replace(' nonce\n', ' PRIVATE\n')],
+    ['properties', text.replace('launch only once', 'PRIVATE')],
+    ['pid-shape', text.replace(' properties =', ' pid = 42\n properties =')],
+    ['pid-shape', text.replace(' properties =', ' pid = PRIVATE\n properties =')]];
+  for (const [category, changed] of cases) {
+    const rejection = parseJobRejection(changed, owner, '/tmp/binary', 'registered');
+    assert.equal(rejection, category); assert.doesNotMatch(rejection, /PRIVATE/);
+  }
+  assert.equal(parseJobRejection(text, owner, '/tmp/binary', 'running'), 'pid-shape');
+});
+
 test('Phase2 non-Darwin reports NOT_RUN with schema v2, never simulation PASS', { skip: process.platform === 'darwin' }, () => {
   const temporary = mkdtempSync(join(tmpdir(), 'ebb-macos-phase2-test-'));
   try {

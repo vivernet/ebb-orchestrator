@@ -188,19 +188,29 @@ function session(binary, socket, nonce, generation, deadline, lease = false, boo
 }
 /** При RunAtLoad=false registration readback не требует несуществующий PID; launch readback требует current PID. */
 export function parseJob(text, owner, binary, phase) {
-  if (!text.startsWith(`${owner.domain}/${owner.label} = {`) || !text.endsWith('}')) return null;
+  if (parseJobRejection(text, owner, binary, phase) !== null) return null;
+  const pid = text.match(/^\s*pid = ([1-9]\d*)$/m)?.[1];
+  return { pid: pid ? Number(pid) : null };
+}
+/** Fixed rejection category объясняет mismatch без raw service data; null означает прохождение всех прежних gates. */
+export function parseJobRejection(text, owner, binary, phase) {
+  if (!text.startsWith(`${owner.domain}/${owner.label} = {`)) return 'prefix';
+  if (!text.endsWith('}')) return 'trailer';
   const program = text.match(/^\s*program = (.+)$/m)?.[1];
   const path = text.match(/^\s*path = (.+)$/m)?.[1];
   const domain = text.match(/^\s*domain = (\S+)(?: .*)?$/m)?.[1];
   const args = text.match(/^\s*arguments = \{\n([\s\S]*?)^\s*\}/m)?.[1].trim().split('\n').map(value => value.trim());
   const properties = text.match(/^\s*properties = (.+)$/m)?.[1] ?? '';
-  if (program !== binary || path !== owner.plist || domain !== owner.domain
-    || JSON.stringify(args) !== JSON.stringify(owner.args) || !properties.includes('launch only once')
-    || properties.includes('keepalive') || !properties.includes('abandon process group')) return null;
+  if (program !== binary) return 'program';
+  if (path !== owner.plist) return 'path';
+  if (domain !== owner.domain) return 'domain';
+  if (JSON.stringify(args) !== JSON.stringify(owner.args)) return 'arguments';
+  if (!properties.includes('launch only once') || properties.includes('keepalive')
+    || !properties.includes('abandon process group')) return 'properties';
   const pid = text.match(/^\s*pid = ([1-9]\d*)$/m)?.[1];
-  if (phase === 'registered') return pid ? null : { pid: null };
-  if (phase === 'static') return { pid: pid ? Number(pid) : null };
-  return pid && Number.isSafeInteger(Number(pid)) ? { pid: Number(pid) } : null;
+  if (/^\s*pid\s*=/m.test(text) && (!pid || !Number.isSafeInteger(Number(pid)))) return 'pid-shape';
+  if (phase === 'registered' && pid || phase === 'running' && !pid) return 'pid-shape';
+  return null;
 }
 function xml(value) { return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;'); }
 /** Новый disposable user-domain fixture явно выбирает Background; restart/demand policy остаётся закрытой. */
@@ -277,9 +287,10 @@ async function managerRead(owner, binary, phase, absent) {
   const healthBefore = await health(owner.domain);
   const result = run('/bin/launchctl', ['print', `${owner.domain}/${owner.label}`], 5000);
   const job = result.status === 0 ? parseJob(result.stdout, owner, binary, phase) : null;
+  const parseRejection = result.status === 0 ? parseJobRejection(result.stdout, owner, binary, phase) : null;
   const healthAfter = await health(owner.domain);
   return { classification: classifyManagerResult(normalized(result, owner.label), { matches: Boolean(job), absent, healthBefore, healthAfter }),
-    pid: job?.pid ?? null, status: result.status, error: result.error, healthBefore, healthAfter };
+    pid: job?.pid ?? null, status: result.status, error: result.error, healthBefore, healthAfter, parseRejection };
 }
 function safeOwnerFile(path, expected) {
   if (objectIdentity(path, 'file') === '') throw new Error('OWNER_IDENTITY');
