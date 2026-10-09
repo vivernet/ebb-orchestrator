@@ -234,6 +234,16 @@ export function registrationPathEvidence(text, owner) {
         : canonicalMatch && sameFileIdentity ? 'CANONICAL_ALIAS_SAME_FILE' : 'MISMATCH' };
   } catch { return { literalMatch, canonicalMatch, sameFileIdentity: null, category: 'OWNED_FILE_UNAVAILABLE' }; }
 }
+/** Closure diagnostics перечисляют только fixed classification/rejection и PID presence; это не STOP authority. */
+export function closureReadbackEvidence(result) {
+  const classification = ['MATCH', 'ABSENT', 'WRONG_GENERATION', 'UNKNOWN'].includes(result.classification) ? result.classification : 'UNKNOWN';
+  const parseRejection = ['prefix', 'trailer', 'program', 'path', 'domain', 'arguments', 'properties', 'pid-shape'].includes(result.parseRejection)
+    ? result.parseRejection : null;
+  const safe = bootstrapEvidence({ status: result.status, signal: result.signal, error: result.error });
+  return { classification, parseRejection, pidPresent: Number.isSafeInteger(result.pid) && result.pid > 0,
+    status: safe.status, signal: safe.signal, error: safe.error,
+    healthBefore: result.healthBefore === true, healthAfter: result.healthAfter === true };
+}
 function xml(value) { return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;'); }
 /** Новый disposable user-domain fixture явно выбирает Background; restart/demand policy остаётся закрытой. */
 export function fixturePlist(label, binary, args) {
@@ -500,6 +510,7 @@ async function exercise(binary, directory, scenario, report, selectedGeneration 
       checkpoint('crash-after-ack');
     }
     const beforeBootout = await managerRead(owner, binary, 'static', absent);
+    outcome.beforeBootout = closureReadbackEvidence(beforeBootout);
     // После root-exit менеджер может не иметь PID, но exact static binding всё ещё обязана совпасть.
     if (beforeBootout.classification !== 'MATCH') { matching = false; throw new Error('CLOSURE_BINDING_UNVERIFIED'); }
     const bootout = run('/bin/launchctl', ['bootout', `${domain}/${label}`], 5000);

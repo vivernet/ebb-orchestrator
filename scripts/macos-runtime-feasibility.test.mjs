@@ -86,6 +86,20 @@ test('registration rejection evidence uses fixed categories and never exposes se
   assert.equal(parseJobRejection(text, owner, '/tmp/binary', 'running'), 'pid-shape');
 });
 
+test('closure readback evidence is recorded before fail-closed binding gate without raw output', async () => {
+  const { closureReadbackEvidence } = await import('./macos-runtime-feasibility.mjs');
+  assert.equal(typeof closureReadbackEvidence, 'function');
+  const rejected = closureReadbackEvidence({ classification: 'WRONG_GENERATION', parseRejection: 'properties', pid: null,
+    status: 0, error: null, healthBefore: true, healthAfter: true, raw: 'PRIVATE' });
+  assert.equal(rejected.classification, 'WRONG_GENERATION'); assert.equal(rejected.pidPresent, false);
+  assert.doesNotMatch(JSON.stringify(rejected), /PRIVATE|raw|pid"/);
+  assert.equal(closureReadbackEvidence({ classification: 'ABSENT', parseRejection: null, pid: null }).classification, 'ABSENT');
+  assert.equal(closureReadbackEvidence({ classification: 'MATCH', parseRejection: null, pid: 123 }).pidPresent, true);
+  const source = readFileSync('scripts/macos-runtime-feasibility.mjs', 'utf8');
+  assert.ok(source.indexOf('outcome.beforeBootout = closureReadbackEvidence(beforeBootout)')
+    < source.indexOf("throw new Error('CLOSURE_BINDING_UNVERIFIED')"));
+});
+
 test('fixture root canonicalization and path evidence retain strict equality and exact private-file identity', async () => {
   const { canonicalFixtureRoot, registrationPathEvidence, parseJobRejection } = await import('./macos-runtime-feasibility.mjs');
   assert.equal(typeof canonicalFixtureRoot, 'function'); assert.equal(typeof registrationPathEvidence, 'function');
