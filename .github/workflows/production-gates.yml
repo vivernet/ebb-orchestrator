@@ -149,6 +149,10 @@ jobs:
         run: pnpm --filter @ebb-orchestrator/server exec vitest run test/e2e/hermes-process-scope.acceptance.test.ts
       - name: Run native provider-free source-snapshot acceptance
         run: pnpm --filter @ebb-orchestrator/server exec vitest run test/e2e/hermes-source-snapshot.acceptance.test.ts
+      - name: Run Linux host-permission compatibility acceptance
+        run: pnpm --filter @ebb-orchestrator/server exec vitest run test/e2e/hermes-host-permission-compatibility.acceptance.test.ts
+      - name: Run Linux native host-policy helper acceptance
+        run: node apps/server/scripts/test-hermes-host-policy-native.mjs
       - name: Record successful Linux owned-scope acceptances
         shell: bash
         run: bash scripts/linux-hermes-namespace-prerequisite.sh acceptance-completed
@@ -217,6 +221,10 @@ jobs:
           # fixture directly under the system volume root without changing its ACL.
           EBB_PROFILE_CHAIN_FIXTURE_ROOT: 'C:\\'
         run: pnpm --filter @ebb-orchestrator/server exec vitest run test/e2e/hermes-profile-path-chain.acceptance.test.ts
+      - name: Run Windows host-permission compatibility acceptance
+        run: pnpm --filter @ebb-orchestrator/server exec vitest run test/e2e/hermes-host-permission-compatibility.acceptance.test.ts
+      - name: Run Windows native host-policy helper acceptance
+        run: node apps/server/scripts/test-hermes-host-policy-native.mjs
       - name: Run native provider-free source-snapshot acceptance
         run: pnpm --filter @ebb-orchestrator/server exec vitest run test/e2e/hermes-source-snapshot.acceptance.test.ts
 
