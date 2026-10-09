@@ -12,6 +12,7 @@ import {
 import {
   HERMES_SOURCE_SNAPSHOT_DIAGNOSTIC_PHASES,
   isSafeHermesPathComponentAclDiagnostic,
+  isSafeHermesPathComponentOpenDiagnostic,
   markHermesSourceSnapshotDiagnosticPhase,
   reportHermesSourceSnapshotFailurePhase,
   sanitizeHermesPathIdentityDiagnostic,
@@ -140,6 +141,72 @@ describe("Hermes source snapshot diagnostics", () => {
     expect(diagnostic).not.toMatch(/private|powershell|SECRET|SID|ACL details/iu);
   });
 
+  it.each([
+    [10, "VERIFY_SAFE_PATH_REFUSED:USER_IDENTITY", "SECONDARY_PATH_USER_IDENTITY_UNAVAILABLE"],
+    [30, "VERIFY_SAFE_PATH_REFUSED:ROOT_OPEN", "SECONDARY_PATH_ROOT_OPEN_FAILED"],
+    [31, "VERIFY_SAFE_PATH_REFUSED:ROOT_IDENTITY", "SECONDARY_PATH_IDENTITY_UNAVAILABLE:ROOT"],
+    [31, "VERIFY_SAFE_PATH_REFUSED:ROOT_ACL", "SECONDARY_PATH_ROOT_ACL_UNSAFE"],
+    [34, "VERIFY_SAFE_PATH_REFUSED:OBJECT_IDENTITY", "SECONDARY_PATH_IDENTITY_UNAVAILABLE"],
+    [41, "VERIFY_SAFE_PATH_REFUSED:COMPONENT_OPEN:INDEX_1", "SECONDARY_PATH_COMPONENT_OPEN_FAILED:INDEX_1"],
+    [51, "VERIFY_SAFE_PATH_REFUSED:COMPONENT_ACL:INDEX_1:ACL_STAGE_1", "SECONDARY_PATH_COMPONENT_ACL_UNSAFE:INDEX_1:STAGE_1"],
+    [103, "VERIFY_SAFE_PATH_REFUSED:COMPONENT_OPEN:INDEX_63", "SECONDARY_PATH_COMPONENT_OPEN_FAILED:INDEX_63"],
+    [56, "VERIFY_SAFE_PATH_REFUSED:COMPONENT_ACL:INDEX_64_PLUS:ACL_STAGE_6", "SECONDARY_PATH_COMPONENT_ACL_UNSAFE:INDEX_64_PLUS:STAGE_6"],
+    [104, "VERIFY_SAFE_PATH_REFUSED:COMPONENT_OPEN:INDEX_64_PLUS", "SECONDARY_PATH_COMPONENT_OPEN_FAILED:INDEX_64_PLUS"],
+    [120, "VERIFY_SAFE_PATH_REFUSED:COMPONENT_OPEN:INDEX_64_PLUS", "SECONDARY_PATH_COMPONENT_OPEN_FAILED:INDEX_64_PLUS"],
+  ])("sanitizes standalone verifier refusal with matching exit %s", (exitCode, stderr, expected) => {
+    const diagnostic = sanitizeHermesPathIdentityDiagnostic(new ExitCodeError(
+      "C:\\private\\helper.exe --secret",
+      exitCode,
+      "",
+      stderr,
+    ));
+
+    expect(diagnostic).toBe(expected);
+    expect(diagnostic).not.toMatch(/private|secret|stdout|VERIFY_SAFE_PATH_REFUSED/iu);
+  });
+
+  it("accepts the native refusal marker with one Windows line ending", () => {
+    expect(sanitizeHermesPathIdentityDiagnostic(new ExitCodeError(
+      "helper",
+      55,
+      "",
+      "VERIFY_SAFE_PATH_REFUSED:COMPONENT_ACL:INDEX_15:ACL_STAGE_5\r\n",
+    ))).toBe("SECONDARY_PATH_COMPONENT_ACL_UNSAFE:INDEX_15:STAGE_5");
+  });
+
+  it("rejects a standalone refusal marker when the native verifier also wrote stdout", () => {
+    expect(sanitizeHermesPathIdentityDiagnostic(new ExitCodeError(
+      "helper",
+      55,
+      "unexpected output",
+      "VERIFY_SAFE_PATH_REFUSED:COMPONENT_ACL:INDEX_15:ACL_STAGE_5\r\n",
+    ))).toBe("SECONDARY_PATH_IDENTITY_UNAVAILABLE");
+  });
+
+  it.each([
+    [31, "VERIFY_SAFE_PATH_REFUSED:ROOT_OPEN"],
+    [31, "VERIFY_SAFE_PATH_REFUSED:ROOT_ACL\nC:\\private\\extra"],
+    [31, "unexpected\nVERIFY_SAFE_PATH_REFUSED:ROOT_OPEN"],
+  ])("does not fall back to legacy root ACL for invalid standalone marker evidence %s", (exitCode, stderr) => {
+    expect(sanitizeHermesPathIdentityDiagnostic(new ExitCodeError("helper", exitCode, "", stderr)))
+      .toBe("SECONDARY_PATH_IDENTITY_UNAVAILABLE");
+  });
+
+  it.each([
+    [11, "VERIFY_SAFE_PATH_REFUSED:USER_IDENTITY"],
+    [31, "VERIFY_SAFE_PATH_REFUSED:ROOT_OPEN"],
+    [30, "VERIFY_SAFE_PATH_REFUSED:ROOT_ACL"],
+    [41, "VERIFY_SAFE_PATH_REFUSED:COMPONENT_OPEN:INDEX_2"],
+    [55, "VERIFY_SAFE_PATH_REFUSED:COMPONENT_ACL:INDEX_1:ACL_STAGE_4"],
+    [103, "VERIFY_SAFE_PATH_REFUSED:COMPONENT_OPEN:INDEX_64_PLUS"],
+    [104, "VERIFY_SAFE_PATH_REFUSED:COMPONENT_OPEN:INDEX_63"],
+    [51, "VERIFY_SAFE_PATH_REFUSED:COMPONENT_ACL:INDEX_01:ACL_STAGE_1"],
+    [51, "VERIFY_SAFE_PATH_REFUSED:COMPONENT_ACL:INDEX_1:ACL_STAGE_1\nC:\\private\\SECRET"],
+  ])("collapses malformed or mismatched standalone refusal %s / %s", (exitCode, stderr) => {
+    expect(sanitizeHermesPathIdentityDiagnostic(new ExitCodeError("helper", exitCode, "", stderr)))
+      .toBe("SECONDARY_PATH_IDENTITY_UNAVAILABLE");
+  });
+
   it("reports only a bounded path-chain component and ACL stage for a matching native failure", () => {
     const diagnostic = sanitizeHermesPathIdentityDiagnostic(new ExitCodeError(
       "C:\\private\\powershell.exe -EncodedCommand SECRET",
@@ -193,6 +260,40 @@ describe("Hermes source snapshot diagnostics", () => {
       "SECONDARY_PATH_COMPONENT_ACL_UNSAFE:INDEX_1:STAGE_5:C:\\private",
     ]) {
       expect(isSafeHermesPathComponentAclDiagnostic(value)).toBe(false);
+    }
+  });
+
+  it("keeps standalone component ACL overflow separate from path-chain numeric indices", () => {
+    expect(isSafeHermesPathComponentAclDiagnostic("SECONDARY_PATH_COMPONENT_ACL_UNSAFE:INDEX_64:STAGE_6")).toBe(true);
+    expect(isSafeHermesPathComponentAclDiagnostic("SECONDARY_PATH_COMPONENT_ACL_UNSAFE:INDEX_64_PLUS:STAGE_6")).toBe(false);
+    expect(isSafeHermesPathComponentAclDiagnostic("SECONDARY_PATH_COMPONENT_ACL_UNSAFE:INDEX_0:STAGE_1", true)).toBe(true);
+    expect(isSafeHermesPathComponentAclDiagnostic("SECONDARY_PATH_COMPONENT_ACL_UNSAFE:INDEX_63:STAGE_6", true)).toBe(true);
+    expect(isSafeHermesPathComponentAclDiagnostic("SECONDARY_PATH_COMPONENT_ACL_UNSAFE:INDEX_64_PLUS:STAGE_6", true)).toBe(true);
+    for (const value of [
+      "SECONDARY_PATH_COMPONENT_ACL_UNSAFE:INDEX_64:STAGE_6",
+      "SECONDARY_PATH_COMPONENT_ACL_UNSAFE:INDEX_65:STAGE_6",
+      "SECONDARY_PATH_COMPONENT_ACL_UNSAFE:INDEX_01:STAGE_1",
+      "SECONDARY_PATH_COMPONENT_ACL_UNSAFE:INDEX_64_PLUS:STAGE_7",
+    ]) {
+      expect(isSafeHermesPathComponentAclDiagnostic(value, true)).toBe(false);
+    }
+  });
+
+  it("accepts only bounded standalone component-open indices", () => {
+    for (const value of [
+      "SECONDARY_PATH_COMPONENT_OPEN_FAILED:INDEX_0",
+      "SECONDARY_PATH_COMPONENT_OPEN_FAILED:INDEX_63",
+      "SECONDARY_PATH_COMPONENT_OPEN_FAILED:INDEX_64_PLUS",
+    ]) {
+      expect(isSafeHermesPathComponentOpenDiagnostic(value)).toBe(true);
+    }
+    for (const value of [
+      "SECONDARY_PATH_COMPONENT_OPEN_FAILED:INDEX_01",
+      "SECONDARY_PATH_COMPONENT_OPEN_FAILED:INDEX_64",
+      "SECONDARY_PATH_COMPONENT_OPEN_FAILED:INDEX_65",
+      "SECONDARY_PATH_COMPONENT_OPEN_FAILED:INDEX_64_PLUS:private",
+    ]) {
+      expect(isSafeHermesPathComponentOpenDiagnostic(value)).toBe(false);
     }
   });
 

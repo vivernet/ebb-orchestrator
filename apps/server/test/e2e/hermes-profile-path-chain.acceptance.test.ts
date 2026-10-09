@@ -22,6 +22,7 @@ import { createProductionPaths } from "../../src/platform/home/production-paths.
 import { resolveOrchestratorHome } from "../../src/platform/home/orchestrator-home.js";
 import {
   isSafeHermesPathComponentAclDiagnostic,
+  isSafeHermesPathComponentOpenDiagnostic,
   sanitizeHermesPathIdentityDiagnostic,
   withHermesSourceSnapshotFailureObserver,
   type HermesSourceSnapshotDiagnosticPhase,
@@ -744,9 +745,7 @@ async function nativeIdentity(
     }
     return { platform: "win32", volumeSerial: identity.volumeSerial, fileId: identity.fileId };
   } catch (error) {
-    if (error instanceof Error && (/^(?:VERIFIED_HELPER_LAUNCHER_REJECTED|SECONDARY_PATH_ROOT_ACL_UNSAFE|SECONDARY_PATH_IDENTITY_UNAVAILABLE|PROFILE_PATH_CHAIN_NATIVE_IDENTITY_INVALID)$/u.test(error.message) ||
-        /^SECONDARY_PATH_IDENTITY_UNAVAILABLE:(?:ROOT|COMPONENT_INDEX_(?:[1-9]|[1-5][0-9]|6[0-4])|SERIALIZATION_LIMIT)$/u.test(error.message) ||
-        isSafeHermesPathComponentAclDiagnostic(error.message))) {
+    if (error instanceof Error && isSafeNativeDiagnosticMessage(error.message)) {
       throw error;
     }
     const diagnostic = safeNativeDiagnostic(error);
@@ -1013,14 +1012,45 @@ function sameNativeIdentity(left: HermesLaunchObjectIdentity, right: HermesLaunc
 function safeNativeDiagnostic(error: unknown): string {
   if (error instanceof ExitCodeError) return sanitizeHermesPathIdentityDiagnostic(error);
   const message = error instanceof Error ? error.message : "";
-  return (/^(?:VERIFIED_HELPER_LAUNCHER_REJECTED|SECONDARY_PATH_ROOT_ACL_UNSAFE|SECONDARY_PATH_IDENTITY_UNAVAILABLE)$/u.test(message) ||
-      /^SECONDARY_PATH_IDENTITY_UNAVAILABLE:(?:ROOT|COMPONENT_INDEX_(?:[1-9]|[1-5][0-9]|6[0-4])|SERIALIZATION_LIMIT)$/u.test(message) ||
-      isSafeHermesPathComponentAclDiagnostic(message))
-    ? message
-    : "SECONDARY_PATH_IDENTITY_UNAVAILABLE";
+  return isSafeNativeDiagnosticMessage(message) ? message : "SECONDARY_PATH_IDENTITY_UNAVAILABLE";
+}
+
+function isSafeNativeDiagnosticMessage(message: string): boolean {
+  return /^(?:VERIFIED_HELPER_LAUNCHER_REJECTED|SECONDARY_PATH_ROOT_ACL_UNSAFE|SECONDARY_PATH_ROOT_OPEN_FAILED|SECONDARY_PATH_USER_IDENTITY_UNAVAILABLE|SECONDARY_PATH_IDENTITY_UNAVAILABLE|PROFILE_PATH_CHAIN_NATIVE_IDENTITY_INVALID)$/u.test(message) ||
+    /^SECONDARY_PATH_IDENTITY_UNAVAILABLE:(?:ROOT|COMPONENT_INDEX_(?:[1-9]|[1-5][0-9]|6[0-4])|SERIALIZATION_LIMIT)$/u.test(message) ||
+    isSafeHermesPathComponentAclDiagnostic(message) ||
+    isSafeHermesPathComponentAclDiagnostic(message, true) ||
+    isSafeHermesPathComponentOpenDiagnostic(message);
 }
 
 describe("Hermes profile-chain fixture ACL command construction", () => {
+  it.each([
+    "SECONDARY_PATH_ROOT_OPEN_FAILED",
+    "SECONDARY_PATH_USER_IDENTITY_UNAVAILABLE",
+    "SECONDARY_PATH_COMPONENT_OPEN_FAILED:INDEX_0",
+    "SECONDARY_PATH_COMPONENT_OPEN_FAILED:INDEX_63",
+    "SECONDARY_PATH_COMPONENT_OPEN_FAILED:INDEX_64_PLUS",
+    "SECONDARY_PATH_COMPONENT_ACL_UNSAFE:INDEX_0:STAGE_1",
+    "SECONDARY_PATH_COMPONENT_ACL_UNSAFE:INDEX_64_PLUS:STAGE_6",
+  ])("preserves exact standalone verifier diagnostic %s", (diagnostic) => {
+    expect(safeNativeDiagnostic(new Error(diagnostic))).toBe(diagnostic);
+  });
+
+  it.each([
+    "SECONDARY_PATH_ROOT_OPEN_FAILED:C:\\private",
+    "SECONDARY_PATH_USER_IDENTITY_UNAVAILABLE\ncredential",
+    "SECONDARY_PATH_COMPONENT_OPEN_FAILED:INDEX_01",
+    "SECONDARY_PATH_COMPONENT_OPEN_FAILED:INDEX_64",
+    "SECONDARY_PATH_COMPONENT_OPEN_FAILED:INDEX_65",
+    "SECONDARY_PATH_COMPONENT_OPEN_FAILED:INDEX_64_PLUS:private",
+    "SECONDARY_PATH_COMPONENT_ACL_UNSAFE:INDEX_01:STAGE_1",
+    "SECONDARY_PATH_COMPONENT_ACL_UNSAFE:INDEX_65:STAGE_1",
+    "SECONDARY_PATH_COMPONENT_ACL_UNSAFE:INDEX_64_PLUS:STAGE_7",
+    "SECONDARY_PATH_COMPONENT_ACL_UNSAFE:INDEX_64_PLUS:STAGE_6:C:\\private",
+  ])("collapses malformed standalone verifier diagnostic %s", (diagnostic) => {
+    expect(safeNativeDiagnostic(new Error(diagnostic))).toBe("SECONDARY_PATH_IDENTITY_UNAVAILABLE");
+  });
+
   it("derives the OS root and tools only from the verified native PowerShell identity", () => {
     const identity = JSON.stringify({
       status: "SAFE_PATH",

@@ -57,6 +57,9 @@ export function reportHermesSourceSnapshotFailurePhase(): void {
 export function sanitizeHermesPathIdentityDiagnostic(error: unknown): string {
   if (error instanceof ExitCodeError) {
     if (isVerifiedHelperLauncherRejection(error)) return "VERIFIED_HELPER_LAUNCHER_REJECTED";
+    if (error.stderr.includes("VERIFY_SAFE_PATH_REFUSED:")) {
+      return standaloneSafePathRefusal(error) ?? "SECONDARY_PATH_IDENTITY_UNAVAILABLE";
+    }
     if (error.exitCode === 31) return "SECONDARY_PATH_ROOT_ACL_UNSAFE";
     const componentAclFailure = error.stderr.split(/\r?\n/u)
       .map((line) => /^SAFE_PATH_CHAIN_COMPONENT_ACL_UNSAFE:INDEX_([1-9][0-9]?):STAGE_([1-6])$/u.exec(line))
@@ -76,10 +79,57 @@ export function sanitizeHermesPathIdentityDiagnostic(error: unknown): string {
   return "SECONDARY_PATH_IDENTITY_UNAVAILABLE";
 }
 
+/** Принимает только фиксированный stderr marker и exit code соответствующего native verifier. */
+function standaloneSafePathRefusal(error: ExitCodeError): string | undefined {
+  if (error.stdout !== "") return undefined;
+  const stderr = error.stderr.replace(/\r?\n$/u, "");
+  if (stderr.includes("\n") || stderr.includes("\r")) return undefined;
+  const match = /^VERIFY_SAFE_PATH_REFUSED:(USER_IDENTITY|ROOT_OPEN|ROOT_IDENTITY|ROOT_ACL|OBJECT_IDENTITY|COMPONENT_OPEN:INDEX_(0|[1-9][0-9]*|64_PLUS)|COMPONENT_ACL:INDEX_(0|[1-9][0-9]*|64_PLUS):ACL_STAGE_([1-6]))$/u.exec(stderr);
+  if (!match) return undefined;
+
+  const refusal = match[1]!;
+  if (refusal === "USER_IDENTITY") return error.exitCode === 10 ? "SECONDARY_PATH_USER_IDENTITY_UNAVAILABLE" : undefined;
+  if (refusal === "ROOT_OPEN") return error.exitCode === 30 ? "SECONDARY_PATH_ROOT_OPEN_FAILED" : undefined;
+  if (refusal === "ROOT_IDENTITY" || refusal === "ROOT_ACL") {
+    if (error.exitCode !== 31) return undefined;
+    return refusal === "ROOT_IDENTITY"
+      ? "SECONDARY_PATH_IDENTITY_UNAVAILABLE:ROOT"
+      : "SECONDARY_PATH_ROOT_ACL_UNSAFE";
+  }
+  if (refusal === "OBJECT_IDENTITY") {
+    return error.exitCode === 34 ? "SECONDARY_PATH_IDENTITY_UNAVAILABLE" : undefined;
+  }
+
+  const componentIndex = match[2] ?? match[3];
+  if (!componentIndex) return undefined;
+  const index = componentIndex === "64_PLUS" ? undefined : Number(componentIndex);
+  if (index !== undefined && index > 63) return undefined;
+  if (refusal.startsWith("COMPONENT_OPEN:")) {
+    if (index === undefined ? error.exitCode < 104 : error.exitCode !== 40 + index) return undefined;
+    return `SECONDARY_PATH_COMPONENT_OPEN_FAILED:INDEX_${componentIndex}`;
+  }
+
+  const aclStage = Number(match[4]);
+  if (error.exitCode !== 50 + aclStage) return undefined;
+  return `SECONDARY_PATH_COMPONENT_ACL_UNSAFE:INDEX_${componentIndex}:STAGE_${aclStage}`;
+}
+
 /** Проверяет динамический компонентный код ACL на точный allowlist без свободного текста. @internal */
-export function isSafeHermesPathComponentAclDiagnostic(value: string): boolean {
+export function isSafeHermesPathComponentAclDiagnostic(value: string, allowStandaloneOverflow = false): boolean {
+  if (allowStandaloneOverflow) {
+    const standaloneMatch = /^SECONDARY_PATH_COMPONENT_ACL_UNSAFE:INDEX_(0|[1-9][0-9]*|64_PLUS):STAGE_([1-6])$/u.exec(value);
+    if (standaloneMatch) {
+      return standaloneMatch[1] === "64_PLUS" || Number(standaloneMatch[1]) <= 63;
+    }
+  }
   const match = /^SECONDARY_PATH_COMPONENT_ACL_UNSAFE:INDEX_([1-9][0-9]?):STAGE_([1-6])$/u.exec(value);
   return match !== null && Number(match[1]) <= 64;
+}
+
+/** Проверяет только безопасный индекс component-open отказа standalone verifier. @internal */
+export function isSafeHermesPathComponentOpenDiagnostic(value: string): boolean {
+  const match = /^SECONDARY_PATH_COMPONENT_OPEN_FAILED:INDEX_(0|[1-9][0-9]*|64_PLUS)$/u.exec(value);
+  return match !== null && (match[1] === "64_PLUS" || Number(match[1]) <= 63);
 }
 
 function isVerifiedHelperLauncherRejection(error: ExitCodeError): boolean {
