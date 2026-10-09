@@ -1,10 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
-import { access, lstat, mkdir, mkdtemp, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
+import { access, cp, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, rmdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve, win32 } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { consumeHermesLaunchTicket, createHermesLaunchTicket, type HermesLaunchObjectIdentity } from "../../src/modules/runtime/hermes/hermes-launch-ticket.js";
 import { ensureHermesSourceSnapshotNativeProjection, materializeHermesSourceSnapshot } from "../../src/modules/runtime/hermes/hermes-source-snapshot.js";
 import { prepareRunProcessOwner } from "../../src/modules/runtime/run-process-owner.js";
@@ -58,6 +58,7 @@ interface ManagedFixtureHome {
     attemptAwareStopRequired: boolean;
   }>;
   unprovenLaunch: boolean;
+  testLifecycle: { finished: boolean };
 }
 
 const originalSystemRootAliases = {
@@ -70,9 +71,21 @@ describe.skipIf(!enabled)("Windows Hermes profile path-chain production integrat
   const executor = new ProcessExecutor();
   const supervisor = new WindowsJobSupervisor(executor, supervisorHelper);
   const fixtureHomes: ManagedFixtureHome[] = [];
+  const pythonRuntimeStage = createFixtureRuntimeStage<{
+    executable: string;
+    identity: HermesLaunchObjectIdentity;
+    strictRoot: string;
+  }>();
+  let currentTestLifecycle = { finished: false };
+
+  beforeEach(() => { currentTestLifecycle = { finished: false }; });
+  afterEach(() => { currentTestLifecycle.finished = true; });
 
   afterAll(async () => {
     try {
+      // Timeout теста не отменяет fs.cp. Пока staging не завершился, его корень
+      // нельзя удалять; rejected stage также остаётся общим и не запускается повторно.
+      await pythonRuntimeStage.settle();
       for (const fixtureHome of fixtureHomes.reverse()) {
         if (fixtureHome.launchAttempted && (fixtureHome.unprovenLaunch || fixtureHome.launchAttempts.length === 0 ||
             fixtureHome.launchAttempts.some((attempt) => !attempt.identity))) {
@@ -126,6 +139,7 @@ describe.skipIf(!enabled)("Windows Hermes profile path-chain production integrat
     onIdentity: (identity: ProcessScopeIdentity) => Promise<void> = async () => {},
   ): Promise<ProcessScopeHandle> {
     const managed = fixture.managedHome;
+    requireFixtureTestActive(managed.testLifecycle);
     const attempt = {
       identity: undefined as ProcessScopeIdentity | undefined,
       attemptAwareStopRequired: false,
@@ -512,6 +526,8 @@ describe.skipIf(!enabled)("Windows Hermes profile path-chain production integrat
   async function makeFixture(
     homes: ManagedFixtureHome[],
   ) {
+    const testLifecycle = currentTestLifecycle;
+    requireFixtureTestActive(testLifecycle);
     const localAppData = process.env.LOCALAPPDATA;
     const userProfile = process.env.USERPROFILE;
     if (!localAppData || !userProfile || !(await existingRealDirectory(userProfile)) ||
@@ -549,6 +565,7 @@ describe.skipIf(!enabled)("Windows Hermes profile path-chain production integrat
         attemptAwareStopRequired: boolean;
       }>,
       unprovenLaunch: false,
+      testLifecycle,
     };
     const previousHomeOverride = process.env.EBB_ORCHESTRATOR_HOME;
     try {
@@ -625,10 +642,38 @@ describe.skipIf(!enabled)("Windows Hermes profile path-chain production integrat
       await mkdir(home, { recursive: true });
       await writeFile(config, "provider-free native path acceptance\n");
       await setPrivateOwnerAcl([authRoot, join(authRoot, "profiles"), profile, home, config], systemPaths);
-      const python = await resolvePython();
+      requireFixtureTestActive(testLifecycle);
+      const sharedPythonRuntime = await pythonRuntimeStage.stage(async () => {
+        requireFixtureTestActive(testLifecycle);
+        const configuredPython = await resolvePython();
+        requireFixtureTestActive(testLifecycle);
+        // Hosted runners install Python beneath a shared tool-cache ACL. Copy the complete real
+        // configured runtime into the first protected fixture instead of weakening the native
+        // verifier for that external tree. fs.cp copies file contents, not Windows ACLs, so the
+        // owner-only inheritable DACL established here applies to every staged runtime object.
+        const stagedRoot = join(fixtureParent, "python-runtime");
+        await mkdir(stagedRoot);
+        await setPrivateOwnerAcl([stagedRoot], systemPaths, true);
+        requireFixtureTestActive(testLifecycle);
+        await copyPythonRuntime(dirname(configuredPython), stagedRoot);
+        requireFixtureTestActive(testLifecycle);
+        const stagedExecutable = join(stagedRoot, basename(configuredPython));
+        await verifyStagedPythonRuntime(stagedExecutable, stagedRoot, systemPaths);
+        requireFixtureTestActive(testLifecycle);
+        return {
+          executable: stagedExecutable,
+          identity: await nativeIdentity(stagedExecutable, "file", fixtureParent),
+          strictRoot: fixtureParent,
+        };
+      });
+      requireFixtureTestActive(testLifecycle);
+      const python = sharedPythonRuntime.executable;
+      const pythonIdentity = await nativeIdentity(python, "file", sharedPythonRuntime.strictRoot);
+      if (!sameNativeIdentity(pythonIdentity, sharedPythonRuntime.identity)) {
+        throw new Error("PROFILE_PATH_CHAIN_STAGED_PYTHON_IDENTITY_CHANGED");
+      }
       const shim = join(root, "hermes.exe");
       await writeFile(shim, "synthetic launcher identity; never executed\n");
-      const pythonIdentity = await nativeIdentity(python, "file");
       const hermesIdentity = await nativeIdentity(shim, "file", fixtureParent);
       const profileIdentity = await nativeIdentity(profile, "directory", fixtureParent);
       const targetIdentities = {
@@ -794,13 +839,69 @@ function safeFixtureCleanupResult(result: { exitCode: number; stdout: string; st
 async function resolvePython(): Promise<string> {
   for (const command of ["python", "py"]) {
     try {
-      const result = await new ProcessExecutor().exec(command, command === "py" ? ["-3", "-c", "import sys;print(sys.executable)"] : ["-c", "import sys;print(sys.executable)"], {
+      // В venv sys.executable указывает на redirector в Scripts, где нет DLL/stdlib.
+      // Копируем исходный interpreter вместе с его runtime, без конфигурации venv.
+      const args = ["-I", "-B", "-S", "-c", "import sys;print(getattr(sys, '_base_executable', sys.executable))"];
+      const result = await new ProcessExecutor().exec(command, command === "py" ? ["-3", ...args] : args, {
         cwd: tmpdir(), env: processEnvironment(), timeout: 5_000, maxBuffer: 4096,
       });
-      if (result.exitCode === 0 && result.stdout.trim()) return result.stdout.trim();
+      if (result.exitCode === 0 && isAbsolute(result.stdout.trim())) return result.stdout.trim();
     } catch { /* Try the next supported Windows launcher. */ }
   }
   throw new Error("PROFILE_PATH_CHAIN_ACCEPTANCE_PYTHON_UNAVAILABLE");
+}
+
+async function copyPythonRuntime(sourceRoot: string, stagedRoot: string): Promise<void> {
+  // Корень уже создан с защищённым DACL. Копируем только его новые дочерние объекты:
+  // cp с errorOnExist отклоняет существующий destination даже для каталога.
+  for (const entry of await readdir(sourceRoot)) {
+    await cp(join(sourceRoot, entry), join(stagedRoot, entry), {
+      recursive: true, errorOnExist: true, force: false,
+    });
+  }
+}
+
+function createFixtureRuntimeStage<T>() {
+  let staging: Promise<T> | undefined;
+  return {
+    stage(start: () => Promise<T>): Promise<T> {
+      // Публикуем Promise до запуска callback, чтобы concurrent callers и rejection
+      // всегда разделяли одну попытку, включая незавершённый copy после timeout.
+      staging ??= Promise.resolve().then(start);
+      return staging;
+    },
+    async settle(): Promise<void> {
+      await staging?.catch(() => undefined);
+    },
+  };
+}
+
+function requireFixtureTestActive(lifecycle: { finished: boolean }): void {
+  if (lifecycle.finished) throw new Error("PROFILE_PATH_CHAIN_FIXTURE_TEST_FINISHED");
+}
+
+async function verifyStagedPythonRuntime(
+  executable: string, stagedRoot: string, systemPaths: VerifiedWindowsSystemPaths,
+): Promise<void> {
+  const script = [
+    "import os, pathlib, sys, time",
+    "normalize = lambda value: os.path.normcase(os.path.abspath(value))",
+    "assert normalize(sys.executable) == normalize(sys.argv[1])",
+    "assert normalize(sys.prefix) == normalize(sys.argv[2])",
+    "assert normalize(sys.base_prefix) == normalize(sys.argv[2])",
+    "assert normalize(pathlib.__file__).startswith(normalize(sys.argv[2]) + os.sep)",
+    "print('STAGED_PYTHON_READY')",
+  ].join("\n");
+  try {
+    const result = await new ProcessExecutor().exec(executable, ["-I", "-B", "-S", "-c", script, executable, stagedRoot], {
+      cwd: stagedRoot, env: fixtureCommandEnvironment(systemPaths), timeout: 10_000, maxBuffer: 4_096,
+    });
+    if (result.stdout.trim() !== "STAGED_PYTHON_READY" || result.stderr !== "") {
+      throw new Error("PROFILE_PATH_CHAIN_STAGED_PYTHON_UNAVAILABLE");
+    }
+  } catch {
+    throw new Error("PROFILE_PATH_CHAIN_STAGED_PYTHON_UNAVAILABLE");
+  }
 }
 
 function ownerIdentity(owner: ReturnType<typeof prepareRunProcessOwner>) {
@@ -1024,6 +1125,86 @@ function isSafeNativeDiagnosticMessage(message: string): boolean {
 }
 
 describe("Hermes profile-chain fixture ACL command construction", () => {
+  it("shares one pending runtime stage and delays cleanup until it settles", async () => {
+    const stage = createFixtureRuntimeStage<string>();
+    let completeCopy: (runtime: string) => void = () => { throw new Error("COPY_NOT_STARTED"); };
+    const copied = new Promise<string>((resolveCopy) => { completeCopy = resolveCopy; });
+    let starts = 0;
+    const start = async () => { starts += 1; return copied; };
+    const first = stage.stage(start);
+    const concurrent = stage.stage(start);
+    expect(concurrent).toBe(first);
+    let cleanupAllowed = false;
+    const settled = stage.settle().then(() => { cleanupAllowed = true; });
+    await Promise.resolve();
+    expect(starts).toBe(1);
+    expect(cleanupAllowed, "cleanup must not pass a pending copy").toBe(false);
+    completeCopy("staged runtime");
+    expect(await first).toBe("staged runtime");
+    await settled;
+    expect(cleanupAllowed).toBe(true);
+    expect(stage.stage(start)).toBe(first);
+    expect(starts).toBe(1);
+  });
+
+  it("retains a failed shared stage and prevents late setup launch after test timeout", async () => {
+    const stage = createFixtureRuntimeStage<string>();
+    const lifecycle = { finished: false };
+    let completeCopy: () => void = () => { throw new Error("COPY_NOT_STARTED"); };
+    const copied = new Promise<void>((resolveCopy) => { completeCopy = resolveCopy; });
+    let starts = 0;
+    let setupLaunches = 0;
+    const start = async () => {
+      starts += 1;
+      await copied;
+      requireFixtureTestActive(lifecycle);
+      setupLaunches += 1;
+      return "staged runtime";
+    };
+    const first = stage.stage(start);
+    const concurrent = stage.stage(start);
+    expect(concurrent).toBe(first);
+    const failure = expect(first).rejects.toThrow("PROFILE_PATH_CHAIN_FIXTURE_TEST_FINISHED");
+    let cleanupAllowed = false;
+    const settled = stage.settle().then(() => { cleanupAllowed = true; });
+    await Promise.resolve();
+    lifecycle.finished = true;
+    expect(cleanupAllowed).toBe(false);
+    completeCopy();
+    await failure;
+    await settled;
+    expect(cleanupAllowed).toBe(true);
+    expect(stage.stage(start)).toBe(first);
+    await expect(stage.stage(start)).rejects.toThrow("PROFILE_PATH_CHAIN_FIXTURE_TEST_FINISHED");
+    expect(starts).toBe(1);
+    expect(setupLaunches, "expired fixture setup must not spawn its interpreter probe").toBe(0);
+  });
+
+  it("copies the runtime into its existing protected root without replacing existing files", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ebb-profile-chain-runtime-copy-"));
+    try {
+      const source = join(root, "source");
+      const staged = join(root, "staged");
+      await mkdir(join(source, "Lib"), { recursive: true });
+      await mkdir(staged);
+      await writeFile(join(source, "python.exe"), "runtime executable");
+      await writeFile(join(source, "python3.dll"), "runtime library");
+      await writeFile(join(source, "Lib", "pathlib.py"), "runtime stdlib");
+      await copyPythonRuntime(source, staged);
+      expect(await readFile(join(staged, "python.exe"), "utf8")).toBe("runtime executable");
+      expect(await readFile(join(staged, "python3.dll"), "utf8")).toBe("runtime library");
+      expect(await readFile(join(staged, "Lib", "pathlib.py"), "utf8")).toBe("runtime stdlib");
+      const replacementSource = join(root, "replacement-source");
+      await mkdir(replacementSource);
+      await writeFile(join(replacementSource, "python.exe"), "must not replace");
+      await writeFile(join(staged, "python.exe"), "must remain");
+      await expect(copyPythonRuntime(replacementSource, staged)).rejects.toMatchObject({ code: "ERR_FS_CP_EEXIST" });
+      expect(await readFile(join(staged, "python.exe"), "utf8")).toBe("must remain");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     "SECONDARY_PATH_ROOT_OPEN_FAILED",
     "SECONDARY_PATH_USER_IDENTITY_UNAVAILABLE",
