@@ -297,6 +297,19 @@ export function terminateHermesProcessTree(pid, platformName = platform(), run =
   }
 }
 
+async function waitForHermesProcessGroupExit(pid, timeoutMs, pollIntervalMs, processGroupExists) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      if (!processGroupExists(pid)) return true;
+    } catch {
+      // Ошибка проверки не доказывает завершение группы.
+    }
+    await new Promise((resolve) => setTimeout(resolve, Math.min(pollIntervalMs, Math.max(1, deadline - Date.now()))));
+  }
+  try { return !processGroupExists(pid); } catch { return false; }
+}
+
 function fixedExecuteResult(exitCode, marker, cleanupVerified) {
   return { exitCode, marker, redacted: true, cleanupVerified };
 }
@@ -306,6 +319,17 @@ export async function runHermesExecute({
   planPath,
   tmpDir = process.env.TEMP || process.env.TMPDIR || join(homedir(), 'tmp'),
   timeoutMs = parseExecuteTimeout(),
+  terminationGraceMs = 2_000,
+  processGroupPollIntervalMs = 25,
+  platformName = platform(),
+  processGroupExists = (pid) => {
+    try {
+      process.kill(-pid, 0);
+      return true;
+    } catch (error) {
+      return error?.code !== 'ESRCH';
+    }
+  },
   spawnChild = spawn,
   terminate = terminateHermesProcessTree,
   write = writeFileSync,
@@ -316,6 +340,7 @@ export async function runHermesExecute({
 } = {}) {
   const tmpFile = join(tmpDir, `hermes-prompt-${now()}.txt`);
   let result = fixedExecuteResult(1, 'SPAWN_ERROR', false);
+  let retainPrompt = false;
   makeDirectory(tmpDir, { recursive: true });
 
   try {
@@ -333,10 +358,14 @@ No nested delegation.
     result = await new Promise((resolve) => {
       let settled = false;
       let timer;
+      let graceTimer;
+      let timedOut = false;
+      let termination;
       const finish = (value) => {
         if (settled) return;
         settled = true;
         if (timer) clearTimeout(timer);
+        if (graceTimer) clearTimeout(graceTimer);
         resolve(value);
       };
 
@@ -352,35 +381,76 @@ No nested delegation.
           stdio: ['ignore', 'pipe', 'pipe'],
           shell: false,
           windowsHide: true,
+          ...(platformName === 'win32' ? {} : { detached: true }),
         });
         child.stdout?.on('data', () => {});
         child.stderr?.on('data', () => {});
-        child.once('error', () => finish(fixedExecuteResult(1, 'SPAWN_ERROR', false)));
+        child.once('error', () => {
+          if (!timedOut) finish(fixedExecuteResult(1, 'SPAWN_ERROR', false));
+        });
         child.once('close', (code) => {
+          if (timedOut) {
+            void (async () => {
+              const groupStopped = platformName === 'win32'
+                ? termination?.ok === true
+                : await waitForHermesProcessGroupExit(child.pid, terminationGraceMs, processGroupPollIntervalMs, processGroupExists);
+              const terminated = groupStopped && (platformName !== 'win32' || termination?.ok === true);
+              retainPrompt = !terminated;
+              finish(fixedExecuteResult(terminated ? 124 : 125, terminated ? 'TIMEOUT' : 'TERMINATION_FAILED', false));
+            })();
+            return;
+          }
+          if (timer) {
+            clearTimeout(timer);
+            timer = undefined;
+          }
+          if (platformName !== 'win32') {
+            void (async () => {
+              let groupAlive = true;
+              try { groupAlive = processGroupExists(child.pid); } catch { /* Unknown group state requires termination and verification. */ }
+              if (!groupAlive) {
+                finish(fixedExecuteResult(code === 0 ? 0 : (code ?? 1), code === 0 ? 'COMPLETED' : 'FAILED', false));
+                return;
+              }
+
+              let normalCloseTermination;
+              try { normalCloseTermination = terminate(child.pid, platformName, undefined, true); } catch { normalCloseTermination = { ok: false }; }
+              const groupStopped = await waitForHermesProcessGroupExit(child.pid, terminationGraceMs, processGroupPollIntervalMs, processGroupExists);
+              const cleanupSafe = groupStopped;
+              retainPrompt = !cleanupSafe;
+              finish(fixedExecuteResult(cleanupSafe ? 1 : 125, cleanupSafe ? 'FAILED' : 'TERMINATION_FAILED', false));
+            })();
+            return;
+          }
           finish(fixedExecuteResult(code === 0 ? 0 : (code ?? 1), code === 0 ? 'COMPLETED' : 'FAILED', false));
         });
         timer = setTimeout(() => {
-          let termination;
-          try { termination = terminate(child.pid, platform()); } catch { termination = { ok: false }; }
+          timedOut = true;
+          try { termination = terminate(child.pid, platformName, undefined, platformName !== 'win32'); } catch { termination = { ok: false }; }
           try { child.kill(); } catch { /* child may already be gone */ }
-          finish(fixedExecuteResult(termination?.ok === true ? 124 : 125, termination?.ok === true ? 'TIMEOUT' : 'TERMINATION_FAILED', false));
+          graceTimer = setTimeout(() => {
+            retainPrompt = true;
+            finish(fixedExecuteResult(125, 'TERMINATION_FAILED', false));
+          }, terminationGraceMs);
         }, timeoutMs);
       } catch {
         finish(fixedExecuteResult(1, 'SPAWN_ERROR', false));
       }
     });
   } finally {
-    try {
-      remove(tmpFile, { force: true });
-      result.cleanupVerified = !exists(tmpFile);
-      if (!result.cleanupVerified) {
+    if (!retainPrompt) {
+      try {
+        remove(tmpFile, { force: true });
+        result.cleanupVerified = !exists(tmpFile);
+        if (!result.cleanupVerified) {
+          result.exitCode = 1;
+          result.marker = 'CLEANUP_FAILED';
+        }
+      } catch {
         result.exitCode = 1;
         result.marker = 'CLEANUP_FAILED';
+        result.cleanupVerified = false;
       }
-    } catch {
-      result.exitCode = 1;
-      result.marker = 'CLEANUP_FAILED';
-      result.cleanupVerified = false;
     }
   }
   return result;

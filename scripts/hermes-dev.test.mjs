@@ -2,11 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { spawnSync } from 'node:child_process';
+import { setTimeout } from 'node:timers';
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { resolvePlanPath } from './hermes-dev-paths.mjs';
-import { checkHermesVersion, collectHermesConfigChecks, isHermesProjectDiscoveryEnabled, isHermesProjectTrusted, resolveRepositoryRoot, runHermesConfig, runHermesProjectSetup, terminateHermesProcessTree, validateCanonicalSkills } from './hermes-dev.mjs';
+import { checkHermesVersion, collectHermesConfigChecks, isHermesProjectDiscoveryEnabled, isHermesProjectTrusted, resolveRepositoryRoot, runHermesConfig, runHermesExecute, runHermesProjectSetup, terminateHermesProcessTree, validateCanonicalSkills } from './hermes-dev.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const skillsRoot = join(root, '.agents', 'skills');
@@ -415,4 +416,273 @@ test('Hermes execute terminates the Windows process tree on timeout', () => {
   assert.match(source, /taskkill\.exe/);
   assert.match(source, /\/T/);
   assert.match(source, /\/F/);
+});
+
+test('Hermes execute waits for child close before cleaning the prompt after timeout', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'hermes-execute-close-'));
+  const child = new EventEmitter();
+  let closed = false;
+  child.pid = 1234;
+  child.kill = () => {};
+
+  try {
+    const resultPromise = runHermesExecute({
+      worktreeRoot: directory,
+      planPath: 'plan.md',
+      tmpDir: directory,
+      timeoutMs: 5,
+      terminationGraceMs: 50,
+      terminate: () => ({ ok: true }),
+      spawnChild: () => {
+        setTimeout(() => {
+          closed = true;
+          child.emit('close', null);
+        }, 10);
+        return child;
+      },
+    });
+    const result = await resultPromise;
+
+    assert.equal(result.marker, 'TIMEOUT');
+    assert.equal(result.exitCode, 124);
+    assert.equal(result.cleanupVerified, true);
+    assert.equal(closed, true);
+    assert.deepEqual(readdirSync(directory), []);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('Hermes execute retains the prompt when timed out child never closes', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'hermes-execute-open-'));
+  const child = new EventEmitter();
+  child.pid = 1234;
+  child.kill = () => {};
+
+  try {
+    const result = await runHermesExecute({
+      worktreeRoot: directory,
+      planPath: 'plan.md',
+      tmpDir: directory,
+      timeoutMs: 5,
+      terminationGraceMs: 5,
+      terminate: () => ({ ok: true }),
+      spawnChild: () => child,
+    });
+
+    assert.equal(result.marker, 'TERMINATION_FAILED');
+    assert.equal(result.exitCode, 125);
+    assert.equal(result.cleanupVerified, false);
+    const retainedFiles = readdirSync(directory);
+    assert.equal(retainedFiles.length, 1);
+    assert.match(retainedFiles[0], /^hermes-prompt-\d+\.txt$/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('Hermes execute starts Hermes in a POSIX process group and waits for the group to exit', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'hermes-execute-group-exit-'));
+  const child = new EventEmitter();
+  const processGroupStates = [true, false];
+  let spawnOptions;
+  let terminationArgs;
+  child.pid = 2345;
+  child.kill = () => {};
+
+  try {
+    const result = await runHermesExecute({
+      worktreeRoot: directory,
+      planPath: 'plan.md',
+      tmpDir: directory,
+      timeoutMs: 5,
+      terminationGraceMs: 50,
+      processGroupPollIntervalMs: 1,
+      platformName: 'linux',
+      processGroupExists: () => processGroupStates.shift() ?? false,
+      terminate: (...args) => { terminationArgs = args; return { ok: true }; },
+      spawnChild: (_command, _args, options) => {
+        spawnOptions = options;
+        setTimeout(() => child.emit('close', null), 10);
+        return child;
+      },
+    });
+
+    assert.equal(spawnOptions.detached, true);
+    assert.equal(terminationArgs[0], child.pid);
+    assert.equal(terminationArgs[1], 'linux');
+    assert.equal(terminationArgs[3], true);
+    assert.equal(result.marker, 'TIMEOUT');
+    assert.equal(result.exitCode, 124);
+    assert.equal(result.cleanupVerified, true);
+    assert.deepEqual(readdirSync(directory), []);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('Hermes execute retains prompt when POSIX descendants remain after child close', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'hermes-execute-group-live-'));
+  const child = new EventEmitter();
+  child.pid = 3456;
+  child.kill = () => {};
+
+  try {
+    const result = await runHermesExecute({
+      worktreeRoot: directory,
+      planPath: 'plan.md',
+      tmpDir: directory,
+      timeoutMs: 5,
+      terminationGraceMs: 10,
+      processGroupPollIntervalMs: 1,
+      platformName: 'linux',
+      processGroupExists: () => true,
+      terminate: () => ({ ok: true }),
+      spawnChild: () => {
+        setTimeout(() => child.emit('close', null), 10);
+        return child;
+      },
+    });
+
+    assert.equal(result.marker, 'TERMINATION_FAILED');
+    assert.equal(result.exitCode, 125);
+    assert.equal(result.cleanupVerified, false);
+    const retainedFiles = readdirSync(directory);
+    assert.equal(retainedFiles.length, 1);
+    assert.match(retainedFiles[0], /^hermes-prompt-\d+\.txt$/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('Hermes execute confirms POSIX process group exit after normal child close', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'hermes-execute-normal-group-'));
+  const child = new EventEmitter();
+  let groupChecks = 0;
+  child.pid = 4567;
+  child.kill = () => {};
+
+  try {
+    const result = await runHermesExecute({
+      worktreeRoot: directory,
+      planPath: 'plan.md',
+      tmpDir: directory,
+      terminationGraceMs: 50,
+      processGroupPollIntervalMs: 1,
+      platformName: 'linux',
+      processGroupExists: () => { groupChecks += 1; return false; },
+      spawnChild: (_command, _args, options) => {
+        assert.equal(options.detached, true);
+        setTimeout(() => child.emit('close', 0), 1);
+        return child;
+      },
+    });
+
+    assert.equal(result.marker, 'COMPLETED');
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.cleanupVerified, true);
+    assert.equal(groupChecks, 1);
+    assert.deepEqual(readdirSync(directory), []);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('Hermes execute terminates unexpected POSIX group after normal child close', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'hermes-execute-normal-group-live-'));
+  const child = new EventEmitter();
+  const processGroupStates = [true, false];
+  let terminationArgs;
+  child.pid = 5678;
+  child.kill = () => {};
+
+  try {
+    const result = await runHermesExecute({
+      worktreeRoot: directory,
+      planPath: 'plan.md',
+      tmpDir: directory,
+      terminationGraceMs: 10,
+      processGroupPollIntervalMs: 1,
+      platformName: 'linux',
+      processGroupExists: () => processGroupStates.shift() ?? false,
+      terminate: (...args) => { terminationArgs = args; return { ok: true }; },
+      spawnChild: () => {
+        setTimeout(() => child.emit('close', 0), 1);
+        return child;
+      },
+    });
+
+    assert.equal(terminationArgs[0], child.pid);
+    assert.equal(terminationArgs[1], 'linux');
+    assert.equal(terminationArgs[3], true);
+    assert.equal(result.marker, 'FAILED');
+    assert.equal(result.exitCode, 1);
+    assert.equal(result.cleanupVerified, true);
+    assert.deepEqual(readdirSync(directory), []);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('Hermes execute cleans prompt when unexpected POSIX group exits before termination', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'hermes-execute-normal-group-race-'));
+  const child = new EventEmitter();
+  const processGroupStates = [true, false];
+  child.pid = 7890;
+  child.kill = () => {};
+
+  try {
+    const result = await runHermesExecute({
+      worktreeRoot: directory,
+      planPath: 'plan.md',
+      tmpDir: directory,
+      terminationGraceMs: 10,
+      processGroupPollIntervalMs: 1,
+      platformName: 'linux',
+      processGroupExists: () => processGroupStates.shift() ?? false,
+      terminate: () => ({ ok: false }),
+      spawnChild: () => {
+        setTimeout(() => child.emit('close', 0), 1);
+        return child;
+      },
+    });
+
+    assert.equal(result.marker, 'FAILED');
+    assert.equal(result.exitCode, 1);
+    assert.equal(result.cleanupVerified, true);
+    assert.deepEqual(readdirSync(directory), []);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('Hermes execute retains prompt when unexpected POSIX group survives termination', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'hermes-execute-normal-group-still-live-'));
+  const child = new EventEmitter();
+  child.pid = 6789;
+  child.kill = () => {};
+
+  try {
+    const result = await runHermesExecute({
+      worktreeRoot: directory,
+      planPath: 'plan.md',
+      tmpDir: directory,
+      terminationGraceMs: 10,
+      processGroupPollIntervalMs: 1,
+      platformName: 'linux',
+      processGroupExists: () => true,
+      terminate: () => ({ ok: true }),
+      spawnChild: () => {
+        setTimeout(() => child.emit('close', 0), 1);
+        return child;
+      },
+    });
+
+    assert.equal(result.marker, 'TERMINATION_FAILED');
+    assert.equal(result.exitCode, 125);
+    assert.equal(result.cleanupVerified, false);
+    assert.equal(readdirSync(directory).length, 1);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
