@@ -1,0 +1,18 @@
+{
+  "result": "PASS",
+  "startedAt": "2026-10-13T01:00:19+03:00",
+  "durationSeconds": 934.13,
+  "testFiles": 1,
+  "testsPassed": 15,
+  "testsFailed": 0,
+  "planningRuns": 3,
+  "epicRuns": 12,
+  "restarts": 3,
+  "phaseRunsValidated": 12,
+  "epicStage": "FINAL_APPROVAL",
+  "finalMerge": "PENDING",
+  "projectConfigRevision": {
+    "revisionId": "6de0f264-47da-4d65-9af8-0e5f086a3442",
+    "revisionHash": "18b1a2c749bf46bd3b9b37681f5b0769c55358993d545f485c16c24147f61be5"
+  }
+}

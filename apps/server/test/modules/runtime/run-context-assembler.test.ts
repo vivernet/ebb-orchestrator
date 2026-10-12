@@ -248,6 +248,20 @@ function contextSection(prompt: string, finalPrompt: string): Record<string, unk
 }
 
 describe("RunContextAssembler.prepare", () => {
+  it("adds Reviewer findings as validated Developer role context, without transcript input", () => {
+    const testCase = cases[0]!;
+    const db = txFor(testCase);
+    try {
+      const input = { ...inputFor(testCase), roleInputs: { reviewFindings: [{ type: "MAJOR", description: "Review finding context marker", file: "src/example.ts", line: 12 }] } };
+      const prepared = db.transaction((tx) => assembler().prepare(tx, input));
+      expect(prepared.finalPrompt).toContain("Review finding context marker");
+      expect(prepared.finalPrompt).toContain("src/example.ts");
+      expect(prepared.finalPrompt).not.toContain("Developer transcript marker");
+      expect(() => db.transaction((tx) => assembler().prepare(tx, { ...input, roleInputs: { reviewFindings: [{ type: "UNTRUSTED", description: "bad" }] } })))
+        .toThrow(/reviewFindings.*type is invalid/);
+    } finally { db.close(); }
+  });
+
   it.each(cases)("assembles persisted $type/$role role context without losing the caller prompt", (testCase) => {
     const db = txFor(testCase);
     try {

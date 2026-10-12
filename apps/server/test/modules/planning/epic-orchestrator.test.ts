@@ -31,6 +31,7 @@ type PrivateCalls = {
   runPhase(epicId: string, taskId: string | undefined, phase: string, role: string, request: EpicAgentRequest, prompt?: string): Promise<unknown>;
   approvedEpicCoordinatorPrompt(input: { epic?: { title: string }; tasks: Array<{ ref: string; title: string; role: string; workflow: string; acceptanceCriteria: string[]; dependsOn?: string[] }> }): string;
   persistedPhase(epicId: string, taskId: string | undefined, phase: string, role: string, result: { accepted: boolean; output: unknown }, agentRunId: string, phaseId: string): Promise<unknown>;
+  requirePersistedEvidence(epicId: string, taskId: string, phase: string, result: { accepted: boolean; output: unknown }): void;
 };
 async function draftFixture() {
   const root = await mkdtemp(join(tmpdir(), "epic-draft-guard-"));
@@ -52,6 +53,90 @@ function expectNoDispatchRows(db: Database) {
   expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_reservations")?.count).toBe(0);
 }
 describe("EpicOrchestrator draft onboarding guard", () => {
+  async function reviewReworkFixture() {
+    const f = await draftFixture();
+    const now = new Date().toISOString();
+    f.db.run("INSERT INTO approvals(id,type,subject_id,subject_type,status,requested_by,resolved_by,created_at,resolved_at) VALUES('review-approval','WORKFLOW_CHANGE',$projectId,'PROJECT','APPROVED','tester','tester',$now,$now)", {
+      projectId: f.db.get<{ project_id: string }>("SELECT project_id FROM epics WHERE id=$id", { id: f.epicId })!.project_id, now,
+    });
+    f.db.run("UPDATE onboarding_configs SET status='ACTIVE',approval_id='review-approval' WHERE project_id=(SELECT project_id FROM epics WHERE id=$id)", { id: f.epicId });
+    f.db.run("UPDATE tasks SET status='REVIEW' WHERE id=$id", { id: f.taskId });
+    f.db.run("INSERT INTO orchestration_phase_runs(id,epic_id,task_id,phase,role,agent_run_id,result_json,evidence_json,validated,status,created_at) VALUES($id,$epicId,$taskId,'child_task','developer',$runId,'{}','{}',1,'COMPLETED',$now)", {
+      id: randomUUID(), epicId: f.epicId, taskId: f.taskId, runId: randomUUID(), now,
+    });
+    const findings = [{ type: "MAJOR" as const, description: "Handle the missing boundary case", file: "src/example.ts", line: 12 }];
+    const dispatch = vi.spyOn(f.calls, "runPhase");
+    vi.spyOn(f.calls, "requirePersistedEvidence").mockImplementation(() => undefined);
+    return { ...f, findings, dispatch };
+  }
+
+  it("does one same-Task Developer rework with validated findings, then requires a distinct passing re-review", async () => {
+    const f = await reviewReworkFixture();
+    f.dispatch.mockImplementation(async (_epicId, _taskId, phase) => {
+      if (phase === "review") return { accepted: true, output: { version: "1.0.0", outcome: "CHANGES_REQUESTED", findings: f.findings } };
+      if (phase === "review_rework") return { accepted: true, output: { version: "1.0.0", outcome: "COMPLETED" } };
+      if (phase === "review_recheck") return { accepted: true, output: { version: "1.0.0", outcome: "PASS" } };
+      return { accepted: true, output: { version: "1.0.0", outcome: "PASS" } };
+    });
+    try {
+      await f.calls.runChild({ id: f.taskId, display_id: "TASK-DRAFT", status: "REVIEW" }, f.epicId, "epic/draft");
+      expect(f.dispatch.mock.calls.map((call) => call[2])).toEqual(["review", "review_rework", "review_recheck", "qa", "integration"]);
+      expect(f.dispatch.mock.calls[1]?.[1]).toBe(f.taskId);
+      expect(f.dispatch.mock.calls[1]?.[4].roleInputs).toEqual({ reviewFindings: f.findings });
+      expect(f.db.get<{ status: string }>("SELECT status FROM tasks WHERE id=$id", { id: f.taskId })?.status).toBe("INTEGRATED_INTO_EPIC");
+    } finally { f.db.close(); await rm(f.root, { recursive: true, force: true }); }
+  });
+
+  it("fails closed when the re-review requests changes again", async () => {
+    const f = await reviewReworkFixture();
+    f.dispatch.mockImplementation(async (_epicId, _taskId, phase) => {
+      if (phase === "review") return { accepted: true, output: { version: "1.0.0", outcome: "CHANGES_REQUESTED", findings: f.findings } };
+      if (phase === "review_rework") return { accepted: true, output: { version: "1.0.0", outcome: "COMPLETED" } };
+      if (phase === "review_recheck") return { accepted: true, output: { version: "1.0.0", outcome: "CHANGES_REQUESTED", findings: f.findings } };
+      return { accepted: true, output: { version: "1.0.0", outcome: "PASS" } };
+    });
+    try {
+      await expect(f.calls.runChild({ id: f.taskId, display_id: "TASK-DRAFT", status: "REVIEW" }, f.epicId, "epic/draft"))
+        .rejects.toThrow("TASK_REVIEW_REWORK_REVIEW_NOT_PASSED");
+      expect(f.dispatch.mock.calls.map((call) => call[2])).toEqual(["review", "review_rework", "review_recheck"]);
+      expect(f.db.get<{ status: string }>("SELECT status FROM tasks WHERE id=$id", { id: f.taskId })?.status).toBe("REVIEW");
+    } finally { f.db.close(); await rm(f.root, { recursive: true, force: true }); }
+  });
+
+  it("does not retry a durably failed rework phase after recovery", async () => {
+    const f = await reviewReworkFixture();
+    const now = new Date().toISOString();
+    f.db.run("INSERT INTO orchestration_phase_runs(id,epic_id,task_id,phase,role,agent_run_id,status,validated,created_at) VALUES($id,$epicId,$taskId,'review_rework','developer',$runId,'FAILED',0,$now)", {
+      id: randomUUID(), epicId: f.epicId, taskId: f.taskId, runId: randomUUID(), now,
+    });
+    f.orchestrator.reconcileInterruptedRuns();
+    expect(f.db.get<{ status: string; validated: number }>("SELECT status,validated FROM orchestration_phase_runs WHERE epic_id=$epicId AND task_id=$taskId AND phase='review_rework'", { epicId: f.epicId, taskId: f.taskId }))
+      .toEqual({ status: "FAILED", validated: 0 });
+    f.dispatch.mockResolvedValue({ accepted: true, output: { version: "1.0.0", outcome: "CHANGES_REQUESTED", findings: f.findings } });
+    try {
+      await expect(f.calls.runChild({ id: f.taskId, display_id: "TASK-DRAFT", status: "REVIEW" }, f.epicId, "epic/draft"))
+        .rejects.toThrow("TASK_REVIEW_REWORK_ATTEMPT_EXHAUSTED");
+      expect(f.dispatch.mock.calls.map((call) => call[2])).toEqual(["review"]);
+    } finally { f.db.close(); await rm(f.root, { recursive: true, force: true }); }
+  });
+
+  it("persists CHANGES_REQUESTED only for the initial or bounded Task re-review phases", async () => {
+    const f = await draftFixture();
+    const runId = randomUUID(); const phaseId = randomUUID(); const now = new Date().toISOString();
+    f.db.run("INSERT INTO orchestration_phase_runs(id,epic_id,task_id,phase,role,agent_run_id,status,validated,created_at) VALUES($id,$epicId,$taskId,'review','reviewer',$runId,'RUNNING',0,$now)", {
+      id: phaseId, epicId: f.epicId, taskId: f.taskId, runId, now,
+    });
+    try {
+      const result = await f.calls.persistedPhase(f.epicId, f.taskId, "review", "reviewer", {
+        accepted: true,
+        output: { version: "1.0.0", outcome: "CHANGES_REQUESTED", findings: [{ type: "MAJOR", description: "Fix this finding" }] },
+      }, runId, phaseId) as { accepted: boolean };
+      expect(result.accepted).toBe(true);
+      expect(f.db.get<{ status: string; validated: number }>("SELECT status,validated FROM orchestration_phase_runs WHERE id=$id", { id: phaseId }))
+        .toEqual({ status: "COMPLETED", validated: 1 });
+    } finally { f.db.close(); await rm(f.root, { recursive: true, force: true }); }
+  });
+
   async function coordinatorPhaseFixture() {
     const f = await draftFixture();
     const plan = {

@@ -66,6 +66,68 @@ interface RunEvidence extends TeardownOwner {
 interface RequestRow { id: string; status: string; classification: string | null; plan_id: string | null; coordinator_run_id: string | null; failure_code: string | null; }
 interface PendingPlan { id: string; status: string; epic_id: string | null; plan_json: string; }
 interface ActiveProjectConfigRevision { revision_id: string; revision_hash: string; }
+interface PlanningTimeoutSnapshot {
+  requestStatus: string | null;
+  requestFailureCode: string | null;
+  roles: { coordinator: string | null; product_manager: string | null; architect: string | null };
+  owners: readonly { runStatus: string; state: string | null; stopEvidence: string | null; containmentKind: string | null }[];
+}
+
+const stableToken = (value: string | null | undefined, allowed?: ReadonlySet<string>): string => {
+  if (!value || !/^[A-Z][A-Z0-9_]{1,79}$/u.test(value) || (allowed && !allowed.has(value))) return "UNKNOWN";
+  return value;
+};
+const requestStatuses = new Set(["RECEIVED", "PLANNING", "PLAN_PENDING_APPROVAL", "FAILED", "NEEDS_INPUT", "REJECTED", "MATERIALIZED"]);
+const runStatuses = new Set(["STARTED", "IN_PROGRESS", "COMPLETING", "COMPLETED", "FAILED", "CANCELLED"]);
+const ownerStates = new Set(["PREPARED", "LAUNCHING", "LIVE", "STOPPING", "STOPPED", "UNKNOWN"]);
+const planningFailureCodes = new Set([
+  "COORDINATOR_RUN_FAILED", "COORDINATOR_OUTPUT_INVALID", "PLANNING_DISPATCH_FAILED",
+  "PLANNING_INTERRUPTED", "PLANNING_REVIEW_BLOCKED", "EPIC_RECOVERY_FAILED",
+]);
+
+/** Formats a test-only timeout summary without IDs, paths, prompts, output, or raw owner evidence. */
+function formatPlanningTimeoutDiagnostic(snapshot: PlanningTimeoutSnapshot): string {
+  const owners = snapshot.owners;
+  const stopped = owners.filter((owner) => owner.state === "STOPPED").length;
+  const proven = owners.filter((owner) => isAuthoritativeRunProcessStopEvidence(owner.stopEvidence, owner.containmentKind)).length;
+  const states = [...new Set(owners.map((owner) => stableToken(owner.state, ownerStates)))].sort().join(",") || "NONE";
+  return [
+    "REQUEST_EPIC_PLANNING_TIMEOUT",
+    `REQUEST_${stableToken(snapshot.requestStatus, requestStatuses)}`,
+    `FAILURE_${stableToken(snapshot.requestFailureCode, planningFailureCodes)}`,
+    `COORDINATOR_${stableToken(snapshot.roles.coordinator, runStatuses)}`,
+    `PRODUCT_MANAGER_${stableToken(snapshot.roles.product_manager, runStatuses)}`,
+    `ARCHITECT_${stableToken(snapshot.roles.architect, runStatuses)}`,
+    `OWNERS_${owners.length}`, `OWNERS_STOPPED_${stopped}`, `OWNERS_STOP_PROVEN_${proven}`,
+    `OWNER_STATES_${states}`,
+  ].join(":");
+}
+
+function planningTimeoutSnapshot(database: Database, requestId: string): PlanningTimeoutSnapshot {
+  const request = database.get<{ status: string; failure_code: string | null; coordinator_run_id: string | null }>(
+    "SELECT status,failure_code,coordinator_run_id FROM planning_requests WHERE id=$requestId", { requestId });
+  const roles = database.all<{ role: string; runStatus: string; state: string | null; stopEvidence: string | null; containmentKind: string | null }>(
+    `SELECT pr.role,r.status AS runStatus,o.state,o.stop_evidence AS stopEvidence,o.containment_kind AS containmentKind
+     FROM planning_request_role_runs pr JOIN agent_runs r ON r.id=pr.run_id
+     LEFT JOIN run_process_owners o ON o.run_id=r.id WHERE pr.request_id=$requestId`, { requestId });
+  const coordinator = request?.coordinator_run_id
+    ? database.get<{ runStatus: string; state: string | null; stopEvidence: string | null; containmentKind: string | null }>(
+      `SELECT r.status AS runStatus,o.state,o.stop_evidence AS stopEvidence,o.containment_kind AS containmentKind FROM agent_runs r
+       LEFT JOIN run_process_owners o ON o.run_id=r.id WHERE r.id=$runId AND r.role='coordinator'`, { runId: request.coordinator_run_id })
+    : undefined;
+  const byRole = new Map(roles.map((row) => [row.role, row]));
+  const ownerRows = [coordinator, byRole.get("product_manager"), byRole.get("architect")].filter((row) => row !== undefined);
+  return {
+    requestStatus: request?.status ?? null,
+    requestFailureCode: request?.failure_code ?? null,
+    roles: {
+      coordinator: coordinator?.runStatus ?? null,
+      product_manager: byRole.get("product_manager")?.runStatus ?? null,
+      architect: byRole.get("architect")?.runStatus ?? null,
+    },
+    owners: ownerRows,
+  };
+}
 
 function assertRunUsesActiveProjectConfig(run: RunEvidence, active: ActiveProjectConfigRevision): void {
   let capability: unknown;
@@ -95,6 +157,25 @@ function assertRunUsesActiveProjectConfig(run: RunEvidence, active: ActiveProjec
   }
 }
 
+const activeRunStatuses = new Set(["STARTED", "IN_PROGRESS", "COMPLETING"]);
+
+/** Проверяет binding QA пока capability ещё удерживается активным RunService. */
+function observeActiveQaProjectConfig(
+  candidates: readonly RunEvidence[], active: ActiveProjectConfigRevision, observedRunIds: Set<string>,
+): void {
+  for (const run of candidates) {
+    if (run.role.toLowerCase() !== "qa" || !activeRunStatuses.has(run.status)) continue;
+    assertRunUsesActiveProjectConfig(run, active);
+    observedRunIds.add(run.id);
+  }
+}
+
+/** Не позволяет принять финальное состояние, если активное окно какого-либо QA Run пропущено. */
+function assertAllQaRunsWereObserved(finalRuns: readonly RunEvidence[], observedRunIds: ReadonlySet<string>): void {
+  const finalQaIds = finalRuns.filter((run) => run.role.toLowerCase() === "qa").map((run) => run.id);
+  if (finalQaIds.some((id) => !observedRunIds.has(id))) throw new Error("REQUEST_EPIC_QA_CONFIG_OBSERVATION_INCOMPLETE");
+}
+
 describe("Request-to-Epic approved Project Config evidence", () => {
   it("accepts only the active revision and exact configured QA command", () => {
     const active = { revision_id: "revision-1", revision_hash: "a".repeat(64) };
@@ -115,6 +196,33 @@ describe("Request-to-Epic approved Project Config evidence", () => {
       .toThrow("REQUEST_EPIC_CAPABILITY_NOT_JSON");
     const substituted = { ...run, capability_json: run.capability_json?.replace("test/smoke.js", "test/other.js") ?? null };
     expect(() => assertRunUsesActiveProjectConfig(substituted, active)).toThrow("REQUEST_EPIC_APPROVED_PROJECT_CONFIG_TEST_COMMAND_MISMATCH");
+  });
+
+  it("captures each QA binding only while the run is active and requires every final QA run to be observed", () => {
+    const active = { revision_id: "revision-1", revision_hash: "a".repeat(64) };
+    const capability_json = JSON.stringify({ approvedProjectConfig: {
+      revisionId: active.revision_id, revisionHash: active.revision_hash,
+      config: { execution: { commands: { test: { executable: process.execPath, args: ["test/smoke.js"] } } } },
+    } });
+    const observed = new Set<string>();
+    observeActiveQaProjectConfig([
+      { id: "qa-active", role: "qa", status: "IN_PROGRESS", capability_json } as RunEvidence,
+      { id: "qa-completed", role: "qa", status: "COMPLETED", capability_json: null } as RunEvidence,
+      { id: "review-active", role: "reviewer", status: "IN_PROGRESS", capability_json: null } as RunEvidence,
+    ], active, observed);
+    expect(observed).toEqual(new Set(["qa-active"]));
+    expect(() => assertAllQaRunsWereObserved([
+      { id: "qa-active", role: "qa" } as RunEvidence,
+      { id: "qa-completed", role: "qa" } as RunEvidence,
+    ], observed)).toThrow("REQUEST_EPIC_QA_CONFIG_OBSERVATION_INCOMPLETE");
+    observed.add("qa-completed");
+    expect(() => assertAllQaRunsWereObserved([
+      { id: "qa-active", role: "qa" } as RunEvidence,
+      { id: "qa-completed", role: "qa" } as RunEvidence,
+    ], observed)).not.toThrow();
+    expect(() => observeActiveQaProjectConfig([
+      { id: "qa-wrong-binding", role: "qa", status: "STARTED", capability_json: capability_json.replace(active.revision_hash, "b".repeat(64)) } as RunEvidence,
+    ], active, observed)).toThrow("REQUEST_EPIC_APPROVED_PROJECT_CONFIG_REVISION_MISMATCH");
   });
 });
 
@@ -194,21 +302,35 @@ async function reservePort(): Promise<number> {
   return address.port;
 }
 
-async function waitForReady(child: ProductionChild, origin: string, timeoutMs = 90_000, database?: Database, epicId?: string): Promise<void> {
+async function waitForReady(child: ProductionChild, origin: string, timeoutMs = 90_000, database?: Database, epicId?: string,
+  poll?: () => void): Promise<void> {
   const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (child.process.exitCode !== null || child.process.signalCode !== null) {
-      const exit = child.process.exitCode === null ? "NONE" : String(child.process.exitCode);
-      const signal = child.process.signalCode ?? "NONE";
-      const codes = [...child.diagnosticCodes].sort().join(",") || "NONE";
-      const phase = database && epicId ? failedIntegrationDiagnostic(database, epicId) : null;
-      throw new Error([`REQUEST_EPIC_CHILD_EXITED_BEFORE_READY:EXIT_${exit}:SIGNAL_${signal}:CODES_${codes}`, phase].filter(Boolean).join(":"));
+  let pollFailure: unknown;
+  const runPoll = () => {
+    if (pollFailure || !poll) return;
+    try { poll(); } catch (error) { pollFailure = error; }
+  };
+  runPoll();
+  const pollTimer = poll ? setInterval(runPoll, 10) : undefined;
+  try {
+    while (Date.now() < deadline) {
+      if (pollFailure) throw pollFailure;
+      if (child.process.exitCode !== null || child.process.signalCode !== null) {
+        const exit = child.process.exitCode === null ? "NONE" : String(child.process.exitCode);
+        const signal = child.process.signalCode ?? "NONE";
+        const codes = [...child.diagnosticCodes].sort().join(",") || "NONE";
+        const phase = database && epicId ? failedIntegrationDiagnostic(database, epicId) : null;
+        throw new Error([`REQUEST_EPIC_CHILD_EXITED_BEFORE_READY:EXIT_${exit}:SIGNAL_${signal}:CODES_${codes}`, phase].filter(Boolean).join(":"));
+      }
+      const response = await fetch(`${origin}/api/v1/health`, { signal: AbortSignal.timeout(1000) }).catch(() => undefined);
+      if (pollFailure) throw pollFailure;
+      if (response?.ok && (await response.json() as { lifecycle?: unknown }).lifecycle === "READY") return;
+      await sleep(200);
     }
-    const response = await fetch(`${origin}/api/v1/health`, { signal: AbortSignal.timeout(1000) }).catch(() => undefined);
-    if (response?.ok && (await response.json() as { lifecycle?: unknown }).lifecycle === "READY") return;
-    await sleep(200);
+    throw new Error("REQUEST_EPIC_READY_TIMEOUT");
+  } finally {
+    if (pollTimer) clearInterval(pollTimer);
   }
-  throw new Error("REQUEST_EPIC_READY_TIMEOUT");
 }
 
 function failedIntegrationDiagnostic(database: Database, epicId: string): string | null {
@@ -337,7 +459,7 @@ async function waitForPendingPlan(database: Database, requestId: string, child: 
     if (child.process.exitCode !== null || child.process.signalCode !== null) throw new Error("REQUEST_EPIC_CHILD_EXITED_DURING_PLANNING");
     await sleep(200);
   }
-  throw new Error("REQUEST_EPIC_PLANNING_TIMEOUT");
+  throw new Error(formatPlanningTimeoutDiagnostic(planningTimeoutSnapshot(database, requestId)));
 }
 
 async function gitSucceeded(repository: string, args: string[]): Promise<string> {
@@ -385,6 +507,36 @@ function assertPreApprovalIsolation(database: Database, projectId: string, basel
 }
 
 describe("Plan19 Task5 acceptance safeguards (provider-free)", () => {
+  it("formats timeout evidence as stable statuses and proof counts without exposing arbitrary data", () => {
+    const diagnostic = formatPlanningTimeoutDiagnostic({
+      requestStatus: "PLANNING", requestFailureCode: "PLANNING_INTERRUPTED",
+      roles: { coordinator: "IN_PROGRESS", product_manager: "FAILED", architect: "COMPLETED" },
+      owners: [
+        { runStatus: "IN_PROGRESS", state: "LIVE", stopEvidence: "secret prompt / C:\\private\\path", containmentKind: "windows-job" },
+        { runStatus: "COMPLETED", state: "STOPPED", stopEvidence: "WINDOWS_JOB_EMPTY", containmentKind: "windows-job" },
+      ],
+    });
+    expect(diagnostic).toBe("REQUEST_EPIC_PLANNING_TIMEOUT:REQUEST_PLANNING:FAILURE_PLANNING_INTERRUPTED:COORDINATOR_IN_PROGRESS:PRODUCT_MANAGER_FAILED:ARCHITECT_COMPLETED:OWNERS_2:OWNERS_STOPPED_1:OWNERS_STOP_PROVEN_1:OWNER_STATES_LIVE,STOPPED");
+    expect(diagnostic).not.toMatch(/secret|private|WINDOWS_JOB_EMPTY/u);
+  });
+  it("replaces unknown persisted state and failure strings with a stable placeholder", () => {
+    const diagnostic = formatPlanningTimeoutDiagnostic({
+      requestStatus: "PLANNING", requestFailureCode: "raw path C:\\secret",
+      roles: { coordinator: "COMPLETED", product_manager: null, architect: null },
+      owners: [{ runStatus: "COMPLETED", state: "provider output", stopEvidence: "token", containmentKind: "unknown" }],
+    });
+    expect(diagnostic).toContain("FAILURE_UNKNOWN");
+    expect(diagnostic).toContain("OWNER_STATES_UNKNOWN");
+    expect(diagnostic).not.toMatch(/secret|provider|token/u);
+  });
+  it("allows only known planning failure codes even when unknown text looks like a stable code", () => {
+    const diagnostic = formatPlanningTimeoutDiagnostic({
+      requestStatus: "PLANNING", requestFailureCode: "API_TOKEN_SECRET_ABC123",
+      roles: { coordinator: "IN_PROGRESS", product_manager: null, architect: null }, owners: [],
+    });
+    expect(diagnostic).toContain("FAILURE_UNKNOWN");
+    expect(diagnostic).not.toContain("API_TOKEN_SECRET_ABC123");
+  });
   it("extracts only explicitly allowlisted stable diagnostics from arbitrary child output", () => {
     expect(safeCodesInText("Error: EPIC_INTEGRATION_SERVICE_UNAVAILABLE token=secret\ncustom secret text"))
       .toEqual(["EPIC_INTEGRATION_SERVICE_UNAVAILABLE"]);
@@ -615,15 +767,6 @@ describe.skipIf(!enabled || !["win32", "linux"].includes(process.platform))("Pla
     expect(approvalResponseStatus).toBeNull();
     const third = launchChild(home, port);
     children.push(third);
-    await waitForReady(third, origin, 25 * 60_000, database, epicId);
-    const orchestration = database.get<{ stage: string; final_approval_id: string | null; recovery_failure_code: string | null }>("SELECT stage,final_approval_id,recovery_failure_code FROM epic_orchestrations WHERE epic_id=$id", { id: epicId });
-    expect(orchestration).toMatchObject({ stage: "FINAL_APPROVAL", recovery_failure_code: null });
-    if (!orchestration?.final_approval_id) throw new Error("REQUEST_EPIC_FINAL_APPROVAL_MISSING");
-    const finalApproval = database.get<{ id: string; status: string; subject_id: string; type: string }>("SELECT id,status,subject_id,type FROM approvals WHERE id=$id", { id: orchestration.final_approval_id });
-    expect(finalApproval).toEqual({ id: orchestration.final_approval_id, status: "PENDING", subject_id: epicId, type: "FINAL_MERGE" });
-    const finalRuns = runs(database);
-    finalRuns.forEach(assertLiveRun);
-    expect(finalRuns).toHaveLength(15);
     const activeProjectConfig = database.get<ActiveProjectConfigRevision>(`SELECT revision.revision_id,revision.revision_hash
       FROM project_config_state state
       JOIN project_config_revisions revision ON revision.revision_id=state.active_revision_id AND revision.project_id=state.project_id
@@ -633,11 +776,23 @@ describe.skipIf(!enabled || !["win32", "linux"].includes(process.platform))("Pla
     if (!activeProjectConfig || !/^[0-9a-f]{64}$/u.test(activeProjectConfig.revision_hash)) {
       throw new Error("REQUEST_EPIC_ACTIVE_PROJECT_CONFIG_REVISION_UNAVAILABLE");
     }
+    const observedQaRunIds = new Set<string>();
+    await waitForReady(third, origin, 25 * 60_000, database, epicId, () => {
+      const activeQaRuns = database!.all<RunEvidence>(`SELECT r.id,r.role,r.status,r.capability_json
+        FROM agent_runs r WHERE r.epic_id=$epicId AND lower(r.role)='qa' AND r.status IN ('STARTED','IN_PROGRESS','COMPLETING')`, { epicId });
+      observeActiveQaProjectConfig(activeQaRuns, activeProjectConfig, observedQaRunIds);
+    });
+    const orchestration = database.get<{ stage: string; final_approval_id: string | null; recovery_failure_code: string | null }>("SELECT stage,final_approval_id,recovery_failure_code FROM epic_orchestrations WHERE epic_id=$id", { id: epicId });
+    expect(orchestration).toMatchObject({ stage: "FINAL_APPROVAL", recovery_failure_code: null });
+    if (!orchestration?.final_approval_id) throw new Error("REQUEST_EPIC_FINAL_APPROVAL_MISSING");
+    const finalApproval = database.get<{ id: string; status: string; subject_id: string; type: string }>("SELECT id,status,subject_id,type FROM approvals WHERE id=$id", { id: orchestration.final_approval_id });
+    expect(finalApproval).toEqual({ id: orchestration.final_approval_id, status: "PENDING", subject_id: epicId, type: "FINAL_MERGE" });
+    const finalRuns = runs(database);
+    finalRuns.forEach(assertLiveRun);
+    expect(finalRuns).toHaveLength(15);
     const qaRuns = finalRuns.filter((candidate) => candidate.role.toLowerCase() === "qa");
     expect(qaRuns.length).toBeGreaterThan(0);
-    for (const run of qaRuns) {
-      assertRunUsesActiveProjectConfig(run, activeProjectConfig);
-    }
+    assertAllQaRunsWereObserved(qaRuns, observedQaRunIds);
     const phases = database.all<{ id: string; agent_run_id: string; status: string; validated: number }>("SELECT id,agent_run_id,status,validated FROM orchestration_phase_runs WHERE epic_id=$id ORDER BY id", { id: epicId });
     expect(phases).toHaveLength(12);
     expect(new Set(phases.map((phase) => phase.agent_run_id)).size).toBe(phases.length);
