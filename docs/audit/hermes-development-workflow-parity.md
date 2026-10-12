@@ -104,6 +104,62 @@ evidence отсутствуют. Общие lint/typecheck/test PASS не зак
 
 **Итоговый verdict остаётся FAIL / NOT VERIFIED.** Этот повтор не закрыл Task7 и не даёт основания повторять запуск без изменения причины timeout/termination и безопасного подтверждения полного process teardown.
 
+## Повторная попытка по fixture после восстановления сессии — 2026-10-13
+
+### Снимок и границы
+
+- Дата завершения проверки: 2026-10-13, Europe/Moscow (RTZ, UTC+03:00); final snapshot получен в 02:42:40.
+- Ветка: `develop`. Начальный HEAD этой попытки: `cd7d525ffc53ec277502644f927ef0527f037ff4`. Финальный HEAD: `c0695a6c7e69b9b8221393c9e48cfcfad72d8fd8`.
+- Между начальным и финальным HEAD появились только изменения в `docs/architecture/plans/19-unfinished-plan-closure.md` и этом audit-файле; `git diff --name-only cd7d525..c0695a6` подтвердил doc-only изменения. Поэтому успешные `pnpm lint` и `pnpm typecheck`, выполненные на начальном code tree, применимы к неизменившемуся коду текущего HEAD.
+- Начальный `git status --short`: только `?? "Сравнение Ebb Orchestrator и OpenAI Symphony.md"`; этот посторонний untracked-файл не менялся. Fixture frontmatter остаётся `status: proposed`; прямое указание пользователя исполнять именно этот ограниченный audit трактовано как разрешение на запуск, не как разрешение менять статус или расширять scope.
+- В рабочем дереве разрешено менять только `docs/audit/hermes-development-workflow-parity.md`. Не изменялись product code, tests, scripts, config или skills; commit/merge/push/tag/release не выполнялись.
+
+### Task 1 — два параллельных read-only context checks
+
+Вызов `delegate_19742488` вернул ровно два задания: `deleg_19742488/task-0` (A) и `deleg_19742488/task-1` (B), оба `completed`, model metadata `gpt-6-luna`. Это безопасное provider-backed evidence из Hermes delegation result/tool traces; credentials не читались и в отчёт не включались.
+
+| Child | Наблюдаемые времена (+03:00) | Проверенный результат |
+|---|---|---|
+| `deleg_19742488/task-0` — A, repo rules | старт 02:00:37; final 02:01:17; 39.72 s | Прочитал `AGENTS.md`, Plan19 и `ebb-orchestrate-work`. Подтвердил primary branch `master` (`AGENTS.md:71-75`), required gates (`AGENTS.md:91-108`) и Task7 evidence/ограничения (`docs/architecture/plans/19-unfinished-plan-closure.md:319-337`). |
+| `deleg_19742488/task-1` — B, skill rules | старт 02:00:37; результат 02:01:04; 27.44 s; transcript закрыт dispatcher в 02:01:17 | Trace подтверждает чтение всех четырёх назначенных skill-файлов. Финальная сводка агента вернула требования fixture, а не запрошенные выдержки skills; поэтому точные skill claims ниже независимо проверены контроллером по файлам на диске. |
+
+Оба child стартовали одновременно. Суммарная длительность child runs — 67.16 s, aggregate dispatch duration — 39.97 s; наблюдаемое перекрытие составляет не менее 27.19 s. У A в trace только `read_file`/`search_files`, у B — только `read_file`; ни один trace не содержит вызова delegation или записи файлов. Dispatcher вернул ровно два task records, дополнительных child в этом вызове нет.
+
+Фактически проверенные canonical `.agents/skills/` evidence:
+
+- `.agents/skills/ebb-orchestrate-work/SKILL.md:11-20` — canonical workflow внутри `ebb-*` skills, независимые исследования идут через `ebb-dispatch-agents`.
+- `.agents/skills/ebb-dispatch-agents/SKILL.md:15-20` — self-contained brief, отсутствие конфликта mutable scope, leaf-agent не создаёт каскад delegation; controller сверяет trace/results.
+- `.agents/skills/ebb-review-task/SKILL.md:11,19` — свежий независимый контекст и read-only review.
+- `.agents/skills/ebb-final-review/SKILL.md:11-18` — независимая whole-change проверка без истории implementer и evidence-backed verdict.
+- `.agents/skills/ebb-quality-gates/SKILL.md:15-29` — свежий run/read/verify, gates по scope, diff/status перед завершением.
+- Fixture `scripts/fixtures/hermes-development-workflow-parity-plan.md:34-58,95-99` задаёт ровно двух параллельных read-only агентов и запрещает считать полный process tree проверенным без наблюдаемого evidence.
+
+Ограничение: tool traces подтверждают отсутствие nested delegation calls и отсутствие третьей задачи в Hermes dispatcher result, но доступные инструменты не показывают полный OS-level process tree дочерних агентов. Требование полного дерева процессов не считаю подтверждённым.
+
+### Task 2 — repository gates
+
+| Команда | Результат | Evidence |
+|---|---|---|
+| `pnpm lint` | PASS, exit 0 | Вывод `$ eslint .`; запуск на `cd7d525`, код затем не менялся. |
+| `pnpm typecheck` | PASS, exit 0 | `packages/testing`, `packages/contracts`, `apps/server` завершили `tsc -p tsconfig.json --noEmit`; запуск на `cd7d525`, код затем не менялся. |
+| `pnpm test` — первый foreground run | TIMEOUT | Terminal достиг лимита 420 s без финального exit code. Промежуточный web результат не использовался как полный PASS. Старая session `proc_bacc2fda5455` стала недоступна (`not_found`), поэтому её результат не приписывается gate. |
+| `pnpm test` — свежий background run | PASS, exit 0 | Точная session `proc_d020b0142daf`, PID 30692, `process_manage wait` вернул `exited`, exit code 0. Contracts: 4 files/7 tests passed; web: 22 files/219 passed; server: 151 files passed, 3 skipped, 1,842 tests passed, 29 skipped; root Node suites: 64/64 passed; `packages/testing` сообщил, что test files отсутствуют. Полный output сохранён process manager session. |
+| `git diff --check` | PASS, final exit 0 | После промежуточного exit 2 (`new blank line at EOF`, строка 180) удалена только лишняя пустая строка; повторная проверка после финального текста завершилась exit 0. |
+
+### Provider и cleanup evidence
+
+- Provider-backed evidence доступно: delegation result содержит provider model metadata `gpt-6-luna`, статусы обоих child и реальные read/search traces. Это не вывод wrapper-маркера `COMPLETED`.
+- После test run `process_manage list` показывает завершённую session `proc_d020b0142daf` с exit code 0; `tasklist /FI "PID eq 30692"` не находит wrapper PID. Это подтверждает завершение известного root process/session, но не отсутствие всех detached descendants.
+- PowerShell `Get-CimInstance` query был заблокирован terminal safety policy; обход блокировки не предпринимался. Полный OS child tree и исчерпывающая проверка временных артефактов поэтому **NOT VERIFIED**. Логи теста подтверждают создание native build outputs в ignored `apps/server/dist/native/`; ничего не удалялось, поскольку fixture запрещает cleanup/deletion.
+- Отдельный read-only inventory `%TEMP%` по известным префиксам и временному окну именно этого `pnpm test` запуска обнаружил 203 оставшихся каталога: `git-integration-*` — 100, `git-merge-*` — 27, `git-wt-*` — 9, `repo-discovery-test-*` — 17, `hermes-prompt-*` — 50. Имена, типы и времена создания согласуются с тестовыми fixture; содержимое и reparse points этих каталогов в этой проверке не инспектировались. Каталоги не удалялись: fixture запрещает cleanup/deletion. Для `hermes-prompt-*` требуется отдельное расследование владельца создания/очистки до объявления артефактов устранёнными.
+- Не заявляю, что временные артефакты удалены или что полное process-tree teardown доказано. Подтверждено только завершение известной root process session; проверенные процессы Hermes предыдущей попытки не обнаружены, а оставшиеся процессы Node/Python не приписываются этому запуску без доказанного parent/command-line evidence.
+
+### Финальный статус и verdict
+
+Финальный snapshot до обновления этого отчёта: branch `develop`, HEAD `c0695a6c7e69b9b8221393c9e48cfcfad72d8fd8`; `git status --short` содержал только исходный untracked-файл сравнения. Во время fixture session изменялся только audit-файл; после её завершения краткая запись результатов синхронизирована в Plan19. Текущее состояние подтверждается `git diff --check` и `git status --short`.
+
+**Итоговый verdict: FAIL / NOT VERIFIED.** `lint`, `typecheck`, свежий background `test` и provider-backed параллельное выполнение подтверждены. PASS запрещён, поскольку полный child process tree не подтверждён, а read-only inventory нашёл 203 оставшихся тестовых каталога, включая 50 `hermes-prompt-*`; их содержимое и безопасная очистка не проверены. Кроме того, финальная сводка child B не включила запрошенные skill excerpts, хотя чтение файлов видно в trace и их содержание проверено контроллером. Во время fixture session изменялся только audit report; после её завершения изменена соответствующая запись Plan19. Commit не выполнялся.
+
 ## Повторная попытка после lifecycle fix `cd7d525` — 2026-10-13
 
 - Перед запуском checkpoint `cd7d525` содержал lifecycle fix Hermes runner; полный `pnpm test` завершился успешно (server 1842 passed / 29 skipped, web 219/219, contracts 7/7, root Node 64/64), а независимый review последней правки завершился `APPROVED`.
@@ -112,4 +168,13 @@ evidence отсутствуют. Общие lint/typecheck/test PASS не зак
 - После прерывания wrapper prompt `hermes-prompt-1791845875037.txt` оставался в `%TEMP%`. Его содержимое проверено: оно включало только общую инструкцию и путь fixture, без credentials или provider output. После проверки, что указанные процессы остановлены, удалён только этот точный prompt-файл; последующий inventory этого имени его не находит. Широкую уборку `%TEMP%` и удаление иных fixture-каталогов не выполняли.
 - В durable execution ledger обнаружен результат Task 1: один parallel dispatch `deleg_19742488`, ровно два завершённых provider-backed read-only child task (`task-0`, `task-1`, оба `gpt-6-luna`); длительности 39.72 s и 27.44 s внутри 39.97 s aggregate подтверждают перекрытие. Traces показывают только read/search для A, read-only для B и отсутствие nested delegation calls. B summary не перечислил требуемые skill evidence, хотя trace подтверждает чтение всех четырёх skills. Доступ к OS-level child process tree отсутствовал. Эти данные подтверждают delegation slice, но не общий PASS.
 - Hermes error log для session `20261013_015806_862947` дал причину части задержки и неполного завершения: `terminal` timed out after 420.0 s; отдельные tool failures включают отказ перезаписать уже существующий plan-owned ledger, `process_manage` `not_found`, schema error `todo_list` (нет обязательного `content`), блокировку shell-команды с `-e/-c` в single-query режиме и несовместимую на Windows команду `ps -o`. Свежий локальный root `pnpm test` длился 431.12 s, что согласуется с terminal limit, но не доказывает, что именно эта команда была тем timed-out вызовом. Existing ledger прочитан, сохранён без перезаписи.
-- Task 2 не завершён, Task 3 отчёта и финальной сверки не достигнуты; поэтому Task7 остаётся **FAIL / NOT VERIFIED**. Итак, это не проблема Hermes provider/auth и не отсутствие запуска Hermes: доказаны Hermes session и две parallel read-only subagents. Главный установленный execution blocker — несовместимость workflow/tool calls с Windows и 420-секундным terminal limit; полного Task7 report и завершённых gate evidence всё ещё нет.
+- На момент этого checkpoint Task 2 был незавершён и Task 3 не достигнуты. Этот промежуточный статус закрыт в разделе «Завершение после восстановления сессии» ниже; не использовать его как итоговый результат.
+
+## Завершение после восстановления сессии — 2026-10-13
+
+- Работа продолжена по существующему execution ledger; после прямого указания пользователя новые subagents не запускались и Task 1 повторно не выполнялся.
+- Task 2 завершён: `pnpm test` запущен в background, session `proc_d020b0142daf` завершилась с exit 0; подробные counts и подтверждение session приведены в разделе «Повторная попытка по fixture после восстановления сессии». `pnpm lint` и `pnpm typecheck` остаются применимыми: между их code checkpoint `cd7d525` и текущим `c0695a6` изменились только документы.
+- Task 3 выполнен: добавлена только текущая запись в `docs/audit/hermes-development-workflow-parity.md`; исходный untracked-файл сравнения сохранён. Финальная проверка в 02:44:14: `git diff --check` exit 0; `git status --short` показал ` M docs/audit/hermes-development-workflow-parity.md` и `?? "Сравнение Ebb Orchestrator и OpenAI Symphony.md"`.
+
+- Итоговый verdict остаётся **FAIL / NOT VERIFIED**: подтверждены gates и provider-backed параллельный dispatch, но полный child process tree и отсутствие остаточных temporary artifacts не подтверждены. Commit/merge/push/tag/release не выполнялись.
+- Независимый final-review не выполнялся: прямое указание пользователя запрещало запускать новые subagents. Контроллер проверил финальный diff; отдельная независимая проверка отчёта остаётся внешним следующим шагом.
