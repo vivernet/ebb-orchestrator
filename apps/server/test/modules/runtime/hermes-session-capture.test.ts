@@ -1,8 +1,8 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { afterEach, describe, expect, it } from "vitest";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { createSqliteDatabase } from "../../../src/platform/database/sqlite-database.js";
 import { runMigrations } from "../../../src/platform/database/migrator.js";
 import type { Database } from "../../../src/platform/database/database.js";
@@ -13,11 +13,10 @@ import type { PreparedRunContext } from "../../../src/modules/context/context-ty
 import { digestRunPromptBytesV1 } from "../../../src/modules/context/context-provenance.js";
 import type { HermesSessionCapture, HermesSessionCapturePort } from "../../../src/modules/runtime/hermes-session-capture-port.js";
 import type { ProcessScopeIdentity } from "../../../src/platform/process/process-inspector.js";
-import { transitionRunProcessOwnerTx } from "../../../src/modules/runtime/run-process-owner.js";
+import { syncCurrentRunProcessGenerationTx, transitionRunProcessOwnerTx } from "../../../src/modules/runtime/run-process-owner.js";
 import { HermesRuntimeAdapter } from "../../../src/modules/runtime/hermes/hermes-runtime-adapter.js";
-import { HERMES_PROVIDER_SELECTION_SOURCE } from "../../../src/modules/runtime/hermes/hermes-provider-selection.js";
-import { createHermesAuthRouteFixture } from "../../helpers/hermes-auth-route-fixture.js";
 import { createHermesLaunchTicket } from "../../../src/modules/runtime/hermes/hermes-launch-ticket.js";
+import { HERMES_PROVIDER_SELECTION_SOURCE } from "../../../src/modules/runtime/hermes/hermes-source-identity.js";
 import { ProcessExecutor } from "../../../src/platform/process/process-executor.js";
 import type { ProcessScopeLaunchRequest, ProcessScopeSupervisor } from "../../../src/platform/process/run-scope-supervisor.js";
 import type { ProcessScopeObservation } from "../../../src/platform/process/process-inspector.js";
@@ -244,8 +243,9 @@ describe("Hermes live session capture bridge", () => {
          systemd_invocation_id=NULL,systemd_control_group=NULL,supervisor_pid=NULL,supervisor_start_identity=NULL,
          pid=NULL,platform=NULL,process_start_identity=NULL,executable_identity=NULL,capture_state='UNBOUND'
         WHERE run_id=$runId`,
-      { runId: fixture.run.id, home: join(resultDirectory, "profiles", `ebb-orchestrator-run-${fixture.run.id}`) },
+      { runId: fixture.run.id, home: resultDirectory },
     );
+    database!.transaction((tx) => syncCurrentRunProcessGenerationTx(tx, fixture.run.id));
     const supervisor = new CompletionFailureSupervisor();
     const platform = process.platform === "win32" ? "win32" as const : "linux" as const;
     const objectIdentity = platform === "win32"
@@ -255,22 +255,7 @@ describe("Hermes live session capture bridge", () => {
       databasePath: join(tempDirectory, "capture.db"), resultDirectory,
       checkpointDirectory: join(tempDirectory, "checkpoints"),
       hermesLaunchTicketFactory: async (input) => {
-        const sourceSnapshotKey = JSON.stringify({
-          formatVersion: 1,
-          hermesVersion: HERMES_PROVIDER_SELECTION_SOURCE.version,
-          manifestDigest: "c".repeat(64),
-          ...(platform === "win32" ? { materializationPolicyVersion: 2 } : {}),
-          sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit,
-          sourceTree: "d".repeat(40),
-        });
-        const snapshotId = createHash("sha256").update(sourceSnapshotKey).digest("hex");
-        const sourceSnapshotRoot = join(tempDirectory, "source-snapshots", snapshotId);
-        const sourceProjectionPath = join(tempDirectory, "source-snapshots", `${snapshotId}.native-v1.bin`);
         const argsPrefix = ["-I", "-B", "-S", "-c", "test bootstrap"];
-        const profileHomeTargetIdentities = platform === "win32" ? {
-          home: { ...objectIdentity, fileId: "7".repeat(32) },
-          config: { ...objectIdentity, fileId: "8".repeat(32) },
-        } : undefined;
         return {
           executablePath: join(tmpdir(), platform === "win32" ? "python.exe" : "python3"),
           argsPrefix,
@@ -280,58 +265,31 @@ describe("Hermes live session capture bridge", () => {
             platform,
             hermesExecutablePath: join(tmpdir(), platform === "win32" ? "hermes.exe" : "hermes"),
             hermesExecutableIdentity: objectIdentity,
+            sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit,
             executablePath: join(tmpdir(), platform === "win32" ? "python.exe" : "python3"),
             executableIdentity: objectIdentity,
             executableArgsPrefix: argsPrefix,
-            profileHome: input.profileHome,
-            profileHomeIdentity: objectIdentity,
-            ...(profileHomeTargetIdentities ? { profileHomeTargetIdentities } : {}),
-            ...(input.profileHomePathChain ? { profileHomePathChain: input.profileHomePathChain } : {}),
-            hermesSourceSnapshotKey: sourceSnapshotKey,
-            hermesSourceSnapshotRoot: sourceSnapshotRoot,
-            hermesSourceSnapshotRootIdentity: objectIdentity,
-            hermesSourceManifestDigest: "c".repeat(64),
-            hermesSourceProjectionPath: sourceProjectionPath,
-            hermesSourceProjectionSha256: "f".repeat(64),
-            hermesSourceProjectionSize: 128,
+            hermesHome: input.hermesHome,
             environment: input.environment,
           }),
         };
       },
-      hermesRunProfileConfigWriter: async ({ profileHome, configYaml }) => {
-        await mkdir(join(profileHome, "home"), { recursive: true });
-        await writeFile(join(profileHome, "config.yaml"), configYaml);
-      },
     }, supervisor);
-    vi.spyOn(adapter as unknown as { assertNativeHermesAuthReady(): void }, "assertNativeHermesAuthReady")
-      .mockImplementation(() => undefined);
     new RunService(database!, adapter);
 
-    const sourceSnapshotKey = JSON.stringify({
-      formatVersion: 1,
-      hermesVersion: HERMES_PROVIDER_SELECTION_SOURCE.version,
-      manifestDigest: "c".repeat(64),
-      ...(platform === "win32" ? { materializationPolicyVersion: 2 } : {}),
-      sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit,
-      sourceTree: "d".repeat(40),
+    // Controlled protocol fixture: selection issuance is synthetic, not source/provider acceptance.
+    const selection = Object.freeze({
+      mode: "HERMES_MANAGED" as const,
+      hermesHome: resultDirectory,
+      runId: fixture.run.id,
+      runtimeIdentity: "fixture-runtime",
     });
-    const authFixture = await createHermesAuthRouteFixture(fixture.run.id, "openai-codex", fixture.run.model, resultDirectory);
-    const { profileHome } = authFixture;
+    const fixtureBoundary = adapter as unknown as { verifiedManagedSelections: WeakSet<object> };
+    fixtureBoundary.verifiedManagedSelections.add(selection);
     await expect(adapter.startRun({
       ...fixture.run,
-      hermesSelection: {
-        runId: fixture.run.id,
-        providerId: "openai-codex",
-        modelId: fixture.run.model,
-        endpointIdentity: "hermes-provider:openai-codex",
-        endpointRevision: HERMES_PROVIDER_SELECTION_SOURCE.commit,
-        sourceVersion: HERMES_PROVIDER_SELECTION_SOURCE.version,
-        sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit,
-        sourceSnapshotKey,
-        profileHome,
-        ...(authFixture.profileHomePathChain ? { profileHomePathChain: authFixture.profileHomePathChain } : {}),
-        authRouteEvidence: authFixture.authRouteEvidence,
-      },
+      model: "default",
+      hermesSelection: selection,
     })).rejects.toThrow("SIMULATED_STDOUT_TRANSPORT_FAILURE");
 
     expect(database!.get<{ session_id: string | null; capture_state: string; owner_state: string }>(
@@ -386,6 +344,7 @@ describe("Hermes live session capture bridge", () => {
     database!.run("UPDATE run_process_owners SET state='STOPPED',stop_evidence=$stopEvidence WHERE run_id=$runId", {
       runId: fixture.run.id, stopEvidence,
     });
+    database!.transaction((tx) => syncCurrentRunProcessGenerationTx(tx, fixture.run.id));
     await expect(fixture.runtime.handler!({
       runId: fixture.run.id, attempt: null, sourceTag: fixture.owner.source_tag, hermesHome: fixture.owner.hermes_home,
       owner: fixture.liveIdentity, status: "captured", sessionId: "late-session",
@@ -409,6 +368,7 @@ describe("Hermes live session capture bridge", () => {
       database!.run("UPDATE run_process_owners SET systemd_invocation_id='87654321-4321-4321-4321-cba987654321',capture_state='BOUND' WHERE run_id=$runId", { runId: fixture.run.id });
     }
     database!.run("UPDATE agent_runs SET session_id='replacement-session' WHERE id=$runId", { runId: fixture.run.id });
+    database!.transaction((tx) => syncCurrentRunProcessGenerationTx(tx, fixture.run.id));
 
     await expect(fixture.runtime.handler!({
       runId: fixture.run.id, attempt: null, sourceTag: fixture.owner.source_tag, hermesHome: fixture.owner.hermes_home,

@@ -9,7 +9,8 @@ import { getLinuxHermesLauncherIntegrityDigest } from "./native-helper-integrity
 
 const HERMES_CHILD_ENV_KEYS = new Set([
   "HOMEDRIVE", "HOMEPATH", "SYSTEMROOT", "TEMP", "TMP", "PATH", "NODE_PATH", "NODE_ENV",
-  "HOME", "HERMES_HOME", "HERMES_CONFIG", "HERMES_MODEL",
+  "HOME", "HERMES_HOME", "HERMES_PROFILE", "HERMES_CONFIG", "HERMES_MODEL",
+  "HERMES_DATA_DIR_SUFFIX", "HERMES_RUNTIME_DIR",
 ]);
 const STOP_TIMEOUT_MS = 30_000;
 const POLL_INTERVAL_MS = 500;
@@ -66,7 +67,8 @@ const { constants, fstatSync, openSync, closeSync, readFileSync } = require("nod
 const { createHash } = require("node:crypto");
 const safeEnvironmentKeys = [
   "HOMEDRIVE", "HOMEPATH", "SYSTEMROOT", "TEMP", "TMP", "PATH", "NODE_PATH", "NODE_ENV",
-  "HOME", "HERMES_HOME", "HERMES_CONFIG", "HERMES_MODEL",
+  "HOME", "HERMES_HOME", "HERMES_PROFILE", "HERMES_CONFIG", "HERMES_MODEL",
+  "HERMES_DATA_DIR_SUFFIX", "HERMES_RUNTIME_DIR",
 ];
 let pending = Buffer.alloc(0);
 let waiter;
@@ -169,7 +171,7 @@ export class SystemdRunSupervisor implements ProcessScopeSupervisor {
     if (request.signal?.aborted) throw new ProcessScopeLaunchNotDispatchedError();
     const baseEnvironment = this.managerEnvironment();
     for (const [key, value] of Object.entries(request.environment)) {
-      if (!HERMES_CHILD_ENV_KEYS.has(key) || isCredentialEnvironmentKey(key) || !/^[A-Z_][A-Z0-9_]*$/.test(key) || /[\0\r\n]/.test(value)) {
+      if (!HERMES_CHILD_ENV_KEYS.has(key) || isCredentialEnvironmentKey(key) || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || /[\0\r\n]/.test(value)) {
         throw new Error("PROCESS_SCOPE_ENVIRONMENT_REJECTED");
       }
     }
@@ -214,6 +216,7 @@ export class SystemdRunSupervisor implements ProcessScopeSupervisor {
     });
     let verifiedIdentity: ProcessScopeIdentity | undefined;
     let stoppedBySignal = false;
+    let payloadAuthorized = false;
     let stdoutFailure: unknown;
     let stdoutCallbacks = Promise.resolve();
     if (request.onStdoutChunk) {
@@ -243,6 +246,11 @@ export class SystemdRunSupervisor implements ProcessScopeSupervisor {
         });
       });
     }
+    if (request.onStderrChunk) {
+      session.stderr.on("data", (chunk: Buffer | string) => {
+        if (payloadAuthorized) request.onStderrChunk?.(Buffer.from(chunk));
+      });
+    }
     const onAbort = () => {
       stoppedBySignal = true;
       // Closing the wrapper transport prevents its launch-authorization read from
@@ -266,6 +274,7 @@ export class SystemdRunSupervisor implements ProcessScopeSupervisor {
       // Payload authorization is a separate protocol byte. Cancellation after durable
       // owner persistence but before this byte must never dispatch the payload.
       if (request.signal?.aborted) throw new Error("PROCESS_SCOPE_LAUNCH_CANCELLED");
+      payloadAuthorized = true;
       session.stdin.write(Buffer.from([1]));
       session.stdin.end();
     } catch (error) {
@@ -561,34 +570,20 @@ function buildLinuxHermesLauncherArgs(
   identity: HermesLaunchTicketInput,
 ): string[] {
   if (identity.platform !== "linux" || identity.hermesExecutableIdentity.platform !== "linux" ||
-    identity.executableIdentity.platform !== "linux" || identity.profileHomeIdentity.platform !== "linux") {
+    identity.executableIdentity.platform !== "linux") {
     throw new Error("SYSTEMD_HERMES_LAUNCH_PLATFORM_MISMATCH");
   }
-  if (identity.hermesSourceSnapshotRootIdentity.platform !== "linux" ||
-      identity.hermesSourceProjectionSize > 64 * 1024 * 1024 || identity.hermesSourceSnapshotKey.length > 4096) {
-    throw new Error("SYSTEMD_HERMES_SOURCE_SNAPSHOT_INVALID");
-  }
   return [
-    "--run-hermes",
+    "--run-hermes-v3",
     identity.runId,
     owner.launchNonce,
-    identity.profileHome,
-    identity.profileHomeIdentity.device,
-    identity.profileHomeIdentity.inode,
+    identity.hermesHome,
     identity.hermesExecutablePath,
     identity.hermesExecutableIdentity.device,
     identity.hermesExecutableIdentity.inode,
     identity.executablePath,
     identity.executableIdentity.device,
     identity.executableIdentity.inode,
-    identity.hermesSourceSnapshotRoot,
-    identity.hermesSourceSnapshotRootIdentity.device,
-    identity.hermesSourceSnapshotRootIdentity.inode,
-    identity.hermesSourceProjectionPath,
-    identity.hermesSourceProjectionSha256,
-    String(identity.hermesSourceProjectionSize),
-    identity.hermesSourceManifestDigest,
-    identity.hermesSourceSnapshotKey,
     String(request.args.length),
     ...request.args,
   ];

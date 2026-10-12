@@ -141,7 +141,7 @@ Rules:
 ## 8. Security, path identity, packaging and source integrity
 
 - Preserve Proposal13: existing host ACL/mode, owner and foreign grants are not an admission predicate; no host permission inventory or mutation. Tests may create/change only disposable objects they own.
-- Every Ebb-private root, launch descriptor, helper, plist/VM bundle, configuration, socket and source snapshot is opened/checked nofollow and bounded. Tie pathname to immutable file/object identity, size/content digest and expected parent; retain file handles/leases across the launch/stop boundary where available. Revalidate immediately before dispatch and at cleanup; path replacement, symlink, hardlink policy violation, rename race, digest mismatch or inaccessible identity fails closed.
+- Exact paths for the selected Darwin containment mechanism (launch descriptor, helper, plist/VM bundle, configuration and socket) use bounded no-follow identity checks where required by that mechanism. Do not impose a Hermes source snapshot/cache/publication lease, per-Run profile, or Hermes configuration/auth copy: the approved Task5B contract launches the installed Hermes from its existing root/profile and leaves provider/model/auth resolution to Hermes. A VM image, if later selected, remains a separate containment artifact with its own reviewed identity and lifecycle requirements.
 - `launchctl`/ServiceManagement/Virtualization output is not itself authority. Parsers are bounded and versioned; unsupported OS build or unrecognized response is `UNKNOWN`, never “not found” by substring.
 - Package first-party Darwin native helper(s) per supported architecture. Build must fail closed without the expected Apple Clang/Xcode SDK and must record exact compiler, SDK, deployment target, OS build, architecture, helper digest, signing/entitlement identity and package manifest on every acceptance source SHA. Do not package a helper for the wrong host/guest architecture or use `macos-latest` as an unpinned compatibility identity.
 - If using Virtualization.framework, record and validate `com.apple.security.virtualization` entitlement in the delivered helper/app; no silent fallback to uncontained host execution if entitlement, host capability, guest image or shared-folder policy is unavailable.
@@ -194,9 +194,9 @@ Implementation plan must name concrete tests/scripts and exact commands, with no
 
 ## 11. Task5B-M and Task5C-M dependency boundaries
 
-### Task5B-M — Hermes profile/auth and live session capture
+### Task5B-M — installed Hermes and live session capture
 
-Begins only after Task5A-M provider-free native/package/CI gates and fresh process-scope/security review pass. It verifies the exact supported Hermes version/command/source and selected configured non-secret provider/model/endpoint identity; auth continues to be resolved by Hermes from the already configured Hermes-owned provider. It verifies isolated per-Run profile/source integrity and no Ebb credential reads/copies, then performs a real user-authorized provider request and proves one correlated allowlisted `system/init.session_id`, RunService CAS, durable SQLite readback while scope is live, and readback after Orchestrator restart. Missing/ambiguous source, plugin-backed unsupported auth path, provider failure or session mismatch is NOT VERIFIED; mocks/fixtures remain protocol tests only.
+Begins only after Task5A-M provider-free native/package/CI gates and fresh process-scope/security review pass. Launch the supported installed Hermes with the user's existing Hermes root/profile; Hermes alone selects the configured provider/model and resolves its existing auth. Do not inspect Hermes configuration or credential stores, classify auth sources, create/copy a per-Run profile or config, add an Ebb provider mapping, or require provider/endpoint identity for a new Run. Register existing Ebb MCP tools in memory through the supported pinned Hermes API. Then perform a real provider-backed request through that existing configuration and prove one correlated allowlisted `system/init.session_id`, RunService CAS, durable SQLite readback while scope is live, and readback after Orchestrator restart. Missing/unsupported CLI contract, provider failure or session mismatch is NOT VERIFIED; mocks/fixtures remain protocol tests only. Runtime/provider context is required only for same-session resume under Plan20; if Hermes does not expose sufficient stable non-secret context, new Runs remain allowed and resume fails closed.
 
 ### Task5C-M — same-Run/session recovery
 
@@ -208,7 +208,7 @@ Begins only after fresh Task5A-M and Task5B-M evidence. It requires durable orig
 
 - selected public/reviewed native design has no unresolved blocking architecture/security finding;
 - exact supported OS version and CPU architecture matrix is approved and has fresh passing native/package CI evidence on each required entry;
-- `main.ts`, platform-home resolution, production composition, RunService containment kind, helper launch/integrity, source snapshot/profile cleanup and package paths all have Darwin implementations and fail-closed unsupported behavior;
+- `main.ts`, platform-home resolution, production composition, RunService containment kind, helper launch/integrity and package paths all have Darwin implementations and fail-closed unsupported behavior; no Hermes source-snapshot or per-Run-profile subsystem is required;
 - PREPARED→LAUNCHING→BOUND→RELEASED→STOPPING→STOPPED and every interruption/restart path has independent native evidence; no scenario equates PID/PGID/job absence with full STOPPED;
 - startup recovery preflight precedes every reconciliation/worker callback;
 - schema changes pass populated/fresh migration checks and preserve `context_deltas` exactly;

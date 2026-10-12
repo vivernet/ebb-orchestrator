@@ -107,6 +107,9 @@ export class ProjectActions {
     if (!configured) {
       throw new Error(`project action is not configured: ${action}`);
     }
+    if (this.commandTools.isShellExecutable(configured.executable)) {
+      throw new Error(`project action known shell interpreters or launchers are not allowed: ${action}`);
+    }
     return configured;
   }
 }

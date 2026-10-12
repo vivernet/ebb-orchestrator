@@ -133,7 +133,7 @@ class Orchestrator {
    */
   handleRuntimeCompletion(taskId: string, outcome: RunOutcome): void {
     const now = new Date().toISOString();
-    const parsed = outcome.success ? { version: "1", outcome: "COMPLETED" } : { version: "1", outcome: "BLOCKED" };
+    const parsed = outcome.success ? { version: "1", outcome: "COMPLETED", commitSha: "test-commit-sha" } : { version: "1", outcome: "BLOCKED" };
     this.db.run(`INSERT INTO agent_runs (id, role, runtime, model, task_id, status, started_at, output)
       VALUES ($id, 'developer', 'fake', 'test', $task_id, 'COMPLETED', $now, $output)`, { id: taskId, task_id: taskId, now, output: JSON.stringify(parsed) });
     this.handlers.handleRuntimeCompletion(taskId, { ...outcome, output: JSON.stringify(parsed), validatedSubmission: true,
@@ -256,7 +256,7 @@ describe("Standalone task fake runtime scenario", () => {
         markFakeRunNeverLaunched(db!, run.id);
         runtimeCalls.push({ phase: "start", role: run.role, ...(run.taskId ? { taskId: run.taskId } : {}) });
         statusAtRuntimeStart = db!.get<{ status: string }>("SELECT status FROM tasks WHERE id=$id", { id: run.taskId })?.status ?? null;
-        if (!run.capabilityRef || !await completion.accept(run.capabilityRef, { runId: run.id, role: run.role, output: { version: "1", outcome: "COMPLETED" } })) {
+        if (!run.capabilityRef || !await completion.accept(run.capabilityRef, { runId: run.id, role: run.role, output: { version: "1", outcome: "COMPLETED", commitSha: "test-commit-sha" } })) {
           throw new Error("test runtime could not submit a prepared run result");
         }
       },
@@ -471,7 +471,7 @@ describe("Standalone task fake runtime scenario", () => {
         const accepted = run.capabilityRef ? await completion.accept(run.capabilityRef, {
           runId: run.id,
           role: run.role,
-          output: { version: "1.0.0", outcome: "COMPLETED" },
+          output: { version: "1.0.0", outcome: "COMPLETED", commitSha: "test-commit-sha" },
         }) : false;
         if (!accepted) throw new Error("test runtime could not submit the prepared run result");
       },

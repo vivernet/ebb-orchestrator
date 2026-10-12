@@ -4,8 +4,6 @@
 
 export interface LaunchArgs {
   queryFile: string;
-  provider: string;
-  model: string;
   toolsets: string[];
   worktree: string;
   ignoreRules: boolean;
@@ -15,6 +13,7 @@ export interface LaunchArgs {
 
 export interface ResumeArgs {
   sessionId: string;
+  queryFile: string;
   toolsets: string[];
   worktree: string;
   ignoreRules: boolean;
@@ -30,19 +29,10 @@ export class HermesCliBuilder {
    * Формирует аргументы запуска для Объект новый hermes run.
    */
   buildLaunchArgs(args: LaunchArgs): string[] {
-    if (args.provider.toLowerCase() === "moa" || args.model.toLowerCase().startsWith("moa:")) {
-      throw new Error("HERMES_RUN_SELECTION_INVALID");
-    }
     const result: string[] = ["chat"];
 
     // --query-file <prompt-file>
     result.push("--query-file", args.queryFile);
-
-    // Pin both route dimensions explicitly so Hermes config/env defaults cannot pick another provider.
-    result.push("--provider", args.provider);
-
-    // --model <resolved-model>
-    result.push("--model", args.model);
 
     // --toolsets mcp-orchestrator
     result.push("--toolsets", args.toolsets.join(","));
@@ -68,13 +58,17 @@ export class HermesCliBuilder {
   }
 
   /**
-   * Формирует аргументы возобновления для continuing Объект hermes сессия.
+   * Возобновляет сохранённую сессию с явным continuation turn в режиме stream-json.
+   * Запрещает Hermes восстанавливать прежний cwd поверх управляемого worktree.
    */
   buildResumeArgs(args: ResumeArgs): string[] {
     const result: string[] = ["chat"];
+    result.push("--format", "stream-json");
 
     // --resume <session-id>
     result.push("--resume", args.sessionId);
+    result.push("--query-file", args.queryFile);
+    result.push("--no-restore-cwd");
 
     // --toolsets mcp-orchestrator
     result.push("--toolsets", args.toolsets.join(","));

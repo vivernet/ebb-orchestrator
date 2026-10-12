@@ -1,5 +1,5 @@
 import { constants as fsConstants } from "node:fs";
-import { lstat, open } from "node:fs/promises";
+import { lstat, open, type FileHandle } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import path from "node:path";
@@ -60,27 +60,85 @@ async function runLinuxHelperFromDescriptor(
   args: string[],
   options: ProcessOptions,
 ): Promise<ProcessResult> {
-  const digest = await getNativeHelperIntegrityDigest(anchorName);
-  const pathStat = await lstat(helperPath).catch(() => { throw new Error("NATIVE_HELPER_UNAVAILABLE"); });
-  if (!pathStat.isFile() || pathStat.isSymbolicLink() || (pathStat.mode & 0o111) === 0) {
-    throw new Error("NATIVE_HELPER_PATH_UNSAFE");
-  }
-  let helper;
+  const helper = await pinVerifiedLinuxNativeHelper(helperPath, anchorName);
   try {
-    helper = await open(helperPath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
-  } catch {
-    throw new Error("NATIVE_HELPER_UNAVAILABLE");
-  }
-  try {
-    const details = await helper.stat();
-    if (!details.isFile() || (details.mode & 0o111) === 0) throw new Error("NATIVE_HELPER_PATH_UNSAFE");
-    const bytes = await helper.readFile();
-    if (createHash("sha256").update(bytes).digest("hex") !== digest) {
-      throw new Error("NATIVE_HELPER_INTEGRITY_MISMATCH");
-    }
     return await spawnPinnedDescriptor(helper.fd, args, options);
   } finally {
-    await helper.close().catch(() => undefined);
+    await helper.close();
+  }
+}
+
+/**
+ * Внутренний Linux seam: удерживает nofollow descriptors всех родителей и проверяет bounded
+ * bytes helper по first-party digest. Host owner/write bits не являются admission policy.
+ * Возвращённый fd передаётся через stdio для exec; pathname больше не выбирает executable.
+ * Caller обязан закрыть lease после spawn/завершения; close idempotent. Ошибки закрывают всю цепочку.
+ * @param helperPath Абсолютный canonical Linux path packaged helper, максимум 64 компонента.
+ * @param anchorName Trusted parent-code digest anchor.
+ * @param requireSingleLink Сохраняет дополнительный single-link invariant publication lock.
+ * @returns Held descriptor и освобождение цепочки без повторного native verification.
+ * @throws {Error} При symlink, substitution, изменении bytes или digest mismatch.
+ */
+export async function pinVerifiedLinuxNativeHelper(
+  helperPath: string,
+  anchorName: NativeHelperAnchorName,
+  requireSingleLink = false,
+): Promise<{ readonly fd: number; close(): Promise<void> }> {
+  const parts = helperPath.split("/").slice(1);
+  if (process.platform !== "linux" || !path.posix.isAbsolute(helperPath) ||
+      path.posix.normalize(helperPath) !== helperPath || [...helperPath].some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127) ||
+      parts.length === 0 || parts.length > 64 || parts.some((part) => !part) ||
+      !fsConstants.O_NOFOLLOW || !fsConstants.O_DIRECTORY) throw new Error("NATIVE_HELPER_PATH_UNSAFE");
+  const digest = await getNativeHelperIntegrityDigest(anchorName);
+  const held: FileHandle[] = [];
+  let closed = false;
+  const close = async () => {
+    if (closed) return;
+    closed = true;
+    for (const entry of [...held].reverse()) await entry.close().catch(() => undefined);
+  };
+  try {
+    held.push(await open("/", fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_DIRECTORY));
+    for (const [index, part] of parts.entries()) {
+      const parent = held[held.length - 1];
+      if (!parent) throw new Error("NATIVE_HELPER_PATH_UNSAFE");
+      held.push(await open(`/proc/self/fd/${parent.fd}/${part}`, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW |
+        (index === parts.length - 1 ? fsConstants.O_NONBLOCK : fsConstants.O_DIRECTORY)));
+    }
+    const helper = held[held.length - 1];
+    if (!helper) throw new Error("NATIVE_HELPER_PATH_UNSAFE");
+    const before = await helper.stat({ bigint: true });
+    const maxBytes = 16 * 1024 * 1024;
+    if (!before.isFile() || (before.mode & 0o111n) === 0n || before.size <= 0n || before.size > BigInt(maxBytes) ||
+        (requireSingleLink && before.nlink !== 1n)) throw new Error("NATIVE_HELPER_PATH_UNSAFE");
+    const buffer = Buffer.alloc(Number(before.size) + 1);
+    let length = 0;
+    while (length < buffer.length) {
+      const result = await helper.read(buffer, length, buffer.length - length, length);
+      if (result.bytesRead === 0) break;
+      length += result.bytesRead;
+    }
+    const after = await helper.stat({ bigint: true });
+    if (length !== Number(before.size) || !after.isFile() || after.dev !== before.dev || after.ino !== before.ino ||
+        after.size !== before.size || after.mtimeNs !== before.mtimeNs || after.ctimeNs !== before.ctimeNs ||
+        (requireSingleLink && after.nlink !== 1n)) throw new Error("NATIVE_HELPER_PATH_UNSAFE");
+    if (createHash("sha256").update(buffer.subarray(0, length)).digest("hex") !== digest) {
+      throw new Error("NATIVE_HELPER_INTEGRITY_MISMATCH");
+    }
+    for (const [index, part] of parts.entries()) {
+      const parent = held[index];
+      const child = held[index + 1];
+      if (!parent || !child) throw new Error("NATIVE_HELPER_PATH_UNSAFE");
+      const linked = await lstat(`/proc/self/fd/${parent.fd}/${part}`, { bigint: true });
+      const pinned = await child.stat({ bigint: true });
+      if (linked.isSymbolicLink() || linked.dev !== pinned.dev || linked.ino !== pinned.ino ||
+          (index === parts.length - 1 ? !linked.isFile() : !linked.isDirectory())) throw new Error("NATIVE_HELPER_PATH_UNSAFE");
+    }
+    return { fd: helper.fd, close };
+  } catch (error) {
+    await close();
+    if (error instanceof Error && error.message.startsWith("NATIVE_HELPER_")) throw error;
+    throw new Error("NATIVE_HELPER_PATH_UNSAFE", { cause: error });
   }
 }
 
@@ -101,7 +159,7 @@ function spawnPinnedDescriptor(
       cwd: options.cwd,
       env: options.env,
       windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe", fileDescriptor],
+      stdio: [options.input === undefined ? "ignore" : "pipe", "pipe", "pipe", fileDescriptor],
     });
     let inputError: Error | undefined;
     if (options.input !== undefined && child.stdin) {

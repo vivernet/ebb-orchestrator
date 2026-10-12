@@ -15,13 +15,43 @@ export interface RunOutcome {
     runId: string;
     sessionId: string | null;
     stderr: string;
+    stderrCategory?: "EMPTY" | "AUTH" | "RATE_LIMIT" | "NETWORK" | "TIMEOUT" | "MCP" | "PROCESS_ERROR" | "OTHER";
     exitCode: number;
     artifactReferences: string[];
+    submitResultToolUses?: number;
+    submitResultCalls?: number;
+    submitResultErrors?: number;
+    toolCounts?: RuntimeToolEventCounts;
   };
 }
 
+/** Короткий диагностический summary только для разрешённых agent-facing tools. */
+export const RUNTIME_TOOL_ERROR_CATEGORIES = [
+  "INVALID_ARGUMENTS",
+  "PERMISSION_DENIED",
+  "NOT_AVAILABLE",
+  "PROCESS_FAILURE",
+  "OTHER",
+] as const;
+export type RuntimeToolErrorCategory = typeof RUNTIME_TOOL_ERROR_CATEGORIES[number];
+export type RuntimeToolEventCounts = Readonly<Record<RuntimeDiagnosticToolId, Readonly<{
+  uses: number;
+  results: number;
+  successes: number;
+  errors: number;
+  errorCategories: Readonly<Record<RuntimeToolErrorCategory, number>>;
+}>>>;
+export type RuntimeDiagnosticToolId =
+  | "workspace.read"
+  | "workspace.patch"
+  | "workspace.search"
+  | "project.test"
+  | "git.add"
+  | "git.commit"
+  | "git.head"
+  | "submit_result";
+
 export interface ResumeRunOptions {
-  sessionId: string;
   attempt: number;
 }
 

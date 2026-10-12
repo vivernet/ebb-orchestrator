@@ -7,15 +7,14 @@ import { verifyNativeHelperIntegrity } from "../../../src/platform/process/nativ
 import { runVerifiedNativeHelper } from "../../../src/platform/process/native-helper-launcher.js";
 
 const serverRoot = path.resolve(import.meta.dirname, "../../..");
-const helperName = process.platform === "win32" ? "ebb-hermes-profile-path.exe" : "ebb-hermes-profile-path";
+const helperName = "ebb-hermes-profile-path.exe";
 const packagedHelper = path.join(serverRoot, "dist/native/hermes-profile-path", helperName);
 const packagedWindowsSupervisor = path.join(serverRoot, "dist/native/windows-run-supervisor/ebb-run-supervisor.exe");
 const packagedAnchor = path.join(serverRoot, "dist/platform/process/native-helper-integrity-anchor.js");
-const windowsSystemRoot = process.env.SystemRoot ?? process.env.SYSTEMROOT;
 
 describe("packaged native helper integrity", () => {
   it.skipIf(!existsSync(packagedHelper) || !existsSync(packagedAnchor))(
-    "rejects Hermes profile helper bytes changed after the parent-code digest was generated",
+    "rejects Hermes identity helper bytes changed after the parent-code digest was generated",
     async () => assertTamperRejected(packagedHelper, "hermesProfilePath", helperName),
   );
 
@@ -24,17 +23,15 @@ describe("packaged native helper integrity", () => {
     async () => assertTamperRejected(packagedWindowsSupervisor, "windowsRunSupervisor", "ebb-run-supervisor.exe"),
   );
 
-  it.skipIf(process.platform !== "win32" || !existsSync(packagedHelper) || !existsSync(packagedAnchor) ||
-    !windowsSystemRoot || !existsSync(windowsSystemRoot))(
-    "executes the profile helper through the parent-hash gate for a trusted Windows directory",
+  it.skipIf(process.platform !== "win32" || !existsSync(packagedHelper) || !existsSync(packagedAnchor))(
+    "executes the file identity helper through the parent-hash gate",
     async () => {
-      if (!windowsSystemRoot) throw new Error("WINDOWS_SYSTEM_ROOT_UNAVAILABLE");
       const result = await runVerifiedNativeHelper(packagedHelper, "hermesProfilePath", [
-        "verify-safe-path", "directory", windowsSystemRoot,
+        "verify-host-path", "file", packagedHelper,
       ], { timeout: 5_000, maxBuffer: 8_192 });
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('"status":"SAFE_PATH"');
-      expect(result.stdout).toContain('"kind":"directory"');
+      expect(result.stdout).toContain('"kind":"file"');
     },
   );
 

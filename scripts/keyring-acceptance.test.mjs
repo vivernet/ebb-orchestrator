@@ -27,5 +27,25 @@ test('production gates run a credential-free real keyring smoke on Windows and U
     job.steps?.some((step) => step.run === 'pnpm exec tsx apps/server/scripts/keyring-smoke.ts'),
     'matrix job must run the real KeyringSecretStore acceptance script',
   );
+  const projectConfigSteps = (job.steps ?? [])
+    .map((step, index) => ({ step, index }))
+    .filter(({ step }) => step.run === 'pnpm plan06:project-config:acceptance');
+  assert.equal(projectConfigSteps.length, 1, 'keyring matrix must define exactly one Project Config acceptance step');
+  const keyringStepIndex = job.steps?.findIndex(
+    (step) => step.run === 'pnpm exec tsx apps/server/scripts/keyring-smoke.ts',
+  ) ?? -1;
+  assert.ok(
+    projectConfigSteps[0].index > keyringStepIndex,
+    'Project Config acceptance must run after the real OS keyring acceptance',
+  );
+  assert.equal(
+    projectConfigSteps[0].step.if,
+    "${{ matrix.os == 'ubuntu-latest' }}",
+    'Project Config acceptance must run only on Ubuntu',
+  );
+  const allProjectConfigCommands = Object.values(workflow.jobs ?? {})
+    .flatMap((workflowJob) => workflowJob.steps ?? [])
+    .filter((step) => step.run === 'pnpm plan06:project-config:acceptance');
+  assert.equal(allProjectConfigCommands.length, 1, 'workflow must not launch Project Config acceptance elsewhere');
   assert.doesNotMatch(JSON.stringify(job), /\$\{\{\s*secrets\./i, 'keyring smoke must not receive provider secrets');
 });

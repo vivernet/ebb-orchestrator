@@ -52,7 +52,7 @@ type EpicFixtureRequest = {
   integration?: { id: string; target_branch: string; expected_target_sha: string; source_sha: string };
 };
 
-async function commitTaskFixtureChange(database: Database, runId: string, taskId: string): Promise<void> {
+async function commitTaskFixtureChange(database: Database, runId: string, taskId: string): Promise<string> {
   const row = database.get<{ capability_json: string | null }>("SELECT capability_json FROM agent_runs WHERE id=$runId", { runId });
   let workspace: string | undefined;
   try {
@@ -66,6 +66,7 @@ async function commitTaskFixtureChange(database: Database, runId: string, taskId
   await git.run(workspace, ["add", file]);
   const commit = await git.run(workspace, ["commit", "-m", `seed Task integration fixture ${taskId}`]);
   if (commit.exitCode !== 0) throw new Error(`Could not create Task fixture commit: ${commit.stderr}`);
+  return (await git.run(workspace, ["rev-parse", "HEAD"])).stdout.trim();
 }
 
 class FakeAgentRuntime implements AgentRuntime {
@@ -117,19 +118,19 @@ class FakeAgentRuntime implements AgentRuntime {
     const request = record.request;
     await Promise.resolve();
     this.active--;
-    if (request.role === "developer" && request.taskId) {
-      await commitTaskFixtureChange(this.db, runId, request.taskId);
-    }
+    const commitSha = request.role === "developer" && request.taskId
+      ? await commitTaskFixtureChange(this.db, runId, request.taskId)
+      : "test-commit-sha";
 
     const common = { version: "1.0", summary: request.phase };
     const output = request.role === "coordinator"
-      ? { ...common, operation: "PLAN", classification: "EPIC" }
+      ? approvedEpicCoordinatorOutput(this.db, record.run.epicId)
       : request.role === "product_manager"
         ? { ...common, outcome: "PRODUCT_DEFINITION", goal: "Deliver demo" }
         : request.role === "architect"
           ? { ...common, outcome: "DESIGN", architectureReviewRequired: true }
           : request.role === "developer"
-            ? { ...common, outcome: "COMPLETED" }
+            ? { ...common, outcome: "COMPLETED", commitSha }
             : request.role === "reviewer"
               ? { ...common, outcome: "PASS", independent: true }
               : request.role === "qa"
@@ -170,6 +171,18 @@ class FakeAgentRuntime implements AgentRuntime {
     return { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, cost: 0.25 };
   }
   async healthCheck(): Promise<boolean> { return true; }
+}
+
+function approvedEpicCoordinatorOutput(database: Database, epicId: string | null | undefined): unknown {
+  if (!epicId) throw new Error("Fake Epic Coordinator Run has no Epic identity");
+  const row = database.get<{ plan_json: string }>(
+    "SELECT plan_json FROM planning_plans WHERE epic_id=$epicId AND status='APPROVED'",
+    { epicId },
+  );
+  if (!row) throw new Error(`Approved plan is missing for Epic ${epicId}`);
+  const approved = JSON.parse(row.plan_json) as { epic?: unknown; tasks?: unknown };
+  if (!approved.epic || !Array.isArray(approved.tasks)) throw new Error(`Approved Epic plan is malformed for ${epicId}`);
+  return { version: "1", operation: "PLAN", classification: "EPIC", plan: { epic: approved.epic, tasks: approved.tasks } };
 }
 
 // ── PausableFakeAgentRuntime ──
@@ -318,6 +331,13 @@ describe("Coordinator request to Epic deterministic lifecycle", () => {
 
   it("executes epic lifecycle after approval", async () => {
     const { registry, runtime, merge, executionOptions } = await setupDatabase();
+    const provisionBatches: Array<string[] | undefined> = [];
+    const taskProvisioner = executionOptions.taskWorkspaceProvisioner;
+    const provisionTasks = taskProvisioner.provisionForEpic.bind(taskProvisioner);
+    taskProvisioner.provisionForEpic = async (epicId, taskIds) => {
+      provisionBatches.push(taskIds ? [...taskIds] : undefined);
+      await provisionTasks(epicId, taskIds);
+    };
     const planning = new PlanningService(db!);
     const orchestrator = new EpicOrchestrator(db!, new WorkflowEngine(db!, registry), planning, new RunService(db!, runtime), merge, new SchedulerService(db!), executionOptions);
     db!.run("INSERT INTO scheduler_budgets (project_id,limit_cost,spent_cost,reserved_cost) VALUES ($projectId,100,0,0)", { projectId });
@@ -363,6 +383,11 @@ describe("Coordinator request to Epic deterministic lifecycle", () => {
 
     // Все дочерние задачи достигли статуса INTEGRATED_INTO_EPIC.
     expect(result.childStatuses.every((status) => status === "INTEGRATED_INTO_EPIC")).toBe(true);
+    const taskIdsByDisplayId = db!.all<{ id: string; display_id: string }>("SELECT id,display_id FROM tasks WHERE epic_id=$epicId ORDER BY display_id", { epicId: result.epicId });
+    expect(provisionBatches).toEqual([
+      [taskIdsByDisplayId[0]?.id],
+      [taskIdsByDisplayId[1]?.id, taskIdsByDisplayId[2]?.id],
+    ]);
 
     // Требуется финальный approval, он ожидает выполнения.
     expect(result.finalApprovalRequired).toBe(true);

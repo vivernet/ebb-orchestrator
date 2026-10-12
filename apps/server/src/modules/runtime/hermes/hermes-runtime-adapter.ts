@@ -5,55 +5,33 @@
 import type { AgentRuntime, AgentRuntimeRun } from "../agent-runtime.js";
 import type { AgentRun, RunStatus } from "@ebb-orchestrator/contracts";
 import type { RunOutcome } from "../run-types.js";
-import { ProcessExecutor, ExitCodeError, type ProcessOptions, type ProcessResult } from "../../../platform/process/process-executor.js";
+import { ProcessExecutor, type ProcessResult } from "../../../platform/process/process-executor.js";
 import { HermesCliBuilder } from "./hermes-cli.js";
-import { generateConfigYaml } from "./hermes-profile.js";
+import { buildHermesMcpServer } from "./hermes-mcp-server.js";
 import { parseSessionId } from "./hermes-session-parser.js";
 import { HermesStreamSessionObserver } from "./hermes-stream-session-observer.js";
+import type { HermesSubmitResultStreamCounts, HermesToolEventCounts } from "./hermes-stream-session-observer.js";
 import type { HermesSessionCapture, HermesSessionCaptureFailure, HermesSessionCapturePort } from "../hermes-session-capture-port.js";
 import {
   createHermesLaunchTicket,
   type HermesLaunchTicketFactory,
 } from "./hermes-launch-ticket.js";
 import {
-  buildHermesSnapshotRuntimeArgs,
+  buildHermesInstalledRuntimeArgs,
   resolveHermesExecutable,
-  verifyHermesProfileHomeIdentity,
-  verifyHermesProfileHomePathChain,
-  verifyHermesRunProfileTargetIdentities,
 } from "./hermes-executable-resolver.js";
-import {
-  ensureHermesSourceSnapshotNativeProjection,
-  isVerifiedHermesSourceSnapshot,
-  materializeHermesSourceSnapshot,
-  releaseHermesSourceSnapshotReferenceLease,
-} from "./hermes-source-snapshot.js";
-import { HERMES_PROVIDER_SELECTION_SOURCE, readHermesProviderSelection } from "./hermes-provider-selection.js";
-import {
-  cleanupHermesRunProfileHome,
-  createHermesRunProfileHomeWithReceipt,
-  writeHermesRunProfileConfig,
-  type HermesRunProfileConfigWriter,
-} from "../../../platform/home/hermes-profile-home.js";
-import {
-  deriveHermesNativeAuthRouteEvidence,
-  isHermesNativeAuthRouteEvidence,
-  type HermesNativeAuthRouteEvidence,
-  type HermesRunSelection,
-  type HermesRunSelectionPreflight,
-} from "./hermes-run-selection.js";
+import type { HermesManagedRunSelection, HermesRunSelectionPreflight, HermesRuntimeSelection } from "./hermes-run-selection.js";
 import { validateRoleOutput } from "../output-validator.js";
 import * as path from "path";
 import * as fs from "fs/promises";
 import * as os from "os";
-import { fileURLToPath } from "node:url";
 import { createSqliteDatabase } from "../../../platform/database/sqlite-database.js";
 import { loadValidatedCapability } from "../../execution/capability-validation.js";
 import { validatePlatform, type Platform } from "../../../platform/config/app-config.js";
 import { resolveOrchestratorHome, type HomeEnv } from "../../../platform/home/orchestrator-home.js";
 import { ProcessScopeLaunchNotDispatchedError, type ProcessScopeLaunchRequest, type ProcessScopeSupervisor } from "../../../platform/process/run-scope-supervisor.js";
 import type { ProcessScopeIdentity, ProcessScopeObservation } from "../../../platform/process/process-inspector.js";
-import { getRunProcessOwner, isAuthoritativeRunProcessStopEvidence, prepareRunProcessOwner, transitionRunProcessOwnerTx, type RunProcessOwner, type RunProcessOwnerState } from "../run-process-owner.js";
+import { getRunProcessOwner, isAuthoritativeRunProcessStopEvidence, prepareRunProcessOwner, syncCurrentRunProcessGenerationTx, transitionRunProcessOwnerTx, type RunProcessOwner, type RunProcessOwnerState } from "../run-process-owner.js";
 
 /**
  * В памяти run state tracking.
@@ -65,6 +43,7 @@ interface RunState {
   observedSessionId?: string | null;
   stdout: string;
   stderr: string;
+  stderrCategory: NonNullable<NonNullable<RunOutcome["diagnostics"]>["stderrCategory"]>;
   exitCode: number | null;
   startTime: Date;
   abortController: AbortController | null;
@@ -72,6 +51,8 @@ interface RunState {
   submittedResult: string | null;
   resultPath: string;
   usage: RunUsage | null;
+  submitResultCounts?: HermesSubmitResultStreamCounts;
+  toolEventCounts?: HermesToolEventCounts;
 }
 
 interface RunStartControl {
@@ -85,22 +66,7 @@ interface RunUsage {
   inputTokens: number;
   cachedInputTokens: number;
   outputTokens: number;
-  cost: number;
-}
-
-interface VerifiedHermesNativeAuthEvidence {
-  readonly authRoot: string;
-  readonly profileHome: string;
-  readonly runId: string;
-  readonly sourceVersion: string;
-  readonly sourceCommit: string;
-  readonly sourceSnapshotKey: string;
-  readonly providerId: string;
-  readonly modelId: string;
-  readonly endpointIdentity: string;
-  readonly endpointRevision: string;
-  readonly projectionVersion: string;
-  readonly authRouteEvidence: HermesNativeAuthRouteEvidence;
+  cost: number | null;
 }
 
 /**
@@ -139,7 +105,6 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
   private readonly artifactStore: ArtifactStore;
   private readonly timeoutMs: number;
   private readonly roleLimit: number;
-  private readonly toolsets: string[];
   private readonly ignoreRules: boolean;
   private readonly managedWorktree: string | undefined;
   private readonly managedWorktreeForRun: ((run: AgentRun) => string) | undefined;
@@ -148,16 +113,11 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
   private readonly checkpointDirectory: string;
   private readonly exitCodes = new Map<string, number>();
   private readonly databasePath: string | undefined;
-  private readonly hermesSourceCacheRoot: string;
-  private readonly mayCollectHermesSourceSnapshot: ((cacheKey: string) => Promise<boolean>) | undefined;
-  private readonly hasHermesSourceSnapshotReferences: ((cacheKey: string) => Promise<boolean>) | undefined;
-  private readonly hermesSourceReferenceLock: ((input: { cacheRoot: string; mode: "shared" | "exclusive" }) => Promise<import("./hermes-source-reference-lock.js").HermesSourceReferenceLease>) | undefined;
   private readonly mcpCommand: string;
   private readonly mcpArgs: string[];
   private readonly processScopeSupervisor: ProcessScopeSupervisor | undefined;
   private readonly hermesLaunchTicketFactory: HermesLaunchTicketFactory | undefined;
-  private readonly hermesRunProfileConfigWriter: HermesRunProfileConfigWriter | undefined;
-  private readonly verifiedNativeAuthSelections = new WeakMap<HermesRunSelection, VerifiedHermesNativeAuthEvidence>();
+  private readonly verifiedManagedSelections = new WeakSet<HermesManagedRunSelection>();
   private readonly activeScopes = new Map<string, { owner: ProcessScopeIdentity; durable: boolean; abortController: AbortController }>();
   private readonly startingRuns = new Map<string, RunStartControl>();
   private hermesSessionCaptureHandler: ((capture: HermesSessionCapture) => Promise<void>) | undefined;
@@ -178,24 +138,17 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
       resultDirectory?: string;
       checkpointDirectory?: string;
       databasePath?: string;
-      hermesSourceSnapshotCacheRoot?: string;
-      mayCollectHermesSourceSnapshot?: (cacheKey: string) => Promise<boolean>;
-      hasHermesSourceSnapshotReferences?: (cacheKey: string) => Promise<boolean>;
-      hermesSourceReferenceLock?: (input: { cacheRoot: string; mode: "shared" | "exclusive" }) => Promise<import("./hermes-source-reference-lock.js").HermesSourceReferenceLease>;
       mcpCommand?: string;
       mcpArgs?: string[];
-      /** Test seam; production defaults to pinned Hermes resolver + native profile identity check. */
+      /** Test seam; production проверяет executable/source identity до запуска. */
       hermesLaunchTicketFactory?: HermesLaunchTicketFactory;
-      /** Test seam; production defaults to the handle-bound native profile config writer. */
-      hermesRunProfileConfigWriter?: HermesRunProfileConfigWriter;
     },
     processScopeSupervisor?: ProcessScopeSupervisor,
   ) {
     this.executor = executor;
     this.artifactStore = artifactStore ?? new InMemoryArtifactStore();
     this.timeoutMs = config?.timeoutMs ?? 300000; // 5 minutes default
-    this.roleLimit = config?.roleLimit ?? 20;
-    this.toolsets = config?.toolsets ?? ["mcp-orchestrator"];
+    this.roleLimit = config?.roleLimit ?? 500;
     this.ignoreRules = config?.ignoreRules ?? true;
     this.managedWorktree = config?.managedWorktree;
     this.managedWorktreeForRun = config?.managedWorktreeForRun;
@@ -208,19 +161,10 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
       return join(home.runtime, "checkpoints");
     })();
     this.databasePath = config?.databasePath;
-    const resolvedPlatform = config?.platform ?? validatePlatform(process.platform);
-    const homePaths = resolveOrchestratorHome(config?.homeEnvironment ?? process.env, resolvedPlatform);
-    const platformPaths = resolvedPlatform === "win32" ? path.win32 : path.posix;
-    this.hermesSourceCacheRoot = config?.hermesSourceSnapshotCacheRoot ??
-      platformPaths.join(homePaths.runtime, "hermes", "source-snapshots");
-    this.mayCollectHermesSourceSnapshot = config?.mayCollectHermesSourceSnapshot;
-    this.hasHermesSourceSnapshotReferences = config?.hasHermesSourceSnapshotReferences;
-    this.hermesSourceReferenceLock = config?.hermesSourceReferenceLock;
     this.mcpCommand = config?.mcpCommand ?? "ebb-orchestrator-mcp";
     this.mcpArgs = config?.mcpArgs ?? [];
     this.processScopeSupervisor = processScopeSupervisor;
     this.hermesLaunchTicketFactory = config?.hermesLaunchTicketFactory;
-    this.hermesRunProfileConfigWriter = config?.hermesRunProfileConfigWriter;
     this.cliBuilder = new HermesCliBuilder();
   }
 
@@ -241,213 +185,30 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
   }
 
   /**
-   * Проверяет pinned Hermes installation и non-secret selection, затем создаёт ровно один
-   * пустой Hermes-native profile под auth-owning root. Credential values не читаются и не копируются.
+   * Находит установленный Hermes и фиксирует identity исполняемых файлов для этого Run.
+   * Provider, model и auth settings читает сам Hermes из общего профиля пользователя.
    *
    * @param runId UUID будущего Run, уже созданный Orchestrator до внешнего/SQLite side effect.
-   * @returns Bounded provider/model identity и idempotent cleanup только для rollback до записи файлов.
-   * @throws {Error} Если selection неявен, endpoint не имеет stable identity или native helper отказал.
+   * @returns Hermes home и краткую identity установленного launcher/Python.
+   * @throws {Error} Если Run UUID или установленный Hermes не разрешаются.
    */
   async prepareHermesRunSelection(runId: string): Promise<HermesRunSelectionPreflight> {
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(runId)) {
       throw new Error("HERMES_RUN_SELECTION_BINDING_MISMATCH");
     }
-    const platform = currentHermesPlatform();
-    const resolution = await resolveHermesExecutable({ cwd: process.cwd() });
-    if (resolution.executableIdentity.platform !== platform) throw new Error("HERMES_PLATFORM_IDENTITY_MISMATCH");
-    const sourceSnapshot = await materializeHermesSourceSnapshot({
-      gitExecutable: resolution.gitExecutable,
-      sourceRoot: resolution.hermesProjectRoot,
-      cacheRoot: this.hermesSourceCacheRoot,
-      hermesVersion: resolution.sourceVersion,
-      commit: resolution.sourceCommit,
-      tree: resolution.sourceTree,
-      retainReferenceLease: true,
-      ...(this.hermesSourceReferenceLock
-        ? { referenceLock: this.hermesSourceReferenceLock }
-        : {}),
-      ...(this.mayCollectHermesSourceSnapshot
-        ? { mayCollectSnapshot: this.mayCollectHermesSourceSnapshot }
-        : {}),
-      ...(this.hasHermesSourceSnapshotReferences
-        ? { hasSnapshotReferences: this.hasHermesSourceSnapshotReferences }
-        : {}),
-    });
-    const paths = platform === "win32" ? path.win32 : path.posix;
-    const helperPath = hermesProfilePathHelperPath(platform);
-    const plannedProfileHome = paths.join(resolution.hermesConfigHome, "profiles", `ebb-orchestrator-run-${runId}`);
-    let createdProfileOptions: { hermesRoot: string; runId: string; helperPath: string; platform: "win32" | "linux" } | undefined;
-    let profileCreated = false;
-    try {
-    const projected = await readHermesProviderSelection({
-      hermesConfigHome: resolution.hermesConfigHome,
-      hermesRunProfileHome: plannedProfileHome,
-      hermesProjectRoot: resolution.hermesProjectRoot,
-      runId,
-      runEnvironment: this.environment ?? {},
-      helperPath,
-      platform,
-    });
-    if (!projected.endpointIdentityEligible || !projected.endpointIdentity || !projected.endpointRevision) throw new Error("HERMES_ENDPOINT_ID_UNAVAILABLE");
-    const helperOptions = { hermesRoot: resolution.hermesConfigHome, runId, helperPath, platform } as const;
-    createdProfileOptions = helperOptions;
-    let profileHome: string;
-    let profileReceipt;
-    try {
-    profileReceipt = await createHermesRunProfileHomeWithReceipt(helperOptions);
-    profileHome = profileReceipt.profileHome;
-    profileCreated = true;
-    } catch {
-      throw new Error("HERMES_PROFILE_PATH_CREATE_FAILED");
-    }
-    const profileHomePathChain = await verifyHermesProfileHomePathChain(profileHome, resolution.hermesConfigHome);
-    const authRouteEvidence = deriveHermesNativeAuthRouteEvidence({
-      profileReceipt,
-      providerSelection: projected,
-      authRoot: resolution.hermesConfigHome,
-      hermesProjectRoot: resolution.hermesProjectRoot,
-      sourceVersion: resolution.sourceVersion,
+    const resolution = await resolveHermesExecutable({ cwd: process.cwd(), environment: this.configuredEnvironment() });
+    const runtimeIdentity = JSON.stringify({
+      platform: resolution.executableIdentity.platform,
+      hermes: resolution.executableIdentity,
+      python: resolution.runtimeExecutableIdentity,
       sourceCommit: resolution.sourceCommit,
-      environment: this.environment ?? {},
-      ...(profileHomePathChain ? { profileHomePathChain } : {}),
     });
-    const selection: HermesRunSelection = Object.freeze({
-      runId,
-      providerId: projected.providerId,
-      modelId: projected.modelId,
-      endpointIdentity: projected.endpointIdentity,
-      endpointRevision: projected.endpointRevision,
-      sourceVersion: HERMES_PROVIDER_SELECTION_SOURCE.version,
-      sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit,
-      sourceSnapshotKey: sourceSnapshot.cacheKey,
-      profileHome,
-      ...(profileHomePathChain ? { profileHomePathChain } : {}),
-      authRouteEvidence,
+    const selection: HermesManagedRunSelection = Object.freeze({
+      mode: "HERMES_MANAGED", runId, hermesHome: resolution.hermesConfigHome,
+      runtimeIdentity,
     });
-    this.recordVerifiedHermesNativeAuthEvidence(selection, {
-      authRoot: resolution.hermesConfigHome,
-      profileHome,
-      runId,
-      sourceVersion: resolution.sourceVersion,
-      sourceCommit: resolution.sourceCommit,
-      sourceSnapshotKey: sourceSnapshot.cacheKey,
-      providerId: projected.providerId,
-      modelId: projected.modelId,
-      endpointIdentity: projected.endpointIdentity,
-      endpointRevision: projected.endpointRevision,
-      projectionVersion: HERMES_PROVIDER_SELECTION_SOURCE.projectionVersion,
-      authRouteEvidence,
-    });
-    let leaseReleased = false;
-    const releaseReference = async () => {
-      if (leaseReleased) return;
-      leaseReleased = true;
-      await releaseHermesSourceSnapshotReferenceLease(sourceSnapshot);
-    };
-    return {
-      selection,
-      commit: releaseReference,
-      cleanup: async () => {
-        await releaseReference();
-        await cleanupHermesRunProfileHome(helperOptions);
-      },
-    };
-    } catch (error) {
-      if (profileCreated && createdProfileOptions) {
-        try {
-          await cleanupHermesRunProfileHome(createdProfileOptions);
-        } catch {
-          try {
-            console.error("[ebb-orchestrator] HERMES_PROFILE_PATH_CLEANUP_FAILED");
-          } catch {
-            // Diagnostics must not replace the primary preflight failure.
-          }
-        }
-      }
-      try {
-        await releaseHermesSourceSnapshotReferenceLease(sourceSnapshot);
-      } catch {
-        try {
-          console.error("[ebb-orchestrator] HERMES_SOURCE_SNAPSHOT_LEASE_RELEASE_FAILED");
-        } catch {
-          // Diagnostics must not replace the primary preflight failure.
-        }
-      }
-      throw error;
-    }
-  }
-
-  /** Удаляет только точный Run profile после отзыва capability, terminal status и освобождения
-   * Scheduler reservation/locks; непосредственно перед удалением повторно проверяет STOP
-   * supervisor для durable owner и принимает только нативное OS evidence. */
-  async cleanupTerminalHermesProfile(runId: string): Promise<void> {
-    if (!this.databasePath || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(runId)) {
-      throw new Error("HERMES_PROFILE_CLEANUP_BINDING_INVALID");
-    }
-    const database = createSqliteDatabase(this.databasePath);
-    let hermesHome: string;
-    let persistedOwner: RunProcessOwner;
-    try {
-      const run = database.get<{ status: string; capability_ref: string | null; task_id: string | null }>(
-        "SELECT status,capability_ref,task_id FROM agent_runs WHERE id=$runId", { runId },
-      );
-      const owner = getRunProcessOwner(database, runId);
-      if (!run || !["COMPLETED", "FAILED", "CANCELLED"].includes(run.status) || run.capability_ref !== null ||
-          !owner || owner.state !== "STOPPED" ||
-          !isAuthoritativeRunProcessStopEvidence(owner.stopEvidence, owner.containmentKind)) {
-        throw new Error("HERMES_PROFILE_CLEANUP_GATE_NOT_SATISFIED");
-      }
-      const reservation = database.get<{ present: number }>(
-        `SELECT 1 AS present FROM scheduler_reservations
-          WHERE status='RESERVED' AND (run_id=$runId OR subject_id=$runId
-            OR ($taskId IS NOT NULL AND kind='TASK' AND subject_id=$taskId)) LIMIT 1`, { runId, taskId: run.task_id },
-      );
-      const lock = database.get<{ present: number }>(
-        `SELECT 1 AS present FROM scheduler_resource_locks lock_row
-          JOIN scheduler_reservations reservation ON reservation.id=lock_row.reservation_id
-          WHERE reservation.run_id=$runId OR reservation.subject_id=$runId
-            OR ($taskId IS NOT NULL AND reservation.kind='TASK' AND reservation.subject_id=$taskId) LIMIT 1`,
-        { runId, taskId: run.task_id },
-      );
-      if (reservation || lock) throw new Error("HERMES_PROFILE_CLEANUP_GATE_NOT_SATISFIED");
-      hermesHome = owner.hermesHome;
-      persistedOwner = owner;
-    } finally {
-      database.close();
-    }
-    const platform = currentHermesPlatform();
-    const paths = platform === "win32" ? path.win32 : path.posix;
-    const expectedLeaf = `ebb-orchestrator-run-${runId}`;
-    const profilesDirectory = paths.dirname(hermesHome);
-    const authRoot = paths.dirname(profilesDirectory);
-    const exactProfile = paths.join(authRoot, "profiles", expectedLeaf);
-    const samePath = platform === "win32"
-      ? paths.normalize(hermesHome).toLowerCase() === paths.normalize(exactProfile).toLowerCase()
-      : paths.normalize(hermesHome) === paths.normalize(exactProfile);
-    if (!samePath || paths.basename(profilesDirectory).toLowerCase() !== "profiles") {
-      throw new Error("HERMES_PROFILE_CLEANUP_BINDING_INVALID");
-    }
-    const supervisor = this.processScopeSupervisor;
-    if (!supervisor) throw new Error("HERMES_PROFILE_CLEANUP_STOP_UNPROVEN");
-    let freshStop: ProcessScopeObservation;
-    try {
-      freshStop = await supervisor.waitForStopped(ownerToScopeIdentity(persistedOwner), 30_000);
-    } catch {
-      throw new Error("HERMES_PROFILE_CLEANUP_STOP_UNPROVEN");
-    }
-    const hasFreshNativeStopEvidence = freshStop && typeof freshStop === "object" && freshStop.state === "STOPPED" &&
-      (persistedOwner.containmentKind === "windows-job"
-        ? freshStop.evidence === "WINDOWS_JOB_EMPTY" || freshStop.evidence === "WINDOWS_JOB_AND_HELPER_ABSENT"
-        : freshStop.evidence === "SYSTEMD_CGROUP_EMPTY" || freshStop.evidence === "UNIT_ABSENT_NO_PENDING_CGROUP_ABSENT");
-    if (!hasFreshNativeStopEvidence) {
-      throw new Error("HERMES_PROFILE_CLEANUP_STOP_UNPROVEN");
-    }
-    await cleanupHermesRunProfileHome({
-      hermesRoot: authRoot,
-      runId,
-      helperPath: hermesProfilePathHelperPath(platform),
-      platform,
-    });
+    this.verifiedManagedSelections.add(selection);
+    return { selection };
   }
 
   /** Подключает awaited RunService sink для allowlisted live Hermes session evidence. */
@@ -458,14 +219,12 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
     this.hermesSessionCaptureHandler = handler;
   }
 
-  private async startRunWithControl(run: AgentRuntimeRun, control: RunStartControl): Promise<void> {
+  private async startRunWithControl(run: AgentRuntimeRun, control: RunStartControl, resumeSessionId?: string): Promise<void> {
     const supervisor = this.processScopeSupervisor;
     if (!supervisor) throw new Error("PROCESS_SCOPE_SUPERVISOR_REQUIRED");
     const hermesSelection = run.hermesSelection;
-    if (!hermesSelection || hermesSelection.runId !== run.id || hermesSelection.modelId !== run.model ||
-        !hermesSelection.sourceSnapshotKey ||
-        hermesSelection.sourceVersion !== HERMES_PROVIDER_SELECTION_SOURCE.version ||
-        hermesSelection.sourceCommit !== HERMES_PROVIDER_SELECTION_SOURCE.commit) {
+    if (!hermesSelection || !("mode" in hermesSelection) || hermesSelection.mode !== "HERMES_MANAGED" || hermesSelection.runId !== run.id ||
+        !hermesSelection.runtimeIdentity) {
       throw new Error("HERMES_RUN_SELECTION_UNAVAILABLE");
     }
     if (this.finishCancelledBeforeLaunch(run.id, control)) return;
@@ -477,56 +236,36 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
       workspace = await this.waitForWorkspace(run);
       if (this.finishCancelledBeforeLaunch(run.id, control)) return;
     }
-    const defaultProfileHome = path.join(this.resultDirectory, "profiles", `ebb-orchestrator-run-${run.id}`);
-    const preparedOwner = this.loadProcessOwner(run.id, defaultProfileHome);
-    this.assertNativeHermesAuthReady(run, preparedOwner);
+    const preparedOwner = this.loadProcessOwner(run.id, hermesSelection.hermesHome);
+    this.assertManagedHermesReady(run, preparedOwner, hermesSelection);
     const abortController = control.abortController;
-    const promptFile = await this.writePromptFile(run);
-    if (this.finishCancelledBeforeLaunch(run.id, control)) return;
-    const profileHome = preparedOwner.hermesHome;
-    if (hermesSelection.profileHome !== profileHome) throw new Error("HERMES_PROFILE_HOME_MISMATCH");
+    const hermesHome = preparedOwner.hermesHome;
     const resultPath = path.join(this.resultDirectory, `${run.id}.json`);
-    const configOptions = {
-      capability: { role: run.role, workspace },
-      toolsetPath: "mcp-orchestrator",
-      mcpCommand: this.mcpCommand,
-      mcpArgs: [...this.mcpArgs, ...(this.databasePath ? ["--database", this.databasePath] : [])],
-      resultFile: resultPath,
-      providerSelection: { providerId: hermesSelection.providerId, modelId: hermesSelection.modelId },
-      ...(run.capabilityRef ? { capabilityRef: run.capabilityRef } : {}),
-    };
-    const configYaml = generateConfigYaml(configOptions);
-    const platform = currentHermesPlatform();
-    const helperPath = hermesProfilePathHelperPath(platform);
-    await (this.hermesRunProfileConfigWriter ?? writeHermesRunProfileConfig)({
-      runId: run.id,
-      profileHome,
-      helperPath,
-      platform,
-      configYaml,
-    });
-    if (this.finishCancelledBeforeLaunch(run.id, control)) return;
-
-    const args = this.cliBuilder.buildLaunchArgs({
-      queryFile: promptFile,
-      provider: hermesSelection.providerId,
-      model: hermesSelection.modelId,
-      toolsets: this.toolsets,
-      worktree: workspace,
-      ignoreRules: this.ignoreRules,
-      source: preparedOwner.sourceTag,
-      maxTurns: this.roleLimit,
-    });
-    const environment = this.buildEnvironment(run, profileHome);
-    environment.HERMES_MODEL = hermesSelection.modelId;
-    if (environment.HERMES_HOME !== preparedOwner.hermesHome ||
-        environment.HOME !== path.join(profileHome, "home") ||
-        environment.HERMES_CONFIG !== path.join(profileHome, "config.yaml") ||
-        environment.HERMES_MODEL !== hermesSelection.modelId) {
-      this.markNeverLaunched(preparedOwner.runId);
-      control.stopProven = true;
-      throw new Error("HERMES_NATIVE_AUTH_NOT_READY");
+    let args: string[];
+    if (resumeSessionId !== undefined) {
+      if (!/^[A-Za-z0-9_-]{1,256}$/.test(resumeSessionId)) throw new Error("RESUME_ORIGINAL_SESSION_UNAVAILABLE");
+      if (typeof run.prompt !== "string" || !run.prompt.trim()) throw new Error("HERMES_RESUME_PROMPT_UNAVAILABLE");
+      const queryFile = await this.writePromptFile(run, [
+        "Resume the interrupted Orchestrator task in this existing session.",
+        "First inspect the restored conversation and current workspace state, including persisted tool results, using the permitted Orchestrator tools.",
+        "Continue only the remaining work. Do not repeat completed actions or a successful submit_result. The original task below is repeated to recover a possible interruption before its first delivery; it is not a new task.",
+        "Use the original task's execution and output contract. If no successful result was submitted, submit one successful structured result with submit_result before ending; correct validation errors and retry, then stop submitting after success.",
+        "Original persisted task and execution contract:",
+        run.prompt,
+      ].join("\n\n"));
+      args = this.cliBuilder.buildResumeArgs({
+        sessionId: resumeSessionId, queryFile, toolsets: ["mcp-ebb-orchestrator"], worktree: workspace,
+        ignoreRules: this.ignoreRules, source: preparedOwner.sourceTag, maxTurns: this.roleLimit,
+      });
+    } else {
+      const promptFile = await this.writePromptFile(run);
+      args = this.cliBuilder.buildLaunchArgs({
+        queryFile: promptFile, toolsets: ["mcp-ebb-orchestrator"], worktree: workspace,
+        ignoreRules: this.ignoreRules, source: preparedOwner.sourceTag, maxTurns: this.roleLimit,
+      });
     }
+    if (this.finishCancelledBeforeLaunch(run.id, control)) return;
+    const environment = this.buildEnvironment(run, hermesHome);
 
     if (control.cancelled || abortController.signal.aborted) {
       this.markNeverLaunched(preparedOwner.runId);
@@ -534,17 +273,19 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
       return;
     }
 
-    const preparedLaunch = await this.createLaunchAuthorization(run, workspace, profileHome, environment);
+    const preparedLaunch = await this.createLaunchAuthorization(run, workspace, hermesHome, environment, resultPath);
 
     let processOutput: ProcessResult;
     const sessionObserver = this.hermesSessionCaptureHandler ? new HermesStreamSessionObserver() : undefined;
     let liveCaptureOwner: ProcessScopeIdentity | undefined;
     let captureInvalidReported = false;
+    let captureInvalidReason: HermesSessionCaptureFailure | undefined;
     const reportInvalidCapture = async (owner: ProcessScopeIdentity, reason: HermesSessionCaptureFailure): Promise<void> => {
       if (!sessionObserver || !this.hermesSessionCaptureHandler || captureInvalidReported) return;
+      captureInvalidReason = reason;
       await this.hermesSessionCaptureHandler({
         runId: run.id, attempt: run.attempt, sourceTag: preparedOwner.sourceTag,
-        hermesHome: environment.HERMES_HOME!, owner, status: "invalid", reason,
+        hermesHome, owner, status: "invalid", reason,
       });
       captureInvalidReported = true;
     };
@@ -575,7 +316,7 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
       try {
         await this.hermesSessionCaptureHandler({
           runId: run.id, attempt: run.attempt, sourceTag: preparedOwner.sourceTag,
-          hermesHome: environment.HERMES_HOME!, owner, status: "captured",
+          hermesHome, owner, status: "captured",
           sessionId: update.projection.sessionId,
         });
       } catch {
@@ -600,6 +341,7 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
       }
       return "VALID";
     };
+    const startupDiagnostic = new HermesStartupStderrClassifier();
     try {
       processOutput = await this.launchScopedRun(supervisor, preparedOwner, {
         executable: preparedLaunch.executablePath,
@@ -611,17 +353,31 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
         signal: abortController.signal,
         timeoutMs: this.timeoutMs,
         ...(this.hermesSessionCaptureHandler ? { captureOutput: false } : {}),
+        ...(this.hermesSessionCaptureHandler ? { onStderrChunk: (chunk) => startupDiagnostic.write(chunk) } : {}),
       }, abortController, control, onStdoutChunk, (identity) => { liveCaptureOwner = identity; });
     } catch (error) {
       if (control.cancelled && control.stopProven) {
         await settleSessionCapture();
         return;
       }
-      await settleSessionCapture(true);
+      const captureSettlement = await settleSessionCapture(true);
+      if (captureSettlement === "INVALID" && error instanceof Error &&
+          error.message === "HERMES_SESSION_STREAM_INVALID" && captureInvalidReason) {
+        const diagnostic = captureInvalidReason === "MISSING_INIT" ? startupDiagnostic.failure : undefined;
+        if (diagnostic) throw new Error(diagnostic, { cause: error });
+        throw new Error(`HERMES_SESSION_STREAM_INVALID:${captureInvalidReason ?? "MISSING_INIT"}`, { cause: error });
+      }
+      if (error instanceof Error && error.message === "WINDOWS_HELPER_PAYLOAD_CALLBACK_FAILED" &&
+          captureInvalidReason && captureInvalidReason !== "MISSING_INIT") {
+        throw new Error(`WINDOWS_HELPER_PAYLOAD_CALLBACK_FAILED:${captureInvalidReason}`, { cause: error });
+      }
       throw error;
     }
     const captureSettlement = await settleSessionCapture();
-    if (captureSettlement === "INVALID") throw new Error("HERMES_SESSION_STREAM_INVALID");
+    if (captureSettlement === "INVALID") {
+      if (captureInvalidReason === "MISSING_INIT" && startupDiagnostic.failure) throw new Error(startupDiagnostic.failure);
+      throw new Error(`HERMES_SESSION_STREAM_INVALID:${captureInvalidReason ?? "MISSING_INIT"}:EXIT_${processOutput.exitCode}`);
+    }
     if (control.cancelled) {
       this.assertStopProof(run.id, control);
       return;
@@ -642,13 +398,20 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
       observedSessionId: observedSessionId || null,
       stdout: this.hermesSessionCaptureHandler ? "" : processOutput.stdout,
       stderr: this.hermesSessionCaptureHandler ? "" : processOutput.stderr,
+      stderrCategory: this.hermesSessionCaptureHandler
+        ? startupDiagnostic.category
+        : classifyHermesStderr(processOutput.stderr),
       exitCode: processOutput.exitCode,
       startTime: new Date(),
       abortController,
       checkpointPath: await this.getCheckpointPath(run.id),
       submittedResult: await this.readSubmittedResult(run.id, run.role),
       resultPath,
-      usage: this.hermesSessionCaptureHandler ? null : this.parseUsage(processOutput.stdout),
+      usage: this.hermesSessionCaptureHandler
+        ? (sessionObserver?.usage ? { ...sessionObserver.usage, cost: null } : null)
+        : this.parseUsage(processOutput.stdout),
+      ...(sessionObserver ? { submitResultCounts: sessionObserver.submitResultCounts } : {}),
+      ...(sessionObserver ? { toolEventCounts: sessionObserver.toolEventCountsSnapshot } : {}),
     };
 
     this.runs.set(run.id, state);
@@ -657,84 +420,62 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
   private async createLaunchAuthorization(
     run: AgentRuntimeRun,
     cwd: string,
-    profileHome: string,
+    hermesHome: string,
     environment: Record<string, string>,
+    resultPath: string,
   ) {
     const selection = run.hermesSelection;
     const input = {
       runId: run.id,
       attempt: run.attempt,
       cwd,
-      profileHome,
-      ...(selection?.profileHomePathChain ? { profileHomePathChain: selection.profileHomePathChain } : {}),
+      hermesHome,
+      mcpServer: buildHermesMcpServer({
+        ...(run.capabilityRef ? { capabilityRef: run.capabilityRef } : {}), resultFile: resultPath,
+        mcpCommand: this.mcpCommand,
+        mcpArgs: [...this.mcpArgs, ...(this.databasePath ? ["--database", this.databasePath] : [])],
+      }),
       environment: {
-        HERMES_HOME: environment.HERMES_HOME!,
-        HOME: environment.HOME!,
-        HERMES_CONFIG: environment.HERMES_CONFIG!,
+        ...(environment.HOMEDRIVE === undefined ? {} : { HOMEDRIVE: environment.HOMEDRIVE }),
+        ...(environment.HOMEPATH === undefined ? {} : { HOMEPATH: environment.HOMEPATH }),
+        ...(environment.USERPROFILE === undefined ? {} : { USERPROFILE: environment.USERPROFILE }),
+        ...(environment.LOCALAPPDATA === undefined ? {} : { LOCALAPPDATA: environment.LOCALAPPDATA }),
+        ...(environment.HERMES_HOME === undefined ? {} : { HERMES_HOME: environment.HERMES_HOME }),
+        ...(environment.HERMES_PROFILE === undefined ? {} : { HERMES_PROFILE: environment.HERMES_PROFILE }),
+        ...(environment.HERMES_MODEL === undefined ? {} : { HERMES_MODEL: environment.HERMES_MODEL }),
+        ...(environment.HOME === undefined ? {} : { HOME: environment.HOME }),
+        ...(environment.HERMES_CONFIG === undefined ? {} : { HERMES_CONFIG: environment.HERMES_CONFIG }),
+        ...(environment.HERMES_DATA_DIR_SUFFIX === undefined ? {} : { HERMES_DATA_DIR_SUFFIX: environment.HERMES_DATA_DIR_SUFFIX }),
+        ...(environment.HERMES_RUNTIME_DIR === undefined ? {} : { HERMES_RUNTIME_DIR: environment.HERMES_RUNTIME_DIR }),
       },
     };
     if (this.hermesLaunchTicketFactory) return this.hermesLaunchTicketFactory(input);
-    if (!selection || selection.runId !== run.id || !selection.sourceSnapshotKey) {
+    if (!selection || selection.runId !== run.id || !selection.runtimeIdentity) {
       throw new Error("HERMES_RUN_SELECTION_UNAVAILABLE");
     }
     const platform = currentHermesPlatform();
-    const resolution = await resolveHermesExecutable({ cwd });
-    if (resolution.executableIdentity.platform !== platform) throw new Error("HERMES_PLATFORM_IDENTITY_MISMATCH");
-    const durableOwner = this.loadProcessOwner(run.id, profileHome);
-    const sourceSnapshotKey = durableOwner.hermesSourceSnapshotKey;
-    if (!sourceSnapshotKey) throw new Error("HERMES_SOURCE_SNAPSHOT_KEY_REQUIRED");
-    const selectedSnapshotKey = selection.sourceSnapshotKey;
-    if (!selectedSnapshotKey || selectedSnapshotKey !== sourceSnapshotKey) throw new Error("HERMES_SOURCE_SNAPSHOT_KEY_MISMATCH");
-    const { snapshot, projection } = await ensureHermesSourceSnapshotNativeProjection({
-      cacheRoot: this.hermesSourceCacheRoot,
-      cacheKey: sourceSnapshotKey,
-    });
-    if (snapshot.cacheKey !== sourceSnapshotKey || snapshot.manifestDigest.length !== 64) {
-      throw new Error("HERMES_SOURCE_SNAPSHOT_UNAVAILABLE");
+    const resolution = await resolveHermesExecutable({ cwd, environment: this.configuredEnvironment() });
+    if (resolution.executableIdentity.platform !== platform || runtimeIdentityFor(resolution) !== selection.runtimeIdentity) {
+      throw new Error("HERMES_RUNTIME_IDENTITY_CHANGED");
     }
-    if (resolution.sourceVersion !== selection.sourceVersion || resolution.sourceCommit !== selection.sourceCommit) {
-      throw new Error("HERMES_SOURCE_SNAPSHOT_KEY_MISMATCH");
-    }
-    const sourceSnapshotRootIdentity = await verifyHermesProfileHomeIdentity(snapshot.rootPath);
-    if (!isVerifiedHermesSourceSnapshot(snapshot)) throw new Error("HERMES_SOURCE_SNAPSHOT_UNAVAILABLE");
-    const executableArgsPrefix = buildHermesSnapshotRuntimeArgs({
-      snapshot,
-      runtimeDependencyRoot: resolution.runtimeDependencyRoot,
+    const executableArgsPrefix = buildHermesInstalledRuntimeArgs({
+      hermesProjectRoot: resolution.hermesProjectRoot,
+      sourceCommit: resolution.sourceCommit,
       runtimeExecutablePath: resolution.runtimeExecutablePath,
-      sourceVersion: selection.sourceVersion,
-      sourceCommit: selection.sourceCommit,
+      hermesHome: resolution.hermesConfigHome,
+      mcpServer: input.mcpServer,
     });
-    const profileHomeIdentity = await verifyHermesProfileHomeIdentity(profileHome);
-    const profileHomeTargetIdentities = platform === "win32"
-      ? await verifyHermesRunProfileTargetIdentities(profileHome)
-      : undefined;
-    const profileHomePathChain = await verifyHermesProfileHomePathChain(profileHome, resolution.hermesConfigHome);
-    if (JSON.stringify(profileHomePathChain) !== JSON.stringify(selection.profileHomePathChain) ||
-        JSON.stringify(profileHomePathChain) !== JSON.stringify(selection.authRouteEvidence.profileHomePathChain)) {
-      throw new Error("HERMES_PROFILE_PATH_CHAIN_MISMATCH");
-    }
     const ticket = createHermesLaunchTicket({
       ...input,
       platform: resolution.executableIdentity.platform,
       hermesExecutablePath: resolution.executablePath,
       hermesExecutableIdentity: resolution.executableIdentity,
+      sourceCommit: resolution.sourceCommit,
       executablePath: resolution.runtimeExecutablePath,
       executableIdentity: resolution.runtimeExecutableIdentity,
       executableArgsPrefix,
-      profileHomeIdentity,
-      ...(profileHomeTargetIdentities ? { profileHomeTargetIdentities } : {}),
-      ...(profileHomePathChain ? { profileHomePathChain } : {}),
-      hermesSourceSnapshotKey: snapshot.cacheKey,
-      hermesSourceSnapshotRoot: snapshot.rootPath,
-      hermesSourceSnapshotRootIdentity: sourceSnapshotRootIdentity,
-      hermesSourceManifestDigest: snapshot.manifestDigest,
-      hermesSourceProjectionPath: projection.path,
-      hermesSourceProjectionSha256: projection.sha256,
-      hermesSourceProjectionSize: projection.size,
     });
-    // Both production supervisors consume this one-use ticket before dispatch. Windows validates
-    // and holds the snapshot handles for the Job lifetime; Linux validates the projection/tree,
-    // holds the shared cache reference lease, and runs Hermes from a read-only private mount.
+    // Platform supervisors verify the installed entrypoints and own the complete Run process scope.
     return { executablePath: resolution.runtimeExecutablePath, argsPrefix: executableArgsPrefix, ticket };
   }
 
@@ -921,6 +662,7 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
         if ((tx.get<{ changes: number }>("SELECT changes() AS changes")?.changes ?? 0) !== 1) {
           throw new Error("RUN_PROCESS_OWNER_STATE_CHANGED");
         }
+        syncCurrentRunProcessGenerationTx(tx, runId);
       });
     } finally {
       database.close();
@@ -1012,82 +754,67 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
   /**
    * Возобновление a run that was paused.
    */
-  async resumeRun(runId: string, options: { sessionId: string; attempt: number }): Promise<void> {
-    if (this.databasePath) throw new Error("HERMES_RESUME_REQUIRES_TASK_5C");
-    this.assertNativeHermesAuthReady();
-    const existingState = this.runs.get(runId) ?? await this.restoreRunState(runId, options);
-
-    const abortController = new AbortController();
-
-    const args = this.cliBuilder.buildResumeArgs({
-      sessionId: options.sessionId,
-      toolsets: this.toolsets,
-      worktree: this.getManagedWorktree(existingState.run),
-      ignoreRules: this.ignoreRules,
-      source: "tool",
-      maxTurns: this.roleLimit,
-    });
-
-    const execOptions: ProcessOptions = {
-      cwd: this.getManagedWorktree(existingState.run),
-      env: this.buildEnvironment(existingState.run, path.join(this.resultDirectory, "profiles", runId)),
-      timeout: this.timeoutMs,
-      signal: abortController.signal,
-    };
-
-    let processOutput: { stdout: string; stderr: string; exitCode: number };
-
-    try {
-      const result = await this.executor.exec("hermes", args, execOptions);
-      processOutput = { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode };
-    } catch (error) {
-      const processError = error instanceof ExitCodeError ? error : undefined;
-      if (!processError) throw error;
-      processOutput = { stdout: processError?.stdout ?? "", stderr: processError?.stderr ?? (error as Error).message, exitCode: processError?.exitCode ?? -1 };
+  async resumeRun(runId: string, options: {
+    sessionId: string;
+    attempt: number;
+    hermesSelection?: HermesRuntimeSelection;
+  }): Promise<void> {
+    if (!this.databasePath || !this.processScopeSupervisor) throw new Error("HERMES_RESUME_DURABLE_RUNTIME_REQUIRED");
+    if (!/^[A-Za-z0-9_-]{1,256}$/.test(options.sessionId) || !Number.isSafeInteger(options.attempt) || options.attempt < 1) {
+      throw new Error("RESUME_ORIGINAL_SESSION_UNAVAILABLE");
     }
-    // Обновляет existing state in place
-    existingState.run.sessionId = options.sessionId;
-    existingState.run.attempt = options.attempt;
-    existingState.run.status = "IN_PROGRESS" as RunStatus;
-    existingState.pid = null;
-    existingState.stdout = processOutput.stdout;
-    existingState.stderr = processOutput.stderr;
-    existingState.exitCode = processOutput.exitCode;
-    this.artifactStore.saveArtifacts(runId, processOutput.stdout, processOutput.stderr, processOutput.exitCode);
-    existingState.submittedResult = await this.readSubmittedResult(runId, existingState.run.role);
-    existingState.usage = this.parseUsage(processOutput.stdout);
-    existingState.startTime = new Date();
-    existingState.abortController = abortController;
-    this.runs.set(runId, existingState);
-  }
-
-  private async restoreRunState(runId: string, options: { sessionId: string; attempt: number }): Promise<RunState> {
-    if (!this.databasePath) throw new Error(`Run ${runId} not found in persisted runtime state`);
-    const db = createSqliteDatabase(this.databasePath);
+    if (this.startingRuns.has(runId) || this.activeScopes.has(runId)) throw new Error("RUN_START_ALREADY_IN_PROGRESS");
+    const selection = options.hermesSelection;
+    if (!selection || !("mode" in selection) || selection.mode !== "HERMES_MANAGED" || selection.runId !== runId ||
+        !selection.runtimeIdentity || !this.verifiedManagedSelections.has(selection)) {
+      throw new Error("HERMES_RUN_SELECTION_UNAVAILABLE");
+    }
+    const database = createSqliteDatabase(this.databasePath);
+    let run: AgentRuntimeRun;
     try {
-      const row = db.get<Record<string, unknown>>("SELECT * FROM agent_runs WHERE id = $id", { id: runId });
-      if (!row) throw new Error(`Run ${runId} not found`);
-      const capability = row.capability_json ? JSON.parse(String(row.capability_json)) as { workspace?: string } : undefined;
-      const run: AgentRun = {
-        id: String(row.id), role: String(row.role), runtime: String(row.runtime), model: String(row.model),
-        taskId: row.task_id as string | null, epicId: row.epic_id as string | null, status: "IN_PROGRESS" as RunStatus,
-        sessionId: options.sessionId, attempt: options.attempt, triggerReason: row.trigger_reason as AgentRun["triggerReason"],
-        contextVersion: row.context_version as string | null, outputSchemaVersion: row.output_schema_version as string | null,
-        startedAt: row.started_at ? new Date(String(row.started_at)) : null, endedAt: null,
-        exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
-        ...(row.capability_ref ? { capabilityRef: String(row.capability_ref) } : {}),
-      };
-      const workspace = capability?.workspace || this.getManagedWorktree(run);
-      // сохранять Объект restored workspace доступный to Объект обычный resolver не делая
-      // resume dependent on Объект процесс который created Объект исходную запись map.
-      const restored = { run, pid: null, sessionId: options.sessionId, stdout: "", stderr: "", exitCode: null,
-        startTime: new Date(), abortController: null, checkpointPath: await this.getCheckpointPath(runId),
-        submittedResult: null, resultPath: path.join(this.resultDirectory, `${runId}.json`), usage: null } satisfies RunState;
-      if (!this.managedWorktree && !this.managedWorktreeForRun) {
-        (restored.run as AgentRun & { __workspace?: string }).__workspace = workspace;
+      const row = database.get<Record<string, unknown>>("SELECT * FROM agent_runs WHERE id=$runId", { runId });
+      const binding = database.get<{ original_session_id: string | null }>(
+        "SELECT original_session_id FROM run_resume_bindings WHERE run_id=$runId", { runId });
+      const owner = getRunProcessOwner(database, runId);
+      if (!row || row.status !== "IN_PROGRESS" || row.attempt !== options.attempt || row.session_id !== options.sessionId ||
+          binding?.original_session_id !== options.sessionId || !row.capability_ref || owner?.state !== "PREPARED" ||
+          owner.hermesHome !== selection.hermesHome || row.output !== null || row.ended_at !== null) {
+        throw new Error("HERMES_RESUME_BINDING_UNAVAILABLE");
       }
-      return restored;
-    } finally { db.close(); }
+      run = {
+        id: row.id as string,
+        role: row.role as string,
+        runtime: row.runtime as string,
+        model: row.model as string,
+        taskId: row.task_id as string | null,
+        epicId: row.epic_id as string | null,
+        status: row.status as RunStatus,
+        sessionId: row.session_id as string | null,
+        attempt: row.attempt as number | null,
+        triggerReason: row.trigger_reason as AgentRun["triggerReason"],
+        contextVersion: row.context_version as string | null,
+        outputSchemaVersion: row.output_schema_version as string | null,
+        startedAt: row.started_at ? new Date(row.started_at as string) : null,
+        endedAt: row.ended_at ? new Date(row.ended_at as string) : null,
+        exitCode: row.exit_code as number | null,
+        inputTokens: row.input_tokens as number | null,
+        cachedInputTokens: row.cached_input_tokens as number | null,
+        outputTokens: row.output_tokens as number | null,
+        cost: row.cost as number | null,
+        ...(typeof row.prompt === "string" ? { prompt: row.prompt } : {}),
+        capabilityRef: row.capability_ref as string,
+        hermesSelection: selection,
+      };
+    } finally {
+      database.close();
+    }
+    const control: RunStartControl = { abortController: new AbortController(), cancelled: false, stopProven: false };
+    this.startingRuns.set(runId, control);
+    try {
+      await this.startRunWithControl(run, control, options.sessionId);
+    } finally {
+      if (this.startingRuns.get(runId) === control) this.startingRuns.delete(runId);
+    }
   }
 
   /**
@@ -1178,8 +905,15 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
           runId,
           sessionId: state.observedSessionId ?? state.sessionId,
           stderr: state.stderr,
+          stderrCategory: state.stderrCategory,
           exitCode: state.exitCode ?? -1,
           artifactReferences: [state.resultPath, `run-artifacts://${runId}`],
+          ...(state.submitResultCounts ? { submitResultToolUses: state.submitResultCounts.toolUses } : {}),
+          ...(state.submitResultCounts ? {
+            submitResultCalls: state.submitResultCounts.calls,
+            submitResultErrors: state.submitResultCounts.errors,
+          } : {}),
+          ...(state.toolEventCounts ? { toolCounts: state.toolEventCounts } : {}),
         },
       };
     }
@@ -1193,8 +927,10 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
         runId,
         sessionId: state.observedSessionId ?? state.sessionId,
         stderr: state.stderr,
+        stderrCategory: state.stderrCategory,
         exitCode: state.exitCode ?? -1,
         artifactReferences: [state.resultPath, `run-artifacts://${runId}`],
+        ...(state.toolEventCounts ? { toolCounts: state.toolEventCounts } : {}),
       },
     };
   }
@@ -1206,10 +942,10 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
     inputTokens: number;
     cachedInputTokens: number;
     outputTokens: number;
-    cost: number;
+    cost: number | null;
   }> {
     const state = this.runs.get(runId);
-    if (!state?.usage || (state.usage.inputTokens === 0 && state.usage.outputTokens === 0)) {
+    if (!state?.usage) {
       throw new Error(`HERMES_USAGE_MISSING: no usage values were emitted for run ${runId}`);
     }
     return state.usage;
@@ -1232,6 +968,7 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
         runId,
         sessionId: state.observedSessionId ?? state.sessionId,
         stderr: state.stderr,
+        stderrCategory: state.stderrCategory,
         exitCode: state.exitCode ?? -1,
         artifactReferences: [state.resultPath],
       },
@@ -1246,113 +983,52 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
   }
 
   /**
-   * Записывает prompt body to a temporary file.
+   * Записывает initial prompt или явный continuation turn во временный файл для Hermes CLI.
    */
-  private async writePromptFile(run: AgentRun): Promise<string> {
+  private async writePromptFile(run: AgentRun, continuationQuery?: string): Promise<string> {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-prompt-"));
     const promptFile = path.join(tempDir, `prompt-${run.id}.txt`);
-    const body = run.prompt ?? [
+    const body = continuationQuery ?? run.prompt ?? [
       `Task: ${run.taskId ?? "N/A"}`,
       `Role: ${run.role}`,
       `Context version: ${run.contextVersion ?? ""}`,
       "Use the Orchestrator tools only.",
-      "Submit exactly one valid result with submit_result before ending.",
+      "Submit one successful structured result with submit_result before ending. If submit_result returns a validation error, correct the payload and retry; after success, do not call submit_result again.",
     ].join("\n");
     await fs.writeFile(promptFile, body);
     return promptFile;
   }
 
-  /**
-   * Формирует environment variables for hermes process.
-   */
-  private buildEnvironment(_run: AgentRun, profileHome?: string): Record<string, string> {
-    const allowed = new Set(["HOMEDRIVE", "HOMEPATH", "SYSTEMROOT", "TEMP", "TMP", "PATH", "NODE_PATH", "NODE_ENV", "HERMES_HOME", "HERMES_CONFIG", "HERMES_MODEL"]);
-    const env: Record<string, string> = {};
+  /** Передаёт только не-secret переменные, нужные установленному Hermes и OS runtime. */
+  private configuredEnvironment(): Record<string, string> {
+    const allowed = ["HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "SYSTEMROOT", "TEMP", "TMP", "PATH", "NODE_PATH", "NODE_ENV", "LOCALAPPDATA", "HERMES_DATA_DIR_SUFFIX", "HERMES_RUNTIME_DIR", "HERMES_HOME", "HERMES_CONFIG", "HERMES_PROFILE", "HERMES_MODEL"];
+    const environment: Record<string, string> = {};
     for (const key of allowed) {
-      const value = key === "HERMES_HOME" && profileHome
-        ? profileHome
-        : this.environment?.[key];
-      if (value !== undefined) env[key] = value;
+      const value = this.environment?.[key] ?? process.env[key];
+      if (value !== undefined) environment[key] = value;
     }
-    for (const [key, value] of Object.entries(this.environment ?? {})) {
-      if (key === "GITHUB_TOKEN" || key === "SSH_AUTH_SOCK" || key.endsWith("TOKEN") || key.endsWith("SECRET")) throw new Error("Forbidden credential in supplied runtime environment");
-      if (!allowed.has(key)) throw new Error(`Forbidden or unknown Hermes environment variable: ${key}`);
-      env[key] = value;
+    for (const key of Object.keys(this.environment ?? {})) {
+      if (key === "GITHUB_TOKEN" || key === "SSH_AUTH_SOCK" || key.endsWith("TOKEN") || key.endsWith("SECRET")) {
+        throw new Error("Forbidden credential in supplied runtime environment");
+      }
+      if (!allowed.includes(key)) throw new Error(`Forbidden or unknown Hermes environment variable: ${key}`);
     }
-    const home = profileHome ?? env.HERMES_HOME;
-    if (!home) throw new Error("Hermes isolated profile is required");
-    env.HERMES_HOME = home;
-    env.HOME = path.join(home, "home");
-    env.HERMES_CONFIG = path.join(home, "config.yaml");
-    delete env.HERMES_PROFILE;
-    return env;
+    return environment;
   }
 
-  /**
-   * Разрешает запуск только для selection, подготовленного после проверки pinned source,
-   * source snapshot, bounded projection и нового профиля под native auth root.
-   * Credential values, auth files и account identifiers не читаются.
-   */
-  private assertNativeHermesAuthReady(run?: AgentRuntimeRun, owner?: RunProcessOwner): void {
-    const selection = run?.hermesSelection;
-    const evidence = selection ? this.verifiedNativeAuthSelections.get(selection) : undefined;
-    if (!run || !owner || !selection || !evidence || owner.state !== "PREPARED" ||
+  private buildEnvironment(_run: AgentRun, _hermesHome: string): Record<string, string> {
+    return this.configuredEnvironment();
+  }
+
+  private assertManagedHermesReady(run: AgentRuntimeRun, owner: RunProcessOwner, selection: HermesManagedRunSelection): void {
+    if (!this.verifiedManagedSelections.has(selection) || owner.state !== "PREPARED" ||
         owner.runId !== run.id || owner.sourceTag !== `ebb-run:${run.id}` ||
-        owner.hermesHome !== selection.profileHome || evidence.runId !== run.id ||
-        evidence.profileHome !== selection.profileHome || evidence.sourceVersion !== HERMES_PROVIDER_SELECTION_SOURCE.version ||
-        evidence.sourceCommit !== HERMES_PROVIDER_SELECTION_SOURCE.commit ||
-        selection.sourceVersion !== evidence.sourceVersion || selection.sourceCommit !== evidence.sourceCommit ||
-        selection.modelId !== run.model || selection.providerId !== evidence.providerId ||
-        selection.modelId !== evidence.modelId || selection.endpointIdentity !== evidence.endpointIdentity ||
-        selection.endpointRevision !== evidence.endpointRevision ||
-        selection.endpointIdentity !== `hermes-provider:${selection.providerId.toLowerCase()}` ||
-        selection.endpointRevision !== HERMES_PROVIDER_SELECTION_SOURCE.commit ||
-        evidence.projectionVersion !== HERMES_PROVIDER_SELECTION_SOURCE.projectionVersion ||
-        !isHermesNativeAuthRouteEvidence(selection.authRouteEvidence) ||
-        evidence.authRouteEvidence !== selection.authRouteEvidence ||
-        evidence.authRouteEvidence.authRoot !== evidence.authRoot ||
-        evidence.authRouteEvidence.profileHome !== selection.profileHome ||
-        JSON.stringify(evidence.authRouteEvidence.profileHomePathChain) !== JSON.stringify(selection.profileHomePathChain) ||
-        evidence.authRouteEvidence.endpointIdentity !== selection.endpointIdentity ||
-        evidence.authRouteEvidence.endpointRevision !== selection.endpointRevision ||
-        !isSupportedHermesNativeAuthSnapshot(selection.sourceSnapshotKey, evidence) ||
-        (this.databasePath !== undefined && owner.hermesSourceSnapshotKey !== selection.sourceSnapshotKey) ||
-        !isFreshHermesNativeProfilePath(selection.profileHome, evidence.authRoot, run.id)) {
-      throw new Error("HERMES_NATIVE_AUTH_NOT_READY");
+        owner.hermesHome !== selection.hermesHome || selection.runId !== run.id ||
+        !selection.runtimeIdentity) {
+      throw new Error("HERMES_RUN_SELECTION_UNAVAILABLE");
     }
   }
 
-  private recordVerifiedHermesNativeAuthEvidence(
-    selection: HermesRunSelection,
-    evidence: VerifiedHermesNativeAuthEvidence,
-  ): void {
-    if (!isSupportedHermesNativeAuthSnapshot(selection.sourceSnapshotKey, evidence) ||
-        !isFreshHermesNativeProfilePath(selection.profileHome, evidence.authRoot, selection.runId) ||
-        selection.profileHome !== evidence.profileHome || selection.runId !== evidence.runId ||
-        selection.sourceVersion !== evidence.sourceVersion || selection.sourceCommit !== evidence.sourceCommit ||
-        selection.providerId !== evidence.providerId || selection.modelId !== evidence.modelId ||
-        selection.endpointIdentity !== evidence.endpointIdentity || selection.endpointRevision !== evidence.endpointRevision ||
-        evidence.projectionVersion !== HERMES_PROVIDER_SELECTION_SOURCE.projectionVersion ||
-        !isHermesNativeAuthRouteEvidence(evidence.authRouteEvidence) ||
-        evidence.authRouteEvidence.runId !== selection.runId ||
-        evidence.authRouteEvidence.authRoot !== evidence.authRoot ||
-        evidence.authRouteEvidence.profileHome !== selection.profileHome ||
-        JSON.stringify(evidence.authRouteEvidence.profileHomePathChain) !== JSON.stringify(selection.profileHomePathChain) ||
-        evidence.authRouteEvidence.endpointIdentity !== selection.endpointIdentity ||
-        evidence.authRouteEvidence.endpointRevision !== selection.endpointRevision ||
-        evidence.authRouteEvidence.providerId !== selection.providerId ||
-        evidence.authRouteEvidence.modelId !== selection.modelId ||
-        evidence.authRouteEvidence.sourceVersion !== selection.sourceVersion ||
-        evidence.authRouteEvidence.sourceCommit !== selection.sourceCommit ||
-        evidence.authRouteEvidence.policyIdentity !== selection.authRouteEvidence.policyIdentity) {
-      throw new Error("HERMES_NATIVE_AUTH_NOT_READY");
-    }
-    this.verifiedNativeAuthSelections.set(selection, Object.freeze({ ...evidence }));
-  }
-
-  /**
-   * Получает the managed worktree path for a run.
-   */
   private getManagedWorktree(run: AgentRun): string {
     if (this.databasePath) {
       if (!run.capabilityRef) {
@@ -1468,70 +1144,6 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
   }
 }
 
-function isSupportedHermesNativeAuthSnapshot(
-  sourceSnapshotKey: string,
-  evidence: VerifiedHermesNativeAuthEvidence,
-): boolean {
-  if (typeof sourceSnapshotKey !== "string" || sourceSnapshotKey.length > 2_048) return false;
-  let identity: unknown;
-  try {
-    identity = JSON.parse(sourceSnapshotKey) as unknown;
-  } catch {
-    return false;
-  }
-  if (typeof identity !== "object" || identity === null || Array.isArray(identity)) return false;
-  const snapshot = identity as Record<string, unknown>;
-  const platform = currentHermesPlatform();
-  const expectedKeys = platform === "win32"
-    ? ["formatVersion", "hermesVersion", "manifestDigest", "materializationPolicyVersion", "sourceCommit", "sourceTree"]
-    : ["formatVersion", "hermesVersion", "manifestDigest", "sourceCommit", "sourceTree"];
-  const canonicalIdentity = platform === "win32"
-    ? {
-      formatVersion: snapshot.formatVersion,
-      hermesVersion: snapshot.hermesVersion,
-      manifestDigest: snapshot.manifestDigest,
-      materializationPolicyVersion: 2,
-      sourceCommit: snapshot.sourceCommit,
-      sourceTree: snapshot.sourceTree,
-    }
-    : {
-      formatVersion: snapshot.formatVersion,
-      hermesVersion: snapshot.hermesVersion,
-      manifestDigest: snapshot.manifestDigest,
-      sourceCommit: snapshot.sourceCommit,
-      sourceTree: snapshot.sourceTree,
-    };
-  return JSON.stringify(Object.keys(snapshot)) === JSON.stringify(expectedKeys) &&
-    (platform !== "win32" || snapshot.materializationPolicyVersion === 2) &&
-    JSON.stringify(snapshot) === sourceSnapshotKey && snapshot.formatVersion === 1 &&
-    JSON.stringify(canonicalIdentity) === sourceSnapshotKey &&
-    snapshot.hermesVersion === HERMES_PROVIDER_SELECTION_SOURCE.version &&
-    snapshot.sourceCommit === HERMES_PROVIDER_SELECTION_SOURCE.commit &&
-    evidence.sourceVersion === snapshot.hermesVersion && evidence.sourceCommit === snapshot.sourceCommit &&
-    typeof snapshot.manifestDigest === "string" && /^[a-f0-9]{64}$/u.test(snapshot.manifestDigest) &&
-    typeof snapshot.sourceTree === "string" && /^[a-f0-9]{40}$/u.test(snapshot.sourceTree);
-}
-
-function isFreshHermesNativeProfilePath(profileHome: string, authRoot: string, runId: string): boolean {
-  if (typeof profileHome !== "string" || typeof authRoot !== "string" ||
-      containsControlCharacter(profileHome) || containsControlCharacter(authRoot)) return false;
-  const paths = currentHermesPlatform() === "win32" ? path.win32 : path.posix;
-  if (!paths.isAbsolute(profileHome) || !paths.isAbsolute(authRoot)) return false;
-  const expected = paths.join(authRoot, "profiles", `ebb-orchestrator-run-${runId}`);
-  const normalize = (value: string) => paths.normalize(value);
-  return currentHermesPlatform() === "win32"
-    ? normalize(profileHome).toLocaleLowerCase("en-US") === normalize(expected).toLocaleLowerCase("en-US")
-    : normalize(profileHome) === normalize(expected);
-}
-
-function containsControlCharacter(value: string): boolean {
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    if (code <= 0x1f || code === 0x7f) return true;
-  }
-  return false;
-}
-
 function ownerToScopeIdentity(owner: RunProcessOwner): ProcessScopeIdentity {
   return {
     runId: owner.runId,
@@ -1548,6 +1160,77 @@ function ownerToScopeIdentity(owner: RunProcessOwner): ProcessScopeIdentity {
     executableIdentity: owner.executableIdentity,
     state: owner.state,
   };
+}
+
+/** Возвращает безопасную фиксированную категорию stderr без сохранения его текста. */
+function classifyHermesStderr(stderr: string): NonNullable<NonNullable<RunOutcome["diagnostics"]>["stderrCategory"]> {
+  if (!stderr) return "EMPTY";
+  const text = stderr.slice(0, 8_192).toLowerCase();
+  if (/\b(?:401|unauthorized|authentication failed|invalid api key)\b/u.test(text)) return "AUTH";
+  if (/\b(?:429|rate limit|quota exceeded)\b/u.test(text)) return "RATE_LIMIT";
+  if (/\b(?:connection error|connection refused|network unreachable|name resolution|dns error|ssl error)\b/u.test(text)) return "NETWORK";
+  if (/\b(?:timeout|timed out)\b/u.test(text)) return "TIMEOUT";
+  if (/\b(?:mcp|tool call)\b/u.test(text)) return "MCP";
+  if (/\b(?:traceback|exception|fatal error|failed|error)\b/u.test(text)) return "PROCESS_ERROR";
+  return "OTHER";
+}
+
+/** Сохраняет только фиксированный код Hermes или класс Python exception; текст ошибки не удерживается. */
+class HermesStartupStderrClassifier {
+  private line = "";
+  private overflowed = false;
+  private categoryText = "";
+  private parsedFailure: string | undefined;
+  private static readonly MAX_LINE_CHARACTERS = 192;
+  private static readonly MAX_CATEGORY_CHARACTERS = 8_192;
+
+  get category(): NonNullable<NonNullable<RunOutcome["diagnostics"]>["stderrCategory"]> {
+    return classifyHermesStderr(this.categoryText);
+  }
+
+  get failure(): string | undefined {
+    return this.parsedFailure;
+  }
+
+  write(chunk: Uint8Array): void {
+    if (this.categoryText.length < HermesStartupStderrClassifier.MAX_CATEGORY_CHARACTERS) {
+      this.categoryText += Buffer.from(chunk).toString("utf8").slice(0,
+        HermesStartupStderrClassifier.MAX_CATEGORY_CHARACTERS - this.categoryText.length);
+    }
+    if (this.parsedFailure) return;
+    for (const character of Buffer.from(chunk).toString("utf8")) {
+      if (character === ":" && !this.overflowed &&
+          /^(ModuleNotFoundError|ImportError|PermissionError|FileNotFoundError|OSError|RuntimeError|ValueError|TypeError|AttributeError|KeyError|SyntaxError|NameError|UnicodeDecodeError|UnicodeEncodeError)$/u.test(this.line)) {
+        this.parsedFailure = `HERMES_PYTHON_STARTUP_EXCEPTION:${this.line}`;
+        this.line = "";
+        return;
+      }
+      if (character === "\n") {
+        if (!this.overflowed) this.classify(this.line.replace(/\r$/u, ""));
+        if (this.parsedFailure) {
+          this.line = "";
+          this.overflowed = false;
+          return;
+        }
+        this.line = "";
+        this.overflowed = false;
+      } else if (!this.overflowed && this.line.length < HermesStartupStderrClassifier.MAX_LINE_CHARACTERS) {
+        this.line += character;
+      } else {
+        this.line = "";
+        this.overflowed = true;
+      }
+    }
+  }
+
+  private classify(line: string): void {
+    if (line === "HERMES_EBB_MCP_REGISTRATION_FAILED") {
+      this.parsedFailure = "HERMES_EBB_MCP_REGISTRATION_FAILED";
+      return;
+    }
+    const refusal = /^hermes-refusal-reason: (SESSION_NOT_OWNED|MAX_CONCURRENT_SESSIONS|SESSION_COORDINATION_UNAVAILABLE)$/u.exec(line);
+    if (refusal?.[1]) this.parsedFailure = `HERMES_ACTIVE_SESSION_REFUSED:${refusal[1]}`;
+  }
 }
 
 function assertMatchingLiveIdentity(owner: ProcessScopeIdentity, identity: ProcessScopeIdentity): void {
@@ -1596,12 +1279,11 @@ function currentHermesPlatform(): "win32" | "linux" {
   return platform;
 }
 
-function hermesProfilePathHelperPath(platform: "win32" | "linux"): string {
-  const paths = platform === "win32" ? path.win32 : path.posix;
-  const filename = platform === "win32" ? "ebb-hermes-profile-path.exe" : "ebb-hermes-profile-path";
-  return paths.resolve(
-    paths.dirname(fileURLToPath(import.meta.url)),
-    "../../../../dist/native/hermes-profile-path",
-    filename,
-  );
+function runtimeIdentityFor(resolution: Awaited<ReturnType<typeof resolveHermesExecutable>>): string {
+  return JSON.stringify({
+    platform: resolution.executableIdentity.platform,
+    hermes: resolution.executableIdentity,
+    python: resolution.runtimeExecutableIdentity,
+    sourceCommit: resolution.sourceCommit,
+  });
 }

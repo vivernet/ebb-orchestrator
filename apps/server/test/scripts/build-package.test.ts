@@ -56,17 +56,14 @@ describe("server production native packaging", () => {
     expect(packagedPath).toBeNull();
   });
 
-  it.each([
-    ["win32", "ebb-hermes-profile-path.exe"],
-    ["linux", "ebb-hermes-profile-path"],
-  ] as const)("packages the Hermes profile helper on %s", (platform, filename) => {
+  it("packages the Windows Hermes file identity helper", () => {
     const root = mkdtempSync(resolve(tmpdir(), "ebb-hermes-profile-package-"));
     serverRoot = root;
-    const expectedPath = resolve(root, "dist/native/hermes-profile-path", filename);
+    const expectedPath = resolve(root, "dist/native/hermes-profile-path/ebb-hermes-profile-path.exe");
     let buildCalls = 0;
 
     const packagedPath = ensureHermesProfilePathHelper({
-      platform,
+      platform: "win32",
       serverRoot: root,
       buildHelper: () => {
         buildCalls += 1;
@@ -79,13 +76,13 @@ describe("server production native packaging", () => {
     expect(packagedPath).toBe(expectedPath);
   });
 
-  it("does not require a Hermes profile helper on unsupported platforms", () => {
+  it.each(["linux", "darwin"] as const)("does not build a Windows identity helper on %s", (platform) => {
     const root = mkdtempSync(resolve(tmpdir(), "ebb-hermes-profile-package-unsupported-"));
     serverRoot = root;
     let buildCalls = 0;
 
     expect(ensureHermesProfilePathHelper({
-      platform: "darwin",
+      platform,
       serverRoot: root,
       buildHelper: () => { buildCalls += 1; },
     })).toBeNull();
@@ -129,7 +126,7 @@ describe("server production native packaging", () => {
     const root = mkdtempSync(resolve(tmpdir(), "ebb-native-helper-anchor-"));
     serverRoot = root;
     const supervisorPath = resolve(root, "dist/native/windows-run-supervisor/ebb-run-supervisor.exe");
-    const profileName = process.platform === "win32" ? "ebb-hermes-profile-path.exe" : "ebb-hermes-profile-path";
+    const profileName = "ebb-hermes-profile-path.exe";
     const profilePath = resolve(root, "dist/native/hermes-profile-path", profileName);
     const supervisorBytes = Buffer.from("trusted supervisor helper");
     const profileBytes = Buffer.from("trusted profile helper");

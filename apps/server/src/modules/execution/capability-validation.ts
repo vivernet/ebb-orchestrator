@@ -273,9 +273,11 @@ export function loadValidatedCapability(db: Database, capabilityRef: string): Ru
     ? undefined
     : { ...(projectConfig as Record<string, unknown>), workspace };
   if (validatedProjectConfig !== undefined && !isProjectConfig(validatedProjectConfig)) throw new Error('malformed project configuration');
+  if (validatedProjectConfig && Object.values(validatedProjectConfig.commands).some(Boolean)) {
+    throw new Error('caller-supplied project action commands are not allowed; use an approved Project Config revision');
+  }
   let validatedApprovedProjectConfig: ReturnType<typeof approvedProjectConfigRevisionTx> | undefined;
   if (approvedProjectConfig !== undefined) {
-    if (validatedProjectConfig) throw new Error('approved Project Config binding conflicts with run capability');
     const task = row.task_id ? db.get<{ project_id: string }>('SELECT project_id FROM tasks WHERE id=$taskId', { taskId: row.task_id }) : undefined;
     const claimedRevisionId = (approvedProjectConfig as { revisionId?: unknown } | null)?.revisionId;
     const configProjectId = planningProjectId ?? epicProjectId ?? task?.project_id;

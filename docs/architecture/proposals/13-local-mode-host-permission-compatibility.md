@@ -2,15 +2,16 @@
 id: proposal-13
 kind: proposal
 title: Совместимость Local Mode с разрешениями хоста
-status: accepted
+status: superseded
 created: 2026-10-09
-updated: 2026-10-09
-accepted: 2026-10-09
+updated: 2026-10-11
 ---
 
 # Proposal 13 — Совместимость Local Mode с разрешениями хоста
 
-**Статус технического контракта:** Accepted для ограниченного Task5B-H Windows/Linux после независимого Plan20/security re-review от 2026-10-09 без blocking findings. Пользователь 2026-10-09 явно утвердил направление: убрать проверку и отклонение существующих host ACL ради запуска продукта, сохранить установленные пользователем разрешения и поддержать Windows, Linux и macOS. Host ACL inventory, remediation и повторное согласование сохранения этих разрешений не являются prerequisite. Acceptance этого контракта разрешает реализацию Task5B-H, но не подтверждает её выполнение, native acceptance или готовность платформ. Обязательный macOS port Task5A-M требует собственного design/review до реализации.
+> **Superseded 2026-10-10:** пользователь отклонил отдельный Hermes-профиль и потребовал использовать уже настроенный Hermes root/profile. Актуальный контракт — [Proposal 09](09-hermes-provider-auth-reuse.md), [Plan20](../plans/20-production-context-manifest.md) и [spec-01](../specs/01-system-design.md). Per-Run profiles, их private ACL/owner/mode проверки, snapshots, locks и cleanup ниже — только исторический контекст и не являются требованиями или инструкциями v1. Проверка и изменение существующих host permissions не допускаются.
+
+**Исторический статус:** Proposal13 был принят для ограниченного Task5B-H 2026-10-09 и заменил Proposal12 как interim host-permission direction. Его per-Run private-profile contract был superseded решением пользователя 2026-10-10 об использовании настроенного Hermes root/profile. Поддерживаемые сейчас process supervision, source integrity, durable session capture и STOPPED evidence определяются актуальными Proposal09, Plan20 и spec-01; статус этого исторического proposal не подтверждает реализацию или acceptance.
 
 ## Решение и границы
 

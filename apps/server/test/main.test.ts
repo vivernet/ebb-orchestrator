@@ -13,7 +13,6 @@ describe("production path composition", () => {
       integrationWorktreeRoot: join(home.worktrees, "epic-integration"),
       hermesDatabasePath: home.database,
       hermesResultDirectory: join(home.runtime, "hermes", "results"),
-      hermesSourceSnapshotCacheRoot: join(home.runtime, "hermes", "source-snapshots"),
       hermesCheckpointDirectory: join(home.runtime, "checkpoints"),
     });
   });

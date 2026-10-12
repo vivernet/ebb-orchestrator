@@ -24,7 +24,7 @@ import { ProjectConfigService } from "../../../src/modules/projects/project-conf
 import { ProjectConfigRepository } from "../../../src/modules/projects/project-config-repository.js";
 import { parseProjectConfigYaml } from "../../../src/platform/config/project-config.js";
 import { digestRunPromptBytesV1 } from "../../../src/modules/context/context-provenance.js";
-import { createHermesAuthRouteFixture } from "../../helpers/hermes-auth-route-fixture.js";
+import { createHermesManagedSelectionFixture } from "../../helpers/hermes-managed-selection-fixture.js";
 
 const hermesSourceSnapshotKey = JSON.stringify({
   formatVersion: 1,
@@ -62,7 +62,6 @@ describe("Coordinator planning background job", () => {
     const runRef: { current?: RunService } = {};
     const outputs = new Map<string, unknown>();
     const hermesPreflightCalls: string[] = [];
-    const hermesCleanupCalls: string[] = [];
     const runtime: AgentRuntime = {
       active: 0,
       maxActive: 1,
@@ -70,26 +69,8 @@ describe("Coordinator planning background job", () => {
       ...(useHermesSelection ? {
         prepareHermesRunSelection: async (runId: string) => {
           hermesPreflightCalls.push(runId);
-          const authFixture = await createHermesAuthRouteFixture(
-            runId, "openai-codex", "selected-hermes-model", join(root, "hermes-auth-root"),
-          );
-          const { profileHome } = authFixture;
-          const modelId = "selected-hermes-model";
           return {
-            selection: {
-              runId,
-              providerId: authFixture.providerSelection.providerId,
-              modelId,
-              endpointIdentity: "hermes-provider:openai-codex",
-              endpointRevision: authFixture.providerSelection.endpointRevision!,
-              sourceVersion: "v0.21.5+9117.g08165d5",
-              sourceCommit: "08165d58931841cee713468ae89032af7c57060a",
-              sourceSnapshotKey: hermesSourceSnapshotKey,
-              profileHome,
-              ...(authFixture.profileHomePathChain ? { profileHomePathChain: authFixture.profileHomePathChain } : {}),
-              authRouteEvidence: authFixture.authRouteEvidence,
-            },
-            cleanup: async () => { hermesCleanupCalls.push(runId); },
+            selection: createHermesManagedSelectionFixture(runId, hermesSourceSnapshotKey, join(root, "configured-hermes")),
           };
         },
       } : {}),
@@ -125,7 +106,7 @@ describe("Coordinator planning background job", () => {
     const registry = new BackgroundJobRegistry();
     const scheduler = new SchedulerService(db);
     registerCoordinatorPlanningJob(registry, { db, planning, runs, scheduler });
-    return { projectId, requestId: request.id, planning, registry, runs, scheduler, hermesPreflightCalls, hermesCleanupCalls };
+    return { projectId, requestId: request.id, planning, registry, runs, scheduler, hermesPreflightCalls };
   }
 
   it("keeps request, reservation, and resource lock active when Coordinator stop proof is unavailable", async () => {
@@ -194,6 +175,9 @@ describe("Coordinator planning background job", () => {
     expect(preparedRuns).toHaveLength(3);
     expect(preparedRuns.map(({ role }) => role)).toEqual(["architect", "coordinator", "product_manager"]);
     for (const run of preparedRuns) {
+      expect(run.prompt).toContain("If submit_result returns a validation error, correct the payload and retry");
+      expect(run.prompt).toContain("after success, do not call submit_result again");
+      expect(run.prompt).not.toMatch(/submit_result exactly once|exactly once[^\n]*submit_result/i);
       expect(run).toMatchObject({ subject_type: "REQUEST", request_id: requestId });
       expect(run.prompt_hash).toBe(digestRunPromptBytesV1(new TextEncoder().encode(run.prompt)));
       const requestBinding = run.role === "coordinator"
@@ -226,8 +210,8 @@ describe("Coordinator planning background job", () => {
     expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM tasks")?.count).toBe(2);
   });
 
-  it("preflights a fresh Hermes profile before each Coordinator, PM, and Architect transaction", async () => {
-    const { requestId, registry, hermesPreflightCalls, hermesCleanupCalls } = await setup(epicOutput(), true);
+  it("preflights the configured Hermes source before each Coordinator, PM, and Architect transaction", async () => {
+    const { requestId, registry, hermesPreflightCalls } = await setup(epicOutput(), true);
 
     const result = await new JobRunner(db!, registry).runOnce(new Date());
 
@@ -236,10 +220,9 @@ describe("Coordinator planning background job", () => {
       "SELECT id,role,model FROM agent_runs WHERE role IN ('coordinator','product_manager','architect') ORDER BY role",
     );
     expect(runs).toHaveLength(3);
-    expect(runs.every((run) => run.model === "selected-hermes-model")).toBe(true);
+    expect(runs.every((run) => run.model === "default")).toBe(true);
     expect(hermesPreflightCalls).toHaveLength(3);
     expect(new Set(hermesPreflightCalls)).toEqual(new Set(runs.map((run) => run.id)));
-    expect(hermesCleanupCalls).toEqual([]);
     expect(db!.get<{ coordinator_run_id: string }>(
       "SELECT coordinator_run_id FROM planning_requests WHERE id=$requestId", { requestId },
     )?.coordinator_run_id).toBe(runs.find((run) => run.role === "coordinator")?.id);
@@ -249,7 +232,7 @@ describe("Coordinator planning background job", () => {
     for (const run of runs) {
       expect(db!.get<{ hermes_home: string }>(
         "SELECT hermes_home FROM run_process_owners WHERE run_id=$runId", { runId: run.id },
-      )?.hermes_home).toBe(join(root, "hermes-auth-root", "profiles", `ebb-orchestrator-run-${run.id}`));
+      )?.hermes_home).toBe(join(root, "configured-hermes"));
     }
   });
 
@@ -269,6 +252,49 @@ describe("Coordinator planning background job", () => {
       .toEqual({ status: "PLAN_PENDING_APPROVAL", coordinator_run_id: runId });
     expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM agent_runs")?.count).toBe(3);
     expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM agent_runs WHERE task_id IS NOT NULL OR epic_id IS NOT NULL")?.count).toBe(0);
+    expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM planning_plans")?.count).toBe(1);
+  });
+
+  it.each(["coordinator", "product_manager", "architect"] as const)("requeues adoption after startup recovery completes the same %s Run whose job already succeeded", async (interruptedRole) => {
+    const { requestId, registry, planning, runs } = await setup();
+    const originalExecute = runs.executePreparedRun.bind(runs);
+    const execute = vi.spyOn(runs, "executePreparedRun").mockImplementation(async (runId) => {
+      if (db!.get<{ role: string }>("SELECT role FROM agent_runs WHERE id=$id", { id: runId })?.role !== interruptedRole) {
+        return originalExecute(runId);
+      }
+      db!.run("UPDATE agent_runs SET status='IN_PROGRESS' WHERE id=$id", { id: runId });
+      throw new Error("interrupted runtime has not stopped");
+    });
+    vi.spyOn(runs, "failPreparedRun").mockReturnValue(false);
+    const runner = new JobRunner(db!, registry);
+    await runner.runOnce(new Date());
+    const coordinatorRunId = db!.get<{ coordinator_run_id: string }>(
+      "SELECT coordinator_run_id FROM planning_requests WHERE id=$requestId", { requestId },
+    )!.coordinator_run_id;
+    expect(db!.get<{ status: string }>("SELECT status FROM background_jobs")?.status).toBe("SUCCEEDED");
+
+    const interruptedRunId = db!.get<{ id: string }>("SELECT id FROM agent_runs WHERE role=$role", { role: interruptedRole })!.id;
+    // Same-Run recovery completed after workers consumed the startup planning job.
+    db!.transaction((tx) => transitionRunProcessOwnerTx(tx, {
+      runId: interruptedRunId, expectedState: "PREPARED", nextState: "STOPPED", evidence: "NEVER_LAUNCHED",
+    }));
+    db!.run("UPDATE agent_runs SET status='COMPLETED',ended_at=$now,output=$output WHERE id=$id", {
+      id: interruptedRunId, now: new Date().toISOString(), output: JSON.stringify(
+        interruptedRole === "product_manager" ? productManagerOutput() : interruptedRole === "architect" ? architectOutput() : epicOutput(),
+      ),
+    });
+    execute.mockRestore();
+    expect(planning.reconcileInterruptedRequests()).toBe(0);
+    expect(planning.reconcileInterruptedRequests()).toBe(0);
+    expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM background_jobs WHERE status='QUEUED'")?.count).toBe(1);
+    const completed = await runner.runOnce(new Date());
+    expect(completed).toMatchObject({ claimed: 1, succeeded: 1, failed: 0 });
+    expect(db!.get<{ status: string; coordinator_run_id: string }>(
+      "SELECT status,coordinator_run_id FROM planning_requests WHERE id=$requestId", { requestId },
+    )).toEqual({ status: "PLAN_PENDING_APPROVAL", coordinator_run_id: coordinatorRunId });
+    expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM agent_runs WHERE role='coordinator'")?.count).toBe(1);
+    expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM agent_runs WHERE role=$role", { role: interruptedRole })?.count).toBe(1);
+    expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM agent_runs")?.count).toBe(3);
     expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM planning_plans")?.count).toBe(1);
   });
 

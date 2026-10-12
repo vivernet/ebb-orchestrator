@@ -4,10 +4,10 @@
 
 import type { AgentRun } from "@ebb-orchestrator/contracts";
 import type { RunOutcome } from "./run-types.js";
-import type { HermesRunSelection, HermesRunSelectionPreflight } from "./hermes/hermes-run-selection.js";
+import type { HermesRuntimeSelection, HermesRunSelectionPreflight } from "./hermes/hermes-run-selection.js";
 
 /** AgentRun plus its non-persisted selection for this initial, already-preflighted launch. */
-export type AgentRuntimeRun = AgentRun & { readonly hermesSelection?: HermesRunSelection };
+export type AgentRuntimeRun = AgentRun & { readonly hermesSelection?: HermesRuntimeSelection };
 
 export interface AgentRuntime {
   /**
@@ -28,16 +28,13 @@ export interface AgentRuntime {
     */
   startRun(run: AgentRuntimeRun): Promise<void>;
 
-  /** Creates and verifies the exact native Hermes profile before a SQLite transaction begins. */
+  /** Проверяет установленный Hermes и возвращает selection до SQLite transaction без создания внешних ресурсов. */
   prepareHermesRunSelection?(runId: string): Promise<HermesRunSelectionPreflight>;
-
-  /** Removes only the terminal Run's exact Hermes profile after RunService cleanup gates pass. */
-  cleanupTerminalHermesProfile?(runId: string): Promise<void>;
 
   /**
    * Возобновление a run that was paused.
    */
-  resumeRun(runId: string, options: { sessionId: string; attempt: number }): Promise<void>;
+  resumeRun(runId: string, options: { sessionId: string; attempt: number; hermesSelection?: HermesRuntimeSelection }): Promise<void>;
 
   /**
    * Отмена an in-progress run.
@@ -61,7 +58,8 @@ export interface AgentRuntime {
     inputTokens: number;
     cachedInputTokens: number;
     outputTokens: number;
-    cost: number;
+    /** NULL означает, что runtime не сообщил стоимость; не подменяется оценкой или нулём. */
+    cost: number | null;
   }>;
 
   /**

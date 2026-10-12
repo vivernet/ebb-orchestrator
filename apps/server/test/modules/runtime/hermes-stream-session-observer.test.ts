@@ -16,6 +16,147 @@ function feedAll(observer: HermesStreamSessionObserver, input: string): ReturnTy
 }
 
 describe("Hermes live stream session observer", () => {
+  it("retains only numeric usage from a correlated terminal result across split chunks", () => {
+    const observer = new HermesStreamSessionObserver();
+    observer.push(initEvent("usage-session"));
+    const result = `${JSON.stringify({ type: "result", session_id: "usage-session",
+      tokens: { input: 123, output: 45, total: 168, cache_read: 10, cache_write: 2 },
+      text: "secret-answer", error: "secret-error", unrelated: { secret: "private-detail" } })}\n`;
+    feedAll(observer, result.slice(0, 52));
+    expect(observer.usage).toBeNull();
+    feedAll(observer, result.slice(52));
+    expect(observer.finish()).toEqual({ status: "captured" });
+    expect(observer.usage).toEqual({ inputTokens: 123, outputTokens: 45, cachedInputTokens: 10 });
+    expect(JSON.stringify(observer.usage)).not.toContain("secret");
+    expect(JSON.stringify(observer.usage)).not.toContain("private-detail");
+  });
+
+  it("counts only submit_result calls and error results without retaining event content", () => {
+    const observer = new HermesStreamSessionObserver();
+    const secretMarker = "never-retain-submit-payload";
+    observer.push(initEvent("counts-session"));
+    feedAll(observer, [
+      { type: "tool_use", name: "mcp__ebb_orchestrator__submit_result", input: { secret: secretMarker } },
+      { type: "tool_result", name: "mcp__ebb_orchestrator__submit_result", is_error: true, output: secretMarker },
+      { type: "tool_use", name: "submit_result", input: secretMarker },
+      { type: "tool_result", name: "submit_result", is_error: false, output: secretMarker },
+      { type: "tool_use", name: "submit_result_extra", input: secretMarker },
+      { type: "tool_result", name: "other_tool", is_error: true, output: secretMarker },
+    ].map((event) => JSON.stringify(event)).join("\n") + "\n");
+
+    expect(observer.submitResultCounts).toEqual({ toolUses: 2, calls: 2, errors: 1 });
+    expect(JSON.stringify(observer.submitResultCounts)).not.toContain(secretMarker);
+    expect(JSON.stringify(observer.submitResultCounts)).not.toContain("input");
+    expect(JSON.stringify(observer.submitResultCounts)).not.toContain("output");
+  });
+
+  it("counts only the fixed Ebb tool IDs and retains no event payload", () => {
+    const observer = new HermesStreamSessionObserver();
+    const secretMarker = "must-not-escape-stream-observer";
+    observer.push(initEvent("tool-summary-session"));
+    const events = [
+      ["workspace.read", true], ["workspace.patch", true], ["workspace.search", false], ["project.test", true],
+      ["git.add", false], ["git.commit", true], ["git.head", false], ["submit_result", true],
+    ].flatMap(([name, failed]) => [
+      { type: "tool_use", name: `mcp__ebb_orchestrator__${String(name).replaceAll(".", "_")}`, input: { secret: secretMarker } },
+      { type: "tool_result", name: `mcp__ebb_orchestrator__${String(name).replaceAll(".", "_")}`, is_error: failed, output: secretMarker },
+    ]);
+    events.push(
+      { type: "tool_use", name: "mcp__untrusted__secret_tool", input: { secret: secretMarker } },
+      { type: "tool_result", name: "mcp__untrusted__secret_tool", is_error: true, output: secretMarker },
+    );
+    feedAll(observer, `${events.map((event) => JSON.stringify(event)).join("\n")}\n`);
+
+    expect(observer.toolEventCountsSnapshot).toEqual({
+      "workspace.read": { uses: 1, results: 1, successes: 0, errors: 1, errorCategories: { INVALID_ARGUMENTS: 0, PERMISSION_DENIED: 0, NOT_AVAILABLE: 0, PROCESS_FAILURE: 0, OTHER: 1 } },
+      "workspace.patch": { uses: 1, results: 1, successes: 0, errors: 1, errorCategories: { INVALID_ARGUMENTS: 0, PERMISSION_DENIED: 0, NOT_AVAILABLE: 0, PROCESS_FAILURE: 0, OTHER: 1 } },
+      "workspace.search": { uses: 1, results: 1, successes: 1, errors: 0, errorCategories: { INVALID_ARGUMENTS: 0, PERMISSION_DENIED: 0, NOT_AVAILABLE: 0, PROCESS_FAILURE: 0, OTHER: 0 } },
+      "project.test": { uses: 1, results: 1, successes: 0, errors: 1, errorCategories: { INVALID_ARGUMENTS: 0, PERMISSION_DENIED: 0, NOT_AVAILABLE: 0, PROCESS_FAILURE: 0, OTHER: 1 } },
+      "git.add": { uses: 1, results: 1, successes: 1, errors: 0, errorCategories: { INVALID_ARGUMENTS: 0, PERMISSION_DENIED: 0, NOT_AVAILABLE: 0, PROCESS_FAILURE: 0, OTHER: 0 } },
+      "git.commit": { uses: 1, results: 1, successes: 0, errors: 1, errorCategories: { INVALID_ARGUMENTS: 0, PERMISSION_DENIED: 0, NOT_AVAILABLE: 0, PROCESS_FAILURE: 0, OTHER: 1 } },
+      "git.head": { uses: 1, results: 1, successes: 1, errors: 0, errorCategories: { INVALID_ARGUMENTS: 0, PERMISSION_DENIED: 0, NOT_AVAILABLE: 0, PROCESS_FAILURE: 0, OTHER: 0 } },
+      submit_result: { uses: 1, results: 1, successes: 0, errors: 1, errorCategories: { INVALID_ARGUMENTS: 0, PERMISSION_DENIED: 0, NOT_AVAILABLE: 0, PROCESS_FAILURE: 0, OTHER: 1 } },
+    });
+    expect(JSON.stringify(observer.toolEventCountsSnapshot)).not.toContain(secretMarker);
+    expect(JSON.stringify(observer.toolEventCountsSnapshot)).not.toContain("untrusted");
+  });
+
+  it("classifies allowlisted tool errors into fixed categories without retaining their output", () => {
+    const observer = new HermesStreamSessionObserver();
+    const secretMarker = "private-error-detail-must-not-escape";
+    observer.push(initEvent("error-category-session"));
+    const tool = "mcp__ebb_orchestrator__workspace_patch";
+    const outputs = [
+      [true, { error: `INVALID_TOOL_ARGS: ${secretMarker}` }],
+      [true, { output: JSON.stringify({ content: [{ type: "text", text: JSON.stringify({ error: `schema validation failed: ${secretMarker}` }) }] }) }],
+      [true, { error: `CAPABILITY_REVOKED: ${secretMarker}` }],
+      [true, { error: `git not available: ${secretMarker}` }],
+      [true, { error: `PROCESS_FAILURE: command exited with code 7: ${secretMarker}` }],
+      [true, { error: secretMarker }],
+      [false, { error: `PERMISSION_DENIED: ${secretMarker}` }],
+    ] as const;
+    feedAll(observer, `${outputs.map(([isError, output]) => JSON.stringify({
+      type: "tool_result", name: tool, is_error: isError, output,
+    })).join("\n")}\n${JSON.stringify({
+      type: "tool_result", name: "mcp__untrusted__secret_tool", is_error: true,
+      output: { error: `PERMISSION_DENIED: ${secretMarker}` },
+    })}\n`);
+
+    expect(observer.toolEventCountsSnapshot["workspace.patch"]).toMatchObject({
+      errors: 6,
+      errorCategories: {
+        INVALID_ARGUMENTS: 2,
+        PERMISSION_DENIED: 1,
+        NOT_AVAILABLE: 1,
+        PROCESS_FAILURE: 1,
+        OTHER: 1,
+      },
+    });
+    expect(JSON.stringify(observer.toolEventCountsSnapshot)).not.toContain(secretMarker);
+    expect(JSON.stringify(observer.toolEventCountsSnapshot)).not.toContain("CAPABILITY_REVOKED");
+  });
+
+  it("does not count tool_use as a successful result when no tool_result arrives", () => {
+    const observer = new HermesStreamSessionObserver();
+    observer.push(initEvent("missing-tool-result-session"));
+    feedAll(observer, `${JSON.stringify({ type: "tool_use", name: "mcp__ebb_orchestrator__project_test", input: {} })}\n`);
+
+    expect(observer.toolEventCountsSnapshot["project.test"]).toMatchObject({
+      uses: 1,
+      results: 0,
+      successes: 0,
+      errors: 0,
+    });
+  });
+
+  it.each([
+    { session_id: "another-session", tokens: { input: 1, output: 2, total: 3, cache_read: 0, cache_write: 0 } },
+    { session_id: "usage-session" },
+    { session_id: "usage-session", tokens: { input: -1, output: 2, total: 1, cache_read: 0, cache_write: 0 } },
+    { session_id: "usage-session", tokens: { input: "1", output: 2, total: 3, cache_read: 0, cache_write: 0 } },
+    { session_id: "usage-session", tokens: { input: 1, output: 2, total: 3, cache_read: 0.5, cache_write: 0 } },
+    { session_id: "usage-session", tokens: { input: 1, output: 2, total: 3, cache_read: 0, cache_write: Number.MAX_SAFE_INTEGER + 1 } },
+  ])("leaves malformed or uncorrelated result usage unavailable: %j", (result) => {
+    const observer = new HermesStreamSessionObserver();
+    observer.push(initEvent("usage-session"));
+    feedAll(observer, `${JSON.stringify({ type: "result", ...result })}\n`);
+    expect(observer.finish()).toEqual({ status: "captured" });
+    expect(observer.usage).toBeNull();
+  });
+
+  it("discards usage after duplicate result or protocol invalidation", () => {
+    const observer = new HermesStreamSessionObserver();
+    observer.push(initEvent("usage-session"));
+    const result = `${JSON.stringify({ type: "result", session_id: "usage-session",
+      tokens: { input: 1, output: 2, total: 3, cache_read: 0, cache_write: 0 } })}\n`;
+    feedAll(observer, result);
+    expect(observer.usage).not.toBeNull();
+    feedAll(observer, result);
+    expect(observer.usage).toBeNull();
+    observer.push(initEvent("usage-session"));
+    expect(observer.usage).toBeNull();
+  });
+
   it("incrementally accepts one init event when a multibyte UTF-8 character is split across chunks", () => {
     const observer = new HermesStreamSessionObserver();
     const bytes = initEvent("session_abc", { label: "café" });

@@ -485,10 +485,92 @@ getEligibility(taskId: string, scope?: { projectId: string }): Eligibility {
       if (budget && budget.spent_cost + budget.reserved_cost + estimate > budget.limit_cost) throw new Error(`Run ${runId} is not schedulable: WAITING_FOR_BUDGET`);
       if (budget) tx.run("UPDATE scheduler_budgets SET reserved_cost=reserved_cost+$estimate WHERE project_id=$projectId", { projectId, estimate });
       const now = new Date().toISOString();
-      tx.run("INSERT INTO scheduler_reservations(id,kind,subject_id,project_id,owner_id,reserved_at,estimate_cost,status,role,model,run_id) VALUES($id,'PHASE',$runId,$projectId,$ownerId,$at,$estimate,'RESERVED',$role,$model,$runId)", { id: crypto.randomUUID(), runId, projectId, ownerId: `run:${runId}`, at: now, estimate, role, model });
+      tx.run("INSERT INTO scheduler_reservations(id,kind,subject_id,project_id,owner_id,reserved_at,estimate_cost,status,role,model,approval_id,run_id) VALUES($id,'PHASE',$runId,$projectId,$ownerId,$at,$estimate,'RESERVED',$role,$model,$approvalId,$runId)", { id: crypto.randomUUID(), runId, projectId, ownerId: `run:${runId}`, at: now, estimate, role, model, approvalId: options.approvalId ?? null });
       const reservation = tx.get<{ id: string }>("SELECT id FROM scheduler_reservations WHERE subject_id=$runId", { runId })!;
       tx.run("INSERT INTO scheduler_resource_locks(resource_key,reservation_id,project_id,owner_id,locked_at) VALUES($resourceKey,$reservationId,$projectId,$ownerId,$at)", { resourceKey, reservationId: reservation.id, projectId, ownerId: `run:${runId}`, at: now });
     });
+  }
+
+  /**
+   * Читает минимальную identity исходной активной reservation внутри recovery tx.
+   * Отсутствие либо неоднозначность возвращают undefined; результат не заменяет
+   * повторную проверку gates и точной записи перед generation/attempt CAS.
+   */
+  getRunRecoveryReservationInTransaction(tx: DatabaseTx, runId: string): { reservationId: string; projectId: string; role: string } | undefined {
+    const rows = tx.all<{ id: string; project_id: string; role: string }>(
+      "SELECT id,project_id,role FROM scheduler_reservations WHERE run_id=$runId AND status='RESERVED' AND kind <> 'LOCK'", { runId });
+    const row = rows.length === 1 ? rows[0] : undefined;
+    return row ? { reservationId: row.id, projectId: row.project_id, role: row.role } : undefined;
+  }
+
+  /**
+   * Повторно проверяет gates для исходной reservation восстанавливаемого Run.
+   * Вызывается после READY внутри той же транзакции, где RunService выполняет
+   * эксклюзивный generation/attempt CAS; сам метод не создаёт claim или runtime.
+   * Существующий слот и estimate учитываются ровно один раз. Reservation, locks
+   * и reserved cost сохраняются; отсутствующие или дрейфующие записи fail closed.
+   * Approval читается только из durable association; caller не может заменить его.
+   * Provider/model конфигурация Hermes не является gate и не считывается.
+   *
+   * @returns Идентификатор точной проверенной reservation для атомарного CAS.
+   * @throws {Error} Если identity, ownership или текущая eligibility не подтверждены.
+   */
+  claimRunRecoveryInTransaction(tx: DatabaseTx, input: {
+    runId: string; reservationId: string; projectId: string; role: string;
+  }): string {
+    const reservation = tx.get<{
+      id: string; kind: string; subject_id: string; project_id: string;
+      owner_id: string; role: string; approval_id: string | null;
+    }>("SELECT id,kind,subject_id,project_id,owner_id,role,approval_id FROM scheduler_reservations WHERE id=$id AND run_id=$runId AND status='RESERVED'", { id: input.reservationId, runId: input.runId });
+    if (!reservation || reservation.project_id !== input.projectId || reservation.role.toLowerCase() !== input.role.toLowerCase()
+      || !["TASK", "PHASE"].includes(reservation.kind)
+      || reservation.owner_id !== (reservation.kind === "TASK" ? `task:${reservation.subject_id}` : `run:${input.runId}`)
+      || (reservation.kind === "PHASE" && reservation.subject_id !== input.runId)) {
+      throw new Error("RECOVERY_RESERVATION_MISMATCH");
+    }
+    if (this.countTx(tx, "status='RESERVED' AND run_id=$runId", { runId: input.runId }) !== 1) throw new Error("RECOVERY_RESERVATION_MISMATCH");
+    assertProjectDispatchableTx(tx, reservation.project_id);
+    const locks = tx.all<{ resource_key: string; project_id: string; owner_id: string }>(
+      "SELECT resource_key,project_id,owner_id FROM scheduler_resource_locks WHERE reservation_id=$id", { id: reservation.id });
+    if (locks.length === 0 || locks.some((lock) => lock.project_id !== reservation.project_id || lock.owner_id !== reservation.owner_id)
+      || (reservation.kind === "TASK" && !locks.some((lock) => lock.resource_key === `task:${reservation.subject_id}`))) {
+      throw new Error("RECOVERY_RESOURCE_LOCK_MISMATCH");
+    }
+    if (tx.get("SELECT 1 FROM scheduler_resource_locks WHERE resource_key='global' AND reservation_id<>$id", { id: reservation.id })) {
+      throw new Error("WAITING_FOR_RESOURCE_LOCK");
+    }
+    if (reservation.kind === "TASK") {
+      const task = tx.get<TaskRow>("SELECT id,project_id,epic_id,status,contract_json,created_at FROM tasks WHERE id=$id", { id: reservation.subject_id });
+      if (!task || task.project_id !== reservation.project_id) throw new Error("RECOVERY_RESERVATION_MISMATCH");
+      if (task.status === "PAUSED") throw new Error("WAITING_FOR_PAUSE");
+      if (task.status === "WAITING_FOR_DEPENDENCY" || task.status === "WAITING_FOR_APPROVAL") throw new Error(task.status);
+      if (!["READY", "DEVELOPMENT", "REVIEW", "QA", "INTEGRATION", "MERGING"].includes(task.status)) throw new Error("BLOCKED_BY_WORKFLOW");
+      const candidate = this.toSchedulableTask(task, tx);
+      if (candidate.dependsOnTaskIds.some((id) => {
+        const dependency = tx.get<{ status: string }>("SELECT status FROM tasks WHERE id=$id", { id });
+        return dependency !== undefined && !isTerminalStatus(dependency.status);
+      })) throw new Error("WAITING_FOR_DEPENDENCY");
+    }
+    if (this.hasPendingApprovalTx(tx, reservation.subject_id)) throw new Error("WAITING_FOR_APPROVAL");
+    const approvalId = reservation.approval_id;
+    if (approvalId !== null) {
+      const approval = tx.get<{ type: string; subject_id: string; subject_type: string; status: string }>("SELECT type,subject_id,subject_type,status FROM approvals WHERE id=$id", { id: approvalId });
+      const validSubject = reservation.kind === "TASK"
+        ? approval?.subject_id === reservation.subject_id && approval.subject_type === "TASK" && approval.type === "FINAL_MERGE"
+        : (approval?.subject_id === input.runId || (approval?.subject_id === reservation.project_id && approval.subject_type === "PROJECT"));
+      if (!approval || approval.status !== "APPROVED" || !validSubject) throw new Error("WAITING_FOR_APPROVAL");
+    }
+    const limits = this.getLimits(reservation.project_id);
+    if (this.countTx(tx, "status='RESERVED' AND kind <> 'LOCK'") > limits.globalMax
+      || this.countTx(tx, "status='RESERVED' AND kind <> 'LOCK' AND project_id=$projectId", { projectId: reservation.project_id }) > limits.projectMax) {
+      throw new Error("WAITING_FOR_CAPACITY");
+    }
+    if (this.countTx(tx, "status='RESERVED' AND kind <> 'LOCK' AND lower(role)=lower($role)", { role: reservation.role }) > this.getRoleCapacity(reservation.role)) {
+      throw new Error("WAITING_FOR_ROLE_CAPACITY");
+    }
+    const budget = tx.get<{ limit_cost: number; spent_cost: number; reserved_cost: number }>("SELECT limit_cost,spent_cost,reserved_cost FROM scheduler_budgets WHERE project_id=$projectId", { projectId: reservation.project_id });
+    if (budget && budget.spent_cost + budget.reserved_cost > budget.limit_cost) throw new Error("WAITING_FOR_BUDGET");
+    return reservation.id;
   }
 
   /** Сводит phase reservation с конкретным AgentRun. */

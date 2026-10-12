@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createHash } from "node:crypto";
 import { PassThrough, Writable } from "node:stream";
 import { ExitCodeError, ProcessExecutor, type ProcessOptions, type ProcessResult, type ProcessSession, type ProcessSessionOptions } from "../../../src/platform/process/process-executor.js";
 import { WindowsJobSupervisor } from "../../../src/platform/process/windows-job-supervisor.js";
+import { HermesStreamSessionObserver } from "../../../src/modules/runtime/hermes/hermes-stream-session-observer.js";
 import { createHermesLaunchTicket } from "../../../src/modules/runtime/hermes/hermes-launch-ticket.js";
+import { HERMES_PROVIDER_SELECTION_SOURCE } from "../../../src/modules/runtime/hermes/hermes-source-identity.js";
 import { safeRestartChildFailureCode } from "../../helpers/restart-child-diagnostics.js";
 import type { ProcessScopeIdentity } from "../../../src/platform/process/process-inspector.js";
 import type { ProcessScopeLaunchRequest } from "../../../src/platform/process/run-scope-supervisor.js";
@@ -152,6 +153,10 @@ const request: ProcessScopeLaunchRequest = {
     PATH: "C:\\Windows\\System32",
     SYSTEMROOT: "C:\\Windows",
     HERMES_HOME: "C:\\ebb\\hermes-home",
+    USERPROFILE: "C:\\Users\\test",
+    LOCALAPPDATA: "C:\\Users\\test\\AppData\\Local",
+    HERMES_DATA_DIR_SUFFIX: "-custom",
+    HERMES_RUNTIME_DIR: "C:\\Users\\test\\hermes-runtime",
   },
   timeoutMs: 10_000,
 };
@@ -171,17 +176,28 @@ describe("WindowsJobSupervisor", () => {
     vi.restoreAllMocks();
   });
 
-  it("rejects credential-shaped child environment before starting the native helper", async () => {
+  it("rejects malformed child environment names before starting the native helper", async () => {
     Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
     const executor = new FakeExecutor();
     const supervisor = new WindowsJobSupervisor(executor, "native-helper.exe", createTestHelperInvocation);
     const unsafeRequest = {
       ...request,
-      environment: { ...request.environment, AWS_SECRET_ACCESS_KEY: "must-not-be-forwarded" },
+      environment: { ...request.environment, "=C:": "pseudo-variable" },
     };
 
     await expect(supervisor.launch(owner, unsafeRequest, async () => undefined))
       .rejects.toThrow("PROCESS_SCOPE_ENVIRONMENT_REJECTED");
+    expect(executor.startSession).not.toHaveBeenCalled();
+  });
+
+  it("rejects provider-key overlays before serializing the Hermes child frame", async () => {
+    Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+    const executor = new FakeExecutor();
+    const supervisor = new WindowsJobSupervisor(executor, "native-helper.exe", createTestHelperInvocation);
+    await expect(supervisor.launch(owner, {
+      ...request,
+      environment: { ...request.environment, OPENAI_API_KEY: "dummy-provider-env-sentinel" },
+    }, async () => undefined)).rejects.toThrow("PROCESS_SCOPE_ENVIRONMENT_REJECTED");
     expect(executor.startSession).not.toHaveBeenCalled();
   });
 
@@ -222,6 +238,7 @@ describe("WindowsJobSupervisor", () => {
     await supervisor.launch(owner, request, async () => undefined);
 
     expect(executor.writes).toHaveLength(2);
+    expect(executor.writes[0]?.readUInt32BE(0)).toBe(0x45424233);
     expect(executor.writes[1]).toEqual(Buffer.from(`EBBACK01${owner.launchNonce}`, "ascii"));
     expect(Buffer.concat(executor.writes).toString("utf8")).not.toContain("EBB_HERMES_PROVIDER_API_KEY");
   });
@@ -242,61 +259,31 @@ describe("WindowsJobSupervisor", () => {
     expect(executor.writes[1]).toEqual(Buffer.from(`EBBACK01${owner.launchNonce}`, "ascii"));
   });
 
-  it("serializes the Run-bound EBB3 profile identity chain before source snapshot metadata", async () => {
+  it("serializes direct Hermes identity and allowlisted OS environment in the child frame", async () => {
     Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
     const runId = "123e4567-e89b-42d3-a456-426614174000";
-    const profileHome = `C:\\ebb\\profiles\\ebb-orchestrator-run-${runId}`;
+    const hermesHome = "C:\\ebb\\hermes";
     const objectIdentity = (fileId: string) => ({
       platform: "win32" as const,
       volumeSerial: "0123456789abcdef",
       fileId,
     });
-    const sourceSnapshotKey = JSON.stringify({
-      formatVersion: 1,
-      hermesVersion: "v0.21.5+9117.g08165d5",
-      manifestDigest: "c".repeat(64),
-      materializationPolicyVersion: 2,
-      sourceCommit: "b".repeat(40),
-      sourceTree: "d".repeat(40),
-    });
-    const sourceSnapshotId = createHash("sha256").update(sourceSnapshotKey).digest("hex");
-    const argsPrefix = ["-I", "-B", "-S", "-c", "snapshot-bootstrap"];
+    const argsPrefix = ["-I", "-B", "-c", "installed-hermes-bootstrap"];
     const launchTicket = createHermesLaunchTicket({
       runId,
       attempt: 0,
       platform: "win32",
       hermesExecutablePath: "C:\\ebb\\bin\\hermes.exe",
       hermesExecutableIdentity: objectIdentity("1".repeat(32)),
+      sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit,
       executablePath: "C:\\ebb\\runtime\\python.exe",
       executableIdentity: objectIdentity("2".repeat(32)),
       executableArgsPrefix: argsPrefix,
-      profileHome,
-      profileHomeIdentity: objectIdentity("4".repeat(32)),
-      profileHomeTargetIdentities: {
-        home: objectIdentity("6".repeat(32)),
-        config: objectIdentity("7".repeat(32)),
-      },
-      profileHomePathChain: {
-        version: 1,
-        authRootIndex: 1,
-        components: [
-          { volumeSerial: "0123456789abcdef", fileId: "0".repeat(32) },
-          { volumeSerial: "0123456789abcdef", fileId: "1".repeat(32) },
-          { volumeSerial: "0123456789abcdef", fileId: "2".repeat(32) },
-          { volumeSerial: "0123456789abcdef", fileId: "4".repeat(32) },
-        ],
-      },
-      hermesSourceSnapshotKey: sourceSnapshotKey,
-      hermesSourceSnapshotRoot: `C:\\ebb\\source-snapshots\\${sourceSnapshotId}`,
-      hermesSourceSnapshotRootIdentity: objectIdentity("5".repeat(32)),
-      hermesSourceManifestDigest: "c".repeat(64),
-      hermesSourceProjectionPath: `C:\\ebb\\source-snapshots\\${sourceSnapshotId}.native-v1.bin`,
-      hermesSourceProjectionSha256: "f".repeat(64),
-      hermesSourceProjectionSize: 256,
+      hermesHome,
       environment: {
-        HERMES_HOME: profileHome,
-        HOME: `${profileHome}\\home`,
-        HERMES_CONFIG: `${profileHome}\\config.yaml`,
+        HERMES_HOME: hermesHome,
+        HOME: "C:\\Users\\test",
+        HERMES_CONFIG: `${hermesHome}\\config.yaml`,
       },
     });
     const executor = new HandshakeExecutor();
@@ -308,9 +295,12 @@ describe("WindowsJobSupervisor", () => {
       executable: "C:\\ebb\\runtime\\python.exe",
       args: [...argsPrefix, "chat"],
       environment: {
-        HERMES_HOME: profileHome,
-        HOME: `${profileHome}\\home`,
-        HERMES_CONFIG: `${profileHome}\\config.yaml`,
+        HERMES_HOME: hermesHome,
+        HOME: "C:\\Users\\test",
+        HERMES_CONFIG: `${hermesHome}\\config.yaml`,
+        SYSTEMROOT: "C:\\Windows",
+        TEMP: "C:\\Users\\test\\AppData\\Local\\Temp",
+        PATH: "C:\\Windows\\System32",
       },
       hermesLaunchTicket: launchTicket,
     }, async () => undefined);
@@ -320,8 +310,7 @@ describe("WindowsJobSupervisor", () => {
     const readU32 = () => { const value = frame.readUInt32BE(offset); offset += 4; return value; };
     const readString = () => { const length = readU32(); const value = frame.toString("utf8", offset, offset + length); offset += length; return value; };
     const skipIdentity = () => { readString(); readString(); };
-    const readIdentity = () => [readString(), readString()];
-    expect(readU32()).toBe(0x45424233);
+    expect(readU32()).toBe(0x45424236);
     const declaredFrameLength = readU32();
     expect(declaredFrameLength).toBe(frame.length);
     const argCount = readU32();
@@ -329,31 +318,19 @@ describe("WindowsJobSupervisor", () => {
     readString();
     readString();
     for (let index = 0; index < argCount; index += 1) readString();
-    for (let index = 0; index < environmentCount; index += 1) { readString(); readString(); }
+    const childEnvironment = new Map<string, string>();
+    for (let index = 0; index < environmentCount; index += 1) childEnvironment.set(readString(), readString());
+    expect(childEnvironment.get("SYSTEMROOT")).toBe("C:\\Windows");
+    expect(childEnvironment.get("TEMP")).toBe("C:\\Users\\test\\AppData\\Local\\Temp");
+    expect(childEnvironment.get("PATH")).toBe("C:\\Windows\\System32");
     expect(readU32()).toBe(1);
-    expect(readString()).toBe(profileHome);
-    readString();
+    expect(readString()).toBe("C:\\ebb\\bin\\hermes.exe");
     skipIdentity();
     skipIdentity();
-    skipIdentity();
-    expect(readIdentity()).toEqual(["0123456789abcdef", "6".repeat(32)]);
-    expect(readIdentity()).toEqual(["0123456789abcdef", "7".repeat(32)]);
     expect(readString()).toBe(runId);
-    expect(readU32()).toBe(1);
-    expect(readU32()).toBe(1);
-    expect(readU32()).toBe(4);
-    for (const component of ["0", "1", "2", "4"]) {
-      expect(readString()).toBe("0123456789abcdef");
-      expect(readString()).toBe(component.repeat(32));
-    }
-    expect(readString()).toBe(sourceSnapshotKey);
-    readString();
-    skipIdentity();
-    readString();
-    readString();
-    readString();
-    readU32();
     expect(offset).toBe(frame.length);
+    expect(JSON.stringify(owner)).not.toContain("OPENAI_API_KEY");
+    expect(Buffer.concat(executor.writes.slice(1)).toString("utf8")).not.toContain("OPENAI_API_KEY");
   });
 
   it("fails immediately on a native UNKNOWN frame before the launch handshake", async () => {
@@ -755,21 +732,77 @@ describe("WindowsJobSupervisor", () => {
   it("forwards only child payload bytes after both helper handshakes and the launch ACK", async () => {
     Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
     const payload = '{"type":"system","subtype":"init","session_id":"session-1"}\n';
-    const executor = new HandshakeExecutor(payload);
+    const executor = new HandshakeExecutor(payload, true, undefined, "pre-ack-diagnostic\n");
     const supervisor = new WindowsJobSupervisor(executor, "native-helper.exe", createTestHelperInvocation);
-    const chunks: string[] = [];
+    const stdoutChunks: string[] = [];
+    const stderrChunks: string[] = [];
 
     const handle = await supervisor.launch(owner, {
       ...request,
       captureOutput: false,
-      onStdoutChunk: async (chunk) => { chunks.push(Buffer.from(chunk).toString("utf8")); },
+      onStdoutChunk: async (chunk) => { stdoutChunks.push(Buffer.from(chunk).toString("utf8")); },
+      onStderrChunk: (chunk) => { stderrChunks.push(Buffer.from(chunk).toString("utf8")); },
     }, async () => undefined);
+    (executor.session?.stderr as PassThrough | undefined)?.write("hermes-refusal-reason: SESSION_NOT_OWNED\n");
     const result = await handle.completion;
 
-    expect(chunks.join("")).toBe(payload);
-    expect(chunks.join("")).not.toContain("EBB_HELPER_READY");
-    expect(chunks.join("")).not.toContain("EBB_SCOPE_READY");
+    expect(stdoutChunks.join("")).toBe(payload);
+    expect(stderrChunks.join("")).toBe("hermes-refusal-reason: SESSION_NOT_OWNED\n");
+    expect(stderrChunks.join("")).not.toContain("pre-ack-diagnostic");
     expect(result.stdout).toBe("");
+  });
+
+  it.each([false, true])("reports a post-ACK native refusal separately from Hermes JSON (fragmented=%s)", async (fragmented) => {
+    Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+    const executor = new HandshakeExecutor("", false);
+    const supervisor = new WindowsJobSupervisor(executor, "native-helper.exe", createTestHelperInvocation);
+    const stop = vi.spyOn(supervisor, "stop");
+    const observer = new HermesStreamSessionObserver();
+    const handle = await supervisor.launch(owner, {
+      ...request,
+      onStdoutChunk: async (chunk) => {
+        const update = observer.push(chunk);
+        if (update.status === "invalid") throw new Error(update.reason);
+      },
+    }, async () => undefined);
+    const payload = '{"type":"system","subtype":"init","session_id":"session-native-refusal"}\nUNKNOWN\tJOB_ACCOUNTING_UNAVAILABLE\n';
+    for (const chunk of fragmented ? [...payload] : [payload]) executor.writeStdout(chunk);
+    executor.complete();
+
+    await expect(handle.completion).rejects.toThrow("WINDOWS_HELPER_NATIVE_UNKNOWN:JOB_ACCOUNTING_UNAVAILABLE");
+    expect(observer.finish()).toEqual({ status: "captured" });
+    expect(stop).toHaveBeenCalledWith(expect.objectContaining({ launchNonce: owner.launchNonce, supervisorPid: 41 }));
+  });
+
+  it("preserves malformed Hermes stdout as a callback failure after ACK", async () => {
+    Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+    const executor = new HandshakeExecutor("", false);
+    const supervisor = new WindowsJobSupervisor(executor, "native-helper.exe", createTestHelperInvocation);
+    const observer = new HermesStreamSessionObserver();
+    const handle = await supervisor.launch(owner, {
+      ...request,
+      onStdoutChunk: async (chunk) => {
+        const update = observer.push(chunk);
+        if (update.status === "invalid") throw new Error(update.reason);
+      },
+    }, async () => undefined);
+    executor.writeStdout('{"type":"system","subtype":"init","session_id":"session-malformed"}\nUNKNOWN\tPRIVATE_UNRECOGNIZED_VALUE\n');
+    executor.complete();
+
+    await expect(handle.completion).rejects.toThrow("WINDOWS_HELPER_PAYLOAD_CALLBACK_FAILED");
+    expect(observer.finish()).toEqual({ status: "invalid", reason: "MALFORMED_JSON" });
+  });
+
+  it("requires STOPPED proof before returning a post-ACK native refusal", async () => {
+    Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+    const executor = new HandshakeExecutor("", false);
+    const supervisor = new WindowsJobSupervisor(executor, "native-helper.exe", createTestHelperInvocation);
+    vi.spyOn(supervisor, "stop").mockResolvedValue({ state: "UNKNOWN", reason: "STOP_NOT_PROVEN" });
+    const handle = await supervisor.launch(owner, request, async () => undefined);
+    executor.writeStdout("UNKNOWN\tJOB_ACCOUNTING_UNAVAILABLE\n");
+    executor.complete();
+
+    await expect(handle.completion).rejects.toThrow("WINDOWS_PROCESS_SCOPE_STOP_UNPROVEN");
   });
 
   it("rejects and stops the exact Job when stdout errors after a successful init callback", async () => {
@@ -911,7 +944,8 @@ describe("WindowsJobSupervisor", () => {
     ["abort before spawn", new Error("Process aborted before spawn"), "WINDOWS_JOB_INSPECTION_PROCESS_ABORTED"],
     ["runtime abort", Object.assign(new Error("private abort detail"), { name: "AbortError" }), "WINDOWS_JOB_INSPECTION_PROCESS_ABORTED"],
     ["nonzero helper process", new ExitCodeError("C:\\private\\native-helper.exe secret-argument", 126, "private stdout", "OPENAI_API_KEY=secret"), "WINDOWS_JOB_INSPECTION_PROCESS_EXIT_NONZERO"],
-    ["known native gate phase", new ExitCodeError("private command", 126, "", "NATIVE_HELPER_GATE_FAIL:parent-directory-open-index-1-win32-5:InvalidOperationException\r\nC:\\private\\OPENAI_API_KEY=secret"), "WINDOWS_JOB_INSPECTION_HELPER_PATH_GATE_FAILED"],
+    ["path normalization gate phase", new ExitCodeError("private command", 126, "", "NATIVE_HELPER_GATE_FAIL:path-normalization:InvalidOperationException\r\nC:\\private\\OPENAI_API_KEY=secret"), "WINDOWS_JOB_INSPECTION_HELPER_PATH_GATE_FAILED"],
+    ["removed parent directory gate phase", new ExitCodeError("private command", 126, "", "NATIVE_HELPER_GATE_FAIL:parent-directory-open-index-1-win32-5:InvalidOperationException\r\nC:\\private\\OPENAI_API_KEY=secret"), "WINDOWS_JOB_INSPECTION_PROCESS_EXIT_NONZERO"],
     ["argument gate phase", new ExitCodeError("private command", 126, "", "NATIVE_HELPER_GATE_FAIL:argument-validation:InvalidOperationException\nC:\\private\\OPENAI_API_KEY=secret"), "WINDOWS_JOB_INSPECTION_HELPER_ARGUMENT_GATE_FAILED"],
     ["helper-file gate phase", new ExitCodeError("private command", 126, "", "NATIVE_HELPER_GATE_FAIL:helper-file-lock:UnauthorizedAccessException\nC:\\private\\OPENAI_API_KEY=secret"), "WINDOWS_JOB_INSPECTION_HELPER_FILE_GATE_FAILED"],
     ["integrity gate phase", new ExitCodeError("private command", 126, "", "NATIVE_HELPER_GATE_FAIL:integrity-check:CryptographicException\nC:\\private\\OPENAI_API_KEY=secret"), "WINDOWS_JOB_INSPECTION_HELPER_INTEGRITY_GATE_FAILED"],

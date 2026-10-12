@@ -4,11 +4,22 @@ import type { RoleOutput } from "../../../src/modules/runtime/output-validator.j
 
 describe("validateRoleOutput", () => {
   describe("Developer output validation", () => {
-    it("accepts valid COMPLETED outcome", () => {
+    it("rejects COMPLETED without the commit SHA required by Plan04 acceptance", () => {
       const value: RoleOutput = {
         version: "1.0.0",
         outcome: "COMPLETED",
         summary: "Feature implemented",
+      };
+      const result = validateRoleOutput("developer", value);
+      expect(result.valid).toBe(false);
+    });
+
+    it("accepts COMPLETED with a nonblank commit SHA", () => {
+      const value: RoleOutput = {
+        version: "1.0.0",
+        outcome: "COMPLETED",
+        summary: "Feature implemented",
+        commitSha: "abc123",
       };
       const result = validateRoleOutput("developer", value);
       expect(result.valid).toBe(true);
@@ -23,6 +34,16 @@ describe("validateRoleOutput", () => {
         findings: [{ type: "BLOCKING", description: "Missing API key" }],
       };
       const result = validateRoleOutput("developer", value);
+      expect(result.valid).toBe(true);
+      expect(result.outcome).toBe("BLOCKED");
+    });
+
+    it("allows BLOCKED without a commit SHA", () => {
+      const result = validateRoleOutput("developer", {
+        version: "1.0.0",
+        outcome: "BLOCKED",
+        summary: "Waiting on dependency",
+      });
       expect(result.valid).toBe(true);
       expect(result.outcome).toBe("BLOCKED");
     });

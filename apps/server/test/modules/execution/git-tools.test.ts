@@ -100,9 +100,28 @@ describe('GitTools', () => {
 
     it('should fail for non-existent workspace', async () => {
       const gitTools = new GitTools('/nonexistent/path');
-      const result = await gitTools.commit('Test');
-      // Сообщение об ошибке должно указывать на проблему.
-      expect(result?.length).toBeGreaterThan(0);
+      await expect(gitTools.commit('Test')).rejects.toThrow();
+    });
+  });
+
+  describe('Plan04 Developer stage and HEAD evidence', () => {
+    it('stages explicit workspace files and returns the exact full HEAD object ID after commit', async () => {
+      const gitTools = new GitTools(workspaceDir);
+      await gitTools.initRepo();
+      fs.writeFileSync(path.join(workspaceDir, 'health.ts'), 'export const health = true;');
+
+      await expect(gitTools.add(['health.ts'])).resolves.toBe('');
+      await gitTools.commit('Add health route');
+
+      await expect(gitTools.headSha()).resolves.toMatch(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu);
+    });
+
+    it('rejects traversal and absolute paths before staging', async () => {
+      const gitTools = new GitTools(workspaceDir);
+      await gitTools.initRepo();
+
+      await expect(gitTools.add(['../outside.txt'])).rejects.toThrow('Invalid Git add paths');
+      await expect(gitTools.add([path.join(workspaceDir, 'outside.txt')])).rejects.toThrow('Invalid Git add paths');
     });
   });
 

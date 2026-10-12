@@ -16,7 +16,9 @@ export type ToolId =
   | 'workspace.patch'
   | 'git.status'
   | 'git.diff'
+  | 'git.add'
   | 'git.commit'
+  | 'git.head'
   | 'project.test'
   | 'project.lint'
   | 'project.typecheck'
@@ -26,7 +28,7 @@ export type ToolId =
 
 export const SUPPORTED_TOOL_IDS = [
   'workspace.read', 'workspace.search', 'workspace.patch',
-  'git.status', 'git.diff', 'git.commit',
+  'git.status', 'git.diff', 'git.add', 'git.commit', 'git.head',
   'project.test', 'project.lint', 'project.typecheck', 'project.build',
   'command.exec', 'submit_result',
 ] as const satisfies readonly ToolId[];
@@ -59,7 +61,16 @@ export class RunCapability {
 
   constructor(public capability: RunCapabilityDef, private readonly revalidate?: () => void) {
     this.resolver = new PathResolver();
-    this.gateway = new ActionGateway(this.resolver, capability.workspace, capability.allowedTools, capability.projectConfig, undefined, capability.approvedProjectConfig?.files);
+    const approvedCommands = capability.approvedProjectConfig?.config.execution.commands;
+    const commands: ProjectConfig['commands'] = {};
+    if (approvedCommands?.test) commands.test = approvedCommands.test;
+    if (approvedCommands?.lint) commands.lint = approvedCommands.lint;
+    if (approvedCommands?.typecheck) commands.typecheck = approvedCommands.typecheck;
+    if (approvedCommands?.build) commands.build = approvedCommands.build;
+    const actionConfig: ProjectConfig | undefined = approvedCommands || capability.projectConfig?.commandPolicies
+      ? { commands, ...(capability.projectConfig?.commandPolicies ? { commandPolicies: capability.projectConfig.commandPolicies } : {}) }
+      : undefined;
+    this.gateway = new ActionGateway(this.resolver, capability.workspace, capability.allowedTools, actionConfig, undefined, capability.approvedProjectConfig?.files);
     this.workspaceTools = new WorkspaceTools(this.resolver, capability.workspace, capability.approvedProjectConfig?.files);
     this.gitTools = capability.workspace ? new GitTools(capability.workspace) : null;
   }

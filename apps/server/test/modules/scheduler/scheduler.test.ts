@@ -346,6 +346,224 @@ describe("SchedulerService", () => {
     expect(() => scheduler.dispatchTask("over-capacity", registry, () => undefined)).toThrow(/WAITING_FOR_CAPACITY/);
   });
 
+  it("revalidates an exact existing recovery reservation without charging a second slot or estimate", async () => {
+    await setup();
+    db!.run("INSERT INTO scheduler_budgets(project_id,limit_cost,spent_cost,reserved_cost) VALUES($projectId,1,0,0)", { projectId });
+    scheduler.updateConfig({ ...scheduler.getConfig(), globalMax: 1, projectMax: 1, roleCapacity: { reviewer: 1 } });
+    scheduler.dispatchAgentRun("recovery-run", projectId, "reviewer", "original-model", "shared-recovery-resource");
+    const reservation = db!.get<{ id: string }>("SELECT * FROM scheduler_reservations WHERE run_id='recovery-run'")!;
+    const locks = db!.all("SELECT * FROM scheduler_resource_locks");
+    const budget = db!.get("SELECT * FROM scheduler_budgets");
+
+    expect(scheduler).toHaveProperty("claimRunRecoveryInTransaction", expect.any(Function));
+    for (let retry = 0; retry < 2; retry++) {
+      expect(db!.transaction((tx) => scheduler.claimRunRecoveryInTransaction(tx, {
+        runId: "recovery-run", reservationId: reservation.id, projectId, role: "reviewer",
+      }))).toBe(reservation.id);
+    }
+    expect(db!.get("SELECT * FROM scheduler_reservations WHERE run_id='recovery-run'")).toEqual(reservation);
+    expect(db!.all("SELECT * FROM scheduler_resource_locks")).toEqual(locks);
+    expect(db!.get("SELECT * FROM scheduler_budgets")).toEqual(budget);
+  });
+
+  describe("existing-reservation recovery gates", () => {
+    async function recoveryFixture(approval = false) {
+      await setup();
+      const approvalId = approval ? randomUUID() : undefined;
+      if (approvalId) db!.run("INSERT INTO approvals(id,type,subject_id,subject_type,status,requested_by,created_at) VALUES($id,'WORKFLOW_CHANGE',$projectId,'PROJECT','APPROVED','test',$now)", { id: approvalId, projectId, now: new Date().toISOString() });
+      db!.run("INSERT INTO scheduler_budgets(project_id,limit_cost,spent_cost,reserved_cost) VALUES($projectId,100,0,0)", { projectId });
+      scheduler.dispatchAgentRun("recovery-run", projectId, "reviewer", "original-model", "recovery-resource", approvalId === undefined ? {} : { approvalId });
+      const reservationId = db!.get<{ id: string }>("SELECT id FROM scheduler_reservations WHERE run_id='recovery-run'")!.id;
+      return { runId: "recovery-run", reservationId, projectId, role: "reviewer" };
+    }
+
+    function snapshot() {
+      return {
+        reservations: db!.all("SELECT * FROM scheduler_reservations ORDER BY id"),
+        locks: db!.all("SELECT * FROM scheduler_resource_locks ORDER BY resource_key"),
+        budgets: db!.all("SELECT * FROM scheduler_budgets ORDER BY project_id"),
+      };
+    }
+
+    async function taskRecoveryFixture() {
+      await setup();
+      const task = insertTask(db!, projectId, { id: "recovery-task" });
+      const workflow = { transitionInTransaction: (tx: Database, id: string, status: string) => tx.run("UPDATE tasks SET status=$status WHERE id=$id", { id, status }) };
+      scheduler.dispatchTask(task.id, workflow as never, vi.fn(), { runId: "recovery-run" });
+      const reservationId = db!.get<{ id: string }>("SELECT id FROM scheduler_reservations WHERE run_id='recovery-run'")!.id;
+      return { runId: "recovery-run", reservationId, projectId, role: "developer" };
+    }
+
+    it.each([
+      ["archived project", "UPDATE projects SET status='ARCHIVED'", "PROJECT_NOT_ACTIVE"],
+      ["inactive onboarding", "UPDATE onboarding_configs SET status='PROPOSED'", "ONBOARDING_NOT_ACTIVE"],
+      ["revoked onboarding approval", "UPDATE approvals SET status='REJECTED'", "ONBOARDING_NOT_ACTIVE"],
+      ["missing original lock", "DELETE FROM scheduler_resource_locks", "RECOVERY_RESOURCE_LOCK_MISMATCH"],
+      ["foreign lock owner", "UPDATE scheduler_resource_locks SET owner_id='run:other'", "RECOVERY_RESOURCE_LOCK_MISMATCH"],
+      ["foreign lock project", "UPDATE scheduler_resource_locks SET project_id='other'", "RECOVERY_RESOURCE_LOCK_MISMATCH"],
+      ["released reservation", "UPDATE scheduler_reservations SET status='RELEASED'", "RECOVERY_RESERVATION_MISMATCH"],
+      ["foreign reservation owner", "UPDATE scheduler_reservations SET owner_id='run:other'", "RECOVERY_RESERVATION_MISMATCH"],
+      ["foreign reservation run", "UPDATE scheduler_reservations SET run_id='other'", "RECOVERY_RESERVATION_MISMATCH"],
+      ["foreign reservation role", "UPDATE scheduler_reservations SET role='qa'", "RECOVERY_RESERVATION_MISMATCH"],
+      ["foreign reservation project", "UPDATE scheduler_reservations SET project_id='other'", "RECOVERY_RESERVATION_MISMATCH"],
+      ["exceeded reserved budget", "UPDATE scheduler_budgets SET limit_cost=0.5", "WAITING_FOR_BUDGET"],
+      ["exceeded spent budget", "UPDATE scheduler_budgets SET spent_cost=100", "WAITING_FOR_BUDGET"],
+    ])("rejects %s and retains scheduler state", async (_name, change, reason) => {
+      const input = await recoveryFixture();
+      db!.exec(change);
+      const before = snapshot();
+      expect(() => db!.transaction((tx) => scheduler.claimRunRecoveryInTransaction(tx, input))).toThrow(reason);
+      expect(snapshot()).toEqual(before);
+    });
+
+    it("rechecks a degraded Project Config", async () => {
+      const input = await recoveryFixture();
+      db!.run("INSERT INTO project_config_state(project_id,config_status,updated_at) VALUES($projectId,'DEGRADED',$at)", { projectId, at: new Date().toISOString() });
+      const before = snapshot();
+      expect(() => db!.transaction((tx) => scheduler.claimRunRecoveryInTransaction(tx, input))).toThrow("PROJECT_CONFIG_DEGRADED");
+      expect(snapshot()).toEqual(before);
+    });
+
+    it.each([
+      ["PAUSED", "WAITING_FOR_PAUSE"], ["FAILED", "BLOCKED_BY_WORKFLOW"], ["BLOCKED", "BLOCKED_BY_WORKFLOW"],
+      ["WAITING_FOR_DEPENDENCY", "WAITING_FOR_DEPENDENCY"], ["WAITING_FOR_APPROVAL", "WAITING_FOR_APPROVAL"],
+    ])("rejects a recovering Task currently %s", async (status, reason) => {
+      const input = await taskRecoveryFixture();
+      db!.run("UPDATE tasks SET status=$status WHERE id='recovery-task'", { status });
+      const before = snapshot();
+      expect(() => db!.transaction((tx) => scheduler.claimRunRecoveryInTransaction(tx, input))).toThrow(reason);
+      expect(snapshot()).toEqual(before);
+    });
+
+    it("rechecks dependencies and pending approvals of a recovering Task", async () => {
+      const input = await taskRecoveryFixture();
+      const dependency = insertTask(db!, projectId, { id: "dependency" });
+      db!.run("UPDATE tasks SET contract_json=$contract WHERE id='recovery-task'", { contract: JSON.stringify(contract("recovery", [dependency.id])) });
+      const before = snapshot();
+      expect(() => db!.transaction((tx) => scheduler.claimRunRecoveryInTransaction(tx, input))).toThrow("WAITING_FOR_DEPENDENCY");
+      expect(snapshot()).toEqual(before);
+      db!.run("UPDATE tasks SET status='DONE' WHERE id=$id", { id: dependency.id });
+      const approvalId = randomUUID();
+      db!.run("INSERT INTO approvals(id,type,subject_id,subject_type,status,requested_by,created_at) VALUES($id,'FINAL_MERGE','recovery-task','TASK','PENDING','test',$at)", { id: approvalId, at: new Date().toISOString() });
+      expect(() => db!.transaction((tx) => scheduler.claimRunRecoveryInTransaction(tx, input))).toThrow("WAITING_FOR_APPROVAL");
+      db!.run("UPDATE approvals SET status='APPROVED' WHERE id=$id", { id: approvalId });
+      expect(db!.transaction((tx) => scheduler.claimRunRecoveryInTransaction(tx, input))).toBe(input.reservationId);
+      expect(snapshot()).toEqual(before);
+    });
+
+    it("validates a Task reservation at its current workflow phase rather than requiring READY again", async () => {
+      const input = await taskRecoveryFixture();
+      expect(db!.get<{ status: string }>("SELECT status FROM tasks WHERE id='recovery-task'")?.status).toBe("DEVELOPMENT");
+      const before = snapshot();
+      expect(db!.transaction((tx) => scheduler.claimRunRecoveryInTransaction(tx, input))).toBe(input.reservationId);
+      expect(snapshot()).toEqual(before);
+    });
+
+    it("rejects a Task reservation whose durable resource key no longer identifies its subject", async () => {
+      const input = await taskRecoveryFixture();
+      db!.run("UPDATE scheduler_resource_locks SET resource_key='task:other'");
+      const before = snapshot();
+      expect(() => db!.transaction((tx) => scheduler.claimRunRecoveryInTransaction(tx, input))).toThrow("RECOVERY_RESOURCE_LOCK_MISMATCH");
+      expect(snapshot()).toEqual(before);
+    });
+
+    it.each([
+      "status='REJECTED'", "type='WORKFLOW_CHANGE'", "subject_type='PROJECT'", "subject_id='other-task'",
+    ])("rechecks the exact persisted Task FINAL_MERGE approval when %s", async (change) => {
+      const input = await taskRecoveryFixture();
+      const approvalId = randomUUID();
+      db!.run("INSERT INTO approvals(id,type,subject_id,subject_type,status,requested_by,created_at) VALUES($id,'FINAL_MERGE','recovery-task','TASK','APPROVED','test',$at)", { id: approvalId, at: new Date().toISOString() });
+      db!.run("UPDATE scheduler_reservations SET approval_id=$id WHERE run_id='recovery-run'", { id: approvalId });
+      expect(db!.transaction((tx) => scheduler.claimRunRecoveryInTransaction(tx, input))).toBe(input.reservationId);
+      db!.run(`UPDATE approvals SET ${change} WHERE id=$id`, { id: approvalId });
+      const before = snapshot();
+      expect(() => db!.transaction((tx) => scheduler.claimRunRecoveryInTransaction(tx, input))).toThrow("WAITING_FOR_APPROVAL");
+      expect(snapshot()).toEqual(before);
+    });
+
+    it("preserves an IN_PROGRESS Run reservation during startup reconciliation without claiming or recreating it", async () => {
+      const input = await recoveryFixture();
+      db!.run("INSERT INTO agent_runs(id,role,runtime,model,status) VALUES('recovery-run','reviewer','hermes','original-model','IN_PROGRESS')");
+      const before = snapshot();
+      expect(scheduler.reconcile()).toEqual({ releasedReservationIds: [], blockedReservationIds: [] });
+      expect(snapshot()).toEqual(before);
+      expect(db!.transaction((tx) => scheduler.claimRunRecoveryInTransaction(tx, input))).toBe(input.reservationId);
+      expect(snapshot()).toEqual(before);
+    });
+
+    it("exposes only the unique existing reservation through the Scheduler recovery lookup", async () => {
+      const input = await recoveryFixture();
+      expect(scheduler).toHaveProperty("getRunRecoveryReservationInTransaction", expect.any(Function));
+      expect(db!.transaction((tx) => scheduler.getRunRecoveryReservationInTransaction(tx, input.runId))).toEqual({ reservationId: input.reservationId, projectId, role: "reviewer" });
+      expect(db!.transaction((tx) => scheduler.getRunRecoveryReservationInTransaction(tx, "unknown"))).toBeUndefined();
+      scheduler.releaseAgentRun(input.runId, 0);
+      expect(db!.transaction((tx) => scheduler.getRunRecoveryReservationInTransaction(tx, input.runId))).toBeUndefined();
+    });
+
+    it.each(["global", "project", "role"])("rechecks reduced %s capacity including the existing slot once", async (scope) => {
+      const input = await recoveryFixture();
+      scheduler.dispatchAgentRun("other-run", projectId, "reviewer", "test");
+      const config = scheduler.getConfig();
+      scheduler.updateConfig({ ...config, ...(scope === "global" ? { globalMax: 1 } : scope === "project" ? { projectMax: 1 } : { roleCapacity: { ...config.roleCapacity, reviewer: 1 } }) });
+      const before = snapshot();
+      expect(() => db!.transaction((tx) => scheduler.claimRunRecoveryInTransaction(tx, input))).toThrow(scope === "role" ? "WAITING_FOR_ROLE_CAPACITY" : "WAITING_FOR_CAPACITY");
+      expect(snapshot()).toEqual(before);
+    });
+
+    it("rechecks the persisted phase approval rather than accepting an already RESERVED early return", async () => {
+      const input = await recoveryFixture(true);
+      const reservation = db!.get<{ approval_id: string }>("SELECT approval_id FROM scheduler_reservations WHERE id=$id", { id: input.reservationId })!;
+      expect(reservation.approval_id).toEqual(expect.any(String));
+      db!.run("UPDATE approvals SET status='REJECTED' WHERE id=$id", { id: reservation.approval_id });
+      const before = snapshot();
+      expect(() => db!.transaction((tx) => scheduler.claimRunRecoveryInTransaction(tx, input))).toThrow("WAITING_FOR_APPROVAL");
+      expect(snapshot()).toEqual(before);
+    });
+
+    it("rejects a persisted phase approval whose approved subject was changed", async () => {
+      const input = await recoveryFixture(true);
+      const approval = db!.get<{ approval_id: string }>("SELECT approval_id FROM scheduler_reservations WHERE id=$id", { id: input.reservationId })!;
+      db!.run("UPDATE approvals SET subject_id='other-project' WHERE id=$id", { id: approval.approval_id });
+      const before = snapshot();
+      expect(() => db!.transaction((tx) => scheduler.claimRunRecoveryInTransaction(tx, input))).toThrow("WAITING_FOR_APPROVAL");
+      expect(snapshot()).toEqual(before);
+    });
+
+    it("rejects a foreign global lock even when the original reservation lock is intact", async () => {
+      const input = await recoveryFixture();
+      db!.run("INSERT INTO scheduler_resource_locks(resource_key,reservation_id,project_id,owner_id,locked_at) VALUES('global','other',$projectId,'run:other',$at)", { projectId, at: new Date().toISOString() });
+      const before = snapshot();
+      expect(() => db!.transaction((tx) => scheduler.claimRunRecoveryInTransaction(tx, input))).toThrow("WAITING_FOR_RESOURCE_LOCK");
+      expect(snapshot()).toEqual(before);
+    });
+
+    it("rejects two active reservations for the same Run", async () => {
+      const input = await recoveryFixture();
+      db!.run("INSERT INTO scheduler_reservations(id,kind,subject_id,project_id,owner_id,reserved_at,status,role,model,run_id) VALUES('duplicate','TASK','another-task',$projectId,'task:another-task',$at,'RESERVED','reviewer','test','recovery-run')", { projectId, at: new Date().toISOString() });
+      const before = snapshot();
+      expect(db!.transaction((tx) => scheduler.getRunRecoveryReservationInTransaction(tx, input.runId))).toBeUndefined();
+      expect(() => db!.transaction((tx) => scheduler.claimRunRecoveryInTransaction(tx, input))).toThrow("RECOVERY_RESERVATION_MISMATCH");
+      expect(snapshot()).toEqual(before);
+    });
+
+    it("shares the caller CAS rollback boundary and allows an idempotent retry", async () => {
+      const input = await recoveryFixture();
+      db!.run("INSERT INTO agent_runs(id,role,runtime,model,status,attempt) VALUES('recovery-run','reviewer','hermes','original-model','IN_PROGRESS',1)");
+      const before = snapshot();
+      expect(() => db!.transaction((tx) => {
+        expect(scheduler.claimRunRecoveryInTransaction(tx, input)).toBe(input.reservationId);
+        tx.run("UPDATE agent_runs SET attempt=attempt+1 WHERE id=$id AND attempt=1", { id: input.runId });
+        throw new Error("GENERATION_PREPARE_FAILED");
+      })).toThrow("GENERATION_PREPARE_FAILED");
+      expect(snapshot()).toEqual(before);
+      expect(db!.get<{ attempt: number }>("SELECT attempt FROM agent_runs WHERE id=$id", { id: input.runId })?.attempt).toBe(1);
+      expect(db!.transaction((tx) => scheduler.claimRunRecoveryInTransaction(tx, input))).toBe(input.reservationId);
+      const committed = snapshot();
+      expect(db!.transaction((tx) => scheduler.claimRunRecoveryInTransaction(tx, input))).toBe(input.reservationId);
+      expect(snapshot()).toEqual(committed);
+    });
+  });
+
   it("releases an AgentRun reservation idempotently", async () => {
     await setup();
     db!.run("INSERT INTO scheduler_budgets (project_id,limit_cost,spent_cost,reserved_cost) VALUES ($projectId,100,0,0)", { projectId });

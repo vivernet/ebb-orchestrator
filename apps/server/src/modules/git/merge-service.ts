@@ -295,13 +295,13 @@ export class MergeService {
     const attempts = this.database.all<{
       id: string; source_branch: string; target_branch: string; repository_path: string;
       expected_target_sha: string; source_sha: string; worktree_path: string;
-      integration_run_id: string; status: IntegrationAttempt["status"]; created_at: string; capability_json: string | null;
+      integration_run_id: string; status: IntegrationAttempt["status"]; created_at: string;
     }>(`SELECT ia.*
-             , ar.capability_json
         FROM integration_attempts ia
         JOIN agent_runs ar ON ar.id = ia.integration_run_id
           AND lower(ar.role) = 'integration'
           AND ar.epic_id = $subjectId
+          AND ar.status = 'COMPLETED'
         JOIN orchestration_phase_runs pr ON pr.agent_run_id = ar.id
           AND pr.epic_id = $subjectId
           AND pr.task_id IS NULL
@@ -333,15 +333,9 @@ export class MergeService {
       : typeof facts.defaultBranch === "string" && facts.defaultBranch.length > 0
         ? facts.defaultBranch
         : undefined;
-    let capabilityWorkspace: string | undefined;
-    try {
-      const capability = row.capability_json ? JSON.parse(row.capability_json) as { workspace?: unknown } : undefined;
-      if (typeof capability?.workspace === "string") capabilityWorkspace = capability.workspace;
-    } catch { /* fail closed below */ }
     const expectedSourceBranch = `epic/${epicConfig.display_id}`;
     if (!approvedBaseBranch || row.repository_path !== epicConfig.repository_path ||
-        row.source_branch !== expectedSourceBranch || row.target_branch !== approvedBaseBranch ||
-        !capabilityWorkspace || row.worktree_path !== capabilityWorkspace) {
+        row.source_branch !== expectedSourceBranch || row.target_branch !== approvedBaseBranch) {
       throw new Error("Missing exact Integration provenance: attempt refs, repository, or workspace do not match the approved Epic configuration");
     }
     this.integrationAttempt = {

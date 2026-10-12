@@ -2,9 +2,9 @@
  * CommandTools provides controlled команда execution с окружение isolation.
  * It executes команды without shell syntax, preferring explicit executable + args.
  */
-import * as path from 'node:path';
 import { EnvironmentBuilder } from '../../platform/security/environment-builder.js';
 import { ProcessExecutor } from '../../platform/process/process-executor.js';
+import { isDisallowedProjectCommandExecutable } from '../../platform/process/project-command-policy.js';
 
 export type ExecOptions = {
   executable: string;
@@ -26,7 +26,6 @@ export type ProjectAction = 'test' | 'lint' | 'typecheck' | 'build';
 export enum ShellType {
   bash = 'bash', sh = 'sh', zsh = 'zsh', cmd = 'cmd', powershell = 'powershell', pwsh = 'pwsh',
 }
-const SHELL_EXECUTABLES = new Set(Object.values(ShellType));
 const DEFAULT_TIMEOUT = 5 * 60 * 1000;
 const DEFAULT_MAX_OUTPUT = 1024 * 1024;
 
@@ -38,8 +37,7 @@ export class CommandTools {
   private readonly executor = new ProcessExecutor();
 
   isShellExecutable(executable: string): boolean {
-    const baseName = path.basename(executable.toLowerCase()).replace(/\.exe$/, '');
-    return SHELL_EXECUTABLES.has(baseName as ShellType);
+    return isDisallowedProjectCommandExecutable(executable);
   }
 
   async exec(options: ExecOptions, cwd: string, injectedEnv: Record<string, string> = {}): Promise<ExecResult> {

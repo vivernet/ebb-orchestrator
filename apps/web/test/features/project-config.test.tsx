@@ -7,12 +7,15 @@ afterEach(() => vi.restoreAllMocks());
 
 describe("Project Config review panel", () => {
   it("shows the persisted source diff and approves exactly its candidate/hash", async () => {
-    const candidate = { candidateId: "candidate-1", projectId: "project-1", sourceHead: "abc123", manifestHash: "a".repeat(64), files: { ".ebb-orchestrator/project.yaml": "schema_version: 1\nproject:\n  name: sample\n  default_branch: main\n" }, manifest: [{ path: ".ebb-orchestrator/project.yaml", state: "present", sha256: "b".repeat(64) }, { path: ".ebb-orchestrator/guidelines/old.md", state: "deleted", sha256: null }], status: "PENDING_REVIEW", createdAt: "2026-09-29T00:00:00.000Z" };
+    const candidate = { candidateId: "candidate-1", projectId: "project-1", sourceHead: "abc123", manifestHash: "a".repeat(64), files: { ".ebb-orchestrator/project.yaml": "schema_version: 1\nproject:\n  name: sample\n  default_branch: main\n" }, normalizedPreview: { project: { execution: { commands: { test: { executable: "pnpm", args: ["--filter", "@sample/server", "test"] } } } } }, manifest: [{ path: ".ebb-orchestrator/project.yaml", state: "present", sha256: "b".repeat(64) }, { path: ".ebb-orchestrator/guidelines/old.md", state: "deleted", sha256: null }], status: "PENDING_REVIEW", createdAt: "2026-09-29T00:00:00.000Z" };
     const get = vi.spyOn(apiClient, "get").mockResolvedValue({ current: candidate, active: { revisionId: "old", manifestHash: "c".repeat(64), revisionHash: "d".repeat(64), files: { ".ebb-orchestrator/guidelines/old.md": "Retired guideline" } }, revisions: [] });
     const post = vi.spyOn(apiClient, "post").mockResolvedValue({ active: { revisionId: "revision-1", manifestHash: candidate.manifestHash, revisionHash: "b".repeat(64) } });
     render(<ProjectConfigPanel projectId="project-1" />);
     await screen.findByText(candidate.manifestHash);
     expect(screen.getByText(/default_branch/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /команды проекта/i })).toBeInTheDocument();
+    expect(screen.getByText("pnpm")).toBeInTheDocument();
+    expect(screen.getByText('["--filter","@sample/server","test"]')).toBeInTheDocument();
     expect(screen.getByText(/guidelines\/old\.md/)).toBeInTheDocument();
     expect(screen.getByText(/Удалён/)).toBeInTheDocument();
     expect(screen.getByText("Retired guideline")).toBeInTheDocument();

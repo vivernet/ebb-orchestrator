@@ -1,9 +1,15 @@
 import { randomUUID } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { EpicProjection } from "../../../src/app/read-models/epic-projection.js";
 import { EpicOrchestrator, type EpicAgentRequest } from "../../../src/modules/planning/epic-orchestrator.js";
 import { PlanningService } from "../../../src/modules/planning/planning-service.js";
 import { RunService } from "../../../src/modules/runtime/run-service.js";
+import { GitCli } from "../../../src/modules/git/git-cli.js";
+import { IntegrationService } from "../../../src/modules/git/integration-service.js";
+import { insertRunProcessOwnerTx, prepareRunProcessOwner, rotateRunProcessOwnerForResumeTx, syncCurrentRunProcessGenerationTx, transitionRunProcessOwnerTx } from "../../../src/modules/runtime/run-process-owner.js";
 import type { AgentRuntime } from "../../../src/modules/runtime/agent-runtime.js";
 import { SchedulerService } from "../../../src/modules/scheduler/scheduler-service.js";
 import { WorkflowEngine } from "../../../src/modules/workflow/workflow-engine.js";
@@ -113,6 +119,14 @@ async function approvedEpic(taskCount = 1, seedCheckpoint = false) {
   return { db, planning, request, plan, input, epicId, taskId, workflow, orchestrator, scheduler, workspaceOptions, git };
 }
 
+function expectedRetrySafetyCode(evidence: string): string {
+  if (["INTENT", "RUNNING", "validated"].includes(evidence)) return "EPIC_PHASE_NOT_FAILED_UNVALIDATED";
+  if (["owner", "generation", "manifest", "resume-binding", "integration-attempt"].includes(evidence)) return "EPIC_PHASE_ORPHAN_LAUNCH_EVIDENCE";
+  if (evidence.endsWith("-reservation")) return "EPIC_PHASE_RESERVATION_PRESENT";
+  if (evidence.endsWith("-lock")) return "EPIC_PHASE_RESOURCE_LOCK_PRESENT";
+  throw new Error(`Unhandled retry safety evidence: ${evidence}`);
+}
+
 type PrivateCalls = {
   runPhase(epicId: string, taskId: string | undefined, phase: string, role: string, request: EpicAgentRequest): Promise<unknown>;
   runChild(task: { id: string; display_id: string; status: string }, epicId: string, branch: string): Promise<void>;
@@ -148,7 +162,7 @@ function fakeRunService(db: ReturnType<typeof createSqliteDatabase>, failFirst =
       if (failFirst && attempts === 1) throw new Error("controlled phase failure");
       const role = roles.get(runId);
       const outcome = role === "developer" ? "COMPLETED" : role === "product_manager" ? "PRODUCT_DEFINITION" : role === "architect" ? "DESIGN" : "PASS";
-      const output = JSON.stringify({ version: "1.0.0", outcome });
+      const output = JSON.stringify({ version: "1.0.0", outcome, ...(role === "developer" ? { commitSha: "test-commit-sha" } : {}) });
       db.run("UPDATE agent_runs SET status='COMPLETED',ended_at=$now,exit_code=0,output=$output WHERE id=$id", {
         id: runId, now: new Date().toISOString(), output,
       });
@@ -163,7 +177,6 @@ function fakeRunService(db: ReturnType<typeof createSqliteDatabase>, failFirst =
     },
     // The fake runtime has no native per-Run Hermes profile to remove. Keep the
     // production cleanup call observable while modeling its harmless no-op result.
-    cleanupTerminalHermesProfile: vi.fn(async () => false),
   } as unknown as RunService;
 }
 
@@ -188,6 +201,353 @@ function setPhaseCheckpoint(f: Awaited<ReturnType<typeof approvedEpic>>, phase: 
 }
 
 describe("Epic orchestrator recovery safety", () => {
+  it.each([
+    "INTENT", "RUNNING", "validated", "owner", "generation", "manifest", "resume-binding",
+    "integration-attempt", "run-reservation", "task-reservation", "run-lock", "task-lock", "owner-lock", "reservation-lock",
+  ])("rejects a missing AgentRun phase with ambiguous prelaunch evidence: %s", async (evidence) => {
+    const f = await approvedEpic();
+    try {
+      const runId = randomUUID();
+      const phaseId = randomUUID();
+      const now = new Date().toISOString();
+      const projectId = f.db.get<{ project_id: string }>("SELECT project_id FROM epics WHERE id=$id", { id: f.epicId })!.project_id;
+      f.db.run("INSERT INTO orchestration_phase_runs(id,epic_id,task_id,phase,role,agent_run_id,result_json,evidence_json,validated,status,created_at) VALUES($id,$epicId,$taskId,'child_task','developer',$runId,'{}','{}',$validated,$status,$now)", {
+        id: phaseId, epicId: f.epicId, taskId: f.taskId, runId, now,
+        status: evidence === "INTENT" || evidence === "RUNNING" ? evidence : "FAILED", validated: evidence === "validated" ? 1 : 0,
+      });
+      if (["owner", "generation", "manifest", "resume-binding"].includes(evidence)) {
+        // Model interrupted/corrupt storage with orphan evidence: absence of the
+        // parent Run must never be enough to discard a previously created scope.
+        f.db.run("INSERT INTO agent_runs(id,role,runtime,model,task_id,epic_id,status) VALUES($id,'developer','test','test',$taskId,$epicId,'FAILED')", { id: runId, taskId: f.taskId, epicId: f.epicId });
+        if (evidence === "owner" || evidence === "generation") {
+          f.db.transaction((tx) => insertRunProcessOwnerTx(tx, prepareRunProcessOwner(runId, `/fake/home-${runId}`, "systemd-user-service")));
+        } else if (evidence === "manifest") {
+          f.db.run("INSERT INTO context_manifests(id,run_id,subject_type,task_id,role,items_json,prompt_hash,context_hash,context_builder_version,created_at) VALUES($id,$runId,'TASK',$taskId,'developer','[]',$hash,$hash,'test',$now)", { id: randomUUID(), runId, taskId: f.taskId, hash: "a".repeat(64), now });
+        } else {
+          f.db.run("INSERT INTO run_resume_bindings(run_id,schema_version,baseline_jcs,context_hash,workspace_snapshot_version,workspace_snapshot_bound,created_at) VALUES($runId,1,'{}',$hash,1,0,$now)", { runId, hash: "a".repeat(64), now });
+        }
+        f.db.exec("PRAGMA foreign_keys=OFF");
+        f.db.run("DELETE FROM agent_runs WHERE id=$id", { id: runId });
+        if (evidence === "owner") f.db.run("DELETE FROM run_process_owner_generations WHERE run_id=$id", { id: runId });
+        if (evidence === "generation") f.db.run("DELETE FROM run_process_owners WHERE run_id=$id", { id: runId });
+        f.db.exec("PRAGMA foreign_keys=ON");
+      }
+      if (evidence === "integration-attempt") {
+        f.db.run("INSERT INTO integration_attempts(id,repository_path,source_branch,target_branch,expected_target_sha,source_sha,worktree_path,integration_run_id,status,created_at) VALUES($id,'/repo','source','target',$sha,$sha,'/worktree',$runId,'FAILED',$now)", { id: randomUUID(), sha: "a".repeat(40), runId, now });
+      }
+      if (evidence.endsWith("-reservation")) {
+        const subjectId = evidence === "task-reservation" ? f.taskId : runId;
+        f.db.run("INSERT INTO scheduler_reservations(id,kind,subject_id,project_id,owner_id,reserved_at,estimate_cost,status,role,model,run_id) VALUES($id,'PHASE',$subjectId,$projectId,$owner,$now,0,$status,'developer','test',$runId)", {
+          id: randomUUID(), subjectId, projectId, owner: `run:${runId}`, now, runId, status: "RESERVED",
+        });
+      }
+      if (evidence.endsWith("-lock")) {
+        const reservationId = randomUUID();
+        if (evidence === "reservation-lock") {
+          f.db.run("INSERT INTO scheduler_reservations(id,kind,subject_id,project_id,owner_id,reserved_at,estimate_cost,status,role,model,run_id) VALUES($id,'PHASE',$runId,$projectId,'other-owner',$now,0,'RELEASED','developer','test',$runId)", { id: reservationId, runId, projectId, now });
+        }
+        f.db.run("INSERT INTO scheduler_resource_locks(resource_key,reservation_id,project_id,owner_id,locked_at) VALUES($key,$reservationId,$projectId,$owner,$now)", {
+          key: evidence === "run-lock" ? `run:${runId}` : evidence === "task-lock" ? `task:${f.taskId}` : "other-resource", reservationId, projectId, owner: evidence === "reservation-lock" ? "other-owner" : `run:${runId}`, now,
+        });
+      }
+      const originalPhase = f.db.get("SELECT * FROM orchestration_phase_runs WHERE id=$id", { id: phaseId });
+      const validatedPlan = f.db.get("SELECT * FROM orchestration_phase_runs WHERE epic_id=$id AND phase='plan'", { id: f.epicId });
+      const runs = fakeRunService(f.db, false);
+      const prepare = vi.spyOn(runs, "prepareRun");
+      const orchestrator = new EpicOrchestrator(f.db, f.workflow, f.planning, runs, {} as never, f.scheduler, f.workspaceOptions);
+      await expect((orchestrator as unknown as PrivateCalls).runPhase(f.epicId, f.taskId, "child_task", "developer", {
+        phase: "child_task", role: "developer", taskId: f.taskId, epicId: f.epicId,
+      })).rejects.toThrow(expectedRetrySafetyCode(evidence));
+      expect(prepare).not.toHaveBeenCalled();
+      expect(f.db.get("SELECT id FROM agent_runs WHERE id=$id", { id: runId })).toBeUndefined();
+      expect(f.db.get("SELECT * FROM orchestration_phase_runs WHERE id=$id", { id: phaseId })).toEqual(originalPhase);
+      expect(f.db.get("SELECT * FROM orchestration_phase_runs WHERE epic_id=$id AND phase='plan'", { id: f.epicId })).toEqual(validatedPlan);
+    } finally {
+      f.db.close();
+    }
+  });
+
+  it.each(["integration-attempt", "phase-cas"])("rechecks prelaunch retry evidence atomically after preflight: %s", async (race) => {
+    const f = await approvedEpic();
+    try {
+      const runId = randomUUID();
+      const phaseId = randomUUID();
+      const now = new Date().toISOString();
+      f.db.run("INSERT INTO orchestration_phase_runs(id,epic_id,task_id,phase,role,agent_run_id,result_json,evidence_json,validated,status,created_at) VALUES($id,$epicId,$taskId,'child_task','developer',$runId,'{}','{}',0,'FAILED',$now)", { id: phaseId, epicId: f.epicId, taskId: f.taskId, runId, now });
+      const runs = fakeRunService(f.db, false);
+      const preflight = runs.beginHermesRunPreflight.bind(runs);
+      const cleanups: Array<ReturnType<typeof vi.fn>> = [];
+      vi.spyOn(runs, "beginHermesRunPreflight").mockImplementation(async (options) => {
+        const result = await preflight(options);
+        const cleanup = vi.fn(result.cleanup);
+        cleanups.push(cleanup);
+        if (race === "integration-attempt") {
+          f.db.run("INSERT INTO integration_attempts(id,repository_path,source_branch,target_branch,expected_target_sha,source_sha,worktree_path,integration_run_id,status,created_at) VALUES($id,'/repo','source','target',$sha,$sha,'/worktree',$runId,'FAILED',$now)", { id: randomUUID(), sha: "a".repeat(40), runId, now });
+        } else {
+          f.db.run("UPDATE orchestration_phase_runs SET agent_run_id=$nextRun WHERE id=$id", { id: phaseId, nextRun: randomUUID() });
+        }
+        return { ...result, cleanup };
+      });
+      const prepare = vi.spyOn(runs, "prepareRun");
+      const orchestrator = new EpicOrchestrator(f.db, f.workflow, f.planning, runs, {} as never, f.scheduler, f.workspaceOptions);
+      await expect((orchestrator as unknown as PrivateCalls).runPhase(f.epicId, f.taskId, "child_task", "developer", {
+        phase: "child_task", role: "developer", taskId: f.taskId, epicId: f.epicId,
+      })).rejects.toThrow(race === "integration-attempt" ? "EPIC_PHASE_ORPHAN_LAUNCH_EVIDENCE" : "changed before retry");
+      expect(prepare).not.toHaveBeenCalled();
+      expect(cleanups).toHaveLength(1);
+      expect(cleanups[0]).toHaveBeenCalledOnce();
+      expect(f.db.get("SELECT status,validated FROM orchestration_phase_runs WHERE id=$id", { id: phaseId })).toEqual({ status: "FAILED", validated: 0 });
+    } finally {
+      f.db.close();
+    }
+  });
+
+  it.each(["LIVE", "STOPPED-unproven", "STOPPED-proven"])("checks the owner stop proof before retrying a terminal Run: %s", async (state) => {
+    const f = await approvedEpic();
+    try {
+      const runId = randomUUID();
+      const phaseId = randomUUID();
+      const now = new Date().toISOString();
+      f.db.run("INSERT INTO agent_runs(id,role,runtime,model,task_id,epic_id,status) VALUES($id,'developer','test','test',$taskId,$epicId,'FAILED')", { id: runId, taskId: f.taskId, epicId: f.epicId });
+      f.db.run("INSERT INTO orchestration_phase_runs(id,epic_id,task_id,phase,role,agent_run_id,result_json,evidence_json,validated,status,created_at) VALUES($id,$epicId,$taskId,'child_task','developer',$runId,'{}','{}',0,'FAILED',$now)", { id: phaseId, epicId: f.epicId, taskId: f.taskId, runId, now });
+      f.db.transaction((tx) => {
+        insertRunProcessOwnerTx(tx, prepareRunProcessOwner(runId, `/fake/home-${runId}`, "systemd-user-service"));
+        transitionRunProcessOwnerTx(tx, { runId, expectedState: "PREPARED", nextState: "LAUNCHING" });
+        transitionRunProcessOwnerTx(tx, { runId, expectedState: "LAUNCHING", nextState: "LIVE", identity: { platform: "linux", pid: 100, systemdInvocationId: "fixture", systemdControlGroup: "/fixture" } });
+        if (state === "STOPPED-proven") {
+          transitionRunProcessOwnerTx(tx, { runId, expectedState: "LIVE", nextState: "STOPPED", evidence: "SYSTEMD_CGROUP_EMPTY" });
+        }
+      });
+      if (state === "STOPPED-unproven") {
+        // Corrupted bounded tokens in both projections cannot substitute for OS proof.
+        f.db.run("UPDATE run_process_owners SET state='STOPPED',stop_evidence='UNPROVEN' WHERE run_id=$runId", { runId });
+        f.db.run("UPDATE run_process_owner_generations SET state='STOPPED',stop_evidence='UNPROVEN' WHERE run_id=$runId", { runId });
+      }
+      const runs = fakeRunService(f.db, false);
+      const prepare = vi.spyOn(runs, "prepareRun");
+      const orchestrator = new EpicOrchestrator(f.db, f.workflow, f.planning, runs, {} as never, f.scheduler, f.workspaceOptions);
+      const result = (orchestrator as unknown as PrivateCalls).runPhase(f.epicId, f.taskId, "child_task", "developer", {
+        phase: "child_task", role: "developer", taskId: f.taskId, epicId: f.epicId,
+      });
+      if (state === "STOPPED-proven") {
+        await expect(result).resolves.toMatchObject({ accepted: true });
+        expect(prepare).toHaveBeenCalledOnce();
+      } else {
+        await expect(result).rejects.toThrow("EPIC_PHASE_OWNER_STOP_UNPROVEN");
+        expect(prepare).not.toHaveBeenCalled();
+        expect(f.db.get("SELECT agent_run_id,status,validated FROM orchestration_phase_runs WHERE id=$id", { id: phaseId }))
+          .toEqual({ agent_run_id: runId, status: "FAILED", validated: 0 });
+      }
+    } finally {
+      f.db.close();
+    }
+  });
+
+  it("rejects a nonterminal AgentRun with a specific retry safety code", async () => {
+    const f = await approvedEpic();
+    try {
+      const runId = randomUUID();
+      const phaseId = randomUUID();
+      const now = new Date().toISOString();
+      f.db.run("INSERT INTO agent_runs(id,role,runtime,model,task_id,epic_id,status) VALUES($id,'developer','test','test',$taskId,$epicId,'STARTED')", { id: runId, taskId: f.taskId, epicId: f.epicId });
+      f.db.run("INSERT INTO orchestration_phase_runs(id,epic_id,task_id,phase,role,agent_run_id,result_json,evidence_json,validated,status,created_at) VALUES($id,$epicId,$taskId,'child_task','developer',$runId,'{}','{}',0,'FAILED',$now)", { id: phaseId, epicId: f.epicId, taskId: f.taskId, runId, now });
+      const runs = fakeRunService(f.db, false);
+      const orchestrator = new EpicOrchestrator(f.db, f.workflow, f.planning, runs, {} as never, f.scheduler, f.workspaceOptions);
+      await expect((orchestrator as unknown as PrivateCalls).runPhase(f.epicId, f.taskId, "child_task", "developer", {
+        phase: "child_task", role: "developer", taskId: f.taskId, epicId: f.epicId,
+      })).rejects.toThrow("EPIC_PHASE_RUN_NOT_TERMINAL");
+    } finally {
+      f.db.close();
+    }
+  });
+
+  it.each(["resumed", "initial-completed", "already-merged", "invalid-output", "target-moved"])(
+    "adopts the existing Integration phase only after exact Git reconciliation: %s", async (variant) => {
+      const f = await approvedEpic();
+      const root = mkdtempSync(join(tmpdir(), "ebb-integration-recovery-"));
+      try {
+        const runId = randomUUID();
+        const attemptId = randomUUID();
+        const phaseId = randomUUID();
+        const now = new Date().toISOString();
+        const baseSha = "a".repeat(40);
+        const sourceSha = "b".repeat(40);
+        const sourceBranch = f.db.get<{ branch: string }>("SELECT branch FROM worktrees WHERE id=$id", { id: `epic:${f.epicId}` })!.branch;
+        const output = variant === "invalid-output" ? "{}" : JSON.stringify({ version: "1.0.0", outcome: "PASS", baseSha, sourceSha,
+          provenance: [`integration_attempt:${attemptId}`], evidence: ["Verified source and target"] });
+        f.db.run("INSERT INTO agent_runs(id,role,runtime,model,epic_id,status,session_id,cost) VALUES($id,'integration','test','test',$epicId,'IN_PROGRESS','original-session',0.5)", { id: runId, epicId: f.epicId });
+        f.db.transaction((tx) => {
+          insertRunProcessOwnerTx(tx, prepareRunProcessOwner(runId, `/fake/hermes-${runId}`, "systemd-user-service"));
+          transitionRunProcessOwnerTx(tx, { runId, expectedState: "PREPARED", nextState: "LAUNCHING" });
+          transitionRunProcessOwnerTx(tx, { runId, expectedState: "LAUNCHING", nextState: "LIVE", identity: { platform: "linux", pid: 100, systemdInvocationId: "initial", systemdControlGroup: "/fixture" } });
+          tx.run("UPDATE run_process_owners SET capture_state='BOUND' WHERE run_id=$runId", { runId });
+          syncCurrentRunProcessGenerationTx(tx, runId);
+          transitionRunProcessOwnerTx(tx, { runId, expectedState: "LIVE", nextState: "STOPPED", evidence: "SYSTEMD_CGROUP_EMPTY" });
+          if (variant !== "initial-completed") {
+            rotateRunProcessOwnerForResumeTx(tx, { runId, attempt: 1, previousAttempt: null });
+            tx.run("UPDATE agent_runs SET attempt=1 WHERE id=$runId", { runId });
+            transitionRunProcessOwnerTx(tx, { runId, expectedState: "PREPARED", nextState: "LAUNCHING" });
+            transitionRunProcessOwnerTx(tx, { runId, expectedState: "LAUNCHING", nextState: "LIVE", identity: { platform: "linux", pid: 101, systemdInvocationId: "resumed", systemdControlGroup: "/fixture-resumed" } });
+            transitionRunProcessOwnerTx(tx, { runId, expectedState: "LIVE", nextState: "STOPPED", evidence: "SYSTEMD_CGROUP_EMPTY" });
+          }
+          tx.run(`INSERT INTO run_resume_bindings(run_id,schema_version,baseline_jcs,context_hash,workspace_snapshot_version,workspace_snapshot_hash,resume_binding_hash,original_session_id,created_at)
+            VALUES($runId,1,'{}',$hash,1,$hash,$hash,'original-session',$now)`, { runId, hash: "a".repeat(64), now });
+          tx.run("UPDATE agent_runs SET status='COMPLETED',exit_code=0,ended_at=$now,output=$output WHERE id=$runId", { runId, now, output });
+        });
+        f.db.run("INSERT INTO orchestration_phase_runs(id,epic_id,task_id,phase,role,agent_run_id,result_json,evidence_json,validated,status,created_at) VALUES($id,$epicId,NULL,'integration','integration',$runId,'{}','{}',0,'RUNNING',$now)", { id: phaseId, epicId: f.epicId, runId, now });
+        f.db.run(`INSERT INTO integration_attempts(id,repository_path,source_branch,target_branch,expected_target_sha,source_sha,worktree_path,integration_run_id,status,created_at)
+          VALUES($id,'/recovery-safety-repo',$source,'main',$base,$sha,'/fake/integration',$runId,$status,$now)`, {
+          id: attemptId, source: sourceBranch, base: baseSha, sha: sourceSha, runId, status: variant === "already-merged" ? "MERGED" : "MERGING", now,
+        });
+        const projectId = f.db.get<{ project_id: string }>("SELECT project_id FROM epics WHERE id=$epicId", { epicId: f.epicId })!.project_id;
+        f.scheduler.dispatchAgentRun(runId, projectId, "integration", "test");
+        const runs = fakeRunService(f.db, false);
+        const dispatch = vi.spyOn(runs, "beginHermesRunPreflight");
+        const gitCommands = vi.fn(async (_file: string, args: string[]) => ({ exitCode: 0,
+          stdout: args[0] === "rev-parse" ? `${variant === "target-moved" ? "c".repeat(40) : baseSha}\n` : "", stderr: "" }));
+        const service = new IntegrationService({ database: f.db, git: new GitCli({ exec: gitCommands }), integrationRunId: runId, worktreeDir: root });
+        const prepare = vi.spyOn(service, "prepareIntegration");
+        const merge = vi.spyOn(service, "mergePreparedSource");
+        const execute = vi.spyOn(service, "runInIntegrationWorktree");
+        const orchestrator = new EpicOrchestrator(f.db, f.workflow, f.planning, runs, {} as never, f.scheduler, {
+          ...f.workspaceOptions, integrationWorktreeRoot: root, integrationServiceFactory: () => service,
+        });
+        const fail = vi.spyOn(runs, "failPreparedRun");
+        orchestrator.reconcileInterruptedRuns();
+        expect(fail).not.toHaveBeenCalled();
+        const call = () => (orchestrator as unknown as PrivateCalls).runPhase(f.epicId, undefined, "integration", "integration", { phase: "integration", role: "integration", epicId: f.epicId });
+        if (variant === "invalid-output" || variant === "target-moved") {
+          await expect(call()).rejects.toThrow(variant === "invalid-output" ? "INTEGRATION_RECOVERY_OUTPUT_MISMATCH" : "TARGET_MOVED");
+          expect(f.db.get("SELECT status FROM integration_attempts WHERE id=$id", { id: attemptId })).toEqual({ status: "MERGING" });
+          expect(f.db.get("SELECT status,validated FROM orchestration_phase_runs WHERE id=$id", { id: phaseId })).toEqual({ status: "RUNNING", validated: 0 });
+          expect(f.db.get("SELECT status FROM scheduler_reservations WHERE run_id=$runId", { runId })).toEqual({ status: "RESERVED" });
+        } else {
+          await expect(call()).resolves.toMatchObject({ accepted: true, output: { outcome: "PASS" } });
+          await expect(call()).resolves.toMatchObject({ accepted: true });
+          expect(f.db.get("SELECT status FROM integration_attempts WHERE id=$id", { id: attemptId })).toEqual({ status: "MERGED" });
+          expect(f.db.get("SELECT agent_run_id,status,validated FROM orchestration_phase_runs WHERE id=$id", { id: phaseId })).toEqual({ agent_run_id: runId, status: "COMPLETED", validated: 1 });
+          expect(f.db.get("SELECT status FROM scheduler_reservations WHERE run_id=$runId", { runId })).toEqual({ status: "RELEASED" });
+        }
+        expect(dispatch).not.toHaveBeenCalled();
+        expect(prepare).not.toHaveBeenCalled();
+        expect(merge).not.toHaveBeenCalled();
+        expect(execute).not.toHaveBeenCalled();
+      } finally { f.db.close(); rmSync(root, { recursive: true, force: true }); }
+    },
+  );
+
+  it.each(["candidate", "recovered-result", "validated-phase", "legacy"])("selects the original child_task checkpoint for %s in DEVELOPMENT", async (variant) => {
+    const f = await approvedEpic();
+    try {
+      f.workflow.transition(f.taskId, "READY");
+      f.workflow.transition(f.taskId, "DEVELOPMENT");
+      const runId = randomUUID();
+      const now = new Date().toISOString();
+      f.db.run("INSERT INTO agent_runs(id,role,runtime,model,task_id,epic_id,status) VALUES($runId,'developer','test','test',$taskId,$epicId,'IN_PROGRESS')", { runId, taskId: f.taskId, epicId: f.epicId });
+      f.db.run("INSERT INTO orchestration_phase_runs(id,epic_id,task_id,phase,role,agent_run_id,result_json,evidence_json,validated,status,created_at) VALUES($id,$epicId,$taskId,'child_task','developer',$runId,'{}','{}',0,'RUNNING',$now)", { id: randomUUID(), epicId: f.epicId, taskId: f.taskId, runId, now });
+      const runs = { ...fakeRunService(f.db, false), isRecoveryCandidate: () => variant === "candidate" } as unknown as RunService;
+      const orchestrator = new EpicOrchestrator(f.db, f.workflow, f.planning, runs, {} as never, f.scheduler, f.workspaceOptions);
+      if (variant === "validated-phase") f.db.run("UPDATE orchestration_phase_runs SET status='COMPLETED',validated=1 WHERE agent_run_id=$runId", { runId });
+      if (variant === "recovered-result") vi.spyOn(orchestrator as unknown as { recoveredPhaseRun(): { output: string; cost: number } | undefined }, "recoveredPhaseRun").mockReturnValue({ output: "{}", cost: 0 });
+      const calls = orchestrator as unknown as PrivateCalls;
+      const phase = vi.spyOn(calls, "runPhase").mockRejectedValue(new Error("selection-observed"));
+      await expect(calls.runChild({ id: f.taskId, display_id: "task", status: "DEVELOPMENT" }, f.epicId, "epic/test")).rejects.toThrow("selection-observed");
+      const expected = variant === "legacy" ? "child_task_reconcile" : "child_task";
+      expect(phase).toHaveBeenCalledWith(f.epicId, f.taskId, expected, "developer", expect.objectContaining({ phase: expected }));
+    } finally { f.db.close(); }
+  });
+
+  it.each(["valid", "initial-completed", "session-mismatch", "role-mismatch", "invalid-output"])("adopts only the verified recovered phase result: %s", async (variant) => {
+    const f = await approvedEpic();
+    try {
+      const { runId } = setPhaseCheckpoint(f, "pm", ["plan"], "FAILED", 0);
+      const now = new Date().toISOString();
+      const output = JSON.stringify({ version: "1.0.0", outcome: "PRODUCT_DEFINITION" });
+      f.db.run("UPDATE orchestration_phase_runs SET status='RUNNING' WHERE agent_run_id=$runId", { runId });
+      f.db.run("UPDATE agent_runs SET status='IN_PROGRESS',session_id='original-session',cost=0.5 WHERE id=$runId", { runId });
+      f.db.transaction((tx) => {
+        insertRunProcessOwnerTx(tx, prepareRunProcessOwner(runId, `/fake/hermes-home-${runId}`, "systemd-user-service"));
+        transitionRunProcessOwnerTx(tx, { runId, expectedState: "PREPARED", nextState: "LAUNCHING" });
+        transitionRunProcessOwnerTx(tx, { runId, expectedState: "LAUNCHING", nextState: "LIVE", identity: { platform: "linux", pid: 100, systemdInvocationId: "fixture-invocation", systemdControlGroup: "/fixture-cgroup" } });
+        tx.run("UPDATE run_process_owners SET capture_state='BOUND' WHERE run_id=$runId", { runId });
+        syncCurrentRunProcessGenerationTx(tx, runId);
+        transitionRunProcessOwnerTx(tx, { runId, expectedState: "LIVE", nextState: "STOPPED", evidence: "SYSTEMD_CGROUP_EMPTY" });
+        if (variant !== "initial-completed") {
+          rotateRunProcessOwnerForResumeTx(tx, { runId, attempt: 1, previousAttempt: null });
+          tx.run("UPDATE agent_runs SET attempt=1 WHERE id=$runId", { runId });
+          transitionRunProcessOwnerTx(tx, { runId, expectedState: "PREPARED", nextState: "LAUNCHING" });
+          transitionRunProcessOwnerTx(tx, { runId, expectedState: "LAUNCHING", nextState: "LIVE", identity: { platform: "linux", pid: 101, systemdInvocationId: "resumed-invocation", systemdControlGroup: "/resumed-cgroup" } });
+          transitionRunProcessOwnerTx(tx, { runId, expectedState: "LIVE", nextState: "STOPPED", evidence: "SYSTEMD_CGROUP_EMPTY" });
+        }
+        tx.run(`INSERT INTO run_resume_bindings(run_id,schema_version,baseline_jcs,context_hash,workspace_snapshot_version,workspace_snapshot_hash,resume_binding_hash,original_session_id,created_at)
+          VALUES($runId,1,'{}',$hash,1,$hash,$hash,'original-session',$now)`, { runId, hash: "a".repeat(64), now });
+        tx.run("UPDATE agent_runs SET status='COMPLETED',exit_code=0,ended_at=$now,output=$output WHERE id=$runId", { runId, now, output });
+      });
+      const projectId = f.db.get<{ project_id: string }>("SELECT project_id FROM epics WHERE id=$epicId", { epicId: f.epicId })!.project_id;
+      f.scheduler.dispatchAgentRun(runId, projectId, "product_manager", "test");
+      const runs = { ...fakeRunService(f.db, false), isRecoveryCandidate: vi.fn(() => false) } as unknown as RunService;
+      const fail = vi.spyOn(runs, "failPreparedRun");
+      const dispatch = vi.spyOn(runs, "beginHermesRunPreflight");
+      const orchestrator = new EpicOrchestrator(f.db, f.workflow, f.planning, runs, {} as never, f.scheduler, f.workspaceOptions);
+      if (variant === "session-mismatch") f.db.run("UPDATE agent_runs SET session_id='other-session' WHERE id=$runId", { runId });
+      if (variant === "role-mismatch") f.db.run("UPDATE agent_runs SET role='architect' WHERE id=$runId", { runId });
+      if (variant === "invalid-output") f.db.run("UPDATE agent_runs SET output='{}' WHERE id=$runId", { runId });
+      if (["session-mismatch", "role-mismatch", "invalid-output"].includes(variant)) {
+        await expect((orchestrator as unknown as PrivateCalls).runPhase(f.epicId, undefined, "pm", "product_manager", { phase: "pm", role: "product_manager", epicId: f.epicId })).rejects.toThrow();
+        expect(dispatch).not.toHaveBeenCalled();
+        expect(f.db.get("SELECT agent_run_id,status,validated FROM orchestration_phase_runs WHERE agent_run_id=$runId", { runId })).toEqual({ agent_run_id: runId, status: "RUNNING", validated: 0 });
+        expect(f.db.get("SELECT status FROM scheduler_reservations WHERE run_id=$runId", { runId })).toEqual({ status: "RESERVED" });
+        return;
+      }
+      orchestrator.reconcileInterruptedRuns();
+      expect(fail).not.toHaveBeenCalled();
+      const result = await (orchestrator as unknown as PrivateCalls).runPhase(f.epicId, undefined, "pm", "product_manager", { phase: "pm", role: "product_manager", epicId: f.epicId });
+      expect(result).toMatchObject({ accepted: true, output: { outcome: "PRODUCT_DEFINITION" }, usage: { cost: 0.5 } });
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(f.db.get("SELECT agent_run_id,status,validated FROM orchestration_phase_runs WHERE agent_run_id=$runId", { runId })).toEqual({ agent_run_id: runId, status: "COMPLETED", validated: 1 });
+      expect(f.db.get("SELECT status FROM scheduler_reservations WHERE run_id=$runId", { runId })).toEqual({ status: "RELEASED" });
+    } finally { f.db.close(); }
+  });
+
+  it.each(["INTENT", "RUNNING"])("preserves a same-Run recovery candidate in %s until post-READY recovery", async (status) => {
+    const f = await approvedEpic(1, true);
+    try {
+      const { runId } = setPhaseCheckpoint(f, "pm", ["plan"], "FAILED", 0);
+      f.db.run("UPDATE orchestration_phase_runs SET status=$status WHERE agent_run_id=$runId", { status, runId });
+      f.db.run("UPDATE agent_runs SET status='IN_PROGRESS' WHERE id=$runId", { runId });
+      const projectId = f.db.get<{ project_id: string }>("SELECT project_id FROM epics WHERE id=$epicId", { epicId: f.epicId })!.project_id;
+      f.scheduler.dispatchAgentRun(runId, projectId, "product_manager", "test");
+      const runs = { ...fakeRunService(f.db, false), isRecoveryCandidate: vi.fn((id: string) => id === runId), failPreparedRun: vi.fn(() => true) } as unknown as RunService;
+      const orchestrator = new EpicOrchestrator(f.db, f.workflow, f.planning, runs, {} as never, f.scheduler, f.workspaceOptions);
+      const approve = vi.spyOn(orchestrator, "approveAndRun");
+      orchestrator.reconcileInterruptedRuns();
+      f.scheduler.reconcile();
+      await orchestrator.resumeApprovedEpics();
+      expect(runs.failPreparedRun).not.toHaveBeenCalled();
+      expect(approve).not.toHaveBeenCalled();
+      expect(f.db.get("SELECT status FROM orchestration_phase_runs WHERE agent_run_id=$runId", { runId })).toEqual({ status });
+      expect(f.db.get("SELECT status FROM agent_runs WHERE id=$runId", { runId })).toEqual({ status: "IN_PROGRESS" });
+      expect(f.db.get("SELECT status FROM scheduler_reservations WHERE run_id=$runId", { runId })).toEqual({ status: "RESERVED" });
+      expect(f.db.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_resource_locks WHERE reservation_id=(SELECT id FROM scheduler_reservations WHERE run_id=$runId)", { runId })?.count).toBe(1);
+    } finally { f.db.close(); }
+  });
+
+  it("terminalizes an ordinary interrupted phase when no durable same-Run recovery candidate exists", async () => {
+    const f = await approvedEpic();
+    try {
+      const { runId } = setPhaseCheckpoint(f, "pm", ["plan"], "FAILED", 0);
+      f.db.run("UPDATE orchestration_phase_runs SET status='RUNNING' WHERE agent_run_id=$runId", { runId });
+      f.db.run("UPDATE agent_runs SET status='STARTED' WHERE id=$runId", { runId });
+      const runs = { ...fakeRunService(f.db, false), isRecoveryCandidate: vi.fn(() => false) } as unknown as RunService;
+      const fail = vi.spyOn(runs, "failPreparedRun");
+      const orchestrator = new EpicOrchestrator(f.db, f.workflow, f.planning, runs, {} as never, f.scheduler, f.workspaceOptions);
+      orchestrator.reconcileInterruptedRuns();
+      expect(fail).toHaveBeenCalledWith(runId, expect.any(Error));
+      expect(f.db.get("SELECT status FROM agent_runs WHERE id=$runId", { runId })).toEqual({ status: "FAILED" });
+      expect(f.db.get("SELECT id FROM orchestration_phase_runs WHERE agent_run_id=$runId", { runId })).toBeUndefined();
+    } finally { f.db.close(); }
+  });
+
   it("keeps the execution claim and blocker clear until every sibling child settles, then preserves the first failure", async () => {
     const f = await approvedEpic(2);
     try {
@@ -259,9 +619,6 @@ describe("Epic orchestrator recovery safety", () => {
       const projectId = f.db.get<{ project_id: string }>("SELECT project_id FROM epics WHERE id=$id", { id: f.epicId })?.project_id;
       if (!projectId) throw new Error("Epic project is missing");
       expect(f.db.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_reservations WHERE status='RESERVED' AND project_id=$id", { id: projectId })?.count).toBe(0);
-      expect(runs.cleanupTerminalHermesProfile).toHaveBeenCalledTimes(2);
-      expect(runs.cleanupTerminalHermesProfile).toHaveBeenNthCalledWith(1, failed!.agent_run_id);
-      expect(runs.cleanupTerminalHermesProfile).toHaveBeenNthCalledWith(2, retriedRun!.agent_run_id);
     } finally {
       f.db.close();
     }
@@ -333,7 +690,7 @@ describe("Epic orchestrator recovery safety", () => {
         id: randomUUID(), taskId: f.taskId, projectId, owner: `task:${f.taskId}`, now: new Date().toISOString(), runId: previous.agent_run_id,
       });
 
-      await expect(calls.runPhase(f.epicId, f.taskId, "child_task", "developer", request)).rejects.toThrow("not safely retryable");
+      await expect(calls.runPhase(f.epicId, f.taskId, "child_task", "developer", request)).rejects.toThrow("EPIC_PHASE_RESERVATION_PRESENT");
       expect(f.db.get<{ count: number }>("SELECT COUNT(*) AS count FROM agent_runs WHERE epic_id=$id AND role='developer'", { id: f.epicId })?.count).toBe(1);
       expect(f.db.get<{ status: string }>("SELECT status FROM orchestration_phase_runs WHERE id=$id", { id: previous.id })?.status).toBe("FAILED");
     } finally {
@@ -406,11 +763,11 @@ describe("Epic orchestrator recovery safety", () => {
       const projectId = f.db.get<{ project_id: string }>("SELECT project_id FROM epics WHERE id=$id", { id: f.epicId })!.project_id;
       const now = new Date().toISOString();
       f.db.run("INSERT INTO agent_runs(id,role,runtime,model,status,epic_id) VALUES($id,'reviewer','test','test','FAILED',$epicId)", { id: runId, epicId: f.epicId });
-      f.db.run(
-        `INSERT INTO run_process_owners(run_id,source_tag,hermes_home,containment_kind,containment_id,launch_nonce,state,updated_at)
-         VALUES($id,$tag,$home,'systemd-user-service',$containment,$nonce,'LIVE',$now)`,
-        { id: runId, tag: `ebb-run:${runId}`, home: `/fake/hermes-home-${runId}`, containment: "a".repeat(64), nonce: "b".repeat(64), now },
-      );
+      f.db.transaction((tx) => {
+        insertRunProcessOwnerTx(tx, prepareRunProcessOwner(runId, `/fake/hermes-home-${runId}`, "systemd-user-service"));
+        transitionRunProcessOwnerTx(tx, { runId, expectedState: "PREPARED", nextState: "LAUNCHING" });
+        transitionRunProcessOwnerTx(tx, { runId, expectedState: "LAUNCHING", nextState: "LIVE", identity: { platform: "linux", pid: 100, systemdInvocationId: "fixture-invocation", systemdControlGroup: "/fixture-cgroup" } });
+      });
       f.db.run(
         `INSERT INTO orchestration_phase_runs(id,epic_id,task_id,phase,role,agent_run_id,result_json,evidence_json,validated,status,created_at)
          VALUES($id,$epicId,NULL,'child_review','reviewer',$runId,'{}','{}',0,'RUNNING',$now)`,
@@ -431,9 +788,7 @@ describe("Epic orchestrator recovery safety", () => {
         "SELECT containment_kind FROM run_process_owners WHERE run_id=$id", { id: runId },
       )?.containment_kind;
       const stopEvidence = containmentKind === "windows-job" ? "WINDOWS_JOB_EMPTY" : "SYSTEMD_CGROUP_EMPTY";
-      f.db.run("UPDATE run_process_owners SET state='STOPPED',stop_evidence=$stopEvidence,updated_at=$now WHERE run_id=$id", {
-        id: runId, now: new Date().toISOString(), stopEvidence,
-      });
+      f.db.transaction((tx) => transitionRunProcessOwnerTx(tx, { runId, expectedState: "LIVE", nextState: "STOPPED", evidence: stopEvidence }));
       orchestrator.reconcileInterruptedRuns();
       expect(failPreparedRun).toHaveBeenCalledWith(runId, expect.any(Error));
       expect(f.db.get<{ count: number }>("SELECT COUNT(*) AS count FROM orchestration_phase_runs WHERE agent_run_id=$id", { id: runId })?.count).toBe(0);
@@ -465,7 +820,7 @@ describe("Epic orchestrator recovery safety", () => {
     const f = await approvedEpic(1, true);
     try {
       setPhaseCheckpoint(f, phase, ["plan", phase], "FAILED", 1);
-      await expect(f.orchestrator.approveAndRun(f.plan.id, "recovery", f.request.id)).rejects.toThrow("not safely retryable");
+      await expect(f.orchestrator.approveAndRun(f.plan.id, "recovery", f.request.id)).rejects.toThrow("EPIC_PHASE_NOT_FAILED_UNVALIDATED");
       expect(f.db.get<{ status: string; failure_code: string | null }>("SELECT status,failure_code FROM planning_requests WHERE id=$id", { id: f.request.id }))
         .toEqual({ status: "FAILED", failure_code: "EPIC_RECOVERY_FAILED" });
       expect(f.db.get<{ count: number }>("SELECT COUNT(*) AS count FROM agent_runs WHERE epic_id=$id AND role=$role", { id: f.epicId, role: phase === "pm" ? "product_manager" : "architect" })?.count).toBe(1);

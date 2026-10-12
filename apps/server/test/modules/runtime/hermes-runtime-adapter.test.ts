@@ -6,11 +6,11 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
-import { createHash } from "node:crypto";
 import { HermesRuntimeAdapter } from "../../../src/modules/runtime/hermes/hermes-runtime-adapter.js";
 import { validatePlatform } from "../../../src/platform/config/app-config.js";
 import * as orchestratorHomeModule from "../../../src/platform/home/orchestrator-home.js";
 import { HermesCliBuilder } from "../../../src/modules/runtime/hermes/hermes-cli.js";
+import { HERMES_PROVIDER_SELECTION_SOURCE } from "../../../src/modules/runtime/hermes/hermes-source-identity.js";
 import { createHermesLaunchTicket, type HermesLaunchTicketFactory } from "../../../src/modules/runtime/hermes/hermes-launch-ticket.js";
 import { createSqliteDatabase } from "../../../src/platform/database/sqlite-database.js";
 import {
@@ -21,17 +21,9 @@ import {
 } from "../../../src/platform/process/process-executor.js";
 import type { ProcessScopeIdentity, ProcessScopeObservation } from "../../../src/platform/process/process-inspector.js";
 import { ProcessScopeLaunchNotDispatchedError, type ProcessScopeLaunchRequest, type ProcessScopeSupervisor } from "../../../src/platform/process/run-scope-supervisor.js";
-import { insertRunProcessOwnerTx, prepareRunProcessOwner, transitionRunProcessOwnerTx } from "../../../src/modules/runtime/run-process-owner.js";
+import { insertRunProcessOwnerTx, prepareRunProcessOwner } from "../../../src/modules/runtime/run-process-owner.js";
 import type { HermesSessionCapture } from "../../../src/modules/runtime/hermes-session-capture-port.js";
-import { HERMES_PROVIDER_SELECTION_SOURCE } from "../../../src/modules/runtime/hermes/hermes-provider-selection.js";
-import { createHermesAuthRouteFixture } from "../../helpers/hermes-auth-route-fixture.js";
-import * as hermesProviderSelectionModule from "../../../src/modules/runtime/hermes/hermes-provider-selection.js";
-import * as hermesRunSelectionModule from "../../../src/modules/runtime/hermes/hermes-run-selection.js";
-import * as hermesProfileHomeModule from "../../../src/platform/home/hermes-profile-home.js";
-import * as hermesNativeHelperLauncherModule from "../../../src/platform/process/native-helper-launcher.js";
-import * as hermesNativeHelperIntegrityModule from "../../../src/platform/process/native-helper-integrity.js";
-import type { HermesRunSelection } from "../../../src/modules/runtime/hermes/hermes-run-selection.js";
-import type { HermesRunProfileConfigWriter } from "../../../src/platform/home/hermes-profile-home.js";
+import type { HermesManagedRunSelection, HermesRuntimeSelection } from "../../../src/modules/runtime/hermes/hermes-run-selection.js";
 
 // Имитация исполнителя процессов для тестов.
 class MockProcessExecutor extends ProcessExecutor {
@@ -85,7 +77,9 @@ class MockProcessScopeSupervisor implements ProcessScopeSupervisor {
   launchCalls = 0;
   payloadDispatches = 0;
   stdoutChunks: Uint8Array[] = [];
+  stderrChunks: Uint8Array[] = [];
   completionError: Error | undefined;
+  maskPayloadCallbackFailure = false;
   stopCalls: ProcessScopeIdentity[] = [];
   beforeProcessExecution: ((owner: ProcessScopeIdentity, request: ProcessScopeLaunchRequest) => void | Promise<void>) | undefined;
 
@@ -117,8 +111,14 @@ class MockProcessScopeSupervisor implements ProcessScopeSupervisor {
     const env = { ...request.environment };
     this.payloadDispatches += 1;
     for (const chunk of this.stdoutChunks) {
-      await request.onStdoutChunk?.(chunk);
+      try {
+        await request.onStdoutChunk?.(chunk);
+      } catch (error) {
+        if (this.maskPayloadCallbackFailure) throw new Error("WINDOWS_HELPER_PAYLOAD_CALLBACK_FAILED", { cause: error });
+        throw error;
+      }
     }
+    for (const chunk of this.stderrChunks) request.onStderrChunk?.(chunk);
     const execution = this.completionError ? Promise.reject(this.completionError) : this.executor.exec(request.executable, [...request.args], {
       cwd: request.cwd,
       env,
@@ -157,6 +157,31 @@ function stoppedEvidence(owner: ProcessScopeIdentity): string {
   return owner.containmentKind === "windows-job" ? "WINDOWS_JOB_EMPTY" : "SYSTEMD_CGROUP_EMPTY";
 }
 
+function createProcessOwnerGenerationFixture(database: ReturnType<typeof createSqliteDatabase>): void {
+  database.exec(`ALTER TABLE run_process_owners ADD COLUMN current_generation INTEGER NOT NULL DEFAULT 1`);
+  database.exec(`CREATE TABLE run_process_owner_generations (
+    run_id TEXT NOT NULL, generation INTEGER NOT NULL, run_attempt INTEGER,
+    source_tag TEXT NOT NULL, hermes_home TEXT NOT NULL, hermes_source_snapshot_key TEXT,
+    capture_state TEXT NOT NULL, containment_kind TEXT NOT NULL, containment_id TEXT NOT NULL,
+    launch_nonce TEXT NOT NULL, systemd_invocation_id TEXT, systemd_control_group TEXT,
+    supervisor_pid INTEGER, supervisor_start_identity TEXT, pid INTEGER, platform TEXT,
+    process_start_identity TEXT, executable_identity TEXT, state TEXT NOT NULL,
+    stop_evidence TEXT, updated_at TEXT NOT NULL, PRIMARY KEY(run_id,generation)
+  )`);
+}
+
+function insertCurrentProcessOwnerGenerationFixture(database: ReturnType<typeof createSqliteDatabase>, runId: string): void {
+  database.run(`INSERT INTO run_process_owner_generations(
+    run_id,generation,run_attempt,source_tag,hermes_home,hermes_source_snapshot_key,capture_state,
+    containment_kind,containment_id,launch_nonce,systemd_invocation_id,systemd_control_group,
+    supervisor_pid,supervisor_start_identity,pid,platform,process_start_identity,executable_identity,
+    state,stop_evidence,updated_at
+  ) SELECT run_id,1,NULL,source_tag,hermes_home,hermes_source_snapshot_key,'UNBOUND',
+    containment_kind,containment_id,launch_nonce,systemd_invocation_id,systemd_control_group,
+    supervisor_pid,supervisor_start_identity,pid,platform,process_start_identity,executable_identity,
+    state,stop_evidence,updated_at FROM run_process_owners WHERE run_id=$runId`, { runId });
+}
+
 function deferred<T = void>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
   const promise = new Promise<T>((resolvePromise) => { resolve = resolvePromise; });
@@ -169,10 +194,9 @@ function createTestRuntimeAdapter(
   config?: ConstructorParameters<typeof HermesRuntimeAdapter>[2],
   supervisor?: ProcessScopeSupervisor,
 ): HermesRuntimeAdapter {
-  return allowTestHermesNativeAuth(new HermesRuntimeAdapter(executor, artifactStore, {
+  return allowTestManagedHermesSelection(new HermesRuntimeAdapter(executor, artifactStore, {
     ...config,
     hermesLaunchTicketFactory: config?.hermesLaunchTicketFactory ?? testHermesLaunchTicketFactory,
-    hermesRunProfileConfigWriter: config?.hermesRunProfileConfigWriter ?? testHermesRunProfileConfigWriter,
   }, supervisor ?? new MockProcessScopeSupervisor(executor)), async (run) => run.hermesSelection ?? await testHermesSelection(
     run.id,
     run.model,
@@ -188,21 +212,7 @@ const testHermesLaunchTicketFactory: HermesLaunchTicketFactory = async (input) =
   const objectIdentity = platform === "win32"
     ? { platform, volumeSerial: "0123456789abcdef", fileId: "0123456789abcdef0123456789abcdef" } as const
     : { platform, device: "1", inode: "1" } as const;
-  const profileHomeTargetIdentities = platform === "win32" ? {
-    home: { ...objectIdentity, fileId: "7".repeat(32) },
-    config: { ...objectIdentity, fileId: "8".repeat(32) },
-  } : undefined;
   const argsPrefix = ["-I", "-B", "-S", "-c", "test bootstrap"];
-  const sourceSnapshotKey = JSON.stringify({
-    formatVersion: 1,
-    hermesVersion: HERMES_PROVIDER_SELECTION_SOURCE.version,
-    manifestDigest: "c".repeat(64),
-    ...(process.platform === "win32" ? { materializationPolicyVersion: 2 } : {}),
-    sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit,
-    sourceTree: "d".repeat(40),
-  });
-  const sourceSnapshotDirectoryId = createHash("sha256").update(sourceSnapshotKey).digest("hex");
-  const sourceSnapshotRoot = paths.join(os.tmpdir(), "hermes-source-snapshots", sourceSnapshotDirectoryId);
   return {
     executablePath,
     argsPrefix,
@@ -212,117 +222,36 @@ const testHermesLaunchTicketFactory: HermesLaunchTicketFactory = async (input) =
       platform,
       hermesExecutablePath,
       hermesExecutableIdentity: objectIdentity,
+      sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit,
       executablePath,
       executableIdentity: objectIdentity,
       executableArgsPrefix: argsPrefix,
-      profileHome: input.profileHome,
-      profileHomeIdentity: objectIdentity,
-      ...(profileHomeTargetIdentities ? { profileHomeTargetIdentities } : {}),
-      ...(input.profileHomePathChain ? { profileHomePathChain: input.profileHomePathChain } : {}),
-      hermesSourceSnapshotKey: sourceSnapshotKey,
-      hermesSourceSnapshotRoot: sourceSnapshotRoot,
-      hermesSourceSnapshotRootIdentity: objectIdentity,
-      hermesSourceManifestDigest: "c".repeat(64),
-      hermesSourceProjectionPath: paths.join(os.tmpdir(), "hermes-source-snapshots", `${sourceSnapshotDirectoryId}.native-v1.bin`),
-      hermesSourceProjectionSha256: "f".repeat(64),
-      hermesSourceProjectionSize: 128,
+      hermesHome: input.hermesHome,
       environment: input.environment,
     }),
   };
 };
 
-const testHermesRunProfileConfigWriter: HermesRunProfileConfigWriter = async ({ profileHome, configYaml }) => {
-  await fs.mkdir(path.join(profileHome, "home"), { recursive: true });
-  await fs.writeFile(path.join(profileHome, "config.yaml"), configYaml);
-};
-
-async function testHermesSelection(runId: string, modelId: string, resultDirectory = path.join(os.tmpdir(), "orchestrator-hermes-results")): Promise<HermesRunSelection> {
-  const sourceSnapshotKey = JSON.stringify({
-    formatVersion: 1,
-    hermesVersion: HERMES_PROVIDER_SELECTION_SOURCE.version,
-    manifestDigest: "c".repeat(64),
-    ...(process.platform === "win32" ? { materializationPolicyVersion: 2 } : {}),
-    sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit,
-    sourceTree: "d".repeat(40),
-  });
-  const authFixture = await createHermesAuthRouteFixture(runId, "openai-codex", modelId, resultDirectory, false, {
-    providerModule: hermesProviderSelectionModule,
-    selectionModule: hermesRunSelectionModule,
-    profileModule: hermesProfileHomeModule,
-    launcherModule: hermesNativeHelperLauncherModule,
-    integrityModule: hermesNativeHelperIntegrityModule,
-  });
-  const { profileHome } = authFixture;
+async function testHermesSelection(runId: string, _modelId: string, resultDirectory = path.join(os.tmpdir(), "orchestrator-hermes-results")): Promise<HermesManagedRunSelection> {
   return {
-    runId,
-    providerId: "openai-codex",
-    modelId,
-    endpointIdentity: "hermes-provider:openai-codex",
-    endpointRevision: HERMES_PROVIDER_SELECTION_SOURCE.commit,
-    sourceVersion: HERMES_PROVIDER_SELECTION_SOURCE.version,
-    sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit,
-    sourceSnapshotKey,
-    profileHome,
-    ...(authFixture.profileHomePathChain ? { profileHomePathChain: authFixture.profileHomePathChain } : {}),
-    authRouteEvidence: authFixture.authRouteEvidence,
+    mode: "HERMES_MANAGED", runId, hermesHome: path.join(resultDirectory, "configured-hermes"),
+    runtimeIdentity: "fixture-runtime",
   };
 }
 
-function allowTestHermesNativeAuth(
+function allowTestManagedHermesSelection(
   adapter: HermesRuntimeAdapter,
-  selectionForRun?: (run: Parameters<HermesRuntimeAdapter["startRun"]>[0]) => HermesRunSelection | undefined | Promise<HermesRunSelection | undefined>,
+  selectionForRun?: (run: Parameters<HermesRuntimeAdapter["startRun"]>[0]) => HermesRuntimeSelection | undefined | Promise<HermesRuntimeSelection | undefined>,
 ): HermesRuntimeAdapter {
-  (adapter as unknown as { hermesLaunchTicketFactory: HermesLaunchTicketFactory }).hermesLaunchTicketFactory = testHermesLaunchTicketFactory;
-  const profileConfigWriter = adapter as unknown as { hermesRunProfileConfigWriter?: HermesRunProfileConfigWriter };
-  profileConfigWriter.hermesRunProfileConfigWriter ??= testHermesRunProfileConfigWriter;
-  const proofRegistrar = adapter as unknown as {
-    recordVerifiedHermesNativeAuthEvidence(selection: HermesRunSelection, evidence: {
-      authRoot: string;
-      profileHome: string;
-      runId: string;
-      sourceVersion: string;
-      sourceCommit: string;
-      sourceSnapshotKey: string;
-      providerId: string;
-      modelId: string;
-      endpointIdentity: string;
-      endpointRevision: string;
-      projectionVersion: string;
-      authRouteEvidence: HermesRunSelection["authRouteEvidence"];
-    }): void;
-  };
-  const authGate = adapter as unknown as { assertNativeHermesAuthReady: (...args: unknown[]) => void };
-  const originalAuthGate = authGate.assertNativeHermesAuthReady.bind(adapter);
-  vi.spyOn(authGate, "assertNativeHermesAuthReady").mockImplementation((...args: unknown[]) => {
-    // Legacy in-memory resume tests predate Task5C's durable selection binding. Keep that
-    // test-only path isolated; every production start call supplies run + PREPARED owner.
-    if (args.length === 0) return;
-    Reflect.apply(originalAuthGate, adapter, args);
-  });
+  (adapter as unknown as { hermesLaunchTicketFactory: HermesLaunchTicketFactory }).hermesLaunchTicketFactory ??= testHermesLaunchTicketFactory;
+  const proofs = (adapter as unknown as { verifiedManagedSelections: WeakSet<HermesManagedRunSelection> }).verifiedManagedSelections;
   const originalStart = adapter.startRun.bind(adapter);
   vi.spyOn(adapter, "startRun").mockImplementation(async (run) => {
-    const selectionResult = selectionForRun?.(run);
-    const selection = selectionResult && typeof selectionResult === "object" && "then" in selectionResult
-      ? await selectionResult
-      : selectionResult ?? run.hermesSelection;
-    if (selection) {
-      const paths = process.platform === "win32" ? path.win32 : path.posix;
-      proofRegistrar.recordVerifiedHermesNativeAuthEvidence(selection, {
-        authRoot: paths.dirname(paths.dirname(selection.profileHome)),
-        profileHome: selection.profileHome,
-        runId: selection.runId,
-        sourceVersion: selection.sourceVersion,
-        sourceCommit: selection.sourceCommit,
-        sourceSnapshotKey: selection.sourceSnapshotKey,
-        providerId: selection.providerId,
-        modelId: selection.modelId,
-        endpointIdentity: selection.endpointIdentity,
-        endpointRevision: selection.endpointRevision,
-        projectionVersion: HERMES_PROVIDER_SELECTION_SOURCE.projectionVersion,
-        authRouteEvidence: selection.authRouteEvidence,
-      });
-    }
-    return originalStart(selection ? { ...run, hermesSelection: selection } : run);
+    const projected = selectionForRun?.(run);
+    const selection = projected && typeof projected === "object" && "then" in projected ? await projected : projected ?? run.hermesSelection ?? await testHermesSelection(run.id, run.model);
+    if (selection && "mode" in selection) proofs.add(selection);
+    if (!selection) throw new Error("Managed selection fixture missing");
+    return originalStart({ ...run, capabilityRef: run.capabilityRef ?? "fixture-capability", hermesSelection: selection });
   });
   return adapter;
 }
@@ -365,163 +294,46 @@ describe("HermesRuntimeAdapter", () => {
     await fs.rm(sharedCheckpointDirectory, { recursive: true, force: true });
   });
 
-  it("attempts cleanup only for the created Run profile and releases the source lease when evidence recording fails", async () => {
-    const platform = process.platform === "win32" ? "win32" : "linux";
-    const paths = platform === "win32" ? path.win32 : path.posix;
+  it("selects the configured Hermes root without reading or creating its profile", async () => {
     const runId = "f672e56f-07ed-4fc4-9aca-2f91b3d7bc82";
-    const hermesRoot = paths.join(os.tmpdir(), `hermes-preflight-cleanup-${runId}`);
-    const cacheRoot = paths.join(os.tmpdir(), `hermes-preflight-cache-${runId}`);
-    const primaryError = new Error("TEST_AUTH_EVIDENCE_RECORD_FAILED");
-    const events: string[] = [];
-    const sourceSnapshot = {
-      cacheKey: "test-source-snapshot-key",
-      directoryId: "test-source-snapshot-directory",
-      manifestDigest: "a".repeat(64),
-      rootPath: paths.join(cacheRoot, "test-source-snapshot"),
-    };
-    const cleanupProfileOptions: Array<Record<string, unknown>> = [];
-    const releaseReference = vi.fn(async () => {
-      events.push("lease-release");
-      throw new Error("TEST_LEASE_RELEASE_FAILED");
-    });
-    const cleanupFailureLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const cleanupProfile = vi.fn(async (options: Record<string, unknown>) => {
-      cleanupProfileOptions.push(options);
-      events.push("profile-cleanup");
-      throw new Error("TEST_CLEANUP_FAILED");
-    });
-
-    // The adapter is dynamically loaded against local test doubles so this preflight test never
-    // resolves or reads a real Hermes installation, provider configuration, profile, or auth.
-    vi.doUnmock("../../../src/modules/runtime/hermes/hermes-executable-resolver.js");
-    vi.doUnmock("../../../src/modules/runtime/hermes/hermes-source-snapshot.js");
-    vi.doUnmock("../../../src/platform/home/hermes-profile-home.js");
+    const hermesRoot = path.join(os.tmpdir(), `hermes-managed-${runId}`);
+    const installedCommit = "9244275491" + "0".repeat(30);
     vi.resetModules();
     vi.doMock("../../../src/modules/runtime/hermes/hermes-executable-resolver.js", () => ({
       resolveHermesExecutable: vi.fn(async () => ({
-        executablePath: paths.join(hermesRoot, platform === "win32" ? "hermes.exe" : "hermes"),
-        executableIdentity: { platform },
-        runtimeExecutablePath: paths.join(hermesRoot, platform === "win32" ? "python.exe" : "python3"),
-        runtimeExecutableIdentity: { platform },
-        runtimeDependencyRoot: hermesRoot,
-        runtimeArgsPrefix: [],
-        hermesProjectRoot: paths.join(hermesRoot, "source"),
-        hermesConfigHome: hermesRoot,
-        sourceVersion: HERMES_PROVIDER_SELECTION_SOURCE.version,
-        sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit,
-        sourceTree: "b".repeat(40),
-        gitExecutable: paths.join(hermesRoot, platform === "win32" ? "git.exe" : "git"),
+        hermesConfigHome: hermesRoot, hermesProjectRoot: "fixture-source",
+        sourceCommit: installedCommit,
+        executableIdentity: { platform: "win32", volumeSerial: "0123456789abcdef", fileId: "a".repeat(32) },
+        runtimeExecutableIdentity: { platform: "win32", volumeSerial: "0123456789abcdef", fileId: "b".repeat(32) },
       })),
-      buildHermesSnapshotRuntimeArgs: vi.fn(),
-      verifyHermesProfileHomeIdentity: vi.fn(),
-      verifyHermesRunProfileTargetIdentities: vi.fn(async () => ({
-        home: { platform: "win32", volumeSerial: "0123456789abcdef", fileId: "7".repeat(32) },
-        config: { platform: "win32", volumeSerial: "0123456789abcdef", fileId: "8".repeat(32) },
-      })),
-      verifyHermesProfileHomePathChain: vi.fn(async (profileHome: string, authRoot: string) => {
-        if (platform !== "win32") return undefined;
-        const root = path.win32.parse(profileHome).root;
-        const profileParts = path.win32.relative(root, profileHome).split(/[\\/]+/u).filter(Boolean);
-        const authRootIndex = path.win32.relative(root, authRoot).split(/[\\/]+/u).filter(Boolean).length;
-        return {
-          version: 1 as const,
-          authRootIndex,
-          components: Array.from({ length: profileParts.length + 1 }, (_unused, index) => ({
-            volumeSerial: "0123456789abcdef",
-            fileId: index === profileParts.length ? "f".repeat(32) : `${index}`.padStart(32, "0"),
-          })),
-        };
-      }),
     }));
-    vi.doMock("../../../src/modules/runtime/hermes/hermes-source-snapshot.js", () => ({
-      ensureHermesSourceSnapshotNativeProjection: vi.fn(),
-      isVerifiedHermesSourceSnapshot: vi.fn(),
-      materializeHermesSourceSnapshot: vi.fn(async () => sourceSnapshot),
-      releaseHermesSourceSnapshotReferenceLease: releaseReference,
-    }));
-    vi.doMock("../../../src/platform/process/native-helper-integrity.js", () => ({
-      verifyNativeHelperIntegrity: vi.fn(async () => undefined),
-    }));
-    vi.doMock("../../../src/platform/process/native-helper-launcher.js", () => ({
-      runVerifiedNativeHelper: vi.fn(async (_helper: string, _anchor: string, args: string[]) => {
-        if (args[0] === "create-profile") events.push("profile-created");
-        return {
-          exitCode: 0,
-          stderr: "",
-          stdout: args[0] === "project-selection" ? JSON.stringify({
-            sourceVersion: HERMES_PROVIDER_SELECTION_SOURCE.version,
-            sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit,
-            projectionVersion: HERMES_PROVIDER_SELECTION_SOURCE.projectionVersion,
-            status: "EXPLICIT_SELECTION",
-            endpointOverridePresent: false,
-            providerId: "openai-codex",
-            modelId: "test-model",
-          }) : "",
-        };
-      }),
-    }));
-    vi.doMock("../../../src/platform/home/hermes-profile-home.js", async () => {
-      const actual = await vi.importActual<typeof import("../../../src/platform/home/hermes-profile-home.js")>(
-        "../../../src/platform/home/hermes-profile-home.js",
-      );
-      return { ...actual, cleanupHermesRunProfileHome: cleanupProfile };
-    });
-
     try {
-      const { HermesRuntimeAdapter: IsolatedHermesRuntimeAdapter } = await import(
-        "../../../src/modules/runtime/hermes/hermes-runtime-adapter.js"
-      );
-      const isolatedAdapter = new IsolatedHermesRuntimeAdapter(new ProcessExecutor(), undefined, {
-        hermesSourceSnapshotCacheRoot: cacheRoot,
-        homeEnvironment: { EBB_ORCHESTRATOR_HOME: paths.join(os.tmpdir(), `orchestrator-home-${runId}`) },
-      });
-      const authEvidenceRegistrar = isolatedAdapter as unknown as {
-        recordVerifiedHermesNativeAuthEvidence: (...args: unknown[]) => void;
-      };
-      vi.spyOn(authEvidenceRegistrar, "recordVerifiedHermesNativeAuthEvidence").mockImplementation(() => {
-        events.push("auth-evidence-record");
-        throw primaryError;
-      });
-
-      await expect(isolatedAdapter.prepareHermesRunSelection(runId)).rejects.toBe(primaryError);
-
-      expect(events).toEqual([
-        "profile-created",
-        "auth-evidence-record",
-        "profile-cleanup",
-        "lease-release",
-      ]);
-      expect(cleanupProfile).toHaveBeenCalledTimes(1);
-      expect(cleanupProfileOptions[0]).toMatchObject({ hermesRoot, runId, platform });
-      expect(releaseReference).toHaveBeenCalledTimes(1);
-      expect(cleanupFailureLog).toHaveBeenCalledTimes(2);
-      expect(cleanupFailureLog).toHaveBeenNthCalledWith(1,
-        "[ebb-orchestrator] HERMES_PROFILE_PATH_CLEANUP_FAILED",
-      );
-      expect(cleanupFailureLog).toHaveBeenNthCalledWith(2,
-        "[ebb-orchestrator] HERMES_SOURCE_SNAPSHOT_LEASE_RELEASE_FAILED",
-      );
+      const { HermesRuntimeAdapter: ManagedAdapter } = await import("../../../src/modules/runtime/hermes/hermes-runtime-adapter.js");
+      const runtime = new ManagedAdapter(new ProcessExecutor());
+      const preflight = await runtime.prepareHermesRunSelection(runId);
+      expect(preflight.selection).toEqual({ mode: "HERMES_MANAGED", runId, hermesHome: hermesRoot,
+        runtimeIdentity: JSON.stringify({ platform: "win32",
+          hermes: { platform: "win32", volumeSerial: "0123456789abcdef", fileId: "a".repeat(32) },
+          python: { platform: "win32", volumeSerial: "0123456789abcdef", fileId: "b".repeat(32) },
+          sourceCommit: installedCommit }) });
+      expect(Object.keys(preflight)).toEqual(["selection"]);
+      await expect(fs.stat(hermesRoot)).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
-      cleanupFailureLog.mockRestore();
       vi.doUnmock("../../../src/modules/runtime/hermes/hermes-executable-resolver.js");
-      vi.doUnmock("../../../src/modules/runtime/hermes/hermes-source-snapshot.js");
-      vi.doUnmock("../../../src/modules/runtime/hermes/hermes-provider-selection.js");
-      vi.doUnmock("../../../src/platform/home/hermes-profile-home.js");
       vi.resetModules();
     }
   });
 
-  it("fails closed before preparing a process when native Hermes auth evidence is absent", async () => {
+  it("fails closed before preparing a process when managed selection verification is absent", async () => {
     const resultDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-auth-policy-red-"));
     const supervisor = new MockProcessScopeSupervisor(mockExecutor);
-    const profileWriter = vi.fn(testHermesRunProfileConfigWriter);
     const adapterWithoutTestAuthBypass = new HermesRuntimeAdapter(mockExecutor, mockArtifactStore, {
       resultDirectory,
       checkpointDirectory: sharedCheckpointDirectory,
       managedWorktree: path.join(os.tmpdir(), "hermes-auth-policy-workspace"),
       hermesLaunchTicketFactory: testHermesLaunchTicketFactory,
-      hermesRunProfileConfigWriter: profileWriter,
     }, supervisor);
+    const promptWrite = vi.spyOn(adapterWithoutTestAuthBypass as unknown as { writePromptFile(run: Parameters<HermesRuntimeAdapter["startRun"]>[0]): Promise<string> }, "writePromptFile");
     const runId = "b8617c18-bb88-4ce3-af9e-9f7f206c27ac";
     const run = {
       id: runId, role: "Developer", runtime: "hermes", model: "model-x",
@@ -532,11 +344,12 @@ describe("HermesRuntimeAdapter", () => {
     };
 
     try {
-      await expect(adapterWithoutTestAuthBypass.startRun(run)).rejects.toThrow("HERMES_NATIVE_AUTH_NOT_READY");
-      expect(profileWriter).not.toHaveBeenCalled();
+      await expect(adapterWithoutTestAuthBypass.startRun(run)).rejects.toThrow("HERMES_RUN_SELECTION_UNAVAILABLE");
+      expect(promptWrite).not.toHaveBeenCalled();
       expect(supervisor.launchCalls).toBe(0);
       expect(mockExecutor.getCalls()).toHaveLength(0);
     } finally {
+      promptWrite.mockRestore();
       await fs.rm(resultDirectory, { recursive: true, force: true });
     }
   });
@@ -674,6 +487,13 @@ describe("HermesRuntimeAdapter", () => {
         resultDirectory,
         managedWorktree: path.join(os.tmpdir(), "hermes-test-workspace"),
         checkpointDirectory: sharedCheckpointDirectory,
+        environment: {
+          HERMES_HOME: path.join(resultDirectory, "configured-hermes"),
+          HERMES_DATA_DIR_SUFFIX: "-custom",
+          HERMES_RUNTIME_DIR: path.join(resultDirectory, "runtime"),
+          USERPROFILE: "C:\\Users\\test",
+          LOCALAPPDATA: "C:\\Users\\test\\AppData\\Local",
+        },
       }, supervisor);
       const captures: HermesSessionCapture[] = [];
       adapter.setHermesSessionCaptureHandler(async (capture) => { captures.push(capture); });
@@ -691,13 +511,191 @@ describe("HermesRuntimeAdapter", () => {
         expect(captures).toHaveLength(1);
         expect(captures[0]).toEqual({
           runId: run.id, attempt: null, sourceTag: `ebb-run:${run.id}`,
-          hermesHome: supervisor.lastRequest?.environment.HERMES_HOME,
+          hermesHome: path.join(resultDirectory, "configured-hermes"),
           owner: supervisor.lastLiveIdentity,
           status: "captured", sessionId: "session-live-123",
         });
         expect(supervisor.lastRequest?.captureOutput).toBe(false);
+        expect(supervisor.lastRequest?.environment).toMatchObject({
+          HERMES_HOME: path.join(resultDirectory, "configured-hermes"),
+          USERPROFILE: "C:\\Users\\test",
+          LOCALAPPDATA: "C:\\Users\\test\\AppData\\Local",
+          HERMES_DATA_DIR_SUFFIX: "-custom",
+          HERMES_RUNTIME_DIR: path.join(resultDirectory, "runtime"),
+        });
         expect(mockArtifactStore.getArtifacts(run.id)).toEqual({ stdout: "", stderr: "", exitCode: 0 });
         expect(JSON.stringify(captures)).not.toContain(rawMarker);
+      } finally {
+        await fs.rm(resultDirectory, { recursive: true, force: true });
+      }
+    });
+
+    it("preserves only a known capture failure reason across the supervisor callback boundary", async () => {
+      const resultDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-capture-callback-diagnostic-"));
+      const supervisor = new MockProcessScopeSupervisor(mockExecutor);
+      supervisor.maskPayloadCallbackFailure = true;
+      const secret = "raw-provider-output-must-not-escape";
+      supervisor.stdoutChunks = [new TextEncoder().encode(`${secret}\n`)];
+      adapter = createTestRuntimeAdapter(mockExecutor, mockArtifactStore, {
+        resultDirectory,
+        managedWorktree: path.join(os.tmpdir(), "hermes-test-workspace"),
+        checkpointDirectory: sharedCheckpointDirectory,
+      }, supervisor);
+      adapter.setHermesSessionCaptureHandler(async () => undefined);
+      const run = {
+        id: "5ce80561-dd6f-4a77-b62c-b18e7180241e", role: "Developer", runtime: "hermes", model: "model-x",
+        taskId: null, epicId: null, status: "STARTED" as const, sessionId: null, attempt: null,
+        triggerReason: null, contextVersion: "v1", outputSchemaVersion: "v1", startedAt: new Date(),
+        endedAt: null, exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
+      };
+
+      try {
+        const failure = await adapter.startRun(run).then(() => undefined, (error: unknown) => error);
+        expect(failure).toBeInstanceOf(Error);
+        expect((failure as Error).message).toBe("WINDOWS_HELPER_PAYLOAD_CALLBACK_FAILED:MALFORMED_JSON");
+        expect((failure as Error).stack).not.toContain(secret);
+        expect(supervisor.stopCalls).toHaveLength(1);
+      } finally {
+        await fs.rm(resultDirectory, { recursive: true, force: true });
+      }
+    });
+
+    it("keeps the generic supervisor callback code when no capture callback reason is known", async () => {
+      const supervisor = new MockProcessScopeSupervisor(mockExecutor);
+      supervisor.completionError = new Error("WINDOWS_HELPER_PAYLOAD_CALLBACK_FAILED");
+      adapter = createTestRuntimeAdapter(mockExecutor, mockArtifactStore, {
+        managedWorktree: path.join(os.tmpdir(), "hermes-test-workspace"),
+        checkpointDirectory: sharedCheckpointDirectory,
+      }, supervisor);
+      adapter.setHermesSessionCaptureHandler(async () => undefined);
+      const run = {
+        id: "4e0b8271-2325-4265-a4eb-d6240b7e7bb1", role: "Developer", runtime: "hermes", model: "model-x",
+        taskId: null, epicId: null, status: "STARTED" as const, sessionId: null, attempt: null,
+        triggerReason: null, contextVersion: "v1", outputSchemaVersion: "v1", startedAt: new Date(),
+        endedAt: null, exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
+      };
+
+      await expect(adapter.startRun(run)).rejects.toThrow("WINDOWS_HELPER_PAYLOAD_CALLBACK_FAILED");
+      await expect(adapter.startRun(run)).rejects.toThrow(/^WINDOWS_HELPER_PAYLOAD_CALLBACK_FAILED$/u);
+    });
+
+    it("reports only the fixed Hermes MCP registration failure marker from stderr", async () => {
+      const resultDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-registration-diagnostic-"));
+      const supervisor = new MockProcessScopeSupervisor(mockExecutor);
+      adapter = createTestRuntimeAdapter(mockExecutor, mockArtifactStore, {
+        resultDirectory,
+        managedWorktree: path.join(os.tmpdir(), "hermes-test-workspace"),
+        checkpointDirectory: sharedCheckpointDirectory,
+      }, supervisor);
+      adapter.setHermesSessionCaptureHandler(async () => undefined);
+      const run = {
+        id: "24807021-4403-49d3-9349-dd375a3e0563", role: "Developer", runtime: "hermes", model: "model-x",
+        taskId: null, epicId: null, status: "STARTED" as const, sessionId: null, attempt: null,
+        triggerReason: null, contextVersion: "v1", outputSchemaVersion: "v1", startedAt: new Date(),
+        endedAt: null, exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
+      };
+
+      try {
+        const marker = "HERMES_EBB_MCP_REGISTRATION_FAILED";
+        supervisor.stderrChunks = [new TextEncoder().encode(`${marker}\nsecret-tail-must-not-escape`)];
+        mockExecutor.setNextResult({ exitCode: 1, stdout: "", stderr: `${marker}\n` });
+        const markerFailure = await adapter.startRun(run).then(
+          () => "unexpected success", (error: unknown) => error instanceof Error ? error.message : String(error),
+        );
+        expect(markerFailure).toBe(marker);
+        expect(markerFailure).not.toContain("secret-tail-must-not-escape");
+
+        const unrelatedStderr = `provider detail ${marker} must not escape`;
+        supervisor.stderrChunks = [new TextEncoder().encode(unrelatedStderr)];
+        mockExecutor.setNextResult({ exitCode: 1, stdout: "", stderr: unrelatedStderr });
+        const unrelatedFailure = await adapter.startRun({ ...run, id: "db9857cf-0fb1-49ed-99d3-d514ad93ee65" })
+          .then(() => "unexpected success", (error: unknown) => error instanceof Error ? error.message : String(error));
+        expect(unrelatedFailure).toBe("HERMES_SESSION_STREAM_INVALID:MISSING_INIT:EXIT_1");
+        expect(unrelatedFailure).not.toContain(unrelatedStderr);
+      } finally {
+        await fs.rm(resultDirectory, { recursive: true, force: true });
+      }
+    });
+
+    it.each([
+      ["ModuleNotFoundError", "HERMES_PYTHON_STARTUP_EXCEPTION:ModuleNotFoundError"],
+      ["PermissionError", "HERMES_PYTHON_STARTUP_EXCEPTION:PermissionError"],
+      ["UnknownProviderError", "HERMES_SESSION_STREAM_INVALID:MISSING_INIT:EXIT_1"],
+      ["detail ModuleNotFoundError", "HERMES_SESSION_STREAM_INVALID:MISSING_INIT:EXIT_1"],
+    ])("reports only the allowlisted Python startup exception class %s", async (exceptionClass, expected) => {
+      const resultDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-python-diagnostic-"));
+      const supervisor = new MockProcessScopeSupervisor(mockExecutor);
+      const secret = "secret-must-not-escape".repeat(40);
+      const encoder = new TextEncoder();
+      supervisor.stderrChunks = [
+        encoder.encode("Traceback (most recent call last):\n  private-path-must-not-escape\n"),
+        encoder.encode(exceptionClass.slice(0, 4)),
+        encoder.encode(`${exceptionClass.slice(4)}: ${secret}\n`),
+      ];
+      mockExecutor.setNextResult({ exitCode: 1, stdout: "", stderr: "" });
+      adapter = createTestRuntimeAdapter(mockExecutor, mockArtifactStore, {
+        resultDirectory, managedWorktree: path.join(os.tmpdir(), "hermes-test-workspace"),
+        checkpointDirectory: sharedCheckpointDirectory,
+      }, supervisor);
+      const captures: HermesSessionCapture[] = [];
+      adapter.setHermesSessionCaptureHandler(async (capture) => { captures.push(capture); });
+      const run = {
+        id: "035e9033-1b14-49cf-adb3-fbb2c668b07f", role: "Developer", runtime: "hermes", model: "default",
+        taskId: null, epicId: null, status: "STARTED" as const, sessionId: null, attempt: null,
+        triggerReason: null, contextVersion: "v1", outputSchemaVersion: "v1", startedAt: new Date(),
+        endedAt: null, exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
+      };
+      try {
+        const failure = await adapter.startRun(run).then(() => undefined, (error: unknown) => error);
+        expect(failure).toBeInstanceOf(Error);
+        expect((failure as Error).message).toBe(expected);
+        expect((failure as Error).stack).not.toContain("secret-must-not-escape");
+        expect((failure as Error).stack).not.toContain("private-path-must-not-escape");
+        expect(supervisor.lastRequest?.captureOutput).toBe(false);
+        expect(mockArtifactStore.getArtifacts(run.id)).toBeUndefined();
+        expect(JSON.stringify(captures)).not.toContain("secret-must-not-escape");
+        expect(JSON.stringify(captures)).not.toContain("private-path-must-not-escape");
+      } finally {
+        await fs.rm(resultDirectory, { recursive: true, force: true });
+      }
+    });
+
+    it.each([[123, 45, 10], [0, 0, 0]])("collects live Hermes terminal token counts %i/%i with unknown cost and no raw output retention", async (inputTokens, outputTokens, cachedInputTokens) => {
+      const resultDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-live-usage-"));
+      const supervisor = new MockProcessScopeSupervisor(mockExecutor);
+      supervisor.stdoutChunks = [new TextEncoder().encode([
+        JSON.stringify({ type: "system", subtype: "init", session_id: "usage-session" }),
+        JSON.stringify({ type: "result", session_id: "usage-session",
+          tokens: { input: inputTokens, output: outputTokens, total: inputTokens + outputTokens, cache_read: cachedInputTokens, cache_write: 0 },
+          text: "private-answer", error: "private-error" }), "",
+      ].join("\n"))];
+      adapter = createTestRuntimeAdapter(mockExecutor, mockArtifactStore, {
+        resultDirectory, managedWorktree: path.join(os.tmpdir(), "hermes-test-workspace"),
+        checkpointDirectory: sharedCheckpointDirectory,
+      }, supervisor);
+      const captures: HermesSessionCapture[] = [];
+      adapter.setHermesSessionCaptureHandler(async (capture) => { captures.push(capture); });
+      const run = {
+        id: "059fa3de-d204-49a8-b6a6-7cc3491aebf9", role: "Developer", runtime: "hermes", model: "default",
+        taskId: null, epicId: null, status: "STARTED" as const, sessionId: null, attempt: null,
+        triggerReason: null, contextVersion: "v1", outputSchemaVersion: "v1", startedAt: new Date(),
+        endedAt: null, exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
+      };
+      try {
+        await adapter.startRun(run);
+        await expect(adapter.collectUsage(run.id)).resolves.toEqual({
+          inputTokens, outputTokens, cachedInputTokens, cost: null,
+        });
+        expect(supervisor.lastRequest?.captureOutput).toBe(false);
+        expect(mockArtifactStore.getArtifacts(run.id)).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+        expect(JSON.stringify(captures)).not.toContain("private-answer");
+        expect(JSON.stringify(captures)).not.toContain("private-error");
+        supervisor.stdoutChunks = [new TextEncoder().encode(
+          `${JSON.stringify({ type: "system", subtype: "init", session_id: "usage-session" })}\n`,
+        )];
+        const withoutResult = { ...run, id: "45380b48-e4f9-49e9-b9c7-975757f371d4" };
+        await adapter.startRun(withoutResult);
+        await expect(adapter.collectUsage(withoutResult.id)).rejects.toThrow("HERMES_USAGE_MISSING");
       } finally {
         await fs.rm(resultDirectory, { recursive: true, force: true });
       }
@@ -789,14 +787,14 @@ describe("HermesRuntimeAdapter", () => {
       }
     });
 
-    it("launches with the Run-owned HERMES_HOME even when the inherited value differs", async () => {
+    it("preserves inherited Hermes selection rather than replacing it with Run metadata", async () => {
       const resultDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-home-mismatch-"));
       const supervisor = new MockProcessScopeSupervisor(mockExecutor);
       adapter = createTestRuntimeAdapter(mockExecutor, mockArtifactStore, {
         resultDirectory,
         managedWorktree: path.join(os.tmpdir(), "hermes-test-workspace"),
         checkpointDirectory: sharedCheckpointDirectory,
-        environment: { HERMES_HOME: path.join(resultDirectory, "other-profile") },
+        environment: { HERMES_HOME: path.join(resultDirectory, "other-profile"), HERMES_PROFILE: "chosen-profile", HOME: "existing-home", HERMES_CONFIG: "existing-config" },
       }, supervisor);
       const run = {
         id: "c044e33a-705a-4b5b-83b6-721773542a9a", role: "Developer", runtime: "hermes", model: "model-x",
@@ -808,23 +806,55 @@ describe("HermesRuntimeAdapter", () => {
       try {
         await adapter.startRun(run);
         expect(supervisor.launchCalls).toBe(1);
-        const runProfileHome = path.join(resultDirectory, "profiles", `ebb-orchestrator-run-${run.id}`);
-        expect(supervisor.lastRequest?.environment.HERMES_HOME).toBe(runProfileHome);
-        expect(supervisor.lastRequest?.environment.HOME).toBe(path.join(runProfileHome, "home"));
-        expect(supervisor.lastRequest?.environment.HERMES_CONFIG).toBe(path.join(runProfileHome, "config.yaml"));
-        expect(supervisor.lastRequest?.environment.HERMES_MODEL).toBe(run.model);
-        expect(supervisor.lastRequest?.environment.HERMES_HOME)
-          .not.toBe(path.join(resultDirectory, "other-profile"));
+        expect(supervisor.lastRequest?.environment.HERMES_HOME).toBe(path.join(resultDirectory, "other-profile"));
+        expect(supervisor.lastRequest?.environment.HERMES_PROFILE).toBe("chosen-profile");
+        expect(supervisor.lastRequest?.environment.HOME).toBe("existing-home");
+        expect(supervisor.lastRequest?.environment.HERMES_CONFIG).toBe("existing-config");
+        expect(supervisor.lastRequest?.environment.HERMES_MODEL).toBeUndefined();
+
       } finally {
         await fs.rm(resultDirectory, { recursive: true, force: true });
       }
     });
 
-    it("uses the bounded Hermes provider selection without reading the legacy Ebb SecretStore", async () => {
+    it("keeps absent Hermes selection variables absent for the ordinary configured default", async () => {
+      const resultDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-env-absent-"));
+      const previous = new Map(["HERMES_HOME", "HERMES_CONFIG", "HERMES_PROFILE"].map((name) => [name, process.env[name]]));
+      for (const name of previous.keys()) delete process.env[name];
+      const supervisor = new MockProcessScopeSupervisor(mockExecutor);
+      const captures: HermesSessionCapture[] = [];
+      supervisor.stdoutChunks = [new TextEncoder().encode(`${JSON.stringify({
+        type: "system", subtype: "init", session_id: "session-shared-home-123",
+      })}\n`)];
+      mockExecutor.setNextResult({ exitCode: 0, stdout: "", stderr: "" });
+      const adapter = createTestRuntimeAdapter(mockExecutor, mockArtifactStore, {
+        resultDirectory, managedWorktree: path.join(os.tmpdir(), "hermes-test-workspace"), checkpointDirectory: sharedCheckpointDirectory,
+      }, supervisor);
+      adapter.setHermesSessionCaptureHandler(async (capture) => { captures.push(capture); });
+      const run = {
+        id: "c044e33a-705a-4b5b-83b6-721773542a9a", role: "Developer", runtime: "hermes", model: "default",
+        taskId: null, epicId: null, status: "STARTED" as const, sessionId: null, attempt: null,
+        triggerReason: null, contextVersion: "v1", outputSchemaVersion: "v1", startedAt: new Date(),
+        endedAt: null, exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
+      };
+      try {
+        await adapter.startRun(run);
+        for (const name of previous.keys()) expect(supervisor.lastRequest?.environment).not.toHaveProperty(name);
+        expect(captures).toMatchObject([{
+          hermesHome: path.join(resultDirectory, "configured-hermes"),
+          status: "captured", sessionId: "session-shared-home-123",
+        }]);
+      } finally {
+        for (const [name, value] of previous) { if (value === undefined) delete process.env[name]; else process.env[name] = value; }
+        await fs.rm(resultDirectory, { recursive: true, force: true });
+      }
+    });
+
+    it("leaves configured provider selection to Hermes without reading the legacy Ebb SecretStore", async () => {
       const resultDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-provider-bridge-"));
       const resolveForService = vi.fn().mockResolvedValue("legacy-credential-must-not-be-read");
       const scopeSupervisor = new MockProcessScopeSupervisor(mockExecutor);
-      adapter = allowTestHermesNativeAuth(new HermesRuntimeAdapter(mockExecutor, mockArtifactStore, {
+      adapter = allowTestManagedHermesSelection(new HermesRuntimeAdapter(mockExecutor, mockArtifactStore, {
         resultDirectory,
         managedWorktree: path.join(os.tmpdir(), "hermes-test-workspace"),
         checkpointDirectory: sharedCheckpointDirectory,
@@ -844,24 +874,20 @@ describe("HermesRuntimeAdapter", () => {
       expect(resolveForService).not.toHaveBeenCalled();
       expect(scopeSupervisor.launchCalls).toBe(1);
       expect(scopeSupervisor.lastRequest?.environment.HERMES_HOME)
-        .toBe(path.join(resultDirectory, "profiles", `ebb-orchestrator-run-${run.id}`));
-      expect(mockExecutor.getCalls()[0]?.args).toContain("model-x");
-      const profileConfig = await fs.readFile(path.join(resultDirectory, "profiles", `ebb-orchestrator-run-${run.id}`, "config.yaml"), "utf8");
-      expect(profileConfig).toContain('provider: "openai-codex"');
-      expect(profileConfig).toContain('default: "model-x"');
+        .toBe(process.env.HERMES_HOME);
+      expect(mockExecutor.getCalls()[0]?.args).not.toContain("--model");
+      expect(mockExecutor.getCalls()[0]?.args).not.toContain("--provider");
+      await expect(fs.stat(path.join(resultDirectory, "configured-hermes", "config.yaml"))).rejects.toMatchObject({ code: "ENOENT" });
       await fs.rm(resultDirectory, { recursive: true, force: true });
     });
 
-    it("delegates profile home/config writes to the handle-bound native writer", async () => {
+    it("does not create or write a Hermes profile during launch", async () => {
       const resultDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-profile-write-"));
       const runId = "b8617c18-bb88-4ce3-af9e-9f7f206c27ac";
-      const profileHome = path.join(resultDirectory, "profiles", `ebb-orchestrator-run-${runId}`);
-      const profileWriter = vi.fn(async () => undefined);
       adapter = createTestRuntimeAdapter(mockExecutor, mockArtifactStore, {
         resultDirectory,
         managedWorktree: path.join(os.tmpdir(), "hermes-test-workspace"),
         checkpointDirectory: sharedCheckpointDirectory,
-        hermesRunProfileConfigWriter: profileWriter,
       } as unknown as ConstructorParameters<typeof HermesRuntimeAdapter>[2]);
       const run = {
         id: runId, role: "Developer", runtime: "hermes", model: "model-x",
@@ -873,11 +899,8 @@ describe("HermesRuntimeAdapter", () => {
 
       try {
         await adapter.startRun(run);
-        expect(profileWriter).toHaveBeenCalledWith(expect.objectContaining({
-          runId,
-          profileHome,
-          configYaml: expect.stringContaining('provider: "openai-codex"'),
-        }));
+        await expect(fs.stat(path.join(resultDirectory, "configured-hermes", "config.yaml"))).rejects.toMatchObject({ code: "ENOENT" });
+        await expect(fs.stat(path.join(resultDirectory, "profiles"))).rejects.toMatchObject({ code: "ENOENT" });
       } finally {
         await fs.rm(resultDirectory, { recursive: true, force: true });
       }
@@ -889,7 +912,7 @@ describe("HermesRuntimeAdapter", () => {
         managedWorktree: path.join(os.tmpdir(), "hermes-test-workspace"),
         checkpointDirectory: sharedCheckpointDirectory,
       }, scopeSupervisor);
-      allowTestHermesNativeAuth(adapter);
+      allowTestManagedHermesSelection(adapter);
       const run = {
         id: "93a15f8a-52f4-4bdb-9da2-e302095d4391", role: "Developer", runtime: "hermes", model: "model-x",
         taskId: null, epicId: null, status: "STARTED" as const, sessionId: null, attempt: null,
@@ -919,7 +942,7 @@ describe("HermesRuntimeAdapter", () => {
         managedWorktree: path.join(os.tmpdir(), "hermes-test-workspace"),
         checkpointDirectory: sharedCheckpointDirectory,
       }, scopeSupervisor);
-      allowTestHermesNativeAuth(adapter);
+      allowTestManagedHermesSelection(adapter);
       const run = {
         id: "6e9f65c6-79c8-4da9-93a7-e29a1566d4f0", role: "Developer", runtime: "hermes", model: "model-x",
         taskId: null, epicId: null, status: "STARTED" as const, sessionId: null, attempt: null,
@@ -960,13 +983,14 @@ describe("HermesRuntimeAdapter", () => {
         systemd_invocation_id TEXT, systemd_control_group TEXT, supervisor_pid INTEGER,
         supervisor_start_identity TEXT, pid INTEGER, platform TEXT, process_start_identity TEXT,
         executable_identity TEXT, state TEXT NOT NULL, stop_evidence TEXT, updated_at TEXT NOT NULL,
-        hermes_source_snapshot_key TEXT
+        hermes_source_snapshot_key TEXT, capture_state TEXT NOT NULL DEFAULT 'UNBOUND'
       )`);
+      createProcessOwnerGenerationFixture(database);
       const runId = "09ef53bd-819b-43a0-aabd-286c15e0d36f";
       const resultDirectory = path.join(root, "results");
       const selection = await testHermesSelection(runId, "model-x", resultDirectory);
-      const preparedOwner = prepareRunProcessOwner(runId, selection.profileHome,
-        process.platform === "win32" ? "windows-job" : "systemd-user-service", selection.sourceSnapshotKey);
+      const preparedOwner = prepareRunProcessOwner(runId, selection.hermesHome,
+        process.platform === "win32" ? "windows-job" : "systemd-user-service");
       database.transaction((tx) => insertRunProcessOwnerTx(tx, preparedOwner));
 
       const launchEntered = deferred<void>();
@@ -986,7 +1010,7 @@ describe("HermesRuntimeAdapter", () => {
         checkpointDirectory: sharedCheckpointDirectory,
       }, supervisor);
       (adapter as unknown as { getManagedWorktree(run: { id: string }): string }).getManagedWorktree = () => path.join(root, "workspace");
-      allowTestHermesNativeAuth(adapter);
+      allowTestManagedHermesSelection(adapter);
       expect(() => (adapter as unknown as {
         persistLaunchNotDispatched(id: string, error: unknown): void;
       }).persistLaunchNotDispatched(runId, new Error("forged generic Error"))).toThrow(TypeError);
@@ -1029,7 +1053,7 @@ describe("HermesRuntimeAdapter", () => {
       }
     });
 
-    it("uses the persisted capability workspace as the Hermes process cwd", async () => {
+    it.each(["start", "resume"] as const)("uses the persisted capability workspace for Hermes %s", async (operation) => {
       const root = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-persisted-workspace-"));
       const workspace = path.join(root, "managed-worktree");
       const repository = path.join(root, "repository");
@@ -1060,9 +1084,10 @@ describe("HermesRuntimeAdapter", () => {
           systemd_invocation_id TEXT, systemd_control_group TEXT, supervisor_pid INTEGER,
           supervisor_start_identity TEXT, pid INTEGER, platform TEXT, process_start_identity TEXT,
           executable_identity TEXT, state TEXT NOT NULL, stop_evidence TEXT, updated_at TEXT NOT NULL,
-          hermes_source_snapshot_key TEXT
+          hermes_source_snapshot_key TEXT, capture_state TEXT NOT NULL DEFAULT 'UNBOUND'
         )
       `);
+      createProcessOwnerGenerationFixture(database);
       database.exec(`
         CREATE TABLE projects (id TEXT PRIMARY KEY, status TEXT NOT NULL);
         CREATE TABLE epics (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, display_id TEXT);
@@ -1118,14 +1143,15 @@ describe("HermesRuntimeAdapter", () => {
         {
           runId: "dc20d357-c4a5-4f42-a31a-320cfade61ec",
           sourceTag: "ebb-run:dc20d357-c4a5-4f42-a31a-320cfade61ec",
-          hermesHome: path.join(resultDirectory, "profiles", "ebb-orchestrator-run-dc20d357-c4a5-4f42-a31a-320cfade61ec"),
-          snapshotKey: persistedSelection.sourceSnapshotKey,
+          hermesHome: persistedSelection.hermesHome,
+          snapshotKey: null,
           kind: process.platform === "win32" ? "windows-job" : "systemd-user-service",
           containmentId: "a".repeat(64),
           launchNonce: "b".repeat(64),
           now: new Date().toISOString(),
         },
       );
+      insertCurrentProcessOwnerGenerationFixture(database, "dc20d357-c4a5-4f42-a31a-320cfade61ec");
       const run = {
         id: "dc20d357-c4a5-4f42-a31a-320cfade61ec", role: "Developer", runtime: "hermes", model: "default",
         taskId: "persisted-task", epicId: null, status: "STARTED" as const, sessionId: null, attempt: null,
@@ -1148,10 +1174,42 @@ describe("HermesRuntimeAdapter", () => {
           resultDirectory,
           checkpointDirectory,
         }, scopeSupervisor);
-        allowTestHermesNativeAuth(adapter);
+        allowTestManagedHermesSelection(adapter);
         mockExecutor.setNextResult({ exitCode: 0, stdout: "session: persisted", stderr: "" });
 
-        await adapter.startRun(run);
+        if (operation === "resume") {
+          database.exec(`ALTER TABLE agent_runs ADD COLUMN attempt INTEGER;
+            ALTER TABLE agent_runs ADD COLUMN output TEXT;
+            ALTER TABLE agent_runs ADD COLUMN ended_at TEXT;
+            ALTER TABLE agent_runs ADD COLUMN prompt TEXT;
+            CREATE TABLE run_resume_bindings (run_id TEXT PRIMARY KEY, original_session_id TEXT NOT NULL);`);
+          const originalPrompt = "Original task: implement the requested feature.\nAcceptance: preserve existing user data.\nContract: use submit_result with the Developer output schema.";
+          database.run("UPDATE agent_runs SET status='IN_PROGRESS',attempt=1,session_id='saved-session',prompt=$prompt WHERE id=$runId", { runId: run.id, prompt: originalPrompt });
+          database.run("INSERT INTO run_resume_bindings VALUES ($runId,'saved-session')", { runId: run.id });
+          const proofs = (adapter as unknown as { verifiedManagedSelections: WeakSet<HermesManagedRunSelection> }).verifiedManagedSelections;
+          proofs.add(persistedSelection);
+          database.run("UPDATE agent_runs SET prompt=NULL WHERE id=$runId", { runId: run.id });
+          await expect(adapter.resumeRun(run.id, { sessionId: "saved-session", attempt: 1, hermesSelection: persistedSelection }))
+            .rejects.toThrow("HERMES_RESUME_PROMPT_UNAVAILABLE");
+          expect(scopeSupervisor.launchCalls).toBe(0);
+          database.run("UPDATE agent_runs SET prompt=$prompt WHERE id=$runId", { runId: run.id, prompt: originalPrompt });
+          await adapter.resumeRun(run.id, { sessionId: "saved-session", attempt: 1, hermesSelection: persistedSelection });
+          const resumeArgs = scopeSupervisor.lastRequest!.args;
+          expect(resumeArgs.slice(resumeArgs.indexOf("--resume"), resumeArgs.indexOf("--resume") + 2))
+            .toEqual(["--resume", "saved-session"]);
+          expect(resumeArgs).toContain("--no-restore-cwd");
+          const maxTurnsIndex = resumeArgs.indexOf("--max-turns");
+          expect(resumeArgs.slice(maxTurnsIndex, maxTurnsIndex + 2)).toEqual(["--max-turns", "500"]);
+          const queryFile = resumeArgs[resumeArgs.indexOf("--query-file") + 1];
+          expect(resumeArgs).toContain("--query-file");
+          const continuation = await fs.readFile(queryFile!, "utf8");
+          // Hermes can emit init before persisting its first user turn; recovery must carry the task itself.
+          expect(continuation).toContain(originalPrompt);
+          expect(continuation).toContain("First inspect the restored conversation and current workspace state");
+          expect(continuation).toContain("Continue only the remaining work");
+        } else {
+          await adapter.startRun(run);
+        }
 
         expect(mockExecutor.getCalls()[0]?.options?.cwd).toBe(workspace);
         expect(scopeSupervisor.lastRequest?.args.slice(
@@ -1160,7 +1218,7 @@ describe("HermesRuntimeAdapter", () => {
         )).toEqual(["--source", `ebb-run:${run.id}`]);
         expect(database.get<{ session_id: string | null }>(
           "SELECT session_id FROM agent_runs WHERE id=$id", { id: run.id },
-        )?.session_id).toBeNull();
+        )?.session_id).toBe(operation === "resume" ? "saved-session" : null);
         expect(database.get<{ state: string; stop_evidence: string | null }>(
           "SELECT state,stop_evidence FROM run_process_owners WHERE run_id=$runId", { runId: run.id },
         )).toEqual({ state: "STOPPED", stop_evidence: stoppedEvidence(scopeSupervisor.lastLiveIdentity!) });
@@ -1197,14 +1255,15 @@ describe("HermesRuntimeAdapter", () => {
           {
             runId: failedRun.id,
             sourceTag: `ebb-run:${failedRun.id}`,
-            hermesHome: path.join(resultDirectory, "profiles", `ebb-orchestrator-run-${failedRun.id}`),
-            snapshotKey: failedRun.hermesSelection.sourceSnapshotKey,
+            hermesHome: failedRun.hermesSelection.hermesHome,
+            snapshotKey: null,
             kind: process.platform === "win32" ? "windows-job" : "systemd-user-service",
             containmentId: "c".repeat(64),
             launchNonce: "d".repeat(64),
             now: new Date().toISOString(),
           },
         );
+        insertCurrentProcessOwnerGenerationFixture(database, failedRun.id);
         database.exec(`CREATE TRIGGER reject_live_owner_identity BEFORE UPDATE OF state ON run_process_owners
           WHEN NEW.run_id='${failedRun.id}' AND NEW.state='LIVE'
           BEGIN SELECT RAISE(ABORT,'test identity persistence failure'); END;`);
@@ -1214,7 +1273,7 @@ describe("HermesRuntimeAdapter", () => {
           resultDirectory,
           checkpointDirectory,
         }, failingSupervisor);
-        allowTestHermesNativeAuth(failingAdapter);
+        allowTestManagedHermesSelection(failingAdapter);
         const ownerRead = vi.spyOn(failingAdapter as unknown as {
           readPersistedOwnerState(runId: string): string | undefined;
         }, "readPersistedOwnerState").mockImplementationOnce(() => {
@@ -1267,14 +1326,15 @@ describe("HermesRuntimeAdapter", () => {
           {
             runId: stopPersistenceRun.id,
             sourceTag: `ebb-run:${stopPersistenceRun.id}`,
-            hermesHome: path.join(resultDirectory, "profiles", `ebb-orchestrator-run-${stopPersistenceRun.id}`),
-            snapshotKey: stopPersistenceRun.hermesSelection!.sourceSnapshotKey,
+            hermesHome: stopPersistenceRun.hermesSelection.hermesHome,
+            snapshotKey: null,
             kind: process.platform === "win32" ? "windows-job" : "systemd-user-service",
             containmentId: "e".repeat(64),
             launchNonce: "f".repeat(64),
             now: new Date().toISOString(),
           },
         );
+        insertCurrentProcessOwnerGenerationFixture(database, stopPersistenceRun.id);
         database.exec(`CREATE TRIGGER reject_stopped_owner BEFORE UPDATE OF state ON run_process_owners
           WHEN NEW.run_id='${stopPersistenceRun.id}' AND NEW.state='STOPPED'
           BEGIN SELECT RAISE(ABORT,'injected STOPPED evidence persistence failure'); END;`);
@@ -1284,7 +1344,7 @@ describe("HermesRuntimeAdapter", () => {
           resultDirectory,
           checkpointDirectory,
         }, stopFailSupervisor);
-        allowTestHermesNativeAuth(stopFailAdapter);
+        allowTestManagedHermesSelection(stopFailAdapter);
         mockExecutor.setNextResult({ exitCode: 0, stdout: "session: stop-persistence", stderr: "" });
 
         await expect(stopFailAdapter.startRun(stopPersistenceRun))
@@ -1344,10 +1404,11 @@ describe("HermesRuntimeAdapter", () => {
       }
     });
 
-    it("wires the exact run result path into the authenticated MCP config", async () => {
+    it("wires the exact run result path into the in-memory MCP registration", async () => {
       const resultDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-result-wiring-"));
+      const factory = vi.fn(testHermesLaunchTicketFactory);
       adapter = createTestRuntimeAdapter(mockExecutor, mockArtifactStore, {
-        resultDirectory,
+        resultDirectory, hermesLaunchTicketFactory: factory,
         managedWorktree: path.join(os.tmpdir(), "hermes-test-workspace"),
         checkpointDirectory: sharedCheckpointDirectory,
       });
@@ -1358,8 +1419,9 @@ describe("HermesRuntimeAdapter", () => {
         endedAt: null, exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
       };
       await adapter.startRun(run);
-      const config = await fs.readFile(path.join(resultDirectory, "profiles", `ebb-orchestrator-run-${run.id}`, "config.yaml"), "utf8");
-      expect(config).toContain(`- ${JSON.stringify(path.join(resultDirectory, `${run.id}.json`))}`);
+      expect(factory).toHaveBeenCalledWith(expect.objectContaining({ mcpServer: expect.objectContaining({
+        args: expect.arrayContaining(["--capability-ref", "fixture-capability", "--result-file", path.join(resultDirectory, `${run.id}.json`)]),
+      }) }));
       await fs.rm(resultDirectory, { recursive: true, force: true });
     });
 
@@ -1398,18 +1460,30 @@ describe("HermesRuntimeAdapter", () => {
        const { args } = call;
       expect(args).toContain("chat");
       expect(args).toContain("--query-file");
-      expect(args).toContain("--model");
-      expect(args).toContain("claude-3-5-sonnet");
-      expect(args.slice(args.indexOf("--provider"), args.indexOf("--provider") + 2))
-        .toEqual(["--provider", "openai-codex"]);
+      expect(args).not.toContain("--model");
+      expect(args).not.toContain("--provider");
       expect(args).toContain("--toolsets");
-      expect(args).toContain("mcp-orchestrator");
+      expect(args).toContain("mcp-ebb-orchestrator");
       expect(args).toContain("--in");
       expect(args).toContain("--ignore-rules");
       expect(args).toContain("--source");
       const sourceIndex = args.indexOf("--source");
       expect(args.slice(sourceIndex, sourceIndex + 2)).toEqual(["--source", `ebb-run:${run.id}`]);
       expect(args).toContain("--max-turns");
+      const maxTurnsIndex = args.indexOf("--max-turns");
+      expect(args.slice(maxTurnsIndex, maxTurnsIndex + 2)).toEqual(["--max-turns", "500"]);
+
+      const overrideExecutor = new MockProcessExecutor();
+      const overrideAdapter = createTestRuntimeAdapter(overrideExecutor, mockArtifactStore, {
+        managedWorktree: path.join(os.tmpdir(), "hermes-test-workspace"),
+        checkpointDirectory: sharedCheckpointDirectory,
+        roleLimit: 7,
+      });
+      overrideExecutor.setNextResult({ exitCode: 0, stdout: "session: override", stderr: "" });
+      await overrideAdapter.startRun(run);
+      const overrideArgs = overrideExecutor.getCalls()[0]!.args;
+      const overrideMaxTurnsIndex = overrideArgs.indexOf("--max-turns");
+      expect(overrideArgs.slice(overrideMaxTurnsIndex, overrideMaxTurnsIndex + 2)).toEqual(["--max-turns", "7"]);
     });
 
     it("writes prompt body to file and passes with --query-file", async () => {
@@ -1445,6 +1519,43 @@ describe("HermesRuntimeAdapter", () => {
        const queryFileArg = call.args.find((a, i) => a === "--query-file" && i + 1 < call.args.length);
       expect(queryFileArg).toBeDefined();
       expect(call.args[call.args.indexOf("--query-file") + 1]).toMatch(/\.txt$/);
+    });
+
+    it("fallback prompt allows retry after validation errors but only one successful submission", async () => {
+      const run = {
+        id: "fallback-prompt-contract",
+        role: "Developer",
+        runtime: "hermes",
+        model: "test",
+        taskId: null,
+        epicId: null,
+        status: "STARTED" as const,
+        sessionId: null,
+        attempt: null,
+        triggerReason: null,
+        contextVersion: "v1",
+        outputSchemaVersion: "v1",
+        startedAt: new Date(),
+        endedAt: null,
+        exitCode: null,
+        inputTokens: null,
+        cachedInputTokens: null,
+        outputTokens: null,
+        cost: null,
+      } satisfies Parameters<HermesRuntimeAdapter["startRun"]>[0];
+      const writePromptFile = (adapter as unknown as {
+        writePromptFile(run: Parameters<HermesRuntimeAdapter["startRun"]>[0]): Promise<string>;
+      }).writePromptFile.bind(adapter);
+      const promptPath = await writePromptFile(run);
+      try {
+        const prompt = await fs.readFile(promptPath, "utf8");
+        expect(prompt).toContain("Submit one successful structured result with submit_result before ending.");
+        expect(prompt).toContain("If submit_result returns a validation error, correct the payload and retry");
+        expect(prompt).toContain("after success, do not call submit_result again");
+        expect(prompt).not.toMatch(/submit_result exactly once|exactly once[^\n]*submit_result/i);
+      } finally {
+        await fs.rm(path.dirname(promptPath), { recursive: true, force: true });
+      }
     });
 
     it("never adds --worktree flag", async () => {
@@ -1579,85 +1690,10 @@ describe("HermesRuntimeAdapter", () => {
   });
 
   describe("resumeRun", () => {
-    it("does not enable production resume before Task 5C", async () => {
-      const productionAdapter = new HermesRuntimeAdapter(mockExecutor, mockArtifactStore, {
-        databasePath: path.join(os.tmpdir(), "task5a-resume-disabled.sqlite"),
-        managedWorktree: path.join(os.tmpdir(), "hermes-test-workspace"),
-        checkpointDirectory: sharedCheckpointDirectory,
-      }, new MockProcessScopeSupervisor(mockExecutor));
-      await expect(productionAdapter.resumeRun("existing-run", { sessionId: "late-session-id", attempt: 1 }))
-        .rejects.toThrow("HERMES_RESUME_REQUIRES_TASK_5C");
+    it("rejects resume when no durable Run database and process supervisor are configured", async () => {
+      await expect(adapter.resumeRun("existing-run", { sessionId: "saved-session", attempt: 1 }))
+        .rejects.toThrow("HERMES_RESUME_DURABLE_RUNTIME_REQUIRED");
       expect(mockExecutor.getCalls()).toHaveLength(0);
-    });
-
-    it("updates run state with session info", async () => {
-    // Сначала запускаем выполнение.
-      const startRun = {
-        id: "9a47e3b6-4089-4c0d-b55a-9f69f4cb88c0",
-        role: "Developer",
-        runtime: "hermes",
-        model: "claude-3",
-        taskId: "task-resume",
-        epicId: null,
-        status: "STARTED" as const,
-        sessionId: null,
-        attempt: null,
-        triggerReason: null,
-        contextVersion: "v1",
-        outputSchemaVersion: "v1",
-        startedAt: new Date(),
-        endedAt: null,
-        exitCode: null,
-        inputTokens: null,
-        cachedInputTokens: null,
-        outputTokens: null,
-        cost: null,
-      };
-
-      mockExecutor.setNextResult({ exitCode: 0, stdout: "session: test", stderr: "" });
-      await adapter.startRun(startRun);
-
-    // Теперь возобновляем выполнение.
-      mockExecutor.setNextResult({ exitCode: 0, stdout: "resumed", stderr: "" });
-      await adapter.resumeRun(startRun.id, { sessionId: "existing-session-456", attempt: 1 });
-
-       const state = await adapter.inspectRun(startRun.id);
-      expect(state.sessionId).toBe("existing-session-456");
-      expect(state.attempt).toBe(1);
-      expect(state.status).toBe("IN_PROGRESS");
-    });
-
-    it("sets status to IN_PROGRESS on resume", async () => {
-      const startRun = {
-        id: "55b1f777-f9d4-4baf-aacb-8cb5f5925cca",
-        role: "Developer",
-        runtime: "hermes",
-        model: "claude-3",
-        taskId: "task-resume-2",
-        epicId: null,
-        status: "STARTED" as const,
-        sessionId: null,
-        attempt: null,
-        triggerReason: null,
-        contextVersion: "v1",
-        outputSchemaVersion: "v1",
-        startedAt: new Date(),
-        endedAt: null,
-        exitCode: null,
-        inputTokens: null,
-        cachedInputTokens: null,
-        outputTokens: null,
-        cost: null,
-      };
-
-      mockExecutor.setNextResult({ exitCode: 0, stdout: "session: test", stderr: "" });
-      await adapter.startRun(startRun);
-
-      mockExecutor.setNextResult({ exitCode: 0, stdout: "resumed", stderr: "" });
-      await adapter.resumeRun(startRun.id, { sessionId: "existing-session-789", attempt: 2 });
-
-       const state = await adapter.inspectRun(startRun.id);
-      expect(state.status).toBe("IN_PROGRESS");
     });
   });
 
@@ -1697,6 +1733,88 @@ describe("HermesRuntimeAdapter", () => {
   });
 
   describe("collectResult", () => {
+    it("exposes fixed tool counters for accepted submissions without retaining stream content", async () => {
+      const resultDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-accepted-tool-counts-"));
+      const supervisor = new MockProcessScopeSupervisor(mockExecutor);
+      const secretMarker = "accepted-stream-private-payload";
+      supervisor.stdoutChunks = [new TextEncoder().encode([
+        JSON.stringify({ type: "system", subtype: "init", session_id: "accepted-counts-session" }),
+        JSON.stringify({ type: "tool_use", name: "mcp__ebb_orchestrator__workspace_read", input: { path: "src/health.js" } }),
+        JSON.stringify({ type: "tool_result", name: "mcp__ebb_orchestrator__workspace_read", is_error: true, output: { error: `NOT_AVAILABLE: ${secretMarker}` } }),
+        JSON.stringify({ type: "tool_use", name: "mcp__ebb_orchestrator__workspace_patch", input: { content: secretMarker } }),
+        JSON.stringify({ type: "tool_result", name: "mcp__ebb_orchestrator__workspace_patch", is_error: false, output: secretMarker }),
+        JSON.stringify({ type: "tool_use", name: "mcp__ebb_orchestrator__git_commit", input: { message: secretMarker } }),
+        JSON.stringify({ type: "tool_result", name: "mcp__ebb_orchestrator__git_commit", is_error: true, output: { error: `PERMISSION_DENIED: ${secretMarker}` } }),
+        JSON.stringify({ type: "tool_use", name: "mcp__untrusted__secret_tool", input: { secret: secretMarker } }),
+        JSON.stringify({ type: "tool_result", name: "mcp__untrusted__secret_tool", is_error: true, output: secretMarker }),
+      ].join("\n") + "\n")];
+      const countsAdapter = createTestRuntimeAdapter(mockExecutor, mockArtifactStore, {
+        resultDirectory,
+        managedWorktree: path.join(os.tmpdir(), "hermes-test-workspace"),
+        checkpointDirectory: sharedCheckpointDirectory,
+      }, supervisor);
+      countsAdapter.setHermesSessionCaptureHandler(async () => undefined);
+      const run = {
+        id: "7275730b-8cca-4cb7-b6c8-586c0db6c7d3", role: "Developer", runtime: "hermes", model: "model-x",
+        taskId: "task-accepted-counts", epicId: null, status: "STARTED" as const, sessionId: null, attempt: null,
+        triggerReason: null, contextVersion: "v1", outputSchemaVersion: "1", startedAt: new Date(),
+        endedAt: null, exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
+      };
+
+      try {
+        await fs.writeFile(path.join(resultDirectory, `${run.id}.json`), JSON.stringify({
+          version: "1.0.0", outcome: "COMPLETED", commitSha: "a".repeat(40),
+        }), "utf8");
+        mockExecutor.setNextResult({ exitCode: 0, stdout: "", stderr: "" });
+        await countsAdapter.startRun(run);
+        const outcome = await countsAdapter.collectResult(run.id);
+        expect(outcome.validatedSubmission).toBe(true);
+        expect(outcome.diagnostics?.toolCounts).toMatchObject({
+          "workspace.read": { uses: 1, errors: 1, errorCategories: { NOT_AVAILABLE: 1 } },
+          "workspace.patch": { uses: 1, errors: 0 },
+          "git.commit": { uses: 1, errors: 1, errorCategories: { PERMISSION_DENIED: 1 } },
+          submit_result: { uses: 0, errors: 0 },
+        });
+        expect(JSON.stringify(outcome.diagnostics?.toolCounts)).not.toContain(secretMarker);
+        expect(JSON.stringify(outcome.diagnostics?.toolCounts)).not.toContain("untrusted");
+      } finally {
+        await fs.rm(resultDirectory, { recursive: true, force: true });
+      }
+    });
+
+    it("exposes only submit_result summary counts when the validated result is missing", async () => {
+      const resultDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-submit-counts-"));
+      const supervisor = new MockProcessScopeSupervisor(mockExecutor);
+      const secretMarker = "submit-result-secret-payload";
+      supervisor.stdoutChunks = [new TextEncoder().encode([
+        JSON.stringify({ type: "system", subtype: "init", session_id: "counts-session" }),
+        JSON.stringify({ type: "tool_use", name: "mcp__ebb_orchestrator__submit_result", input: { secret: secretMarker } }),
+        JSON.stringify({ type: "tool_result", name: "mcp__ebb_orchestrator__submit_result", is_error: true, output: secretMarker }),
+      ].join("\n") + "\n")];
+      const countsAdapter = createTestRuntimeAdapter(mockExecutor, mockArtifactStore, {
+        resultDirectory,
+        managedWorktree: path.join(os.tmpdir(), "hermes-test-workspace"),
+        checkpointDirectory: sharedCheckpointDirectory,
+      }, supervisor);
+      countsAdapter.setHermesSessionCaptureHandler(async () => undefined);
+      const run = {
+        id: "80d791dc-bf62-4320-a43a-08626bd29312", role: "Developer", runtime: "hermes", model: "model-x",
+        taskId: "task-submit-counts", epicId: null, status: "STARTED" as const, sessionId: null, attempt: null,
+        triggerReason: null, contextVersion: "v1", outputSchemaVersion: "v1", startedAt: new Date(),
+        endedAt: null, exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
+      };
+      mockExecutor.setNextResult({ exitCode: 0, stdout: secretMarker, stderr: "" });
+
+      try {
+        await countsAdapter.startRun(run);
+        const outcome = await countsAdapter.collectResult(run.id);
+        expect(outcome.diagnostics).toMatchObject({ submitResultCalls: 1, submitResultErrors: 1 });
+        expect(JSON.stringify(outcome.diagnostics)).not.toContain(secretMarker);
+      } finally {
+        await fs.rm(resultDirectory, { recursive: true, force: true });
+      }
+    });
+
     it("returns AGENT_OUTPUT_MISSING when process exits without valid submitted result", async () => {
     // Сначала запускаем выполнение.
       const startRun = {
@@ -1735,6 +1853,38 @@ describe("HermesRuntimeAdapter", () => {
       expect(outcome.exitCode).toBe(1);
     });
 
+    it("keeps only a bounded stderr category when managed capture disables process stderr output", async () => {
+      const resultDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-managed-stderr-category-"));
+      const supervisor = new MockProcessScopeSupervisor(mockExecutor);
+      const secret = "OPENAI_API_KEY=stderr-secret-marker";
+      supervisor.stdoutChunks = [new TextEncoder().encode('{"type":"system","subtype":"init","session_id":"managed-stderr-category"}\n')];
+      supervisor.stderrChunks = [new TextEncoder().encode(`HTTP 429 rate limit ${secret}\n`)];
+      const managedAdapter = createTestRuntimeAdapter(mockExecutor, mockArtifactStore, {
+        resultDirectory,
+        managedWorktree: path.join(os.tmpdir(), "hermes-test-workspace"),
+        checkpointDirectory: sharedCheckpointDirectory,
+      }, supervisor);
+      managedAdapter.setHermesSessionCaptureHandler(async () => undefined);
+      const run = {
+        id: "901def44-8ee8-4f6a-9612-f84205f55c11", role: "Developer", runtime: "hermes", model: "model-x",
+        taskId: null, epicId: null, status: "STARTED" as const, sessionId: null, attempt: null,
+        triggerReason: null, contextVersion: "v1", outputSchemaVersion: "1", startedAt: new Date(),
+        endedAt: null, exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
+      };
+      try {
+        mockExecutor.setNextResult({ exitCode: 1, stdout: "", stderr: "" });
+        await managedAdapter.startRun(run);
+        const outcome = await managedAdapter.collectResult(run.id);
+        expect(supervisor.lastRequest?.captureOutput).toBe(false);
+        expect(outcome.output).toBe("AGENT_OUTPUT_MISSING");
+        expect(outcome.diagnostics?.stderr).toBe("");
+        expect(outcome.diagnostics?.stderrCategory).toBe("RATE_LIMIT");
+        expect(JSON.stringify(outcome.diagnostics)).not.toContain(secret);
+      } finally {
+        await fs.rm(resultDirectory, { recursive: true, force: true });
+      }
+    });
+
     it("does not consume another run's exact result file and returns diagnostics", async () => {
       const resultDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-results-"));
       await fs.writeFile(path.join(resultDirectory, "other-run.json"), JSON.stringify({ version: "1.0", outcome: "COMPLETED" }));
@@ -1758,6 +1908,7 @@ describe("HermesRuntimeAdapter", () => {
         runId: run.id,
         sessionId: "exact-session",
         stderr: "agent failed",
+        stderrCategory: "PROCESS_ERROR",
         exitCode: 7,
         artifactReferences: [path.join(resultDirectory, `${run.id}.json`), `run-artifacts://${run.id}`],
       });
@@ -1779,7 +1930,7 @@ describe("HermesRuntimeAdapter", () => {
         checkpointDirectory: sharedCheckpointDirectory,
       });
       await exactAdapter.startRun(run);
-      await fs.writeFile(path.join(resultDirectory, `${run.id}.json`), JSON.stringify({ version: "1", outcome: "COMPLETED" }));
+      await fs.writeFile(path.join(resultDirectory, `${run.id}.json`), JSON.stringify({ version: "1", outcome: "COMPLETED", commitSha: "test-commit-sha" }));
       expect((await exactAdapter.collectResult(run.id)).validatedSubmission).toBe(true);
       await fs.writeFile(path.join(resultDirectory, `${run.id}.json`), JSON.stringify({ version: "1", outcome: "INVALID" }));
       const invalid = await exactAdapter.collectResult(run.id);
@@ -1788,18 +1939,52 @@ describe("HermesRuntimeAdapter", () => {
       await fs.rm(resultDirectory, { recursive: true, force: true });
     });
 
-    it("rejects forbidden credentials in supplied runtime overlays", async () => {
-      const restricted = createTestRuntimeAdapter(mockExecutor, mockArtifactStore, {
+    it("rejects provider-key overlays before they enter the Hermes child request", async () => {
+      const resultDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-provider-env-"));
+      const supervisor = new MockProcessScopeSupervisor(mockExecutor);
+      const sentinel = "dummy-provider-env-sentinel";
+      const child = createTestRuntimeAdapter(mockExecutor, mockArtifactStore, {
+        resultDirectory,
         managedWorktree: path.join(os.tmpdir(), "hermes-test-workspace"),
         checkpointDirectory: sharedCheckpointDirectory,
-        environment: { GITHUB_TOKEN: "secret" },
-      });
-      await expect(restricted.startRun({
+        environment: { OPENAI_API_KEY: sentinel },
+      }, supervisor);
+      const run = {
         id: "abcf7629-9c91-4754-8ca5-f746c566cd53", role: "Developer", runtime: "hermes", model: "claude-3", taskId: "task-credential",
         epicId: null, status: "STARTED" as const, sessionId: null, attempt: null, triggerReason: null,
         contextVersion: "v1", outputSchemaVersion: "v1", startedAt: new Date(), endedAt: null,
         exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
-      })).rejects.toThrow("Forbidden credential");
+      };
+      try {
+        await expect(child.startRun(run)).rejects.toThrow(/Forbidden (credential|or unknown Hermes environment variable)/u);
+        expect(supervisor.lastRequest).toBeUndefined();
+        expect(mockExecutor.getCalls()).toHaveLength(0);
+        expect(mockArtifactStore.getArtifacts(run.id)).toBeUndefined();
+      } finally {
+        await fs.rm(resultDirectory, { recursive: true, force: true });
+      }
+    });
+
+    it("classifies only fixed live Hermes pre-init markers when session capture fails", async () => {
+      const resultDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-startup-diagnostic-"));
+      const supervisor = new MockProcessScopeSupervisor(mockExecutor);
+      supervisor.stderrChunks = [new TextEncoder().encode("secret detail\nHERMES_EBB_MCP_REGISTRATION_FAILED\n")];
+      mockExecutor.setNextResult({ exitCode: 1, stdout: "", stderr: "" });
+      adapter = createTestRuntimeAdapter(mockExecutor, mockArtifactStore, {
+        resultDirectory, managedWorktree: path.join(os.tmpdir(), "hermes-test-workspace"), checkpointDirectory: sharedCheckpointDirectory,
+      }, supervisor);
+      adapter.setHermesSessionCaptureHandler(async () => undefined);
+      const run = {
+        id: "f6772d14-8cc9-4701-b79e-2aafc8d9a199", role: "Developer", runtime: "hermes", model: "default",
+        taskId: null, epicId: null, status: "STARTED" as const, sessionId: null, attempt: null,
+        triggerReason: null, contextVersion: "v1", outputSchemaVersion: "v1", startedAt: new Date(),
+        endedAt: null, exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
+      };
+      try {
+        await expect(adapter.startRun(run)).rejects.toThrow("HERMES_EBB_MCP_REGISTRATION_FAILED");
+      } finally {
+        await fs.rm(resultDirectory, { recursive: true, force: true });
+      }
     });
   });
 
@@ -1849,9 +2034,7 @@ describe("HermesRuntimeAdapter", () => {
       const builder = new HermesCliBuilder();
       const args = builder.buildLaunchArgs({
         queryFile: "/tmp/prompt.txt",
-        provider: "openai-codex",
-        model: "claude-3-5-sonnet",
-        toolsets: ["mcp-orchestrator"],
+        toolsets: ["mcp-ebb-orchestrator"],
         worktree: "/managed/worktree",
         ignoreRules: true,
         source: "tool",
@@ -1861,14 +2044,10 @@ describe("HermesRuntimeAdapter", () => {
       expect(args).toContain("chat");
       expect(args).toContain("--query-file");
       expect(args).toContain("/tmp/prompt.txt");
-      expect(args).toContain("--model");
-      expect(args).toContain("claude-3-5-sonnet");
-      expect(args).toContain("--provider");
-      expect(args).toContain("openai-codex");
-      expect(args.slice(args.indexOf("--provider"), args.indexOf("--provider") + 2))
-        .toEqual(["--provider", "openai-codex"]);
+      expect(args).not.toContain("--model");
+      expect(args).not.toContain("--provider");
       expect(args).toContain("--toolsets");
-      expect(args).toContain("mcp-orchestrator");
+      expect(args).toContain("mcp-ebb-orchestrator");
       expect(args).toContain("--in");
       expect(args).toContain("/managed/worktree");
       expect(args).toContain("--ignore-rules");
@@ -1882,7 +2061,8 @@ describe("HermesRuntimeAdapter", () => {
       const builder = new HermesCliBuilder();
       const args = builder.buildResumeArgs({
         sessionId: "resume-123",
-        toolsets: ["mcp-orchestrator"],
+        queryFile: "/tmp/continuation.txt",
+        toolsets: ["mcp-ebb-orchestrator"],
         worktree: "/managed/worktree",
         ignoreRules: true,
         source: "tool",
@@ -1892,135 +2072,14 @@ describe("HermesRuntimeAdapter", () => {
       expect(args).toContain("chat");
       expect(args).toContain("--resume");
       expect(args).toContain("resume-123");
+      expect(args.slice(args.indexOf("--query-file"), args.indexOf("--query-file") + 2)).toEqual(["--query-file", "/tmp/continuation.txt"]);
+      expect(args).toContain("--no-restore-cwd");
+      expect(args).not.toContain("--model");
+      expect(args).not.toContain("--provider");
+      expect(args.slice(args.indexOf("--format"), args.indexOf("--format") + 2)).toEqual(["--format", "stream-json"]);
       expect(args).toContain("--in");
       expect(args).toContain("/managed/worktree");
     });
 
-    it("rejects Hermes virtual-provider syntax that can override the explicit provider", () => {
-      const builder = new HermesCliBuilder();
-      expect(() => builder.buildLaunchArgs({
-        queryFile: "/tmp/prompt.txt",
-        provider: "openai-codex",
-        model: "moa:balanced",
-        toolsets: ["mcp-orchestrator"],
-        worktree: "/managed/worktree",
-        ignoreRules: false,
-        source: "tool",
-        maxTurns: 20,
-      })).toThrow("HERMES_RUN_SELECTION_INVALID");
-    });
-  });
-});
-
-describe("Hermes terminal profile cleanup STOP gate", () => {
-  const runId = "f672e56f-07ed-4fc4-9aca-2f91b3d7bc82";
-  let root: string;
-  let databasePath: string;
-  let database: ReturnType<typeof createSqliteDatabase>;
-  let identity!: ProcessScopeIdentity;
-  let supervisor: ProcessScopeSupervisor;
-  let executor: MockProcessExecutor;
-  let artifacts: MockArtifactStore;
-  let waitForStopped: ProcessScopeSupervisor["waitForStopped"];
-  let cleanupProfile: ReturnType<typeof vi.spyOn>;
-
-  beforeEach(async () => {
-    executor = new MockProcessExecutor();
-    artifacts = new MockArtifactStore();
-    root = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-cleanup-stop-gate-"));
-    databasePath = path.join(root, "state.sqlite");
-    database = createSqliteDatabase(databasePath);
-    database.exec(`
-      CREATE TABLE agent_runs (id TEXT PRIMARY KEY, status TEXT NOT NULL, capability_ref TEXT, task_id TEXT);
-      CREATE TABLE run_process_owners (
-        run_id TEXT PRIMARY KEY, source_tag TEXT NOT NULL, hermes_home TEXT NOT NULL,
-        containment_kind TEXT NOT NULL, containment_id TEXT NOT NULL, launch_nonce TEXT NOT NULL,
-        systemd_invocation_id TEXT, systemd_control_group TEXT, supervisor_pid INTEGER,
-        supervisor_start_identity TEXT, pid INTEGER, platform TEXT, process_start_identity TEXT,
-        executable_identity TEXT, state TEXT NOT NULL, stop_evidence TEXT, updated_at TEXT NOT NULL,
-        hermes_source_snapshot_key TEXT
-      );
-      CREATE TABLE scheduler_reservations (id TEXT PRIMARY KEY, status TEXT, run_id TEXT, subject_id TEXT, kind TEXT);
-      CREATE TABLE scheduler_resource_locks (reservation_id TEXT);
-    `);
-    const hermesHome = path.join(root, "profiles", `ebb-orchestrator-run-${runId}`);
-    const owner = prepareRunProcessOwner(runId, hermesHome,
-      process.platform === "win32" ? "windows-job" : "systemd-user-service");
-    database.run("INSERT INTO agent_runs (id,status,capability_ref,task_id) VALUES ($runId,'COMPLETED',NULL,NULL)", { runId });
-    database.transaction((tx) => {
-      insertRunProcessOwnerTx(tx, owner);
-      transitionRunProcessOwnerTx(tx, { runId, expectedState: "PREPARED", nextState: "STOPPED", evidence: "NEVER_LAUNCHED" });
-    });
-    identity = {
-      runId,
-      containmentKind: owner.containmentKind,
-      containmentId: owner.containmentId,
-      launchNonce: owner.launchNonce,
-      systemdInvocationId: null,
-      systemdControlGroup: null,
-      supervisorPid: null,
-      supervisorStartIdentity: null,
-      pid: null,
-      platform: null,
-      processStartIdentity: null,
-      executableIdentity: null,
-      state: "STOPPED",
-    };
-    waitForStopped = vi.fn(async (_owner: ProcessScopeIdentity, _timeoutMs?: number): Promise<ProcessScopeObservation> => ({
-      state: "STOPPED" as const,
-      evidence: owner.containmentKind === "windows-job" ? "WINDOWS_JOB_EMPTY" : "SYSTEMD_CGROUP_EMPTY",
-    }));
-    supervisor = {
-      launch: async () => { throw new Error("unused"); },
-      inspect: async () => ({ state: "UNKNOWN", reason: "unused" }),
-      stop: async () => ({ state: "UNKNOWN", reason: "unused" }),
-      waitForStopped,
-    };
-    cleanupProfile = vi.spyOn(hermesProfileHomeModule, "cleanupHermesRunProfileHome").mockResolvedValue(undefined);
-  });
-
-  afterEach(async () => {
-    cleanupProfile.mockRestore();
-    database.close();
-    await fs.rm(root, { recursive: true, force: true });
-  });
-
-  it("waits for fresh STOP evidence for the exact persisted owner before removing its profile", async () => {
-    const adapter = new HermesRuntimeAdapter(executor, artifacts, { databasePath }, supervisor);
-
-    await adapter.cleanupTerminalHermesProfile(runId);
-
-    expect(vi.mocked(waitForStopped)).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(waitForStopped)).toHaveBeenCalledWith(identity, 30_000);
-    expect(cleanupProfile).toHaveBeenCalledTimes(1);
-    expect(cleanupProfile.mock.invocationCallOrder[0]).toBeGreaterThan(vi.mocked(waitForStopped).mock.invocationCallOrder[0]!);
-  });
-
-  it.each([
-    ["LIVE", { state: "LIVE", identity: { ...identity, state: "LIVE" } }],
-    ["UNKNOWN", { state: "UNKNOWN", reason: "UNPROVEN" }],
-    ["malformed STOP evidence", { state: "STOPPED", evidence: "not-safe-evidence" }],
-    ["historical non-OS STOP evidence", { state: "STOPPED", evidence: "NEVER_LAUNCHED" }],
-    ["wrong-containment evidence", { state: "STOPPED", evidence: process.platform === "win32" ? "SYSTEMD_CGROUP_EMPTY" : "WINDOWS_JOB_EMPTY" }],
-  ] as const)("does not remove the profile when fresh supervisor evidence is %s", async (_label, observation) => {
-    const supervisor: ProcessScopeSupervisor = {
-      launch: async () => { throw new Error("unused"); },
-      inspect: async () => ({ state: "UNKNOWN", reason: "unused" }),
-      stop: async () => ({ state: "UNKNOWN", reason: "unused" }),
-      waitForStopped: vi.fn(async () => observation as ProcessScopeObservation),
-    };
-    const adapter = new HermesRuntimeAdapter(executor, artifacts, { databasePath }, supervisor);
-
-    await expect(adapter.cleanupTerminalHermesProfile(runId)).rejects.toThrow("HERMES_PROFILE_CLEANUP_STOP_UNPROVEN");
-
-    expect(cleanupProfile).not.toHaveBeenCalled();
-  });
-
-  it("fails closed without a process-scope supervisor", async () => {
-    const adapter = new HermesRuntimeAdapter(executor, artifacts, { databasePath });
-
-    await expect(adapter.cleanupTerminalHermesProfile(runId)).rejects.toThrow("HERMES_PROFILE_CLEANUP_STOP_UNPROVEN");
-
-    expect(cleanupProfile).not.toHaveBeenCalled();
   });
 });

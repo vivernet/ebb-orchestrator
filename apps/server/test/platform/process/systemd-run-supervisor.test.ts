@@ -1,5 +1,4 @@
 import { PassThrough, Writable } from "node:stream";
-import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ExitCodeError,
@@ -18,6 +17,7 @@ import type {
 } from "../../../src/platform/process/process-inspector.js";
 import type { ProcessScopeLaunchRequest } from "../../../src/platform/process/run-scope-supervisor.js";
 import { createHermesLaunchTicket } from "../../../src/modules/runtime/hermes/hermes-launch-ticket.js";
+import { HERMES_PROVIDER_SELECTION_SOURCE } from "../../../src/modules/runtime/hermes/hermes-source-identity.js";
 
 class FakeProcessExecutor extends ProcessExecutor {
   readonly execCalls: Array<{ file: string; args: string[]; options: ProcessOptions }> = [];
@@ -225,42 +225,28 @@ describe("SystemdRunSupervisor", () => {
     await expect(handle.completion).resolves.toMatchObject({ exitCode: 0, stdout: "dummy stdout" });
   });
 
-  it("routes a ticketed Linux Hermes run through the pinned native launcher and verifies its digest in the wrapper", async () => {
+  it("routes a ticketed Linux Hermes run through the installed-runtime launcher and verifies its digest", async () => {
     const runId = "123e4567-e89b-42d3-a456-426614174000";
-    const profileHome = `/home/test-user/.hermes/profiles/ebb-orchestrator-run-${runId}`;
+    const hermesHome = "/home/test-user/.hermes";
     const pythonPath = "/opt/hermes/venv/bin/python";
-    const argsPrefix = ["-I", "-B", "-S", "-c", "pinned-hermes-bootstrap"];
-    const hermesSourceSnapshotKey = JSON.stringify({
-      formatVersion: 1,
-      hermesVersion: "v0.21.5+9117.g08165d5",
-      manifestDigest: "a".repeat(64),
-      sourceCommit: "b".repeat(40),
-      sourceTree: "c".repeat(40),
-    });
-    const sourceSnapshotDirectoryId = createHash("sha256").update(hermesSourceSnapshotKey).digest("hex");
-    const sourceSnapshotRoot = `/var/lib/ebb/runtime/hermes/source-snapshots/${sourceSnapshotDirectoryId}`;
+    const argsPrefix = ["-I", "-B", "-c", "installed-hermes-bootstrap"];
     const ticket = createHermesLaunchTicket({
       runId,
       attempt: 0,
       platform: "linux",
       hermesExecutablePath: "/opt/hermes/bin/hermes",
       hermesExecutableIdentity: { platform: "linux", device: "8", inode: "10" },
+      sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit,
       executablePath: pythonPath,
       executableIdentity: { platform: "linux", device: "8", inode: "11" },
       executableArgsPrefix: argsPrefix,
-      profileHome,
-      profileHomeIdentity: { platform: "linux", device: "8", inode: "12" },
-      hermesSourceSnapshotKey,
-      hermesSourceSnapshotRoot: sourceSnapshotRoot,
-      hermesSourceSnapshotRootIdentity: { platform: "linux", device: "8", inode: "13" },
-      hermesSourceManifestDigest: "a".repeat(64),
-      hermesSourceProjectionPath: `${sourceSnapshotRoot}.native-v1.bin`,
-      hermesSourceProjectionSha256: "d".repeat(64),
-      hermesSourceProjectionSize: 128,
+      hermesHome,
       environment: {
-        HERMES_HOME: profileHome,
-        HOME: `${profileHome}/home`,
-        HERMES_CONFIG: `${profileHome}/config.yaml`,
+        HERMES_HOME: hermesHome,
+        HOME: "/home/test-user",
+        HERMES_CONFIG: `${hermesHome}/config.yaml`,
+        HERMES_DATA_DIR_SUFFIX: "-custom",
+        HERMES_RUNTIME_DIR: "/home/test-user/hermes-runtime",
       },
     });
     const hermesRequest: ProcessScopeLaunchRequest = {
@@ -269,9 +255,11 @@ describe("SystemdRunSupervisor", () => {
       executable: pythonPath,
       args: [...argsPrefix, "chat", "--query-file", "/tmp/request.md", "--source", runId],
       environment: {
-        HERMES_HOME: profileHome,
-        HOME: `${profileHome}/home`,
-        HERMES_CONFIG: `${profileHome}/config.yaml`,
+        HERMES_HOME: hermesHome,
+        HOME: "/home/test-user",
+        HERMES_CONFIG: `${hermesHome}/config.yaml`,
+        HERMES_DATA_DIR_SUFFIX: "-custom",
+        HERMES_RUNTIME_DIR: "/home/test-user/hermes-runtime",
       },
       hermesLaunchTicket: ticket,
     };
@@ -301,21 +289,27 @@ describe("SystemdRunSupervisor", () => {
     expect(call?.args).toContain(helperPath);
     expect(call?.args).toContain("--verified-linux-hermes-helper");
     expect(call?.args).toContain(nativeHelperDigest);
-      expect(call?.args).toContain("--run-hermes");
+    expect(call?.args).toContain("--run-hermes-v3");
       expect(call?.args).toContain(runId);
       expect(call?.args).toContain(launchNonce);
-      expect(call?.args).toContain(profileHome);
-      expect(call?.args).toContain(sourceSnapshotRoot);
-      expect(call?.args).toContain("13");
-      expect(call?.args).toContain(`${sourceSnapshotRoot}.native-v1.bin`);
-      expect(call?.args).toContain("d".repeat(64));
-      expect(call?.args).toContain("128");
-      expect(call?.args).toContain(hermesSourceSnapshotKey);
-    expect(call?.args).toContain("12");
+      expect(call?.args).toContain(hermesHome);
+    expect(call?.args).toContain("8");
+    expect(call?.args).toContain("10");
+    expect(call?.args).toContain("11");
+    expect(call?.args).not.toContain("source-snapshots");
     expect(call?.args).toContain(pythonPath);
     expect(call?.args).toContain("11");
-    expect(call?.args).toContain("pinned-hermes-bootstrap");
+    expect(call?.args).toContain("installed-hermes-bootstrap");
     expect(call?.args).toContain("/opt/hermes/bin/hermes");
+    expect(call?.args).toContain(`HERMES_HOME=${hermesHome}`);
+    expect(call?.args).toContain("HOME=/home/test-user");
+    expect(call?.args).toContain(`HERMES_CONFIG=${hermesHome}/config.yaml`);
+    expect(call?.args).toContain("HERMES_DATA_DIR_SUFFIX=-custom");
+    expect(call?.args).toContain("HERMES_RUNTIME_DIR=/home/test-user/hermes-runtime");
+    const payloadWrapper = call?.args.find((argument) => argument.includes("safeEnvironmentKeys"));
+    expect(payloadWrapper).toContain('"HERMES_DATA_DIR_SUFFIX"');
+    expect(payloadWrapper).toContain('"HERMES_RUNTIME_DIR"');
+    expect(call?.args.join(" ")).not.toContain("OPENAI_API_KEY");
     expect(call?.args.join(" ")).toContain("/proc/self/fd/3");
     expect(call?.args.join(" ")).toContain("openSync");
     expect(call?.args.join(" ")).toContain("createHash");
@@ -327,21 +321,32 @@ describe("SystemdRunSupervisor", () => {
   });
 
   it("forwards live payload chunks and suppresses all process output from its completion result", async () => {
-    const chunks: string[] = [];
-    const handle = await supervisor.launch(owner, {
+    const stdoutChunks: string[] = [];
+    const stderrChunks: string[] = [];
+    const persistEntered = deferred();
+    const releasePersist = deferred();
+    const launch = supervisor.launch(owner, {
       ...launchRequest,
       captureOutput: false,
-      onStdoutChunk: async (chunk) => { chunks.push(Buffer.from(chunk).toString("utf8")); },
-    }, async () => undefined);
+      onStdoutChunk: async (chunk) => { stdoutChunks.push(Buffer.from(chunk).toString("utf8")); },
+      onStderrChunk: (chunk) => { stderrChunks.push(Buffer.from(chunk).toString("utf8")); },
+    }, async () => { persistEntered.resolve(); await releasePersist.promise; });
+    await persistEntered.promise;
+    (executor.sessionCall?.session.stderr as PassThrough | undefined)?.write("pre-ack-diagnostic\n");
+    releasePersist.resolve();
+    const handle = await launch;
     const payload = '{"type":"system","subtype":"init","session_id":"session-live"}\n';
     (executor.sessionCall?.session.stdout as PassThrough | undefined)?.write(Buffer.from(payload).subarray(0, 19));
     (executor.sessionCall?.session.stdout as PassThrough | undefined)?.write(Buffer.from(payload).subarray(19));
+    (executor.sessionCall?.session.stderr as PassThrough | undefined)?.write("hermes-refusal-reason: SESSION_NOT_OWNED\n");
 
     unitState = "absent";
     executor.finish({ exitCode: 0, stdout: payload, stderr: "private diagnostic" });
     const result = await handle.completion;
 
-    expect(chunks.join("")).toBe(payload);
+    expect(stdoutChunks.join("")).toBe(payload);
+    expect(stderrChunks.join("")).toBe("hermes-refusal-reason: SESSION_NOT_OWNED\n");
+    expect(stderrChunks.join("")).not.toContain("pre-ack-diagnostic");
     expect(result).toEqual({ exitCode: 0, stdout: "", stderr: "" });
     expect(executor.sessionCall?.options.captureOutput).toBe(false);
   });
@@ -907,10 +912,10 @@ describe("SystemdRunSupervisor", () => {
     expect(executor.sessionCall).toBeUndefined();
   });
 
-  it("rejects the former provider-key environment name before creating a transient service", async () => {
+  it("rejects OpenAI provider-key overlays before creating a transient service", async () => {
     const request = {
       ...launchRequest,
-      environment: { ...launchRequest.environment, EBB_HERMES_PROVIDER_API_KEY: "must-not-be-forwarded" },
+      environment: { ...launchRequest.environment, OPENAI_API_KEY: "dummy-provider-env-sentinel" },
     };
     await expect(supervisor.launch(owner, request, async () => undefined))
       .rejects.toThrow("PROCESS_SCOPE_ENVIRONMENT_REJECTED");

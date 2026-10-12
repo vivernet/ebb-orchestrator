@@ -17,7 +17,7 @@ const HELPER_PATH = fileURLToPath(new URL("../../../dist/native/windows-run-supe
 export const WINDOWS_PATH_CHAIN_EVIDENCE_STAGES = [
   "FRAME_DECODED_EXPECTED", "SUPERVISOR_OPEN", "PRE_CREATE", "PRE_RESUME", "STOPPED_HELD",
 ] as const;
-const EVIDENCE_FOOTER_PREFIX = Buffer.from("EBB_EVIDENCE_END_V1:", "ascii");
+const EVIDENCE_FOOTER_PREFIX = Buffer.from("EBB_EVIDENCE_END_V3:", "ascii");
 export type WindowsPathChainEvidenceStage = (typeof WINDOWS_PATH_CHAIN_EVIDENCE_STAGES)[number];
 export interface WindowsPathChainEvidenceRecord {
   readonly stage: WindowsPathChainEvidenceStage;
@@ -102,14 +102,17 @@ function parseEvidenceLine(
   if (line.byteLength > 512 || line.some((byte) => byte > 0x7f)) throw new Error("WINDOWS_PATH_CHAIN_EVIDENCE_INVALID");
   const fields = line.toString("ascii").split("\t");
   const stage = WINDOWS_PATH_CHAIN_EVIDENCE_STAGES[index];
-  if (fields.length !== 7 || fields[0] !== "EBB_EVIDENCE" || fields[1] !== "V1" || !stage || fields[2] !== stage ||
+  if (fields.length !== 7 || fields[0] !== "EBB_EVIDENCE" || fields[1] !== "V3" || !stage || fields[2] !== stage ||
       fields[3] !== binding.containmentId || fields[4] !== binding.runId || fields[5] !== binding.launchNonce ||
       fields[6] !== binding.expectedDigests[stage]) throw new Error("WINDOWS_PATH_CHAIN_EVIDENCE_INVALID");
   return { stage, commitment: fields[6] };
 }
+
 const HERMES_CHILD_ENV_KEYS = new Set([
   "HOMEDRIVE", "HOMEPATH", "SYSTEMROOT", "TEMP", "TMP", "PATH", "NODE_PATH", "NODE_ENV",
-  "HOME", "HERMES_HOME", "HERMES_CONFIG", "HERMES_MODEL",
+  "USERPROFILE", "LOCALAPPDATA",
+  "HOME", "HERMES_HOME", "HERMES_PROFILE", "HERMES_CONFIG", "HERMES_MODEL",
+  "HERMES_DATA_DIR_SUFFIX", "HERMES_RUNTIME_DIR",
 ]);
 interface LocalLaunchAttempt {
   session?: ProcessSession;
@@ -223,9 +226,13 @@ export class WindowsJobSupervisor implements ProcessScopeSupervisor {
     });
     attempt.session = session;
     let identity: ProcessScopeIdentity | undefined;
+    let payloadAuthorized = false;
     let stopPromise: Promise<ProcessScopeObservation> | undefined;
     const terminalFailureCapture = new NativeHelperTerminalFailureCapture();
     session.stderr.on("data", (chunk: Buffer | string) => terminalFailureCapture.write(chunk));
+    session.stderr.on("data", (chunk: Buffer | string) => {
+      if (payloadAuthorized) request.onStderrChunk?.(Buffer.from(chunk));
+    });
     session.stdout.on("data", (chunk: Buffer | string) => diagnosticTrace?.observeStdout(chunk));
     session.stderr.on("data", () => diagnosticTrace?.markStderrByte());
     session.stdout.on("end", () => diagnosticTrace?.mark("OUT_END"));
@@ -264,6 +271,7 @@ export class WindowsJobSupervisor implements ProcessScopeSupervisor {
       // ResumeThread is gated by a fixed nonce-bound ACK frame. Recheck the signal
       // after the asynchronous durable callback and before sending the frame.
       if (request.signal?.aborted) throw new Error("WINDOWS_PROCESS_SCOPE_LAUNCH_CANCELLED");
+      payloadAuthorized = true;
       protocol.beginPayload();
       session.stdin.write(encodeLaunchAcknowledgement(owner.launchNonce));
       this.pendingLaunches.delete(key);
@@ -475,7 +483,7 @@ function classifyInspectionExecutionFailure(error: unknown): string {
 
 function mapInspectionGateFailurePhase(phase: string): string | undefined {
   if (phase.startsWith("ARGUMENT_")) return "WINDOWS_JOB_INSPECTION_HELPER_ARGUMENT_GATE_FAILED";
-  if (phase === "PATH_NORMALIZATION" || phase.startsWith("PARENT_DIRECTORY_")) {
+  if (phase === "PATH_NORMALIZATION") {
     return "WINDOWS_JOB_INSPECTION_HELPER_PATH_GATE_FAILED";
   }
   if (phase.startsWith("HELPER_FILE_")) return "WINDOWS_JOB_INSPECTION_HELPER_FILE_GATE_FAILED";
@@ -542,7 +550,7 @@ function encodeMetadataFrame(request: ProcessScopeLaunchRequest, launchIdentity?
     addU32(bytes.byteLength);
     pieces.push(bytes);
   };
-  addU32(0x45424233);
+  addU32(launchIdentity ? 0x45424236 : 0x45424233);
   const frameLengthOffset = pieces.reduce((length, piece) => length + piece.byteLength, 0);
   addU32(0);
   addU32(request.args.length);
@@ -557,32 +565,10 @@ function encodeMetadataFrame(request: ProcessScopeLaunchRequest, launchIdentity?
   }
   addU32(launchIdentity ? 1 : 0);
   if (launchIdentity) {
-    addString(launchIdentity.profileHome);
     addString(launchIdentity.hermesExecutablePath);
     addIdentity(launchIdentity.hermesExecutableIdentity);
     addIdentity(launchIdentity.executableIdentity);
-    addIdentity(launchIdentity.profileHomeIdentity);
-    const profileHomeTargetIdentities = launchIdentity.profileHomeTargetIdentities;
-    if (!profileHomeTargetIdentities) throw new Error("WINDOWS_HERMES_PROFILE_TARGET_IDENTITIES_REQUIRED");
-    addIdentity(profileHomeTargetIdentities.home);
-    addIdentity(profileHomeTargetIdentities.config);
     addString(launchIdentity.runId);
-    const profileHomePathChain = launchIdentity.profileHomePathChain;
-    if (!profileHomePathChain) throw new Error("WINDOWS_HERMES_PROFILE_PATH_CHAIN_REQUIRED");
-    addU32(profileHomePathChain.version);
-    addU32(profileHomePathChain.authRootIndex);
-    addU32(profileHomePathChain.components.length);
-    for (const component of profileHomePathChain.components) {
-      addString(component.volumeSerial);
-      addString(component.fileId);
-    }
-    addString(launchIdentity.hermesSourceSnapshotKey);
-    addString(launchIdentity.hermesSourceSnapshotRoot);
-    addIdentity(launchIdentity.hermesSourceSnapshotRootIdentity);
-    addString(launchIdentity.hermesSourceManifestDigest);
-    addString(launchIdentity.hermesSourceProjectionPath);
-    addString(launchIdentity.hermesSourceProjectionSha256);
-    addU32(launchIdentity.hermesSourceProjectionSize);
   }
   const result = Buffer.concat(pieces);
   if (result.byteLength > 256 * 1024) throw new TypeError("Windows process-scope metadata exceeds 256 KiB.");
@@ -889,7 +875,6 @@ function normalizeNativeHelperGatePhase(phase: string): string | undefined {
     "argument-type": "ARGUMENT_TYPE",
     "argument-nul": "ARGUMENT_NUL",
     "path-normalization": "PATH_NORMALIZATION",
-    "parent-directory-lock": "PARENT_DIRECTORY_LOCK",
     "helper-file-lock": "HELPER_FILE_LOCK",
     "integrity-check": "INTEGRITY_CHECK",
     "process-start": "PROCESS_START",
@@ -902,8 +887,6 @@ function normalizeNativeHelperGatePhase(phase: string): string | undefined {
   };
   const fixed = Object.prototype.hasOwnProperty.call(fixedPhases, phase) ? fixedPhases[phase] : undefined;
   if (fixed) return fixed;
-  if (/^parent-directory-open-index-\d+-win32-\d+$/u.test(phase)) return "PARENT_DIRECTORY_OPEN";
-  if (/^parent-directory-check-win32-\d+$/u.test(phase)) return "PARENT_DIRECTORY_CHECK";
   if (/^helper-file-open-win32-\d+$/u.test(phase)) return "HELPER_FILE_OPEN";
   return undefined;
 }
@@ -911,6 +894,12 @@ function normalizeNativeHelperGatePhase(phase: string): string | undefined {
 class HelperProtocol {
   private buffered = Buffer.alloc(0);
   private payloadStarted = false;
+  private payloadLineStart = true;
+  private payloadMarkerCandidate = Buffer.alloc(0);
+  private nativePayloadFailure: string | undefined;
+  private readonly nativePayloadMarkers = [...SAFE_NATIVE_HELPER_FAILURE_CODES].map((code) => ({
+    bytes: Buffer.from(`UNKNOWN\t${code}\n`, "ascii"), code,
+  }));
   private payloadFailure: "CALLBACK" | "STREAM" | undefined;
   private payloadTransportFailureQueued = false;
   private payloadCallbacks = Promise.resolve();
@@ -926,8 +915,8 @@ class HelperProtocol {
       if (this.payloadStarted) {
         const acceptedBeforeTransportFailure = !this.payloadTransportFailureQueued;
         this.payloadCallbacks = this.payloadCallbacks.then(async () => {
-          if (acceptedBeforeTransportFailure && this.payloadFailure === undefined && this.onStdoutChunk) {
-            await this.onStdoutChunk(bytes);
+          if (acceptedBeforeTransportFailure && this.payloadFailure === undefined) {
+            await this.forwardPayload(bytes);
           }
         }).catch(() => {
           this.payloadFailure ??= "CALLBACK";
@@ -967,8 +956,47 @@ class HelperProtocol {
       observed = this.payloadCallbacks;
       await observed;
     } while (observed !== this.payloadCallbacks);
+    // An unfinished marker prefix is ordinary payload: never silently discard a malformed line.
+    if (this.payloadFailure === undefined && this.payloadMarkerCandidate.byteLength > 0) {
+      const remainder = this.payloadMarkerCandidate;
+      this.payloadMarkerCandidate = Buffer.alloc(0);
+      try { await this.onStdoutChunk?.(remainder); }
+      catch {
+        this.payloadFailure = "CALLBACK";
+        this.onPayloadError?.();
+      }
+    }
+    if (this.nativePayloadFailure) throw new Error(`WINDOWS_HELPER_NATIVE_UNKNOWN:${this.nativePayloadFailure}`);
     if (this.payloadFailure === "STREAM") throw new Error("WINDOWS_HELPER_PAYLOAD_STREAM_FAILED");
     if (this.payloadFailure === "CALLBACK") throw new Error("WINDOWS_HELPER_PAYLOAD_CALLBACK_FAILED");
+  }
+
+  /** Отделяет только exact allowlisted native terminal frames; остальные байты передаёт без изменений. */
+  private async forwardPayload(bytes: Buffer): Promise<void> {
+    let offset = 0;
+    while (offset < bytes.byteLength) {
+      if (this.payloadLineStart || this.payloadMarkerCandidate.byteLength > 0) {
+        this.payloadMarkerCandidate = Buffer.concat([this.payloadMarkerCandidate, bytes.subarray(offset, offset + 1)]);
+        offset += 1;
+        const candidate = this.payloadMarkerCandidate;
+        const exact = this.nativePayloadMarkers.find((marker) => marker.bytes.equals(candidate));
+        if (exact) {
+          this.payloadMarkerCandidate = Buffer.alloc(0);
+          this.nativePayloadFailure = exact.code;
+          throw new Error("WINDOWS_HELPER_NATIVE_PAYLOAD_REFUSAL");
+        }
+        if (this.nativePayloadMarkers.some((marker) => marker.bytes.subarray(0, candidate.byteLength).equals(candidate))) continue;
+        this.payloadMarkerCandidate = Buffer.alloc(0);
+        this.payloadLineStart = candidate[candidate.byteLength - 1] === 0x0a;
+        await this.onStdoutChunk?.(candidate);
+      } else {
+        const newline = bytes.indexOf(0x0a, offset);
+        const end = newline < 0 ? bytes.byteLength : newline + 1;
+        this.payloadLineStart = newline >= 0;
+        await this.onStdoutChunk?.(bytes.subarray(offset, end));
+        offset = end;
+      }
+    }
   }
 
   nextLine(prefix: string, timeoutMs: number): Promise<string> {

@@ -25,6 +25,12 @@ export interface ValidatedRequestRunContextV1 {
   readonly architect: DesignResult | null;
 }
 
+/** Проверенная связь текущего восстанавливаемого Run с Request и его сохранённым lifecycle статусом. */
+export interface RequestRunRecoveryContextV1 {
+  readonly currentRunId: string;
+  readonly originalRequestStatus: "RECEIVED" | "PLANNING";
+}
+
 /** Проверенная read-only проекция существующего Epic orchestration checkpoint. */
 export interface ValidatedEpicRunContextV1 {
   readonly planId: string;
@@ -33,15 +39,19 @@ export interface ValidatedEpicRunContextV1 {
 }
 
 /**
- * Загружает Request вместе с результатами только из принадлежащих ему завершённых Runs.
- * DTO вызывающего кода не является источником authority для planning plan/decisions.
+ * Загружает Request и результаты только из принадлежащих ему Runs; исключение — единственный
+ * явно связанный текущий Run recovery, у которого ещё нет результата. DTO caller не authority.
  *
  * @param tx Транзакция, из которой собирается Run context.
  * @param requestId Persisted Request ID.
  * @returns Проверенные persisted Request, plan и доступные решения.
- * @throws {Error} Если связанный Run отсутствует, не завершён или содержит некорректный output.
+ * @throws {Error} Если связь Run/Request/role не подтверждена, lifecycle недопустим или output некорректен.
  */
-export function readValidatedRequestRunContextTx(tx: DatabaseTx, requestId: string): ValidatedRequestRunContextV1 {
+export function readValidatedRequestRunContextTx(
+  tx: DatabaseTx,
+  requestId: string,
+  recovery?: RequestRunRecoveryContextV1,
+): ValidatedRequestRunContextV1 {
   const row = tx.get<{
     id: string; project_id: string; request: string; requested_by: string; status: string;
     classification: string | null; plan_id: string | null; planning_decisions_required: number; coordinator_run_id: string | null;
@@ -50,21 +60,60 @@ export function readValidatedRequestRunContextTx(tx: DatabaseTx, requestId: stri
       || !Number.isInteger(row.planning_decisions_required) || ![0, 1].includes(row.planning_decisions_required)) {
     throw new Error("Persisted planning request is missing or invalid");
   }
+  let recoveryRole: "coordinator" | "product_manager" | "architect" | null = null;
+  if (recovery) {
+    if (!recovery.currentRunId || !["RECEIVED", "PLANNING"].includes(recovery.originalRequestStatus)) {
+      throw new Error("REQUEST_RECOVERY_BINDING_INVALID");
+    }
+    const current = tx.get<{ role: string; status: string; output: string | null; task_id: string | null; epic_id: string | null }>(
+      "SELECT role,status,output,task_id,epic_id FROM agent_runs WHERE id=$runId", { runId: recovery.currentRunId });
+    if (!current || !["coordinator", "product_manager", "architect"].includes(current.role) ||
+        !isValidRequestPlanningRun(current, current.role as "coordinator" | "product_manager" | "architect") ||
+        !["STARTED", "IN_PROGRESS", "COMPLETING"].includes(current.status) || current.output !== null) {
+      throw new Error("REQUEST_RECOVERY_RUN_UNAVAILABLE");
+    }
+    if (current.role === "coordinator" && row.coordinator_run_id === recovery.currentRunId) {
+      recoveryRole = "coordinator";
+      if (row.status !== "PLANNING" || recovery.originalRequestStatus !== "RECEIVED") throw new Error("REQUEST_RECOVERY_STATUS_MISMATCH");
+    } else {
+      if (current.role !== "product_manager" && current.role !== "architect") {
+        throw new Error("REQUEST_RECOVERY_RUN_BINDING_MISMATCH");
+      }
+      const roleLink = tx.get<{ request_id: string }>(
+        "SELECT request_id FROM planning_request_role_runs WHERE request_id=$requestId AND run_id=$runId AND role=$role",
+        { requestId, runId: recovery.currentRunId, role: current.role },
+      );
+      recoveryRole = roleLink ? current.role as "product_manager" | "architect" : null;
+      if (!recoveryRole || row.status !== "PLANNING" || recovery.originalRequestStatus !== "PLANNING") {
+        throw new Error("REQUEST_RECOVERY_RUN_BINDING_MISMATCH");
+      }
+    }
+  }
+  const projectedRequestStatus = recovery?.originalRequestStatus ?? row.status;
 
   let coordinatorPlan: PlanningPlanInput | null = null;
   let coordinatorClassification: PlanningClassification | null = null;
   if (row.coordinator_run_id) {
     const run = tx.get<{ id: string; role: string; task_id: string | null; epic_id: string | null; status: string; output: string | null }>(
       "SELECT id,role,task_id,epic_id,status,output FROM agent_runs WHERE id=$runId", { runId: row.coordinator_run_id });
-    if (!isValidRequestPlanningRun(run, "coordinator") || run.status !== "COMPLETED" || !run.output) {
+    const recoveringCoordinator = recoveryRole === "coordinator" && run?.id === recovery?.currentRunId;
+    if (!isValidRequestPlanningRun(run, "coordinator") ||
+        (!recoveringCoordinator && (run.status !== "COMPLETED" || !run.output)) ||
+        (recoveringCoordinator && (!(["STARTED", "IN_PROGRESS", "COMPLETING"].includes(run.status) && run.output === null)))) {
       throw new Error("Persisted Coordinator Run is not a valid Request planning run");
     }
-    const output = parsePersistedContextJsonV1(run.output);
-    const decision = parseCoordinatorRequestOutput(output, row.project_id, row.requested_by);
-    coordinatorClassification = decision.classification;
-    if (decision.classification === "EPIC") coordinatorPlan = decision.plan;
-    if (row.classification !== null && decision.classification !== row.classification) {
-      throw new Error("Persisted Coordinator classification does not match its Request");
+    if (recoveringCoordinator) {
+      coordinatorPlan = null;
+      coordinatorClassification = null;
+    } else {
+      if (!run.output) throw new Error("Persisted Coordinator Run output is unavailable");
+      const output = parsePersistedContextJsonV1(run.output);
+      const decision = parseCoordinatorRequestOutput(output, row.project_id, row.requested_by);
+      coordinatorClassification = decision.classification;
+      if (decision.classification === "EPIC") coordinatorPlan = decision.plan;
+      if (row.classification !== null && decision.classification !== row.classification) {
+        throw new Error("Persisted Coordinator classification does not match its Request");
+      }
     }
   }
 
@@ -85,16 +134,21 @@ export function readValidatedRequestRunContextTx(tx: DatabaseTx, requestId: stri
       `SELECT r.id,r.role,r.task_id,r.epic_id,r.status,r.output FROM planning_request_role_runs pr JOIN agent_runs r ON r.id=pr.run_id
         WHERE pr.request_id=$requestId AND pr.role=$role`, { requestId, role });
     if (!linked) return null;
-    if (!isValidRequestPlanningRun(linked, role) || linked.status !== "COMPLETED" || !linked.output) {
+    const recoveringRole = recoveryRole === role && linked.id === recovery?.currentRunId;
+    if (!isValidRequestPlanningRun(linked, role) ||
+        (!recoveringRole && (linked.status !== "COMPLETED" || !linked.output)) ||
+        (recoveringRole && (!(["STARTED", "IN_PROGRESS", "COMPLETING"].includes(linked.status) && linked.output === null)))) {
       throw new Error(`Persisted ${role} Run is not a valid Request planning run`);
     }
+    if (recoveringRole) return null;
+    if (linked.output === null) throw new Error(`Persisted ${role} Run output is unavailable`);
     return parsePersistedContextJsonV1(linked.output);
   };
   const productOutput = readRoleOutput("product_manager");
   const architectOutput = readRoleOutput("architect");
   const productManager = productOutput === null ? null : ProductDefinitionSchema.parse(productOutput);
   const architect = architectOutput === null ? null : DesignResultSchema.parse(architectOutput);
-  if (planningDecisionsRequired && row.status !== "RECEIVED" && (!row.coordinator_run_id || !coordinatorPlan)) {
+  if (planningDecisionsRequired && projectedRequestStatus !== "RECEIVED" && (!row.coordinator_run_id || !coordinatorPlan)) {
     throw new Error("Persisted Request Coordinator plan is unavailable");
   }
   if (architect && !productManager) throw new Error("Persisted Architect result has no linked Product Manager result");
@@ -102,7 +156,7 @@ export function readValidatedRequestRunContextTx(tx: DatabaseTx, requestId: stri
   return {
     request: {
       id: row.id, projectId: row.project_id, request: row.request, requestedBy: row.requested_by,
-      status: row.status, classification: row.classification, planId: row.plan_id,
+      status: projectedRequestStatus, classification: row.classification, planId: row.plan_id,
       planningDecisionsRequired,
     },
     coordinatorClassification, coordinatorPlan, persistedPlan, productManager, architect,
@@ -220,7 +274,12 @@ export class PlanningService {
     return Boolean(row);
   }
 
-  /** После run reconciliation завершает PLANNING, если его Run оборван. */
+  /**
+   * После Run recovery завершает оборванные Requests и ставит durable adoption job
+   * для завершённых Coordinator Runs. Повторный вызов использует тот же dedupe key;
+   * результат прежнего Run принимается без создания replacement Coordinator.
+   * Возвращает количество Requests, переведённых в FAILED.
+   */
   reconcileInterruptedRequests(): number {
     this.db.run(
       `UPDATE planning_requests
@@ -232,7 +291,20 @@ export class PlanningService {
           ))`,
       { now: new Date().toISOString() },
     );
-    return this.db.get<{ changes: number }>("SELECT changes() AS changes")?.changes ?? 0;
+    const failed = this.db.get<{ changes: number }>("SELECT changes() AS changes")?.changes ?? 0;
+    this.db.transaction((tx) => {
+      const recovered = tx.all<{ id: string; project_id: string }>(
+        `SELECT q.id,q.project_id FROM planning_requests q JOIN agent_runs r ON r.id=q.coordinator_run_id
+          WHERE q.status='PLANNING' AND r.status='COMPLETED'`,
+      );
+      for (const request of recovered) {
+        enqueueJob(tx, {
+          type: "coordinator.planning", payload: { requestId: request.id, projectId: request.project_id },
+          dedupeKey: `planning:${request.id}`,
+        });
+      }
+    });
+    return failed;
   }
 
   /** Сохраняет проверенный план и связь с request в одной транзакции. */

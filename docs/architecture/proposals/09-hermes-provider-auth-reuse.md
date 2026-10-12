@@ -4,125 +4,29 @@ kind: proposal
 title: Reuse the configured Hermes provider for Orchestrator Runs
 status: accepted
 created: 2026-10-01
-updated: 2026-10-02
+updated: 2026-10-10
 ---
 
 # Proposal 09: Reuse the configured Hermes provider for Orchestrator Runs
 
-**Status:** Accepted by the user on 2026-10-02 as a conditional design direction. Implementation remains subject to the Plan20 review and the profile/configuration safety and real-provider acceptance gates below.
+**Current decision (2026-10-10):** The user explicitly rejected the per-Run isolated Hermes profile as unnecessary for the first version and directed Ebb to use the Hermes setup that is already configured. This decision supersedes the 2026-10-02 conditional approval of Alternative C below. It changes the product contract; it does not assert implementation or runtime acceptance is complete.
 
-## Problem
+## Contract for v1
 
-The production runtime creates an isolated Hermes home for each Run. Its current provider bridge requires a second configuration (`EBB_HERMES_PROVIDER_BASE_URL`, `EBB_HERMES_PROVIDER_SECRET_NAME`) and an API key stored in Orchestrator's SecretStore. It does not reuse the provider already configured in the user's Hermes profile. The repository-root `.env`/`.env.example` configure Ebb Orchestrator itself; they are not where the user's Hermes provider credentials belong. The README lacks the complete end-to-end Hermes setup and Run instructions.
+- Hermes remains the owner of provider configuration and authentication. Ebb must not ask the user to configure Hermes again, add a duplicate provider/credential in Ebb, read or copy credentials, or change the user's Hermes configuration.
+- Each Hermes invocation uses the existing user-configured Hermes root/profile (`HERMES_HOME` remains the normal configured root). Ebb does not create a per-Run Hermes profile/home and does not copy user `config.yaml`, auth files, `.env`, or other Hermes state.
+- Hermes itself uses the provider/model/auth already configured by the user. Ebb does not require explicit provider/model/endpoint projection for a new Run and does not classify auth sources. It must not replace the user's Hermes selection.
+- The Run API's `model=default` uses the Hermes-configured model. An explicit non-default model override is rejected before Run creation with `HERMES_MODEL_OVERRIDE_UNSUPPORTED`; it is never silently ignored or passed as a second model setting.
+- Register the existing Ebb MCP tools through the pinned Hermes in-memory registration API before ordinary CLI discovery. This is an adapter call, not a new config subsystem; verify that discovery preserves `submit_result` and cannot bypass Action Gateway.
+- A real provider-backed invocation is required to claim runtime acceptance. Provider-free tests, seeded output, or a successful `hermes --version` do not prove it.
+- Run/session correlation remains Orchestrator-owned. Persist only the allowlisted session ID and the minimum Run/generation/attempt/containment correlation needed for recovery. Do not persist raw Hermes output or credentials.
+- Resume is allowed only for the same logical Run and durably captured original Hermes session after authoritative proof that its previous process scope stopped and all existing Run/workspace/fingerprint checks pass. Hermes applies its current configured provider/model/auth when resuming; Ebb does not inspect or compare Hermes provider context. Do not add a provider URL hash, Ebb HMAC key, SecretStore mapping, or `.env` setting to manufacture identity.
+- Do not add per-Run Hermes profile path, profile ACL/ownership, profile cleanup, auth-route fallback, refresh-contention, or MCP/config-overlay subsystems to v1.
 
-This conflicts with the intended operator experience: configure/authenticate Hermes once, then let Ebb Orchestrator use that configured provider without asking the user to maintain a duplicate endpoint/key mapping.
+## Superseded design record
 
-## Goal
+The decision accepted on 2026-10-02 proposed creating a unique Hermes-native profile under the auth-owning root for every Run, projecting provider configuration into that profile, and proving profile-specific auth fallback, path safety, isolation, refresh behavior, and cleanup. The user superseded that direction on 2026-10-10. Those profile-specific requirements are no longer v1 requirements. Historical implementation and review evidence may remain in the Plan19 ledger, but it must not be treated as acceptance evidence for this contract.
 
-Use the provider and authentication already configured in the user's Hermes installation while retaining isolated Hermes state for every Orchestrator Run.
+## Required document reconciliation
 
-## Non-goals
-
-- Sharing the user's whole Hermes home, session database, memory, MCP configuration, skills, or other personal settings with a Run.
-- Copying an `auth.json`, `.env`, or other credential file into the repository or a Run profile.
-- Logging, returning, or persisting provider tokens in SQLite, prompts, artifacts, UI, or ordinary logs.
-- Replacing Hermes with another runtime.
-
-## Current evidence and constraints
-
-- `HermesRuntimeAdapter` overrides `HERMES_HOME`, `HOME`, and `HERMES_CONFIG`, writes a managed per-Run profile, and resolves the provider API key through `SecretStore`.
-- Plan04 explicitly scopes the current bridge to an OpenAI-compatible API key and excludes reuse of the user's OAuth state or an OAuth broker.
-- Hermes documentation describes OAuth credentials in its auth store and profiles as separate homes containing configuration, auth state, sessions, memory, skills, and other state. Hermes warns against concurrent use of the same profile.
-- Read-only inspection of the installed Hermes `v0.21.5+4831.g02e4118` source found `_global_auth_file_path`, `_load_provider_state_with_source`, `_provider_state_transaction`, and `_save_provider_state_to_source` in `hermes_cli/auth.py`. Distinct Hermes homes can fall back to provider state in Hermes' global-root `auth.json`; provider refresh uses Hermes-owned locks and writes updated state back to the source store. `hermes_constants.py:get_default_hermes_root` determines which root is visible to that fallback.
-- Read-only inspection of non-secret active-profile metadata in this environment reported provider `openai-api` and model `gpt-6-luna`; `HERMES_HOME` matches Hermes' platform default root and is not a named profile. No `.env`, `auth.json`, key, token, or account identity was read. Hermes source classifies `openai-api` as an API-key provider and lists `gpt-6-luna` for it.
-- Hermes' source distinguishes Hermes-managed credential paths. Its native `hermes auth add openai-api` flow stores an API-key credential in Hermes `credential_pool`; that pool can fall back from a real profile under the Hermes root to the root `auth.json`. Hermes-profile `.env` and scoped process-environment values follow separate profile scoping. These Hermes-side files are distinct from the repository-root Ebb `.env`.
-- The current Orchestrator run home is outside the user's Hermes root and the process environment allowlist drops provider keys. Therefore the native credential-pool fallback is currently unreachable. It may work for runs under `<Hermes-root>/profiles/<run-id>`, but provider/model selection, custom endpoint behavior, `.env`-only credentials, and cross-platform path safety remain unproven. No secret value or user auth/config file was read.
-- The installed `hermes auth status openai-api` path reads/resolves the credential before it reports status, and its CLI output omits the credential source. `hermes auth list openai-api` exposes auth labels/IDs and still cannot establish whether an environment credential takes precedence. Neither command is a suitable secret-free source-classification interface. No Hermes command or provider request was run for this review.
-- Consequently, pointing Runs at the user's whole Hermes profile is not an acceptable shortcut: it would share personal configuration/state and would not support concurrent Run isolation.
-
-## Proposed contract
-
-Hermes owns provider configuration and credentials. Ebb must reuse the provider already configured in Hermes and must not create a second endpoint/key-name mapping or require a second credential entry in Orchestrator `SecretStore`. The installed Hermes `auth.json`/`credential_pool` profile fallback is the leading supported path: create a distinct Hermes profile for every Run under the same Hermes root and let Hermes resolve and refresh its own credential. Do not pass the whole user profile to the Run.
-
-1. The user configures/authenticates the provider once using Hermes' supported setup. In this environment, non-secret active metadata is `openai-api` / `gpt-6-luna`, and the active home is the platform default root. Implementation consumes only the selected provider/model/endpoint fields.
-2. Every Run receives a unique Hermes-native profile/home under the Hermes root that owns the configured auth store. Hermes' native fallback may read provider auth from that root; the Run does not share another Run's sessions, memory, MCP configuration, tools, or skills.
-3. The first supported path requires an explicit provider and model in the default Hermes profile; Ebb does not reproduce Hermes' `auto` provider selection. Run config uses only schema-validated, allowlisted provider/model/endpoint values and rejects endpoint URLs containing userinfo or credential-like query parameters. The available `hermes config get` command reads a declared value rather than resolving the effective runtime provider, and loading config may create directories/backups, so it is not presumed to be a side-effect-free selection API. Never copy the full user configuration or auth/secret files into a Run profile.
-4. Hermes remains the owner of credential lookup, provider token refresh/rotation, and cross-process serialization. Ebb does not parse auth files, export/copy token values, implement refresh, or request a duplicate provider mapping.
-5. Hermes-managed global/default `credential_pool` and OAuth auth-store fallback are the target credentials for the first supported path. The current active home uses that global/default root layout. Hermes-profile `.env`, process-environment, and external secret-source-plugin credentials are separate sources; support them only if the same Hermes-native isolated profile can resolve them without forwarding unrelated secrets or copying secret-bearing files. Otherwise fail closed with an actionable compatibility message; never ask for a SecretStore key name.
-6. Missing, expired, revoked, or unsupported authentication fails before dispatch with a specific Hermes-side remediation; no silent provider fallback occurs.
-7. The non-secret provider/runtime policy identity is bound into the existing prepared-input/execution fingerprint using only IDs/revision values explicitly exposed by supported runtime configuration. For Hermes, endpoint identity/revision must be source-backed and mutation-sensitive: it changes whenever the effective endpoint changes, including `api`/`base_url` under an unchanged provider alias. A provider or endpoint alias alone is insufficient if the effective endpoint may change beneath it. If pinned Hermes does not expose a revision/identity with this guarantee, fail closed before creating a Run/manifest and do not resume that configuration. Never persist or hash a raw endpoint URL, generate an Ebb HMAC/fingerprint key, add a SecretStore or root `.env` mapping, or ask the user to maintain a parallel identity.
-8. Windows/Linux profile-root ownership, path validation, access control, retention, and cleanup must be specified and independently reviewed before implementation. If native Hermes profile fallback cannot be made safe, stop and present an explicit architecture choice rather than implementing an unsupported auth-file parser or token-copy workaround.
-
-## Unresolved feasibility gates
-
-- Prove the provider home/root calculation on Windows and Linux for a unique per-Run Hermes home and whether it resolves the expected global auth store without exposing user state.
-- Prove the pinned Hermes global-root fallback supports Hermes `credential_pool` and OAuth auth-store entries for the configured provider/model; distinguish global/default auth from non-default active profiles.
-- Prove Hermes' own lock/refresh/write-through contract safely covers concurrent Orchestrator Runs and a user Hermes process, including crash/restart during token rotation.
-- Prove a side-effect-bounded method to resolve explicit provider/model/endpoint values from the default Hermes profile. Validate only allowlisted scalar fields; do not run the full runtime provider resolver or expose provider config. Auth-store fallback supplies credentials for a provider ID but does not select provider/model/custom endpoint.
-- Prove from pinned Hermes source/configuration that the projected endpoint identity or revision changes on every effective endpoint change, including `api`/`base_url` mutation under a stable provider alias. If no supported source-backed revision exists, that endpoint configuration remains fail-closed; do not persist/hash its URL or add an Ebb-owned key or mapping.
-- Prove whether `.env`, process-environment and Hermes external secret-source plugins can be consumed from a Run profile through Hermes-native behavior without forwarding unrelated secrets or copying user secret-bearing configuration. Do not probe or display credential values to classify the source.
-- If profiles must live under the user's Hermes root to use `credential_pool` fallback, define ownership, ACLs, reparse-point/symlink handling, retention, and cleanup for Orchestrator-created per-Run directories on Windows and Linux. This changes the current runtime storage boundary.
-- Define the exact first-run instruction and failure action when the user's provider is stored in a Hermes profile that the native fallback cannot reach.
-- Bind the Hermes-configured provider/model IDs, source-backed mutation-sensitive endpoint identity/revision, and versioned auth policy into resume eligibility; test effective `api`/`base_url` mutation under the same alias, identity-change rejection, and fail-closed rejection before Run creation when pinned Hermes has no qualifying revision. No raw URL or URL hash may be persisted, and no auxiliary Ebb key/mapping may be introduced.
-
-## Accepted conditional design decision
-
-The user approved the direction in Alternative C: Hermes remains the only provider/auth owner; Ebb creates an isolated native Hermes profile per Run under the same default Hermes root and uses Hermes' global/default auth-store fallback. The first supported path requires an explicit provider/model and an allowlisted endpoint; it does not add an Ebb SecretStore credential or a second key mapping. Named-profile auth and profile-scoped external secret sources remain unsupported unless a Hermes-supported sharing mechanism is proven.
-
-This approval covers the design direction. Before the Hermes provider path is enabled, close the configuration-reading and Windows/Linux path-security gates above and pass a real provider-backed acceptance. Update spec-01 and Plans 04/19/20 consistently; Plan20 must pass a fresh independent review before its implementation begins. Continue ordinary implementation and acceptance without asking the user for routine technical approvals. Stop only if Hermes-owned credential reuse and Run-profile isolation cannot be proven.
-
-## Alternatives
-
-### A. Point Runs at the user's whole Hermes profile
-
-This reuses the existing login directly, but shares user configuration and state with Runs, conflicts with Hermes' one-agent-per-profile guidance, and weakens current per-Run isolation. Rejected.
-
-### B. Keep the API-key SecretStore bridge and document it
-
-This preserves current isolation but requires the separate provider endpoint/key setup that prompted this change. It also needs a supported key-entry UX and complete documentation. Rejected as the default user experience.
-
-### C. Use Hermes native profile authentication fallback
-
-This preserves per-Run Hermes state and reuses the existing Hermes auth store without duplicate provider credentials or an Orchestrator auth broker. For v0.21.5, each isolated run home must be a Hermes-recognized profile under the Hermes root that owns the auth store; the current external Orchestrator runtime path does not qualify. This is the recommended direction. Provider/model/endpoint selection, external secret-source compatibility, and concurrent refresh semantics remain feasibility gates.
-
-### D. Reuse every Hermes credential source
-
-Hermes also supports profile-scoped external secret-source plugins and environment-backed credentials. A Run profile does not automatically inherit the user's source declarations or bootstrap material. Extend native Run profiles through a Hermes-supported credential-sharing boundary only if source configuration can be reused without exposing unrelated secrets, reading credential files in Orchestrator, or maintaining another provider/key mapping. Otherwise list these source modes as unsupported for this path with an actionable message. Do not infer a source by parsing credentials or by running a status command that resolves a secret.
-
-## Security and lifecycle requirements
-
-- Do not expose the user's full Hermes home to a Run.
-- Do not pass the entire backend environment to Hermes; keep the existing explicit runtime allowlist.
-- Provider credentials must remain outside Run prompts, Run records, generated files, logs, and API/UI responses.
-- Concurrent Runs must not race on mutable OAuth refresh state. The design must name the single owner/lock and define crash/restart recovery.
-- A token refresh failure must not trigger repeated stale-token use, silent provider substitution, or a new Run while the prior process is live.
-- Keep provider identity and credential metadata out of public Run responses unless an already-approved API field is explicitly non-sensitive.
-
-## Required plan and documentation updates after design approval
-
-- Update `docs/architecture/specs/01-system-design.md` only where the provider-auth ownership/security contract changes.
-- Update Plan04 and Plan19 from the API-key-only bridge to the approved provider-auth flow; update Plan20 acceptance prerequisites so Task5B uses the user's configured Hermes provider without introducing a second key mapping.
-- Add a complete README first-run guide: supported OS/runtime prerequisites, install, one-time Hermes provider login, Ebb Orchestrator configuration/startup, expected first-run behavior, a harmless real-provider verification, and recovery/troubleshooting.
-- Keep `.env.example` limited to safe, non-secret application settings; document exactly which variables remain necessary and why.
-- Update `docs/development/05-hermes.md` to distinguish developer project-trust setup from Orchestrator runtime/provider setup.
-
-## Feasibility and acceptance evidence required before implementation
-
-- Verify the supported Hermes version's native profile fallback can use the existing configured provider from a distinct per-Run home without sharing session/config state or copying raw auth files; cite the exact interface/source.
-- Verify user-selected provider/model resolution reads only safe, non-secret configuration and never inherits personal MCP servers, tools, skills, or prompts.
-- Verify Hermes-owned token refresh/rotation is safe under concurrent Runs and an independently running user Hermes process; test lock contention, process crash during refresh, and recovery after restart. Orchestrator must rely on Hermes' supported serialization, not reproduce private locks.
-- Verify `HERMES_HOME`/profile path behavior and auth-store root resolution on Windows and Linux before moving runtime homes from `.ebb-orchestrator`.
-- Run real provider-backed acceptance using only the provider, endpoint, model, and Hermes-native authentication already selected in the existing Hermes configuration. Do not create or assume a second provider setup or credential, and do not treat seeded/mock tests as provider evidence. If a custom/private endpoint is not already configured and selected, perform only config-projection/fail-closed checks and report live acceptance `NOT RUN`; do not create a fixture provider to turn it into PASS.
-- Prove selected provider/account identity without fallback, per-Run session/home isolation, unchanged user Hermes state, source-tag visibility, process-stop ownership, and fail-closed behavior for missing/revoked auth.
-- Prove a provider identity/auth-policy change makes same-Run resume ineligible.
-- Obtain independent architecture review before implementation and independent recovery/security review after implementation.
-
-## Sources
-
-- `docs/architecture/specs/01-system-design.md`
-- `docs/architecture/plans/04-hermes-autonomous-task.md`
-- `docs/architecture/plans/19-unfinished-plan-closure.md`
-- `docs/architecture/plans/20-production-context-manifest.md`
-- Installed Hermes v0.21.5 source (read-only): `hermes_cli/auth.py` and `hermes_constants.py` in `%LOCALAPPDATA%/hermes/hermes-agent`
-- Hermes provider setup and OAuth/auth store behavior: <https://github.com/nousresearch/hermes-agent/blob/main/website/docs/integrations/providers.md>
-- Hermes profile isolation: <https://github.com/nousresearch/hermes-agent/blob/main/website/docs/reference/faq.md>
+Update `docs/architecture/specs/01-system-design.md`, Plan20, and the Hermes runtime setup documentation to describe the shared configured Hermes root consistently and do not introduce an MCP/config-overlay subsystem. Do not change implementation or plan lifecycle status as part of this decision record. Plan20's independent review must check the amended contract before implementation continues.

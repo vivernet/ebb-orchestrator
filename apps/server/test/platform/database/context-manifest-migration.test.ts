@@ -32,7 +32,7 @@ describe("context manifest v2 migration", () => {
     if (tmpDir) await rm(tmpDir, { recursive: true, force: true });
   });
 
-  it("preserves historical manifests and delta storage through populated v036 to v040 upgrade", async () => {
+  it("preserves historical manifests and delta storage through populated v036 to v042 upgrade", async () => {
     tmpDir = await mkdtemp(join(tmpdir(), "ebb-context-manifest-migration-"));
     dbPath = join(tmpDir, `migration-${randomUUID()}.sqlite`);
     db = createSqliteDatabase(dbPath);
@@ -40,12 +40,14 @@ describe("context manifest v2 migration", () => {
     const migration037 = migrations.find((migration) => migration.version === 37);
     const migration039 = migrations.find((migration) => migration.version === 39);
     const migration040 = migrations.find((migration) => migration.version === 40);
+    const migration041 = migrations.find((migration) => migration.version === 41);
     expect(migration037?.name).toBe("037_context_manifest_v2");
     expect(migration039?.name).toBe("039_run_session_capture_state");
     expect(migration040?.name).toBe("040_run_hermes_source_snapshot");
+    expect(migration041?.name).toBe("041_shared_hermes_home");
     expect(migration040?.sql.trim()).toBe("ALTER TABLE run_process_owners ADD COLUMN hermes_source_snapshot_key TEXT;");
     expect(migrations.map(({ version }) => version)).toEqual(
-      Array.from({ length: 40 }, (_, index) => index + 1),
+      Array.from({ length: 42 }, (_, index) => index + 1),
     );
 
     runMigrations(db, migrations.filter((migration) => migration.version <= 36));
@@ -93,15 +95,19 @@ describe("context manifest v2 migration", () => {
       indexes: indexes(db!, table), sql: tableSql(db!, table),
       rootPage: rootPage(db!, table), foreignKeys: foreignKeys(db!, table),
     }));
-    expect(runMigrations(db, migrations).applied).toBe(1);
+    expect(runMigrations(db, migrations).applied).toBe(3);
     expect(db.all("SELECT version, name FROM schema_migrations ORDER BY version"))
       .toEqual(migrations.map(({ version, name }) => ({ version, name })));
     expect(tableColumns(db, "run_process_owners")).toEqual([
       ...ownerColumnsBefore040,
       { name: "hermes_source_snapshot_key", type: "TEXT", notnull: 0, dflt_value: null, pk: 0 },
+      { name: "current_generation", type: "INTEGER", notnull: 1, dflt_value: "1", pk: 0 },
     ]);
     expect(db.all<Row>("SELECT * FROM run_process_owners ORDER BY run_id"))
-      .toEqual(ownersBefore040.map((owner) => ({ ...owner, hermes_source_snapshot_key: null })));
+      .toEqual(ownersBefore040.map((owner) => ({ ...owner, hermes_source_snapshot_key: null, current_generation: 1 })));
+    expect(db.all("SELECT run_id,generation,run_attempt FROM run_process_owner_generations"))
+      .toEqual([{ run_id: "legacy-run-a", generation: 1, run_attempt: null }]);
+    expect(db.all("SELECT * FROM run_resume_bindings")).toEqual([]);
     for (const before of contextTablesBefore040) {
       expect(db.all<Row>(`SELECT * FROM ${before.table} ORDER BY id`)).toEqual(before.rows);
       expect(storedBytes(db, before.table)).toEqual(before.bytes);
@@ -171,6 +177,184 @@ describe("context manifest v2 migration", () => {
     expect(db.all<{ id: string; previous_manifest_id: string | null }>(
       "SELECT id, previous_manifest_id FROM context_deltas ORDER BY id",
     )).toEqual([{ id: "legacy-delta-c", previous_manifest_id: null }]);
+  });
+
+  it("copies populated v041 owner identities exactly and preserves immutable stopped generations across reopen", async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "ebb-run-recovery-upgrade-"));
+    dbPath = join(tmpDir, "upgrade.sqlite");
+    db = createSqliteDatabase(dbPath);
+    const migrations = loadTestMigrations();
+    runMigrations(db, migrations.filter(({ version }) => version <= 36));
+    seedLegacyRows(db);
+    runMigrations(db, migrations.filter(({ version }) => version <= 41));
+    const states = ["PREPARED", "LAUNCHING", "LIVE", "STOPPING", "STOPPED", "UNKNOWN"] as const;
+    for (const [index, state] of states.entries()) {
+      const runId = `generation-run-${index}`;
+      insertRun(db, runId, "migration-task", "migration-epic", "developer");
+      const owner = prepareRunProcessOwner(runId, "C:\\shared\\hermes", index % 2 === 0 ? "windows-job" : "systemd-user-service");
+      insertRawOwner(db, state === "PREPARED" ? owner : {
+        ...owner, state, systemdInvocationId: index % 2 === 1 ? `invocation-${index}` : null,
+        supervisorPid: 100 + index, supervisorStartIdentity: `supervisor-${index}`, pid: 200 + index,
+        platform: index % 2 === 0 ? "win32" : "linux", processStartIdentity: `process-${index}`,
+        executableIdentity: `executable-${index}`, stopEvidence: state === "STOPPED" ? "EXACT_SCOPE_STOPPED" : null,
+      });
+      db.run("UPDATE run_process_owners SET capture_state=$capture,systemd_control_group=$cgroup,hermes_source_snapshot_key=$source WHERE run_id=$runId", {
+        runId, capture: ["UNBOUND", "BOUND", "INVALID"][index % 3]!,
+        cgroup: index % 2 === 1 ? `/user.slice/fixture-${index}` : null, source: index === 2 ? "historical-source-key" : null,
+      });
+      db.run("UPDATE agent_runs SET attempt=$attempt,session_id=$session WHERE id=$runId", {
+        runId, attempt: index + 1, session: index === 1 ? "original-session" : null,
+      });
+    }
+    const owners = db.all<Row>("SELECT * FROM run_process_owners ORDER BY run_id");
+    const runs = db.all<Row>("SELECT * FROM agent_runs ORDER BY id");
+    const deltaBefore = deltaStorage(db);
+    const ownerRoot = rootPage(db, "run_process_owners");
+    expect(runMigrations(db, migrations).applied).toBe(1);
+    expect(rootPage(db, "run_process_owners")).toBe(ownerRoot);
+    expect(db.all<Row>("SELECT * FROM run_process_owners ORDER BY run_id"))
+      .toEqual(owners.map((owner) => ({ ...owner, current_generation: 1 })));
+    const generationColumns = tableColumns(db, "run_process_owner_generations").map(({ name }) => String(name));
+    expect(generationColumns).toEqual(expect.arrayContaining([
+      "source_tag", "hermes_home", "hermes_source_snapshot_key", "capture_state",
+    ]));
+    const expected = owners.map((owner) => Object.fromEntries(generationColumns.map((name) => [name,
+      name === "generation" ? 1 : name === "run_attempt" ? null : owner[name],
+    ])));
+    expect(db.all("SELECT * FROM run_process_owner_generations ORDER BY run_id")).toEqual(expected);
+    expect(db.all<Row>("SELECT * FROM agent_runs ORDER BY id")).toEqual(runs);
+    expect(db.all("SELECT * FROM run_resume_bindings")).toEqual([]);
+    expect(deltaStorage(db)).toEqual(deltaBefore);
+    expect(db.all("PRAGMA foreign_key_check")).toEqual([]);
+    expect(() => db!.run("UPDATE run_process_owner_generations SET stop_evidence='changed' WHERE state='STOPPED'"))
+      .toThrow(/STOPPED generation is immutable/);
+    expect(() => db!.run("DELETE FROM run_process_owner_generations WHERE state='STOPPED'"))
+      .toThrow(/STOPPED generation is immutable/);
+    expect(() => db!.run("UPDATE run_process_owners SET current_generation=999 WHERE run_id='generation-run-0'"))
+      .toThrow(/Current generation does not exist/);
+    expect(() => db!.run("DELETE FROM run_process_owner_generations WHERE run_id='generation-run-0'"))
+      .toThrow(/Current generation is referenced/);
+    expect(() => db!.run("UPDATE run_process_owner_generations SET generation=999 WHERE run_id='generation-run-0'"))
+      .toThrow(/Current generation is referenced/);
+    db.exec("PRAGMA recursive_triggers=OFF");
+    for (const identity of ["containment_id", "launch_nonce"]) {
+      for (const protectedRun of ["generation-run-4", "generation-run-1"]) {
+        expect(() => db!.run(
+          `UPDATE OR REPLACE run_process_owner_generations
+           SET ${identity}=(SELECT ${identity} FROM run_process_owner_generations WHERE run_id=$protectedRun)
+           WHERE run_id='generation-run-0'`,
+          { protectedRun },
+        )).toThrow(/Generation identity conflict/);
+      }
+    }
+    expect(db.all("SELECT * FROM run_process_owner_generations ORDER BY run_id")).toEqual(expected);
+    expect(db.all("PRAGMA foreign_key_check")).toEqual([]);
+    for (const replacementGeneration of ["generation", "2"]) {
+      expect(() => db!.run(
+        `INSERT OR REPLACE INTO run_process_owner_generations(${generationColumns.join(",")})
+         SELECT ${generationColumns.map((column) => column === "generation" ? replacementGeneration : column).join(",")}
+         FROM run_process_owner_generations WHERE run_id='generation-run-4'`,
+      )).toThrow(/STOPPED generation is immutable/);
+    }
+    expect(() => db!.run(
+      `INSERT OR REPLACE INTO run_process_owner_generations(${generationColumns.join(",")})
+       SELECT ${generationColumns.map((column) => column === "generation" ? "2" : column).join(",")}
+       FROM run_process_owner_generations WHERE run_id='generation-run-0'`,
+    )).toThrow(/UNIQUE conflict would orphan current generation/);
+    const bindingHash = "a".repeat(64);
+    for (const [runId, sessionId] of [["generation-run-0", null], ["generation-run-1", "original-session"]] as const) {
+      db.run(
+        `INSERT INTO run_resume_bindings (
+           run_id, schema_version, baseline_jcs, context_hash, workspace_snapshot_version,
+           workspace_snapshot_hash, resume_binding_hash, original_session_id, created_at
+         ) VALUES ($runId, 1, '{}', $hash, 1, $hash, $hash, $sessionId, '2026-10-11T00:00:00.000Z')`,
+        { runId, hash: bindingHash, sessionId },
+      );
+    }
+    expect(() => db!.run(
+      `UPDATE OR REPLACE run_resume_bindings SET run_id='generation-run-1'
+       WHERE run_id='generation-run-0'`,
+    )).toThrow(/Resume binding Run identity is immutable/);
+    expect(db.all<Row>("SELECT run_id, original_session_id FROM run_resume_bindings ORDER BY run_id")).toEqual([
+      { run_id: "generation-run-0", original_session_id: null },
+      { run_id: "generation-run-1", original_session_id: "original-session" },
+    ]);
+    expect(() => db!.run("UPDATE run_resume_bindings SET context_hash=$hash WHERE run_id='generation-run-0'", { hash: "b".repeat(64) }))
+      .toThrow(/Resume context baseline is immutable/);
+    expect(() => db!.run("UPDATE run_resume_bindings SET workspace_snapshot_hash=$hash WHERE run_id='generation-run-0'", { hash: "b".repeat(64) }))
+      .toThrow(/Initial workspace snapshot binding is immutable/);
+    for (const suffix of ["initial", "late", "partial"]) {
+      const runId = `pending-integration-${suffix}`;
+      insertRun(db, runId, "migration-task", "migration-epic", "integration");
+      db.run("UPDATE agent_runs SET status='STARTED' WHERE id=$runId", { runId });
+      db.transaction((tx) => insertRunProcessOwnerTx(tx, prepareRunProcessOwner(runId, "C:\\shared\\hermes", "windows-job")));
+      db.run(`INSERT INTO run_resume_bindings(run_id,schema_version,baseline_jcs,context_hash,workspace_snapshot_version,
+        workspace_snapshot_bound,workspace_snapshot_hash,resume_binding_hash,created_at)
+        VALUES($runId,1,'{}',$hash,1,0,NULL,NULL,'2026-10-11T00:00:00.000Z')`, { runId, hash: bindingHash });
+    }
+    expect(() => db!.run(`UPDATE run_resume_bindings SET workspace_snapshot_bound=1,workspace_snapshot_hash=$hash
+      WHERE run_id='pending-integration-partial'`, { hash: bindingHash })).toThrow(/CHECK/);
+    expect(db.get("SELECT workspace_snapshot_bound,workspace_snapshot_hash,resume_binding_hash FROM run_resume_bindings WHERE run_id='pending-integration-partial'"))
+      .toEqual({ workspace_snapshot_bound: 0, workspace_snapshot_hash: null, resume_binding_hash: null });
+    db.run(`UPDATE run_resume_bindings SET workspace_snapshot_bound=1,workspace_snapshot_hash=$hash,resume_binding_hash=$hash
+      WHERE run_id='pending-integration-initial'`, { hash: bindingHash });
+    expect(() => db!.run(`UPDATE run_resume_bindings SET workspace_snapshot_bound=0,workspace_snapshot_hash=NULL,resume_binding_hash=NULL
+      WHERE run_id='pending-integration-initial'`)).toThrow(/Initial workspace snapshot binding is immutable/);
+    expect(() => db!.run(`UPDATE OR REPLACE run_resume_bindings SET workspace_snapshot_hash=$hash
+      WHERE run_id='pending-integration-initial'`, { hash: "b".repeat(64) })).toThrow(/Initial workspace snapshot binding is immutable/);
+    for (const state of ["LAUNCHING", "STOPPED"]) {
+      db.run("UPDATE run_process_owners SET state=$state WHERE run_id='pending-integration-late'", { state });
+      expect(() => db!.run(`UPDATE run_resume_bindings SET workspace_snapshot_bound=1,workspace_snapshot_hash=$hash,resume_binding_hash=$hash
+        WHERE run_id='pending-integration-late'`, { hash: bindingHash })).toThrow(/no longer prepared/);
+    }
+    db.run("UPDATE run_process_owners SET state='PREPARED' WHERE run_id='pending-integration-late'");
+    db.run("UPDATE agent_runs SET attempt=1 WHERE id='pending-integration-late'");
+    expect(() => db!.run(`UPDATE run_resume_bindings SET workspace_snapshot_bound=1,workspace_snapshot_hash=$hash,resume_binding_hash=$hash
+      WHERE run_id='pending-integration-late'`, { hash: bindingHash })).toThrow(/no longer prepared/);
+    for (const suffix of ["initial", "late", "partial"]) db.run("DELETE FROM agent_runs WHERE id=$runId", { runId: `pending-integration-${suffix}` });
+    expect(deltaStorage(db)).toEqual(deltaBefore);
+    expect(db.all("PRAGMA foreign_key_check")).toEqual([]);
+    const original = db.get<Row>("SELECT * FROM run_process_owner_generations WHERE run_id='generation-run-0'")!;
+    expect(() => db!.run(
+      `INSERT INTO run_process_owner_generations(${generationColumns.join(",")})
+       SELECT ${generationColumns.map((column) => column === "generation" ? "2" : column).join(",")}
+       FROM run_process_owner_generations WHERE run_id='generation-run-0'`,
+    )).toThrow(/UNIQUE/);
+    expect(db.get<Row>("SELECT * FROM run_process_owner_generations WHERE run_id='generation-run-0'")).toEqual(original);
+    db.close();
+    db = createSqliteDatabase(dbPath);
+    expect(runMigrations(db, migrations).applied).toBe(0);
+    expect(db.all("SELECT * FROM run_process_owner_generations ORDER BY run_id")).toEqual(expected);
+    expect(deltaStorage(db)).toEqual(deltaBefore);
+    db.run("DELETE FROM agent_runs WHERE id='generation-run-4'");
+    expect(db.get("SELECT * FROM run_process_owner_generations WHERE run_id='generation-run-4'")).toBeUndefined();
+    expect(db.all("PRAGMA foreign_key_check")).toEqual([]);
+  });
+
+  it("rolls back the new generation copy, owner pointer and resume schema together when recovery migration fails", async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "ebb-run-recovery-rollback-"));
+    dbPath = join(tmpDir, "rollback.sqlite");
+    db = createSqliteDatabase(dbPath);
+    const migrations = loadTestMigrations();
+    const previous = migrations.filter(({ version }) => version <= 41);
+    runMigrations(db, previous.filter(({ version }) => version <= 36));
+    seedLegacyRows(db);
+    runMigrations(db, previous);
+    insertRawOwner(db, prepareRunProcessOwner("legacy-run-a", "C:\\shared\\hermes", "windows-job"));
+    const ownersBefore = db.all("SELECT * FROM run_process_owners");
+    const ownerSqlBefore = tableSql(db, "run_process_owners");
+    const deltaBefore = deltaStorage(db);
+    const migration = migrations.find(({ version }) => version === 42);
+    expect(migration?.name).toBe("042_durable_run_recovery");
+    const failing: Migration = { ...migration!, sql: `${migration!.sql}\nSELECT intentionally_invalid_recovery_migration_sql;` };
+    expect(() => runMigrations(db!, [...previous, failing])).toThrow(/intentionally_invalid/);
+    expect(db.all("SELECT * FROM run_process_owners")).toEqual(ownersBefore);
+    expect(tableSql(db, "run_process_owners")).toBe(ownerSqlBefore);
+    expect(deltaStorage(db)).toEqual(deltaBefore);
+    expect(db.all("SELECT name FROM sqlite_master WHERE name IN ('run_process_owner_generations','run_resume_bindings')")).toEqual([]);
+    expect(db.get("SELECT version FROM schema_migrations WHERE version=42")).toBeUndefined();
+    expect(db.all("PRAGMA foreign_key_check")).toEqual([]);
+    expect(runMigrations(db, migrations).applied).toBe(1);
   });
 
   it("adds process-owner cgroup identity without rebuilding or changing ContextDelta storage", async () => {
@@ -379,16 +563,23 @@ describe("context manifest v2 migration", () => {
       tx,
       prepareRunProcessOwner(ownerRun, "C:\\ebb\\runtime\\hermes\\duplicate", "windows-job"),
     ))).toThrow(/UNIQUE|unique/i);
-    expect(() => insertRunProcessOwnerTx(db!, {
-      ...secondOwner,
-      hermesHome: owner.hermesHome,
-    })).toThrow(/UNIQUE|unique/i);
+    insertRunProcessOwnerTx(db!, { ...secondOwner, hermesHome: owner.hermesHome });
+    expect(db!.get<{ count: number }>(
+      "SELECT COUNT(*) AS count FROM run_process_owners WHERE hermes_home=$hermesHome",
+      { hermesHome: owner.hermesHome },
+    )).toEqual({ count: 2 });
     expect(() => insertRawOwner(db!, { ...owner, sourceTag: "not-the-deterministic-tag" })).toThrow(/CHECK constraint failed/i);
     expect(() => insertRawOwner(db!, { ...secondOwner, containmentId: "predictable" })).toThrow(/CHECK constraint failed/i);
     expect(() => insertRawOwner(db!, { ...secondOwner, pid: 123 })).toThrow(/CHECK constraint failed/i);
     expect(() => insertRawOwner(db!, { ...secondOwner, state: "RUNNING" })).toThrow(/CHECK constraint failed/i);
     expect(() => insertRawOwner(db!, { ...secondOwner, containmentKind: "process-group" })).toThrow(/CHECK constraint failed/i);
-    expect(() => insertRawOwner(db!, { ...secondOwner, runId: "missing-owner-run", sourceTag: "ebb-run:missing-owner-run" })).toThrow(/FOREIGN KEY constraint failed/i);
+    expect(() => insertRawOwner(db!, {
+      ...secondOwner,
+      runId: "missing-owner-run",
+      sourceTag: "ebb-run:missing-owner-run",
+      containmentId: "e".repeat(64),
+      launchNonce: "f".repeat(64),
+    })).toThrow(/FOREIGN KEY constraint failed/i);
 
     db.exec("PRAGMA ignore_check_constraints = ON");
     db.run("UPDATE context_manifests SET items_json='not-json' WHERE run_id=$runId", { runId: knownEmptyRun });
@@ -542,6 +733,15 @@ function tableColumns(database: Database, table: string): Row[] {
     dflt_value: dflt_value as string | null,
     pk: pk as number,
   }));
+}
+
+function deltaStorage(database: Database): unknown {
+  return {
+    rows: database.all("SELECT * FROM context_deltas ORDER BY id"), bytes: storedBytes(database, "context_deltas"),
+    columns: tableColumns(database, "context_deltas"), indexes: indexes(database, "context_deltas"),
+    sql: tableSql(database, "context_deltas"), rootPage: rootPage(database, "context_deltas"),
+    foreignKeys: foreignKeys(database, "context_deltas"),
+  };
 }
 
 function storedBytes(database: Database, table: string): Row[] {

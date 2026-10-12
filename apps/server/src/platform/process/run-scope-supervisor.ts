@@ -15,6 +15,8 @@ export interface ProcessScopeLaunchRequest {
   readonly timeoutMs: number;
   /** Ограниченный live consumer exact payload stdout; helper protocol bytes сюда не передаются. */
   readonly onStdoutChunk?: (chunk: Uint8Array) => Promise<void>;
+  /** Ограниченный consumer stderr уже запущенного payload; до передачи launch ACK данные не передаются. */
+  readonly onStderrChunk?: (chunk: Uint8Array) => void;
   /** Сохранять ли stdout/stderr в ProcessResult; live observer может отключить raw retention. */
   readonly captureOutput?: boolean;
 }

@@ -65,6 +65,21 @@ describe('ActionGateway', () => {
       .resolves.toMatchObject({ success: false, stderr: 'command.exec has no declared policies' });
   });
 
+  it.each([
+    ['direct dash shell', 'dash', ['-c', 'echo unsafe']],
+    ['direct fish shell', 'fish', ['-c', 'echo unsafe']],
+    ['env shell launcher', 'env', ['bash', '-c', 'echo unsafe']],
+    ['busybox shell launcher', 'busybox', ['sh', '-c', 'echo unsafe']],
+  ])('rejects %s at action execution', async (_label, executable, args) => {
+    const shellGateway = new ActionGateway(resolver, workspaceDir, ['project.test'], {
+      commands: { test: { executable, args } },
+    });
+
+    await expect(shellGateway.test()).resolves.toMatchObject({
+      action: 'test', success: false, stderr: expect.stringMatching(/known shell interpreters or launchers are not allowed/i), exitCode: null,
+    });
+  });
+
   it('runs only the exact invocation declared by a command policy', async () => {
     const commandGateway = new ActionGateway(resolver, workspaceDir, ['command.exec'], {
       commands: {},

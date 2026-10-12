@@ -1,12 +1,13 @@
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import type { Database } from "../../platform/database/database.js";
-import { assertSafeGitRef } from "./git-cli.js";
+import { GitCli, assertSafeGitRef } from "./git-cli.js";
 import { WorktreeManager } from "./worktree-manager.js";
 
 export interface TaskWorkspaceProvisionerOptions {
   database: Database;
   worktreeManager: WorktreeManager;
+  git?: Pick<GitCli, "run">;
 }
 
 interface OnboardingRow {
@@ -27,23 +28,31 @@ interface EpicProvisioningRow {
 }
 
 /**
- * Создаёт authoritative task worktree до запуска Epic integration.
+ * Создаёт authoritative task worktrees из текущей Epic branch перед запуском Task phases.
  *
  * Репозиторий и target ref разрешаются только из активного approved onboarding.
- * Повторный вызов безопасен: уже проверенный journal/worktree считается готовым,
- * а незавершённая операция требует reconciliation и не перезаписывается.
+ * Вызов с taskIds ограничивает Git side effects выбранным runnable batch. Уже начатые
+ * worktrees сохраняются; чистый, но устаревший worktree незапущенной Task отклоняется,
+ * поскольку безопасное продвижение требует отдельной журналируемой Git operation.
+ * Незавершённая операция требует reconciliation и не перезаписывается.
  */
 export class TaskWorkspaceProvisioner {
   private readonly db: Database;
   private readonly worktrees: WorktreeManager;
+  private readonly git: Pick<GitCli, "run">;
 
   constructor(options: TaskWorkspaceProvisionerOptions) {
     this.db = options.database;
     this.worktrees = options.worktreeManager;
+    this.git = options.git ?? new GitCli();
   }
 
-  /** Гарантирует persisted worktree/branch для всех child tasks Epic. */
-  async provisionForEpic(epicId: string): Promise<void> {
+  /**
+   * Гарантирует persisted worktree/branch для всех child tasks либо выбранного runnable batch.
+   * Новые worktrees ответвляются от текущей Epic branch; грязный или устаревший unstarted
+   * workspace завершается ошибкой без reset/rebase/delete. Уже начатая Task сохраняет свой workspace.
+   */
+  async provisionForEpic(epicId: string, taskIds?: readonly string[]): Promise<void> {
     const epic = this.db.get<EpicProvisioningRow>(
       "SELECT id,project_id,display_id FROM epics WHERE id=$epicId",
       { epicId },
@@ -86,15 +95,52 @@ export class TaskWorkspaceProvisioner {
       throw new Error("verified managed Epic workspace is required before child task provisioning");
     }
     const targetRef = epicBranch;
-    const tasks = this.db.all<TaskRow>(
+    const allTasks = this.db.all<TaskRow>(
       "SELECT id,project_id FROM tasks WHERE epic_id=$epicId ORDER BY display_id",
       { epicId },
     );
-    if (tasks.length === 0) throw new Error(`Epic ${epicId} has no tasks`);
+    if (allTasks.length === 0) throw new Error(`Epic ${epicId} has no tasks`);
+    const selectedIds = taskIds === undefined ? new Set(allTasks.map((task) => task.id)) : new Set(taskIds);
+    if (selectedIds.size !== (taskIds?.length ?? allTasks.length)) throw new Error("Task workspace batch contains duplicate task IDs");
+    const tasks = allTasks.filter((task) => selectedIds.has(task.id));
+    if (tasks.length !== selectedIds.size) throw new Error("Task workspace batch contains a task outside the Epic");
 
-    for (const task of tasks) {
-      if (task.project_id !== epic.project_id) throw new Error(`Task ${task.id} project mismatch`);
-      await this.provisionTask(task.id, repoPath, targetRef);
+    let hasFailure = false;
+    let firstFailure: unknown;
+    await Promise.allSettled(tasks.map(async (task) => {
+      try {
+        if (task.project_id !== epic.project_id) throw new Error(`Task ${task.id} project mismatch`);
+        const state = this.db.get<{ status: string; has_phase: number }>(
+          `SELECT t.status,EXISTS(SELECT 1 FROM orchestration_phase_runs p WHERE p.epic_id=$epicId AND p.task_id=t.id) AS has_phase
+             FROM tasks t WHERE t.id=$taskId AND t.epic_id=$epicId`,
+          { epicId, taskId: task.id },
+        );
+        if (!state) throw new Error(`Task ${task.id} no longer belongs to Epic ${epicId}`);
+        const unstarted = ["DRAFT", "READY"].includes(state.status) && state.has_phase === 0;
+        await this.provisionTask(task.id, repoPath, targetRef);
+        if (unstarted) await this.assertFreshUnstartedWorkspace(task.id, repoPath, targetRef);
+      } catch (error) {
+        if (!hasFailure) {
+          hasFailure = true;
+          firstFailure = error;
+        }
+        throw error;
+      }
+    }));
+    if (hasFailure) throw firstFailure;
+  }
+
+  private async assertFreshUnstartedWorkspace(taskId: string, repoPath: string, targetRef: string): Promise<void> {
+    const worktree = this.db.get<{ path: string }>("SELECT path FROM worktrees WHERE id=$taskId AND removed_at IS NULL", { taskId });
+    if (!worktree) throw new Error(`TASK_WORKSPACE_UNAVAILABLE_BEFORE_DISPATCH:${taskId}`);
+    const [target, head, status] = await Promise.all([
+      this.git.run(repoPath, ["rev-parse", "--verify", "--end-of-options", `${targetRef}^{commit}`]),
+      this.git.run(worktree.path, ["rev-parse", "--verify", "--end-of-options", "HEAD^{commit}"]),
+      this.git.run(worktree.path, ["status", "--porcelain=v1", "--untracked-files=all"]),
+    ]);
+    if (status.stdout.trim()) throw new Error(`TASK_WORKSPACE_DIRTY_BEFORE_DISPATCH:${taskId}`);
+    if (!target.stdout.trim() || head.stdout.trim() !== target.stdout.trim()) {
+      throw new Error(`TASK_WORKSPACE_STALE_BEFORE_DISPATCH:${taskId}`);
     }
   }
 

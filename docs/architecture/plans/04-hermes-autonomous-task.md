@@ -4,7 +4,7 @@ kind: plan
 status: blocked
 title: План реализации среды выполнения Orchestrator Hermes и автономной задачи
 created: 2026-09-23
-updated: 2026-10-02
+updated: 2026-10-11
 depends_on: []
 specs:
   - ../specs/01-system-design.md
@@ -13,13 +13,10 @@ evidence:
   - https://github.com/ebb-orchestrator/ebb-orchestrator/commit/c18264e
   - https://github.com/ebb-orchestrator/ebb-orchestrator/commit/b9441ad
   - apps/server/test/modules/runtime/output-validator.test.ts
-  - tools/hermes/
   - docs/architecture/plans/governance/evidence/07-current-plan-reconciliation.md
   - docs/architecture/plans/04-hermes-autonomous-task.md
-  - apps/server/src/modules/runtime/hermes/hermes-provider-bridge.ts
-  - apps/server/test/modules/runtime/hermes-provider-bridge.test.ts
   - apps/server/test/modules/runtime/hermes-runtime-adapter.test.ts
-  - apps/server/test/modules/runtime/hermes-profile.test.ts
+  - apps/server/test/modules/runtime/hermes-executable-resolver.test.ts
   - apps/server/test/e2e/v1-autonomous-task.test.ts
 ---
 # План реализации среды выполнения Orchestrator Hermes и автономной задачи
@@ -28,11 +25,11 @@ evidence:
 
 **Цель:** Подключить Hermes как единственный реальный AgentRuntime v1 и довести вручную созданную автономную Task через Developer → Reviewer → QA → Integration → ручное финальное слияние.
 
-**Архитектура:** Orchestrator создаёт изолированный `HERMES_HOME`, запускает Hermes в назначенном worktree и предоставляет единственный Orchestrator MCP набор инструментов. Hermes завершает run через `submit_result`; backend не парсит свободный финальный текст как результат домена.
+**Архитектура:** Orchestrator запускает установленный Hermes через уже настроенный пользователем root/profile и provider/auth, назначает ему управляемый worktree и предоставляет только Orchestrator MCP tools. Per-Run профиль и конфигурационный overlay не создаются. Hermes завершает run через `submit_result`; backend не парсит свободный финальный текст как результат домена.
 
 ## Superseded historical record: provider credential bridge proposal (2026-09-28)
 
-> This proposal is superseded by the user-approved Proposal09 direction (2026-10-02); it is not current setup guidance. Earlier drafts required a separate Ebb SecretStore entry and provider-key environment injection. Production Runs must reuse the provider/auth already configured through Hermes-native mechanisms, with an isolated per-Run profile under the auth-owning Hermes root. The old note describing `openai-codex` OAuth was a dated observation, not confirmation of current selection; Plan20 acceptance must revalidate the explicitly configured non-secret provider/model/endpoint. The runtime bridge still needs replacement under Plan20.
+> This proposal is superseded by the user-approved Proposal09 direction (2026-10-02); it is not current setup guidance. Earlier drafts required a separate Ebb SecretStore entry and provider-key environment injection. Production Runs reuse the provider/auth and root/profile already configured through Hermes-native mechanisms; Ebb does not create a per-Run profile or config overlay. The old note describing `openai-codex` OAuth was a dated observation, not confirmation of current selection. Hermes owns provider/model/auth selection; Ebb does not inspect or override it.
 
 **Provider/auth documentation owner:** Plan20 Task7 owns `README.md` and `docs/development/05-hermes.md` as the single source for end-to-end setup. Those instructions must explain that Hermes provider/model and native authentication are configured once through Hermes, Orchestrator Runs reuse that configured selection/auth, root `.env` contains only Ebb settings, and no duplicate Ebb SecretStore credential or provider key is required. Plan04 acceptance consumes that documented flow; it must not introduce a competing setup path.
 **Технологический стек:** Hermes CLI; stdio MCP; TypeScript/Zod контракты; Node process adapter; существующие модули Action Gateway/Git/Workflow.
@@ -43,8 +40,8 @@ evidence:
 
 - Не использовать Hermes `--worktree`; worktree создаёт Orchestrator.
 - Не использовать `--yolo` как способ авторизации действий.
-- Hermes profile изолирован через `HERMES_HOME`; repository `AGENTS.md`/rules/memory не инжектируются автоматически.
-- Hermes получает только `mcp-orchestrator` набор инструментов, соответствующий RoleContract.
+- Hermes использует уже настроенный пользователем root/profile; Ebb не создаёт отдельный `HERMES_HOME`, профиль или config overlay. Repository `AGENTS.md`/rules/memory не инжектируются автоматически.
+- Hermes получает только `mcp-ebb-orchestrator` набор инструментов, соответствующий RoleContract.
 - `submit_result` — один финальный допустимый результат на Run.
 - Reviewer получает новую сессию; Developer возобновляет ту же сессию задачи для доработки; QA independent; Integration собственную сессию.
 - GitHub учётные данные и реальные учётные данные HOME пользователя не передаются Hermes подпроцесс.
@@ -89,7 +86,7 @@ pnpm --filter @ebb-orchestrator/server test -- output-validator.test.ts
 
 - [ ] **Шаг 3: Реализовать компактные версионированные схемы**
 
-Результаты Developer: `COMPLETED|BLOCKED`.
+Результаты Developer: `COMPLETED|BLOCKED`. `COMPLETED` требует непустой `commitSha`; `BLOCKED` может не содержать `commitSha`. Условие должно присутствовать и в канонической Zod-схеме, и в опубликованном MCP JSON Schema.
 Reviewer: `PASS|CHANGES_REQUESTED|BLOCKED`.
 QA: `PASS|FAIL|BLOCKED`.
 Integration: `PASS|BLOCKED`.
@@ -125,7 +122,7 @@ git commit -m "feat: add structured role output contracts"
 
 - [ ] **Шаг 1: Написать snapshot-тесты контрактов**
 
-Snapshot Reviewer не должен содержать `workspace.patch`, `git.commit`, `command.shell`. Developer не должен содержать `git.push`, `слияния.default`, изменение разрешений/конфигурации.
+Snapshot Reviewer не должен содержать `workspace.patch`, `git.add`, `git.commit`, `git.head`, `command.shell`. Developer получает `workspace.search`, `git.add`, `git.commit` и read-only `git.head`, но не должен иметь `git.push`, `слияния.default` или изменение разрешений/конфигурации.
 
 - [ ] **Шаг 2: Проверить ожидаемое падение**
 
@@ -172,7 +169,7 @@ git commit -m "feat: define role contracts and tool surfaces"
 - Создать: `apps/server/src/modules/execution/mcp/tool-registry.ts`
 - Создать: `apps/server/src/modules/execution/mcp/submit-result-tool.ts`
 - Создать: `apps/server/src/bin/ebb-orchestrator-mcp.ts`
-- Тест: `apps/server/test/modules/execution/mcp-server.test.ts`
+- Тест: `apps/server/test/modules/execution/mcp/mcp-server.test.ts`
 
 **Интерфейсы:**
 - Создаёт инструменты MCP, сопоставленные с Action Gateway по capability ID из окружения/argv процесса.
@@ -203,57 +200,56 @@ pnpm --filter @ebb-orchestrator/server test -- mcp-server.test.ts
 - [ ] **Шаг 5: Закоммитить**
 
 ```bash
-git add apps/server/src/modules/execution/mcp apps/server/src/bin/ebb-orchestrator-mcp.ts apps/server/test/modules/execution/mcp-server.test.ts
+git add apps/server/src/modules/execution/mcp apps/server/src/bin/ebb-orchestrator-mcp.ts apps/server/test/modules/execution/mcp/mcp-server.test.ts
 git commit -m "feat: expose capability-bound orchestrator mcp"
 ```
 
 ---
 
-### Задача 4: Изолированный построитель профиля Hermes
+### Задача 4: Запуск Hermes через существующую пользовательскую конфигурацию
 
 **Файлы:**
-- Создать: `apps/server/src/modules/runtime/hermes/hermes-profile.ts`
-- Создать: `apps/server/src/modules/runtime/hermes/hermes-config.ts`
-- Тест: `apps/server/test/modules/runtime/hermes-profile.test.ts`
+- Реализация: `apps/server/src/modules/runtime/hermes/hermes-runtime-adapter.ts`
+- Реализация: `apps/server/src/modules/runtime/hermes/hermes-cli.ts`
+- Тесты: `apps/server/test/modules/runtime/hermes-runtime-adapter.test.ts` и `apps/server/test/modules/runtime/hermes-executable-resolver.test.ts`
 
 **Интерфейсы:**
-- Создаёт: `prepareHermesProfile(run): HermesLaunchProfile { hermesHome, env, набор инструментовName }`.
+- Адаптер запускает поддерживаемый Hermes CLI с существующим пользовательским root/profile и provider/auth, связывает процесс с durable Run owner и регистрирует разрешённые Ebb MCP tools в памяти.
 
-- [ ] **Шаг 1: Написать тест изоляции профиля**
+- [ ] **Шаг 1: Проверить запуск без отдельного профиля и overlay**
 
 Проверить сгенерированное окружение:
 
 ```text
-HERMES_HOME=<EBB_ORCHESTRATOR_HOME>/runtime/hermes
-HOME=<HERMES_HOME>/home for tool subprocess isolation
-no GITHUB_TOKEN
-no SSH_AUTH_SOCK
-no inherited personal Hermes profile
+existing user-configured Hermes root/profile and provider/auth
+no per-Run HERMES_HOME or config overlay
+no Ebb provider key or duplicate provider credential
+GitHub credentials remain available only to GitHubAdapter
 ```
 
-Сгенерированный `config.yaml` содержит только настройки под управлением Orchestrator и описание MCP-сервера, команда которого запускает `ebb-orchestrator-mcp` с capability ref. `terminal.home_mode: profile`.
+Ebb не генерирует и не изменяет Hermes `config.yaml`; MCP tools регистрируются только в памяти поддерживаемым Hermes API. Provider/model/auth выбираются и разрешаются Hermes.
 
 - [ ] **Шаг 2: Проверить ожидаемое падение**
 
 ```bash
-pnpm --filter @ebb-orchestrator/server test -- hermes-profile.test.ts
+pnpm --filter @ebb-orchestrator/server exec vitest run test/modules/runtime/hermes-runtime-adapter.test.ts test/modules/runtime/hermes-executable-resolver.test.ts
 ```
 
-- [ ] **Шаг 3: Реализовать построитель профиля**
+- [ ] **Шаг 3: Подключить существующую Hermes конфигурацию без профиля/overlay**
 
-Не сохранять API-ключи провайдера в prompts. Если самому Hermes требуется credential провайдера, передавать из заглушки интеграции SecureStore только credential, необходимый процессу Hermes, и никогда не передавать его дочерним инструментам MCP.
+Не читать, не копировать и не передавать provider credentials от имени Ebb. Hermes использует уже настроенную пользователем provider/auth конфигурацию; Ebb не блокирует запуск из-за невозможности проецировать provider selection.
 
 - [ ] **Шаг 4: Запустить тесты**
 
 ```bash
-pnpm --filter @ebb-orchestrator/server test -- hermes-profile.test.ts
+pnpm --filter @ebb-orchestrator/server exec vitest run test/modules/runtime/hermes-runtime-adapter.test.ts test/modules/runtime/hermes-executable-resolver.test.ts
 ```
 
 - [ ] **Шаг 5: Закоммитить**
 
 ```bash
-git add apps/server/src/modules/runtime/hermes apps/server/test/modules/runtime/hermes-profile.test.ts
-git commit -m "feat: isolate hermes runtime profile"
+git add apps/server/src/modules/runtime/hermes apps/server/test/modules/runtime
+git commit -m "feat: запускать настроенный Hermes runtime"
 ```
 
 ---
@@ -273,14 +269,15 @@ git commit -m "feat: isolate hermes runtime profile"
 ```text
 hermes chat
   --query-file <prompt-file>
-  --model <resolved-model>
-  --toolsets mcp-orchestrator
+  --toolsets mcp-ebb-orchestrator
   --in <managed-worktree>
   --ignore-rules
-  --source tool
+  --source ebb-run:<run-id>
+  --format stream-json
   --max-turns <role-limit>
 ```
 
+- Provider/model/auth берутся из уже настроенного Hermes root/profile; Ebb не передаёт `--model` и не подменяет выбор пользователя.
 - При возобновлении добавляется `--resume <session-id>`, а `--in <managed-worktree>` сохраняется.
 
 - [ ] **Шаг 1: Написать тесты аргументов запуска с поддельным исполнителем процессов**
@@ -401,7 +398,7 @@ git commit -m "feat: persist stable review findings and qa defects"
 
 **Файлы:**
 - Создать: `apps/server/test/e2e/fixtures/health-service/`
-- Создать: `apps/server/test/e2e/autonomous-task.hermes.test.ts`
+- Проверка: `apps/server/test/e2e/v1-autonomous-task.test.ts`
 - Изменить: обработчики runtime только там, где E2E выявляет отсутствующую связку.
 
 **Интерфейсы:**
@@ -420,7 +417,7 @@ Non-goal: no auth changes
 - [ ] **Шаг 2: Запустить с реальным Hermes и ожидать первую ошибку связки**
 
 ```bash
-RUN_HERMES_E2E=1 pnpm --filter @ebb-orchestrator/server test -- autonomous-task.hermes.test.ts
+$env:RUN_HERMES_E2E='1'; pnpm --filter @ebb-orchestrator/server exec vitest run test/e2e/v1-autonomous-task.test.ts -t "runs the real Hermes managed-worktree acceptance when opted in"
 ```
 
 Не ослаблять разрешения ради прохождения теста; исправлять связку адаптера, инструментов и контекста.
@@ -438,6 +435,10 @@ managed worktree
 → FINAL_MERGE approval pending
 ```
 
+Результат Developer со статусом `COMPLETED` обязан содержать точный SHA этого commit из `git rev-parse HEAD`; `submit_result` отклоняет отсутствующий или пустой `commitSha`. Результат `BLOCKED` может не содержать SHA, если commit не создан.
+
+Developer получает `workspace.search` для чтения по запросу, а для завершения использует capability-bound `git.add` с явными относительными путями, `git.commit` и read-only `git.head` (фиксированный `git rev-parse HEAD`). `COMPLETED.commitSha` должен быть в точности значением `git.head`; Developer не получает push/merge tools.
+
 Слияние пока не выполняется.
 
 - [ ] **Шаг 4: Одобрить финальное слияние через ApprovalService и проверить master**
@@ -445,6 +446,8 @@ managed worktree
 Тест программно действует как одобряющий пользователь, вызывает MergeService, затем проверяет `master` содержит `/health`, Task имеет состояние `DONE`, политика очистки worktree сработала, заглушки Audit/Usage записаны.
 
 - [ ] **Шаг 5: Закоммитить**
+
+Hermes CLI `--max-turns` ограничивает число tool-calling iterations внутри conversation turn. Adapter по умолчанию передаёт поддерживаемый CLI default `500`; явный `roleLimit` остаётся override. Это снижает риск преждевременного завершения длинной Developer работы до обязательного `submit_result`, но не гарантирует завершение и не меняет fail-closed проверку результата.
 
 ```bash
 git add apps/server/test/e2e apps/server/src
@@ -463,7 +466,7 @@ pnpm test
 Обязательная включаемая вручную проверка реальной среды выполнения:
 
 ```bash
-RUN_HERMES_E2E=1 pnpm --filter @ebb-orchestrator/server test -- autonomous-task.hermes.test.ts
+$env:RUN_HERMES_E2E='1'; pnpm --filter @ebb-orchestrator/server exec vitest run test/e2e/v1-autonomous-task.test.ts -t "runs the real Hermes managed-worktree acceptance when opted in"
 ```
 
-Run должен доказать, что Hermes использует worktree и MCP-инструменты под управлением Orchestrator, правила репозитория не инжектируются автоматически, личные учётные данные GitHub/SSH не наследуются, а финальное слияние невозможно до явного одобрения.
+Live Run должен доказать, что Hermes использует управляемый worktree и MCP-инструменты Orchestrator при уже настроенном пользователем Hermes root/profile/provider/auth, правила репозитория не инжектируются автоматически, GitHub credentials доступны только GitHubAdapter, а финальное слияние невозможно до явного одобрения. Acceptance не создаёт тестовую копию Hermes profile и не требует изменения host ACL.

@@ -160,7 +160,7 @@ class Orchestrator {
    */
   handleRuntimeCompletion(taskId: string, outcome: RunOutcome): void {
     const now = new Date().toISOString();
-    const output = JSON.stringify({ version: "1", outcome: outcome.success ? "COMPLETED" : "BLOCKED" });
+    const output = JSON.stringify({ version: "1", outcome: outcome.success ? "COMPLETED" : "BLOCKED", ...(outcome.success ? { commitSha: "test-commit-sha" } : {}) });
     this.db.run(`INSERT INTO agent_runs (id, role, runtime, model, task_id, status, started_at, output)
       VALUES ($id, 'developer', 'fake', 'test', $task_id, 'COMPLETED', $now, $output)`, { id: taskId, task_id: taskId, now, output });
     this.handlers.handleRuntimeCompletion(taskId, { ...outcome,

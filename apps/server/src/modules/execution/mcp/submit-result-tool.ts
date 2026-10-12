@@ -1,6 +1,6 @@
 import type { RunCapability } from '../run-capability.js';
 import { validateRoleOutput } from '../../runtime/output-validator.js';
-import type { Database } from '../../../platform/database/database.js';
+import type { Database, DatabaseTx } from '../../../platform/database/database.js';
 
 /**
  * SubmitResultTool validates роль результат schemОбъект и atomically sets run to COMPLETING.
@@ -51,12 +51,16 @@ export interface CompletionStore {
 export class DatabaseCompletionStore implements CompletionStore {
   constructor(private readonly db: Database) {}
   async accept(reference: string, value: { runId: string; role: string; output: unknown }): Promise<boolean> {
-    return this.db.transaction((tx) => Boolean(tx.get<{ id: string }>(
-      `UPDATE agent_runs SET status = 'COMPLETING', output = $output
-       WHERE id = $run_id AND lower(role) = lower($role) AND capability_ref = $reference
-         AND status IN ('STARTED','IN_PROGRESS') RETURNING id`,
-      { run_id: value.runId, role: value.role, reference, output: JSON.stringify(value.output) },
-    )));
+    return this.db.transaction((tx) => {
+      const output = bindIntegrationPassSha(tx, value);
+      if (output === undefined) return false;
+      return Boolean(tx.get<{ id: string }>(
+        `UPDATE agent_runs SET status = 'COMPLETING', output = $output
+         WHERE id = $run_id AND lower(role) = lower($role) AND capability_ref = $reference
+           AND status IN ('STARTED','IN_PROGRESS') RETURNING id`,
+        { run_id: value.runId, role: value.role, reference, output: JSON.stringify(output) },
+      ));
+    });
   }
 
   getSubmission(runId: string): { runId: string; role: string; output: string } | undefined {
@@ -67,4 +71,35 @@ export class DatabaseCompletionStore implements CompletionStore {
     if (!row?.output) return undefined;
     return { runId: row.id, role: row.role, output: row.output };
   }
+}
+
+function bindIntegrationPassSha(
+  tx: DatabaseTx,
+  value: { runId: string; role: string; output: unknown },
+): unknown | undefined {
+  if (value.role.toLowerCase() !== "integration" || !isRecord(value.output) || value.output.outcome !== "PASS") {
+    return value.output;
+  }
+
+  const attempts = tx.all<{ id: string; expected_target_sha: string; source_sha: string }>(
+    `SELECT id, expected_target_sha, source_sha FROM integration_attempts
+      WHERE integration_run_id = $runId AND status = 'MERGING'`,
+    { runId: value.runId },
+  );
+  const attempt = attempts[0];
+  const provenance = value.output.provenance;
+  if (attempts.length !== 1 || !attempt || !attempt.expected_target_sha || !attempt.source_sha ||
+      !Array.isArray(provenance) || !provenance.includes(`integration_attempt:${attempt.id}`)) {
+    return undefined;
+  }
+
+  return {
+    ...value.output,
+    baseSha: attempt.expected_target_sha,
+    sourceSha: attempt.source_sha,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

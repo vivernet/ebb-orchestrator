@@ -28,6 +28,7 @@ import { templates } from "../../src/modules/workflow/templates.js";
 import { OnboardingService } from "../../src/modules/projects/onboarding-service.js";
 import { createSqliteDatabase } from "../../src/platform/database/sqlite-database.js";
 import { resolveOrchestratorHome } from "../../src/platform/home/orchestrator-home.js";
+import { createProductionPaths } from "../../src/platform/home/production-paths.js";
 import type { Database } from "../../src/platform/database/database.js";
 import { seedApprovedProjectConfig } from "../helpers/approved-project-config.js";
 
@@ -52,7 +53,7 @@ interface StoredPhase {
   validated: number;
 }
 
-async function commitTaskFixtureChange(database: Database, runId: string, taskId: string): Promise<void> {
+async function commitTaskFixtureChange(database: Database, runId: string, taskId: string): Promise<string> {
   const row = database.get<{ capability_json: string | null }>("SELECT capability_json FROM agent_runs WHERE id=$runId", { runId });
   let workspace: string | undefined;
   try {
@@ -66,6 +67,7 @@ async function commitTaskFixtureChange(database: Database, runId: string, taskId
   await git.run(workspace, ["add", file]);
   const commit = await git.run(workspace, ["commit", "-m", `seed Task integration fixture ${taskId}`]);
   if (commit.exitCode !== 0) throw new Error(`Could not create Task fixture commit: ${commit.stderr}`);
+  return (await git.run(workspace, ["rev-parse", "HEAD"])).stdout.trim();
 }
 
 type CheckpointRequest = {
@@ -107,8 +109,8 @@ class CheckpointFixtureRuntime implements AgentRuntime {
 
   async startRun(run: AgentRun): Promise<void> {
     markFakeRunNeverLaunched(this.database, run.id);
-    const phase = this.database.get<{ phase: string; task_id: string | null }>(
-      "SELECT phase,task_id FROM orchestration_phase_runs WHERE agent_run_id=$runId",
+    const phase = this.database.get<{ phase: string; task_id: string | null; epic_id: string }>(
+      "SELECT phase,task_id,epic_id FROM orchestration_phase_runs WHERE agent_run_id=$runId",
       { runId: run.id },
     );
     const integration = this.database.get<{ id: string; expected_target_sha: string; source_sha: string }>(
@@ -138,17 +140,28 @@ class CheckpointFixtureRuntime implements AgentRuntime {
     this.active--;
     const { run, request } = stored;
     const common = { version: "1.0", summary: request.phase };
-    if (request.role === "developer" && request.taskId) {
-      await commitTaskFixtureChange(this.database, runId, request.taskId);
-    }
+    const coordinatorPlan = request.role === "coordinator"
+      ? this.database.get<{ plan_json: string }>(
+          `SELECT p.plan_json FROM planning_plans p
+             JOIN epic_orchestrations o ON o.plan_id=p.id
+             JOIN orchestration_phase_runs r ON r.epic_id=o.epic_id
+            WHERE r.agent_run_id=$runId`,
+          { runId },
+        )
+      : undefined;
+    if (request.role === "coordinator" && !coordinatorPlan) throw new Error(`No approved plan for coordinator run ${runId}`);
+    const approvedPlan = coordinatorPlan ? JSON.parse(coordinatorPlan.plan_json) as { epic: unknown; tasks: unknown } : undefined;
+    const commitSha = request.role === "developer" && request.taskId
+      ? await commitTaskFixtureChange(this.database, runId, request.taskId)
+      : "test-commit-sha";
     const output = request.role === "coordinator"
-      ? { ...common, operation: "PLAN", classification: "EPIC" }
+      ? { version: "1", operation: "PLAN", classification: "EPIC", plan: { epic: approvedPlan?.epic, tasks: approvedPlan?.tasks } }
       : request.role === "product_manager"
         ? { ...common, outcome: "PRODUCT_DEFINITION", goal: "Restart acceptance" }
         : request.role === "architect"
           ? { ...common, outcome: "DESIGN", architectureReviewRequired: true }
           : request.role === "developer"
-            ? { ...common, outcome: "COMPLETED" }
+            ? { ...common, outcome: "COMPLETED", commitSha }
             : request.role === "reviewer"
               ? { ...common, outcome: "PASS", independent: true }
               : request.role === "integration"
@@ -380,7 +393,7 @@ describe("Plan05 production process Epic restart acceptance", () => {
   });
 
   it("restarts production main, resumes only approved Epic to FINAL_APPROVAL, and preserves completed child work", async () => {
-    root = await mkdtemp(join(tmpdir(), "ebb-plan05-epic-restart-"));
+    root = await mkdtemp(join(tmpdir(), "e-"));
     const home = join(root, ".ebb-orchestrator");
     const repoPath = join(root, "repository");
     await mkdir(repoPath, { recursive: true });
@@ -434,10 +447,10 @@ describe("Plan05 production process Epic restart acceptance", () => {
       {
         epicWorkspaceProvisioner: fixtureEpicProvisioner,
         taskWorkspaceProvisioner: fixtureTaskProvisioner,
-        integrationWorktreeRoot: join(homePaths.worktrees, "integrations"),
-        integrationServiceFactory: ({ worktreeRoot, integrationRunId }) => new IntegrationService({
+        integrationWorktreeRoot: createProductionPaths(homePaths).integrationWorktreeRoot,
+        integrationServiceFactory: ({ worktreeRoot, epicId, taskId, integrationRunId }) => new IntegrationService({
           database: database!,
-          worktreeDir: worktreeRoot,
+          worktreeDir: taskId ? join(worktreeRoot, epicId) : join(worktreeRoot, epicId, "epic-final"),
           provenanceDatabasePath: homePaths.database,
           integrationRunId,
         }),

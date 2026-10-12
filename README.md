@@ -251,31 +251,42 @@ MCP-инструменты проверяют capability и аргументы. 
 
 Настроить Hermes project discovery и проверить prerequisites:
 
-Важно: `pnpm hermes:setup` изменяет активную конфигурацию выбранного Hermes
-home/profile (доверие к репозиторию, discovery и delegation). Чтобы сохранить
-обычный профиль Hermes и его настройки auth/credentials без изменений,
-запускайте команду только с отдельным изолированным Hermes home/копией.
+`pnpm hermes:setup` настраивает доверие к репозиторию, discovery и delegation
+в активном Hermes home/profile. Production Runs используют уже настроенный
+пользователем Hermes home/profile и его provider/auth; Ebb не создаёт отдельный
+профиль на каждый Run и не копирует настройки или credentials. Если trust уже
+настроен, сначала достаточно выполнить read-only `pnpm hermes:check`.
 
 ```bash
 pnpm hermes:setup
 pnpm hermes:check
 ```
 
-**Ограничение настройки provider:** полная проверенная инструкция для чистой
-установки Ebb Orchestrator, Hermes-native auth и безвредного real provider Run
-пока отсутствует. Проверка справки CLI не подтверждает рабочий wizard, выбранный
-auth path или Ebb integration. Точные шаги будут документированы после проверки
-на pinned Hermes и прохождения зависимых native acceptance gates Plan20.
+**Проверка реального provider Run:** 11 октября 2026 Windows acceptance
+выполнил один реальный Run через настроенный Hermes provider и успешно проверил
+ответ provider, `submit_result` и сохранение `session_id` во время работы
+процесса с последующим чтением из базы. Результат всей acceptance suite — 3/3
+теста, exit 0;
+она подтверждает Windows acceptance slice, но не полный clean-checkout walkthrough,
+все платформы или восстановление прерванной сессии. Установка Hermes и выбор /
+аутентификация provider/model в Ebb не выполняются: используйте уже настроенный
+пользовательский Hermes home/profile. Этот репозиторий пока не содержит проверенной
+пошаговой инструкции установки Hermes и первоначальной Hermes-native настройки
+provider с нуля.
 
 Учётные данные AI-провайдера принадлежат Hermes-native auth. Не копируйте их в
 корневой `.env` Ebb Orchestrator и не заводите для них записи в Ebb SecretStore.
 
 `pnpm hermes:setup` настраивает доверие к репозиторию, project discovery и
-delegation; это не настройка provider credentials. `pnpm hermes:check` проверяет
-CLI и проектные prerequisites, но не проверяет provider authentication и не
-вызывает API, то есть не является provider acceptance. Production Hermes
-per-Run auth/session acceptance остаётся `NOT RUN`: она зависит от завершения
-Plan20 Task5A, затем Task5B и Task5C. См. [Plan20](docs/architecture/plans/20-production-context-manifest.md).
+delegation в активном Hermes home/profile; отдельная копия профиля не требуется.
+Это не настройка provider credentials. `pnpm hermes:check` проверяет CLI и
+проектные prerequisites, но не проверяет provider authentication и не вызывает
+API, поэтому сам по себе не является provider acceptance. На Windows пройден
+только live-provider slice Task5B: выполнен один настоящий Run; результат 3/3
+относится к тестам suite и не означает три provider Run. Полный Task5B и Plan20
+остаются незавершёнными. Task5C same-session recovery, Linux/macOS production gates
+и полный end-to-end UI acceptance пока не пройдены.
+См. [Plan20](docs/architecture/plans/20-production-context-manifest.md).
 
 ## Справочник pnpm-команд
 
@@ -319,9 +330,11 @@ pnpm start
 
 ### Hermes
 
-Внимание: `pnpm hermes:setup` изменяет выбранный Hermes home/profile. Запускайте
-его только с отдельным изолированным Hermes home/копией, чтобы сохранить
-обычный профиль Hermes и его auth/credentials без изменений.
+Production Runs используют уже настроенный пользователем Hermes home/profile;
+отдельный Hermes home/profile или копия для Ebb не нужны. `pnpm hermes:setup`
+изменяет активные настройки доверия к репозиторию, discovery и delegation.
+Запускайте его, если эти project prerequisites ещё не настроены; иначе выполните
+read-only проверку `pnpm hermes:check`.
 
 ```bash
 pnpm hermes:setup
@@ -332,10 +345,14 @@ pnpm skills:dependencies:test
 pnpm hermes:execute -- <plan-path>
 ```
 
-`hermes:setup` изменяет настройки выбранного Hermes home; `hermes:check` проверяет
-установленный CLI и доверие к проекту, но не обращается к API провайдера.
-Успех `hermes:check` не подтверждает доступность или аутентификацию провайдера;
-`hermes:test` проверяет скрипты интеграции, а `skills:test` — canonical bundle.
+`hermes:setup` изменяет настройки project trust/discovery/delegation активного
+Hermes home; `hermes:check` проверяет установленный CLI и доверие к проекту, но
+не обращается к API провайдера. Успех `hermes:check` не подтверждает доступность
+или аутентификацию провайдера. Подтверждён один настоящий Run в Windows
+live-provider slice Task5B; suite прошла 3/3 теста (это не три provider Run), но
+полный Task5B не завершён. Task5C recovery, Linux/macOS gates и полный end-to-end
+UI acceptance также остаются незавершёнными. `hermes:test` проверяет
+скрипты интеграции, а `skills:test` — canonical bundle.
 `skills:dependencies:test` проверяет workflow dependencies;
 `hermes:execute` запускает план после явного одобрения.
 
@@ -452,8 +469,8 @@ secret manager. Настройки из корневого `.env` относят
 Hermes credentials должны разрешаться его встроенным механизмом, без
 дублирования provider credentials или endpoint/key mapping в Ebb `.env` или
 `SecretStore`. [Руководство по Hermes](docs/development/05-hermes.md) описывает
-project trust и отмечает незавершённую provider acceptance; оно пока не является
-проверенным clean-checkout provider setup walkthrough.
+project trust и подтверждённый Windows provider acceptance, а также честно
+перечисляет незакрытые recovery, cross-platform и clean-checkout проверки.
 
 Для параметров самого приложения приоритет значений: окружение процесса, затем
 корневой `.env`, затем defaults приложения.

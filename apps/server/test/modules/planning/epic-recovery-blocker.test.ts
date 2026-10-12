@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { createSqliteDatabase } from "../../../src/platform/database/sqlite-database.js";
 import { runMigrations } from "../../../src/platform/database/migrator.js";
 import { loadTestMigrations } from "../../helpers/migrations.js";
+import { seedApprovedProjectConfig } from "../../helpers/approved-project-config.js";
 import { PlanningService } from "../../../src/modules/planning/planning-service.js";
 import { EpicOrchestrator } from "../../../src/modules/planning/epic-orchestrator.js";
 import { RunService } from "../../../src/modules/runtime/run-service.js";
@@ -35,6 +36,7 @@ describe("Epic recovery failure state", () => {
       db.run("INSERT INTO projects(id,name,display_name,status,created_at,updated_at) VALUES($id,'recovery','Recovery','ACTIVE',$now,$now)", { id: projectId, now });
       db.run("INSERT INTO approvals(id,type,subject_id,subject_type,status,requested_by,resolved_by,created_at,resolved_at) VALUES($approvalId,'WORKFLOW_CHANGE',$projectId,'PROJECT','APPROVED','tester','tester',$now,$now)", { approvalId, projectId, now });
       db.run("INSERT INTO onboarding_configs(project_id,repository_path,facts_json,proposed_json,status,approval_id,created_at,updated_at) VALUES($projectId,'/recovery-repo','{}','{}','ACTIVE',$approvalId,$now,$now)", { projectId, approvalId, now });
+      seedApprovedProjectConfig(db, projectId, "main");
 
       const planning = new PlanningService(db);
       const request = planning.createRequest(projectId, "Build the Recovery Epic", "tester");
@@ -45,8 +47,18 @@ describe("Epic recovery failure state", () => {
         tasks: [{ ref: "task_recovery", title: "Recovery task", acceptanceCriteria: ["works"], role: "developer", workflow: "standard" }],
       });
       db.run("UPDATE planning_requests SET classification='EPIC',plan_id=$planId,status='PLAN_PENDING_APPROVAL' WHERE id=$requestId", { planId: plan.id, requestId: request.id });
+      planning.approvePlan(plan.id, "tester", request.id);
+      const epicId = db.get<{ epic_id: string }>("SELECT epic_id FROM planning_plans WHERE id=$id", { id: plan.id })?.epic_id;
+      if (!epicId) throw new Error("Approved Epic was not materialized");
+      const completedPlanRunId = randomUUID();
+      db.run("INSERT INTO agent_runs(id,role,runtime,model,status) VALUES($id,'coordinator','persisted','persisted','COMPLETED')", { id: completedPlanRunId });
+      db.run("INSERT INTO orchestration_phase_runs(id,epic_id,task_id,phase,role,agent_run_id,result_json,evidence_json,validated,status,created_at) VALUES($id,$epicId,NULL,'plan','coordinator',$runId,'{}','{}',1,'COMPLETED',$now)", {
+        id: randomUUID(), epicId, runId: completedPlanRunId, now,
+      });
 
       let failProvisioning = true;
+      const epicWorktreePath = "/fake/epic-worktree";
+      const persistedWorkspaceBranches = new Map<string, string>();
       const makeOrchestrator = (scheduler: SchedulerService = new SchedulerService(db)) => {
         const registry = new WorkflowRegistry();
         for (const template of Object.values(templates)) registry.register(template);
@@ -58,12 +70,28 @@ describe("Epic recovery failure state", () => {
           {} as never,
           scheduler,
           {
-            epicWorkspaceProvisioner: { provisionForEpic: async () => ({ path: "/fake/epic-worktree" }) },
+            epicWorkspaceProvisioner: { provisionForEpic: async (epicId) => {
+              const epic = db.get<{ display_id: string; project_id: string }>("SELECT display_id,project_id FROM epics WHERE id=$epicId", { epicId });
+              if (!epic) throw new Error("Test Epic was not materialized");
+              const branch = `epic/${epic.display_id}`;
+              db.run("INSERT OR REPLACE INTO worktrees(id,repo_path,path,branch,created_at) VALUES($id,'/recovery-repo',$path,$branch,$now)", {
+                id: `epic:${epicId}`, path: epicWorktreePath, branch, now,
+              });
+              persistedWorkspaceBranches.set(epicWorktreePath, branch);
+              return { path: epicWorktreePath };
+            } },
             taskWorkspaceProvisioner: { provisionForEpic: async () => {
               if (failProvisioning) {
                 failProvisioning = false;
                 throw new Error("PRIVATE_RUNTIME_FAILURE_SENTINEL");
               }
+            } },
+            git: { run: async (cwd, args) => {
+              const branch = persistedWorkspaceBranches.get(cwd);
+              if (!branch) throw new Error(`Unexpected recovery blocker test Git cwd: ${cwd}`);
+              if (args[0] === "rev-parse") return { exitCode: 0, stdout: `${"a".repeat(40)}\n`, stderr: "" };
+              if (args[0] === "symbolic-ref") return { exitCode: 0, stdout: `${branch}\n`, stderr: "" };
+              throw new Error(`Unexpected recovery blocker test Git command: ${args.join(" ")}`);
             } },
           },
         );
@@ -73,18 +101,11 @@ describe("Epic recovery failure state", () => {
 
       const linkedRequest = db.get<{ status: string; failure_code: string | null }>("SELECT status,failure_code FROM planning_requests WHERE id=$id", { id: request.id });
       expect(linkedRequest).toEqual({ status: "FAILED", failure_code: "EPIC_RECOVERY_FAILED" });
-      const epicId = db.get<{ epic_id: string }>("SELECT epic_id FROM planning_plans WHERE id=$id", { id: plan.id })?.epic_id;
-      if (!epicId) throw new Error("Epic was not materialized");
       const blockedProjection = new EpicProjection(db).get(epicId)!;
       expect(blockedProjection.lifecycle).toMatchObject({ status: "BLOCKED", recoveryFailureCode: "EPIC_RECOVERY_FAILED" });
       expect(JSON.stringify(blockedProjection)).not.toContain("PRIVATE_RUNTIME_FAILURE_SENTINEL");
 
       db.run("UPDATE epic_orchestrations SET stage='FINAL_APPROVAL',final_approval_id='persisted-approval' WHERE epic_id=$id", { id: epicId });
-      const completedRunId = randomUUID();
-      db.run("INSERT INTO agent_runs(id,role,runtime,model,status) VALUES($id,'coordinator','persisted','persisted','COMPLETED')", { id: completedRunId });
-      db.run("INSERT INTO orchestration_phase_runs(id,epic_id,task_id,phase,role,agent_run_id,result_json,evidence_json,validated,status,created_at) VALUES($id,$epicId,NULL,'plan','coordinator',$runId,'{}','{}',1,'COMPLETED',$now)", {
-        id: randomUUID(), epicId, runId: completedRunId, now,
-      });
 
       const rejectingScheduler = {
         reconcile() {},

@@ -27,7 +27,6 @@ import type { OrchestratorHomePaths } from "./orchestrator-home.js";
 import { recoverExpiredJobs } from "../jobs/job-repository.js";
 import { preflightRunProcessOwners } from "../../modules/runtime/run-process-owner.js";
 import type { ProjectConfigService } from "../../modules/projects/project-config-service.js";
-import { hasHermesSourceSnapshotReferences, mayCollectHermesSourceSnapshot } from "../../modules/runtime/hermes/hermes-source-snapshot-gc-policy.js";
 
 /** Зависимости для построения production adapters без старта процессов. */
 export interface ProductionCompositionOptions {
@@ -44,7 +43,7 @@ export interface ProductionCompositionOptions {
 /** Зависимости application services, необходимые для startup recovery callbacks. */
 export interface ProductionStartupReconciliationOptions {
   /** Сервис runs уже создан после применения migrations. */
-  runService: Pick<RunService, "reconcileInterruptedRuns"> & Partial<Pick<RunService, "reconcileTerminalHermesProfiles">>;
+  runService: Pick<RunService, "reconcileInterruptedRuns">;
   /** Dispatcher уже привязан к application EventBus. */
   eventDispatcher: Pick<EventDispatcher, "dispatchBatch">;
   /** Lifecycle status изменяется только startup coordinator. */
@@ -59,15 +58,12 @@ export interface ProductionStartupReconciliationOptions {
  * проверяемую последовательность после process-owner preflight и platform recovery.
  *
  * @param dependencies Production services, чьи durable state reconciles выполняются до READY.
- * @param dependencies.runService Run profile cleanup после reconciliation scheduler reservations и resource locks.
  * @param dependencies.epicOrchestrator Epic recovery и approved-plan resume.
  * @param dependencies.scheduler Восстановление scheduler reservations.
  * @param dependencies.planningService Восстановление незавершённых Request planning jobs.
- * @returns Шесть именованных recovery steps для Epic runs, scheduler, profile cleanup, Requests, execution claims и approved Epic resume.
+ * @returns Пять именованных recovery steps for Epic runs, scheduler, Requests, execution claims, and approved Epic resume.
  */
 export function createApplicationRecoveryReconcilers(dependencies: {
-  /** Run cleanup after scheduler reservations and resource locks are reconciled. */
-  runService: Pick<RunService, "reconcileTerminalHermesProfiles">;
   /** Epic lifecycle recovery и возобновление approved plans. */
   epicOrchestrator: Pick<EpicOrchestrator, "reconcileInterruptedRuns" | "reconcileInterruptedExecutionClaims" | "resumeApprovedEpics">;
   /** Восстанавливает scheduler reservations после Run recovery. */
@@ -75,11 +71,10 @@ export function createApplicationRecoveryReconcilers(dependencies: {
   /** Восстанавливает незавершённые Request planning jobs. */
   planningService: Pick<PlanningService, "reconcileInterruptedRequests">;
 }): NamedRecoveryStep[] {
-  const { epicOrchestrator, scheduler, planningService, runService } = dependencies;
+  const { epicOrchestrator, scheduler, planningService } = dependencies;
   return [
     { name: "reconcile_epic_runs", run: async () => { epicOrchestrator.reconcileInterruptedRuns(); } },
     { name: "reconcile_scheduler", run: async () => { scheduler.reconcile(); } },
-    { name: "cleanup_terminal_hermes_profiles", run: async () => { await runService.reconcileTerminalHermesProfiles(); } },
     { name: "reconcile_planning_requests", run: async () => { planningService.reconcileInterruptedRequests(); } },
     { name: "reconcile_execution_claims", run: async () => { epicOrchestrator.reconcileInterruptedExecutionClaims(); } },
     { name: "resume_approved_epics", run: () => epicOrchestrator.resumeApprovedEpics() },
@@ -101,9 +96,6 @@ export function createProductionComposition(options: ProductionCompositionOption
   const runtime = new HermesRuntimeAdapter(processExecutor, undefined, {
     databasePath: paths.hermesDatabasePath,
     resultDirectory: paths.hermesResultDirectory,
-    hermesSourceSnapshotCacheRoot: paths.hermesSourceSnapshotCacheRoot,
-    mayCollectHermesSourceSnapshot: async (cacheKey: string) => mayCollectHermesSourceSnapshot(database, cacheKey),
-    hasHermesSourceSnapshotReferences: async (cacheKey: string) => hasHermesSourceSnapshotReferences(database, cacheKey),
     checkpointDirectory: paths.hermesCheckpointDirectory,
   }, processScopeSupervisor);
   const taskWorkspaceProvisioner = new TaskWorkspaceProvisioner({
@@ -111,8 +103,16 @@ export function createProductionComposition(options: ProductionCompositionOption
     worktreeManager: new WorktreeManager({ db: database, worktreeDir: paths.taskWorktreeDirectory }),
   });
   const epicWorkspaceProvisioner = new EpicWorkspaceProvisioner({ database, worktreeDir: paths.epicWorktreeDirectory });
-  const integrationServiceFactory: IntegrationServiceFactory = ({ worktreeRoot, epicId, taskId, integrationRunId, finalizeRunFailure }: IntegrationServiceFactoryContext) =>
-    new IntegrationService({ database, provenanceDatabasePath: home.database, integrationRunId, finalizeRunFailure, worktreeDir: join(worktreeRoot, epicId, taskId ?? "epic-final") });
+  const integrationServiceFactory: IntegrationServiceFactory = ({ worktreeRoot, epicId, taskId, integrationRunId, targetWorktreePath, finalizeRunFailure }: IntegrationServiceFactoryContext) =>
+    new IntegrationService({
+      database,
+      provenanceDatabasePath: home.database,
+      integrationRunId,
+      finalizeRunFailure,
+      ...(targetWorktreePath ? { targetWorktreePath } : {}),
+      advanceTargetBranch: Boolean(taskId),
+      worktreeDir: taskId ? join(worktreeRoot, epicId) : join(worktreeRoot, epicId, "epic-final"),
+    });
   const artifactStore = new ArtifactStore(home.artifacts, new ArtifactRepository(database));
 
   /**

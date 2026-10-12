@@ -27,7 +27,9 @@ export enum ActionId {
   // Операции Git
   GitStatus = 'git.status',
   GitDiff = 'git.diff',
+  GitAdd = 'git.add',
   GitCommit = 'git.commit',
+  GitHead = 'git.head',
   
   // Операции с artifacts
   ArtifactWrite = 'artifact.write',

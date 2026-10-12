@@ -8,6 +8,26 @@
 import { z } from "zod";
 import { load } from "js-yaml";
 import { ConfigValidationError } from "./config-errors.js";
+import { isDisallowedProjectCommandExecutable } from "../process/project-command-policy.js";
+
+const MAX_PROJECT_COMMAND_EXECUTABLE_LENGTH = 4096;
+const MAX_PROJECT_COMMAND_ARGUMENT_COUNT = 256;
+const MAX_PROJECT_COMMAND_ARGUMENT_LENGTH = 8192;
+
+const ProjectCommandV1Schema = z.strictObject({
+  executable: z.string().min(1).max(MAX_PROJECT_COMMAND_EXECUTABLE_LENGTH)
+    .refine((value) => !value.includes("\0"), "must not contain NUL")
+    .refine((value) => !isDisallowedProjectCommandExecutable(value), "known shell interpreters or launchers are not allowed"),
+  args: z.array(z.string().max(MAX_PROJECT_COMMAND_ARGUMENT_LENGTH)
+    .refine((value) => !value.includes("\0"), "must not contain NUL")).max(MAX_PROJECT_COMMAND_ARGUMENT_COUNT),
+});
+
+const ProjectCommandsV1Schema = z.strictObject({
+  test: ProjectCommandV1Schema.optional(),
+  lint: ProjectCommandV1Schema.optional(),
+  typecheck: ProjectCommandV1Schema.optional(),
+  build: ProjectCommandV1Schema.optional(),
+});
 
 export const ProjectConfigV1Schema = z.strictObject({
   schema_version: z.literal(1),
@@ -18,6 +38,7 @@ export const ProjectConfigV1Schema = z.strictObject({
   execution: z
     .strictObject({
       mode: z.literal("local").default("local"),
+      commands: ProjectCommandsV1Schema.optional(),
     })
     .default({ mode: "local" }),
 });

@@ -11,6 +11,7 @@ import { writeFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { createSqliteDatabase } from '../platform/database/sqlite-database.js';
 import { DatabaseCompletionStore } from '../modules/execution/mcp/submit-result-tool.js';
+import { extractSuccessfulSubmission } from '../modules/execution/mcp/submission-result.js';
 import { createInterface } from 'node:readline';
 
 function parseArgs(): { capabilityRef: string | undefined; resultFile: string | undefined; database: string | undefined } {
@@ -72,11 +73,11 @@ async function main() {
       const requestParams = requestRecord?.params && typeof requestRecord.params === 'object' && !Array.isArray(requestRecord.params)
         ? requestRecord.params as Record<string, unknown> : undefined;
       if (requestRecord?.method === 'tools/call' && requestParams?.name === 'submit_result' && response && resultFile) {
-        const content = (response.result as { content?: Array<{ text?: string }> }).content?.[0]?.text;
-        const toolResult = content ? JSON.parse(content) as { outcome?: unknown } : undefined;
-        if (toolResult?.outcome === undefined) throw new Error('submit_result did not return a result');
-        await mkdir(dirname(resultFile), { recursive: true });
-        await writeFile(resultFile, JSON.stringify(toolResult), { encoding: 'utf8', flag: 'wx' });
+        const submission = extractSuccessfulSubmission(response, capability.capability.role);
+        if (submission) {
+          await mkdir(dirname(resultFile), { recursive: true });
+          await writeFile(resultFile, JSON.stringify(submission), { encoding: 'utf8', flag: 'wx' });
+        }
       }
       if (response) console.log(JSON.stringify(response));
     } catch {

@@ -192,7 +192,9 @@ describe('RoleRegistry', () => {
         'command.exec',
         'git.status',
         'git.diff',
+        'git.add',
         'git.commit',
+        'git.head',
         'submit_result',
       ]);
       // Проверяем ограничения: без изменений git.push, merge.default и конфигурации permissions.

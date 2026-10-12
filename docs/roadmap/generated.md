@@ -47,7 +47,7 @@ updated: 2026-10-10
 | plan-18 | completed | Автономный набор Ebb skills и очистка Hermes tooling |
 | plan-19 | in_progress | План разблокирования и завершения открытых планов v1 |
 | plan-20 | in_progress | Production ContextManifest lifecycle for every Run binding |
-| plan-21 | proposed | Проверяемое Linux AppArmor attachment evidence |
+| plan-21 | superseded | Проверяемое Linux AppArmor attachment evidence |
 | plan-00 | completed | Documentation Governance Refactoring |
 | plan-00-02 | completed | Проверка и исправление политики AGENTS |
 | plan-00-05 | completed | Интеграция политик документации и governance |

@@ -56,6 +56,15 @@ describe('issued capability validation', () => {
     expect(loadValidatedCapability(db, 'cap-1').runId).toBe('run-1');
     db.close();
   });
+  it('rejects project action commands injected into a persisted Run capability', () => {
+    const db = fixture('STARTED', JSON.stringify({
+      runId: 'run-1', capabilityRef: 'cap-1', role: 'reviewer', workspace: '/tmp/work',
+      allowedTools: ['project.test'],
+      projectConfig: { commands: { test: { executable: process.execPath, args: ['-e', 'process.exit(0)'] } } },
+    }));
+    expect(() => loadValidatedCapability(db, 'cap-1')).toThrow(/caller-supplied project action commands.*approved Project Config revision/i);
+    db.close();
+  });
   it('rejects a task workspace without an exact verified Git operation', () => {
     const db = fixture('STARTED');
     db.run("UPDATE git_operations SET status='STARTED',verified_at=NULL WHERE id='worktree-op'");

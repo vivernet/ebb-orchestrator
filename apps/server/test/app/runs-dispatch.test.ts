@@ -71,6 +71,19 @@ function headers(_app: ReturnType<typeof createApp>) {
 }
 
 describe("task dispatch route", () => {
+  it("returns a safe structured model-override error without scheduling a Run", async () => {
+    const { app, db, runService, scheduler, workspace } = setup();
+    vi.mocked(runService.prepareRun).mockImplementationOnce(() => { throw new Error("HERMES_MODEL_OVERRIDE_UNSUPPORTED"); });
+    try {
+      const response = await app.inject({ method: "POST", url: "/api/v1/tasks/task-1/dispatch", headers: headers(app), payload: { model: "explicit-model" } });
+      expect(response.statusCode).toBe(400);
+      expect(response.json()).toEqual({ error: { code: "HERMES_MODEL_OVERRIDE_UNSUPPORTED", message: "Модель выбирается в Hermes. Для запуска используйте model=default." } });
+      expect(scheduler.dispatchTask).not.toHaveBeenCalled();
+      expect(runService.executePreparedRun).not.toHaveBeenCalled();
+    } finally {
+      await app.close(); db.close(); rmSync(workspace, { recursive: true, force: true });
+    }
+  });
   it("prepares one durable run, binds it to scheduler, and acknowledges asynchronously", async () => {
     const { app, db, runService, scheduler, workspace } = setup();
     const response = await app.inject({ method: "POST", url: "/api/v1/tasks/task-1/dispatch", headers: headers(app) });

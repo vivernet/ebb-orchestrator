@@ -1,6 +1,7 @@
 import { RunCapability } from '../run-capability.js';
 import type { ToolId } from '../run-capability.js';
 import { SubmitResultTool, type CompletionStore } from './submit-result-tool.js';
+import { getRoleOutputJsonSchema } from '../../runtime/output-validator.js';
 
 /**
  * инструмент definition для MCP.
@@ -47,14 +48,14 @@ export class ToolRegistry {
       inputSchema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'], additionalProperties: false },
       handler: async (args) => {
         const result = await capability.getActionGateway().readFile(args.path as string);
-        return result;
+        return result.success ? { success: true, result: result.content } : result;
       },
     });
 
     // Регистрирует workspace.search.
     this.toolDefinitions.set('workspace.search', {
       name: 'workspace.search',
-      description: 'Search for patterns in the workspace',
+      description: 'Search for patterns in the workspace; returns matching file paths only, not file contents',
       inputSchema: { type: 'object', properties: { pattern: { type: 'string' }, ext: { type: 'string' } }, required: ['pattern'], additionalProperties: false },
       handler: async (args) => {
         const results = await capability.getActionGateway().search(
@@ -68,7 +69,7 @@ export class ToolRegistry {
     // Регистрирует workspace.patch (с возможностью записи).
     this.toolDefinitions.set('workspace.patch', {
       name: 'workspace.patch',
-      description: 'Patch a file in the workspace',
+      description: 'Patch a file using zero-based UTF-16 offsets and end-exclusive [start,end) ranges; apply ascending non-overlapping replacements, where content replaces each range',
       inputSchema: {
         type: 'object',
         properties: {
@@ -91,7 +92,7 @@ export class ToolRegistry {
           return { success: false, error: 'invalid workspace.patch arguments' };
         }
         const result = await capability.getActionGateway().patch(args.path, args.patches);
-        return result;
+        return result.success ? { success: true, result: { success: true } } : result;
       },
     });
 
@@ -125,6 +126,27 @@ export class ToolRegistry {
       },
     });
 
+    this.toolDefinitions.set('git.add', {
+      name: 'git.add',
+      description: 'Stage explicitly listed relative workspace paths using literal Git pathspecs',
+      inputSchema: {
+        type: 'object',
+        properties: { paths: { type: 'array', items: { type: 'string' }, minItems: 1 } },
+        required: ['paths'],
+        additionalProperties: false,
+      },
+      handler: async (args) => {
+        const paths = args.paths as string[];
+        try {
+          const result = await capability.getGitTools()?.add(paths);
+          if (result === undefined) return { success: false, error: 'git not available' };
+          return { success: true, result };
+        } catch {
+          return { success: false, error: 'git add rejected paths or failed' };
+        }
+      },
+    });
+
     // Регистрирует git.commit.
     this.toolDefinitions.set('git.commit', {
       name: 'git.commit',
@@ -136,8 +158,24 @@ export class ToolRegistry {
           return { success: false, error: 'git not available' };
         }
         const message = args.message as string;
-        const result = await gitTools.commit(message);
-        return { success: true, result };
+        try {
+          const result = await gitTools.commit(message);
+          return { success: true, result };
+        } catch {
+          return { success: false, error: 'git commit failed' };
+        }
+      },
+    });
+
+    this.toolDefinitions.set('git.head', {
+      name: 'git.head',
+      description: 'Read the full current HEAD SHA (fixed `git rev-parse HEAD`)',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      handler: async (_args) => {
+        const gitTools = capability.getGitTools();
+        if (!gitTools) return { success: false, error: 'git not available' };
+        const sha = await gitTools.headSha();
+        return sha ? { success: true, result: sha } : { success: false, error: 'git HEAD unavailable' };
       },
     });
 
@@ -151,7 +189,11 @@ export class ToolRegistry {
           return { success: false, error: 'invalid project.test arguments' };
         }
         const result = await capability.getActionGateway().test();
-        return { success: result.success, result, ...(result.success ? {} : { error: result.stderr }) };
+          return {
+            success: result.success,
+            result,
+            ...(!result.success ? { error: result.stderr || `project test exited with code ${String(result.exitCode)}` } : {}),
+          };
       },
     });
 
@@ -199,10 +241,16 @@ export class ToolRegistry {
 
     // Регистрирует submit_result.
     const submitTool = new SubmitResultTool(capability, completion);
+    const roleOutputSchema = getRoleOutputJsonSchema(capability.capability.role);
     this.toolDefinitions.set('submit_result' as ToolId, {
       name: 'submit_result',
-      description: 'Submit agent result and finalize run',
-      inputSchema: { type: 'object', properties: { payload: { type: 'object' } }, required: ['payload'], additionalProperties: false },
+      description: 'Submit a result matching this run role contract and finalize the run',
+      inputSchema: {
+        type: 'object',
+        properties: { payload: (roleOutputSchema as unknown as SchemaDefinition | undefined) ?? { type: 'object' } },
+        required: ['payload'],
+        additionalProperties: false,
+      },
       handler: async (args) => {
         const result = await submitTool.validateAndSubmit(args.payload);
         return result;

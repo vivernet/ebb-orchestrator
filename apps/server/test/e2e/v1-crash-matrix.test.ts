@@ -98,7 +98,7 @@ async function waitForProductionReady(child: ProductionChild, port: number): Pro
     }
     await new Promise((resolveWait) => setTimeout(resolveWait, 100));
   }
-  throw new Error("production test child did not reach READY within timeout");
+  throw new Error(`production test child did not reach READY within timeout: ${child.output.slice(-4000)}`);
 }
 
 async function stopProductionChild(child: ProductionChild): Promise<void> {

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -11,9 +11,8 @@ import { digestRunPromptBytesV1 } from "../../src/modules/context/context-proven
 import type { HermesSessionCapture, HermesSessionCapturePort } from "../../src/modules/runtime/hermes-session-capture-port.js";
 import { HermesStreamSessionObserver } from "../../src/modules/runtime/hermes/hermes-stream-session-observer.js";
 import { HermesRuntimeAdapter } from "../../src/modules/runtime/hermes/hermes-runtime-adapter.js";
-import { HERMES_PROVIDER_SELECTION_SOURCE } from "../../src/modules/runtime/hermes/hermes-provider-selection.js";
-import type { HermesRunSelection } from "../../src/modules/runtime/hermes/hermes-run-selection.js";
-import { createHermesAuthRouteFixture } from "../helpers/hermes-auth-route-fixture.js";
+import { HERMES_PROVIDER_SELECTION_SOURCE } from "../../src/modules/runtime/hermes/hermes-source-identity.js";
+import type { HermesManagedRunSelection } from "../../src/modules/runtime/hermes/hermes-run-selection.js";
 import { createHermesLaunchTicket } from "../../src/modules/runtime/hermes/hermes-launch-ticket.js";
 import { transitionRunProcessOwnerTx } from "../../src/modules/runtime/run-process-owner.js";
 import type { ProcessScopeIdentity, ProcessScopeObservation } from "../../src/platform/process/process-inspector.js";
@@ -208,9 +207,10 @@ describe("Hermes init capture bridge — controlled protocol fixture only", () =
     const fixture = await setup({ leaveOwnerPrepared: true, workspace: true, mechanicsOnlyAdapter: true });
     if (!(fixture.runtime instanceof HermesRuntimeAdapter)) throw new Error("SESSION_CAPTURE_FIXTURE_ADAPTER_MISSING");
     const authRoot = join(directory, "hermes-auth-root");
-    const profileHome = join(authRoot, "profiles", `ebb-orchestrator-run-${fixture.run.id}`);
+
     const selection = await createMechanicsSelection(fixture.run.id, fixture.run.model, authRoot);
-    expect(selection.profileHome).toBe(profileHome);
+    brandMechanicsSelection(fixture.runtime, selection);
+    expect(selection.hermesHome).toBe(authRoot);
     await fixture.runtime.startRun({ ...fixture.run, runtime: "hermes", hermesSelection: selection });
     expect(fixture.mechanicsSupervisor?.captureWhileLive).toEqual({
       session_id: "session-adapter-live-001", capture_state: "BOUND", owner_state: "LIVE",
@@ -290,7 +290,7 @@ async function setup(options: { leaveOwnerPrepared?: boolean; workspace?: string
   });
   const runOptions = {
     role: "developer",
-    model: "fixture-model",
+    model: options.mechanicsOnlyAdapter ? "default" : "fixture-model",
     taskId,
     epicId: null,
     triggerReason: "task-assignment",
@@ -305,7 +305,7 @@ async function setup(options: { leaveOwnerPrepared?: boolean; workspace?: string
         roleVersion: null,
         runtime: "fixture",
         runtimeVersion: null,
-        model: "fixture-model",
+        model: options.mechanicsOnlyAdapter ? "default" : "fixture-model",
         modelVersion: null,
         outputSchemaVersion: "1",
         contextVersion: "mechanics-fixture-v1",
@@ -382,17 +382,6 @@ async function setup(options: { leaveOwnerPrepared?: boolean; workspace?: string
   };
 }
 
-function createSourceSnapshotKey(): string {
-  return JSON.stringify({
-    formatVersion: 1,
-    hermesVersion: HERMES_PROVIDER_SELECTION_SOURCE.version,
-    manifestDigest: "c".repeat(64),
-    ...(process.platform === "win32" ? { materializationPolicyVersion: 2 } : {}),
-    sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit,
-    sourceTree: "d".repeat(40),
-  });
-}
-
 /**
  * Создаёт тестовый Hermes runtime только для механики stdout capture → RunService CAS.
  * Selection/auth readiness синтетические и явно не являются provider acceptance.
@@ -405,13 +394,7 @@ function createProviderFreeHermesMechanicsRuntime(database: Database, fixtureRoo
   const objectIdentity = platform === "win32"
     ? { platform, volumeSerial: "0123456789abcdef", fileId: "0123456789abcdef0123456789abcdef" } as const
     : { platform, device: "1", inode: "1" } as const;
-  const profileHomeTargetIdentities = platform === "win32" ? {
-    home: { ...objectIdentity, fileId: "7".repeat(32) },
-    config: { ...objectIdentity, fileId: "8".repeat(32) },
-  } : undefined;
   const argsPrefix = ["-I", "-B", "-S", "-c", "mechanics-only bootstrap"];
-  const sourceSnapshotKey = createSourceSnapshotKey();
-  const snapshotDirectoryId = createHash("sha256").update(sourceSnapshotKey).digest("hex");
   const supervisor = new ControlledCaptureSupervisor(database);
   const adapter = new HermesRuntimeAdapter(new ProcessExecutor(), undefined, {
     databasePath: join(fixtureRoot, "capture.sqlite"),
@@ -426,58 +409,40 @@ function createProviderFreeHermesMechanicsRuntime(database: Database, fixtureRoo
         platform,
         hermesExecutablePath: join(fixtureRoot, platform === "win32" ? "hermes.exe" : "hermes"),
         hermesExecutableIdentity: objectIdentity,
+        sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit,
         executablePath: join(fixtureRoot, platform === "win32" ? "python.exe" : "python3"),
         executableIdentity: objectIdentity,
         executableArgsPrefix: argsPrefix,
-        profileHome: input.profileHome,
-        profileHomeIdentity: objectIdentity,
-        ...(profileHomeTargetIdentities ? { profileHomeTargetIdentities } : {}),
-        ...(input.profileHomePathChain ? { profileHomePathChain: input.profileHomePathChain } : {}),
-        hermesSourceSnapshotKey: sourceSnapshotKey,
-        hermesSourceSnapshotRoot: join(fixtureRoot, "source-snapshots", snapshotDirectoryId),
-        hermesSourceSnapshotRootIdentity: objectIdentity,
-        hermesSourceManifestDigest: "c".repeat(64),
-        hermesSourceProjectionPath: join(fixtureRoot, "source-snapshots", `${snapshotDirectoryId}.native-v1.bin`),
-        hermesSourceProjectionSha256: "f".repeat(64),
-        hermesSourceProjectionSize: 128,
+        hermesHome: input.hermesHome,
         environment: input.environment,
       }),
     }),
-    hermesRunProfileConfigWriter: async ({ profileHome, configYaml }) => {
-      await mkdir(join(profileHome, "home"), { recursive: true });
-      await writeFile(join(profileHome, "config.yaml"), configYaml, "utf8");
-    },
   }, supervisor);
 
   vi.spyOn(adapter, "prepareHermesRunSelection").mockImplementation(async (runId) => ({
-    selection: await createMechanicsSelection(runId, "fixture-model", join(fixtureRoot, "hermes-auth-root")),
-    cleanup: async () => undefined,
+    selection: brandMechanicsSelection(adapter, await createMechanicsSelection(runId, "fixture-model", join(fixtureRoot, "hermes-auth-root"))),
   }));
-  // Unit mechanics only: this named test helper bypasses auth-proof verification and has no
-  // production constructor option, environment switch, or provider setup.
-  const authGateTestSeam = adapter as unknown as { assertNativeHermesAuthReady: (...args: unknown[]) => void };
-  vi.spyOn(authGateTestSeam, "assertNativeHermesAuthReady").mockImplementation(() => undefined);
   return { adapter, supervisor };
 }
 
-async function createMechanicsSelection(runId: string, modelId: string, authRoot: string): Promise<HermesRunSelection> {
-  const fixture = await createHermesAuthRouteFixture(runId, "openai-codex", modelId, authRoot);
-  const { profileHome } = fixture;
+async function createMechanicsSelection(runId: string, _modelId: string, hermesHome: string): Promise<HermesManagedRunSelection> {
   return Object.freeze({
+    mode: "HERMES_MANAGED",
     runId,
-    providerId: "openai-codex",
-    modelId,
-    endpointIdentity: "hermes-provider:openai-codex",
-    endpointRevision: HERMES_PROVIDER_SELECTION_SOURCE.commit,
+    hermesHome,
     sourceVersion: HERMES_PROVIDER_SELECTION_SOURCE.version,
     sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit,
-    sourceSnapshotKey: createSourceSnapshotKey(),
-    profileHome,
-    ...(fixture.profileHomePathChain ? { profileHomePathChain: fixture.profileHomePathChain } : {}),
-    authRouteEvidence: fixture.authRouteEvidence,
+    runtimeIdentity: "fixture-runtime",
   });
 }
 
 function encodeInit(sessionId: string): Uint8Array {
   return encoder.encode(`${JSON.stringify({ type: "system", subtype: "init", session_id: sessionId })}\n`);
+}
+
+/** Controlled protocol fixture only; does not prove production source preflight or provider readiness. */
+function brandMechanicsSelection(adapter: HermesRuntimeAdapter, selection: HermesManagedRunSelection): HermesManagedRunSelection {
+  const fixtureBoundary = adapter as unknown as { verifiedManagedSelections: WeakSet<object> };
+  fixtureBoundary.verifiedManagedSelections.add(selection);
+  return selection;
 }

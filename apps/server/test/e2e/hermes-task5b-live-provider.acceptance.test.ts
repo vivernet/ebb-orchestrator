@@ -1,7 +1,7 @@
 import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { lstat, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -9,15 +9,21 @@ import { afterAll, describe, expect, it } from "vitest";
 import { RunService, createRunContextInput } from "../../src/modules/runtime/run-service.js";
 import type { StartRunOptions } from "../../src/modules/runtime/run-types.js";
 import { HermesRuntimeAdapter } from "../../src/modules/runtime/hermes/hermes-runtime-adapter.js";
+import { resolveHermesExecutable } from "../../src/modules/runtime/hermes/hermes-executable-resolver.js";
 import { ProcessExecutor } from "../../src/platform/process/process-executor.js";
 import { WindowsJobSupervisor } from "../../src/platform/process/windows-job-supervisor.js";
 import { SystemdRunSupervisor } from "../../src/platform/process/systemd-run-supervisor.js";
 import { createSqliteDatabase } from "../../src/platform/database/sqlite-database.js";
 import { runMigrations } from "../../src/platform/database/migrator.js";
 import { loadTestMigrations } from "../helpers/migrations.js";
+import { seedApprovedProjectConfig } from "../helpers/approved-project-config.js";
 import { resolveOrchestratorHome } from "../../src/platform/home/orchestrator-home.js";
 import { createProductionPaths } from "../../src/platform/home/production-paths.js";
 import { isAuthoritativeRunProcessStopEvidence } from "../../src/modules/runtime/run-process-owner.js";
+import { ApprovalService } from "../../src/modules/approvals/approval-service.js";
+import { OnboardingService } from "../../src/modules/projects/onboarding-service.js";
+import { GitCli } from "../../src/modules/git/git-cli.js";
+import { WorktreeManager } from "../../src/modules/git/worktree-manager.js";
 
 const ACCEPTANCE_MARKER = "I_UNDERSTAND_THIS_SENDS_A_REAL_PROVIDER_REQUEST";
 const enabled = process.env.EBB_RUN_TASK5B_LIVE_PROVIDER_ACCEPTANCE === ACCEPTANCE_MARKER;
@@ -27,6 +33,25 @@ const mcpCli = resolve(import.meta.dirname, "../../src/bin/ebb-orchestrator-mcp.
 const workspace = resolve(import.meta.dirname, "../../../..");
 const wait = (milliseconds: number) => new Promise((resolveWait) => setTimeout(resolveWait, milliseconds));
 
+/** Возвращает только заранее разрешённые диагностические коды Hermes, не текст исключения целиком. */
+function safeHermesFailure(error: unknown): string | undefined {
+  let current: unknown = error;
+  for (let depth = 0; depth < 4 && current instanceof Error; depth += 1) {
+    const message = current.message;
+    if (/^HERMES_SESSION_STREAM_INVALID:[A-Z0-9_]+(?::EXIT_-?\d+)?$/.test(message) ||
+        /^HERMES_PYTHON_STARTUP_EXCEPTION:(ModuleNotFoundError|ImportError|PermissionError|FileNotFoundError|OSError|RuntimeError|ValueError|TypeError|AttributeError|KeyError|SyntaxError|NameError|UnicodeDecodeError|UnicodeEncodeError)$/u.test(message) ||
+        message === "HERMES_EBB_MCP_REGISTRATION_FAILED" ||
+        /^HERMES_ACTIVE_SESSION_REFUSED:(SESSION_NOT_OWNED|MAX_CONCURRENT_SESSIONS|SESSION_COORDINATION_UNAVAILABLE)$/u.test(message) ||
+        message === "HERMES_SESSION_STREAM_INVALID" ||
+        message === "HERMES_RUN_SELECTION_UNAVAILABLE" ||
+        message === "HERMES_SESSION_CAPTURE_CALLBACK_FAILED") {
+      return message;
+    }
+    current = current.cause;
+  }
+  return undefined;
+}
+
 interface RestartReadback {
   runStatus: string;
   sessionId: string | null;
@@ -35,7 +60,12 @@ interface RestartReadback {
 }
 
 /** Reopens production persistence and composition in a fresh Orchestrator process. */
-function readSessionAfterOrchestratorRestart(dbPath: string, orchestratorHome: string, runId: string): Promise<RestartReadback> {
+function readSessionAfterOrchestratorRestart(
+  dbPath: string,
+  orchestratorHome: string,
+  runId: string,
+  preloadPath?: string,
+): Promise<RestartReadback> {
   const databaseModule = pathToFileURL(resolve(import.meta.dirname, "../../src/platform/database/sqlite-database.ts")).href;
   const compositionModule = pathToFileURL(resolve(import.meta.dirname, "../../src/platform/home/production-composition.ts")).href;
   const homeModule = pathToFileURL(resolve(import.meta.dirname, "../../src/platform/home/orchestrator-home.ts")).href;
@@ -53,7 +83,10 @@ function readSessionAfterOrchestratorRestart(dbPath: string, orchestratorHome: s
   ].join("\n");
 
   return new Promise((resolveReadback, rejectReadback) => {
-    const child = spawn(process.execPath, ["--import", tsxLoader, "--input-type=module", "-e", source, dbPath, orchestratorHome, runId], {
+    const child = spawn(process.execPath, [
+      ...(preloadPath ? ["--import", pathToFileURL(preloadPath).href] : []),
+      "--import", tsxLoader, "--input-type=module", "-e", source, dbPath, orchestratorHome, runId,
+    ], {
       cwd: workspace,
       windowsHide: true,
       env: {
@@ -95,6 +128,25 @@ function readSessionAfterOrchestratorRestart(dbPath: string, orchestratorHome: s
 }
 
 describe("Plan20 Task5B restart persistence harness", () => {
+  it("keeps only allowlisted Hermes failure codes for acceptance diagnostics", () => {
+    expect(safeHermesFailure(new Error("wrapped", {
+      cause: new Error("HERMES_SESSION_STREAM_INVALID:MISSING_INIT:EXIT_-1"),
+    }))).toBe("HERMES_SESSION_STREAM_INVALID:MISSING_INIT:EXIT_-1");
+    expect(safeHermesFailure(new Error("HERMES_PYTHON_STARTUP_EXCEPTION:ModuleNotFoundError")))
+      .toBe("HERMES_PYTHON_STARTUP_EXCEPTION:ModuleNotFoundError");
+    expect(safeHermesFailure(new Error("HERMES_PYTHON_STARTUP_EXCEPTION:PermissionError")))
+      .toBe("HERMES_PYTHON_STARTUP_EXCEPTION:PermissionError");
+    expect(safeHermesFailure(new Error("HERMES_PYTHON_STARTUP_EXCEPTION:UnknownProviderError"))).toBeUndefined();
+    expect(safeHermesFailure(new Error("HERMES_PYTHON_STARTUP_EXCEPTION:ModuleNotFoundError:secret"))).toBeUndefined();
+    expect(safeHermesFailure(new Error("HERMES_EBB_MCP_REGISTRATION_FAILED")))
+      .toBe("HERMES_EBB_MCP_REGISTRATION_FAILED");
+    expect(safeHermesFailure(new Error("HERMES_EBB_MCP_REGISTRATION_FAILED:secret"))).toBeUndefined();
+    expect(safeHermesFailure(new Error("HERMES_ACTIVE_SESSION_REFUSED:SESSION_NOT_OWNED")))
+      .toBe("HERMES_ACTIVE_SESSION_REFUSED:SESSION_NOT_OWNED");
+    expect(safeHermesFailure(new Error("HERMES_ACTIVE_SESSION_REFUSED:UNKNOWN"))).toBeUndefined();
+    expect(safeHermesFailure(new Error("provider response contained a secret"))).toBeUndefined();
+  });
+
   it("reads a session capture after reopening production composition in a new process", async () => {
     const root = await mkdtemp(join(tmpdir(), "ebb-plan20-task5b-restart-check-"));
     const dbPath = join(root, "orchestrator.sqlite");
@@ -109,12 +161,24 @@ describe("Plan20 Task5B restart persistence harness", () => {
         { id: runId },
       );
       database.run(
+        `INSERT INTO run_process_owner_generations(run_id,generation,source_tag,hermes_home,containment_kind,containment_id,launch_nonce,state,stop_evidence,updated_at,capture_state)
+         VALUES($runId,1,$sourceTag,$hermesHome,'windows-job',$containmentId,$launchNonce,'STOPPED','verified-stop',$now,'BOUND')`,
+        {
+          runId,
+          sourceTag: `ebb-run:${runId}`,
+          hermesHome: join(root, "shared-hermes-root"),
+          containmentId: "a".repeat(64),
+          launchNonce: "b".repeat(64),
+          now,
+        },
+      );
+      database.run(
         `INSERT INTO run_process_owners(run_id,source_tag,hermes_home,containment_kind,containment_id,launch_nonce,state,stop_evidence,updated_at,capture_state)
          VALUES($runId,$sourceTag,$hermesHome,'windows-job',$containmentId,$launchNonce,'STOPPED','verified-stop',$now,'BOUND')`,
         {
           runId,
           sourceTag: `ebb-run:${runId}`,
-          hermesHome: join(root, "profiles", runId),
+          hermesHome: join(root, "shared-hermes-root"),
           containmentId: "a".repeat(64),
           launchNonce: "b".repeat(64),
           now,
@@ -123,7 +187,14 @@ describe("Plan20 Task5B restart persistence harness", () => {
       database.close();
       databaseOpen = false;
 
-      await expect(readSessionAfterOrchestratorRestart(dbPath, join(root, "home"), runId)).resolves.toEqual({
+      const preloadPath = join(root, "tsx-preload.mjs");
+      await writeFile(preloadPath, [
+        "// Keep TSX's Windows temp-directory fallback independent of OS account lookup.",
+        "process.geteuid ??= () => process.pid;",
+        "",
+      ].join("\n"), { flag: "wx", mode: 0o600 });
+
+      await expect(readSessionAfterOrchestratorRestart(dbPath, join(root, "home"), runId, preloadPath)).resolves.toEqual({
         runStatus: "COMPLETED",
         sessionId: "durable-session-id",
         captureState: "BOUND",
@@ -136,14 +207,6 @@ describe("Plan20 Task5B restart persistence harness", () => {
   });
 });
 
-async function isMissingPath(path: string): Promise<boolean> {
-  try {
-    await lstat(path);
-    return false;
-  } catch (error) {
-    return error !== null && typeof error === "object" && "code" in error && error.code === "ENOENT";
-  }
-}
 
 /**
  * Реальная provider acceptance Plan20 Task5B. Запускается только при задании точного marker:
@@ -162,7 +225,7 @@ describe.skipIf(!enabled || !["win32", "linux"].includes(process.platform))(
     let restartReadbackVerified = false;
 
     afterAll(async () => {
-      let safeToRemoveFixture = !runId || restartReadbackVerified;
+      let safeToRemoveFixture = restartReadbackVerified;
       let cleanupUnverified = Boolean(runId) && !restartReadbackVerified && !database;
       if (runId && database) {
         let row = database.get<{ status: string; state: string; stop_evidence: string | null; containment_kind: string }>(
@@ -181,24 +244,13 @@ describe.skipIf(!enabled || !["win32", "linux"].includes(process.platform))(
         }
         if (row && ["COMPLETED", "FAILED", "CANCELLED"].includes(row.status) && row.state === "STOPPED" &&
             isAuthoritativeRunProcessStopEvidence(row.stop_evidence, row.containment_kind as "windows-job" | "systemd-user-service")) {
-          const profile = database.get<{ hermes_home: string }>(
-            "SELECT hermes_home FROM run_process_owners WHERE run_id=$runId", { runId },
-          );
-          let cleanupSucceeded = false;
-          try { cleanupSucceeded = await runs?.cleanupTerminalHermesProfile(runId) === true; }
-          catch { /* A failed cleanup leaves the initialized false result intact. */ }
-          const profilePath = profile?.hermes_home;
-          const profileAbsent = typeof profilePath === "string" && profilePath.length > 0 && await isMissingPath(profilePath);
-          if (!cleanupSucceeded || !profileAbsent) {
-            safeToRemoveFixture = false;
-            cleanupUnverified = true;
-          }
+          // Fixture process уже доказанно остановлен; повторная отмена не требуется.
         } else if (row) {
-          // Keep the DB and profile path intact so process-owner recovery evidence is not discarded.
+          // Keep the DB intact so process-owner recovery evidence is not discarded.
           safeToRemoveFixture = false;
           cleanupUnverified = true;
         } else {
-          // The durable Run identity is missing; retain the test home because profile absence is unproven.
+          // The durable Run identity is missing; retain only the Ebb test home for recovery evidence.
           safeToRemoveFixture = false;
           cleanupUnverified = true;
         }
@@ -206,25 +258,61 @@ describe.skipIf(!enabled || !["win32", "linux"].includes(process.platform))(
       readbackDatabase?.close();
       database?.close();
       if (root && safeToRemoveFixture) await rm(root, { recursive: true, force: true });
+      else if (root) process.stderr.write(`TASK5B_DIAGNOSTIC_ROOT_RETAINED:${root}\n`);
       if (cleanupUnverified) throw new Error("TASK5B_LIVE_ACCEPTANCE_CLEANUP_UNVERIFIED; diagnostic database retained under the test temp root");
     });
 
-    it("captures the actual init session id durably while the supervised owner is LIVE, then cleans its exact profile", async () => {
+    it("captures the actual init session id durably while the supervised owner is LIVE, then confirms STOPPED", async () => {
+      const resolvedHermes = await resolveHermesExecutable({ cwd: process.cwd() });
+      expect(resolvedHermes.sourceCommit).toMatch(/^[a-f0-9]{40}$/u);
       root = await mkdtemp(join(tmpdir(), "ebb-plan20-task5b-live-"));
       dbPath = join(root, "orchestrator.sqlite");
       database = createSqliteDatabase(dbPath);
       runMigrations(database, loadTestMigrations());
       const now = new Date().toISOString();
-      const projectId = randomUUID();
       const taskId = randomUUID();
-      database.run(
-        "INSERT INTO projects(id,name,display_name,status,created_at,updated_at) VALUES($id,'task5b-live','Task5B live','ACTIVE',$now,$now)",
-        { id: projectId, now },
-      );
+      const repository = join(root, "repository");
+      await mkdir(repository, { recursive: true });
+      const git = new GitCli();
+      await git.run(repository, ["init", "--initial-branch=master"]);
+      await git.run(repository, ["config", "user.email", "acceptance@example.invalid"]);
+      await git.run(repository, ["config", "user.name", "Acceptance Fixture"]);
+      await writeFile(join(repository, "README.md"), "# Disposable Task5B acceptance repository\n");
+      await git.run(repository, ["add", "README.md"]);
+      await git.run(repository, ["commit", "-m", "initial Task5B acceptance fixture"]);
+
+      const approvals = new ApprovalService(database);
+      const onboarding = new OnboardingService(database, approvals);
+      const draft = await onboarding.discoverAndCreateDraft(repository);
+      onboarding.requestApproval(draft.projectId, {
+        defaultBranch: "master",
+        workflow: "standard",
+        roles: ["developer"],
+        guidelines: ["Use the disposable Task5B acceptance repository."],
+      });
+      onboarding.approve(draft.projectId);
+      onboarding.activate(draft.projectId);
+      seedApprovedProjectConfig(database, draft.projectId, "master");
+
+      const taskWorkspace = await new WorktreeManager({
+        db: database,
+        git,
+        worktreeDir: join(root, "task-worktrees"),
+      }).createTaskWorkspace(taskId, repository, "master");
       database.run(
         `INSERT INTO tasks(id,project_id,display_id,title,status,contract_json,required,created_at,updated_at)
-         VALUES($id,$projectId,'TASK5B-LIVE','Hermes live provider acceptance','READY','{}',1,$now,$now)`,
-        { id: taskId, projectId, now },
+         VALUES($id,$projectId,'TASK5B-LIVE','Hermes live provider acceptance','READY',$contract,1,$now,$now)`,
+        {
+          id: taskId, projectId: draft.projectId, now,
+          contract: JSON.stringify({
+            version: 1,
+            goal: "Verify that Hermes captures and persists its real session ID.",
+            context: "One live provider request; do not edit files or run shell commands.",
+            requirements: ["Submit the requested structured result through submit_result."],
+            acceptanceCriteria: ["The Run completes and its session ID survives Orchestrator restart."],
+            dependencies: [], nonGoals: [], definitionOfDone: ["Verified persisted session ID and STOPPED process owner."],
+          }),
+        },
       );
 
       const orchestratorHome = join(root, "orchestrator-home");
@@ -238,41 +326,42 @@ describe.skipIf(!enabled || !["win32", "linux"].includes(process.platform))(
         databasePath: dbPath,
         resultDirectory: paths.hermesResultDirectory,
         checkpointDirectory: paths.hermesCheckpointDirectory,
-        hermesSourceSnapshotCacheRoot: paths.hermesSourceSnapshotCacheRoot,
         timeoutMs: 180_000,
         mcpCommand: process.execPath,
         mcpArgs: ["--import", tsxLoader, mcpCli],
       }, supervisor);
-      runs = new RunService(database, runtime);
+      const runService = new RunService(database, runtime);
+      runs = runService;
 
+      const currentWorkspaceHead = (await git.run(taskWorkspace.path, ["rev-parse", "HEAD"])).stdout.trim();
       const prompt = [
         "This is a single live provider acceptance request for the Orchestrator.",
         "Do not edit files, run shell commands, or call any tool except submit_result.",
         "Call submit_result exactly once with this valid DeveloperOutput JSON:",
-        JSON.stringify({ version: "1.0.0", outcome: "COMPLETED", summary: "Live Hermes provider request completed." }),
+        JSON.stringify({ version: "1.0.0", outcome: "COMPLETED", summary: "Live Hermes provider request completed.", commitSha: currentWorkspaceHead }),
       ].join("\n");
       const options = {
-        role: "developer", model: "persisted", taskId, epicId: null,
+        role: "developer", model: "default", taskId, epicId: null,
         triggerReason: "task-assignment", contextVersion: "plan20-task5b-live-v1", outputSchemaVersion: "1",
-        capability: { workspace, allowedTools: ["workspace.read", "submit_result"] }, prompt,
+        capability: { workspace: taskWorkspace.path, allowedTools: ["workspace.read", "submit_result"] }, prompt,
       } satisfies StartRunOptions;
-      const run = await runs.prepareRunWithHermesPreflight({
-        ...options,
-        contextInput: createRunContextInput(options, {
-          prompt,
-          roleInputs: {},
-          workspaceIdentity: { repository: workspace, workspace, worktree: null },
-          targetHead: null,
-          targetBranch: null,
-        }),
+      const run = await runService.prepareRunWithHermesPreflight({
+          ...options,
+          contextInput: createRunContextInput(options, {
+            prompt,
+            roleInputs: {},
+            workspaceIdentity: { repository, workspace: taskWorkspace.path, worktree: taskId },
+            targetHead: (await git.run(repository, ["rev-parse", "master"])).stdout.trim(),
+            targetBranch: "master",
+          }),
       });
       runId = run.id;
 
-      let executionError = false;
+      let executionFailure: string | undefined;
       let executionFinished = false;
       const execution = runs.executePreparedRun(run.id).then(
         (value) => { executionFinished = true; return { value }; },
-        () => { executionFinished = true; executionError = true; return { value: undefined }; },
+        (error: unknown) => { executionFinished = true; executionFailure = safeHermesFailure(error); return { value: undefined }; },
       );
       let liveDurableReadback = false;
       const deadline = Date.now() + 180_000;
@@ -296,15 +385,19 @@ describe.skipIf(!enabled || !["win32", "linux"].includes(process.platform))(
         }
         await wait(100);
       }
-      expect(liveDurableReadback, "actual Hermes init session must be CAS-bound and readable from a second SQLite connection before the owner stops").toBe(true);
-      const settled = await execution;
-      expect(executionError, "supervised real provider Run must complete successfully").toBe(false);
-      expect(settled.value?.outcome.validatedSubmission, "the provider must submit the validated result through the controlled channel").toBe(true);
+      const settled = executionFinished ? await execution : undefined;
+      expect(liveDurableReadback,
+        `actual Hermes init session must be CAS-bound and readable from a second SQLite connection before the owner stops; safe Hermes failure: ${executionFailure ?? "none"}`,
+      ).toBe(true);
+      const completed = settled ?? await execution;
+      expect(executionFailure, "supervised real provider Run must complete successfully").toBeUndefined();
+      expect(completed.value?.outcome.validatedSubmission, "the provider must submit the validated result through the controlled channel").toBe(true);
 
-      const finalRun = database.get<{ status: string; session_id: string | null; input_tokens: number | null; output_tokens: number | null }>(
-        "SELECT status,session_id,input_tokens,output_tokens FROM agent_runs WHERE id=$runId", { runId: run.id },
+      const finalRun = database.get<{ status: string; session_id: string | null; input_tokens: number | null; output_tokens: number | null; output: string | null }>(
+        "SELECT status,session_id,input_tokens,output_tokens,output FROM agent_runs WHERE id=$runId", { runId: run.id },
       );
       expect(finalRun?.status).toBe("COMPLETED");
+      expect(JSON.parse(finalRun!.output!).commitSha).toBe(currentWorkspaceHead);
       expect(typeof finalRun?.session_id).toBe("string");
       expect((finalRun?.session_id?.length ?? 0) > 0).toBe(true);
       expect((finalRun?.input_tokens ?? 0) + (finalRun?.output_tokens ?? 0)).toBeGreaterThan(0);
@@ -314,8 +407,9 @@ describe.skipIf(!enabled || !["win32", "linux"].includes(process.platform))(
       expect(owner?.state).toBe("STOPPED");
       expect(isAuthoritativeRunProcessStopEvidence(owner?.stop_evidence ?? null,
         owner?.containment_kind as "windows-job" | "systemd-user-service")).toBe(true);
-      expect(await runs.cleanupTerminalHermesProfile(run.id)).toBe(true);
-      expect(await isMissingPath(owner!.hermes_home)).toBe(true);
+      expect(database.get<{ hermes_home: string }>(
+        "SELECT hermes_home FROM run_process_owners WHERE run_id=$runId", { runId: run.id },
+      )?.hermes_home).toBe(owner!.hermes_home);
 
       // End this Orchestrator's database lifetime before reopening it in a fresh process.
       // The live-before-stop assertion above remains separate and proves capture timing.
@@ -330,6 +424,6 @@ describe.skipIf(!enabled || !["win32", "linux"].includes(process.platform))(
         ownerState: "STOPPED",
       });
       restartReadbackVerified = true;
-    }, 240_000);
+    }, 600_000);
   },
 );

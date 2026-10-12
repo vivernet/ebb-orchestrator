@@ -3,6 +3,20 @@ import { tmpdir } from 'node:os';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import crypto from 'node:crypto';
+import type { ProjectConfigV1 } from '../../../../src/platform/config/project-config.js';
+
+function approvedProjectConfig(commands: NonNullable<ProjectConfigV1['execution']['commands']>): NonNullable<import('../../../../src/modules/execution/run-capability.js').RunCapabilityDef['approvedProjectConfig']> {
+  return {
+    revisionId: 'approved-revision',
+    revisionHash: 'a'.repeat(64),
+    config: {
+      schema_version: 1,
+      project: { name: 'test-project', default_branch: 'master' },
+      execution: { mode: 'local', commands },
+    },
+    files: {},
+  };
+}
 
 describe('MCP Server', () => {
   let testDir: string;
@@ -39,6 +53,152 @@ describe('MCP Server', () => {
        const tools = listedResponse.result.tools;
       expect(tools).toHaveLength(2);
       for (const tool of tools) expect(tool.inputSchema).toMatchObject({ type: 'object' });
+    });
+
+    it('documents paths-only search and exact patch range semantics in tools/list', async () => {
+      const { McpServer } = await import('../../../../src/modules/execution/mcp/mcp-server.js');
+      const { RunCapability } = await import('../../../../src/modules/execution/run-capability.js');
+      const server = new McpServer(new RunCapability({
+        id: 'workspace-tool-contracts', role: 'developer', workspace: workspaceDir,
+        allowedTools: ['workspace.read', 'workspace.search', 'workspace.patch'],
+      }));
+      const listed = await server.processRequest({ jsonrpc: '2.0', id: 9, method: 'tools/list' }) as {
+        result: { tools: Array<{ name: string; description: string }> };
+      };
+      const descriptions = new Map(listed.result.tools.map(({ name, description }) => [name, description]));
+      expect(descriptions.get('workspace.search')).toContain('file paths only');
+      expect(descriptions.get('workspace.patch')).toContain('zero-based UTF-16');
+      expect(descriptions.get('workspace.patch')).toContain('end-exclusive [start,end)');
+      expect(descriptions.get('workspace.patch')).toContain('ascending non-overlapping replacements');
+      expect(descriptions.get('workspace.patch')).toContain('content replaces each range');
+    });
+
+    it('publishes capability-bound git.add and read-only git.head tools when explicitly allowed', async () => {
+      const { McpServer } = await import('../../../../src/modules/execution/mcp/mcp-server.js');
+      const { RunCapability } = await import('../../../../src/modules/execution/run-capability.js');
+      const server = new McpServer(new RunCapability({
+        id: 'developer-git-surface', role: 'developer', workspace: workspaceDir,
+        allowedTools: ['git.add', 'git.commit', 'git.head'],
+      }));
+
+      const listed = await server.processRequest({ jsonrpc: '2.0', id: 18, method: 'tools/list' }) as {
+        result: { tools: Array<{ name: string; inputSchema: { properties: Record<string, unknown>; required?: string[] } }> };
+      };
+      expect(listed.result.tools.map(({ name }) => name)).toEqual(['git.add', 'git.commit', 'git.head']);
+      expect(listed.result.tools.find(({ name }) => name === 'git.add')?.inputSchema).toMatchObject({
+        properties: { paths: { type: 'array', minItems: 1, items: { type: 'string' } } }, required: ['paths'],
+      });
+      expect(listed.result.tools.find(({ name }) => name === 'git.head')?.inputSchema).toMatchObject({ properties: {} });
+
+      const { GitTools } = await import('../../../../src/modules/execution/git-tools.js');
+      const gitTools = new GitTools(workspaceDir);
+      await gitTools.initRepo();
+      fs.writeFileSync(path.join(workspaceDir, 'health.ts'), 'export const health = true;');
+      await expect(server.callTool('git.add', { paths: ['health.ts'] })).resolves.toMatchObject({ success: true });
+      await expect(server.callTool('git.commit', { message: 'Add health route' })).resolves.toMatchObject({ success: true });
+      const head = await server.callTool('git.head', {});
+      expect(head).toMatchObject({ success: true });
+      expect(head.result).toMatch(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu);
+      await expect(server.callTool('git.add', { paths: ['../outside.txt'] })).resolves.toMatchObject({
+        success: false, error: 'git add rejected paths or failed',
+      });
+
+      const noRepo = new McpServer(new RunCapability({
+        id: 'developer-git-commit-failure', role: 'developer', workspace: path.join(testDir, 'no-repository'),
+        allowedTools: ['git.commit'],
+      }));
+      fs.mkdirSync(path.join(testDir, 'no-repository'), { recursive: true });
+      await expect(noRepo.callTool('git.commit', { message: 'Must fail safely' })).resolves.toEqual({
+        success: false, error: 'git commit failed',
+      });
+    });
+
+    it('publishes the canonical role output schema for submit_result and returns safe schema rejection details', async () => {
+      const { McpServer } = await import('../../../../src/modules/execution/mcp/mcp-server.js');
+      const { RunCapability } = await import('../../../../src/modules/execution/run-capability.js');
+      const server = new McpServer(new RunCapability({
+        id: 'role-schema', role: 'developer', workspace: workspaceDir, allowedTools: ['submit_result'],
+      }));
+
+      const listed = await server.processRequest({ jsonrpc: '2.0', id: 1, method: 'tools/list' }) as {
+        result: { tools: Array<{ name: string; inputSchema: { properties: Record<string, unknown> } }> };
+      };
+      const submitTool = listed.result.tools.find(({ name }) => name === 'submit_result');
+      expect(submitTool).toBeDefined();
+      const developerPayloadSchema = submitTool?.inputSchema.properties.payload as {
+        oneOf: Array<{ properties: Record<string, unknown>; required: string[] }>;
+      };
+      expect(developerPayloadSchema.oneOf).toHaveLength(2);
+      const completedSchema = developerPayloadSchema.oneOf.find((branch) =>
+        (branch.properties.outcome as { const?: string }).const === 'COMPLETED');
+      const blockedSchema = developerPayloadSchema.oneOf.find((branch) =>
+        (branch.properties.outcome as { const?: string }).const === 'BLOCKED');
+      expect(completedSchema?.required).toContain('commitSha');
+      expect(completedSchema?.properties.commitSha).toMatchObject({ type: 'string', minLength: 1, pattern: '\\S' });
+      expect(blockedSchema?.required).not.toContain('commitSha');
+      expect(blockedSchema?.properties.commitSha).toMatchObject({ type: 'string', minLength: 1, pattern: '\\S' });
+      expect((completedSchema as { additionalProperties?: boolean }).additionalProperties).toBe(false);
+      expect((blockedSchema as { additionalProperties?: boolean }).additionalProperties).toBe(false);
+
+      for (const [role, outcomes] of [
+        ['reviewer', ['PASS', 'CHANGES_REQUESTED', 'BLOCKED']],
+        ['qa', ['PASS', 'FAIL', 'BLOCKED']],
+        ['integration', ['PASS', 'BLOCKED']],
+      ] as const) {
+        const roleServer = new McpServer(new RunCapability({
+          id: `role-schema-${role}`, role, workspace: workspaceDir, allowedTools: ['submit_result'],
+        }));
+        const roleListing = await roleServer.processRequest({ jsonrpc: '2.0', id: 3, method: 'tools/list' }) as {
+          result: { tools: Array<{ name: string; inputSchema: { properties: Record<string, unknown> } }> };
+        };
+        const roleTool = roleListing.result.tools.find(({ name }) => name === 'submit_result');
+        const publishedSchema = JSON.stringify(roleTool?.inputSchema.properties.payload);
+        for (const outcome of outcomes) expect(publishedSchema).toContain(outcome);
+      }
+
+      const rejected = await server.processRequest({
+        jsonrpc: '2.0', id: 2, method: 'tools/call',
+        params: { name: 'submit_result', arguments: { payload: { version: '1.0.0', outcome: 'UNKNOWN' } } },
+      }) as { result: { isError: boolean; content: Array<{ text: string }> } };
+      expect(rejected.result.isError).toBe(true);
+      expect(rejected.result.content[0]?.text).toContain('schema validation failed');
+      expect(rejected.result.content[0]?.text).toContain("Expected 'COMPLETED' | 'BLOCKED'");
+      expect(rejected.result.content[0]?.text).not.toContain('Internal error');
+    });
+
+    it.each([
+      ['PASS', { version: '1.0.0', outcome: 'PASS', baseSha: 'base-sha', sourceSha: 'source-sha', provenance: ['merge verified'], evidence: ['pnpm test passed'] }],
+      ['BLOCKED', { version: '1.0.0', outcome: 'BLOCKED' }],
+    ])('accepts canonical Integration %s output through MCP tools/call', async (_label, payload) => {
+      const { McpServer } = await import('../../../../src/modules/execution/mcp/mcp-server.js');
+      const { RunCapability } = await import('../../../../src/modules/execution/run-capability.js');
+      const server = new McpServer(new RunCapability({
+        id: `integration-${payload.outcome}`, role: 'integration', workspace: workspaceDir, allowedTools: ['submit_result'],
+      }));
+
+      const response = await server.processRequest({
+        jsonrpc: '2.0', id: 10, method: 'tools/call',
+        params: { name: 'submit_result', arguments: { payload } },
+      }) as { result: { isError: boolean; content: Array<{ text: string }> } };
+
+      expect(response.result.isError).toBe(false);
+      expect(JSON.parse(response.result.content[0]!.text)).toEqual(payload);
+    });
+
+    it('rejects invalid Integration output through canonical role validation', async () => {
+      const { McpServer } = await import('../../../../src/modules/execution/mcp/mcp-server.js');
+      const { RunCapability } = await import('../../../../src/modules/execution/run-capability.js');
+      const server = new McpServer(new RunCapability({
+        id: 'integration-invalid', role: 'integration', workspace: workspaceDir, allowedTools: ['submit_result'],
+      }));
+
+      const response = await server.processRequest({
+        jsonrpc: '2.0', id: 11, method: 'tools/call',
+        params: { name: 'submit_result', arguments: { payload: { version: '1.0.0', outcome: 'PASS' } } },
+      }) as { result: { isError: boolean; content: Array<{ text: string }> } };
+
+      expect(response.result.isError).toBe(true);
+      expect(response.result.content[0]?.text).toContain('schema validation failed');
     });
 
     it('implements JSON-RPC errors, params validation, and silent notifications', async () => {
@@ -107,6 +267,9 @@ describe('MCP Server', () => {
       const { McpServer } = await import('../../../../src/modules/execution/mcp/mcp-server.js');
       const { RunCapability } = await import('../../../../src/modules/execution/run-capability.js');
       fs.writeFileSync(path.join(workspaceDir, 'file.txt'), 'hello');
+      const { GitTools } = await import('../../../../src/modules/execution/git-tools.js');
+      const gitTools = new GitTools(workspaceDir);
+      await gitTools.initRepo();
       const server = new McpServer(new RunCapability({
         id: 'schema-valid', role: 'developer', workspace: workspaceDir,
         allowedTools: ['workspace.read', 'workspace.patch', 'git.commit'],
@@ -117,7 +280,62 @@ describe('MCP Server', () => {
         path: 'file.txt', patches: [{ start: 0, end: 5, content: 'world' }],
       })).resolves.toMatchObject({ success: true });
       expect(fs.readFileSync(path.join(workspaceDir, 'file.txt'), 'utf8')).toBe('world');
+      await gitTools.add(['file.txt']);
       await expect(server.callTool('git.commit', { message: 'validation test' })).resolves.toMatchObject({ success: true });
+    });
+
+    it.each(['hello\nworld', ''])('transports actual workspace.read content over JSON-RPC (%j)', async (content) => {
+      const { McpServer } = await import('../../../../src/modules/execution/mcp/mcp-server.js');
+      const { RunCapability } = await import('../../../../src/modules/execution/run-capability.js');
+      fs.writeFileSync(path.join(workspaceDir, 'file.txt'), content);
+      const server = new McpServer(new RunCapability({
+        id: 'wire-read', role: 'developer', workspace: workspaceDir, allowedTools: ['workspace.read'],
+      }));
+      const response = await server.processRequest({
+        jsonrpc: '2.0', id: 12, method: 'tools/call',
+        params: { name: 'workspace.read', arguments: { path: 'file.txt' } },
+      });
+      const wire = JSON.parse(JSON.stringify(response)) as { result: { isError: boolean; content: Array<{ type: string; text: string }> } };
+      expect(wire.result.isError).toBe(false);
+      expect(wire.result.content[0]).toEqual({ type: 'text', text: content });
+    });
+
+    it('transports a serializable workspace.patch acknowledgement over JSON-RPC', async () => {
+      const { McpServer } = await import('../../../../src/modules/execution/mcp/mcp-server.js');
+      const { RunCapability } = await import('../../../../src/modules/execution/run-capability.js');
+      fs.writeFileSync(path.join(workspaceDir, 'file.txt'), 'hello');
+      const server = new McpServer(new RunCapability({
+        id: 'wire-patch', role: 'developer', workspace: workspaceDir, allowedTools: ['workspace.patch'],
+      }));
+      const response = await server.processRequest({
+        jsonrpc: '2.0', id: 13, method: 'tools/call',
+        params: { name: 'workspace.patch', arguments: { path: 'file.txt', patches: [{ start: 0, end: 5, content: 'world' }] } },
+      });
+      const wire = JSON.parse(JSON.stringify(response)) as { result: { isError: boolean; content: Array<{ type: string; text: string }> } };
+      expect(wire.result.isError).toBe(false);
+      expect(wire.result.content[0]).toEqual({ type: 'text', text: JSON.stringify({ success: true }) });
+      expect(JSON.parse(wire.result.content[0]!.text)).toEqual({ success: true });
+      expect(fs.readFileSync(path.join(workspaceDir, 'file.txt'), 'utf8')).toBe('world');
+    });
+
+    it.each([
+      ['workspace.read', { path: 'missing.txt' }],
+      ['workspace.patch', { path: 'file.txt', patches: [{ start: 0, end: 99, content: 'world' }] }],
+    ] as const)('preserves %s failures over JSON-RPC', async (name, args) => {
+      const { McpServer } = await import('../../../../src/modules/execution/mcp/mcp-server.js');
+      const { RunCapability } = await import('../../../../src/modules/execution/run-capability.js');
+      fs.writeFileSync(path.join(workspaceDir, 'file.txt'), 'hello');
+      const server = new McpServer(new RunCapability({
+        id: 'wire-workspace-error', role: 'developer', workspace: workspaceDir, allowedTools: ['workspace.read', 'workspace.patch'],
+      }));
+      const response = await server.processRequest({
+        jsonrpc: '2.0', id: 14, method: 'tools/call', params: { name, arguments: args },
+      });
+      const wire = JSON.parse(JSON.stringify(response)) as { result: { isError: boolean; content: Array<{ type: string; text: string }> } };
+      expect(wire.result.isError).toBe(true);
+      expect(wire.result.content[0]).toMatchObject({ type: 'text', text: expect.any(String) });
+      expect(JSON.parse(wire.result.content[0]!.text)).toEqual({ error: expect.any(String) });
+      expect(fs.readFileSync(path.join(workspaceDir, 'file.txt'), 'utf8')).toBe('hello');
     });
 
     it('returns an internal error for runtime failures without mislabeling them as parse errors', async () => {
@@ -175,11 +393,49 @@ describe('MCP Server', () => {
       const server = new McpServer(new RunCapability({
         id: 'project-test', role: 'reviewer', workspace: workspaceDir,
         allowedTools: ['project.test'],
-        projectConfig: { commands: { test: { executable: process.execPath, args: ['-e', 'process.stdout.write("real test")'] } } },
+        approvedProjectConfig: approvedProjectConfig({ test: { executable: process.execPath, args: ['-e', 'process.stdout.write("real test")'] } }),
       }));
       const result = await server.callTool('project.test', {});
       expect(result.success).toBe(true);
       expect(result.result).toMatchObject({ action: 'test', stdout: 'real test', exitCode: 0 });
+    });
+
+    it('returns a completed failing test as a readable tool result', async () => {
+      const { McpServer } = await import('../../../../src/modules/execution/mcp/mcp-server.js');
+      const { RunCapability } = await import('../../../../src/modules/execution/run-capability.js');
+      const server = new McpServer(new RunCapability({
+        id: 'project-test-failed-exit', role: 'developer', workspace: workspaceDir,
+        allowedTools: ['project.test'],
+        approvedProjectConfig: approvedProjectConfig({ test: { executable: process.execPath, args: [
+          '-e', 'process.stdout.write("baseline stdout"); process.stderr.write("baseline stderr"); process.exit(1)',
+        ] } }),
+      }));
+
+      const result = await server.callTool('project.test', {});
+      expect(result).toMatchObject({
+        success: false,
+        result: { action: 'test', success: false, stdout: 'baseline stdout', stderr: 'baseline stderr', exitCode: 1 },
+      });
+      expect(result.error).toContain('baseline stderr');
+
+      const rpc = await server.processRequest({
+        jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'project.test' },
+      });
+      const rpcResult = (rpc as { result: { isError: boolean; content: Array<{ text: string }> } }).result;
+      expect(rpcResult.isError).toBe(true);
+      expect(JSON.parse(rpcResult.content[0]!.text)).toMatchObject({ success: false, exitCode: 1 });
+    });
+
+    it('keeps project.test tool failures for actions without a process exit code', async () => {
+      const { McpServer } = await import('../../../../src/modules/execution/mcp/mcp-server.js');
+      const { RunCapability } = await import('../../../../src/modules/execution/run-capability.js');
+      const server = new McpServer(new RunCapability({
+        id: 'project-test-unconfigured', role: 'developer', workspace: workspaceDir,
+        allowedTools: ['project.test'], projectConfig: { commands: {} },
+      }));
+
+      const result = await server.callTool('project.test', {});
+      expect(result).toMatchObject({ success: false, error: expect.stringContaining('project test is not configured') });
     });
 
     it.each([
@@ -192,7 +448,7 @@ describe('MCP Server', () => {
       const server = new McpServer(new RunCapability({
         id: `project-${action}`, role: 'developer', workspace: workspaceDir,
         allowedTools: [toolName],
-        projectConfig: { commands: { [action]: { executable: process.execPath, args: ['-e', `process.stdout.write("${action}")`] } } },
+        approvedProjectConfig: approvedProjectConfig({ [action]: { executable: process.execPath, args: ['-e', `process.stdout.write("${action}")`] } }),
       }));
 
       const result = await server.callTool(toolName, {});
@@ -407,7 +663,7 @@ describe('MCP Server', () => {
       });
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain('schema');
+      expect(result.error).toContain('Unrecognized key: "invalidField"');
     });
 
     it('should block write-capable tools after submit_result', async () => {
@@ -435,6 +691,7 @@ describe('MCP Server', () => {
         payload: {
           version: '1.0',
           outcome: 'COMPLETED',
+          commitSha: 'abc123',
         },
       });
 
@@ -467,6 +724,29 @@ describe('MCP Server', () => {
       expect((await server.callTool('submit_result', { payload: { version: '1.0', outcome: 'PASS' } })).success).toBe(true);
       expect((await server.callTool('submit_result', { payload: { version: '1.0', outcome: 'PASS' } })).error).toContain('RUN_ALREADY_COMPLETING');
       expect(accepted).toHaveLength(1);
+    });
+
+    it('allows a retry when submit_result handler throws before accepting the result', async () => {
+      const { McpServer } = await import('../../../../src/modules/execution/mcp/mcp-server.js');
+      const { RunCapability } = await import('../../../../src/modules/execution/run-capability.js');
+      let attempts = 0;
+      const completion = {
+        accept: async () => {
+          attempts += 1;
+          if (attempts === 1) throw new Error('temporary completion store failure');
+          return true;
+        },
+      };
+      const server = new McpServer(new RunCapability({
+        id: 'retry-ref', capabilityRef: 'retry-ref', runId: 'run-retry', role: 'reviewer',
+        workspace: workspaceDir, allowedTools: ['submit_result'],
+      }), { completion });
+
+      await expect(server.callTool('submit_result', { payload: { version: '1.0', outcome: 'PASS' } }))
+        .rejects.toThrow('temporary completion store failure');
+      await expect(server.callTool('submit_result', { payload: { version: '1.0', outcome: 'PASS' } }))
+        .resolves.toMatchObject({ success: true });
+      expect(attempts).toBe(2);
     });
 
     it('rejects a capability bound to a different run or role', async () => {

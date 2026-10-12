@@ -37,6 +37,7 @@ import { JobRunner } from "./platform/jobs/job-runner.js";
 import { JobWorker } from "./platform/jobs/job-worker.js";
 import { RuntimeOrchestrator } from "./modules/runtime/run-orchestrator.js";
 import { RunService } from "./modules/runtime/run-service.js";
+import { rotateRunProcessOwnerForResumeTx } from "./modules/runtime/run-process-owner.js";
 import { EventBus } from "./platform/events/event-bus.js";
 import { EventDispatcher } from "./platform/events/event-dispatcher.js";
 import { OutboxWorker } from "./platform/events/outbox-worker.js";
@@ -157,7 +158,25 @@ for (const template of Object.values(templates)) workflowRegistry.register(templ
 const workflowEngine = new WorkflowEngine(database, workflowRegistry);
 const eventBus = new EventBus();
 const eventDispatcher = new EventDispatcher(database, eventBus);
-const runService = new RunService(database, runtime);
+const runService: RunService = new RunService(database, runtime, undefined, {
+  verifyContext: async (runId): Promise<void> => runService.verifyCurrentResumeContext(runId),
+  claimInTransaction: (tx, input) => {
+    const reservation = scheduler.getRunRecoveryReservationInTransaction(tx, input.runId);
+    if (!reservation) throw new Error("RECOVERY_RESERVATION_MISSING");
+    const claimed = scheduler.claimRunRecoveryInTransaction(tx, {
+      runId: input.runId,
+      reservationId: reservation.reservationId,
+      projectId: reservation.projectId,
+      role: reservation.role,
+    });
+    if (claimed !== reservation.reservationId) throw new Error("RECOVERY_RESERVATION_MISMATCH");
+    rotateRunProcessOwnerForResumeTx(tx, {
+      runId: input.runId,
+      attempt: input.attempt,
+      previousAttempt: input.previousAttempt,
+    });
+  },
+});
 const runtimeOrchestrator = new RuntimeOrchestrator(database, workflowEngine, eventBus, eventDispatcher, scheduler, runService);
 runtimeOrchestrator.initialize();
 const planningService = new PlanningService(database);
@@ -231,11 +250,20 @@ async function startLifecycle(): Promise<void> {
   ...startupReconciliation,
   additionalReconcilers: [
     ...startupReconciliation.additionalReconcilers,
-    ...createApplicationRecoveryReconcilers({ epicOrchestrator, scheduler, planningService, runService }),
+    ...createApplicationRecoveryReconcilers({ epicOrchestrator, scheduler, planningService }),
   ],
   workers,
   signal: startupAbortController.signal,
   });
+  if (status.get() !== "READY") throw new Error("RUN_RECOVERY_REQUIRES_READY_SYSTEM");
+  try {
+    await runService.resumeRecoveryCandidates();
+  } finally {
+    // Recovery can terminalize a Run after the startup reconciliation already ran.
+    scheduler.reconcile();
+  }
+  planningService.reconcileInterruptedRequests();
+  await epicOrchestrator.resumeApprovedEpics();
 }
 
 startupCleanup = createStartupCleanup({

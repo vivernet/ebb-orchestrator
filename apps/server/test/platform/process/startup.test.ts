@@ -363,6 +363,159 @@ describe("startup lifecycle", () => {
     }
   });
 
+  it.each([
+    ["EPIC_RECOVERY_FAILED", "EPIC_RECOVERY_FAILED"],
+    ["EPIC_RECOVERY_CHECKPOINT_INVALID", "EPIC_RECOVERY_CHECKPOINT_INVALID"],
+    ["EPIC_INTEGRATION_WORKTREE_ROOT_UNAVAILABLE", "EPIC_INTEGRATION_WORKTREE_ROOT_UNAVAILABLE"],
+    ["EPIC_PHASE_NOT_FAILED_UNVALIDATED", "EPIC_PHASE_NOT_FAILED_UNVALIDATED"],
+    ["EPIC_PHASE_RUN_NOT_TERMINAL", "EPIC_PHASE_RUN_NOT_TERMINAL"],
+    ["EPIC_PHASE_OWNER_STOP_UNPROVEN", "EPIC_PHASE_OWNER_STOP_UNPROVEN"],
+    ["EPIC_PHASE_ORPHAN_LAUNCH_EVIDENCE", "EPIC_PHASE_ORPHAN_LAUNCH_EVIDENCE"],
+    ["EPIC_PHASE_RESERVATION_PRESENT", "EPIC_PHASE_RESERVATION_PRESENT"],
+    ["EPIC_PHASE_RESOURCE_LOCK_PRESENT", "EPIC_PHASE_RESOURCE_LOCK_PRESENT"],
+    ["HERMES_CONFIG_HOME_UNSAFE", "HERMES_CONFIG_HOME_UNSAFE"],
+    ["HERMES_INSTALL_LAYOUT_UNSUPPORTED", "HERMES_INSTALL_LAYOUT_UNSUPPORTED"],
+    ["HERMES_LAUNCHER_AMBIGUOUS", "HERMES_LAUNCHER_AMBIGUOUS"],
+    ["HERMES_LAUNCHER_NOT_FOUND", "HERMES_LAUNCHER_NOT_FOUND"],
+    ["HERMES_PATH_IDENTITY_INVALID", "HERMES_PATH_IDENTITY_INVALID"],
+    ["HERMES_PLATFORM_UNSUPPORTED", "HERMES_PLATFORM_UNSUPPORTED"],
+    ["HERMES_RUNTIME_LAYOUT_UNSUPPORTED", "HERMES_RUNTIME_LAYOUT_UNSUPPORTED"],
+    ["HERMES_SOURCE_IDENTITY_MISMATCH", "HERMES_SOURCE_IDENTITY_MISMATCH"],
+    ["HERMES_SOURCE_IDENTITY_UNAVAILABLE", "HERMES_SOURCE_IDENTITY_UNAVAILABLE"],
+    ["HERMES_SOURCE_IDENTITY_DIRTY", "HERMES_SOURCE_IDENTITY_DIRTY"],
+    ["NATIVE_HELPER_EXECUTION_FAILED", "NATIVE_HELPER_EXECUTION_FAILED"],
+    ["NATIVE_HELPER_GATE_UNAVAILABLE", "NATIVE_HELPER_GATE_UNAVAILABLE"],
+    ["NATIVE_HELPER_INTEGRITY_ANCHOR_INVALID", "NATIVE_HELPER_INTEGRITY_ANCHOR_INVALID"],
+    ["NATIVE_HELPER_INTEGRITY_ANCHOR_UNAVAILABLE", "NATIVE_HELPER_INTEGRITY_ANCHOR_UNAVAILABLE"],
+    ["NATIVE_HELPER_INTEGRITY_MISMATCH", "NATIVE_HELPER_INTEGRITY_MISMATCH"],
+    ["NATIVE_HELPER_LAUNCH_FAILED", "NATIVE_HELPER_LAUNCH_FAILED"],
+    ["NATIVE_HELPER_LAUNCH_INPUT_INVALID", "NATIVE_HELPER_LAUNCH_INPUT_INVALID"],
+    ["NATIVE_HELPER_LAUNCH_OPTIONS_INVALID", "NATIVE_HELPER_LAUNCH_OPTIONS_INVALID"],
+    ["NATIVE_HELPER_LAUNCH_STREAM_UNAVAILABLE", "NATIVE_HELPER_LAUNCH_STREAM_UNAVAILABLE"],
+    ["NATIVE_HELPER_PATH_UNSAFE", "NATIVE_HELPER_PATH_UNSAFE"],
+    ["NATIVE_HELPER_PATH_INVALID", "NATIVE_HELPER_PATH_INVALID"],
+    ["NATIVE_HELPER_PLATFORM_UNSUPPORTED", "NATIVE_HELPER_PLATFORM_UNSUPPORTED"],
+    ["NATIVE_HELPER_STDIN_WRITE_FAILED", "NATIVE_HELPER_STDIN_WRITE_FAILED"],
+    ["NATIVE_HELPER_UNAVAILABLE", "NATIVE_HELPER_UNAVAILABLE"],
+    ["INTEGRATION_PREPARE_ROOT_CREATE_FAILED", "INTEGRATION_PREPARE_ROOT_CREATE_FAILED"],
+    ["INTEGRATION_PREPARE_HOOKS_DIR_CREATE_FAILED", "INTEGRATION_PREPARE_HOOKS_DIR_CREATE_FAILED"],
+    ["INTEGRATION_PREPARE_REFS_FAILED:GIT_EXIT_128:OTHER", "INTEGRATION_PREPARE_REFS_FAILED:GIT_EXIT_128:OTHER"],
+    ["INTEGRATION_PREPARE_WORKTREE_FAILED:GIT_EXIT_128:GIT_DIR_TOO_BIG", "INTEGRATION_PREPARE_WORKTREE_FAILED:GIT_EXIT_128:GIT_DIR_TOO_BIG"],
+    ["INTEGRATION_PREPARE_WORKTREE_FAILED:GIT_EXIT_1:PATH_TOO_LONG", "INTEGRATION_PREPARE_WORKTREE_FAILED:GIT_EXIT_1:PATH_TOO_LONG"],
+    ["INTEGRATION_PREPARE_PERSISTENCE_FAILED:GIT_EXIT_UNKNOWN:BRANCH_EXISTS", "INTEGRATION_PREPARE_PERSISTENCE_FAILED:GIT_EXIT_UNKNOWN:BRANCH_EXISTS"],
+    ["INTEGRATION_PREPARE_WORKTREE_FAILED:GIT_EXIT_128:WORKTREE_PATH_EXISTS", "INTEGRATION_PREPARE_WORKTREE_FAILED:GIT_EXIT_128:WORKTREE_PATH_EXISTS"],
+    ["INTEGRATION_PREPARE_WORKTREE_FAILED:GIT_EXIT_128:BRANCH_IN_USE", "INTEGRATION_PREPARE_WORKTREE_FAILED:GIT_EXIT_128:BRANCH_IN_USE"],
+    ["INTEGRATION_PREPARE_WORKTREE_FAILED:GIT_EXIT_128:REF_NOT_FOUND", "INTEGRATION_PREPARE_WORKTREE_FAILED:GIT_EXIT_128:REF_NOT_FOUND"],
+    ["INTEGRATION_PREPARE_WORKTREE_FAILED:GIT_EXIT_128:INVALID_OBJECT", "INTEGRATION_PREPARE_WORKTREE_FAILED:GIT_EXIT_128:INVALID_OBJECT"],
+    ["INTEGRATION_PREPARE_WORKTREE_FAILED:GIT_EXIT_128:REPOSITORY_UNAVAILABLE", "INTEGRATION_PREPARE_WORKTREE_FAILED:GIT_EXIT_128:REPOSITORY_UNAVAILABLE"],
+    ["INTEGRATION_PREPARE_WORKTREE_FAILED:GIT_EXIT_128:WORKTREE_LOCKED", "INTEGRATION_PREPARE_WORKTREE_FAILED:GIT_EXIT_128:WORKTREE_LOCKED"],
+    ["INTEGRATION_PREPARE_WORKTREE_FAILED:GIT_EXIT_128:NESTED_WORKTREE", "INTEGRATION_PREPARE_WORKTREE_FAILED:GIT_EXIT_128:NESTED_WORKTREE"],
+    ["INTEGRATION_PREPARE_WORKTREE_FAILED:GIT_EXIT_128:CREATE_REJECTED", "INTEGRATION_PREPARE_WORKTREE_FAILED:GIT_EXIT_128:CREATE_REJECTED"],
+    ["INTEGRATION_PREPARE_WORKTREE_FAILED:GIT_EXIT_128:LOCK_REJECTED", "INTEGRATION_PREPARE_WORKTREE_FAILED:GIT_EXIT_128:LOCK_REJECTED"],
+    ["INTEGRATION_PREPARE_WORKTREE_FAILED:GIT_EXIT_128:REFERENCE_REJECTED", "INTEGRATION_PREPARE_WORKTREE_FAILED:GIT_EXIT_128:REFERENCE_REJECTED"],
+    ["INTEGRATION_PREPARE_WORKTREE_FAILED:GIT_EXIT_128:WORKTREE_REJECTED", "INTEGRATION_PREPARE_WORKTREE_FAILED:GIT_EXIT_128:WORKTREE_REJECTED"],
+    ["INTEGRATION_PREPARE_REFS_FAILED:OTHER", "INTEGRATION_PREPARE_REFS_FAILED:OTHER"],
+    ["INTEGRATION_PREPARE_PERSISTENCE_FAILED:ERR_SQLITE_ERROR", "INTEGRATION_PREPARE_PERSISTENCE_FAILED:ERR_SQLITE_ERROR"],
+    ["INTEGRATION_PREPARE_PERSISTENCE_FAILED:SQLITE_CONSTRAINT", "INTEGRATION_PREPARE_PERSISTENCE_FAILED:SQLITE_CONSTRAINT"],
+    ["INTEGRATION_PREPARE_PERSISTENCE_FAILED:SQLITE_BUSY", "INTEGRATION_PREPARE_PERSISTENCE_FAILED:SQLITE_BUSY"],
+    ["INTEGRATION_PREPARE_PERSISTENCE_FAILED:SQLITE_LOCKED", "INTEGRATION_PREPARE_PERSISTENCE_FAILED:SQLITE_LOCKED"],
+    ["INTEGRATION_PREPARE_PERSISTENCE_FAILED:SQLITE_READONLY", "INTEGRATION_PREPARE_PERSISTENCE_FAILED:SQLITE_READONLY"],
+    ["INTEGRATION_PREPARE_PERSISTENCE_FAILED:SQLITE_FULL", "INTEGRATION_PREPARE_PERSISTENCE_FAILED:SQLITE_FULL"],
+    ["INTEGRATION_PREPARE_PERSISTENCE_FAILED:SQLITE_IOERR", "INTEGRATION_PREPARE_PERSISTENCE_FAILED:SQLITE_IOERR"],
+    ["INTEGRATION_PREPARE_FAILED:WORKSPACE_UNAVAILABLE", "UNCLASSIFIED"],
+    ["INTEGRATION_PREPARE_OTHER_FAILED:GIT_EXIT_1:OTHER", "UNCLASSIFIED"],
+    ["INTEGRATION_PREPARE_REFS_FAILED:GIT_EXIT_-1:OTHER", "UNCLASSIFIED"],
+    ["INTEGRATION_PREPARE_REFS_FAILED:GIT_EXIT_1:SECRET_TOKEN", "UNCLASSIFIED"],
+    ["INTEGRATION_PREPARE_WORKTREE_FAILED:GIT_EXIT_128:BRANCH_REMOVED", "UNCLASSIFIED"],
+    ["INTEGRATION_PREPARE_WORKTREE_FAILED:GIT_EXIT_128:INVALID_OBJECT_SECRET", "UNCLASSIFIED"],
+    ["INTEGRATION_PREPARE_WORKTREE_FAILED:GIT_EXIT_128:CREATE_REJECTED_SECRET", "UNCLASSIFIED"],
+    ["INTEGRATION_PREPARE_REFS_FAILED:GIT_EXIT_1:OTHER:/private/token", "UNCLASSIFIED"],
+    ["INTEGRATION_PREPARE_REFS_FAILED:SQLITE_SECRET_TOKEN", "UNCLASSIFIED"],
+    ["INTEGRATION_PREPARE_REFS_FAILED:SQLITE_BUSY", "UNCLASSIFIED"],
+    ["C:\\Users\\private\\token=secret", "UNCLASSIFIED"],
+    ["EPIC_SECRET_TOKEN=supersecret", "UNCLASSIFIED"],
+    ["EPIC_UNKNOWN_SUFFIX", "UNCLASSIFIED"],
+    ["NATIVE_HELPER_GATE_FAIL:PHASE_SECRET", "UNCLASSIFIED"],
+    ["PRIVATE_ACCESS_TOKEN", "UNCLASSIFIED"],
+    ["EPIC_RECOVERY_FAILED\nTOKEN_SECRET", "UNCLASSIFIED"],
+    [`EPIC_${"A".repeat(160)}`, "UNCLASSIFIED"],
+  ])("logs a bounded allowlisted recovery code for %s", async (message, expectedCode) => {
+    const status = new StatusTracker();
+    const workerStart = vi.fn(async () => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const deps: SystemLifecycleDeps = {
+      instanceLock: { acquire: async () => ({ pid: 1 }), release: async () => {} },
+      database: { open: async () => {}, close: () => {} },
+      migrator: { run: async () => {} },
+      status,
+      preflightRecovery: async () => { throw new Error(message); },
+      reconcileProjectConfig: async () => {},
+      reconcileOutbox: async () => {},
+      reconcileJobs: async () => {},
+      reconcileArtifacts: async () => {},
+      additionalReconcilers: [],
+      workers: [{ start: workerStart, stop: async () => {} }],
+    };
+    try {
+      await startSystem(deps);
+      expect(status.get()).toBe("DEGRADED");
+      expect(workerStart).not.toHaveBeenCalled();
+      expect(errorSpy.mock.calls).toEqual([[
+        `[orchestrator] startup reconciliation failed: step=preflight_recovery; error_kind=error; error_code=${expectedCode}`,
+      ]]);
+      if (expectedCode === "UNCLASSIFIED") {
+        expect(errorSpy.mock.calls.flat().join(" ")).not.toContain(message);
+      }
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("logs UNCLASSIFIED for a non-Error recovery failure", async () => {
+    const status = new StatusTracker();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const deps: SystemLifecycleDeps = {
+      instanceLock: { acquire: async () => ({ pid: 1 }), release: async () => {} },
+      database: { open: async () => {}, close: () => {} },
+      migrator: { run: async () => {} },
+      status,
+      preflightRecovery: async () => { throw { message: "EPIC_RECOVERY_CHECKPOINT_INVALID" }; },
+      reconcileProjectConfig: async () => {}, reconcileOutbox: async () => {}, reconcileJobs: async () => {},
+      reconcileArtifacts: async () => {}, additionalReconcilers: [], workers: [],
+    };
+    try {
+      await startSystem(deps);
+      expect(status.get()).toBe("DEGRADED");
+      expect(errorSpy.mock.calls).toEqual([[
+        "[orchestrator] startup reconciliation failed: step=preflight_recovery; error_kind=non_error; error_code=UNCLASSIFIED",
+      ]]);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("keeps a stable resume recovery code in the named startup diagnostic", async () => {
+    const status = new StatusTracker();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const deps: SystemLifecycleDeps = {
+      instanceLock: { acquire: async () => ({ pid: 1 }), release: async () => {} },
+      database: { open: async () => {}, close: () => {} }, migrator: { run: async () => {} }, status,
+      preflightRecovery: async () => {}, reconcileProjectConfig: async () => {}, reconcileOutbox: async () => {},
+      reconcileJobs: async () => {}, reconcileArtifacts: async () => {},
+      additionalReconcilers: [{ name: "resume_approved_epics", run: async () => { throw new Error("EPIC_RECOVERY_CHECKPOINT_INVALID"); } }],
+      workers: [],
+    };
+    try {
+      await startSystem(deps);
+      expect(status.get()).toBe("DEGRADED");
+      expect(errorSpy.mock.calls).toEqual([[
+        "[orchestrator] startup reconciliation failed: step=resume_approved_epics; error_kind=error; error_code=EPIC_RECOVERY_CHECKPOINT_INVALID",
+      ]]);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
   it("replaces an invalid recovery phase name instead of interpolating hostile text into logs", async () => {
     const status = new StatusTracker();
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -389,7 +542,7 @@ describe("startup lifecycle", () => {
 
       expect(status.get()).toBe("DEGRADED");
       expect(errorSpy.mock.calls).toEqual([[
-        "[orchestrator] startup reconciliation failed: step=invalid_recovery_step; error_kind=error",
+        "[orchestrator] startup reconciliation failed: step=invalid_recovery_step; error_kind=error; error_code=UNCLASSIFIED",
       ]]);
     } finally {
       errorSpy.mockRestore();

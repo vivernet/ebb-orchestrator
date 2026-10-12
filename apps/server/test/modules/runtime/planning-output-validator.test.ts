@@ -24,6 +24,7 @@ describe("planning output validation", () => {
       version: "1.0.0",
       outcome: "COMPLETED",
       summary: "Implemented the task",
+      commitSha: "test-commit-sha",
     });
 
     expect(result.valid).toBe(true);

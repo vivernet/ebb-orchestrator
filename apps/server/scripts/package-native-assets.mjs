@@ -30,18 +30,17 @@ export function ensureWindowsRunSupervisor({ platform, serverRoot, buildHelper }
 }
 
 /**
- * Собирает Hermes profile-path helper на поддерживаемом runtime host и проверяет его runtime artifact.
- * Другие платформы не получают фиктивный fallback executable.
+ * Собирает Windows file identity helper для установленного Hermes и проверяет runtime artifact.
+ * Другие платформы получают identity через обычный stat и не требуют helper.
  *
  * @param {{ platform: string, serverRoot: string, buildHelper: () => void }} options Платформа, корень server package и builder.
- * @returns {string | null} Абсолютный путь к helper для Windows/Linux или null на неподдерживаемой платформе.
+ * @returns {string | null} Абсолютный путь к helper для Windows или null на другой платформе.
  * @throws {Error} Если поддерживаемая сборка не положила непустой executable.
  */
 export function ensureHermesProfilePathHelper({ platform, serverRoot, buildHelper }) {
-  if (platform !== "win32" && platform !== "linux") return null;
+  if (platform !== "win32") return null;
 
-  const filename = platform === "win32" ? "ebb-hermes-profile-path.exe" : "ebb-hermes-profile-path";
-  const helperPath = resolve(serverRoot, "dist/native/hermes-profile-path", filename);
+  const helperPath = resolve(serverRoot, "dist/native/hermes-profile-path/ebb-hermes-profile-path.exe");
   buildHelper();
 
   let helperStat;
@@ -94,9 +93,7 @@ export function ensureLinuxHermesLauncher({ platform, serverRoot, buildHelper })
 export function writeNativeHelperIntegrityAnchor({ serverRoot }) {
   const helpers = {
     windowsRunSupervisor: resolve(serverRoot, "dist/native/windows-run-supervisor/ebb-run-supervisor.exe"),
-    hermesProfilePath: resolve(serverRoot, "dist/native/hermes-profile-path", process.platform === "win32"
-      ? "ebb-hermes-profile-path.exe"
-      : "ebb-hermes-profile-path"),
+    hermesProfilePath: resolve(serverRoot, "dist/native/hermes-profile-path/ebb-hermes-profile-path.exe"),
     linuxHermesLauncher: resolve(serverRoot, "dist/native/linux-hermes-launcher/ebb-linux-hermes-launcher"),
   };
   const digests = {};

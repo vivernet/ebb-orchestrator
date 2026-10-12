@@ -9,7 +9,7 @@ const binding = {
 };
 
 function line(stage: string, digest: string, values = binding): string {
-  return `EBB_EVIDENCE\tV1\t${stage}\t${values.containmentId}\t${values.runId}\t${values.launchNonce}\t${digest}\n`;
+  return `EBB_EVIDENCE\tV3\t${stage}\t${values.containmentId}\t${values.runId}\t${values.launchNonce}\t${digest}\n`;
 }
 
 function records(values = binding): string {
@@ -17,7 +17,7 @@ function records(values = binding): string {
 }
 
 function envelope(body: string): string {
-  return `${body}EBB_EVIDENCE_END_V1:${Buffer.byteLength(body).toString(16).padStart(8, "0")}`;
+  return `${body}EBB_EVIDENCE_END_V3:${Buffer.byteLength(body).toString(16).padStart(8, "0")}`;
 }
 
 describe("bounded Windows native path-chain evidence framing", () => {
@@ -35,15 +35,15 @@ describe("bounded Windows native path-chain evidence framing", () => {
   });
 
   it.each([
-    ["lookalike payload", `EBB_EVIDENCEISH\tV1\t${envelope(records())}`],
-    ["spoofed evidence in payload", `EBB_EVIDENCE\tV1\t${WINDOWS_PATH_CHAIN_EVIDENCE_STAGES[0]}\t${"a".repeat(64)}\t${binding.runId}\t${binding.launchNonce}\t${"1".repeat(64)}\n${envelope(records())}`],
+    ["lookalike payload", `EBB_EVIDENCEISH\tV3\t${envelope(records())}`],
+    ["spoofed evidence in payload", `EBB_EVIDENCE\tV3\t${WINDOWS_PATH_CHAIN_EVIDENCE_STAGES[0]}\t${"a".repeat(64)}\t${binding.runId}\t${binding.launchNonce}\t${"1".repeat(64)}\n${envelope(records())}`],
     ["duplicate", envelope(`${line(WINDOWS_PATH_CHAIN_EVIDENCE_STAGES[0]!, "1".repeat(64))}${records()}`)],
     ["out of order", envelope(`${line(WINDOWS_PATH_CHAIN_EVIDENCE_STAGES[1]!, "2".repeat(64))}${records()}`)],
     ["unknown stage", envelope(`${line("OTHER", "1".repeat(64))}${records()}`)],
     ["wrong owner binding", envelope(`${line(WINDOWS_PATH_CHAIN_EVIDENCE_STAGES[0]!, "1".repeat(64), { ...binding, containmentId: "c".repeat(64) })}${records()}`)],
     ["wrong commitment", envelope(`${line(WINDOWS_PATH_CHAIN_EVIDENCE_STAGES[0]!, "f".repeat(64))}${records().split("\n").slice(1).join("\n")}`)],
     ["oversized record", envelope(`EBB_EVIDENCE\t${"x".repeat(600)}\n${records()}`)],
-    ["unknown version", envelope(`EBB_EVIDENCE\tV2\t${records()}`)],
+    ["unknown version", envelope(`EBB_EVIDENCE\tV1\t${records()}`)],
   ])("rejects %s", (_name, input) => {
     const parser = new WindowsPathChainEvidenceParser(binding);
     parser.write(Buffer.from(input, "utf8"));
@@ -57,7 +57,7 @@ describe("bounded Windows native path-chain evidence framing", () => {
     expect(() => missing.finish()).toThrow();
 
     const malformed = new WindowsPathChainEvidenceParser(binding);
-    malformed.write(Buffer.from(envelope(`EBB_EVIDENCE\tV1\t${WINDOWS_PATH_CHAIN_EVIDENCE_STAGES[0]}\tshort\n`)));
+    malformed.write(Buffer.from(envelope(`EBB_EVIDENCE\tV3\t${WINDOWS_PATH_CHAIN_EVIDENCE_STAGES[0]}\tshort\n`)));
     expect(() => malformed.finish()).toThrow();
 
     const trailing = new WindowsPathChainEvidenceParser(binding);

@@ -34,6 +34,17 @@ const schemas: Record<string, z.ZodSchema> = {
   devops: DevOpsOutputSchema,
 };
 
+/**
+ * Exposes the exact role output contract used by validation as JSON Schema for MCP clients.
+ * The server still validates submitted values with the same Zod schema in `validateRoleOutput`.
+ * @param role - Normalized role name bound to the run capability.
+ * @returns JSON Schema for the role output, or `undefined` for an unsupported role.
+ */
+export function getRoleOutputJsonSchema(role: string): Record<string, unknown> | undefined {
+  const schema = schemas[role];
+  return schema ? z.toJSONSchema(schema) : undefined;
+}
+
 const roles = new Set(["coordinator", "product_manager", "product-manager", "architect", "middle_dev", "senior_dev", "developer", "devops", "reviewer", "qa", "integration"]);
 const workflows = new Set(["standard", "bugfix", "architecture_change", "documentation", "devops"]);
 

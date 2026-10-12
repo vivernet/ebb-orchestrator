@@ -31,7 +31,6 @@ describe("RuntimeEventHandlers runtime dispatch", () => {
         outcome: { success: true, exitCode: 0, output: "accepted", diagnostics: { runId: "run-1" } },
       }),
       failPreparedRun: vi.fn().mockReturnValue(true),
-      cleanupTerminalHermesProfile: vi.fn().mockResolvedValue(undefined),
     } as unknown as RunService;
     const git = { run: vi.fn(async (_path: string, args: string[]) => ({
       exitCode: 0, stdout: args[0] === "symbolic-ref" ? worktree.branch : args[0] === "diff" ? "fixture diff" : "a".repeat(40), stderr: "",
@@ -72,7 +71,7 @@ describe("RuntimeEventHandlers runtime dispatch", () => {
   });
 
   it("fails the same prepared run and releases its reservation when launch fails", async () => {
-    const { scheduler, runService, handlers, releaseTaskMock } = setup();
+    const { scheduler, runService, handlers } = setup();
     vi.mocked(runService.executePreparedRun).mockRejectedValueOnce(new Error("launcher unavailable"));
 
     await expect(handlers.handleAgentRunRequested({
@@ -83,10 +82,21 @@ describe("RuntimeEventHandlers runtime dispatch", () => {
 
     expect(runService.failPreparedRun).toHaveBeenCalledWith("run-1", expect.any(Error));
     expect(scheduler.releaseTask).toHaveBeenCalledWith("task-1", 0);
-    expect(runService.cleanupTerminalHermesProfile).toHaveBeenCalledWith("run-1");
-    expect(releaseTaskMock.mock.invocationCallOrder[0]).toBeLessThan(
-      vi.mocked(runService.cleanupTerminalHermesProfile).mock.invocationCallOrder[0]!,
-    );
+  });
+
+  it("keeps an omitted model under the configured Hermes selection", async () => {
+    const { handlers, runService } = setup();
+
+    await handlers.handleAgentRunRequested({
+      type: "AgentRunRequested", aggregateId: "task-1", payload: {},
+    });
+
+    expect(runService.prepareRunWithHermesPreflight).toHaveBeenCalledWith(expect.objectContaining({
+      model: "default",
+      contextInput: expect.objectContaining({
+        versions: expect.objectContaining({ model: "default" }),
+      }),
+    }));
   });
 
   it("retains task reservation when launch failure has no persisted stop proof", async () => {
@@ -100,7 +110,6 @@ describe("RuntimeEventHandlers runtime dispatch", () => {
 
     expect(runService.failPreparedRun).toHaveBeenCalledWith("run-1", expect.any(Error));
     expect(scheduler.releaseTask).not.toHaveBeenCalled();
-    expect(runService.cleanupTerminalHermesProfile).not.toHaveBeenCalled();
   });
 
   it("rejects unsupported Task roles before scheduler or Run preparation", async () => {

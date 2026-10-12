@@ -38,20 +38,37 @@ export class GitTools {
   }
 
   async add(patterns: string[]): Promise<string> {
-    try { return (await this.git.run(this.workspace, ['add', '--', ...patterns])).stdout; }
-    catch (err: unknown) { return err instanceof Error ? err.message : String(err); }
+    if (patterns.length === 0 || patterns.some((pattern) => !isSafeWorkspacePath(pattern))) {
+      throw new Error('Invalid Git add paths');
+    }
+    return (await this.git.run(this.workspace, ['add', '--', ...patterns.map((pattern) => `:(literal)${pattern}`)])).stdout;
   }
 
   async commit(message: string): Promise<string> {
-    try {
-      // Managed commits должен never run repository hooks, и Объект сообщение является один argv item.
-      return (await this.git.run(this.workspace, ['commit', '--no-verify', '-m', message])).stdout;
-    } catch (err: unknown) {
-      return err instanceof Error ? err.message : String(err);
-    }
+    // Managed commits must not run repository hooks; preserve process failure so MCP never reports a false success.
+    return (await this.git.run(this.workspace, ['commit', '--no-verify', '-m', message])).stdout;
   }
 
   async branch(): Promise<string> {
     try { return (await this.git.run(this.workspace, ['branch', '--show-current'])).stdout.trim(); } catch { return ''; }
   }
+
+  /** Возвращает только полный hex SHA текущего HEAD после фиксированной команды `git rev-parse HEAD`. */
+  async headSha(): Promise<string> {
+    try {
+      const value = (await this.git.run(this.workspace, ['rev-parse', 'HEAD'])).stdout.trim();
+      return /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu.test(value) ? value : '';
+    } catch {
+      return '';
+    }
+  }
+}
+
+function isSafeWorkspacePath(value: string): boolean {
+  if (!value || value.includes('\0') || value.includes(':') || value.startsWith('/') || value.startsWith('\\') ||
+      /^[A-Za-z]:/u.test(value) || [...value].some((character) => character.charCodeAt(0) < 0x20 || character.charCodeAt(0) === 0x7f)) {
+    return false;
+  }
+  const segments = value.replace(/\\/g, '/').split('/');
+  return value !== '.' && segments.every((segment) => segment !== '..');
 }

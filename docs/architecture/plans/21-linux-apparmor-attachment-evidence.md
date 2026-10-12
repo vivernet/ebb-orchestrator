@@ -1,9 +1,9 @@
 ---
 id: plan-21
 kind: plan
-status: proposed
+status: superseded
 title: Проверяемое Linux AppArmor attachment evidence
-summary: Добавить ограниченный versioned evaluator compiled AppArmor xmatch для Linux Task5A-WL, сохраняя fail-closed поведение для неизвестных ABI и форматов.
+summary: Исторический план AppArmor evidence; superseded для локальной v1.
 created: 2026-10-09
 updated: 2026-10-10
 depends_on: []
@@ -13,13 +13,13 @@ evidence:
   - ../proposals/16-linux-apparmor-attachment-evidence.md
   - 20-production-context-manifest.md
   - ../../../.github/workflows/production-gates.yml
-  - ../../../scripts/linux-hermes-namespace-prerequisite.sh
-  - ../../../scripts/linux-hermes-namespace-prerequisite.test.mjs
 ---
 
-# Проверяемое Linux AppArmor attachment evidence — draft implementation plan
+# Проверяемое Linux AppArmor attachment evidence — superseded plan
 
-> **Статус:** `proposed`, не одобрен для исполнения целиком. Разрешён только ограниченный F0 feasibility task: подготовка и review maintained read-only probe в существующем Linux CI. Реализация matcher/parser, изменение Linux admission, Tasks1–T5 и обновление статусов Plan20/19 запрещены до полного F0 evidence, заполнения ABI-специфичных решений, независимого security/architecture review обновлённого плана и отдельного approval пользователя.
+> **Superseded 2026-10-10:** текущая v1 использует обычный установленный Hermes и systemd user service/cgroup для управления процессом. AppArmor policy parsing, user namespaces, profile setup и их CI prerequisites не входят в эту локальную версию; production runtime их не использует. Этот план сохранён как историческая запись, его реализация и acceptance не требуются для Plan20/Plan19.
+
+> **Историческая запись:** следующий ниже design и незавершённые checklist описывают прежний AppArmor-путь. Они не являются текущими требованиями и не должны исполняться.
 
 **Goal:** Разблокировать Linux часть Plan20 Task5A-WL только для явно поддержанных compiled AppArmor attachment representations, доказывая непересечение каждого foreign profile с каждым точным helper/probe path и сохраняя отказ для любого неизвестного или неоднозначного случая.
 

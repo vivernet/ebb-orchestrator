@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import type { Database, DatabaseTx } from "../../../src/platform/database/database.js";
 import { createSqliteDatabase } from "../../../src/platform/database/sqlite-database.js";
 import { runMigrations } from "../../../src/platform/database/migrator.js";
-import { getRunProcessOwner, insertRunProcessOwnerTx, prepareRunProcessOwner, preflightRunProcessOwners, transitionRunProcessOwnerTx } from "../../../src/modules/runtime/run-process-owner.js";
+import { getRunProcessOwner, insertRunProcessOwnerTx, prepareRunProcessOwner, preflightRunProcessOwners,
+  syncCurrentRunProcessGenerationTx, transitionRunProcessOwnerTx } from "../../../src/modules/runtime/run-process-owner.js";
 import { safeRestartChildFailureCode } from "../../helpers/restart-child-diagnostics.js";
 import type { ProcessScopeIdentity, ProcessScopeObservation } from "../../../src/platform/process/process-inspector.js";
 import type { ProcessScopeSupervisor } from "../../../src/platform/process/run-scope-supervisor.js";
@@ -108,6 +109,26 @@ describe("Run process owner", () => {
     expect(getRunProcessOwner(db, owner.runId)).toMatchObject({ state: "STOPPED", hermesSourceSnapshotKey: snapshotKey });
   });
 
+  it("rejects a current pointer to a different generation before any startup side effect", async () => {
+    const database = await setup();
+    insertRun(database, "corrupt-generation-run");
+    expect(() => database.run("UPDATE run_process_owners SET current_generation=999 WHERE run_id='corrupt-generation-run'"))
+      .toThrow("Current generation does not exist");
+    database.run(`INSERT INTO run_process_owner_generations(run_id,generation,run_attempt,source_tag,hermes_home,
+      hermes_source_snapshot_key,capture_state,containment_kind,containment_id,launch_nonce,state,updated_at)
+      SELECT run_id,2,NULL,source_tag,hermes_home,hermes_source_snapshot_key,capture_state,containment_kind,
+        $containmentId,$nonce,'PREPARED',updated_at FROM run_process_owners WHERE run_id='corrupt-generation-run'`,
+      { containmentId: "a".repeat(64), nonce: "b".repeat(64) });
+    database.run("UPDATE run_process_owners SET current_generation=2 WHERE run_id='corrupt-generation-run'");
+    expect(() => getRunProcessOwner(database, "corrupt-generation-run")).toThrow("RUN_PROCESS_GENERATION_MISMATCH");
+    const inspect = vi.fn(async (): Promise<ProcessScopeObservation> => ({ state: "STOPPED", evidence: "SYSTEMD_CGROUP_EMPTY" }));
+    const supervisor: ProcessScopeSupervisor = { inspect, stop: inspect, waitForStopped: inspect,
+      launch: async () => { throw new Error("not used"); } };
+    await expect(preflightRunProcessOwners(database, supervisor)).rejects.toThrow("RUN_PROCESS_GENERATION_MISMATCH");
+    expect(inspect).not.toHaveBeenCalled();
+    expect(database.get("SELECT state FROM run_process_owners WHERE run_id='corrupt-generation-run'")).toEqual({ state: "PREPARED" });
+  });
+
   it.each([
     "", "a".repeat(64), "null", "{}", ` ${snapshotKey}`,
     JSON.stringify({ ...snapshotIdentity, formatVersion: 2 }),
@@ -169,6 +190,7 @@ describe("Run process owner", () => {
     database.run("UPDATE run_process_owners SET hermes_source_snapshot_key=$key WHERE run_id=$runId", {
       key: snapshotKey, runId: owner.runId,
     });
+    database.transaction((tx) => syncCurrentRunProcessGenerationTx(tx, owner.runId));
     database.transaction((tx) => transitionRunProcessOwnerTx(tx, {
       runId: owner.runId, expectedState: "PREPARED", nextState: "LAUNCHING",
     }));

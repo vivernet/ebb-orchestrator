@@ -27,10 +27,10 @@ export interface PackageLinuxHermesLauncherOptions {
 }
 
 /**
- * Собирает Hermes profile-path helper на Windows/Linux и проверяет runtime artifact.
+ * Собирает Windows file identity helper для установленного Hermes и проверяет runtime artifact.
  *
  * @param options Платформа, корень server package и сборщик helper.
- * @returns Путь к собранному helper или null для неподдерживаемой платформы.
+ * @returns Путь к собранному helper на Windows или null на другой платформе.
  * @throws {Error} Если поддерживаемая сборка не создала непустой executable.
  */
 export function ensureHermesProfilePathHelper(options: PackageHermesProfilePathHelperOptions): string | null;

@@ -7,9 +7,12 @@ interface ConfigCandidate {
   sourceHead: string;
   manifestHash: string;
   files: Record<string, string>;
+  normalizedPreview: { project: { execution: { commands?: Partial<Record<ProjectActionName, ProjectCommandPreview>> } } };
   manifest: Array<{ path: string; state: 'present' | 'deleted'; sha256: string | null }>;
   status: string;
 }
+type ProjectActionName = 'test' | 'lint' | 'typecheck' | 'build';
+interface ProjectCommandPreview { executable: string; args: string[]; }
 interface ConfigRevision { revisionId: string; manifestHash: string; revisionHash: string; normalizedConfig: Record<string, unknown>; files?: Record<string, string>; }
 interface ConfigResponse { current: ConfigCandidate | null; active: ConfigRevision | null; revisions: ConfigRevision[]; degraded?: boolean; candidateInvalid?: boolean; }
 
@@ -71,6 +74,7 @@ export default function ProjectConfigPanel({ projectId }: { projectId: string })
       {value?.current?.status === 'PENDING_REVIEW' ? <>
         <p>Изменения ожидают явного одобрения. Источник: commit <code>{value.current.sourceHead}</code></p>
         <p>Manifest hash: <code>{value.current.manifestHash}</code></p>
+        <ProjectCommandsReview commands={value.current.normalizedPreview.project.execution.commands} />
         <ul aria-label="Изменения конфигурации">
           {value.current.manifest.map(({ path, state, sha256 }) => {
             const previous = value.active?.files?.[path];
@@ -97,6 +101,22 @@ export default function ProjectConfigPanel({ projectId }: { projectId: string })
       <button type="button" onClick={() => void capture()} disabled={busy}>Проверить `.ebb-orchestrator/`</button>
     </section>
   );
+}
+
+function ProjectCommandsReview({ commands }: { commands: Partial<Record<ProjectActionName, ProjectCommandPreview>> | undefined }) {
+  const entries = Object.entries(commands ?? {}) as Array<[ProjectActionName, ProjectCommandPreview]>;
+  if (entries.length === 0) return <p>Команды проекта не настроены; автоматического запуска команд из репозитория нет.</p>;
+  return <section aria-label="Проверка команд проекта">
+    <h3>Команды проекта, которые будут доступны после одобрения</h3>
+    <p>Проверьте точный executable и порядок аргументов. Команды станут доступны только после одобрения этой revision.</p>
+    <ul aria-label="Команды проекта">
+      {entries.map(([action, command]) => <li key={action}>
+        <strong>{action}</strong>
+        <p>Executable: <code>{command.executable}</code></p>
+        <p>Аргументы по порядку (JSON-массив): <code>{JSON.stringify(command.args)}</code></p>
+      </li>)}
+    </ul>
+  </section>;
 }
 
 function readableError(cause: unknown): string {

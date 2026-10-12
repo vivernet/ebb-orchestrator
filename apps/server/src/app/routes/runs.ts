@@ -177,6 +177,9 @@ export async function runRoutes(app: FastifyInstance, deps: RunRouteDeps = {}): 
       if (run && runService.failPreparedRun?.(run.id, error) === true) {
         try { deps.scheduler.releaseTask(task.id, 0); } catch { /* recovery reconciler owns retry */ }
       }
+      if (error instanceof Error && error.message === "HERMES_MODEL_OVERRIDE_UNSUPPORTED") {
+        return reply.code(400).send({ error: { code: "HERMES_MODEL_OVERRIDE_UNSUPPORTED", message: "Модель выбирается в Hermes. Для запуска используйте model=default." } });
+      }
       return reply.code(classifyDispatchError(error)).send({ error: "dispatch rejected" });
     }
 
@@ -236,8 +239,8 @@ export async function runRoutes(app: FastifyInstance, deps: RunRouteDeps = {}): 
 
   app.get<{ Params: { id: string } }>("/api/v1/runs/:id/context-manifests", async (request, reply) => {
     if (!deps.db) return reply.code(503).send({ error: "database unavailable" });
-    const run = deps.db.get<{ id: string; task_id: string | null; epic_id: string | null; role: string; capability_json: string | null }>(
-      "SELECT id, task_id, epic_id, role, capability_json FROM agent_runs WHERE id = $id",
+    const run = deps.db.get<{ id: string; task_id: string | null; epic_id: string | null; role: string }>(
+      "SELECT id, task_id, epic_id, role FROM agent_runs WHERE id = $id",
       { id: request.params.id },
     );
     if (!run) return reply.code(404).send({ error: "run not found" });
@@ -408,7 +411,7 @@ export async function runRoutes(app: FastifyInstance, deps: RunRouteDeps = {}): 
 
 function readRunManifestSubject(
   db: Database,
-  run: { id: string; task_id: string | null; epic_id: string | null; capability_json: string | null },
+  run: { id: string; task_id: string | null; epic_id: string | null },
 ): { type: "TASK" | "EPIC" | "REQUEST"; id: string } | null {
   if (run.task_id !== null) {
     const task = db.get<{ id: string }>("SELECT id FROM tasks WHERE id = $id", { id: run.task_id });
@@ -418,23 +421,15 @@ function readRunManifestSubject(
     const epic = db.get<{ id: string }>("SELECT id FROM epics WHERE id = $id", { id: run.epic_id });
     return epic ? { type: "EPIC", id: epic.id } : null;
   }
-  if (!run.capability_json) return null;
-  try {
-    const capability: unknown = JSON.parse(run.capability_json);
-    if (!isPlainObject(capability) || !isNonEmptyString(capability.requestId)) return null;
-    const request = db.get<{ id: string }>(
-      `SELECT p.id FROM planning_requests p
-        WHERE p.id = $requestId AND (
-          p.coordinator_run_id = $runId OR EXISTS (
-            SELECT 1 FROM planning_request_role_runs pr WHERE pr.request_id = p.id AND pr.run_id = $runId
-          )
-        )`,
-      { requestId: capability.requestId, runId: run.id },
-    );
-    return request ? { type: "REQUEST", id: request.id } : null;
-  } catch {
-    return null;
-  }
+  const requests = db.all<{ id: string }>(
+    `SELECT p.id FROM planning_requests p
+      WHERE p.coordinator_run_id = $runId OR EXISTS (
+        SELECT 1 FROM planning_request_role_runs pr WHERE pr.request_id = p.id AND pr.run_id = $runId
+      )
+      ORDER BY p.id LIMIT 2`,
+    { runId: run.id },
+  );
+  return requests.length === 1 ? { type: "REQUEST", id: requests[0]!.id } : null;
 }
 
 function normalizeContextManifestRole(value: string): (typeof CONTEXT_MANIFEST_ROLES)[number] | "unknown" {

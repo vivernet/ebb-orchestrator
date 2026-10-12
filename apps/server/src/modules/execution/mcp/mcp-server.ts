@@ -90,6 +90,7 @@ const safeErrorMessage = (error: unknown, runId: string): string => {
 const validateToolArguments = (
   schema: ToolDefinition['inputSchema'],
   value: unknown,
+  deferSchemaProperties: readonly string[] = [],
 ): Record<string, unknown> | string => {
   const validateValue = (definition: SchemaDefinition, candidate: unknown, path: string): string | undefined => {
     const validType = definition.type === 'object'
@@ -143,6 +144,10 @@ const validateToolArguments = (
   }
   for (const [key, propertySchema] of Object.entries(schema.properties)) {
     if (key in value) {
+      if (deferSchemaProperties.includes(key)) {
+        if (!isRecord(value[key])) return `${key} must be an object`;
+        continue;
+      }
       const error = validateValue(propertySchema, value[key], key);
       if (error) return error;
     }
@@ -202,7 +207,10 @@ export class McpServer {
       return { success: false, error: safeErrorMessage(new Error(`tool not found: ${name}`), this.runId) };
     }
 
-    const validatedArgs = validateToolArguments(tool.inputSchema, args);
+    // The role output contract is validated by SubmitResultTool's canonical Zod schema.
+    // Its published JSON Schema can contain unions (for example Integration's root oneOf),
+    // which must not be partially reinterpreted by this generic envelope validator.
+    const validatedArgs = validateToolArguments(tool.inputSchema, args, name === 'submit_result' ? ['payload'] : []);
     if (typeof validatedArgs === 'string') return { success: false, error: `invalid tool arguments: ${validatedArgs}` };
 
     // Проверяет if submit_result has already been called - blocks all write-capable tools
@@ -212,15 +220,19 @@ export class McpServer {
 
     // Call Объект инструмент handler
     if (name === 'submit_result') this.submittingResult = true;
-    const result = await tool.handler(validatedArgs);
+    try {
+      const result = await tool.handler(validatedArgs);
 
-    // Отслеживает successful submit_result call
-    if (name === 'submit_result' && result.success) {
-      this.hasSubmittedResult = true;
+      // Отслеживает successful submit_result call
+      if (name === 'submit_result' && result.success) {
+        this.hasSubmittedResult = true;
+      }
+
+      return result;
+    } finally {
+      // Исключение handler не должно навсегда блокировать повторную отправку результата.
+      if (name === 'submit_result') this.submittingResult = false;
     }
-    if (name === 'submit_result' && !result.success) this.submittingResult = false;
-
-    return result;
   }
 
   /**
@@ -270,8 +282,16 @@ export class McpServer {
           const toolName = params.name as string;
           const toolArgs = (params.arguments as Record<string, unknown> | undefined) ?? {};
           const result = await this.callTool(toolName, toolArgs);
+          const contentText = toolName === 'workspace.read' && result.success && typeof result.result === 'string'
+            ? result.result
+            : JSON.stringify(result.result !== undefined && (result.success || toolName === 'project.test')
+              ? result.result
+              : { error: result.error });
           return respond({ jsonrpc: '2.0', id: id ?? null, result: {
-            content: [{ type: 'text', text: JSON.stringify(result.success ? result.result : { error: result.error }) }],
+            content: [{
+              type: 'text',
+              text: contentText,
+            }],
             isError: result.success !== true,
           } });
         }

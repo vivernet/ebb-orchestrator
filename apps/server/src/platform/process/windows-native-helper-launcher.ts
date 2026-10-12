@@ -153,9 +153,7 @@ public static class EbbNativeHelperGate {
   [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetFileInformationByHandleEx(SafeFileHandle handle, int infoClass, out FILE_ATTRIBUTE_TAG_INFO info, uint size);
   public static int LastErrorCode() { return Marshal.GetLastWin32Error(); }
   public static SafeFileHandle OpenLockedRegularFile(string path) { return CreateFileW(path, 0x80000080, 0x00000001, IntPtr.Zero, 3, 0x00200000 | 0x08000000, IntPtr.Zero); }
-  public static SafeFileHandle OpenLockedDirectory(string path) { return CreateFileW(path, 0x00000080, 0x00000003, IntPtr.Zero, 3, 0x00200000 | 0x02000000, IntPtr.Zero); }
   public static bool IsRegularNonReparseFile(SafeFileHandle handle) { FILE_ATTRIBUTE_TAG_INFO info; if (!GetFileInformationByHandleEx(handle, 9, out info, 8)) return false; return (info.FileAttributes & (0x00000010 | 0x00000400 | 0x00000040)) == 0; }
-  public static bool IsDirectoryNonReparse(SafeFileHandle handle) { FILE_ATTRIBUTE_TAG_INFO info; if (!GetFileInformationByHandleEx(handle, 9, out info, 8)) return false; return (info.FileAttributes & 0x00000010) != 0 && (info.FileAttributes & 0x00000400) == 0; }
 }
 `;
 
@@ -216,7 +214,6 @@ $gateSource = $gateSourceReader.ReadToEnd()
 $gateSourceReader.Dispose()
 $gateSourceGzip.Dispose()
 $gateSourceInput.Dispose()
-$directoryHandles = [System.Collections.Generic.List[Microsoft.Win32.SafeHandles.SafeFileHandle]]::new()
 $stream = $null
 $sha = $null
 $inspectionJob = [IntPtr]::Zero
@@ -245,24 +242,6 @@ try {
   $fullHelperPath = [System.IO.Path]::GetFullPath($helperPath)
   $root = [System.IO.Path]::GetPathRoot($fullHelperPath)
   if ($root -notmatch '^[A-Za-z]:\\$' -or -not [string]::Equals($fullHelperPath, $helperPath, [StringComparison]::OrdinalIgnoreCase)) { throw [System.InvalidOperationException]::new('Unsafe absolute helper path') }
-  $parts = $fullHelperPath.Substring($root.Length).Split([char[]]@(92, 47), [StringSplitOptions]::RemoveEmptyEntries)
-  if ($parts.Length -lt 2) { throw [System.InvalidOperationException]::new('Helper path has no parent directory') }
-  $directoryPath = $root
-  $phase = 'parent-directory-lock'
-  for ($index = 0; $index -lt $parts.Length; $index++) {
-    $directoryPath = [System.IO.Path]::Combine($directoryPath, $parts[$index])
-    if ($index -eq ($parts.Length - 1)) { break }
-    $directoryHandle = [EbbNativeHelperGate]::OpenLockedDirectory($directoryPath)
-    if ($null -eq $directoryHandle -or $directoryHandle.IsInvalid) {
-      $phase = 'parent-directory-open-index-' + $index + '-win32-' + [EbbNativeHelperGate]::LastErrorCode()
-      throw [System.InvalidOperationException]::new('Helper parent directory open failed')
-    }
-    if (-not [EbbNativeHelperGate]::IsDirectoryNonReparse($directoryHandle)) {
-      $phase = 'parent-directory-check-win32-' + [EbbNativeHelperGate]::LastErrorCode()
-      throw [System.InvalidOperationException]::new('Helper parent directory check failed')
-    }
-    $directoryHandles.Add($directoryHandle)
-  }
   $phase = 'helper-file-lock'
   $handle = [EbbNativeHelperGate]::OpenLockedRegularFile($helperPath)
   if ($null -eq $handle -or $handle.IsInvalid) {
@@ -384,7 +363,6 @@ finally {
     }
     [void][EbbNativeHelperGate]::CloseInspectionJob($inspectionJob)
   }
-  foreach ($directoryHandle in $directoryHandles) { $directoryHandle.Dispose() }
 }
 if ($failurePhase) { [Console]::Error.WriteLine('NATIVE_HELPER_GATE_FAIL:' + $failurePhase + ':' + $failureType) }
 exit $exitCode

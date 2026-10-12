@@ -2,14 +2,16 @@
 id: proposal-16
 kind: proposal
 title: Versioned Linux AppArmor attachment evidence for Plan20
-status: draft
+status: superseded
 created: 2026-10-09
 updated: 2026-10-10
 ---
 
 # Proposal 16 — Linux AppArmor attachment evidence
 
-> **Статус:** пользователь выбрал Option C как направление design. Это не approval конкретного implementation plan и не разрешение менять текущий fail-closed gate до прохождения raw-ABI feasibility, независимого review и отдельного approval плана.
+> **Superseded 2026-10-10:** после решения упростить первую локальную версию до запуска установленного Hermes с обычным process supervision, AppArmor parser/admission gate и его Linux namespace prerequisites больше не входят в продуктовый scope. Plan21 сохранён как исторический документ со статусом `superseded`.
+
+> **Исторический статус:** пользователь ранее выбрал Option C как направление design; это решение superseded более поздним упрощением v1.
 
 ## 1. Цель и границы
 

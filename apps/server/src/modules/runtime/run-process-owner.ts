@@ -131,6 +131,7 @@ export function prepareRunProcessOwner(
  */
 export function insertRunProcessOwnerTx(tx: DatabaseTx, owner: RunProcessOwner): void {
   assertPreparedOwner(owner);
+  insertPreparedRunProcessGenerationTx(tx, owner, 1, null, 'UNBOUND');
   tx.run(
     `INSERT INTO run_process_owners(
       run_id, source_tag, hermes_home, hermes_source_snapshot_key, containment_kind, containment_id, launch_nonce,
@@ -213,6 +214,7 @@ export function transitionRunProcessOwnerTx(
   if (input.evidence === 'LAUNCH_NOT_DISPATCHED') {
     throw new TypeError('LAUNCH_NOT_DISPATCHED can only be persisted by the Hermes launch adapter.');
   }
+  assertCurrentRunProcessGenerationTx(tx, input.runId);
   const current = tx.get<{ state: string; containment_kind: string }>(
     'SELECT state,containment_kind FROM run_process_owners WHERE run_id=$runId', { runId: input.runId },
   );
@@ -266,6 +268,89 @@ export function transitionRunProcessOwnerTx(
   if ((tx.get<{ changes: number }>('SELECT changes() AS changes')?.changes ?? 0) !== 1) {
     throw new Error('RUN_PROCESS_OWNER_STATE_CHANGED');
   }
+  syncCurrentRunProcessGenerationTx(tx, input.runId);
+}
+
+/** Синхронизирует только текущее незавершённое поколение после owner/capture CAS; STOPPED history неизменна. */
+export function syncCurrentRunProcessGenerationTx(tx: DatabaseTx, runId: string): void {
+  const history = tx.get<{ state: string }>(`SELECT g.state FROM run_process_owner_generations g
+    JOIN run_process_owners o ON o.run_id=g.run_id AND o.current_generation=g.generation WHERE o.run_id=$runId`, { runId });
+  if (!history) throw new Error('RUN_PROCESS_GENERATION_MISSING');
+  if (history.state === 'STOPPED') return;
+  tx.run(`UPDATE run_process_owner_generations SET
+    (source_tag,hermes_home,hermes_source_snapshot_key,capture_state,containment_kind,containment_id,launch_nonce,
+     systemd_invocation_id,systemd_control_group,supervisor_pid,supervisor_start_identity,pid,platform,
+     process_start_identity,executable_identity,state,stop_evidence,updated_at) =
+    (SELECT source_tag,hermes_home,hermes_source_snapshot_key,capture_state,containment_kind,containment_id,launch_nonce,
+     systemd_invocation_id,systemd_control_group,supervisor_pid,supervisor_start_identity,pid,platform,
+     process_start_identity,executable_identity,state,stop_evidence,updated_at FROM run_process_owners WHERE run_id=$runId)
+    WHERE run_id=$runId AND generation=(SELECT current_generation FROM run_process_owners WHERE run_id=$runId)
+      AND state <> 'STOPPED'`, { runId });
+  if ((tx.get<{ changes: number }>('SELECT changes() AS changes')?.changes ?? 0) !== 1) {
+    throw new Error('RUN_PROCESS_GENERATION_CHANGED');
+  }
+}
+
+function insertPreparedRunProcessGenerationTx(
+  tx: DatabaseTx, owner: RunProcessOwner, generation: number, attempt: number | null, captureState: 'UNBOUND' | 'BOUND',
+): void {
+  tx.run(`INSERT INTO run_process_owner_generations(
+    run_id,generation,run_attempt,source_tag,hermes_home,hermes_source_snapshot_key,capture_state,
+    containment_kind,containment_id,launch_nonce,systemd_invocation_id,systemd_control_group,
+    supervisor_pid,supervisor_start_identity,pid,platform,process_start_identity,executable_identity,state,stop_evidence,updated_at)
+    VALUES($runId,$generation,$attempt,$sourceTag,$hermesHome,$sourceKey,$captureState,
+      $containmentKind,$containmentId,$launchNonce,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'PREPARED',NULL,$updatedAt)`, {
+    runId: owner.runId, generation, attempt, sourceTag: owner.sourceTag, hermesHome: owner.hermesHome,
+    sourceKey: owner.hermesSourceSnapshotKey ?? null, captureState, containmentKind: owner.containmentKind,
+    containmentId: owner.containmentId, launchNonce: owner.launchNonce, updatedAt: owner.updatedAt,
+  });
+  if ((tx.get<{ changes: number }>('SELECT changes() AS changes')?.changes ?? 0) !== 1) throw new Error('RUN_PROCESS_OWNER_MISSING');
+}
+
+/**
+ * В caller transaction создаёт PREPARED поколение того же Run после точного STOPPED proof.
+ * Сохраняет прежнюю историю, shared Hermes home и BOUND capture; IDs/nonce всегда новые.
+ * Caller в этой же transaction обязан claim-ить исходную Scheduler reservation и обновить Run attempt.
+ */
+export function rotateRunProcessOwnerForResumeTx(tx: DatabaseTx, input: {
+  runId: string; attempt: number; previousAttempt: number | null;
+}): number {
+  if (!Number.isSafeInteger(input.attempt) || input.attempt <= (input.previousAttempt ?? 0)) {
+    throw new Error('RUN_PROCESS_GENERATION_ATTEMPT_INVALID');
+  }
+  const owner = getRunProcessOwner(tx, input.runId);
+  if (!owner) throw new Error('RUN_PROCESS_OWNER_MISSING');
+  const current = tx.get<{ current_generation: number; capture_state: string; state: string;
+    containment_kind: string; containment_id: string; launch_nonce: string; stop_evidence: string | null;
+    run_attempt: number | null }>(`SELECT o.*,r.attempt AS run_attempt FROM run_process_owners o
+      JOIN agent_runs r ON r.id=o.run_id WHERE o.run_id=$runId`, { runId: input.runId });
+  if (!current || current.capture_state !== 'BOUND' || current.state !== 'STOPPED' ||
+      current.run_attempt !== input.previousAttempt ||
+      !isAuthoritativeRunProcessStopEvidence(current.stop_evidence, current.containment_kind)) {
+    throw new Error('RUN_PROCESS_GENERATION_STOP_UNPROVEN');
+  }
+  const history = tx.get<{ state: string; containment_id: string; launch_nonce: string; stop_evidence: string | null }>(
+    'SELECT state,containment_id,launch_nonce,stop_evidence FROM run_process_owner_generations WHERE run_id=$runId AND generation=$generation',
+    { runId: input.runId, generation: current.current_generation });
+  if (!history || history.state !== 'STOPPED' || history.containment_id !== current.containment_id ||
+      history.launch_nonce !== current.launch_nonce || history.stop_evidence !== current.stop_evidence) {
+    throw new Error('RUN_PROCESS_GENERATION_STOP_UNPROVEN');
+  }
+  const generation = current.current_generation + 1;
+  const nextOwner = prepareRunProcessOwner(input.runId, owner.hermesHome, owner.containmentKind, owner.hermesSourceSnapshotKey);
+  insertPreparedRunProcessGenerationTx(tx, nextOwner, generation, input.attempt, 'BOUND');
+  tx.run(`UPDATE run_process_owners SET current_generation=$generation,
+    containment_id=$containmentId,launch_nonce=$launchNonce,state='PREPARED',stop_evidence=NULL,
+    systemd_invocation_id=NULL,systemd_control_group=NULL,supervisor_pid=NULL,supervisor_start_identity=NULL,
+    pid=NULL,platform=NULL,process_start_identity=NULL,executable_identity=NULL,updated_at=$updatedAt
+    WHERE run_id=$runId AND current_generation=$previousGeneration AND state='STOPPED' AND capture_state='BOUND'
+      AND containment_id=$previousContainment AND launch_nonce=$previousNonce`, {
+      runId: input.runId, generation, previousGeneration: current.current_generation,
+      containmentId: nextOwner.containmentId, launchNonce: nextOwner.launchNonce,
+      previousContainment: current.containment_id, previousNonce: current.launch_nonce, updatedAt: nextOwner.updatedAt,
+    });
+  if ((tx.get<{ changes: number }>('SELECT changes() AS changes')?.changes ?? 0) !== 1) throw new Error('RUN_PROCESS_GENERATION_CHANGED');
+  return generation;
 }
 
 function assertLiveIdentity(identity: RunProcessOwnerIdentity): void {
@@ -329,7 +414,27 @@ export function getRunProcessOwner(database: Database | DatabaseTx, runId: strin
   const row = database.get<Record<string, unknown>>(
     "SELECT * FROM run_process_owners WHERE run_id=$runId", { runId },
   );
-  return row ? parseOwnerRow(row) : undefined;
+  if (!row) return undefined;
+  const owner = parseOwnerRow(row);
+  assertCurrentRunProcessGenerationTx(database, runId);
+  return owner;
+}
+
+/** Проверяет current pointer и exact OS/source projection; поздняя INVALID capture не переписывает STOPPED history. */
+function assertCurrentRunProcessGenerationTx(tx: DatabaseTx, runId: string): void {
+  const matching = tx.get<{ run_id: string }>(`SELECT o.run_id FROM run_process_owners o
+    JOIN run_process_owner_generations g ON g.run_id=o.run_id AND g.generation=o.current_generation
+    WHERE o.run_id=$runId AND g.source_tag=o.source_tag AND g.hermes_home=o.hermes_home
+      AND g.hermes_source_snapshot_key IS o.hermes_source_snapshot_key
+      AND (g.capture_state=o.capture_state OR (g.state='STOPPED' AND o.capture_state='INVALID'))
+      AND g.containment_kind=o.containment_kind AND g.containment_id=o.containment_id AND g.launch_nonce=o.launch_nonce
+      AND g.state=o.state AND g.stop_evidence IS o.stop_evidence
+      AND (g.updated_at=o.updated_at OR (g.state='STOPPED' AND o.capture_state='INVALID'))
+      AND g.systemd_invocation_id IS o.systemd_invocation_id AND g.systemd_control_group IS o.systemd_control_group
+      AND g.supervisor_pid IS o.supervisor_pid AND g.supervisor_start_identity IS o.supervisor_start_identity
+      AND g.pid IS o.pid AND g.platform IS o.platform AND g.process_start_identity IS o.process_start_identity
+      AND g.executable_identity IS o.executable_identity`, { runId });
+  if (!matching) throw new Error('RUN_PROCESS_GENERATION_MISMATCH');
 }
 
 /**
@@ -368,6 +473,9 @@ export async function preflightRunProcessOwners(
     owner.state === 'STOPPED' && !isAuthoritativeRunProcessStopEvidence(owner.stopEvidence, owner.containmentKind),
   );
   if (stoppedWithInvalidProof) throw new Error(`RUN_PROCESS_STOP_PROOF_INVALID:${stoppedWithInvalidProof.runId}`);
+
+  // Validate the whole inventory before any supervisor/recovery side effect.
+  for (const owner of owners) assertCurrentRunProcessGenerationTx(database, owner.runId);
 
   for (const owner of owners) {
     if (owner.state === 'STOPPED') continue;

@@ -36,7 +36,9 @@ export const AllTools: ActionId[] = [
   // Операции Git
   ActionId.GitStatus,
   ActionId.GitDiff,
+  ActionId.GitAdd,
   ActionId.GitCommit,
+  ActionId.GitHead,
   // Операции с artifacts
   ActionId.SubmitResult,
 ];
@@ -216,7 +218,9 @@ export const MiddleDevContract: RoleContract = {
     ActionId.CommandExec,
     ActionId.GitStatus,
     ActionId.GitDiff,
+    ActionId.GitAdd,
     ActionId.GitCommit,
+    ActionId.GitHead,
     ActionId.SubmitResult,
   ],
   sessionPolicy: 'shared',
@@ -247,7 +251,9 @@ export const SeniorDevContract: RoleContract = {
     ActionId.CommandExec,
     ActionId.GitStatus,
     ActionId.GitDiff,
+    ActionId.GitAdd,
     ActionId.GitCommit,
+    ActionId.GitHead,
     ActionId.SubmitResult,
   ],
   sessionPolicy: 'shared',

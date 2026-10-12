@@ -40,7 +40,7 @@ export class RuntimeEventHandlers {
 
     const taskId = event.aggregateId;
     const roleValue = event.payload.role === undefined ? "developer" : event.payload.role;
-    const modelValue = event.payload.model === undefined ? "test-model" : event.payload.model;
+    const modelValue = event.payload.model === undefined ? "default" : event.payload.model;
     if (typeof roleValue !== "string" || !["developer", "reviewer", "qa", "integration"].includes(roleValue.toLowerCase())) throw new Error("TASK_RUN_ROLE_UNSUPPORTED");
     if (typeof modelValue !== "string" || modelValue.trim() === "") throw new Error("TASK_RUN_MODEL_INVALID");
     if (!this.runService) throw new Error("RUN_PREPARATION_SERVICE_UNAVAILABLE");
@@ -124,7 +124,6 @@ export class RuntimeEventHandlers {
     } catch (error) {
       if (this.runService.failPreparedRun(run.id, error)) {
         this.scheduler.releaseTask(taskId, 0);
-        await this.runService.cleanupTerminalHermesProfile(run.id);
       }
       throw error;
     }
@@ -139,11 +138,9 @@ export class RuntimeEventHandlers {
     try {
       const execution = await this.runService!.executePreparedRun(runId);
       this.handleRuntimeCompletion(runId, execution.outcome);
-      await this.runService!.cleanupTerminalHermesProfile(runId);
     } catch (error) {
       if (this.runService!.failPreparedRun(runId, error)) {
         this.scheduler.releaseTask(taskId, 0);
-        await this.runService!.cleanupTerminalHermesProfile(runId);
       }
       throw error;
     }

@@ -54,6 +54,16 @@ describe('CommandTools', () => {
       expect(commandTools.isShellExecutable('cmd')).toBe(true);
       expect(commandTools.isShellExecutable('powershell')).toBe(true);
       expect(commandTools.isShellExecutable('pwsh')).toBe(true);
+      for (const shell of ['dash', 'fish', 'ash', 'ksh', 'mksh', 'csh', 'tcsh', 'nu']) {
+        expect(commandTools.isShellExecutable(shell)).toBe(true);
+      }
+      expect(commandTools.isShellExecutable('C:\\Windows\\System32\\cmd.exe')).toBe(true);
+    });
+
+    it('blocks common shell launchers by executable name regardless of argv', () => {
+      for (const launcher of ['env', 'busybox', 'wsl', '/usr/bin/env', 'C:\\Windows\\System32\\wsl.exe']) {
+        expect(commandTools.isShellExecutable(launcher)).toBe(true);
+      }
     });
 
     it('should not classify regular executables as shell', () => {

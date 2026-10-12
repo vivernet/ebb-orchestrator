@@ -10,6 +10,10 @@ import type {
   Decision,
 } from '../context/context-types.js';
 
+/** Точная инструкция, связывающая Developer completion с фактическим HEAD worktree. */
+export const DEVELOPER_COMMIT_SHA_INSTRUCTION = 'Stage only the changed files with git.add using explicit relative paths, commit them with git.commit, then call git.head (the fixed git rev-parse HEAD read) and pass exactly its full SHA as commitSha; do not invent or shorten it.';
+export const DEVELOPER_COMPLETED_OUTPUT_EXAMPLE = '{"version":"1.0.0","outcome":"COMPLETED","commitSha":"<exact full SHA returned by git.head>"}';
+
 /**
  * Формирует prompts для agent роли.
  */
@@ -31,7 +35,9 @@ export class PromptBuilder {
   private addSubmissionContract(lines: string[], role: string, instructions: string): void {
     lines.push('=== STRUCTURED RESULT / submit_result ===');
     lines.push(`Stage: ${role}`);
-    lines.push(`Call submit_result exactly once using the validated ${role} schema.`);
+    lines.push(`Submit one successful structured result using mcp__ebb_orchestrator__submit_result and the validated ${role} schema.`);
+    lines.push('If submit_result returns a validation error, correct the payload and retry. After a successful submission, do not call submit_result again.');
+    lines.push('Set the structured result version exactly to "1.0.0".');
     lines.push(instructions);
     lines.push('Do not treat free-form text as a result; report only facts observed in the assigned workspace.');
     lines.push('');
@@ -87,8 +93,18 @@ export class PromptBuilder {
     }
     lines.push('=== STAGE ===');
     lines.push('DEVELOPMENT: implement the contract in the managed task worktree, verify it, and commit the change.');
+    lines.push('=== VERIFY / IMPLEMENT ===');
+    lines.push('Run project.test before changing files. A pre-change test failure that matches an acceptance criterion is expected, not by itself a reason to return BLOCKED.');
+    lines.push('Inspect its failure and relevant source with workspace.read and workspace.search.');
+    lines.push('workspace.search returns file paths only.');
+    lines.push('Use workspace.read on relevant source/test paths returned by workspace.search and inspect their contents before choosing workspace.patch.');
+    lines.push('Before returning BLOCKED, inspect relevant source with workspace.read; a baseline red alone is not a blocker.');
+    lines.push('For workspace.patch use {path, patches:[{start,end,content}]}: start/end are zero-based UTF-16 offsets and [start,end) is end-exclusive. Patches must be ascending, non-overlapping replacements; content replaces each range.');
+    lines.push('use workspace.patch to implement the required change; rerun project.test until it passes.');
+    lines.push('Only after project.test passes, stage and commit the implementation and report COMPLETED with the exact current HEAD SHA.');
+    lines.push(`For COMPLETED, use this result shape and replace the placeholder with the exact git.head value: ${DEVELOPER_COMPLETED_OUTPUT_EXAMPLE}`);
     lines.push('');
-    this.addSubmissionContract(lines, 'Developer', 'For COMPLETED, include the exact commitSha from git rev-parse HEAD in this managed worktree.');
+    this.addSubmissionContract(lines, 'Developer', `${DEVELOPER_COMMIT_SHA_INSTRUCTION} This is required for COMPLETED.`);
 
     // Findings (relevant активный ones)
     if (input.findings && input.findings.length > 0) {
@@ -210,7 +226,7 @@ export class PromptBuilder {
     lines.push('3. Check against requirements and acceptance criteria');
     lines.push('4. Verify against guidelines and decisions');
     lines.push('5. Report PASS only with findings (possibly an empty array), set independent=true, and include concrete file/test evidence');
-    lines.push('6. Finish by calling submit_result exactly once with the validated Reviewer schema');
+    lines.push('6. Submit the review result using the structured-result instructions below.');
     lines.push('');
     this.addSubmissionContract(lines, 'Reviewer', 'For PASS, include independent=true, findings (possibly empty), and concrete file/test evidence.');
     lines.push('');
@@ -304,7 +320,7 @@ export class PromptBuilder {
       input.taskContract.nonGoals.join('; ') || 'none',
       `Definition of Done: ${input.taskContract.definitionOfDone.join('; ') || 'none'}`,
       '=== STAGE ===',
-      'INTEGRATION: verify the isolated merge, tests, and durable provenance; do not alter target or task worktrees.',
+      'INTEGRATION: verify the isolated merge and tests; the Orchestrator verifies persisted provenance deterministically. Do not alter target or task worktrees.',
       '=== WORKSPACE ===',
       `Workspace: ${input.workspace ?? 'assigned workspace'}`,
       `Target ref: ${input.targetRef ?? 'master'}`,
@@ -312,10 +328,12 @@ export class PromptBuilder {
       `Expected target SHA: ${input.expectedTargetSha ?? 'read from the persisted integration attempt'}`,
       `Expected source SHA: ${input.sourceSha ?? 'read from the persisted integration attempt'}`,
       `Integration attempt ID: ${input.integrationAttemptId ?? 'read from the persisted integration attempt'}`,
-      `Provenance database: ${input.provenanceDatabasePath ?? 'authoritative persisted provenance database'}`,
-      'A PASS must include baseSha equal to expected target SHA, sourceSha equal to expected source SHA, provenance containing exactly the identity entry integration_attempt:<Integration attempt ID>, and non-empty evidence for the verification performed.',
+      'Do not try to read the Orchestrator database or files outside the assigned workspace.',
+      `A PASS must include baseSha equal to expected target SHA, sourceSha equal to expected source SHA, provenance containing exactly the identity entry integration_attempt:${input.integrationAttemptId ?? 'the attempt ID supplied in the Orchestrator context'}, and non-empty evidence for the verification performed.`,
       '=== STRUCTURED RESULT / submit_result ===',
-      'Call submit_result exactly once using the validated Integration schema. Include outcome, baseSha, sourceSha, provenance, and non-empty test evidence.',
+      'Submit one successful structured result using mcp__ebb_orchestrator__submit_result and the validated Integration schema. Include outcome, baseSha, sourceSha, provenance, and non-empty test evidence.',
+      'If submit_result returns a validation error, correct the payload and retry. After a successful submission, do not call submit_result again.',
+      'Set the structured result version exactly to "1.0.0".',
       '',
       'Begin integration verification.',
     ];

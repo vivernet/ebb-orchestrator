@@ -67,7 +67,35 @@ function migrations(): Migration[] {
 }
 
 describe("EpicOrchestrator child integration wiring", () => {
-  it("uses only persisted Git/onboarding refs and executes inside the bound integration worktree", async () => {
+  it("serializes only child Integration phases per Epic", async () => {
+    const started: string[] = [];
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const fake = {
+      childIntegrationTails: new Map<string, Promise<void>>(),
+      runPhaseUnlocked: async (_epicId: string, taskId: string | undefined, phase: string, role: string) => {
+        started.push(`${taskId ?? "epic"}:${phase}:${role}`);
+        if (taskId === "task-1") await firstGate;
+        return { accepted: true, output: {} };
+      },
+    };
+    const runPhase = (EpicOrchestrator.prototype as unknown as { runPhase: (...args: unknown[]) => Promise<unknown> }).runPhase;
+    const first = runPhase.call(fake, "epic-1", "task-1", "integration", "integration", {});
+    const second = runPhase.call(fake, "epic-1", "task-2", "integration", "integration", {});
+    const independentEpic = runPhase.call(fake, "epic-2", "task-3", "integration", "integration", {});
+    const development = runPhase.call(fake, "epic-1", "task-4", "child_task", "developer", {});
+    await Promise.all([independentEpic, development]);
+    expect(started.filter((entry) => entry.endsWith(":integration:integration"))).toEqual([
+      "task-1:integration:integration", "task-3:integration:integration",
+    ]);
+    releaseFirst();
+    await Promise.all([first, second]);
+    expect(started.filter((entry) => entry.endsWith(":integration:integration"))).toEqual([
+      "task-1:integration:integration", "task-3:integration:integration", "task-2:integration:integration",
+    ]);
+  });
+
+  it.each([false, true])("uses only persisted Git/onboarding refs and executes inside the bound integration worktree (prelaunch retry=%s)", async (failPreparationOnce) => {
     const root = await mkdtemp(join(tmpdir(), "epic-integration-wiring-"));
     const db = createSqliteDatabase(join(root, "orchestrator.sqlite"));
     try {
@@ -119,9 +147,14 @@ describe("EpicOrchestrator child integration wiring", () => {
 
       const attempts: IntegrationAttempt[] = [];
       const calls: string[] = [];
+      let preparationFailed = false;
       let factoryIntegrationRunId: string | undefined;
       const integrationService = {
         prepareIntegration: async (source: string, target: string, repo: string) => {
+          if (failPreparationOnce && !preparationFailed) {
+            preparationFailed = true;
+            throw new Error("controlled integration preparation failure");
+          }
           calls.push(`prepare:${source}:${target}:${repo}`);
           const worktreePath = join(root, `integration-worktree-${attempts.length}`);
           mkdirSync(worktreePath, { recursive: true });
@@ -150,18 +183,52 @@ describe("EpicOrchestrator child integration wiring", () => {
       const registry = new WorkflowRegistry();
       for (const template of Object.values(templates)) registry.register(template);
       const runtime = new IntegrationRuntime(db);
-      const orchestrator = new EpicOrchestrator(db, new WorkflowEngine(db, registry), new PlanningService(db), new RunService(db, runtime), {} as never, new SchedulerService(db), { integrationServiceFactory: factory, integrationWorktreeRoot: join(root, "integration-root") });
+      const runs = new RunService(db, runtime);
+      const bindSnapshot = runs.bindInitialIntegrationWorkspaceSnapshot.bind(runs);
+      runs.bindInitialIntegrationWorkspaceSnapshot = (runId) => {
+        expect(calls.at(-1)).toBe("merge");
+        expect(db.get("SELECT run_id FROM scheduler_reservations WHERE run_id=$runId", { runId })).toBeUndefined();
+        calls.push("snapshot");
+        bindSnapshot(runId);
+      };
+      const orchestrator = new EpicOrchestrator(db, new WorkflowEngine(db, registry), new PlanningService(db), runs, {} as never, new SchedulerService(db), { integrationServiceFactory: factory, integrationWorktreeRoot: join(root, "integration-root"), epicWorkspaceProvisioner: { provisionForEpic: async () => ({ path: epicWorktreePath }) } });
       const internal = orchestrator as unknown as { resolvePersistedIntegrationGit: (epic: string, task: string | undefined) => { repoPath: string; sourceBranch: string; targetBranch: string } };
       expect(() => internal.resolvePersistedIntegrationGit(epicId, taskId)).toThrow(/parent Epic branch/i);
       db.run("UPDATE git_operations SET target_ref='epic/EPIC-1' WHERE branch_name=$branch", { branch: `task/${taskId}` });
+      let failedPhase: { id: string; agent_run_id: string } | undefined;
+      if (failPreparationOnce) {
+        await expect((orchestrator as unknown as { runPhase: (epic: string, task: string, phase: string, role: string, request: unknown) => Promise<unknown> }).runPhase(epicId, taskId, "integration", "integration", { phase: "integration", role: "integration", taskId, epicId }))
+          .rejects.toThrow("controlled integration preparation failure");
+        failedPhase = db.get<{ id: string; agent_run_id: string }>("SELECT id,agent_run_id FROM orchestration_phase_runs WHERE epic_id=$epicId AND task_id=$taskId AND phase='integration' AND status='FAILED' AND validated=0", { epicId, taskId });
+        expect(failedPhase).toBeDefined();
+        expect(db.get("SELECT id FROM agent_runs WHERE id=$id", { id: failedPhase!.agent_run_id })).toBeUndefined();
+        expect(db.get("SELECT id FROM integration_attempts WHERE integration_run_id=$id", { id: failedPhase!.agent_run_id })).toBeUndefined();
+        expect(runtime.runIds).toEqual([]);
+      }
+      const previousDeveloperRunId = randomUUID();
+      const previousPhaseId = randomUUID();
+      const previousReservationId = randomUUID();
+      db.run("INSERT INTO agent_runs(id,role,runtime,model,task_id,epic_id,status) VALUES($id,'developer','test','test',$taskId,$epicId,'COMPLETED')", { id: previousDeveloperRunId, taskId, epicId });
+      db.run("INSERT INTO orchestration_phase_runs(id,epic_id,task_id,phase,role,agent_run_id,result_json,evidence_json,validated,status,created_at) VALUES($id,$epicId,$taskId,'child_task','developer',$runId,'{\"accepted\":true}','{\"kind\":\"validated-role-result\"}',1,'COMPLETED',$now)", { id: previousPhaseId, epicId, taskId, runId: previousDeveloperRunId, now });
+      db.run("INSERT INTO scheduler_reservations(id,kind,subject_id,project_id,owner_id,reserved_at,estimate_cost,status,role,model,run_id) VALUES($id,'TASK',$taskId,$projectId,$owner,$now,0,'RELEASED','developer','test',$runId)", { id: previousReservationId, taskId, projectId, owner: `task:${taskId}`, runId: previousDeveloperRunId, now });
+      const previousPhase = db.get("SELECT * FROM orchestration_phase_runs WHERE id=$id", { id: previousPhaseId });
+      const previousReservation = db.get("SELECT * FROM scheduler_reservations WHERE id=$id", { id: previousReservationId });
       const result = await (orchestrator as unknown as { runPhase: (epic: string, task: string, phase: string, role: string, request: unknown) => Promise<{ accepted: boolean }> }).runPhase(epicId, taskId, "integration", "integration", { phase: "integration", role: "integration", taskId, epicId, targetBranch: "attacker-controlled" });
       const finalIntegration = await (orchestrator as unknown as { runPhase: (epic: string, task: undefined, phase: string, role: string, request: unknown) => Promise<{ accepted: boolean }> }).runPhase(epicId, undefined, "integration", "integration", { phase: "integration", role: "integration", epicId, targetBranch: "attacker-controlled" });
 
       expect(result.accepted).toBe(true);
       expect(finalIntegration.accepted).toBe(true);
-      expect(factoryContexts[0]).toMatchObject({ repoPath: join(root, "journal-repo"), worktreeRoot: join(root, "integration-root"), integrationRunId: expect.any(String), taskId, epicId });
-      expect(factoryContexts[1]).toMatchObject({ repoPath: join(root, "journal-repo"), worktreeRoot: join(root, "integration-root"), integrationRunId: expect.any(String), epicId });
-      expect(factoryContexts[1]?.integrationRunId).not.toBe(factoryContexts[0]?.integrationRunId);
+      expect(db.get("SELECT * FROM orchestration_phase_runs WHERE id=$id", { id: previousPhaseId })).toEqual(previousPhase);
+      expect(db.get("SELECT * FROM scheduler_reservations WHERE id=$id", { id: previousReservationId })).toEqual(previousReservation);
+      const successfulFactoryContexts = factoryContexts.slice(failPreparationOnce ? 1 : 0);
+      expect(successfulFactoryContexts[0]).toMatchObject({ repoPath: join(root, "journal-repo"), worktreeRoot: join(root, "integration-root"), integrationRunId: expect.any(String), taskId, epicId });
+      expect(successfulFactoryContexts[1]).toMatchObject({ repoPath: join(root, "journal-repo"), worktreeRoot: join(root, "integration-root"), integrationRunId: expect.any(String), epicId });
+      expect(successfulFactoryContexts[1]?.integrationRunId).not.toBe(successfulFactoryContexts[0]?.integrationRunId);
+      if (failedPhase) {
+        expect(db.all("SELECT id,agent_run_id,status,validated FROM orchestration_phase_runs WHERE epic_id=$epicId AND task_id=$taskId AND phase='integration'", { epicId, taskId }))
+          .toEqual([{ id: failedPhase.id, agent_run_id: runtime.runIds[0], status: "COMPLETED", validated: 1 }]);
+        expect(runtime.runIds[0]).not.toBe(failedPhase.agent_run_id);
+      }
       for (const [index, attempt] of attempts.entries()) {
         expect(runtime.prompts[index]).toContain(`Expected target SHA: ${attempt.expectedTargetSha}`);
         expect(runtime.prompts[index]).toContain(`Expected source SHA: ${attempt.sourceSha}`);
@@ -182,22 +249,24 @@ describe("EpicOrchestrator child integration wiring", () => {
       expect(runtime.prompts[1]).toContain("Goal: Epic outcome remains authoritative");
       expect(runtime.prompts[1]).toContain("Task TASK-1 (T) goal: Task delivers the distinct persistence boundary");
       expect(runtime.prompts[1]).toContain("Task context: Task-specific implementation context");
-      expect(calls.slice(0, 3)).toEqual([`prepare:task/${taskId}:epic/EPIC-1:${repoPath}`, expect.stringMatching(/^bind:/), "merge"]);
+      expect(calls.slice(0, 4)).toEqual([`prepare:task/${taskId}:epic/EPIC-1:${repoPath}`, expect.stringMatching(/^bind:/), "merge", "snapshot"]);
       expect(calls).toContain(`prepare:epic/EPIC-1:master:${repoPath}`);
       expect(calls.filter((call) => call === "execute")).toHaveLength(2);
       const finalRun = db.get<{ agent_run_id: string }>("SELECT agent_run_id FROM orchestration_phase_runs WHERE epic_id=$epicId AND task_id IS NULL AND phase='integration'", { epicId });
       if (!finalRun) throw new Error("Epic-level Integration phase was not persisted");
       expect(db.get<{ source_branch: string; target_branch: string; status: string }>("SELECT source_branch,target_branch,status FROM integration_attempts WHERE integration_run_id=$runId", { runId: finalRun.agent_run_id })).toMatchObject({ source_branch: "epic/EPIC-1", target_branch: "master", status: "MERGED" });
-      const exactAttempt = db.get<{ id: string; expected_target_sha: string; source_sha: string; integration_run_id: string }>("SELECT id,expected_target_sha,source_sha,integration_run_id FROM integration_attempts WHERE integration_run_id=$runId AND status='MERGED'", { runId: finalRun.agent_run_id });
+      const exactAttempt = db.get<{ id: string; expected_target_sha: string; source_sha: string; integration_run_id: string; worktree_path: string }>("SELECT id,expected_target_sha,source_sha,integration_run_id,worktree_path FROM integration_attempts WHERE integration_run_id=$runId AND status='MERGED'", { runId: finalRun.agent_run_id });
       const validatedResult = db.get<{ output: string }>("SELECT output FROM agent_runs WHERE id=$runId", { runId: finalRun.agent_run_id });
       const phaseEvidence = db.get<{ evidence_json: string }>("SELECT evidence_json FROM orchestration_phase_runs WHERE epic_id=$epicId AND task_id IS NULL AND phase='integration'", { epicId });
       if (!exactAttempt || !validatedResult || !phaseEvidence) throw new Error("Validated Epic Integration provenance was not fully persisted");
       const structuredResult = JSON.parse(validatedResult.output) as { baseSha: string; sourceSha: string; provenance: string[] };
       const persistedEvidence = JSON.parse(phaseEvidence.evidence_json) as { integrationAttemptId?: string };
       expect(exactAttempt.integration_run_id).toBe(finalRun.agent_run_id);
+      expect(exactAttempt.worktree_path).toBe(attempts[1]?.worktreePath);
       expect(structuredResult).toMatchObject({ baseSha: exactAttempt.expected_target_sha, sourceSha: exactAttempt.source_sha, provenance: [`integration_attempt:${exactAttempt.id}`] });
       expect(persistedEvidence.integrationAttemptId).toBe(exactAttempt.id);
-      expect(db.get<{ workspace: string }>("SELECT json_extract(capability_json,'$.workspace') AS workspace FROM agent_runs WHERE id=$runId", { runId: finalRun.agent_run_id })?.workspace).toBe(attempts[1]?.worktreePath);
+      expect(db.get<{ capability_ref: string | null; capability_json: string | null }>("SELECT capability_ref,capability_json FROM agent_runs WHERE id=$runId", { runId: finalRun.agent_run_id }))
+        .toEqual({ capability_ref: null, capability_json: null });
       const finalPhase = db.get<{ id: string }>("SELECT id FROM orchestration_phase_runs WHERE epic_id=$epicId AND task_id IS NULL AND phase='integration'", { epicId });
       if (!finalPhase) throw new Error("Epic-level Integration phase was not persisted");
       const persistedPhase = orchestrator as unknown as { persistedPhase: (epic: string, task: undefined, phase: string, role: string, result: { accepted: boolean; output: unknown }, runId: string, phaseId: string) => Promise<unknown> };

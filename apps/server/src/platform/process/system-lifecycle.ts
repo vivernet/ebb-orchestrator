@@ -61,7 +61,6 @@ export const RECOVERY_PHASE_NAMES = [
   "production_startup_reconciliation",
   "reconcile_epic_runs",
   "reconcile_scheduler",
-  "cleanup_terminal_hermes_profiles",
   "reconcile_planning_requests",
   "reconcile_execution_claims",
   "resume_approved_epics",
@@ -112,15 +111,74 @@ function assertStartupActive(signal?: AbortSignal): void {
   if (signal?.aborted) throw signal.reason ?? new Error("Startup interrupted before READY");
 }
 
+const recoveryErrorCodes: ReadonlySet<string> = new Set([
+  "EPIC_RECOVERY_FAILED",
+  "EPIC_RECOVERY_CHECKPOINT_INVALID",
+  "EPIC_ORCHESTRATION_ALREADY_RUNNING",
+  "EPIC_WORKSPACE_PROVISIONING_UNAVAILABLE",
+  "EPIC_INTEGRATION_CONTRACT_INVALID",
+  "EPIC_INTEGRATION_SERVICE_UNAVAILABLE",
+  "EPIC_INTEGRATION_WORKTREE_ROOT_UNAVAILABLE",
+  "EPIC_INTEGRATION_TARGET_SHA_UNAVAILABLE",
+  "EPIC_INTEGRATION_PROVENANCE_PATH_UNAVAILABLE",
+  "EPIC_WORKSPACE_IDENTITY_UNAVAILABLE",
+  "EPIC_WORKSPACE_SNAPSHOT_UNAVAILABLE",
+  "EPIC_COORDINATOR_APPROVED_PLAN_UNAVAILABLE",
+  "EPIC_COORDINATOR_PLAN_MISMATCH",
+  "EPIC_PHASE_NOT_FAILED_UNVALIDATED",
+  "EPIC_PHASE_RUN_NOT_TERMINAL",
+  "EPIC_PHASE_OWNER_STOP_UNPROVEN",
+  "EPIC_PHASE_ORPHAN_LAUNCH_EVIDENCE",
+  "EPIC_PHASE_RESERVATION_PRESENT",
+  "EPIC_PHASE_RESOURCE_LOCK_PRESENT",
+  "HERMES_CONFIG_HOME_UNSAFE",
+  "HERMES_INSTALL_LAYOUT_UNSUPPORTED",
+  "HERMES_LAUNCHER_AMBIGUOUS",
+  "HERMES_LAUNCHER_NOT_FOUND",
+  "HERMES_PATH_IDENTITY_INVALID",
+  "HERMES_PLATFORM_UNSUPPORTED",
+  "HERMES_RUNTIME_LAYOUT_UNSUPPORTED",
+  "HERMES_SOURCE_IDENTITY_MISMATCH",
+  "HERMES_SOURCE_IDENTITY_UNAVAILABLE",
+  "HERMES_SOURCE_IDENTITY_DIRTY",
+  "NATIVE_HELPER_EXECUTION_FAILED",
+  "NATIVE_HELPER_GATE_UNAVAILABLE",
+  "NATIVE_HELPER_INTEGRITY_ANCHOR_INVALID",
+  "NATIVE_HELPER_INTEGRITY_ANCHOR_UNAVAILABLE",
+  "NATIVE_HELPER_INTEGRITY_MISMATCH",
+  "NATIVE_HELPER_LAUNCH_FAILED",
+  "NATIVE_HELPER_LAUNCH_INPUT_INVALID",
+  "NATIVE_HELPER_LAUNCH_OPTIONS_INVALID",
+  "NATIVE_HELPER_LAUNCH_STREAM_UNAVAILABLE",
+  "NATIVE_HELPER_PATH_UNSAFE",
+  "NATIVE_HELPER_PATH_INVALID",
+  "NATIVE_HELPER_PLATFORM_UNSUPPORTED",
+  "NATIVE_HELPER_STDIN_WRITE_FAILED",
+  "NATIVE_HELPER_UNAVAILABLE",
+  "INTEGRATION_PREPARE_ROOT_CREATE_FAILED",
+  "INTEGRATION_PREPARE_HOOKS_DIR_CREATE_FAILED",
+  "TASK_WORKSPACE_NOT_PROVISIONED",
+  "TASK_MANAGED_WORKSPACE_UNAVAILABLE",
+]);
+
+const integrationPreparationErrorPattern = /^INTEGRATION_PREPARE_(?:(?:REFS|WORKTREE|PERSISTENCE)_FAILED:(?:GIT_EXIT_(?:\d{1,16}|UNKNOWN):(?:PATH_TOO_LONG|GIT_DIR_TOO_BIG|BRANCH_EXISTS|PERMISSION|WORKTREE_PATH_EXISTS|BRANCH_IN_USE|REF_NOT_FOUND|INVALID_OBJECT|REPOSITORY_UNAVAILABLE|WORKTREE_LOCKED|NESTED_WORKTREE|CREATE_REJECTED|LOCK_REJECTED|REFERENCE_REJECTED|WORKTREE_REJECTED|OTHER)|OTHER)|PERSISTENCE_FAILED:(?:ERR_SQLITE_ERROR|SQLITE_(?:CONSTRAINT|BUSY|LOCKED|READONLY|FULL|IOERR)))$/u;
+
+/** Отбирает ограниченный machine code; произвольные сообщения и детали ошибок не журналирует. */
+function safeRecoveryErrorCode(error: unknown): string {
+  if (!(error instanceof Error) || error.message.length > 128) return "UNCLASSIFIED";
+  const code = error.message;
+  return recoveryErrorCodes.has(code) || integrationPreparationErrorPattern.test(code) ? code : "UNCLASSIFIED";
+}
+
 async function runRecoveryStep(step: RecoveryPhaseName, reconcile: () => Promise<void>): Promise<void> {
   try {
     await reconcile();
   } catch (error) {
-    // Не выводим message/error object: reconciliation может содержать secrets
-    // или raw repository/model output. Диагностика ограничена фиксированным шагом.
+    // Не выводим raw message/error object: reconciliation может содержать secrets
+    // или repository/model output. Допускаем только ограниченный machine code.
     const errorKind = error instanceof Error ? "error" : "non_error";
     const safeStep = recoveryPhaseNameSet.has(step) ? step : "invalid_recovery_step";
-    console.error(`[orchestrator] startup reconciliation failed: step=${safeStep}; error_kind=${errorKind}`);
+    console.error(`[orchestrator] startup reconciliation failed: step=${safeStep}; error_kind=${errorKind}; error_code=${safeRecoveryErrorCode(error)}`);
     throw error;
   }
 }

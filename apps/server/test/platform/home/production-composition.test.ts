@@ -47,12 +47,10 @@ describe("production composition", () => {
     expect(composition.paths.epicWorktreeDirectory).toBe(join(home.worktrees, "epics"));
     expect(composition.paths.integrationWorktreeRoot).toBe(join(home.worktrees, "epic-integration"));
     expect(composition.paths.hermesResultDirectory).toBe(join(home.runtime, "hermes", "results"));
-    expect(composition.paths.hermesSourceSnapshotCacheRoot).toBe(join(home.runtime, "hermes", "source-snapshots"));
     expect(composition.paths.hermesCheckpointDirectory).toBe(join(home.runtime, "checkpoints"));
     expect(composition.runtime).toBeInstanceOf(HermesRuntimeAdapter);
     expect((composition.runtime as unknown as { databasePath: string }).databasePath).toBe(home.database);
     expect((composition.runtime as unknown as { resultDirectory: string }).resultDirectory).toBe(composition.paths.hermesResultDirectory);
-    expect((composition.runtime as unknown as { hermesSourceCacheRoot: string }).hermesSourceCacheRoot).toBe(composition.paths.hermesSourceSnapshotCacheRoot);
     expect((composition.runtime as unknown as { checkpointDirectory: string }).checkpointDirectory).toBe(composition.paths.hermesCheckpointDirectory);
     expect(composition.taskWorkspaceProvisioner).toBeInstanceOf(TaskWorkspaceProvisioner);
     expect(composition.epicWorkspaceProvisioner).toBeInstanceOf(EpicWorkspaceProvisioner);
@@ -70,7 +68,7 @@ describe("production composition", () => {
     const home = resolveOrchestratorHome({ EBB_ORCHESTRATOR_HOME: temporaryRoot }, "win32");
     database = createSqliteDatabase(join(temporaryRoot, "composition.db"));
     const composition = createProductionComposition({ database, home });
-    const expectedWorktree = join(composition.paths.integrationWorktreeRoot, "epic-1", "task-1");
+    const expectedWorktree = join(composition.paths.integrationWorktreeRoot, "epic-1");
 
     const integration = composition.integrationServiceFactory({
       repoPath: temporaryRoot,
@@ -83,6 +81,17 @@ describe("production composition", () => {
 
     expect((integration as unknown as { worktreeDir: string }).worktreeDir).toBe(expectedWorktree);
     expect(existsSync(expectedWorktree)).toBe(true);
+    expect(expectedWorktree).not.toContain(join("epic-1", "task-1"));
+
+    const finalIntegration = composition.integrationServiceFactory({
+      repoPath: temporaryRoot,
+      worktreeRoot: composition.paths.integrationWorktreeRoot,
+      epicId: "epic-1",
+      integrationRunId: "integration-run-2",
+      finalizeRunFailure: () => false,
+    });
+    expect((finalIntegration as unknown as { worktreeDir: string }).worktreeDir)
+      .toBe(join(composition.paths.integrationWorktreeRoot, "epic-1", "epic-final"));
   });
 
   it("composes startup recovery callbacks with the configured Git reconciler", async () => {
@@ -291,9 +300,7 @@ describe("production composition", () => {
       events.push("scheduler-reconcile");
       return schedulerReconcile();
     });
-    const reconcileTerminalHermesProfiles = vi.fn(async () => { events.push("terminal-profiles-cleanup"); return 0; });
     const applicationRecoveryReconcilers = createApplicationRecoveryReconcilers({
-      runService: { reconcileTerminalHermesProfiles },
       epicOrchestrator: {
         reconcileInterruptedRuns: () => { events.push("epic-reconcile"); },
         reconcileInterruptedExecutionClaims: () => { events.push("execution-claims-reconcile"); return 0; },
@@ -310,7 +317,6 @@ describe("production composition", () => {
     expect(applicationRecoveryReconcilers.map(({ name }) => name)).toEqual([
       "reconcile_epic_runs",
       "reconcile_scheduler",
-      "cleanup_terminal_hermes_profiles",
       "reconcile_planning_requests",
       "reconcile_execution_claims",
       "resume_approved_epics",
@@ -352,7 +358,6 @@ describe("production composition", () => {
       "runs",
       "epic-reconcile",
       "scheduler-reconcile",
-      "terminal-profiles-cleanup",
       "planning-reconcile",
       "execution-claims-reconcile",
       "resume-approved-epics",
@@ -360,8 +365,6 @@ describe("production composition", () => {
       "status:READY",
     ]);
     expect(currentStatus).toBe("READY");
-    expect(reconcileTerminalHermesProfiles).toHaveBeenCalledOnce();
-    expect(events.indexOf("scheduler-reconcile")).toBeLessThan(events.indexOf("terminal-profiles-cleanup"));
     expect(database.get<{ status: string }>("SELECT status FROM agent_runs WHERE id=$id", { id: interruptedRun.id })?.status)
       .toBe("FAILED");
     expect(database.get<{ status: string }>("SELECT status FROM scheduler_reservations WHERE subject_id='recovery-run'")?.status)
@@ -369,7 +372,20 @@ describe("production composition", () => {
 
     const mainSource = await readFile(join(import.meta.dirname, "../../../src/main.ts"), "utf8");
     expect(mainSource).toMatch(/import\s*\{\s*createApplicationRecoveryReconcilers\s*,\s*createProductionComposition\s*\}\s*from\s*["']\.\/platform\/home\/production-composition\.js["']/);
-    expect(mainSource).toMatch(/additionalReconcilers:\s*\[\s*\.\.\.startupReconciliation\.additionalReconcilers,\s*\.\.\.createApplicationRecoveryReconcilers\(\{\s*epicOrchestrator,\s*scheduler,\s*planningService,\s*runService\s*\}\),\s*\]/s);
-    expect(mainSource).not.toMatch(/epicOrchestrator\.reconcileInterruptedRuns\(\)|epicOrchestrator\.reconcileInterruptedExecutionClaims\(\)|epicOrchestrator\.resumeApprovedEpics\(\)/);
+    expect(mainSource).toMatch(/additionalReconcilers:\s*\[\s*\.\.\.startupReconciliation\.additionalReconcilers,\s*\.\.\.createApplicationRecoveryReconcilers\(\{\s*epicOrchestrator,\s*scheduler,\s*planningService\s*\}\),\s*\]/s);
+    expect(mainSource).not.toMatch(/epicOrchestrator\.reconcileInterruptedRuns\(\)|epicOrchestrator\.reconcileInterruptedExecutionClaims\(\)/);
+    const lifecycleStart = mainSource.indexOf("async function startLifecycle(): Promise<void>");
+    const lifecycleEnd = mainSource.indexOf("startupCleanup = createStartupCleanup(", lifecycleStart);
+    const lifecycleSource = mainSource.slice(lifecycleStart, lifecycleEnd);
+    const orderedRecoverySteps = [
+      "await startSystem({",
+      'if (status.get() !== "READY")',
+      "await runService.resumeRecoveryCandidates();",
+      "scheduler.reconcile();",
+      "planningService.reconcileInterruptedRequests();",
+      "await epicOrchestrator.resumeApprovedEpics();",
+    ].map((step) => lifecycleSource.indexOf(step));
+    expect(orderedRecoverySteps.every((index) => index >= 0)).toBe(true);
+    expect(orderedRecoverySteps).toEqual([...orderedRecoverySteps].sort((left, right) => left - right));
   });
 });

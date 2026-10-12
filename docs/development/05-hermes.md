@@ -55,25 +55,34 @@ runtime skill index/provenance требует отдельной runtime accepta
 Эти команды также не проверяют вход в AI-провайдер и не отправляют provider/API
 запрос. `pnpm hermes:check` не является provider acceptance.
 
-### Provider setup: пока не проверено
+### Production provider и runtime
 
 Hermes-native auth является предусмотренной границей владения учётными данными:
 не копируйте provider credentials в корневой `.env` Ebb Orchestrator или Ebb
-SecretStore. Однако полный clean-checkout путь установки, выбора provider/model,
-native auth и безвредного real provider Run ещё не проверен на pinned Hermes.
-Поэтому это руководство пока не утверждает, что описывает воспроизводимую
-настройку provider с нуля.
+SecretStore. Production Run использует уже настроенный пользователем Hermes
+home/profile и его provider/model/auth. Ebb не создаёт per-Run Hermes profile/home,
+не копирует профиль и не читает credential values. Для настройки Hermes с нуля
+используйте поддерживаемый вашей установленной версией Hermes способ; точные
+пошаговые команды первоначального выбора provider/model и Hermes-native auth
+здесь пока не подтверждены clean-checkout walkthrough и поэтому не приводятся.
 
-Read-only проверки `hermes model --help` и `hermes auth --help` завершились с
-exit `0` и показали справку CLI. Это подтверждает только наличие help output:
-интерактивный wizard и Hermes-native auth flow имеют статус `NOT RUN / NOT
-VERIFIED`; auth state/profile не читались и provider request не отправлялся.
+Реальный Windows provider acceptance через production Run path пройден
+2026-10-11: один Run получил ответ настроенного provider и валидированный
+`submit_result`; acceptance также подтвердила live `session_id` capture и его
+сохранение с последующим чтением из SQLite после запуска свежего процесса
+Orchestrator. Это подтверждает Windows Task5B slice, но не проверяет установку и
+первичную настройку Hermes на чистой машине, не закрывает Linux/macOS production
+gates и не доказывает восстановление прерванного Run. Task5C same-session recovery
+и полный end-to-end UI acceptance остаются незавершёнными. Статусы и подробные
+evidence ведутся в [Plan20](../architecture/plans/20-production-context-manifest.md).
 
-Production Hermes per-Run auth/session acceptance остаётся `NOT RUN / NOT
-VERIFIED` и gated на Plan20 Task5A → Task5B → Task5C. Task5B требует доказать
-безопасность native auth в изолированном per-Run profile, а Task5C — provider-backed
-same-session recovery. Подробные gates и evidence описаны в
-[Plan20](../architecture/plans/20-production-context-manifest.md).
+`pnpm hermes:check` — проверка установленного CLI и project prerequisites, а не
+проверка provider/auth: она не вызывает provider API. `pnpm hermes:setup` при
+необходимости настраивает project trust/discovery/delegation в активном Hermes
+home/profile и изменяет эти настройки; отдельная копия профиля не требуется.
+Для Ebb `.env` задаёт только настройки приложения, например
+`EBB_ORCHESTRATOR_HOME` и `PORT`; provider credentials остаются в Hermes.
+См. [инструкции и команды в README](../../README.md#hermes-runtime).
 
 ## Запуск implementation plan
 
@@ -133,7 +142,20 @@ skills до их commit; обязательные внешние workflow skills
 **Hermes не найден:** установите Hermes Agent и убедитесь, что он в PATH.
 
 **Проверка не проходит:** прочитайте failed check, проверьте выбранный Hermes home
-и выполните `pnpm hermes:setup`. Для trust failure используйте также указанную
-скриптом команду `hermes skills trust <repo-root>`.
+и сначала повторите read-only `pnpm hermes:check`. Для отсутствующего project
+trust выполните `pnpm hermes:setup`; эта команда меняет trust/discovery/delegation
+активного Hermes home. Не создавайте копию профиля как требование Ebb.
+
+**Provider не отвечает или Hermes сообщает об authentication/refresh error:**
+проверьте сообщение Hermes и состояние provider через уже используемый вами
+Hermes setup. `pnpm hermes:check` не диагностирует provider auth и не отправляет
+запрос. Не переносите credentials в Ebb `.env`.
+
+**Hermes не запускается, не останавливается или не захватил session ID:**
+сохраните точный безопасный код/диагностику Ebb и Run ID. Ошибка запуска или
+остановки процесса означает failure соответствующего Run; отказ live session
+capture запрещает считать recovery готовым. Не меняйте права файловой системы
+ради прохождения этих проверок; передайте диагностический код для исправления
+интеграции.
 
 **План не запускается:** убедитесь, что путь к плану корректен и он существует в репозитории.

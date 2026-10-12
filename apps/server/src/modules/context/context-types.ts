@@ -338,6 +338,8 @@ export interface ContextSubjectV1 {
  * в provenance-таблице.
  */
 export interface PreparedRunContext {
+  /** Внутренний source-backed fingerprint для recovery; не входит в публичный manifest DTO. */
+  fingerprintInput?: ContextFingerprintInputV1;
   finalPrompt: string;
   subject: ContextSubjectV1;
   role: ContextManifestRoleV1;

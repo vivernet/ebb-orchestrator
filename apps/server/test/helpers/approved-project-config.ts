@@ -6,8 +6,16 @@ import { ProjectConfigService } from "../../src/modules/projects/project-config-
 import { parseProjectConfigYaml } from "../../src/platform/config/project-config.js";
 
 /** Создаёт approved Project Config fixture для RunContextAssembler tests. */
-export function seedApprovedProjectConfig(database: Database, projectId: string, defaultBranch = "master"): void {
-  const projectYaml = `schema_version: 1\nproject:\n  name: test-project\n  default_branch: ${defaultBranch}\n`;
+export function seedApprovedProjectConfig(
+  database: Database,
+  projectId: string,
+  defaultBranch = "master",
+  commands?: Partial<Record<"test" | "lint" | "typecheck" | "build", { executable: string; args: string[] }>>,
+): void {
+  const commandEntries = Object.entries(commands ?? {});
+  const commandsYaml = commandEntries.length === 0 ? "" : `execution:\n  commands:\n${commandEntries.map(([name, command]) =>
+    `    ${name}:\n      executable: ${JSON.stringify(command.executable)}\n      args: ${JSON.stringify(command.args)}\n`).join("")}`;
+  const projectYaml = `schema_version: 1\nproject:\n  name: test-project\n  default_branch: ${defaultBranch}\n${commandsYaml}`;
   const sourceFiles = { ".ebb-orchestrator/project.yaml": Buffer.from(projectYaml, "utf8").toString("base64") };
   const manifestJson = JSON.stringify({ files: [{ path: ".ebb-orchestrator/project.yaml", state: "present", sha256: createHash("sha256").update(projectYaml, "utf8").digest("hex") }] });
   const manifestHash = createHash("sha256").update("ebb-project-config-manifest-v1\0", "utf8").update(manifestJson, "utf8").digest("hex");
