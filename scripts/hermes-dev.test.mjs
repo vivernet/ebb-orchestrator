@@ -363,15 +363,14 @@ test('README points to Hermes guide and canonical skills', () => {
 test('Plan 19 Hermes parity fixture uses recoverable ledger, tool schemas and portable evidence steps', () => {
   const fixture = readFileSync(join(root, 'scripts', 'fixtures', 'hermes-development-workflow-parity-plan.md'), 'utf8');
 
-  assert.match(fixture, /append-only ledger/i);
-  assert.match(fixture, /ledger:[\s\S]{0,120}в этой задаче не изменять его/i);
-  assert.match(fixture, /не дописывать ledger даже при[\s\S]{0,80}разрешения/i);
-  assert.match(fixture, /todo_list[\s\S]{0,240}content/i);
-  assert.match(fixture, /background process\/session/i);
-  assert.match(fixture, /exact current-run handle/i);
+  assert.match(fixture, /ledger-format\.md[\s\S]{0,180}execution-state-machine\.md/i);
+  assert.match(fixture, /append-only Markdown[\s\S]{0,180}в `## Tasks` добавлять новую[\s\S]{0,160}BASE[\s\S]{0,160}attempt/i);
+  assert.match(fixture, /не редактируя[\s\S]{0,60}прежние состояния и[\s\S]{0,30}evidence/i);
+  assert.doesNotMatch(fixture, /\btodo_list\b/i);
+  assert.match(fixture, /поддерживаемый в текущем[\s\S]{0,100}механизм process\/session/i);
+  assert.match(fixture, /точный handle[\s\S]{0,180}фактический exit code/i);
   const commandBlocks = [...fixture.matchAll(/```[\s\S]*?```/g)].map(([block]) => block).join('\n');
   assert.doesNotMatch(commandBlocks, /\b(?:bash|sh)\s+-[ec]\b|\bps\s+-o\b/i);
-  assert.match(fixture, /не использовать[\s\S]{0,100}форму\s+`?ps\s+-o`?[\s\S]{0,40}на Windows/i);
   assert.match(fixture, /schema-valid[\s\S]{0,300}child B/i);
   assert.match(fixture, /skill excerpts[\s\S]{0,180}citations/i);
   assert.match(fixture, /ровно двух параллельных[\s\S]{0,80}read-only субагентов/i);

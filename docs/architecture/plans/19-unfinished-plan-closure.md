@@ -766,3 +766,19 @@ Expected: exit code 0; `git status --short` lists only reviewed intended evidenc
 - Выполнена прямая команда `hermes --in <repo> chat --query-file <temp> --oneshot -Q`. Prompt запрашивал точный случайный nonce `EBB_RESULT_<8-char nonce>`. Через 45,657 ms получены `stdoutBytes=21`, `stderrBytes=220`, `timedOut=true`; stdout содержал запрошенный точный nonce. Значение nonce и raw output/session ID не сохранены.
 - `taskkill.exe /PID 31680 /T /F` завершился exit 0; событие `close` дочернего процесса наблюдалось, его exit code — 1. Временный prompt-файл подтверждённо удалён.
 - Это доказывает, что короткий запрос вернул требуемый ответ, но Hermes CLI не завершился в пределах 45 секунд. Условия Task7 не выполнены: нет evidence ровно двух Hermes child sessions, parity report или прохождения gates. Точную причину незавершения CLI не устанавливаем. Credentials, config, session store и ACL не инспектировались. Статусы, чеклисты и source не менялись.
+
+## Checkpoint — Plan19 Task7 повтор после runner race fix (2026-10-13)
+
+- На branch `develop`, HEAD `e79052a` до документационного изменения, restricted-executor acceptance завершился за 81 ms с child exit 1, пустыми stdout/stderr, без попытки termination и с подтверждённой очисткой wrapper prompt. `where.exe hermes` не нашёл команду в restricted PATH; read-only `pnpm hermes:check` завершился на `hermes --version` с exit 1 без diagnostic output.
+- В elevated Windows execution read-only `hermes.exe --version` завершился exit 0 (`v0.21.5+9117.g08165d5`) и вывел предупреждение о нечитаемом Home Assistant plugin; причинная связь с acceptance не установлена.
+- Один acceptance run с process-only PATH дополнением `C:\Users\alex1\AppData\Local\hermes\bin` и `HERMES_EXECUTE_TIMEOUT_MS=900000` завершился wrapper exit 1 / `TERMINATION_FAILED`: `duration_ms=900894`, `child_closed=true`, `child_exit_code=1`, `child_pid=13020`, `stdout_bytes=0`, `stderr_bytes=182`, `termination_attempted=true`, `termination_ok=false`, `taskkill_status=128`, `cleanup_verified=true`. Сырые потоки не сохранены; причина статуса 128 не устанавливается.
+- Provider response, parity report и два проверяемых child results отсутствуют. Cleanup marker относится к wrapper prompt и не подтверждает успешный Task7 или полное завершение процесса/дерева. Credentials, Hermes profile/settings/session store и ACL не читались и не менялись; постоянных изменений окружения не было. User-owned untracked Symphony-файл не менялся.
+- После закрытия wrapper проверка `Get-Process -Id 13020` подтвердила отсутствие точного child PID.
+- Task7 остаётся **FAIL / NOT VERIFIED**; Plan07 и связанные lifecycle/checklist статусы не менялись. Дополнительные тесты/provider runs после этого checkpoint не выполнялись.
+
+## Checkpoint — исправление Task7 fixture и общие gates (2026-10-13)
+
+- Исправлен fixture: убраны требования к несуществующему `todo_list` и запрет, конфликтовавший с обязательным обновлением plan-owned ledger. Ledger теперь обновляется по документированным `ledger-format.md` / `execution-state-machine.md`, с сохранением прежних evidence; Task7 acceptance criteria не ослаблены.
+- Узкий regression test прошёл 1/1; `pnpm hermes:test` — 43/43; ESLint и `git diff --check` — PASS. Независимый повторный review fixture — PASS, замечаний нет.
+- Свежий `pnpm test` в разрешённом Windows execution завершился exit 0: 152 test files passed, 3 skipped; 1,838 tests passed, 29 skipped. Отдельный `context-manifest-production.acceptance.test.ts` прошёл 8/8 с подключённым браузерным runner. Предыдущий restricted-executor запуск полного suite имел teardown `taskkill` access denied; конкретный оставшийся frontend PID был остановлен и подтверждён отсутствующим. Это не было проверкой/изменением ACL пользователя или Hermes.
+- Hermes/provider acceptance после fixture исправления не запускался. Task7 сохраняет **FAIL / NOT VERIFIED** до получения свежего provider-backed результата и требуемого parity report.

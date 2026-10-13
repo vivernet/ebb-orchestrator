@@ -231,3 +231,20 @@ evidence отсутствуют. Общие lint/typecheck/test PASS не зак
 - Единственный acceptance rerun в executor с разрешённым расширенным доступом: `duration_ms=900679`, `timeout_ms=900000`, `child_closed=true`, `child_exit_code=1`, `termination_attempted=true`, `termination_ok=false`, `taskkill_status=128`, `marker=TERMINATION_FAILED`, wrapper exit `125`, `cleanup_verified=true`. Вывод не включает PID. Cleanup marker подтверждает проверенную очистку wrapper prompt; termination failure не позволяет утверждать закрытие всего процесса/дерева по этому сценарию.
 - Task7 остаётся **FAIL / NOT VERIFIED**: provider-backed parity result, ровно два schema-valid завершённых child sessions, отсутствие nested/third child и parity report не доказаны. Новых Hermes запусков в рамках этой записи не выполнялось. Provider, session и auth данные, а также ACL не читались и не изменялись.
 - Plan/task lifecycle statuses и checklists не менялись. Изменён только этот audit-файл; commit не выполнялся.
+
+## Checkpoint — повтор Task7 после runner race fix — 2026-10-13
+
+- На branch `develop`, HEAD `e79052a` до этой записи, restricted-executor acceptance завершился FAIL за 81 ms: child exit 1, `stdout_bytes=0`, `stderr_bytes=0`, termination не предпринимался, wrapper prompt cleanup подтверждён. `where.exe hermes` не нашёл команду в restricted PATH; read-only `pnpm hermes:check` также завершился на `hermes --version` с exit 1 без diagnostic output.
+- В elevated Windows execution read-only `hermes.exe --version` завершился exit 0 и сообщил версию `v0.21.5+9117.g08165d5`; вывод также содержал предупреждение о нечитаемом Home Assistant plugin. Причина предупреждения и его связь с acceptance не установлены.
+- Один acceptance run выполнен с process-local PATH, дополненным `C:\Users\alex1\AppData\Local\hermes\bin`, и `HERMES_EXECUTE_TIMEOUT_MS=900000`: `pnpm hermes:execute -- scripts/fixtures/hermes-development-workflow-parity-plan.md`. Wrapper завершился exit 1 с `TERMINATION_FAILED`: `duration_ms=900894`, `timeout_ms=900000`, `child_closed=true`, `child_exit_code=1`, `child_signal=unknown`, `child_pid=13020`, `stdout_bytes=0`, `stderr_bytes=182`, `termination_attempted=true`, `termination_ok=false`, `taskkill_status=128`, `cleanup_verified=true`. Сырые stdout/stderr не сохранялись.
+- Этот запуск не предоставил provider response, parity report или два проверяемых child results. Причину `taskkill_status=128` не устанавливаем. Значение cleanup относится к wrapper prompt; оно не доказывает закрытие всех процессов или успешную acceptance.
+- После закрытия wrapper проверка `Get-Process -Id 13020` подтвердила отсутствие точного child PID.
+- Credentials, Hermes profile/settings/session store и ACL не читались и не менялись. Изменялся только PATH процесса; постоянных изменений среды не выполнялось. User-owned untracked Symphony-файл не трогался.
+- Task7 сохраняет **FAIL / NOT VERIFIED**, Plan07 остаётся открытым/blocked по текущей зависимости. Lifecycle/checklist статусы не менялись; новых тестов или provider запусков после этого checkpoint не выполнялось.
+
+## Checkpoint — исправление runner fixture и общий test gate — 2026-10-13
+
+- Удалены два противоречия в fixture Task7: требование несуществующего `todo_list` и запрет на обновление execution ledger, требуемое каноническим controller. Инструкция теперь ссылается на документированные Markdown ledger format/state machine и требует сохранять все прежние evidence. Acceptance criteria Task7 не изменены.
+- Тест fixture прошёл 1/1, `pnpm hermes:test` — 43/43, ESLint, `pnpm lint`, `pnpm typecheck` и `git diff --check` — PASS. Независимый reviewer повторно проверил исправления: PASS без замечаний.
+- Полный `pnpm test` в разрешённом Windows execution: exit 0, 152 files passed / 3 skipped, 1,838 tests passed / 29 skipped. Отдельный Plan20 `context-manifest-production.acceptance.test.ts`: 8/8, включая подключённый браузерный Run.
+- Эти результаты provider-backed Task7 не подтверждают. После исправления fixture Hermes/provider ещё не запускался; Task7 остаётся **FAIL / NOT VERIFIED**, пока не появятся два проверяемых завершённых child results, parity report и полный acceptance evidence.
