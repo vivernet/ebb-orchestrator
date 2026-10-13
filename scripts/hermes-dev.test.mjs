@@ -359,6 +359,24 @@ test('README points to Hermes guide and canonical skills', () => {
   assert.match(guide, /\]\(\.\.\/\.\.\/README\.md#hermes-development-skills\)/);
 });
 
+test('Plan 19 Hermes parity fixture uses recoverable ledger, tool schemas and portable evidence steps', () => {
+  const fixture = readFileSync(join(root, 'scripts', 'fixtures', 'hermes-development-workflow-parity-plan.md'), 'utf8');
+
+  assert.match(fixture, /append-only ledger/i);
+  assert.match(fixture, /ledger:[\s\S]{0,120}в этой задаче не изменять его/i);
+  assert.match(fixture, /не дописывать ledger даже при[\s\S]{0,80}разрешения/i);
+  assert.match(fixture, /todo_list[\s\S]{0,240}content/i);
+  assert.match(fixture, /background process\/session/i);
+  assert.match(fixture, /exact current-run handle/i);
+  const commandBlocks = [...fixture.matchAll(/```[\s\S]*?```/g)].map(([block]) => block).join('\n');
+  assert.doesNotMatch(commandBlocks, /\b(?:bash|sh)\s+-[ec]\b|\bps\s+-o\b/i);
+  assert.match(fixture, /не использовать[\s\S]{0,100}форму\s+`?ps\s+-o`?[\s\S]{0,40}на Windows/i);
+  assert.match(fixture, /schema-valid[\s\S]{0,300}child B/i);
+  assert.match(fixture, /skill excerpts[\s\S]{0,180}citations/i);
+  assert.match(fixture, /ровно двух параллельных[\s\S]{0,80}read-only субагентов/i);
+  assert.match(fixture, /nested\s+delegation/i);
+});
+
 test('plan path resolution rejects traversal and sibling-prefix escapes', () => {
   const root = join('C:', 'repo', 'worktree');
   assert.equal(resolvePlanPath(root, 'docs/plan.md'), resolve(root, 'docs/plan.md'));
