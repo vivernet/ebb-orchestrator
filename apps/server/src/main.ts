@@ -223,7 +223,12 @@ async function gracefulShutdown(signal: string): Promise<void> {
    console.log(`\n[ebb-orchestrator] received ${signal}, shutting down…`);
    await shutdownSystem({
     status,
+    stopIngress: async () => {
+      serverReady = false;
+      if (app.server.listening) await app.close();
+    },
     workers,
+    stopRuntimeScopes: () => runService.stopActiveRuntimeScopes(),
     database: { open: async () => {}, close: () => database.close() },
     instanceLock: lock,
     timeoutMs: 5_000,

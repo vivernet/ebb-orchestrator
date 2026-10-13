@@ -278,7 +278,11 @@ export class StatusTracker implements StatusTrackerInterface {
  */
 export async function shutdownSystem(deps: {
   status: StatusTrackerInterface;
+  /** Закрывает входящий HTTP listener и дожидается текущих запросов до остановки workers. */
+  stopIngress: () => Promise<void>;
   workers: BackgroundWorker[];
+  /** После остановки dispatch останавливает runtime scopes и возвращается только при STOPPED proof. */
+  stopRuntimeScopes: () => Promise<void>;
   database: LifecycleDatabase;
   instanceLock: { release(): Promise<void> };
   timeoutMs?: number;
@@ -287,20 +291,35 @@ export async function shutdownSystem(deps: {
 
   await deps.status.set("SHUTTING_DOWN");
 
-  // Останавливает workers конкурентно и enforce один grace-period deadline для the
-  // всю остановку.  Объект worker который cannot останавливать in time не должен multiply the
-  // задержку остановки процесса by Объект число of workers.
+  // Сначала прекращаем dispatch, затем останавливаем OS-owned runtime scopes.
+  // Для обеих фаз действует один grace-period deadline.
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const stopPromise = Promise.allSettled(
-    deps.workers.map(async (worker) => {
-      await worker.stop();
-    }),
-  );
+  const stopPromise = (async () => {
+    await deps.stopIngress();
+    const workerResults = await Promise.allSettled(deps.workers.map((worker) => worker.stop()));
+    if (workerResults.some((result) => result.status === "rejected")) {
+      throw new Error("SHUTDOWN_WORKER_STOP_FAILED");
+    }
+    await deps.stopRuntimeScopes();
+  })();
   const timeoutPromise = new Promise<void>((resolve) => {
     timer = setTimeout(resolve, timeout);
   });
-  await Promise.race([stopPromise.then(() => undefined), timeoutPromise]);
-  if (timer !== undefined) clearTimeout(timer);
+  let completedBeforeTimeout: boolean;
+  try {
+    completedBeforeTimeout = await Promise.race([
+      stopPromise.then(() => true),
+      timeoutPromise.then(() => false),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+  if (!completedBeforeTimeout) {
+    // Do not close SQLite or release the singleton lock while a scope stop may still be running.
+    // The process boundary will terminate this instance; startup recovery owns any remaining Run.
+    void stopPromise.catch(() => undefined);
+    throw new Error("SHUTDOWN_RUNTIME_STOP_TIMEOUT");
+  }
 
   deps.database.close();
   await deps.instanceLock.release();

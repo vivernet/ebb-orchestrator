@@ -169,6 +169,40 @@ describe("RunService with FakeAgentRuntime", () => {
     expect(coordinator.roleInputs).toEqual({});
   });
 
+  it("stops only durable active runtime scopes and leaves Run state for startup recovery", async () => {
+    await setup();
+    const active = prepareRun({ role: "developer", model: "default", taskId, epicId: null,
+      triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1" });
+    const completing = prepareRun({ role: "reviewer", model: "default", taskId, epicId: null,
+      triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1" });
+    const terminal = prepareRun({ role: "qa", model: "default", taskId, epicId: null,
+      triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1" });
+    db!.run("UPDATE agent_runs SET status='IN_PROGRESS' WHERE id=$id", { id: active.id });
+    db!.run("UPDATE agent_runs SET status='COMPLETING' WHERE id=$id", { id: completing.id });
+    db!.run("UPDATE agent_runs SET status='FAILED' WHERE id=$id", { id: terminal.id });
+    const stop = vi.fn(fakeRuntime.cancelRun.bind(fakeRuntime));
+    fakeRuntime.cancelRun = stop;
+
+    await runService.stopActiveRuntimeScopes();
+
+    expect(stop.mock.calls.map(([id]) => id)).toEqual([active.id, completing.id].sort());
+    expect(db!.all<{ id: string; status: string }>(
+      "SELECT id,status FROM agent_runs WHERE id IN ($active,$completing,$terminal) ORDER BY id",
+      { active: active.id, completing: completing.id, terminal: terminal.id },
+    )).toEqual(expect.arrayContaining([
+      { id: active.id, status: "IN_PROGRESS" },
+      { id: completing.id, status: "COMPLETING" },
+      { id: terminal.id, status: "FAILED" },
+    ]));
+    expect(db!.all<{ run_id: string; state: string; stop_evidence: string | null }>(
+      "SELECT run_id,state,stop_evidence FROM run_process_owners WHERE run_id IN ($active,$completing) ORDER BY run_id",
+      { active: active.id, completing: completing.id },
+    )).toEqual(expect.arrayContaining([
+      { run_id: active.id, state: "STOPPED", stop_evidence: "NEVER_LAUNCHED" },
+      { run_id: completing.id, state: "STOPPED", stop_evidence: "NEVER_LAUNCHED" },
+    ]));
+  });
+
   it("persists the shared Hermes root without inventing provider selection", async () => {
     await setup();
     const runId = randomUUID();

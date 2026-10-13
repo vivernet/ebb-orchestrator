@@ -557,27 +557,61 @@ describe("startup lifecycle", () => {
       const released = vi.fn(async () => {});
       const shutdown = shutdownSystem({
         status: { get: () => "READY", set: vi.fn(async () => {}) },
+        stopIngress: async () => {},
         workers: [
           { start: async () => {}, stop: async () => { stopped.push("one"); await new Promise<void>(() => {}); } },
           { start: async () => {}, stop: async () => { stopped.push("two"); await new Promise<void>(() => {}); } },
         ],
+        stopRuntimeScopes: async () => {},
         database: { open: async () => {}, close: closed },
         instanceLock: { release: released },
         timeoutMs: 1_000,
       });
+      const shutdownResult = shutdown.then(() => null, (error: unknown) => error);
 
+      await Promise.resolve();
       await Promise.resolve();
       expect(stopped).toEqual(["one", "two"]);
       expect(closed).not.toHaveBeenCalled();
 
       await vi.advanceTimersByTimeAsync(1_000);
-      await shutdown;
+      const shutdownError = await shutdownResult;
+      expect(shutdownError).toMatchObject({ message: "SHUTDOWN_RUNTIME_STOP_TIMEOUT" });
 
-      expect(closed).toHaveBeenCalledOnce();
-      expect(released).toHaveBeenCalledOnce();
+      expect(closed).not.toHaveBeenCalled();
+      expect(released).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("stops active runtime scopes after workers and before closing the database or releasing the lock", async () => {
+    const steps: string[] = [];
+    await shutdownSystem({
+      status: { get: () => "READY", set: async () => { steps.push("status"); } },
+      stopIngress: async () => { steps.push("ingress"); },
+      workers: [{ start: async () => {}, stop: async () => { steps.push("workers"); } }],
+      stopRuntimeScopes: async () => { steps.push("runtime scopes"); },
+      database: { open: async () => {}, close: () => { steps.push("database"); } },
+      instanceLock: { release: async () => { steps.push("lock"); } },
+    });
+
+    expect(steps).toEqual(["status", "ingress", "workers", "runtime scopes", "database", "lock"]);
+  });
+
+  it("does not close the database or release the lock when runtime scope stop is unproven", async () => {
+    const closed = vi.fn();
+    const released = vi.fn(async () => {});
+    await expect(shutdownSystem({
+      status: { get: () => "READY", set: async () => {} },
+      stopIngress: async () => {},
+      workers: [{ start: async () => {}, stop: async () => {} }],
+      stopRuntimeScopes: async () => { throw new Error("PROCESS_SCOPE_STOP_UNPROVEN"); },
+      database: { open: async () => {}, close: closed },
+      instanceLock: { release: released },
+    })).rejects.toThrow("PROCESS_SCOPE_STOP_UNPROVEN");
+    expect(closed).not.toHaveBeenCalled();
+    expect(released).not.toHaveBeenCalled();
   });
 
   it("prevents second instance from acquiring lock", async () => {

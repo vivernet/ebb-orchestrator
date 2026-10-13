@@ -1181,6 +1181,27 @@ export class RunService {
     });
   }
 
+  /** Останавливает runtime scopes текущих активных Runs, сохраняя их durable state для startup recovery. */
+  async stopActiveRuntimeScopes(): Promise<void> {
+    const activeRuns = this.db.all<{ id: string }>(
+      "SELECT id FROM agent_runs WHERE status IN ('STARTED','IN_PROGRESS','COMPLETING') ORDER BY id",
+    );
+    await Promise.all(activeRuns.map(async ({ id }) => {
+      await this.runtime.cancelRun(id);
+      let owner = getRunProcessOwner(this.db, id);
+      if (owner?.state === "PREPARED") {
+        this.db.transaction((tx) => transitionRunProcessOwnerTx(tx, {
+          runId: id, expectedState: "PREPARED", nextState: "STOPPED", evidence: "NEVER_LAUNCHED",
+        }));
+        owner = getRunProcessOwner(this.db, id);
+      }
+      if (!owner || owner.state !== "STOPPED" ||
+          !isAuthoritativeRunProcessStopEvidence(owner.stopEvidence, owner.containmentKind)) {
+        throw new Error("RUN_PROCESS_SCOPE_STOP_UNPROVEN");
+      }
+    }));
+  }
+
   /**
    * Collect результат и обновляет run статус.
    */
