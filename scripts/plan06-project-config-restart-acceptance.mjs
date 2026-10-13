@@ -497,7 +497,7 @@ async function verifyPreparedRunCapability({ scenarioRoot, repository, projectNa
   const rawWorktreeConfig = await readFile(worktreeConfigPath, "utf8");
   assert.match(rawWorktreeConfig, /default_branch: develop/);
 
-  const [{ createSqliteDatabase }, { BackupService }, { RunService }, { loadValidatedCapability }] = await Promise.all([
+  const [{ createSqliteDatabase }, { BackupService }, { RunService, createRunContextInput }, { loadValidatedCapability }] = await Promise.all([
     import(pathToFileURL(resolve(root, "apps/server/dist/platform/database/sqlite-database.js")).href),
     import(pathToFileURL(resolve(root, "apps/server/dist/platform/database/backup-service.js")).href),
     import(pathToFileURL(resolve(root, "apps/server/dist/modules/runtime/run-service.js")).href),
@@ -531,7 +531,7 @@ async function verifyPreparedRunCapability({ scenarioRoot, repository, projectNa
       collectResult() { runtimeCalls += 1; throw new Error("provider/runtime invocation is forbidden in capability acceptance"); },
     };
     const runService = new RunService(snapshotDatabase, runtimeStub);
-    const run = runService.prepareRun({
+    const runOptions = {
       role: "developer",
       model: "plan06-acceptance-no-provider",
       taskId,
@@ -540,6 +540,16 @@ async function verifyPreparedRunCapability({ scenarioRoot, repository, projectNa
       contextVersion: "plan06-project-config-restart-acceptance",
       outputSchemaVersion: "1",
       capability: { workspace },
+    };
+    const run = runService.prepareRun({
+      ...runOptions,
+      contextInput: createRunContextInput(runOptions, {
+        prompt: "Verify the approved Project Config snapshot used for this prepared run.",
+        roleInputs: {},
+        workspaceIdentity: { repository, workspace, worktree: taskId },
+        targetHead: git(workspace, ["rev-parse", "HEAD"]),
+        targetBranch: branch,
+      }),
     });
     const persisted = snapshotDatabase.get("SELECT capability_json FROM agent_runs WHERE id=$id", { id: run.id });
     assert.ok(persisted?.capability_json, "RunService did not persist its prepared capability");

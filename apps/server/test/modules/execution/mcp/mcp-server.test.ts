@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { tmpdir } from 'node:os';
+import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import crypto from 'node:crypto';
@@ -93,6 +94,8 @@ describe('MCP Server', () => {
       const { GitTools } = await import('../../../../src/modules/execution/git-tools.js');
       const gitTools = new GitTools(workspaceDir);
       await gitTools.initRepo();
+      execFileSync('git', ['-C', workspaceDir, 'config', '--local', 'user.name', 'MCP Test']);
+      execFileSync('git', ['-C', workspaceDir, 'config', '--local', 'user.email', 'mcp-test@example.invalid']);
       fs.writeFileSync(path.join(workspaceDir, 'health.ts'), 'export const health = true;');
       await expect(server.callTool('git.add', { paths: ['health.ts'] })).resolves.toMatchObject({ success: true });
       await expect(server.callTool('git.commit', { message: 'Add health route' })).resolves.toMatchObject({ success: true });
@@ -270,6 +273,8 @@ describe('MCP Server', () => {
       const { GitTools } = await import('../../../../src/modules/execution/git-tools.js');
       const gitTools = new GitTools(workspaceDir);
       await gitTools.initRepo();
+      execFileSync('git', ['-C', workspaceDir, 'config', '--local', 'user.name', 'MCP Test']);
+      execFileSync('git', ['-C', workspaceDir, 'config', '--local', 'user.email', 'mcp-test@example.invalid']);
       const server = new McpServer(new RunCapability({
         id: 'schema-valid', role: 'developer', workspace: workspaceDir,
         allowedTools: ['workspace.read', 'workspace.patch', 'git.commit'],
