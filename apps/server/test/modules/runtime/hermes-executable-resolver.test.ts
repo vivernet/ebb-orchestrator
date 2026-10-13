@@ -70,6 +70,14 @@ describe("direct installed Hermes resolver", () => {
     expect(bootstrap).not.toContain("ebb_verify_hermes_source");
     expect(bootstrap).not.toContain("subprocess");
     expect(bootstrap).toContain("import hermes_bootstrap");
+    expect(bootstrap).toContain("except BaseException as ebb_bootstrap_error:");
+    expect(bootstrap).toContain("EBB_HERMES_BOOTSTRAP_RELAUNCH:HERMES_BOOTSTRAP:");
+    expect(bootstrap).toContain("EBB_HERMES_BOOTSTRAP_SYSTEM_EXIT:HERMES_BOOTSTRAP:");
+    expect(bootstrap).toContain("type(ebb_bootstrap_error).__module__ == 'hermes_bootstrap'");
+    expect(bootstrap).toContain("type(ebb_bootstrap_error) is SystemExit");
+    expect(bootstrap).not.toContain("hermes_bootstrap.__name__");
+    expect(bootstrap).not.toContain("isinstance(ebb_bootstrap_error, SystemExit)");
+    expect(bootstrap).toContain("raise");
     expect(bootstrap).toContain("runpy.run_module('hermes_cli.main', run_name='__main__', alter_sys=True)");
     expect(bootstrap).toContain("os.environ.pop('PYTHONHOME', None)");
     expect(bootstrap).toContain("os.environ.pop('PYTHONPATH', None)");

@@ -1229,6 +1229,11 @@ class HermesStartupStderrClassifier {
       this.parsedFailure = "HERMES_EBB_MCP_REGISTRATION_FAILED";
       return;
     }
+    const bootstrapExit = /^EBB_HERMES_BOOTSTRAP_(RELAUNCH|SYSTEM_EXIT):HERMES_BOOTSTRAP:(0|[1-9][0-9]{0,2})$/u.exec(line);
+    if (bootstrapExit?.[1] && bootstrapExit[2] && Number(bootstrapExit[2]) <= 255) {
+      this.parsedFailure = `HERMES_BOOTSTRAP_${bootstrapExit[1]}:EXIT_${bootstrapExit[2]}`;
+      return;
+    }
     const refusal = /^hermes-refusal-reason: (SESSION_NOT_OWNED|MAX_CONCURRENT_SESSIONS|SESSION_COORDINATION_UNAVAILABLE)$/u.exec(line);
     if (refusal?.[1]) this.parsedFailure = `HERMES_ACTIVE_SESSION_REFUSED:${refusal[1]}`;
   }

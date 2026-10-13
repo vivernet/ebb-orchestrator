@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
@@ -618,6 +619,47 @@ describe("HermesRuntimeAdapter", () => {
           .then(() => "unexpected success", (error: unknown) => error instanceof Error ? error.message : String(error));
         expect(categorizedFailure).toBe("HERMES_SESSION_STREAM_INVALID:MISSING_INIT:EXIT_103:CATEGORY_AUTH");
         expect(categorizedFailure).not.toContain("private credential");
+
+        const bootstrapMarker = "EBB_HERMES_BOOTSTRAP_RELAUNCH:HERMES_BOOTSTRAP:42";
+        supervisor.stderrChunks = [new TextEncoder().encode(`${bootstrapMarker}\nprivate bootstrap detail`)];
+        mockExecutor.setNextResult({ exitCode: 42, stdout: "", stderr: "" });
+        const bootstrapFailure = await adapter.startRun({ ...run, id: "bc24582a-b384-4e1c-8d77-d18a29db6582" })
+          .then(() => "unexpected success", (error: unknown) => error instanceof Error ? error.message : String(error));
+        expect(bootstrapFailure).toBe("HERMES_BOOTSTRAP_RELAUNCH:EXIT_42");
+        expect(bootstrapFailure).not.toContain("private bootstrap detail");
+
+        const systemExitMarker = "EBB_HERMES_BOOTSTRAP_SYSTEM_EXIT:HERMES_BOOTSTRAP:103";
+        supervisor.stderrChunks = [new TextEncoder().encode(`${systemExitMarker}\nprivate system exit detail`)];
+        mockExecutor.setNextResult({ exitCode: 103, stdout: "", stderr: "" });
+        const systemExitFailure = await adapter.startRun({ ...run, id: "25e1e819-3246-45e3-b8f0-9094b550fa4b" })
+          .then(() => "unexpected success", (error: unknown) => error instanceof Error ? error.message : String(error));
+        expect(systemExitFailure).toBe("HERMES_BOOTSTRAP_SYSTEM_EXIT:EXIT_103");
+        expect(systemExitFailure).not.toContain("private system exit detail");
+
+        const injectedMarker = `${bootstrapMarker}:private-path`;
+        supervisor.stderrChunks = [new TextEncoder().encode(`prefix ${bootstrapMarker}\n${injectedMarker}\n`)];
+        mockExecutor.setNextResult({ exitCode: 42, stdout: "", stderr: "" });
+        const injectedFailure = await adapter.startRun({ ...run, id: "ecdf3af0-1cd3-4c5a-90fc-1ebf5bb39cbb" })
+          .then(() => "unexpected success", (error: unknown) => error instanceof Error ? error.message : String(error));
+        expect(injectedFailure).toBe("HERMES_SESSION_STREAM_INVALID:MISSING_INIT:EXIT_42:CATEGORY_OTHER");
+        expect(injectedFailure).not.toContain("private-path");
+
+        for (const malformed of [
+          "EBB_HERMES_BOOTSTRAP_RELAUNCH:HERMES_BOOTSTRAP:256",
+          "EBB_HERMES_BOOTSTRAP_RELAUNCH:HERMES_BOOTSTRAP:042",
+          "EBB_HERMES_BOOTSTRAP_RELAUNCH:OTHER:42",
+          "EBB_HERMES_BOOTSTRAP_SYSTEM_EXIT:HERMES_BOOTSTRAP:256",
+          "EBB_HERMES_BOOTSTRAP_SYSTEM_EXIT:HERMES_BOOTSTRAP:0103",
+          "EBB_HERMES_BOOTSTRAP_SYSTEM_EXIT:OTHER:103",
+          "prefix EBB_HERMES_BOOTSTRAP_SYSTEM_EXIT:HERMES_BOOTSTRAP:103",
+          "EBB_HERMES_BOOTSTRAP_SYSTEM_EXIT:HERMES_BOOTSTRAP:103:private-path",
+        ]) {
+          supervisor.stderrChunks = [new TextEncoder().encode(`${malformed}\n`)];
+          mockExecutor.setNextResult({ exitCode: 42, stdout: "", stderr: "" });
+          const malformedFailure = await adapter.startRun({ ...run, id: randomUUID() })
+            .then(() => "unexpected success", (error: unknown) => error instanceof Error ? error.message : String(error));
+          expect(malformedFailure).toBe("HERMES_SESSION_STREAM_INVALID:MISSING_INIT:EXIT_42:CATEGORY_OTHER");
+        }
       } finally {
         await fs.rm(resultDirectory, { recursive: true, force: true });
       }

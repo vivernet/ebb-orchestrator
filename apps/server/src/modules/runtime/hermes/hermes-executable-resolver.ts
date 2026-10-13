@@ -377,7 +377,18 @@ export function buildHermesInstalledRuntimeArgs(input: {
     `os.environ['HERMES_HOME'] = os.environ.get('HERMES_HOME') or ${pythonUnicodeEscape(input.hermesHome)}\n` +
     "sys.dont_write_bytecode = True\n" +
     `sys.path.insert(0, ${sourceRoot})\n` +
-    "import hermes_bootstrap\n" +
+    "try:\n" +
+    "    import hermes_bootstrap\n" +
+    "except BaseException as ebb_bootstrap_error:\n" +
+    "    if type(ebb_bootstrap_error).__name__ == 'RelaunchExit' and type(ebb_bootstrap_error).__module__ == 'hermes_bootstrap':\n" +
+    "        ebb_bootstrap_exit_code = getattr(ebb_bootstrap_error, 'code', 1)\n" +
+    "        if type(ebb_bootstrap_exit_code) is int and 0 <= ebb_bootstrap_exit_code <= 255:\n" +
+    "            sys.stderr.write('EBB_HERMES_BOOTSTRAP_RELAUNCH:HERMES_BOOTSTRAP:' + str(ebb_bootstrap_exit_code) + '\\n')\n" +
+    "    elif type(ebb_bootstrap_error) is SystemExit:\n" +
+    "        ebb_bootstrap_exit_code = getattr(ebb_bootstrap_error, 'code', None)\n" +
+    "        if type(ebb_bootstrap_exit_code) is int and 0 <= ebb_bootstrap_exit_code <= 255:\n" +
+    "            sys.stderr.write('EBB_HERMES_BOOTSTRAP_SYSTEM_EXIT:HERMES_BOOTSTRAP:' + str(ebb_bootstrap_exit_code) + '\\n')\n" +
+    "    raise\n" +
     registration +
     "runpy.run_module('hermes_cli.main', run_name='__main__', alter_sys=True)\n";
   return Object.freeze(["-I", "-B", "-c", bootstrap]);

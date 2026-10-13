@@ -39,6 +39,7 @@ function safeHermesFailure(error: unknown): string | undefined {
     const message = current.message;
     if (/^HERMES_SESSION_STREAM_INVALID:[A-Z0-9_]+(?::EXIT_-?\d+)?(?::CATEGORY_(EMPTY|AUTH|RATE_LIMIT|NETWORK|TIMEOUT|MCP|PROCESS_ERROR|OTHER))?$/.test(message) ||
         /^HERMES_PYTHON_STARTUP_EXCEPTION:(ModuleNotFoundError|ImportError|PermissionError|FileNotFoundError|OSError|RuntimeError|ValueError|TypeError|AttributeError|KeyError|SyntaxError|NameError|UnicodeDecodeError|UnicodeEncodeError)$/u.test(message) ||
+        isSafeBootstrapExitDiagnostic(message) ||
         message === "HERMES_EBB_MCP_REGISTRATION_FAILED" ||
         /^HERMES_ACTIVE_SESSION_REFUSED:(SESSION_NOT_OWNED|MAX_CONCURRENT_SESSIONS|SESSION_COORDINATION_UNAVAILABLE)$/u.test(message) ||
         message === "HERMES_SESSION_STREAM_INVALID" ||
@@ -49,6 +50,11 @@ function safeHermesFailure(error: unknown): string | undefined {
     current = current.cause;
   }
   return undefined;
+}
+
+function isSafeBootstrapExitDiagnostic(message: string): boolean {
+  const match = /^HERMES_BOOTSTRAP_(RELAUNCH|SYSTEM_EXIT):EXIT_(0|[1-9][0-9]{0,2})$/u.exec(message);
+  return match?.[2] !== undefined && Number(match[2]) <= 255;
 }
 
 interface RestartReadback {
@@ -148,6 +154,20 @@ describe("Plan20 Task5B restart persistence harness", () => {
     expect(safeHermesFailure(new Error("HERMES_ACTIVE_SESSION_REFUSED:SESSION_NOT_OWNED")))
       .toBe("HERMES_ACTIVE_SESSION_REFUSED:SESSION_NOT_OWNED");
     expect(safeHermesFailure(new Error("HERMES_ACTIVE_SESSION_REFUSED:UNKNOWN"))).toBeUndefined();
+    expect(safeHermesFailure(new Error("HERMES_BOOTSTRAP_RELAUNCH:EXIT_42")))
+      .toBe("HERMES_BOOTSTRAP_RELAUNCH:EXIT_42");
+    expect(safeHermesFailure(new Error("HERMES_BOOTSTRAP_SYSTEM_EXIT:EXIT_103")))
+      .toBe("HERMES_BOOTSTRAP_SYSTEM_EXIT:EXIT_103");
+    for (const malformed of [
+      "HERMES_BOOTSTRAP_RELAUNCH:EXIT_256",
+      "HERMES_BOOTSTRAP_RELAUNCH:EXIT_042",
+      "HERMES_BOOTSTRAP_RELAUNCH:EXIT_42:secret",
+      "prefix HERMES_BOOTSTRAP_RELAUNCH:EXIT_42",
+      "HERMES_BOOTSTRAP_SYSTEM_EXIT:EXIT_256",
+      "HERMES_BOOTSTRAP_SYSTEM_EXIT:EXIT_0103",
+      "HERMES_BOOTSTRAP_SYSTEM_EXIT:EXIT_103:secret",
+      "prefix HERMES_BOOTSTRAP_SYSTEM_EXIT:EXIT_103",
+    ]) expect(safeHermesFailure(new Error(malformed))).toBeUndefined();
     expect(safeHermesFailure(new Error("provider response contained a secret"))).toBeUndefined();
   });
 
