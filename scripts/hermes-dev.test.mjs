@@ -375,6 +375,31 @@ test('Plan 19 Hermes parity fixture uses recoverable ledger, tool schemas and po
   assert.match(fixture, /skill excerpts[\s\S]{0,180}citations/i);
   assert.match(fixture, /ровно двух параллельных[\s\S]{0,80}read-only субагентов/i);
   assert.match(fixture, /одним-единственным параллельным batch-вызовом/i);
+  assert.match(fixture, /delegate_task\(tasks=\[\{goal, context, toolsets, output_schema\}, \{goal, context, toolsets, output_schema\}\]\)/);
+  const outputSchemaA = fixture.match(/A output_schema:\s*```json\r?\n([\s\S]*?)\r?\n```/i);
+  assert.ok(outputSchemaA, 'child A must receive its own JSON output_schema');
+  const schemaA = JSON.parse(outputSchemaA[1]);
+  assert.deepEqual(schemaA.required, ['findings']);
+  assert.deepEqual(schemaA.properties.findings.items.required, ['path', 'line_citation', 'excerpt', 'requirement']);
+  const outputSchemaMatch = fixture.match(/B output_schema:[\s\S]{0,400}?```json\r?\n([\s\S]*?)\r?\n```/i);
+  assert.ok(outputSchemaMatch, 'child B must receive a JSON output_schema');
+  const outputSchema = JSON.parse(outputSchemaMatch[1]);
+  const skillEvidence = outputSchema.properties.skills;
+  const expectedSkills = ['dispatch_agents', 'review_task', 'final_review', 'quality_gates'];
+  const expectedFields = ['path', 'line_citation', 'excerpt', 'requirement'];
+  assert.deepEqual(skillEvidence.required, expectedSkills);
+  for (const [index, key] of expectedSkills.entries()) {
+    const evidence = skillEvidence.properties[key];
+    assert.deepEqual(evidence.required, expectedFields);
+    assert.equal(evidence.properties.path.const, [
+      '.agents/skills/ebb-dispatch-agents/SKILL.md',
+      '.agents/skills/ebb-review-task/SKILL.md',
+      '.agents/skills/ebb-final-review/SKILL.md',
+      '.agents/skills/ebb-quality-gates/SKILL.md',
+    ][index]);
+    assert.ok(evidence.properties.excerpt.maxLength > 0);
+    assert.ok(evidence.properties.requirement.maxLength > 0);
+  }
   assert.match(fixture, /не отправлять[\s\S]{0,80}двумя отдельными вызовами[\s\S]{0,40}ни последовательно/i);
   assert.match(fixture, /отклоняет хотя бы одного, зафиксировать `FAIL` и остановиться/i);
   assert.match(fixture, /второй[\s\S]{0,60}вызов для создания недостающего child запрещён/i);

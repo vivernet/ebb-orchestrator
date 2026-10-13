@@ -50,7 +50,12 @@ tests, scripts, конфигурацию, skills и другие файлы. Н�
 
 Передать поручения A и B одним-единственным параллельным batch-вызовом
 delegation tool, чтобы оба child были созданы и запущены в рамках одного
-вызова. Не отправлять A и B двумя отдельными вызовами — ни последовательно, ни
+вызова. Использовать поддерживаемую форму вызова
+`delegate_task(tasks=[{goal, context, toolsets, output_schema}, {goal, context, toolsets, output_schema}])`:
+передать два отдельных объекта в `tasks`, по одному для A и B; в каждом
+заполнить `goal`, `context`, `toolsets` и собственный `output_schema` значениями
+соответствующего поручения. Не выносить `output_schema` на верхний уровень.
+Не отправлять A и B двумя отдельными вызовами — ни последовательно, ни
 как повторный вызов после частичного отказа. Если единый вызов не создаёт обоих
 child или отклоняет хотя бы одного, зафиксировать `FAIL` и остановиться; второй
 вызов для создания недостающего child запрещён.
@@ -67,6 +72,35 @@ delegation. Третий дочерний агент не допускается
   `.agents/skills/ebb-orchestrate-work/SKILL.md`. Вернуть пути и точные
   выдержки/номера строк, подтверждающие основную ветку, ограничения на
   субагентов, запрет nested delegation, требуемые gates и границы изменений.
+
+A output_schema:
+
+```json
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["findings"],
+  "properties": {
+    "findings": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 12,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "line_citation", "excerpt", "requirement"],
+        "properties": {
+          "path": {"type": "string", "minLength": 1, "maxLength": 240},
+          "line_citation": {"type": "string", "pattern": "^.+:L[1-9][0-9]*(?:-L[1-9][0-9]*)?$"},
+          "excerpt": {"type": "string", "minLength": 1, "maxLength": 500},
+          "requirement": {"type": "string", "minLength": 1, "maxLength": 240}
+        }
+      }
+    }
+  }
+}
+```
+
 - **Субагент B — актуальные skills.** Проверить наличие и содержание
   `.agents/skills/ebb-dispatch-agents/SKILL.md`,
   `.agents/skills/ebb-review-task/SKILL.md`,
@@ -74,6 +108,73 @@ delegation. Третий дочерний агент не допускается
   `.agents/skills/ebb-quality-gates/SKILL.md`. Вернуть пути и точные
   выдержки/номера строк о read-only review, независимой проверке,
   ограничениях leaf-agent и доказательствах completion.
+
+B output_schema:
+Передать эту ограниченную JSON Schema в `output_schema` объекта B. Она
+требует отдельную evidence-запись для каждого из четырёх навыков; каждая запись
+содержит фиксированный путь, номера строк, выдержку и объяснение подтверждаемого
+требования.
+
+```json
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["skills"],
+  "properties": {
+    "skills": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dispatch_agents", "review_task", "final_review", "quality_gates"],
+      "properties": {
+        "dispatch_agents": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "line_citation", "excerpt", "requirement"],
+          "properties": {
+            "path": {"type": "string", "const": ".agents/skills/ebb-dispatch-agents/SKILL.md"},
+            "line_citation": {"type": "string", "pattern": "^L[1-9][0-9]*(?:-L[1-9][0-9]*)?$"},
+            "excerpt": {"type": "string", "minLength": 1, "maxLength": 500},
+            "requirement": {"type": "string", "minLength": 1, "maxLength": 240}
+          }
+        },
+        "review_task": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "line_citation", "excerpt", "requirement"],
+          "properties": {
+            "path": {"type": "string", "const": ".agents/skills/ebb-review-task/SKILL.md"},
+            "line_citation": {"type": "string", "pattern": "^L[1-9][0-9]*(?:-L[1-9][0-9]*)?$"},
+            "excerpt": {"type": "string", "minLength": 1, "maxLength": 500},
+            "requirement": {"type": "string", "minLength": 1, "maxLength": 240}
+          }
+        },
+        "final_review": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "line_citation", "excerpt", "requirement"],
+          "properties": {
+            "path": {"type": "string", "const": ".agents/skills/ebb-final-review/SKILL.md"},
+            "line_citation": {"type": "string", "pattern": "^L[1-9][0-9]*(?:-L[1-9][0-9]*)?$"},
+            "excerpt": {"type": "string", "minLength": 1, "maxLength": 500},
+            "requirement": {"type": "string", "minLength": 1, "maxLength": 240}
+          }
+        },
+        "quality_gates": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "line_citation", "excerpt", "requirement"],
+          "properties": {
+            "path": {"type": "string", "const": ".agents/skills/ebb-quality-gates/SKILL.md"},
+            "line_citation": {"type": "string", "pattern": "^L[1-9][0-9]*(?:-L[1-9][0-9]*)?$"},
+            "excerpt": {"type": "string", "minLength": 1, "maxLength": 500},
+            "requirement": {"type": "string", "minLength": 1, "maxLength": 240}
+          }
+        }
+      }
+    }
+  }
+}
+```
 
 Принимать результат B только после того, как delegation tool вернул успешный,
 schema-valid завершённый ответ child B. Ответ должен отдельно содержать все
