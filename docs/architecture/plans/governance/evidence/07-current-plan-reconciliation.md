@@ -4,7 +4,7 @@ kind: ledger
 status: current
 title: Сверка незавершённых планов и требований
 created: 2026-09-28
-updated: 2026-10-09
+updated: 2026-10-13
 ---
 
 # Сверка незавершённых планов и требований
@@ -840,3 +840,9 @@ Plan01 metadata переведена из `completed` в `in_progress` посл�
 - Свежий полный `pnpm test` exit 0: contracts 7/7, web 219/219, server 152 passed / 3 skipped, 1,838 passed / 29 skipped, root scripts 64/64. Полный `pnpm build` — exit 0, включая оба Windows native helpers; `pnpm lint`, `pnpm typecheck`, `pnpm docs:check` и `pnpm docs:test` (20/20) также PASS; у docs:check сохранилось прежнее filename-prefix предупреждение. `git diff --check` PASS. Никакой Hermes/provider request в этих проверках не выполнялся.
 - Первый полный прогон в ограниченном executor не смог завершить собственное Vite process tree через `taskkill /T` и завис на teardown; его результат не принят. После точечной остановки только созданного этим прогоном дерева повтор полного suite в process-control-capable executor завершился PASS с проверкой закрытия frontend port.
 - Обновлена `docs/roadmap/02-current-state.md`; lifecycle metadata/generated statuses не менялись. Task7 остаётся открытой для provider-backed/platform links и свежих whole-change/whole-plan reviews. Linux acceptance и macOS Apple Silicon 13.5+ gates открыты. Пользователь разрешил только feasibility research per-Run VM + durable host manager; реализация и runner operations не разрешены. Plan19 Tasks8–9 и final all-plan audit не закрывались.
+
+## Дополнение — Plan20 Linux trigger and macOS VM feasibility (2026-10-13)
+
+- Linux Task5A запускается существующим `.github/workflows/production-gates.yml` только на `push`; отдельного `workflow_dispatch` нет. Runner — `ubuntu-24.04`, с systemd user manager и cgroup v2; acceptance строит Linux Hermes launcher и запускает `hermes-process-scope.acceptance.test.ts` с `EBB_RUN_NATIVE_SCOPE_ACCEPTANCE=1`. Локальный WSL inventory завершился `Wsl/EnumerateDistros/Service/E_ACCESSDENIED`, поэтому Linux gate из этого checkout не выполнен.
+- Попытка push `origin/develop` для получения hosted Linux evidence была отклонена automatic approval review: она публиковала бы 19 локальных commits, тогда как прежнее разрешение пользователя называло push из `master`, не этот branch/payload. Никакого remote ref не изменено. Следующий необходимый внешний шаг — точное разрешение на `origin/develop` `0065ce830b84c6c75cf48c02091ae67c834f6f7c` (включая 19 commits от `origin/develop`) либо другое поддерживаемое средство запуска без публикации.
+- Read-only VM research по одобренному Proposal15 подтвердило, что Virtualization.framework — возможный macOS guest candidate на Apple Silicon, но docs не подтверждают helper-crash/restart STOPPED, durable VM-owner recovery или Hermes auth/workspace path. GitHub-hosted arm64 macOS начинается с macOS 14 и не поддерживает nested virtualization; self-hosted ARM64 runner указан как public preview, но физический runner/operations не подтверждён. Детальные gates и официальные источники добавлены в Proposal15. Исследование не запускало VM/runner, не меняло файлы пользователя и не разрешает реализацию.

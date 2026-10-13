@@ -4,7 +4,7 @@ kind: proposal
 title: macOS production process containment for Plan20 Task5A-M
 status: draft
 created: 2026-10-09
-updated: 2026-10-09
+updated: 2026-10-13
 ---
 
 # Proposal 15 — macOS production process containment
@@ -235,6 +235,15 @@ Primary evidence: [Apple `VZVirtualMachine.start`](https://developer.apple.com/t
 Пользователь одобрил исследование per-Run macOS guest VM вместе с постоянно работающим durable host manager как кандидата для macOS 13.5+ на Apple Silicon, сохраняя строгий `STOPPED`. Это разрешает только проектирование и feasibility-проверку. Реализация и выбор архитектуры не одобрены: сначала нужны доказательства crash/restart recovery, точного STOPPED, Hermes-owned auth/workspace compatibility, startup latency, storage, workspace exchange, packaging и независимый review.
 
 Исследование остаётся открытой технической задачей. До прохождения этих gates Plan20 Task5A-M остаётся открытым; нельзя подменять строгий `STOPPED` проверкой PID/PGID или считать macOS production-ready.
+
+### Feasibility findings — read-only review (2026-10-13)
+
+- Публичный `Virtualization.framework` предоставляет основу для macOS guest на Apple Silicon и требует virtualization entitlement. Это подтверждает техническую возможность кандидата, но не его production lifecycle. API-документация не доказывает, что VM заканчивает выполнение при аварии host manager, что новый manager после падения может безопасно определить судьбу прежнего VM object или что host reboot закрывает dispatch до recovery.
+- `saveMachineStateTo`/`restoreMachineStateFrom` доступны только с macOS 14 и не могут быть условием поддержки минимального macOS 13.5. Нужны отдельный durable identity/config contract для повторного открытия exact VM и доказательство отсутствия повторного старта/restore при неоднозначном результате.
+- На GitHub-hosted ARM64 macOS доступны образы начиная с macOS 14; вложенная виртуализация там не поддерживается. Это не доказывает floor 13.5 и не подходит как единственная VM-host acceptance. GitHub перечисляет ARM64 macOS среди self-hosted архитектур как public preview, но наличие, эксплуатация и security boundary физического runner не подтверждены. Источники: [Apple Virtualize macOS on a Mac](https://developer.apple.com/documentation/virtualization/virtualize-macos-on-a-mac), [Apple VZMacPlatformConfiguration](https://developer.apple.com/documentation/virtualization/vzmacplatformconfiguration), [Apple VZVirtualMachine](https://developer.apple.com/documentation/virtualization/vzvirtualmachine), [GitHub-hosted runners](https://docs.github.com/en/actions/reference/runners/github-hosted-runners), [GitHub self-hosted runners](https://docs.github.com/en/actions/reference/runners/self-hosted-runners).
+- До возможного implementation/design approval остаются проверяемые gates: durable single-writer host-manager journal и recovery после kill/reboot; точный `STOPPED` при остановке/таймауте/потере manager/повреждении VM identity; безопасный workspace handoff; совместимость с уже настроенным Hermes-owned auth без чтения или копирования credential/config данных; реальные boot/stop/storage/concurrency измерения; signing, entitlement, packaging/update и физический Apple Silicon acceptance на поддерживаемом floor. Ни один из этих runtime/API/prod gates не закрыт этим обзором.
+
+Вывод исследования: VM остаётся единственным кандидатом в текущем proposal, который заслуживает дальнейшего design work для macOS guest, но сейчас это **feasibility candidate, NOT VERIFIED**. Реализацию не начинать; сначала нужен доступный одобренный Apple Silicon test host/runner и независимый architecture/security review точного design delta.
 
 ### CI operations gate
 
