@@ -4,7 +4,7 @@ kind: plan
 status: in_progress
 title: Production ContextManifest lifecycle for every Run binding
 created: 2026-09-30
-updated: 2026-10-11
+updated: 2026-10-13
 specs:
   - ../specs/01-system-design.md
 evidence:
@@ -368,6 +368,13 @@ Producer coverage is keyed by exactly 18 stable source-backed labels and each mu
 **Review Focus:** No mock-only acceptance is misreported as Hermes/provider evidence; current Plan05/06 statuses and roadmap/index remain consistent; unrelated tasks and `plan-14` stay out of scope; external/hosted CI, scans, provider use or publication are not assumed authorized.
 **Completion evidence:** Acceptance report with exactly 13 distinct subject/role pairs, all 18 source-backed producer-to-Run/manifest assertions, and three consumer-only event-path assertions (the Run ID total may differ); exact Request route/job/classification/decision evidence; per-run manifest-before-dispatch and rollback proof; exact command exit codes; proof that the supported installed CLI/invocation works; optional version/source identity is diagnostic only, plus real provider-backed capture through the already configured Hermes profile without reading/copying credential values; durable session capture/invalidation and process-tree restart recovery; API restart readback; UI assertions; test summaries; required Plan20 reviewer verdicts; clean generated-artifact check; downstream follow-ups recorded without making their independent gates prerequisites; and `git status --short`.
 **BLOCKED when:** Task 5's supported live init-event persistence/restart evidence is absent, an external Hermes/provider/hosted CI gate is unavailable, or any required reviewer/gate fails. Record the exact reason and `NOT VERIFIED`; do not claim Plan05/06 or this plan complete.
+
+## 2026-10-13 — Current-tree Windows process-scope and Task7 acceptance checkpoint
+
+- `pnpm server:build` passed on current HEAD `cd238e6721028dcffaa7e7321e7ce85b50b78116`, including both Windows native helper builds.
+- The provider-free `pnpm --filter @ebb-orchestrator/server exec vitest run test/e2e/context-manifest-production.acceptance.test.ts` passed: 1 file, 8/8 tests. Its current assertions cover atomic Run/manifest/owner writes and rollback, all source-backed producer bindings and 13 subject/role pairs, the three consumer-only event paths, restart readback, and safe manifest API responses. This is one Task7 acceptance slice; it does not by itself prove the separate browser/UI, docs, root quality, review, or provider/recovery requirements.
+- The provider-free Windows native command `$env:EBB_RUN_NATIVE_SCOPE_ACCEPTANCE='1'; pnpm --filter @ebb-orchestrator/server exec vitest run test/e2e/hermes-process-scope.acceptance.test.ts` passed outside the restricted executor: 1 file, 18 passed, 2 Linux-only skipped, exit 0, 42.46 s. It proved the current-tree Windows production Job/process-scope, helper/launcher crash recovery, durable UNKNOWN-to-STOPPED reconciliation, and descendant shutdown slice. The same command in the restricted executor initially gave 16 passed/2 skipped/2 failed because restart workers exited before READY with stderr redacted; a read-only check found no matching fixture directories or Node processes after that run. The ordinary Windows execution is the accepted evidence. No Hermes/provider was launched and no host ACL or credential was inspected or changed.
+- Windows current-tree Task5A process-scope and Task7 producer/consumer acceptance slices now pass. Linux Task5A remains unverified on current code; Linux was not provisioned or run. macOS Apple Silicon 13.5+ design/native gates remain open. The recorded Windows Task5B live-provider pass is separate; Task5C's 2026-10-11 Windows same-session recovery remains a dated checkpoint requiring revalidation only if a recovery-relevant change invalidates it. Plan20 remains `in_progress`; this checkpoint does not close Task5 overall or Task7.
 
 ## Plan completion criteria
 
