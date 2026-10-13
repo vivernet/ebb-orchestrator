@@ -290,3 +290,16 @@ evidence отсутствуют. Общие lint/typecheck/test PASS не зак
 - Этот wrapper lifecycle PASS не меняет verdict parity. Приведённый выше provider-backed report подтверждает только child A и отсутствие child B после ошибки `delegation.oneshot_max_children`; требование одновременного запуска двух детей не выполнено. Raw stdout/stderr и credentials не сохранялись.
 - По этому наблюдению fixture дополнен обязательным единым batch-вызовом A+B с fail-stop при частичном отказе. Изменение проверено targeted test/`pnpm hermes:test` и независимым read-only review; нового provider run с этим уточнением ещё не было.
 - Task7 остаётся **FAIL / NOT VERIFIED**. Последовательный/одиночный dispatch не засчитывается; права, ACL, Hermes профиль, auth и конфигурация не менялись.
+
+## Controller checkpoint — единый batch prompt rerun (2026-10-13)
+
+- После уточнения fixture отправлять A+B одним параллельным batch-вызовом controller выполнил один `pnpm hermes:execute -- scripts/fixtures/hermes-development-workflow-parity-plan.md` с `HERMES_EXECUTE_TIMEOUT_MS=900000` и process-local PATH до установленного Hermes CLI.
+- Wrapper вернул `marker=TIMEOUT`, exit 124, `duration_ms=900455`, `timeout_ms=900000`, `child_closed=true`, `child_exit_code=1`, `child_pid=4524`, `stdout_bytes=0`, `stderr_bytes=182`, `termination_attempted=true`, `termination_ok=true`, `taskkill_status=0`, `cleanup_verified=true`. После завершения `Get-Process -Id 4524` подтвердил `PID_4524_ABSENT`.
+- Hermes не передал stdout и не создал новый итоговый report, поэтому evidence не показывает, успел ли он выполнить один batch вызов или получить provider response. Успешный wrapper cleanup не является parity PASS. Task7 сохраняет **FAIL / NOT VERIFIED**.
+- Никакие ACL, пользовательские права, Hermes profile, auth credentials или конфигурация не читались и не менялись. Не повторять тот же запуск без нового диагностического основания.
+
+## Final quality gates after batch clarification — 2026-10-13
+
+- На финальном fixture/test snapshot `pnpm lint`, `pnpm typecheck`, полный `pnpm test`, `pnpm hermes:test`, scoped ESLint и `git diff --check` завершились успешно. Полный suite: exit 0, 152 files passed / 3 skipped, 1,838 tests passed / 29 skipped.
+- Provider-backed one-batch попытка остаётся `FAIL / NOT VERIFIED` по содержанию; wrapper timeout/termination evidence записано выше и не объявляется parity PASS.
+- После последней provider attempt tracked changes в audit report не возникли автоматически; этот раздел фиксирует только проверенный результат локальных gates. Незатреканный файл Symphony оставлен без изменений.

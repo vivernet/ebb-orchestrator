@@ -790,3 +790,15 @@ Expected: exit code 0; `git status --short` lists only reviewed intended evidenc
 - Root cause, подтверждённый записью попытки: controller отправил A отдельным вызовом до B, израсходовав одноразовый delegation budget. Fixture уточнён и теперь требует отправлять A+B одним параллельным batch-вызовом; при частичном отказе — фиксировать FAIL без второго вызова. Критерии Task7 не ослаблены, Hermes config/provider/auth/ACL не менялись.
 - Fixture/test изменения прошли focused RED→GREEN, `pnpm hermes:test` 43/43, scoped ESLint, diff-check и independent review PASS. Полный `pnpm test` 1,838/1,867 прошёл до последнего уточнения one-batch; полный повтор для этого финального изменения остаётся необходимым.
 - Task7 сохраняет **FAIL / NOT VERIFIED** до следующего bounded run с двумя одновременно созданными child sessions, обязательными gates, provider-backed parity report и cleanup evidence. Бесконечные повторы запрещены; если единый batch-вызов вновь не создаст обеих задач, установить причину по новым evidence и не повторять тот же вызов без исправления.
+
+## Checkpoint — единый batch prompt rerun (2026-10-13)
+
+- После уточнения «отправить A+B одним batch-вызовом» выполнен один `pnpm hermes:execute -- scripts/fixtures/hermes-development-workflow-parity-plan.md` с timeout 900000 ms. Wrapper завершился `TIMEOUT`, exit 124: `duration_ms=900455`, `child_closed=true`, `child_exit_code=1`, `child_pid=4524`, `stdout_bytes=0`, `stderr_bytes=182`, `termination_attempted=true`, `termination_ok=true`, `taskkill_status=0`, `cleanup_verified=true`.
+- После close точный PID 4524 отсутствовал. Вывод подтверждает корректное bounded termination и prompt cleanup, но не сообщает, начал ли Hermes выполнять batch, получил ли provider response или где остановился. Parity report этого запуска не появился; Task7 остаётся **FAIL / NOT VERIFIED**.
+- Credentials, Hermes profile/settings/session store, user ACL и конфигурация не читались и не менялись. Повторять этот же запуск без нового диагностического evidence не планируется.
+
+## Checkpoint — final quality gates после one-batch уточнения (2026-10-13)
+
+- После изменения fixture/test о едином batch-вызове выполнены `pnpm lint` (exit 0), `pnpm typecheck` (exit 0), полный `pnpm test` вне sandbox (exit 0: 152 files passed, 3 skipped; 1,838 tests passed, 29 skipped), `pnpm hermes:test` (43/43), scoped ESLint и `git diff --check` (exit 0).
+- Точный provider-backed запуск после one-batch изменения завершился bounded timeout с подтверждённым termination/cleanup; это не отменяет его `FAIL / NOT VERIFIED` по содержательному acceptance. Новые Hermes попытки не запускались.
+- Local checkpoints сохранены коммитами `ce98d47` и `acae666`; remote push/merge не выполнялись. Пользовательский untracked Symphony-файл исключён.
