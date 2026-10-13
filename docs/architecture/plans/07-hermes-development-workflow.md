@@ -1080,6 +1080,9 @@ Acceptance criteria:
 - repository gates прошли;
 - parity report создан и закоммичен отдельно;
 - production-код не изменён.
+- cleanup подтверждён в ограниченном объёме: после close точного child process Hermes runner удалён созданный prompt file;
+- если применялось timeout termination, есть подтверждение успешного `taskkill.exe /PID <exact pid> /T /F` и последующего close root child;
+- detached OS descendants отмечены как `NOT VERIFIED`; при выполнении остальных критериев это само по себе не препятствует v1 acceptance. Не заявлять полный OS process-tree cleanup.
 
 Если verdict = FAIL:
 
