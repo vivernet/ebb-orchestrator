@@ -89,6 +89,35 @@ describe("RepositoryDiscovery", () => {
       expect(run).not.toHaveBeenCalledWith(tmpDir, ["remote", "show", "origin"]);
     });
 
+    it("prefers local main ref on detached HEAD when main and master exist", async () => {
+      const tmpDir = createTempDir();
+      setupGitRepo(tmpDir);
+      writeFileSync(join(tmpDir, "README.md"), "# Test");
+      execSync("git add README.md", { cwd: tmpDir });
+      execSync("git commit -m init", { cwd: tmpDir });
+      execSync("git branch main", { cwd: tmpDir });
+      execSync("git checkout --detach HEAD", { cwd: tmpDir });
+      const discovery = new RepositoryDiscovery();
+      const facts = await discovery.discover(tmpDir);
+
+      expect(facts.defaultBranch).toBe("main");
+      expect(execSync("git branch --list", { cwd: tmpDir, encoding: "utf8" })).toContain("main");
+      expect(execSync("git branch --list", { cwd: tmpDir, encoding: "utf8" })).toContain("master");
+    });
+
+    it("uses local master ref on detached HEAD when main does not exist", async () => {
+      const tmpDir = createTempDir();
+      setupGitRepo(tmpDir);
+      writeFileSync(join(tmpDir, "README.md"), "# Test");
+      execSync("git add README.md", { cwd: tmpDir });
+      execSync("git commit -m init", { cwd: tmpDir });
+      execSync("git checkout --detach HEAD", { cwd: tmpDir });
+
+      const discovery = new RepositoryDiscovery();
+      const facts = await discovery.discover(tmpDir);
+
+      expect(facts.defaultBranch).toBe("master");
+    });
     it("detects remotes from git config", async () => {
       const tmpDir = createTempDir();
       setupGitRepo(tmpDir);

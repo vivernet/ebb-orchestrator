@@ -144,7 +144,7 @@ async function windowsRuntime(
   const stamp: Record<string, unknown> = await readJson(paths.join(source, "install-stamp.json"))
     .catch((): Record<string, unknown> => ({}));
   const stampedRoot = typeof stamp.runtimeDir === "string" && stamp.runtimeDir.trim() ? stamp.runtimeDir : undefined;
-  const storePath = environment.HERMES_RUNTIME_DIR?.trim() || stampedRoot || paths.join(home, "tools");
+  const storePath = environment.HERMES_RUNTIME_DIR?.trim() || stampedRoot || paths.join(windowsHermesRuntimeRoot(home), "tools");
   if (!paths.isAbsolute(storePath) || hasControlCharacters(storePath)) {
     throw resolverError("HERMES_RUNTIME_LAYOUT_UNSUPPORTED");
   }
@@ -160,6 +160,15 @@ async function windowsRuntime(
   const canonicalDependencyRoot = await existingDirectory(dependencyRoot, paths);
   const pythonExecutable = await existingFile(paths.join(canonicalDependencyRoot, "python.exe"), paths);
   return { pythonExecutable };
+}
+
+/** Hermes stores profile-specific state below `<root>/profiles/<name>` but shares `<root>/tools`. */
+function windowsHermesRuntimeRoot(home: string): string {
+  const paths = path.win32;
+  const profilesDirectory = paths.dirname(home);
+  return paths.basename(profilesDirectory).toLowerCase() === "profiles"
+    ? paths.dirname(profilesDirectory)
+    : home;
 }
 
 async function linuxRuntime(

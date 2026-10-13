@@ -117,6 +117,26 @@ describe("direct installed Hermes resolver", () => {
     expect(verifiedPaths).toEqual([paths.launcher, paths.python]);
     expect(resolution.runtimeExecutablePath).toBe(paths.python);
   });
+
+  it.runIf(process.platform === "win32")("finds the shared runtime store when HERMES_HOME points at a profile", async () => {
+    const paths = await windowsProfileFixture();
+    const resolution = await resolveHermesExecutable({
+      cwd: paths.cwd,
+      pathValue: paths.bin,
+      platform: "win32",
+      environment: paths.environment,
+      verifyNativeHelper: async () => undefined,
+      runNativePathVerifier: async (_file, args) => {
+        const filename = args[args.indexOf("file") + 1] ?? "";
+        return { exitCode: 0, stdout: JSON.stringify({
+          status: "SAFE_PATH", kind: "file", path: filename,
+          volumeSerial: "0123456789abcdef", fileId: "0123456789abcdef0123456789abcdef",
+        }), stderr: "" };
+      },
+    });
+    expect(resolution.hermesConfigHome).toBe(paths.profileHome);
+    expect(resolution.runtimeExecutablePath).toBe(paths.python);
+  });
 });
 
 async function windowsFixture() {
@@ -139,6 +159,25 @@ async function windowsFixture() {
   await writeFile(python, "");
   await writeFile(paths.join(runtime, "facts.json"), JSON.stringify({ packages: { python: { entry: pythonEntry } } }));
   return { source, bin, cwd, launcher, python, runtime, hermesHome, environment: { PATH: bin, HERMES_HOME: hermesHome, USERPROFILE: fixtureRoot } };
+}
+
+async function windowsProfileFixture() {
+  const paths = await windowsFixture();
+  const winPaths = win32;
+  const profileHome = winPaths.join(fixtureRoot, "hermes-root", "profiles", "default");
+  const runtime = winPaths.join(fixtureRoot, "hermes-root", "tools");
+  const pythonEntry = "python-store-entry";
+  const python = winPaths.join(runtime, pythonEntry, "python.exe");
+  await mkdir(winPaths.dirname(python), { recursive: true });
+  await writeFile(python, "");
+  await writeFile(winPaths.join(runtime, "facts.json"), JSON.stringify({ packages: { python: { entry: pythonEntry } } }));
+  await writeFile(winPaths.join(paths.source, "install-stamp.json"), JSON.stringify({ commit: HERMES_PROVIDER_SELECTION_SOURCE.commit }));
+  return {
+    ...paths,
+    python,
+    profileHome,
+    environment: { ...paths.environment, HERMES_HOME: profileHome },
+  };
 }
 
 async function linuxFixture() {
