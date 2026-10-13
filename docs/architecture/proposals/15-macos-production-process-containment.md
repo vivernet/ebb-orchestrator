@@ -230,11 +230,15 @@ Current GitHub-hosted arm64 standard and larger-runner labels begin at macOS 14 
 
 Primary evidence: [Apple `VZVirtualMachine.start`](https://developer.apple.com/tutorials/data/documentation/virtualization/vzvirtualmachine/start(completionhandler:).json), [Apple `VZVirtualMachine.stop`](https://developer.apple.com/tutorials/data/documentation/virtualization/vzvirtualmachine/stop(completionhandler:).json), [Apple save state API](https://developer.apple.com/tutorials/data/documentation/virtualization/vzvirtualmachine/savemachinestateto(url:completionhandler:).json), [Apple restore state API](https://developer.apple.com/tutorials/data/documentation/virtualization/vzvirtualmachine/restoremachinestatefrom(url:completionhandler:).json), [GitHub-hosted runners](https://docs.github.com/en/actions/reference/runners/github-hosted-runners), [GitHub larger runners](https://docs.github.com/en/actions/reference/runners/larger-runners), and [GitHub self-hosted runners](https://docs.github.com/en/actions/reference/runners/self-hosted-runners).
 
-Only these are **product decisions** that cannot be derived from repository or API evidence:
+One **product decision** cannot be derived from repository or API evidence:
 
-1. **Runtime architecture:** whether a per-Run VM is an acceptable product/runtime architecture if it proves to be the only supported mechanism meeting the current strict STOPPED contract. This choice affects startup latency, storage, workspace exchange, packaging, and Hermes-auth availability; it is not implied by the general requirement to support macOS.
-2. **CI ownership:** the approved 13.5 floor and current GitHub runner labels require an explicitly managed physical/self-hosted Apple Silicon gate to test the oldest supported macOS version. Decide whether the project may operate such a runner and define its ownership/security boundary before adding it. No self-hosted runner is presumed.
-3. **If no supported mechanism can meet the current contract:** decide product scope/containment requirements explicitly. Until then Task5A-M remains blocked; do not silently weaken strict STOPPED to PID/PGID snapshots.
+> Для уже утверждённой поддержки macOS 13.5+ на Apple Silicon при неизменном строгом `STOPPED` допустимо ли исследовать per-Run macOS guest VM вместе с постоянно работающим durable host manager как основной кандидат на runtime architecture? Это решение разрешает только дальнейшее проектирование и проверку feasibility. Оно не разрешает реализацию: принять архитектуру можно будет лишь после доказательства crash/restart recovery, точного STOPPED, Hermes-owned auth/workspace compatibility и прохождения независимого review. Вариант требует оценить startup latency, storage, workspace exchange и packaging.
+
+Если ответ **нет**, текущих доказательств поддерживаемого macOS-механизма нет: Plan20 Task5A-M остаётся открытым, а product scope/containment contract нужно пересмотреть явно. Нельзя подменять строгий `STOPPED` проверкой PID/PGID или считать macOS production-ready.
+
+### CI operations gate
+
+Утверждённый минимум macOS 13.5 требует физический/self-hosted Apple Silicon runner, поскольку стандартные GitHub-hosted arm64 labels начинаются с macOS 14. Владение, эксплуатация и security boundary такого runner — отдельное операционное решение проекта, а не часть выбора runtime architecture. До его отдельного подтверждения нельзя добавлять или считать обязательный 13.5 CI gate настроенным; hosted `macos-15` не доказывает совместимость с 13.5.
 
 ## 14. Primary references
 
