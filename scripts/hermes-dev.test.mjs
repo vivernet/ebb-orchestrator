@@ -548,6 +548,51 @@ test('Hermes execute waits for child close before cleaning the prompt after time
   }
 });
 
+test('Hermes execute treats a child exit before timeout as a natural completion race', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'hermes-execute-exit-race-'));
+  const child = new EventEmitter();
+  child.pid = 9876;
+  child.exitCode = null;
+  child.signalCode = null;
+  child.kill = () => { throw new Error('must not kill an exited child'); };
+  let terminationCalls = 0;
+  let promptPresentAtClose = false;
+
+  try {
+    const resultPromise = runHermesExecute({
+      worktreeRoot: directory,
+      planPath: 'plan.md',
+      tmpDir: directory,
+      timeoutMs: 15,
+      platformName: 'win32',
+      terminate: () => { terminationCalls += 1; return { ok: false, status: 128 }; },
+      spawnChild: () => {
+        setTimeout(() => {
+          child.exitCode = 1;
+          child.emit('exit', 1, null);
+        }, 1);
+        setTimeout(() => {
+          promptPresentAtClose = readdirSync(directory).some((entry) => entry.startsWith('hermes-prompt-'));
+          child.emit('close', 1, null);
+        }, 25);
+        return child;
+      },
+    });
+
+    const result = await resultPromise;
+    assert.equal(terminationCalls, 0);
+    assert.equal(result.marker, 'FAILED');
+    assert.equal(result.exitCode, 1);
+    assert.equal(result.childClosed, true);
+    assert.equal(result.terminationAttempted, false);
+    assert.equal(result.cleanupVerified, true);
+    assert.equal(promptPresentAtClose, true);
+    assert.deepEqual(readdirSync(directory), []);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('Hermes execute returns only bounded timeout metadata and never child output', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'hermes-execute-telemetry-'));
   const child = new EventEmitter();

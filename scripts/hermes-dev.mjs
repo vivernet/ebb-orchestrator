@@ -485,6 +485,9 @@ No nested delegation.
           finish(fixedExecuteResult(code === 0 ? 0 : (code ?? 1), code === 0 ? 'COMPLETED' : 'FAILED', false));
         });
         timer = setTimeout(() => {
+          const childAlreadyExited = (child.exitCode !== null && child.exitCode !== undefined)
+            || (child.signalCode !== null && child.signalCode !== undefined);
+          if (childAlreadyExited) return;
           timedOut = true;
           telemetry.terminationAttempted = true;
           try { termination = terminate(child.pid, platformName, undefined, platformName !== 'win32'); } catch { termination = { ok: false }; }
