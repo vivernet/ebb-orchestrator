@@ -374,6 +374,10 @@ test('Plan 19 Hermes parity fixture uses recoverable ledger, tool schemas and po
   assert.match(fixture, /schema-valid[\s\S]{0,300}child B/i);
   assert.match(fixture, /skill excerpts[\s\S]{0,180}citations/i);
   assert.match(fixture, /ровно двух параллельных[\s\S]{0,80}read-only субагентов/i);
+  assert.match(fixture, /одним-единственным параллельным batch-вызовом/i);
+  assert.match(fixture, /не отправлять[\s\S]{0,80}двумя отдельными вызовами[\s\S]{0,40}ни последовательно/i);
+  assert.match(fixture, /отклоняет хотя бы одного, зафиксировать `FAIL` и остановиться/i);
+  assert.match(fixture, /второй[\s\S]{0,60}вызов для создания недостающего child запрещён/i);
   assert.match(fixture, /nested\s+delegation/i);
 });
 

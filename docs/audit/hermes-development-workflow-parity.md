@@ -248,3 +248,45 @@ evidence отсутствуют. Общие lint/typecheck/test PASS не зак
 - Тест fixture прошёл 1/1, `pnpm hermes:test` — 43/43, ESLint, `pnpm lint`, `pnpm typecheck` и `git diff --check` — PASS. Независимый reviewer повторно проверил исправления: PASS без замечаний.
 - Полный `pnpm test` в разрешённом Windows execution: exit 0, 152 files passed / 3 skipped, 1,838 tests passed / 29 skipped. Отдельный Plan20 `context-manifest-production.acceptance.test.ts`: 8/8, включая подключённый браузерный Run.
 - Эти результаты provider-backed Task7 не подтверждают. После исправления fixture Hermes/provider ещё не запускался; Task7 остаётся **FAIL / NOT VERIFIED**, пока не появятся два проверяемых завершённых child results, parity report и полный acceptance evidence.
+
+## Повторная попытка по прямому запросу — 2026-10-13
+
+### Снимок, границы и stop condition
+
+- Снимок до отчётной записи: 2026-10-13 14:01:43 RTZ (Europe/Moscow, UTC+03:00), branch `develop`, HEAD `ce98d47fa0ca419728dbda0a95f6eb2e31a0f2d0`.
+- Начальный `git status --short`: только защищённый untracked-файл `Сравнение Ebb Orchestrator и OpenAI Symphony.md`; его не менял. Разрешённый tracked scope этой проверки — только этот audit-файл.
+- Plan frontmatter остаётся `status: proposed`. Прямое указание пользователя трактовано только как разрешение выполнить данный bounded audit; lifecycle и scope не менялись.
+- Fixture требует остановиться с `FAIL`, если параллельный запуск двух subagents невозможен; последовательный или одиночный запуск не подтверждает contract. Параллельная пара в этой попытке не состоялась, поэтому последующие Plan Tasks 2–3 acceptance gates и Hermes runner не запускались.
+
+### Task 1 — результат и точные источники
+
+- Первая корректно завершённая delegation-запись содержала только один Task A: `deleg_93edf96e/task-0`, model metadata `gpt-6-luna`, `schema_valid=true`, tool duration 44.0 s, aggregate dispatch 44.22 s. Child ответил `completed`, `read_only=true`, `children_spawned=0`, `files_changed=[]`, `git_mutations=[]`; trace содержит только чтение `AGENTS.md`, Plan19 и `ebb-orchestrate-work`.
+- Это был одиночный запуск: одновременный Task B отсутствовал, поэтому overlap не наблюдался. Точные start/end timestamps этого child tool result не предоставил (`NOT VERIFIED`).
+- Попытка запустить требуемую пару была отклонена до запуска детей с точным сообщением: `Delegation budget for this one-shot run is exhausted (1/2 subagents used; delegation.oneshot_max_children).` Два предыдущих tool-level schema/input validation errors также не создали children. Причина недостижения параллельной пары: контроллер сначала отправил только один task, израсходовав одну из двух разрешённых в этом one-shot run delegation slots.
+- Полученный Task A source evidence:
+  - `AGENTS.md:71-75` — точная выдержка: «Основная ветка этого репозитория: `master`; Feature/bugfix/audit/documentation work выполняется в отдельной ветке и отдельном Git worktree».
+  - `AGENTS.md:93-101` — точная выдержка о минимальных completion gates: `pnpm lint`, `pnpm typecheck`, `pnpm test`; применимые обязательные build/E2E/security/recovery gates также подлежат выполнению.
+  - `docs/architecture/plans/19-unfinished-plan-closure.md:334-340` — Task7 требует ровно двух параллельных read-only subagents без nested delegation; PASS требует ровно две schema-valid completed Hermes child sessions и запрещает nested/third child.
+  - `docs/architecture/plans/19-unfinished-plan-closure.md:320-324` — Task7 ограничивает evidence target указанным audit report; migration scripts/config разрешены только после воспроизведённого failing contract и test-first fix; активный `.opencode` workflow нельзя удалять.
+  - `.agents/skills/ebb-orchestrate-work/SKILL.md:11` — canonical workflow должен оставаться внутри `ebb-*` skills. Skill не является источником primary-branch или файлово-Git-разрешений.
+- Task B не был запущен и не имеет результата; четыре обязательных canonical skill excerpts/citations от child B отсутствуют. Одного самостоятельно прочитанного контроллером содержимого навыков недостаточно для принятия B deliverable по правилам fixture.
+- Безопасное provider-backed свидетельство ограничено одним delegated child с model metadata `gpt-6-luna` и read-only tool trace. Это не является выполнением полного `pnpm hermes:execute` parity workflow и не доказывает запрошенную пару child sessions.
+
+### Task 2 и bounded cleanup
+
+- `pnpm lint`, `pnpm typecheck`, `pnpm test`, `git diff --check` как последовательность Task 2 не запускались: выполнение остановлено до неё по указанному stop condition. Их результаты — `NOT RUN`, exit codes отсутствуют; прежние результаты в этом отчёте относятся к другим HEAD/попыткам.
+- `pnpm hermes:setup`, `pnpm hermes:check` и `pnpm hermes:execute -- scripts/fixtures/hermes-development-workflow-parity-plan.md` в этой попытке не запускались.
+- Wrapper child process, prompt file, timeout termination и `taskkill.exe` не использовались; поэтому критерии wrapper close/prompt deletion/timeout termination неприменимы к этой остановленной попытке. OS-level descendants для delegated session не проверялись (`NOT VERIFIED`); full process-tree cleanup не заявляется.
+
+### Итог
+
+- Финальный snapshot будет указан после append этой записи: branch `develop`, HEAD `ce98d47fa0ca419728dbda0a95f6eb2e31a0f2d0`; изменён только разрешённый audit report, защищённый untracked-файл сохранён.
+- Verdict этой попытки: **FAIL / NOT VERIFIED**. Нет двух параллельно завершённых child sessions и результата B, не выполнены repository gates и provider-backed full parity run. Commit/merge/push/tag/release не выполнялись; plan lifecycle не изменялся.
+- Post-write read-only snapshot: `git status --short` показывает ` M docs/audit/hermes-development-workflow-parity.md` и `?? "Сравнение Ebb Orchestrator и OpenAI Symphony.md"`; branch `develop`, HEAD `ce98d47fa0ca419728dbda0a95f6eb2e31a0f2d0`. Полный diff содержит только append к разрешённому audit report; исходный untracked-файл сохранён. `git diff --check` не запускался по stop condition.
+
+## Controller verification — bounded wrapper result (2026-10-13)
+
+- После приведённой выше fixture-проверки controller действительно выполнил `pnpm hermes:execute -- scripts/fixtures/hermes-development-workflow-parity-plan.md` с timeout 900000 ms и process-local PATH до установленного Hermes CLI. Wrapper завершился `COMPLETED`, exit 0, `duration_ms=417437`, `child_closed=true`, `child_exit_code=0`, `child_pid=12636`, `stdout_bytes=1808`, `stderr_bytes=182`, `termination_attempted=false`, `cleanup_verified=true`.
+- Этот wrapper lifecycle PASS не меняет verdict parity. Приведённый выше provider-backed report подтверждает только child A и отсутствие child B после ошибки `delegation.oneshot_max_children`; требование одновременного запуска двух детей не выполнено. Raw stdout/stderr и credentials не сохранялись.
+- По этому наблюдению fixture дополнен обязательным единым batch-вызовом A+B с fail-stop при частичном отказе. Изменение проверено targeted test/`pnpm hermes:test` и независимым read-only review; нового provider run с этим уточнением ещё не было.
+- Task7 остаётся **FAIL / NOT VERIFIED**. Последовательный/одиночный dispatch не засчитывается; права, ACL, Hermes профиль, auth и конфигурация не менялись.
