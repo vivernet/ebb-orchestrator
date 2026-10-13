@@ -345,8 +345,9 @@ export async function runHermesExecute({
   try {
     const promptContent = `You are executing trusted Ebb Orchestrator development work.
 
-Read .hermes.md for project instructions.
-Use ebb-execute-plan skill to execute the plan.
+Read AGENTS.md for project instructions.
+Use .agents/skills/ebb-execute-plan/SKILL.md to execute the plan.
+Use canonical .agents/skills/ for any other required skills.
 Plan path: ${planPath}
 EXECUTE the plan, do not only summarize.
 Max 2 concurrent subagents.

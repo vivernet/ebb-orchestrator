@@ -487,6 +487,10 @@ test('Hermes execute uses the top-level scripted one-shot mode with the generate
     assert.equal(result.exitCode, 0);
     assert.equal(invocation.command, 'hermes');
     assert.deepEqual(invocation.args.slice(0, 3), ['--in', directory, '-z']);
+    assert.match(promptContent, /Read AGENTS\.md/);
+    assert.match(promptContent, /\.agents\/skills\/ebb-execute-plan\/SKILL\.md/);
+    assert.match(promptContent, /canonical \.agents\/skills\//);
+    assert.doesNotMatch(promptContent, /\.hermes\.md/);
     assert.match(promptContent, /Plan path: docs\/plan\.md/);
     assert.equal(promptExistedUntilClose, true);
     assert.equal(existsSync(promptPath), false);
