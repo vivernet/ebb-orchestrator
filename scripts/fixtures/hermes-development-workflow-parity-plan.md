@@ -79,22 +79,61 @@ A output_schema:
 {
   "type": "object",
   "additionalProperties": false,
-  "required": ["findings"],
+  "required": ["primary_branch", "agent_limits", "nested_delegation", "required_gates", "scope_allowed_files"],
   "properties": {
-    "findings": {
-      "type": "array",
-      "minItems": 1,
-      "maxItems": 12,
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["path", "line_citation", "excerpt", "requirement"],
-        "properties": {
-          "path": {"type": "string", "minLength": 1, "maxLength": 240},
-          "line_citation": {"type": "string", "pattern": "^.+:L[1-9][0-9]*(?:-L[1-9][0-9]*)?$"},
-          "excerpt": {"type": "string", "minLength": 1, "maxLength": 500},
-          "requirement": {"type": "string", "minLength": 1, "maxLength": 240}
-        }
+    "primary_branch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "line_citation", "excerpt", "requirement"],
+      "properties": {
+        "path": {"type": "string", "const": "AGENTS.md"},
+        "line_citation": {"type": "string", "pattern": "^.+:L[1-9][0-9]*(?:-L[1-9][0-9]*)?$"},
+        "excerpt": {"type": "string", "minLength": 1, "maxLength": 500},
+        "requirement": {"type": "string", "const": "primary branch is master"}
+      }
+    },
+    "agent_limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "line_citation", "excerpt", "requirement"],
+      "properties": {
+        "path": {"type": "string", "const": "scripts/fixtures/hermes-development-workflow-parity-plan.md"},
+        "line_citation": {"type": "string", "pattern": "^.+:L[1-9][0-9]*(?:-L[1-9][0-9]*)?$"},
+        "excerpt": {"type": "string", "minLength": 1, "maxLength": 500},
+        "requirement": {"type": "string", "const": "agent count and concurrency limits"}
+      }
+    },
+    "nested_delegation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "line_citation", "excerpt", "requirement"],
+      "properties": {
+        "path": {"type": "string", "const": "scripts/fixtures/hermes-development-workflow-parity-plan.md"},
+        "line_citation": {"type": "string", "pattern": "^.+:L[1-9][0-9]*(?:-L[1-9][0-9]*)?$"},
+        "excerpt": {"type": "string", "minLength": 1, "maxLength": 500},
+        "requirement": {"type": "string", "const": "nested delegation is prohibited"}
+      }
+    },
+    "required_gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "line_citation", "excerpt", "requirement"],
+      "properties": {
+        "path": {"type": "string", "const": "docs/architecture/plans/19-unfinished-plan-closure.md"},
+        "line_citation": {"type": "string", "pattern": "^.+:L[1-9][0-9]*(?:-L[1-9][0-9]*)?$"},
+        "excerpt": {"type": "string", "minLength": 1, "maxLength": 500},
+        "requirement": {"type": "string", "const": "required quality gates"}
+      }
+    },
+    "scope_allowed_files": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "line_citation", "excerpt", "requirement"],
+      "properties": {
+        "path": {"type": "string", "const": "scripts/fixtures/hermes-development-workflow-parity-plan.md"},
+        "line_citation": {"type": "string", "pattern": "^.+:L[1-9][0-9]*(?:-L[1-9][0-9]*)?$"},
+        "excerpt": {"type": "string", "minLength": 1, "maxLength": 500},
+        "requirement": {"type": "string", "const": "allowed file scope"}
       }
     }
   }

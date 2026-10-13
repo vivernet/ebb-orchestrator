@@ -379,8 +379,22 @@ test('Plan 19 Hermes parity fixture uses recoverable ledger, tool schemas and po
   const outputSchemaA = fixture.match(/A output_schema:\s*```json\r?\n([\s\S]*?)\r?\n```/i);
   assert.ok(outputSchemaA, 'child A must receive its own JSON output_schema');
   const schemaA = JSON.parse(outputSchemaA[1]);
-  assert.deepEqual(schemaA.required, ['findings']);
-  assert.deepEqual(schemaA.properties.findings.items.required, ['path', 'line_citation', 'excerpt', 'requirement']);
+  const expectedTaskAEvidence = ['primary_branch', 'agent_limits', 'nested_delegation', 'required_gates', 'scope_allowed_files'];
+  assert.deepEqual(schemaA.required, expectedTaskAEvidence);
+  const expectedEvidenceFields = ['path', 'line_citation', 'excerpt', 'requirement'];
+  for (const [index, key] of expectedTaskAEvidence.entries()) {
+    const evidence = schemaA.properties[key];
+    assert.ok(evidence, `child A schema must require ${key} evidence`);
+    assert.deepEqual(evidence.required, expectedEvidenceFields);
+    assert.equal(evidence.properties.requirement.const, [
+      'primary branch is master',
+      'agent count and concurrency limits',
+      'nested delegation is prohibited',
+      'required quality gates',
+      'allowed file scope',
+    ][index]);
+    assert.ok(evidence.properties.excerpt.maxLength > 0);
+  }
   const outputSchemaMatch = fixture.match(/B output_schema:[\s\S]{0,400}?```json\r?\n([\s\S]*?)\r?\n```/i);
   assert.ok(outputSchemaMatch, 'child B must receive a JSON output_schema');
   const outputSchema = JSON.parse(outputSchemaMatch[1]);
