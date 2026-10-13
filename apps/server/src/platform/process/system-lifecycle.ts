@@ -315,8 +315,9 @@ export async function shutdownSystem(deps: {
     if (timer !== undefined) clearTimeout(timer);
   }
   if (!completedBeforeTimeout) {
-    // Do not close SQLite or release the singleton lock while a scope stop may still be running.
-    // The process boundary will terminate this instance; startup recovery owns any remaining Run.
+    // Timeout is not STOPPED proof. Leave durable Runs and the instance lock untouched, then let
+    // the caller force process termination; startup reconciliation will stop the persisted scopes
+    // and mark unfinished Runs interrupted only after authoritative STOPPED evidence is available.
     void stopPromise.catch(() => undefined);
     throw new Error("SHUTDOWN_RUNTIME_STOP_TIMEOUT");
   }

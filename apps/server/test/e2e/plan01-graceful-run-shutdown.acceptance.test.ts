@@ -86,7 +86,7 @@ describe.skipIf(!enabled)("Plan 01 graceful shutdown with an active Run scope", 
       .toEqual({ status: "IN_PROGRESS" });
   });
 
-  it("keeps the database and lock open when live scope stop exceeds the shutdown deadline", async () => {
+  it("forces process-boundary recovery after the grace deadline without closing resources before STOPPED proof", async () => {
     const fixture = await createFixture({ stopMode: "blocked" });
     const { db, runService, runtime, steps } = fixture;
     const closed = { value: false };
@@ -100,20 +100,38 @@ describe.skipIf(!enabled)("Plan 01 graceful shutdown with an active Run scope", 
       instanceLock: { release: async () => { released.value = true; } },
       timeoutMs: 20,
     });
-    const result = await shutdown.then(() => undefined, (error: unknown) => error);
+    const shutdownResult = shutdown.then(() => "FULFILLED", (error: unknown) => error instanceof Error ? error.message : "UNKNOWN_ERROR");
 
-    expect(result).toMatchObject({ message: "SHUTDOWN_RUNTIME_STOP_TIMEOUT" });
-    expect(runtime.scope.live).toBe(true);
-    expect(closed.value).toBe(false);
-    expect(released.value).toBe(false);
-    expect(db.get<{ state: string }>("SELECT state FROM run_process_owners WHERE run_id=$runId", { runId: fixture.runId }))
-      .toEqual({ state: "LIVE" });
+    try {
+      const resultAtDeadline = await Promise.race([
+        shutdownResult,
+        new Promise<string>((resolve) => setTimeout(() => resolve("STILL_RUNNING"), 60)),
+      ]);
+      expect(resultAtDeadline).toBe("SHUTDOWN_RUNTIME_STOP_TIMEOUT");
+      expect(runtime.scope.live).toBe(true);
+      expect(closed.value).toBe(false);
+      expect(released.value).toBe(false);
+      expect(db.get<{ state: string }>("SELECT state FROM run_process_owners WHERE run_id=$runId", { runId: fixture.runId }))
+        .toEqual({ state: "LIVE" });
+      expect(db.get<{ status: string }>("SELECT status FROM agent_runs WHERE id=$runId", { runId: fixture.runId }))
+        .toEqual({ status: "IN_PROGRESS" });
 
-    runtime.scope.allowStop();
-    await runtime.scope.stopFinished;
-    expect(runtime.scope.live).toBe(false);
-    expect(closed.value).toBe(false);
-    expect(released.value).toBe(false);
+      // The caller's forced process exit drops the process-local stop continuation. Once a
+      // subsequent startup proves the old scope STOPPED, interrupted Run reconciliation applies.
+      runtime.scope.allowStop();
+      await runtime.scope.stopFinished;
+      expect(db.get<{ state: string; stop_evidence: string | null }>("SELECT state,stop_evidence FROM run_process_owners WHERE run_id=$runId", { runId: fixture.runId }))
+        .toMatchObject({ state: "STOPPED", stop_evidence: enabledStopEvidence() });
+      expect(runService.reconcileInterruptedRuns()).toBe(1);
+      expect(db.get<{ status: string; output: string | null }>("SELECT status,output FROM agent_runs WHERE id=$runId", { runId: fixture.runId }))
+        .toMatchObject({ status: "FAILED", output: expect.stringContaining("Run interrupted by orchestrator restart") });
+      expect(closed.value).toBe(false);
+      expect(released.value).toBe(false);
+    } finally {
+      runtime.scope.allowStop();
+      await runtime.scope.stopFinished;
+      await shutdownResult;
+    }
   });
 
   async function createFixture(options: { stopMode?: "proof" | "unknown" | "blocked" } = {}) {
