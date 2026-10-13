@@ -12,7 +12,7 @@ afterAll(() => {
 });
 
 describe.skipIf(process.platform !== "win32")("Windows installed Hermes resolver acceptance", () => {
-  it("discovers launcher/Python identity and hands off resolved source pin without profile ACL admission", async () => {
+  it("discovers launcher/Python identity and keeps the source pin diagnostic", async () => {
     const root = mkdtempSync(path.join(tmpdir(), "ebb-hermes-resolver-acceptance-"));
     fixtureRoots.add(root);
     const install = path.join(root, "install");
@@ -56,6 +56,7 @@ describe.skipIf(process.platform !== "win32")("Windows installed Hermes resolver
     });
 
     expect(resolution).toMatchObject({ executablePath: launcher, runtimeExecutablePath: python, hermesProjectRoot: source, hermesConfigHome: home });
+    expect(resolution.sourceCommit).toBe("08165d58931841cee713468ae89032af7c57060a");
     const args = buildHermesInstalledRuntimeArgs({
       hermesProjectRoot: resolution.hermesProjectRoot,
       sourceCommit: resolution.sourceCommit,
@@ -65,7 +66,7 @@ describe.skipIf(process.platform !== "win32")("Windows installed Hermes resolver
     expect(args[3]).toContain("import hermes_bootstrap");
     expect(args[3]).toContain("runpy.run_module('hermes_cli.main'");
     expect(operations.length).toBeGreaterThan(0);
-    expect(sourceChecks).toEqual([{ root: source, commit: resolution.sourceCommit }]);
+    expect(sourceChecks).toEqual([]);
     expect(operations.every((operation) => operation === "verify-host-path")).toBe(true);
   });
 });

@@ -13,16 +13,17 @@ afterEach(async () => {
 });
 
 describe("direct installed Hermes resolver", () => {
-  it("accepts the installed source commit when its checkout is verified and rejects a missing stamp commit", async () => {
+  it("treats the install-stamp commit as optional diagnostics and never checks out Git", async () => {
     const paths = process.platform === "win32" ? await windowsFixture() : await linuxFixture();
     const stampPath = join(paths.source, "install-stamp.json");
     const installedCommit = "9244275491" + "0".repeat(30);
     await writeFile(stampPath, JSON.stringify({ runtimeDir: join(paths.source, "runtime"), commit: installedCommit }));
-    const verifySourceCheckout = async (_root: string, commit: string) => expect(commit).toBe(installedCommit);
+    const verifySourceCheckout = async () => { throw new Error("must not inspect Git"); };
     const resolution = await resolveHermesExecutable({ cwd: paths.cwd, pathValue: paths.bin, platform: process.platform === "win32" ? "win32" : "linux", environment: paths.environment, verifySourceCheckout, verifyNativeHelper: async () => undefined, runNativePathVerifier: async (_file, args) => { const filename = args[args.indexOf("file") + 1] ?? ""; return { exitCode: 0, stdout: JSON.stringify({ status: "SAFE_PATH", kind: "file", path: filename, volumeSerial: "0123456789abcdef", fileId: "0123456789abcdef0123456789abcdef" }), stderr: "" }; } });
     expect(resolution.sourceCommit).toBe(installedCommit);
     await writeFile(stampPath, JSON.stringify({ runtimeDir: join(paths.source, "runtime") }));
-    await expect(resolveHermesExecutable({ cwd: paths.cwd, pathValue: paths.bin, platform: process.platform === "win32" ? "win32" : "linux", environment: paths.environment, verifyNativeHelper: async () => undefined, runNativePathVerifier: async (_file, args) => { const filename = args[args.indexOf("file") + 1] ?? ""; return { exitCode: 0, stdout: JSON.stringify({ status: "SAFE_PATH", kind: "file", path: filename, volumeSerial: "0123456789abcdef", fileId: "0123456789abcdef0123456789abcdef" }), stderr: "" }; } })).rejects.toThrow("HERMES_SOURCE_IDENTITY_UNAVAILABLE");
+    const unstamped = await resolveHermesExecutable({ cwd: paths.cwd, pathValue: paths.bin, platform: process.platform === "win32" ? "win32" : "linux", environment: paths.environment, verifySourceCheckout, verifyNativeHelper: async () => undefined, runNativePathVerifier: async (_file, args) => { const filename = args[args.indexOf("file") + 1] ?? ""; return { exitCode: 0, stdout: JSON.stringify({ status: "SAFE_PATH", kind: "file", path: filename, volumeSerial: "0123456789abcdef", fileId: "0123456789abcdef0123456789abcdef" }), stderr: "" }; } });
+    expect(unstamped.sourceCommit).toBeNull();
   });
   it("discovers the installed launcher and ordinary Python runtime without Git or ACL admission", async () => {
     const platform = process.platform === "win32" ? "win32" : "linux";
@@ -33,10 +34,7 @@ describe("direct installed Hermes resolver", () => {
       pathValue: paths.bin,
       platform,
       environment: paths.environment,
-      verifySourceCheckout: async (root, commit) => {
-        expect(root).toBe(paths.source);
-        expect(commit).toBe(HERMES_PROVIDER_SELECTION_SOURCE.commit);
-      },
+      verifySourceCheckout: async () => { throw new Error("must not inspect Git"); },
       verifyNativeHelper: async () => undefined,
       runNativePathVerifier: async (_file, args) => {
         verifierCalls.push(args);
@@ -69,10 +67,8 @@ describe("direct installed Hermes resolver", () => {
     expect(args.slice(0, 3)).toEqual(["-I", "-B", "-c"]);
     const bootstrap = args[3] ?? "";
     expect(bootstrap).toContain("sys.path.insert(0,");
-    expect(bootstrap.indexOf("ebb_verify_hermes_source()\nimport hermes_bootstrap")).toBeGreaterThanOrEqual(0);
-    expect(bootstrap.indexOf("ebb_verify_hermes_source()\nrunpy.run_module")).toBeGreaterThanOrEqual(0);
-    expect(bootstrap).toContain("--porcelain=v1");
-    expect(bootstrap).toContain("--untracked-files=all");
+    expect(bootstrap).not.toContain("ebb_verify_hermes_source");
+    expect(bootstrap).not.toContain("subprocess");
     expect(bootstrap).toContain("import hermes_bootstrap");
     expect(bootstrap).toContain("runpy.run_module('hermes_cli.main', run_name='__main__', alter_sys=True)");
     expect(bootstrap).toContain("os.environ.pop('PYTHONHOME', None)");

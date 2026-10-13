@@ -4,7 +4,6 @@ import { createHash } from "node:crypto";
 import process from "node:process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { verifyHermesSourceCheckout } from "./hermes-source-integrity.js";
 import type { HermesLaunchObjectIdentity } from "./hermes-launch-ticket.js";
 import type { ProcessOptions, ProcessResult } from "../../../platform/process/process-executor.js";
 import { verifyNativeHelperIntegrity } from "../../../platform/process/native-helper-integrity.js";
@@ -17,8 +16,8 @@ export interface HermesExecutableResolution {
   readonly runtimeExecutablePath: string;
   readonly runtimeExecutableIdentity: HermesLaunchObjectIdentity;
   readonly hermesProjectRoot: string;
-  /** Фактический install-stamp commit, подтверждённый по HEAD и clean status checkout. */
-  readonly sourceCommit: string;
+  /** Необязательная install-stamp identity для diagnostics; не является условием запуска. */
+  readonly sourceCommit: string | null;
   readonly hermesConfigHome: string;
 }
 
@@ -36,22 +35,20 @@ export interface HermesExecutableResolverOptions {
     file: string, args: string[], options: HermesResolverCommandOptions,
   ) => Promise<ProcessResult>;
   readonly verifyNativeHelper?: typeof verifyNativeHelperIntegrity;
-  /** Test seam для checkout integrity; production проверяет локальный Git checkout. */
-  readonly verifySourceCheckout?: typeof verifyHermesSourceCheckout;
+  /** Совместимый test seam; source checkout integrity не участвует в допуске запуска. */
+  readonly verifySourceCheckout?: (sourceRoot: string, expectedCommit: string) => Promise<void>;
 }
 
 type Platform = "win32" | "linux";
 type PlatformPaths = typeof path.win32 | typeof path.posix;
 
-// Budget включает холодный запуск PowerShell integrity gate перед native identity probe.
 const WINDOWS_PATH_IDENTITY_TIMEOUT_MS = 15_000;
 
 /**
  * Находит установленный Hermes в PATH и его обычный Python runtime.
  * Читает только install metadata для выбора interpreter; пользовательские config/profile/auth
  * не открывает. На Windows native helper возвращает file identity без ACL admission.
- * Текущий install stamp задаёт source commit; HEAD и clean status checkout подтверждают
- * эту identity для конкретного Run.
+ * Install stamp может предоставить диагностический source commit; Git state не проверяется.
  *
  * @throws {Error} При отсутствующем/неоднозначном launcher или неподдерживаемой installation layout.
  */
@@ -67,7 +64,6 @@ export async function resolveHermesExecutable(
     ? await windowsSourceRoot(executablePath, cwd)
     : await linuxSourceRoot(executablePath, cwd);
   const sourceCommit = await readInstalledSourceCommit(hermesProjectRoot);
-  await verifyResolvedSource(hermesProjectRoot, sourceCommit, options);
   const hermesConfigHome = platform === "win32"
     ? resolveWindowsHermesConfigHome(environment)
     : resolveLinuxHermesConfigHome(environment);
@@ -87,26 +83,13 @@ export async function resolveHermesExecutable(
   });
 }
 
-async function readInstalledSourceCommit(sourceRoot: string): Promise<string> {
-  let stamp: Record<string, unknown>;
+async function readInstalledSourceCommit(sourceRoot: string): Promise<string | null> {
   try {
-    stamp = record(JSON.parse((await readBoundedFile(path.join(sourceRoot, "install-stamp.json"), 64 * 1024)).toString("utf8").replace(/^\uFEFF/u, "")) as unknown);
+    const stamp = record(JSON.parse((await readBoundedFile(path.join(sourceRoot, "install-stamp.json"), 64 * 1024)).toString("utf8").replace(/^\uFEFF/u, "")) as unknown);
+    return typeof stamp.commit === "string" && /^[a-f0-9]{40}$/u.test(stamp.commit) ? stamp.commit : null;
   } catch {
-    throw resolverError("HERMES_SOURCE_IDENTITY_UNAVAILABLE");
+    return null;
   }
-  const commit = stamp.commit;
-  if (typeof commit !== "string" || !/^[a-f0-9]{40}$/u.test(commit)) {
-    throw resolverError("HERMES_SOURCE_IDENTITY_UNAVAILABLE");
-  }
-  return commit;
-}
-
-async function verifyResolvedSource(
-  sourceRoot: string,
-  expectedCommit: string,
-  options: HermesExecutableResolverOptions,
-): Promise<void> {
-  await (options.verifySourceCheckout ?? verifyHermesSourceCheckout)(sourceRoot, expectedCommit);
 }
 
 async function findLauncher(pathValue: string, cwd: string, platform: Platform): Promise<string> {
@@ -347,14 +330,23 @@ export function resolveLinuxHermesConfigHome(
 
 
 /**
- * Формирует argv для installed Hermes и регистрирует Ebb MCP только в памяти процесса.
- * Повторно проверяет exact HEAD и clean status до первого Hermes import и последующих
- * source imports. Предусловие Plan20: pinned source не обновляют от финальной проверки
- * перед импортом до завершения Run; verifier не удерживает внешние writers.
+ * Формирует argv для установленного Hermes, использует source напрямую и регистрирует
+ * Ebb MCP только в памяти процесса. Git source admission и отдельная копия source не нужны.
+ *
+ * @param input Параметры запуска установленного Hermes.
+ * @param input.hermesProjectRoot Корень установленного Hermes source.
+ * @param input.sourceCommit Необязательная install-stamp identity только для diagnostics.
+ * @param input.runtimeExecutablePath Абсолютный путь к установленному Python runtime.
+ * @param input.hermesHome Настроенный Hermes home, передаваемый процессу как fallback.
+ * @param input.mcpServer Необязательная конфигурация Ebb MCP для регистрации в памяти процесса.
+ * @param input.mcpServer.command Исполняемый файл MCP server.
+ * @param input.mcpServer.args Аргументы запуска MCP server.
+ * @returns Аргументы изолированного Python bootstrap для установленного Hermes CLI.
+ * @throws {Error} Если пути не абсолютны или содержат неподдерживаемые символы.
  */
 export function buildHermesInstalledRuntimeArgs(input: {
   readonly hermesProjectRoot: string;
-  readonly sourceCommit: string;
+  readonly sourceCommit?: string | null;
   readonly runtimeExecutablePath: string;
   readonly hermesHome: string;
   readonly mcpServer?: { readonly command: string; readonly args: readonly string[] };
@@ -363,58 +355,10 @@ export function buildHermesInstalledRuntimeArgs(input: {
   if (!paths.isAbsolute(input.hermesProjectRoot) || !paths.isAbsolute(input.runtimeExecutablePath) ||
       !paths.isAbsolute(input.hermesHome) || hasControlCharacters(input.hermesProjectRoot) ||
       hasControlCharacters(input.runtimeExecutablePath) || hasControlCharacters(input.hermesHome) ||
-      !/^[a-f0-9]{40}$/u.test(input.sourceCommit)) {
+      (input.sourceCommit != null && !/^[a-f0-9]{40}$/u.test(input.sourceCommit))) {
     throw resolverError("HERMES_RUNTIME_LAYOUT_UNSUPPORTED");
   }
   const sourceRoot = pythonUnicodeEscape(input.hermesProjectRoot);
-  const expectedSourceCommit = pythonUnicodeEscape(input.sourceCommit);
-  const sourceVerifier =
-    "import subprocess,threading\n" +
-    `ebb_hermes_source_root = ${sourceRoot}\n` +
-    `ebb_hermes_source_commit = ${expectedSourceCommit}\n` +
-    "def ebb_verify_hermes_source():\n" +
-    "    try:\n" +
-    "        def git(args):\n" +
-    "            env = {key: value for key, value in os.environ.items() if not key.upper().startswith('GIT_')}\n" +
-    "            env.update(GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_SYSTEM=os.devnull)\n" +
-    "            command = ['git', '--no-optional-locks', '--no-replace-objects', '-c', 'core.excludesFile=', '-c', 'core.fsmonitor=false', '-c', 'core.untrackedCache=false', '-c', 'core.ignoreStat=false', '-C', ebb_hermes_source_root, *args]\n" +
-    "            child = subprocess.Popen(command, cwd=ebb_hermes_source_root, env=env, shell=False, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)\n" +
-    "            output = []\n" +
-    "            def read_output():\n" +
-    "                try:\n" +
-    "                    output.append(child.stdout.read(8193))\n" +
-    "                except Exception:\n" +
-    "                    pass\n" +
-    "            reader = threading.Thread(target=read_output, daemon=True)\n" +
-    "            try:\n" +
-    "                reader.start()\n" +
-    "                reader.join(timeout=5)\n" +
-    "                if reader.is_alive() or not output or len(output[0]) > 8192:\n" +
-    "                    raise RuntimeError('source metadata unavailable')\n" +
-    "                if child.wait(timeout=1) != 0:\n" +
-    "                    raise RuntimeError('git failed')\n" +
-    "                return output[0].decode('utf-8', errors='strict').strip()\n" +
-    "            finally:\n" +
-    "                if child.poll() is None:\n" +
-    "                    child.kill()\n" +
-    "                    try:\n" +
-    "                        child.wait(timeout=1)\n" +
-    "                    except subprocess.TimeoutExpired:\n" +
-    "                        pass\n" +
-    "                if not reader.is_alive():\n" +
-    "                    child.stdout.close()\n" +
-    "        root = os.path.normcase(os.path.realpath(ebb_hermes_source_root))\n" +
-    "        git_root = os.path.normcase(os.path.realpath(git(['rev-parse', '--show-toplevel'])))\n" +
-    "        if root != git_root:\n" +
-    "            raise RuntimeError('source root mismatch')\n" +
-    "        if git(['rev-parse', '--verify', 'HEAD^{commit}']) != ebb_hermes_source_commit:\n" +
-    "            raise SystemExit('HERMES_SOURCE_IDENTITY_MISMATCH')\n" +
-    "        if git(['status', '--porcelain=v1', '--untracked-files=all', '--no-renames']):\n" +
-    "            raise SystemExit('HERMES_SOURCE_IDENTITY_DIRTY')\n" +
-    "    except SystemExit:\n" +
-    "        raise\n" +
-    "    except Exception:\n" +
-    "        raise SystemExit('HERMES_SOURCE_IDENTITY_UNAVAILABLE')\n";
   const registration = input.mcpServer
     ? "import json\n" +
       "from tools.mcp_tool_discovery import register_mcp_servers\n" +
@@ -432,13 +376,9 @@ export function buildHermesInstalledRuntimeArgs(input: {
     "os.environ.pop('VIRTUAL_ENV', None)\n" +
     `os.environ['HERMES_HOME'] = os.environ.get('HERMES_HOME') or ${pythonUnicodeEscape(input.hermesHome)}\n` +
     "sys.dont_write_bytecode = True\n" +
-    sourceVerifier +
     `sys.path.insert(0, ${sourceRoot})\n` +
-    "ebb_verify_hermes_source()\n" +
     "import hermes_bootstrap\n" +
-    "ebb_verify_hermes_source()\n" +
     registration +
-    "ebb_verify_hermes_source()\n" +
     "runpy.run_module('hermes_cli.main', run_name='__main__', alter_sys=True)\n";
   return Object.freeze(["-I", "-B", "-c", bootstrap]);
 }

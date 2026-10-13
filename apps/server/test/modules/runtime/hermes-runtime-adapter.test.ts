@@ -314,8 +314,7 @@ describe("HermesRuntimeAdapter", () => {
       expect(preflight.selection).toEqual({ mode: "HERMES_MANAGED", runId, hermesHome: hermesRoot,
         runtimeIdentity: JSON.stringify({ platform: "win32",
           hermes: { platform: "win32", volumeSerial: "0123456789abcdef", fileId: "a".repeat(32) },
-          python: { platform: "win32", volumeSerial: "0123456789abcdef", fileId: "b".repeat(32) },
-          sourceCommit: installedCommit }) });
+          python: { platform: "win32", volumeSerial: "0123456789abcdef", fileId: "b".repeat(32) } }) });
       expect(Object.keys(preflight)).toEqual(["selection"]);
       await expect(fs.stat(hermesRoot)).rejects.toMatchObject({ code: "ENOENT" });
     } finally {

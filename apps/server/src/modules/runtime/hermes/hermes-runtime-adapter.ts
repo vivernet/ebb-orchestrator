@@ -201,7 +201,6 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
       platform: resolution.executableIdentity.platform,
       hermes: resolution.executableIdentity,
       python: resolution.runtimeExecutableIdentity,
-      sourceCommit: resolution.sourceCommit,
     });
     const selection: HermesManagedRunSelection = Object.freeze({
       mode: "HERMES_MANAGED", runId, hermesHome: resolution.hermesConfigHome,
@@ -455,7 +454,8 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
     }
     const platform = currentHermesPlatform();
     const resolution = await resolveHermesExecutable({ cwd, environment: this.configuredEnvironment() });
-    if (resolution.executableIdentity.platform !== platform || runtimeIdentityFor(resolution) !== selection.runtimeIdentity) {
+    if (resolution.executableIdentity.platform !== platform ||
+        normalizeManagedRuntimeIdentity(selection.runtimeIdentity) !== runtimeIdentityFor(resolution)) {
       throw new Error("HERMES_RUNTIME_IDENTITY_CHANGED");
     }
     const executableArgsPrefix = buildHermesInstalledRuntimeArgs({
@@ -1284,6 +1284,43 @@ function runtimeIdentityFor(resolution: Awaited<ReturnType<typeof resolveHermesE
     platform: resolution.executableIdentity.platform,
     hermes: resolution.executableIdentity,
     python: resolution.runtimeExecutableIdentity,
-    sourceCommit: resolution.sourceCommit,
   });
+}
+
+/** Принимает текущую identity и legacy-вариант с диагностическим sourceCommit. */
+function normalizeManagedRuntimeIdentity(serialized: string): string | null {
+  let value: unknown;
+  try { value = JSON.parse(serialized) as unknown; } catch { return null; }
+  if (!isRecord(value)) return null;
+  const keys = Object.keys(value).sort();
+  const expectedKeys = value.sourceCommit === undefined
+    ? ["hermes", "platform", "python"]
+    : ["hermes", "platform", "python", "sourceCommit"];
+  if (keys.length !== expectedKeys.length || keys.some((key, index) => key !== expectedKeys[index])) return null;
+  if (value.sourceCommit !== undefined && value.sourceCommit !== null &&
+      (typeof value.sourceCommit !== "string" || !/^[a-f0-9]{40}$/u.test(value.sourceCommit))) return null;
+  if (value.platform !== "win32" && value.platform !== "linux") return null;
+  const hermes = normalizeRuntimeObjectIdentity(value.hermes, value.platform);
+  const python = normalizeRuntimeObjectIdentity(value.python, value.platform);
+  if (!hermes || !python) return null;
+  return JSON.stringify({ platform: value.platform, hermes, python });
+}
+
+function normalizeRuntimeObjectIdentity(value: unknown, platform: "win32" | "linux"): Record<string, string> | null {
+  if (!isRecord(value) || value.platform !== platform) return null;
+  const keys = Object.keys(value).sort();
+  if (platform === "win32") {
+    if (keys.join(",") !== "fileId,platform,volumeSerial" ||
+        typeof value.volumeSerial !== "string" || !/^[a-f0-9]{16}$/iu.test(value.volumeSerial) ||
+        typeof value.fileId !== "string" || !/^[a-f0-9]{32}$/iu.test(value.fileId)) return null;
+    return { platform, volumeSerial: value.volumeSerial, fileId: value.fileId };
+  }
+  if (keys.join(",") !== "device,inode,platform" ||
+      typeof value.device !== "string" || !/^(0|[1-9][0-9]*)$/u.test(value.device) ||
+      typeof value.inode !== "string" || !/^(0|[1-9][0-9]*)$/u.test(value.inode)) return null;
+  return { platform, device: value.device, inode: value.inode };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

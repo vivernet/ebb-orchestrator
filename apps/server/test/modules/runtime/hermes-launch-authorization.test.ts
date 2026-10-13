@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import * as path from "node:path";
 import type { AgentRuntimeRun } from "../../../src/modules/runtime/agent-runtime.js";
 import { createHermesManagedSelectionFixture } from "../../helpers/hermes-managed-selection-fixture.js";
-import type { HermesLaunchTicket } from "../../../src/modules/runtime/hermes/hermes-launch-ticket.js";
+import type { HermesLaunchObjectIdentity, HermesLaunchTicket } from "../../../src/modules/runtime/hermes/hermes-launch-ticket.js";
 import { HERMES_PROVIDER_SELECTION_SOURCE } from "../../../src/modules/runtime/hermes/hermes-source-identity.js";
 import { ProcessExecutor } from "../../../src/platform/process/process-executor.js";
 
@@ -25,15 +25,17 @@ describe("direct installed Hermes launch authorization", () => {
     const pythonIdentity = platform === "win32"
       ? { platform, volumeSerial: "0123456789abcdef", fileId: "b".repeat(32) } as const
       : { platform, device: "1", inode: "3" } as const;
+    let resolvedHermesIdentity: HermesLaunchObjectIdentity = objectIdentity;
+    let resolvedPythonIdentity: HermesLaunchObjectIdentity = pythonIdentity;
 
     vi.doUnmock("../../../src/modules/runtime/hermes/hermes-executable-resolver.js");
     vi.resetModules();
     vi.doMock("../../../src/modules/runtime/hermes/hermes-executable-resolver.js", () => ({
       resolveHermesExecutable: vi.fn(async () => ({
         executablePath: paths.join(root, platform === "win32" ? "hermes.cmd" : "hermes"),
-        executableIdentity: objectIdentity,
+        executableIdentity: resolvedHermesIdentity,
         runtimeExecutablePath: paths.join(root, platform === "win32" ? "python.exe" : "python3"),
-        runtimeExecutableIdentity: pythonIdentity,
+        runtimeExecutableIdentity: resolvedPythonIdentity,
         hermesProjectRoot: paths.join(root, "hermes-agent"),
         sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit,
         hermesConfigHome: hermesHome,
@@ -48,7 +50,7 @@ describe("direct installed Hermes launch authorization", () => {
       mcpCommand: "ebb-orchestrator-mcp", mcpArgs: ["--stdio"],
     });
     const runtimeIdentity = JSON.stringify({ platform, hermes: objectIdentity, python: pythonIdentity,
-      sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit });
+      sourceCommit: null });
     const selection = createHermesManagedSelectionFixture(runId, runtimeIdentity, hermesHome);
     const run = {
       id: runId, role: "developer", runtime: "hermes", model: "default", taskId: "task",
@@ -74,5 +76,24 @@ describe("direct installed Hermes launch authorization", () => {
     });
     expect(authorized).toMatchObject({ runId, attempt: 1, hermesHome, environment });
     expect(authorized).not.toHaveProperty("hermesSourceSnapshotKey");
+
+    resolvedHermesIdentity = platform === "win32"
+      ? { platform, volumeSerial: "0123456789abcdef", fileId: "c".repeat(32) }
+      : { platform, device: "1", inode: "4" };
+    await expect(authorize(run, root, hermesHome, environment, paths.join(root, "result.json")))
+      .rejects.toThrow("HERMES_RUNTIME_IDENTITY_CHANGED");
+    resolvedHermesIdentity = objectIdentity;
+    resolvedPythonIdentity = platform === "win32"
+      ? { platform, volumeSerial: "0123456789abcdef", fileId: "d".repeat(32) }
+      : { platform, device: "1", inode: "5" };
+    await expect(authorize(run, root, hermesHome, environment, paths.join(root, "result.json")))
+      .rejects.toThrow("HERMES_RUNTIME_IDENTITY_CHANGED");
+
+    const malformedSelection = createHermesManagedSelectionFixture(runId, JSON.stringify({
+      platform, hermes: objectIdentity, python: pythonIdentity, sourceCommit: "f".repeat(40), unexpected: true,
+    }), hermesHome);
+    const malformedRun = { ...run, hermesSelection: malformedSelection } satisfies AgentRuntimeRun;
+    await expect(authorize(malformedRun, root, hermesHome, environment, paths.join(root, "result.json")))
+      .rejects.toThrow("HERMES_RUNTIME_IDENTITY_CHANGED");
   });
 });

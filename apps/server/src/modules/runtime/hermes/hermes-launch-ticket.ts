@@ -13,7 +13,7 @@ export interface HermesLaunchTicketInput {
   readonly platform: "win32" | "linux";
   readonly hermesExecutablePath: string;
   readonly hermesExecutableIdentity: HermesLaunchObjectIdentity;
-  readonly sourceCommit: string;
+  readonly sourceCommit: string | null;
   readonly executablePath: string;
   readonly executableIdentity: HermesLaunchObjectIdentity;
   readonly executableArgsPrefix: readonly string[];
@@ -135,7 +135,7 @@ function assertTicketInput(input: HermesLaunchTicketInput): void {
       (input.platform === "win32" && paths.basename(input.hermesExecutablePath).toLowerCase() === "hermes.cmd" &&
         paths.basename(input.executablePath).toLowerCase() !== "python.exe") ||
       input.hermesExecutableIdentity.platform !== input.platform || input.executableIdentity.platform !== input.platform ||
-      !/^[a-f0-9]{40}$/u.test(input.sourceCommit) ||
+      (input.sourceCommit !== null && !/^[a-f0-9]{40}$/u.test(input.sourceCommit)) ||
       input.executableArgsPrefix.length < 2 || input.executableArgsPrefix.some((arg) => typeof arg !== "string" || arg.includes("\0")) ||
       !isValidObjectIdentity(input.hermesExecutableIdentity) || !isValidObjectIdentity(input.executableIdentity) ||
       Object.values(input.environment).some((value) => value !== undefined && /[\0\r\n]/u.test(value))) {
