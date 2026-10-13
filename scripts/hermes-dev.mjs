@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn, spawnSync } from 'node:child_process';
+import { Buffer } from 'node:buffer';
 import { performance } from 'node:perf_hooks';
 import { existsSync, readFileSync, rmSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
@@ -322,6 +323,16 @@ function boundedExitCode(code) {
   return Number.isSafeInteger(code) && code >= 0 && code <= 255 ? code : null;
 }
 
+function boundedChildPid(pid) {
+  return Number.isSafeInteger(pid) && pid > 0 && pid <= 4_294_967_295 ? pid : null;
+}
+
+function childOutputByteLength(chunk) {
+  if (typeof chunk === 'string') return Buffer.byteLength(chunk, 'utf8');
+  if (Buffer.isBuffer(chunk) || ArrayBuffer.isView(chunk)) return chunk.byteLength;
+  return 0;
+}
+
 function fixedExecuteResult(exitCode, marker, cleanupVerified) {
   return { exitCode, marker, redacted: true, cleanupVerified };
 }
@@ -336,6 +347,7 @@ export function formatHermesExecuteResult(result) {
   return `${HERMES_EXECUTE_MARKER} marker=${result.marker} exit_code=${result.exitCode} redacted=${result.redacted} cleanup_verified=${result.cleanupVerified}`
     + ` duration_ms=${result.durationMs} timeout_ms=${result.timeoutMs} child_closed=${result.childClosed}`
     + ` child_exit_code=${value(result.childExitCode)} child_signal=${value(result.childSignal)}`
+    + ` child_pid=${value(result.childPid)} stdout_bytes=${result.stdoutBytes} stderr_bytes=${result.stderrBytes}`
     + ` termination_attempted=${result.terminationAttempted} termination_ok=${value(result.terminationOk)}`
     + ` taskkill_status=${value(result.taskkillStatus)}`;
 }
@@ -371,6 +383,9 @@ export async function runHermesExecute({
     childClosed: false,
     childExitCode: null,
     childSignal: null,
+    childPid: null,
+    stdoutBytes: 0,
+    stderrBytes: 0,
     terminationAttempted: false,
     terminationOk: null,
     taskkillStatus: null,
@@ -422,8 +437,13 @@ No nested delegation.
           windowsHide: true,
           ...(platformName === 'win32' ? {} : { detached: true }),
         });
-        child.stdout?.on('data', () => {});
-        child.stderr?.on('data', () => {});
+        telemetry.childPid = boundedChildPid(child.pid);
+        child.stdout?.on('data', (chunk) => {
+          telemetry.stdoutBytes = Math.min(1_000_000, telemetry.stdoutBytes + childOutputByteLength(chunk));
+        });
+        child.stderr?.on('data', (chunk) => {
+          telemetry.stderrBytes = Math.min(1_000_000, telemetry.stderrBytes + childOutputByteLength(chunk));
+        });
         child.once('error', () => {
           if (!timedOut) finish(fixedExecuteResult(1, 'SPAWN_ERROR', false));
         });

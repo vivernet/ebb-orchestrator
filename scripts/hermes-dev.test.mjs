@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import { Buffer } from 'node:buffer';
 import { spawnSync } from 'node:child_process';
 import { setTimeout } from 'node:timers';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -585,14 +586,82 @@ test('Hermes execute returns only bounded timeout metadata and never child outpu
     assert.equal(result.terminationAttempted, true);
     assert.equal(result.terminationOk, false);
     assert.equal(result.taskkillStatus, 1);
+    assert.equal(result.childPid, 7890);
+    assert.equal(result.stdoutBytes, Buffer.byteLength(stdoutSecret));
+    assert.equal(result.stderrBytes, Buffer.byteLength(stderrSecret));
     assert.ok(Number.isSafeInteger(result.durationMs) && result.durationMs >= 0);
     assert.equal(result.cleanupVerified, true);
     const cliOutput = formatHermesExecuteResult(result);
     assert.match(cliOutput, /duration_ms=\d+ timeout_ms=5 child_closed=true/);
-    assert.match(cliOutput, /child_exit_code=unknown child_signal=SIGTERM termination_attempted=true termination_ok=false taskkill_status=1/);
+    assert.match(cliOutput, /child_exit_code=unknown child_signal=SIGTERM child_pid=7890 stdout_bytes=\d+ stderr_bytes=\d+ termination_attempted=true termination_ok=false taskkill_status=1/);
     assert.doesNotMatch(JSON.stringify(result), /sentinel-(?:stdout|stderr)-secret/);
     assert.doesNotMatch(cliOutput, /sentinel-(?:stdout|stderr)-secret/);
     assert.deepEqual(readdirSync(directory), []);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('Hermes execute counts UTF-8 output bytes, saturates counters, and accepts the Windows PID boundary', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'hermes-execute-byte-count-'));
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.pid = 4_294_967_295;
+  child.kill = () => {};
+
+  try {
+    const result = await runHermesExecute({
+      worktreeRoot: directory,
+      planPath: 'plan.md',
+      tmpDir: directory,
+      timeoutMs: 1_000,
+      platformName: 'win32',
+      spawnChild: () => {
+        setTimeout(() => {
+          child.stdout.emit('data', 'é');
+          child.stdout.emit('data', Buffer.from([0xF0, 0x9F, 0x8C, 0x8D]));
+          child.stdout.emit('data', Buffer.alloc(1_000_001));
+          child.stderr.emit('data', Buffer.from('λ'));
+          child.stderr.emit('data', Buffer.alloc(1_000_001));
+          child.emit('close', 0);
+        }, 0);
+        return child;
+      },
+    });
+
+    assert.equal(result.childPid, 4_294_967_295);
+    assert.equal(result.stdoutBytes, 1_000_000);
+    assert.equal(result.stderrBytes, 1_000_000);
+    assert.doesNotMatch(JSON.stringify(result), /é|🌍|λ/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('Hermes execute omits a child PID above the Windows DWORD boundary', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'hermes-execute-invalid-pid-'));
+  const child = new EventEmitter();
+  child.pid = 4_294_967_296;
+
+  try {
+    const result = await runHermesExecute({
+      worktreeRoot: directory,
+      planPath: 'plan.md',
+      tmpDir: directory,
+      timeoutMs: 1_000,
+      platformName: 'win32',
+      spawnChild: () => {
+        setTimeout(() => child.emit('close', 0), 0);
+        return child;
+      },
+    });
+
+    assert.equal(result.childPid, null);
+    const cliOutput = formatHermesExecuteResult(result);
+    assert.match(cliOutput, /child_pid=unknown/);
+    assert.doesNotMatch(JSON.stringify(result), /4294967296/);
+    assert.doesNotMatch(cliOutput, /4294967296/);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
