@@ -290,7 +290,7 @@ evidence:
 
 ## Plan-wide verification
 
-- Для изменения root test graph и action: чистая установка/CI evidence, Node 24 + 26, focused security-audit workflow contract test и hosted выполнение всех четырёх manual failure-path сценариев.
+- Для изменения root test graph и action: чистая установка/CI evidence на поддерживаемой матрице Node 24.x, focused security-audit workflow contract test и hosted выполнение всех четырёх manual failure-path сценариев. Node 26 не входит в текущую CI-проверку.
 - Для runtime path: focused resolver/adapter tests и controlled smoke с подтверждённым home, health endpoint, graceful stop и отсутствием дублирующего user-home state вне общего resolver.
 - Для `.env`: isolated env-file tests плюс проверка каждого штатного server launcher и process-vs-file precedence.
 - Для lock policy: focused startup tests, server typecheck, `pnpm server:build && node scripts/verify-lock-startup.mjs`, README operator guidance review; выполнить независимый обязательный `ebb-security-review` после реализации с фокусом на serialized ownership/release, exact record preservation, partial-write fail-closed behavior, DB startup order и явно принятую trusted-operator boundary (без обещания защиты от произвольной внешней подмены между compare/unlink).
