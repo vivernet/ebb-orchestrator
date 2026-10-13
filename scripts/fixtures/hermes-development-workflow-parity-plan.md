@@ -118,16 +118,26 @@ foreground terminal с коротким фиксированным лимито�
 - безопасное свидетельство provider-backed выполнения Hermes, если оно
   доступно, без значений credentials; один лишь успешный exit code обёртки
   не является таким свидетельством;
-- доступное свидетельство завершения дочерних процессов и отсутствия
-  оставшихся временных артефактов после выполнения; если точное дерево процессов
-  или полный временный каталог нельзя проверить поддерживаемыми средствами,
-  явно указать `NOT VERIFIED` и не заявлять cleanup/process-tree PASS;
+- реальные результаты two schema-valid, completed Hermes child sessions,
+  условие no nested/third child и точные source excerpts/citations из обоих
+  ответов;
+- bounded cleanup evidence: exact wrapper child process closed, prompt file
+  deletion verified after close; если использовалось timeout termination — успешный вызов
+  `taskkill.exe /PID <exact pid> /T /F` и последующий root child close;
+- detached OS descendants вне этой проверки пометить `NOT VERIFIED`. В рамках
+  принятой v1-политики это ограничение само по себе не мешает PASS Task7, если
+  все перечисленные bounded criteria выполнены. Не заявлять full OS
+  process-tree cleanup;
 - финальный `git status --short`, список изменённых файлов и verdict `PASS`
   или `FAIL` с конкретными причинами.
 
-`PASS` допустим только при наличии реальных результатов ровно двух
-параллельных read-only субагентов без nested delegation, успешных gates,
-provider-backed evidence и подтверждённого cleanup. Если какое-либо
-свидетельство недоступно, указать `FAIL` или `NOT VERIFIED` для пункта и
-общий verdict `FAIL`. Не выдавать `COMPLETED exit_code=0` за parity PASS.
+`PASS` допустим только при наличии двух schema-valid, completed Hermes child
+sessions без nested/third child, успешных обязательных gates, provider-backed
+evidence, закрытия точного wrapper child process, подтверждённого удаления
+prompt file после close и, если применялось timeout termination, успешного
+`taskkill.exe /PID <exact pid> /T /F` с последующим root child close. Любой
+недостающий критерий из этого списка даёт `FAIL`. Detached OS descendants
+вне bounded проверки помечаются `NOT VERIFIED`, но по принятой v1-политике не
+блокируют Task7 PASS; не заявлять full OS process-tree cleanup. Не выдавать
+`COMPLETED exit_code=0` за parity PASS.
 Отчёт оставить для отдельной проверки и отдельного решения о commit.

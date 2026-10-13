@@ -851,3 +851,8 @@ Plan01 metadata переведена из `completed` в `in_progress` посл�
 ## Correction — текущая CI матрица Node (2026-10-13)
 
 - Предыдущее описание в дополнении от 2026-10-09 о действующей Ubuntu-only матрице Node 24/26 устарело. Активные jobs в `.github/workflows/production-gates.yml` используют только Node `24.x`; Node 26 удалён из текущих CI-проверок. Записи о конкретных старых прогонах Node 26 выше сохранены как исторические evidence и не описывают текущую матрицу.
+
+## Correction — Plan19 Task7 bounded cleanup acceptance (2026-10-13)
+
+- По явному решению пользователя Task7 использует ограниченную v1-проверку cleanup. Требуются ровно две schema-valid, завершённые Hermes child sessions без nested/third child; точное подтверждение закрытия wrapper child process и удаления его prompt file после close. Если использовался timeout termination, дополнительно требуется успешный `taskkill.exe /PID <exact pid> /T /F` и последующее закрытие root child.
+- Detached OS descendants вне этих проверок остаются `NOT VERIFIED`; по принятой политике это ограничение само по себе не препятствует Task7 PASS при прохождении всех перечисленных критериев. Нельзя заявлять полный OS process-tree cleanup. Старые failed-run evidence, включая `TERMINATION_FAILED`, сохранены без переписывания; текущая запись меняет только критерий будущей acceptance, а Plan07 остаётся `blocked` до свежего результата и whole-plan review.

@@ -334,10 +334,10 @@ Expected: supported CLI, canonical skills inventory, project discovery/trust and
 Run: create `scripts/fixtures/hermes-development-workflow-parity-plan.md` with the current contracts: ровно два параллельных read-only subagents без nested delegation; только `.agents/skills/`; lint/typecheck/test/diff-check; no product-code changes, merge, push or release; report has date/branch/HEAD/commands/evidence/verdict; no automatic commit.
 Expected: fixture exists, is reviewable, excludes stale `.hermes.md` and `tools/hermes/skills/` assumptions and cannot authorize repository mutations.
 Run: pnpm hermes:execute -- scripts/fixtures/hermes-development-workflow-parity-plan.md
-Expected: parity verdict PASS, exactly two read-only subagents, no nested/third child, repository gates PASS, report committed as separate evidence, child processes and artifacts fully cleaned.
+Expected: parity verdict PASS only when there are exactly two schema-valid, completed Hermes child sessions with no nested/third child; required repository gates pass; and the report is saved as separate evidence. Bounded cleanup acceptance verifies that the exact wrapper child process closed and prompt file deletion verified after close. If timeout termination was used, require successful `taskkill.exe /PID <exact pid> /T /F` evidence and subsequent root child close. Detached OS descendants outside this check must be marked `NOT VERIFIED`; under this accepted v1 contract that limitation does not fail Task 7 when all listed criteria pass. Do not claim full OS process-tree cleanup.
 ```
 
-**Review Focus:** wrapper `COMPLETED exit_code=0` alone does not prove provider-backed parity; require parity report, actual two child results and clean process/artifact inventory. Preserve `.opencode` until existing Plan07 task explicitly permits deletion after PASS.
+**Review Focus:** wrapper `COMPLETED exit_code=0` alone does not prove provider-backed parity; require the parity report and actual schema-valid completed results from both child sessions. Verify no nested/third child, exact wrapper child process closed, and prompt deletion after close; on timeout require successful `taskkill.exe /PID <exact pid> /T /F` plus root child close. Mark detached OS descendants outside this bounded check `NOT VERIFIED`; this limitation does not fail Task 7 if its bounded criteria pass. Do not claim full OS process-tree cleanup. Preserve `.opencode` until existing Plan07 task explicitly permits deletion after PASS.
 
 ### Task 8: Добавить и получить свежий независимый source security scan для Plan09
 

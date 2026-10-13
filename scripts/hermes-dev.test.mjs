@@ -377,6 +377,34 @@ test('Plan 19 Hermes parity fixture uses recoverable ledger, tool schemas and po
   assert.match(fixture, /nested\s+delegation/i);
 });
 
+test('Plan 19 Task 7 cleanup acceptance is bounded to wrapper-owned process and prompt evidence', () => {
+  const taskPlan = readFileSync(join(root, 'docs', 'architecture', 'plans', '19-unfinished-plan-closure.md'), 'utf8');
+  const task7 = taskPlan.split('### Task 7:')[1]?.split('### Task 8:')[0] ?? '';
+  const fixture = readFileSync(join(root, 'scripts', 'fixtures', 'hermes-development-workflow-parity-plan.md'), 'utf8');
+  const roadmap = readFileSync(join(root, 'docs', 'roadmap', '02-current-state.md'), 'utf8');
+  const reconciliation = readFileSync(join(root, 'docs', 'architecture', 'plans', 'governance', 'evidence', '07-current-plan-reconciliation.md'), 'utf8');
+  const auditReport = readFileSync(join(root, 'docs', 'audit', 'hermes-development-workflow-parity.md'), 'utf8');
+
+  for (const text of [task7, fixture]) {
+    assert.match(text, /two schema-valid[\s\S]{0,100}completed Hermes child sessions/i);
+    assert.match(text, /no nested\/third child/i);
+    assert.match(text, /wrapper child process closed/i);
+    assert.match(text, /prompt file\s+deletion verified after close/i);
+    assert.match(text, /taskkill\.exe \/PID <exact pid> \/T \/F/i);
+    assert.match(text, /root child close/i);
+    assert.match(text, /detached OS descendants[\s\S]{0,30}NOT VERIFIED/i);
+    assert.match(text, /NOT VERIFIED[\s\S]{0,180}(?:does not fail|не мешает)[\s\S]{0,50}Task\s?7/i);
+    assert.doesNotMatch(text, /full OS process-tree cleanup PASS/i);
+  }
+
+  assert.match(roadmap, /\| `plan-07` \| `blocked` \|[\s\S]*bounded v1 cleanup contract/i);
+  assert.match(reconciliation, /Correction — Plan19 Task7 bounded cleanup acceptance \(2026-10-13\)/);
+  assert.match(auditReport, /Correction — bounded Task7 cleanup policy B \(2026-10-13\)/);
+  assert.match(auditReport, /detached OS descendants[\s\S]{0,80}NOT VERIFIED[\s\S]{0,160}не блокируют PASS/i);
+  assert.match(auditReport, /Прежний \*\*FAIL[\s\S]{0,180}старого запуска/i);
+  assert.match(auditReport, /Plan07 остаётся `NOT VERIFIED`[\s\S]{0,180}свежего acceptance[\s\S]{0,100}whole-plan review/i);
+});
+
 test('plan path resolution rejects traversal and sibling-prefix escapes', () => {
   const root = join('C:', 'repo', 'worktree');
   assert.equal(resolvePlanPath(root, 'docs/plan.md'), resolve(root, 'docs/plan.md'));
