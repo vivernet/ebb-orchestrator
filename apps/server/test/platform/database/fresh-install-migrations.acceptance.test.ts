@@ -18,18 +18,19 @@ describe("fresh-install migration acceptance", () => {
     if (tmpDir) await rm(tmpDir, { recursive: true, force: true });
   });
 
-  it("applies migrations 001-042 with a shared Hermes home and durable recovery schema", async () => {
+  it("applies migrations 001-043 with scheduler capacity wait tracking", async () => {
     tmpDir = await mkdtemp(join(tmpdir(), "ebb-fresh-install-migrations-"));
     db = createSqliteDatabase(join(tmpDir, `fresh-${randomUUID()}.sqlite`));
     const migrations = loadTestMigrations();
-    const expectedVersions = Array.from({ length: 42 }, (_, index) => index + 1);
+    const expectedVersions = Array.from({ length: 43 }, (_, index) => index + 1);
 
     expect(migrations.map(({ version }) => version)).toEqual(expectedVersions);
-    expect(migrations.at(-4)?.name).toBe("039_run_session_capture_state");
-    expect(migrations.at(-3)?.name).toBe("040_run_hermes_source_snapshot");
-    expect(migrations.at(-2)?.name).toBe("041_shared_hermes_home");
-    expect(migrations.at(-1)?.name).toBe("042_durable_run_recovery");
-    expect(runMigrations(db, migrations).applied).toBe(42);
+    expect(migrations.at(-4)?.name).toBe("040_run_hermes_source_snapshot");
+    expect(migrations.at(-3)?.name).toBe("041_shared_hermes_home");
+    expect(migrations.at(-2)?.name).toBe("042_durable_run_recovery");
+    expect(migrations.at(-1)?.name).toBe("043_scheduler_capacity_wait_started_at");
+    expect(runMigrations(db, migrations).applied).toBe(43);
+    expect(db.all("PRAGMA table_info(tasks)")).toContainEqual(expect.objectContaining({ name: "capacity_wait_started_at", type: "TEXT", notnull: 0, dflt_value: null }));
     expect(db.all("SELECT * FROM run_process_owner_generations")).toEqual([]);
     expect(db.all("SELECT * FROM run_resume_bindings")).toEqual([]);
     expect(db.all("SELECT * FROM context_deltas")).toEqual([]);

@@ -294,7 +294,7 @@ git commit -m "feat: add runtime port and fake agent runtime"
 ****Файлы:****
 - Изменить: `apps/server/src/modules/scheduler/scheduler-types.ts`, `scheduler-policy.ts`, `scheduler-service.ts`.
 - Сохранить поведение `apps/server/src/modules/scheduler/resource-lock-service.ts` и точные `wait_reason` для UI projection.
-- Создать additive forward migration для nullable `tasks.capacity_wait_started_at`; на schema head `039` это `apps/server/src/platform/database/migrations/040_scheduler_capacity_wait_started_at.sql`. Перед реализацией повторно проверить migration head и выбрать следующий номер.
+- Создать additive forward migration для nullable `tasks.capacity_wait_started_at`; на фактическом schema head `042` это `apps/server/src/platform/database/migrations/043_scheduler_capacity_wait_started_at.sql`. Перед реализацией повторно проверить migration head и выбрать следующий номер.
 - Не редактировать уже применённые `002_work_domain.sql`, `003_work_control.sql` и `005_scheduler.sql`.
 - Изменить тесты: `apps/server/test/modules/scheduler/scheduler.test.ts`, `apps/server/test/platform/database/context-manifest-migration.test.ts`, `apps/server/test/platform/database/fresh-install-migrations.acceptance.test.ts`.
 - Изменить/создать migration acceptance: `apps/server/test/platform/database/scheduler-migration.test.ts`.
@@ -322,16 +322,16 @@ git commit -m "feat: add runtime port and fake agent runtime"
 | Missing/terminal path | Изолированная leaf candidate; terminal node между unfinished tasks; попытка добавить dependency с отсутствующим endpoint | Leaf path length равна `1`; terminal node исключён и не соединяет цепочку; FK отклоняет missing endpoint, `foreign_key_check` пуст |
 | Cycles | DependencyService попыткой вставить цикл; также тестовая corrupt persisted graph | Запись цикла отклонена; обнаруженный persisted cycle даёт диагностируемую graph-integrity error, и данный reconciliation cycle ничего не dispatch-ит без изменения Task status |
 | Deterministic ties | Равны category, aged priority и path; равные candidate timestamps/ветви; сравнить две equivalent fixtures с противоположным порядком вставки | Tie-break `created_at`, затем ordinal `id`; выбранный порядок не зависит от insertion order |
-| Migration compatibility | Empty DB и populated upgrade 039→040 с существующими `context_deltas` rows | Миграция только добавляет nullable `tasks.capacity_wait_started_at`; значения старых задач остаются `NULL`, raw `context_deltas` rows/values и table SQL/columns/indexes не меняются; сохраняются `manifest_id ON DELETE CASCADE` и `previous_manifest_id ON DELETE SET NULL`, `PRAGMA foreign_key_check` пуст |
+| Migration compatibility | Empty DB и populated upgrade 042→043 с существующими `context_deltas` rows | Миграция только добавляет nullable `tasks.capacity_wait_started_at`; значения старых задач остаются `NULL`, raw `context_deltas` rows/values и table SQL/columns/indexes не меняются; сохраняются `manifest_id ON DELETE CASCADE` и `previous_manifest_id ON DELETE SET NULL`, `PRAGMA foreign_key_check` пуст |
 
 Migration-specific test boundaries:
 
-- `scheduler-migration.test.ts` добавляет отдельный populated 039→040 upgrade case. Перед 040 сохранить число строк и каждую колонку каждой строки `context_deltas`, включая SQLite `typeof` и byte representation (`hex(CAST(text_column AS BLOB))` для каждого TEXT value); также сохранить `sqlite_master.sql`, `PRAGMA table_info`, `PRAGMA index_list` и `PRAGMA index_xinfo` для `context_deltas` и `context_manifests`, плюс все поля `PRAGMA foreign_key_list` у `context_deltas`. После 040 проверить побайтовое/построчное совпадение, неизменность SQL/columns/indexes обеих context tables, `manifest_id ON DELETE CASCADE`, `previous_manifest_id ON DELETE SET NULL`, ровно одну новую nullable `TEXT` колонку `tasks.capacity_wait_started_at` и пустой `PRAGMA foreign_key_check`.
-- `context-manifest-migration.test.ts` остаётся проверкой исходного диапазона 001–039. Ограничить fixture/catalog через `loadTestMigrations().filter(migration => migration.version <= 39)` и оставить assertion последовательности 1..39 и migration 039; новая 040 не должна расширять этот тест.
-- `fresh-install-migrations.acceptance.test.ts` обновляет каталог/ожидания на последовательность 001–040 (40 migrations) и проверяет, что новая установка содержит nullable `TEXT` поле `tasks.capacity_wait_started_at` и проходит `PRAGMA foreign_key_check`.
-- Migration 040 должна содержать только additive `ALTER TABLE tasks ADD COLUMN capacity_wait_started_at TEXT` (nullable); старые migration files и context tables не перестраиваются.
+- `scheduler-migration.test.ts` и `context-manifest-migration.test.ts` добавляют отдельный populated 042→043 upgrade case. Перед 043 сохранить число строк и каждую колонку каждой строки `context_deltas`, включая SQLite `typeof` и byte representation (`hex(CAST(text_column AS BLOB))` для каждого TEXT value); также сохранить `sqlite_master.sql`, `PRAGMA table_info`, `PRAGMA index_list` и `PRAGMA index_xinfo` для `context_deltas` и `context_manifests`, плюс все поля `PRAGMA foreign_key_list` у `context_deltas`. После 043 проверить побайтовое/построчное совпадение, неизменность SQL/columns/indexes обеих context tables, `manifest_id ON DELETE CASCADE`, `previous_manifest_id ON DELETE SET NULL`, ровно одну новую nullable `TEXT` колонку `tasks.capacity_wait_started_at` и пустой `PRAGMA foreign_key_check`.
+- `context-manifest-migration.test.ts` сохраняет исторические переходы до schema head 042; добавленная отдельная проверка отвечает за 042→043.
+- `fresh-install-migrations.acceptance.test.ts` обновляет каталог/ожидания на последовательность 001–043 (43 migrations) и проверяет, что новая установка содержит nullable `TEXT` поле `tasks.capacity_wait_started_at` и проходит `PRAGMA foreign_key_check`.
+- Migration 043 должна содержать только additive `ALTER TABLE tasks ADD COLUMN capacity_wait_started_at TEXT` (nullable); старые migration files и context tables не перестраиваются.
 
-- [ ] **Шаг 1: Написать RED-тесты eligibility, durable aging, graph scoring и migration**
+- [x] **Шаг 1: Написать RED-тесты eligibility, durable aging, graph scoring и migration**
 
 До реализации добавить новые assertions в указанные suites. Scheduler тесты должны покрыть:
 
@@ -347,11 +347,11 @@ approval pending -> WAIT APPROVAL
 
 Также проверить, что Reviewer находится в очереди перед четвёртым новым Developer, когда слот reviewer свободен.
 
-Дополнительно до production-кода написать регрессии для thresholds `23:59:59.999`/`24:00:00.000`, 48h/72h/cap, строгого category order, aging только после non-capacity gates, сохранения/reset across capacity reasons, process restart, read-only queries, длиннейшего branching path/terminal leaves/cycle, insertion-order ties и legacy NULL. Детерминизм проверяется в одной тестовой процедуре на двух эквивалентных fixtures, записанных в противоположном порядке; они должны дать одинаковую ordered task ID sequence и reservations. Migration suite должна до миграции доказывать ожидаемое nullable поле, empty install через 001–040 и populated upgrade 039→040 с сохранением `context_deltas` rows, table SQL/columns/indexes, обоих FK delete actions и `PRAGMA foreign_key_check`. В `context-manifest-migration.test.ts` ограничить именно historical regression catalog миграциями 001–039, чтобы она по-прежнему проверяла переход 039 без случайного захвата новых будущих migrations.
+Дополнительно до production-кода написать регрессии для thresholds `23:59:59.999`/`24:00:00.000`, 48h/72h/cap, строгого category order, aging только после non-capacity gates, сохранения/reset across capacity reasons, process restart, read-only queries, длиннейшего branching path/terminal leaves/cycle, insertion-order ties и legacy NULL. Детерминизм проверяется в двух эквивалентных DB fixtures, записанных в противоположном порядке; они должны дать одинаковую ordered task ID sequence и reservations. Migration suite доказывает ожидаемое nullable поле, empty install через 001–043 и populated upgrade 042→043 с сохранением `context_deltas` rows, table SQL/columns/indexes, обоих FK delete actions и `PRAGMA foreign_key_check`. Исторические fixtures в `context-manifest-migration.test.ts` остаются ограничены прежним schema head.
 
 Отдельная RED-регрессия должна создать ситуацию, где одновременно исчерпана global/project/role capacity и недоступен budget. Текущий `evaluateEligibilityTx()` может первым вернуть capacity `wait_reason`, но `reconcile()` обязан независимо проверить все non-capacity gates: timestamp остаётся `NULL` и не стареет до прохождения budget; если capacity всё ещё занята, стартовое время берётся из нового injected clock observation после снятия budget.
 
-- [ ] **Шаг 2: Подтвердить ожидаемый RED на новых проверках**
+- [x] **Шаг 2: Подтвердить ожидаемый RED на новых проверках**
 
 ```bash
 pnpm --filter @ebb-orchestrator/server exec vitest run test/modules/scheduler/scheduler.test.ts
@@ -360,9 +360,9 @@ pnpm --filter @ebb-orchestrator/server exec vitest run test/platform/database/co
 pnpm --filter @ebb-orchestrator/server exec vitest run test/platform/database/fresh-install-migrations.acceptance.test.ts
 ```
 
-Ожидается: новые policy assertions и проверка migration 040 падают на отсутствующем поле/поведении; ранее существовавшая migration-039 regression в своей ограниченной цепочке остаётся зелёной. Не использовать `skip`, ослабление assertions или искусственный fail.
+Ожидается: новые policy assertions и проверка migration 043 падают на отсутствующем поле/поведении; ранее существовавшие migration regressions остаются зелёными в своих явно ограниченных schema-head диапазонах. Не использовать `skip`, ослабление assertions или искусственный fail.
 
-- [ ] **Шаг 3: Реализовать durable wait tracking и scoring по spec-01 §8.1**
+- [x] **Шаг 3: Реализовать durable wait tracking и scoring по spec-01 §8.1**
 
 Порядок строго лексикографический; более ранний ключ никогда не обходится последующим:
 
@@ -386,9 +386,9 @@ Critical path считается по нормализованной табли�
 
 Поле ожидания хранится в отдельной additive migration. Migration/upgrade acceptance обязан сохранить существующие строки `context_deltas` и их FK-семантику (`manifest_id ON DELETE CASCADE`, `previous_manifest_id ON DELETE SET NULL`); никакие уже применённые migrations не переписываются. Новая схема проверяется на empty DB и при upgrade populated DB, затем выполняется `foreign_key_check`.
 
-- [ ] **Шаг 4: Проверить acceptance matrix выше после GREEN**
+- [x] **Шаг 4: Проверить acceptance matrix выше после GREEN**
 
-- [ ] **Шаг 5: Запустить focused Scheduler и migration acceptance suites**
+- [x] **Шаг 5: Запустить focused Scheduler и migration acceptance suites**
 
 ```bash
 pnpm --filter @ebb-orchestrator/server exec vitest run test/modules/scheduler/scheduler.test.ts
@@ -397,14 +397,16 @@ pnpm --filter @ebb-orchestrator/server exec vitest run test/platform/database/co
 pnpm --filter @ebb-orchestrator/server exec vitest run test/platform/database/fresh-install-migrations.acceptance.test.ts
 ```
 
-Ожидается: все четыре suites завершаются с exit `0`; `context-manifest-migration.test.ts` по-прежнему доказывает migration 039 в ограниченной цепочке 001–039; новая migration suite доказывает 039→040 populated upgrade и неизменность `context_deltas`; fresh install заканчивается на 040. Scheduler suite сравнивает противоположные insertion-order fixtures и получает идентичные ordered task IDs/reservations.
+Ожидается: все четыре suites завершаются с exit `0`; исторические context-manifest checks сохраняют прежний schema head; migration suite доказывает 042→043 populated upgrade и неизменность `context_deltas`; fresh install заканчивается на 043. Scheduler suite сравнивает две fixtures с противоположным insertion order и получает идентичные ordered task IDs/reservations.
 
 - [ ] **Шаг 6: Коммит**
 
 ```bash
-git add apps/server/src/modules/scheduler apps/server/src/platform/database/migrations/040_scheduler_capacity_wait_started_at.sql apps/server/test/modules/scheduler apps/server/test/platform/database
-git commit -m "feat: добавить детерминированный scheduler и блокировки ресурсов"
+git add apps/server/src/modules/scheduler apps/server/src/platform/database/migrations/043_scheduler_capacity_wait_started_at.sql apps/server/test/modules/scheduler apps/server/test/platform/database
+git commit -m "Добавить aging и critical path Scheduler"
 ```
+
+**Текущий evidence, 2026-10-14:** Шаги 1–5 выполнены. Migration 043 добавляет только nullable `tasks.capacity_wait_started_at`; populated schema head 042→043 acceptance сохраняет `context_deltas` values/bytes/schema/indexes/FKs. Scheduler использует normalized `dependencies`, глобально fail-closed проверяет persisted blocking graph на циклы, применяет category → aged priority → critical path → creation time → ordinal ID порядок, а wait timestamp сохраняет до закрытия gate или успешного atomic dispatch. Focused suites прошли 98/98, server typecheck, scoped ESLint и `git diff --check` прошли; независимый Task5 review — `APPROVED`. Step 6 и обязательные full workspace quality gates остаются открытыми; Task6 durable RunRequest не реализован, Plan02 остаётся `in_progress`.
 
 ---
 
@@ -413,11 +415,11 @@ git commit -m "feat: добавить детерминированный schedul
 ****Файлы:****
 - Создать: `apps/server/src/modules/runtime/run-orchestrator.ts`
 - Создать: `apps/server/src/modules/runtime/run-event-handlers.ts`
-- Создать additive migration `041_scheduler_run_requests.sql` после migration 040 из Task5: таблица durable Task-bound requests с opaque ID, обязательными `task_id`, `idempotency_key`, исходными `role`/`model`, typed origin/trigger reference, status (`PENDING`, `DISPATCHED`, `FAILED`), created/updated timestamps, nullable `run_id` и nullable stable `failure_code`; добавить unique index на `idempotency_key` во всех status и unique partial index на один `PENDING` request per Task. Перед реализацией проверить schema head и выбрать следующий номер; не переписывать migrations и не трогать `context_deltas`/`context_manifests`.
+- Создать additive migration после Task5 (ожидаемый `044_scheduler_run_requests.sql` при текущем schema head 043): таблица durable Task-bound requests с opaque ID, обязательными `task_id`, `idempotency_key`, исходными `role`/`model`, typed origin/trigger reference, status (`PENDING`, `DISPATCHED`, `FAILED`), created/updated timestamps, nullable `run_id` и nullable stable `failure_code`; добавить unique index на `idempotency_key` во всех status и unique partial index на один `PENDING` request per Task. Перед реализацией проверить schema head и выбрать следующий номер; не переписывать migrations и не трогать `context_deltas`/`context_manifests`.
 - Изменить: `apps/server/src/modules/scheduler/scheduler-service.ts`, `apps/server/src/modules/recovery/recovery-service.ts`, `apps/server/src/modules/runtime/run-service.ts`, `apps/server/src/platform/events/event-dispatcher.ts`, `apps/server/src/platform/home/production-composition.ts` и `apps/server/src/main.ts` для durable queue producer/worker startup, event nudge, READY-gated event delivery и safety-tick recovery.
 - Перевести production Task dispatch caller `apps/server/src/app/routes/runs.ts`, его Runtime handoff `apps/server/src/modules/runtime/run-event-handlers.ts` и Task Recovery на public Scheduler request API. `/tasks/:id/dispatch` требует `Idempotency-Key`; Recovery создаёт отдельную новую Task попытку с новым source attempt key. Все Epic phase runs, включая child phases с `task_id`, и Request planning не переводить в пользовательскую Task очередь; сохранить их текущие persisted phase/job intents и собственный lifecycle.
 - Изменить `apps/server/test/scenarios/standalone-task.fake-runtime.test.ts` и `apps/server/test/platform/events/event-dispatcher.test.ts`; создать/изменить scheduler request, recovery, API и `apps/server/test/platform/database/scheduler-run-request-migration.test.ts` acceptance suites.
-- `scheduler-run-request-migration.test.ts` проверяет populated upgrade 040→041, поля/status constraint, unique partial index, FK/delete actions, старые task rows и `foreign_key_check`; `fresh-install-migrations.acceptance.test.ts` проверяет empty install 001–041. `context-manifest-migration.test.ts` остаётся ограничен historical 001–039, а `scheduler-migration.test.ts` по-прежнему покрывает 039→040.
+- `scheduler-run-request-migration.test.ts` проверяет populated upgrade 043→044, поля/status constraint, unique partial index, FK/delete actions, старые task rows и `foreign_key_check`; `fresh-install-migrations.acceptance.test.ts` проверяет empty install 001–044. `context-manifest-migration.test.ts` сохраняет предыдущие migration checks, а `scheduler-migration.test.ts` по-прежнему покрывает additive 042→043.
 
 ****Интерфейсы:****
 - Создаёт durable Task-bound `SchedulerRunRequest` с оригинальными `taskId`, выбранными `role`/`model`, stable `idempotency_key` и source-backed caller reference. Глобальный unique index сохраняет idempotency key навсегда; unique partial index разрешает не более одного активного `PENDING` request на Task. Повтор с тем же ключом и теми же полями во всех состояниях возвращает прежний request/status/`run_id`; тот же ключ с другим payload получает stable conflict. Новая намеренная попытка получает новый ключ. Другой concurrent key для Task с уже активным PENDING получает `RUN_REQUEST_ALREADY_PENDING`.
@@ -456,7 +458,7 @@ Acceptance проходит через production composition, Task API и Task 
 
 - [ ] **Шаг 1: Написать RED для durable queue, ordered arbitration и полного standalone workflow**
 
-Сначала покрыть все строки acceptance matrix, включая READY barrier, crash/replay после каждой commit/runtime/ack границы, ожидание/restart, selected role/model persistence, error rollback, постоянную request deduplication и отсутствие prepared/failed orphan Run до arbitration. Создать отдельную populated upgrade suite 040→041 и проверить empty install 001–041; Task5 suite отдельно сохраняет проверку 039→040.
+Сначала покрыть все строки acceptance matrix, включая READY barrier, crash/replay после каждой commit/runtime/ack границы, ожидание/restart, selected role/model persistence, error rollback, постоянную request deduplication и отсутствие prepared/failed orphan Run до arbitration. Создать отдельную populated upgrade suite 043→044 и проверить empty install 001–044; Task5 suite отдельно сохраняет проверку 042→043.
 
 Script roles:
 

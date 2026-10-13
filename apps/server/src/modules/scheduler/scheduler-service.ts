@@ -22,7 +22,7 @@ import type {
   SchedulerReconciliationResult,
   SchedulerLimits,
 } from "./scheduler-types.js";
-import { compareTasks } from "./scheduler-policy.js";
+import { agedPriority, compareTasks } from "./scheduler-policy.js";
 import { ResourceLockService } from "./resource-lock-service.js";
 import { assertProjectDispatchableTx, projectDispatchEligibilityTx } from "./project-dispatch-guard.js";
 
@@ -33,6 +33,8 @@ interface TaskRow {
   status: string;
   contract_json: string;
   created_at: string;
+  capacity_wait_started_at?: string | null;
+  required?: number;
 }
 
 /**\n * Сервис планировщика — координирует планирование задач и оценку элигибельности.\n *\n * Использует единственный production-экземпляр, разделяемый всеми runtime-компонентами.\n * Единый долговечный authority для элигибельности/резервирований применяется ко ВСЕМ ролям\n * с точным контролем capacity для каждой роли.\n */
@@ -48,7 +50,7 @@ export class SchedulerService {
   static readonly DEFAULT_SCHEME_VERSION = DEFAULT_SCHEME_VERSION;
   static readonly ALL_ROLES = ALL_ROLES;
 
-  constructor(private readonly db: Database) {
+  constructor(private readonly db: Database, private readonly clock: () => Date = () => new Date()) {
     this.lockService = new ResourceLockService(db);
     // Initialize с defaults только если no config exists yet.
     const existing = this.db.get<{ id: string }>("SELECT id FROM scheduler_config WHERE id=1");
@@ -85,6 +87,7 @@ export class SchedulerService {
 
   /**\n   * Пересчитывает элигибельность для всех активных задач (опционально в пределах проекта).\n   *\n   * Результаты детерминированы — одно и то же состояние всегда даёт одинаковый порядок.\n   */
   recalculate(scope?: { projectId: string }): RecalculateResult {
+    this.assertAcyclicDependencyGraph(this.db);
     // Получает all tasks (filtered by scope if provided)
     const tasks = this.getSchedulableTasks(scope);
 
@@ -135,6 +138,39 @@ export class SchedulerService {
     }
 
     // сортировать runnables deterministically
+    const now = this.clock();
+    const dependents = new Map<string, string[]>();
+    for (const edge of this.db.all<{ task_id: string; depends_on_task_id: string }>(
+      "SELECT task_id,depends_on_task_id FROM dependencies WHERE type='BLOCKING' ORDER BY task_id,depends_on_task_id",
+    )) {
+      const children = dependents.get(edge.depends_on_task_id) ?? [];
+      children.push(edge.task_id);
+      dependents.set(edge.depends_on_task_id, children);
+    }
+    const activeById = new Map(allActiveTasks.map((task) => [task.id, task]));
+    const pathLength = (startId: string): number => {
+      const visiting = new Set<string>();
+      const memo = new Map<string, number>();
+      const visit = (id: string): number => {
+        if (visiting.has(id)) throw new Error(`dependency graph cycle detected at task ${id}`);
+        const cached = memo.get(id);
+        if (cached !== undefined) return cached;
+        visiting.add(id);
+        let longest = 1;
+        for (const childId of dependents.get(id) ?? []) {
+          const child = activeById.get(childId);
+          if (child && !isTerminalStatus(child.status)) longest = Math.max(longest, 1 + visit(childId));
+        }
+        visiting.delete(id);
+        memo.set(id, longest);
+        return longest;
+      };
+      return visit(startId);
+    };
+    for (const task of runnables) {
+      task.agedPriority = agedPriority(task.priority, task.capacityWaitStartedAt, now);
+      task.criticalPathLength = pathLength(task.id);
+    }
     runnables.sort((a, b) => compareTasks(a, b));
 
     // лимит runnables based on capacity constraints
@@ -296,12 +332,12 @@ export class SchedulerService {
   ): SchedulableTask[] {
     const rows = this.db.all<TaskRow>(
       scope
-        ? "SELECT id, project_id, epic_id, status, contract_json, created_at FROM tasks WHERE project_id = $project_id"
-        : "SELECT id, project_id, epic_id, status, contract_json, created_at FROM tasks",
+        ? "SELECT id, project_id, epic_id, status, contract_json, created_at, capacity_wait_started_at, required FROM tasks WHERE project_id = $project_id"
+        : "SELECT id, project_id, epic_id, status, contract_json, created_at, capacity_wait_started_at, required FROM tasks",
       scope ? { project_id: scope.projectId } : {},
     );
 
-    return rows.map((row) => this.toSchedulableTask(row, this.db));
+    return rows.map((row) => ({ ...this.toSchedulableTask(row, this.db), capacityWaitStartedAt: row.capacity_wait_started_at ?? null, required: row.required !== 0 }));
   }
 
   /**\n   * Возвращает элигибельность для отдельной задачи.\n   */
@@ -402,6 +438,7 @@ getEligibility(taskId: string, scope?: { projectId: string }): Eligibility {
     if (task.status !== "READY") throw new Error(`Task ${taskId} is not READY`);
     this.db.transaction((tx) => {
        assertProjectDispatchableTx(tx, task.project_id);
+       this.assertAcyclicDependencyGraph(tx);
        const rows = tx.all<TaskRow>("SELECT id,project_id,epic_id,status,contract_json,created_at FROM tasks");
        const candidates = rows.map((row) => this.toSchedulableTask(row, tx));
        const candidate = candidates.find((entry) => entry.id === taskId);
@@ -452,6 +489,7 @@ getEligibility(taskId: string, scope?: { projectId: string }): Eligibility {
         throw new Error(`Task ${taskId} reservation run identity mismatch: expected ${options.runId}, found ${existing.run_id ?? "NULL"}`);
       }
       workflowEngine.transitionInTransaction(tx, taskId, "DEVELOPMENT");
+      tx.run("UPDATE tasks SET capacity_wait_started_at=NULL WHERE id=$taskId", { taskId });
     });
     onWorkflowRunStarted(taskId, triggerReason);
   }
@@ -608,9 +646,11 @@ getEligibility(taskId: string, scope?: { projectId: string }): Eligibility {
 
   /** Сводит резервации и блокировки после краша или прерванного run. */
   reconcile(): SchedulerReconciliationResult {
-    if (!this.db.get<{ name: string }>("SELECT name FROM sqlite_master WHERE type='table' AND name='agent_runs'")) return { releasedReservationIds: [], blockedReservationIds: [] };
     return this.db.transaction((tx) => {
       const result: SchedulerReconciliationResult = { releasedReservationIds: [], blockedReservationIds: [] };
+      this.assertAcyclicDependencyGraph(tx);
+      const now = this.clock().toISOString();
+      if (tx.get<{ name: string }>("SELECT name FROM sqlite_master WHERE type='table' AND name='agent_runs'")) {
       const rows = tx.all<{ id: string; subject_id: string; project_id: string; estimate_cost: number; kind: string; owner_id: string; run_id: string | null }>("SELECT id,subject_id,project_id,estimate_cost,kind,owner_id,run_id FROM scheduler_reservations WHERE status='RESERVED' ORDER BY id");
       for (const row of rows) {
         if (!this.lockOwnerMatches(tx, row)) {
@@ -650,8 +690,77 @@ getEligibility(taskId: string, scope?: { projectId: string }): Eligibility {
           result.releasedReservationIds.push(row.id);
         }
       }
+      }
+      this.reconcileCapacityWaitTx(tx, now);
       return result;
     });
+  }
+
+  private reconcileCapacityWaitTx(tx: DatabaseTx, now: string): void {
+    if (!tx.all<{ name: string }>("PRAGMA table_info(tasks)").some(({ name }) => name === "capacity_wait_started_at")) return;
+    const tasks = tx.all<TaskRow>("SELECT id,project_id,epic_id,status,contract_json,created_at,capacity_wait_started_at FROM tasks ORDER BY id");
+    const active = tasks.map((row) => this.toSchedulableTask(row, tx)).filter((task) => !isTerminalStatus(task.status));
+    for (const row of tasks) {
+      const task = active.find((entry) => entry.id === row.id);
+      const nonCapacityGatesOpen = task !== undefined && this.nonCapacityGatesPassTx(tx, task, active);
+      const waitingForCapacity = nonCapacityGatesOpen && this.capacityIsFullTx(tx, task);
+      const startedAt = !nonCapacityGatesOpen
+        ? null
+        : waitingForCapacity
+          ? row.capacity_wait_started_at ?? now
+          : row.capacity_wait_started_at ?? null;
+      if (startedAt !== (row.capacity_wait_started_at ?? null)) {
+        tx.run("UPDATE tasks SET capacity_wait_started_at=$startedAt WHERE id=$id", { id: row.id, startedAt });
+      }
+    }
+  }
+
+  private assertAcyclicDependencyGraph(source: Pick<Database | DatabaseTx, "all">): void {
+    const edges = source.all<{ task_id: string; depends_on_task_id: string }>(
+      "SELECT task_id,depends_on_task_id FROM dependencies WHERE type='BLOCKING' ORDER BY task_id,depends_on_task_id",
+    );
+    const adjacency = new Map<string, string[]>();
+    const vertices = new Set<string>();
+    for (const edge of edges) {
+      const children = adjacency.get(edge.depends_on_task_id) ?? [];
+      children.push(edge.task_id);
+      adjacency.set(edge.depends_on_task_id, children);
+      vertices.add(edge.task_id);
+      vertices.add(edge.depends_on_task_id);
+    }
+    const visiting = new Set<string>();
+    const visited = new Set<string>();
+    const visit = (id: string, path: string[]): void => {
+      if (visiting.has(id)) {
+        const start = path.indexOf(id);
+        throw new Error(`dependency graph cycle detected: ${[...path.slice(start), id].join(" -> ")}`);
+      }
+      if (visited.has(id)) return;
+      visiting.add(id);
+      for (const dependentId of adjacency.get(id) ?? []) visit(dependentId, [...path, id]);
+      visiting.delete(id);
+      visited.add(id);
+    };
+    for (const id of [...vertices].sort()) visit(id, []);
+  }
+
+  private nonCapacityGatesPassTx(tx: DatabaseTx, task: SchedulableTask, active: SchedulableTask[]): boolean {
+    if (!projectDispatchEligibilityTx(tx, task.projectId).allowed || task.status !== "READY") return false;
+    if (task.dependsOnTaskIds.some((id) => active.some((candidate) => candidate.id === id))) return false;
+    if (tx.get("SELECT 1 FROM scheduler_resource_locks WHERE owner_id<>$owner AND resource_key IN ('global',$resource)", { owner: `task:${task.id}`, resource: `task:${task.id}` })) return false;
+    if (this.hasPendingApprovalTx(tx, task.id)) return false;
+    const role = task.category === "reviewer" ? "reviewer" : "developer";
+    const budget = tx.get<{ limit_cost: number; spent_cost: number; reserved_cost: number }>("SELECT limit_cost,spent_cost,reserved_cost FROM scheduler_budgets WHERE project_id=$projectId", { projectId: task.projectId });
+    return !budget || budget.spent_cost + budget.reserved_cost + this.estimateCostTx(tx, task.projectId, role, "default") <= budget.limit_cost;
+  }
+
+  private capacityIsFullTx(tx: DatabaseTx, task: SchedulableTask): boolean {
+    const limits = this.getLimits(task.projectId);
+    const global = this.countTx(tx, "status='RESERVED' AND kind <> 'LOCK'");
+    const project = this.countTx(tx, "status='RESERVED' AND kind <> 'LOCK' AND project_id=$projectId", { projectId: task.projectId });
+    const role = task.category === "reviewer" ? "reviewer" : "developer";
+    const roleCount = this.countTx(tx, "status='RESERVED' AND kind <> 'LOCK' AND lower(role)=lower($role)", { role });
+    return global >= limits.globalMax || project >= limits.projectMax || roleCount >= this.getRoleCapacity(role);
   }
 
   private lockOwnerMatches(tx: DatabaseTx, reservation: { id: string; owner_id: string }): boolean {
@@ -764,7 +873,8 @@ getEligibility(taskId: string, scope?: { projectId: string }): Eligibility {
 
   private toSchedulableTask(row: TaskRow, source: DatabaseTx): SchedulableTask {
     const contract = JSON.parse(row.contract_json) as { dependencies?: string[]; priority?: Priority; category?: Category };
-    return { id: row.id, projectId: row.project_id, epicId: row.epic_id, status: row.status, priority: contract.priority ?? "Normal", category: contract.category ?? "new-development", createdAt: row.created_at, dependsOnTaskIds: contract.dependencies ?? [], hasResourceLock: Boolean(source.get("SELECT 1 FROM scheduler_resource_locks WHERE owner_id=$owner", { owner: `task:${row.id}` })), hasBudgetPlaceholder: false, hasPendingApproval: this.hasPendingApprovalTx(source, row.id) };
+    const dependencies = source.all<{ depends_on_task_id: string }>("SELECT depends_on_task_id FROM dependencies WHERE task_id=$taskId AND type='BLOCKING' ORDER BY depends_on_task_id", { taskId: row.id });
+    return { id: row.id, projectId: row.project_id, epicId: row.epic_id, status: row.status, priority: contract.priority ?? "Normal", category: contract.category ?? "new-development", createdAt: row.created_at, dependsOnTaskIds: dependencies.map(({ depends_on_task_id }) => depends_on_task_id), hasResourceLock: Boolean(source.get("SELECT 1 FROM scheduler_resource_locks WHERE owner_id=$owner", { owner: `task:${row.id}` })), hasBudgetPlaceholder: false, hasPendingApproval: this.hasPendingApprovalTx(source, row.id) };
   }
 
 }

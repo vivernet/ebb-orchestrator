@@ -8,6 +8,10 @@ import { runMigrations } from "../../../src/platform/database/migrator.js";
 import { loadTestMigrations } from "../../helpers/migrations.js";
 import type { Database } from "../../../src/platform/database/database.js";
 import { SchedulerSafetyWorker, SchedulerService } from "../../../src/modules/scheduler/scheduler-service.js";
+import { agedPriority } from "../../../src/modules/scheduler/scheduler-policy.js";
+import { WorkflowEngine } from "../../../src/modules/workflow/workflow-engine.js";
+import { WorkflowRegistry } from "../../../src/modules/workflow/workflow-registry.js";
+import { standard } from "../../../src/modules/workflow/templates.js";
 import type { TaskContract } from "../../../src/modules/work/work-types.js";
 
 const migrations = loadTestMigrations();
@@ -66,6 +70,11 @@ function insertTask(
         updated_at: now,
       },
     );
+    for (const dependsOnTaskId of overrides.dependencies ?? []) {
+      tx.run("INSERT INTO dependencies(id,task_id,depends_on_task_id,type,created_at) VALUES($id,$taskId,$dependsOnTaskId,'BLOCKING',$at)", {
+        id: randomUUID(), taskId: id, dependsOnTaskId, at: now,
+      });
+    }
   });
 
   return { id, projectId };
@@ -80,6 +89,18 @@ describe("SchedulerService", () => {
   beforeEach(() => {
     tmpDir = "";
     projectId = randomUUID();
+  });
+
+  it("ages only at full UTC day boundaries, clamps Critical, and rejects malformed timestamps", () => {
+    const now = new Date("2026-10-14T12:00:00.000Z");
+    expect(agedPriority("Low", "2026-10-13T12:00:00.001Z", now)).toBe("Low");
+    expect(agedPriority("Low", "2026-10-13T12:00:00.000Z", now)).toBe("Normal");
+    expect(agedPriority("Low", "2026-10-12T12:00:00.000Z", now)).toBe("High");
+    expect(agedPriority("Low", "2026-10-11T12:00:00.000Z", now)).toBe("Critical");
+    expect(agedPriority("Low", "2026-10-10T12:00:00.000Z", now)).toBe("Critical");
+    expect(agedPriority("Critical", "2020-01-01T00:00:00.000Z", now)).toBe("Critical");
+    expect(agedPriority("Low", "2026-10-15T12:00:00.000Z", now)).toBe("Low");
+    expect(() => agedPriority("Low", "not-a-timestamp", now)).toThrow(/invalid capacity_wait_started_at/);
   });
 
   afterEach(async () => {
@@ -239,6 +260,174 @@ describe("SchedulerService", () => {
     const result = scheduler.recalculate();
     expect(result.runnables[0]!.id).toBe("high");
     expect(result.runnables[1]!.id).toBe("low");
+  });
+
+  it("uses durable capacity wait aging after category and before the critical path", async () => {
+    await setup();
+    const now = "2026-10-14T12:00:00.000Z";
+    const schedulerWithClock = new SchedulerService(db!, () => new Date(now));
+    insertTask(db!, projectId, { id: "fresh-high", status: "READY", priority: "High" });
+    insertTask(db!, projectId, { id: "aged-low", status: "READY", priority: "Low" });
+    db!.run("UPDATE tasks SET capacity_wait_started_at=$at WHERE id='aged-low'", { at: "2026-10-11T12:00:00.000Z" });
+
+    expect(schedulerWithClock.recalculate().runnables.map(({ id }) => id)).toEqual(["aged-low", "fresh-high"]);
+  });
+
+  it("scores the normalized blocking graph, including the longest unfinished branch, regardless of contract_json", async () => {
+    await setup();
+    insertTask(db!, projectId, { id: "path-short" });
+    insertTask(db!, projectId, { id: "path-root" });
+    insertTask(db!, projectId, { id: "branch-a", dependencies: ["path-root"] });
+    insertTask(db!, projectId, { id: "branch-b", dependencies: ["path-root"] });
+    insertTask(db!, projectId, { id: "branch-b-leaf", dependencies: ["branch-b"] });
+    db!.run("UPDATE tasks SET contract_json=json_set(contract_json,'$.dependencies',json('[]')) WHERE id IN ('branch-a','branch-b','branch-b-leaf')");
+
+    const result = scheduler.recalculate();
+    expect(result.runnables.map(({ id }) => id).slice(0, 2)).toEqual(["path-root", "path-short"]);
+    expect(result.runnables[0]?.criticalPathLength).toBe(3);
+    expect(result.runnables[1]?.criticalPathLength).toBe(1);
+
+    insertTask(db!, projectId, { id: "terminal-root" });
+    insertTask(db!, projectId, { id: "terminal-middle", status: "DONE", dependencies: ["terminal-root"] });
+    insertTask(db!, projectId, { id: "unfinished-after-terminal", dependencies: ["terminal-middle"] });
+    expect(scheduler.recalculate().runnables.find(({ id }) => id === "terminal-root")?.criticalPathLength).toBe(1);
+  });
+
+  it("blocks all dispatch selection on a persisted cycle, including a disconnected runnable task", async () => {
+    await setup();
+    insertTask(db!, projectId, { id: "cycle-a" });
+    insertTask(db!, projectId, { id: "cycle-b" });
+    insertTask(db!, projectId, { id: "otherwise-runnable" });
+    db!.run("INSERT INTO dependencies(id,task_id,depends_on_task_id,type,created_at) VALUES('cycle-edge-a','cycle-a','cycle-b','BLOCKING',$at),('cycle-edge-b','cycle-b','cycle-a','BLOCKING',$at)", { at: new Date().toISOString() });
+
+    expect(() => scheduler.recalculate()).toThrow(/dependency graph cycle detected/);
+    expect(() => scheduler.dispatchTask("otherwise-runnable", { transitionInTransaction: () => undefined } as never, () => undefined)).toThrow(/dependency graph cycle detected/);
+    expect(() => scheduler.reconcile()).toThrow(/dependency graph cycle detected/);
+    expect(db!.get("SELECT COUNT(*) AS count FROM scheduler_reservations WHERE status='RESERVED'")).toEqual({ count: 0 });
+    expect(db!.get("SELECT status FROM tasks WHERE id='otherwise-runnable'")).toEqual({ status: "READY" });
+  });
+
+  it("uses path only after equal aged priority and keeps category and ordinal id ahead of insertion order", async () => {
+    await setup();
+    const fixedClockScheduler = new SchedulerService(db!, () => new Date("2026-10-14T12:00:00.000Z"));
+    insertTask(db!, projectId, { id: "z-prerequisite", priority: "Normal" });
+    insertTask(db!, projectId, { id: "a-prerequisite", priority: "Low" });
+    insertTask(db!, projectId, { id: "dependent-long", priority: "Normal", dependencies: ["z-prerequisite"] });
+    db!.run("UPDATE tasks SET capacity_wait_started_at='2026-10-13T12:00:00.000Z' WHERE id='a-prerequisite'");
+    db!.run("UPDATE tasks SET created_at='2026-10-10T00:00:00.000Z' WHERE id IN ('z-prerequisite','a-prerequisite','dependent-long')");
+    const ordered = fixedClockScheduler.recalculate().runnables.map(({ id }) => id);
+    expect(ordered.slice(0, 2)).toEqual(["z-prerequisite", "a-prerequisite"]);
+
+    db!.run("UPDATE tasks SET contract_json=json_set(contract_json,'$.category','new-development','$.priority','Critical') WHERE id='dependent-long'");
+    db!.run("UPDATE tasks SET contract_json=json_set(contract_json,'$.category','integration','$.priority','Low') WHERE id='z-prerequisite'");
+    expect(fixedClockScheduler.recalculate().runnables[0]?.id).toBe("z-prerequisite");
+  });
+
+  it("fails closed for a malformed persisted aging timestamp", async () => {
+    await setup();
+    insertTask(db!, projectId, { id: "malformed-aging" });
+    db!.run("UPDATE tasks SET capacity_wait_started_at='yesterday-ish' WHERE id='malformed-aging'");
+    expect(() => scheduler.recalculate()).toThrow(/invalid capacity_wait_started_at/);
+  });
+
+  it("uses ordinal task id for exact ties regardless of insertion order", async () => {
+    await setup();
+    const insertTiedTasks = (ids: string[]) => {
+      for (const id of ids) insertTask(db!, projectId, { id });
+      db!.run("UPDATE tasks SET created_at='2026-10-10T00:00:00.000Z' WHERE id IN ('tie-a','tie-z')");
+      return scheduler.recalculate().runnables.map(({ id }) => id);
+    };
+    const forward = insertTiedTasks(["tie-z", "tie-a"]);
+    db!.run("DELETE FROM tasks WHERE id IN ('tie-z','tie-a')");
+    const reverse = insertTiedTasks(["tie-a", "tie-z"]);
+    expect(forward).toEqual(["tie-a", "tie-z"]);
+    expect(reverse).toEqual(forward);
+  });
+
+  it("produces identical ordered IDs and persisted reservations in reversed independent fixtures", async () => {
+    const runFixture = async (insertionOrder: string[]) => {
+      await setup();
+      for (const id of insertionOrder) insertTask(db!, projectId, { id });
+      db!.run("UPDATE tasks SET created_at='2026-10-10T00:00:00.000Z' WHERE id IN ('fixture-a','fixture-b','fixture-c')");
+      const registry = new WorkflowRegistry();
+      registry.register(standard);
+      const result = scheduler.startWorkflowRuns(new WorkflowEngine(db!, registry), () => undefined);
+      const reservations = db!.all<{ seq: number; subject_id: string; role: string; status: string }>(
+        "SELECT rowid AS seq,subject_id,role,status FROM scheduler_reservations WHERE status='RESERVED' AND kind='TASK' ORDER BY rowid",
+      );
+      const fixture = { startedTaskIds: result.startedTaskIds, reservations };
+      const originalDb = db!;
+      originalDb.close();
+      db = undefined;
+      await rm(tmpDir, { recursive: true, force: true });
+      tmpDir = "";
+      return fixture;
+    };
+
+    const first = await runFixture(["fixture-c", "fixture-a", "fixture-b"]);
+    const second = await runFixture(["fixture-b", "fixture-c", "fixture-a"]);
+    expect(first.startedTaskIds).toEqual(["fixture-a", "fixture-b", "fixture-c"]);
+    expect(second.startedTaskIds).toEqual(first.startedTaskIds);
+    expect(first.reservations.map(({ seq, subject_id, role, status }) => ({ seq, subject_id, role, status })))
+      .toEqual(second.reservations.map(({ seq, subject_id, role, status }) => ({ seq, subject_id, role, status })));
+  });
+
+  it("starts capacity aging only after non-capacity gates pass and preserves the durable UTC instant", async () => {
+    await setup();
+    let instant = "2026-10-14T12:00:00.000Z";
+    let clocked = new SchedulerService(db!, () => new Date(instant));
+    const roleCapacity = Object.fromEntries(SchedulerService.ALL_ROLES.map((role) => [role, 4]));
+    db!.run("UPDATE scheduler_config SET config_json=$config WHERE id=1", { config: JSON.stringify({ globalMax: 4, projectMax: 10, roleCapacity }) });
+    const transition = { transitionInTransaction: () => undefined } as never;
+    for (let index = 0; index < 4; index++) {
+      insertTask(db!, projectId, { id: `holder-${index}`, status: "READY" });
+      clocked.dispatchTask(`holder-${index}`, transition, () => undefined);
+      db!.run("UPDATE tasks SET status='DEVELOPMENT' WHERE id=$id", { id: `holder-${index}` });
+    }
+    insertTask(db!, projectId, { id: "capacity-waiter", status: "READY" });
+    db!.run("UPDATE tasks SET created_at='2020-01-01T00:00:00.000Z' WHERE id='capacity-waiter'");
+    db!.run("INSERT INTO scheduler_budgets(project_id,limit_cost,spent_cost,reserved_cost) VALUES($projectId,1,1,0)", { projectId });
+    clocked.reconcile();
+    expect(db!.get("SELECT capacity_wait_started_at FROM tasks WHERE id='capacity-waiter'")).toEqual({ capacity_wait_started_at: null });
+
+    db!.run("DELETE FROM scheduler_budgets WHERE project_id=$projectId", { projectId });
+    instant = "2026-10-14T13:00:00.000Z";
+    clocked.reconcile();
+    expect(db!.get("SELECT capacity_wait_started_at FROM tasks WHERE id='capacity-waiter'")).toEqual({ capacity_wait_started_at: instant });
+    db!.run("UPDATE scheduler_config SET config_json=$config WHERE id=1", { config: JSON.stringify({ globalMax: 10, projectMax: 10, roleCapacity }) });
+    instant = "2026-10-14T14:00:00.000Z";
+    clocked.reconcile();
+    expect(db!.get("SELECT capacity_wait_started_at FROM tasks WHERE id='capacity-waiter'")).toEqual({ capacity_wait_started_at: "2026-10-14T13:00:00.000Z" });
+
+    const databasePath = db!.get<{ file: string }>("PRAGMA database_list")?.file;
+    expect(databasePath).toBeTruthy();
+    db!.close();
+    db = createSqliteDatabase(databasePath!);
+    clocked = new SchedulerService(db!, () => new Date(instant));
+    clocked.reconcile();
+    expect(db!.get("SELECT capacity_wait_started_at FROM tasks WHERE id='capacity-waiter'")).toEqual({ capacity_wait_started_at: "2026-10-14T13:00:00.000Z" });
+    expect(clocked.getEligibility("capacity-waiter")).toEqual({ status: "WAIT", reason: "WAITING_FOR_ROLE_CAPACITY" });
+    expect(clocked.getWaitReason("capacity-waiter")).toBe("WAITING_FOR_ROLE_CAPACITY");
+    expect(clocked.recalculate().waiting.some(({ task }) => task.id === "capacity-waiter")).toBe(true);
+    expect(db!.get("SELECT capacity_wait_started_at FROM tasks WHERE id='capacity-waiter'")).toEqual({ capacity_wait_started_at: "2026-10-14T13:00:00.000Z" });
+
+    clocked.releaseTask("holder-0");
+    clocked.reconcile();
+    expect(db!.get("SELECT capacity_wait_started_at FROM tasks WHERE id='capacity-waiter'")).toEqual({ capacity_wait_started_at: "2026-10-14T13:00:00.000Z" });
+    insertTask(db!, projectId, { id: "fresh-high", priority: "High" });
+    instant = "2026-10-17T13:00:00.000Z";
+    clocked.reconcile();
+    expect(clocked.recalculate().runnables.map(({ id }) => id).slice(0, 2)).toEqual(["capacity-waiter", "fresh-high"]);
+    db!.run("DELETE FROM tasks WHERE id='fresh-high'");
+    const registry = new WorkflowRegistry();
+    registry.register(standard);
+    const workflow = new WorkflowEngine(db!, registry);
+    expect(() => clocked.dispatchTask("capacity-waiter", { transitionInTransaction: () => { throw new Error("transition rejected"); } } as never, () => undefined)).toThrow(/transition rejected/);
+    expect(db!.get("SELECT capacity_wait_started_at FROM tasks WHERE id='capacity-waiter'")).toEqual({ capacity_wait_started_at: "2026-10-14T13:00:00.000Z" });
+    expect(db!.get("SELECT COUNT(*) AS count FROM scheduler_reservations WHERE subject_id='capacity-waiter' AND status='RESERVED'")).toEqual({ count: 0 });
+    clocked.dispatchTask("capacity-waiter", workflow, () => undefined);
+    expect(db!.get("SELECT capacity_wait_started_at FROM tasks WHERE id='capacity-waiter'")).toEqual({ capacity_wait_started_at: null });
+    expect(db!.get("SELECT status FROM tasks WHERE id='capacity-waiter'")).toEqual({ status: "DEVELOPMENT" });
   });
 
   it("orders by creation time when category and priority match", async () => {
@@ -439,6 +628,7 @@ describe("SchedulerService", () => {
       const input = await taskRecoveryFixture();
       const dependency = insertTask(db!, projectId, { id: "dependency" });
       db!.run("UPDATE tasks SET contract_json=$contract WHERE id='recovery-task'", { contract: JSON.stringify(contract("recovery", [dependency.id])) });
+      db!.run("INSERT INTO dependencies(id,task_id,depends_on_task_id,type,created_at) VALUES($id,'recovery-task',$dependencyId,'BLOCKING',$at)", { id: randomUUID(), dependencyId: dependency.id, at: new Date().toISOString() });
       const before = snapshot();
       expect(() => db!.transaction((tx) => scheduler.claimRunRecoveryInTransaction(tx, input))).toThrow("WAITING_FOR_DEPENDENCY");
       expect(snapshot()).toEqual(before);

@@ -49,11 +49,30 @@ export function compareTasks(a: SchedulableTask, b: SchedulableTask): number {
   if (catDiff !== 0) return catDiff;
 
   // Затем сравнивает приоритет.
-  const prioDiff = getPriorityOrder(a.priority) - getPriorityOrder(b.priority);
+  const prioDiff = getPriorityOrder(a.agedPriority ?? a.priority) - getPriorityOrder(b.agedPriority ?? b.priority);
   if (prioDiff !== 0) return prioDiff;
 
+  const pathDiff = (b.criticalPathLength ?? 0) - (a.criticalPathLength ?? 0);
+  if (pathDiff !== 0) return pathDiff;
+
   // В конце сравнивает время создания (сначала более старые).
-  return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+  const createdDiff = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+  return createdDiff || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+}
+
+const PRIORITIES: Priority[] = ["Low", "Normal", "High", "Critical"];
+
+/** Рассчитывает durable priority aging в полных UTC сутках; повреждённое значение fail-closed. */
+export function agedPriority(priority: Priority, startedAt: string | null | undefined, now: Date): Priority {
+  if (startedAt == null) return priority;
+  const parsed = Date.parse(startedAt);
+  if (!Number.isFinite(parsed) || new Date(parsed).toISOString() !== startedAt) {
+    throw new Error(`invalid capacity_wait_started_at timestamp: ${startedAt}`);
+  }
+  const rank = PRIORITIES.indexOf(priority);
+  if (rank < 0) throw new Error(`invalid task priority: ${priority}`);
+  const levels = Math.max(0, Math.floor((now.getTime() - parsed) / 86_400_000));
+  return PRIORITIES[Math.min(3, rank + levels)]!;
 }
 
 function getCategoryOrder(category: Category): number {

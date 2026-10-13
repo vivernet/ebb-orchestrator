@@ -76,6 +76,10 @@ export interface SchedulableTask {
   hasResourceLock: boolean;
   hasBudgetPlaceholder: boolean;
   hasPendingApproval: boolean;
+  capacityWaitStartedAt?: string | null;
+  criticalPathLength?: number;
+  agedPriority?: Priority;
+  required?: boolean;
 }
 
 /**
