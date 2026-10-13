@@ -29,6 +29,8 @@ let e2eHome;
 let passwordChannel;
 let controlEndpoint;
 let controlChannel;
+let frontendPort;
+const attachedBackendUrl = process.env.EBB_E2E_ATTACH_BACKEND_URL;
 let playwrightExitCode = 1;
 let primaryError;
 let detachedProcessLedgerFailure = false;
@@ -129,6 +131,26 @@ async function allocateLoopbackPort() {
     if (Number.isInteger(port) && port > 0 && port <= 65535) return port;
   }
   throw new Error("Could not allocate a dynamic loopback port");
+}
+
+async function assertLoopbackPortClosed(port) {
+  await new Promise((resolvePromise, reject) => {
+    const socket = connect({ host: "127.0.0.1", port });
+    const timer = setTimeout(() => {
+      socket.destroy();
+      reject(new Error(`E2E loopback port ${port} did not close before deadline`));
+    }, 1_000);
+    socket.once("connect", () => {
+      clearTimeout(timer);
+      socket.destroy();
+      reject(new Error(`E2E loopback port ${port} still has a listener`));
+    });
+    socket.once("error", (error) => {
+      clearTimeout(timer);
+      if (error.code === "ECONNREFUSED") resolvePromise();
+      else reject(error);
+    });
+  });
 }
 
 function waitForMessage(child, type, requestId, timeoutMs = 90_000) {
@@ -294,50 +316,60 @@ async function assertCleanSqliteAndHome() {
 }
 
 try {
-  const backendPort = await allocateLoopbackPort();
-  let frontendPort = await allocateLoopbackPort();
-  await runBuild();
-
+  frontendPort = await allocateLoopbackPort();
   e2eHome = await mkdtemp(join(tmpdir(), "ebb-orchestrator-e2e-"));
   const detachedProcessLedger = process.platform === "win32" ? undefined : join(e2eHome, "detached-process-groups.jsonl");
   if (detachedProcessLedger) await writeFile(detachedProcessLedger, "", { flag: "wx", mode: 0o600 });
-  const backend = spawnNode("backend", [serverScript, String(backendPort)], {
-    cwd: repoRoot,
-    env: { ...inheritedEnv, EBB_ORCHESTRATOR_HOME: e2eHome },
-    ipc: true,
-  });
-  const requestId = randomUUID();
-  const seeded = waitForMessage(backend, "seeded", requestId);
-  const ready = waitForMessage(backend, "ready", requestId);
-  backend.send({ type: "seed-password", requestId, password: password.toString("utf8") });
-  await seeded;
   let backendReady;
-  try {
-    backendReady = await ready;
-  } catch (error) {
-    if (error?.code !== "EADDRINUSE" || !error.controlEndpoint) throw error;
-    controlEndpoint = error.controlEndpoint;
-    parseControlEndpoint(controlEndpoint);
-    controlChannel = { endpoint: controlEndpoint, async dispose() { closeControlChannel(); } };
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      const retryPort = await allocateLoopbackPort();
-      try {
-        backendReady = await controlRequest("start", 5_000, { port: retryPort });
-        break;
-      } catch (retryError) {
-        if (retryError?.code !== "EADDRINUSE" || attempt === 2) throw retryError;
+  if (attachedBackendUrl) {
+    const match = /^http:\/\/127\.0\.0\.1:([1-9]\d{0,4})$/.exec(attachedBackendUrl);
+    const port = match ? Number(match[1]) : NaN;
+    if (!match || port > 65535) throw new Error("Attached E2E backend must be a validated loopback HTTP origin");
+    backendReady = { host: "127.0.0.1", port, backendUrl: attachedBackendUrl, lifecycle: "READY" };
+    const healthResponse = await globalThis.fetch(`${attachedBackendUrl}/api/v1/health`);
+    if (!healthResponse.ok || JSON.stringify(await healthResponse.json()) !== JSON.stringify({ status: "ok", lifecycle: "READY" })) {
+      throw new Error("Attached E2E backend did not report the exact READY health projection");
+    }
+  } else {
+    await runBuild();
+    const backendPort = await allocateLoopbackPort();
+    const backend = spawnNode("backend", [serverScript, String(backendPort)], {
+      cwd: repoRoot,
+      env: { ...inheritedEnv, EBB_ORCHESTRATOR_HOME: e2eHome },
+      ipc: true,
+    });
+    const requestId = randomUUID();
+    const seeded = waitForMessage(backend, "seeded", requestId);
+    const ready = waitForMessage(backend, "ready", requestId);
+    backend.send({ type: "seed-password", requestId, password: password.toString("utf8") });
+    await seeded;
+    try {
+      backendReady = await ready;
+    } catch (error) {
+      if (error?.code !== "EADDRINUSE" || !error.controlEndpoint) throw error;
+      controlEndpoint = error.controlEndpoint;
+      parseControlEndpoint(controlEndpoint);
+      controlChannel = { endpoint: controlEndpoint, async dispose() { closeControlChannel(); } };
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const retryPort = await allocateLoopbackPort();
+        try {
+          backendReady = await controlRequest("start", 5_000, { port: retryPort });
+          break;
+        } catch (retryError) {
+          if (retryError?.code !== "EADDRINUSE" || attempt === 2) throw retryError;
+        }
       }
     }
+    if (backendReady.host !== "127.0.0.1" || backendReady.backendUrl !== `http://127.0.0.1:${backendReady.port}` || backendReady.lifecycle !== "READY") {
+      throw new Error("Backend readiness acknowledgement did not match its allocated loopback origin");
+    }
+    controlEndpoint = backendReady.controlEndpoint;
+    parseControlEndpoint(controlEndpoint);
+    controlChannel = {
+      endpoint: controlEndpoint,
+      async dispose() { closeControlChannel(); },
+    };
   }
-  if (backendReady.host !== "127.0.0.1" || backendReady.backendUrl !== `http://127.0.0.1:${backendReady.port}` || backendReady.lifecycle !== "READY") {
-    throw new Error("Backend readiness acknowledgement did not match its allocated loopback origin");
-  }
-  controlEndpoint = backendReady.controlEndpoint;
-  parseControlEndpoint(controlEndpoint);
-  controlChannel = {
-    endpoint: controlEndpoint,
-    async dispose() { closeControlChannel(); },
-  };
 
   passwordChannel = await createE2EPasswordChannel(password);
   frontendPort = await allocateLoopbackPort();
@@ -368,7 +400,7 @@ try {
     EBB_E2E_HOME: e2eHome,
     EBB_E2E_PLAYWRIGHT_OUTPUT_DIR: join(e2eHome, "playwright-output"),
     EBB_E2E_PASSWORD_CHANNEL: passwordChannel.endpoint,
-    EBB_E2E_CONTROL_CHANNEL: controlEndpoint,
+    ...(controlEndpoint ? { EBB_E2E_CONTROL_CHANNEL: controlEndpoint } : {}),
   };
   if (detachedProcessLedger) {
     playwrightEnv.EBB_E2E_PROCESS_GROUP_LEDGER = detachedProcessLedger;
@@ -384,7 +416,14 @@ try {
 } finally {
   const cleanupErrors = [];
   for (const name of ["playwright", "frontend"]) {
-    try { await terminateChild(name); } catch (error) { cleanupErrors.push(error); }
+    const child = children.get(name);
+    try {
+      await terminateChild(name);
+      if (name === "frontend" && frontendPort) await assertLoopbackPortClosed(frontendPort);
+      if (attachedBackendUrl && child) {
+        process.stderr.write(`[E2E attached lifecycle] ${name} pid=${child.pid ?? "none"} exitCode=${child.exitCode ?? "none"} signal=${child.signalCode ?? "none"}${name === "frontend" ? ` port=${frontendPort} closed` : ""}\n`);
+      }
+    } catch (error) { cleanupErrors.push(error); }
   }
   if (controlEndpoint && children.has("backend")) {
     const backendProcess = children.get("backend");

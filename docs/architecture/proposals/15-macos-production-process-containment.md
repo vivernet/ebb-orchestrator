@@ -230,11 +230,11 @@ Current GitHub-hosted arm64 standard and larger-runner labels begin at macOS 14 
 
 Primary evidence: [Apple `VZVirtualMachine.start`](https://developer.apple.com/tutorials/data/documentation/virtualization/vzvirtualmachine/start(completionhandler:).json), [Apple `VZVirtualMachine.stop`](https://developer.apple.com/tutorials/data/documentation/virtualization/vzvirtualmachine/stop(completionhandler:).json), [Apple save state API](https://developer.apple.com/tutorials/data/documentation/virtualization/vzvirtualmachine/savemachinestateto(url:completionhandler:).json), [Apple restore state API](https://developer.apple.com/tutorials/data/documentation/virtualization/vzvirtualmachine/restoremachinestatefrom(url:completionhandler:).json), [GitHub-hosted runners](https://docs.github.com/en/actions/reference/runners/github-hosted-runners), [GitHub larger runners](https://docs.github.com/en/actions/reference/runners/larger-runners), and [GitHub self-hosted runners](https://docs.github.com/en/actions/reference/runners/self-hosted-runners).
 
-One **product decision** cannot be derived from repository or API evidence:
+### Product decision — feasibility research approved (2026-10-13)
 
-> Для уже утверждённой поддержки macOS 13.5+ на Apple Silicon при неизменном строгом `STOPPED` допустимо ли исследовать per-Run macOS guest VM вместе с постоянно работающим durable host manager как основной кандидат на runtime architecture? Это решение разрешает только дальнейшее проектирование и проверку feasibility. Оно не разрешает реализацию: принять архитектуру можно будет лишь после доказательства crash/restart recovery, точного STOPPED, Hermes-owned auth/workspace compatibility и прохождения независимого review. Вариант требует оценить startup latency, storage, workspace exchange и packaging.
+Пользователь одобрил исследование per-Run macOS guest VM вместе с постоянно работающим durable host manager как кандидата для macOS 13.5+ на Apple Silicon, сохраняя строгий `STOPPED`. Это разрешает только проектирование и feasibility-проверку. Реализация и выбор архитектуры не одобрены: сначала нужны доказательства crash/restart recovery, точного STOPPED, Hermes-owned auth/workspace compatibility, startup latency, storage, workspace exchange, packaging и независимый review.
 
-Если ответ **нет**, текущих доказательств поддерживаемого macOS-механизма нет: Plan20 Task5A-M остаётся открытым, а product scope/containment contract нужно пересмотреть явно. Нельзя подменять строгий `STOPPED` проверкой PID/PGID или считать macOS production-ready.
+Исследование остаётся открытой технической задачей. До прохождения этих gates Plan20 Task5A-M остаётся открытым; нельзя подменять строгий `STOPPED` проверкой PID/PGID или считать macOS production-ready.
 
 ### CI operations gate
 

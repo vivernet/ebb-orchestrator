@@ -97,6 +97,48 @@ trust/discovery/delegation в активном Hermes home/profile и измен
 настройки приложения, например `EBB_ORCHESTRATOR_HOME` и `PORT`; provider
 credentials остаются в Hermes.
 
+### Первый production Run и troubleshooting
+
+Пошаговый clean-checkout flow — установка Hermes, `hermes setup` / `hermes model`,
+запуск Ebb, активация локального проекта и безопасная проверка Coordinator Run —
+приведён в [README, «Первый запуск Hermes»](../../README.md#первый-запуск-hermes).
+Для проверки runtime достаточно отправить ограниченный planning request и
+убедиться, что появился сохранённый план `PLAN_PENDING_APPROVAL`; не одобряйте
+Epic, если не собираетесь запускать его реализацию. Hermes/Ebb provider-запросы
+могут расходовать лимит или стоимость провайдера. `pnpm hermes:check` не заменяет
+этот реальный Run и не является проверкой provider/auth.
+Planning roles получают только `workspace.read`, `workspace.search`,
+`git.status`, `git.diff` и `submit_result`; они не получают file-write или
+command-execution capabilities. Сам запрос, Runs и preview сохраняются в локальной
+базе Orchestrator.
+
+При проблеме сначала используйте сигнал соответствующего слоя:
+
+- Нет CLI или Ebb не находит его: `hermes --version`, затем `pnpm hermes:check`
+  из корня и проверьте `PATH` процесса backend. После изменения `PATH` перезапустите
+  backend. Не создавайте отдельный Hermes profile для Ebb.
+- Hermes сообщает об отсутствующем/неоднозначном provider или model: проверьте
+  текущий выбор через `hermes model`, выполните `hermes doctor` и
+  `hermes chat --oneshot -q "Reply with OK"`. Ebb использует настроенный Hermes
+  default; `HERMES_MODEL_OVERRIDE_UNSUPPORTED` означает, что Run запросил override.
+- Auth/refresh failure: следуйте сообщению Hermes и исправьте вход только через
+  Hermes-native setup/model flow. Не переносите credentials в Ebb `.env` или
+  Ebb SecretStore и не отправляйте их в чат.
+- `HERMES_LAUNCHER_NOT_FOUND`, `HERMES_PATH_IDENTITY_INVALID` или
+  `HERMES_EBB_MCP_REGISTRATION_FAILED`: это ошибка обнаружения/подготовки/запуска;
+  сохраняйте точный код и Run ID, не диагностируйте её проверкой ACL или владельцев
+  пользовательских каталогов.
+- `PROCESS_SCOPE_STOP_UNPROVEN` или `RUN_PROCESS_SCOPE_STOP_UNPROVEN`: полная
+  остановка процесса пока не доказана; не запускайте повторный Run и не завершайте
+  процесс вручную. Дождитесь reconciliation и сохраните Run ID с кодом ошибки.
+- `HERMES_SESSION_STREAM_INVALID` или `HERMES_SESSION_CAPTURE_*`: session ID не
+  был валидно связан с живым Run и сохранён. Не подменяйте его результатом
+  `hermes sessions list` и не пытайтесь resume; дождитесь terminal/recovery статуса.
+
+Ebb сохраняет fail-closed поведение при ошибке запуска, остановки или session
+capture. Устранение проблемы не требует проверки/изменения permissions Hermes
+home или копирования provider/auth.
+
 ## Запуск implementation plan
 
 ```bash

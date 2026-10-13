@@ -2,7 +2,9 @@ import { createHash, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { connect, createServer } from "node:net";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentRuntime } from "../../src/modules/runtime/agent-runtime.js";
 import type { AgentRun } from "@ebb-orchestrator/contracts";
@@ -36,6 +38,40 @@ const hermesSourceSnapshotKey = JSON.stringify({
   sourceCommit: HERMES_PROVIDER_SELECTION_SOURCE.commit,
   sourceTree: "d".repeat(40),
 });
+
+async function assertLoopbackPortClosed(port: number): Promise<void> {
+  await new Promise<void>((resolvePromise, reject) => {
+    const socket = connect({ host: "127.0.0.1", port });
+    const timer = setTimeout(() => {
+      socket.destroy();
+      reject(new Error(`Task7 acceptance backend port ${port} did not close before deadline`));
+    }, 1_000);
+    socket.once("connect", () => {
+      clearTimeout(timer);
+      socket.destroy();
+      reject(new Error(`Task7 acceptance backend port ${port} still has a listener`));
+    });
+    socket.once("error", (error) => {
+      clearTimeout(timer);
+      if ((error as NodeJS.ErrnoException).code === "ECONNREFUSED") resolvePromise();
+      else reject(error);
+    });
+  });
+}
+
+async function allocateLoopbackPort(): Promise<number> {
+  const server = createServer();
+  await new Promise<void>((resolvePromise, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => resolvePromise());
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Task7 acceptance could not allocate a loopback port");
+  await new Promise<void>((resolvePromise, reject) => {
+    server.close((error) => error ? reject(error) : resolvePromise());
+  });
+  return address.port;
+}
 import { PlanningService } from "../../src/modules/planning/planning-service.js";
 import { EpicOrchestrator, type IntegrationServiceFactoryContext } from "../../src/modules/planning/epic-orchestrator.js";
 import { DatabaseCompletionStore } from "../../src/modules/execution/mcp/submit-result-tool.js";
@@ -554,11 +590,15 @@ describe("production context manifest acceptance", () => {
       "SELECT architecture_review_authorized,stage FROM epic_orchestrations WHERE epic_id=$epicId", { epicId },
     )).toMatchObject({ architecture_review_authorized: 1, stage: "FINAL_APPROVAL" });
 
+    const acceptancePort = await allocateLoopbackPort();
+    await runtimeApp.close();
     runtimeApp = createApp({
+      host: "127.0.0.1", port: acceptancePort,
       db: recoveryDb!, scheduler: recoveryScheduler as never, runService: recoveryRunService, runtime: recoveryRuntime,
-      epicOrchestrator: recoveryEpicOrchestrator, authService: createTestAuthService(),
+      epicOrchestrator: recoveryEpicOrchestrator, authService: createTestAuthService({ strict: false }),
     });
     app = runtimeApp;
+    headers.origin = `http://127.0.0.1:${acceptancePort}`;
 
     const requestResponse = await runtimeApp.inject({
       method: "POST", url: "/api/v1/projects/project-acceptance/requests", headers,
@@ -745,7 +785,39 @@ describe("production context manifest acceptance", () => {
     expect(db!.get<{ status: string }>(
       "SELECT status FROM orchestration_phase_runs WHERE epic_id=$epicId ORDER BY created_at DESC LIMIT 1", { epicId: failedEpicId },
     )).toEqual({ status: "FAILED" });
-  });
+
+    const acceptanceAddress = await runtimeApp.listen({ host: "127.0.0.1", port: acceptancePort });
+    const acceptanceUrl = new URL(acceptanceAddress);
+    const listeningPort = Number(acceptanceUrl.port);
+    expect(acceptanceUrl.hostname).toBe("127.0.0.1");
+    expect(listeningPort).toBe(acceptancePort);
+    const runnerPath = resolve(dirname(fileURLToPath(import.meta.url)), "../../../web/test/e2e/run-e2e.mjs");
+    const webRoot = resolve(dirname(runnerPath), "../..");
+    const runnerEnvironment = Object.fromEntries(
+      Object.entries(process.env).filter(([key]) => !/(?:password|passwd|token|secret|credential)/i.test(key)),
+    );
+    runnerEnvironment.EBB_E2E_ATTACH_BACKEND_URL = acceptanceAddress;
+    runnerEnvironment.EBB_E2E_ACCEPTED_RUNS_JSON = JSON.stringify(producerRunIds);
+    const lifecycle = await import("../../../web/test/e2e/child-lifecycle.mjs") as unknown as {
+      spawnManagedChild: (command: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv; stdio: "inherit"; windowsHide: boolean }) => import("node:child_process").ChildProcess;
+      waitForChildExit: (child: import("node:child_process").ChildProcess, timeoutMs: number) => Promise<{ exited: boolean; code: number | null; signal: NodeJS.Signals | null }>;
+      terminateManagedChild: (child: import("node:child_process").ChildProcess) => Promise<unknown>;
+    };
+    const browserRunner = lifecycle.spawnManagedChild(process.execPath, [runnerPath, "--", "test/e2e/task7-accepted-runs.spec.ts"], {
+      cwd: webRoot, env: runnerEnvironment, stdio: "inherit", windowsHide: true,
+    });
+    console.info(`[Plan20 Task7 browser] attached runner PID=${browserRunner.pid ?? "none"}; backend=${acceptanceUrl.origin}; producer Run IDs=${Object.keys(producerRunIds).length}`);
+    const runnerExit = await lifecycle.waitForChildExit(browserRunner, 240_000);
+    if (!runnerExit.exited) {
+      await lifecycle.terminateManagedChild(browserRunner);
+      throw new Error(`Plan20 Task7 attached browser runner exceeded its 240s deadline (PID=${browserRunner.pid ?? "none"})`);
+    }
+    expect(runnerExit, `Plan20 Task7 attached browser runner PID=${browserRunner.pid ?? "none"}`).toEqual({ exited: true, code: 0, signal: null });
+    await runtimeApp.close();
+    app = undefined;
+    expect(runtimeApp.server.listening, "attached acceptance backend listener must close after the browser run").toBe(false);
+    await assertLoopbackPortClosed(listeningPort);
+  }, 300_000);
 
   function setup() {
     root = mkdtempSync(join(tmpdir(), "context-manifest-production-"));

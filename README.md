@@ -279,7 +279,7 @@ curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
 hermes setup
 hermes model
 hermes doctor
-hermes chat -q "Reply with OK"
+hermes chat --oneshot -q "Reply with OK"
 ```
 
 В `hermes setup` / `hermes model` проходите OAuth или вводите ключ непосредственно
@@ -289,7 +289,7 @@ SecretStore. `hermes model` — терминальная настройка prov
 внутри открытого Hermes chat переключает только уже настроенный вариант.
 Подробности приведены в официальном разделе [Configuring Models](https://hermes-agent.nousresearch.com/docs/user-guide/configuring-models).
 
-`hermes doctor` должен завершиться с exit code `0`; короткий `hermes chat -q`
+`hermes doctor` должен завершиться с exit code `0`; короткий `hermes chat --oneshot -q`
 должен вернуть ответ от настроенного provider. Это проверяет Hermes отдельно;
 это не доказательство успешного Ebb Run.
 
@@ -316,6 +316,79 @@ Production Runs используют уже настроенный Hermes home/p
 Подтверждены один Windows provider Run (Task5B slice) и Windows same-Run/session
 restart acceptance (Task5C, 1/1); полные Plan20 gates, Linux/macOS acceptance и
 end-to-end UI acceptance ещё открыты. См. [Plan20](docs/architecture/plans/20-production-context-manifest.md).
+
+### Безопасный первый Run в Ebb
+
+Из корня checkout установите зависимости и откройте два терминала:
+
+```bash
+pnpm install --frozen-lockfile
+pnpm server:dev
+```
+
+В отдельном терминале запустите Web UI:
+
+```bash
+pnpm web:dev
+```
+
+Откройте локальный URL Web UI из вывода Vite и войдите
+в локальную учётную запись сервера. При первом запуске backend попросит задать
+пароль в интерактивном терминале; требования и восстановление входа описаны выше
+в разделе «Быстрый старт».
+
+Для чистого checkout выберите «Проекты» → «Создать первый проект» (`/projects/new`),
+укажите абсолютный путь к локальному репозиторию, проверьте найденные сведения,
+отправьте предложенную конфигурацию на согласование, утвердите и активируйте её.
+Затем откройте проект и в панели «Запрос Coordinator» отправьте небольшой запрос
+на план Epic, например:
+
+> Подготовь план небольшого документационного Epic: опиши назначение основных каталогов этого репозитория. Только анализ и план; не изменяй файлы, не запускай команды и не создавай commit.
+
+При классификации запроса как Epic Orchestrator выполнит Coordinator, Product
+Manager и Architect Runs с уже настроенным Hermes provider. Успешная проверка
+покажет сохранённый план со статусом «План ожидает одобрения»; UI позволяет
+проверить план до отдельного одобрения Epic. Чтобы проверить только Hermes/Ebb
+Run path и не запускать реализацию, **не нажимайте «Одобрить план и запустить
+Epic»**. Этот сценарий отправляет provider-запросы и может расходовать лимит или
+стоимость провайдера. Для проверки выполнения Developer Task требуется отдельное
+одобрение Epic и соответствующих действий по репозиторию.
+
+На этом planning path capabilities ограничены `workspace.read`,
+`workspace.search`, `git.status`, `git.diff` и `submit_result`: роли не получают
+инструменты записи файлов или запуска команд. Orchestrator сохраняет запрос,
+Runs и предложенный план в локальной базе; одобрение Epic — отдельное действие.
+
+#### Если первый Run завершился ошибкой
+
+- **Hermes не найден:** выполните `hermes --version` в новом терминале, затем
+  `pnpm hermes:check` из корня Ebb. Установите Hermes официальной командой выше
+  или исправьте `PATH` для процесса Ebb; после изменения `PATH` перезапустите
+  backend. `hermes:check` подтверждает наличие CLI и проектные prerequisites,
+  но не проверяет provider.
+- **Provider/model не выбран или выбор неоднозначен:** проверьте его в Hermes
+  командой `hermes model`, затем выполните `hermes doctor` и
+  `hermes chat --oneshot -q "Reply with OK"`. Ebb использует Hermes default;
+  явная модель в Ebb Run не поддерживается (`HERMES_MODEL_OVERRIDE_UNSUPPORTED`).
+- **Ошибка auth или refresh:** исправьте вход/provider только в Hermes-native
+  setup/model flow по сообщению самого Hermes и повторите Hermes smoke test.
+  Не добавляйте ключ в Ebb `.env` или SecretStore и не публикуйте credential.
+- **CLI/path/launch ошибка:** проверьте, что `hermes --version` работает из
+  того же окружения, откуда запущен backend. Коды `HERMES_LAUNCHER_NOT_FOUND`,
+  `HERMES_PATH_IDENTITY_INVALID` и `HERMES_EBB_MCP_REGISTRATION_FAILED` указывают
+  на этап запуска; сохраните Run ID и точный безопасный код ошибки.
+- **Не подтверждена остановка процесса:** `PROCESS_SCOPE_STOP_UNPROVEN` или
+  `RUN_PROCESS_SCOPE_STOP_UNPROVEN` означает, что Ebb не получил доказательство
+  полной остановки процесса. Не запускайте повторный Run и не завершайте процесс
+  вручную; дождитесь reconciliation или сохраните Run ID и код для диагностики.
+- **Не сохранён Hermes session ID:** `HERMES_SESSION_STREAM_INVALID` и связанные
+  `HERMES_SESSION_CAPTURE_*` ошибки означают, что живое событие session не было
+  безопасно связано с Run. Не подставляйте ID из `hermes sessions list` и не
+  пытайтесь resume; дождитесь terminal/recovery статуса и передайте Run ID вместе
+  с кодом ошибки.
+
+В этих случаях Ebb fail-closed: не обходите ошибку изменением permissions,
+подменой provider или ручной записью session ID.
 
 ## Справочник pnpm-команд
 
