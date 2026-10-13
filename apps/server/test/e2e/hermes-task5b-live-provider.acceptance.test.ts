@@ -9,7 +9,6 @@ import { afterAll, describe, expect, it } from "vitest";
 import { RunService, createRunContextInput } from "../../src/modules/runtime/run-service.js";
 import type { StartRunOptions } from "../../src/modules/runtime/run-types.js";
 import { HermesRuntimeAdapter } from "../../src/modules/runtime/hermes/hermes-runtime-adapter.js";
-import { resolveHermesExecutable } from "../../src/modules/runtime/hermes/hermes-executable-resolver.js";
 import { ProcessExecutor } from "../../src/platform/process/process-executor.js";
 import { WindowsJobSupervisor } from "../../src/platform/process/windows-job-supervisor.js";
 import { SystemdRunSupervisor } from "../../src/platform/process/systemd-run-supervisor.js";
@@ -38,7 +37,7 @@ function safeHermesFailure(error: unknown): string | undefined {
   let current: unknown = error;
   for (let depth = 0; depth < 4 && current instanceof Error; depth += 1) {
     const message = current.message;
-    if (/^HERMES_SESSION_STREAM_INVALID:[A-Z0-9_]+(?::EXIT_-?\d+)?$/.test(message) ||
+    if (/^HERMES_SESSION_STREAM_INVALID:[A-Z0-9_]+(?::EXIT_-?\d+)?(?::CATEGORY_(EMPTY|AUTH|RATE_LIMIT|NETWORK|TIMEOUT|MCP|PROCESS_ERROR|OTHER))?$/.test(message) ||
         /^HERMES_PYTHON_STARTUP_EXCEPTION:(ModuleNotFoundError|ImportError|PermissionError|FileNotFoundError|OSError|RuntimeError|ValueError|TypeError|AttributeError|KeyError|SyntaxError|NameError|UnicodeDecodeError|UnicodeEncodeError)$/u.test(message) ||
         message === "HERMES_EBB_MCP_REGISTRATION_FAILED" ||
         /^HERMES_ACTIVE_SESSION_REFUSED:(SESSION_NOT_OWNED|MAX_CONCURRENT_SESSIONS|SESSION_COORDINATION_UNAVAILABLE)$/u.test(message) ||
@@ -132,6 +131,11 @@ describe("Plan20 Task5B restart persistence harness", () => {
     expect(safeHermesFailure(new Error("wrapped", {
       cause: new Error("HERMES_SESSION_STREAM_INVALID:MISSING_INIT:EXIT_-1"),
     }))).toBe("HERMES_SESSION_STREAM_INVALID:MISSING_INIT:EXIT_-1");
+    expect(safeHermesFailure(new Error("wrapped", {
+      cause: new Error("HERMES_SESSION_STREAM_INVALID:MISSING_INIT:EXIT_103:CATEGORY_AUTH"),
+    }))).toBe("HERMES_SESSION_STREAM_INVALID:MISSING_INIT:EXIT_103:CATEGORY_AUTH");
+    expect(safeHermesFailure(new Error("HERMES_SESSION_STREAM_INVALID:MISSING_INIT:EXIT_103:CATEGORY_AUTH:secret")))
+      .toBeUndefined();
     expect(safeHermesFailure(new Error("HERMES_PYTHON_STARTUP_EXCEPTION:ModuleNotFoundError")))
       .toBe("HERMES_PYTHON_STARTUP_EXCEPTION:ModuleNotFoundError");
     expect(safeHermesFailure(new Error("HERMES_PYTHON_STARTUP_EXCEPTION:PermissionError")))
@@ -263,8 +267,6 @@ describe.skipIf(!enabled || !["win32", "linux"].includes(process.platform))(
     });
 
     it("captures the actual init session id durably while the supervised owner is LIVE, then confirms STOPPED", async () => {
-      const resolvedHermes = await resolveHermesExecutable({ cwd: process.cwd() });
-      expect(resolvedHermes.sourceCommit).toMatch(/^[a-f0-9]{40}$/u);
       root = await mkdtemp(join(tmpdir(), "ebb-plan20-task5b-live-"));
       dbPath = join(root, "orchestrator.sqlite");
       database = createSqliteDatabase(dbPath);

@@ -609,8 +609,15 @@ describe("HermesRuntimeAdapter", () => {
         mockExecutor.setNextResult({ exitCode: 1, stdout: "", stderr: unrelatedStderr });
         const unrelatedFailure = await adapter.startRun({ ...run, id: "db9857cf-0fb1-49ed-99d3-d514ad93ee65" })
           .then(() => "unexpected success", (error: unknown) => error instanceof Error ? error.message : String(error));
-        expect(unrelatedFailure).toBe("HERMES_SESSION_STREAM_INVALID:MISSING_INIT:EXIT_1");
+        expect(unrelatedFailure).toBe("HERMES_SESSION_STREAM_INVALID:MISSING_INIT:EXIT_1:CATEGORY_OTHER");
         expect(unrelatedFailure).not.toContain(unrelatedStderr);
+
+        supervisor.stderrChunks = [new TextEncoder().encode("401 unauthorized\nprivate credential must not escape")];
+        mockExecutor.setNextResult({ exitCode: 103, stdout: "", stderr: "" });
+        const categorizedFailure = await adapter.startRun({ ...run, id: "b77f61a8-a292-4d93-b33a-1213ee95ddc0" })
+          .then(() => "unexpected success", (error: unknown) => error instanceof Error ? error.message : String(error));
+        expect(categorizedFailure).toBe("HERMES_SESSION_STREAM_INVALID:MISSING_INIT:EXIT_103:CATEGORY_AUTH");
+        expect(categorizedFailure).not.toContain("private credential");
       } finally {
         await fs.rm(resultDirectory, { recursive: true, force: true });
       }
@@ -619,8 +626,8 @@ describe("HermesRuntimeAdapter", () => {
     it.each([
       ["ModuleNotFoundError", "HERMES_PYTHON_STARTUP_EXCEPTION:ModuleNotFoundError"],
       ["PermissionError", "HERMES_PYTHON_STARTUP_EXCEPTION:PermissionError"],
-      ["UnknownProviderError", "HERMES_SESSION_STREAM_INVALID:MISSING_INIT:EXIT_1"],
-      ["detail ModuleNotFoundError", "HERMES_SESSION_STREAM_INVALID:MISSING_INIT:EXIT_1"],
+      ["UnknownProviderError", "HERMES_SESSION_STREAM_INVALID:MISSING_INIT:EXIT_1:CATEGORY_PROCESS_ERROR"],
+      ["detail ModuleNotFoundError", "HERMES_SESSION_STREAM_INVALID:MISSING_INIT:EXIT_1:CATEGORY_PROCESS_ERROR"],
     ])("reports only the allowlisted Python startup exception class %s", async (exceptionClass, expected) => {
       const resultDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-python-diagnostic-"));
       const supervisor = new MockProcessScopeSupervisor(mockExecutor);

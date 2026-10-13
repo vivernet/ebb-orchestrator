@@ -364,7 +364,8 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
           error.message === "HERMES_SESSION_STREAM_INVALID" && captureInvalidReason) {
         const diagnostic = captureInvalidReason === "MISSING_INIT" ? startupDiagnostic.failure : undefined;
         if (diagnostic) throw new Error(diagnostic, { cause: error });
-        throw new Error(`HERMES_SESSION_STREAM_INVALID:${captureInvalidReason ?? "MISSING_INIT"}`, { cause: error });
+        const category = captureInvalidReason === "MISSING_INIT" ? `:CATEGORY_${startupDiagnostic.category}` : "";
+        throw new Error(`HERMES_SESSION_STREAM_INVALID:${captureInvalidReason ?? "MISSING_INIT"}${category}`, { cause: error });
       }
       if (error instanceof Error && error.message === "WINDOWS_HELPER_PAYLOAD_CALLBACK_FAILED" &&
           captureInvalidReason && captureInvalidReason !== "MISSING_INIT") {
@@ -375,7 +376,7 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
     const captureSettlement = await settleSessionCapture();
     if (captureSettlement === "INVALID") {
       if (captureInvalidReason === "MISSING_INIT" && startupDiagnostic.failure) throw new Error(startupDiagnostic.failure);
-      throw new Error(`HERMES_SESSION_STREAM_INVALID:${captureInvalidReason ?? "MISSING_INIT"}:EXIT_${processOutput.exitCode}`);
+      throw new Error(`HERMES_SESSION_STREAM_INVALID:${captureInvalidReason ?? "MISSING_INIT"}:EXIT_${processOutput.exitCode}:CATEGORY_${startupDiagnostic.category}`);
     }
     if (control.cancelled) {
       this.assertStopProof(run.id, control);
