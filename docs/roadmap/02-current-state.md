@@ -4,14 +4,14 @@ status: current
 kind: roadmap
 title: Текущая сверка и последовательность закрытия работ
 created: 2026-09-28
-updated: 2026-10-09
+updated: 2026-10-13
 ---
 
 # Текущая сверка и последовательность закрытия работ
 
 Этот документ фиксирует фактическую последовательность закрытия уже принятых обязательств и проверки evidence. Он не создаёт продуктовый scope. Идентификаторы, статусы и зависимости планов авторитетно публикуются в [сгенерированном реестре](generated.md); подробная доказательная сверка находится в [ledger-07](../architecture/plans/governance/evidence/07-current-plan-reconciliation.md).
 
-Свежая сверка на `83bb8926be7841fb365332650340d326d7c0175e` добавлена 2026-10-09 ниже и supersedes прежние claims только по указанным hosted runs. Остальные dated notes и evidence старых SHA сохранены как история; не считать их актуальным read-back. Изменения после этого SHA ожидают review и не входят в перечисленные результаты.
+Сверка на `83bb8926be7841fb365332650340d326d7c0175e` и последующие hosted checkpoints ниже сохранены как исторические snapshots. Самые поздние записи по текущим обязательствам находятся в append-only [ledger-07](../architecture/plans/governance/evidence/07-current-plan-reconciliation.md); более ранние dated notes не считать актуальным read-back, если их явно не подтверждает поздняя запись.
 
 ## Текущие статусы, отличные от `completed`
 
@@ -19,25 +19,26 @@ updated: 2026-10-09
 |---|---|---|
 | `plan-01` | `in_progress` | Fresh whole-plan review `CHANGES_REQUIRED`: shutdown не останавливает активные Run process scopes до закрытия БД/освобождения lock. Нужны fix, regression acceptance, свежие broad gates, disposition исторических checkboxes и повторный review. |
 | `plan-02` | `in_progress` | Пользователь одобрил durable Task-bound `RunRequest` A с сохранением `taskId`/`role`/`model`/idempotency key и ожиданием capacity/restart. Queue policy реализации ещё нет; остаются production failure → Recovery → Scheduler wiring, exact acceptance и ожидаемое cross-lifecycle решение о request для Epic-owned Task; fresh review `CHANGES_REQUIRED`. |
-| `plan-04` | `blocked` | `hermes:check` — только developer readiness; provider-backed Developer → Reviewer → QA → Integration acceptance и whole-plan review остаются открытыми. Hermes production resolver всё ещё fail-closed (`HERMES_PATH_UNSAFE`); provider не запускался. |
-| `plan-05` | `blocked` | Seeded Epic-restart acceptance остаётся ограниченным evidence; нужны same-request restart и реальный Hermes request → Epic acceptance плюс whole-plan review. Production ContextManifest acceptance зависит от Plan20 Task7. |
-| `plan-06` | `in_progress` | Inbox restart evidence и Windows Project Config `WAIVED / NOT RUN` сохраняются; Production run `37862703264` подтвердил Windows и Ubuntu keyring gates PASS. Supported POSIX Project Config lifecycle, persisted task-bound ContextManifest/Proposal 08 acceptance и whole-plan review всё ещё открыты. |
-| `plan-07` | `blocked` | Реальные Hermes parity run/provider evidence, два параллельных read-only subagents, teardown report и whole-plan review не подтверждены. Ранее зафиксированный auto-review отказ передачи parity payload остаётся ограничением; нового разрешения здесь не выводится. |
-| `plan-09` | `in_progress` | CodeQL run `37862703303` прошёл для точного SHA `83bb8926be7841fb365332650340d326d7c0175e` и загрузил analysis. Требуется read-back и disposition всех findings; после fixes нужен новый scan. Успешная загрузка сама по себе не доказывает отсутствие findings. |
-| `plan-14` | `proposed` | Оставить вне v1 закрытия до подтверждения Docker artifacts/version/hash/architectures, credential bridge и CI/release scope. |
+| `plan-04` | `blocked` | `hermes:check` подтверждает только developer readiness. Полная отдельная provider-backed Developer → Reviewer → QA → Integration acceptance Plan04 и whole-plan review не доказаны; Task4 Plan19 vertical slice не заменяет их. Производственный Hermes path остаётся gated на Plan20 acceptance. |
+| `plan-05` | `blocked` | Task5 Plan19 Request→Epic acceptance PASS 2026-10-13: 15/15, 3 planning Runs, 12 validated Epic phase Runs, 3 restarts, `FINAL_APPROVAL`, merge `PENDING`; exact revision evidence сохранено в [acceptance record](../architecture/plans/governance/evidence/plan19-task5-request-epic-2026-10-13.json) и описано последним Task5 appendix в ledger. Plan05 остаётся открытым до production ContextManifest acceptance по Proposal 08/Plan20 Task7 и whole-plan review. |
+| `plan-06` | `in_progress` | Inbox restart и Windows Project Config fail-closed acceptance доказаны; hosted keyring gates прошли в Production run `37862703264`. Supported POSIX Project Config lifecycle acceptance, persisted task-bound ContextManifest/Proposal 08 acceptance и whole-plan review остаются открытыми. |
+| `plan-07` | `blocked` | Последняя parity retry от 2026-10-13 завершилась `TERMINATION_FAILED` по timeout; provider verdict, ровно два проверенных read-only child результата/ID, завершение delegation и полный teardown не доказаны. Нужны исправление/независимая проверка runner boundary, повторная acceptance и whole-plan review. |
+| `plan-09` | `in_progress` | Успешный CodeQL run `37862703303` относится к SHA `83bb8926be7841fb365332650340d326d7c0175e`, а не к финальному текущему source SHA. Нужны findings read-back/disposition и свежий scan точной финальной ревизии после source fixes. |
+| `plan-14` | `proposed` | Исключён из closure scope Plan19; Docker artifacts/version/hash/architectures, credential bridge и CI/release scope остаются будущим направлением без разрешения на реализацию. |
 | `plan-16` | `blocked` | Восемь точных tracked delete targets удалены после 97-path rebaseline в commit `966f1ec`; ещё 75 путей отсутствовали, 14 preservation paths сохранены. Дополнительных file-operation targets нет. На текущем checkpoint acceptance criteria 404, 406 и 407 отмечены выполненными по свежим docs/link/date/inventory evidence; открыты criteria 405 и 408, а также final whole-plan review. README/command-matrix consistency для provider/per-Run инструкций зависит от Plan20 Task7. |
-| `plan-19` | `in_progress` | На `4e87d26` fresh Production gates `37880854058` и CodeQL `37880854063` ещё `in_progress`. Предыдущий `37880160803` на `b2fbb25` завершился FAIL: по одному source-contract failure в Node 24/26; Windows fixture 32 PASS/2 FAIL. Proposal13/Plan20 amendment review завершён без blockers; Task5B-H implementation начата, но Task5A-M macOS gates, прочие Plan04/05/06/07 acceptances/reviews, Plan09 findings disposition и Task9 all-plan audit открыты. |
-| `plan-20` | `in_progress` | Run `37864962696` на `8c44de6` остановился до Linux source child marker: `unshare` дал `ERRNO 1` до/после AppArmor profile; source acceptance NOT RUN. Run `37880160803` на `b2fbb25` завершился FAIL (Windows fixture 32 PASS/2 FAIL, private `FILE_DACL` и cleanup `STOP_UNPROVEN`); Node 24/26 quality each had one source-contract failure. Fix вошёл в `4e87d26`; fresh CI ещё in progress. Proposal13/Plan20 amendment review — без blockers, Task5B-H реализация стартовала. Task5A-M и требуемые macOS design/review/acceptance открыты; macOS support не заявлять. Host ACL inventory/mutation/remediation запрещены, ACL сохранять; Proposal12 `superseded`. Provider acceptance NOT RUN. Task5A/5B/5C/Task7 и whole-plan review остаются открытыми. |
+| `plan-19` | `in_progress` | Task5 Request→Epic acceptance PASS (2026-10-13), но Plan19 остаётся открытым: Plan04/06/07 acceptance и reviews, Plan05 ContextManifest acceptance, Task8 current-final-SHA CodeQL и Task9 all-plan/whole-plan reconciliation не закрыты. Последняя Plan07 retry завершилась `TERMINATION_FAILED`; ledger содержит exact evidence. |
+| `plan-20` | `in_progress` | Windows Task5B real-provider acceptance на текущем дереве прошла 3/3 (один provider request): durable session readback при LIVE owner, STOPPED proof и readback из нового Orchestrator process. Windows Task5C same-Run/session restart acceptance ранее прошла 1/1; это checkpoint от 2026-10-11, поэтому учитывать как historical slice и перепроверить при затрагивающих recovery изменениях. Это не закрывает Plan20: Task5A/5B/5C cross-platform gates, Task7, whole-plan review и macOS Apple Silicon 13.5+ design/acceptance остаются открытыми. ACL не менять. |
+| `plan-21` | `superseded` | Включён в общий closure audit (Plan19 исключает только Plan14); `superseded` — lifecycle disposition, не доказательство выполнения. Сверить его replacement/disposition evidence при all-plan audit, не менять статус в рамках Task2. |
 
 ## Очерёдность
 
-1. Сохранить принятую Task5A baseline acceptance (`b6a55f10`, hosted run `37162376745`) как историческое evidence. Run `37862703264` выявил текущие раздельные Windows path-chain и Linux namespace blockers; дождаться owner fixes/review и успешных hosted acceptance. Не считать эти проблемы взаимозаменяемыми или Task5B fixtures заменой provider-backed acceptance.
-2. Продолжить независимые от Linux обязательства Plan16: evidence-bound command matrix, README/docs проверка и финальные documentation/governance gates; не выполнять новые удаления/перемещения/архивирование.
-3. После закрытия Plan20 platform gates завершить Task5B/5C, real provider acceptance и independent recovery/architecture review. Только затем обновлять связанные обязательства Plan05/06/19 по их собственным gates.
-4. После готовности безопасного Hermes-native profile/auth path выполнить реальный Plan04 acceptance и Plan07 parity; developer `hermes:check` сам по себе эти gates не закрывает.
-5. CodeQL run `37862703303` уже сканировал и загрузил analysis для `83bb892`; выполнить findings read-back/disposition. После source fixes повторить scan на финальной gated revision; dependency audit его не заменяет.
-6. Провести closure audit всех планов, кроме Plan14, затем общие quality/build/browser gates, independent whole-plan reviews, reconciliation и lifecycle updates по evidence.
-7. Перегенерировать [Plan Register](generated.md) после подтверждённых lifecycle изменений; не проставлять статусы или чекбоксы без evidence.
+1. Закрыть оставшиеся Plan20 platform/native-auth/session/recovery acceptance и whole-plan review по их отдельным gates; старые hosted results и Plan19 Task5 PASS не заменяют Plan20 Task5B/Task5C.
+2. Завершить поддерживаемую POSIX Project Config lifecycle acceptance Plan06 и hosted Ubuntu keyring gate при обычном authorized CI event. Реализовать принятый Proposal 08 ContextManifest producer/runtime acceptance для Plans05/06 после выполнения его Plan20 dependencies; не создавать placeholder provenance.
+3. Устранить и независимо проверить Plan07 parity runner timeout/termination gap, затем получить provider-backed report, ровно два read-only child результата и доказанный teardown. Плановая Task5 Request→Epic acceptance уже PASS, но whole-plan Plan05 review и ContextManifest gate остаются.
+4. После готовности безопасного Hermes-native production path выполнить отдельную полную Plan04 acceptance и whole-plan review; `hermes:check` и Plan19 Task5 не заменяют этот gate.
+5. После завершения Tasks4–7 получить CodeQL analysis на точном финальном source SHA, прочитать findings и disposition/fix/re-scan их до закрытия Plan09.
+6. Провести all-plan closure audit, исключая только Plan14 и включая Plan16 и `superseded` plans с отдельной disposition-проверкой; завершить whole-plan reviews Plans04/05/06/07/09 и выполнить их required final gates.
+7. После evidence обновить только подтверждённые lifecycle/checklist данные, синхронизировать current-state и ledger, затем штатно перегенерировать [Plan Register](generated.md). Не менять статусы без PASS evidence.
 
 ## Исторический hosted checkpoint от 2026-10-09 (`83bb892`)
 
