@@ -4,7 +4,7 @@ status: in_progress
 kind: development
 title: Разработка Ebb Orchestrator через Hermes
 created: 2026-09-23
-updated: 2026-09-23
+updated: 2026-10-13
 ---
 
 # Разработка Ebb Orchestrator через Hermes
@@ -18,6 +18,8 @@ production `AgentRuntime` / `HermesRuntimeAdapter` задаётся архите
 - Выполняйте repository-команды из корня выбранного Git worktree.
 - Нужны Node.js и pnpm из требований корневого README, Git и доступный в `PATH`
   Hermes Agent с командами config и project trust.
+- Установка Hermes, первичная настройка provider/model и проверочный запрос
+  описаны в [первом запуске в README](../../README.md#первый-запуск-hermes).
 - В worktree должны присутствовать `.hermes.md` и canonical source `.agents/skills/`.
 - Полный актуальный набор из 20 Ebb skills находится в
   [единственном README inventory](../../README.md#hermes-development-skills).
@@ -25,6 +27,18 @@ production `AgentRuntime` / `HermesRuntimeAdapter` задаётся архите
 ## Первоначальная настройка
 
 ### Project trust и prerequisites
+
+Сначала настройте сам Hermes и проверьте его provider по шагам из README. Это
+отдельно от project trust Ebb: команды ниже изменяют настройки текущего
+пользовательского Hermes home/profile, но не добавляют и не аутентифицируют
+provider.
+
+```bash
+pnpm hermes:check
+```
+
+Если check сообщает, что repository trust, project discovery или delegation
+не настроены, выполните setup и затем повторите check:
 
 ```bash
 pnpm hermes:setup
@@ -61,28 +75,27 @@ Hermes-native auth является предусмотренной границ�
 не копируйте provider credentials в корневой `.env` Ebb Orchestrator или Ebb
 SecretStore. Production Run использует уже настроенный пользователем Hermes
 home/profile и его provider/model/auth. Ebb не создаёт per-Run Hermes profile/home,
-не копирует профиль и не читает credential values. Для настройки Hermes с нуля
-используйте поддерживаемый вашей установленной версией Hermes способ; точные
-пошаговые команды первоначального выбора provider/model и Hermes-native auth
-здесь пока не подтверждены clean-checkout walkthrough и поэтому не приводятся.
+не копирует профиль и не читает credential values. Если provider уже настроен в
+Hermes, не перенастраивайте его для Ebb. Для новой установки выполняйте Hermes
+настройку и первый запрос по [инструкции README](../../README.md#первый-запуск-hermes);
+при необходимости OAuth или ключ вводится непосредственно в Hermes-native flow.
+Никогда не пересылайте credential values в чат и не помещайте их в Ebb `.env`.
 
 Реальный Windows provider acceptance через production Run path пройден
 2026-10-11: один Run получил ответ настроенного provider и валидированный
 `submit_result`; acceptance также подтвердила live `session_id` capture и его
 сохранение с последующим чтением из SQLite после запуска свежего процесса
-Orchestrator. Это подтверждает Windows Task5B slice, но не проверяет установку и
-первичную настройку Hermes на чистой машине, не закрывает Linux/macOS production
-gates и не доказывает восстановление прерванного Run. Task5C same-session recovery
-и полный end-to-end UI acceptance остаются незавершёнными. Статусы и подробные
-evidence ведутся в [Plan20](../architecture/plans/20-production-context-manifest.md).
+Orchestrator. Отдельный Windows same-Run/session restart acceptance пройден
+1/1 на checkpoint 2026-10-11. Это не закрывает Linux и macOS Apple Silicon
+platform/recovery gates, полный Task7 или Plan20. Статусы и подробные evidence
+ведутся в [Plan20](../architecture/plans/20-production-context-manifest.md).
 
-`pnpm hermes:check` — проверка установленного CLI и project prerequisites, а не
-проверка provider/auth: она не вызывает provider API. `pnpm hermes:setup` при
-необходимости настраивает project trust/discovery/delegation в активном Hermes
-home/profile и изменяет эти настройки; отдельная копия профиля не требуется.
-Для Ebb `.env` задаёт только настройки приложения, например
-`EBB_ORCHESTRATOR_HOME` и `PORT`; provider credentials остаются в Hermes.
-См. [инструкции и команды в README](../../README.md#hermes-runtime).
+`pnpm hermes:check` проверяет CLI и Ebb project prerequisites, но не вызывает
+provider API. `pnpm hermes:setup` при необходимости настраивает project
+trust/discovery/delegation в активном Hermes home/profile и изменяет эти
+настройки; отдельная копия профиля не требуется. Для Ebb `.env` задаёт только
+настройки приложения, например `EBB_ORCHESTRATOR_HOME` и `PORT`; provider
+credentials остаются в Hermes.
 
 ## Запуск implementation plan
 

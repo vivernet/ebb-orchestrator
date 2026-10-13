@@ -689,13 +689,26 @@ describe("production context manifest acceptance", () => {
         "SELECT run_id,source_tag,state FROM run_process_owners WHERE run_id=$runId", { runId },
       ), label).toEqual({ run_id: runId, source_tag: `ebb-run:${runId}`, state: "STOPPED" });
     }
-    for (const label of ["request-coordinator", "request-product_manager", "request-architect"] as const) {
-      const response = await runtimeApp.inject({ method: "GET", url: `/api/v1/runs/${producerRunIds[label]}/context-manifests`, headers });
-      expect(response.statusCode, `${label} context manifest`).toBe(200);
-      expect(response.json()).toMatchObject({
+    for (const [label, runId] of Object.entries(producerRunIds)) {
+      const response = await runtimeApp.inject({ method: "GET", url: `/api/v1/runs/${runId}/context-manifests`, headers });
+      expect(response.statusCode, `${label} context manifest after restart`).toBe(200);
+      const projection = response.json() as Record<string, unknown>;
+      const expected = producerSubjectRole(label, { epicId, epicTaskId, requestId: request.id });
+      const subjectId = expected.subject_type === "TASK" ? expected.task_id
+        : expected.subject_type === "EPIC" ? expected.epic_id : expected.request_id;
+      expect(projection, `${label} safe manifest projection after restart`).toMatchObject({
         availability: "available",
-        subject: { type: "REQUEST", id: request.id },
+        runId,
+        subject: { type: expected.subject_type, id: subjectId },
+        role: expected.role,
       });
+      const serializedProjection = JSON.stringify(projection);
+      const persistedPrompt = db!.get<{ prompt: string }>("SELECT prompt FROM agent_runs WHERE id=$runId", { runId })?.prompt;
+      expect(persistedPrompt, `${label} source prompt exists for privacy assertion`).toBeTruthy();
+      expect(serializedProjection, `${label} response must not expose the persisted prompt`).not.toContain(persistedPrompt!);
+      expect(serializedProjection, `${label} response must not expose raw context text`).not.toMatch(/persisted task contract|acceptance task context|Create an Epic plan and preserve its request-bound role decisions/i);
+      expect(projection).not.toHaveProperty("prompt");
+      expect(projection).not.toHaveProperty("context");
     }
     expect(taskDispatchBarrier).toHaveBeenCalledTimes(3);
     expect(integrationAttempts).toHaveLength(3);
