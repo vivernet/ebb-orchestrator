@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -28,13 +27,12 @@ describe.skipIf(process.platform !== "win32")("Windows installed Hermes resolver
     writeFileSync(path.join(source, "install-stamp.json"), JSON.stringify({ commit: "08165d58931841cee713468ae89032af7c57060a" }));
     const launcher = path.join(bin, "hermes.cmd");
     writeFileSync(launcher, "@echo off\r\n");
-    const state = path.join(install, "installs", createHash("sha256").update(source).digest("hex").slice(0, 16));
-    const venv = path.join(state, "environments", "fixture", "venv");
-    const python = path.join(venv, "Scripts", "python.exe");
+    const runtime = path.join(home, "tools");
+    const pythonEntry = "python-3.14.7+fixture-win32-x64";
+    const python = path.join(runtime, pythonEntry, "python.exe");
     mkdirSync(path.dirname(python), { recursive: true });
     writeFileSync(python, "fixture interpreter");
-    writeFileSync(path.join(venv, "pyvenv.cfg"), "home = fixture\n");
-    writeFileSync(path.join(state, "facts.json"), JSON.stringify({ packages: { venv: { environment: venv } } }));
+    writeFileSync(path.join(runtime, "facts.json"), JSON.stringify({ packages: { python: { entry: pythonEntry } } }));
     const operations: string[] = [];
     const sourceChecks: Array<{ root: string; commit: string }> = [];
 

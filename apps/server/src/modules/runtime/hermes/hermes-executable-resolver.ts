@@ -1,6 +1,5 @@
 import { constants as fsConstants } from "node:fs";
 import { access, open, realpath, stat } from "node:fs/promises";
-import { createHash } from "node:crypto";
 import process from "node:process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -68,7 +67,7 @@ export async function resolveHermesExecutable(
     ? resolveWindowsHermesConfigHome(environment)
     : resolveLinuxHermesConfigHome(environment);
   const runtime = platform === "win32"
-    ? await windowsRuntime(hermesProjectRoot)
+    ? await windowsRuntime(hermesProjectRoot, hermesConfigHome, environment)
     : await linuxRuntime(hermesProjectRoot, hermesConfigHome, environment);
   const executableIdentity = await fileIdentity(executablePath, platform, cwd, options);
   const runtimeExecutableIdentity = await fileIdentity(runtime.pythonExecutable, platform, cwd, options);
@@ -138,19 +137,28 @@ async function linuxSourceRoot(launcher: string, cwd: string): Promise<string> {
   return source;
 }
 
-async function windowsRuntime(source: string): Promise<{ pythonExecutable: string }> {
+async function windowsRuntime(
+  source: string, home: string, environment: Readonly<Record<string, string | undefined>>,
+): Promise<{ pythonExecutable: string }> {
   const paths = path.win32;
-  const key = createHash("sha256").update(source).digest("hex").slice(0, 16);
-  const state = paths.join(paths.dirname(source), "installs", key);
-  const facts = await readJson(paths.join(state, "facts.json"));
-  const venv = record(facts.packages).venv;
-  const dependencyRoot = record(venv).environment;
-  if (typeof dependencyRoot !== "string" || !isWithin(paths.join(state, "environments"), dependencyRoot, paths)) {
+  const stamp: Record<string, unknown> = await readJson(paths.join(source, "install-stamp.json"))
+    .catch((): Record<string, unknown> => ({}));
+  const stampedRoot = typeof stamp.runtimeDir === "string" && stamp.runtimeDir.trim() ? stamp.runtimeDir : undefined;
+  const storePath = environment.HERMES_RUNTIME_DIR?.trim() || stampedRoot || paths.join(home, "tools");
+  if (!paths.isAbsolute(storePath) || hasControlCharacters(storePath)) {
     throw resolverError("HERMES_RUNTIME_LAYOUT_UNSUPPORTED");
   }
-  const canonicalVenv = await existingDirectory(dependencyRoot, paths);
-  await existingFile(paths.join(canonicalVenv, "pyvenv.cfg"), paths);
-  const pythonExecutable = await existingFile(paths.join(canonicalVenv, "Scripts", "python.exe"), paths);
+  const store = await existingDirectory(storePath, paths);
+  const facts = await readJson(paths.join(store, "facts.json"));
+  const entry = record(record(facts.packages).python).entry;
+  if (typeof entry !== "string" || !entry || paths.isAbsolute(entry) ||
+      entry.split(/[\\/]/u).some((component) => !component || component === "." || component === "..")) {
+    throw resolverError("HERMES_RUNTIME_LAYOUT_UNSUPPORTED");
+  }
+  const dependencyRoot = paths.join(store, entry);
+  if (!isWithin(store, dependencyRoot, paths)) throw resolverError("HERMES_RUNTIME_LAYOUT_UNSUPPORTED");
+  const canonicalDependencyRoot = await existingDirectory(dependencyRoot, paths);
+  const pythonExecutable = await existingFile(paths.join(canonicalDependencyRoot, "python.exe"), paths);
   return { pythonExecutable };
 }
 

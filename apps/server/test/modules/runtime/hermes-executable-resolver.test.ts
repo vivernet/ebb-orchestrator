@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, rm, writeFile, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, win32 } from "node:path";
@@ -17,11 +16,11 @@ describe("direct installed Hermes resolver", () => {
     const paths = process.platform === "win32" ? await windowsFixture() : await linuxFixture();
     const stampPath = join(paths.source, "install-stamp.json");
     const installedCommit = "9244275491" + "0".repeat(30);
-    await writeFile(stampPath, JSON.stringify({ runtimeDir: join(paths.source, "runtime"), commit: installedCommit }));
+    await writeFile(stampPath, JSON.stringify({ runtimeDir: paths.runtime, commit: installedCommit }));
     const verifySourceCheckout = async () => { throw new Error("must not inspect Git"); };
     const resolution = await resolveHermesExecutable({ cwd: paths.cwd, pathValue: paths.bin, platform: process.platform === "win32" ? "win32" : "linux", environment: paths.environment, verifySourceCheckout, verifyNativeHelper: async () => undefined, runNativePathVerifier: async (_file, args) => { const filename = args[args.indexOf("file") + 1] ?? ""; return { exitCode: 0, stdout: JSON.stringify({ status: "SAFE_PATH", kind: "file", path: filename, volumeSerial: "0123456789abcdef", fileId: "0123456789abcdef0123456789abcdef" }), stderr: "" }; } });
     expect(resolution.sourceCommit).toBe(installedCommit);
-    await writeFile(stampPath, JSON.stringify({ runtimeDir: join(paths.source, "runtime") }));
+    await writeFile(stampPath, JSON.stringify({ runtimeDir: paths.runtime }));
     const unstamped = await resolveHermesExecutable({ cwd: paths.cwd, pathValue: paths.bin, platform: process.platform === "win32" ? "win32" : "linux", environment: paths.environment, verifySourceCheckout, verifyNativeHelper: async () => undefined, runNativePathVerifier: async (_file, args) => { const filename = args[args.indexOf("file") + 1] ?? ""; return { exitCode: 0, stdout: JSON.stringify({ status: "SAFE_PATH", kind: "file", path: filename, volumeSerial: "0123456789abcdef", fileId: "0123456789abcdef0123456789abcdef" }), stderr: "" }; } });
     expect(unstamped.sourceCommit).toBeNull();
   });
@@ -133,14 +132,13 @@ async function windowsFixture() {
   await writeFile(paths.join(source, "install-stamp.json"), JSON.stringify({ commit: "08165d58931841cee713468ae89032af7c57060a" }));
   const launcher = paths.join(bin, "hermes.cmd");
   await writeFile(launcher, "@echo off\r\n");
-  const state = paths.join(install, "installs", createHash("sha256").update(source).digest("hex").slice(0, 16));
-  const venv = paths.join(state, "environments", "fixture", "venv");
-  const python = paths.join(venv, "Scripts", "python.exe");
+  const runtime = paths.join(hermesHome, "tools");
+  const pythonEntry = "python-3.14.7+fixture-win32-x64";
+  const python = paths.join(runtime, pythonEntry, "python.exe");
   await mkdir(paths.dirname(python), { recursive: true });
   await writeFile(python, "");
-  await writeFile(paths.join(venv, "pyvenv.cfg"), "home = fixture\n");
-  await writeFile(paths.join(state, "facts.json"), JSON.stringify({ packages: { venv: { environment: venv } } }));
-  return { source, bin, cwd, launcher, python, hermesHome, environment: { PATH: bin, HERMES_HOME: hermesHome, USERPROFILE: fixtureRoot } };
+  await writeFile(paths.join(runtime, "facts.json"), JSON.stringify({ packages: { python: { entry: pythonEntry } } }));
+  return { source, bin, cwd, launcher, python, runtime, hermesHome, environment: { PATH: bin, HERMES_HOME: hermesHome, USERPROFILE: fixtureRoot } };
 }
 
 async function linuxFixture() {
@@ -163,5 +161,5 @@ async function linuxFixture() {
   await chmod(launcher, 0o755);
   await writeFile(inner, "");
   await chmod(inner, 0o755);
-  return { source, bin, cwd, launcher, python, hermesHome, environment: { PATH: bin, HOME: join(source, "user-home"), HERMES_HOME: hermesHome } };
+  return { source, bin, cwd, launcher, python, runtime, hermesHome, environment: { PATH: bin, HOME: join(source, "user-home"), HERMES_HOME: hermesHome } };
 }
