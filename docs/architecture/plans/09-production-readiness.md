@@ -27,6 +27,8 @@ evidence:
 
 > **Актуальная сверка (2026-09-30):** production startup вызывает `applyMigrationsWithVerifiedBackup`; прежнее утверждение, что `BackupService` не wired в startup, устарело. План остаётся `in_progress`: source security scan и whole-plan review для текущего дерева не подтверждены. Настроенный CodeQL workflow сам по себе не является evidence выполненного hosted scan.
 
+> **Обновление evidence (2026-10-14):** CodeQL run `38478452148` завершился успешно для `develop` SHA `fd18083171fde0a40545096959d129fb6871269e`; analysis `1947414414` содержит 12 results. Все четыре открытых alerts `js/missing-rate-limiting` (#5–#8) рассмотрены и закрыты как `won't fix` по принятому пользователем риску v1. Остаточный риск локального перебора пароля через login явно принят; loopback и CSRF его не устраняют. Независимый scoped security review одобрил disposition в этих границах. Plan09 остаётся `in_progress` до независимого whole-plan review и сверки остальных критериев.
+
 > **Для агентного исполнения:** REQUIRED SKILL: `ebb-execute-plan`. План выполняется по задачам; для отслеживания шагов используется синтаксис флажков (`- [ ]`).
 
 **Goal:** Сделать утверждённый local-first v1 безопасным и доказуемо готовым к production: без потери dirty worktree, ложного сохранения секретов, unwired local paths и ложноположительных E2E.

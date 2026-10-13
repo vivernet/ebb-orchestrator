@@ -868,3 +868,10 @@ Plan01 metadata переведена из `completed` в `in_progress` посл�
 - Команда `hermes --in <repo> chat --query-file <temp> --oneshot -Q` получила prompt с запросом точного случайного nonce `EBB_RESULT_<8-char nonce>`. Через 45,657 ms зафиксированы `stdoutBytes=21`, `stderrBytes=220`, `timedOut=true`; stdout содержал точный nonce. Raw output, значение nonce и session ID не сохранены.
 - `taskkill.exe /PID 31680 /T /F` завершился exit 0; событие `close` дочернего процесса наблюдалось с code 1. Временный prompt-файл подтверждённо удалён.
 - Короткий query вернул запрошенный ответ, однако CLI не завершился за 45 секунд. Это не выполняет Task7: нет доказательств ровно двух Hermes child sessions, parity report или прохождения gates. Причина незавершения не устанавливается. Credentials, config, session store и ACL не инспектировались. Lifecycle statuses/checklists и source не менялись.
+
+## Дополнение от 2026-10-14 — Plan19 Task8 CodeQL current-SHA disposition
+
+- CodeQL run `38478452148` (push, success) и analysis `1947414414` подтверждены для одного SHA `fd18083171fde0a40545096959d129fb6871269e` на `develop`; analysis содержит 12 results. Alerts #1–#12 имеют `state=dismissed`; открытых alerts нет.
+- По принятому пользователем риску v1 alerts #5–#8 (`js/missing-rate-limiting`) закрыты как `won't fix`. Комментарии различают защищённые loopback API/session/Origin/CSRF маршруты, local password login, только публичные файлы UI из canonical web root, и дополнительную валидацию перед Task dispatch. Решение не добавляет новый rate limiter и не требует изменения Windows ACL.
+- Это закрывает Plan19 Task8 scan/disposition gate для указанного SHA. Plan09 lifecycle остаётся `in_progress` до whole-plan review и проверки других checklist/acceptance критериев; Plan19 Task9/all-plan audit не закрыты.
+- Независимый scoped review Luna: `APPROVED` для disposition #5–#8; охват — production bind, auth/CSRF, login, UI static route, dispatch и exact-SHA evidence. Reviewer подтвердил остаточный локальный password-brute-force риск как явно принятый пользователем для v1. ACL и права пользователей не проверялись.
