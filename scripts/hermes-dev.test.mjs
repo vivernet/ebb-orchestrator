@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { spawnSync } from 'node:child_process';
 import { setTimeout } from 'node:timers';
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { resolvePlanPath } from './hermes-dev-paths.mjs';
@@ -457,6 +457,46 @@ test('Hermes execute cleans its temporary prompt before process exit', () => {
   assert.doesNotMatch(source, /stdio: 'inherit'/);
 });
 
+test('Hermes execute uses the top-level scripted one-shot mode with the generated prompt', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'hermes-execute-oneshot-'));
+  const child = new EventEmitter();
+  child.pid = 1234;
+  child.kill = () => {};
+  let invocation;
+  let promptContent;
+  let promptPath;
+  let promptExistedUntilClose;
+
+  try {
+    const result = await runHermesExecute({
+      worktreeRoot: directory,
+      planPath: 'docs/plan.md',
+      tmpDir: directory,
+      platformName: 'win32',
+      spawnChild: (command, args, options) => {
+        invocation = { command, args, options };
+        promptContent = args[3];
+        promptPath = join(directory, readdirSync(directory)[0]);
+        promptExistedUntilClose = existsSync(promptPath);
+        setTimeout(() => child.emit('close', 0), 0);
+        return child;
+      },
+    });
+
+    assert.equal(result.marker, 'COMPLETED');
+    assert.equal(result.exitCode, 0);
+    assert.equal(invocation.command, 'hermes');
+    assert.deepEqual(invocation.args.slice(0, 3), ['--in', directory, '-z']);
+    assert.match(promptContent, /Plan path: docs\/plan\.md/);
+    assert.equal(promptExistedUntilClose, true);
+    assert.equal(existsSync(promptPath), false);
+    assert.equal(invocation.options.shell, false);
+    assert.deepEqual(readdirSync(directory), []);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('Hermes execute terminates the Windows process tree on timeout', () => {
   const source = readFileSync(join(root, 'scripts', 'hermes-dev.mjs'), 'utf8');
   assert.match(source, /taskkill\.exe/);
@@ -499,7 +539,7 @@ test('Hermes execute waits for child close before cleaning the prompt after time
   }
 });
 
-test('Hermes execute retains the prompt when timed out child never closes', async () => {
+test('Hermes execute removes the prompt when timed out child never closes', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'hermes-execute-open-'));
   const child = new EventEmitter();
   child.pid = 1234;
@@ -518,10 +558,8 @@ test('Hermes execute retains the prompt when timed out child never closes', asyn
 
     assert.equal(result.marker, 'TERMINATION_FAILED');
     assert.equal(result.exitCode, 125);
-    assert.equal(result.cleanupVerified, false);
-    const retainedFiles = readdirSync(directory);
-    assert.equal(retainedFiles.length, 1);
-    assert.match(retainedFiles[0], /^hermes-prompt-\d+\.txt$/);
+    assert.equal(result.cleanupVerified, true);
+    assert.deepEqual(readdirSync(directory), []);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -567,7 +605,7 @@ test('Hermes execute starts Hermes in a POSIX process group and waits for the gr
   }
 });
 
-test('Hermes execute retains prompt when POSIX descendants remain after child close', async () => {
+test('Hermes execute removes prompt when POSIX descendants remain after child close', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'hermes-execute-group-live-'));
   const child = new EventEmitter();
   child.pid = 3456;
@@ -592,10 +630,8 @@ test('Hermes execute retains prompt when POSIX descendants remain after child cl
 
     assert.equal(result.marker, 'TERMINATION_FAILED');
     assert.equal(result.exitCode, 125);
-    assert.equal(result.cleanupVerified, false);
-    const retainedFiles = readdirSync(directory);
-    assert.equal(retainedFiles.length, 1);
-    assert.match(retainedFiles[0], /^hermes-prompt-\d+\.txt$/);
+    assert.equal(result.cleanupVerified, true);
+    assert.deepEqual(readdirSync(directory), []);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -702,7 +738,7 @@ test('Hermes execute cleans prompt when unexpected POSIX group exits before term
   }
 });
 
-test('Hermes execute retains prompt when unexpected POSIX group survives termination', async () => {
+test('Hermes execute removes prompt when unexpected POSIX group survives termination', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'hermes-execute-normal-group-still-live-'));
   const child = new EventEmitter();
   child.pid = 6789;
@@ -726,8 +762,8 @@ test('Hermes execute retains prompt when unexpected POSIX group survives termina
 
     assert.equal(result.marker, 'TERMINATION_FAILED');
     assert.equal(result.exitCode, 125);
-    assert.equal(result.cleanupVerified, false);
-    assert.equal(readdirSync(directory).length, 1);
+    assert.equal(result.cleanupVerified, true);
+    assert.deepEqual(readdirSync(directory), []);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, rmSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
 import { dirname, join, posix, win32 } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -340,7 +340,6 @@ export async function runHermesExecute({
 } = {}) {
   const tmpFile = join(tmpDir, `hermes-prompt-${now()}.txt`);
   let result = fixedExecuteResult(1, 'SPAWN_ERROR', false);
-  let retainPrompt = false;
   makeDirectory(tmpDir, { recursive: true });
 
   try {
@@ -373,9 +372,8 @@ No nested delegation.
       try {
         child = spawnChild('hermes', [
           '--in', worktreeRoot,
-          'chat',
-          '--query-file',
-          tmpFile,
+          '-z',
+          readFileSync(tmpFile, 'utf8'),
         ], {
           cwd: worktreeRoot,
           stdio: ['ignore', 'pipe', 'pipe'],
@@ -395,7 +393,6 @@ No nested delegation.
                 ? termination?.ok === true
                 : await waitForHermesProcessGroupExit(child.pid, terminationGraceMs, processGroupPollIntervalMs, processGroupExists);
               const terminated = groupStopped && (platformName !== 'win32' || termination?.ok === true);
-              retainPrompt = !terminated;
               finish(fixedExecuteResult(terminated ? 124 : 125, terminated ? 'TIMEOUT' : 'TERMINATION_FAILED', false));
             })();
             return;
@@ -417,7 +414,6 @@ No nested delegation.
               try { normalCloseTermination = terminate(child.pid, platformName, undefined, true); } catch { normalCloseTermination = { ok: false }; }
               const groupStopped = await waitForHermesProcessGroupExit(child.pid, terminationGraceMs, processGroupPollIntervalMs, processGroupExists);
               const cleanupSafe = groupStopped;
-              retainPrompt = !cleanupSafe;
               finish(fixedExecuteResult(cleanupSafe ? 1 : 125, cleanupSafe ? 'FAILED' : 'TERMINATION_FAILED', false));
             })();
             return;
@@ -429,7 +425,6 @@ No nested delegation.
           try { termination = terminate(child.pid, platformName, undefined, platformName !== 'win32'); } catch { termination = { ok: false }; }
           try { child.kill(); } catch { /* child may already be gone */ }
           graceTimer = setTimeout(() => {
-            retainPrompt = true;
             finish(fixedExecuteResult(125, 'TERMINATION_FAILED', false));
           }, terminationGraceMs);
         }, timeoutMs);
@@ -438,19 +433,17 @@ No nested delegation.
       }
     });
   } finally {
-    if (!retainPrompt) {
-      try {
-        remove(tmpFile, { force: true });
-        result.cleanupVerified = !exists(tmpFile);
-        if (!result.cleanupVerified) {
-          result.exitCode = 1;
-          result.marker = 'CLEANUP_FAILED';
-        }
-      } catch {
+    try {
+      remove(tmpFile, { force: true });
+      result.cleanupVerified = !exists(tmpFile);
+      if (!result.cleanupVerified) {
         result.exitCode = 1;
         result.marker = 'CLEANUP_FAILED';
-        result.cleanupVerified = false;
       }
+    } catch {
+      result.exitCode = 1;
+      result.marker = 'CLEANUP_FAILED';
+      result.cleanupVerified = false;
     }
   }
   return result;
