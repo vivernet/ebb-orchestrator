@@ -134,7 +134,7 @@ evidence:
 
 **GREEN:**
 
-- Использовать существующую CI matrix `node-version: 24.x` и `26.x` в `.github/workflows/production-gates.yml:20-23` без добавления новых runtime versions; в обоих clean jobs выполнить `pnpm test`. Ожидание: `contracts/dist` создан до server tests, все не-документационные workspace suites завершаются без `ERR_MODULE_NOT_FOUND`.
+- Использовать CI matrix с `node-version: 24.x` в `.github/workflows/production-gates.yml`; выполнить `pnpm test` в clean job. Ожидание: `contracts/dist` создан до server tests, все не-документационные workspace suites завершаются без `ERR_MODULE_NOT_FOUND`.
 - Выполнить `node --test scripts/security-audit-evidence.test.mjs`; ожидание: все workflow/evidence assertions проходят.
 - Контрактные assertions должны проверять три полных выражения посимвольно: audit `!cancelled() && steps.install-dependencies.outcome == 'success'`; upload `!cancelled() && steps.dependency-audit.outcome != 'skipped'`; final failure gate `!cancelled() && steps.dependency-audit.outcome == 'failure'` (в YAML каждое выражение обёрнуто `${{ ... }}`). На test-only workflow отдельно запустить fault injection раннего gate failure, самого audit и install; verifier обязан подтвердить соответствующие outcomes, наличие evidence после audit и его `exitCode`. Отдельно отменить workflow во время ожидания до audit и подтвердить через GitHub job/step conclusions, что audit/upload/final gate пропущены, а run отменён.
 - На GitHub-hosted runner повторить upload и проверить, что artifact читается под прежним именем и warning `DEP0040` отсутствует.

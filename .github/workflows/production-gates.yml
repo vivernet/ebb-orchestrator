@@ -226,8 +226,6 @@ jobs:
         include:
           - node-version: "24.x"
             runtime: node@24
-          - node-version: "26.x"
-            runtime: node@26
     steps:
       - name: Checkout
         uses: actions/checkout@v6
