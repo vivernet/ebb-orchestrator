@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn, spawnSync } from 'node:child_process';
+import { performance } from 'node:perf_hooks';
 import { existsSync, readFileSync, rmSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
 import { dirname, join, posix, win32 } from 'node:path';
@@ -286,7 +287,7 @@ export function terminateHermesProcessTree(pid, platformName = platform(), run =
       stdio: 'ignore',
       windowsHide: true,
     });
-    return { ok: !result?.error && result?.status === 0 };
+    return { ok: !result?.error && result?.status === 0, status: Number.isSafeInteger(result?.status) ? Math.max(-1, Math.min(255, result.status)) : null };
   }
   try {
     signal(processGroup ? -pid : pid, 'SIGTERM');
@@ -310,8 +311,33 @@ async function waitForHermesProcessGroupExit(pid, timeoutMs, pollIntervalMs, pro
   try { return !processGroupExists(pid); } catch { return false; }
 }
 
+const HERMES_CHILD_SIGNALS = new Set(['SIGABRT', 'SIGINT', 'SIGKILL', 'SIGQUIT', 'SIGSEGV', 'SIGTERM']);
+
+function normalizeChildSignal(signal) {
+  if (signal == null) return null;
+  return HERMES_CHILD_SIGNALS.has(signal) ? signal : 'OTHER';
+}
+
+function boundedExitCode(code) {
+  return Number.isSafeInteger(code) && code >= 0 && code <= 255 ? code : null;
+}
+
 function fixedExecuteResult(exitCode, marker, cleanupVerified) {
   return { exitCode, marker, redacted: true, cleanupVerified };
+}
+
+/**
+ * Формирует фиксированную строку результата Hermes execute без содержимого потоков и ошибок.
+ * @param {ReturnType<typeof fixedExecuteResult> & Record<string, unknown>} result Результат с ограниченной process telemetry.
+ * @returns {string} Маркер с числовыми и enum-полями, безопасными для диагностического вывода.
+ */
+export function formatHermesExecuteResult(result) {
+  const value = (item) => item == null ? 'unknown' : String(item);
+  return `${HERMES_EXECUTE_MARKER} marker=${result.marker} exit_code=${result.exitCode} redacted=${result.redacted} cleanup_verified=${result.cleanupVerified}`
+    + ` duration_ms=${result.durationMs} timeout_ms=${result.timeoutMs} child_closed=${result.childClosed}`
+    + ` child_exit_code=${value(result.childExitCode)} child_signal=${value(result.childSignal)}`
+    + ` termination_attempted=${result.terminationAttempted} termination_ok=${value(result.terminationOk)}`
+    + ` taskkill_status=${value(result.taskkillStatus)}`;
 }
 
 export async function runHermesExecute({
@@ -339,6 +365,16 @@ export async function runHermesExecute({
   now = Date.now,
 } = {}) {
   const tmpFile = join(tmpDir, `hermes-prompt-${now()}.txt`);
+  const startedAt = performance.now();
+  const telemetry = {
+    timeoutMs: Number.isSafeInteger(timeoutMs) ? Math.max(0, Math.min(2_147_483_647, timeoutMs)) : null,
+    childClosed: false,
+    childExitCode: null,
+    childSignal: null,
+    terminationAttempted: false,
+    terminationOk: null,
+    taskkillStatus: null,
+  };
   let result = fixedExecuteResult(1, 'SPAWN_ERROR', false);
   makeDirectory(tmpDir, { recursive: true });
 
@@ -366,7 +402,11 @@ No nested delegation.
         settled = true;
         if (timer) clearTimeout(timer);
         if (graceTimer) clearTimeout(graceTimer);
-        resolve(value);
+        resolve({
+          ...value,
+          durationMs: Math.max(0, Math.min(2_147_483_647, Math.round(performance.now() - startedAt))),
+          ...telemetry,
+        });
       };
 
       let child;
@@ -387,7 +427,10 @@ No nested delegation.
         child.once('error', () => {
           if (!timedOut) finish(fixedExecuteResult(1, 'SPAWN_ERROR', false));
         });
-        child.once('close', (code) => {
+        child.once('close', (code, signal) => {
+          telemetry.childClosed = true;
+          telemetry.childExitCode = boundedExitCode(code);
+          telemetry.childSignal = normalizeChildSignal(signal);
           if (timedOut) {
             void (async () => {
               const groupStopped = platformName === 'win32'
@@ -423,7 +466,12 @@ No nested delegation.
         });
         timer = setTimeout(() => {
           timedOut = true;
+          telemetry.terminationAttempted = true;
           try { termination = terminate(child.pid, platformName, undefined, platformName !== 'win32'); } catch { termination = { ok: false }; }
+          telemetry.terminationOk = termination?.ok === true;
+          telemetry.taskkillStatus = platformName === 'win32' && Number.isSafeInteger(termination?.status)
+            ? Math.max(-1, Math.min(255, termination.status))
+            : null;
           try { child.kill(); } catch { /* child may already be gone */ }
           graceTimer = setTimeout(() => {
             finish(fixedExecuteResult(125, 'TERMINATION_FAILED', false));
@@ -656,7 +704,7 @@ async function doExecute(args) {
   }
 
   const result = await runHermesExecute({ worktreeRoot, planPath });
-  console.log(`${HERMES_EXECUTE_MARKER} marker=${result.marker} exit_code=${result.exitCode} redacted=${result.redacted} cleanup_verified=${result.cleanupVerified}`);
+  console.log(formatHermesExecuteResult(result));
   process.exitCode = result.exitCode;
 }
 

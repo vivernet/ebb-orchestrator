@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { resolvePlanPath } from './hermes-dev-paths.mjs';
-import { checkHermesVersion, collectHermesConfigChecks, isHermesProjectDiscoveryEnabled, isHermesProjectTrusted, resolveRepositoryRoot, runHermesConfig, runHermesExecute, runHermesProjectSetup, terminateHermesProcessTree, validateCanonicalSkills } from './hermes-dev.mjs';
+import { checkHermesVersion, collectHermesConfigChecks, formatHermesExecuteResult, isHermesProjectDiscoveryEnabled, isHermesProjectTrusted, resolveRepositoryRoot, runHermesConfig, runHermesExecute, runHermesProjectSetup, terminateHermesProcessTree, validateCanonicalSkills } from './hermes-dev.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const skillsRoot = join(root, '.agents', 'skills');
@@ -535,8 +535,63 @@ test('Hermes execute waits for child close before cleaning the prompt after time
 
     assert.equal(result.marker, 'TIMEOUT');
     assert.equal(result.exitCode, 124);
+    assert.equal(result.childClosed, true);
+    assert.equal(result.childExitCode, null);
+    assert.equal(result.terminationAttempted, true);
+    assert.equal(result.terminationOk, true);
     assert.equal(result.cleanupVerified, true);
     assert.equal(closed, true);
+    assert.deepEqual(readdirSync(directory), []);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('Hermes execute returns only bounded timeout metadata and never child output', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'hermes-execute-telemetry-'));
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.pid = 7890;
+  child.kill = () => {};
+  const stdoutSecret = 'API_KEY=sentinel-stdout-secret';
+  const stderrSecret = 'API_KEY=sentinel-stderr-secret';
+
+  try {
+    const result = await runHermesExecute({
+      worktreeRoot: directory,
+      planPath: 'plan.md',
+      tmpDir: directory,
+      timeoutMs: 5,
+      terminationGraceMs: 50,
+      platformName: 'win32',
+      terminate: () => ({ ok: false, status: 1 }),
+      spawnChild: () => {
+        setTimeout(() => {
+          child.stdout.emit('data', stdoutSecret);
+          child.stderr.emit('data', stderrSecret);
+        }, 1);
+        setTimeout(() => child.emit('close', null, 'SIGTERM'), 10);
+        return child;
+      },
+    });
+
+    assert.equal(result.marker, 'TERMINATION_FAILED');
+    assert.equal(result.exitCode, 125);
+    assert.equal(result.timeoutMs, 5);
+    assert.equal(result.childClosed, true);
+    assert.equal(result.childExitCode, null);
+    assert.equal(result.childSignal, 'SIGTERM');
+    assert.equal(result.terminationAttempted, true);
+    assert.equal(result.terminationOk, false);
+    assert.equal(result.taskkillStatus, 1);
+    assert.ok(Number.isSafeInteger(result.durationMs) && result.durationMs >= 0);
+    assert.equal(result.cleanupVerified, true);
+    const cliOutput = formatHermesExecuteResult(result);
+    assert.match(cliOutput, /duration_ms=\d+ timeout_ms=5 child_closed=true/);
+    assert.match(cliOutput, /child_exit_code=unknown child_signal=SIGTERM termination_attempted=true termination_ok=false taskkill_status=1/);
+    assert.doesNotMatch(JSON.stringify(result), /sentinel-(?:stdout|stderr)-secret/);
+    assert.doesNotMatch(cliOutput, /sentinel-(?:stdout|stderr)-secret/);
     assert.deepEqual(readdirSync(directory), []);
   } finally {
     rmSync(directory, { recursive: true, force: true });
@@ -562,6 +617,9 @@ test('Hermes execute removes the prompt when timed out child never closes', asyn
 
     assert.equal(result.marker, 'TERMINATION_FAILED');
     assert.equal(result.exitCode, 125);
+    assert.equal(result.childClosed, false);
+    assert.equal(result.terminationAttempted, true);
+    assert.equal(result.terminationOk, true);
     assert.equal(result.cleanupVerified, true);
     assert.deepEqual(readdirSync(directory), []);
   } finally {
