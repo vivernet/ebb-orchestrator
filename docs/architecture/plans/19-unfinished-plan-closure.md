@@ -4,7 +4,7 @@ kind: plan
 status: in_progress
 title: План разблокирования и завершения открытых планов v1
 created: 2026-09-29
-updated: 2026-10-09
+updated: 2026-10-13
 depends_on: []
 specs:
   - ../specs/01-system-design.md
@@ -39,12 +39,12 @@ evidence:
 | Исходный plan | Текущий статус | Gate для завершения |
 |---|---|---|
 | `plan-04` | `blocked` | Поддерживаемый Hermes CLI через уже настроенный пользователем root/profile; полный реальный provider-backed Developer → Reviewer → QA → Integration acceptance и review. Hermes владеет provider/model/auth resolution; Ebb не создаёт Run-profile и не требует собственного provider credential mapping. |
-| `plan-05` | `blocked` | Mandatory request/plan UI, startup recovery до `READY` и deterministic production-process Epic recovery harness реализованы; harness прошёл, но он не заменяет same-request restart и real Hermes request → Epic acceptance. Нужно завершить ContextManifest producer по принятому Proposal 08 и пройти whole-plan review. Решение о показе PM/Architect summary до materialization содержится в принятом варианте A Proposal 06. |
+| `plan-05` | `blocked` | Mandatory request/plan UI, startup recovery до `READY` и deterministic production-process Epic recovery harness реализованы. Plan19 Task5 реальный Hermes Request→Epic acceptance прошёл 2026-10-13: 15/15, 12/12 validated Epic phase Runs, три restart и `FINAL_APPROVAL`/`PENDING` merge; exact revision evidence находится в `governance/evidence/plan19-task5-request-epic-2026-10-13.json`. Остаются ContextManifest producer/acceptance по Proposal 08 и independent whole-plan review. Решение о показе PM/Architect summary до materialization содержится в принятом варианте A Proposal 06. |
 | `plan-06` | `in_progress` | Production inbox/wiring/UI и Project Config lifecycle реализованы. По решению пользователя capture на Windows теперь fail closed с HTTP 503 до safe-handle verification; Windows happy-path недоступен. Metadata-only Artifact/Run UI и read-only Settings/Usage projections реализованы; persisted task-bound ContextManifest acceptance остаётся открытым до producer/acceptance по Proposal 08. Schema v1 — первый поддерживаемый формат; predecessor migration не требуется. Остаются supported-platform acceptance, hosted Ubuntu keyring evidence и whole-plan review. |
 | `plan-07` | `blocked` | Поддерживаемый Hermes runtime/provider и завершённый parity plan с report, двумя read-only subagents и доказанным teardown; review. |
 | `plan-09` | `in_progress` | Свежий source security scan после изменений, все gates и whole-plan review без load-bearing finding. |
 
-`plan-01` и `plan-12` уже `completed` в generated register и ledger; current-state snapshot синхронизирован при подготовке этого плана и проверяется повторно в Task 2. По уточнению пользователя от 2026-09-30 closure охватывает все планы, кроме `plan-14`, включая `plan-16`. Его exact deletion disposition уже выполнен по решению пользователя; для остальных obligations Plan16 повторно сверить acceptance, не восстанавливая старые approval/archive prerequisites.
+На текущем metadata snapshot `plan-01` — `in_progress` после свежего whole-plan verdict `CHANGES_REQUIRED`, а `plan-12` — `completed`; статусы отражаются по metadata без принудительного закрытия Plan01. Task 2 синхронизирует current-state, ledger и generated register с этими evidence-based lifecycle statuses. По уточнению пользователя от 2026-09-30 closure охватывает все планы, кроме `plan-14`, включая `plan-16`. Его exact deletion disposition уже выполнен по решению пользователя; для остальных obligations Plan16 повторно сверить acceptance, не восстанавливая старые approval/archive prerequisites.
 
 Plan review обновлённой редакции завершился `APPROVED`; Proposal 05/06, полный lifecycle Proposal 07, canonical `.ebb-orchestrator/` и весь Proposal 08 приняты пользователем. Proposal 08 утверждён 2026-09-30; его implementation plan проходит отдельное независимое review.
 
@@ -143,7 +143,7 @@ User decision follow-up (2026-10-12): Epic QA получает `project.test` т
 
 **RED:** На исходном baseline current-state расходился с metadata `plan-01`/`plan-12`, а evidence ledger продолжает утверждать, что `plan-01` `in_progress`. Этот baseline частично исправлен при подготовке plan-19; остаётся синхронизировать ledger и повторно проверить все три источника.
 
-**GREEN:** `02-current-state.md` и ledger согласованы с metadata/generated register: `plan-01`/`plan-12` completed, открытые планы указаны без пропусков, `plan-14` явно вне scope, остальные планы включая `plan-16` входят в closure audit, `plan-19` in_progress; следующий шаг отражает порядок Tasks 0–8.
+**GREEN:** `02-current-state.md` и ledger согласованы с авторитетными plan metadata и `generated.md`: каждый lifecycle status совпадает, все планы со статусом кроме `completed` перечислены без пропусков, `plan-14` явно исключён из closure scope, а `plan-16` и планы со статусом `superseded` включены в аудит с проверкой их disposition. `plan-19` остаётся `in_progress` до выполнения собственных completion gates; current-state отражает evidence-based порядок Tasks 0–8. Не требовать конкретного статуса другого плана вопреки его metadata и свежему review evidence.
 
 ```text
 Run: pnpm docs:roadmap
@@ -156,7 +156,7 @@ Run: git diff --check
 Expected: exit code 0.
 ```
 
-**Review Focus:** metadata `kind: plan` — authority статуса; current-state/ledger не возвращают завершённые `plan-01/12` в список blocker. Повторить синхронизацию после изменения статусов в Task 9.
+**Review Focus:** metadata `kind: plan` — authority статуса; current-state, ledger и generated register не изменяют статусы самостоятельно и не исключают незавершённый план из открытых обязательств. Повторить синхронизацию после подтверждённых изменений статусов в Task 9.
 
 ### Task 3: Подтвердить Hermes CLI и developer project-trust readiness
 
