@@ -439,6 +439,7 @@ async function runCorruptionScenario(temporaryRoot, password, onChild) {
 
   server = await startProductionServer({ home, port, password, bootstrap: false }, onChild);
   session = await login(server, password);
+  const blockedDispatches = [];
   for (const item of [corrupt, unsupported]) {
     const state = await getProjectConfig(session, item.project.projectId);
     assert.equal(state.degraded, true, "invalid active revision did not degrade its Project");
@@ -467,9 +468,36 @@ async function runCorruptionScenario(temporaryRoot, password, onChild) {
     } finally {
       update.close();
     }
-    const dispatch = await requestJson(session, "POST", `/api/v1/tasks/${taskId}/dispatch`, {}, 409);
-    assert.equal(dispatch.error.code, "PROJECT_CONFIG_DEGRADED", "dispatch did not fail closed on invalid active config");
-    const runCount = countTaskRuns(databasePath, taskId);
+    const dispatchResponse = await requestJson(
+      session,
+      "POST",
+      `/api/v1/tasks/${taskId}/dispatch`,
+      {},
+      202,
+      { "idempotency-key": `plan06-degraded-${taskId}` },
+    );
+    assert.equal(typeof dispatchResponse.requestId, "string");
+    assert.equal(dispatchResponse.taskId, taskId);
+    assert.equal(dispatchResponse.status, "PENDING");
+    assert.equal(dispatchResponse.runId, null);
+    blockedDispatches.push({ taskId, requestId: dispatchResponse.requestId });
+  }
+
+  // Дайте production worker и одному safety tick пройти; недоступный Project Config
+  // должен оставить durable intent в очереди и не создавать AgentRun.
+  await new Promise((resolveDelay) => setTimeout(resolveDelay, 5_250));
+  for (const item of blockedDispatches) {
+    const dispatchRequest = await requestJson(
+      session,
+      "GET",
+      `/api/v1/tasks/${item.taskId}/dispatch-requests/${item.requestId}`,
+      undefined,
+      200,
+    );
+    assert.equal(dispatchRequest.status, "PENDING", "degraded Project Config must keep its durable dispatch intent pending");
+    assert.equal(dispatchRequest.runId, null, "blocked dispatch request unexpectedly acquired a Run");
+    assert.equal(dispatchRequest.failureCode, null, "blocked dispatch request was incorrectly terminalized");
+    const runCount = countTaskRuns(databasePath, item.taskId);
     assert.equal(runCount, 0, "dispatch created an Agent Run for a degraded Project");
   }
   await terminateProductionProcess(server, password);
@@ -641,7 +669,7 @@ async function getProjectConfig(session, projectId) {
   return requestJson(session, "GET", `/api/v1/projects/${projectId}/config`, undefined, 200);
 }
 
-async function requestJson(session, method, path, body, expectedStatus) {
+async function requestJson(session, method, path, body, expectedStatus, extraHeaders = {}) {
   const mutating = method !== "GET" && method !== "HEAD";
   const headers = { cookie: session.cookie };
   if (mutating) {
@@ -649,6 +677,7 @@ async function requestJson(session, method, path, body, expectedStatus) {
     headers["x-csrf-token"] = session.csrfToken;
     headers["content-type"] = "application/json";
   }
+  Object.assign(headers, extraHeaders);
   const response = await globalThis.fetch(`${session.origin}${path}`, {
     method,
     headers,

@@ -255,6 +255,8 @@ jobs:
       - name: Install dependencies
         id: install-dependencies
         run: pnpm install --frozen-lockfile
+      - name: Install Chromium
+        run: pnpm --dir apps/web exec playwright install ${{ matrix.os == 'ubuntu-latest' && '--with-deps' || '' }} chromium
       - name: Lint
         run: pnpm lint
       - name: Typecheck
@@ -284,7 +286,5 @@ jobs:
         run: exit 1
       - name: Repository integrity
         run: git diff --check
-      - name: Install Chromium
-        run: pnpm --dir apps/web exec playwright install ${{ matrix.os == 'ubuntu-latest' && '--with-deps' || '' }} chromium
       - name: Browser E2E
         run: pnpm --dir apps/web test:e2e

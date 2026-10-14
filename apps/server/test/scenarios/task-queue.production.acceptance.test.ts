@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
+import type { Platform } from "../../src/platform/config/app-config.js";
 import { createSqliteDatabase } from "../../src/platform/database/sqlite-database.js";
 import { runMigrations } from "../../src/platform/database/migrator.js";
 import { loadTestMigrations } from "../helpers/migrations.js";
@@ -65,10 +66,15 @@ describe("production Task queue transaction and handoff", () => {
     await status.set("RECOVERING");
     let completion = new DatabaseCompletionStore(db);
     const starts: string[] = [];
+    const integrationWorkspaces: string[] = [];
     const runtime: AgentRuntime = {
       active: 0, maxActive: 0, calls: [],
       async startRun(run) {
         starts.push(run.id);
+        if (run.role === "integration") {
+          const capability = db.get<{ capability_json: string }>("SELECT capability_json FROM agent_runs WHERE id=$id", { id: run.id })!;
+          integrationWorkspaces.push((JSON.parse(capability.capability_json) as { workspace: string }).workspace);
+        }
         markFakeRunNeverLaunched(db, run.id);
         let commitSha = "a".repeat(40);
         if (run.role === "developer") {
@@ -95,7 +101,8 @@ describe("production Task queue transaction and handoff", () => {
     const bus = new EventBus();
     const dispatcher = new EventDispatcher(db, bus, () => status.get() === "READY");
     new RuntimeOrchestrator(db, workflow, bus, dispatcher, scheduler, runs, () => status.get() === "READY").initialize();
-    const production = createProductionComposition({ database: db, home: resolveOrchestratorHome({ EBB_ORCHESTRATOR_HOME: root }, "win32") });
+    const platform = process.platform as Platform;
+    const production = createProductionComposition({ database: db, home: resolveOrchestratorHome({ EBB_ORCHESTRATOR_HOME: root }, platform) });
     const queue = production.createTaskRunQueue({ scheduler, runs, workflow, status, eventBus: bus });
     const app = createApp({ db, scheduler, runService: runs, status, authService: createTestAuthService() });
     cleanups.push(async () => { await queue.stop(); await app.close(); });
@@ -122,12 +129,12 @@ describe("production Task queue transaction and handoff", () => {
       const newBus = new EventBus();
       const newDispatcher = new EventDispatcher(db, newBus, () => status.get() === "READY");
       new RuntimeOrchestrator(db, newWorkflow, newBus, newDispatcher, newScheduler, newRuns, () => status.get() === "READY").initialize();
-      const newComposition = createProductionComposition({ database: db, home: resolveOrchestratorHome({ EBB_ORCHESTRATOR_HOME: root }, "win32") });
+      const newComposition = createProductionComposition({ database: db, home: resolveOrchestratorHome({ EBB_ORCHESTRATOR_HOME: root }, platform) });
       const newQueue = newComposition.createTaskRunQueue({ scheduler: newScheduler, runs: newRuns, workflow: newWorkflow, status, eventBus: newBus });
       cleanups.push(() => newQueue.stop());
       return { db, scheduler: newScheduler, runs: newRuns, dispatcher: newDispatcher, queue: newQueue };
     }
-    return { db, dbPath, root, scheduler, status, runs, runtime, bus, dispatcher, queue, starts, task, request, count, restart };
+    return { db, dbPath, root, scheduler, status, runs, runtime, bus, dispatcher, queue, starts, integrationWorkspaces, task, request, count, restart };
   }
 
   it("defers RECOVERING and selects only the ordered winner at capacity one", async () => {
@@ -239,6 +246,8 @@ describe("production Task queue transaction and handoff", () => {
     expect(executionErrors).toEqual([]);
     expect(f.db.get<{ status: string }>("SELECT status FROM tasks WHERE id=$id", { id: taskId })?.status).toBe("READY_FOR_MERGE");
     expect(f.db.all<{ role: string }>("SELECT role FROM agent_runs ORDER BY started_at").map(({ role }) => role)).toEqual(["developer", "reviewer", "qa", "integration"]);
+    expect(f.integrationWorkspaces).toHaveLength(1);
+    if (process.platform !== "win32") expect(isAbsolute(f.integrationWorkspaces[0]!)).toBe(true);
     const pendingApprovals = f.db.all<{ id: string; subject_type: string; requested_by: string }>(
       "SELECT id, subject_type, requested_by FROM approvals WHERE subject_id=$id AND type='FINAL_MERGE' AND status='PENDING'",
       { id: taskId },
@@ -304,7 +313,7 @@ describe("production Task queue transaction and handoff", () => {
     const secondDb = createSqliteDatabase(f.dbPath);
     const secondScheduler = new SchedulerService(secondDb);
     const registry = new WorkflowRegistry(); for (const template of Object.values(templates)) registry.register(template);
-    const secondComposition = createProductionComposition({ database: secondDb, home: resolveOrchestratorHome({ EBB_ORCHESTRATOR_HOME: f.root }, "win32") });
+    const secondComposition = createProductionComposition({ database: secondDb, home: resolveOrchestratorHome({ EBB_ORCHESTRATOR_HOME: f.root }, process.platform as Platform) });
     const secondQueue = secondComposition.createTaskRunQueue({ scheduler: secondScheduler, runs: new RunService(secondDb, f.runtime), workflow: new WorkflowEngine(secondDb, registry), status: f.status, eventBus: new EventBus() });
     try {
       await f.status.set("READY"); await Promise.all([f.queue.tick(), secondQueue.tick()]);

@@ -148,8 +148,10 @@ test('production workflow builds the server via pnpm test and keeps stdin smoke 
   const testIndex = stepIndex('Unit and integration tests');
   const followUpIndex = stepIndex('Local-user stdin smoke and web build');
   const harnessIndex = stepIndex('E2E harness contracts');
+  const chromiumIndex = stepIndex('Install Chromium');
   const browserIndex = stepIndex('Browser E2E');
   const followUp = steps[followUpIndex]?.run ?? '';
+  const chromium = steps[chromiumIndex];
 
   assert.equal(steps[testIndex]?.run, 'pnpm test');
   assert.ok(manifest.scripts.test.startsWith('pnpm server:build &&'), 'pnpm test must build the production server');
@@ -158,6 +160,12 @@ test('production workflow builds the server via pnpm test and keeps stdin smoke 
   assert.ok(followUp.includes('node scripts/local-user-stdin-smoke.mjs'), 'workflow must retain local-user stdin smoke');
   assert.ok(followUp.includes('pnpm web:build'), 'workflow must retain web build');
   assert.ok(harnessIndex > followUpIndex, 'E2E harness contracts must follow web build');
+  assert.ok(chromiumIndex >= 0 && chromiumIndex < testIndex, 'Chromium must be installed before unit and integration tests because production acceptance includes browser coverage');
+  assert.equal(
+    chromium?.run,
+    "pnpm --dir apps/web exec playwright install ${{ matrix.os == 'ubuntu-latest' && '--with-deps' || '' }} chromium",
+    'the quality matrix must retain Ubuntu system dependencies and macOS Playwright Chromium installation',
+  );
   assert.ok(browserIndex > harnessIndex, 'browser E2E must follow harness contracts');
 });
 

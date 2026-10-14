@@ -21,7 +21,12 @@ test("Plan 06 Project Config acceptance runs the production server in a disposab
   assert.match(harness, /\/api\/v1\/projects\/\$\{[^}]+\}\/config\/candidates/);
   assert.match(harness, /manifestHash/);
   assert.match(harness, /PENDING_REVIEW/);
-  assert.match(harness, /PROJECT_CONFIG_DEGRADED/);
+  assert.match(harness, /state\.degraded, true/);
+  assert.match(harness, /"idempotency-key": `plan06-degraded-\$\{taskId\}`/);
+  assert.match(harness, /dispatchRequest\.status, "PENDING"/);
+  assert.match(harness, /dispatchRequest\.runId, null/);
+  assert.match(harness, /dispatchResponse\s*=\s*await requestJson\([\s\S]*?\/api\/v1\/tasks\/\$\{taskId\}\/dispatch[\s\S]*?,\s*202\s*,\s*\{\s*"idempotency-key"/);
+  assert.match(harness, /\/api\/v1\/tasks\/\$\{item\.taskId\}\/dispatch-requests\/\$\{item\.requestId\}/);
   assert.match(harness, /runWindowsFailClosedScenario/);
   assert.match(harness, /PROJECT_CONFIG_UNSUPPORTED_PLATFORM/);
   assert.match(harness, /PLAN06_PROJECT_CONFIG_RESTART_ACCEPTANCE=WAIVED \/ NOT RUN/);
