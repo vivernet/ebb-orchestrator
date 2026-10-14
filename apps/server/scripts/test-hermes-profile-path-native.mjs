@@ -22,13 +22,13 @@ function invoke(args) {
   });
   assert.ifError(result.error);
   assert.equal(result.signal, null);
-  assert.equal(result.stderr, "");
   return result;
 }
 
 function identity(filename) {
   const result = invoke(["verify-host-path", "file", filename]);
   assert.equal(result.status, 0);
+  assert.equal(result.stderr, "");
   const value = JSON.parse(result.stdout);
   assert.deepEqual(Object.keys(value).sort(), ["fileId", "kind", "path", "status", "volumeSerial"]);
   assert.equal(value.status, "SAFE_PATH");
@@ -59,15 +59,21 @@ try {
   writeFileSync(join(target, "nested.txt"), "target content");
   const junction = join(fixture, "junction");
   symlinkSync(target, junction, "junction");
-  for (const args of [
-    ["verify-host-path", "file", fixture],
-    ["verify-host-path", "file", join(fixture, "missing.txt")],
-    ["verify-host-path", "file", join(junction, "nested.txt")],
-    ["verify-host-path", "file", `${fixture}\\target\\..\\identity проба.txt`],
+  for (const [args, expectedDiagnostic] of [
+    [["verify-host-path", "file", fixture], ""],
+    [["verify-host-path", "file", join(fixture, "missing.txt")], ""],
+    [["verify-host-path", "file", join(junction, "nested.txt")], "HERMES_PATH_IDENTITY_EXPECTED_PATH_MISMATCH"],
+    [["verify-host-path", "file", `${fixture}\\target\\..\\identity проба.txt`], ""],
   ]) {
     const result = invoke(args);
     assert.notEqual(result.status, 0);
     assert.equal(result.stdout, "");
+    if (expectedDiagnostic) {
+      assert.match(result.stderr, new RegExp(`^${expectedDiagnostic}\\r?\\n$`, "u"));
+      assert.equal(result.stderr.includes(fixture), false);
+    } else {
+      assert.equal(result.stderr, "");
+    }
   }
   for (const args of [
     [], ["verify-host-path", "directory", fixture],

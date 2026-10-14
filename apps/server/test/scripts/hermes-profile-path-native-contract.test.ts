@@ -17,6 +17,10 @@ const linuxLauncherSource = readFileSync(
   new URL("../../native/linux-hermes-launcher/ebb-linux-hermes-launcher.cpp", import.meta.url),
   "utf8",
 );
+const hermesProfilePathHelperSource = readFileSync(
+  new URL("../../native/hermes-profile-path/ebb-hermes-profile-path.cpp", import.meta.url),
+  "utf8",
+);
 
 describe("direct installed Hermes launch contract", () => {
   it("uses the shared Hermes home and binds each launch ticket to its Run", () => {
@@ -41,5 +45,20 @@ describe("direct installed Hermes launch contract", () => {
     expect(linuxLauncherSource).toContain("PR_SET_CHILD_SUBREAPER");
     expect(linuxLauncherSource).toContain("forwardSignal");
     expect(linuxLauncherSource).not.toMatch(/snapshot|projection|AppArmor|source-cache/iu);
+  });
+
+  it("reports sanitized stages for Windows file identity failures", () => {
+    expect(hermesProfilePathHelperSource).toContain("kPathFileIdQueryFailed = 34");
+    expect(hermesProfilePathHelperSource).toContain("kPathFinalPathQueryFailed = 35");
+    expect(hermesProfilePathHelperSource).toContain("kPathExpectedPathMismatch = 36");
+    expect(hermesProfilePathHelperSource).toContain("kPathUtf8ConversionFailed = 37");
+    expect(hermesProfilePathHelperSource).toContain('"HERMES_PATH_IDENTITY_" << stage');
+    expect(hermesProfilePathHelperSource).toContain('reportIdentityFailure("FILE_ID_QUERY_FAILED", error, true)');
+    expect(hermesProfilePathHelperSource).toContain('reportIdentityFailure("FINAL_PATH_QUERY_FAILED", finalPathError, true)');
+    expect(hermesProfilePathHelperSource).toContain('reportIdentityFailure("EXPECTED_PATH_MISMATCH")');
+    expect(hermesProfilePathHelperSource).toContain('reportIdentityFailure("UTF8_CONVERSION_FAILED")');
+    expect(hermesProfilePathHelperSource).toMatch(/GetFinalPathNameByHandleW\([\s\S]*?\);\s*const DWORD finalPathError = GetLastError\(\);/u);
+    const diagnosticReporter = /void reportIdentityFailure\([\s\S]*?\n\}/u.exec(hermesProfilePathHelperSource)?.[0] ?? "";
+    expect(diagnosticReporter).not.toMatch(/filename|expectedPath|canonicalPath/iu);
   });
 });

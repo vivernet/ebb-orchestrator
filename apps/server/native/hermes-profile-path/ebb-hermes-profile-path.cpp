@@ -10,10 +10,19 @@
 
 namespace {
 constexpr int kInvalidInput = 2;
-constexpr int kPathIdentityUnavailable = 34;
+constexpr int kPathFileIdQueryFailed = 34;
+constexpr int kPathFinalPathQueryFailed = 35;
+constexpr int kPathExpectedPathMismatch = 36;
+constexpr int kPathUtf8ConversionFailed = 37;
 constexpr int kPathTargetOpenFailed = 40;
 constexpr int kPathTargetUnsafe = 41;
 constexpr int kPathComponentOpenFailed = 40;
+
+void reportIdentityFailure(const char* stage, DWORD error = ERROR_SUCCESS, bool includeError = false) {
+  std::cerr << "HERMES_PATH_IDENTITY_" << stage;
+  if (includeError) std::cerr << ":WIN32_ERROR_" << error;
+  std::cerr << '\n';
+}
 
 std::string narrowUtf8(const std::wstring& value) {
   const int needed = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, value.data(),
@@ -70,14 +79,32 @@ std::string jsonEscape(const std::string& value) {
 int printFileIdentity(HANDLE handle, const std::wstring& expectedPath) {
   FILE_ID_INFO identity{};
   std::array<wchar_t, 32768> finalPath{};
-  if (!GetFileInformationByHandleEx(handle, FileIdInfo, &identity, sizeof(identity))) return kPathIdentityUnavailable;
+  if (!GetFileInformationByHandleEx(handle, FileIdInfo, &identity, sizeof(identity))) {
+    const DWORD error = GetLastError();
+    reportIdentityFailure("FILE_ID_QUERY_FAILED", error, true);
+    return kPathFileIdQueryFailed;
+  }
   const DWORD length = GetFinalPathNameByHandleW(handle, finalPath.data(), static_cast<DWORD>(finalPath.size()),
     FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
-  if (length == 0 || length >= finalPath.size()) return kPathIdentityUnavailable;
+  const DWORD finalPathError = GetLastError();
+  if (length == 0) {
+    reportIdentityFailure("FINAL_PATH_QUERY_FAILED", finalPathError, true);
+    return kPathFinalPathQueryFailed;
+  }
+  if (length >= finalPath.size()) {
+    reportIdentityFailure("FINAL_PATH_BUFFER_TOO_SMALL");
+    return kPathFinalPathQueryFailed;
+  }
   if (CompareStringOrdinal(finalPath.data(), static_cast<int>(length), expectedPath.c_str(),
-      static_cast<int>(expectedPath.size()), TRUE) != CSTR_EQUAL) return kPathIdentityUnavailable;
+      static_cast<int>(expectedPath.size()), TRUE) != CSTR_EQUAL) {
+    reportIdentityFailure("EXPECTED_PATH_MISMATCH");
+    return kPathExpectedPathMismatch;
+  }
   const std::string canonicalPath = narrowUtf8(std::wstring(finalPath.data(), length));
-  if (canonicalPath.empty()) return kPathIdentityUnavailable;
+  if (canonicalPath.empty()) {
+    reportIdentityFailure("UTF8_CONVERSION_FAILED");
+    return kPathUtf8ConversionFailed;
+  }
   char volume[17]{};
   std::snprintf(volume, sizeof(volume), "%016llx", static_cast<unsigned long long>(identity.VolumeSerialNumber));
   static constexpr char hex[] = "0123456789abcdef";
