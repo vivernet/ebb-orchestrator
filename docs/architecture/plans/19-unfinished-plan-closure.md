@@ -221,6 +221,12 @@ Expected: все роли завершаются подтверждённым st
 
 **Blocked when:** provider вызов неуспешен/не завершён или роль не прошла. В evidence сохранить `FAIL / NOT VERIFIED` с marker и cleanup status.
 
+**Fresh acceptance evidence (2026-10-14):** На HEAD `089def63872e9a08ce1c87aac45d089d212a464d` точная opt-in команда `RUN_HERMES_E2E=1 pnpm --filter @ebb-orchestrator/server exec vitest run test/e2e/v1-autonomous-task.test.ts -t "runs the real Hermes managed-worktree acceptance when opted in"` завершилась exit 0: 1 passed, 18 skipped, 367.89 s. Настроенный Hermes реально завершил Developer → Reviewer → QA → Integration; проверены `submit_result`, QA/Integration `project.test`, provenance, ожидание final merge approval, одобрение test actor, fixture merge и teardown. Это закрывает live acceptance для Plan19 Task4 на указанном SHA; статусы Plan04 и checklist меняются только в Task9 после whole-plan review.
+
+После этого была одна диагностическая попытка с временно изменённым E2E harness, чтобы дополнительно проверить approval projection. Она завершилась до Integration на QA evidence assertion; требуемые health/test evidence факты не были распознаны. Попытка не доказывает поломку продукта или причину вариативности QA результата, поэтому её не засчитываем как acceptance и Hermes повторно без точечной причины не запускали. Изменения E2E harness удалены; отдельная provider-free production queue acceptance покрывает `READY_FOR_MERGE` → persisted pending `FINAL_MERGE` → одобрение → `MERGING`.
+
+**Fresh gates (2026-10-14):** `pnpm lint`, `pnpm typecheck`, scoped standalone workflow suite 8/8, production Task queue acceptance 20/20 и полный `pnpm test` завершились exit 0. Полный набор: server 160 файлов (157 passed / 3 skipped), 1,896 passed / 29 skipped; browser E2E 1/1 с закрытием Playwright/frontend; root Node scripts 71/71. Независимый review production Task approval acceptance — `APPROVED`.
+
 ### Task 5: Реализовать и принять Coordinator request → Epic recovery по Plan05
 
 **Depends on:** Task 0 с принятым Proposal 06; Task 3 для real Hermes части; Task 6 Project Config command wiring before the next real Request→Epic acceptance.

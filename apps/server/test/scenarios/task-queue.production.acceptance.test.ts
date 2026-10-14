@@ -13,6 +13,7 @@ import { createProductionComposition } from "../../src/platform/home/production-
 import { resolveOrchestratorHome } from "../../src/platform/home/orchestrator-home.js";
 import { StatusTracker } from "../../src/platform/process/system-lifecycle.js";
 import { SchedulerService } from "../../src/modules/scheduler/scheduler-service.js";
+import { ApprovalService } from "../../src/modules/approvals/approval-service.js";
 import { WorkflowEngine } from "../../src/modules/workflow/workflow-engine.js";
 import { WorkflowRegistry } from "../../src/modules/workflow/workflow-registry.js";
 import { templates } from "../../src/modules/workflow/templates.js";
@@ -225,7 +226,7 @@ describe("production Task queue transaction and handoff", () => {
     expect(f.starts).toHaveLength(1);
   });
 
-  it("runs all standalone roles and leaves exactly one pending FINAL_MERGE", async () => {
+  it("runs all standalone roles and waits for FINAL_MERGE approval before entering MERGING", async () => {
     const f = await setup();
     const executionErrors: string[] = [];
     const execute = f.runs.executeTaskRequestRun.bind(f.runs);
@@ -238,7 +239,16 @@ describe("production Task queue transaction and handoff", () => {
     expect(executionErrors).toEqual([]);
     expect(f.db.get<{ status: string }>("SELECT status FROM tasks WHERE id=$id", { id: taskId })?.status).toBe("READY_FOR_MERGE");
     expect(f.db.all<{ role: string }>("SELECT role FROM agent_runs ORDER BY started_at").map(({ role }) => role)).toEqual(["developer", "reviewer", "qa", "integration"]);
-    expect(f.db.get<{ count: number }>("SELECT count(*) AS count FROM approvals WHERE subject_id=$id AND type='FINAL_MERGE' AND status='PENDING'", { id: taskId })?.count).toBe(1);
+    const pendingApprovals = f.db.all<{ id: string; subject_type: string; requested_by: string }>(
+      "SELECT id, subject_type, requested_by FROM approvals WHERE subject_id=$id AND type='FINAL_MERGE' AND status='PENDING'",
+      { id: taskId },
+    );
+    expect(pendingApprovals).toHaveLength(1);
+    expect(pendingApprovals[0]).toMatchObject({ subject_type: "TASK", requested_by: "runtime-orchestrator" });
+    const approval = new ApprovalService(f.db).approve(pendingApprovals[0]!.id, "test-human", "acceptance approval");
+    expect(approval.status).toBe("APPROVED");
+    await f.dispatcher.dispatchBatch(100);
+    expect(f.db.get<{ status: string }>("SELECT status FROM tasks WHERE id=$id", { id: taskId })?.status).toBe("MERGING");
     expect(f.count("run_completion_projections")).toBe(4);
     const reviewer = f.db.get<{ prompt: string }>("SELECT prompt FROM agent_runs WHERE role='reviewer'")!;
     expect(reviewer.prompt).toContain("Independently review"); expect(reviewer.prompt).toContain("task.txt");
