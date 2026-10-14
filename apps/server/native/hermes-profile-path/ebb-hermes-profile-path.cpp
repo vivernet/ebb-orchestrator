@@ -85,6 +85,31 @@ bool hasExpectedAttributes(HANDLE handle, bool directory) {
     ((info.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) == directory;
 }
 
+bool normalizedFinalPath(HANDLE handle, std::wstring& normalized) {
+  std::array<wchar_t, 32768> finalPath{};
+  const DWORD length = GetFinalPathNameByHandleW(handle, finalPath.data(), static_cast<DWORD>(finalPath.size()),
+    FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+  if (length == 0 || length >= finalPath.size()) return false;
+  return normalizeDosDrivePath(std::wstring(finalPath.data(), length), normalized);
+}
+
+bool isDirectChildPath(const std::wstring& parent, const std::wstring& child) {
+  if (child.size() <= parent.size() || CompareStringOrdinal(parent.c_str(), static_cast<int>(parent.size()),
+      child.c_str(), static_cast<int>(parent.size()), TRUE) != CSTR_EQUAL) return false;
+  size_t componentStart = parent.size();
+  if (parent.back() != L'\\') {
+    if (child[componentStart] != L'\\') return false;
+    ++componentStart;
+  }
+  return componentStart < child.size() && child.find(L'\\', componentStart) == std::wstring::npos;
+}
+
+bool isReparsePoint(HANDLE handle) {
+  FILE_ATTRIBUTE_TAG_INFO info{};
+  return GetFileInformationByHandleEx(handle, FileAttributeTagInfo, &info, sizeof(info)) != 0 &&
+    (info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+}
+
 std::string jsonEscape(const std::string& value) {
   std::string result;
   static constexpr char hex[] = "0123456789abcdef";
@@ -101,7 +126,7 @@ std::string jsonEscape(const std::string& value) {
   return result;
 }
 
-int printFileIdentity(HANDLE handle, const std::wstring& expectedPath) {
+int printFileIdentity(HANDLE handle, const std::wstring& expectedPath, const std::wstring& verifiedFinalPath) {
   FILE_ID_INFO identity{};
   std::array<wchar_t, 32768> finalPath{};
   if (!GetFileInformationByHandleEx(handle, FileIdInfo, &identity, sizeof(identity))) {
@@ -122,6 +147,7 @@ int printFileIdentity(HANDLE handle, const std::wstring& expectedPath) {
   }
   std::wstring normalizedFinalPath;
   std::wstring normalizedExpectedPath;
+  std::wstring normalizedVerifiedFinalPath;
   if (!normalizeDosDrivePath(std::wstring(finalPath.data(), length), normalizedFinalPath)) {
     reportIdentityFailure("FINAL_PATH_FORMAT_UNSUPPORTED");
     return kPathExpectedPathMismatch;
@@ -130,15 +156,19 @@ int printFileIdentity(HANDLE handle, const std::wstring& expectedPath) {
     reportIdentityFailure("EXPECTED_PATH_FORMAT_UNSUPPORTED");
     return kPathExpectedPathMismatch;
   }
+  if (!normalizeDosDrivePath(verifiedFinalPath, normalizedVerifiedFinalPath)) {
+    reportIdentityFailure("FINAL_PATH_FORMAT_UNSUPPORTED");
+    return kPathExpectedPathMismatch;
+  }
   if (CompareStringOrdinal(normalizedFinalPath.c_str(), static_cast<int>(normalizedFinalPath.size()),
-      normalizedExpectedPath.c_str(), static_cast<int>(normalizedExpectedPath.size()), TRUE) != CSTR_EQUAL) {
+      normalizedVerifiedFinalPath.c_str(), static_cast<int>(normalizedVerifiedFinalPath.size()), TRUE) != CSTR_EQUAL) {
     const bool driveMatches = CompareStringOrdinal(normalizedFinalPath.c_str(), 2,
-      normalizedExpectedPath.c_str(), 2, TRUE) == CSTR_EQUAL;
+      normalizedVerifiedFinalPath.c_str(), 2, TRUE) == CSTR_EQUAL;
     reportIdentityFailure(driveMatches ? "SAME_DRIVE_PATH_MISMATCH" : "DRIVE_MISMATCH");
     return kPathExpectedPathMismatch;
   }
-  const std::string canonicalPath = narrowUtf8(normalizedFinalPath);
-  if (canonicalPath.empty()) {
+  const std::string reportedPath = narrowUtf8(normalizedExpectedPath);
+  if (reportedPath.empty()) {
     reportIdentityFailure("UTF8_CONVERSION_FAILED");
     return kPathUtf8ConversionFailed;
   }
@@ -150,7 +180,7 @@ int printFileIdentity(HANDLE handle, const std::wstring& expectedPath) {
     fileId.push_back(hex[byte >> 4]);
     fileId.push_back(hex[byte & 0x0f]);
   }
-  std::cout << "{\"status\":\"SAFE_PATH\",\"kind\":\"file\",\"path\":\"" << jsonEscape(canonicalPath)
+  std::cout << "{\"status\":\"SAFE_PATH\",\"kind\":\"file\",\"path\":\"" << jsonEscape(reportedPath)
     << "\",\"volumeSerial\":\"" << volume << "\",\"fileId\":\"" << fileId << "\"}\n";
   return 0;
 }
@@ -164,13 +194,46 @@ int verifyHostFile(const std::wstring& path) {
     if (expectedPath.back() != L'\\') expectedPath.push_back(L'\\');
     expectedPath.append(component);
   }
-  HANDLE current = CreateFileW(path.c_str(), FILE_READ_ATTRIBUTES,
-    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
-    FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
-  if (current == INVALID_HANDLE_VALUE) return kPathTargetOpenFailed;
-  if (!hasExpectedAttributes(current, false)) { CloseHandle(current); return kPathTargetUnsafe; }
-  const int result = printFileIdentity(current, expectedPath);
-  CloseHandle(current);
+  std::vector<HANDLE> handles;
+  std::wstring previousFinalPath = driveRoot.substr(4);
+  for (size_t index = 0; index < components.size(); ++index) {
+    std::wstring currentPath = L"\\\\?\\" + previousFinalPath;
+    if (currentPath.back() != L'\\') currentPath.push_back(L'\\');
+    currentPath.append(components[index]);
+    const bool directory = index + 1 < components.size();
+    HANDLE current = CreateFileW(currentPath.c_str(), FILE_READ_ATTRIBUTES,
+      FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
+      FILE_FLAG_OPEN_REPARSE_POINT | (directory ? FILE_FLAG_BACKUP_SEMANTICS : 0), nullptr);
+    if (current == INVALID_HANDLE_VALUE) {
+      for (HANDLE handle : handles) CloseHandle(handle);
+      return kPathComponentOpenFailed;
+    }
+    handles.push_back(current);
+    if (!hasExpectedAttributes(current, directory)) {
+      const bool reparse = isReparsePoint(current);
+      for (HANDLE handle : handles) CloseHandle(handle);
+      if (reparse) {
+        reportIdentityFailure("SAME_DRIVE_PATH_MISMATCH");
+        return kPathExpectedPathMismatch;
+      }
+      return kPathTargetUnsafe;
+    }
+    std::wstring currentFinalPath;
+    if (!normalizedFinalPath(current, currentFinalPath)) {
+      const DWORD error = GetLastError();
+      for (HANDLE handle : handles) CloseHandle(handle);
+      reportIdentityFailure("FINAL_PATH_QUERY_FAILED", error, true);
+      return kPathFinalPathQueryFailed;
+    }
+    if (!isDirectChildPath(previousFinalPath, currentFinalPath)) {
+      for (HANDLE handle : handles) CloseHandle(handle);
+      reportIdentityFailure("SAME_DRIVE_PATH_MISMATCH");
+      return kPathExpectedPathMismatch;
+    }
+    previousFinalPath = std::move(currentFinalPath);
+  }
+  const int result = printFileIdentity(handles.back(), expectedPath, previousFinalPath);
+  for (HANDLE handle : handles) CloseHandle(handle);
   return result;
 }
 } // namespace

@@ -25,6 +25,20 @@ function invoke(args) {
   return result;
 }
 
+function shortPath(filename) {
+  const scriptPath = join(fixture, "get-short-path.cmd");
+  writeFileSync(scriptPath, '@echo off\r\nfor %%I in ("%EBB_IDENTITY_TEST_PATH%") do @echo %%~sI\r\n');
+  const result = spawnSync("cmd.exe", ["/d", "/c", scriptPath], {
+    shell: false, windowsHide: true, encoding: "utf8", timeout: 5_000, maxBuffer: 2_048,
+    env: { ...process.env, EBB_IDENTITY_TEST_PATH: filename },
+  });
+  assert.ifError(result.error);
+  assert.equal(result.status, 0);
+  const value = result.stdout.trim();
+  assert.notEqual(value, "");
+  return value;
+}
+
 function safeIdentityDiagnostic(stderr) {
   const match = /^HERMES_PATH_IDENTITY_(FINAL_PATH_FORMAT_UNSUPPORTED|EXPECTED_PATH_FORMAT_UNSUPPORTED|DRIVE_MISMATCH|SAME_DRIVE_PATH_MISMATCH)$/u.exec(stderr.trim());
   return match ? match[1] : "UNCLASSIFIED_FAILURE";
@@ -52,6 +66,10 @@ try {
   const file = join(fixture, "identity проба.txt");
   writeFileSync(file, "first content");
   const original = identity(file);
+  const shortFilePath = shortPath(file);
+  if (shortFilePath.toLowerCase() !== file.toLowerCase()) {
+    assert.deepEqual(identity(shortFilePath), original);
+  }
   const extendedFilePath = `\\\\?\\${file}`;
   assert.deepEqual(identity(extendedFilePath), original);
   assert.deepEqual(identity(file.toLowerCase()), original);
