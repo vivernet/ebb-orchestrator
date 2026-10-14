@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Database, DatabaseTx } from "../../platform/database/database.js";
 
 export type SchedulerRunRequestStatus = "PENDING" | "DISPATCHED" | "FAILED";
-export type SchedulerRunRequestOrigin = "TASK_API" | "TASK_RECOVERY";
+export type SchedulerRunRequestOrigin = "TASK_API" | "TASK_RECOVERY" | "TASK_STAGE";
 
 export interface SchedulerRunRequest {
   readonly id: string;
@@ -87,6 +87,27 @@ export class SchedulerRunRequestRepository {
     );
     return row ? project(row) : undefined;
   }
+
+  /** Читает очередь из caller snapshot, не изменяя request lifecycle. */
+  pending(source: DatabaseTx = this.db): SchedulerRunRequest[] {
+    return source.all<SchedulerRunRequestRow>("SELECT * FROM scheduler_run_requests WHERE status='PENDING' ORDER BY created_at,id").map(project);
+  }
+
+  /** Завершает выбранный request вместе с Run/reservation/outbox в одной transaction. */
+  dispatchInTransaction(tx: DatabaseTx, requestId: string, runId: string): void {
+    tx.run("UPDATE scheduler_run_requests SET status='DISPATCHED',run_id=$runId,updated_at=$now WHERE id=$id AND status='PENDING'", {
+      id: requestId, runId, now: this.clock().toISOString(),
+    });
+    if (tx.get<{ changes: number }>("SELECT changes() AS changes")?.changes !== 1) throw new Error("RUN_REQUEST_CLAIM_CONFLICT");
+  }
+
+  /** Терминализирует только детерминированную integrity failure; raw exception не сохраняется. */
+  fail(requestId: string, failureCode: string): void {
+    if (!/^RUN_REQUEST_[A-Z_]{1,80}$/.test(failureCode)) throw new Error("RUN_REQUEST_FAILURE_CODE_INVALID");
+    this.db.run("UPDATE scheduler_run_requests SET status='FAILED',failure_code=$code,updated_at=$now WHERE id=$id AND status='PENDING'", {
+      id: requestId, code: failureCode, now: this.clock().toISOString(),
+    });
+  }
 }
 
 function validateInput(input: EnqueueSchedulerRunRequest): void {
@@ -95,7 +116,7 @@ function validateInput(input: EnqueueSchedulerRunRequest): void {
   })) {
     if (typeof value !== "string" || value.trim() === "") throw new Error(`RUN_REQUEST_${name.toUpperCase()}_INVALID`);
   }
-  if (input.originType !== "TASK_API" && input.originType !== "TASK_RECOVERY") throw new Error("RUN_REQUEST_ORIGIN_INVALID");
+  if (input.originType !== "TASK_API" && input.originType !== "TASK_RECOVERY" && input.originType !== "TASK_STAGE") throw new Error("RUN_REQUEST_ORIGIN_INVALID");
 }
 
 function samePayload(row: SchedulerRunRequestRow, input: EnqueueSchedulerRunRequest): boolean {

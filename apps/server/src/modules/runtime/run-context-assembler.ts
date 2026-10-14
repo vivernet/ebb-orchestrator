@@ -308,8 +308,16 @@ function readEpic(tx: DatabaseTx, epicId: string, projectId: string): WorkRow | 
 
 function parsePersistedContract(value: unknown): PersistedWorkTaskContractV1 {
   const parsed = parsePersistedContextJsonV1(typeof value === "string" ? value : "");
-  assertExactObject(parsed, ["version", "goal", "context", ...CONTRACT_ARRAYS], "persisted Work Task Contract");
-  const record = parsed as unknown as PersistedWorkTaskContractV1;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new TypeError("Persisted Work Task Contract must be an object.");
+  const { category, priority, ...canonical } = parsed as Record<string, unknown>;
+  if (category !== undefined && (typeof category !== "string" || !["integration", "reviewer", "qa", "rework", "new-development", "optional"].includes(category))) {
+    throw new TypeError("Persisted Task scheduler category is invalid.");
+  }
+  if (priority !== undefined && (typeof priority !== "string" || !["Critical", "High", "Normal", "Low"].includes(priority))) {
+    throw new TypeError("Persisted Task scheduler priority is invalid.");
+  }
+  assertExactObject(canonical, ["version", "goal", "context", ...CONTRACT_ARRAYS], "persisted Work Task Contract");
+  const record = canonical as unknown as PersistedWorkTaskContractV1;
   if (!Number.isSafeInteger(record.version) || record.version < 1) throw new TypeError("Persisted Work Task Contract version is invalid.");
   assertNonEmptyString(record.goal, "contract.goal");
   assertString(record.context, "contract.context");

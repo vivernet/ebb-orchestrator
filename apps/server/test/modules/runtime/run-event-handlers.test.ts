@@ -5,148 +5,62 @@ import type { SchedulerService } from "../../../src/modules/scheduler/scheduler-
 import type { RunService } from "../../../src/modules/runtime/run-service.js";
 import { RuntimeEventHandlers } from "../../../src/modules/runtime/run-event-handlers.js";
 
-describe("RuntimeEventHandlers runtime dispatch", () => {
-  function setup() {
-    const worktree = { id: "task-1", repo_path: "C:/repo", path: "C:/worktree/task-1", branch: "task/task-1", created_at: "now", removed_at: null };
-    const db = {
-      exec: vi.fn(),
-      get: vi.fn((sql: string) => sql.includes("FROM tasks")
-        ? { id: "task-1", status: "READY", project_id: "project-1", epic_id: null }
-        : sql.includes("FROM worktrees") ? worktree
-          : sql.includes("FROM git_operations") ? { target_ref: "HEAD" } : undefined),
-    } as unknown as Database;
+describe("RuntimeEventHandlers committed Task handoff", () => {
+  function setup(role = "developer", status = "STARTED") {
+    const record = { task_id: "task-1", role, status, output: status === "COMPLETED" ? "stored-outcome" : null };
+    const db = { get: vi.fn(() => record) } as unknown as Database;
     const workflow = {} as WorkflowEngine;
-    const releaseTaskMock = vi.fn();
-    const scheduler = {
-      assertProjectDispatchable: vi.fn(),
-      dispatchTask: vi.fn(),
-      releaseTask: releaseTaskMock,
-    } as unknown as SchedulerService;
-    const run = { id: "run-1", model: "test-model" };
-    const runService = {
-      prepareRun: vi.fn().mockReturnValue(run),
-      prepareRunWithHermesPreflight: vi.fn().mockResolvedValue(run),
-      executePreparedRun: vi.fn().mockResolvedValue({
-        run,
-        outcome: { success: true, exitCode: 0, output: "accepted", diagnostics: { runId: "run-1" } },
-      }),
-      failPreparedRun: vi.fn().mockReturnValue(true),
-    } as unknown as RunService;
-    const git = { run: vi.fn(async (_path: string, args: string[]) => ({
-      exitCode: 0, stdout: args[0] === "symbolic-ref" ? worktree.branch : args[0] === "diff" ? "fixture diff" : "a".repeat(40), stderr: "",
-    })) };
-    const handlers = new RuntimeEventHandlers(db, workflow, scheduler, runService, git);
-    vi.spyOn(handlers, "handleRuntimeCompletion").mockImplementation(() => undefined);
-    return { db, workflow, scheduler, runService, handlers, git, releaseTaskMock };
+    const scheduler = { getRunRequest: vi.fn((taskId: string, requestId: string) => taskId === "task-1" && requestId === "request-1"
+      ? { id: requestId, taskId, role, status: "DISPATCHED", runId: "run-1" } : undefined), dispatchTask: vi.fn() } as unknown as SchedulerService;
+    const runService = { executeTaskRequestRun: vi.fn().mockResolvedValue({ run: { id: "run-1" }, outcome: { diagnostics: { runId: "run-1" } } }),
+      prepareRun: vi.fn(), reconcileTaskIntegrationOutcome: vi.fn() } as unknown as RunService;
+    const handlers = new RuntimeEventHandlers(db, workflow, scheduler, runService);
+    const project = vi.spyOn(handlers, "handleRuntimeCompletion").mockImplementation(() => undefined);
+    const event = { type: "AgentRunRequested", aggregateId: "task-1", payload: { requestId: "request-1", runId: "run-1" } };
+    return { db, scheduler, runService, handlers, project, event, record, workflow };
   }
 
-  it("persists one run identity, binds it to the scheduler reservation, and executes it", async () => {
-    const { scheduler, runService, handlers } = setup();
-
-    await handlers.handleAgentRunRequested({
-      type: "AgentRunRequested",
-      aggregateId: "task-1",
-      payload: { role: "Developer", model: "test-model" },
-    });
-
-    expect(runService.prepareRunWithHermesPreflight).toHaveBeenCalledWith(expect.objectContaining({
-      role: "developer",
-      model: "test-model",
-      taskId: "task-1",
-      epicId: null,
-      contextInput: expect.objectContaining({
-        role: "developer", subject: { type: "TASK", id: "task-1" },
-        execution: expect.objectContaining({ targetHead: "a".repeat(40), targetBranch: "task/task-1" }),
-      }),
-      triggerReason: "runtime-request",
-    }));
-    expect(scheduler.dispatchTask).toHaveBeenCalledWith(
-      "task-1",
-      expect.anything(),
-      expect.any(Function),
-      expect.objectContaining({ runId: "run-1", role: "developer", model: "test-model" }),
-    );
-    expect(runService.executePreparedRun).toHaveBeenCalledWith("run-1");
-    expect(runService.failPreparedRun).not.toHaveBeenCalled();
+  it("executes only the exact committed Run without preparing or direct dispatch", async () => {
+    const f = setup(); await f.handlers.handleAgentRunRequested(f.event);
+    expect(f.runService.executeTaskRequestRun).toHaveBeenCalledWith("request-1", "run-1", "task-1", expect.any(Function));
+    expect(f.runService.prepareRun).not.toHaveBeenCalled();
+    expect(f.scheduler.dispatchTask).not.toHaveBeenCalled();
+    expect(f.project).toHaveBeenCalledTimes(1);
   });
-
-  it("fails the same prepared run and releases its reservation when launch fails", async () => {
-    const { scheduler, runService, handlers } = setup();
-    vi.mocked(runService.executePreparedRun).mockRejectedValueOnce(new Error("launcher unavailable"));
-
-    await expect(handlers.handleAgentRunRequested({
-      type: "AgentRunRequested",
-      aggregateId: "task-1",
-      payload: {},
-    })).rejects.toThrow("launcher unavailable");
-
-    expect(runService.failPreparedRun).toHaveBeenCalledWith("run-1", expect.any(Error));
-    expect(scheduler.releaseTask).toHaveBeenCalledWith("task-1", 0);
+  it("propagates infrastructure failure for durable recovery", async () => {
+    const f = setup(); vi.mocked(f.runService.executeTaskRequestRun).mockRejectedValue(new Error("launcher unavailable"));
+    await expect(f.handlers.handleAgentRunRequested(f.event)).rejects.toThrow("launcher unavailable");
+    expect(f.project).not.toHaveBeenCalled();
   });
-
-  it("keeps an omitted model under the configured Hermes selection", async () => {
-    const { handlers, runService } = setup();
-
-    await handlers.handleAgentRunRequested({
-      type: "AgentRunRequested", aggregateId: "task-1", payload: {},
-    });
-
-    expect(runService.prepareRunWithHermesPreflight).toHaveBeenCalledWith(expect.objectContaining({
-      model: "default",
-      contextInput: expect.objectContaining({
-        versions: expect.objectContaining({ model: "default" }),
-      }),
-    }));
+  it("rejects legacy events without committed request/run identities", async () => {
+    const f = setup(); await expect(f.handlers.handleAgentRunRequested({ ...f.event, payload: { role: "developer" } })).rejects.toThrow("RUN_REQUEST_COMMITTED_IDENTITY_REQUIRED");
+    expect(f.runService.executeTaskRequestRun).not.toHaveBeenCalled();
   });
-
-  it("retains task reservation when launch failure has no persisted stop proof", async () => {
-    const { scheduler, runService, handlers } = setup();
-    vi.mocked(runService.executePreparedRun).mockRejectedValueOnce(new Error("launcher unavailable"));
-    vi.mocked(runService.failPreparedRun).mockReturnValueOnce(false);
-
-    await expect(handlers.handleAgentRunRequested({
-      type: "AgentRunRequested", aggregateId: "task-1", payload: {},
-    })).rejects.toThrow("launcher unavailable");
-
-    expect(runService.failPreparedRun).toHaveBeenCalledWith("run-1", expect.any(Error));
-    expect(scheduler.releaseTask).not.toHaveBeenCalled();
+  it.each(["request-foreign", "run-foreign", "task-foreign", "role-foreign"])("rejects %s identity", async (kind) => {
+    const f = setup();
+    if (kind === "role-foreign") f.record.role = "qa";
+    const event = { ...f.event, aggregateId: kind === "task-foreign" ? "other-task" : f.event.aggregateId,
+      payload: { requestId: kind === "request-foreign" ? "other-request" : "request-1", runId: kind === "run-foreign" ? "other-run" : "run-1" } };
+    await expect(f.handlers.handleAgentRunRequested(event)).rejects.toThrow("RUN_REQUEST_COMMITTED_IDENTITY_MISMATCH");
+    expect(f.runService.executeTaskRequestRun).not.toHaveBeenCalled();
   });
-
-  it("rejects unsupported Task roles before scheduler or Run preparation", async () => {
-    const { scheduler, runService, handlers } = setup();
-
-    await expect(handlers.handleAgentRunRequested({
-      type: "AgentRunRequested", aggregateId: "task-1", payload: { role: "coordinator" },
-    })).rejects.toThrow("TASK_RUN_ROLE_UNSUPPORTED");
-
-    expect(runService.prepareRunWithHermesPreflight).not.toHaveBeenCalled();
-    expect(scheduler.assertProjectDispatchable).not.toHaveBeenCalled();
-    expect(scheduler.dispatchTask).not.toHaveBeenCalled();
+  it("projects stored completed output without invoking runtime", async () => {
+    const f = setup("developer", "COMPLETED"); await f.handlers.handleAgentRunRequested(f.event);
+    expect(f.project).toHaveBeenCalledWith("run-1", expect.objectContaining({ output: "stored-outcome" }));
+    expect(f.runService.executeTaskRequestRun).not.toHaveBeenCalled();
   });
-
-  it("keeps Reviewer as a supported Task role without using Developer transcript", async () => {
-    const { scheduler, runService, handlers } = setup();
-
-    await handlers.handleAgentRunRequested({
-      type: "AgentRunRequested", aggregateId: "task-1", payload: { role: "reviewer", model: "test-model" },
-    });
-
-    const options = vi.mocked(runService.prepareRunWithHermesPreflight).mock.calls[0]?.[0];
-    expect(options).toMatchObject({ role: "reviewer", contextInput: { role: "reviewer", roleInputs: { gitDiff: "fixture diff", checks: [] } } });
-    expect(options?.contextInput?.prompt).toContain("Independently review");
-    expect(options?.contextInput?.prompt).not.toContain("=== DEVELOPER TRANSCRIPT ===");
-    expect(scheduler.dispatchTask).toHaveBeenCalledWith("task-1", expect.anything(), expect.any(Function), expect.objectContaining({ role: "reviewer" }));
+  it.each(["FAILED", "CANCELLED"])("never relaunches terminal %s Run", async (status) => {
+    const f = setup("developer", status); await f.handlers.handleAgentRunRequested(f.event);
+    expect(f.runService.executeTaskRequestRun).not.toHaveBeenCalled();
   });
-
-  it("fails closed without RunService instead of dispatching a legacy unmanifested Run", async () => {
-    const { db, workflow, scheduler } = setup();
-    const handlers = new RuntimeEventHandlers(db, workflow, scheduler);
-
-    await expect(handlers.handleAgentRunRequested({
-      type: "AgentRunRequested", aggregateId: "task-1", payload: { role: "Developer" },
-    })).rejects.toThrow("RUN_PREPARATION_SERVICE_UNAVAILABLE");
-
-    expect(scheduler.assertProjectDispatchable).not.toHaveBeenCalled();
-    expect(scheduler.dispatchTask).not.toHaveBeenCalled();
+  it("retains a selected Reviewer role through matching committed handoff", async () => {
+    const f = setup("reviewer"); await f.handlers.handleAgentRunRequested(f.event);
+    expect(f.runService.executeTaskRequestRun).toHaveBeenCalledTimes(1);
+  });
+  it("fails closed before reading mutable state when lifecycle is not READY", async () => {
+    const f = setup(); const handlers = new RuntimeEventHandlers(f.db, f.workflow, f.scheduler, f.runService, undefined, () => false);
+    await expect(handlers.handleAgentRunRequested(f.event)).resolves.toBe("deferred");
+    expect(f.db.get).not.toHaveBeenCalled();
+    expect(f.runService.executeTaskRequestRun).not.toHaveBeenCalled();
   });
 });

@@ -27,6 +27,9 @@ import type { OrchestratorHomePaths } from "./orchestrator-home.js";
 import { recoverExpiredJobs } from "../jobs/job-repository.js";
 import { preflightRunProcessOwners } from "../../modules/runtime/run-process-owner.js";
 import type { ProjectConfigService } from "../../modules/projects/project-config-service.js";
+import { SchedulerRunRequestWorker } from "../../modules/scheduler/scheduler-run-request-worker.js";
+import type { WorkflowEngine } from "../../modules/workflow/workflow-engine.js";
+import type { EventBus } from "../events/event-bus.js";
 
 /** Зависимости для построения production adapters без старта процессов. */
 export interface ProductionCompositionOptions {
@@ -189,6 +192,13 @@ export function createProductionComposition(options: ProductionCompositionOption
     processScopeSupervisor,
     gitReconciler,
     createStartupReconciliation,
+    /** Создаёт shared production queue без запуска timer/runtime; lifecycle запускает её до READY. */
+    createTaskRunQueue: (dependencies: { scheduler: SchedulerService; runs: RunService; workflow: WorkflowEngine; status: StatusTrackerInterface; eventBus: EventBus }) =>
+      new SchedulerRunRequestWorker({ db: database, scheduler: dependencies.scheduler, runs: dependencies.runs,
+        workflow: dependencies.workflow, isReady: () => dependencies.status.get() === "READY", eventBus: dependencies.eventBus,
+        integrationFactory: (runId) => new IntegrationService({ database, integrationRunId: runId,
+          worktreeDir: join(paths.integrationWorktreeRoot, "standalone"), advanceTargetBranch: false,
+          finalizeRunFailure: (id, error) => dependencies.runs.failPreparedRun(id, error) }) }),
     epicMergeAuthority: createEpicMergeAuthority(database),
   };
 }

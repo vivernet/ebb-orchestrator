@@ -39,8 +39,9 @@ export class RuntimeOrchestrator {
     private readonly dispatcher: EventDispatcher,
     scheduler: SchedulerService,
     runService?: RunService,
+    isReady: () => boolean = () => true,
   ) {
-    this.eventHandlers = new RuntimeEventHandlers(db, workflowEngine, scheduler, runService);
+    this.eventHandlers = new RuntimeEventHandlers(db, workflowEngine, scheduler, runService, undefined, isReady);
   }
 
   /**

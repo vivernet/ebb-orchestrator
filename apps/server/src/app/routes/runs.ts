@@ -5,12 +5,9 @@ import type { SchedulerService } from "../../modules/scheduler/scheduler-service
 import { contextManifestProjectionSchema, type AgentRun } from "@ebb-orchestrator/contracts";
 import type { StartRunOptions } from "../../modules/runtime/run-types.js";
 import type { WorkflowEngine } from "../../modules/workflow/workflow-engine.js";
-import { existsSync, statSync } from "node:fs";
-import { isAbsolute } from "node:path";
 import { WorktreeRepository } from "../../modules/git/worktree-repository.js";
 import type { ArtifactStore } from "../../platform/artifacts/artifact-store.js";
-import { assertSafeGitRef, GitCli } from "../../modules/git/git-cli.js";
-import { createRunContextInput, taskDeveloperPrompt, taskQaPrompt, taskReviewerPrompt } from "../../modules/runtime/run-service.js";
+import { GitCli } from "../../modules/git/git-cli.js";
 import { getContextManifest } from "../../modules/context/context-manifest-repository.js";
 
 const CONTEXT_MANIFEST_ROLES = ["coordinator", "product_manager", "architect", "developer", "reviewer", "qa", "integration"] as const;
@@ -21,6 +18,7 @@ export interface RunCommandService {
   prepareRunWithHermesPreflight?(options: StartRunOptions): Promise<AgentRun>;
   executePreparedRun?(runId: string): Promise<unknown>;
   failPreparedRun?(runId: string, error: unknown): boolean;
+  validateTaskRequestModel?(model: string): void;
 }
 
 export interface RunRouteDeps {
@@ -69,129 +67,35 @@ export async function runRoutes(app: FastifyInstance, deps: RunRouteDeps = {}): 
   app.get("/api/v1/execution", async () => projection.get());
   
   app.post<{ Params: { id: string }; Body: unknown }>("/api/v1/tasks/:id/dispatch", async (request, reply) => {
-    const runService = deps.runService;
-    if (!deps.db || !runService || !runService.prepareRun || !runService.executePreparedRun || !deps.scheduler || !deps.workflow) {
-      return reply.code(503).send({ error: "dispatch service unavailable" });
+    if (!deps.scheduler) return reply.code(503).send({ error: "dispatch service unavailable" });
+    const key = request.headers["idempotency-key"];
+    if (typeof key !== "string" || !/^[\x21-\x7e]{1,256}$/.test(key)) {
+      return reply.code(400).send({ error: { code: "RUN_REQUEST_IDEMPOTENCY_KEY_REQUIRED" } });
     }
-
-    const task = deps.db.get<{ id: string; status: string; epic_id: string | null }>(
-      "SELECT id, status, epic_id FROM tasks WHERE id = $id",
-      { id: request.params.id },
-    );
-    if (!task) return reply.code(404).send({ error: "task not found" });
-    if (task.status !== "READY") {
-      return reply.code(409).send({ error: "task is not READY", status: task.status });
-    }
-
     const options = parseDispatchBody(request.body);
-    if (!options) return reply.code(400).send({ error: "invalid dispatch options" });
-
+    if (!options) return reply.code(400).send({ error: { code: "RUN_REQUEST_OPTIONS_INVALID" } });
     try {
-      const project = deps.db.get<{ project_id: string }>("SELECT project_id FROM tasks WHERE id=$id", { id: task.id });
-      if (!project) return reply.code(404).send({ error: "task not found" });
-      deps.scheduler.assertProjectDispatchable(project.project_id);
+      const accepted = deps.scheduler.enqueueRunRequest({ taskId: request.params.id, ...options,
+        idempotencyKey: key, originType: "TASK_API", originId: `task-api:${request.params.id}` }, () => deps.runService?.validateTaskRequestModel?.(options.model));
+      return reply.code(202).send(dispatchProjection(accepted));
     } catch (error) {
-      const code = error instanceof Error ? error.message : "PROJECT_NOT_ACTIVE";
-      if (code === "ONBOARDING_NOT_ACTIVE" || code === "PROJECT_NOT_ACTIVE" || code === "PROJECT_CONFIG_DEGRADED") return reply.code(409).send({ contractVersion: 1, error: { code, message: code === "ONBOARDING_NOT_ACTIVE" ? "Онбординг проекта не активирован" : code === "PROJECT_CONFIG_DEGRADED" ? "Конфигурация проекта требует восстановления" : "Проект не активен" } });
-      return reply.code(409).send({ error: "dispatch rejected" });
+      const code = error instanceof Error ? error.message : "RUN_REQUEST_UNAVAILABLE";
+      if (code === "HERMES_MODEL_OVERRIDE_UNSUPPORTED") return reply.code(400).send({ error: { code, message: "Модель выбирается в Hermes. Для запуска используйте model=default." } });
+      if (code === "RUN_REQUEST_TASK_NOT_READY") return reply.code(409).send({ error: { code } });
+      if (code === "RUN_REQUEST_EPIC_TASK_UNSUPPORTED") return reply.code(409).send({ error: { code } });
+      if (code === "RUN_REQUEST_TASK_NOT_FOUND") return reply.code(404).send({ error: { code } });
+      if (code === "RUN_REQUEST_IDEMPOTENCY_CONFLICT" || code === "RUN_REQUEST_ALREADY_PENDING") return reply.code(409).send({ error: { code } });
+      return reply.code(503).send({ error: { code: "RUN_REQUEST_UNAVAILABLE" } });
     }
-
-    // Выполняет соответствующую проверку или действие согласно контракту.
-    const worktree = (deps.worktreeRepository ?? new WorktreeRepository(deps.db)).findTaskWorkspace(task.id);
-    if (!worktree || !isAbsolute(worktree.path) || !existsSync(worktree.path) || !statIsDirectory(worktree.path)) {
-      return reply.code(409).send({ error: "managed task workspace is required" });
-    }
-
-    let targetHead: string;
-    let actualBranch: string;
-    try {
-      const git = deps.git ?? new GitCli();
-      targetHead = (await git.run(worktree.path, ["rev-parse", "--verify", "--end-of-options", "HEAD^{commit}"])).stdout.trim();
-      actualBranch = (await git.run(worktree.path, ["symbolic-ref", "--quiet", "--short", "HEAD"])).stdout.trim();
-      if (!/^[a-f0-9]{40}$/i.test(targetHead) || actualBranch !== worktree.branch) throw new Error("TASK_WORKTREE_SNAPSHOT_UNAVAILABLE");
-    } catch {
-      return reply.code(409).send({ error: "managed task workspace snapshot is unavailable" });
-    }
-
-    let roleInputs: unknown;
-    let prompt: string;
-    try {
-      if (options.role === "developer") {
-        prompt = taskDeveloperPrompt();
-      } else if (options.role === "reviewer") {
-        const operation = deps.db.get<{ target_ref: string | null }>(
-          `SELECT target_ref FROM git_operations WHERE type='CREATE_WORKTREE' AND status='VERIFIED'
-             AND repo_path=$repoPath AND branch_name=$branch AND worktree_id=$taskId ORDER BY verified_at DESC LIMIT 1`,
-          { repoPath: worktree.repoPath, branch: worktree.branch, taskId: task.id },
-        );
-        if (!operation?.target_ref) throw new Error("TASK_REVIEW_BASE_UNAVAILABLE");
-        assertSafeGitRef(operation.target_ref);
-        const gitDiff = (await (deps.git ?? new GitCli()).run(worktree.path, [
-          "diff", "--no-ext-diff", "--no-textconv", `${operation.target_ref}...HEAD`, "--",
-        ])).stdout;
-        roleInputs = { gitDiff, checks: [] };
-        prompt = taskReviewerPrompt();
-      } else if (options.role === "qa") {
-        roleInputs = { environment: `Managed task worktree branch ${actualBranch} at target SHA ${targetHead} on ${process.platform}.` };
-        prompt = taskQaPrompt();
-      } else {
-        throw new Error("TASK_INTEGRATION_REQUIRES_PREPARED_ATTEMPT");
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "TASK_ROLE_INPUT_UNAVAILABLE";
-      return reply.code(409).send({ error: message });
-    }
-
-    let run: AgentRun | undefined;
-    try {
-      const runOptions: StartRunOptions = {
-        role: options.role,
-        model: options.model,
-        taskId: task.id,
-        epicId: task.epic_id,
-        triggerReason: "runtime-request",
-        contextVersion: "runtime-request-v1",
-        outputSchemaVersion: "1",
-        capability: { workspace: worktree.path },
-      };
-      const preparedOptions: StartRunOptions = {
-        ...runOptions,
-        contextInput: createRunContextInput(runOptions, {
-          prompt,
-          ...(roleInputs !== undefined ? { roleInputs } : {}),
-          workspaceIdentity: { repository: worktree.repoPath, workspace: worktree.path, worktree: worktree.id },
-          targetHead,
-          targetBranch: actualBranch,
-        }),
-      };
-      run = runService.prepareRunWithHermesPreflight
-        ? await runService.prepareRunWithHermesPreflight(preparedOptions)
-        : runService.prepareRun(preparedOptions);
-      deps.scheduler.dispatchTask(task.id, deps.workflow, () => undefined, {
-        triggerReason: "runtime-request",
-        role: options.role,
-        model: run.model,
-        runId: run.id,
-      });
-    } catch (error) {
-      if (run && runService.failPreparedRun?.(run.id, error) === true) {
-        try { deps.scheduler.releaseTask(task.id, 0); } catch { /* recovery reconciler owns retry */ }
-      }
-      if (error instanceof Error && error.message === "HERMES_MODEL_OVERRIDE_UNSUPPORTED") {
-        return reply.code(400).send({ error: { code: "HERMES_MODEL_OVERRIDE_UNSUPPORTED", message: "Модель выбирается в Hermes. Для запуска используйте model=default." } });
-      }
-      return reply.code(classifyDispatchError(error)).send({ error: "dispatch rejected" });
-    }
-
-    // Выполняет соответствующую проверку или действие согласно контракту.
-    void runService.executePreparedRun(run.id).catch((error: unknown) => {
-      if (runService.failPreparedRun?.(run.id, error) === true) {
-        try { deps.scheduler!.releaseTask(task.id, 0); } catch { /* recovery reconciler owns retry */ }
-      }
-    });
-    return reply.code(202).send({ runId: run.id, taskId: task.id, status: run.status });
   });
-  
+
+  app.get<{ Params: { taskId: string; requestId: string } }>("/api/v1/tasks/:taskId/dispatch-requests/:requestId", async (request, reply) => {
+    if (!deps.scheduler) return reply.code(503).send({ error: { code: "RUN_REQUEST_UNAVAILABLE" } });
+    const durable = deps.scheduler.getRunRequest(request.params.taskId, request.params.requestId);
+    if (!durable) return reply.code(404).send({ error: { code: "RUN_REQUEST_NOT_FOUND" } });
+    return dispatchProjection(durable);
+  });
+
   /**
    * Возвращает базовую информацию о запуске (run).
    */
@@ -436,10 +340,6 @@ function normalizeContextManifestRole(value: string): (typeof CONTEXT_MANIFEST_R
   return CONTEXT_MANIFEST_ROLES.find((role) => role === value) ?? "unknown";
 }
 
-function statIsDirectory(path: string): boolean {
-  try { return statSync(path).isDirectory(); } catch { return false; }
-}
-
 function parseDispatchBody(value: unknown): { role: "developer" | "reviewer" | "qa" | "integration"; model: string } | null {
   if (value === undefined) return { role: "developer", model: "default" };
   if (!isPlainObject(value) || Object.keys(value).some((key) => key !== "role" && key !== "model")) return null;
@@ -457,7 +357,7 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
-function classifyDispatchError(error: unknown): 404 | 409 | 503 {
-  const message = error instanceof Error ? error.message : "";
-  return /not found/i.test(message) ? 404 : /runtime|unavailable|launcher/i.test(message) ? 503 : 409;
+function dispatchProjection(request: import("../../modules/scheduler/scheduler-run-request-repository.js").SchedulerRunRequest) {
+  return { requestId: request.id, taskId: request.taskId, status: request.status, runId: request.runId,
+    role: request.role, model: request.model, failureCode: request.failureCode };
 }

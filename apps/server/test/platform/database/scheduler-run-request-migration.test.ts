@@ -21,7 +21,7 @@ describe("scheduler RunRequest migration", () => {
   it("upgrades populated schema 043 without changing existing task or context schema", async () => {
     tmpDir = await mkdtemp(join(tmpdir(), "ebb-run-request-migration-"));
     db = createSqliteDatabase(join(tmpDir, `${randomUUID()}.sqlite`));
-    const migrations = loadTestMigrations();
+    const migrations = loadTestMigrations().filter(({ version }) => version <= 44);
     const through043 = migrations.filter(({ version }) => version <= 43);
     expect(runMigrations(db, through043).applied).toBe(43);
 
@@ -82,6 +82,19 @@ describe("scheduler RunRequest migration", () => {
     ]);
 
     db.run("UPDATE scheduler_run_requests SET status='DISPATCHED',run_id=$runId,updated_at=$now WHERE id=$id", { id: requestId, runId, now });
+    expect(() => db!.run("DELETE FROM agent_runs WHERE id=$runId", { runId })).toThrow();
+    const requestRowsBefore = db.all("SELECT * FROM scheduler_run_requests");
+    expect(runMigrations(db, loadTestMigrations()).applied).toBe(2);
+    expect(db.all("SELECT * FROM scheduler_run_requests")).toEqual(requestRowsBefore);
+    expect(db.all("SELECT * FROM context_deltas")).toEqual(contextRowsBefore);
+    expect(db.all("SELECT name,sql FROM sqlite_master WHERE name IN ('context_deltas','context_manifests','idx_context_deltas_manifest') ORDER BY name")).toEqual(contextSchemaBefore);
+    expect(db.all("PRAGMA foreign_key_list(context_deltas)")).toEqual(contextForeignKeysBefore);
+    expect(db.all("PRAGMA foreign_key_check")).toEqual([]);
+    db.run(`INSERT INTO scheduler_run_requests(id,task_id,idempotency_key,role,model,origin_type,origin_id,status,created_at,updated_at)
+      VALUES($id,$taskId,'stage-key','reviewer','default','TASK_STAGE',$runId,'PENDING',$now,$now)`, { id: randomUUID(), taskId, runId, now });
+    expect(() => db!.run("INSERT INTO run_completion_projections(run_id,projected_at) VALUES('missing-run',$now)", { now })).toThrow(/FOREIGN KEY/);
+    db.run("INSERT INTO run_completion_projections(run_id,projected_at) VALUES($runId,$now)", { runId, now });
+    expect(() => db!.run("INSERT INTO run_completion_projections(run_id,projected_at) VALUES($runId,$now)", { runId, now })).toThrow(/UNIQUE/);
     expect(() => db!.run("DELETE FROM agent_runs WHERE id=$runId", { runId })).toThrow();
     db.run("DELETE FROM tasks WHERE id=$taskId", { taskId });
     expect(db.get("SELECT id FROM scheduler_run_requests WHERE id=$id", { id: requestId })).toBeUndefined();

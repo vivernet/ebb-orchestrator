@@ -97,6 +97,7 @@ export const standard: WorkflowTemplate = {
     { from: "DEVELOPMENT", to: "FAILED" },
     { from: "REVIEW", to: "FAILED" },
     { from: "QA", to: "FAILED" },
+    { from: "INTEGRATION", to: "FAILED" },
 
     // Возобновление from flow-control states
     { from: "BLOCKED", to: "READY" },

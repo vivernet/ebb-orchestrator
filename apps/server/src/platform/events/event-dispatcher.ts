@@ -84,10 +84,11 @@ export class EventDispatcher {
         if (alreadyProcessed) continue;
 
         try {
-          await subscription.handler(event);
+          const disposition = await subscription.handler(event);
+          if (disposition === "deferred") { allConsumersHandled = false; break; }
           // Фиксирует idempotency.
           this.db.run(
-            "INSERT INTO processed_events (consumer_name, event_id, processed_at) VALUES ($consumer, $event_id, $processed_at)",
+            "INSERT OR IGNORE INTO processed_events (consumer_name, event_id, processed_at) VALUES ($consumer, $event_id, $processed_at)",
             { consumer: subscription.name, event_id: event.id, processed_at: new Date().toISOString() },
           );
         } catch {

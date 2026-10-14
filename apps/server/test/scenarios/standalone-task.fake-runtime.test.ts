@@ -15,6 +15,7 @@ import { WorkflowRegistry } from "../../src/modules/workflow/workflow-registry.j
 import { templates } from "../../src/modules/workflow/templates.js";
 import { RuntimeEventHandlers } from "../../src/modules/runtime/run-event-handlers.js";
 import { SchedulerService } from "../../src/modules/scheduler/scheduler-service.js";
+import { SchedulerRunRequestWorker } from "../../src/modules/scheduler/scheduler-run-request-worker.js";
 import type { RunOutcome } from "../../src/modules/runtime/run-types.js";
 import type { AgentRuntime } from "../../src/modules/runtime/agent-runtime.js";
 import { RunService } from "../../src/modules/runtime/run-service.js";
@@ -87,34 +88,17 @@ class Orchestrator {
     private readonly bus: EventBus,
     private readonly workflowEngine: WorkflowEngine,
     private readonly handlers: RuntimeEventHandlers,
+    private readonly runs: RunService,
   ) {}
 
   /**
    * Запускает workflow run для задачи.
    */
-  startWorkflowRun(taskId: string, triggerReason: string): void {
-    const task = this.db.get<{ id: string; status: string; epic_id: string | null }>(
-      "SELECT id, status, epic_id FROM tasks WHERE id = $id",
-      { id: taskId },
-    );
-    if (!task) {
-      throw new Error(`Task ${taskId} not found`);
-    }
-
-// Создаём событие AgentRunRequested.
-    const _event = DomainEvent.create({
-      type: "AgentRunRequested",
-      aggregateType: "Task",
-      aggregateId: taskId,
-      payload: {
-        taskId,
-        status: task.status,
-        triggerReason,
-        role: "Developer",
-        model: "test-model",
-      },
-    });
-    appendOutboxEvent(this.db, _event);
+  async startWorkflowRun(taskId: string, _triggerReason: string): Promise<void> {
+    const scheduler = new SchedulerService(this.db);
+    scheduler.enqueueRunRequest({ taskId, role: "developer", model: "test-model", idempotencyKey: randomUUID(), originType: "TASK_API", originId: `task-api:${taskId}` });
+    const queue = new SchedulerRunRequestWorker({ db: this.db, scheduler, runs: this.runs, workflow: this.workflowEngine, isReady: () => true });
+    await queue.tick();
   }
 
   /**
@@ -124,7 +108,7 @@ class Orchestrator {
     readonly type: string;
     readonly aggregateId: string | undefined;
     readonly payload: Record<string, unknown>;
-  }): void | Promise<void> {
+  }): void | Promise<void | "deferred"> {
     return this.handlers.handleAgentRunRequested(event);
   }
 
@@ -272,8 +256,9 @@ describe("Standalone task fake runtime scenario", () => {
       async runResult(runId) { return this.collectResult(runId); },
       async healthCheck() { return true; },
     };
-    handlers = new RuntimeEventHandlers(db, workflowEngine, new SchedulerService(db), new RunService(db, runtime));
-    orchestrator = new Orchestrator(db, bus, workflowEngine, handlers);
+    const runs = new RunService(db, runtime);
+    handlers = new RuntimeEventHandlers(db, workflowEngine, new SchedulerService(db), runs);
+    orchestrator = new Orchestrator(db, bus, workflowEngine, handlers, runs);
   }
 
   it("should handle AgentRunRequested and transition task to DEVELOPMENT", async () => {
@@ -294,7 +279,7 @@ describe("Standalone task fake runtime scenario", () => {
     const { id: taskId } = insertTask(db!, projectId, { status: "READY" });
     await createTaskWorkspace(taskId);
     db!.run("UPDATE outbox_events SET processed_at=$now WHERE processed_at IS NULL", { now: new Date().toISOString() });
-    orchestrator.startWorkflowRun(taskId, "task-assignment");
+    await orchestrator.startWorkflowRun(taskId, "task-assignment");
 
 // Отправляем события — обработчик должен быть вызван.
     await orchestrator.dispatchEvents(10);
@@ -371,6 +356,20 @@ describe("Standalone task fake runtime scenario", () => {
       { id: taskId },
     );
     expect(updatedStage?.status).toBe("FAILED");
+  });
+
+  it("projects one stored outcome exactly once even when delivery acknowledgement is lost", async () => {
+    await setupOrchestrator();
+    const { id: taskId } = insertTask(db!, projectId, { status: "READY" });
+    workflowEngine.transition(taskId, "DEVELOPMENT");
+    const runId = randomUUID();
+    const output = JSON.stringify({ version: "1", outcome: "COMPLETED", commitSha: "test-commit-sha" });
+    db!.run("INSERT INTO agent_runs(id,task_id,role,runtime,model,status,output) VALUES($id,$taskId,'developer','fake','test','COMPLETED',$output)", { id: runId, taskId, output });
+    const outcome: RunOutcome = { success: true, exitCode: 0, output, validatedSubmission: true,
+      diagnostics: { runId, sessionId: null, stderr: "", exitCode: 0, artifactReferences: [] } };
+    handlers.handleRuntimeCompletion(runId, outcome);
+    expect(() => handlers.handleRuntimeCompletion(runId, outcome)).not.toThrow();
+    expect(db!.get<{ count: number }>("SELECT count(*) AS count FROM outbox_events WHERE type='TaskStateChanged' AND aggregate_id=$id AND json_extract(payload_json,'$.toStatus')='REVIEW'", { id: taskId })?.count).toBe(1);
   });
 
   it("should support full standalone task workflow lifecycle", async () => {
@@ -486,8 +485,9 @@ describe("Standalone task fake runtime scenario", () => {
       async runResult(runId) { return this.collectResult(runId); },
       async healthCheck() { return true; },
     };
-    handlers = new RuntimeEventHandlers(db!, workflowEngine, new SchedulerService(db!), new RunService(db!, runtime));
-    orchestrator = new Orchestrator(db!, bus, workflowEngine, handlers);
+    const runs = new RunService(db!, runtime);
+    handlers = new RuntimeEventHandlers(db!, workflowEngine, new SchedulerService(db!), runs);
+    orchestrator = new Orchestrator(db!, bus, workflowEngine, handlers, runs);
 
     let handlerCalls = 0;
     bus.subscribe("AgentRunRequested", "idempotent-handler", (event) => {
@@ -505,7 +505,7 @@ describe("Standalone task fake runtime scenario", () => {
     const { id: taskId } = insertTask(db!, projectId, { status: "READY" });
     await createTaskWorkspace(taskId);
     db!.run("UPDATE outbox_events SET processed_at=$now WHERE processed_at IS NULL", { now: new Date().toISOString() });
-    orchestrator.startWorkflowRun(taskId, "task-assignment");
+    await orchestrator.startWorkflowRun(taskId, "task-assignment");
     const requestedEvent = db!.get<{ id: string }>(
       "SELECT id FROM outbox_events WHERE type='AgentRunRequested' AND aggregate_id=$taskId ORDER BY created_at DESC LIMIT 1",
       { taskId },
@@ -526,7 +526,7 @@ describe("Standalone task fake runtime scenario", () => {
     }
     const initialDispatchCount = await firstDispatchPromise;
     const firstDispatchHandlerCalls = handlerCalls;
-    expect(initialDispatchCount).toBe(1);
+    expect(initialDispatchCount).toBe(2);
     expect(firstDispatchHandlerCalls).toBe(1);
     expect(runtime.calls).toHaveLength(1);
     expect(db!.get<{ processed_at: string | null }>("SELECT processed_at FROM outbox_events WHERE id=$eventId", { eventId: requestedEvent.id })?.processed_at).toEqual(expect.any(String));
@@ -553,7 +553,7 @@ describe("Standalone task fake runtime scenario", () => {
     expect(db!.get<{ processed_at: string | null }>("SELECT processed_at FROM outbox_events WHERE id=$eventId", { eventId: requestedEvent.id })?.processed_at).toEqual(expect.any(String));
   });
 
-  it("should throw when AgentRunRequested is received for non-READY task", async () => {
+  it("rejects legacy AgentRunRequested without committed identity", async () => {
     await setupOrchestrator();
 
     const { id: taskId } = insertTask(db!, projectId, { status: "DEVELOPMENT" });
@@ -571,6 +571,6 @@ describe("Standalone task fake runtime scenario", () => {
       },
     });
 
-    await expect(orchestrator.handleAgentRunRequested(_event)).rejects.toThrow(/not in READY state/i);
+    await expect(orchestrator.handleAgentRunRequested(_event)).rejects.toThrow("RUN_REQUEST_COMMITTED_IDENTITY_REQUIRED");
   });
 });

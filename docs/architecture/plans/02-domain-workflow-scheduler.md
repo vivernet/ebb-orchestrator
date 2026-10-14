@@ -415,15 +415,16 @@ git commit -m "Добавить aging и critical path Scheduler"
 ****Файлы:****
 - Создать: `apps/server/src/modules/runtime/run-orchestrator.ts`
 - Создать: `apps/server/src/modules/runtime/run-event-handlers.ts`
-- Создать additive migration `044_scheduler_run_requests.sql` после Task5 и фактического schema head 043: таблица durable Task-bound requests с opaque ID, обязательными `task_id`, `idempotency_key`, исходными `role`/`model`, typed origin/trigger reference, status (`PENDING`, `DISPATCHED`, `FAILED`), created/updated timestamps, nullable `run_id` и nullable stable `failure_code`; добавить unique index на `idempotency_key` во всех status и unique partial index на один `PENDING` request per Task. Не переписывать migrations и не трогать `context_deltas`/`context_manifests`.
+- Создать additive migration `044_scheduler_run_requests.sql` после Task5 и фактического schema head 043: таблица durable Task-bound requests с opaque ID, обязательными `task_id`, `idempotency_key`, исходными `role`/`model`, typed origin/trigger reference, status (`PENDING`, `DISPATCHED`, `FAILED`), created/updated timestamps, nullable `run_id` и nullable stable `failure_code`; добавить unique index на `idempotency_key` во всех status и unique partial index на один `PENDING` request per Task. Не переписывать migrations и не трогать `context_deltas`/`context_manifests`. Затем additive migrations `045_run_completion_projections.sql` и `046_scheduler_task_stage_requests.sql` добавляют completion idempotency и stage-aware intents, сохраняя `context_deltas`.
 - Изменить: `apps/server/src/modules/scheduler/scheduler-service.ts`, `apps/server/src/modules/recovery/recovery-service.ts`, `apps/server/src/modules/runtime/run-service.ts`, `apps/server/src/platform/events/event-dispatcher.ts`, `apps/server/src/platform/home/production-composition.ts` и `apps/server/src/main.ts` для durable queue producer/worker startup, event nudge, READY-gated event delivery и safety-tick recovery.
 - Перевести production Task dispatch caller `apps/server/src/app/routes/runs.ts`, его Runtime handoff `apps/server/src/modules/runtime/run-event-handlers.ts` и Task Recovery на public Scheduler request API. `/tasks/:id/dispatch` требует `Idempotency-Key`; Recovery создаёт отдельную новую Task попытку с новым source attempt key. Все Epic phase runs, включая child phases с `task_id`, и Request planning не переводить в пользовательскую Task очередь; сохранить их текущие persisted phase/job intents и собственный lifecycle.
 - Изменить `apps/server/test/scenarios/standalone-task.fake-runtime.test.ts` и `apps/server/test/platform/events/event-dispatcher.test.ts`; создать/изменить scheduler request, recovery, API и `apps/server/test/platform/database/scheduler-run-request-migration.test.ts` acceptance suites.
-- `scheduler-run-request-migration.test.ts` проверяет populated upgrade 043→044, поля/status constraint, unique partial index, FK/delete actions, старые task rows и `foreign_key_check`; `fresh-install-migrations.acceptance.test.ts` проверяет empty install 001–044. `context-manifest-migration.test.ts` сохраняет предыдущие migration checks, а `scheduler-migration.test.ts` по-прежнему покрывает additive 042→043.
+- `scheduler-run-request-migration.test.ts` проверяет populated upgrade 043→046, поля/status constraint, unique partial index, FK/delete actions, старые task rows и `foreign_key_check`; `fresh-install-migrations.acceptance.test.ts` проверяет empty install 001–046. `context-manifest-migration.test.ts` сохраняет предыдущие migration checks, а `scheduler-migration.test.ts` по-прежнему покрывает additive 042→043.
 
 ****Интерфейсы:****
 - Создаёт durable Task-bound `SchedulerRunRequest` с оригинальными `taskId`, выбранными `role`/`model`, stable `idempotency_key` и source-backed caller reference. Глобальный unique index сохраняет idempotency key навсегда; unique partial index разрешает не более одного активного `PENDING` request на Task. Повтор с тем же ключом и теми же полями во всех состояниях возвращает прежний request/status/`run_id`; тот же ключ с другим payload получает stable conflict. Новая намеренная попытка получает новый ключ. Другой concurrent key для Task с уже активным PENDING получает `RUN_REQUEST_ALREADY_PENDING`.
 - При принятии команды API возвращает `202 Accepted` с `requestId` и status `PENDING`; `GET /api/v1/tasks/:taskId/dispatch-requests/:requestId` читает тот же durable request/status после restart. Capacity/priority wait возвращается как обычный pending projection, не как exception.
+- Epic-owned Task отклоняется до сохранения request для всех origin через public и transactional enqueue API. `POST /tasks/:id/dispatch` возвращает `409 RUN_REQUEST_EPIC_TASK_UNSUPPORTED`; Epic phases продолжают использовать только собственные persisted intents.
 - `SchedulerRunRequest` остаётся в `PENDING`, пока lifecycle не `READY`, его Task не станет допустимым кандидатом и request не победит общую selection. В `RECOVERING` queue worker только сохраняет wake-up и не пишет Run/manifest/reservation. `EventDispatcher` получает `canDeliver(event)` readiness policy от production composition до вызова подписчиков. Для `AgentRunRequested` при статусе не `READY` он возвращает отдельный `deferred` disposition: не вызывает consumer, не меняет `attempts`, `available_at`, `last_error` или dead-letter state и продолжает batch с другими событиями. Это не обычный успешный возврат handler и не exception. После READY startup scan, event nudge от Task/Recovery/reservation changes и existing periodic safety tick повторно вызывают queue worker; следующий outbox drain доставляет оставшееся событие. Единственное recovery исключение из общего запрета dispatch до READY — возобновление ранее approved Epic по Proposal 06: это существующий persisted phase flow, после всех reconciliations, вне пользовательской Task очереди и не изменяется Task6.
 - Queue worker читает актуальные Task gates и выбирает все schedulable pending requests по `spec-01 §8.1`. Сначала проверяет все non-capacity gates независимо от первого `wait_reason`; capacity-wait timestamp ведётся в Task5. Запрос с закрытым non-capacity gate не стареет.
 - Worker может заранее собрать только in-memory `PreparedRunContext` кандидата; это не создаёт Run/manifest. В одной SQLite write transaction `SchedulerService.dispatchRunRequest()` повторно проверяет gates и ordered winner, затем `RunService.prepareRunInTransaction(...)` сверяет `PreparedRunContext` с текущей transaction snapshot и только после совпадения сохраняет Run+ContextManifest. Далее та же transaction делает reservation, Workflow state transition, `PENDING → DISPATCHED` claim, сохраняет `run_id` и вставляет outbox `AgentRunRequested`. Run/manifest создаются после выбора winner и до reservation/event dispatch; внешне виден только полный commit. Смена ordering/input откатывает всю операцию; низкоранговые и capacity-waiting requests не создают Run или reservation.
@@ -452,11 +453,13 @@ git commit -m "Добавить aging и critical path Scheduler"
 | Ошибка подготовки | Принудительно прервать Run/manifest insert внутри dispatch transaction | Нет частичного Run, manifest, reservation, Workflow transition, request claim или outbox; повтор остаётся безопасным |
 | Request identity/deduplication | Повторить команду с прежним `Idempotency-Key` до/после `DISPATCHED`, включая потерянный HTTP response; затем повторить ключ с изменёнными role/model | Идентичный вызов возвращает прежние request/status/`run_id` во всех состояниях; изменённый payload получает stable conflict; новый Run возможен только с новым ключом |
 | Task Recovery and Epic boundary | Recovery повторно создаёт Task request после persisted Run failure; production Epic flow создаёт task-bound и taskless phase runs | Recovery использует новый source attempt key и общую Task очередь; Epic phase intent/run остаётся в своём persisted lifecycle и не создаётся повторно через пользовательский queue producer |
+| Recovery после crash на каждой stage | Остановить Run на REVIEW, QA и INTEGRATION, подтвердить source Run `STOPPED`, restart SQLite/Orchestrator, затем завершить повтор | Создаётся не более одного same-role request с ключом source attempt; Task сохраняет исходную stage, результат проходит дальше по workflow; без STOPPED proof retry отсутствует |
+| Structured role failure и lifecycle outbox | Передать structured Integration `BLOCKED`; повторно доставить lifecycle events и вызвать ошибку при terminal projection | Task переходит в `FAILED` ровно один раз без auto-retry; `AgentRunStarted|Completed|Failed|Interrupted` находятся в outbox на authoritative commit boundary, replay/ack не дублирует projection, а ошибка откатывает transaction |
 | Migration compatibility | Empty install и populated upgrade с ожидаемого schema head | Новая migration только создаёт request table/indexes/FKs; `context_deltas` rows/schema/indexes/FKs побайтно сохраняются; `foreign_key_check` пуст |
 
 Acceptance проходит через production composition, Task API и Task Recovery; unit-only вызов `startWorkflowRuns()` или direct handler не засчитывается. Проверки наблюдают lifecycle status, outbox attempts, request state, persisted Run+manifest+owner, reservation, workflow transition и `AgentRunRequested`, а также readback того же request после restart и lost-response replay. Epic/Request phases проверяются только на сохранение их persisted lifecycle boundary и не считаются producer coverage пользовательской Task очереди.
 
-- [ ] **Шаг 1: Написать RED для durable queue, ordered arbitration и полного standalone workflow**
+- [x] **Шаг 1: Написать RED для durable queue, ordered arbitration и полного standalone workflow**
 
 Сначала покрыть все строки acceptance matrix, включая READY barrier, crash/replay после каждой commit/runtime/ack границы, ожидание/restart, selected role/model persistence, error rollback, постоянную request deduplication и отсутствие prepared/failed orphan Run до arbitration. Создать отдельную populated upgrade suite 043→044 и проверить empty install 001–044; Task5 suite отдельно сохраняет проверку 042→043.
 
@@ -469,9 +472,9 @@ QA PASS
 Integration PASS
 ```
 
-Ожидается, что статус Задача завершится на `WAITING_FOR_APPROVAL` с ровно одним ожидающим `FINAL_MERGE` approval и без дублирующихся runs после воспроизведения всех durable events.
+После Integration Task получает `READY_FOR_MERGE` и ровно один ожидающий `FINAL_MERGE` approval; после одобрения переходит в `MERGING`. Git merge остаётся отдельной операцией и не выполняется этим Task. Повторное воспроизведение durable events не создаёт дублирующих runs или approvals.
 
-- [ ] **Шаг 2: Подтвердить ожидаемый RED до production-кода**
+- [x] **Шаг 2: Подтвердить ожидаемый RED до production-кода**
 
 ```bash
 pnpm --filter @ebb-orchestrator/server exec vitest run test/scenarios/standalone-task.fake-runtime.test.ts test/modules/scheduler/
@@ -479,25 +482,27 @@ pnpm --filter @ebb-orchestrator/server exec vitest run test/app/api.test.ts test
 pnpm --filter @ebb-orchestrator/server exec vitest run test/platform/database/scheduler-migration.test.ts test/platform/database/scheduler-run-request-migration.test.ts test/platform/database/fresh-install-migrations.acceptance.test.ts
 ```
 
-- [ ] **Шаг 3: Реализовать durable RunRequest producer, queue worker и transactional runtime handoff**
+- [x] **Шаг 3: Реализовать durable RunRequest producer, queue worker и transactional runtime handoff**
 
 Добавить migration 044, repository/API для request lifecycle, startup/safety-tick worker и event nudges; добавить deferred disposition для `AgentRunRequested` в outbox во время `RECOVERING`. Перевести Task HTTP/Recovery callers на request API и обеспечить стабильный `Idempotency-Key` во всех request states. В одной write transaction выполнить ordered selection → подготовить Run/manifest → reservation и Workflow transition → отметить request `DISPATCHED` → вставить `AgentRunRequested`. Runtime consumer запускает только matching committed Run после READY и идемпотентно применяет уже сохранённый outcome при replay. Epic/Request сохраняют свои persisted phase/job flows. При capacity/priority WAIT request остаётся `PENDING`, без Run и без ошибки EventDispatcher.
 
-Только domain services могут переводить стадии. Обработчик completion проверяет текущую стадию workflow перед применением результата. `ApprovalApproved(FINAL_MERGE)` переводит Task в `READY_FOR_MERGE`; фактический Git merge остаётся в будущем Plan 3.
+Только domain services могут переводить стадии. Обработчик completion проверяет текущую стадию workflow перед применением результата. После Integration Task остаётся `READY_FOR_MERGE` с единственным pending approval типа `FINAL_MERGE`; `ApprovalApproved(FINAL_MERGE)` переводит Task в `MERGING`. Фактический Git merge остаётся отдельной операцией будущего Plan 3.
 
-- [ ] **Шаг 4: Запустить сценарий и проверить idempotency**
+- [x] **Шаг 4: Запустить сценарий и проверить idempotency**
 
 ```bash
 pnpm --filter @ebb-orchestrator/server exec vitest run test/scenarios/standalone-task.fake-runtime.test.ts test/modules/scheduler/ test/modules/recovery/recovery.test.ts test/platform/events/event-dispatcher.test.ts
 pnpm --filter @ebb-orchestrator/server exec vitest run test/app/api.test.ts test/platform/database/scheduler-migration.test.ts test/platform/database/scheduler-run-request-migration.test.ts test/platform/database/fresh-install-migrations.acceptance.test.ts
 ```
 
-- [ ] **Шаг 5: Коммит**
+- [x] **Шаг 5: Коммит**
 
 ```bash
 git add apps/server/src/modules/runtime apps/server/src/modules/scheduler apps/server/test/scenarios
 git commit -m "feat: добавить durable Scheduler RunRequest очередь"
 ```
+
+**Evidence, 2026-10-14:** production queue/HTTP/migration acceptance — 9 файлов, 74/74; EventDispatcher и Scheduler suites — 4 файла, 90/90; отдельный 3-role stop-proof recovery/restart acceptance — 4/4. Server typecheck, scoped ESLint и `git diff --check` прошли. Независимый Task6 re-review — `APPROVED`: Epic Task boundary, same-stage bounded recovery после authoritative STOPPED proof, durable Run lifecycle outbox, migration 043→046 с сохранением `context_deltas`, и финальный `READY_FOR_MERGE` + один pending `FINAL_MERGE` проверены. Structured Integration `BLOCKED` становится `FAILED` без автоматического retry. Checkpoint commit содержит только перечисленные изменения Task6 и этот план; пользовательский Symphony report остаётся локальным и unstaged.
 
 ---
 

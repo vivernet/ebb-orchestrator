@@ -18,19 +18,21 @@ describe("fresh-install migration acceptance", () => {
     if (tmpDir) await rm(tmpDir, { recursive: true, force: true });
   });
 
-  it("applies migrations 001-044 with durable scheduler RunRequests", async () => {
+  it("applies migrations 001-046 with durable scheduler RunRequests", async () => {
     tmpDir = await mkdtemp(join(tmpdir(), "ebb-fresh-install-migrations-"));
     db = createSqliteDatabase(join(tmpDir, `fresh-${randomUUID()}.sqlite`));
     const migrations = loadTestMigrations();
-    const expectedVersions = Array.from({ length: 44 }, (_, index) => index + 1);
+    const expectedVersions = Array.from({ length: 46 }, (_, index) => index + 1);
 
     expect(migrations.map(({ version }) => version)).toEqual(expectedVersions);
-    expect(migrations.at(-5)?.name).toBe("040_run_hermes_source_snapshot");
-    expect(migrations.at(-4)?.name).toBe("041_shared_hermes_home");
-    expect(migrations.at(-3)?.name).toBe("042_durable_run_recovery");
-    expect(migrations.at(-2)?.name).toBe("043_scheduler_capacity_wait_started_at");
-    expect(migrations.at(-1)?.name).toBe("044_scheduler_run_requests");
-    expect(runMigrations(db, migrations).applied).toBe(44);
+    expect(migrations.at(-7)?.name).toBe("040_run_hermes_source_snapshot");
+    expect(migrations.at(-6)?.name).toBe("041_shared_hermes_home");
+    expect(migrations.at(-5)?.name).toBe("042_durable_run_recovery");
+    expect(migrations.at(-4)?.name).toBe("043_scheduler_capacity_wait_started_at");
+    expect(migrations.at(-3)?.name).toBe("044_scheduler_run_requests");
+    expect(migrations.at(-2)?.name).toBe("045_run_completion_projections");
+    expect(migrations.at(-1)?.name).toBe("046_scheduler_task_stage_requests");
+    expect(runMigrations(db, migrations).applied).toBe(46);
     expect(db.all("PRAGMA table_info(tasks)")).toContainEqual(expect.objectContaining({ name: "capacity_wait_started_at", type: "TEXT", notnull: 0, dflt_value: null }));
     expect(db.all("SELECT * FROM run_process_owner_generations")).toEqual([]);
     expect(db.all("SELECT * FROM run_resume_bindings")).toEqual([]);

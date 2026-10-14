@@ -443,6 +443,24 @@ describe("RunContextAssembler.prepare", () => {
     } finally { malformed.close(); }
   });
 
+  it("accepts validated scheduler metadata without changing the canonical Work digest", () => {
+    const plain = fixtureDatabase();
+    const scheduled = fixtureDatabase({ taskContractJson: JSON.stringify({ ...taskContract, category: "rework", priority: "High" }) });
+    try {
+      const input = inputFor(cases[0]!);
+      const baseline = plain.transaction((tx) => assembler().prepare(tx, input));
+      const enriched = scheduled.transaction((tx) => assembler().prepare(tx, input));
+      expect(enriched.contractDigest).toBe(baseline.contractDigest);
+      expect(enriched.contextHash).toBe(baseline.contextHash);
+    } finally { plain.close(); scheduled.close(); }
+  });
+
+  it.each([{ category: "unknown" }, { priority: "Urgent" }, { priority: null }, { category: ["qa"] }, { hiddenAuthority: true }])("rejects malformed or unknown contract metadata %j", (extra) => {
+    const db = fixtureDatabase({ taskContractJson: JSON.stringify({ ...taskContract, ...extra }) });
+    try { expect(() => db.transaction((tx) => assembler().prepare(tx, inputFor(cases[0]!)))).toThrow(); }
+    finally { db.close(); }
+  });
+
   it("rejects missing approved Project Config instead of inventing an empty identity", () => {
     const db = fixtureDatabase();
     try {

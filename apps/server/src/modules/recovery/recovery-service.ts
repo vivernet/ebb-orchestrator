@@ -15,6 +15,10 @@ import type {
   FailureType,
 } from "./recovery-types.js";
 import { evaluateRecovery, getRemainingAttempts } from "./recovery-policy.js";
+import type { SchedulerService } from "../scheduler/scheduler-service.js";
+import type { WorkflowEngine } from "../workflow/workflow-engine.js";
+import type { SchedulerRunRequest } from "../scheduler/scheduler-run-request-repository.js";
+import { getRunProcessOwner, isAuthoritativeRunProcessStopEvidence } from "../runtime/run-process-owner.js";
 
 /**
  * Scheduler запрос для recovery работа.
@@ -34,6 +38,48 @@ export class RecoveryService {
     private db: Database,
     private policy: RecoveryPolicy,
   ) {}
+
+  /**
+   * Создаёт новую Task попытку только для точного failed/cancelled queue Run с STOPPED proof.
+   * Source Run является постоянным attempt key; replay не создаёт новый request и не выполняет runtime.
+   * Epic/Request phase Runs без пользовательского request здесь не рассматриваются.
+   */
+  enqueueTaskRetry(runId: string, scheduler: SchedulerService, workflow: WorkflowEngine): SchedulerRunRequest | undefined {
+    return this.db.transaction((tx) => {
+      const source = tx.get<{ task_id: string; role: string; model: string; status: string; task_status: string; epic_id: string | null }>(
+        `SELECT r.task_id,q.role,q.model,r.status,t.status AS task_status,t.epic_id FROM agent_runs r
+         JOIN scheduler_run_requests q ON q.run_id=r.id AND q.task_id=r.task_id AND q.status='DISPATCHED'
+         JOIN tasks t ON t.id=r.task_id WHERE r.id=$runId`, { runId });
+      if (!source || source.epic_id !== null || !["FAILED", "CANCELLED"].includes(source.status)) return undefined;
+      const owner = getRunProcessOwner(tx, runId);
+      if (!owner || owner.state !== "STOPPED" || !isAuthoritativeRunProcessStopEvidence(owner.stopEvidence, owner.containmentKind)) return undefined;
+      const key = `task-recovery:${runId}`;
+      const existing = tx.get<{ id: string }>("SELECT id FROM scheduler_run_requests WHERE idempotency_key=$key", { key });
+      if (existing) return scheduler.getRunRequest(source.task_id, existing.id);
+      const stageRetry = source.role === "reviewer" && source.task_status === "REVIEW" ||
+        source.role === "qa" && source.task_status === "QA" ||
+        source.role === "integration" && source.task_status === "INTEGRATION";
+      if (!stageRetry && !["DEVELOPMENT", "BLOCKED", "READY"].includes(source.task_status)) return undefined;
+      const count = tx.get<{ count: number }>("SELECT count(*) AS count FROM scheduler_run_requests WHERE task_id=$id AND origin_type='TASK_RECOVERY'", { id: source.task_id })?.count ?? 0;
+      if (count >= this.policy.middleAttempts) return undefined;
+      if (tx.get("SELECT id FROM scheduler_run_requests WHERE task_id=$id AND status='PENDING'", { id: source.task_id })) return undefined;
+      if (!stageRetry) {
+        if (source.task_status === "DEVELOPMENT") workflow.transitionInTransaction(tx, source.task_id, "BLOCKED");
+        if (source.task_status !== "READY") workflow.transitionInTransaction(tx, source.task_id, "READY");
+      }
+      const release = scheduler.releaseTaskInTransaction(tx, source.task_id);
+      if (release.status === "BLOCKED_OWNERSHIP_DRIFT") throw new Error("RUN_RECOVERY_RESERVATION_OWNERSHIP_DRIFT");
+      return scheduler.enqueueRunRequestInTransaction(tx, { taskId: source.task_id, role: source.role, model: source.model,
+        idempotencyKey: key, originType: "TASK_RECOVERY", originId: runId });
+    });
+  }
+
+  /** Startup/safety scan ловит crash до event acknowledgement; retry source IDs читаются из durable queue bindings. */
+  recoverTaskRunRequests(scheduler: SchedulerService, workflow: WorkflowEngine): void {
+    const runs = this.db.all<{ id: string }>(`SELECT r.id FROM agent_runs r JOIN scheduler_run_requests q ON q.run_id=r.id
+      WHERE q.status='DISPATCHED' AND r.status IN ('FAILED','CANCELLED') ORDER BY r.id`);
+    for (const run of runs) this.enqueueTaskRetry(run.id, scheduler, workflow);
+  }
 
   /**
    * Вычисляет решение восстановления для Объект задача.

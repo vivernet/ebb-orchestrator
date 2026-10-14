@@ -177,7 +177,7 @@ const runService: RunService = new RunService(database, runtime, undefined, {
     });
   },
 });
-const runtimeOrchestrator = new RuntimeOrchestrator(database, workflowEngine, eventBus, eventDispatcher, scheduler, runService);
+const runtimeOrchestrator = new RuntimeOrchestrator(database, workflowEngine, eventBus, eventDispatcher, scheduler, runService, () => status.get() === "READY");
 runtimeOrchestrator.initialize();
 const planningService = new PlanningService(database);
 const epicOrchestrator = new EpicOrchestrator(
@@ -217,7 +217,8 @@ const githubFeedbackWorker: BackgroundWorker = {
   start: async () => { githubSyncWorker.startMappedRepositories(() => humanFeedbackService.listMappedRepositories()); },
   stop: async () => { githubSyncWorker.stop(); },
 };
-const workers = [schedulerWorker, outboxWorker, backgroundJobWorker, githubFeedbackWorker];
+const taskRunQueue = production.createTaskRunQueue({ scheduler, runs: runService, workflow: workflowEngine, status, eventBus });
+const workers = [schedulerWorker, taskRunQueue, outboxWorker, backgroundJobWorker, githubFeedbackWorker];
 
 async function gracefulShutdown(signal: string): Promise<void> {
    console.log(`\n[ebb-orchestrator] received ${signal}, shutting down…`);
@@ -261,6 +262,7 @@ async function startLifecycle(): Promise<void> {
   signal: startupAbortController.signal,
   });
   if (status.get() !== "READY") throw new Error("RUN_RECOVERY_REQUIRES_READY_SYSTEM");
+  await taskRunQueue.tick();
   try {
     await runService.resumeRecoveryCandidates();
   } finally {

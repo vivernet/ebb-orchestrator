@@ -4,7 +4,8 @@
 
 import type { DomainEvent } from "./domain-event.js";
 
-export type EventHandler = (event: DomainEvent) => Promise<void> | void;
+export type EventDeliveryDisposition = void | "deferred";
+export type EventHandler = (event: DomainEvent) => Promise<EventDeliveryDisposition> | EventDeliveryDisposition;
 export type EventObserver = (event: DomainEvent) => void;
 
 export interface Subscription {

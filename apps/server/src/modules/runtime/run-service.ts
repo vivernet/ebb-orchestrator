@@ -38,6 +38,7 @@ import type { HermesSessionCapture, HermesSessionCapturePort } from "./hermes-se
 import { bindHermesRunSelectionToOptions } from "./hermes/hermes-run-selection.js";
 import type { HermesRuntimeSelection } from "./hermes/hermes-run-selection.js";
 import { DEVELOPER_COMMIT_SHA_INSTRUCTION } from "./prompt-builder.js";
+import type { IntegrationService, IntegrationAttempt } from "../git/integration-service.js";
 
 export interface HermesRunPreflight {
   readonly options: StartRunOptions;
@@ -148,6 +149,7 @@ export class RunTransitionConflictError extends Error {
  * Связывает runtime-контракт run-service с жизненным циклом agent run и структурированным результатом.
  */
 export class RunService {
+  private taskIntegrationFactory: ((runId: string) => IntegrationService) | undefined;
   private readonly contextAssembler: Pick<RunContextAssembler, "prepare">;
   private readonly runSelections = new Map<string, HermesRuntimeSelection>();
   private readonly pendingRunSelections = new Map<string, HermesRuntimeSelection>();
@@ -162,6 +164,14 @@ export class RunService {
     this.contextAssembler = contextAssembler;
     const capturePort = asHermesSessionCapturePort(runtime);
     capturePort?.setHermesSessionCaptureHandler((capture) => this.captureHermesSession(capture));
+  }
+
+  /** Composition подключает существующий Integration service без изменения runtime/security policy. */
+  setTaskIntegrationFactory(factory: (runId: string) => IntegrationService): void { this.taskIntegrationFactory = factory; }
+
+  /** Проверяет поддерживаемый selector до enqueue; установленный Hermes выбирает model из своего профиля. */
+  validateTaskRequestModel(model: string): void {
+    if (this.runtime.prepareHermesRunSelection && model !== "default") throw new Error("HERMES_MODEL_OVERRIDE_UNSUPPORTED");
   }
 
   /**
@@ -309,7 +319,7 @@ export class RunService {
         continue;
       }
       if (this.isRecoveryCandidate(run.id)) continue;
-      if (this.failRun(run.id, new Error("Run interrupted by orchestrator restart"))) reconciled += 1;
+      if (this.failRun(run.id, new Error("Run interrupted by orchestrator restart"), -1, "AgentRunInterrupted")) reconciled += 1;
     }
     return reconciled;
   }
@@ -332,7 +342,9 @@ export class RunService {
         tx.run(`UPDATE agent_runs SET status='COMPLETED',ended_at=$endedAt,exit_code=0,
           capability_ref=NULL,capability_json=NULL WHERE id=$runId AND status='COMPLETING' AND output=$output AND ended_at IS NULL`,
         { runId, output: submission.output, endedAt: new Date().toISOString() });
-        return (tx.get<{ changes: number }>("SELECT changes() AS changes")?.changes ?? 0) === 1;
+        const completed = (tx.get<{ changes: number }>("SELECT changes() AS changes")?.changes ?? 0) === 1;
+        if (completed) this.appendLifecycleEvent(tx, runId, "AgentRunCompleted");
+        return completed;
       });
     } catch {
       return false;
@@ -517,6 +529,15 @@ export class RunService {
       const prepared = this.contextAssembler.prepare(tx, input);
       return this.prepareRunInTransaction(tx, { ...options, prompt: prepared.finalPrompt }, prepared);
     });
+  }
+
+  /** Собирает только in-memory provenance; Run, manifest и owner здесь не создаются.
+   * Caller должен повторно сверить контекст в prepareRunInTransaction после Scheduler arbitration.
+   */
+  prepareRunContext(options: StartRunOptions): PreparedRunContext {
+    const input = this.contextInput(options);
+    this.assertEffectiveCapabilities(options, input);
+    return this.db.transaction((tx) => this.contextAssembler.prepare(tx, input));
   }
 
   /**
@@ -822,6 +843,68 @@ export class RunService {
     return this.collectRuntimeResult(run);
   }
 
+  /**
+   * Claim-ит только matching committed Task Run после READY. CAS STARTED→IN_PROGRESS вместе
+   * с проверкой PREPARED process owner предотвращает повторный запуск и оставляет OS launch protocol runtime adapter.
+   * Duplicate delivery не вызывает runtime; terminal outcomes проецирует caller из durable storage.
+   */
+  async executeTaskRequestRun(requestId: string, runId: string, taskId: string, isReady: () => boolean): Promise<{
+    run: AgentRun; outcome: RunOutcome;
+  } | undefined> {
+    const stored = this.getRun(this.db, runId);
+    if (stored.role === "integration") {
+      const service = this.taskIntegrationFactory?.(runId);
+      if (!service) throw new Error("TASK_INTEGRATION_SERVICE_UNAVAILABLE");
+      if (stored.status === "COMPLETED") {
+        await service.completeRecoveredAttempt(runId);
+        return undefined;
+      }
+      if (stored.status !== "STARTED" || !isReady()) return undefined;
+      const rows = this.db.all<{ id: string; repository_path: string; source_branch: string; target_branch: string; expected_target_sha: string; source_sha: string; worktree_path: string; integration_run_id: string; created_at: string; status: IntegrationAttempt["status"] }>(
+        "SELECT * FROM integration_attempts WHERE integration_run_id=$runId AND status='PREPARED'", { runId });
+      const row = rows.length === 1 ? rows[0] : undefined;
+      if (!row) throw new Error("TASK_INTEGRATION_ATTEMPT_UNAVAILABLE");
+      const attempt: IntegrationAttempt = { id: row.id, repoPath: row.repository_path, sourceBranch: row.source_branch,
+        currentTargetBranch: row.target_branch, expectedTargetBranch: row.target_branch, expectedTargetSha: row.expected_target_sha,
+        sourceSha: row.source_sha, worktreePath: row.worktree_path, integrationRunId: runId, status: row.status, createdAt: row.created_at };
+      await service.mergePreparedSource(attempt);
+      this.bindInitialIntegrationWorkspaceSnapshot(runId);
+      return service.runInIntegrationWorktree(attempt, () => this.executeCommittedTaskRun(requestId, runId, taskId, isReady));
+    }
+    return this.executeCommittedTaskRun(requestId, runId, taskId, isReady);
+  }
+
+  /** Завершает interrupted Integration candidate по сохранённому outcome без повторного runtime invocation. */
+  async reconcileTaskIntegrationOutcome(runId: string): Promise<void> {
+    const service = this.taskIntegrationFactory?.(runId);
+    if (!service) throw new Error("TASK_INTEGRATION_SERVICE_UNAVAILABLE");
+    await service.completeRecoveredAttempt(runId);
+  }
+
+  private async executeCommittedTaskRun(requestId: string, runId: string, taskId: string, isReady: () => boolean): Promise<{
+    run: AgentRun; outcome: RunOutcome;
+  } | undefined> {
+    const run = this.db.transaction((tx) => {
+      if (!isReady()) return undefined;
+      const binding = tx.get<{ status: string }>(`SELECT r.status FROM agent_runs r
+        JOIN scheduler_run_requests q ON q.run_id=r.id AND q.task_id=r.task_id AND q.role=r.role
+        JOIN run_process_owners o ON o.run_id=r.id
+        WHERE q.id=$requestId AND q.status='DISPATCHED' AND r.id=$runId AND r.task_id=$taskId
+          AND o.source_tag=$sourceTag AND o.state='PREPARED'`, { requestId, runId, taskId, sourceTag: `ebb-run:${runId}` });
+      if (!binding || binding.status !== "STARTED") return undefined;
+      const prepared = this.getRun(tx, runId);
+      this.assertDurablePreparedRun(prepared);
+      tx.run("UPDATE agent_runs SET status='IN_PROGRESS' WHERE id=$runId AND status='STARTED'", { runId });
+      if (tx.get<{ changes: number }>("SELECT changes() AS changes")?.changes !== 1) return undefined;
+      this.appendLifecycleEvent(tx, runId, "AgentRunStarted");
+      return prepared;
+    });
+    if (!run) return undefined;
+    try { await this.runtime.startRun(this.runtimeRun(run)); }
+    catch (error) { this.failRun(run.id, error); throw error; }
+    return this.collectRuntimeResult(run);
+  }
+
   /** Принимает результат только из authenticated submit_result после доказанной остановки runtime; сохраняет доступный usage. */
   private async collectRuntimeResult(run: AgentRun): Promise<{ run: AgentRun; outcome: RunOutcome }> {
     let failureExitCode: number | undefined;
@@ -1088,7 +1171,7 @@ export class RunService {
     return status === "COMPLETED" || status === "FAILED" || status === "CANCELLED";
   }
 
-  private failRun(runId: string, error: unknown, exitCode = -1): boolean {
+  private failRun(runId: string, error: unknown, exitCode = -1, eventType: "AgentRunFailed" | "AgentRunInterrupted" = "AgentRunFailed"): boolean {
     const diagnostics = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
     const current = this.db.get<{ status: RunStatus }>("SELECT status FROM agent_runs WHERE id=$runId", { runId });
     if (!current) return false;
@@ -1124,7 +1207,9 @@ export class RunService {
           exit_code = $exit_code, output = $output, capability_ref = NULL, capability_json = NULL
           WHERE id = $id AND status IN ('STARTED','IN_PROGRESS','COMPLETING')`,
         { id: runId, ended_at: new Date().toISOString(), exit_code: exitCode, output: diagnostics });
-        return (tx.get<{ changes: number }>("SELECT changes() AS changes")?.changes ?? 0) === 1;
+        const failed = (tx.get<{ changes: number }>("SELECT changes() AS changes")?.changes ?? 0) === 1;
+        if (failed) this.appendLifecycleEvent(tx, runId, eventType);
+        return failed;
       });
     } catch {
       // The owner proof remains authoritative; failed cleanup is retried by durable recovery.
@@ -1173,6 +1258,7 @@ export class RunService {
         payload: { runId, previousStatus: stored.status, taskId: stored.task_id, cancelledAt: now },
       });
       appendOutboxEvent(tx, event);
+      this.appendLifecycleEvent(tx, runId, "AgentRunInterrupted");
       // Добавляет audit log entry.
       tx.run(
         `INSERT INTO audit_log(id,action,actor,aggregate_type,aggregate_id,details_json,created_at) VALUES($id,$action,$actor,$aggregate_type,$aggregate_id,$details,$created_at)`,
@@ -1240,6 +1326,7 @@ export class RunService {
           ended_at: new Date().toISOString(),
         }
       );
+      this.appendLifecycleEvent(tx, runId, "AgentRunCompleted");
       return this.getRun(tx, runId);
     });
   }
@@ -1268,9 +1355,16 @@ export class RunService {
     });
   }
 
-  /**
-   * Получает a run by ID.
-   */
+  /** Записывает одно событие принятого Run transition в той же transaction; result и diagnostics не публикуются. */
+  private appendLifecycleEvent(tx: DatabaseTx, runId: string, type: "AgentRunStarted" | "AgentRunCompleted" | "AgentRunFailed" | "AgentRunInterrupted"): void {
+    const run = tx.get<{ task_id: string | null; epic_id: string | null; role: string; status: string }>(
+      "SELECT task_id,epic_id,role,status FROM agent_runs WHERE id=$id", { id: runId });
+    if (!run) throw new Error("RUN_LIFECYCLE_SOURCE_UNAVAILABLE");
+    appendOutboxEvent(tx, DomainEvent.create({ type, aggregateType: "AgentRun", aggregateId: runId,
+      payload: { runId, taskId: run.task_id, epicId: run.epic_id, role: run.role, status: run.status } }));
+  }
+
+  /** Получает Run из указанного transaction snapshot по его точному ID. */
    private getRun(tx: DatabaseTx, runId: string): AgentRun {
     const row = tx.get(
       `SELECT * FROM agent_runs WHERE id = $id`,

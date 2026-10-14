@@ -8,9 +8,11 @@ import { WorkflowEngine } from "../workflow/workflow-engine.js";
 import type { RunOutcome } from "./run-types.js";
 import { validateRoleOutput } from "./output-validator.js";
 import { SchedulerService } from "../scheduler/scheduler-service.js";
-import { createRunContextInput, RunService, taskDeveloperPrompt, taskQaPrompt, taskReviewerPrompt } from "./run-service.js";
-import { WorktreeRepository } from "../git/worktree-repository.js";
-import { assertSafeGitRef, GitCli } from "../git/git-cli.js";
+import { RunService } from "./run-service.js";
+import { GitCli } from "../git/git-cli.js";
+import { ApprovalService } from "../approvals/approval-service.js";
+import { appendOutboxEvent } from "../../platform/events/outbox-repository.js";
+import { DomainEvent } from "../../platform/events/domain-event.js";
 
 /**
  * Orchestrates runtime события и workflow transitions.
@@ -21,7 +23,8 @@ export class RuntimeEventHandlers {
     private readonly workflowEngine: WorkflowEngine,
     private readonly scheduler: SchedulerService,
     private readonly runService?: RunService,
-    private readonly git: Pick<GitCli, "run"> = new GitCli(),
+    _git: Pick<GitCli, "run"> = new GitCli(),
+    private readonly isReady: () => boolean = () => true,
   ) {
   }
 
@@ -33,117 +36,36 @@ export class RuntimeEventHandlers {
     readonly type: string;
     readonly aggregateId: string | undefined;
     readonly payload: Record<string, unknown>;
-  }): Promise<void> {
+  }): Promise<void | "deferred"> {
     if (event.type !== "AgentRunRequested" || !event.aggregateId) {
       return;
     }
 
+    if (!this.isReady()) return "deferred";
     const taskId = event.aggregateId;
-    const roleValue = event.payload.role === undefined ? "developer" : event.payload.role;
-    const modelValue = event.payload.model === undefined ? "default" : event.payload.model;
-    if (typeof roleValue !== "string" || !["developer", "reviewer", "qa", "integration"].includes(roleValue.toLowerCase())) throw new Error("TASK_RUN_ROLE_UNSUPPORTED");
-    if (typeof modelValue !== "string" || modelValue.trim() === "") throw new Error("TASK_RUN_MODEL_INVALID");
+    const { requestId, runId } = event.payload;
+    if (typeof requestId !== "string" || typeof runId !== "string") throw new Error("RUN_REQUEST_COMMITTED_IDENTITY_REQUIRED");
+    const request = this.scheduler.getRunRequest(taskId, requestId);
+    const run = this.db.get<{ task_id: string | null; role: string; status: string; output: string | null }>(
+      "SELECT task_id,role,status,output FROM agent_runs WHERE id=$id", { id: runId });
+    if (!request || request.status !== "DISPATCHED" || request.runId !== runId || !run || run.task_id !== taskId || run.role !== request.role) {
+      throw new Error("RUN_REQUEST_COMMITTED_IDENTITY_MISMATCH");
+    }
+    if (run.status === "COMPLETED" && run.output) {
+      if (run.role === "integration") {
+        const validation = validateRoleOutput(run.role, JSON.parse(run.output) as unknown);
+        // Только PASS требует доведения Integration attempt; semantic BLOCKED проецируется в FAILED.
+        if (validation.valid && validation.outcome === "PASS") await this.runService?.reconcileTaskIntegrationOutcome(runId);
+      }
+      this.handleRuntimeCompletion(runId, storedOutcome(runId, run.output));
+      return;
+    }
+    if (run.status === "FAILED" || run.status === "CANCELLED") return;
+    if (run.status === "IN_PROGRESS" || run.status === "COMPLETING") return "deferred";
     if (!this.runService) throw new Error("RUN_PREPARATION_SERVICE_UNAVAILABLE");
-    const role = roleValue.toLowerCase() as "developer" | "reviewer" | "qa" | "integration";
-    const model = modelValue;
-
-    // Проверяет task exists and is in READY state
-    const task = this.db.get<{ id: string; status: string; project_id: string; epic_id: string | null }>(
-      "SELECT id, status, project_id, epic_id FROM tasks WHERE id = $id",
-      { id: taskId },
-    );
-
-    if (!task) {
-      throw new Error(`Task ${taskId} not found`);
-    }
-
-    if (task.status !== "READY") {
-      throw new Error(
-        `Task ${taskId} is not in READY state. Current status: ${task.status}`,
-      );
-    }
-
-    const worktree = new WorktreeRepository(this.db).findTaskWorkspace(taskId);
-    if (!worktree) throw new Error("TASK_MANAGED_WORKSPACE_UNAVAILABLE");
-    const targetHead = (await this.git.run(worktree.path, ["rev-parse", "--verify", "--end-of-options", "HEAD^{commit}"])).stdout.trim();
-    const actualBranch = (await this.git.run(worktree.path, ["symbolic-ref", "--quiet", "--short", "HEAD"])).stdout.trim();
-    if (!/^[a-f0-9]{40}$/i.test(targetHead) || actualBranch !== worktree.branch) throw new Error("TASK_WORKTREE_SNAPSHOT_UNAVAILABLE");
-    let prompt: string;
-    let roleInputs: unknown;
-    if (role === "developer") {
-      prompt = taskDeveloperPrompt();
-    } else if (role === "reviewer") {
-      const operation = this.db.get<{ target_ref: string | null }>(
-        `SELECT target_ref FROM git_operations WHERE type='CREATE_WORKTREE' AND status='VERIFIED'
-           AND repo_path=$repoPath AND branch_name=$branch AND worktree_id=$taskId ORDER BY verified_at DESC LIMIT 1`,
-        { repoPath: worktree.repoPath, branch: worktree.branch, taskId },
-      );
-      if (!operation?.target_ref) throw new Error("TASK_REVIEW_BASE_UNAVAILABLE");
-      assertSafeGitRef(operation.target_ref);
-      const gitDiff = (await this.git.run(worktree.path, ["diff", "--no-ext-diff", "--no-textconv", `${operation.target_ref}...HEAD`, "--"])).stdout;
-      prompt = taskReviewerPrompt();
-      roleInputs = { gitDiff, checks: [] };
-    } else if (role === "qa") {
-      prompt = taskQaPrompt();
-      roleInputs = { environment: `Managed task worktree branch ${actualBranch} at target SHA ${targetHead} on ${process.platform}.` };
-    } else {
-      throw new Error("TASK_INTEGRATION_REQUIRES_PREPARED_ATTEMPT");
-    }
-    this.scheduler.assertProjectDispatchable(task.project_id);
-
-    const runOptions = {
-      role,
-      model,
-      taskId,
-      epicId: task.epic_id,
-      triggerReason: "runtime-request",
-      contextVersion: "runtime-request-v1",
-      outputSchemaVersion: "1",
-      capability: { workspace: worktree.path },
-    } as const;
-    const run = await this.runService.prepareRunWithHermesPreflight({
-      ...runOptions,
-      contextInput: createRunContextInput(runOptions, {
-        prompt,
-        ...(roleInputs !== undefined ? { roleInputs } : {}),
-        workspaceIdentity: { repository: worktree.repoPath, workspace: worktree.path, worktree: worktree.id },
-        targetHead,
-        targetBranch: actualBranch,
-      }),
-    });
-
-    try {
-      // Scheduler является Объект только dispatch authority: it atomically reserves
-      // capacity/budget/resource lock перед advancing Объект workflow.
-      this.scheduler.dispatchTask(taskId, this.workflowEngine, () => undefined, {
-        triggerReason: "runtime-request",
-        role,
-        model: run.model,
-        runId: run.id,
-      });
-    } catch (error) {
-      if (this.runService.failPreparedRun(run.id, error)) {
-        this.scheduler.releaseTask(taskId, 0);
-      }
-      throw error;
-    }
-
-    this.emitAgentRunStarted(taskId, role, run.model);
-    await this.executePreparedRun(taskId, run.id);
-    return;
-  }
-
-  /** Executes Объект scheduler-bound run и applies только its persisted outcome. */
-  private async executePreparedRun(taskId: string, runId: string): Promise<void> {
-    try {
-      const execution = await this.runService!.executePreparedRun(runId);
-      this.handleRuntimeCompletion(runId, execution.outcome);
-    } catch (error) {
-      if (this.runService!.failPreparedRun(runId, error)) {
-        this.scheduler.releaseTask(taskId, 0);
-      }
-      throw error;
-    }
+    const execution = await this.runService.executeTaskRequestRun(requestId, runId, taskId, this.isReady);
+    if (execution) this.handleRuntimeCompletion(runId, execution.outcome);
+    else if (!this.isReady()) return "deferred";
   }
 
   /**
@@ -176,35 +98,39 @@ export class RuntimeEventHandlers {
     if (!validation.valid) throw new Error(`Run ${runId} result rejected: ${validation.error}`);
 
     const taskId = run.task_id;
-    // Проверяет current workflow stage
-    const currentStage = this.db.get<{ status: string }>(
-      "SELECT status FROM tasks WHERE id = $id",
-      { id: taskId },
-    );
-
-    if (!currentStage) {
-      throw new Error(`Task ${taskId} not found`);
-    }
-
-    // Только allow completion from DEVELOPMENT stage
-    if (currentStage.status !== "DEVELOPMENT") {
-      throw new Error(
-        `Invalid workflow stage for completion: ${currentStage.status}. Expected: DEVELOPMENT`,
-      );
-    }
-
-    // Применяет outcome based on success/failure
-    const successfulOutcome = !["BLOCKED", "FAIL", "CHANGES_REQUESTED"].includes(validation.outcome ?? "");
-    const targetStatus = successfulOutcome ? "REVIEW" : "FAILED";
-    this.workflowEngine.transition(taskId, targetStatus);
-
-    // Emit appropriate событие
-    if (successfulOutcome) {
-      this.emitAgentRunCompleted(taskId, outcome);
-    } else {
-      this.emitAgentRunFailed(taskId, outcome);
-    }
-    this.scheduler.releaseTask(taskId, run.cost ?? 0);
+    this.db.transaction((tx) => {
+      if (tx.get("SELECT run_id FROM run_completion_projections WHERE run_id=$runId", { runId })) return;
+      const stage = tx.get<{ status: string; epic_id: string | null }>("SELECT status,epic_id FROM tasks WHERE id=$id", { id: taskId });
+      const expected = run.role === "reviewer" ? "REVIEW" : run.role === "qa" ? "QA" : run.role === "integration" ? "INTEGRATION" : "DEVELOPMENT";
+      if (!stage || (stage.status !== expected && stage.status !== "DEVELOPMENT")) throw new Error(`Invalid workflow stage for completion: ${stage?.status}. Expected: ${expected}`);
+      const successful = !["BLOCKED", "FAIL", "CHANGES_REQUESTED"].includes(validation.outcome ?? "");
+      if (successful && run.role === "integration") {
+        const attempt = tx.get<{ status: string; source_sha: string; expected_target_sha: string }>("SELECT status,source_sha,expected_target_sha FROM integration_attempts WHERE integration_run_id=$runId", { runId });
+        const result = submitted as { sourceSha?: string; baseSha?: string };
+        if (!attempt || attempt.status !== "MERGED" || result.sourceSha !== attempt.source_sha || result.baseSha !== attempt.expected_target_sha) throw new Error("TASK_INTEGRATION_OUTCOME_UNVERIFIED");
+      }
+      const target = stage.status === "DEVELOPMENT" ? "REVIEW" : run.role === "reviewer" ? "QA" : run.role === "qa" ? "READY_FOR_INTEGRATION" : "READY_FOR_MERGE";
+      this.workflowEngine.transitionInTransaction(tx, taskId, successful ? target : "FAILED", {
+        hasReviewPassed: successful && run.role === "reviewer", hasSuccessfulIntegration: successful && run.role === "integration",
+        hasFinalMergeApproval: false, parentEpicReleased: false,
+      });
+      const release = this.scheduler.releaseTaskInTransaction(tx, taskId, run.cost ?? 0);
+      if (release.status === "BLOCKED_OWNERSHIP_DRIFT") throw new Error("RUN_COMPLETION_RESERVATION_OWNERSHIP_DRIFT");
+      tx.run("INSERT INTO run_completion_projections(run_id,projected_at) VALUES($runId,$now)", { runId, now: new Date().toISOString() });
+      if (!successful) appendOutboxEvent(tx, DomainEvent.create({ type: "AgentRunFailed", aggregateType: "AgentRun", aggregateId: runId,
+        payload: { runId, taskId, role: run.role, status: "COMPLETED", taskStatus: "FAILED", outcome: validation.outcome, failureKind: "ROLE_OUTCOME" } }));
+      if (successful && stage.epic_id === null) {
+        if (target === "READY_FOR_MERGE") new ApprovalService(this.db).requestInTransaction(tx, {
+          type: "FINAL_MERGE", subjectType: "TASK", subjectId: taskId, requestedBy: "runtime-orchestrator",
+        });
+        else {
+          const role = target === "REVIEW" ? "reviewer" : target === "QA" ? "qa" : "integration";
+          const source = tx.get<{ model: string }>("SELECT model FROM scheduler_run_requests WHERE run_id=$runId", { runId });
+          this.scheduler.enqueueRunRequestInTransaction(tx, { taskId, role, model: source?.model ?? "default",
+            idempotencyKey: `task-stage:${runId}:${role}`, originType: "TASK_STAGE", originId: runId });
+        }
+      }
+    });
   }
 
   /**
@@ -228,10 +154,13 @@ export class RuntimeEventHandlers {
       );
     }
 
-    // Переход к CANCELLED.
-    this.workflowEngine.transition(taskId, "CANCELLED");
-    this.scheduler.releaseTask(taskId);
-    this.emitAgentRunInterrupted(taskId);
+    this.db.transaction((tx) => {
+      this.workflowEngine.transitionInTransaction(tx, taskId, "CANCELLED");
+      const release = this.scheduler.releaseTaskInTransaction(tx, taskId);
+      if (release.status === "BLOCKED_OWNERSHIP_DRIFT") throw new Error("RUN_INTERRUPTION_RESERVATION_OWNERSHIP_DRIFT");
+      appendOutboxEvent(tx, DomainEvent.create({ type: "AgentRunInterrupted", aggregateType: "Task", aggregateId: taskId,
+        payload: { taskId, previousStatus: currentStage.status, status: "CANCELLED" } }));
+    });
   }
 
   /**
@@ -324,38 +253,6 @@ export class RuntimeEventHandlers {
   /**
    * приватный helper methods для emitting события.
    */
-  private emitAgentRunStarted(
-    taskId: string,
-    role: string,
-    model: string,
-  ): void {
-    // в production, этот would append to outbox
-    // Для now, we log it
-    console.log(`[AgentRunStarted] taskId=${taskId} role=${role} model=${model}`);
-  }
-
-  private emitAgentRunCompleted(
-    taskId: string,
-    outcome: RunOutcome,
-  ): void {
-    console.log(
-      `[AgentRunCompleted] taskId=${taskId} exitCode=${outcome.exitCode}`,
-    );
-  }
-
-  private emitAgentRunFailed(
-    taskId: string,
-    outcome: RunOutcome,
-  ): void {
-    console.log(
-      `[AgentRunFailed] taskId=${taskId} exitCode=${outcome.exitCode}`,
-    );
-  }
-
-  private emitAgentRunInterrupted(taskId: string): void {
-    console.log(`[AgentRunInterrupted] taskId=${taskId}`);
-  }
-
   private emitTaskTransitioned(
     taskId: string,
     fromStatus: string,
@@ -365,4 +262,9 @@ export class RuntimeEventHandlers {
       `[TaskTransitioned] taskId=${taskId} from=${fromStatus} to=${toStatus}`,
     );
   }
+}
+
+function storedOutcome(runId: string, output: string): RunOutcome {
+  return { success: true, exitCode: 0, output, validatedSubmission: true,
+    diagnostics: { runId, sessionId: null, stderr: "", exitCode: 0, artifactReferences: [] } };
 }

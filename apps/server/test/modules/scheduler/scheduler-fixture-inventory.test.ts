@@ -51,7 +51,17 @@ describe("closed scheduler fixture and authority inventory", () => {
     const migrations = loadSchedulerMigrations();
     expect(migrations.map((migration) => migration.version)).toEqual(Array.from({ length: 30 }, (_, index) => index + 1));
     const runtime = runtimeSources.map((file) => readFileSync(join(import.meta.dirname, "../../../", file), "utf8")).join("\n");
-    expect((runtime.match(/INSERT INTO scheduler_reservations/g) ?? []).length).toBe(3);
+    const schedulerSource = readFileSync(join(import.meta.dirname, "../../../src/modules/scheduler/scheduler-service.ts"), "utf8");
+    const taskQueueReservation = schedulerSource.slice(schedulerSource.indexOf("private reserveTaskRunTx("), schedulerSource.indexOf("/**", schedulerSource.indexOf("private reserveTaskRunTx(")));
+    expect((taskQueueReservation.match(/INSERT INTO scheduler_reservations/g) ?? []).length).toBe(1);
+    expect(schedulerSource.match(/this\.reserveTaskRunTx\(/g)).toHaveLength(1);
+    const queueDispatch = schedulerSource.slice(schedulerSource.indexOf("  dispatchRunRequest("), schedulerSource.indexOf("  failRunRequest("));
+    expect(queueDispatch).toContain("this.db.transaction((tx)");
+    expect(queueDispatch.indexOf("const run = prepare(tx, request)")).toBeLessThan(queueDispatch.indexOf("this.reserveTaskRunTx("));
+    for (const path of ["src/app/routes/runs.ts", "src/modules/runtime/run-event-handlers.ts"]) {
+      expect(readFileSync(join(import.meta.dirname, "../../../", path), "utf8")).not.toContain(".dispatchTask(");
+    }
+    expect((runtime.replace(taskQueueReservation, "").match(/INSERT INTO scheduler_reservations/g) ?? []).length).toBe(3);
     expect(readFileSync(join(import.meta.dirname, "../../../src/platform/database/migrations/013_remove_legacy_scheduler_locks.sql"), "utf8")).toContain("scheduler_reservations");
     expect(readFileSync(join(import.meta.dirname, "../../../src/platform/database/migrations/014_migrate_legacy_scheduler_authority.sql"), "utf8")).toContain("scheduler_reservations");
     expect(readdirSync(join(import.meta.dirname, "../../../src/platform/database/migrations")).filter((file) => /^(028|029|030)_/.test(file))).toEqual(["028_agent_run_prompt.sql", "029_git_operation_failure_reason.sql", "030_github_feedback_delivery.sql"]);

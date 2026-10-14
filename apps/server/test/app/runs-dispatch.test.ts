@@ -1,174 +1,76 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../../src/app/create-app.js";
 import { createSqliteDatabase } from "../../src/platform/database/sqlite-database.js";
-import { runMigrations, type Migration } from "../../src/platform/database/migrator.js";
-import { readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
-import { join } from "node:path";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { fileURLToPath } from "node:url";
+import { runMigrations } from "../../src/platform/database/migrator.js";
+import { loadTestMigrations } from "../helpers/migrations.js";
+import { SchedulerService } from "../../src/modules/scheduler/scheduler-service.js";
 import { createTestAuthService, TEST_COOKIE, TEST_CSRF_TOKEN } from "../helpers/auth.js";
-import type { StartRunOptions } from "../../src/modules/runtime/run-types.js";
 
-const migrationDir = fileURLToPath(new URL("../../src/platform/database/migrations/", import.meta.url));
-const migrations: Migration[] = readdirSync(migrationDir).filter((file) => file.endsWith(".sql")).map((file) => ({
-  version: Number(/^([0-9]+)/.exec(file)?.[1]),
-  name: file.replace(/^[0-9]+_/, "").replace(/\.sql$/, ""),
-  sql: readFileSync(join(migrationDir, file), "utf8"),
-}));
-
-function setup() {
-  const db = createSqliteDatabase(":memory:");
-  runMigrations(db, migrations);
-  const run = {
-    id: "run-1", role: "developer", runtime: "hermes", model: "default", taskId: "task-1", epicId: null,
-    status: "STARTED", sessionId: null, attempt: null, triggerReason: "runtime-request", contextVersion: "runtime-request-v1",
-    outputSchemaVersion: "1", startedAt: new Date(), endedAt: null, exitCode: null, inputTokens: null,
-    cachedInputTokens: null, outputTokens: null, cost: null,
-  } as never;
-  const runService = {
-    cancelRun: vi.fn(),
-    prepareRun: vi.fn((_options: StartRunOptions) => run),
-    executePreparedRun: vi.fn(async () => ({ run, outcome: { success: true } })),
-    failPreparedRun: vi.fn().mockReturnValue(true),
-  };
-  const scheduler = {
-    assertProjectDispatchable: vi.fn(),
-    dispatchTask: vi.fn(),
-    releaseTask: vi.fn(),
-    projectProjection: vi.fn(() => ({ global: { active: 0, max: 1 }, projects: [] })),
-  };
-  const app = createApp({ db, scheduler: scheduler as never, runService, authService: createTestAuthService() });
-  const now = new Date().toISOString();
-  const workspace = mkdtempSync(join(tmpdir(), "dispatch-workspace-"));
-  execFileSync("git", ["init", "--quiet"], { cwd: workspace, windowsHide: true });
-  execFileSync("git", ["checkout", "--quiet", "-b", "task/task-1"], { cwd: workspace, windowsHide: true });
-  writeFileSync(join(workspace, "fixture.txt"), "managed dispatch test\n", "utf8");
-  execFileSync("git", ["add", "fixture.txt"], { cwd: workspace, windowsHide: true });
-  execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--quiet", "-m", "fixture"], { cwd: workspace, windowsHide: true });
-  db.run(
-    `INSERT INTO worktrees (id,repo_path,path,branch,created_at,removed_at)
-     VALUES ('task-1',$workspace, $workspace, 'task/task-1', $now, NULL)`,
-    { workspace, now },
-  );
-  db.run(
-    `INSERT INTO git_operations(id,type,status,repo_path,branch_name,worktree_id,target_ref,created_at,verified_at)
-     VALUES('dispatch-op','CREATE_WORKTREE','VERIFIED',$workspace,'task/task-1','task-1','HEAD',$now,$now)`,
-    { workspace, now },
-  );
-  db.run("INSERT INTO projects (id,name,display_name,status,created_at,updated_at) VALUES ('project-1','p','P','ACTIVE',$now,$now)", { now });
-  db.run(
-    `INSERT INTO tasks (id,project_id,display_id,title,status,contract_json,created_at,updated_at)
-     VALUES ('task-1','project-1','T-1','Task','READY',$contract,$now,$now)`,
-    { contract: JSON.stringify({ version: 1, goal: "run", context: "test", requirements: [], acceptanceCriteria: [], dependencies: [], nonGoals: [], definitionOfDone: [] }), now },
-  );
-  return { app, db, runService, scheduler, workspace };
-}
-
-function headers(_app: ReturnType<typeof createApp>) {
-  return { cookie: TEST_COOKIE, origin: "http://127.0.0.1:3000", "x-csrf-token": TEST_CSRF_TOKEN };
-}
-
-describe("task dispatch route", () => {
-  it("returns a safe structured model-override error without scheduling a Run", async () => {
-    const { app, db, runService, scheduler, workspace } = setup();
-    vi.mocked(runService.prepareRun).mockImplementationOnce(() => { throw new Error("HERMES_MODEL_OVERRIDE_UNSUPPORTED"); });
-    try {
-      const response = await app.inject({ method: "POST", url: "/api/v1/tasks/task-1/dispatch", headers: headers(app), payload: { model: "explicit-model" } });
-      expect(response.statusCode).toBe(400);
-      expect(response.json()).toEqual({ error: { code: "HERMES_MODEL_OVERRIDE_UNSUPPORTED", message: "Модель выбирается в Hermes. Для запуска используйте model=default." } });
-      expect(scheduler.dispatchTask).not.toHaveBeenCalled();
-      expect(runService.executePreparedRun).not.toHaveBeenCalled();
-    } finally {
-      await app.close(); db.close(); rmSync(workspace, { recursive: true, force: true });
-    }
-  });
-  it("prepares one durable run, binds it to scheduler, and acknowledges asynchronously", async () => {
-    const { app, db, runService, scheduler, workspace } = setup();
-    const response = await app.inject({ method: "POST", url: "/api/v1/tasks/task-1/dispatch", headers: headers(app) });
-    expect(response.statusCode).toBe(202);
-    expect(JSON.parse(response.body)).toMatchObject({ runId: "run-1", taskId: "task-1", status: "STARTED" });
-    expect(runService.prepareRun).toHaveBeenCalledWith(expect.objectContaining({
-      role: "developer", model: "default", taskId: "task-1", capability: { workspace },
-      contextInput: expect.objectContaining({
-        role: "developer", subject: { type: "TASK", id: "task-1" },
-        prompt: expect.stringContaining("persisted Task Contract"),
-        execution: expect.objectContaining({ targetBranch: "task/task-1", targetHead: expect.stringMatching(/^[a-f0-9]{40}$/i) }),
-      }),
-    }));
-    expect(scheduler.dispatchTask).toHaveBeenCalledWith("task-1", expect.anything(), expect.any(Function), expect.objectContaining({ runId: "run-1" }));
-    await Promise.resolve();
-    expect(runService.executePreparedRun).toHaveBeenCalledWith("run-1");
-    await app.close();
-    db.close();
-    rmSync(workspace, { recursive: true, force: true });
-  });
-
-  it("retains task reservation when async dispatch fails without persisted stop proof", async () => {
-    const { app, db, runService, scheduler, workspace } = setup();
-    vi.mocked(runService.executePreparedRun).mockRejectedValueOnce(new Error("runtime stop is unproven"));
-    vi.mocked(runService.failPreparedRun).mockReturnValueOnce(false);
-
-    const response = await app.inject({ method: "POST", url: "/api/v1/tasks/task-1/dispatch", headers: headers(app) });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(response.statusCode).toBe(202);
-    expect(runService.failPreparedRun).toHaveBeenCalledWith("run-1", expect.any(Error));
-    expect(scheduler.releaseTask).not.toHaveBeenCalled();
-    await app.close();
-    db.close();
-    rmSync(workspace, { recursive: true, force: true });
-  });
-
-  it("rejects unknown fields and non-ready tasks", async () => {
-    const { app, db, workspace } = setup();
-    const invalid = await app.inject({ method: "POST", url: "/api/v1/tasks/task-1/dispatch", headers: headers(app), payload: { role: "developer", extra: true } });
-    expect(invalid.statusCode).toBe(400);
-    db.run("UPDATE tasks SET status='DRAFT' WHERE id='task-1'");
-    const notReady = await app.inject({ method: "POST", url: "/api/v1/tasks/task-1/dispatch", headers: headers(app), payload: {} });
-    expect(notReady.statusCode).toBe(409);
-    await app.close();
-    db.close();
-    rmSync(workspace, { recursive: true, force: true });
-  });
-
-  it("rejects an unsupported Task role before scheduler or Run preparation", async () => {
-    const { app, db, workspace, runService, scheduler } = setup();
-    const response = await app.inject({
-      method: "POST", url: "/api/v1/tasks/task-1/dispatch", headers: headers(app), payload: { role: "coordinator" },
-    });
+describe("task dispatch route durable producer", () => {
+  const cleanups: (() => Promise<void>)[] = [];
+  afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup(); });
+  function setup() {
+    const db = createSqliteDatabase(":memory:"); runMigrations(db, loadTestMigrations());
+    const now = new Date().toISOString();
+    db.run("INSERT INTO projects(id,name,display_name,status,created_at,updated_at) VALUES('project-1','p','P','ACTIVE',$now,$now)", { now });
+    db.run("INSERT INTO tasks(id,project_id,display_id,title,status,contract_json,created_at,updated_at) VALUES('task-1','project-1','T-1','Task','READY','{}',$now,$now)", { now });
+    const scheduler = new SchedulerService(db);
+    const runService = { cancelRun: vi.fn(), prepareRun: vi.fn(), executePreparedRun: vi.fn(), validateTaskRequestModel: vi.fn() };
+    const app = createApp({ db, scheduler, runService, authService: createTestAuthService() });
+    cleanups.push(async () => { await app.close(); db.close(); });
+    const headers = { cookie: TEST_COOKIE, origin: "http://127.0.0.1:3000", "x-csrf-token": TEST_CSRF_TOKEN, "idempotency-key": "caller-1" };
+    return { app, db, scheduler, runService, headers };
+  }
+  it("rejects unsupported Hermes model selection before persistence", async () => {
+    const f = setup(); f.runService.validateTaskRequestModel.mockImplementation(() => { throw new Error("HERMES_MODEL_OVERRIDE_UNSUPPORTED"); });
+    const response = await f.app.inject({ method: "POST", url: "/api/v1/tasks/task-1/dispatch", headers: f.headers, payload: { model: "explicit-model" } });
     expect(response.statusCode).toBe(400);
-    expect(runService.prepareRun).not.toHaveBeenCalled();
-    expect(scheduler.assertProjectDispatchable).not.toHaveBeenCalled();
-    expect(scheduler.dispatchTask).not.toHaveBeenCalled();
-    await app.close();
-    db.close();
-    rmSync(workspace, { recursive: true, force: true });
+    expect(response.json()).toMatchObject({ error: { code: "HERMES_MODEL_OVERRIDE_UNSUPPORTED" } });
+    expect(f.db.all("SELECT * FROM scheduler_run_requests")).toEqual([]);
+    expect(f.runService.prepareRun).not.toHaveBeenCalled();
   });
-
-  it("keeps Reviewer as a supported Task role and supplies a diff without Developer transcript", async () => {
-    const { app, db, workspace, runService, scheduler } = setup();
-    const response = await app.inject({ method: "POST", url: "/api/v1/tasks/task-1/dispatch", headers: headers(app), payload: { role: "reviewer" } });
+  it("acknowledges durable pending without preparing or launching in the route", async () => {
+    const f = setup(); const response = await f.app.inject({ method: "POST", url: "/api/v1/tasks/task-1/dispatch", headers: f.headers });
     expect(response.statusCode).toBe(202);
-    const options = vi.mocked(runService.prepareRun).mock.calls[0]?.[0];
-    expect(options).toMatchObject({ role: "reviewer", contextInput: { role: "reviewer", roleInputs: { gitDiff: expect.any(String), checks: [] } } });
-    expect(options?.contextInput?.prompt).toContain("Independently review");
-    expect(options?.contextInput?.prompt).not.toContain("=== DEVELOPER TRANSCRIPT ===");
-    expect(scheduler.dispatchTask).toHaveBeenCalledWith("task-1", expect.anything(), expect.any(Function), expect.objectContaining({ role: "reviewer" }));
-    await app.close();
-    db.close();
-    rmSync(workspace, { recursive: true, force: true });
+    expect(response.json()).toMatchObject({ taskId: "task-1", status: "PENDING", runId: null, requestId: expect.any(String) });
+    expect(f.db.all("SELECT * FROM agent_runs")).toEqual([]);
+    expect(f.runService.prepareRun).not.toHaveBeenCalled(); expect(f.runService.executePreparedRun).not.toHaveBeenCalled();
   });
+  it("rejects unknown fields, unsupported role and a new intent for a non-ready Task", async () => {
+    const f = setup();
+    for (const payload of [{ extra: true }, { role: "coordinator" }]) {
+      expect((await f.app.inject({ method: "POST", url: "/api/v1/tasks/task-1/dispatch", headers: f.headers, payload })).statusCode).toBe(400);
+    }
+    f.db.run("UPDATE tasks SET status='DRAFT' WHERE id='task-1'");
+    expect((await f.app.inject({ method: "POST", url: "/api/v1/tasks/task-1/dispatch", headers: f.headers })).statusCode).toBe(409);
+    expect(f.db.all("SELECT * FROM scheduler_run_requests")).toEqual([]);
+  });
+  it("returns a deterministic conflict for an Epic-owned Task and creates no request", async () => {
+    const f = setup();
+    const now = new Date().toISOString();
+    f.db.run("INSERT INTO epics(id,project_id,display_id,title,contract_json,created_at,updated_at) VALUES('epic-1','project-1','E-1','Epic','{}',$now,$now)", { now });
+    f.db.run("UPDATE tasks SET epic_id='epic-1' WHERE id='task-1'");
 
-  it("rejects dispatch when no persisted managed workspace exists", async () => {
-    const { app, db, workspace } = setup();
-    db.run("UPDATE worktrees SET removed_at=$now WHERE id='task-1'", { now: new Date().toISOString() });
-    const response = await app.inject({ method: "POST", url: "/api/v1/tasks/task-1/dispatch", headers: headers(app) });
+    const response = await f.app.inject({ method: "POST", url: "/api/v1/tasks/task-1/dispatch", headers: f.headers });
+
     expect(response.statusCode).toBe(409);
-    expect(JSON.parse(response.body)).toEqual({ error: "managed task workspace is required" });
-    await app.close();
-    db.close();
-    rmSync(workspace, { recursive: true, force: true });
+    expect(response.json()).toMatchObject({ error: { code: "RUN_REQUEST_EPIC_TASK_UNSUPPORTED" } });
+    expect(f.db.all("SELECT * FROM scheduler_run_requests")).toEqual([]);
+  });
+  it("retains the selected Reviewer role/model and the stable source reference", async () => {
+    const f = setup(); const response = await f.app.inject({ method: "POST", url: "/api/v1/tasks/task-1/dispatch", headers: f.headers, payload: { role: "Reviewer", model: "selected-model" } });
+    expect(response.statusCode).toBe(202);
+    expect(f.db.get("SELECT role,model,origin_type,origin_id FROM scheduler_run_requests")).toEqual({ role: "reviewer", model: "selected-model", origin_type: "TASK_API", origin_id: "task-api:task-1" });
+    expect(f.runService.prepareRun).not.toHaveBeenCalled();
+  });
+  it("deduplicates a lost response even after the Task left READY", async () => {
+    const f = setup(); const call = () => f.app.inject({ method: "POST", url: "/api/v1/tasks/task-1/dispatch", headers: f.headers });
+    const first = await call(); f.db.run("UPDATE tasks SET status='DEVELOPMENT' WHERE id='task-1'");
+    const replay = await call(); expect(replay.statusCode).toBe(202); expect(replay.json()).toEqual(first.json());
+  });
+  it("requires Idempotency-Key and leaves the queue empty", async () => {
+    const f = setup(); const { "idempotency-key": _key, ...headers } = f.headers;
+    expect((await f.app.inject({ method: "POST", url: "/api/v1/tasks/task-1/dispatch", headers })).statusCode).toBe(400);
+    expect(f.db.all("SELECT * FROM scheduler_run_requests")).toEqual([]);
   });
 });

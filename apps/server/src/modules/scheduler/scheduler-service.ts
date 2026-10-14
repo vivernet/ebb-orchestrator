@@ -25,6 +25,10 @@ import type {
 import { agedPriority, compareTasks } from "./scheduler-policy.js";
 import { ResourceLockService } from "./resource-lock-service.js";
 import { assertProjectDispatchableTx, projectDispatchEligibilityTx } from "./project-dispatch-guard.js";
+import { SchedulerRunRequestRepository, type EnqueueSchedulerRunRequest, type SchedulerRunRequest } from "./scheduler-run-request-repository.js";
+import { appendOutboxEvent } from "../../platform/events/outbox-repository.js";
+import { DomainEvent } from "../../platform/events/domain-event.js";
+import type { AgentRun } from "@ebb-orchestrator/contracts";
 
 interface TaskRow {
   id: string;
@@ -42,6 +46,8 @@ interface TaskRow {
  *
  */
 export class SchedulerService {
+  private readonly requests: SchedulerRunRequestRepository;
+  private queueNudge: (() => void) | undefined;
   /** Приватный сервис блокировок для управления ресурсами. */
   private readonly lockService: ResourceLockService;
 
@@ -51,6 +57,7 @@ export class SchedulerService {
   static readonly ALL_ROLES = ALL_ROLES;
 
   constructor(private readonly db: Database, private readonly clock: () => Date = () => new Date()) {
+    this.requests = new SchedulerRunRequestRepository(db, clock);
     this.lockService = new ResourceLockService(db);
     // Initialize с defaults только если no config exists yet.
     const existing = this.db.get<{ id: string }>("SELECT id FROM scheduler_config WHERE id=1");
@@ -83,6 +90,135 @@ export class SchedulerService {
 
   assertProjectDispatchable(projectId: string): void {
     this.db.transaction((tx) => assertProjectDispatchableTx(tx, projectId));
+  }
+
+  /** Принимает Task intent без запуска и без capacity exception. Точный replay всегда возвращает прежний request. */
+  enqueueRunRequest(input: EnqueueSchedulerRunRequest, validateNew?: () => void): SchedulerRunRequest {
+    if (!["developer", "reviewer", "qa", "integration"].includes(input.role)) throw new Error("RUN_REQUEST_ROLE_INVALID");
+    if (!this.db.get("SELECT id FROM tasks WHERE id=$id", { id: input.taskId })) throw new Error("RUN_REQUEST_TASK_NOT_FOUND");
+    const request = this.db.transaction((tx) => {
+      const task = tx.get<{ status: string; epic_id: string | null }>("SELECT status,epic_id FROM tasks WHERE id=$id", { id: input.taskId });
+      if (!task) throw new Error("RUN_REQUEST_TASK_NOT_FOUND");
+      if (task.epic_id !== null) throw new Error("RUN_REQUEST_EPIC_TASK_UNSUPPORTED");
+      const existing = tx.get("SELECT id FROM scheduler_run_requests WHERE idempotency_key=$key", { key: input.idempotencyKey });
+      if (existing) return this.requests.enqueueInTransaction(tx, input);
+      validateNew?.();
+      if (task.status !== "READY") throw new Error("RUN_REQUEST_TASK_NOT_READY");
+      return this.requests.enqueueInTransaction(tx, input);
+    });
+    this.queueNudge?.();
+    return request;
+  }
+
+  /** Recovery enqueues новую source-bound попытку вместе с детерминированным Workflow retry. */
+  enqueueRunRequestInTransaction(tx: DatabaseTx, input: EnqueueSchedulerRunRequest): SchedulerRunRequest {
+    if (!["developer", "reviewer", "qa", "integration"].includes(input.role)) throw new Error("RUN_REQUEST_ROLE_INVALID");
+    const task = tx.get<{ epic_id: string | null }>("SELECT epic_id FROM tasks WHERE id=$id", { id: input.taskId });
+    if (!task) throw new Error("RUN_REQUEST_TASK_NOT_FOUND");
+    if (task.epic_id !== null) throw new Error("RUN_REQUEST_EPIC_TASK_UNSUPPORTED");
+    return this.requests.enqueueInTransaction(tx, input);
+  }
+
+  /** Возвращает source-bound durable request, в том числе после restart и terminal outcome. */
+  getRunRequest(taskId: string, requestId: string): SchedulerRunRequest | undefined {
+    return this.requests.get(taskId, requestId);
+  }
+
+  /** Подключает единственный production worker; callback лишь планирует проход после commit. */
+  setRunRequestNudge(nudge: (() => void) | undefined): void { this.queueNudge = nudge; }
+
+  /** Выбирает только pending requests; READY Tasks без пользовательского intent не участвуют в очереди. */
+  nextRunRequest(): SchedulerRunRequest | undefined {
+    return this.db.transaction((tx) => this.orderedRunRequestsTx(tx)[0]?.request);
+  }
+
+  /**
+   * Сериализует arbitration и все durable writes в SQLite write transaction.
+   * prepare вызывается лишь для повторно подтверждённого winner; ошибка откатывает Run/manifest/owner,
+   * reservation, Workflow, claim и outbox. Изменившийся winner остаётся PENDING.
+   */
+  dispatchRunRequest(
+    requestId: string,
+    workflow: WorkflowEngine,
+    prepare: (tx: DatabaseTx, request: SchedulerRunRequest) => AgentRun,
+    canDispatch: () => boolean,
+  ): AgentRun | undefined {
+    return this.db.transaction((tx) => {
+      if (!canDispatch()) return undefined;
+      const winner = this.orderedRunRequestsTx(tx)[0];
+      if (!winner || winner.request.id !== requestId) return undefined;
+      const { request, task } = winner;
+      const run = prepare(tx, request);
+      if (run.taskId !== task.id || run.role !== request.role) throw new Error("RUN_REQUEST_PREPARED_IDENTITY_MISMATCH");
+      this.reserveTaskRunTx(tx, task, run.id, request.role, run.model);
+      const persistedStage = tx.get<{ status: string }>("SELECT status FROM tasks WHERE id=$id", { id: task.id })?.status;
+      if (request.originType !== "TASK_STAGE" && !(request.originType === "TASK_RECOVERY" && ["REVIEW", "QA", "INTEGRATION"].includes(persistedStage ?? ""))) workflow.transitionInTransaction(tx, task.id, "DEVELOPMENT");
+      else if (request.originType === "TASK_STAGE" && request.role === "integration") workflow.transitionInTransaction(tx, task.id, "INTEGRATION");
+      tx.run("UPDATE tasks SET capacity_wait_started_at=NULL WHERE id=$taskId", { taskId: task.id });
+      this.requests.dispatchInTransaction(tx, request.id, run.id);
+      appendOutboxEvent(tx, DomainEvent.create({ type: "AgentRunRequested", aggregateType: "Task", aggregateId: task.id,
+        payload: { taskId: task.id, requestId: request.id, runId: run.id, role: request.role, model: run.model } }));
+      return run;
+    });
+  }
+
+  /** Терминальная deterministic failure; transient DB/process errors должны оставить intent PENDING. */
+  failRunRequest(requestId: string, code: string): void { this.requests.fail(requestId, code); }
+
+  private orderedRunRequestsTx(tx: DatabaseTx): { request: SchedulerRunRequest; task: SchedulableTask }[] {
+    this.assertAcyclicDependencyGraph(tx);
+    const rows = tx.all<TaskRow>("SELECT id,project_id,epic_id,status,contract_json,created_at,capacity_wait_started_at FROM tasks");
+    const active = rows.map((row) => ({ ...this.toSchedulableTask(row, tx), capacityWaitStartedAt: row.capacity_wait_started_at ?? null }));
+    const now = this.clock();
+    const pathLength = (id: string): number => {
+      const children = active.filter((entry) => !isTerminalStatus(entry.status) && entry.dependsOnTaskIds.includes(id));
+      return 1 + Math.max(0, ...children.map((entry) => pathLength(entry.id)));
+    };
+    const result: { request: SchedulerRunRequest; task: SchedulableTask }[] = [];
+    for (const request of this.requests.pending(tx)) {
+      const persistedTask = active.find((entry) => entry.id === request.taskId);
+      const task = persistedTask ? this.runRequestCandidateTx(tx, request, persistedTask) : undefined;
+      if (!task || !this.nonCapacityGatesPassTx(tx, task, active.filter((entry) => !isTerminalStatus(entry.status)), request.role, request.model) ||
+          this.capacityIsFullTx(tx, task, request.role)) continue;
+      result.push({ request, task: { ...task, agedPriority: agedPriority(task.priority, task.capacityWaitStartedAt, now), criticalPathLength: pathLength(task.id) } });
+    }
+    return result.sort((left, right) => compareTasks(left.task, right.task));
+  }
+
+  private runRequestCandidateTx(tx: DatabaseTx, request: SchedulerRunRequest, task: SchedulableTask): SchedulableTask | undefined {
+    if (task.epicId !== null) return undefined;
+    if (request.originType === "TASK_RECOVERY" && task.status !== "READY") {
+      const stages: Record<string, string> = { reviewer: "REVIEW", qa: "QA", integration: "INTEGRATION" };
+      if (stages[request.role] !== task.status) return undefined;
+      const source = tx.get<{ task_id: string | null; role: string; model: string; status: string }>(
+        `SELECT r.task_id,r.role,q.model,r.status FROM agent_runs r
+         JOIN scheduler_run_requests q ON q.run_id=r.id AND q.task_id=r.task_id AND q.status='DISPATCHED'
+         WHERE r.id=$id`, { id: request.originId });
+      if (source?.task_id !== task.id || source.role !== request.role || source.model !== request.model ||
+          !["FAILED", "CANCELLED"].includes(source.status)) return undefined;
+      return { ...task, status: "READY", category: request.role === "reviewer" ? "reviewer" : request.role === "qa" ? "qa" : "integration" };
+    }
+    if (request.originType !== "TASK_STAGE") return task;
+    const stages: Record<string, string> = { reviewer: "REVIEW", qa: "QA", integration: "READY_FOR_INTEGRATION" };
+    if (task.epicId !== null || stages[request.role] !== task.status) return undefined;
+    const source = tx.get<{ task_id: string | null; status: string }>("SELECT task_id,status FROM agent_runs WHERE id=$id", { id: request.originId });
+    if (source?.task_id !== task.id || source.status !== "COMPLETED" || !tx.get("SELECT run_id FROM run_completion_projections WHERE run_id=$id", { id: request.originId })) return undefined;
+    // Stage intent проходит те же deterministic gates в явно разрешённой паре role/stage.
+    return { ...task, status: "READY", category: request.role === "reviewer" ? "reviewer" : request.role === "qa" ? "qa" : "integration" };
+  }
+
+  private reserveTaskRunTx(tx: DatabaseTx, task: SchedulableTask, runId: string, role: string, model: string): void {
+    const existing = tx.get<{ id: string; status: string }>("SELECT id,status FROM scheduler_reservations WHERE subject_id=$taskId", { taskId: task.id });
+    if (existing && existing.status !== "RELEASED") throw new Error("RUN_REQUEST_RESERVATION_CONFLICT");
+    const estimate = this.estimateCostTx(tx, task.projectId, role, model);
+    const id = existing?.id ?? crypto.randomUUID();
+    const now = this.clock().toISOString();
+    const owner = `task:${task.id}`;
+    const params = { id, projectId: task.projectId, owner, now, estimate, role, model, runId };
+    if (existing) tx.run("UPDATE scheduler_reservations SET project_id=$projectId,owner_id=$owner,reserved_at=$now,estimate_cost=$estimate,status='RESERVED',actual_cost=NULL,role=$role,model=$model,approval_id=NULL,run_id=$runId WHERE id=$id AND status='RELEASED'", params);
+    else tx.run("INSERT INTO scheduler_reservations(id,kind,subject_id,project_id,owner_id,reserved_at,estimate_cost,status,role,model,run_id) VALUES($id,'TASK',$taskId,$projectId,$owner,$now,$estimate,'RESERVED',$role,$model,$runId)", { ...params, taskId: task.id });
+    tx.run("UPDATE scheduler_budgets SET reserved_cost=reserved_cost+$estimate WHERE project_id=$projectId", { projectId: task.projectId, estimate });
+    tx.run("INSERT INTO scheduler_resource_locks(resource_key,reservation_id,project_id,owner_id,locked_at) VALUES($resource,$id,$projectId,$owner,$now)", { resource: owner, id, projectId: task.projectId, owner, now });
   }
 
   /**\n   * Пересчитывает элигибельность для всех активных задач (опционально в пределах проекта).\n   *\n   * Результаты детерминированы — одно и то же состояние всегда даёт одинаковый порядок.\n   */
@@ -629,7 +765,13 @@ getEligibility(taskId: string, scope?: { projectId: string }): Eligibility {
 
   /** Освобождает резервацию только после того, как сохранённый run достигнет terminal state. */
   releaseTask(taskId: string, actualCost = 0): ReservationReleaseResult {
-    return this.db.transaction((tx) => {
+    const result = this.db.transaction((tx) => this.releaseTaskInTransaction(tx, taskId, actualCost));
+    this.queueNudge?.();
+    return result;
+  }
+
+  /** Освобождает Task slot в transaction completion projection; повторный release не списывает budget дважды. */
+  releaseTaskInTransaction(tx: DatabaseTx, taskId: string, actualCost = 0): ReservationReleaseResult {
       const reservation = tx.get<{ id: string; project_id: string; estimate_cost: number; owner_id: string }>("SELECT id,project_id,estimate_cost,owner_id FROM scheduler_reservations WHERE subject_id=$taskId AND status='RESERVED'", { taskId });
       if (!reservation) return { status: "ALREADY_RELEASED" };
       if (!this.lockOwnerMatches(tx, reservation)) return { status: "BLOCKED_OWNERSHIP_DRIFT", reservationId: reservation.id };
@@ -641,7 +783,6 @@ getEligibility(taskId: string, scope?: { projectId: string }): Eligibility {
       if (actual > 0) tx.run("INSERT INTO scheduler_usage_history(project_id,role,model,cost,recorded_at) VALUES($projectId,'developer','default',$actual,$at)", { projectId: reservation.project_id, actual, at: new Date().toISOString() });
       tx.run("DELETE FROM scheduler_resource_locks WHERE reservation_id=$id", { id: reservation.id });
       return { status: "RELEASED", reservationId: reservation.id };
-    });
   }
 
   /** Сводит резервации и блокировки после краша или прерванного run. */
@@ -701,9 +842,12 @@ getEligibility(taskId: string, scope?: { projectId: string }): Eligibility {
     const tasks = tx.all<TaskRow>("SELECT id,project_id,epic_id,status,contract_json,created_at,capacity_wait_started_at FROM tasks ORDER BY id");
     const active = tasks.map((row) => this.toSchedulableTask(row, tx)).filter((task) => !isTerminalStatus(task.status));
     for (const row of tasks) {
-      const task = active.find((entry) => entry.id === row.id);
-      const nonCapacityGatesOpen = task !== undefined && this.nonCapacityGatesPassTx(tx, task, active);
-      const waitingForCapacity = nonCapacityGatesOpen && this.capacityIsFullTx(tx, task);
+      const persistedTask = active.find((entry) => entry.id === row.id);
+      const request = tx.get("SELECT name FROM sqlite_master WHERE type='table' AND name='scheduler_run_requests'")
+        ? this.requests.pending(tx).find((entry) => entry.taskId === row.id) : undefined;
+      const task = persistedTask && request ? this.runRequestCandidateTx(tx, request, persistedTask) : persistedTask;
+      const nonCapacityGatesOpen = task !== undefined && this.nonCapacityGatesPassTx(tx, task, active, request?.role, request?.model);
+      const waitingForCapacity = nonCapacityGatesOpen && this.capacityIsFullTx(tx, task, request?.role);
       const startedAt = !nonCapacityGatesOpen
         ? null
         : waitingForCapacity
@@ -744,21 +888,21 @@ getEligibility(taskId: string, scope?: { projectId: string }): Eligibility {
     for (const id of [...vertices].sort()) visit(id, []);
   }
 
-  private nonCapacityGatesPassTx(tx: DatabaseTx, task: SchedulableTask, active: SchedulableTask[]): boolean {
+  private nonCapacityGatesPassTx(tx: DatabaseTx, task: SchedulableTask, active: SchedulableTask[], requestedRole?: string, model = "default"): boolean {
     if (!projectDispatchEligibilityTx(tx, task.projectId).allowed || task.status !== "READY") return false;
     if (task.dependsOnTaskIds.some((id) => active.some((candidate) => candidate.id === id))) return false;
     if (tx.get("SELECT 1 FROM scheduler_resource_locks WHERE owner_id<>$owner AND resource_key IN ('global',$resource)", { owner: `task:${task.id}`, resource: `task:${task.id}` })) return false;
     if (this.hasPendingApprovalTx(tx, task.id)) return false;
-    const role = task.category === "reviewer" ? "reviewer" : "developer";
+    const role = requestedRole ?? (task.category === "reviewer" ? "reviewer" : "developer");
     const budget = tx.get<{ limit_cost: number; spent_cost: number; reserved_cost: number }>("SELECT limit_cost,spent_cost,reserved_cost FROM scheduler_budgets WHERE project_id=$projectId", { projectId: task.projectId });
-    return !budget || budget.spent_cost + budget.reserved_cost + this.estimateCostTx(tx, task.projectId, role, "default") <= budget.limit_cost;
+    return !budget || budget.spent_cost + budget.reserved_cost + this.estimateCostTx(tx, task.projectId, role, model) <= budget.limit_cost;
   }
 
-  private capacityIsFullTx(tx: DatabaseTx, task: SchedulableTask): boolean {
+  private capacityIsFullTx(tx: DatabaseTx, task: SchedulableTask, requestedRole?: string): boolean {
     const limits = this.getLimits(task.projectId);
     const global = this.countTx(tx, "status='RESERVED' AND kind <> 'LOCK'");
     const project = this.countTx(tx, "status='RESERVED' AND kind <> 'LOCK' AND project_id=$projectId", { projectId: task.projectId });
-    const role = task.category === "reviewer" ? "reviewer" : "developer";
+    const role = requestedRole ?? (task.category === "reviewer" ? "reviewer" : "developer");
     const roleCount = this.countTx(tx, "status='RESERVED' AND kind <> 'LOCK' AND lower(role)=lower($role)", { role });
     return global >= limits.globalMax || project >= limits.projectMax || roleCount >= this.getRoleCapacity(role);
   }
