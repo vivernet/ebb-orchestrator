@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <iostream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -53,6 +54,30 @@ bool parseWindowsPath(std::wstring path, std::vector<std::wstring>& components, 
   return !components.empty();
 }
 
+bool normalizeDosDrivePath(const std::wstring& path, std::wstring& normalized) {
+  constexpr wchar_t extendedPrefix[] = L"\\\\?\\";
+  const size_t prefixLength = path.rfind(extendedPrefix, 0) == 0 ? 4 : 0;
+  if (path.size() < prefixLength + 3) return false;
+  const wchar_t* drivePath = path.c_str() + prefixLength;
+  if (!((drivePath[0] >= L'A' && drivePath[0] <= L'Z') ||
+        (drivePath[0] >= L'a' && drivePath[0] <= L'z')) ||
+      drivePath[1] != L':' || drivePath[2] != L'\\') return false;
+
+  std::wstring candidate = path.substr(prefixLength);
+  if (candidate.find(L'/') != std::wstring::npos) return false;
+  size_t cursor = 3;
+  while (cursor < candidate.size()) {
+    const size_t end = candidate.find(L'\\', cursor);
+    const std::wstring component = candidate.substr(
+      cursor, end == std::wstring::npos ? candidate.size() - cursor : end - cursor);
+    if (component == L"." || component == L"..") return false;
+    if (end == std::wstring::npos) break;
+    cursor = end + 1;
+  }
+  normalized = std::move(candidate);
+  return true;
+}
+
 bool hasExpectedAttributes(HANDLE handle, bool directory) {
   FILE_ATTRIBUTE_TAG_INFO info{};
   return GetFileInformationByHandleEx(handle, FileAttributeTagInfo, &info, sizeof(info)) != 0 &&
@@ -95,12 +120,16 @@ int printFileIdentity(HANDLE handle, const std::wstring& expectedPath) {
     reportIdentityFailure("FINAL_PATH_BUFFER_TOO_SMALL");
     return kPathFinalPathQueryFailed;
   }
-  if (CompareStringOrdinal(finalPath.data(), static_cast<int>(length), expectedPath.c_str(),
-      static_cast<int>(expectedPath.size()), TRUE) != CSTR_EQUAL) {
+  std::wstring normalizedFinalPath;
+  std::wstring normalizedExpectedPath;
+  if (!normalizeDosDrivePath(std::wstring(finalPath.data(), length), normalizedFinalPath) ||
+      !normalizeDosDrivePath(expectedPath, normalizedExpectedPath) ||
+      CompareStringOrdinal(normalizedFinalPath.c_str(), static_cast<int>(normalizedFinalPath.size()),
+        normalizedExpectedPath.c_str(), static_cast<int>(normalizedExpectedPath.size()), TRUE) != CSTR_EQUAL) {
     reportIdentityFailure("EXPECTED_PATH_MISMATCH");
     return kPathExpectedPathMismatch;
   }
-  const std::string canonicalPath = narrowUtf8(std::wstring(finalPath.data(), length));
+  const std::string canonicalPath = narrowUtf8(normalizedFinalPath);
   if (canonicalPath.empty()) {
     reportIdentityFailure("UTF8_CONVERSION_FAILED");
     return kPathUtf8ConversionFailed;

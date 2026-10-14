@@ -33,7 +33,11 @@ function identity(filename) {
   assert.deepEqual(Object.keys(value).sort(), ["fileId", "kind", "path", "status", "volumeSerial"]);
   assert.equal(value.status, "SAFE_PATH");
   assert.equal(value.kind, "file");
-  assert.equal(value.path.replace(/^\\\\\?\\/u, "").toLowerCase(), realpathSync(filename).toLowerCase());
+  assert.equal(value.path.startsWith("\\\\?\\"), false);
+  assert.equal(
+    value.path.toLowerCase(),
+    realpathSync(filename).replace(/^\\\\\?\\/u, "").toLowerCase(),
+  );
   assert.match(value.volumeSerial, /^[a-f0-9]{16}$/u);
   assert.match(value.fileId, /^[a-f0-9]{32}$/u);
   return { volumeSerial: value.volumeSerial, fileId: value.fileId };
@@ -43,6 +47,9 @@ try {
   const file = join(fixture, "identity проба.txt");
   writeFileSync(file, "first content");
   const original = identity(file);
+  const extendedFilePath = `\\\\?\\${file}`;
+  assert.deepEqual(identity(extendedFilePath), original);
+  assert.deepEqual(identity(file.toLowerCase()), original);
   assert.deepEqual(identity(file), original);
   writeFileSync(file, "rewritten content");
   assert.deepEqual(identity(file), original);
@@ -59,14 +66,15 @@ try {
   writeFileSync(join(target, "nested.txt"), "target content");
   const junction = join(fixture, "junction");
   symlinkSync(target, junction, "junction");
-  for (const [args, expectedDiagnostic] of [
-    [["verify-host-path", "file", fixture], ""],
-    [["verify-host-path", "file", join(fixture, "missing.txt")], ""],
-    [["verify-host-path", "file", join(junction, "nested.txt")], "HERMES_PATH_IDENTITY_EXPECTED_PATH_MISMATCH"],
-    [["verify-host-path", "file", `${fixture}\\target\\..\\identity проба.txt`], ""],
+  for (const [args, expectedDiagnostic, expectedStatus] of [
+    [["verify-host-path", "file", fixture], "", null],
+    [["verify-host-path", "file", join(fixture, "missing.txt")], "", null],
+    [["verify-host-path", "file", join(junction, "nested.txt")], "HERMES_PATH_IDENTITY_EXPECTED_PATH_MISMATCH", 36],
+    [["verify-host-path", "file", `${fixture}\\target\\..\\identity проба.txt`], "", null],
   ]) {
     const result = invoke(args);
-    assert.notEqual(result.status, 0);
+    if (expectedStatus === null) assert.notEqual(result.status, 0);
+    else assert.equal(result.status, expectedStatus);
     assert.equal(result.stdout, "");
     if (expectedDiagnostic) {
       assert.match(result.stderr, new RegExp(`^${expectedDiagnostic}\\r?\\n$`, "u"));
@@ -82,6 +90,8 @@ try {
     ["create-profile", fixture, "unused"],
     ["source-cache-root-ensure", fixture],
     ["project-selection", fixture, fixture, "unused"],
+    ["verify-host-path", "file", "\\\\?\\UNC\\server\\share\\file"],
+    ["verify-host-path", "file", "\\\\.\\C:\\fixture\\file"],
   ]) {
     const result = invoke(args);
     assert.equal(result.status, 2);

@@ -58,6 +58,9 @@ describe("direct installed Hermes launch contract", () => {
     expect(hermesProfilePathHelperSource).toContain('reportIdentityFailure("EXPECTED_PATH_MISMATCH")');
     expect(hermesProfilePathHelperSource).toContain('reportIdentityFailure("UTF8_CONVERSION_FAILED")');
     expect(hermesProfilePathHelperSource).toMatch(/GetFinalPathNameByHandleW\([\s\S]*?\);\s*const DWORD finalPathError = GetLastError\(\);/u);
+    expect(hermesProfilePathHelperSource).toContain("bool normalizeDosDrivePath(");
+    expect(hermesProfilePathHelperSource).toContain("normalizeDosDrivePath(std::wstring(finalPath.data(), length), normalizedFinalPath)");
+    expect(hermesProfilePathHelperSource).toContain("normalizeDosDrivePath(expectedPath, normalizedExpectedPath)");
     const diagnosticReporter = /void reportIdentityFailure\([\s\S]*?\n\}/u.exec(hermesProfilePathHelperSource)?.[0] ?? "";
     expect(diagnosticReporter).not.toMatch(/filename|expectedPath|canonicalPath/iu);
   });
