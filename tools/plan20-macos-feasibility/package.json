@@ -1,0 +1,13 @@
+{
+  "name": "@ebb-orchestrator/plan20-macos-feasibility",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24.15" },
+  "scripts": {
+    "preflight": "node src/cli.mjs preflight",
+    "lifecycle": "node src/cli.mjs lifecycle",
+    "provider": "node src/cli.mjs provider",
+    "report": "node src/cli.mjs report",
+    "test": "node --test test/*.test.mjs"
+  }
+}
