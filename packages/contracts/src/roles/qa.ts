@@ -3,7 +3,7 @@
  */
 
 import { z } from "zod";
-import { BaseOutputSchema, QaOutcome } from "./common.js";
+import { BaseOutputSchema, QualityRecordUpdateSchema, QaOutcome, uniqueQualityUpdates } from "./common.js";
 
 /** Схема результата QA с evidence и обязательными failed criteria. */
 export const QaOutputSchema = BaseOutputSchema.extend({
@@ -18,8 +18,12 @@ export const QaOutputSchema = BaseOutputSchema.extend({
       })
     )
     .optional()
-    .describe("List of failed criteria"),
-});
+    .describe("List of failed criteria")
+    .refine((items) => items === undefined || new Set(items.map(({ id }) => id)).size === items.length, "failedCriteria must not repeat criterion IDs"),
+  defect_updates: z.array(QualityRecordUpdateSchema.extend({
+    id: z.string().regex(/^DEFECT-[1-9][0-9]*$/),
+  })).optional().refine(uniqueQualityUpdates, "defect_updates must not contain duplicate IDs"),
+}).strict();
 
 /** Тип проверенного результата QA. */
 export type QaOutput = z.infer<typeof QaOutputSchema>;

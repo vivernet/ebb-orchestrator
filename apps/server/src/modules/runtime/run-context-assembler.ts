@@ -89,10 +89,10 @@ interface DecisionRow {
   related_guideline: string | null; content: string;
 }
 interface FindingRow {
-  id: string; status: string; severity: string; title: string; description: string; guideline_ref: string | null;
+  id: string; display_id: string; status: string; severity: string; title: string; description: string; guideline_ref: string | null;
 }
 interface DefectRow {
-  id: string; status: string; severity: string; title: string; description: string; acceptance_criterion_ref: string | null;
+  id: string; display_id: string; status: string; severity: string; title: string; description: string; acceptance_criterion_ref: string | null;
 }
 
 /**
@@ -352,8 +352,8 @@ function readSelectedKnowledge(
   const guidelines = guidelineRows.map(toGuideline);
   const decisionRows = tx.all<DecisionRow>("SELECT id,display_id,status,scope,title,rationale,related_guideline,content FROM knowledge_decisions WHERE project_id=$projectId ORDER BY id", { projectId });
   const decisions = decisionRows.map(toDecision);
-  const findingRows = taskId ? tx.all<FindingRow>("SELECT id,status,severity,title,description,guideline_ref FROM findings WHERE task_id=$taskId ORDER BY id", { taskId }) : [];
-  const defectRows = taskId ? tx.all<DefectRow>("SELECT id,status,severity,title,description,acceptance_criterion_ref FROM defects WHERE task_id=$taskId ORDER BY id", { taskId }) : [];
+  const findingRows = taskId ? tx.all<FindingRow>("SELECT id,display_id,status,severity,title,description,guideline_ref FROM findings WHERE task_id=$taskId ORDER BY id", { taskId }) : [];
+  const defectRows = taskId ? tx.all<DefectRow>("SELECT id,display_id,status,severity,title,description,acceptance_criterion_ref FROM defects WHERE task_id=$taskId ORDER BY id", { taskId }) : [];
   const selected = new ContextSelector().selectForTask({
     taskArea: "GENERAL", taskPath: "", role,
     guidelines,
@@ -363,13 +363,19 @@ function readSelectedKnowledge(
   });
   const guidelineById = new Map(guidelineRows.map((row) => [row.id, row]));
   const decisionById = new Map(decisionRows.map((row) => [row.id, row]));
-  const findingById = new Map(findingRows.map((row) => [row.id, row]));
-  const defectById = new Map(defectRows.map((row) => [row.id, row]));
+  const findingByDisplayId = new Map(findingRows.map((row) => [row.display_id, row]));
+  const defectByDisplayId = new Map(defectRows.map((row) => [row.display_id, row]));
   return {
     guidelines: selected.guidelines.map((item) => ({ kind: "guideline" as const, id: item.id, value: item, provenance: digestGuidelineProvenance(guidelineById.get(item.id)!) })),
     decisions: selected.decisions.map((item) => ({ kind: "decision" as const, id: item.id, value: item, provenance: digestDecisionProvenance(decisionById.get(item.id)!) })),
-    findings: selected.findings.map((item) => ({ kind: "finding" as const, id: item.id, value: item, provenance: digestFindingProvenance(findingById.get(item.id)!) })),
-    defects: selected.defects.map((item) => ({ kind: "defect" as const, id: item.id, value: item, provenance: digestDefectProvenance(defectById.get(item.id)!) })),
+    findings: selected.findings.map((item) => {
+      const row = findingByDisplayId.get(item.id)!;
+      return { kind: "finding" as const, id: row.id, value: item, provenance: digestFindingProvenance(row) };
+    }),
+    defects: selected.defects.map((item) => {
+      const row = defectByDisplayId.get(item.id)!;
+      return { kind: "defect" as const, id: row.id, value: item, provenance: digestDefectProvenance(row) };
+    }),
   };
 }
 
@@ -448,7 +454,7 @@ function toFinding(row: FindingRow) {
   const severity: Record<string, "low" | "medium" | "high" | "critical"> = { LOW: "low", NORMAL: "medium", HIGH: "high", BLOCKING: "critical" };
   if (!severity[row.severity]) throw new Error("Persisted finding severity is invalid");
   if (row.guideline_ref !== null) assertNonEmptyString(row.guideline_ref, "finding.guideline_ref");
-  return { id: row.id, status, title: row.title, severity: severity[row.severity]!, description: row.description, guidelineRef: row.guideline_ref };
+  return { id: row.display_id, status, title: row.title, severity: severity[row.severity]!, description: row.description, guidelineRef: row.guideline_ref };
 }
 
 function toDefect(row: DefectRow) {
@@ -459,7 +465,7 @@ function toDefect(row: DefectRow) {
   if (!status) throw new Error("Persisted defect status is invalid");
   if (!["LOW", "NORMAL", "HIGH", "BLOCKING"].includes(row.severity)) throw new Error("Persisted defect severity is invalid");
   if (row.acceptance_criterion_ref !== null) assertNonEmptyString(row.acceptance_criterion_ref, "defect.acceptance_criterion_ref");
-  return { id: row.id, status, title: row.title, description: row.description, acceptanceCriterionRef: row.acceptance_criterion_ref };
+  return { id: row.display_id, status, title: row.title, description: row.description, acceptanceCriterionRef: row.acceptance_criterion_ref };
 }
 
 function digestGuidelineProvenance(row: GuidelineRow): ContextItemProvenance {

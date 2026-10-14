@@ -97,6 +97,30 @@ describe("validateRoleOutput", () => {
       expect(result.outcome).toBe("CHANGES_REQUESTED");
     });
 
+    it("accepts explicit updates to existing stable finding IDs", () => {
+      const result = validateRoleOutput("reviewer", {
+        version: "1.0.0",
+        outcome: "PASS",
+        finding_updates: [
+          { id: "FINDING-3", status: "RESOLVED" },
+          { id: "FINDING-8", status: "STILL_PRESENT" },
+        ],
+      });
+      expect(result.valid).toBe(true);
+    });
+
+    it("rejects malformed or duplicate finding updates", () => {
+      expect(validateRoleOutput("reviewer", {
+        version: "1.0.0", outcome: "PASS", finding_updates: [{ id: "not-a-finding", status: "RESOLVED" }],
+      }).valid).toBe(false);
+      expect(validateRoleOutput("reviewer", {
+        version: "1.0.0", outcome: "PASS", finding_updates: [
+          { id: "FINDING-3", status: "RESOLVED" },
+          { id: "FINDING-3", status: "STILL_PRESENT" },
+        ],
+      }).valid).toBe(false);
+    });
+
     it("accepts BLOCKED outcome", () => {
       const value: RoleOutput = {
         version: "1.0.0",
@@ -145,6 +169,27 @@ describe("validateRoleOutput", () => {
       const result = validateRoleOutput("qa", value);
       expect(result.valid).toBe(true);
       expect(result.outcome).toBe("FAIL");
+    });
+
+    it("accepts explicit updates to existing stable defect IDs", () => {
+      const result = validateRoleOutput("qa", {
+        version: "1.0.0",
+        outcome: "PASS",
+        defect_updates: [{ id: "DEFECT-2", status: "RESOLVED" }],
+      });
+      expect(result.valid).toBe(true);
+    });
+
+    it("rejects duplicate failed criteria and malformed defect updates", () => {
+      expect(validateRoleOutput("qa", {
+        version: "1.0.0", outcome: "FAIL", failedCriteria: [
+          { id: "AC-1", required: true, description: "Criterion" },
+          { id: "AC-1", required: true, description: "Criterion" },
+        ],
+      }).valid).toBe(false);
+      expect(validateRoleOutput("qa", {
+        version: "1.0.0", outcome: "PASS", defect_updates: [{ id: "FINDING-1", status: "RESOLVED" }],
+      }).valid).toBe(false);
     });
 
     it("accepts BLOCKED outcome", () => {

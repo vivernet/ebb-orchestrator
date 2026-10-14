@@ -226,7 +226,9 @@ export class PromptBuilder {
     lines.push('3. Check against requirements and acceptance criteria');
     lines.push('4. Verify against guidelines and decisions');
     lines.push('5. Report PASS only with findings (possibly an empty array), set independent=true, and include concrete file/test evidence');
-    lines.push('6. Submit the review result using the structured-result instructions below.');
+    lines.push('6. For a new finding, include it in findings; the Orchestrator assigns its FINDING-n ID.');
+    lines.push('7. To update a prior finding shown in this prompt, include finding_updates with that exact FINDING-n and status RESOLVED or STILL_PRESENT. Omit unchanged findings; never infer identity by matching text.');
+    lines.push('8. Submit the review result using the structured-result instructions below.');
     lines.push('');
     this.addSubmissionContract(lines, 'Reviewer', 'For PASS, include independent=true, findings (possibly empty), and concrete file/test evidence.');
     lines.push('');
@@ -286,6 +288,8 @@ export class PromptBuilder {
     lines.push('2. Verify behavior matches requirements');
     lines.push('3. Retest any reported defects');
     lines.push('4. Report PASS or list failed criteria');
+    lines.push('5. Each failed criterion must use its displayed AC-N identifier; the Orchestrator assigns one DEFECT-n per Task and AC-N.');
+    lines.push('6. To update a prior defect shown in this prompt, include defect_updates with that exact DEFECT-n and status RESOLVED or STILL_PRESENT. Omit unchanged defects; never infer identity by matching text.');
     lines.push('');
 
     lines.push('Begin your QA verification.');

@@ -24,7 +24,6 @@ const migration008 = readFileSync(
   join(import.meta.dirname, "../../../src/platform/database/migrations/008_quality.sql"),
   "utf-8",
 );
-
 const migrations: Migration[] = [
   { version: 1, name: "001_system", sql: migration001 },
   { version: 2, name: "002_work_domain", sql: migration002 },
@@ -316,6 +315,50 @@ describe("DefectsService", () => {
     expect(d.acceptanceCriterionRef).toBe("AC-ACCEPTANCE");
     expect(d.evidenceSignature).toBe("test-failure-hash");
     expect(d.status).toBe("OPEN");
+  });
+
+  it("returns the existing Task+criterion defect without changing it through either create API", async () => {
+    await setup();
+    const existing = defectsService.createDefect(projectA.id, taskA.id, {
+      sourceRunId: "run-first", severity: "BLOCKING", blocking: true, title: "AC-1", description: "First failure",
+      acceptanceCriterionRef: "AC-1", evidenceSignature: "sig1",
+    });
+
+    expect(defectsService.createDefect(projectA.id, taskA.id, {
+      sourceRunId: "run-second", severity: "BLOCKING", blocking: true, title: "AC-1", description: "Repeated failure",
+      acceptanceCriterionRef: "AC-1", evidenceSignature: "sig2",
+    })).toEqual(existing);
+    expect(db?.transaction((tx) => defectsService.createDefectInTransaction(tx, projectA.id, taskA.id, {
+      sourceRunId: "run-third", severity: "HIGH", blocking: false, title: "Changed AC-1", description: "Changed failure",
+      acceptanceCriterionRef: "AC-1", evidenceSignature: "sig3",
+    }))).toEqual(existing);
+    expect(db?.get<{ count: number }>("SELECT count(*) AS count FROM defects WHERE task_id=$taskId AND acceptance_criterion_ref='AC-1'", { taskId: taskA.id })?.count).toBe(1);
+    expect(db?.get<{ source_run_id: string; description: string; evidence_signature: string; status: string }>("SELECT source_run_id,description,evidence_signature,status FROM defects WHERE id=$id", { id: existing.id }))
+      .toEqual({ source_run_id: "run-first", description: "First failure", evidence_signature: "sig1", status: "OPEN" });
+  });
+
+  it("preserves legacy duplicate Task+criterion rows and does not add another", async () => {
+    await setup();
+    const now = new Date().toISOString();
+    for (const [id, displayId, status] of [["legacy-1", "DEFECT-1", "RESOLVED"], ["legacy-2", "DEFECT-2", "STILL_PRESENT"]] as const) {
+      db?.run(`INSERT INTO defects(id,project_id,task_id,display_id,source_run_id,severity,blocking,title,description,
+        acceptance_criterion_ref,evidence_signature,status,created_at,updated_at)
+        VALUES($id,$projectId,$taskId,$displayId,'legacy-run','BLOCKING',1,'AC-1','legacy row','AC-1',$id,$status,$now,$now)`,
+      { id, projectId: projectA.id, taskId: taskA.id, displayId, status, now });
+    }
+
+    const result = defectsService.createDefect(projectA.id, taskA.id, {
+      sourceRunId: "new-run", severity: "NORMAL", blocking: false, title: "AC-1", description: "New result",
+      acceptanceCriterionRef: "AC-1", evidenceSignature: "new-signature",
+    });
+
+    expect(result.displayId).toBe("DEFECT-1");
+    expect(db?.all<{ id: string; display_id: string; status: string; source_run_id: string; description: string }>(
+      "SELECT id,display_id,status,source_run_id,description FROM defects WHERE task_id=$taskId AND acceptance_criterion_ref='AC-1' ORDER BY display_id", { taskId: taskA.id },
+    )).toEqual([
+      { id: "legacy-1", display_id: "DEFECT-1", status: "RESOLVED", source_run_id: "legacy-run", description: "legacy row" },
+      { id: "legacy-2", display_id: "DEFECT-2", status: "STILL_PRESENT", source_run_id: "legacy-run", description: "legacy row" },
+    ]);
   });
 
   it("updates status on re-test without creating duplicate", async () => {

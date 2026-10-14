@@ -10,6 +10,16 @@ const contract = {
 };
 
 describe("Plan04 role prompt submission tool", () => {
+  it("documents explicit stable Reviewer and QA record updates", () => {
+    const reviewerPrompt = builder.buildReviewerPrompt({ taskContract: contract, findings: [{ id: "FINDING-4", status: "in_progress", title: "Existing", severity: "high" }] });
+    const qaPrompt = builder.buildQAPrompt({ taskContract: contract, defects: [{ id: "DEFECT-7", status: "in_progress", title: "Existing", severity: "high" }] });
+    expect(reviewerPrompt).toContain("finding_updates with that exact FINDING-n");
+    expect(reviewerPrompt).toContain("FINDING-4");
+    expect(qaPrompt).toContain("defect_updates with that exact DEFECT-n");
+    expect(qaPrompt).toContain("DEFECT-7");
+    expect(qaPrompt).toContain("AC-1");
+  });
+
   it.each([
     { role: "Developer", build: () => builder.buildDeveloperPrompt({ taskContract: contract }) },
     { role: "Reviewer", build: () => builder.buildReviewerPrompt({ taskContract: contract }) },

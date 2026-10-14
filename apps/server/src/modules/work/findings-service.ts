@@ -47,7 +47,24 @@ export class FindingsService {
       evidenceSignature: string;
     },
   ): Finding {
-    return this.db.transaction((tx) => {
+    return this.db.transaction((tx) => this.createFindingInTransaction(tx, projectId, taskId, input));
+  }
+
+  /** Создаёт finding в уже открытой транзакции проекции Run. */
+  createFindingInTransaction(
+    tx: DatabaseTx,
+    projectId: string,
+    taskId: string,
+    input: {
+      sourceRunId: string;
+      severity: "BLOCKING" | "HIGH" | "NORMAL" | "LOW";
+      blocking: boolean;
+      title: string;
+      description: string;
+      guidelineRef: string | null;
+      evidenceSignature: string;
+    },
+  ): Finding {
       const num = this.nextFindingNumber(tx, projectId);
       const now = new Date().toISOString();
       const id = randomUUID();
@@ -79,7 +96,6 @@ export class FindingsService {
         throw new Error(`Finding ${id} was not persisted`);
       }
       return finding;
-    });
   }
 
   /**
@@ -94,7 +110,19 @@ export class FindingsService {
       sourceRunId?: string;
     },
   ): Finding {
-    return this.db.transaction((tx) => {
+    return this.db.transaction((tx) => this.updateFindingInTransaction(tx, findingId, updates));
+  }
+
+  /** Обновляет finding в уже открытой транзакции проекции Run. */
+  updateFindingInTransaction(
+    tx: DatabaseTx,
+    findingId: string,
+    updates: {
+      status?: FindingStatus;
+      evidenceSignature?: string;
+      sourceRunId?: string;
+    },
+  ): Finding {
       const existing = this.getFindingById(tx, findingId);
       if (!existing) {
         throw new Error(`Finding ${findingId} not found`);
@@ -128,7 +156,21 @@ export class FindingsService {
         throw new Error(`Finding ${findingId} was not persisted`);
       }
       return finding;
-    });
+  }
+
+  /** Проверяет владение Task и active status, затем обновляет finding по публичному display ID. */
+  updateFindingByDisplayIdInTransaction(
+    tx: DatabaseTx,
+    projectId: string,
+    taskId: string,
+    displayId: string,
+    sourceRunId: string,
+    status: Exclude<FindingStatus, "OPEN">,
+  ): Finding {
+    const finding = this.getFindingByDisplayId(tx, projectId, displayId);
+    if (!finding || finding.taskId !== taskId) throw new Error("REVIEW_FINDING_REFERENCE_NOT_OWNED");
+    if (finding.status === "RESOLVED") throw new Error("REVIEW_FINDING_REFERENCE_NOT_ACTIVE");
+    return this.updateFindingInTransaction(tx, finding.id, { status, sourceRunId });
   }
 
   /**

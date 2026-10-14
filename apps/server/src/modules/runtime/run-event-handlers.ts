@@ -13,6 +13,107 @@ import { GitCli } from "../git/git-cli.js";
 import { ApprovalService } from "../approvals/approval-service.js";
 import { appendOutboxEvent } from "../../platform/events/outbox-repository.js";
 import { DomainEvent } from "../../platform/events/domain-event.js";
+import { createHash } from "node:crypto";
+import { FindingsService } from "../work/findings-service.js";
+import { DefectsService } from "../work/defects-service.js";
+import type { DatabaseTx } from "../../platform/database/database.js";
+
+function qualityEvidenceSignature(domain: "finding" | "defect", value: unknown): string {
+  return createHash("sha256").update(`ebb-${domain}-evidence-v1\0`).update(JSON.stringify(value)).digest("hex");
+}
+
+function reviewerFindingSeverity(type: "INFO" | "WARNING" | "MINOR" | "MAJOR" | "BLOCKING"):
+  "BLOCKING" | "HIGH" | "NORMAL" | "LOW" {
+  switch (type) {
+    case "BLOCKING": return "BLOCKING";
+    case "MAJOR": return "HIGH";
+    case "WARNING":
+    case "MINOR": return "NORMAL";
+    case "INFO": return "LOW";
+  }
+}
+
+function assertTaskAcceptanceCriterion(tx: DatabaseTx, taskId: string, reference: string): void {
+  const row = tx.get<{ contract_json: string }>("SELECT contract_json FROM tasks WHERE id=$taskId", { taskId });
+  if (!row) throw new Error("QA_TASK_CONTRACT_UNAVAILABLE");
+  let contract: unknown;
+  try { contract = JSON.parse(row.contract_json) as unknown; } catch { throw new Error("QA_TASK_CONTRACT_INVALID"); }
+  if (!contract || typeof contract !== "object" || Array.isArray(contract)) throw new Error("QA_TASK_CONTRACT_INVALID");
+  const criteria = (contract as { acceptanceCriteria?: unknown }).acceptanceCriteria;
+  const match = /^AC-([1-9][0-9]*)$/.exec(reference);
+  const index = match ? Number(match[1]) - 1 : -1;
+  if (!Array.isArray(criteria) || !Number.isSafeInteger(index) || index < 0 || index >= criteria.length) {
+    throw new Error("QA_ACCEPTANCE_CRITERION_REFERENCE_UNKNOWN");
+  }
+}
+
+function assertQualityRecordInRunContext(
+  tx: DatabaseTx,
+  input: { runId: string; taskId: string; role: string; recordId: string; kind: "finding" | "defect" },
+): void {
+  const included = tx.get<{ present: number }>(`
+    SELECT 1 AS present
+    FROM context_manifests manifest, json_each(manifest.items_json) item
+    WHERE manifest.run_id=$runId
+      AND manifest.subject_type='TASK'
+      AND manifest.task_id=$taskId
+      AND manifest.role=$role
+      AND json_extract(item.value, '$.id')=$recordId
+    LIMIT 1
+  `, { runId: input.runId, taskId: input.taskId, role: input.role, recordId: input.recordId });
+  if (!included) throw new Error(`${input.kind === "finding" ? "REVIEW_FINDING" : "QA_DEFECT"}_REFERENCE_NOT_IN_CONTEXT`);
+}
+
+function projectQualityOutputInTransaction(
+  db: Database,
+  tx: DatabaseTx,
+  input: { projectId: string; taskId: string; runId: string; role: string; output: NonNullable<ReturnType<typeof validateRoleOutput>["output"]> },
+): void {
+  if (input.role === "reviewer") {
+    const findings = new FindingsService(db);
+    for (const finding of input.output.findings ?? []) {
+      findings.createFindingInTransaction(tx, input.projectId, input.taskId, {
+        sourceRunId: input.runId,
+        severity: reviewerFindingSeverity(finding.type),
+        blocking: finding.type === "BLOCKING",
+        title: finding.description,
+        description: finding.description,
+        guidelineRef: null,
+        evidenceSignature: qualityEvidenceSignature("finding", finding),
+      });
+    }
+    for (const update of input.output.finding_updates ?? []) {
+      const finding = findings.getFindingByDisplayId(tx, input.projectId, update.id);
+      if (!finding || finding.taskId !== input.taskId) throw new Error("REVIEW_FINDING_REFERENCE_NOT_OWNED");
+      assertQualityRecordInRunContext(tx, { runId: input.runId, taskId: input.taskId, role: "reviewer", recordId: finding.id, kind: "finding" });
+      findings.updateFindingByDisplayIdInTransaction(tx, input.projectId, input.taskId, update.id, input.runId, update.status);
+    }
+    return;
+  }
+
+  if (input.role === "qa") {
+    const defects = new DefectsService(db);
+    for (const criterion of input.output.failedCriteria ?? []) {
+      assertTaskAcceptanceCriterion(tx, input.taskId, criterion.id);
+      const blocking = criterion.required;
+      defects.createForAcceptanceCriterionInTransaction(tx, input.projectId, input.taskId, {
+        sourceRunId: input.runId,
+        severity: blocking ? "BLOCKING" : "NORMAL",
+        blocking,
+        title: criterion.id,
+        description: criterion.description,
+        acceptanceCriterionRef: criterion.id,
+        evidenceSignature: qualityEvidenceSignature("defect", criterion),
+      });
+    }
+    for (const update of input.output.defect_updates ?? []) {
+      const defect = defects.getDefectByDisplayId(tx, input.projectId, update.id);
+      if (!defect || defect.taskId !== input.taskId) throw new Error("QA_DEFECT_REFERENCE_NOT_OWNED");
+      assertQualityRecordInRunContext(tx, { runId: input.runId, taskId: input.taskId, role: "qa", recordId: defect.id, kind: "defect" });
+      defects.updateDefectByDisplayIdInTransaction(tx, input.projectId, input.taskId, update.id, input.runId, update.status);
+    }
+  }
+}
 
 /**
  * Orchestrates runtime события и workflow transitions.
@@ -100,7 +201,7 @@ export class RuntimeEventHandlers {
     const taskId = run.task_id;
     this.db.transaction((tx) => {
       if (tx.get("SELECT run_id FROM run_completion_projections WHERE run_id=$runId", { runId })) return;
-      const stage = tx.get<{ status: string; epic_id: string | null }>("SELECT status,epic_id FROM tasks WHERE id=$id", { id: taskId });
+      const stage = tx.get<{ status: string; epic_id: string | null; project_id: string }>("SELECT status,epic_id,project_id FROM tasks WHERE id=$id", { id: taskId });
       const expected = run.role === "reviewer" ? "REVIEW" : run.role === "qa" ? "QA" : run.role === "integration" ? "INTEGRATION" : "DEVELOPMENT";
       if (!stage || (stage.status !== expected && stage.status !== "DEVELOPMENT")) throw new Error(`Invalid workflow stage for completion: ${stage?.status}. Expected: ${expected}`);
       const successful = !["BLOCKED", "FAIL", "CHANGES_REQUESTED"].includes(validation.outcome ?? "");
@@ -109,6 +210,8 @@ export class RuntimeEventHandlers {
         const result = submitted as { sourceSha?: string; baseSha?: string };
         if (!attempt || attempt.status !== "MERGED" || result.sourceSha !== attempt.source_sha || result.baseSha !== attempt.expected_target_sha) throw new Error("TASK_INTEGRATION_OUTCOME_UNVERIFIED");
       }
+      if (!stage) throw new Error("RUN_COMPLETION_TASK_NOT_FOUND");
+      projectQualityOutputInTransaction(this.db, tx, { projectId: stage.project_id, taskId, runId, role: run.role.toLowerCase(), output: validation.output! });
       const target = stage.status === "DEVELOPMENT" ? "REVIEW" : run.role === "reviewer" ? "QA" : run.role === "qa" ? "READY_FOR_INTEGRATION" : "READY_FOR_MERGE";
       this.workflowEngine.transitionInTransaction(tx, taskId, successful ? target : "FAILED", {
         hasReviewPassed: successful && run.role === "reviewer", hasSuccessfulIntegration: successful && run.role === "integration",

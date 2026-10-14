@@ -32,8 +32,9 @@ export class DefectsService {
   constructor(private readonly db: Database) {}
 
   /**
-   * Назначает и сохраняет Объект stable defect ID для Объект QОбъект результат.
-   * первый call для Объект задача создаёт DEFECT-1, следующий calls получать DEFECT-2, etc.
+   * Сохраняет стабильную QA defect запись и назначает `DEFECT-n` при первом создании.
+   * Для уже имеющейся пары Task+acceptance criterion возвращает запись с наименьшим display ID
+   * без изменения её данных; historical duplicates не удаляет.
    */
   createDefect(
     projectId: string,
@@ -48,7 +49,28 @@ export class DefectsService {
       evidenceSignature: string;
     },
   ): Defect {
-    return this.db.transaction((tx) => {
+    return this.db.transaction((tx) => this.createDefectInTransaction(tx, projectId, taskId, input));
+  }
+
+  /** Создаёт defect или возвращает существующий Task+criterion defect в caller-owned transaction. */
+  createDefectInTransaction(
+    tx: DatabaseTx,
+    projectId: string,
+    taskId: string,
+    input: {
+      sourceRunId: string;
+      severity: "BLOCKING" | "HIGH" | "NORMAL" | "LOW";
+      blocking: boolean;
+      title: string;
+      description: string;
+      acceptanceCriterionRef: string | null;
+      evidenceSignature: string;
+    },
+  ): Defect {
+      if (input.acceptanceCriterionRef !== null) {
+        const existing = this.getByAcceptanceCriterionInTransaction(tx, taskId, input.acceptanceCriterionRef);
+        if (existing) return existing;
+      }
       const num = this.nextDefectNumber(tx, projectId);
       const now = new Date().toISOString();
       const id = randomUUID();
@@ -80,7 +102,6 @@ export class DefectsService {
         throw new Error(`Defect ${id} was not persisted`);
       }
       return defect;
-    });
   }
 
   /**
@@ -95,7 +116,19 @@ export class DefectsService {
       sourceRunId?: string;
     },
   ): Defect {
-    return this.db.transaction((tx) => {
+    return this.db.transaction((tx) => this.updateDefectInTransaction(tx, defectId, updates));
+  }
+
+  /** Обновляет defect в уже открытой транзакции проекции Run. */
+  updateDefectInTransaction(
+    tx: DatabaseTx,
+    defectId: string,
+    updates: {
+      status?: DefectStatus;
+      evidenceSignature?: string;
+      sourceRunId?: string;
+    },
+  ): Defect {
       const existing = this.getDefectById(tx, defectId);
       if (!existing) {
         throw new Error(`Defect ${defectId} not found`);
@@ -129,7 +162,47 @@ export class DefectsService {
         throw new Error(`Defect ${defectId} was not persisted`);
       }
       return defect;
-    });
+  }
+
+  /** Ищет defect по ограниченному естественному ключу одной acceptance criterion в Task. */
+  getByAcceptanceCriterionInTransaction(tx: DatabaseTx, taskId: string, criterionRef: string): Defect | null {
+    const row = tx.get("SELECT * FROM defects WHERE task_id=$taskId AND acceptance_criterion_ref=$criterionRef ORDER BY display_id LIMIT 1", { taskId, criterionRef });
+    return row ? this.mapDefect(row) : null;
+  }
+
+  /** Возвращает существующий Task+criterion defect без изменения либо создаёт первую запись; legacy duplicates остаются сохранёнными. */
+  createForAcceptanceCriterionInTransaction(
+    tx: DatabaseTx,
+    projectId: string,
+    taskId: string,
+    input: {
+      sourceRunId: string;
+      severity: "BLOCKING" | "HIGH" | "NORMAL" | "LOW";
+      blocking: boolean;
+      title: string;
+      description: string;
+      acceptanceCriterionRef: string;
+      evidenceSignature: string;
+    },
+  ): { defect: Defect; created: boolean } {
+    const existing = this.getByAcceptanceCriterionInTransaction(tx, taskId, input.acceptanceCriterionRef);
+    if (existing) return { defect: existing, created: false };
+    return { defect: this.createDefectInTransaction(tx, projectId, taskId, input), created: true };
+  }
+
+  /** Проверяет владение Task и active status, затем обновляет defect по публичному display ID. */
+  updateDefectByDisplayIdInTransaction(
+    tx: DatabaseTx,
+    projectId: string,
+    taskId: string,
+    displayId: string,
+    sourceRunId: string,
+    status: Exclude<DefectStatus, "OPEN">,
+  ): Defect {
+    const defect = this.getDefectByDisplayId(tx, projectId, displayId);
+    if (!defect || defect.taskId !== taskId) throw new Error("QA_DEFECT_REFERENCE_NOT_OWNED");
+    if (defect.status === "RESOLVED") throw new Error("QA_DEFECT_REFERENCE_NOT_ACTIVE");
+    return this.updateDefectInTransaction(tx, defect.id, { status, sourceRunId });
   }
 
   /**

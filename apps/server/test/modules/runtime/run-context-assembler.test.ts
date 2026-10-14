@@ -118,8 +118,8 @@ function schema(): string {
     CREATE TABLE dependencies(id TEXT PRIMARY KEY,task_id TEXT NOT NULL,depends_on_task_id TEXT NOT NULL,type TEXT NOT NULL,created_at TEXT NOT NULL);
     CREATE TABLE knowledge_guidelines(id TEXT PRIMARY KEY,project_id TEXT NOT NULL,display_id TEXT NOT NULL,category TEXT NOT NULL,version INTEGER NOT NULL,priority TEXT NOT NULL,status TEXT NOT NULL,scope TEXT NOT NULL,applicable_roles TEXT NOT NULL,content_hash TEXT NOT NULL,content TEXT NOT NULL);
     CREATE TABLE knowledge_decisions(id TEXT PRIMARY KEY,project_id TEXT NOT NULL,display_id TEXT NOT NULL,status TEXT NOT NULL,scope TEXT NOT NULL,title TEXT NOT NULL,rationale TEXT NOT NULL,related_guideline TEXT,content TEXT NOT NULL);
-    CREATE TABLE findings(id TEXT PRIMARY KEY,task_id TEXT NOT NULL,status TEXT NOT NULL,severity TEXT NOT NULL,title TEXT NOT NULL,description TEXT NOT NULL,guideline_ref TEXT);
-    CREATE TABLE defects(id TEXT PRIMARY KEY,task_id TEXT NOT NULL,status TEXT NOT NULL,severity TEXT NOT NULL,title TEXT NOT NULL,description TEXT NOT NULL,acceptance_criterion_ref TEXT);
+    CREATE TABLE findings(id TEXT PRIMARY KEY,display_id TEXT NOT NULL,task_id TEXT NOT NULL,status TEXT NOT NULL,severity TEXT NOT NULL,title TEXT NOT NULL,description TEXT NOT NULL,guideline_ref TEXT);
+    CREATE TABLE defects(id TEXT PRIMARY KEY,display_id TEXT NOT NULL,task_id TEXT NOT NULL,status TEXT NOT NULL,severity TEXT NOT NULL,title TEXT NOT NULL,description TEXT NOT NULL,acceptance_criterion_ref TEXT);
     CREATE TABLE planning_requests(id TEXT PRIMARY KEY,project_id TEXT NOT NULL,request TEXT NOT NULL,requested_by TEXT NOT NULL,status TEXT NOT NULL,classification TEXT,plan_id TEXT,planning_decisions_required INTEGER NOT NULL,coordinator_run_id TEXT);
     CREATE TABLE planning_plans(id TEXT PRIMARY KEY,project_id TEXT NOT NULL,plan_json TEXT NOT NULL,epic_id TEXT);
     CREATE TABLE epic_orchestrations(epic_id TEXT PRIMARY KEY,plan_id TEXT NOT NULL,input_json TEXT NOT NULL,stage TEXT NOT NULL);
@@ -157,12 +157,12 @@ function fixtureDatabase(options: { taskContractJson?: string; requestRole?: "co
     ["finding-open", "STILL_PRESENT", "Still-present finding marker"],
     ["finding-resolved", "RESOLVED", "Resolved finding marker"],
   ];
-  for (const [id, status, title] of findingRows) db.run("INSERT INTO findings(id,task_id,status,severity,title,description,guideline_ref) VALUES($id,'task-1',$status,'HIGH',$title,'Finding description marker',NULL)", { id, status, title });
+  for (const [id, status, title] of findingRows) db.run("INSERT INTO findings(id,display_id,task_id,status,severity,title,description,guideline_ref) VALUES($id,$displayId,'task-1',$status,'HIGH',$title,'Finding description marker',NULL)", { id, displayId: id === "finding-open" ? "FINDING-1" : "FINDING-2", status, title });
   const defectRows: Array<[string, string, string]> = [
     ["defect-open", "OPEN", "Open defect marker"],
     ["defect-resolved", "RESOLVED", "Resolved defect marker"],
   ];
-  for (const [id, status, title] of defectRows) db.run("INSERT INTO defects(id,task_id,status,severity,title,description,acceptance_criterion_ref) VALUES($id,'task-1',$status,'NORMAL',$title,'Defect description marker','AC-1')", { id, status, title });
+  for (const [id, status, title] of defectRows) db.run("INSERT INTO defects(id,display_id,task_id,status,severity,title,description,acceptance_criterion_ref) VALUES($id,$displayId,'task-1',$status,'NORMAL',$title,'Defect description marker','AC-1')", { id, displayId: id === "defect-open" ? "DEFECT-1" : "DEFECT-2", status, title });
 
   db.run("INSERT INTO planning_plans(id,project_id,plan_json,epic_id) VALUES('epic-plan-1','project-1',$plan,'epic-1')", { plan: JSON.stringify(plan) });
   db.run("INSERT INTO epic_orchestrations(epic_id,plan_id,input_json,stage) VALUES('epic-1','epic-plan-1',$input,'CHILDREN')", {
@@ -287,6 +287,10 @@ describe("RunContextAssembler.prepare", () => {
       }
       expect(prepared.finalPrompt).not.toContain("C:/Users/alex1");
       if (testCase.type === "TASK" && testCase.role === "developer") {
+        const finding = included.find((item) => item.kind === "finding");
+        const defect = included.find((item) => item.kind === "defect");
+        expect((finding?.value as { id?: string } | undefined)?.id).toBe("FINDING-1");
+        expect((defect?.value as { id?: string } | undefined)?.id).toBe("DEFECT-1");
         expect(section.workspace).toEqual({
           repository: "EbbRepo",
           workspace: "TASK-1",

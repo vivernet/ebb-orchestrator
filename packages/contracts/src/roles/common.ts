@@ -21,6 +21,17 @@ export const BaseOutputSchema = z.object({
     .describe("List of findings (optional)"),
 }).strict();
 
+/** Схема явного изменения статуса ранее выданной quality-записи. */
+export const QualityRecordUpdateSchema = z.object({
+  id: z.string().regex(/^(FINDING|DEFECT)-[1-9][0-9]*$/),
+  status: z.enum(["RESOLVED", "STILL_PRESENT"]),
+}).strict();
+
+/** Требует, чтобы результат не повторял одну и ту же quality-запись в updates. */
+export function uniqueQualityUpdates<T extends { id: string }>(updates: readonly T[] | undefined): boolean {
+  return updates === undefined || new Set(updates.map(({ id }) => id)).size === updates.length;
+}
+
 /** Допустимые исходы Developer. */
 export const DeveloperOutcome = z.enum(["COMPLETED", "BLOCKED"]);
 
@@ -55,6 +66,8 @@ export interface RoleOutput {
     file?: string;
     line?: number;
   }>;
+  finding_updates?: Array<{ id: string; status: "RESOLVED" | "STILL_PRESENT" }>;
+  defect_updates?: Array<{ id: string; status: "RESOLVED" | "STILL_PRESENT" }>;
   failedCriteria?: Array<{
     id: string;
     required: boolean;
@@ -80,6 +93,8 @@ export interface ValidatedRoleOutput {
     file?: string;
     line?: number;
   }>;
+  finding_updates?: Array<{ id: string; status: "RESOLVED" | "STILL_PRESENT" }>;
+  defect_updates?: Array<{ id: string; status: "RESOLVED" | "STILL_PRESENT" }>;
   failedCriteria?: Array<{
     id: string;
     required: boolean;

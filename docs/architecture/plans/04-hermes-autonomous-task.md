@@ -362,12 +362,15 @@ git commit -m "feat: build role-specific run context"
 - Тест: `apps/server/test/modules/work/quality-records.test.ts`
 
 **Интерфейсы:**
-- Создаёт стабильные ID БД `FINDING-n` и `DEFECT-n` для проекта.
-- Повторная проверка принимает `finding_updates` для существующих ID.
+- `findings[]` Reviewer создаёт новые записи с назначенными Orchestrator ID `FINDING-n`; эвристическое сопоставление с прошлыми finding запрещено.
+- Повторная проверка обновляет существующую запись только через явный `finding_updates[{id: FINDING-n, status: RESOLVED | STILL_PRESENT}]`. ID должен относиться к той же Task и присутствовать в active context текущего Reviewer Run. Пропуск ID сохраняет запись без изменений.
+- QA `failedCriteria[]` ссылается на `AC-N`, где N — позиция acceptance criterion в Task Contract, нумеруемая с 1. `DefectsService` возвращает имеющуюся запись для `(task_id, acceptance_criterion_ref)` вместо создания новой; повторный FAIL без явного update не меняет существующую запись. Это service-level гарантия, не DB unique constraint. Legacy-дубликаты сохраняются без изменений; новые QA outputs не добавляют строк для уже представленной пары.
+- QA обновляет существующий defect только через явный `defect_updates[{id: DEFECT-n, status: RESOLVED | STILL_PRESENT}]`. ID должен относиться к той же Task и присутствовать в active context текущего QA Run. Пропуск ID сохраняет запись без изменений.
+- Качество-выводы, workflow completion, reservation release и completion projection фиксируются одной транзакцией; невалидная ссылка откатывает всю проекцию Run.
 
 - [ ] **Шаг 1: Написать тесты жизненного цикла**
 
-Первый вывод Reviewer `finding_1` → сохраняется `FINDING-1`. Повторная проверка помечает тот же ID `RESOLVED`; дубликат finding не создаётся. Для дефекта QA требуется аналогичный жизненный цикл.
+Первый вывод Reviewer создаёт запись с `FINDING-1`; повторный Reviewer явно указывает `finding_updates` для ID из своего контекста. Отсутствие update не меняет status. Для QA проверить `DEFECT-n`, уникальность Task+AC-N, явное обновление и отсутствие implicit update.
 
 - [ ] **Шаг 2: Проверить ожидаемое падение**
 
