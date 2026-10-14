@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { PathResolver } from '../../../src/platform/security/path-resolver.js';
@@ -32,8 +32,23 @@ describe('PathResolver', () => {
       const workspace = mkdtempSync(join(tmpdir(), 'path-resolver-'));
       try {
         const result = await resolver.resolveSafePath(workspace, 'nested/file.txt');
-        expect(result).toEqual({ success: true, path: resolve(workspace, 'nested/file.txt') });
+        expect(result).toEqual({ success: true, path: resolve(realpathSync(workspace), 'nested/file.txt') });
       } finally {
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    });
+
+    it.skipIf(process.platform === 'win32')('returns the canonical target when the workspace is addressed through a symlink', async () => {
+      const workspace = mkdtempSync(join(tmpdir(), 'path-resolver-real-'));
+      const alias = join(tmpdir(), `path-resolver-alias-${process.pid}-${Date.now()}`);
+      try {
+        symlinkSync(workspace, alias, 'dir');
+
+        const result = await resolver.resolveSafePath(alias, 'nested/file.txt');
+
+        expect(result).toEqual({ success: true, path: resolve(realpathSync(workspace), 'nested/file.txt') });
+      } finally {
+        rmSync(alias, { force: true });
         rmSync(workspace, { recursive: true, force: true });
       }
     });

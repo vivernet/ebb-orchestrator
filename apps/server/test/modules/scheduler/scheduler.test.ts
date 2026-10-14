@@ -42,11 +42,12 @@ function insertTask(
     priority: string;
     category: string;
     dependencies: string[];
+    createdAt: string;
   }> = {},
 ): { id: string; projectId: string } {
   const id = overrides.id ?? randomUUID();
   const status = overrides.status ?? "READY";
-  const now = new Date().toISOString();
+  const now = overrides.createdAt ?? new Date().toISOString();
   const c = {
     ...contract("test", overrides.dependencies ?? []),
     priority: overrides.priority ?? "Normal",
@@ -435,10 +436,12 @@ describe("SchedulerService", () => {
     const _olderTask = insertTask(db!, projectId, {
       id: "older",
       status: "READY",
+      createdAt: "2026-10-14T13:00:00.000Z",
     });
     const _newerTask = insertTask(db!, projectId, {
       id: "newer",
       status: "READY",
+      createdAt: "2026-10-14T13:00:00.001Z",
     });
     const result = scheduler.recalculate();
     expect(result.runnables[0]!.id).toBe("older");
