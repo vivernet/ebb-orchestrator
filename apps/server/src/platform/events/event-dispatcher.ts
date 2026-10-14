@@ -32,6 +32,7 @@ export class EventDispatcher {
   constructor(
     private readonly db: Database,
     private readonly bus: EventBus,
+    private readonly canDeliver: (event: DomainEvent) => boolean = () => true,
   ) {
     // Некоторые встраиваемые сценарии всё ещё открывают базу только со схемой v1
     // в тестах и recovery-инструментах. Production-миграции всегда добавляют эти
@@ -65,6 +66,10 @@ export class EventDispatcher {
         createdAt: row.created_at,
         availableAt: row.available_at,
       };
+
+      // Task queue handoff events remain pending until startup reconciliation
+      // publishes READY. Deferral is not a delivery attempt or acknowledgement.
+      if (event.type === "AgentRunRequested" && !this.canDeliver(event)) continue;
 
       const subscriptions = this.bus.subscriptionsFor(event.type);
       let allConsumersHandled = true;

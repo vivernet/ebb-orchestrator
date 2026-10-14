@@ -157,7 +157,7 @@ const workflowRegistry = new WorkflowRegistry();
 for (const template of Object.values(templates)) workflowRegistry.register(template);
 const workflowEngine = new WorkflowEngine(database, workflowRegistry);
 const eventBus = new EventBus();
-const eventDispatcher = new EventDispatcher(database, eventBus);
+const eventDispatcher = new EventDispatcher(database, eventBus, () => status.get() === "READY");
 const runService: RunService = new RunService(database, runtime, undefined, {
   verifyContext: async (runId): Promise<void> => runService.verifyCurrentResumeContext(runId),
   claimInTransaction: (tx, input) => {

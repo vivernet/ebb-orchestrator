@@ -134,6 +134,28 @@ describe("transactional outbox", () => {
     expect(rows).toHaveLength(1);
   });
 
+  it("defers AgentRunRequested before READY without touching delivery state and continues the batch", async () => {
+    db = await setupDb();
+    const bus = new EventBus();
+    const handled: string[] = [];
+    bus.subscribe("AgentRunRequested", "runtime", async () => { handled.push("runtime"); });
+    bus.subscribe("test.entity.created", "audit", async () => { handled.push("audit"); });
+    const dispatcher = new EventDispatcher(db, bus, (event) => event.type !== "AgentRunRequested");
+    const deferred = DomainEvent.create({ type: "AgentRunRequested", aggregateType: "Task", aggregateId: "task-1", payload: { role: "developer" } });
+    const regular = createTestEvent();
+    db.transaction((tx) => {
+      appendOutboxEvent(tx, deferred);
+      appendOutboxEvent(tx, regular);
+    });
+    const before = db.get("SELECT attempts,available_at,last_error,dead_lettered_at FROM outbox_events WHERE id=$id", { id: deferred.id });
+
+    expect(await dispatcher.dispatchBatch(100)).toBe(1);
+    expect(handled).toEqual(["audit"]);
+    expect(db.get("SELECT processed_at FROM outbox_events WHERE id=$id", { id: deferred.id })).toEqual({ processed_at: null });
+    expect(db.get("SELECT attempts,available_at,last_error,dead_lettered_at FROM outbox_events WHERE id=$id", { id: deferred.id })).toEqual(before);
+    expect(db.get("SELECT event_id FROM processed_events WHERE event_id=$id", { id: deferred.id })).toBeUndefined();
+  });
+
   it("dispatches to multiple consumers independently", async () => {
     db = await setupDb();
     const bus = new EventBus();
