@@ -14,6 +14,7 @@ import { createSqliteDatabase } from "../../src/platform/database/sqlite-databas
 import { createProductionPaths } from "../../src/platform/home/production-paths.js";
 import { resolveOrchestratorHome } from "../../src/platform/home/orchestrator-home.js";
 import { seedApprovedProjectConfig } from "../helpers/approved-project-config.js";
+import { classifyTask5cPreflightError } from "./fixtures/task5c-safe-diagnostic.mjs";
 
 const ACCEPTANCE_MARKER = "I_UNDERSTAND_THIS_SENDS_REAL_PROVIDER_REQUESTS";
 const enabled = process.env.EBB_RUN_TASK5C_LIVE_PROVIDER_ACCEPTANCE === ACCEPTANCE_MARKER;
@@ -22,7 +23,34 @@ const workspaceRoot = resolve(import.meta.dirname, "../../../..");
 const shutdownMessage = "ebb-v1-crash-recovery:shutdown";
 const environmentAllowlist = [
   "PATH", "SystemRoot", "WINDIR", "TEMP", "TMP", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA",
+  "HERMES_DATA_DIR_SUFFIX", "HERMES_RUNTIME_DIR", "HERMES_HOME", "HERMES_CONFIG", "HERMES_PROFILE", "HERMES_MODEL",
 ] as const;
+const task5cStages = [
+  "QUEUE_NOT_READY",
+  "QUEUE_DRAIN_STARTED", "QUEUE_DRAIN_COMPLETED", "QUEUE_DRAIN_FAILED", "QUEUE_REQUEST_SELECTED", "QUEUE_EMPTY",
+  "HERMES_PREFLIGHT_STARTED", "HERMES_PREFLIGHT_COMPLETED", "HERMES_PREFLIGHT_FAILED",
+  "RUN_CONTEXT_STARTED", "RUN_CONTEXT_COMPLETED", "RUN_CONTEXT_FAILED",
+  "RUN_TRANSACTION_PREPARE_STARTED", "RUN_TRANSACTION_PREPARE_COMPLETED", "RUN_TRANSACTION_PREPARE_FAILED",
+  "RUN_REQUEST_DISPATCH_STARTED", "RUN_REQUEST_DISPATCH_COMPLETED", "RUN_REQUEST_DISPATCH_NOT_SELECTED", "RUN_REQUEST_DISPATCH_FAILED",
+  "HERMES_PREFLIGHT_COMMIT_STARTED", "HERMES_PREFLIGHT_COMMIT_COMPLETED", "HERMES_PREFLIGHT_COMMIT_FAILED",
+] as const;
+type Task5cStage = typeof task5cStages[number];
+const task5cStageSet: ReadonlySet<string> = new Set(task5cStages);
+const task5cPreflightCodePattern = /^(?:HERMES|WINDOWS|PROCESS|RUN)_[A-Z0-9_]{1,80}$/u;
+const task5cNativePreflightCodes: ReadonlySet<string> = new Set([
+  "NATIVE_HELPER_GATE_FAIL", "NATIVE_HELPER_GATE_UNAVAILABLE", "NATIVE_HELPER_INTEGRITY_ANCHOR_UNAVAILABLE",
+  "NATIVE_HELPER_INTEGRITY_ANCHOR_INVALID", "NATIVE_HELPER_PATH_INVALID", "NATIVE_HELPER_UNAVAILABLE",
+  "NATIVE_HELPER_PATH_UNSAFE", "NATIVE_HELPER_INTEGRITY_MISMATCH", "NATIVE_HELPER_LAUNCH_INPUT_INVALID",
+  "NATIVE_HELPER_PLATFORM_UNSUPPORTED", "NATIVE_HELPER_LAUNCH_OPTIONS_INVALID",
+  "NATIVE_HELPER_SPAWN_EACCES", "NATIVE_HELPER_SPAWN_EPERM", "NATIVE_HELPER_SPAWN_ENOENT",
+  "NATIVE_HELPER_SPAWN_EINVAL", "NATIVE_HELPER_SPAWN_ETIMEDOUT",
+]);
+const task5cPreflightCodes: ReadonlySet<string> = new Set([
+  "HERMES_LAUNCHER_NOT_FOUND", "HERMES_LAUNCHER_AMBIGUOUS", "HERMES_INSTALL_LAYOUT_UNSUPPORTED",
+  "HERMES_RUNTIME_LAYOUT_UNSUPPORTED", "HERMES_PATH_IDENTITY_INVALID", "HERMES_PLATFORM_UNSUPPORTED",
+  "HERMES_CONFIG_HOME_UNSAFE", "HERMES_RUN_SELECTION_BINDING_MISMATCH", "HERMES_RUN_SELECTION_UNAVAILABLE",
+  "HERMES_RUNTIME_IDENTITY_CHANGED", "HERMES_MODEL_OVERRIDE_UNSUPPORTED", "HERMES_RUN_PREFLIGHT_REQUIRED",
+]);
 const wait = (milliseconds: number) => new Promise((resolveWait) => setTimeout(resolveWait, milliseconds));
 
 /**
@@ -35,6 +63,8 @@ interface ProductionChild {
   process: ChildProcess;
   output: string;
   firstReadSessionIds: string[];
+  observedStages: Task5cStage[];
+  lastPreflightCode: string;
 }
 
 interface HandoffRow {
@@ -57,16 +87,86 @@ interface HandoffRow {
   reservation_status: string | null;
 }
 
-function childEnvironment(home: string, port: number): NodeJS.ProcessEnv {
+function childEnvironment(home: string, port: number, source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const environment: NodeJS.ProcessEnv = {};
   for (const name of environmentAllowlist) {
-    const inheritedName = Object.keys(process.env).find((candidate) => candidate.toUpperCase() === name.toUpperCase());
-    if (inheritedName && process.env[inheritedName] !== undefined) environment[name] = process.env[inheritedName];
+    const inheritedName = Object.keys(source).find((candidate) => candidate.toUpperCase() === name.toUpperCase());
+    if (inheritedName && source[inheritedName] !== undefined) environment[name] = source[inheritedName];
   }
   environment.EBB_ORCHESTRATOR_HOME = home;
   environment.PORT = String(port);
   return environment;
 }
+
+function mayRemoveTask5cRoot(input: {
+  childrenExited: boolean;
+  stopFailed: boolean;
+  dispatchSubmitted: boolean;
+  terminalRunStopped: boolean;
+}): boolean {
+  return input.childrenExited && !input.stopFailed && (!input.dispatchSubmitted || input.terminalRunStopped);
+}
+
+describe("Task5C child environment projection", () => {
+  it("forwards existing Hermes selector/runtime values without forwarding credentials", () => {
+    const projected = childEnvironment("fixture-home", 1234, {
+      hermes_data_dir_suffix: "-fixture",
+      HERMES_RUNTIME_DIR: "runtime-dir",
+      HERMES_HOME: "hermes-home",
+      HERMES_CONFIG: "config-path",
+      HERMES_PROFILE: "default",
+      HERMES_MODEL: "openai/gpt-test",
+      HERMES_API_KEY: "must-not-forward",
+      OPENAI_API_KEY: "must-not-forward",
+    });
+    expect(projected).toMatchObject({
+      HERMES_DATA_DIR_SUFFIX: "-fixture",
+      HERMES_RUNTIME_DIR: "runtime-dir",
+      HERMES_HOME: "hermes-home",
+      HERMES_CONFIG: "config-path",
+      HERMES_PROFILE: "default",
+      HERMES_MODEL: "openai/gpt-test",
+      EBB_ORCHESTRATOR_HOME: "fixture-home",
+      PORT: "1234",
+    });
+    expect(projected).not.toHaveProperty("HERMES_API_KEY");
+    expect(projected).not.toHaveProperty("OPENAI_API_KEY");
+  });
+});
+
+describe("Task5C safe preflight diagnostics", () => {
+  it.each([
+    ["EACCES", "NATIVE_HELPER_SPAWN_EACCES"],
+    ["EPERM", "NATIVE_HELPER_SPAWN_EPERM"],
+    ["ENOENT", "NATIVE_HELPER_SPAWN_ENOENT"],
+    ["EINVAL", "NATIVE_HELPER_SPAWN_EINVAL"],
+    ["ETIMEDOUT", "NATIVE_HELPER_SPAWN_ETIMEDOUT"],
+  ])("maps nested %s without exposing message or path", (errno, expectedCode) => {
+    const secretLikeDetail = "secret=fixture-token path=C:\\Users\\example\\Hermes\\private";
+    const nativeError = Object.assign(new Error(secretLikeDetail), { code: errno });
+    const wrapped = new Error(`preflight failed: ${secretLikeDetail}`, { cause: nativeError });
+    const diagnostic = classifyTask5cPreflightError(wrapped);
+    expect(diagnostic).toBe(expectedCode);
+    expect(diagnostic).not.toContain(secretLikeDetail);
+  });
+
+  it("classifies an unknown errno as UNCLASSIFIED without returning its message", () => {
+    const secretLikeDetail = "api_key=hidden path=C:\\private\\runtime";
+    const diagnostic = classifyTask5cPreflightError(Object.assign(new Error(secretLikeDetail), { code: "EUNKNOWN" }));
+    expect(diagnostic).toBe("UNCLASSIFIED");
+    expect(diagnostic).not.toContain(secretLikeDetail);
+  });
+});
+
+describe("Task5C fixture cleanup gate", () => {
+  it("requires every child stopped and durable Run stop proof after dispatch", () => {
+    expect(mayRemoveTask5cRoot({ childrenExited: false, stopFailed: false, dispatchSubmitted: false, terminalRunStopped: false })).toBe(false);
+    expect(mayRemoveTask5cRoot({ childrenExited: true, stopFailed: true, dispatchSubmitted: false, terminalRunStopped: false })).toBe(false);
+    expect(mayRemoveTask5cRoot({ childrenExited: true, stopFailed: false, dispatchSubmitted: true, terminalRunStopped: false })).toBe(false);
+    expect(mayRemoveTask5cRoot({ childrenExited: true, stopFailed: false, dispatchSubmitted: true, terminalRunStopped: true })).toBe(true);
+    expect(mayRemoveTask5cRoot({ childrenExited: true, stopFailed: false, dispatchSubmitted: false, terminalRunStopped: false })).toBe(true);
+  });
+});
 
 function launchProductionChild(home: string, port: number, password?: string): ProductionChild {
   const child = spawn(process.execPath, [serverFixture, "--observe-task5c-first-read", ...(password ? ["--bootstrap-local-user-stdin"] : [])], {
@@ -76,7 +176,9 @@ function launchProductionChild(home: string, port: number, password?: string): P
     windowsHide: true,
     stdio: ["pipe", "pipe", "pipe", "ipc"],
   });
-  const state: ProductionChild = { process: child, output: "", firstReadSessionIds: [] };
+  const state: ProductionChild = {
+    process: child, output: "", firstReadSessionIds: [], observedStages: [], lastPreflightCode: "NO_PREFLIGHT_CODE",
+  };
   child.stdout?.on("data", (chunk: Buffer) => { state.output += chunk.toString("utf8"); });
   child.stderr?.on("data", (chunk: Buffer) => { state.output += chunk.toString("utf8"); });
   child.on("message", (message: unknown) => {
@@ -84,6 +186,19 @@ function launchProductionChild(home: string, port: number, password?: string): P
         (message as Record<string, unknown>).type === "task5c:first-read" &&
         typeof (message as Record<string, unknown>).sessionId === "string") {
       state.firstReadSessionIds.push((message as Record<string, unknown>).sessionId as string);
+    }
+    if (typeof message === "object" && message !== null && !Array.isArray(message)) {
+      const record = message as Record<string, unknown>;
+      if (record.type === "task5c:stage" && typeof record.stage === "string" && task5cStageSet.has(record.stage)) {
+        state.observedStages.push(record.stage as Task5cStage);
+        if (state.observedStages.length > 12) state.observedStages.shift();
+      }
+      if (record.type === "task5c:preflight-code" && typeof record.code === "string" &&
+          (record.code === "UNCLASSIFIED" ||
+            task5cNativePreflightCodes.has(record.code) ||
+            (task5cPreflightCodePattern.test(record.code) && task5cPreflightCodes.has(record.code)))) {
+        state.lastPreflightCode = record.code;
+      }
     }
   });
   if (password) child.stdin?.end(`${password}\n${password}\n`);
@@ -201,8 +316,14 @@ async function waitForLiveCapture(database: ReturnType<typeof createSqliteDataba
   throw new Error("TASK5C_LIVE_SESSION_CAPTURE_TIMEOUT");
 }
 
-async function waitForTaskRunId(database: ReturnType<typeof createSqliteDatabase>, taskId: string): Promise<string> {
-  const deadline = Date.now() + 90_000;
+async function waitForTaskRunId(
+  database: ReturnType<typeof createSqliteDatabase>,
+  taskId: string,
+  idempotencyKey: string,
+  dispatchResponse: Promise<{ status: number; body: { requestId?: unknown; taskId?: unknown; status?: unknown } } | undefined>,
+  child: ProductionChild,
+): Promise<string> {
+  const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
     const rows = database.all<{ id: string }>(
       "SELECT id FROM agent_runs WHERE task_id=$taskId ORDER BY rowid DESC LIMIT 2",
@@ -212,7 +333,39 @@ async function waitForTaskRunId(database: ReturnType<typeof createSqliteDatabase
     if (rows[0]) return rows[0].id;
     await wait(5);
   }
-  throw new Error("TASK5C_DISPATCH_DID_NOT_PERSIST_RUN");
+
+  // Do not let diagnostics stall indefinitely if the HTTP response is also stuck.
+  const response = await Promise.race([dispatchResponse, wait(1_000).then(() => undefined)]);
+  const requestId = typeof response?.body.requestId === "string" && response.body.requestId.length > 0
+    ? response.body.requestId : undefined;
+  const requestById = requestId ? database.get<{ status: string; failure_code: string | null; run_id: string | null }>(
+    "SELECT status,failure_code,run_id FROM scheduler_run_requests WHERE id=$requestId AND task_id=$taskId",
+    { requestId, taskId },
+  ) : undefined;
+  const request = requestById ?? database.get<{ status: string; failure_code: string | null; run_id: string | null }>(
+    "SELECT status,failure_code,run_id FROM scheduler_run_requests WHERE task_id=$taskId AND idempotency_key=$key",
+    { taskId, key: idempotencyKey },
+  );
+  const childCode = child.output.match(/\b(?:TASK5C_[A-Z0-9_]{1,80}|RUN_REQUEST_[A-Z_]{1,80}|TASK_[A-Z0-9_]{1,80}|HERMES_[A-Z0-9_]{1,80}|AGENT_[A-Z0-9_]{1,80})\b/u)?.[0]
+    ?? "NO_ALLOWLISTED_MACHINE_CODE";
+  const requestFailureCode = request?.failure_code && /^RUN_REQUEST_[A-Z_]{1,80}$/u.test(request.failure_code)
+    ? request.failure_code : "NONE_OR_UNRECOGNIZED";
+  const diagnostic = [
+    `dispatch_status=${response?.status ?? "UNAVAILABLE"}`,
+    `dispatch_request_id_nonempty=${Boolean(requestId)}`,
+    `request_status=${request?.status && /^[A-Z_]{1,40}$/u.test(request.status) ? request.status : "MISSING_OR_UNRECOGNIZED"}`,
+    `request_failure_code=${requestFailureCode}`,
+    `request_run_id_nonempty=${Boolean(request?.run_id)}`,
+    `first_child_machine_code=${childCode}`,
+    `last_observed_stages=${child.observedStages.join(",") || "NO_STAGE_OBSERVED"}`,
+    `last_preflight_code=${child.lastPreflightCode}`,
+  ].join(":");
+  if (response) {
+    expect(response.status, diagnostic).toBe(202);
+    expect(response.body.status === "PENDING", diagnostic).toBe(true);
+    expect(Boolean(requestId), diagnostic).toBe(true);
+  }
+  throw new Error(`TASK5C_DISPATCH_DID_NOT_PERSIST_RUN:${diagnostic}`);
 }
 
 async function waitForRunCompletion(database: ReturnType<typeof createSqliteDatabase>, runId: string): Promise<HandoffRow> {
@@ -296,20 +449,26 @@ describe.skipIf(!enabled || !["win32", "linux"].includes(process.platform))(
     let root = "";
     let database: ReturnType<typeof createSqliteDatabase> | undefined;
     let runId: string | undefined;
-    let safeToRemove = false;
+    let dispatchSubmitted = false;
     const children: ProductionChild[] = [];
 
     afterAll(async () => {
+      let stopFailed = false;
       for (const child of children) {
         if (child.process.exitCode === null && child.process.signalCode === null) {
-          await stopProductionChild(child).catch(() => undefined);
+          try {
+            await stopProductionChild(child);
+          } catch {
+            stopFailed = true;
+          }
         }
       }
+      const childrenExited = children.every((child) => child.process.exitCode !== null || child.process.signalCode !== null);
       const row = runId && database ? loadHandoffRow(database, runId) : undefined;
       const terminalAndStopped = Boolean(row && ["COMPLETED", "FAILED", "CANCELLED"].includes(row.status) &&
         row.owner_state === "STOPPED" && isAuthoritativeRunProcessStopEvidence(row.stop_evidence,
           row.containment_kind as "windows-job" | "systemd-user-service"));
-      safeToRemove ||= !runId || terminalAndStopped;
+      const safeToRemove = mayRemoveTask5cRoot({ childrenExited, stopFailed, dispatchSubmitted, terminalRunStopped: terminalAndStopped });
       database?.close();
       if (root && safeToRemove) await rm(root, { recursive: true, force: true });
       else if (root) process.stderr.write(`TASK5C_DIAGNOSTIC_ROOT_RETAINED:${root}\n`);
@@ -330,19 +489,33 @@ describe.skipIf(!enabled || !["win32", "linux"].includes(process.platform))(
       database = createSqliteDatabase(homePaths.database);
       const fixture = await createTaskFixture(database, home, root);
       const auth = await login(origin, password);
-      // Observe SQLite while the real dispatch request is still in flight. Awaiting the HTTP
-      // response first can miss the short live-session window on a fast real provider response.
+      const idempotencyKey = randomUUID();
+      // Keep observing SQLite while the accepted request is still in flight: a fast real
+      // provider can make the live-session capture window short.
       const dispatchResponse = fetch(`${origin}/api/v1/tasks/${fixture.taskId}/dispatch`, {
         method: "POST",
-        headers: { origin, cookie: auth.cookie, "x-csrf-token": auth.csrf, "content-type": "application/json" },
+        headers: {
+          origin,
+          cookie: auth.cookie,
+          "x-csrf-token": auth.csrf,
+          "content-type": "application/json",
+          "idempotency-key": idempotencyKey,
+        },
         body: JSON.stringify({ role: "developer", model: "default" }),
       }).then(async (response) => ({
         status: response.status,
-        body: await response.json() as { runId?: unknown },
+        body: await response.json() as { requestId?: unknown; taskId?: unknown; status?: unknown },
       })).catch(() => undefined);
-      runId = await waitForTaskRunId(database, fixture.taskId);
+      dispatchSubmitted = true;
+
+      runId = await waitForTaskRunId(database, fixture.taskId, idempotencyKey, dispatchResponse, first);
 
       const initial = await waitForLiveCapture(database, runId);
+      const acknowledgedDispatch = await dispatchResponse;
+      expect(acknowledgedDispatch?.status).toBe(202);
+      expect(acknowledgedDispatch?.body).toMatchObject({ taskId: fixture.taskId, status: "PENDING" });
+      expect(typeof acknowledgedDispatch?.body.requestId).toBe("string");
+      expect((acknowledgedDispatch?.body.requestId as string).length).toBeGreaterThan(0);
       expect(initial.current_generation).toBe(1);
       expect(initial.reservation_id).toBeTruthy();
       const originalSessionId = initial.session_id!;
@@ -366,11 +539,6 @@ describe.skipIf(!enabled || !["win32", "linux"].includes(process.platform))(
       // The product's singleton lock deliberately fails closed on any existing lock. Clear only
       // this temporary fixture's exact dead-child record after verifying the child has exited.
       await removeExitedFixtureLock(home, first);
-      const completedDispatchResponse = await Promise.race([dispatchResponse, wait(100).then(() => undefined)]);
-      if (completedDispatchResponse &&
-          (completedDispatchResponse.status !== 202 || completedDispatchResponse.body.runId !== runId)) {
-        throw new Error("TASK5C_REAL_PROVIDER_RUN_DISPATCH_FAILED");
-      }
       const crashed = loadHandoffRow(database, runId);
       expect(crashed?.status).toBe(initial.status);
       expect(crashed?.session_id).toBe(originalSessionId);
@@ -381,6 +549,14 @@ describe.skipIf(!enabled || !["win32", "linux"].includes(process.platform))(
       const resumedRestart = launchProductionChild(home, port);
       children.push(resumedRestart);
       const completed = await waitForRunCompletion(database, runId);
+      const originalGeneration = database.get<{
+        state: string;
+        stop_evidence: string | null;
+        containment_kind: string;
+      }>("SELECT state,stop_evidence,containment_kind FROM run_process_owner_generations WHERE run_id=$runId AND generation=1", { runId });
+      expect(originalGeneration?.state).toBe("STOPPED");
+      expect(isAuthoritativeRunProcessStopEvidence(originalGeneration?.stop_evidence,
+        originalGeneration?.containment_kind)).toBe(true);
       const failureCode = completed.output?.match(/\b(?:TASK|HERMES|AGENT)_[A-Z0-9_]+\b/u)?.[0] ?? "NO_STABLE_DIAGNOSTIC_CODE";
       expect(completed.status, `TASK5C_RESUMED_RUN_FAILURE:${completed.exit_code ?? "NULL"}:${failureCode}`).toBe("COMPLETED");
       expect(completed.current_generation).toBe(2);
@@ -397,7 +573,6 @@ describe.skipIf(!enabled || !["win32", "linux"].includes(process.platform))(
         completed.containment_kind as "windows-job" | "systemd-user-service")).toBe(true);
       expect(database.get<{ count: number }>("SELECT COUNT(*) AS count FROM agent_runs WHERE task_id=$taskId", { taskId: fixture.taskId })?.count).toBe(1);
       await waitForReady(resumedRestart, origin, 90_000);
-      safeToRemove = true;
     }, 900_000);
   },
 );
