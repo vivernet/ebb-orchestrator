@@ -488,18 +488,10 @@ async function verifyPreparedRunCapability({ scenarioRoot, repository, projectNa
   }, 201);
   const taskId = taskResponse.task.id;
   assert.equal(typeof taskId, "string");
-  const branch = `task/${taskId}`;
-  const workspace = join(scenarioRoot, "capability-worktree");
-  git(repository, ["worktree", "add", "-b", branch, workspace, "HEAD"]);
-  assertPathWithin(await realpath(scenarioRoot), await realpath(workspace), "capability workspace");
-  const worktreeConfigPath = join(workspace, ".ebb-orchestrator", "project.yaml");
-  await writeFile(worktreeConfigPath, configText(projectName, "develop"), "utf8");
-  const rawWorktreeConfig = await readFile(worktreeConfigPath, "utf8");
-  assert.match(rawWorktreeConfig, /default_branch: develop/);
-
-  const [{ createSqliteDatabase }, { BackupService }, { RunService, createRunContextInput }, { loadValidatedCapability }] = await Promise.all([
+  const [{ createSqliteDatabase }, { BackupService }, { WorktreeManager }, { RunService, createRunContextInput }, { loadValidatedCapability }] = await Promise.all([
     import(pathToFileURL(resolve(root, "apps/server/dist/platform/database/sqlite-database.js")).href),
     import(pathToFileURL(resolve(root, "apps/server/dist/platform/database/backup-service.js")).href),
+    import(pathToFileURL(resolve(root, "apps/server/dist/modules/git/worktree-manager.js")).href),
     import(pathToFileURL(resolve(root, "apps/server/dist/modules/runtime/run-service.js")).href),
     import(pathToFileURL(resolve(root, "apps/server/dist/modules/execution/capability-validation.js")).href),
   ]);
@@ -520,11 +512,35 @@ async function verifyPreparedRunCapability({ scenarioRoot, repository, projectNa
     const state = snapshotDatabase.get("SELECT current_candidate_id,active_revision_id FROM project_config_state WHERE project_id=$id", { id: project.projectId });
     assert.equal(state.current_candidate_id, pendingCandidate.candidateId);
     assert.equal(state.active_revision_id, active.revisionId);
-    snapshotDatabase.run("UPDATE tasks SET status='READY' WHERE id=$id", { id: taskId });
-    snapshotDatabase.run(
-      "INSERT INTO worktrees(id,repo_path,path,branch,created_at,removed_at) VALUES($id,$repo,$path,$branch,$created,NULL)",
-      { id: taskId, repo: repository, path: workspace, branch, created: new Date().toISOString() },
+
+    const worktree = await new WorktreeManager({
+      db: snapshotDatabase,
+      worktreeDir: join(scenarioRoot, "capability-worktrees"),
+    }).createTaskWorkspace(taskId, repository, "main");
+    const workspace = worktree.path;
+    const branch = worktree.branch;
+    assertPathWithin(await realpath(scenarioRoot), await realpath(workspace), "capability workspace");
+    assert.equal(worktree.id, taskId);
+
+    const verifiedWorktreeOperation = snapshotDatabase.get(
+      "SELECT id,type,status,repo_path,branch_name,worktree_id,target_ref,verified_at FROM git_operations WHERE worktree_id=$taskId ORDER BY created_at DESC LIMIT 1",
+      { taskId },
     );
+    assert.ok(verifiedWorktreeOperation, "WorktreeManager did not persist a CREATE_WORKTREE operation");
+    assert.equal(verifiedWorktreeOperation.type, "CREATE_WORKTREE");
+    assert.equal(verifiedWorktreeOperation.status, "VERIFIED");
+    assert.ok(verifiedWorktreeOperation.verified_at, "verified CREATE_WORKTREE operation omitted verified_at");
+    assert.equal(verifiedWorktreeOperation.repo_path, repository);
+    assert.equal(verifiedWorktreeOperation.branch_name, branch);
+    assert.equal(verifiedWorktreeOperation.worktree_id, taskId);
+    assert.equal(verifiedWorktreeOperation.target_ref, "main");
+
+    const worktreeConfigPath = join(workspace, ".ebb-orchestrator", "project.yaml");
+    await writeFile(worktreeConfigPath, configText(projectName, "develop"), "utf8");
+    const rawWorktreeConfig = await readFile(worktreeConfigPath, "utf8");
+    assert.match(rawWorktreeConfig, /default_branch: develop/);
+
+    snapshotDatabase.run("UPDATE tasks SET status='READY' WHERE id=$id", { id: taskId });
 
     const runtimeStub = {
       startRun() { runtimeCalls += 1; throw new Error("provider/runtime invocation is forbidden in capability acceptance"); },

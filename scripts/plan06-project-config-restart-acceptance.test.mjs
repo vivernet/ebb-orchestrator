@@ -67,6 +67,12 @@ test("Plan 06 Project Config acceptance runs the production server in a disposab
   assert.match(harness, /apps\/server\/dist\/modules\/runtime\/run-service\.js/);
   assert.match(harness, /apps\/server\/dist\/modules\/execution\/capability-validation\.js/);
   assert.match(harness, /loadValidatedCapability/);
+  assert.match(harness, /WorktreeManager/);
+  assert.match(harness, /createTaskWorkspace\(taskId, repository, "main"\)/);
+  assert.match(harness, /SELECT id,type,status,[\s\S]*target_ref,verified_at FROM git_operations/);
+  assert.match(harness, /verifiedWorktreeOperation\.status, "VERIFIED"/);
+  assert.match(harness, /verifiedWorktreeOperation\.verified_at/);
+  assert.match(harness, /verifiedWorktreeOperation\.target_ref, "main"/);
   assert.match(harness, /approvedProjectConfig\.revisionHash/);
   assert.match(harness, /rawWorktreeConfig/);
   assert.match(harness, /assert\.match\(rawWorktreeConfig, \/default_branch: develop\//);
