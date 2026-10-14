@@ -4,7 +4,7 @@ kind: ledger
 status: current
 title: Сверка незавершённых планов и требований
 created: 2026-09-28
-updated: 2026-10-13
+updated: 2026-10-14
 ---
 
 # Сверка незавершённых планов и требований
@@ -908,3 +908,9 @@ Plan01 metadata переведена из `completed` в `in_progress` посл�
 - На снимке `HEAD=a7e1a039b7b32fae8cf917ef9734a498429e8551` от `2026-10-14T07:06:53+03:00` локальная ветка `develop` опережала известный тогда `origin/develop=2ddf9c512c3f3f6586ba432aeff6037ca757d036` на 10 commits. Это историческое значение, а не текущее состояние. При сверке этого дополнения на `HEAD=804b4561301348efed33af0064d30a0d5df48d45` локальная ветка опережает имеющийся `origin/develop` на 11 commits. Предыдущее push-разрешение относилось к более раннему конкретному payload; ни push, ни remote scan/gate в этой сверке не выполнялись. Для свежего hosted evidence потребуется запуск поддерживаемого gate на актуальном commit через явно разрешённую публикацию этого payload либо иной существующий runner.
 - Read-only Apple Silicon scout подтвердил, что текущие `production-gates.yml` macOS jobs дают только общие quality/keyring/Project Config evidence на hosted `macos-14`; они не доказывают macOS 13.5 floor или Hermes process containment. `macos-runtime-feasibility.yml` остаётся fixture-only. Proposal15 — draft, а разрешённое ранее действие было feasibility research per-Run VM + durable host manager; реализация Darwin/VM architecture не подтверждена и не начата. Точные открытые вопросы включают manager/VM recovery после crash/restart и Hermes runtime/auth в guest без копирования user config/credentials.
 - Статусы `plan-20`, `plan-05/06/19` и roadmap не менялись. Это уточнение supported evidence path, а не PASS для Linux/macOS и не закрытие Plan20.
+
+## Correction — Plan19 Task7 / Plan07 evidence (2026-10-14)
+- Свежий read-only audit на `HEAD=91085e4` сверил Plan19 Task7 acceptance с `docs/audit/hermes-development-workflow-parity.md` § «Финальная сверка Task 7». Task7 acceptance PASS по принятому bounded contract: два завершённых schema-valid Hermes child без nested/third child; обязательные repository gates прошли на одном source snapshot; timeout cleanup подтвердил `taskkill` точного wrapper PID, `child_closed=true` и удаление prompt после close; независимый Luna review PASS.
+- Сам `pnpm hermes:execute` wrapper в последнем повторе завершился timeout, не exit 0. Это не скрывается: только перечисленные bounded criteria считаются Task7 acceptance; detached OS descendants остаются `NOT VERIFIED` и не объявляются остановленными.
+- Ранее записанное в snapshot summary (строка Plan07, будто parity report/real run не получены) superseded данным evidence. Lifecycle `plan-07` остаётся `blocked` до отдельного whole-plan review, reconcile устаревших checklist items и итогового решения; `Task7 PASS` не равен `Plan07 completed`.
+- Текущая таблица `docs/roadmap/02-current-state.md` обновлена, чтобы отразить Task7 acceptance и оставить открытые whole-plan/checklist gates. `.opencode` не восстанавливался и файлы не перемещались/удалялись.
