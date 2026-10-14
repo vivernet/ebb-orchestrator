@@ -1,4 +1,4 @@
-import { isAbsolute, relative, resolve } from 'node:path';
+import { isAbsolute, relative, resolve, win32 } from 'node:path';
 
 /**
  * Разрешает путь implementation plan только внутри текущего worktree.
@@ -8,6 +8,7 @@ import { isAbsolute, relative, resolve } from 'node:path';
  * @returns {string | null} Канонический lexical path или null при выходе за границу.
  */
 export function resolvePlanPath(worktreeRoot, planPath) {
+  if (win32.isAbsolute(planPath) && !isAbsolute(planPath)) return null;
   const root = resolve(worktreeRoot);
   const candidate = resolve(root, planPath);
   const candidateRelative = relative(root, candidate);

@@ -453,6 +453,7 @@ test('plan path resolution rejects traversal and sibling-prefix escapes', () => 
   assert.equal(resolvePlanPath(root, 'docs/plan.md'), resolve(root, 'docs/plan.md'));
   assert.equal(resolvePlanPath(root, '../outside.md'), null);
   assert.equal(resolvePlanPath(root, `${root}-sibling/plan.md`), null);
+  assert.equal(resolvePlanPath(root, 'C:/repo/worktree-sibling/plan.md'), null);
   assert.equal(resolvePlanPath(root, join('C:', 'other', 'plan.md')), null);
 });
 
