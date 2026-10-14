@@ -8,6 +8,7 @@ import { dirname, join, resolve } from "node:path";
 import { randomBytes, randomUUID } from "node:crypto";
 import { createServer, connect } from "node:net";
 import { monitorDetachedProcessGroups, spawnManagedChild, terminateManagedChild, waitForChildExit } from "./child-lifecycle.mjs";
+import { terminateWindowsOwnedLeaf } from "./owned-leaf-lifecycle.mjs";
 import { createE2EPasswordChannel } from "./credential-channel.mjs";
 import { createDetachedLedgerErrorDetector } from "./detached-ledger-error-detector.mjs";
 
@@ -299,7 +300,12 @@ async function terminateChild(name) {
   const child = children.get(name);
   if (!child) return;
   try {
-    await terminateManagedChild(child, { onEvent: (event, details) => recordChildEvent(child, event, details) });
+    const onEvent = (event, details) => recordChildEvent(child, event, details);
+    if (name === "frontend" && process.platform === "win32") {
+      await terminateWindowsOwnedLeaf(child, { onEvent });
+    } else {
+      await terminateManagedChild(child, { onEvent });
+    }
   } catch (cause) {
     throw new Error(`E2E ${name} teardown failed: ${cause.message}; lifecycle=${childLifecycleSummary(name, child)}`, { cause });
   }

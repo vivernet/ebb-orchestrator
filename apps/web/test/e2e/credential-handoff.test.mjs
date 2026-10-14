@@ -23,6 +23,7 @@ const ownedLaunchFiles = [
   "apps/web/playwright.config.ts",
   "apps/web/test/e2e/run-e2e.mjs",
   "apps/web/test/e2e/child-lifecycle.mjs",
+  "apps/web/test/e2e/owned-leaf-lifecycle.mjs",
   "apps/web/test/e2e/detached-ledger-error-detector.mjs",
   "apps/web/test/e2e/detached-process-ledger.cjs",
   "apps/web/test/e2e/web-e2e-server.mjs",
@@ -331,6 +332,7 @@ test("launcher teardown owns, escalates, and verifies each POSIX child process g
   assert.match(ledgerErrorDetector, /suffix/);
   assert.match(launcher, /mode:\s*0o600/);
   assert.match(launcher, /terminateManagedChild/);
+  assert.match(launcher, /name === "frontend" && process\.platform === "win32"[\s\S]*terminateWindowsOwnedLeaf\(child/);
   assert.match(lifecycle, /readLinuxProcessIdentity/);
   assert.match(lifecycle, /startTicks/);
   assert.match(lifecycle, /signalVerifiedDetachedGroups/);
@@ -370,6 +372,32 @@ test("Windows taskkill failure exposes process identity, status, and stderr", as
     && event.succeeded === false
     && event.errorCode === "EPERM"
     && event.stderr === "Access is denied."));
+});
+
+test("Windows owned leaf teardown directly kills and verifies its exact child", async (t) => {
+  const { spawn } = await import("node:child_process");
+  const { terminateWindowsOwnedLeaf } = await import("./owned-leaf-lifecycle.mjs");
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+    stdio: "ignore",
+    windowsHide: true,
+  });
+  t.after(async () => {
+    if (child.exitCode === null && child.signalCode === null) child.kill();
+    const exit = await waitForChildExit(child, 3_000);
+    assert.ok(exit.exited, "test-owned leaf must exit during cleanup");
+  });
+  await once(child, "spawn");
+
+  const events = [];
+  const result = await terminateWindowsOwnedLeaf(child, {
+    timeoutMs: 3_000,
+    onEvent: (event, details) => events.push({ event, ...details }),
+  });
+
+  assert.deepEqual(result, { exited: true });
+  assert.ok(child.exitCode !== null || child.signalCode !== null, "the exact owned leaf must be reaped");
+  assert.ok(events.some((event) => event.event === "termination-requested" && event.method === "child.kill"));
+  assert.ok(events.some((event) => event.event === "termination-verified"));
 });
 
 test("detached ledger error marker is detected when split across stderr chunks", () => {

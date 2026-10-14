@@ -76,6 +76,7 @@ import { PlanningService } from "../../src/modules/planning/planning-service.js"
 import { EpicOrchestrator, type IntegrationServiceFactoryContext } from "../../src/modules/planning/epic-orchestrator.js";
 import { DatabaseCompletionStore } from "../../src/modules/execution/mcp/submit-result-tool.js";
 import { SchedulerService } from "../../src/modules/scheduler/scheduler-service.js";
+import { SchedulerRunRequestWorker } from "../../src/modules/scheduler/scheduler-run-request-worker.js";
 import type { IntegrationAttempt, IntegrationService } from "../../src/modules/git/integration-service.js";
 import { BackgroundJobRegistry } from "../../src/platform/jobs/background-job-registry.js";
 import { JobRunner } from "../../src/platform/jobs/job-runner.js";
@@ -86,8 +87,6 @@ import { WorktreeManager } from "../../src/modules/git/worktree-manager.js";
 import { transitionRunProcessOwnerTx } from "../../src/modules/runtime/run-process-owner.js";
 import { EventBus } from "../../src/platform/events/event-bus.js";
 import { EventDispatcher } from "../../src/platform/events/event-dispatcher.js";
-import { appendOutboxEvent } from "../../src/platform/events/outbox-repository.js";
-import { DomainEvent } from "../../src/platform/events/domain-event.js";
 import { RuntimeOrchestrator } from "../../src/modules/runtime/run-orchestrator.js";
 import { createApplicationRecoveryReconcilers, createProductionComposition } from "../../src/platform/home/production-composition.js";
 import { resolveOrchestratorHome } from "../../src/platform/home/orchestrator-home.js";
@@ -117,27 +116,33 @@ describe("production context manifest acceptance", () => {
 
   it("rolls back Run, manifest and PREPARED owner for manifest or owner insert failures before Task dispatch", async () => {
     const fixture = setup();
+    await fixture.app.close();
+    app = undefined;
+    const harness = createHermesProducerHarness(new HermesSelectionMatrixRuntime(db!));
     const triggers = [
-      ["fail_context_manifest_insert", "context_manifests"],
-      ["fail_run_owner_insert", "run_process_owners"],
+      ["fail_context_manifest_insert", "context_manifests", "task-acceptance"],
+      ["fail_run_owner_insert", "run_process_owners", "task-rollback-owner"],
     ] as const;
 
-    for (const [trigger, table] of triggers) {
+    for (const [trigger, table, taskId] of triggers) {
+      if (taskId !== "task-acceptance") addTaskFixture(db!, root, workspace, taskId);
       db!.run(`CREATE TRIGGER ${trigger} BEFORE INSERT ON ${table} BEGIN SELECT RAISE(ABORT, 'injected_${trigger}'); END`);
-      const response = await fixture.app.inject({
-        method: "POST", url: "/api/v1/tasks/task-acceptance/dispatch",
-        headers: { cookie: TEST_COOKIE, origin: "http://127.0.0.1:3000", "x-csrf-token": TEST_CSRF_TOKEN },
+      const response = await harness.app.inject({
+        method: "POST", url: `/api/v1/tasks/${taskId}/dispatch`,
+        headers: { cookie: TEST_COOKIE, origin: "http://127.0.0.1:3000", "x-csrf-token": TEST_CSRF_TOKEN, "idempotency-key": `rollback-${trigger}` },
       });
-      expect(response.statusCode).not.toBe(202);
+      expect(response.statusCode, response.body).toBe(202);
+      const requestId = (response.json() as { requestId: string }).requestId;
+      await harness.worker.tick();
       expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM agent_runs")?.count).toBe(0);
       expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM context_manifests")?.count).toBe(0);
       expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM run_process_owners")?.count).toBe(0);
-      expect(dispatchTask).not.toHaveBeenCalled();
+      expect(harness.scheduler.getRunRequest(taskId, requestId)).toMatchObject({ status: "PENDING", runId: null });
       expect(runtimeStarts).toBe(0);
       db!.run(`DROP TRIGGER ${trigger}`);
     }
 
-    expect(fixture.app).toBeDefined();
+    expect(harness.app).toBeDefined();
   });
 
   it("rejects a context projection that changes inside its preparation transaction", () => {
@@ -170,6 +175,10 @@ describe("production context manifest acceptance", () => {
 
   it("persists exact final prompt bytes, context manifest and owner before a production Task route dispatch", async () => {
     const fixture = setup();
+    await fixture.app.close();
+    app = undefined;
+    const runtime = new HermesSelectionMatrixRuntime(db!);
+    const harness = createHermesProducerHarness(runtime);
     const expectedPrompt = taskDeveloperPrompt();
     const targetHead = execFileSync("git", ["rev-parse", "HEAD"], { cwd: workspace, encoding: "utf8", windowsHide: true }).trim();
     const targetBranch = execFileSync("git", ["symbolic-ref", "--quiet", "--short", "HEAD"], { cwd: workspace, encoding: "utf8", windowsHide: true }).trim();
@@ -183,24 +192,31 @@ describe("production context manifest acceptance", () => {
       workspaceIdentity: { repository: workspace, workspace, worktree: "task-acceptance" },
       targetHead, targetBranch,
     }));
-    const response = await fixture.app.inject({
+    const response = await harness.app.inject({
       method: "POST", url: "/api/v1/tasks/task-acceptance/dispatch",
-      headers: { cookie: TEST_COOKIE, origin: "http://127.0.0.1:3000", "x-csrf-token": TEST_CSRF_TOKEN },
+      headers: { cookie: TEST_COOKIE, origin: "http://127.0.0.1:3000", "x-csrf-token": TEST_CSRF_TOKEN, "idempotency-key": "context-manifest-route" },
     });
     expect(response.statusCode, response.body).toBe(202);
+    const requestId = (response.json() as { requestId: string }).requestId;
+    await harness.worker.tick();
+    const request = harness.scheduler.getRunRequest("task-acceptance", requestId);
+    expect(request).toMatchObject({ status: "DISPATCHED", taskId: "task-acceptance", role: "developer", model: "default" });
+    if (!request?.runId) throw new Error("Durable Task request did not persist its selected Run");
     const run = db!.get<{ id: string; prompt: string }>("SELECT id,prompt FROM agent_runs WHERE task_id='task-acceptance'");
     if (!run) throw new Error("Task dispatch did not persist an agent run");
+    expect(run.id).toBe(request.runId);
     expect(run.prompt).toBe(expectedContext.finalPrompt);
     const manifest = db!.get<{ prompt_hash: string; initial_token_size: number | null; role: string }>(
       "SELECT prompt_hash,initial_token_size,role FROM context_manifests WHERE run_id=$runId", { runId: run.id },
     );
     expect(manifest).toEqual({ prompt_hash: digestRunPromptBytesV1(new TextEncoder().encode(run.prompt)), initial_token_size: null, role: "developer" });
     expect(db!.get<{ source_tag: string; state: string }>("SELECT source_tag,state FROM run_process_owners WHERE run_id=$runId", { runId: run.id }))
-      .toEqual({ source_tag: `ebb-run:${run.id}`, state: "STOPPED" });
-    expect(dispatchTask).toHaveBeenCalledTimes(1);
+      .toEqual({ source_tag: `ebb-run:${run.id}`, state: "PREPARED" });
+    expect(runtime.producerEvents.map(({ kind }) => kind)).toEqual(["preflight", "dispatch"]);
+    expect(runtimeStarts).toBe(0);
   });
 
-  it("dispatches three consumer-only AgentRunRequested outbox events through RuntimeOrchestrator", async () => {
+  it("dispatches three durable Task requests through AgentRunRequested consumer and RuntimeOrchestrator", async () => {
     setup();
     const cases = [
       { label: "task-event-consumer-developer", taskId: "task-event-developer", role: "developer" },
@@ -212,21 +228,36 @@ describe("production context manifest acceptance", () => {
     ].sort());
     for (const item of cases) addTaskFixture(db!, root, workspace, item.taskId);
 
-    const eventPath = createEventPath();
+    const runtime = new MatrixRuntime(db!);
+    const runService = new RunService(db!, runtime);
+    const scheduler = new SchedulerService(db!);
+    const workflow = createAcceptanceWorkflow(db!);
+    const worker = new SchedulerRunRequestWorker({ db: db!, scheduler, runs: runService, workflow, isReady: () => true });
     db!.run("UPDATE outbox_events SET processed_at=$now WHERE processed_at IS NULL", { now: new Date().toISOString() });
-    db!.transaction((tx) => {
-      for (const item of cases) appendOutboxEvent(tx, DomainEvent.create({
-        type: "AgentRunRequested", aggregateType: "TASK", aggregateId: item.taskId,
-        payload: { role: item.role, model: "default" },
-      }));
+    const requests = cases.map((item) => ({ item, request: scheduler.enqueueRunRequest({ taskId: item.taskId, role: item.role, model: "default",
+      idempotencyKey: `context-manifest-consumer:${item.taskId}`, originType: "TASK_API", originId: `task-api:${item.taskId}` }) }));
+    const eventPath = createEventPath(runtime, scheduler, runService, workflow);
+    for (let pass = 0; pass < 12; pass += 1) {
+      await worker.tick();
+      db!.run("UPDATE outbox_events SET available_at=$now WHERE type='AgentRunRequested' AND processed_at IS NULL", {
+        now: new Date(Date.now() - 1_000).toISOString(),
+      });
+      await eventPath.runtimeOrchestrator.dispatchPendingEvents(100);
+      if (requests.every(({ item, request }) => {
+        const durable = scheduler.getRunRequest(item.taskId, request.id);
+        return durable?.status === "DISPATCHED" && durable.runId !== null &&
+          db!.get<{ status: string }>("SELECT status FROM agent_runs WHERE id=$runId", { runId: durable.runId })?.status === "COMPLETED";
+      })) break;
+    }
+    const intendedRunIds = requests.map(({ item, request }) => {
+      const durable = scheduler.getRunRequest(item.taskId, request.id);
+      expect(durable, item.label).toMatchObject({ status: "DISPATCHED", role: item.role, model: "default" });
+      if (!durable?.runId) throw new Error(`${item.label} has no committed Run`);
+      return durable.runId;
     });
-    db!.run("UPDATE outbox_events SET available_at=$now WHERE type='AgentRunRequested' AND processed_at IS NULL", {
-      now: new Date(Date.now() - 1_000).toISOString(),
-    });
-
-    await expect(eventPath.runtimeOrchestrator.dispatchPendingEvents(3)).resolves.toBe(3);
-    expect(eventPath.dispatchSpy).toHaveBeenCalledTimes(3);
-    for (const item of cases) {
+    expect(new Set(eventPath.dispatchSpy.mock.calls.map(([run]) => run.id).filter((runId) => intendedRunIds.includes(runId))))
+      .toEqual(new Set(intendedRunIds));
+    for (const { item } of requests) {
       const run = db!.get<{ id: string; status: string; role: string }>(
         "SELECT id,status,role FROM agent_runs WHERE task_id=$taskId", { taskId: item.taskId },
       );
@@ -246,16 +277,20 @@ describe("production context manifest acceptance", () => {
   it.each([
     ["context_manifests", "fail_event_manifest_insert"],
     ["run_process_owners", "fail_event_owner_insert"],
-  ] as const)("rolls back AgentRunRequested preparation through EventDispatcher when %s insertion fails", async (table, trigger) => {
+  ] as const)("keeps durable Task request pending when queue preparation cannot insert %s", async (table, trigger) => {
     setup();
-    const eventPath = createEventPath();
+    const runtime = new MatrixRuntime(db!);
+    const runService = new RunService(db!, runtime);
+    const scheduler = new SchedulerService(db!);
+    const workflow = createAcceptanceWorkflow(db!);
+    const worker = new SchedulerRunRequestWorker({ db: db!, scheduler, runs: runService, workflow, isReady: () => true });
+    const eventPath = createEventPath(runtime, scheduler, runService, workflow);
     db!.run(`CREATE TRIGGER ${trigger} BEFORE INSERT ON ${table} BEGIN SELECT RAISE(ABORT, 'injected_${trigger}'); END`);
     db!.run("UPDATE outbox_events SET processed_at=$now WHERE processed_at IS NULL", { now: new Date().toISOString() });
-    db!.transaction((tx) => appendOutboxEvent(tx, DomainEvent.create({
-      type: "AgentRunRequested", aggregateType: "TASK", aggregateId: "task-acceptance",
-      payload: { role: "developer", model: "default" },
-    })));
+    const request = scheduler.enqueueRunRequest({ taskId: "task-acceptance", role: "developer", model: "default",
+      idempotencyKey: `context-manifest-rollback:${table}`, originType: "TASK_API", originId: "task-api:task-acceptance" });
 
+    await worker.tick();
     await expect(eventPath.runtimeOrchestrator.dispatchPendingEvents(3)).resolves.toBe(0);
 
     expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM agent_runs")?.count).toBe(0);
@@ -263,57 +298,43 @@ describe("production context manifest acceptance", () => {
     expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM run_process_owners")?.count).toBe(0);
     expect(eventPath.dispatchSpy).not.toHaveBeenCalled();
     expect(runtimeStarts).toBe(0);
-    expect(db!.get<{ processed_at: string | null; attempts: number }>(
-      "SELECT processed_at,attempts FROM outbox_events WHERE type='AgentRunRequested'",
-    )).toMatchObject({ processed_at: null, attempts: 1 });
+    expect(scheduler.getRunRequest("task-acceptance", request.id)).toMatchObject({ status: "PENDING", runId: null });
+    expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM outbox_events WHERE type='AgentRunRequested'")?.count).toBe(0);
+    db!.run(`DROP TRIGGER ${trigger}`);
   });
 
-  it("uses a non-provider Hermes selection seam to hold Task, Event, and Epic producers before durable writes", async () => {
+  it("uses a non-provider Hermes selection seam to hold Task and Epic producers before durable writes", async () => {
     const fixture = setup();
     await fixture.app.close();
     app = undefined;
     const runtime = new HermesSelectionMatrixRuntime(db!);
     const harness = createHermesProducerHarness(runtime);
-    addTaskFixture(db!, root, workspace, "task-event-hermes-preflight");
 
     const taskGate = runtime.gateNextPreflight();
     const taskResponsePromise = harness.app.inject({
       method: "POST", url: "/api/v1/tasks/task-acceptance/dispatch",
-      headers: { cookie: TEST_COOKIE, origin: "http://127.0.0.1:3000", "x-csrf-token": TEST_CSRF_TOKEN },
+      headers: { cookie: TEST_COOKIE, origin: "http://127.0.0.1:3000", "x-csrf-token": TEST_CSRF_TOKEN, "idempotency-key": "context-manifest-preflight-task" },
     });
+    const taskResponse = await taskResponsePromise;
+    expect(taskResponse.statusCode, taskResponse.body).toBe(202);
+    const taskRequestId = (taskResponse.json() as { requestId: string }).requestId;
+    const taskQueuePass = harness.worker.tick();
     const taskRunId = await taskGate.entered;
     assertNoRunProducerWrites(db!, runtime, taskRunId);
     taskGate.release();
-    const taskResponse = await taskResponsePromise;
-    expect(taskResponse.statusCode, taskResponse.body).toBe(202);
+    await taskQueuePass;
+    const taskRequest = harness.scheduler.getRunRequest("task-acceptance", taskRequestId);
+    expect(taskRequest).toMatchObject({ status: "DISPATCHED", runId: taskRunId });
+    const taskEventPath = createEventPath(runtime, harness.scheduler, harness.runService, harness.workflow);
+    db!.run("UPDATE outbox_events SET available_at=$now WHERE processed_at IS NULL", {
+      now: new Date(Date.now() - 1_000).toISOString(),
+    });
+    await taskEventPath.runtimeOrchestrator.dispatchPendingEvents(100);
     await vi.waitFor(() => expect(db!.get<{ status: string }>(
       "SELECT status FROM agent_runs WHERE id=$runId", { runId: taskRunId },
     )).toEqual({ status: "COMPLETED" }));
     expect(db!.get<{ model: string }>("SELECT model FROM agent_runs WHERE id=$runId", { runId: taskRunId }))
       .toEqual({ model: "default" });
-    harness.scheduler.releaseTask("task-acceptance", 0);
-
-    const eventPath = createEventPath(runtime);
-    db!.run("UPDATE outbox_events SET processed_at=$now WHERE processed_at IS NULL", { now: new Date().toISOString() });
-    db!.transaction((tx) => appendOutboxEvent(tx, DomainEvent.create({
-      type: "AgentRunRequested", aggregateType: "TASK", aggregateId: "task-event-hermes-preflight",
-      payload: { role: "developer", model: "default" },
-    })));
-    db!.run("UPDATE outbox_events SET available_at=$now WHERE aggregate_id='task-event-hermes-preflight' AND type='AgentRunRequested'", {
-      now: new Date(Date.now() - 1_000).toISOString(),
-    });
-    const eventGate = runtime.gateNextPreflight();
-    const eventDispatchPromise = eventPath.runtimeOrchestrator.dispatchPendingEvents(1);
-    const eventRunId = await eventGate.entered;
-    assertNoRunProducerWrites(db!, runtime, eventRunId);
-    eventGate.release();
-    await expect(eventDispatchPromise).resolves.toBe(1);
-    expect(db!.get<{ model: string }>("SELECT model FROM agent_runs WHERE id=$runId", { runId: eventRunId }))
-      .toEqual({ model: "default" });
-    expect(db!.get<{ processed_at: string | null }>(
-      "SELECT processed_at FROM outbox_events WHERE aggregate_id='task-event-hermes-preflight' AND type='AgentRunRequested'",
-    )?.processed_at).toBeTruthy();
-    eventPath.dispatchSpy.mockRestore();
 
     const planResponse = await harness.app.inject({
       method: "POST", url: "/api/v1/projects/project-acceptance/epics/plans",
@@ -351,36 +372,22 @@ describe("production context manifest acceptance", () => {
     const runService = new RunService(db!, runtime);
     await fixture.app.close();
     const scheduler = new SchedulerService(db!);
-    addTaskFixture(db!, root, workspace, "task-http-reviewer");
-    addTaskFixture(db!, root, workspace, "task-http-qa");
-    const taskDispatchBarrier = vi.fn((
-      taskId: string,
-      engine: WorkflowEngine,
-      callback: (taskId: string, triggerReason: string) => void,
-      options: Parameters<SchedulerService["dispatchTask"]>[3],
-    ) => {
-      const runId = typeof options === "object" ? options.runId : undefined;
-      if (typeof runId !== "string") throw new Error("Task route dispatch requires a prepared Run ID");
-      const role = typeof options === "object" ? options.role : undefined;
-      if (typeof role !== "string") throw new Error("Task route dispatch requires a role");
-      assertHermesSelectionDurableBeforeDispatch(db!, runtime, runId);
-      expect(db!.get<{ subject_type: string; task_id: string | null; role: string }>(
-        "SELECT subject_type,task_id,role FROM context_manifests WHERE run_id=$runId", { runId },
-      )).toEqual({ subject_type: "TASK", task_id: taskId, role });
-      expect(db!.get<{ source_tag: string; state: string }>(
-        "SELECT source_tag,state FROM run_process_owners WHERE run_id=$runId", { runId },
-      )).toEqual({ source_tag: `ebb-run:${runId}`, state: "PREPARED" });
-      scheduler.dispatchTask(taskId, engine, callback, options);
-    });
-    const taskRouteScheduler = {
-      assertProjectDispatchable: (projectId: string) => scheduler.assertProjectDispatchable(projectId),
-      dispatchTask: taskDispatchBarrier,
-      releaseTask: vi.fn(),
-      projectProjection: vi.fn(() => ({ global: { active: 0, max: 1 }, projects: [] })),
-    };
     const workflowRegistry = new WorkflowRegistry();
     for (const template of Object.values(templates)) workflowRegistry.register(template);
     const workflow = new WorkflowEngine(db!, workflowRegistry);
+    addTaskFixture(db!, root, workspace, "task-http-reviewer");
+    addTaskFixture(db!, root, workspace, "task-http-qa");
+    const taskDispatchBarrier = vi.fn((
+      requestId: string,
+      engine: WorkflowEngine,
+      prepare: Parameters<SchedulerService["dispatchRunRequest"]>[2],
+      canDispatch: Parameters<SchedulerService["dispatchRunRequest"]>[3],
+    ) => {
+      const run = SchedulerService.prototype.dispatchRunRequest.call(scheduler, requestId, engine, prepare, canDispatch);
+      if (run) assertHermesSelectionDurableBeforeDispatch(db!, runtime, run.id);
+      return run;
+    });
+    vi.spyOn(scheduler, "dispatchRunRequest").mockImplementation(taskDispatchBarrier);
     const planning = new PlanningService(db!);
     vi.spyOn(scheduler, "dispatchTask").mockImplementation((taskId, engine, callback, options) => {
       const runId = typeof options === "object" && options !== null ? options.runId : undefined;
@@ -405,13 +412,16 @@ describe("production context manifest acceptance", () => {
       },
     );
     let runtimeApp = createApp({
-      db: db!, scheduler: taskRouteScheduler as never, runService, runtime,
+      db: db!, scheduler, runService, runtime,
       epicOrchestrator, authService: createTestAuthService(),
     });
     app = runtimeApp;
     const headers = { cookie: TEST_COOKIE, origin: "http://127.0.0.1:3000", "x-csrf-token": TEST_CSRF_TOKEN };
+    const taskRunQueue = new SchedulerRunRequestWorker({ db: db!, scheduler, runs: runService, workflow, isReady: () => true });
+    const taskEventPath = createEventPath(runtime, scheduler, runService, workflow);
 
     const taskRunIds: Record<string, string> = {};
+    const taskRequestIds: Array<{ taskId: string; label: string; requestId: string }> = [];
     for (const item of [
       { role: "developer", taskId: "task-acceptance", label: "task-http-developer" },
       { role: "reviewer", taskId: "task-http-reviewer", label: "task-http-reviewer" },
@@ -419,19 +429,44 @@ describe("production context manifest acceptance", () => {
     ] as const) {
       const response = await runtimeApp.inject({
         method: "POST", url: `/api/v1/tasks/${item.taskId}/dispatch`,
-        headers,
+        headers: { ...headers, "idempotency-key": `context-manifest-${item.taskId}-${item.role}` },
         payload: { role: item.role },
       });
       expect(response.statusCode, response.body).toBe(202);
-      const runId = (response.json() as { runId: string }).runId;
-      taskRunIds[item.label] = runId;
+      taskRequestIds.push({ taskId: item.taskId, label: item.label,
+        requestId: (response.json() as { requestId: string }).requestId });
+    }
+    for (let pass = 0; pass < 12; pass += 1) {
+      await taskRunQueue.tick();
+      db!.run("UPDATE outbox_events SET available_at=$now WHERE type='AgentRunRequested' AND processed_at IS NULL", {
+        now: new Date(Date.now() - 1_000).toISOString(),
+      });
+      await taskEventPath.runtimeOrchestrator.dispatchPendingEvents(100);
+      if (taskRequestIds.every((request) => {
+        const durable = scheduler.getRunRequest(request.taskId, request.requestId);
+        return durable?.status === "DISPATCHED" && durable.runId !== null &&
+          db!.get<{ status: string }>("SELECT status FROM agent_runs WHERE id=$runId", { runId: durable.runId })?.status === "COMPLETED";
+      })) break;
+    }
+    for (const request of taskRequestIds) {
+      const dispatched = scheduler.getRunRequest(request.taskId, request.requestId);
+      if (!dispatched) throw new Error(`${request.label} has no durable RunRequest`);
+      expect(dispatched.status, request.label).toBe("DISPATCHED");
+      if (!dispatched.runId) throw new Error(`${request.label} did not receive a committed Run`);
+      taskRunIds[request.label] = dispatched.runId;
+    }
+    for (const item of [
+      { role: "developer", taskId: "task-acceptance", label: "task-http-developer" },
+      { role: "reviewer", taskId: "task-http-reviewer", label: "task-http-reviewer" },
+      { role: "qa", taskId: "task-http-qa", label: "task-http-qa" },
+    ] as const) {
+      const runId = taskRunIds[item.label]!;
       await vi.waitFor(() => {
         expect(db!.get<{ status: string }>("SELECT status FROM agent_runs WHERE id=$runId", { runId }))
           .toEqual({ status: "COMPLETED" });
         expect(db!.get<{ state: string }>("SELECT state FROM run_process_owners WHERE run_id=$runId", { runId }))
           .toEqual({ state: "STOPPED" });
       });
-      scheduler.releaseTask(item.taskId, 0);
     }
 
     const epicPlanResponse = await runtimeApp.inject({
@@ -884,9 +919,12 @@ describe("production context manifest acceptance", () => {
       expect(model).toBe("default");
       return SchedulerService.prototype.dispatchAgentRun.call(scheduler, runId, projectId, role, model, resourceKey, options);
     });
-    const registry = new WorkflowRegistry();
-    for (const template of Object.values(templates)) registry.register(template);
-    const workflow = new WorkflowEngine(db!, registry);
+    vi.spyOn(scheduler, "dispatchRunRequest").mockImplementation((requestId, engine, prepare, canDispatch) => {
+      const run = SchedulerService.prototype.dispatchRunRequest.call(scheduler, requestId, engine, prepare, canDispatch);
+      if (run) assertHermesSelectionDurableBeforeDispatch(db!, runtime, run.id);
+      return run;
+    });
+    const workflow = createAcceptanceWorkflow(db!);
     const planning = new PlanningService(db!);
     const integrationAttempts: IntegrationAttempt[] = [];
     const epicOrchestrator = new EpicOrchestrator(db!, workflow, planning, runService, {} as never, scheduler, {
@@ -901,34 +939,43 @@ describe("production context manifest acceptance", () => {
       db: db!, scheduler, runService, runtime, epicOrchestrator, authService: createTestAuthService(),
     });
     app = producerApp;
-    return { app: producerApp, runService, scheduler, epicOrchestrator };
+    const worker = new SchedulerRunRequestWorker({ db: db!, scheduler, runs: runService, workflow, isReady: () => true });
+    return { app: producerApp, runService, scheduler, epicOrchestrator, workflow, worker };
   }
 
-  function createEventPath(runtime = new HermesSelectionMatrixRuntime(db!)) {
-    const runService = new RunService(db!, runtime);
-    const scheduler = new SchedulerService(db!);
-    const dispatchSpy = vi.spyOn(scheduler, "dispatchTask").mockImplementation((taskId, engine, callback, options) => {
-      const runId = typeof options === "object" && options !== null ? options.runId : undefined;
-      const role = typeof options === "object" && options !== null ? options.role : undefined;
-      if (typeof runId !== "string") throw new Error("Event dispatch requires a prepared Run ID");
-      if (typeof role !== "string") throw new Error("Event dispatch requires a role");
-      assertHermesSelectionDurableBeforeDispatch(db!, runtime, runId);
-      const manifests = db!.all<{ run_id: string; subject_type: string; task_id: string | null; role: string }>(
-        "SELECT run_id,subject_type,task_id,role FROM context_manifests WHERE run_id=$runId", { runId },
+  function createEventPath(
+    runtime: MatrixRuntime = new HermesSelectionMatrixRuntime(db!),
+    scheduler: SchedulerService = new SchedulerService(db!),
+    runService: RunService = new RunService(db!, runtime),
+    workflow: WorkflowEngine = createAcceptanceWorkflow(db!),
+  ) {
+    const dispatchSpy = vi.spyOn(runtime, "startRun").mockImplementation(async (run) => {
+      const manifest = db!.get<{ subject_type: string; task_id: string | null; epic_id: string | null; request_id: string | null; role: string }>(
+        "SELECT subject_type,task_id,epic_id,request_id,role FROM context_manifests WHERE run_id=$runId", { runId: run.id },
       );
-      expect(manifests).toEqual([{ run_id: runId, subject_type: "TASK", task_id: taskId, role }]);
-      const owners = db!.all<{ run_id: string; source_tag: string; state: string }>(
-        "SELECT run_id,source_tag,state FROM run_process_owners WHERE run_id=$runId", { runId },
-      );
-      expect(owners).toEqual([{ run_id: runId, source_tag: `ebb-run:${runId}`, state: "PREPARED" }]);
-      expect(runtime.producerEvents.some((event) => event.kind === "launch" && event.runId === runId)).toBe(false);
-      return SchedulerService.prototype.dispatchTask.call(scheduler, taskId, engine, callback, options);
+      const expectedSubjectType = run.taskId ? "TASK" : run.epicId ? "EPIC" : manifest?.request_id ? "REQUEST" : undefined;
+      const expectedRunStatus = run.triggerReason?.startsWith("epic-") ? "STARTED" : "IN_PROGRESS";
+      expect(db!.get<{ task_id: string | null; role: string; status: string }>(
+        "SELECT task_id,role,status FROM agent_runs WHERE id=$runId", { runId: run.id },
+      )).toMatchObject({ task_id: run.taskId, role: run.role, status: expectedRunStatus });
+      expect(db!.all("SELECT run_id FROM context_manifests WHERE run_id=$runId", { runId: run.id })).toHaveLength(1);
+      expect(manifest).toMatchObject({
+        subject_type: expectedSubjectType,
+        task_id: run.taskId,
+        epic_id: expectedSubjectType === "EPIC" ? run.epicId : null,
+        role: run.role,
+        ...(expectedSubjectType === "REQUEST" ? { request_id: expect.any(String) } : { request_id: null }),
+      });
+      expect(db!.get<{ source_tag: string; state: string }>(
+        "SELECT source_tag,state FROM run_process_owners WHERE run_id=$runId", { runId: run.id },
+      )).toEqual({ source_tag: `ebb-run:${run.id}`, state: "PREPARED" });
+      return MatrixRuntime.prototype.startRun.call(runtime, run);
     });
-    const registry = new WorkflowRegistry();
-    for (const template of Object.values(templates)) registry.register(template);
+    const workflowRegistry = new WorkflowRegistry();
+    for (const template of Object.values(templates)) workflowRegistry.register(template);
     const eventBus = new EventBus();
     const dispatcher = new EventDispatcher(db!, eventBus);
-    const runtimeOrchestrator = new RuntimeOrchestrator(db!, new WorkflowEngine(db!, registry), eventBus, dispatcher, scheduler, runService);
+    const runtimeOrchestrator = new RuntimeOrchestrator(db!, workflow, eventBus, dispatcher, scheduler, runService);
     runtimeOrchestrator.initialize();
     return { runtimeOrchestrator, dispatchSpy };
   }
@@ -953,6 +1000,12 @@ function makeRuntime(database: Database): AgentRuntime {
     runResult: async () => { throw new Error("not used"); },
     healthCheck: async () => true,
   };
+}
+
+function createAcceptanceWorkflow(database: Database): WorkflowEngine {
+  const registry = new WorkflowRegistry();
+  for (const template of Object.values(templates)) registry.register(template);
+  return new WorkflowEngine(database, registry);
 }
 
 class MatrixRuntime implements AgentRuntime {

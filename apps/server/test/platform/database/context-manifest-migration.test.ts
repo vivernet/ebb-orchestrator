@@ -48,7 +48,7 @@ describe("context manifest v2 migration", () => {
     const migration = migrations.find(({ version }) => version === 43)!;
     expect(migration.name).toBe("043_scheduler_capacity_wait_started_at");
     expect(migration.sql.trim()).toBe("ALTER TABLE tasks ADD COLUMN capacity_wait_started_at TEXT;");
-    expect(runMigrations(db, migrations).applied).toBe(1);
+    expect(runMigrations(db, migrations.filter(({ version }) => version <= 43)).applied).toBe(1);
     for (const prior of before) {
       expect(db!.all<Row>(`SELECT * FROM ${prior.table} ORDER BY id`)).toEqual(prior.rows);
       expect(storedBytes(db!, prior.table)).toEqual(prior.bytes);
@@ -75,8 +75,9 @@ describe("context manifest v2 migration", () => {
     expect(migration040?.name).toBe("040_run_hermes_source_snapshot");
     expect(migration041?.name).toBe("041_shared_hermes_home");
     expect(migration040?.sql.trim()).toBe("ALTER TABLE run_process_owners ADD COLUMN hermes_source_snapshot_key TEXT;");
-    expect(migrations.map(({ version }) => version)).toEqual(
-      Array.from({ length: 43 }, (_, index) => index + 1),
+    const migrationsThrough042 = migrations.filter(({ version }) => version <= 42);
+    expect(migrationsThrough042.map(({ version }) => version)).toEqual(
+      Array.from({ length: 42 }, (_, index) => index + 1),
     );
 
     runMigrations(db, migrations.filter((migration) => migration.version <= 36));
@@ -213,6 +214,7 @@ describe("context manifest v2 migration", () => {
     dbPath = join(tmpDir, "upgrade.sqlite");
     db = createSqliteDatabase(dbPath);
     const migrations = loadTestMigrations();
+    const migrationsThrough042 = migrations.filter(({ version }) => version <= 42);
     runMigrations(db, migrations.filter(({ version }) => version <= 36));
     seedLegacyRows(db);
     runMigrations(db, migrations.filter(({ version }) => version <= 41));
@@ -239,7 +241,7 @@ describe("context manifest v2 migration", () => {
     const runs = db.all<Row>("SELECT * FROM agent_runs ORDER BY id");
     const deltaBefore = deltaStorage(db);
     const ownerRoot = rootPage(db, "run_process_owners");
-    expect(runMigrations(db, migrations).applied).toBe(2);
+    expect(runMigrations(db, migrationsThrough042).applied).toBe(1);
     expect(rootPage(db, "run_process_owners")).toBe(ownerRoot);
     expect(db.all<Row>("SELECT * FROM run_process_owners ORDER BY run_id"))
       .toEqual(owners.map((owner) => ({ ...owner, current_generation: 1 })));
@@ -352,7 +354,7 @@ describe("context manifest v2 migration", () => {
     expect(db.get<Row>("SELECT * FROM run_process_owner_generations WHERE run_id='generation-run-0'")).toEqual(original);
     db.close();
     db = createSqliteDatabase(dbPath);
-    expect(runMigrations(db, migrations).applied).toBe(0);
+    expect(runMigrations(db, migrationsThrough042).applied).toBe(0);
     expect(db.all("SELECT * FROM run_process_owner_generations ORDER BY run_id")).toEqual(expected);
     expect(deltaStorage(db)).toEqual(deltaBefore);
     db.run("DELETE FROM agent_runs WHERE id='generation-run-4'");
@@ -383,7 +385,7 @@ describe("context manifest v2 migration", () => {
     expect(db.all("SELECT name FROM sqlite_master WHERE name IN ('run_process_owner_generations','run_resume_bindings')")).toEqual([]);
     expect(db.get("SELECT version FROM schema_migrations WHERE version=42")).toBeUndefined();
     expect(db.all("PRAGMA foreign_key_check")).toEqual([]);
-    expect(runMigrations(db, migrations).applied).toBe(2);
+    expect(runMigrations(db, migrations.filter(({ version }) => version <= 42)).applied).toBe(1);
   });
 
   it("adds process-owner cgroup identity without rebuilding or changing ContextDelta storage", async () => {
