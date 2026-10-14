@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { lstat, mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline/promises';
-import { stdin, stdout } from 'node:process';
+import process, { stdin, stdout } from 'node:process';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {

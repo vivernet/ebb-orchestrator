@@ -5,6 +5,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, write
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import process from 'node:process';
 import {
   EXPECTED_ATTESTATION,
   lifecycleScenarios,
@@ -153,5 +154,5 @@ test('report is NOT_VERIFIED unless every physical gate and both reviews pass', 
   assert.equal(summary.spikeController, 'NOT_IMPLEMENTED');
   assert.equal(summary.exactEbbSha, sha);
   assert.equal(summary.guest, 'NOT_CAPTURED');
-  assert.doesNotMatch(JSON.stringify(summary), /PRIVATE_VALUE|API_KEY|SECRET_VALUE|stderr\"/i);
+  assert.doesNotMatch(JSON.stringify(summary), /PRIVATE_VALUE|API_KEY|SECRET_VALUE|stderr"/i);
 });
