@@ -194,9 +194,14 @@ jobs:
         include:
           - os: ubuntu-latest
           - os: windows-latest
+          - os: macos-14
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+      - name: Assert Apple Silicon runner architecture
+        if: ${{ matrix.os == 'macos-14' }}
+        shell: bash
+        run: test "$(uname -m)" = arm64
       - name: Setup pnpm
         uses: pnpm/setup@v1
         with:
@@ -214,21 +219,29 @@ jobs:
       - name: Run real OS keyring acceptance
         run: pnpm exec tsx apps/server/scripts/keyring-smoke.ts
       - name: Run POSIX Project Config acceptance
-        if: ${{ matrix.os == 'ubuntu-latest' }}
+        if: ${{ matrix.os == 'ubuntu-latest' || matrix.os == 'macos-14' }}
         run: pnpm plan06:project-config:acceptance
 
   quality-security:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
         include:
-          - node-version: "24.x"
+          - os: ubuntu-latest
+            node-version: "24.x"
+            runtime: node@24
+          - os: macos-14
+            node-version: "24.x"
             runtime: node@24
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+      - name: Assert Apple Silicon runner architecture
+        if: ${{ matrix.os == 'macos-14' }}
+        shell: bash
+        run: test "$(uname -m)" = arm64
       - name: Setup pnpm
         uses: pnpm/setup@v1
         with:
@@ -263,7 +276,7 @@ jobs:
         if: ${{ !cancelled() && steps.dependency-audit.outcome != 'skipped' }}
         uses: actions/upload-artifact@v6
         with:
-          name: pnpm-audit-prod-${{ github.sha }}
+          name: pnpm-audit-prod-${{ github.sha }}-${{ matrix.os }}
           path: artifacts/security/pnpm-audit-prod-${{ github.sha }}.json
           if-no-files-found: error
       - name: Fail if dependency audit failed
@@ -272,6 +285,6 @@ jobs:
       - name: Repository integrity
         run: git diff --check
       - name: Install Chromium
-        run: pnpm --dir apps/web exec playwright install --with-deps chromium
+        run: pnpm --dir apps/web exec playwright install ${{ matrix.os == 'ubuntu-latest' && '--with-deps' || '' }} chromium
       - name: Browser E2E
         run: pnpm --dir apps/web test:e2e

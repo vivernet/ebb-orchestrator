@@ -6,7 +6,7 @@ import * as yaml from 'js-yaml';
 
 const root = resolve(import.meta.dirname, '..');
 
-test('production gates run a credential-free real keyring smoke on Windows and Ubuntu', () => {
+test('production gates run a credential-free real keyring smoke on Windows, Ubuntu, and Apple Silicon macOS', () => {
   const workflow = yaml.load(
     readFileSync(resolve(root, '.github/workflows/production-gates.yml'), 'utf8'),
     { schema: yaml.JSON_SCHEMA },
@@ -14,10 +14,14 @@ test('production gates run a credential-free real keyring smoke on Windows and U
   const job = workflow.jobs?.['keyring-acceptance'];
 
   assert.ok(job, 'production workflow must define a separate keyring acceptance job');
+  const architectureSteps = (job.steps ?? []).filter((step) => step.name === 'Assert Apple Silicon runner architecture');
+  assert.equal(architectureSteps.length, 1, 'keyring job must assert architecture on its macOS runner');
+  assert.equal(architectureSteps[0].if, "${{ matrix.os == 'macos-14' }}");
+  assert.equal(architectureSteps[0].run, 'test "$(uname -m)" = arm64');
   assert.deepEqual(
     job.strategy?.matrix?.include?.map((entry) => entry.os),
-    ['ubuntu-latest', 'windows-latest'],
-    'keyring acceptance must exercise Ubuntu and Windows runners',
+    ['ubuntu-latest', 'windows-latest', 'macos-14'],
+    'keyring acceptance must exercise Ubuntu, Windows, and the macOS 14 Apple Silicon runner',
   );
   assert.ok(
     job.steps?.some((step) => step.run === 'node --test scripts/keyring-acceptance.test.mjs'),
@@ -40,8 +44,8 @@ test('production gates run a credential-free real keyring smoke on Windows and U
   );
   assert.equal(
     projectConfigSteps[0].step.if,
-    "${{ matrix.os == 'ubuntu-latest' }}",
-    'Project Config acceptance must run only on Ubuntu',
+    "${{ matrix.os == 'ubuntu-latest' || matrix.os == 'macos-14' }}",
+    'production POSIX Project Config acceptance must run on Ubuntu and macOS 14',
   );
   const allProjectConfigCommands = Object.values(workflow.jobs ?? {})
     .flatMap((workflowJob) => workflowJob.steps ?? [])

@@ -161,6 +161,27 @@ test('production workflow builds the server via pnpm test and keeps stdin smoke 
   assert.ok(browserIndex > harnessIndex, 'browser E2E must follow harness contracts');
 });
 
+test('platform-neutral quality gates cover Ubuntu and Apple Silicon macOS 14', () => {
+  const workflow = yaml.load(readFileSync(join(root, '.github/workflows/production-gates.yml'), 'utf8'), { schema: yaml.JSON_SCHEMA });
+  const job = workflow.jobs['quality-security'];
+  const steps = job.steps;
+  const names = new Set(steps.map((step) => step.name));
+
+  assert.equal(job['runs-on'], '${{ matrix.os }}', 'quality gate must run on each declared platform');
+  assert.deepEqual(job.strategy?.matrix?.include?.map((entry) => entry.os), ['ubuntu-latest', 'macos-14']);
+  const architectureSteps = steps.filter((step) => step.name === 'Assert Apple Silicon runner architecture');
+  assert.equal(architectureSteps.length, 1, 'quality job must assert architecture on its macOS runner');
+  assert.equal(architectureSteps[0].if, "${{ matrix.os == 'macos-14' }}");
+  assert.equal(architectureSteps[0].run, 'test "$(uname -m)" = arm64');
+  for (const step of ['Lint', 'Typecheck', 'Unit and integration tests', 'Local-user stdin smoke and web build']) {
+    assert.ok(names.has(step), `quality matrix must retain ${step}`);
+  }
+  assert.ok(steps.some((step) => step.name === 'Unit and integration tests' && step.run === 'pnpm test'));
+  assert.ok(steps.some((step) => step.name === 'Local-user stdin smoke and web build' && step.run.includes('pnpm web:build')));
+  const artifact = steps.find((step) => step.name === 'Upload dependency audit evidence');
+  assert.match(artifact?.with?.name ?? '', /\$\{\{ matrix\.os \}\}/u, 'audit artifact names must be unique per runner');
+});
+
 test('Linux process-scope acceptance provisions a hosted runner user systemd manager', () => {
   const workflow = yaml.load(readFileSync(join(root, '.github/workflows/production-gates.yml'), 'utf8'), { schema: yaml.JSON_SCHEMA });
   const job = workflow.jobs['process-scope-linux-acceptance'];
@@ -316,7 +337,7 @@ test('production workflow preserves audit evidence under exact conditional contr
   assert.ok(workflow.includes("if: ${{ !cancelled() && steps.dependency-audit.outcome != 'skipped' }}"));
   assert.ok(workflow.includes("if: ${{ !cancelled() && steps.dependency-audit.outcome == 'failure' }}"));
   assert.ok(workflow.includes('uses: actions/upload-artifact@v6'));
-  assert.ok(workflow.includes('name: pnpm-audit-prod-${{ github.sha }}'));
+  assert.ok(workflow.includes('name: pnpm-audit-prod-${{ github.sha }}-${{ matrix.os }}'));
   assert.ok(workflow.includes('path: artifacts/security/pnpm-audit-prod-${{ github.sha }}.json'));
   assert.ok(workflow.includes('if-no-files-found: error'));
   assert.ok(!workflow.includes('archive: false'));

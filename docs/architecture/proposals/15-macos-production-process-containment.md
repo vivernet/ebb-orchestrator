@@ -247,7 +247,7 @@ Primary evidence: [Apple `VZVirtualMachine.start`](https://developer.apple.com/t
 
 ### CI operations gate
 
-Утверждённый минимум macOS 13.5 требует физический/self-hosted Apple Silicon runner, поскольку стандартные GitHub-hosted arm64 labels начинаются с macOS 14. Владение, эксплуатация и security boundary такого runner — отдельное операционное решение проекта, а не часть выбора runtime architecture. До его отдельного подтверждения нельзя добавлять или считать обязательный 13.5 CI gate настроенным; hosted `macos-15` не доказывает совместимость с 13.5.
+Production Gates используют GitHub-hosted `macos-14` Apple Silicon runner для OS-keyring smoke, production POSIX Project Config restart acceptance и platform-neutral quality checks. Это evidence только для macOS 14 и новее: оно не доказывает совместимость с утверждённым минимумом 13.5, а также не доказывает Darwin Hermes process containment/runtime readiness. Hosted arm64 labels начинаются с macOS 14; проверка именно 13.5 потребует отдельной подтверждённой стратегии acceptance (например, управляемого Apple Silicon runner на этом floor). Владение, эксплуатация и security boundary такого runner — отдельное операционное решение проекта, а не часть выбора runtime architecture. Нельзя считать обязательный 13.5 CI gate настроенным только на основании hosted `macos-14`.
 
 ## 14. Primary references
 

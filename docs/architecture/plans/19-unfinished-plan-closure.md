@@ -4,7 +4,7 @@ kind: plan
 status: in_progress
 title: План разблокирования и завершения открытых планов v1
 created: 2026-09-29
-updated: 2026-10-13
+updated: 2026-10-14
 depends_on: []
 specs:
   - ../specs/01-system-design.md
@@ -41,7 +41,7 @@ evidence:
 | `plan-04` | `blocked` | Поддерживаемый Hermes CLI через уже настроенный пользователем root/profile; полный реальный provider-backed Developer → Reviewer → QA → Integration acceptance и review. Hermes владеет provider/model/auth resolution; Ebb не создаёт Run-profile и не требует собственного provider credential mapping. |
 | `plan-05` | `blocked` | Mandatory request/plan UI, startup recovery до `READY` и deterministic production-process Epic recovery harness реализованы. Plan19 Task5 реальный Hermes Request→Epic acceptance прошёл 2026-10-13: 15/15, 12/12 validated Epic phase Runs, три restart и `FINAL_APPROVAL`/`PENDING` merge; exact revision evidence находится в `governance/evidence/plan19-task5-request-epic-2026-10-13.json`. Остаются ContextManifest producer/acceptance по Proposal 08 и independent whole-plan review. Решение о показе PM/Architect summary до materialization содержится в принятом варианте A Proposal 06. |
 | `plan-06` | `in_progress` | Production inbox/wiring/UI и Project Config lifecycle реализованы. По решению пользователя capture на Windows теперь fail closed с HTTP 503 до safe-handle verification; Windows happy-path недоступен. Metadata-only Artifact/Run UI и read-only Settings/Usage projections реализованы; persisted task-bound ContextManifest acceptance остаётся открытым до producer/acceptance по Proposal 08. Schema v1 — первый поддерживаемый формат; predecessor migration не требуется. Остаются supported-platform acceptance, hosted Ubuntu keyring evidence и whole-plan review. |
-| `plan-07` | `blocked` | Поддерживаемый Hermes runtime/provider и завершённый parity plan с report, двумя read-only subagents и доказанным teardown; review. |
+| `plan-07` | `blocked` | Plan19 Task7 provider-backed parity acceptance PASS и independent review PASS на 2026-10-14; остаются Plan07 whole-plan review, checklist reconciliation и final lifecycle decision. |
 | `plan-09` | `in_progress` | Свежий source security scan после изменений, все gates и whole-plan review без load-bearing finding. |
 
 На текущем metadata snapshot `plan-01` — `in_progress` после свежего whole-plan verdict `CHANGES_REQUIRED`, а `plan-12` — `completed`; статусы отражаются по metadata без принудительного закрытия Plan01. Task 2 синхронизирует current-state, ledger и generated register с этими evidence-based lifecycle statuses. По уточнению пользователя от 2026-09-30 closure охватывает все планы, кроме `plan-14`, включая `plan-16`. Его exact deletion disposition уже выполнен по решению пользователя; для остальных obligations Plan16 повторно сверить acceptance, не восстанавливая старые approval/archive prerequisites.
@@ -344,6 +344,8 @@ Expected: parity verdict PASS only when there are exactly two schema-valid, comp
 ```
 
 **Review Focus:** wrapper `COMPLETED exit_code=0` alone does not prove provider-backed parity; require the parity report and actual schema-valid completed results from both child sessions. Verify no nested/third child, exact wrapper child process closed, and prompt deletion after close; on timeout require successful `taskkill.exe /PID <exact pid> /T /F` plus root child close. Mark detached OS descendants outside this bounded check `NOT VERIFIED`; this limitation does not fail Task 7 if its bounded criteria pass. Do not claim full OS process-tree cleanup. Preserve `.opencode` until existing Plan07 task explicitly permits deletion after PASS.
+
+**Acceptance evidence (2026-10-14):** Последняя секция `Финальная сверка Task 7 — исправленный Task A и повторная acceptance` в `docs/audit/hermes-development-workflow-parity.md` фиксирует Task7 `PASS`: два завершённых schema-valid Hermes children без nested/third child; repository gates прошли на одном source snapshot; report сохранён; wrapper timeout завершился успешным `taskkill` точного PID, `child_closed=true`, prompt cleanup подтверждён; независимый read-only Luna review — `PASS`. Detached OS descendants остаются `NOT VERIFIED` по принятой v1 политике и не объявляются закрытыми. Plan07 остаётся `blocked` до whole-plan review и checklist reconciliation.
 
 ### Task 8: Добавить и получить свежий независимый source security scan для Plan09
 
