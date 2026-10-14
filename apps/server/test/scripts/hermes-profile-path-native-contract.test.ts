@@ -55,7 +55,9 @@ describe("direct installed Hermes launch contract", () => {
     expect(hermesProfilePathHelperSource).toContain('"HERMES_PATH_IDENTITY_" << stage');
     expect(hermesProfilePathHelperSource).toContain('reportIdentityFailure("FILE_ID_QUERY_FAILED", error, true)');
     expect(hermesProfilePathHelperSource).toContain('reportIdentityFailure("FINAL_PATH_QUERY_FAILED", finalPathError, true)');
-    expect(hermesProfilePathHelperSource).toContain('reportIdentityFailure("EXPECTED_PATH_MISMATCH")');
+    expect(hermesProfilePathHelperSource).toContain('reportIdentityFailure("EXPECTED_PATH_FORMAT_UNSUPPORTED")');
+    expect(hermesProfilePathHelperSource).toContain('reportIdentityFailure("FINAL_PATH_FORMAT_UNSUPPORTED")');
+    expect(hermesProfilePathHelperSource).toMatch(/reportIdentityFailure\(driveMatches\s*\?\s*"SAME_DRIVE_PATH_MISMATCH"\s*:\s*"DRIVE_MISMATCH"\)/u);
     expect(hermesProfilePathHelperSource).toContain('reportIdentityFailure("UTF8_CONVERSION_FAILED")');
     expect(hermesProfilePathHelperSource).toMatch(/GetFinalPathNameByHandleW\([\s\S]*?\);\s*const DWORD finalPathError = GetLastError\(\);/u);
     expect(hermesProfilePathHelperSource).toContain("bool normalizeDosDrivePath(");

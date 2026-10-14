@@ -25,10 +25,15 @@ function invoke(args) {
   return result;
 }
 
+function safeIdentityDiagnostic(stderr) {
+  const match = /^HERMES_PATH_IDENTITY_(FINAL_PATH_FORMAT_UNSUPPORTED|EXPECTED_PATH_FORMAT_UNSUPPORTED|DRIVE_MISMATCH|SAME_DRIVE_PATH_MISMATCH)$/u.exec(stderr.trim());
+  return match ? match[1] : "UNCLASSIFIED_FAILURE";
+}
+
 function identity(filename) {
   const result = invoke(["verify-host-path", "file", filename]);
-  assert.equal(result.status, 0);
-  assert.equal(result.stderr, "");
+  assert.equal(result.status, 0, `HERMES_IDENTITY_ACCEPTANCE_FAILED:${safeIdentityDiagnostic(result.stderr)}`);
+  assert.equal(result.stderr.length, 0, "HERMES_IDENTITY_UNEXPECTED_STDERR");
   const value = JSON.parse(result.stdout);
   assert.deepEqual(Object.keys(value).sort(), ["fileId", "kind", "path", "status", "volumeSerial"]);
   assert.equal(value.status, "SAFE_PATH");
@@ -69,7 +74,7 @@ try {
   for (const [args, expectedDiagnostic, expectedStatus] of [
     [["verify-host-path", "file", fixture], "", null],
     [["verify-host-path", "file", join(fixture, "missing.txt")], "", null],
-    [["verify-host-path", "file", join(junction, "nested.txt")], "HERMES_PATH_IDENTITY_EXPECTED_PATH_MISMATCH", 36],
+    [["verify-host-path", "file", join(junction, "nested.txt")], "HERMES_PATH_IDENTITY_SAME_DRIVE_PATH_MISMATCH", 36],
     [["verify-host-path", "file", `${fixture}\\target\\..\\identity проба.txt`], "", null],
   ]) {
     const result = invoke(args);

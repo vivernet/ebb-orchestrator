@@ -122,11 +122,19 @@ int printFileIdentity(HANDLE handle, const std::wstring& expectedPath) {
   }
   std::wstring normalizedFinalPath;
   std::wstring normalizedExpectedPath;
-  if (!normalizeDosDrivePath(std::wstring(finalPath.data(), length), normalizedFinalPath) ||
-      !normalizeDosDrivePath(expectedPath, normalizedExpectedPath) ||
-      CompareStringOrdinal(normalizedFinalPath.c_str(), static_cast<int>(normalizedFinalPath.size()),
-        normalizedExpectedPath.c_str(), static_cast<int>(normalizedExpectedPath.size()), TRUE) != CSTR_EQUAL) {
-    reportIdentityFailure("EXPECTED_PATH_MISMATCH");
+  if (!normalizeDosDrivePath(std::wstring(finalPath.data(), length), normalizedFinalPath)) {
+    reportIdentityFailure("FINAL_PATH_FORMAT_UNSUPPORTED");
+    return kPathExpectedPathMismatch;
+  }
+  if (!normalizeDosDrivePath(expectedPath, normalizedExpectedPath)) {
+    reportIdentityFailure("EXPECTED_PATH_FORMAT_UNSUPPORTED");
+    return kPathExpectedPathMismatch;
+  }
+  if (CompareStringOrdinal(normalizedFinalPath.c_str(), static_cast<int>(normalizedFinalPath.size()),
+      normalizedExpectedPath.c_str(), static_cast<int>(normalizedExpectedPath.size()), TRUE) != CSTR_EQUAL) {
+    const bool driveMatches = CompareStringOrdinal(normalizedFinalPath.c_str(), 2,
+      normalizedExpectedPath.c_str(), 2, TRUE) == CSTR_EQUAL;
+    reportIdentityFailure(driveMatches ? "SAME_DRIVE_PATH_MISMATCH" : "DRIVE_MISMATCH");
     return kPathExpectedPathMismatch;
   }
   const std::string canonicalPath = narrowUtf8(normalizedFinalPath);
