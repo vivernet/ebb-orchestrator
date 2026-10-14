@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { tmpdir } from 'node:os';
 import crypto from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { GitTools } from '../../../src/modules/execution/git-tools.js';
 
 describe('GitTools', () => {
@@ -23,18 +24,27 @@ describe('GitTools', () => {
      }
   });
 
+  async function initTestRepo(gitTools: GitTools): Promise<void> {
+    await gitTools.initRepo();
+    execFileSync('git', ['config', '--local', 'user.name', 'Ebb Orchestrator Test'], { cwd: workspaceDir });
+    execFileSync('git', ['config', '--local', 'user.email', 'ebb-test@example.invalid'], { cwd: workspaceDir });
+  }
+
   describe('git.status', () => {
     it('should initialize repositories on the canonical master branch', async () => {
       const gitTools = new GitTools(workspaceDir);
 
-      await gitTools.initRepo();
+      await initTestRepo(gitTools);
+
+      expect(execFileSync('git', ['config', '--local', 'user.name'], { cwd: workspaceDir, encoding: 'utf8' }).trim()).toBe('Ebb Orchestrator Test');
+      expect(execFileSync('git', ['config', '--local', 'user.email'], { cwd: workspaceDir, encoding: 'utf8' }).trim()).toBe('ebb-test@example.invalid');
 
       expect(await gitTools.branch()).toBe('master');
     });
 
     it('should return status for workspace repository', async () => {
       const gitTools = new GitTools(workspaceDir);
-      await gitTools.initRepo();
+      await initTestRepo(gitTools);
       
       const status = await gitTools.status();
       expect(status).toBeDefined();
@@ -42,7 +52,7 @@ describe('GitTools', () => {
 
     it('should detect modified files', async () => {
       const gitTools = new GitTools(workspaceDir);
-      await gitTools.initRepo();
+      await initTestRepo(gitTools);
       
       const file = path.join(workspaceDir, 'test.txt');
       fs.writeFileSync(file, 'initial');
@@ -58,7 +68,7 @@ describe('GitTools', () => {
   describe('git.diff', () => {
     it('should show diff for unstaged changes', async () => {
       const gitTools = new GitTools(workspaceDir);
-      await gitTools.initRepo();
+      await initTestRepo(gitTools);
       
       const file = path.join(workspaceDir, 'test.txt');
       fs.writeFileSync(file, 'initial');
@@ -72,7 +82,7 @@ describe('GitTools', () => {
 
     it('should show staged diff', async () => {
       const gitTools = new GitTools(workspaceDir);
-      await gitTools.initRepo();
+      await initTestRepo(gitTools);
       
       const file = path.join(workspaceDir, 'test.txt');
       fs.writeFileSync(file, 'initial');
@@ -88,7 +98,7 @@ describe('GitTools', () => {
   describe('git.commit', () => {
     it('should commit changes', async () => {
       const gitTools = new GitTools(workspaceDir);
-      await gitTools.initRepo();
+      await initTestRepo(gitTools);
       
       const file = path.join(workspaceDir, 'test.txt');
       fs.writeFileSync(file, 'content');
@@ -107,7 +117,7 @@ describe('GitTools', () => {
   describe('Plan04 Developer stage and HEAD evidence', () => {
     it('stages explicit workspace files and returns the exact full HEAD object ID after commit', async () => {
       const gitTools = new GitTools(workspaceDir);
-      await gitTools.initRepo();
+      await initTestRepo(gitTools);
       fs.writeFileSync(path.join(workspaceDir, 'health.ts'), 'export const health = true;');
 
       await expect(gitTools.add(['health.ts'])).resolves.toBe('');
@@ -118,7 +128,7 @@ describe('GitTools', () => {
 
     it('rejects traversal and absolute paths before staging', async () => {
       const gitTools = new GitTools(workspaceDir);
-      await gitTools.initRepo();
+      await initTestRepo(gitTools);
 
       await expect(gitTools.add(['../outside.txt'])).rejects.toThrow('Invalid Git add paths');
       await expect(gitTools.add([path.join(workspaceDir, 'outside.txt')])).rejects.toThrow('Invalid Git add paths');
@@ -128,7 +138,7 @@ describe('GitTools', () => {
   describe('path confinement', () => {
     it('should only operate within workspace', async () => {
       const gitTools = new GitTools(workspaceDir);
-      await gitTools.initRepo();
+      await initTestRepo(gitTools);
       
       // Пытаемся обратиться к файлам за пределами workspace.
       const fileOutside = path.join(testDir, 'outside.txt');
