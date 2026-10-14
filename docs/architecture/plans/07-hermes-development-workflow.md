@@ -4,7 +4,7 @@ kind: plan
 status: blocked
 title: План миграции процесса разработки Ebb Orchestrator с OpenCode на Hermes
 created: 2026-09-23
-updated: 2026-09-28
+updated: 2026-10-14
 depends_on: []
 specs:
   - ../specs/01-system-design.md
@@ -19,9 +19,47 @@ evidence:
 ---
 # План миграции процесса разработки Ebb Orchestrator с OpenCode на Hermes
 
-> Локальная миграция workflow заменена последующим Plan 18; provider-backed parity из Task 9 не подтверждён (HTTP 401), поэтому весь план не завершён. Пути `tools/hermes/skills/` ниже исторические; текущий canonical source — `.agents/skills/`.
+> **Актуальная сверка (2026-10-14):** Plan18 заменил прежнюю миграцию skills/tooling и завершил удаление `tools/hermes`; текущие инструкции находятся в `README.md` и `docs/development/05-hermes.md`, canonical inventory — 20 skills в `.agents/skills/`. Plan19 Task7 прошёл только свой bounded acceptance contract; это не `Plan07 Task9 PASS`. Полный Hermes parity-run завершился timeout во время Task2, поэтому Plan07 остаётся не подтверждённым. Старое объяснение через HTTP 401 не является актуальной причиной и ниже учитывается только как историческое сообщение, а не как текущее evidence.
 >
-> Дополнение от 2026-09-28: этот план описывает прежний workflow. Текущая Hermes setup/check логика не добавляет provider, не настраивает provider-профиль и не управляет `delegation.worktree_isolation`; она настраивает capabilities и проектный skill discovery.
+> Историческая запись от 2026-09-28: описывавшиеся здесь capability sync и профильная skill-синхронизация позже superseded Plan18. Текущий `hermes:setup` настраивает repository trust, project discovery и поддерживаемые delegation settings; он не добавляет/не настраивает provider, не копирует skills/capabilities в `HERMES_HOME` и не управляет `delegation.worktree_isolation`. Источник текущего контракта — `docs/development/05-hermes.md` и `scripts/hermes-dev.mjs`.
+
+## Reconciliation текущего состояния и старых checklist items (2026-10-14)
+
+Plan18 supersedes части этого плана, которые предписывали копировать skills в `HERMES_HOME`, использовать `tools/hermes/skills/`/capability registry и проверять ровно 19 skills. Сегодня skills обнаруживаются из `.agents/skills/`; inventory содержит 20 skills, README и Hermes guide являются текущей документацией. Требование управлять `delegation.worktree_isolation` также superseded: текущий setup/check его не меняет и не проверяет. Три поддерживаемых настройки — `delegation.max_concurrent_children=2`, `delegation.max_spawn_depth=1` и `delegation.orchestrator_enabled=false` — по-прежнему являются актуальным контрактом, что отражено в `docs/development/05-hermes.md`. Старые несовместимые требования нельзя повторно исполнять. Текущие команды `hermes:setup`/`hermes:check` и их readiness evidence описаны в `docs/development/05-hermes.md` и Plan19 Task3.
+
+| Checkbox | Disposition на 2026-10-14 | Evidence / дальнейшее действие |
+|---|---|---|
+| Task1, Step 1 — Git baseline | `PARTIAL / OPEN` | `docs/audit/06-opencode-to-hermes-inventory.md` сохраняет branch, HEAD и worktree count, но не точный `git status --short` и полный набор запрошенных baseline команд. Не дополнять старый снимок выдуманными значениями. |
+| Task1, Step 2 — найти и классифицировать активные ссылки OpenCode | `EVIDENCE COMPLETE / current scan` | Повторный tracked-source scan классифицировал совпадения: `role-contract.ts` — unrelated product identifier; `docs/README.md` и `docs/audit/06-opencode-to-hermes-inventory.md` — historical navigation/evidence; Plan16 catalog and Plan07/Plan19 historical instructions are plan evidence; spec-01 adapter mention is future architecture; spec-04 records the deletion-order deviation; generated roadmap contains Plan07 title. Active README/docs/tooling contain no OpenCode executor requirement. |
+| Task1, Step 3 — прочитать active OpenCode agents/commands | `PARTIAL / OPEN` | `docs/audit/06-opencode-to-hermes-inventory.md` inventories the deleted files, purposes, permissions and some behavior, but does not record every requested per-file input/action/Git/review/test/commit detail. Original `.opencode/**` is absent; do not reconstruct missing evidence. |
+| Task1, Step 4 — создать inventory report | `EVIDENCE COMPLETE` | Report exists as `docs/audit/06-opencode-to-hermes-inventory.md`; its numeric prefix was added during documentation reorganization. It preserves the historical baseline and inventory, so no duplicate file should be created. |
+| Task1, Step 5 — проверить отсутствие других изменений | `OPEN / historical gap` | Нет сохранённого результата baseline `git diff --check`/`git status --short` для этого этапа. |
+| Task2, Step 1 — создать `.hermes.md` | `EVIDENCE COMPLETE` | `.hermes.md` существует и содержит Scope, Git, Plans, Subagents, Development discipline, Architecture invariants, JSDoc, Verification и Completion sections (строки 1–100). Это подтверждает наличие и базовую структуру, но не согласованность с текущими инструкциями. |
+| Task2, Step 2 — не создавать второй `HERMES.md` с теми же правилами | `EVIDENCE COMPLETE` | Root `.hermes.md` выбран как context file; отдельного `HERMES.md` нет (`Test-Path HERMES.md` = false). Параллельная repository instruction hierarchy в `AGENTS.md` не является файлом `HERMES.md`; её содержание и precedence проверяются отдельно в Step 3. |
+| Task2, Step 3 — проверить согласованность контекста | `OPEN / CONFLICT` | `.hermes.md` содержит архитектурные тезисы (строки 50–65), но не весь текущий scope/roadmap, trust-boundary, secrets/logs и module-boundary контракт `AGENTS.md` §§3, 8, 10. Кроме того, `scripts/hermes-dev.mjs:399` и `scripts/hermes-dev.test.mjs:533` указывают runtime читать `AGENTS.md`; precedence/content contract остаётся неразрешённым. |
+| Task3, Step 5 — проверить skills | `PARTIAL / OPEN` | `scripts/ebb-skills.test.mjs` проверяет 20 имён (`:112`), frontmatter name/description (`:116–128`), local references, autonomy и static trigger routing (`:143–210`). Эти тесты не подтверждают полноту runtime инструкций, child permissions/max-child enforcement или соответствие всех инструкций между skills/AGENTS; нельзя считать весь исходный Skill acceptance закрытым. Инвентарь 19 из старого плана superseded Plan18, текущий список — 20. |
+| Task6, Step 1 — setup | `EVIDENCE COMPLETE / profile-copy detail superseded` | Plan19 Task3 записал setup в disposable Hermes home и 8/8 current check evidence; действующий setup меняет trust/discovery и три поддерживаемые delegation settings. Требование синхронизировать skills/capabilities в `HERMES_HOME` и `delegation.worktree_isolation=false` superseded Plan18/current implementation. |
+| Task6, Step 2 — check | `EVIDENCE COMPLETE` | `pnpm hermes:check` завершился exit 0 с 8/8 checks по Plan19 Task3. Это developer readiness, не provider acceptance. |
+| Task6, Step 3 — ручная проверка runtime inventory | `OPEN` | Свежая runtime skill-index/provenance acceptance для текущих 20 `.agents/skills` путей не подтверждена; статический check этого не доказывает. |
+| Task8, Step 1 — repository gates | `EVIDENCE COMPLETE` | Plan19 Task7 report фиксирует `pnpm lint`, `pnpm typecheck`, `pnpm test` и `git diff --check` как успешные на одном source snapshot. Это не подтверждает остальные шаги Task8. |
+| Task8, Step 2 — diff и условие «`.opencode` ещё не удалён» | `HISTORICAL ORDER VIOLATED` | Условие нарушено: commit `1e949bc` от 2026-09-22 удалил `.opencode/**` до parity PASS. Ничего не восстанавливать; текущий diff не доказывает старый checkpoint. |
+| Task8, Step 3 — commit infrastructure | `EVIDENCE COMPLETE` | Commit `0787bc7` (`build: add Hermes development workflow`) подтверждает фиксацию infrastructure до последующих parity retries. |
+| Task9, Step 1 — запустить parity plan | `EVIDENCE COMPLETE / run attempted` | Выполненные запуски и их результаты перечислены в `docs/audit/hermes-development-workflow-parity.md`; последний full wrapper завершился timeout во время Task2. |
+| Task9, Step 2 — проверить результат | `FAIL / NOT VERIFIED` | Plan19 Task7 bounded PASS подтверждает два schema-valid read-only children, gates на одном source snapshot и ограниченную timeout cleanup. Полный Hermes parity-run не завершился: Task2 timed out; следовательно, `Plan07 Task9` не PASS. Detached OS descendants остаются `NOT VERIFIED`. |
+| Task10, Step 1 — повторно прочитать inventory | `OPEN / inventory unavailable` | Ожидаемый post-acceptance inventory deliverable отсутствует по исходному пути. Существующий `docs/audit/06-opencode-to-hermes-inventory.md` — dated pre-cleanup snapshot, не post-parity re-read; он не удовлетворяет этот шаг. |
+| Task10, Step 2 — удалить OpenCode-only dependencies/scripts | `OPEN / sequence gate unmet` | Commit `1e949bc` удалил 10 файлов `.opencode/**` до parity PASS. Текущие package/source scan не находят OpenCode-only runtime dependency/script, но postcondition не может закрыть нарушенную предусловием последовательность. Ничего не восстанавливать. |
+| Task10, Step 3 — обновить текущую документацию | `OPEN / sequence gate unmet` | README и `docs/development/05-hermes.md` описывают Hermes, однако их обновление и отсутствие active OpenCode recommendation не исправляют факт удаления `.opencode` до требуемого PASS. |
+| Task10, Step 4 — поиск устаревших активных инструкций | `OPEN / sequence gate unmet` | Текущий source scan не нашёл active `.opencode`/`opencode`/`/execute-plan` requirements, но Task10 не проходит общий sequence gate после раннего удаления. Это отмечается как present-state evidence, а не как retroactive acceptance. |
+| Task11, Step 1 — повторно синхронизировать skills | `SUPERSEDED` | Plan18 убрал profile copy; canonical source находится в `.agents/skills`, синхронизация в `HERMES_HOME` не требуется. |
+| Task11, Step 2 — полные gates | `OPEN` | Plan19 Task7 gates относятся к fixture acceptance; финальный набор Plan07 после разрешения findings ещё не пройден. |
+| Task11, Step 3 — independent final review | `REVIEW COMPLETE / CHANGES REQUESTED` | Свежий whole-plan reviewer вернул findings; этот disposition исправляет только документальные пункты и требует повторного read-only review. |
+| Task11, Step 4 — исправить confirmed blockers | `OPEN` | Task4 raw-output/progress requirement остаётся конфликтом. Минимальный безопасный вариант — отдельные структурированные lifecycle/phase events без сырых Hermes потоков, с regression tests и review. |
+| Task12, Step 1 — проверить diff | `OPEN / not reached` | Финальный migration diff нельзя принимать до PASS по Task9 и закрытия Task11. |
+| Task12, Step 2 — stage только migration cleanup | `OPEN / not reached` | Финальный scope для staging не достигнут; файлы не staged этой сверкой. |
+| Task12, Step 3 — финальный migration commit | `OPEN / not reached` | Plan07 acceptance и final review не завершены; соответствующий commit не создавался. |
+| Task12, Step 4 — финальная проверка | `OPEN / not reached` | После несуществующего финального commit не выполнялась; не объявлять выполненной. |
+
+Таблица содержит отдельную строку для каждой из 29 незакрытых отметок; сами отметки сохранены без массового переключения. `Plan19 Task7 PASS` означает только bounded acceptance, не полный Plan07. У Plan07 lifecycle status остаётся `blocked`; эта сверка не меняет его.
 
 > **Для агентного исполнителя:** выполняй этот план последовательно, задача за задачей. Не ограничивайся пересказом плана.
 >
