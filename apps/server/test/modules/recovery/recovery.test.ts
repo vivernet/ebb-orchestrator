@@ -8,7 +8,12 @@ import { createSqliteDatabase } from "../../../src/platform/database/sqlite-data
 import { runMigrations, type Migration } from "../../../src/platform/database/migrator.js";
 import type { Database } from "../../../src/platform/database/database.js";
 import { RecoveryService } from "../../../src/modules/recovery/recovery-service.js";
-import { evaluateRecovery, countAttempts, getRemainingAttempts } from "../../../src/modules/recovery/recovery-policy.js";
+import {
+  evaluateRecovery,
+  countAttempts,
+  getRemainingAttempts,
+  hasExcessiveNoProgress,
+} from "../../../src/modules/recovery/recovery-policy.js";
 import { createNoProgressFingerprint } from "../../../src/modules/recovery/progress-fingerprint.js";
 import type { RecoveryContext } from "../../../src/modules/recovery/recovery-types.js";
 import { DEFAULT_POLICY } from "../../../src/modules/recovery/recovery-types.js";
@@ -234,6 +239,129 @@ describe("RecoveryService", () => {
 
       expect(result.decision).toBe("ESCALATE_ROLE");
       expect(result.nextRoleLevel).toBe("senior");
+    });
+
+    it("resets the no-progress streak after same-stage evidence in newest-first history", () => {
+      const attempts = [
+        {
+          taskId: "task1",
+          roleLevel: "middle" as const,
+          failureType: "NO_PROGRESS" as const,
+          attemptCount: 3,
+          timestamp: "2026-01-03T00:00:00.000Z",
+          fingerprint: createNoProgressFingerprint("review", "2026-01-03T00:00:00.000Z"),
+        },
+        {
+          taskId: "task1",
+          roleLevel: "middle" as const,
+          failureType: "REVIEW_FINDING" as const,
+          attemptCount: 2,
+          timestamp: "2026-01-02T00:00:00.000Z",
+          fingerprint: {
+            stage: "review",
+            evidenceHash: "review-evidence-2",
+            recordedAt: "2026-01-02T00:00:00.000Z",
+          },
+        },
+        {
+          taskId: "task1",
+          roleLevel: "middle" as const,
+          failureType: "NO_PROGRESS" as const,
+          attemptCount: 1,
+          timestamp: "2026-01-01T00:00:00.000Z",
+          fingerprint: createNoProgressFingerprint("review", "2026-01-01T00:00:00.000Z"),
+        },
+      ];
+      const originalOrder = [...attempts];
+
+      const result = evaluateRecovery(createContext("task1", "middle", "NO_PROGRESS", attempts, "review"));
+
+      expect(result.decision).toBe("BLOCK");
+      expect(attempts).toEqual(originalOrder);
+    });
+
+    it("does not let unrelated-stage evidence, fingerprintless attempts, or tool errors reset no-progress streak", () => {
+      const attempts = [
+        {
+          taskId: "task1",
+          roleLevel: "middle" as const,
+          failureType: "NO_PROGRESS" as const,
+          attemptCount: 3,
+          timestamp: "2026-01-04T00:00:00.000Z",
+          fingerprint: createNoProgressFingerprint("review", "2026-01-04T00:00:00.000Z"),
+        },
+        {
+          taskId: "task1",
+          roleLevel: "middle" as const,
+          failureType: "TOOL_ERROR" as const,
+          attemptCount: 2,
+          timestamp: "2026-01-03T00:00:00.000Z",
+          fingerprint: {
+            stage: "review",
+            evidenceHash: "tool-error-associated-evidence",
+            recordedAt: "2026-01-03T00:00:00.000Z",
+          },
+        },
+        {
+          taskId: "task1",
+          roleLevel: "middle" as const,
+          failureType: "TASK_FAILURE" as const,
+          attemptCount: 1,
+          timestamp: "2026-01-02T12:00:00.000Z",
+        },
+        {
+          taskId: "task1",
+          roleLevel: "middle" as const,
+          failureType: "REVIEW_FINDING" as const,
+          attemptCount: 1,
+          timestamp: "2026-01-02T00:00:00.000Z",
+          fingerprint: {
+            stage: "qa",
+            evidenceHash: "qa-evidence-1",
+            recordedAt: "2026-01-02T00:00:00.000Z",
+          },
+        },
+        {
+          taskId: "task1",
+          roleLevel: "middle" as const,
+          failureType: "NO_PROGRESS" as const,
+          attemptCount: 0,
+          timestamp: "2026-01-01T00:00:00.000Z",
+          fingerprint: createNoProgressFingerprint("review", "2026-01-01T00:00:00.000Z"),
+        },
+      ];
+
+      expect(hasExcessiveNoProgress(attempts, "review", 2)).toBe(true);
+    });
+
+    it("uses stable input order for equal timestamps without mutating the history", () => {
+      const attempts = [
+        {
+          taskId: "task1",
+          roleLevel: "middle" as const,
+          failureType: "NO_PROGRESS" as const,
+          attemptCount: 2,
+          timestamp: "2026-01-01T00:00:00.000Z",
+          fingerprint: createNoProgressFingerprint("review", "2026-01-01T00:00:00.000Z"),
+        },
+        {
+          taskId: "task1",
+          roleLevel: "middle" as const,
+          failureType: "REVIEW_FINDING" as const,
+          attemptCount: 1,
+          timestamp: "2026-01-01T00:00:00.000Z",
+          fingerprint: {
+            stage: "review",
+            evidenceHash: "same-timestamp-evidence",
+            recordedAt: "2026-01-01T00:00:00.000Z",
+          },
+        },
+      ];
+      const originalOrder = [...attempts];
+
+      expect(hasExcessiveNoProgress(attempts, "review", 1)).toBe(false);
+      expect(hasExcessiveNoProgress([...attempts].reverse(), "review", 1)).toBe(true);
+      expect(attempts).toEqual(originalOrder);
     });
 
     it("detects review finding loop and escalates", () => {

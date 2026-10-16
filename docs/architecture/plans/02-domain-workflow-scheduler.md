@@ -4,7 +4,7 @@ kind: plan
 status: in_progress
 title: План реализации домена Orchestrator, Workflow, Scheduler и Recovery
 created: 2026-09-23
-updated: 2026-10-03
+updated: 2026-10-16
 depends_on: []
 specs:
   - ../specs/01-system-design.md
@@ -567,6 +567,17 @@ pnpm --filter @ebb-orchestrator/server exec vitest run test/modules/recovery/rec
 git add apps/server/src/modules/recovery apps/server/src/platform/database/migrations/006_recovery.sql apps/server/test/modules/recovery
 git commit -m "feat: add deterministic recovery engine"
 ```
+
+**Проверка 2026-10-16 — узкое исправление счётчика:** `hasExcessiveNoProgress` и
+`evaluateRecovery` теперь считают последовательные попытки без прогресса, а не все
+исторические `no_progress`. Новое evidence той же стадии сбрасывает счётчик;
+`TOOL_ERROR`, другая стадия и записи без fingerprint его не меняют. История из
+persistence обрабатывается хронологически без изменения входного массива, при
+равных timestamp сохраняется исходный порядок. Regression сначала воспроизвёл
+ошибку (`ESCALATE_ROLE` вместо `BLOCK`); после исправления recovery и scheduler
+repository tests прошли **21/21**, scoped ESLint, server typecheck и diff-check
+прошли. Свежий независимый review: **PASS**. Это evidence только счётчика;
+production wiring recovery ladder и остальные acceptance Задачи 7 остаются открыты.
 
 ---
 

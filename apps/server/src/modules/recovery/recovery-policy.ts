@@ -32,16 +32,33 @@ export function hasLoopInEvidence(
 }
 
 /**
- * Проверяет, there have been too many последовательных запусков без прогресса.
+ * Проверяет, достиг ли непрерывный streak отсутствия прогресса порога для stage.
+ * История сортируется по времени на копии, поскольку persistence возвращает её в DESC-порядке;
+ * равные timestamp сохраняют исходный порядок, а TOOL_ERROR и другие stage не меняют streak.
  */
 export function hasExcessiveNoProgress(
   attempts: RecoveryContext["attempts"],
   stage: string,
   maxRuns: number,
 ): boolean {
-  return attempts.filter(
-    (a) => a.fingerprint?.stage === stage && a.fingerprint?.evidenceHash === "no_progress",
-  ).length >= maxRuns;
+  const chronologicalAttempts = [...attempts].sort(
+    (left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp),
+  );
+  let consecutiveRuns = 0;
+
+  for (const attempt of chronologicalAttempts) {
+    if (attempt.failureType === "TOOL_ERROR" || attempt.fingerprint?.stage !== stage) {
+      continue;
+    }
+
+    if (attempt.fingerprint.evidenceHash === "no_progress") {
+      consecutiveRuns += 1;
+    } else {
+      consecutiveRuns = 0;
+    }
+  }
+
+  return consecutiveRuns >= maxRuns;
 }
 
 /**
@@ -64,11 +81,7 @@ export function evaluateRecovery(context: RecoveryContext, policy: RecoveryPolic
 
   // Обрабатывает no-progress detection
   if (failureType === "NO_PROGRESS" && stage) {
-    const noProgressCount = attempts.filter(
-      (a) => a.fingerprint?.stage === stage && a.fingerprint?.evidenceHash === "no_progress",
-    ).length;
-
-    if (noProgressCount >= policy.maxConsecutiveNoProgressRuns) {
+    if (hasExcessiveNoProgress(attempts, stage, policy.maxConsecutiveNoProgressRuns)) {
       if (currentRoleLevel === "middle") {
         return {
           decision: "ESCALATE_ROLE",
