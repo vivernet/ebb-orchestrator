@@ -2,14 +2,14 @@
 id: proposal-15
 kind: proposal
 title: macOS production process containment for Plan20 Task5A-M
-status: draft
+status: superseded
 created: 2026-10-09
-updated: 2026-10-13
+updated: 2026-10-16
 ---
 
 # Proposal 15 — macOS production process containment
 
-> **Статус:** design draft для независимого архитектурного/security review и последующего решения пользователя. Это не implementation plan и не разрешение на production implementation. Никакой из вариантов ниже ещё не принят.
+> **Исторический статус:** этот proposal superseded 2026-10-16 принятым [Proposal17](17-macos-direct-host-hermes-runtime.md), где пользователь выбрал прямой macOS host запуск с ограниченной гарантией process group; независимый архитектурный/security review Proposal17 завершён `APPROVED`. Варианты ниже сохранены как история рассмотрения, но не являются действующим контрактом или разрешением исполнять launchd/coalition/VM spike.
 
 ## 1. Цель и границы
 

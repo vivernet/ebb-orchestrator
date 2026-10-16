@@ -2,7 +2,7 @@
 id: proposal-17
 kind: proposal
 title: Прямой macOS host runtime для обычных Hermes Run
-status: draft
+status: accepted
 created: 2026-10-16
 updated: 2026-10-16
 tags: [macos, hermes, process-scope, recovery, v1]
@@ -10,7 +10,7 @@ tags: [macos, hermes, process-scope, recovery, v1]
 
 # Proposal 17 — Прямой macOS host runtime для обычных Hermes Run
 
-> **Статус:** draft для решения пользователя и независимого architecture/security review. Это предложение не меняет утверждённый контракт, не является implementation plan и не разрешает production implementation.
+> **Статус:** контракт принят пользователем 2026-10-16, а независимый архитектурный/security review завершён `APPROVED`. Proposal задаёт разрешённую архитектуру для синхронизации spec-01 и Plan20; сам по себе не заменяет независимо проверенный implementation plan и не объявляет реализацию готовой.
 
 ## 1. Цель и запрашиваемое решение
 
@@ -18,7 +18,7 @@ tags: [macos, hermes, process-scope, recovery, v1]
 
 Этот вариант заменяет VM feasibility-кандидата Plan20 прямым запуском на host и ослабляет прежнее требование доказать остановку всех OS descendants. Контролируемая граница — точный first-party anchor и процессы в его исходной process group. Процесс, который намеренно покинул process group, может продолжить работу вне наблюдаемой Ebb границы.
 
-**Продуктовое решение для пользователя:** разрешить для macOS этот bounded process-group contract вместо прежнего whole-scope STOPPED. Умышленно detached descendants находятся вне гарантии и могут пережить завершение/остановку управляемой группы. При потере Ebb anchor сам закрывает gate и пытается остановить bounded group; если anchor тоже погиб/завис и остановку нельзя доказать, Run остаётся `UNKNOWN` до подтверждённого естественного выхода процессов либо reboot со сменой boot session. Это намеренная цена отказа от reconnect daemon и внешнего небезопасного сигналинга; в редком таком случае reboot — честный крайний шаг восстановления, а не скрытое снятие lock. Автоматический same-Run resume запрещён. Не добавляются отдельный Coordinator override, новые Run business states или пользовательское заявление об остановке.
+**Принятое продуктовое решение (2026-10-16):** пользователь подтвердил: «Да — принять прямой запуск и ограниченную гарантию». Для macOS v1 применяется этот bounded process-group contract вместо прежнего whole-scope STOPPED. Умышленно detached descendants находятся вне гарантии и могут пережить завершение/остановку управляемой группы. При потере Ebb anchor сам закрывает gate и пытается остановить bounded group; если anchor тоже погиб/завис и остановку нельзя доказать, Run остаётся `UNKNOWN` до подтверждённого естественного выхода процессов либо reboot со сменой boot session. Это намеренная цена отказа от reconnect daemon и внешнего небезопасного сигналинга; в редком таком случае reboot — честный крайний шаг восстановления, а не скрытое снятие lock. Автоматический same-Run resume запрещён. Не добавляются отдельный Coordinator override, новые Run business states или пользовательское заявление об остановке.
 
 ## 2. Утверждённые ограничения и scope
 
@@ -27,7 +27,7 @@ tags: [macos, hermes, process-scope, recovery, v1]
 - Нет VM, отдельного Hermes profile/HOME, config overlay, новых provider credentials, host ACL/owner/mode/foreign-grant inventory или remediation.
 - На macOS нет автоматического повторного dispatch/resume прежнего logical Run после сбоя Ebb или Hermes. Пользовательское восстановление Hermes выполняется вне Ebb и не является OS evidence.
 - Windows/Linux lifecycle не меняется этим proposal.
-- Действующий строгий контракт macOS в spec-01 и Plan20 требует authoritative whole-scope STOPPED прежде конфликтующего Run/cleanup и поэтому **не совместим** с этим ограниченным контрактом. Если пользователь примет его, отдельной последующей задачей нужно согласованно обновить spec-01, Proposal15 и Plan20 после независимого review. До этого текст proposal не является основанием ослабить действующие правила.
+- Spec-01 §10.2/§13.1 и Plan20 синхронизированы с принятым Mac process containment/recovery contract; Windows/Linux контракты сохраняются. Это не отменяет Hermes ownership, Scheduler/Coordinator CAS и startup preflight.
 
 ## 3. Lifecycle прямого host запуска
 
@@ -43,7 +43,7 @@ tags: [macos, hermes, process-scope, recovery, v1]
 
 **Boot-session evidence после перезапуска.** При создании generation Ebb сохраняет текущий kernel boot-session UUID, прочитанный через `sysctlbyname("kern.bootsessionuuid")`, рядом с anchor start identity. XNU source объявляет этот selector read-only; комментарий Apple к `BootSessionUUID` говорит, что UUID уникально идентифицирует boot cycle, появляется при boot, остаётся до shutdown и сохраняется через sleep/wake/hibernate. Поэтому различный UUID — кандидат на доказательство, что старый boot завершён и процессы той boot session не существуют. Sleep/wake не меняет значение.
 
-Этот selector не найден в публичной macOS API availability guarantee. Apple документирует общий `sysctlbyname`, но конкретный `kern.bootsessionuuid` не является гарантированной app API; Apple также отдельно отмечает, что он недоступен приложениям на iOS 18+. Поэтому разрешено полагаться на него только после реального package acceptance на macOS 13.5 и актуальной hosted macOS arm64 CI. На runtime failure, permission denial, отсутствующем/невалидном UUID или generation без сохранённого UUID — fail closed: owner остаётся `UNKNOWN`. Не подменять его временем, uptime, marker-файлом, user assertion или PID scan. Если gate не докажет доступность на target macOS, boot-based UNKNOWN recovery не считается реализуемым.
+Этот selector не найден в публичной macOS API availability guarantee. Apple документирует общий `sysctlbyname`, но конкретный `kern.bootsessionuuid` не является гарантированной app API; Apple отдельно отмечает его недоступность приложениям на iOS 18+, что подчёркивает необходимость target verification. Разрешено полагаться на UUID только после реального package acceptance на macOS 13.5 и актуальной hosted macOS arm64 CI. Runtime failure, permission denial, отсутствующий/невалидный UUID или generation без сохранённого UUID означают UNKNOWN и провал Mac release gate; нельзя выпускать Mac recovery с неустранимым неизвестным состоянием или подменять UUID временем, uptime, marker-файлом, user assertion или PID scan. Вариант решения при недоступности потребует отдельного design review.
 
 ### Штатное завершение и Stop
 
@@ -93,7 +93,7 @@ tags: [macos, hermes, process-scope, recovery, v1]
 
 ## 6. Данные, migration и compatibility
 
-Текущий `RunContainmentKind` и storage checks допускают `windows-job` и `systemd-user-service`; schema migrations 037/041/042 закрепили эти значения. Их нельзя редактировать задним числом или делать вид, что Darwin использовал прежний kind. После принятия отдельный schema review определит новый containment kind и forward-only migration после текущей схемы (Plan20 baseline указывает migration 046 как последний). Не добавлять новую Run business state или UNKNOWN resolution/audit subsystem. Boot evidence можно сериализовать в существующем `process_start_identity` как versioned, validated tuple `(bootSessionUUID, processStartIdentity)`, который уже хранится и в current owner, и в generation history; отдельное boot UUID column не требуется, если implementation review подтвердит совместимость формата. Новый containment-kind CHECK всё равно требует forward migration; нельзя менять миграции 037/041/042. Нельзя выдумывать Darwin identity для старых Windows/Linux generations.
+Текущий `RunContainmentKind` и storage checks допускают `windows-job` и `systemd-user-service`; migrations 037/041/042 закрепили эти значения и не редактируются. Реализация добавляет только `darwin-process-group` в forward migration 047 по Plan20; это не новая Run business state. Anchor identity сохраняется в существующих `supervisor_pid`/`supervisor_start_identity` как versioned tuple `(bootSessionUUID, pid, startTvsec/usec, pgid, sid)`; Hermes runner identity в `pid`/`platform`/`process_start_identity`/`executable_identity`, включая versioned tuple `(bootSessionUUID, pid, startTvsec/usec, pgid, sid)`. Текущая owner row и generation history используют существующие поля; отдельное boot UUID column не добавляется. Существующие состояния и UNKNOWN reconciliation переиспользуются; нет отдельного override/audit subsystem. Нельзя выдумывать Darwin identity для старых Windows/Linux generations.
 
 Обязательная compatibility-инварианта: сохранить каждую существующую `context_deltas` строку, обе FK targets/delete actions, индексы, root page и diagnostic-only semantics; не rebuild/copy эту таблицу. До migration выполнить текущий verified database backup gate и проверить populated upgrade вместе с fresh database.
 
@@ -116,9 +116,9 @@ Hosted macOS acceptance и real-provider acceptance — отдельные gates
 
 Каждая строка имеет отдельный PASS/FAIL/NOT RUN и exact SHA. Missing host, package, Hermes setup или provider call — `NOT RUN`/`NOT VERIFIED`, не PASS. Логи и artifacts допускают только allowlisted identity/status поля; никаких prompts, provider bodies, auth values, credential hashes, host ACL/user inventory.
 
-## 8. Implementation boundary после принятия и review
+## 8. Реализация после принятия
 
-Следующая стадия — independent architecture/security review этого proposal; затем обновление spec-01, Plan20 и связанных решений как отдельная design-integration задача. Лишь после их принятия можно писать implementation plan.
+Пользователь принял bounded direct-host контракт 2026-10-16, а independent architecture/security review завершён `APPROVED`. Spec-01 и Plan20 синхронизируются с ним; следующий implementation gate — свежий independent review самого Plan20. После `APPROVED` Plan20 можно исполнять без повторного продуктового решения. Производственный код пока не меняется.
 
 Предварительная карта production changes для будущего плана:
 
@@ -128,8 +128,8 @@ Hosted macOS acceptance и real-provider acceptance — отдельные gates
 - SQLite: новый forward migration для Darwin containment kind; не добавлять business state/audit subsystem и не переписывать 037/041/042.
 - Coordinator/Scheduler: без нового override API/UI. Существующий recovery/terminal reconciliation потребляет только durable `STOPPED` evidence (`GROUP_EMPTY` или `BOOT_SESSION_CHANGED`); same-boot UNKNOWN продолжает удерживать owner/capability/reservation/locks. Stale callbacks/recovery attempts не могут обойти generation CAS.
 - Native packaging/build scripts, smoke/startup fixtures, macOS CI workflow и acceptance tests для каждой строки matrix.
-- Spec/Plan20 обновляются только после этого design decision; сохранить все `context_deltas` invariants.
+- Spec-01 и Plan20 синхронизируются с принятым контрактом; сохранить все `context_deltas` invariants.
 
-## 9. Открытый gate
+## 9. Оставшиеся технические gates
 
-Нужно подтвердить одно продуктовое решение из §1: пользователь принимает ли macOS-specific ограниченную process-group гарантию вместо whole-scope guarantee, с deliberate detached descendants вне scope и без Coordinator override. Boot UUID является viable kernel-provided evidence для различения boot sessions по XNU source, но его доступность конкретному упакованному app не гарантирована публичной macOS API документацией; до acceptance это обязательное техническое условие, а не доказанный production contract. Решение должно быть независимо проверено архитектурным и security reviewer до production изменения. Proposal15 и действующие spec/Plan20 остаются сильнее до формального обновления.
+Продуктовое решение и архитектурный review завершены; повторное подтверждение от пользователя не требуется. Остаётся доказать на целевых сборке и runtime: точные public API для PID/start/group observation, полноту group enumeration, boot-session UUID availability в macOS 13.5+ package, anchor EOF/stop/crash поведение и packaging. Любая недоступность или неоднозначность остаётся `UNKNOWN`; не подменять отсутствующее доказательство эвристикой, user assertion или внешним numeric-PGID сигналом. Эти технические gates закрываются только свежими acceptance evidence по Plan20; Proposal15 и старые VM spike материалы являются историческими.
