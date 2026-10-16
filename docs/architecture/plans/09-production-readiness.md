@@ -5,7 +5,7 @@ status: in_progress
 title: Production Readiness Hardening
 summary: Добавить fail-closed работу с Git worktree, отказоустойчивое хранилище секретов и чистую production композицию.
 created: 2026-09-23
-updated: 2026-09-30
+updated: 2026-10-16
 depends_on:
   - plan-03
 specs:
@@ -30,6 +30,8 @@ evidence:
 > **Обновление evidence (2026-10-14):** CodeQL run `38478452148` завершился успешно для `develop` SHA `fd18083171fde0a40545096959d129fb6871269e`; analysis `1947414414` содержит 12 results. Все четыре открытых alerts `js/missing-rate-limiting` (#5–#8) рассмотрены и закрыты как `won't fix` по принятому пользователем риску v1. Остаточный риск локального перебора пароля через login явно принят; loopback и CSRF его не устраняют. Независимый scoped security review одобрил disposition в этих границах. Plan09 остаётся `in_progress` до независимого whole-plan review и сверки остальных критериев.
 
 > **Повторная проверка после фиксации disposition (2026-10-14):** CodeQL run `38479980735` завершился `success` на текущем `develop` SHA `0ec807b678a25ad38d110ee0e670fabd94aab345`; analysis `1947483322` содержит 12 results, открытых alerts нет. Последующие изменения в этом checkpoint ограничены записями evidence.
+
+> **Сверка после возобновления (2026-10-16):** CodeQL [run `38559433204`](https://github.com/vivernet/ebb-orchestrator/actions/runs/38559433204) завершился успешно 2026-10-14 для `develop` SHA `ee991725d52f97cc3b377922f518d9941f42015e`. GitHub Code Scanning API подтвердил analysis `1951001087`: `error=""`, 87 rules, 11 results. Отдельный запрос списка открытых alerts 2026-10-16 вернул пустой список; 12 исторических alerts имеют status `dismissed` с сохранёнными dispositions. Это evidence выполненного source scan и текущего списка alerts, а не отсутствие результатов анализа. Production Gates [run `38559433073`](https://github.com/vivernet/ebb-orchestrator/actions/runs/38559433073) на том же SHA: Windows/Linux process-scope, Windows/Ubuntu keyring и Ubuntu quality/security — PASS; macOS quality и Project Config acceptance — FAIL. План остаётся `in_progress`: исправление macOS, финальные gates и независимый whole-plan review ещё открыты. После следующих source changes потребуется scan соответствующей финальной revision.
 
 > **Для агентного исполнения:** REQUIRED SKILL: `ebb-execute-plan`. План выполняется по задачам; для отслеживания шагов используется синтаксис флажков (`- [ ]`).
 

@@ -44,7 +44,7 @@ Plan18 supersedes части этого плана, которые предпи�
 | Task8, Step 1 — repository gates | `EVIDENCE COMPLETE` | Plan19 Task7 report фиксирует `pnpm lint`, `pnpm typecheck`, `pnpm test` и `git diff --check` как успешные на одном source snapshot. Это не подтверждает остальные шаги Task8. |
 | Task8, Step 2 — diff и условие «`.opencode` ещё не удалён» | `HISTORICAL ORDER VIOLATED` | Условие нарушено: commit `1e949bc` от 2026-09-22 удалил `.opencode/**` до parity PASS. Ничего не восстанавливать; текущий diff не доказывает старый checkpoint. |
 | Task8, Step 3 — commit infrastructure | `EVIDENCE COMPLETE` | Commit `0787bc7` (`build: add Hermes development workflow`) подтверждает фиксацию infrastructure до последующих parity retries. |
-| Task9, Step 1 — запустить parity plan | `EVIDENCE COMPLETE / run attempted` | Выполненные запуски и их результаты перечислены в `docs/audit/hermes-development-workflow-parity.md`; последний full wrapper завершился timeout во время Task2. |
+| Task9, Step 1 — запустить parity plan | `EVIDENCE COMPLETE / run attempted` | Выполненные запуски и их результаты перечислены в `docs/audit/13-hermes-development-workflow-parity-current.md`; последний full wrapper завершился timeout во время Task2. |
 | Task9, Step 2 — проверить результат | `FAIL / NOT VERIFIED` | Plan19 Task7 bounded PASS подтверждает два schema-valid read-only children, gates на одном source snapshot и ограниченную timeout cleanup. Полный Hermes parity-run не завершился: Task2 timed out; следовательно, `Plan07 Task9` не PASS. Detached OS descendants остаются `NOT VERIFIED`. |
 | Task10, Step 1 — повторно прочитать inventory | `OPEN / inventory unavailable` | Ожидаемый post-acceptance inventory deliverable отсутствует по исходному пути. Существующий `docs/audit/06-opencode-to-hermes-inventory.md` — dated pre-cleanup snapshot, не post-parity re-read; он не удовлетворяет этот шаг. |
 | Task10, Step 2 — удалить OpenCode-only dependencies/scripts | `OPEN / sequence gate unmet` | Commit `1e949bc` удалил 10 файлов `.opencode/**` до parity PASS. Текущие package/source scan не находят OpenCode-only runtime dependency/script, но postcondition не может закрыть нарушенную предусловием последовательность. Ничего не восстанавливать. |
@@ -1017,7 +1017,7 @@ Subagent B проверяет:
 
 Создать/обновить:
 
-`docs/audit/hermes-development-workflow-parity.md`
+`docs/audit/13-hermes-development-workflow-parity-current.md`
 
 Включить:
 - дату;
@@ -1033,7 +1033,7 @@ Subagent B проверяет:
 
 Только если verdict = PASS:
 
-`git add docs/audit/hermes-development-workflow-parity.md`
+`git add docs/audit/13-hermes-development-workflow-parity-current.md`
 
 Проверить staged diff.
 
@@ -1106,7 +1106,7 @@ git log -3 --oneline
 Прочитать:
 
 ```text
-docs/audit/hermes-development-workflow-parity.md
+docs/audit/13-hermes-development-workflow-parity-current.md
 ```
 
 Acceptance criteria:

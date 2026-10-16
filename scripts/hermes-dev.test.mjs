@@ -426,7 +426,7 @@ test('Plan 19 Task 7 cleanup acceptance is bounded to wrapper-owned process and 
   const fixture = readFileSync(join(root, 'scripts', 'fixtures', 'hermes-development-workflow-parity-plan.md'), 'utf8');
   const roadmap = readFileSync(join(root, 'docs', 'roadmap', '02-current-state.md'), 'utf8');
   const reconciliation = readFileSync(join(root, 'docs', 'architecture', 'plans', 'governance', 'evidence', '07-current-plan-reconciliation.md'), 'utf8');
-  const auditReport = readFileSync(join(root, 'docs', 'audit', 'hermes-development-workflow-parity.md'), 'utf8');
+  const auditReport = readFileSync(join(root, 'docs', 'audit', '13-hermes-development-workflow-parity-current.md'), 'utf8');
 
   for (const text of [task7, fixture]) {
     assert.match(text, /two schema-valid[\s\S]{0,100}completed Hermes child sessions/i);

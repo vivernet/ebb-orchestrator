@@ -38,10 +38,10 @@ execution-state machine, `BASE`, краткой ссылкой на evidence и 
 evidence. Никогда не обнулять, не заменять, не усекать и не пересоздавать ledger.
 Ledger хранится вне отслеживаемых файлов репозитория; среди tracked repository
 files разрешено менять только итоговый отчёт
-`docs/audit/hermes-development-workflow-parity.md`.
+`docs/audit/13-hermes-development-workflow-parity-current.md`.
 
 Разрешено создать или обновить только итоговый отчёт
-`docs/audit/hermes-development-workflow-parity.md`. Не менять product code,
+`docs/audit/13-hermes-development-workflow-parity-current.md`. Не менять product code,
 tests, scripts, конфигурацию, skills и другие файлы. Не создавать worktree и
 ветку. Не выполнять commit автоматически, merge, push, tag или release.
 Не запускать команды, которые исправляют или удаляют файлы рабочего дерева.
@@ -258,7 +258,7 @@ exit code, указать соответствующее свидетельст�
 
 ## Задача 3. Отчёт и verdict
 
-Создать `docs/audit/hermes-development-workflow-parity.md` с полями:
+Создать `docs/audit/13-hermes-development-workflow-parity-current.md` с полями:
 
 - дата и часовой пояс, branch, HEAD, baseline `git status --short`;
 - использованные команды, exit codes и ссылки на конкретные evidence;

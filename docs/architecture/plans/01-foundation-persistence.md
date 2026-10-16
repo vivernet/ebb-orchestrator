@@ -4,7 +4,7 @@ kind: plan
 status: in_progress
 title: План реализации Foundation и Persistence Orchestrator
 created: 2026-09-23
-updated: 2026-10-03
+updated: 2026-10-16
 depends_on: []
 specs:
   - ../specs/01-system-design.md
@@ -834,3 +834,13 @@ SHA из исходного frontmatter подтверждены через `git
 ## Lifecycle reconciliation от 2026-10-03
 
 После свежего independent whole-plan review `CHANGES_REQUIRED` и обнаружения незакрытого shutdown blocker metadata `status` исправлен с `completed` на `in_progress`. Это только корректирует lifecycle classification: shutdown fix, required acceptance, broad quality gates и repeat review ещё не выполнены; исторические procedural checkboxes не отмечались задним числом и не менялись.
+
+## Проверка shutdown после возобновления — 2026-10-16
+
+Старый implementation blocker по порядку shutdown устранён в текущем source snapshot `ee991725d52f97cc3b377922f518d9941f42015e`: `main.ts` передаёт `RunService.stopActiveRuntimeScopes()` в `shutdownSystem`; lifecycle сначала останавливает ingress и workers, затем ждёт authoritative STOPPED активных Run scopes, после этого закрывает БД и освобождает instance lock. При неизвестном stop proof или истечении общего deadline БД и lock не освобождаются до последующего recovery.
+
+Свежая независимая read-only проверка подтвердила этот порядок по production source. `pnpm --filter @ebb-orchestrator/server exec vitest run test/e2e/plan01-graceful-run-shutdown.acceptance.test.ts` завершилась с exit `0`, 3/3 tests: штатный stop перед DB/lock, UNKNOWN proof и timeout. Эта acceptance использует controlled runtime fixture и не является native/provider тестом. Отдельно выполнен уже собранный restart harness без повторной сборки: `node scripts/plan01-process-recovery-acceptance.mjs`, exit `0`, `PLAN01_PROCESS_RECOVERY_ACCEPTANCE=PASS`; он подтверждает migrations/outbox/leases/READY/single-instance, но сам не проверяет активный Hermes process scope.
+
+Независимый whole-plan re-review от 2026-10-16 сопоставил T1–T8 с source/tests/acceptance и завершился `APPROVED`. Дополнительно проверенное предположение, будто v1 обязан автоматически удалять stale lock, отозвано как `FALSE_POSITIVE`: README прямо требует операторскую проверку перед ручным удалением lock; spec §19.5 не требует automatic reclaim. Этот review не является основанием вводить новую locking subsystem.
+
+Это evidence закрывает прежний source-level finding, сохраняя `status: in_progress` до итоговых quality gates и lifecycle reconciliation. Исторические procedural RED checkboxes не отмечаются задним числом; macOS runtime остаётся отдельной зависимостью Plan20.
