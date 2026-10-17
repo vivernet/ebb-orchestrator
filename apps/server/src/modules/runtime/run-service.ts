@@ -21,6 +21,7 @@ import { RunContextAssembler } from "./run-context-assembler.js";
 import type { PreparedRunContext } from "../context/context-types.js";
 import { getContextManifest, insertContextManifestTx } from "../context/context-manifest-repository.js";
 import {
+  containmentKindForPlatform,
   getRunProcessOwner,
   insertRunProcessOwnerTx,
   isAuthoritativeRunProcessStopEvidence,
@@ -48,7 +49,6 @@ export interface HermesRunPreflight {
   cleanup(): Promise<void>;
   isCommitted(): boolean;
 }
-
 /** Проверенные production hooks recovery; вызываются только для исходного durable Run/session. */
 export interface RunRecoveryHooks {
   /** Перепроверяет READY, исходный context fingerprint и доступный workspace; не dispatch-ит runtime. */
@@ -781,7 +781,7 @@ export class RunService {
       const owner = prepareRunProcessOwner(
         id,
         selection?.hermesHome ?? path.join(resolveOrchestratorHome(process.env, validatePlatform(process.platform)).runtime, "hermes", "runs", id),
-        currentContainmentKind(),
+        containmentKindForPlatform(process.platform) ?? (() => { throw new Error(`RUN_PROCESS_CONTAINMENT_UNSUPPORTED:${process.platform}`); })(),
       );
       insertRunProcessOwnerTx(tx, owner);
       if (preparedContext.fingerprintInput && capability.workspace &&
@@ -1719,10 +1719,4 @@ function equalUtf8(left: string, right: string): boolean {
   const leftBytes = encoder.encode(left);
   const rightBytes = encoder.encode(right);
   return leftBytes.length === rightBytes.length && leftBytes.every((value, index) => value === rightBytes[index]);
-}
-
-function currentContainmentKind(): "windows-job" | "systemd-user-service" {
-  if (process.platform === "win32") return "windows-job";
-  if (process.platform === "linux") return "systemd-user-service";
-  throw new Error(`RUN_PROCESS_CONTAINMENT_UNSUPPORTED:${process.platform}`);
 }

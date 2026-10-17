@@ -11,6 +11,7 @@ import {
   insertContextManifestTx,
 } from "../../../src/modules/context/context-manifest-repository.js";
 import {
+  getRunProcessOwner,
   insertRunProcessOwnerTx,
   prepareRunProcessOwner,
 } from "../../../src/modules/runtime/run-process-owner.js";
@@ -59,6 +60,81 @@ describe("context manifest v2 migration", () => {
     }
     expect(db.all("PRAGMA foreign_key_check")).toEqual([]);
     expect(db.all("PRAGMA table_info(tasks)")).toContainEqual(expect.objectContaining({ name: "capacity_wait_started_at", type: "TEXT", notnull: 0 }));
+  });
+
+  it("adds Darwin containment kinds in 047 without changing durable owner or context storage", async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "ebb-darwin-owner-migration-"));
+    dbPath = join(tmpDir, `migration-${randomUUID()}.sqlite`);
+    db = createSqliteDatabase(dbPath);
+    const migrations = loadTestMigrations();
+    runMigrations(db, migrations.filter(({ version }) => version <= 36));
+    seedLegacyRows(db);
+    runMigrations(db, migrations.filter(({ version }) => version <= 46));
+    db.transaction((tx) => insertRunProcessOwnerTx(tx, prepareRunProcessOwner(
+      "legacy-run-a", "C:\\legacy\\hermes", "windows-job")));
+    const ownerRows = db.all<Row>("SELECT * FROM run_process_owners ORDER BY run_id");
+    const generationRows = db.all<Row>("SELECT * FROM run_process_owner_generations ORDER BY run_id,generation");
+    const ownerSchema = ["run_process_owners", "run_process_owner_generations"].map((table) => ({
+      table,
+      columns: tableColumns(db!, table),
+      indexes: indexes(db!, table),
+      foreignKeys: foreignKeys(db!, table),
+      sql: tableSql(db!, table),
+    }));
+    const ownerTriggers = db.all<Row>(`SELECT name,sql FROM sqlite_master WHERE type='trigger'
+      AND tbl_name IN ('run_process_owners','run_process_owner_generations') ORDER BY name`);
+    const deltasBefore = deltaStorage(db);
+    const migrationsThrough046 = migrations.filter(({ version }) => version <= 46);
+    const migration047 = migrations.find(({ version }) => version === 47)!;
+    expect(migration047.name).toBe("047_darwin_process_group");
+
+    const failed = { ...migration047, sql: `${migration047.sql}\nSELECT intentionally_invalid_darwin_migration_sql;` };
+    expect(() => runMigrations(db!, [...migrationsThrough046, failed])).toThrow(/intentionally_invalid_darwin_migration_sql/);
+    expect(db.all<Row>("SELECT * FROM run_process_owners ORDER BY run_id")).toEqual(ownerRows);
+    expect(db.all<Row>("SELECT * FROM run_process_owner_generations ORDER BY run_id,generation")).toEqual(generationRows);
+    for (const before of ownerSchema) {
+      expect(normalizedOwnerTableSql(before.table, tableSql(db, before.table)))
+        .toBe(normalizedOwnerTableSql(before.table, before.sql));
+      expect(tableColumns(db, before.table)).toEqual(before.columns);
+      expect(indexes(db, before.table)).toEqual(before.indexes);
+      expect(foreignKeys(db, before.table)).toEqual(before.foreignKeys);
+    }
+    expect(db.all<Row>(`SELECT name,sql FROM sqlite_master WHERE type='trigger'
+      AND tbl_name IN ('run_process_owners','run_process_owner_generations') ORDER BY name`)).toEqual(ownerTriggers);
+    for (const before of ownerSchema) expect(tableSql(db, before.table)).toBe(before.sql);
+    expect(deltaStorage(db)).toEqual(deltasBefore);
+    expect(db.all("PRAGMA foreign_key_check")).toEqual([]);
+    expect(db.get("SELECT version FROM schema_migrations WHERE version=47")).toBeUndefined();
+
+    expect(runMigrations(db, migrations).applied).toBe(1);
+    expect(db.all<Row>("SELECT * FROM run_process_owners ORDER BY run_id")).toEqual(ownerRows);
+    expect(db.all<Row>("SELECT * FROM run_process_owner_generations ORDER BY run_id,generation")).toEqual(generationRows);
+    for (const before of ownerSchema) {
+      expect(normalizedOwnerTableSql(before.table, tableSql(db, before.table)))
+        .toBe(normalizedOwnerTableSql(before.table, before.sql));
+      expect(tableColumns(db, before.table)).toEqual(before.columns);
+      expect(indexes(db, before.table)).toEqual(before.indexes);
+      expect(foreignKeys(db, before.table)).toEqual(before.foreignKeys);
+    }
+    expect(db.all<Row>(`SELECT name,sql FROM sqlite_master WHERE type='trigger'
+      AND tbl_name IN ('run_process_owners','run_process_owner_generations') ORDER BY name`)).toEqual(ownerTriggers);
+    expect(deltaStorage(db)).toEqual(deltasBefore);
+    expect(db.all("PRAGMA foreign_key_check")).toEqual([]);
+    expect(() => db!.run("UPDATE run_process_owners SET containment_kind='unsupported' WHERE run_id='legacy-run-a'"))
+      .toThrow(/CHECK constraint failed/i);
+    db.run("UPDATE run_process_owner_generations SET containment_kind='darwin-process-group' WHERE run_id='legacy-run-a' AND generation=1");
+    db.run("UPDATE run_process_owners SET containment_kind='darwin-process-group' WHERE run_id='legacy-run-a'");
+    expect(db.get("SELECT containment_kind FROM run_process_owners WHERE run_id='legacy-run-a'"))
+      .toEqual({ containment_kind: "darwin-process-group" });
+    expect(db.get("SELECT containment_kind FROM run_process_owner_generations WHERE run_id='legacy-run-a' AND generation=1"))
+      .toEqual({ containment_kind: "darwin-process-group" });
+    expect(getRunProcessOwner(db, "legacy-run-a")?.containmentKind).toBe("darwin-process-group");
+
+    db.close();
+    db = createSqliteDatabase(dbPath);
+    expect(runMigrations(db, migrations).applied).toBe(0);
+    expect(db.all("PRAGMA foreign_key_check")).toEqual([]);
+    expect(deltaStorage(db)).toEqual(deltasBefore);
   });
 
   it("preserves historical manifests and delta storage through populated v036 to v042 upgrade", async () => {
@@ -831,4 +907,10 @@ function rootPage(database: Database, table: string): number {
 
 function tableSql(database: Database, table: string): string {
   return database.get<{ sql: string }>("SELECT sql FROM sqlite_master WHERE type='table' AND name=$table", { table })!.sql;
+}
+
+function normalizedOwnerTableSql(table: string, sql: string): string {
+  return sql
+    .replace(new RegExp(`^CREATE TABLE "?${table}"?`, "u"), `CREATE TABLE ${table}`)
+    .replace(", 'darwin-process-group'", "");
 }

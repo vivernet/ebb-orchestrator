@@ -2,7 +2,28 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { posix } from "node:path";
 
 export type ProcessScopeState = "PREPARED" | "LAUNCHING" | "LIVE" | "STOPPING" | "STOPPED" | "UNKNOWN";
-export type ProcessScopeContainmentKind = "windows-job" | "systemd-user-service";
+export type ProcessScopeContainmentKind = "windows-job" | "systemd-user-service" | "darwin-process-group";
+
+/**
+ * Версионированный Darwin boot/start/PGID/SID tuple для существующих durable owner полей.
+ * Синтаксически валидный tuple не доказывает, что процесс жив или группа пуста.
+ */
+export interface DarwinProcessGroupIdentityV1 {
+  /** Версия точной JSON projection. */
+  formatVersion: 1;
+  /** Kernel boot-session UUID, сохранённый до dispatch; никогда не выводится эвристически. */
+  bootSessionUUID: string;
+  /** PID того anchor или runner, который описан tuple. */
+  pid: number;
+  /** Unix start time: секунды. */
+  startTvsec: number;
+  /** Unix start time: микросекунды в диапазоне 0..999999. */
+  startUsec: number;
+  /** Исходный process-group ID. */
+  pgid: number;
+  /** Исходный session ID. */
+  sid: number;
+}
 
 /** Durable lookup identity supplied by the Run owner row. */
 export interface ProcessScopeIdentity {

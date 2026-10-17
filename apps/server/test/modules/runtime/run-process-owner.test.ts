@@ -5,12 +5,14 @@ import { tmpdir } from "node:os";
 import type { Database, DatabaseTx } from "../../../src/platform/database/database.js";
 import { createSqliteDatabase } from "../../../src/platform/database/sqlite-database.js";
 import { runMigrations } from "../../../src/platform/database/migrator.js";
-import { getRunProcessOwner, insertRunProcessOwnerTx, prepareRunProcessOwner, preflightRunProcessOwners,
+import { containmentKindForPlatform, encodeDarwinProcessGroupIdentityV1, getRunProcessOwner, insertRunProcessOwnerTx,
+  isAuthoritativeRunProcessStopEvidence, parseDarwinProcessGroupIdentityV1, prepareRunProcessOwner, preflightRunProcessOwners,
   syncCurrentRunProcessGenerationTx, transitionRunProcessOwnerTx } from "../../../src/modules/runtime/run-process-owner.js";
 import { safeRestartChildFailureCode } from "../../helpers/restart-child-diagnostics.js";
 import type { ProcessScopeIdentity, ProcessScopeObservation } from "../../../src/platform/process/process-inspector.js";
 import type { ProcessScopeSupervisor } from "../../../src/platform/process/run-scope-supervisor.js";
 import { loadTestMigrations } from "../../helpers/migrations.js";
+import { runProcessOwnerFixtureForPlatform } from "../../helpers/run-process-owner-fixture.js";
 
 const snapshotIdentity = {
   formatVersion: 1,
@@ -30,6 +32,93 @@ const windowsSnapshotKey = JSON.stringify({
 });
 
 describe("Run process owner", () => {
+  it("maps supported Node platforms to their durable containment kind", () => {
+    expect(containmentKindForPlatform("win32")).toBe("windows-job");
+    expect(containmentKindForPlatform("linux")).toBe("systemd-user-service");
+    expect(containmentKindForPlatform("darwin")).toBe("darwin-process-group");
+    expect(containmentKindForPlatform("freebsd")).toBeNull();
+  });
+
+  it("round-trips the versioned Darwin tuple without making it STOPPED authority", () => {
+    const identity = {
+      formatVersion: 1 as const,
+      bootSessionUUID: "A1B2C3D4-E5F6-4789-ABCD-0123456789AB",
+      pid: 401,
+      startTvsec: 1_792_000_000,
+      startUsec: 999_999,
+      pgid: 401,
+      sid: 401,
+    };
+    const encoded = encodeDarwinProcessGroupIdentityV1(identity);
+    expect(encoded).toBe('{"formatVersion":1,"bootSessionUUID":"a1b2c3d4-e5f6-4789-abcd-0123456789ab","pid":401,"startTvsec":1792000000,"startUsec":999999,"pgid":401,"sid":401}');
+    expect(parseDarwinProcessGroupIdentityV1(encoded)).toEqual({ ...identity, bootSessionUUID: identity.bootSessionUUID.toLowerCase() });
+    expect(() => parseDarwinProcessGroupIdentityV1(null)).toThrow("DARWIN_PROCESS_IDENTITY_UNAVAILABLE");
+    expect(() => encodeDarwinProcessGroupIdentityV1({ ...identity, pgid: 0 })).toThrow("DARWIN_PROCESS_IDENTITY_UNAVAILABLE");
+    expect(isAuthoritativeRunProcessStopEvidence("DARWIN_GROUP_EMPTY", "darwin-process-group")).toBe(false);
+    expect(isAuthoritativeRunProcessStopEvidence("BOOT_SESSION_CHANGED", "darwin-process-group")).toBe(false);
+  });
+
+  it("does not accept Linux or Windows stop evidence for a Darwin owner", () => {
+    for (const evidence of ["SYSTEMD_CGROUP_EMPTY", "UNIT_ABSENT_NO_PENDING_CGROUP_ABSENT",
+      "WINDOWS_JOB_EMPTY", "WINDOWS_JOB_AND_HELPER_ABSENT"]) {
+      expect(isAuthoritativeRunProcessStopEvidence(evidence, "darwin-process-group"), evidence).toBe(false);
+    }
+    expect(isAuthoritativeRunProcessStopEvidence("SYSTEMD_CGROUP_EMPTY", "systemd-user-service")).toBe(true);
+    expect(isAuthoritativeRunProcessStopEvidence("UNIT_ABSENT_NO_PENDING_CGROUP_ABSENT", "systemd-user-service")).toBe(true);
+    expect(isAuthoritativeRunProcessStopEvidence("WINDOWS_JOB_EMPTY", "windows-job")).toBe(true);
+    expect(isAuthoritativeRunProcessStopEvidence("WINDOWS_JOB_AND_HELPER_ABSENT", "windows-job")).toBe(true);
+    expect(isAuthoritativeRunProcessStopEvidence("NEVER_LAUNCHED", "darwin-process-group")).toBe(true);
+    expect(isAuthoritativeRunProcessStopEvidence("LAUNCH_NOT_DISPATCHED", "darwin-process-group")).toBe(true);
+  });
+
+  it("keeps Darwin owner fixtures unavailable until a verified producer exists", () => {
+    const fixture = runProcessOwnerFixtureForPlatform("darwin");
+    expect(fixture).toEqual({
+      containmentKind: "darwin-process-group",
+      identity: null,
+      stopEvidence: null,
+      unavailableReason: "DARWIN_PROCESS_IDENTITY_UNAVAILABLE",
+    });
+  });
+
+  it("persists a matching versioned Darwin anchor and runner tuple through the LIVE CAS", async () => {
+    const database = await setup();
+    const runId = "darwin-owner-live-run";
+    insertRun(database, runId, "STARTED", "darwin-process-group");
+    const anchor = encodeDarwinProcessGroupIdentityV1({
+      formatVersion: 1, bootSessionUUID: "a1b2c3d4-e5f6-4789-abcd-0123456789ab",
+      pid: 401, startTvsec: 1_792_000_000, startUsec: 1, pgid: 401, sid: 401,
+    });
+    const runner = encodeDarwinProcessGroupIdentityV1({
+      formatVersion: 1, bootSessionUUID: "a1b2c3d4-e5f6-4789-abcd-0123456789ab",
+      pid: 402, startTvsec: 1_792_000_001, startUsec: 2, pgid: 401, sid: 401,
+    });
+    const liveIdentity = {
+      platform: "darwin", supervisorPid: 401, supervisorStartIdentity: anchor, pid: 402,
+      processStartIdentity: runner, executableIdentity: "device:1,inode:2",
+    };
+    database.transaction((tx) => transitionRunProcessOwnerTx(tx, {
+      runId, expectedState: "PREPARED", nextState: "LAUNCHING",
+    }));
+    expect(() => database.transaction((tx) => transitionRunProcessOwnerTx(tx, {
+      runId, expectedState: "LAUNCHING", nextState: "LIVE",
+      identity: { ...liveIdentity, processStartIdentity: "{}" },
+    }))).toThrow("DARWIN_PROCESS_IDENTITY_UNAVAILABLE");
+    expect(getRunProcessOwner(database, runId)?.state).toBe("LAUNCHING");
+
+    database.transaction((tx) => transitionRunProcessOwnerTx(tx, {
+      runId, expectedState: "LAUNCHING", nextState: "LIVE", identity: liveIdentity,
+    }));
+    expect(getRunProcessOwner(database, runId)).toMatchObject({
+      containmentKind: "darwin-process-group", state: "LIVE", platform: "darwin",
+      supervisorPid: 401, supervisorStartIdentity: anchor, pid: 402,
+      processStartIdentity: runner, executableIdentity: "device:1,inode:2",
+    });
+    expect(() => database.transaction((tx) => transitionRunProcessOwnerTx(tx, {
+      runId, expectedState: "LIVE", nextState: "STOPPED", evidence: "DARWIN_GROUP_EMPTY",
+    }))).toThrow(/authoritative OS evidence/i);
+  });
+
   let directory = "";
   let db: Database | undefined;
 
@@ -47,7 +136,7 @@ describe("Run process owner", () => {
     return db;
   }
 
-  function insertRun(database: Database, runId: string, status = "STARTED", containmentKind: "systemd-user-service" | "windows-job" = "systemd-user-service"): void {
+  function insertRun(database: Database, runId: string, status = "STARTED", containmentKind: "systemd-user-service" | "windows-job" | "darwin-process-group" = "systemd-user-service"): void {
     database.run(
       "INSERT INTO agent_runs(id,role,runtime,model,status,started_at) VALUES($id,'developer','hermes','test-model',$status,'2026-10-01T00:00:00.000Z')",
       { id: runId, status },

@@ -18,21 +18,22 @@ describe("fresh-install migration acceptance", () => {
     if (tmpDir) await rm(tmpDir, { recursive: true, force: true });
   });
 
-  it("applies migrations 001-046 with durable scheduler RunRequests", async () => {
+  it("applies migrations 001-047 with durable scheduler RunRequests and Darwin owner kind", async () => {
     tmpDir = await mkdtemp(join(tmpdir(), "ebb-fresh-install-migrations-"));
     db = createSqliteDatabase(join(tmpDir, `fresh-${randomUUID()}.sqlite`));
     const migrations = loadTestMigrations();
-    const expectedVersions = Array.from({ length: 46 }, (_, index) => index + 1);
+    const expectedVersions = Array.from({ length: 47 }, (_, index) => index + 1);
 
     expect(migrations.map(({ version }) => version)).toEqual(expectedVersions);
-    expect(migrations.at(-7)?.name).toBe("040_run_hermes_source_snapshot");
-    expect(migrations.at(-6)?.name).toBe("041_shared_hermes_home");
-    expect(migrations.at(-5)?.name).toBe("042_durable_run_recovery");
-    expect(migrations.at(-4)?.name).toBe("043_scheduler_capacity_wait_started_at");
-    expect(migrations.at(-3)?.name).toBe("044_scheduler_run_requests");
-    expect(migrations.at(-2)?.name).toBe("045_run_completion_projections");
-    expect(migrations.at(-1)?.name).toBe("046_scheduler_task_stage_requests");
-    expect(runMigrations(db, migrations).applied).toBe(46);
+    expect(migrations.find(({ version }) => version === 40)?.name).toBe("040_run_hermes_source_snapshot");
+    expect(migrations.find(({ version }) => version === 41)?.name).toBe("041_shared_hermes_home");
+    expect(migrations.find(({ version }) => version === 42)?.name).toBe("042_durable_run_recovery");
+    expect(migrations.find(({ version }) => version === 43)?.name).toBe("043_scheduler_capacity_wait_started_at");
+    expect(migrations.find(({ version }) => version === 44)?.name).toBe("044_scheduler_run_requests");
+    expect(migrations.find(({ version }) => version === 45)?.name).toBe("045_run_completion_projections");
+    expect(migrations.find(({ version }) => version === 46)?.name).toBe("046_scheduler_task_stage_requests");
+    expect(migrations.at(-1)?.name).toBe("047_darwin_process_group");
+    expect(runMigrations(db, migrations).applied).toBe(47);
     expect(db.all("PRAGMA table_info(tasks)")).toContainEqual(expect.objectContaining({ name: "capacity_wait_started_at", type: "TEXT", notnull: 0, dflt_value: null }));
     expect(db.all("SELECT * FROM run_process_owner_generations")).toEqual([]);
     expect(db.all("SELECT * FROM run_resume_bindings")).toEqual([]);
@@ -96,6 +97,19 @@ describe("fresh-install migration acceptance", () => {
       .toEqual({ hermes_source_snapshot_key: null });
     expect(db.get("SELECT current_generation FROM run_process_owners WHERE run_id='fresh-run'"))
       .toEqual({ current_generation: 1 });
+    db.run("INSERT INTO agent_runs(id,role,runtime,model,status) VALUES('darwin-run','developer','hermes','test-model','STARTED')");
+    db.run(`INSERT INTO run_process_owner_generations(
+      run_id,generation,source_tag,hermes_home,containment_kind,containment_id,launch_nonce,state,updated_at
+    ) VALUES('darwin-run',1,'ebb-run:darwin-run','/Users/test/.hermes','darwin-process-group',$containmentId,$launchNonce,'PREPARED','2026-10-16T00:00:00.000Z')`,
+    { containmentId: "e".repeat(64), launchNonce: "f".repeat(64) });
+    db.run(`INSERT INTO run_process_owners(
+      run_id,source_tag,hermes_home,containment_kind,containment_id,launch_nonce,state,updated_at
+    ) VALUES('darwin-run','ebb-run:darwin-run','/Users/test/.hermes','darwin-process-group',$containmentId,$launchNonce,'PREPARED','2026-10-16T00:00:00.000Z')`,
+    { containmentId: "e".repeat(64), launchNonce: "f".repeat(64) });
+    expect(db.get("SELECT containment_kind,current_generation FROM run_process_owners WHERE run_id='darwin-run'"))
+      .toEqual({ containment_kind: "darwin-process-group", current_generation: 1 });
+    expect(db.get("SELECT containment_kind FROM run_process_owner_generations WHERE run_id='darwin-run' AND generation=1"))
+      .toEqual({ containment_kind: "darwin-process-group" });
     expect(() => db!.run("UPDATE run_process_owners SET current_generation=0 WHERE run_id='fresh-run'"))
       .toThrow(/CHECK constraint failed|Current generation does not exist/i);
     const binding = {
@@ -172,7 +186,11 @@ describe("fresh-install migration acceptance", () => {
     );
     expect(db.all<{ hermes_home: string }>(
       "SELECT hermes_home FROM run_process_owners ORDER BY run_id",
-    )).toEqual([{ hermes_home: "C:\\fresh\\hermes" }, { hermes_home: "C:\\fresh\\hermes" }]);
+    )).toEqual([
+      { hermes_home: "/Users/test/.hermes" },
+      { hermes_home: "C:\\fresh\\hermes" },
+      { hermes_home: "C:\\fresh\\hermes" },
+    ]);
     db.run("INSERT INTO projects(id,name,display_name,created_at,updated_at) VALUES('delta-project','delta-project','Delta','fixture','fixture')");
     db.run("INSERT INTO tasks(id,project_id,display_id,title,contract_json,created_at,updated_at) VALUES('delta-task','delta-project','T-1','Delta','{}','fixture','fixture')");
     db.run(`INSERT INTO context_manifests_legacy_v1(id,run_id,task_id,role,task_contract_version,created_at) VALUES

@@ -1,7 +1,8 @@
 import { randomBytes } from 'node:crypto';
 import type { Database, DatabaseTx } from '../../platform/database/database.js';
 import type { ProcessScopeSupervisor } from '../../platform/process/run-scope-supervisor.js';
-import type { ProcessScopeObservation } from '../../platform/process/process-inspector.js';
+import type { DarwinProcessGroupIdentityV1, ProcessScopeObservation } from '../../platform/process/process-inspector.js';
+export type { DarwinProcessGroupIdentityV1 } from '../../platform/process/process-inspector.js';
 
 const SAFE_WINDOWS_SCOPE_UNKNOWN_REASONS = new Set([
   'WINDOWS_ATTEMPT_NONCE_MISMATCH',
@@ -43,8 +44,78 @@ const SAFE_WINDOWS_SCOPE_UNKNOWN_REASONS = new Set([
   'WINDOWS_JOB_ACCOUNTING_UNAVAILABLE',
 ]);
 
-export type RunContainmentKind = 'windows-job' | 'systemd-user-service';
+export type RunContainmentKind = 'windows-job' | 'systemd-user-service' | 'darwin-process-group';
 export type RunProcessOwnerState = 'PREPARED' | 'LAUNCHING' | 'LIVE' | 'STOPPING' | 'STOPPED' | 'UNKNOWN';
+
+/**
+ * Выбирает durable containment kind по Node platform без host probes и побочных эффектов.
+ * @param platform Платформа, сообщённая вызывающей стороной.
+ * @returns Поддерживаемый kind либо `null`, если платформа не входит в контракт.
+ */
+export function containmentKindForPlatform(platform: NodeJS.Platform): RunContainmentKind | null {
+  if (platform === 'win32') return 'windows-job';
+  if (platform === 'linux') return 'systemd-user-service';
+  if (platform === 'darwin') return 'darwin-process-group';
+  return null;
+}
+
+/**
+ * Кодирует проверенный Darwin boot/start/process-group tuple для существующего owner string field.
+ * Формат не подтверждает живость процесса или пустоту группы.
+ * @param identity Нормализуемая identity версии 1.
+ * @returns JSON со стабильным порядком ключей и UUID в нижнем регистре.
+ * @throws {TypeError} Если tuple отсутствует или нарушает формат.
+ */
+export function encodeDarwinProcessGroupIdentityV1(identity: DarwinProcessGroupIdentityV1): string {
+  if (!isDarwinProcessGroupIdentityV1(identity)) throw new TypeError('DARWIN_PROCESS_IDENTITY_UNAVAILABLE');
+  return JSON.stringify({
+    formatVersion: 1,
+    bootSessionUUID: identity.bootSessionUUID.toLowerCase(),
+    pid: identity.pid,
+    startTvsec: identity.startTvsec,
+    startUsec: identity.startUsec,
+    pgid: identity.pgid,
+    sid: identity.sid,
+  });
+}
+
+/**
+ * Разбирает только точную versioned Darwin identity projection; отсутствующее evidence закрывается отказом.
+ * @param value Сохранённая сериализация identity.
+ * @returns Проверенный tuple версии 1 с нормализованным UUID.
+ * @throws {TypeError} Если OS evidence отсутствует, превышает лимит или malformed.
+ */
+export function parseDarwinProcessGroupIdentityV1(value: unknown): DarwinProcessGroupIdentityV1 {
+  if (typeof value !== 'string' || value.length > 512) throw new TypeError('DARWIN_PROCESS_IDENTITY_UNAVAILABLE');
+  let parsed: unknown;
+  try { parsed = JSON.parse(value); } catch { throw new TypeError('DARWIN_PROCESS_IDENTITY_UNAVAILABLE'); }
+  if (!isDarwinProcessGroupIdentityV1(parsed)) throw new TypeError('DARWIN_PROCESS_IDENTITY_UNAVAILABLE');
+  const normalized: DarwinProcessGroupIdentityV1 = {
+    formatVersion: 1,
+    bootSessionUUID: parsed.bootSessionUUID.toLowerCase(),
+    pid: parsed.pid,
+    startTvsec: parsed.startTvsec,
+    startUsec: parsed.startUsec,
+    pgid: parsed.pgid,
+    sid: parsed.sid,
+  };
+  if (value !== JSON.stringify(normalized)) throw new TypeError('DARWIN_PROCESS_IDENTITY_UNAVAILABLE');
+  return normalized;
+}
+
+function isDarwinProcessGroupIdentityV1(value: unknown): value is DarwinProcessGroupIdentityV1 {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const identity = value as Record<string, unknown>;
+  const keys = Object.keys(identity).sort();
+  return keys.join(',') === 'bootSessionUUID,formatVersion,pgid,pid,sid,startTvsec,startUsec' &&
+    identity.formatVersion === 1 && typeof identity.bootSessionUUID === 'string' &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(identity.bootSessionUUID) &&
+    Number.isSafeInteger(identity.pid) && (identity.pid as number) > 0 &&
+    Number.isSafeInteger(identity.startTvsec) && (identity.startTvsec as number) >= 0 &&
+    Number.isSafeInteger(identity.startUsec) && (identity.startUsec as number) >= 0 && (identity.startUsec as number) < 1_000_000 &&
+    Number.isSafeInteger(identity.pgid) && (identity.pgid as number) > 0 &&
+    Number.isSafeInteger(identity.sid) && (identity.sid as number) > 0;
+}
 
 /**
  * Durable Run-owned identity prepared before asking an OS supervisor to launch Hermes.
@@ -92,7 +163,7 @@ export function prepareRunProcessOwner(
 ): RunProcessOwner {
   assertNonEmpty(runId, 'runId');
   assertNonEmpty(hermesHome, 'hermesHome');
-  if (containmentKind !== 'windows-job' && containmentKind !== 'systemd-user-service') {
+  if (containmentKind !== 'windows-job' && containmentKind !== 'systemd-user-service' && containmentKind !== 'darwin-process-group') {
     throw new TypeError('Run process containment kind is unsupported.');
   }
   assertSourceSnapshotKey(hermesSourceSnapshotKey, containmentKind);
@@ -365,6 +436,16 @@ function assertLiveIdentity(identity: RunProcessOwnerIdentity): void {
     assertPositivePid(identity.pid, 'pid');
     assertNonEmpty(identity.processStartIdentity ?? '', 'processStartIdentity');
     assertNonEmpty(identity.executableIdentity ?? '', 'executableIdentity');
+  } else if (identity.platform === 'darwin') {
+    const anchor = parseDarwinProcessGroupIdentityV1(identity.supervisorStartIdentity);
+    const runner = parseDarwinProcessGroupIdentityV1(identity.processStartIdentity);
+    if (identity.systemdInvocationId != null || identity.systemdControlGroup != null ||
+        identity.supervisorPid !== anchor.pid || identity.pid !== runner.pid ||
+        anchor.bootSessionUUID !== runner.bootSessionUUID || anchor.pgid !== anchor.pid || anchor.sid !== anchor.pid ||
+        runner.pgid !== anchor.pgid || runner.sid !== anchor.sid) {
+      throw new TypeError('DARWIN_PROCESS_IDENTITY_UNAVAILABLE');
+    }
+    assertNonEmpty(identity.executableIdentity ?? '', 'executableIdentity');
   } else {
     throw new TypeError('A LIVE Run owner requires a supported native platform identity.');
   }
@@ -402,11 +483,15 @@ export function isCanonicalRunProcessStopEvidence(value: unknown): value is stri
 /** Проверяет, что durable evidence пришло из одного из production STOPPED readback путей. */
 export function isAuthoritativeRunProcessStopEvidence(value: unknown, containmentKind: unknown): value is string {
   if (!isCanonicalRunProcessStopEvidence(value) ||
-      (containmentKind !== 'windows-job' && containmentKind !== 'systemd-user-service')) return false;
+      (containmentKind !== 'windows-job' && containmentKind !== 'systemd-user-service' && containmentKind !== 'darwin-process-group')) return false;
   if (value === 'NEVER_LAUNCHED' || value === 'LAUNCH_NOT_DISPATCHED') return true;
-  return containmentKind === 'windows-job'
-    ? value === 'WINDOWS_JOB_EMPTY' || value === 'WINDOWS_JOB_AND_HELPER_ABSENT'
-    : value === 'SYSTEMD_CGROUP_EMPTY' || value === 'UNIT_ABSENT_NO_PENDING_CGROUP_ABSENT';
+  if (containmentKind === 'windows-job') {
+    return value === 'WINDOWS_JOB_EMPTY' || value === 'WINDOWS_JOB_AND_HELPER_ABSENT';
+  }
+  if (containmentKind === 'systemd-user-service') {
+    return value === 'SYSTEMD_CGROUP_EMPTY' || value === 'UNIT_ABSENT_NO_PENDING_CGROUP_ABSENT';
+  }
+  return false;
 }
 
 /** Возвращает durable owner, проверяя SQLite values; historical source key остаётся NULL. */
@@ -572,7 +657,7 @@ function parseOwnerRow(row: Record<string, unknown>): RunProcessOwner {
   };
   const kind = required('containment_kind');
   const state = required('state');
-  if (kind !== 'windows-job' && kind !== 'systemd-user-service') throw new Error('RUN_PROCESS_OWNER_INVALID');
+  if (kind !== 'windows-job' && kind !== 'systemd-user-service' && kind !== 'darwin-process-group') throw new Error('RUN_PROCESS_OWNER_INVALID');
   if (!['PREPARED', 'LAUNCHING', 'LIVE', 'STOPPING', 'STOPPED', 'UNKNOWN'].includes(state)) throw new Error('RUN_PROCESS_OWNER_INVALID');
   const owner: RunProcessOwner = {
     runId: required('run_id'),
@@ -611,7 +696,7 @@ function assertPreparedOwner(owner: RunProcessOwner): void {
   assertSourceSnapshotKey(owner.hermesSourceSnapshotKey, owner.containmentKind);
   if (!/^[a-f0-9]{64}$/.test(owner.containmentId)) throw new TypeError('Containment ID must be a random 256-bit lowercase hex value.');
   if (!/^[a-f0-9]{64}$/.test(owner.launchNonce)) throw new TypeError('Launch nonce must be a random 256-bit lowercase hex value.');
-  if (owner.containmentKind !== 'windows-job' && owner.containmentKind !== 'systemd-user-service') {
+  if (owner.containmentKind !== 'windows-job' && owner.containmentKind !== 'systemd-user-service' && owner.containmentKind !== 'darwin-process-group') {
     throw new TypeError('Run process containment kind is unsupported.');
   }
   if (owner.state !== 'PREPARED') throw new TypeError('A new Run process owner must start PREPARED.');

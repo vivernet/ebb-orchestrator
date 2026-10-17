@@ -1,7 +1,7 @@
 import { rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname } from "node:path";
-import { getRunProcessOwner, insertRunProcessOwnerTx, preflightRunProcessOwners, prepareRunProcessOwner, transitionRunProcessOwnerTx } from "../../src/modules/runtime/run-process-owner.js";
+import { containmentKindForPlatform, getRunProcessOwner, insertRunProcessOwnerTx, preflightRunProcessOwners, prepareRunProcessOwner, transitionRunProcessOwnerTx } from "../../src/modules/runtime/run-process-owner.js";
 import type { ProcessScopeIdentity } from "../../src/platform/process/process-inspector.js";
 import { ProcessExecutor } from "../../src/platform/process/process-executor.js";
 import { createSqliteDatabase } from "../../src/platform/database/sqlite-database.js";
@@ -42,7 +42,9 @@ async function launchOwnedScope(): Promise<void> {
       "INSERT INTO agent_runs(id,role,runtime,model,status,started_at) VALUES($id,'developer','hermes','dummy-5a','STARTED',$startedAt)",
       { id: runId, startedAt: new Date().toISOString() },
     );
-    const containmentKind = process.platform === "win32" ? "windows-job" : "systemd-user-service";
+    const containmentKind = containmentKindForPlatform(process.platform);
+    if (containmentKind === null) throw new Error("PROCESS_SCOPE_RESTART_CHILD_PLATFORM_UNSUPPORTED");
+    if (process.platform === "darwin") throw new Error("DARWIN_PROCESS_SCOPE_SUPERVISOR_NOT_IMPLEMENTED");
     const prepared = prepareRunProcessOwner(runId, runHome, containmentKind);
     database.transaction((tx) => {
       insertRunProcessOwnerTx(tx, prepared);
@@ -151,7 +153,9 @@ async function recoverOwnedScope(): Promise<void> {
 function createSupervisor(): WindowsJobSupervisor | SystemdRunSupervisor {
   if (process.platform === "win32") return new WindowsJobSupervisor(new ProcessExecutor());
   if (process.platform === "linux") return new SystemdRunSupervisor(new ProcessExecutor());
-  throw new Error("PROCESS_SCOPE_RESTART_CHILD_PLATFORM_UNSUPPORTED");
+  throw new Error(process.platform === "darwin"
+    ? "DARWIN_PROCESS_SCOPE_SUPERVISOR_NOT_IMPLEMENTED"
+    : "PROCESS_SCOPE_RESTART_CHILD_PLATFORM_UNSUPPORTED");
 }
 
 function buildRequest(
@@ -163,7 +167,9 @@ function buildRequest(
 ) {
   const payloadSource = process.platform === "win32"
     ? windowsPayloadSource(heartbeat, digest, descendantPid, descendantExit)
-    : linuxPayloadSource(digest, descendantPid);
+    : process.platform === "linux"
+      ? linuxPayloadSource(digest, descendantPid)
+      : (() => { throw new Error("PROCESS_SCOPE_RESTART_CHILD_PLATFORM_UNSUPPORTED"); })();
   const environment: Record<string, string> = {
     PATH: process.env.PATH ?? "",
     NODE_ENV: "test",

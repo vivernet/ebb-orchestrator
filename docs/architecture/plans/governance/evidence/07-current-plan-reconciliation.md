@@ -4,7 +4,7 @@ kind: ledger
 status: current
 title: Сверка незавершённых планов и требований
 created: 2026-09-28
-updated: 2026-10-14
+updated: 2026-10-17
 ---
 
 # Сверка незавершённых планов и требований
@@ -940,3 +940,11 @@ Plan01 metadata переведена из `completed` в `in_progress` посл�
 - Начата реализация M1: новый Darwin containment kind, единый platform mapping и forward migration 047 с сохранением owner generations и всех инвариантов `context_deltas`. M2 launcher и M3 OS/recovery/CI ещё не реализованы. Provider-free hosted native acceptance, физический Mac floor/package gate и real-provider acceptance остаются разными открытыми gates. Same-Run Mac auto-resume запрещён; Proposal06 Epic-intent recovery сохраняется.
 - Независимо исправлен Plan02 Task7 no-progress counter (`1c7cbe9`): meaningful evidence сбрасывает последовательный счётчик, инфраструктурный TOOL_ERROR не вызывает эскалацию. Regression RED воспроизвёл ошибку; focused recovery/scheduler tests 21/21, scoped ESLint и server typecheck PASS, независимый review PASS. Это не закрывает production recovery ladder или Plan02 целиком.
 - Plan20/05/06/19 lifecycle statuses и checklist completion не повышались; ни push, ни merge этими checkpoint не выполнены.
+
+## Безопасная пауза по запросу пользователя — 2026-10-17
+
+- Сохраняется промежуточный checkpoint Plan20 Task2/5A-M1: forward migration 047, единый platform mapping, versioned Darwin identity и её LIVE CAS validation. `context_deltas` не копируется и не перестраивается; миграция сохраняет owner/generation rows, constraints, triggers и FK-семантику. Нативный Darwin launcher, production composition, recovery/CI и Mac real-provider acceptance ещё не реализованы.
+- До последней узкой правки объединённый focused набор прошёл 6 файлов / 190 тестов. После исправления reviewer finding о неверном Linux STOPPED evidence для Darwin: regression RED воспроизвёл ошибку; owner/adapter/RunService GREEN — 3 файла / 166 тестов, scoped ESLint и server typecheck exit 0. После test-regex style correction миграционная проверка — 1 файл / 8 тестов PASS. Controller прочитал actual logs и выполнил свежий `git diff --check`: exit 0.
+- Независимый M1 review пока имеет последний verdict `CHANGES_REQUIRED`: единственное IMPORTANT исправлено в коде и проверено тестами, но повторный независимый review после исправления ещё не выполнен. M1 и планы не объявляются завершёнными. Полные repository gates и native/platform/provider gates этим checkpoint не заменяются.
+- Все текущие проверки дошли до terminal; matching repo test/node processes при controller readback не найдены. Implementer подтвердил frozen files и остановлен. Handoff, точные RED/GREEN/quality logs, review artifact и brief следующего этапа сохранены в git-owned `ebb-execution/plan-20`, путь определяется командой `git rev-parse --git-path ebb-execution/plan-20`.
+- После возобновления: сначала scoped M1 re-review, затем завершение его интеграции и M2 native anchor по принятому Plan20; не повторять готовую миграцию или прежние исследования. Все lifecycle statuses сохранены; push/merge не выполнялись.

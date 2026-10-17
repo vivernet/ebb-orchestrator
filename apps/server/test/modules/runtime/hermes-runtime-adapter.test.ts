@@ -12,6 +12,7 @@ import { validatePlatform } from "../../../src/platform/config/app-config.js";
 import * as orchestratorHomeModule from "../../../src/platform/home/orchestrator-home.js";
 import { HermesCliBuilder } from "../../../src/modules/runtime/hermes/hermes-cli.js";
 import { HERMES_PROVIDER_SELECTION_SOURCE } from "../../../src/modules/runtime/hermes/hermes-source-identity.js";
+import { containmentKindForPlatform } from "../../../src/modules/runtime/run-process-owner.js";
 import { createHermesLaunchTicket, type HermesLaunchTicketFactory } from "../../../src/modules/runtime/hermes/hermes-launch-ticket.js";
 import { createSqliteDatabase } from "../../../src/platform/database/sqlite-database.js";
 import {
@@ -1013,8 +1014,10 @@ describe("HermesRuntimeAdapter", () => {
 
       expect(scopeSupervisor.payloadDispatches).toBe(0);
       expect(scopeSupervisor.stopCalls).toHaveLength(1);
+      const fixtureContainmentKind = containmentKindForPlatform(process.platform);
+      if (fixtureContainmentKind === null) throw new Error("Test host platform has no process-owner fixture.");
       expect(await scopeSupervisor.inspect({
-        runId: run.id, containmentKind: process.platform === "win32" ? "windows-job" : "systemd-user-service",
+        runId: run.id, containmentKind: fixtureContainmentKind,
         containmentId: "unused", launchNonce: "unused", systemdInvocationId: null, systemdControlGroup: null,
         supervisorPid: null, supervisorStartIdentity: null, pid: null, platform: null,
         processStartIdentity: null, executableIdentity: null, state: "STOPPING",

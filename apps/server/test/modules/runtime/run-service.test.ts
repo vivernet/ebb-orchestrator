@@ -14,7 +14,7 @@ import { loadTestMigrations } from "../../helpers/migrations.js";
 import { createHermesManagedSelectionFixture } from "../../helpers/hermes-managed-selection-fixture.js";
 import { digestRunPromptBytesV1 } from "../../../src/modules/context/context-provenance.js";
 import type { PreparedRunContext } from "../../../src/modules/context/context-types.js";
-import { getRunProcessOwner, isAuthoritativeRunProcessStopEvidence, rotateRunProcessOwnerForResumeTx,
+import { containmentKindForPlatform, getRunProcessOwner, isAuthoritativeRunProcessStopEvidence, rotateRunProcessOwnerForResumeTx,
   syncCurrentRunProcessGenerationTx, transitionRunProcessOwnerTx } from "../../../src/modules/runtime/run-process-owner.js";
 import { captureWorkspaceSnapshotV1, createResumeContextBaselineV1, digestResumeBindingV1 } from "../../../src/modules/context/resume-eligibility.js";
 import { seedApprovedProjectConfig } from "../../helpers/approved-project-config.js";
@@ -618,6 +618,7 @@ describe("RunService with FakeAgentRuntime", () => {
     const run = await startRun({ role: "reviewer", model: "default", taskId, epicId: null,
       triggerReason: "review-request", contextVersion: "1", outputSchemaVersion: "1", capability: { workspace: tmpDir } });
     const owner = getRunProcessOwner(db!, run.id)!;
+    expect(owner.containmentKind).toBe(containmentKindForPlatform(process.platform));
     db!.transaction((tx) => {
       transitionRunProcessOwnerTx(tx, { runId: run.id, expectedState: "PREPARED", nextState: "LAUNCHING" });
       transitionRunProcessOwnerTx(tx, { runId: run.id, expectedState: "LAUNCHING", nextState: "LIVE", identity:

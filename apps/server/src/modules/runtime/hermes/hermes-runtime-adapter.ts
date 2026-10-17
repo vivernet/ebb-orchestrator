@@ -31,7 +31,7 @@ import { validatePlatform, type Platform } from "../../../platform/config/app-co
 import { resolveOrchestratorHome, type HomeEnv } from "../../../platform/home/orchestrator-home.js";
 import { ProcessScopeLaunchNotDispatchedError, type ProcessScopeLaunchRequest, type ProcessScopeSupervisor } from "../../../platform/process/run-scope-supervisor.js";
 import type { ProcessScopeIdentity, ProcessScopeObservation } from "../../../platform/process/process-inspector.js";
-import { getRunProcessOwner, isAuthoritativeRunProcessStopEvidence, prepareRunProcessOwner, syncCurrentRunProcessGenerationTx, transitionRunProcessOwnerTx, type RunProcessOwner, type RunProcessOwnerState } from "../run-process-owner.js";
+import { containmentKindForPlatform, getRunProcessOwner, isAuthoritativeRunProcessStopEvidence, prepareRunProcessOwner, syncCurrentRunProcessGenerationTx, transitionRunProcessOwnerTx, type RunProcessOwner, type RunProcessOwnerState } from "../run-process-owner.js";
 
 /**
  * В памяти run state tracking.
@@ -1274,9 +1274,9 @@ function ownerTransitionIdentity(identity: ProcessScopeIdentity) {
 }
 
 function currentContainmentKind(): RunProcessOwner["containmentKind"] {
-  if (process.platform === "win32") return "windows-job";
-  if (process.platform === "linux") return "systemd-user-service";
-  throw new Error(`RUN_PROCESS_CONTAINMENT_UNSUPPORTED:${process.platform}`);
+  const containmentKind = containmentKindForPlatform(process.platform);
+  if (containmentKind === null) throw new Error(`RUN_PROCESS_CONTAINMENT_UNSUPPORTED:${process.platform}`);
+  return containmentKind;
 }
 
 function currentHermesPlatform(): "win32" | "linux" {
