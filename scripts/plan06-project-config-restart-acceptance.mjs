@@ -1115,7 +1115,7 @@ async function createActivePointerFaultObserver(scenarioRoot, home, databasePath
   const markerPath = join(scenarioRoot, "plan06-active-pointer-trigger-observed");
   const markerContents = "PLAN06_ACTIVE_POINTER_TRIGGER=OBSERVED\n";
   const source = `
-import { writeFileSync } from "node:fs";
+import { writeFileSync, realpathSync } from "node:fs";
 import { DatabaseSync, StatementSync } from "node:sqlite";
 import { resolve } from "node:path";
 
@@ -1127,7 +1127,8 @@ if (!expectedDatabase || !markerPath) throw new Error("Plan 06 fault observer co
 
 function normalizePath(value) {
   if (typeof value !== "string" || value.length === 0) return "";
-  const normalized = resolve(value);
+  let normalized;
+  try { normalized = realpathSync(value); } catch { normalized = resolve(value); }
   return process.platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 function normalizeSql(value) { return String(value).replace(/\\s+/g, " ").trim(); }
@@ -1167,7 +1168,7 @@ async function createPostCommitCrashObserver(scenarioRoot, home, databasePath, p
   const preloadPath = join(scenarioRoot, "plan06-post-commit-crash-observer.mjs");
   const markerPath = join(scenarioRoot, "plan06-post-commit-observed.json");
   const source = `
-import { writeFileSync } from "node:fs";
+import { writeFileSync, realpathSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { resolve } from "node:path";
 
@@ -1180,7 +1181,8 @@ const markerPath = ${JSON.stringify(markerPath)};
 
 function normalizePath(value) {
   if (typeof value !== "string" || value.length === 0) return "";
-  const normalized = resolve(value);
+  let normalized;
+  try { normalized = realpathSync(value); } catch { normalized = resolve(value); }
   return process.platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 function normalizeSql(value) { return String(value).replace(/\\s+/g, " ").trim(); }
@@ -1239,7 +1241,7 @@ async function createPreCommitCrashObserver(scenarioRoot, home, databasePath, pr
   const preloadPath = join(scenarioRoot, "plan06-pre-commit-crash-observer.mjs");
   const markerPath = join(scenarioRoot, "plan06-pre-commit-observed.json");
   const source = `
-import { writeFileSync } from "node:fs";
+import { writeFileSync, realpathSync } from "node:fs";
 import { DatabaseSync, StatementSync } from "node:sqlite";
 import { resolve } from "node:path";
 
@@ -1252,7 +1254,8 @@ const expectedPreviousRevisionId = ${JSON.stringify(previousRevisionId)};
 const markerPath = ${JSON.stringify(markerPath)};
 function normalizePath(value) {
   if (typeof value !== "string" || value.length === 0) return "";
-  const normalized = resolve(value);
+  let normalized;
+  try { normalized = realpathSync(value); } catch { normalized = resolve(value); }
   return process.platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 function normalizeSql(value) { return String(value).replace(/\\s+/g, " ").trim(); }
