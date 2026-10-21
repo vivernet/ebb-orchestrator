@@ -1,10 +1,10 @@
 ---
 id: plan-19
 kind: plan
-status: in_progress
+status: completed
 title: План разблокирования и завершения открытых планов v1
 created: 2026-09-29
-updated: 2026-10-21
+updated: 2026-10-22
 depends_on: []
 specs:
   - ../specs/01-system-design.md
