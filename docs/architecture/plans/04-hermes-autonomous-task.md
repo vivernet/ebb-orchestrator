@@ -1,10 +1,10 @@
 ---
 id: plan-04
 kind: plan
-status: blocked
+status: completed
 title: План реализации среды выполнения Orchestrator Hermes и автономной задачи
 created: 2026-09-23
-updated: 2026-10-11
+updated: 2026-10-21
 depends_on: []
 specs:
   - ../specs/01-system-design.md

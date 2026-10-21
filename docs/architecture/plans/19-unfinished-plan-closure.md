@@ -4,7 +4,7 @@ kind: plan
 status: in_progress
 title: План разблокирования и завершения открытых планов v1
 created: 2026-09-29
-updated: 2026-10-14
+updated: 2026-10-21
 depends_on: []
 specs:
   - ../specs/01-system-design.md
@@ -359,6 +359,8 @@ Expected: parity verdict PASS only when there are exactly two schema-valid, comp
 **Interfaces:** workflow runs on `push` to `master`/`develop`, `pull_request` to `master`, and scheduled refresh; use read-only `contents`/`actions` and only `security-events: write` required for Code Scanning result upload. GitHub CodeQL advanced setup for JavaScript/TypeScript uploads the analysis when `analyze` completes; verify repository is public or has Code Security entitlement before relying on upload ([official setup](https://docs.github.com/en/code-security/code-scanning/creating-an-advanced-setup-for-code-scanning/configuring-advanced-setup-for-code-scanning)). Dependency audit artifact remains a separate existing control and never satisfies this source scan.
 
 **Current state (2026-09-30):** `.github/workflows/codeql.yml` is present with JavaScript/TypeScript CodeQL analysis and least-privilege job permissions. No hosted analysis result is tied to the current source revision, so Task 8 remains open; a configured workflow is not scan evidence.
+
+**Fresh CodeQL evidence (2026-10-21):** репозиторий сделан публичным; GitHub Code Scanning теперь доступен. Push финального develop HEAD `32285e4255d348d0f1a848cc5771d5aa994652eb` (коммит «Исправить ожидания миграционных тестов под голову схемы 047») запустил CodeQL workflow run `39648628981` (event=push, status=completed, conclusion=success). Analysis для этого SHA присутствует (`code-scanning/analyses`, tool CodeQL, created 2026-10-21T18:00:49Z). Открытых alerts нет; все существующие 12 alerts закрыты (won't fix / used in tests / false positive) с 2026-10-01. Требование «completed JS/TS analysis + retained run/SARIF evidence + no unreviewed load-bearing finding» выполнено для финальной revision. Это закрывает Task 8 evidence; итоговый вердикт по Plan09 зависит от независимого whole-plan review (Task 9).
 
 **GREEN:**
 

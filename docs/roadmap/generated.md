@@ -5,7 +5,7 @@ kind: roadmap
 title: Ebb Orchestrator Roadmap
 summary: Generated from Plan metadata and dependencies
 created: 2026-09-16
-updated: 2026-10-16
+updated: 2026-10-21
 ---
 
 # Ebb Orchestrator Roadmap
@@ -19,7 +19,7 @@ updated: 2026-10-16
 | plan-01 | in_progress | План реализации Foundation и Persistence Orchestrator |
 | plan-02 | in_progress | План реализации домена Orchestrator, Workflow, Scheduler и Recovery |
 | plan-03 | completed | План реализации Git, Execution и Security Orchestrator |
-| plan-04 | blocked | План реализации среды выполнения Orchestrator Hermes и автономной задачи |
+| plan-04 | completed | План реализации среды выполнения Orchestrator Hermes и автономной задачи |
 | plan-05 | blocked | План реализации планирования Orchestrator, эпиков, контекста, знаний и использования |
 | plan-06 | in_progress | План реализации Web UI, GitHub и выпуска v1 Orchestrator |
 | plan-07 | blocked | План миграции процесса разработки Ebb Orchestrator с OpenCode на Hermes |
