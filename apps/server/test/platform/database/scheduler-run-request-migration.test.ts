@@ -84,7 +84,7 @@ describe("scheduler RunRequest migration", () => {
     db.run("UPDATE scheduler_run_requests SET status='DISPATCHED',run_id=$runId,updated_at=$now WHERE id=$id", { id: requestId, runId, now });
     expect(() => db!.run("DELETE FROM agent_runs WHERE id=$runId", { runId })).toThrow();
     const requestRowsBefore = db.all("SELECT * FROM scheduler_run_requests");
-    expect(runMigrations(db, loadTestMigrations()).applied).toBe(2);
+    expect(runMigrations(db, loadTestMigrations()).applied).toBe(3);
     expect(db.all("SELECT * FROM scheduler_run_requests")).toEqual(requestRowsBefore);
     expect(db.all("SELECT * FROM context_deltas")).toEqual(contextRowsBefore);
     expect(db.all("SELECT name,sql FROM sqlite_master WHERE name IN ('context_deltas','context_manifests','idx_context_deltas_manifest') ORDER BY name")).toEqual(contextSchemaBefore);
