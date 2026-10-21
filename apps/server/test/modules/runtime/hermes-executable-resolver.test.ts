@@ -137,6 +137,28 @@ describe("direct installed Hermes resolver", () => {
     expect(resolution.hermesConfigHome).toBe(paths.profileHome);
     expect(resolution.runtimeExecutablePath).toBe(paths.python);
   });
+
+  it.runIf(process.platform === "win32")("prefers the launcher inside the configured Hermes home over ambiguous PATH candidates", async () => {
+    const paths = await windowsHomeFixture();
+    const resolution = await resolveHermesExecutable({
+      cwd: paths.cwd,
+      pathValue: `${paths.otherBin1}${win32.delimiter}${paths.otherBin2}`,
+      platform: "win32",
+      environment: paths.environment,
+      verifyNativeHelper: async () => undefined,
+      runNativePathVerifier: async (_file, args) => {
+        const filename = args[args.indexOf("file") + 1] ?? "";
+        return { exitCode: 0, stdout: JSON.stringify({
+          status: "SAFE_PATH", kind: "file", path: filename,
+          volumeSerial: "0123456789abcdef", fileId: "0123456789abcdef0123456789abcdef",
+        }), stderr: "" };
+      },
+    });
+    expect(resolution.executablePath).toBe(paths.launcher);
+    expect(resolution.hermesProjectRoot).toBe(paths.source);
+    expect(resolution.hermesConfigHome).toBe(paths.hermesHome);
+    expect(resolution.runtimeExecutablePath).toBe(paths.python);
+  });
 });
 
 async function windowsFixture() {
@@ -177,6 +199,44 @@ async function windowsProfileFixture() {
     python,
     profileHome,
     environment: { ...paths.environment, HERMES_HOME: profileHome },
+  };
+}
+
+async function windowsHomeFixture() {
+  fixtureRoot = await mkdtemp(join(tmpdir(), "ebb-hermes-home-")).then(resolve);
+  const paths = win32;
+  const hermesHome = paths.join(fixtureRoot, "user-home", "hermes");
+  const source = paths.join(hermesHome, "hermes-agent");
+  const bin = paths.join(hermesHome, "bin");
+  const cwd = paths.join(fixtureRoot, "cwd");
+  const otherBin1 = paths.join(fixtureRoot, "other1");
+  const otherBin2 = paths.join(fixtureRoot, "other2");
+  await Promise.all([
+    mkdir(paths.join(source, "hermes_cli"), { recursive: true }),
+    mkdir(bin, { recursive: true }),
+    mkdir(cwd),
+    mkdir(otherBin1, { recursive: true }),
+    mkdir(otherBin2, { recursive: true }),
+  ]);
+  await writeFile(paths.join(source, "hermes_cli", "main.py"), "");
+  await writeFile(paths.join(source, "install-stamp.json"), JSON.stringify({ commit: HERMES_PROVIDER_SELECTION_SOURCE.commit }));
+  const launcher = paths.join(bin, "hermes.cmd");
+  await writeFile(launcher, "@echo off\r\n");
+  await writeFile(paths.join(otherBin1, "hermes.cmd"), "@echo off\r\n");
+  await writeFile(paths.join(otherBin2, "hermes.cmd"), "@echo off\r\n");
+  const runtime = paths.join(hermesHome, "tools");
+  const pythonEntry = "python-store-entry-home";
+  const python = paths.join(runtime, pythonEntry, "python.exe");
+  await mkdir(paths.dirname(python), { recursive: true });
+  await writeFile(python, "");
+  await writeFile(paths.join(runtime, "facts.json"), JSON.stringify({ packages: { python: { entry: pythonEntry } } }));
+  return {
+    source, bin, cwd, launcher, python, runtime, hermesHome, otherBin1, otherBin2,
+    environment: {
+      PATH: `${otherBin1}${win32.delimiter}${otherBin2}`,
+      HERMES_HOME: hermesHome,
+      USERPROFILE: fixtureRoot,
+    },
   };
 }
 

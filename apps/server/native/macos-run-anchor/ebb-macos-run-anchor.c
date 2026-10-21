@@ -251,7 +251,7 @@ static bool query_start_identity(int pid, proc_start_identity *out) {
   struct proc_bsdinfo info;
   int r = proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, sizeof(info));
   if (r != (int)sizeof(info)) return false;
-  if (info.pbi_pid != pid) return false;
+  if (info.pbi_pid != (uint32_t)pid) return false;
   out->pid = pid;
   out->start_sec = (uint64_t)info.pbi_start_tvsec;
   out->start_usec = (uint32_t)info.pbi_start_tvusec;
@@ -788,7 +788,7 @@ static int cmd_launch(int argc, char **argv) {
       foreign = true;
       struct proc_bsdinfo info;
       int r = proc_pidinfo(pids[i], PROC_PIDTBSDINFO, 0, &info, sizeof(info));
-      if (r != (int)sizeof(info) || info.pbi_pid != pids[i]) {
+      if (r != (int)sizeof(info) || info.pbi_pid != (uint32_t)pids[i]) {
         proof_broken = true;
         break;
       }
@@ -891,7 +891,7 @@ static int cmd_inspect(int argc, char **argv) {
   bool anchor_live = false;
   {
     int r = proc_pidinfo((int)anchor_pid, PROC_PIDTBSDINFO, 0, &anchor_info, sizeof(anchor_info));
-    if (r == (int)sizeof(anchor_info) && anchor_info.pbi_pid == (int)anchor_pid) {
+    if (r == (int)sizeof(anchor_info) && anchor_info.pbi_pid == (uint32_t)anchor_pid) {
       if (identity_matches(&expected_anchor, anchor_info.pbi_pid,
                            (uint64_t)anchor_info.pbi_start_tvsec,
                            (uint32_t)anchor_info.pbi_start_tvusec)) {
@@ -946,7 +946,7 @@ static int cmd_inspect(int argc, char **argv) {
     }
     struct proc_bsdinfo info;
     int r = proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, sizeof(info));
-    if (r != (int)sizeof(info) || info.pbi_pid != pid) {
+    if (r != (int)sizeof(info) || info.pbi_pid != (uint32_t)pid) {
       proof_broken = true;
       break;
     }
@@ -1002,7 +1002,7 @@ static int cmd_inspect(int argc, char **argv) {
         any_foreign = true;
         struct proc_bsdinfo info;
         int r = proc_pidinfo(again[i], PROC_PIDTBSDINFO, 0, &info, sizeof(info));
-        if (r != (int)sizeof(info) || info.pbi_pid != again[i]) {
+        if (r != (int)sizeof(info) || info.pbi_pid != (uint32_t)again[i]) {
           free(again);
           printf("UNKNOWN\tDARWIN_GROUP_MEMBER_UNAVAILABLE\n");
           return 0;

@@ -58,14 +58,14 @@ export async function resolveHermesExecutable(
   const paths = platform === "win32" ? path.win32 : path.posix;
   const environment = options.environment ?? process.env;
   const cwd = await existingDirectory(options.cwd ?? process.cwd(), paths);
-  const executablePath = await findLauncher(options.pathValue ?? environment.PATH ?? "", cwd, platform);
+  const hermesConfigHome = platform === "win32"
+    ? resolveWindowsHermesConfigHome(environment)
+    : resolveLinuxHermesConfigHome(environment);
+  const executablePath = await findLauncher(options.pathValue ?? environment.PATH ?? "", cwd, platform, hermesConfigHome);
   const hermesProjectRoot = platform === "win32"
     ? await windowsSourceRoot(executablePath, cwd)
     : await linuxSourceRoot(executablePath, cwd);
   const sourceCommit = await readInstalledSourceCommit(hermesProjectRoot);
-  const hermesConfigHome = platform === "win32"
-    ? resolveWindowsHermesConfigHome(environment)
-    : resolveLinuxHermesConfigHome(environment);
   const runtime = platform === "win32"
     ? await windowsRuntime(hermesProjectRoot, hermesConfigHome, environment)
     : await linuxRuntime(hermesProjectRoot, hermesConfigHome, environment);
@@ -91,8 +91,10 @@ async function readInstalledSourceCommit(sourceRoot: string): Promise<string | n
   }
 }
 
-async function findLauncher(pathValue: string, cwd: string, platform: Platform): Promise<string> {
+async function findLauncher(pathValue: string, cwd: string, platform: Platform, home: string): Promise<string> {
   const paths = platform === "win32" ? path.win32 : path.posix;
+  const homeLauncher = await resolveHomeLauncher(home, platform, paths, cwd);
+  if (homeLauncher) return homeLauncher;
   const matches = new Map<string, string>();
   for (const entry of pathValue.split(paths.delimiter)) {
     if (!paths.isAbsolute(entry) || hasControlCharacters(entry)) continue;
@@ -109,6 +111,25 @@ async function findLauncher(pathValue: string, cwd: string, platform: Platform):
   if (matches.size === 0) throw resolverError("HERMES_LAUNCHER_NOT_FOUND");
   if (matches.size !== 1) throw resolverError("HERMES_LAUNCHER_AMBIGUOUS");
   return [...matches.values()][0]!;
+}
+
+/** Предпочитает launcher из настроенного Hermes home (`<home>/bin`), если он существует. */
+async function resolveHomeLauncher(
+  home: string,
+  platform: Platform,
+  paths: PlatformPaths,
+  cwd: string,
+): Promise<string | undefined> {
+  if (!paths.isAbsolute(home) || hasControlCharacters(home)) return undefined;
+  const binaryDirectory = await existingDirectory(paths.join(home, "bin"), paths).catch(() => undefined);
+  if (!binaryDirectory || isWithin(cwd, binaryDirectory, paths)) return undefined;
+  for (const name of platform === "win32" ? ["hermes.cmd", "hermes.exe"] : ["hermes"]) {
+    const candidate = await existingFile(paths.join(binaryDirectory, name), paths).catch(() => undefined);
+    if (!candidate || isWithin(cwd, candidate, paths)) continue;
+    if (platform === "linux" && !(await access(candidate, fsConstants.X_OK).then(() => true, () => false))) continue;
+    return candidate;
+  }
+  return undefined;
 }
 
 async function windowsSourceRoot(launcher: string, cwd: string): Promise<string> {
