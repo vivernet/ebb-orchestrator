@@ -20,7 +20,7 @@ updated: 2026-10-21
 | plan-02 | in_progress | План реализации домена Orchestrator, Workflow, Scheduler и Recovery |
 | plan-03 | completed | План реализации Git, Execution и Security Orchestrator |
 | plan-04 | completed | План реализации среды выполнения Orchestrator Hermes и автономной задачи |
-| plan-05 | blocked | План реализации планирования Orchestrator, эпиков, контекста, знаний и использования |
+| plan-05 | completed | План реализации планирования Orchestrator, эпиков, контекста, знаний и использования |
 | plan-06 | in_progress | План реализации Web UI, GitHub и выпуска v1 Orchestrator |
 | plan-07 | completed | План миграции процесса разработки Ebb Orchestrator с OpenCode на Hermes |
 | plan-08-01 | completed | Web UI Foundation and Shell |
