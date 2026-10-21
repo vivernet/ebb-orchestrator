@@ -440,7 +440,7 @@ test('Plan 19 Task 7 cleanup acceptance is bounded to wrapper-owned process and 
     assert.doesNotMatch(text, /full OS process-tree cleanup PASS/i);
   }
 
-  assert.match(roadmap, /\| `plan-07` \| `blocked` \|[\s\S]*Plan19 Task7 bounded acceptance PASS[\s\S]*detached OS descendants остаются `NOT VERIFIED` по принятой v1 политике/i);
+  assert.match(roadmap, /\| `plan-07` \| `completed` \|[\s\S]*whole-plan review PASS[\s\S]*detached OS descendants остаются `NOT VERIFIED` по принятой v1 политике/i);
   assert.match(reconciliation, /Correction — Plan19 Task7 bounded cleanup acceptance \(2026-10-13\)/);
   assert.match(auditReport, /Correction — bounded Task7 cleanup policy B \(2026-10-13\)/);
   assert.match(auditReport, /detached OS descendants[\s\S]{0,80}NOT VERIFIED[\s\S]{0,160}не блокируют PASS/i);
