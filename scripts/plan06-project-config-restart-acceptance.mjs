@@ -7,9 +7,9 @@ import { randomBytes } from "node:crypto";
 import { createServer } from "node:net";
 import { finished } from "node:stream/promises";
 import { clearTimeout, setTimeout } from "node:timers";
-import { mkdtemp, mkdir, readFile, readdir, realpath, rm, unlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, realpath, realpathSync, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, relative, resolve, sep, isAbsolute } from "node:path";
+import { basename, dirname, join, relative, resolve, sep, isAbsolute } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const root = resolve(import.meta.dirname, "..");
@@ -1347,7 +1347,13 @@ async function removeOwnedTemporaryRoot(temporaryRoot) {
 }
 
 function assertPathWithin(parent, candidate, label) {
-  const pathFromParent = relative(resolve(parent), resolve(candidate));
+  const canonicalize = (value) => {
+    try { return realpathSync(value); } catch { return resolve(value); }
+  };
+  const canonicalParent = canonicalize(parent);
+  const candidateDirectory = canonicalize(dirname(candidate));
+  const canonicalCandidate = join(candidateDirectory, basename(candidate));
+  const pathFromParent = relative(canonicalParent, canonicalCandidate);
   assert.ok(
     pathFromParent === "" || (pathFromParent !== ".." && !pathFromParent.startsWith(`..${sep}`) && !isAbsolute(pathFromParent)),
     `${label} escaped its owned root`,
