@@ -22,7 +22,7 @@ updated: 2026-10-21
 | plan-04 | completed | План реализации среды выполнения Orchestrator Hermes и автономной задачи |
 | plan-05 | blocked | План реализации планирования Orchestrator, эпиков, контекста, знаний и использования |
 | plan-06 | in_progress | План реализации Web UI, GitHub и выпуска v1 Orchestrator |
-| plan-07 | blocked | План миграции процесса разработки Ebb Orchestrator с OpenCode на Hermes |
+| plan-07 | completed | План миграции процесса разработки Ebb Orchestrator с OpenCode на Hermes |
 | plan-08-01 | completed | Web UI Foundation and Shell |
 | plan-08-02 | completed | Web UI Core Functional — Onboarding, Dashboard, Project |
 | plan-08-03 | completed | Web UI Onboarding Flow & Projections |

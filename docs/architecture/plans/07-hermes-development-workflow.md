@@ -1,10 +1,10 @@
 ---
 id: plan-07
 kind: plan
-status: blocked
+status: completed
 title: План миграции процесса разработки Ebb Orchestrator с OpenCode на Hermes
 created: 2026-09-23
-updated: 2026-10-14
+updated: 2026-10-21
 depends_on: []
 specs:
   - ../specs/01-system-design.md
