@@ -618,16 +618,18 @@ static int cmd_launch(int argc, char **argv) {
     return 3;
   }
 
-  /* Живая сессия: anchor — session и group leader. */
-  if (setsid() != 0) {
-    if (errno != EPERM || getpgrp() != getpid() || getsid(0) != getpid()) {
-      send_unknown("DARWIN_SESSION_LEADER_UNAVAILABLE");
-      return 3;
+  /* Живая группа: anchor — лидер группы процессов; сессия создаётся по возможности. */
+  if (getpgrp() != getpid()) {
+    if (setpgid(0, 0) != 0 && setsid() != 0) {
+      if (errno != EPERM || getpgrp() != getpid()) {
+        send_unknown("DARWIN_SESSION_LEADER_UNAVAILABLE");
+        return 3;
+      }
     }
   }
   int pgid = getpid();
-  int sid = getpid();
-  if (getpgrp() != pgid || getsid(0) != sid) {
+  int sid = getsid(0);
+  if (getpgrp() != pgid) {
     send_unknown("DARWIN_SESSION_LEADER_UNAVAILABLE");
     return 3;
   }
@@ -856,7 +858,7 @@ static int cmd_inspect(int argc, char **argv) {
       strncmp(executable_identity, "sha256:", 7) != 0 ||
       !is_lower_hex(executable_identity + 7, 64)) return 2;
 
-  if (pgid != anchor_pid || sid != anchor_pid) {
+  if (pgid != anchor_pid) {
     printf("UNKNOWN\tDARWIN_ANCHOR_IDENTITY_MISMATCH\n");
     return 0;
   }

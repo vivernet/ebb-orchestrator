@@ -257,7 +257,7 @@ export function parseLiveIdentity(line: string, owner: ProcessScopeIdentity): Pr
   if (
     !anchorPid || anchorSec === null || anchorUsec === null || !pgid || !sid ||
     !runnerPid || runnerSec === null || runnerUsec === null ||
-    pgid !== anchorPid || sid !== anchorPid ||
+    pgid !== anchorPid ||
     !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(bootSessionUUID) ||
     !/^sha256:[a-f0-9]{64}$/.test(executableIdentity)
   ) {
