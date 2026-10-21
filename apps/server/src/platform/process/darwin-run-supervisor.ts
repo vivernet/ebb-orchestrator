@@ -305,8 +305,7 @@ export function parseInspection(output: string, owner: ProcessScopeIdentity): Pr
 
 function assertDarwinOwner(owner: ProcessScopeIdentity): void {
   if (process.platform !== "darwin" || owner.containmentKind !== "darwin-process-group" ||
-      !/^[a-f0-9]{64}$/.test(owner.containmentId) || !/^[a-f0-9]{64}$/.test(owner.launchNonce) ||
-      !owner.supervisorStartIdentity || !owner.processStartIdentity) {
+      !/^[a-f0-9]{64}$/.test(owner.containmentId) || !/^[a-f0-9]{64}$/.test(owner.launchNonce)) {
     throw new Error("DARWIN_PROCESS_SCOPE_UNSUPPORTED");
   }
 }
