@@ -1279,9 +1279,9 @@ function currentContainmentKind(): RunProcessOwner["containmentKind"] {
   return containmentKind;
 }
 
-function currentHermesPlatform(): "win32" | "linux" {
+function currentHermesPlatform(): "win32" | "linux" | "darwin" {
   const platform = validatePlatform(process.platform);
-  if (platform !== "win32" && platform !== "linux") throw new Error("HERMES_PLATFORM_UNSUPPORTED");
+  if (platform !== "win32" && platform !== "linux" && platform !== "darwin") throw new Error("HERMES_PLATFORM_UNSUPPORTED");
   return platform;
 }
 
@@ -1305,14 +1305,14 @@ function normalizeManagedRuntimeIdentity(serialized: string): string | null {
   if (keys.length !== expectedKeys.length || keys.some((key, index) => key !== expectedKeys[index])) return null;
   if (value.sourceCommit !== undefined && value.sourceCommit !== null &&
       (typeof value.sourceCommit !== "string" || !/^[a-f0-9]{40}$/u.test(value.sourceCommit))) return null;
-  if (value.platform !== "win32" && value.platform !== "linux") return null;
+  if (value.platform !== "win32" && value.platform !== "linux" && value.platform !== "darwin") return null;
   const hermes = normalizeRuntimeObjectIdentity(value.hermes, value.platform);
   const python = normalizeRuntimeObjectIdentity(value.python, value.platform);
   if (!hermes || !python) return null;
   return JSON.stringify({ platform: value.platform, hermes, python });
 }
 
-function normalizeRuntimeObjectIdentity(value: unknown, platform: "win32" | "linux"): Record<string, string> | null {
+function normalizeRuntimeObjectIdentity(value: unknown, platform: "win32" | "linux" | "darwin"): Record<string, string> | null {
   if (!isRecord(value) || value.platform !== platform) return null;
   const keys = Object.keys(value).sort();
   if (platform === "win32") {

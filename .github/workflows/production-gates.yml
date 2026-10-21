@@ -185,6 +185,33 @@ jobs:
       - name: Run executable launch frame and nonce-ACK acceptance
         run: node apps/server/scripts/test-windows-run-supervisor-frame.mjs
 
+  process-scope-darwin-acceptance:
+    runs-on: macos-14
+    timeout-minutes: 20
+    env:
+      EBB_RUN_NATIVE_SCOPE_ACCEPTANCE: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Assert Apple Silicon runner architecture
+        run: test "$(uname -m)" = arm64
+      - name: Setup pnpm
+        uses: pnpm/setup@v1
+        with:
+          version: ">=12.0.0"
+          runtime: node@24
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24.x"
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build macOS process-scope anchor
+        run: pnpm --filter @ebb-orchestrator/server run build
+      - name: Run native provider-free Darwin process-scope acceptance
+        run: pnpm --filter @ebb-orchestrator/server exec vitest run test/e2e/darwin-process-scope.acceptance.test.ts
+
   keyring-acceptance:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10

@@ -6,6 +6,7 @@ import { HermesRuntimeAdapter } from "../../modules/runtime/hermes/hermes-runtim
 import { ProcessExecutor } from "../process/process-executor.js";
 import { SystemdRunSupervisor } from "../process/systemd-run-supervisor.js";
 import { WindowsJobSupervisor } from "../process/windows-job-supervisor.js";
+import { DarwinRunSupervisor } from "../process/darwin-run-supervisor.js";
 import type { ProcessScopeSupervisor } from "../process/run-scope-supervisor.js";
 import { GitCli } from "../../modules/git/git-cli.js";
 import { GitReconciler } from "../../modules/git/git-reconciler.js";
@@ -206,6 +207,7 @@ export function createProductionComposition(options: ProductionCompositionOption
 function createPlatformSupervisor(executor: ProcessExecutor): ProcessScopeSupervisor {
   if (process.platform === "win32") return new WindowsJobSupervisor(executor);
   if (process.platform === "linux") return new SystemdRunSupervisor(executor);
+  if (process.platform === "darwin") return new DarwinRunSupervisor();
   return {
     async inspect() { return { state: "UNKNOWN", reason: "UNSUPPORTED_PROCESS_SCOPE_PLATFORM" }; },
     async launch() { throw new Error("PROCESS_SCOPE_PLATFORM_UNSUPPORTED"); },

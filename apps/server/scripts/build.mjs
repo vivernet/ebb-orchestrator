@@ -2,7 +2,7 @@ import { cpSync, existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import process from "node:process";
-import { ensureHermesProfilePathHelper, ensureLinuxHermesLauncher, ensureWindowsRunSupervisor, writeNativeHelperIntegrityAnchor } from "./package-native-assets.mjs";
+import { ensureDarwinRunAnchor, ensureHermesProfilePathHelper, ensureLinuxHermesLauncher, ensureWindowsRunSupervisor, writeNativeHelperIntegrityAnchor } from "./package-native-assets.mjs";
 
 const appRoot = resolve(import.meta.dirname, "..");
 const distRoot = resolve(appRoot, "dist");
@@ -34,6 +34,16 @@ ensureLinuxHermesLauncher({
   platform: process.platform,
   serverRoot: appRoot,
   buildHelper: () => execFileSync(process.execPath, [resolve(appRoot, "scripts/build-linux-hermes-launcher.mjs")], {
+    cwd: appRoot,
+    stdio: "inherit",
+    windowsHide: true,
+  }),
+});
+
+ensureDarwinRunAnchor({
+  platform: process.platform,
+  serverRoot: appRoot,
+  buildHelper: () => execFileSync(process.execPath, [resolve(appRoot, "scripts/build-macos-run-anchor.mjs")], {
     cwd: appRoot,
     stdio: "inherit",
     windowsHide: true,

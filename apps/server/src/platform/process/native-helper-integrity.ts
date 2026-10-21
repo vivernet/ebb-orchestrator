@@ -3,7 +3,7 @@ import { lstat, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-export type NativeHelperAnchorName = "windowsRunSupervisor" | "hermesProfilePath";
+export type NativeHelperAnchorName = "windowsRunSupervisor" | "hermesProfilePath" | "darwinRunAnchor";
 type NativeHelperAnchorKey = NativeHelperAnchorName | "linuxHermesLauncher";
 
 /** Loads only the expected digest from generated parent-runtime code, never from helper output. */

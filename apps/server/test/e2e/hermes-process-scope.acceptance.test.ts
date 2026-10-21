@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { constants } from "node:fs";
-import { access, mkdtemp, open, readFile, readdir, rm, statfs, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, open, readFile, readdir, rm, statfs, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -13,6 +13,7 @@ import { inspectCgroupTree, type ProcessScopeIdentity } from "../../src/platform
 import { ExitCodeError, ProcessExecutor, type ProcessResult } from "../../src/platform/process/process-executor.js";
 import { SystemdRunSupervisor } from "../../src/platform/process/systemd-run-supervisor.js";
 import { WindowsJobSupervisor } from "../../src/platform/process/windows-job-supervisor.js";
+import { DarwinRunSupervisor } from "../../src/platform/process/darwin-run-supervisor.js";
 import type { ProcessScopeHandle } from "../../src/platform/process/run-scope-supervisor.js";
 import {
   formatRestartChildOutputDiagnostic,
@@ -1283,6 +1284,112 @@ async function runWindowsHelperCrashBoundaryAcceptance(): Promise<void> {
   if (testError !== undefined) throw testError;
   if (cleanupError !== undefined) throw cleanupError;
 }
+
+const isDarwin = process.platform === "darwin";
+
+function darwinWorkerEnvironment(runHome: string): Record<string, string> {
+  return {
+    PATH: process.env.PATH ?? "/usr/bin:/bin:/usr/sbin:/sbin",
+    HOME: homedir(),
+    LANG: "C.UTF-8",
+    TMPDIR: tmpdir(),
+    NODE_ENV: "test",
+    HERMES_HOME: runHome,
+  };
+}
+
+describe.skipIf(!isDarwin || !nativeAcceptanceEnabled)("Darwin native process-scope acceptance", () => {
+  let tempDirectory: string | undefined;
+  afterEach(async () => {
+    if (tempDirectory) await rm(tempDirectory, { recursive: true, force: true });
+    tempDirectory = undefined;
+  });
+
+  function baseOwner(runId: string): ProcessScopeIdentity {
+    return {
+      runId,
+      containmentKind: "darwin-process-group",
+      containmentId: Buffer.from(randomUUID()).toString("hex").padStart(64, "0").slice(0, 64),
+      launchNonce: Buffer.from(randomUUID()).toString("hex").padStart(64, "0").slice(0, 64),
+      systemdInvocationId: null,
+      systemdControlGroup: null,
+      supervisorPid: null,
+      supervisorStartIdentity: null,
+      pid: null,
+      platform: null,
+      processStartIdentity: null,
+      executableIdentity: null,
+      state: "PREPARED",
+    };
+  }
+
+  it("proves a bounded group-empty stop after dummy payload exit and a fresh observer sees the same empty group", async () => {
+    tempDirectory = await mkdtemp(join(tmpdir(), "ebb-darwin-scope-"));
+    const runHome = join(tempDirectory, "run-home");
+    await mkdir(runHome);
+    const owner = baseOwner(randomUUID());
+    const supervisor = new DarwinRunSupervisor();
+    const handle = await supervisor.launch(owner, {
+      executable: "/bin/sh",
+      args: ["-c", "sleep 0.2; echo DARWIN_PAYLOAD_DONE"],
+      cwd: runHome,
+      environment: {
+        PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+        HOME: homedir(),
+        LANG: "C.UTF-8",
+        TMPDIR: tmpdir(),
+      },
+      timeoutMs: 30_000,
+    }, async () => undefined);
+    const result = await handle.completion;
+    expect(result.stdout).toContain("DARWIN_PAYLOAD_DONE");
+    const stopped = await supervisor.waitForStopped(owner);
+    expect(stopped.state).toBe("STOPPED");
+    if (stopped.state === "STOPPED") expect(stopped.evidence).toBe("DARWIN_GROUP_EMPTY");
+    const fresh = new DarwinRunSupervisor();
+    const observed = await fresh.inspect(owner);
+    expect(observed.state).toBe("STOPPED");
+  });
+
+  it("recovers an interrupted LIVE owner after launcher restart via preflight without reconnect", async () => {
+    tempDirectory = await mkdtemp(join(tmpdir(), "ebb-darwin-scope-"));
+    const runHome = join(tempDirectory, "run-home");
+    await mkdir(runHome);
+    const databasePath = join(tempDirectory, "state.db");
+    const database = createSqliteDatabase(databasePath);
+    try {
+      runMigrations(database, loadTestMigrations());
+      const runId = randomUUID();
+      database.run(
+        "INSERT INTO agent_runs(id,role,runtime,model,status,started_at) VALUES($id,'developer','hermes','dummy-5a','STARTED',$startedAt)",
+        { id: runId, startedAt: new Date().toISOString() },
+      );
+      const heartbeat = join(tempDirectory, "heartbeat");
+      const digest = join(tempDirectory, "digest");
+      const descendantPid = join(tempDirectory, "descendant-pid");
+      const descendantExit = join(tempDirectory, "descendant-exit");
+      const marker = join(tempDirectory, "marker.json");
+      const worker = spawnRestartWorker(
+        ["launch", databasePath, runId, runHome, heartbeat, digest, descendantPid, descendantExit, marker],
+        darwinWorkerEnvironment(runHome),
+        true,
+      );
+      const launchedMarker = await promiseWithTimeout(waitForFile(marker), 60_000, "DARWIN_LAUNCHER_READY_MARKER_TIMEOUT");
+      const launched = JSON.parse(launchedMarker) as Record<string, unknown>;
+      expect(launched.state).toBe("LIVE");
+      await terminateRestartLauncher(worker, undefined, 15_000);
+
+      const recoveryMarker = join(tempDirectory, "recovery-marker.json");
+      const recovery = await runRecoveryWorker(databasePath, runId, recoveryMarker, darwinWorkerEnvironment(runHome));
+      expect(recovery.exit.code).toBe(0);
+      expect(recovery.result.ok).toBe(true);
+      expect(recovery.result.state).toBe("STOPPED");
+      expect(recovery.result.stopEvidence).toBe("DARWIN_GROUP_EMPTY");
+    } finally {
+      database.close();
+    }
+  });
+});
 
 function restartWorkerEnvironment(runHome: string): Record<string, string> {
   if (isWindows) {

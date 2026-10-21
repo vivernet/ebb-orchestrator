@@ -4,13 +4,14 @@ const ticketBrand: unique symbol = Symbol("HermesLaunchTicket");
 
 export type HermesLaunchObjectIdentity =
   | { readonly platform: "win32"; readonly volumeSerial: string; readonly fileId: string }
-  | { readonly platform: "linux"; readonly device: string; readonly inode: string };
+  | { readonly platform: "linux"; readonly device: string; readonly inode: string }
+  | { readonly platform: "darwin"; readonly device: string; readonly inode: string };
 
 /** Минимальные сведения, связывающие прямой Hermes запуск с одним Run. */
 export interface HermesLaunchTicketInput {
   readonly runId: string;
   readonly attempt: number | null;
-  readonly platform: "win32" | "linux";
+  readonly platform: "win32" | "linux" | "darwin";
   readonly hermesExecutablePath: string;
   readonly hermesExecutableIdentity: HermesLaunchObjectIdentity;
   readonly sourceCommit: string | null;
@@ -127,7 +128,7 @@ export function consumeHermesLaunchTicket(
 function assertTicketInput(input: HermesLaunchTicketInput): void {
   const paths = input.platform === "win32" ? path.win32 : path.posix;
   if (!isUuidV4(input.runId) || (input.attempt !== null && (!Number.isSafeInteger(input.attempt) || input.attempt < 0)) ||
-      (input.platform !== "win32" && input.platform !== "linux") ||
+      (input.platform !== "win32" && input.platform !== "linux" && input.platform !== "darwin") ||
       !paths.isAbsolute(input.hermesExecutablePath) || !paths.isAbsolute(input.executablePath) ||
       !paths.isAbsolute(input.hermesHome) ||
       !(input.platform === "win32" ? ["hermes", "hermes.exe", "hermes.cmd"] : ["hermes", "hermes.exe"])
@@ -157,7 +158,7 @@ function hasExactPrefix(args: readonly string[], prefix: readonly string[]): boo
   return args.length >= prefix.length && prefix.every((value, index) => args[index] === value);
 }
 
-function samePath(left: string, right: string, platform: "win32" | "linux"): boolean {
+function samePath(left: string, right: string, platform: "win32" | "linux" | "darwin"): boolean {
   const paths = platform === "win32" ? path.win32 : path.posix;
   const normalizedLeft = paths.normalize(left);
   const normalizedRight = paths.normalize(right);

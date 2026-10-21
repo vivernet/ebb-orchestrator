@@ -54,8 +54,8 @@ describe("Run process owner", () => {
     expect(parseDarwinProcessGroupIdentityV1(encoded)).toEqual({ ...identity, bootSessionUUID: identity.bootSessionUUID.toLowerCase() });
     expect(() => parseDarwinProcessGroupIdentityV1(null)).toThrow("DARWIN_PROCESS_IDENTITY_UNAVAILABLE");
     expect(() => encodeDarwinProcessGroupIdentityV1({ ...identity, pgid: 0 })).toThrow("DARWIN_PROCESS_IDENTITY_UNAVAILABLE");
-    expect(isAuthoritativeRunProcessStopEvidence("DARWIN_GROUP_EMPTY", "darwin-process-group")).toBe(false);
-    expect(isAuthoritativeRunProcessStopEvidence("BOOT_SESSION_CHANGED", "darwin-process-group")).toBe(false);
+    expect(isAuthoritativeRunProcessStopEvidence("DARWIN_GROUP_EMPTY", "darwin-process-group")).toBe(true);
+    expect(isAuthoritativeRunProcessStopEvidence("BOOT_SESSION_CHANGED", "darwin-process-group")).toBe(true);
   });
 
   it("does not accept Linux or Windows stop evidence for a Darwin owner", () => {
@@ -71,14 +71,15 @@ describe("Run process owner", () => {
     expect(isAuthoritativeRunProcessStopEvidence("LAUNCH_NOT_DISPATCHED", "darwin-process-group")).toBe(true);
   });
 
-  it("keeps Darwin owner fixtures unavailable until a verified producer exists", () => {
+  it("exposes a verified Darwin owner fixture after the anchor producer exists", () => {
     const fixture = runProcessOwnerFixtureForPlatform("darwin");
-    expect(fixture).toEqual({
-      containmentKind: "darwin-process-group",
-      identity: null,
-      stopEvidence: null,
-      unavailableReason: "DARWIN_PROCESS_IDENTITY_UNAVAILABLE",
-    });
+    expect(fixture.containmentKind).toBe("darwin-process-group");
+    expect(fixture.unavailableReason).toBeNull();
+    expect(fixture.stopEvidence).toBe("DARWIN_GROUP_EMPTY");
+    expect(fixture.identity?.platform).toBe("darwin");
+    expect(fixture.identity?.state).toBe("LIVE");
+    expect(fixture.identity?.supervisorPid).toBe(401);
+    expect(fixture.identity?.pid).toBe(402);
   });
 
   it("persists a matching versioned Darwin anchor and runner tuple through the LIVE CAS", async () => {
@@ -114,9 +115,12 @@ describe("Run process owner", () => {
       supervisorPid: 401, supervisorStartIdentity: anchor, pid: 402,
       processStartIdentity: runner, executableIdentity: "device:1,inode:2",
     });
-    expect(() => database.transaction((tx) => transitionRunProcessOwnerTx(tx, {
+    database.transaction((tx) => transitionRunProcessOwnerTx(tx, {
       runId, expectedState: "LIVE", nextState: "STOPPED", evidence: "DARWIN_GROUP_EMPTY",
-    }))).toThrow(/authoritative OS evidence/i);
+    }));
+    expect(getRunProcessOwner(database, runId)).toMatchObject({
+      containmentKind: "darwin-process-group", state: "STOPPED", stopEvidence: "DARWIN_GROUP_EMPTY",
+    });
   });
 
   let directory = "";

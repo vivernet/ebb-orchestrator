@@ -4,6 +4,32 @@ import { resolve } from "node:path";
 import process from "node:process";
 
 /**
+ * Собирает macOS process-scope anchor в ожидаемый runtime каталог и проверяет его упаковку.
+ * На других платформах не требует clang/arm64 и возвращает null.
+ *
+ * @param {{ platform: string, serverRoot: string, buildHelper: () => void }} options Платформа, корень server package и сборщик native anchor.
+ * @returns {string | null} Абсолютный путь собранного anchor на Darwin; иначе null.
+ * @throws {Error} Если Darwin сборка не положила непустой executable в runtime каталог.
+ */
+export function ensureDarwinRunAnchor({ platform, serverRoot, buildHelper }) {
+  if (platform !== "darwin") return null;
+
+  const anchorPath = resolve(serverRoot, "dist/native/macos-run-anchor/ebb-macos-run-anchor");
+  buildHelper();
+
+  let anchorStat;
+  try {
+    anchorStat = lstatSync(anchorPath);
+  } catch {
+    throw new Error(`MACOS_PROCESS_SCOPE_ANCHOR_NOT_PACKAGED:${anchorPath}`);
+  }
+  if (!anchorStat.isFile() || anchorStat.isSymbolicLink() || anchorStat.size === 0) {
+    throw new Error(`MACOS_PROCESS_SCOPE_ANCHOR_NOT_PACKAGED:${anchorPath}`);
+  }
+  return anchorPath;
+}
+
+/**
  * Собирает Windows process-scope helper в ожидаемый runtime каталог и проверяет его упаковку.
  * На других платформах не требует Windows compiler и возвращает null.
  *
@@ -95,6 +121,7 @@ export function writeNativeHelperIntegrityAnchor({ serverRoot }) {
     windowsRunSupervisor: resolve(serverRoot, "dist/native/windows-run-supervisor/ebb-run-supervisor.exe"),
     hermesProfilePath: resolve(serverRoot, "dist/native/hermes-profile-path/ebb-hermes-profile-path.exe"),
     linuxHermesLauncher: resolve(serverRoot, "dist/native/linux-hermes-launcher/ebb-linux-hermes-launcher"),
+    darwinRunAnchor: resolve(serverRoot, "dist/native/macos-run-anchor/ebb-macos-run-anchor"),
   };
   const digests = {};
   for (const [name, helperPath] of Object.entries(helpers)) {

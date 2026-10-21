@@ -11,6 +11,7 @@
     "build": "pnpm --filter @ebb-orchestrator/contracts build && tsc -p tsconfig.build.json && node scripts/build.mjs",
     "build:hermes-profile-path": "node scripts/build-hermes-profile-path.mjs",
     "build:linux-hermes-launcher": "node scripts/build-linux-hermes-launcher.mjs",
+    "build:macos-run-anchor": "node scripts/build-macos-run-anchor.mjs",
     "build:windows-run-supervisor": "node scripts/build-windows-run-supervisor.mjs",
     "start": "node ../../scripts/run-server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",

@@ -491,6 +491,9 @@ export function isAuthoritativeRunProcessStopEvidence(value: unknown, containmen
   if (containmentKind === 'systemd-user-service') {
     return value === 'SYSTEMD_CGROUP_EMPTY' || value === 'UNIT_ABSENT_NO_PENDING_CGROUP_ABSENT';
   }
+  if (containmentKind === 'darwin-process-group') {
+    return value === 'DARWIN_GROUP_EMPTY' || value === 'BOOT_SESSION_CHANGED';
+  }
   return false;
 }
 

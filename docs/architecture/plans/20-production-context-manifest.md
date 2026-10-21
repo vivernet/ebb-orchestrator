@@ -550,4 +550,22 @@ Producer coverage is keyed by exactly 18 stable source-backed labels and each mu
 - Внутри ограниченного executor native helper запускался с `NATIVE_HELPER_SPAWN_EPERM`: это отказ sandbox при создании `powershell.exe`, до Hermes/provider request. После ограниченной fixture-only диагностики эта причина была подтверждена; вне sandbox тот же test прошёл. Ebb и harness не читали и не копировали credentials; Hermes использовал существующую настроенную аутентификацию. Provider/profile и host ACL/permissions не менялись и не проверялись на права.
 - Уточнён только acceptance harness: forwarding шести существующих не credential Hermes selector/runtime переменных для child process; fixed-token диагностика; fail-closed cleanup временного fixture; явная проверка старой generation STOPPED proof. Product runtime не изменялся.
 - Свежие обязательные Task5C проверки на текущем дереве: recovery/unit 63 passed; Scheduler 138 passed / 1 skipped; migration 24 passed; focused harness 8 passed / 1 live skipped без marker; server typecheck и `git diff --check` exit 0. Независимый review подтвердил безопасность диагностики и исправления cleanup/old-generation assertions; blocking findings по этому Task5C Windows slice закрыты.
-- Закрыта только Windows часть Task5C. Linux/macOS native/provider acceptance, оставшиеся Task7 gates, свежие whole-change/whole-plan reviews и зависимые статусы остаются открытыми; Plan20 и Goal не завершены.
+| Закрыта только Windows часть Task5C. Linux/macOS native/provider acceptance, оставшиеся Task7 gates, свежие whole-change/whole-plan reviews и зависимые статусы остаются открытыми; Plan20 и Goal не завершены.
+
+## 2026-10-22 — provider-free macOS Task5A-M implementation checkpoint
+
+Слайсы Task5A-M1/M2/M3 реализованы в коде и покрыты тестами на текущем дереве (ветка `develop`, HEAD `d463acd`); hosted macOS CI и физическая Mac-приёмка остаются внешними gates.
+
+- **M1 (durable owner/type/platform seam):** миграция `047_darwin_process_group.sql` уже расширяет только `containment_kind` CHECK обоих owner-таблиц (`run_process_owners`, `run_process_owner_generations`) до `darwin-process-group` с сохранением строк/триггеров `context_deltas`-инвариантов. `containmentKindForPlatform()` используется shared RunService/HermesRuntimeAdapter/тестами. `isAuthoritativeRunProcessStopEvidence()` теперь принимает `DARWIN_GROUP_EMPTY` и `BOOT_SESSION_CHANGED` для darwin. Shared fixture `run-process-owner-fixture.ts` возвращает валидную Darwin identity и stop evidence.
+- **M2 (anchor и packaging):** новый first-party C anchor `apps/server/native/macos-run-anchor/ebb-macos-run-anchor.c` (1058 строк, arm64, `-mmacosx-version-min=13.5`, только SDK-shipped/exported `libproc` с runtime availability checks), сборка `scripts/build-macos-run-anchor.mjs`, подключение в `build.mjs`/`package-native-assets.mjs` (включая integrity anchor для `darwinRunAnchor`), расширение `NativeHelperAnchorName`, новый `darwin-run-supervisor.ts` (read/ACK/STOP-протокол по приватному fd-3 каналу, nonce-bound, EOF self-stop, никаких числовых PID/PGID сигналов от Ebb), интеграция в `production-composition.ts`.
+- **M3 (observation/recovery/CI):** добавлен hosted macOS arm64 job `process-scope-darwin-acceptance` в `.github/workflows/production-gates.yml` (сборка anchor затем vitest с `EBB_RUN_NATIVE_SCOPE_ACCEPTANCE=1`). Darwin suite добавлена в `hermes-process-scope.acceptance.test.ts` (bounded group-empty stop, fresh observer, restart/recovery через `hermes-process-scope-restart-child.ts` без reconnect). Отдельный `darwin-process-scope.acceptance.test.ts` покрывает dummy payload complete, EOF stop, UNKNOWN/LIVE/STOPPED наблюдение.
+- **Локальные gates на этом дереве (Windows dev host):** `pnpm lint` PASS, server `typecheck` PASS, targeted suites 8 файлов/159 тестов PASS, целевые 5 файлов/62 теста PASS, `git diff --check` PASS.
+
+**Остаются открытыми (внешние gates, не выполнены):**
+- hosted macOS CI run нового job (нет push; по правилам репозитория push/merge только с явного разрешения пользователя) и физическая Apple Silicon/macOS 13.5+ приёмка;
+- Task5B-M — реальный provider-backed Hermes вызов с live `system/init.session_id` capture через настроенный Hermes root/profile (требует пользовательского Hermes provider и осознанного opt-in; `NOT RUN`);
+- Task5C-M — приёмка interrupted no-auto-resume/UNKNOWN lock retention на физическом Mac (`NOT RUN`);
+- свежие whole-change и whole-plan review Plan20, закрытие Task6/Task7-остатков и конечный lifecycle-переход.
+
+Plan20 остаётся `in_progress`; план 19 закрыт ранее (metadata `completed`).
+

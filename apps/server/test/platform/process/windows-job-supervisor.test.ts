@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { PassThrough, Writable } from "node:stream";
 import { ExitCodeError, ProcessExecutor, type ProcessOptions, type ProcessResult, type ProcessSession, type ProcessSessionOptions } from "../../../src/platform/process/process-executor.js";
 import { WindowsJobSupervisor } from "../../../src/platform/process/windows-job-supervisor.js";
+import type { NativeHelperAnchorName } from "../../../src/platform/process/native-helper-integrity.js";
 import { HermesStreamSessionObserver } from "../../../src/modules/runtime/hermes/hermes-stream-session-observer.js";
 import { createHermesLaunchTicket } from "../../../src/modules/runtime/hermes/hermes-launch-ticket.js";
 import { HERMES_PROVIDER_SELECTION_SOURCE } from "../../../src/modules/runtime/hermes/hermes-source-identity.js";
@@ -164,7 +165,7 @@ const request: ProcessScopeLaunchRequest = {
 const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
 const createTestHelperInvocation = async (
   helperPath: string,
-  _name: "windowsRunSupervisor" | "hermesProfilePath",
+  _name: NativeHelperAnchorName,
   args: readonly string[],
 ) => ({ file: helperPath, args, env: {} });
 

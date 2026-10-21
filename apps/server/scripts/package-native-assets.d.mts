@@ -26,6 +26,12 @@ export interface PackageLinuxHermesLauncherOptions {
   buildHelper: () => void;
 }
 
+export interface PackageDarwinRunAnchorOptions {
+  platform: NodeJS.Platform;
+  serverRoot: string;
+  buildHelper: () => void;
+}
+
 /**
  * Собирает Windows file identity helper для установленного Hermes и проверяет runtime artifact.
  *
@@ -42,6 +48,14 @@ export function ensureHermesProfilePathHelper(options: PackageHermesProfilePathH
  * @throws {Error} If the Linux build did not create a non-empty executable.
  */
 export function ensureLinuxHermesLauncher(options: PackageLinuxHermesLauncherOptions): string | null;
+
+/**
+ * Собирает macOS process-scope anchor и проверяет его runtime artifact.
+ * @param options Платформа, корень server package и сборщик anchor.
+ * @returns Путь к собранному anchor на Darwin или null на другой платформе.
+ * @throws {Error} Если Darwin сборка не создала непустой executable.
+ */
+export function ensureDarwinRunAnchor(options: PackageDarwinRunAnchorOptions): string | null;
 
 /**
  * Emits a generated parent-runtime JavaScript integrity anchor for every present supported helper.

@@ -8,6 +8,7 @@ import { createSqliteDatabase } from "../../src/platform/database/sqlite-databas
 import { runMigrations } from "../../src/platform/database/migrator.js";
 import { SystemdRunSupervisor } from "../../src/platform/process/systemd-run-supervisor.js";
 import { WindowsJobSupervisor } from "../../src/platform/process/windows-job-supervisor.js";
+import { DarwinRunSupervisor } from "../../src/platform/process/darwin-run-supervisor.js";
 import { loadTestMigrations } from "./migrations.js";
 import {
   restartChildTerminalStatusPath,
@@ -44,7 +45,6 @@ async function launchOwnedScope(): Promise<void> {
     );
     const containmentKind = containmentKindForPlatform(process.platform);
     if (containmentKind === null) throw new Error("PROCESS_SCOPE_RESTART_CHILD_PLATFORM_UNSUPPORTED");
-    if (process.platform === "darwin") throw new Error("DARWIN_PROCESS_SCOPE_SUPERVISOR_NOT_IMPLEMENTED");
     const prepared = prepareRunProcessOwner(runId, runHome, containmentKind);
     database.transaction((tx) => {
       insertRunProcessOwnerTx(tx, prepared);
@@ -150,12 +150,11 @@ async function recoverOwnedScope(): Promise<void> {
   }
 }
 
-function createSupervisor(): WindowsJobSupervisor | SystemdRunSupervisor {
+function createSupervisor(): WindowsJobSupervisor | SystemdRunSupervisor | DarwinRunSupervisor {
   if (process.platform === "win32") return new WindowsJobSupervisor(new ProcessExecutor());
   if (process.platform === "linux") return new SystemdRunSupervisor(new ProcessExecutor());
-  throw new Error(process.platform === "darwin"
-    ? "DARWIN_PROCESS_SCOPE_SUPERVISOR_NOT_IMPLEMENTED"
-    : "PROCESS_SCOPE_RESTART_CHILD_PLATFORM_UNSUPPORTED");
+  if (process.platform === "darwin") return new DarwinRunSupervisor();
+  throw new Error("PROCESS_SCOPE_RESTART_CHILD_PLATFORM_UNSUPPORTED");
 }
 
 function buildRequest(
@@ -169,7 +168,9 @@ function buildRequest(
     ? windowsPayloadSource(heartbeat, digest, descendantPid, descendantExit)
     : process.platform === "linux"
       ? linuxPayloadSource(digest, descendantPid)
-      : (() => { throw new Error("PROCESS_SCOPE_RESTART_CHILD_PLATFORM_UNSUPPORTED"); })();
+      : process.platform === "darwin"
+        ? darwinPayloadSource(digest, descendantPid)
+        : (() => { throw new Error("PROCESS_SCOPE_RESTART_CHILD_PLATFORM_UNSUPPORTED"); })();
   const environment: Record<string, string> = {
     PATH: process.env.PATH ?? "",
     NODE_ENV: "test",
@@ -221,6 +222,18 @@ function linuxPayloadSource(digest: string, descendantPid: string): string {
     "if(process.env.EBB_HERMES_PROVIDER_API_KEY)process.exit(20);",
     `writeFileSync(${JSON.stringify(digest)},'provider-free-dummy-payload');`,
     "const child=spawn('setsid',['/bin/sh','-c','sleep 60'],{stdio:'ignore'});",
+    "child.once('error',()=>process.exit(21));",
+    `child.once('spawn',()=>{writeFileSync(${JSON.stringify(descendantPid)},String(child.pid));child.unref();process.stdout.write('dummy payload root complete\\n');});`,
+  ].join(" ");
+}
+
+function darwinPayloadSource(digest: string, descendantPid: string): string {
+  return [
+    "const {spawn}=require('node:child_process');",
+    "const {writeFileSync}=require('node:fs');",
+    "if(process.env.EBB_HERMES_PROVIDER_API_KEY)process.exit(20);",
+    `writeFileSync(${JSON.stringify(digest)},'provider-free-dummy-payload');`,
+    "const child=spawn('/bin/sh',['-c','sleep 60'],{stdio:'ignore'});",
     "child.once('error',()=>process.exit(21));",
     `child.once('spawn',()=>{writeFileSync(${JSON.stringify(descendantPid)},String(child.pid));child.unref();process.stdout.write('dummy payload root complete\\n');});`,
   ].join(" ");
