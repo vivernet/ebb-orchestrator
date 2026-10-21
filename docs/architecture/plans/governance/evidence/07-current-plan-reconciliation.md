@@ -964,3 +964,10 @@ Plan01 metadata переведена из `completed` в `in_progress` посл�
 - Полный `pnpm test` на HEAD `bf0d465` — exit 0 (root scripts 71/71, fail 0); docs:check/docs:test/diff-check PASS после изменения статусов.
 - Статус плана 09 переведён из `in_progress` в `completed`; табличные строки ledger/current-state синхронизированы; roadmap перегенерирован. Исторические procedural checkboxes остаются unchecked согласно governance-правилам.
 - Hermes/provider acceptance и deployment-ops CI не являются критериями плана 09 (это gates Plan04/05/07/20); их открытость не блокирует closeout Plan09.
+
+## Checkpoint — Plan19 сводная сверка после закрытия Plan04/Plan09 и Task8 (2026-10-21)
+
+- Закрыты: Plan04 (whole-plan review PASS, статус completed) и Plan09 (whole-plan review PASS, статус completed); Task8 CodeQL evidence получен на финальном develop HEAD `32285e4` (run `39648628981` success, analysis присутствует, `open=[]`, 12 alerts dismissed).
+- Полный `pnpm test` на HEAD `6b15300` — exit 0 (root scripts 71/71, fail 0); docs:check/docs:test/diff-check PASS.
+- Остаются открытыми (не блокируются Plan19, но препятствуют закрытию Task9): Plan05 (production ContextManifest acceptance по Proposal08/Plan20 Task7 и whole-plan review), Plan06 (POSIX Project Config lifecycle, hosted Ubuntu keyring, ContextManifest acceptance, whole-plan review), Plan07 (BLOCKER из независимого review: полный `hermes:execute` parity-run не завершился; OpenCode удалён до parity PASS; финальный independent review CHANGES_REQUESTED).
+- Plan19 остаётся `in_progress` до закрытия указанных whole-plan reviews и финальной reconciliation; push/merge новых веток не выполнялись, изменения в develop запушены в рамках одобренного пользователем пути source scan.
