@@ -26,7 +26,7 @@ updated: 2026-10-21
 | plan-08-01 | completed | Web UI Foundation and Shell |
 | plan-08-02 | completed | Web UI Core Functional — Onboarding, Dashboard, Project |
 | plan-08-03 | completed | Web UI Onboarding Flow & Projections |
-| plan-09 | in_progress | Production Readiness Hardening |
+| plan-09 | completed | Production Readiness Hardening |
 | plan-10 | completed | Ebb Orchestrator — Final V1 Audit & Hardening Plan (Перевод) |
 | plan-11 | completed | Hermes Development Capabilities Implementation Plan |
 | plan-12 | completed | Web 401 и завершение проекта |
