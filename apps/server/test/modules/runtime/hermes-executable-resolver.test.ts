@@ -47,9 +47,9 @@ describe("direct installed Hermes resolver", () => {
     });
     expect(resolution.executablePath).toBe(realpathSync(paths.launcher));
     expect(resolution.runtimeExecutablePath).toBe(realpathSync(paths.python));
-    expect(resolution.hermesProjectRoot).toBe(paths.source);
+    expect(resolution.hermesProjectRoot).toBe(realpathSync(paths.source));
     expect(resolution.sourceCommit).toBe(HERMES_PROVIDER_SELECTION_SOURCE.commit);
-    expect(resolution.hermesConfigHome).toBe(paths.hermesHome);
+    expect(resolution.hermesConfigHome).toBe(realpathSync(paths.hermesHome));
     expect(resolution).not.toHaveProperty("runtimeDependencyRoot");
     expect(resolution).not.toHaveProperty("runtimeArgsPrefix");
     expect(verifierCalls.every((args) => args[0] === "verify-host-path")).toBe(true);

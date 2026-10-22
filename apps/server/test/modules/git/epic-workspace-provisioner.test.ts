@@ -112,7 +112,7 @@ describe("EpicWorkspaceProvisioner", () => {
 
       const recovered = await f.provisioner.provisionForEpic(f.epicId);
 
-      expect(recovered.path).toBe(realpathSync(worktreePath));
+      expect(recovered.path).toBe(worktreePath);
       expect(f.db.get<{ status: string }>("SELECT status FROM git_operations WHERE id='operation-1'")?.status).toBe("VERIFIED");
       expect(f.db.get<{ count: number }>("SELECT COUNT(*) AS count FROM worktrees WHERE id=$id AND removed_at IS NULL", { id: worktreeId })?.count).toBe(1);
     } finally {
