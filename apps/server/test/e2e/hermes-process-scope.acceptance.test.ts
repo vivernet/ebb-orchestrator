@@ -605,7 +605,7 @@ describe.skipIf(!isWindows || !nativeAcceptanceEnabled)("Windows native process-
       windowsNativeHelperAssemblyPath = undefined;
       throw error;
     }
-  }, 60_000);
+  }, 180_000);
 
   afterAll(async () => {
     if (!windowsNativeHelperDirectory) return;
@@ -1505,7 +1505,7 @@ async function compileWindowsNativeHelper(): Promise<void> {
     "-Mode", "compile-helper", "-ProcessId", "0", "-AssemblyPath", windowsNativeHelperAssemblyPath,
   ], {
     cwd: repositoryRoot,
-    timeout: 60_000,
+    timeout: 180_000,
     maxBuffer: 64 * 1024,
   });
   if (result.stdout.trim() !== "NATIVE_HELPER_COMPILED") {
