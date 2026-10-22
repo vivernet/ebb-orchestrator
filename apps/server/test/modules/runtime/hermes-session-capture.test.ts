@@ -40,10 +40,17 @@ class CompletionFailureSupervisor implements ProcessScopeSupervisor {
     request: ProcessScopeLaunchRequest,
     persistVerifiedIdentity: (identity: ProcessScopeIdentity) => Promise<void>,
   ) {
-    this.liveIdentity = { ...owner, state: "LIVE", ...ownerIdentityForContainmentKind(owner.containmentKind),
-      supervisorPid: 202, supervisorStartIdentity: "supervisor-start", pid: 303,
-      systemdInvocationId: "12345678-1234-1234-1234-123456789abc",
-      systemdControlGroup: `/user.slice/ebb-${owner.containmentId}.service` };
+    const kindIdentity = ownerIdentityForContainmentKind(owner.containmentKind);
+    this.liveIdentity = {
+      ...owner, state: "LIVE",
+      platform: kindIdentity.platform,
+      supervisorPid: 202, supervisorStartIdentity: "supervisor-start",
+      pid: 303,
+      processStartIdentity: kindIdentity.processStartIdentity,
+      executableIdentity: kindIdentity.executableIdentity,
+      systemdInvocationId: kindIdentity.systemdInvocationId,
+      systemdControlGroup: kindIdentity.systemdControlGroup,
+    };
     await persistVerifiedIdentity(this.liveIdentity);
     if (request.onStdoutChunk) {
       await request.onStdoutChunk(new TextEncoder().encode(
