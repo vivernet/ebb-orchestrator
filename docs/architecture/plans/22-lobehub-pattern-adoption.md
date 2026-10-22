@@ -31,6 +31,15 @@ specs:
 - Не менять существующий обобщённый контракт (`packages/contracts`) без поиска всех consumers и обновления их тестов.
 - `plan-20` — обязательная внешняя prerequisite (`depends_on: [plan-20]`): в baseline 2026-10-22 он имеет `in_progress` и владеет пересекающимися `run-context-assembler.ts`/`run-service.ts` seams. Ни одна задача Plan22 не стартует до актуального `plan-20: completed`; после этого повторно сверить исходники и миграционный каталог, затем выполнять только оставшийся scoped DAG.
 
+## Сверка открытых notes (Plan22)
+
+| Note | Решение для этого плана | Основание и граница |
+|---|---|---|
+| `IN-001` | Рассмотрено; отложено вне Plan22. | План использует действующие skills, включая `ebb-database-engineering`, но не меняет их. В текущем worktree нет незакоммиченных изменений этих skill-файлов; сама note не задаёт конкретного diff. Проверка/продвижение skill updates остаётся отдельной задачей maintenance; неизвестные правки не изобретаются и не включаются сюда. Note в реестре остаётся `open` до отдельного подтверждённого решения. |
+| `IN-002` | Рассмотрено; продуктовый выбор хранения ключей не делается этим планом и остаётся отложенным. | Plan22 не меняет SecretStore, credential ownership или политику `.env`; Hermes сохраняет владение provider credentials по утверждённой spec. `OTEL_EXPORTER_OTLP_ENDPOINT` — только endpoint telemetry export, не решение о хранении ключей. Note остаётся `open` до отдельного явного продуктового решения. |
+
+Эта сверка фиксирует только scope Plan22 и не меняет статусы записей в `docs/roadmap/notes.md`.
+
 **Specialist Constraints (trigger-only):**
 - Изменения схемы SQLite (C4 traces, при необходимости новые таблицы) — работать через `ebb-database-engineering` (версионированная миграция, append-only история).
 - Любые изменения security-границ (A3) — обязательный security-focused review и evidence.
@@ -150,12 +159,33 @@ specs:
   - `InterventionRule { id: string; action: ActionId.CommandExec; matcher: InterventionMatcher; reasonCode: string }`; допустимы только константные правила из source; их effect фиксирован как `ABSOLUTE_DENY`.
   - `InterventionChecker.evaluate(action: ActionId, args: { executable: string; argv: readonly string[] }): { decision: PermissionDecision; reason: string }`. Отсутствующие/некорректные поля и значения нестрокового типа блокируются; candidate JSON ограничен 8192 UTF-8 bytes, pattern — 256 символами.
   - `PermissionEngine.evaluate` для `CommandExec` требует уже проверенный вектор команды. Совпадение композируется как `ABSOLUTE_DENY` до обычного capability ALLOW; существующая семантика ASK/approval не меняется.
-- **RED:** тест на каноническом векторе команды `['rm', '-rf', '~']` ожидает `ABSOLUTE_DENY`; `ActionGateway.exec` с соответствующим `CommandPolicy` не должен вызывать process executor. Тест приоритетов доказывает, что capability/policy ALLOW не смягчает blacklist. До исправления capability-only Gateway пропускает разрешённую policy команду, поэтому тест падает по assertion.
-- **GREEN:** matcher запускается после `CommandPolicy.resolve` и до процесса; тесты подтверждают сохранение границ аргументов (без shell-join), NFKC/basename нормализацию, отказ malformed vectors, most-restrictive-wins и неизменное поведение для команд без совпадений.
+- **Начальный source-owned rule catalogue** (каждый шаблон применяется к канонической JSON-строке; `reasonCode` равен указанному `id`):
+
+  | `id` | Matcher | Canonical pattern |
+  |---|---|---|
+  | `cmd-rm-recursive-r` | prefix | `["rm","-r",` |
+  | `cmd-rm-recursive-R` | prefix | `["rm","-R",` |
+  | `cmd-rm-rf` | prefix | `["rm","-rf",` |
+  | `cmd-rm-fr` | prefix | `["rm","-fr",` |
+  | `cmd-rm-Rf` | prefix | `["rm","-Rf",` |
+  | `cmd-rm-fR` | prefix | `["rm","-fR",` |
+  | `cmd-rm-long-recursive` | prefix | `["rm","--recursive",` |
+  | `path-etc-passwd` | wildcard | `*"/etc/passwd"*` |
+  | `path-etc-sudoers` | wildcard | `*"/etc/sudoers"*` |
+  | `cmd-dd-device-output` | wildcard | `["dd",*"of=/dev/"*]` |
+  | `cmd-firewall-iptables` | prefix | `["iptables",` |
+  | `cmd-firewall-ip6tables` | prefix | `["ip6tables",` |
+  | `cmd-firewall-nft` | prefix | `["nft",` |
+  | `cmd-firewall-ufw` | prefix | `["ufw",` |
+  | `cmd-firewall-cmd` | prefix | `["firewall-cmd",` |
+
+- **RED:** тест для каждого ID из таблицы передаёт canonical vector и ожидает `ABSOLUTE_DENY` с соответствующим `reasonCode`; отдельные near-miss vectors `['rm','-f','workspace/tmp']` и `['git','status']` не совпадают. Gateway integration test доказывает, что совпадение не вызывает process executor и не ослабляется capability ALLOW; текущий capability-only Gateway пропускает эти разрешённые policy команды, поэтому RED падает по assertions.
+- **GREEN:** matcher запускается после `CommandPolicy.resolve` и до процесса; tests покрывают весь catalogue, exact/prefix/wildcard boundary, NFKC/basename normalization, malformed vectors, most-restrictive-wins и near misses без изменения argv процесса.
+
 - **Run:** `pnpm --filter @ebb-orchestrator/server exec vitest run test/modules/permissions/intervention-checker.test.ts test/modules/permissions/permission-engine.test.ts test/modules/execution/action-gateway.test.ts`.
 - **Expected:** команда из blacklist получает `ABSOLUTE_DENY` до executor; capability/policy ALLOW не смягчает deny; существующие cases без совпадения сохраняют прежний результат.
 - **Gates:** typecheck; lint; test; security-ревью (specialist).
-- **Review Focus:** `ABSOLUTE_DENY` нельзя ослабить; malformed command vectors всегда fail closed; worst-case matcher complexity ограничена; canonicalization влияет только на проверку и не меняет запускаемый argv.
+- **Review Focus:** `ABSOLUTE_DENY` нельзя ослабить; malformed command vectors всегда fail closed; worst-case matcher complexity ограничена. Каталог — фиксированный дополнительный guard, не исчерпывающая security policy и не OS sandbox; canonicalization влияет только на проверку и не меняет запускаемый argv.
 
 ### Phase B — Runtime & Recovery Execution
 
@@ -238,18 +268,19 @@ specs:
 
 #### Task C4. Best-effort Run-level tracing (без raw payload)
 - **Depends on:** B3 (usage), C1 (digest).
-- **Create:** `apps/server/src/modules/runtime/tracing/tracing-payload.ts`, `tracing-store.ts`; `apps/server/src/platform/database/migrations/048_run_traces.sql`; `apps/server/test/modules/runtime/tracing/tracing-store.test.ts`; migration test `apps/server/test/platform/database/run-traces-migration.test.ts`.
+- **Create:** `apps/server/src/modules/runtime/tracing/tracing-payload.ts`, `tracing-store.ts`; `apps/server/src/platform/database/migrations/048_run_traces.sql`; `apps/server/test/modules/runtime/tracing/tracing-payload.test.ts`, `tracing-store.test.ts`; migration test `apps/server/test/platform/database/run-traces-migration.test.ts`.
 - **Modify:** `run-service.ts`.
 - **Coverage / lifecycle owners:** один общий best-effort `recordCompletedRunTrace(runId)` hook вызывается после commit в обоих путях: обычный `collectRuntimeResult() → collectResult() → optional collectUsage()` и restart-recovery `reconcileInterruptedRuns() → finalizePersistedSubmission()`. В normal path hook вызывается после попытки optional usage collection; recovery использует persisted usage или `NULL`, если он неизвестен. Hook читает Run/manifest/usage в одном consistent DB snapshot; `created_at` берётся из persisted `AgentRun.endedAt`, а не от текущих часов. Трассируются только валидированные успешные `COMPLETED` Runs; failed/interrupted/cancelled Runs не создают trace. Trace — sidecar, не completion authority.
 - **Atomicity / failure policy:** trace пишется в отдельной transaction только после durable `AgentRunCompleted`; это намеренно не атомарно с Run transition. Любая ошибка validation/storage/logging trace не меняет и не откатывает завершённый Run, не блокирует recovery/READY; ошибка логируется только фиксированным безопасным code. Автоматический retry не обещается: crash между Run commit и trace insert может оставить Run без trace. Повторный вызов hook идемпотентен по `run_id`.
-- **Database ownership / desired state:** `run_traces` — additive table runtime/tracing owner; migration не меняет существующие таблицы/строки и не backfill-ит исторические Runs. Колонки: `run_id TEXT PRIMARY KEY REFERENCES agent_runs(id) ON DELETE CASCADE`, nullable `scenario TEXT CHECK (scenario IS NULL OR scenario IN ('task-assignment','review-request','planning-request','test-assignment','custom'))`, `prompt_hash TEXT NOT NULL CHECK (length(prompt_hash) = 64 AND prompt_hash NOT GLOB '*[^0-9a-f]*')`, `context_hash TEXT NOT NULL CHECK (length(context_hash) = 64 AND context_hash NOT GLOB '*[^0-9a-f]*')`, nullable `usage_json TEXT CHECK (usage_json IS NULL OR length(CAST(usage_json AS BLOB)) <= 512)`, `created_at TEXT NOT NULL`, `version TEXT NOT NULL CHECK (version = '1.0')`. Один trace на Run; `run_id` primary key задаёт idempotency, FK cascade — retention boundary.
-- **Allowlist / runtime validation:** `TracingPayloadSchema` — strict schema без unknown/nested fields; разрешены только `run_id`, `scenario`, `prompt_hash`, `context_hash`, `usage`, `created_at`, `version`. `run_id` должен совпадать с UUID persisted `AgentRun`; `scenario` — только `RunTrigger | null`; `prompt_hash` и `context_hash` — 64 lowercase hex; `usage` — `ModelUsage | null` с non-negative safe integer token counts и finite non-negative `cost | null`; SQL `NULL` используется при неизвестном usage. Сериализованный usage ограничен 512 UTF-8 bytes до SQL; unknown/nested fields и любые runtime/model/provider labels отклоняются.
+- **Database ownership / desired state:** `run_traces` — additive table runtime/tracing owner; migration не меняет существующие таблицы/строки и не backfill-ит исторические Runs. Колонки: `run_id TEXT PRIMARY KEY REFERENCES agent_runs(id) ON DELETE CASCADE`, nullable `scenario TEXT CHECK (scenario IS NULL OR scenario IN ('task-assignment','review-request','planning-request','test-assignment','custom','runtime-request','planning-request-role','epic-phase'))`, `prompt_hash TEXT NOT NULL CHECK (length(prompt_hash) = 64 AND prompt_hash NOT GLOB '*[^0-9a-f]*')`, `context_hash TEXT NOT NULL CHECK (length(context_hash) = 64 AND context_hash NOT GLOB '*[^0-9a-f]*')`, nullable `usage_json TEXT CHECK (usage_json IS NULL OR length(CAST(usage_json AS BLOB)) <= 512)`, `created_at TEXT NOT NULL`, `version TEXT NOT NULL CHECK (version = '1.0')`. Один trace на Run; `run_id` primary key задаёт idempotency, FK cascade — retention boundary.
+- **Allowlist / runtime validation:** `TracingPayloadSchema` — strict schema без unknown/nested fields; разрешены только `run_id`, `scenario`, `prompt_hash`, `context_hash`, `usage`, `created_at`, `version`. `run_id` должен совпадать с UUID persisted `AgentRun`; `scenario` — `TraceScenario = RunTrigger | 'runtime-request' | 'planning-request-role' | 'epic-phase'`; `prompt_hash`/`context_hash` — 64 lowercase hex; `usage` — `ModelUsage | null` с non-negative safe integer token counts и finite non-negative `cost | null`; SQL `NULL` используется при неизвестном usage. Сериализованный usage ограничен 512 UTF-8 bytes до SQL; unknown/nested fields и любые runtime/model/provider labels отклоняются.
+- **Scenario mapping:** читать persisted `trigger_reason` как `string | null`, не доверяя cast в `AgentRun.triggerReason`. Точно отображать пять значений `RunTrigger`, `runtime-request` и `planning-request-role` в одноимённые `TraceScenario`; `NULL` отображается в SQL NULL. Значения `epic-${phase}` отображать в `epic-phase` только для фиксированного списка фаз `plan`, `pm`, `architect`, `epic_review`, `architecture_review`, `epic_qa`, `integration`, `child_task`, `child_task_reconcile`, `review`, `review_rework`, `review_recheck`, `qa`. Неизвестный non-null trigger пропускает trace и выдаёт только стабильный `TRACE_SCENARIO_UNMAPPED` diagnostic; raw trigger не сохраняется.
 - **Data / trust contract:** не сохранять и не экспортировать runtime/model/provider labels, raw prompt, raw input/output, stderr, credentials, endpoint URL или headers. Trace содержит только Run ID, enum scenario, canonical hashes, nullable bounded numeric usage и timestamps. OTel не экспортирует runtime/model/provider labels или URL attributes. API projection в этой задаче не добавляется.
-- **Interfaces:** `TracingPayload { run_id; scenario: RunTrigger | null; prompt_hash; context_hash; usage: ModelUsage | null; created_at; version: '1.0' }`; `computePromptHash(finalPromptBytes: Uint8Array): string` делегирует текущему `digestRunPromptBytesV1`, выдаёт полный 64-char lowercase SHA-256 для точных сохранённых prompt bytes. `ITracingStore.save(payload)` использует `run_id` как idempotency key: идентичный payload — no-op/success, другой payload для того же Run — stable conflict без update.
+- **Interfaces:** `TraceScenario = RunTrigger | 'runtime-request' | 'planning-request-role' | 'epic-phase'`; `TracingPayload { run_id; scenario: TraceScenario | null; prompt_hash; context_hash; usage: ModelUsage | null; created_at; version: '1.0' }`; `computePromptHash(finalPromptBytes: Uint8Array): string` делегирует текущему `digestRunPromptBytesV1`, выдаёт полный 64-char lowercase SHA-256 для точных сохранённых prompt bytes. `ITracingStore.save(payload)` использует `run_id` как idempotency key: идентичный payload — no-op/success, другой payload для того же Run — stable conflict без update.
 - **Migration preflight:** на текущем catalog последняя migration — 047; перед исполнением подтвердить, что 048 остаётся следующим свободным номером. Если catalog изменился, обновить migration path/version и acceptance references в этом плане до реализации. Не переписывать опубликованные migrations.
-- **RED:** отдельные tests доказывают fresh install 001–048 и populated upgrade 047→048; запись/чтение допустимого payload; отказ неизвестных/nested полей и попыток добавить `runtime`, `model`, `provider`, endpoint URL или headers; отказ невалидного usage и превышения JSON byte limit; conflict/idempotency по `run_id`; rollback; `PRAGMA foreign_key_check`; cascade; `prompt_hash`/`context_hash` длиной 64. Тесты для обоих terminal paths инъецируют storage failure после Run commit и доказывают, что Run остаётся `COMPLETED`, а recovery завершается.
+- **RED:** отдельные tests доказывают fresh install 001–048 и populated upgrade 047→048; запись/чтение допустимого payload; отказ неизвестных/nested полей и попыток добавить `runtime`, `model`, `provider`, endpoint URL или headers; отказ невалидного usage и превышения JSON byte limit; conflict/idempotency по `run_id`; rollback; `PRAGMA foreign_key_check`; cascade; `prompt_hash`/`context_hash` длиной 64. Scenario tests перечисляют все пять `RunTrigger`, `runtime-request`, `planning-request-role` и каждый допустимый `epic-${phase}` mapping; неизвестный trigger не сохраняется и даёт только stable diagnostic. Тесты обоих terminal paths инъецируют storage failure после Run commit и доказывают, что Run остаётся `COMPLETED`, а recovery завершается.
 - **GREEN:** оба пути вызывают общий hook после terminal commit; storage failure остаётся best-effort и не меняет Run outcome; migration/store проходят fresh/upgrade path, старые rows неизменны, повторная запись идемпотентна.
-- **Run:** `pnpm --filter @ebb-orchestrator/server exec vitest run test/modules/runtime/tracing/tracing-store.test.ts test/modules/runtime/run-service.test.ts test/platform/database/run-traces-migration.test.ts test/platform/database/fresh-install-migrations.acceptance.test.ts`.
+- **Run:** `pnpm --filter @ebb-orchestrator/server exec vitest run test/modules/runtime/tracing/tracing-payload.test.ts test/modules/runtime/tracing/tracing-store.test.ts test/modules/runtime/run-service.test.ts test/platform/database/run-traces-migration.test.ts test/platform/database/fresh-install-migrations.acceptance.test.ts`.
 - **Expected:** populated 047→048 и fresh 001→048 проходят; normal и restart-recovery completions вызывают один trace hook; trace failures не меняют terminal Run/READY; invalid payload отклоняется; FK/cascade и retry/conflict expectations выполняются.
 - **Gates:** `ebb-database-engineering`; focused migration/store/runtime tests; typecheck; lint; test; fresh-install migration acceptance.
 - **Review Focus:** immutable/forward-only migration; точная граница best-effort после Run commit; trace data minimization/allowlist; точное соответствие manifest `prompt_hash`; отсутствие raw-content API.
@@ -282,6 +313,8 @@ specs:
 ```bash
 pnpm lint
 pnpm typecheck
+pnpm test
+pnpm build
 pnpm --filter @ebb-orchestrator/server test
 pnpm --filter @ebb-orchestrator/contracts typecheck
 pnpm --filter @ebb-orchestrator/contracts test
@@ -296,15 +329,16 @@ git diff --check
 
 Внешняя plan dependency из metadata: `plan-20 → plan-22`; выполнение внутреннего DAG ниже запрещено до завершения `plan-20` и повторной проверки актуальных файлов/миграций.
 
-```
-A1 ── A2 ── A3
-│
-├── C1 ──┬── C2
-│        ├── C3
-│        └── C4 ── C5
-│
-B1 ── B2 ── B3
-          ├──── C4
+```text
+A1 → A2 → A3
+A1 → C1
+B1 → B2 → B3
+B3 → C1
+B3 → C4
+C1 → C2
+C1 → C3
+C1 → C4
+C4 → C5
 
 E1 (P2) зависит от A1 и выполняется только после отдельного выбора scope.
 E2, E4 (P2) не входят в baseline и требуют отдельного выбора scope.
@@ -317,14 +351,14 @@ E2, E4 (P2) не входят в baseline и требуют отдельного
 ## Self-review
 
 1. Baseline scope имеет владельцев: A1–A3 (path-scope, cwd invariant, InterventionChecker/blacklist), B1–B3 (error taxonomy, ephemeral events, usage), C1–C5 (context pipeline, token accounting/snapshot, tracing, OTel). Любая задача заблокирована внешней dependency `plan-20`; unsupported network/model/OpenAPI/connector/extra-runtime items вынесены из DAG, P2 E1/E2/E4 не входят в baseline acceptance.
-2. Все task dependencies перечислены в `Depends on` и DAG; пересечения `action-gateway.ts` и runtime adapter/service выполняются в заданном последовательном порядке.
-3. Producer/consumer interfaces сверены: `path-scope` → workspace tools; provider errors/usage/events → Hermes adapter/RunService; tracing ← Run/Context digest.
-4. RED должен падать на ожидаемой behavioral assertion в реальном production seam; отсутствие нового модуля само по себе не принимается как RED. GREEN включает focused и neighboring tests.
+2. Все task dependencies перечислены в `Depends on` и DAG, включая `B3 → C1`; external `plan-20` dependency отражена одновременно в metadata, roadmap и gate до старта.
+3. Producer/consumer seams сверены: `path-scope` → workspace tools; provider errors/usage/events → Hermes adapter/RunService; C4 maps all current persisted trigger variants to finite `TraceScenario` values before storage.
+4. A3 owns an explicit canonical rule catalogue and positive near-misses; RED падает на реальной policy/execution boundary. C4 covers both normal/recovery completion and all current trigger mappings; отсутствие нового модуля само по себе не считается RED.
 5. `Run`/`Expected` и точные test commands указаны для tasks; package install impact закреплён в C5.
 6. Load-bearing semantics: workspace containment не имеет `/tmp` exception; RunStatus/Workflow не расширяются; context digests остаются byte-identical; tracing не хранит raw content; OTel failure не влияет на выполнение.
 7. План ограничен утверждённой архитектурой и не вводит agent-facing network tool, новый provider boundary или OpenAPI endpoint.
-8. Lifecycle остаётся `proposed`; перевод в `planned` допустим только после независимого review с verdict `APPROVED`. Реализация начинается только после такого verdict.
-
+8. Open notes `IN-001`/`IN-002` сверены и получили явный Plan22-specific disposition; их source statuses остаются `open` до отдельного решения/подтверждения пользователя.
+9. Lifecycle остаётся `proposed`; перевод в `planned` допустим только после независимого review с verdict `APPROVED`. Реализация начинается только после такого verdict.
 ---
 
 ## Порядок внедрения (рекомендация)
