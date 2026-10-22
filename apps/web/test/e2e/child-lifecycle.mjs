@@ -303,12 +303,14 @@ function signalVerifiedDetachedGroups(groups, signal, onEvent, processIdentityPr
 }
 
 function isRootSessionLeader(identity, childPid) {
-  return Boolean(identity
-    && identity.pid === childPid
-    && identity.processGroupId === childPid
-    && identity.sessionId === childPid
-    && typeof identity.startTicks === "string"
-    && identity.startTicks.length > 0);
+  if (!identity || identity.pid !== childPid || identity.processGroupId !== childPid
+      || typeof identity.startTicks !== "string" || identity.startTicks.length === 0) {
+    return false;
+  }
+  // На darwin detached spawn создаёт группу процессов (pgid==pid), но не
+  // обязательную сессию (sess != pid); владение по группе достаточно.
+  if (process.platform === "darwin") return true;
+  return identity.sessionId === childPid;
 }
 
 function signalVerifiedRootGroup(identity, child, signal, processIdentityProvider, processGroupExistsProvider, signalProcessGroupProvider) {
