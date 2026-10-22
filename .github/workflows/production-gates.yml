@@ -259,16 +259,16 @@ jobs:
           - os: ubuntu-latest
             node-version: "24.x"
             runtime: node@24
-          - os: macos-13
+          - os: macos-14
             node-version: "24.x"
             runtime: node@24
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-      - name: Assert macOS runner architecture
-        if: ${{ matrix.os == 'macos-13' }}
+      - name: Assert Apple Silicon runner architecture
+        if: ${{ matrix.os == 'macos-14' }}
         shell: bash
-        run: test "$(uname -m)" = x86_64
+        run: test "$(uname -m)" = arm64
       - name: Setup pnpm
         uses: pnpm/setup@v1
         with:
