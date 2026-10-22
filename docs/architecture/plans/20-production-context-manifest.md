@@ -581,5 +581,14 @@ Producer coverage is keyed by exactly 18 stable source-backed labels and each mu
 - **Hosted CI:** `process-scope-darwin-acceptance` (macos-14/arm64) собирается и проходит; `keyring-acceptance (macos-14)` проходит; `quality-security (macos-14)` после фиксов путей/identity снова зелёный; `hermes-process-scope-acceptance` (Windows) проходит после rerun (один прогон упал на таймауте VC-hook, повторный — зелёный).
 - **Локальные gates:** `pnpm lint` PASS, server typecheck PASS, targeted suites (git/run/session/epic/context) PASS.
 
+## 2026-10-22 — статус задач Plan20 и внешние gates
+
+- **Task 0–4, Task 6:** закрыты ранее, acceptance подтверждены (context-manifest production 8/8; 18 producer bindings; 13 subject/role пар; 3 consumer-кейса; миграции 001–047 fresh+populated; API/UI browser-приёмка).
+- **Task 5A-M (M1/M2/M3):** реализация и тесты в коде; hosted CI джоба `process-scope-darwin-acceptance` проходит стабильно. Физическая Apple Silicon/macOS 13.5+ package/lifecycle приёмка остаётся внешним gate (железо недоступно до 1–2 недель).
+- **Task 5B-M:** live-provider acceptance выполнен на Windows-хосте с настроенным Hermes root/profile (3/3 passed, включая live `system/init.session_id` capture и STOPPED). Физический macOS-прогон остаётся желательным, но не блокирует завершение на текущем оборудовании.
+- **Task 5C-M:** отложен пользователем на 1–2 недели (физический Apple Silicon недоступен). Кодовая поддержка (DARWIN_GROUP_EMPTY / BOOT_SESSION_CHANGED / UNKNOWN-удержание) реализована и покрыта тестами.
+- **macOS quality-security CI:** пользователь решил временно отложить доводку (заметка IN-003 в реестре). Остальные 7 из 8 джобов production-gates стабильно зелёные.
+- **Оставшиеся внешние gates Plan20:** физический Mac-приёмка Task5A-M/5B-M/5C-M; возможность довести macOS quality-security CI; финальные whole-change и whole-plan review перед переводом плана в `completed`.
+
 Plan20 остаётся `in_progress`; план 19 закрыт ранее (metadata `completed`).
 
