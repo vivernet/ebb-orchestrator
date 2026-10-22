@@ -1,4 +1,4 @@
-import { realpathSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { tmpdir } from "os";
 import { join } from "path";
