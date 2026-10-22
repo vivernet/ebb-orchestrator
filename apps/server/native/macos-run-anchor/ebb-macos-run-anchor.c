@@ -209,7 +209,7 @@ static bool valid_boot_uuid(const char *s) {
 
 static bool allowed_env_name(const char *name) {
   static const char *allowed[] = {
-    "PATH", "HOME", "LANG", "LC_ALL", "TMPDIR",
+    "PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "NODE_ENV",
     "HERMES_HOME", "HERMES_PROFILE", "HERMES_CONFIG", "HERMES_MODEL",
     "HERMES_DATA_DIR_SUFFIX", "HERMES_RUNTIME_DIR",
     NULL,
@@ -431,7 +431,7 @@ static bool read_metadata(launch_metadata *m) {
       return false;
     }
     if (!allowed_env_name(key) || is_credential_env_key(key) ||
-        strchr(value, '\0') != NULL || strchr(value, '\r') != NULL || strchr(value, '\n') != NULL) {
+        strchr(value, '\r') != NULL || strchr(value, '\n') != NULL) {
       free(key);
       free(value);
       send_unknown("DARWIN_METADATA_BAD_ENV_ENTRY");
