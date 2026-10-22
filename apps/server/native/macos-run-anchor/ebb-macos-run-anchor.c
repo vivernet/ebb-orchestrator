@@ -405,15 +405,15 @@ static bool read_string(char **out, uint32_t *remaining) {
 /* Читает метаданные launch с control_fd; magic/длина и лимиты проверяются. */
 static bool read_metadata(launch_metadata *m) {
   uint32_t magic = 0, frame_len = 0, arg_count = 0, env_count = 0;
-  if (!read_u32(&magic) || magic != FRAME_MAGIC) return false;
-  if (!read_u32(&frame_len) || frame_len < 16 || frame_len > MAX_FRAME_BYTES) return false;
+  if (!read_u32(&magic) || magic != FRAME_MAGIC) { send_unknown("DARWIN_METADATA_BAD_MAGIC"); return false; }
+  if (!read_u32(&frame_len) || frame_len < 16 || frame_len > MAX_FRAME_BYTES) { send_unknown("DARWIN_METADATA_BAD_FRAME_LEN"); return false; }
   uint32_t remaining = frame_len - 8;
-  if (!read_u32(&arg_count) || !read_u32(&env_count)) return false;
-  if (remaining < 8) return false;
+  if (!read_u32(&arg_count) || !read_u32(&env_count)) { send_unknown("DARWIN_METADATA_BAD_COUNTS"); return false; }
+  if (remaining < 8) { send_unknown("DARWIN_METADATA_BAD_REMAINING"); return false; }
   remaining -= 8;
-  if (arg_count > MAX_ARGS || env_count > MAX_ENV) return false;
-  if (!read_string(&m->executable, &remaining) || !read_string(&m->cwd, &remaining)) return false;
-  if (m->executable[0] == '\0' || m->cwd[0] == '\0') return false;
+  if (arg_count > MAX_ARGS || env_count > MAX_ENV) { send_unknown("DARWIN_METADATA_BAD_LIMITS"); return false; }
+  if (!read_string(&m->executable, &remaining) || !read_string(&m->cwd, &remaining)) { send_unknown("DARWIN_METADATA_BAD_HEAD"); return false; }
+  if (m->executable[0] == '\0' || m->cwd[0] == '\0') { send_unknown("DARWIN_METADATA_BAD_EMPTY_HEAD"); return false; }
   m->arg_count = (int)arg_count;
   m->args = (char **)calloc(arg_count ? arg_count : 1, sizeof(char *));
   if (m->args == NULL) return false;
@@ -434,6 +434,7 @@ static bool read_metadata(launch_metadata *m) {
         strchr(value, '\0') != NULL || strchr(value, '\r') != NULL || strchr(value, '\n') != NULL) {
       free(key);
       free(value);
+      send_unknown("DARWIN_METADATA_BAD_ENV_ENTRY");
       return false;
     }
     size_t klen = strlen(key), vlen = strlen(value);
@@ -451,7 +452,11 @@ static bool read_metadata(launch_metadata *m) {
     free(value);
     m->env[i] = pair;
   }
-  return remaining == 0;
+  if (remaining != 0) {
+    send_unknown("DARWIN_METADATA_TRAILING_BYTES");
+    return false;
+  }
+  return true;
 }
 
 /* ---- sha256 (streaming, bounded) --------------------------------------- */
