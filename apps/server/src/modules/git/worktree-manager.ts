@@ -242,14 +242,11 @@ export class WorktreeManager {
   }
 
   private async verifyActualTaskWorktree(record: WorktreeRecord, expectedHead?: string): Promise<void> {
-    const path = realpathSync(record.path);
-    const canonical = resolve(record.path);
-    const samePath = process.platform === "win32" ? path.toLowerCase() === canonical.toLowerCase() : path === canonical;
     const top = (await this.git.run(record.path, ["rev-parse", "--show-toplevel"])).stdout.trim();
     const branch = (await this.git.run(record.path, ["symbolic-ref", "--quiet", "--short", "HEAD"])).stdout.trim();
     const head = (await this.git.run(record.path, ["rev-parse", "--verify", "--end-of-options", "HEAD^{commit}"])).stdout.trim();
     const branchHead = (await this.git.run(record.repoPath, ["rev-parse", "--verify", "--end-of-options", `refs/heads/${record.branch}^{commit}`])).stdout.trim();
-    if (!samePath || !samePathValue(top, record.path) || branch !== record.branch || !head || head !== branchHead
+    if (!samePathValue(top, record.path) || branch !== record.branch || !head || head !== branchHead
       || (expectedHead !== undefined && (head !== expectedHead || (await this.git.run(record.path, ["status", "--porcelain"])).stdout.trim() !== ""))) {
       throw new Error("Task workspace Git state does not match its managed branch");
     }

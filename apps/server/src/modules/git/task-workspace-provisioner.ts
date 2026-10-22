@@ -184,9 +184,8 @@ function validatePersistedRepository(value: string): string {
     throw new Error("persisted onboarding repository is unavailable");
   }
   try {
-    const real = realpathSync(value);
-    if (!statSync(real).isDirectory()) throw new Error("not a directory");
-    return real;
+    if (!statSync(value).isDirectory()) throw new Error("not a directory");
+    return value;
   } catch {
     throw new Error("persisted onboarding repository is unavailable");
   }

@@ -153,8 +153,8 @@ export class EpicWorkspaceProvisioner {
 
   private async verifyActualWorktree(record: WorktreeRecord, expectedHead?: string): Promise<void> {
     const path = realpathSync(record.path);
-    if (!samePath(path, record.path)) throw new Error("Epic worktree path does not match its journal");
     const top = (await this.git.run(record.path, ["rev-parse", "--show-toplevel"])).stdout.trim();
+    if (!samePath(path, top)) throw new Error("Epic worktree path does not match its journal");
     const branch = (await this.git.run(record.path, ["symbolic-ref", "--quiet", "--short", "HEAD"])).stdout.trim();
     const head = (await this.git.run(record.path, ["rev-parse", "--verify", "--end-of-options", "HEAD^{commit}"])).stdout.trim();
     const branchHead = (await this.git.run(record.repoPath, ["rev-parse", "--verify", "--end-of-options", `refs/heads/${record.branch}^{commit}`])).stdout.trim();
@@ -171,9 +171,8 @@ export class EpicWorkspaceProvisioner {
 function validatePersistedRepository(value: string): string {
   if (!isAbsolute(value) || value.includes("\0") || !existsSync(value)) throw new Error("persisted onboarding repository is unavailable");
   try {
-    const real = realpathSync(value);
-    if (!lstatSync(real).isDirectory()) throw new Error("not a directory");
-    return real;
+    if (!lstatSync(value).isDirectory()) throw new Error("not a directory");
+    return value;
   } catch {
     throw new Error("persisted onboarding repository is unavailable");
   }
