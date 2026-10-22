@@ -1,4 +1,4 @@
-import { existsSync, realpathSync, statSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import type { Database } from "../../platform/database/database.js";
 import { GitCli, assertSafeGitRef } from "./git-cli.js";
