@@ -16,6 +16,7 @@
 | Whole-change readiness | `ebb-final-review` | fix or finish branch |
 | Branch/PR integration | `ebb-finish-branch` | user/pipeline decision |
 | Skill authoring/curation | `ebb-curate-skills` | validation + migration map |
+| Заметки/предложения пользователя | `ebb-notes` | планирование / регистрация |
 
 Database/security/Web rows — domain overlays: они не заменяют design/plan/implementation workflow, а добавляют specialist invariants/evidence к нему.
 

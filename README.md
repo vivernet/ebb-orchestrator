@@ -225,7 +225,7 @@ MCP-инструменты проверяют capability и аргументы. 
 
 ### Hermes development skills
 
-Канонический каталог из 20 repository-local Ebb skills находится в
+Канонический каталог из 21 repository-local Ebb skills находится в
 `.agents/skills/`; [руководство разработки через Hermes](docs/development/05-hermes.md) описывает
 настройку trust и проверку runtime prerequisites.
 
@@ -241,6 +241,7 @@ MCP-инструменты проверяют capability и аргументы. 
 - `ebb-finish-branch` — проверка готовности ветки и передача результата для разрешённой интеграции;
 - `ebb-handle-review-feedback` — проверка review findings и устранение подтверждённых замечаний;
 - `ebb-implement-task` — реализация одной задачи, TDD, review и необходимые локальные проверки;
+- `ebb-notes` — добавление, чтение и перевод статусов заметок пользователя из реестра входящих предложений;
 - `ebb-orchestrate-work` — выбор Ebb workflow и владельцев этапов инженерной работы;
 - `ebb-quality-gates` — выбор и выполнение необходимых проверок с evidence;
 - `ebb-repository-context` — разведка репозитория и компактный Context Brief для контроллера;

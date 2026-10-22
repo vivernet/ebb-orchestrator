@@ -9,6 +9,7 @@ const expectedNames = [
   'ebb-curate-skills', 'ebb-database-engineering', 'ebb-debug-issue', 'ebb-design-change',
   'ebb-dispatch-agents', 'ebb-execute-plan', 'ebb-final-review',
   'ebb-finish-branch', 'ebb-handle-review-feedback', 'ebb-implement-task',
+  'ebb-notes',
   'ebb-orchestrate-work', 'ebb-quality-gates', 'ebb-repository-context',
   'ebb-repository-maintenance', 'ebb-review-plan', 'ebb-review-task',
   'ebb-security-review', 'ebb-web-e2e', 'ebb-worktree', 'ebb-write-plan',
@@ -37,6 +38,7 @@ const triggerMatrix = [
   ['Auth/secrets/permissions/process/persistence boundary', 'ebb-security-review', /trust boundary, auth, secrets, permissions, process.*persistence/u, 'Trust boundary/auth/secrets/process'],
   ['Browser/HTTP/session/SSE behavior', 'ebb-web-e2e', /Web UI, HTTP, sessions, SSE.*browser-visible/u, 'Browser-visible HTTP/session/SSE'],
   ['Add/edit/audit Ebb skills', 'ebb-curate-skills', /создать, изменить, объединить, удалить или оценить skill/u, 'Skill authoring/curation'],
+  ['Add/read/resolve user notes/ideas', 'ebb-notes', /заметки.*предложения пользователя|реестр входящих предложений/u, 'Заметки/предложения пользователя'],
   ['Database schema, migration or persistence work', 'ebb-database-engineering', /database schema, migrations, persisted-data representation/u],
 ];
 
