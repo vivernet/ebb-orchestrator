@@ -57,10 +57,11 @@ describe("Darwin process-scope acceptance", () => {
     tmpDirs.push(dir);
     const supervisor = new DarwinRunSupervisor();
     const runOwner = owner();
-    const handle = await supervisor.launch(runOwner, request("sleep 0.2; echo DARWIN_PAYLOAD_DONE"), async () => undefined);
+    let liveOwner = runOwner;
+    const handle = await supervisor.launch(runOwner, request("sleep 0.2; echo DARWIN_PAYLOAD_DONE"), async (identity) => { liveOwner = identity; });
     const result = await handle.completion;
     expect(result.stdout).toContain("DARWIN_PAYLOAD_DONE");
-    const stopped = await supervisor.waitForStopped(runOwner);
+    const stopped = await supervisor.waitForStopped(liveOwner);
     expect(stopped.state).toBe("STOPPED");
     if (stopped.state === "STOPPED") expect(stopped.evidence).toBe("DARWIN_GROUP_EMPTY");
   });
@@ -71,8 +72,9 @@ describe("Darwin process-scope acceptance", () => {
     tmpDirs.push(dir);
     const supervisor = new DarwinRunSupervisor();
     const runOwner = owner();
-    const handle = await supervisor.launch(runOwner, request("sleep 30"), async () => undefined);
-    const stopped = await supervisor.stop(runOwner);
+    let liveOwner = runOwner;
+    const handle = await supervisor.launch(runOwner, request("sleep 30"), async (identity) => { liveOwner = identity; });
+    const stopped = await supervisor.stop(liveOwner);
     expect(stopped.state).toBe("STOPPED");
     await expect(handle.completion).resolves.toBeDefined();
   });
@@ -83,13 +85,14 @@ describe("Darwin process-scope acceptance", () => {
     tmpDirs.push(dir);
     const supervisor = new DarwinRunSupervisor();
     const runOwner = owner();
-    await supervisor.launch(runOwner, request("sleep 0.3"), async () => undefined);
-    const live = await supervisor.inspect(runOwner);
+    let liveOwner = runOwner;
+    await supervisor.launch(runOwner, request("sleep 0.3"), async (identity) => { liveOwner = identity; });
+    const live = await supervisor.inspect(liveOwner);
     if (live.state === "LIVE") {
       expect(live.identity).toBeDefined();
     }
-    await supervisor.waitForStopped(runOwner);
-    const final = await supervisor.inspect(runOwner);
+    await supervisor.waitForStopped(liveOwner);
+    const final = await supervisor.inspect(liveOwner);
     expect(final.state).toBe("STOPPED");
   });
 });

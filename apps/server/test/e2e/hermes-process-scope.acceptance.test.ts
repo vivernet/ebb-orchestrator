@@ -1329,6 +1329,7 @@ describe.skipIf(!isDarwin || !nativeAcceptanceEnabled)("Darwin native process-sc
     await mkdir(runHome);
     const owner = baseOwner(randomUUID());
     const supervisor = new DarwinRunSupervisor();
+    let liveOwner = owner;
     const handle = await supervisor.launch(owner, {
       executable: "/bin/sh",
       args: ["-c", "sleep 0.2; echo DARWIN_PAYLOAD_DONE"],
@@ -1340,14 +1341,14 @@ describe.skipIf(!isDarwin || !nativeAcceptanceEnabled)("Darwin native process-sc
         TMPDIR: tmpdir(),
       },
       timeoutMs: 30_000,
-    }, async () => undefined);
+    }, async (identity) => { liveOwner = identity; });
     const result = await handle.completion;
     expect(result.stdout).toContain("DARWIN_PAYLOAD_DONE");
-    const stopped = await supervisor.waitForStopped(owner);
+    const stopped = await supervisor.waitForStopped(liveOwner);
     expect(stopped.state).toBe("STOPPED");
     if (stopped.state === "STOPPED") expect(stopped.evidence).toBe("DARWIN_GROUP_EMPTY");
     const fresh = new DarwinRunSupervisor();
-    const observed = await fresh.inspect(owner);
+    const observed = await fresh.inspect(liveOwner);
     expect(observed.state).toBe("STOPPED");
   });
 
