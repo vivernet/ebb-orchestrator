@@ -146,7 +146,9 @@ export class DarwinRunSupervisor implements ProcessScopeSupervisor {
     const frame = buildMetadataFrame(request, environment);
     try {
       await writeAll(control, frame);
+      process.stderr.write(`EBB_DARWIN_FRAME_SENT bytes=${frame.byteLength}\n`);
     } catch (error) {
+      process.stderr.write(`EBB_DARWIN_FRAME_WRITE_FAILED ${String(error)}\n`);
       control.end();
       await completion.catch(() => undefined);
       this.launchAttempts.delete(key);
@@ -278,8 +280,8 @@ function readReadyLine(
       if (line.startsWith("UNKNOWN\t")) settle(new Error(`DARWIN_ANCHOR_NATIVE_UNKNOWN:${line.slice(8)}`));
       else settle(null, line);
     };
-    const onError = (): void => settle(new Error("DARWIN_ANCHOR_CHANNEL_FAILED"));
-    const onEnd = (): void => settle(new Error("DARWIN_ANCHOR_CHANNEL_CLOSED"));
+    const onError = (): void => { process.stderr.write(`EBB_DARWIN_CONTROL_ERROR\n`); settle(new Error("DARWIN_ANCHOR_CHANNEL_FAILED")); };
+    const onEnd = (): void => { process.stderr.write(`EBB_DARWIN_CONTROL_END\n`); settle(new Error("DARWIN_ANCHOR_CHANNEL_CLOSED")); };
     const settle = (error: Error | null, line?: string): void => {
       if (settled) return;
       settled = true;
