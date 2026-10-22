@@ -88,7 +88,7 @@ interface AnchorChild {
 /**
  * Первый канонический anchor: живая сессия/группа для одного Run.
  * Протокол: приватный control-канал (fd 3) отделён от stdout/stderr payload;
- * READY/UNKNOWN выводятся на stdout anchor; ACK/STOP nonce-bound идут по control;
+ * READY/UNKNOWN/ACK/STOP — по приватному duplex control-каналу (fd 3);
  * EOF закрывает гейт и запускает self-stop.
  * Ebb никогда не шлёт числовые PID/PGID-сигналы.
  */
@@ -154,7 +154,7 @@ export class DarwinRunSupervisor implements ProcessScopeSupervisor {
       throw error;
     }
 
-    const identity = await readReadyLine(child.stdout, owner, READY_TIMEOUT_MS).catch(async (error: unknown) => {
+    const identity = await readReadyLine(control, owner, READY_TIMEOUT_MS).catch(async (error: unknown) => {
       control.end();
       await completion.catch(() => undefined);
       this.launchAttempts.delete(key);
@@ -297,7 +297,7 @@ function readReadyLine(
 }
 
 /**
- * Разбирает READY-строку anchor-протокола (stdout anchor) в durable Darwin ProcessScopeIdentity.
+ * Разбирает READY-строку anchor-протокола (control, fd 3) в durable Darwin ProcessScopeIdentity.
  * Строка: EBB_DARWIN_READY\t<containmentId>\t<launchNonce>\t1\t<bootSessionUUID>\t<anchorPid>\t<anchorSec>\t<anchorUsec>\t<pgid>\t<sid>\t<runnerPid>\t<runnerSec>\t<runnerUsec>\t<execIdentity>.
  * Проверяет ровно 14 полей, nonce-биндинг, pgid == anchor pid и формат exec-identity.
  */
