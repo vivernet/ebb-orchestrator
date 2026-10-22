@@ -21,7 +21,7 @@ production `AgentRuntime` / `HermesRuntimeAdapter` задаётся архите
 - Установка Hermes, первичная настройка provider/model и проверочный запрос
   описаны в [первом запуске в README](../../README.md#первый-запуск-hermes).
 - В worktree должны присутствовать `.hermes.md` и canonical source `.agents/skills/`.
-- Полный актуальный набор из 20 Ebb skills находится в
+- Полный актуальный набор из 21 Ebb skills находится в
   [единственном README inventory](../../README.md#hermes-development-skills).
 
 ## Первоначальная настройка
@@ -57,7 +57,7 @@ Hermes home и завершает успешную настройку марке
 `HERMES_CONFIG marker=SETUP_CONFIGURED trusted=true redacted=true`.
 
 `hermes:check` проверяет `hermes --version`, `.hermes.md`, точный canonical
-inventory с `SKILL.md` у всех 20 owners, trusted repository через
+inventory с `SKILL.md` у всех 21 owners, trusted repository через
 `skills.trusted_project_dirs`, `skills.project_discovery=true` и три значения
 delegation выше. Успех — exit `0` и `All checks passed.`; ошибка — exit `1` и
 `HERMES_CONFIG marker=CHECK_FAILED exit_code=1 redacted=true`.

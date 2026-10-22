@@ -111,7 +111,7 @@ const actualNames = readdirSync(skillsRoot, { withFileTypes: true })
     return entry.name;
   }).sort();
 
-test('canonical workflow exposes exactly the 20 approved skill owners', () => {
+test('canonical workflow exposes exactly the 21 approved skill owners', () => {
   assert.deepEqual(actualNames, expectedNames);
 });
 

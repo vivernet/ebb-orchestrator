@@ -176,7 +176,7 @@ async function hermesConfigGet(key) {
 const CANONICAL_EBB_SKILLS = [
   'ebb-curate-skills', 'ebb-database-engineering', 'ebb-debug-issue', 'ebb-design-change', 'ebb-dispatch-agents',
   'ebb-execute-plan', 'ebb-final-review', 'ebb-finish-branch', 'ebb-handle-review-feedback',
-  'ebb-implement-task', 'ebb-orchestrate-work', 'ebb-quality-gates', 'ebb-repository-context',
+  'ebb-implement-task', 'ebb-notes', 'ebb-orchestrate-work', 'ebb-quality-gates', 'ebb-repository-context',
   'ebb-repository-maintenance', 'ebb-review-plan', 'ebb-review-task', 'ebb-security-review',
   'ebb-web-e2e', 'ebb-worktree', 'ebb-write-plan',
 ];
@@ -651,7 +651,7 @@ async function doCheck() {
   // Validate the canonical inventory and Hermes project-discovery prerequisites.
   const sourceSkills = join(worktreeRoot, '.agents', 'skills');
   const inventory = validateCanonicalSkills(sourceSkills);
-  checks.push({ name: 'Canonical project skills (20)', pass: inventory.valid });
+  checks.push({ name: 'Canonical project skills (21)', pass: inventory.valid });
   if (!inventory.valid) allPass = false;
   const hermesConfigChecks = await collectHermesConfigChecks({ health, worktreeRoot });
   checks.push(...hermesConfigChecks);
