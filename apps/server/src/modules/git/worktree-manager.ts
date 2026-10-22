@@ -57,7 +57,7 @@ export class WorktreeManager {
     } catch {
       // Пропускаем если директория уже существует или не может быть создана
     }
-    const worktreePath = join(realpathSync(this.worktreeDir), `task-${taskId}`);
+    const worktreePath = join(this.worktreeDir, `task-${taskId}`);
     
     const targetHead = (await this.git.run(repoPath, ["rev-parse", "--verify", "--end-of-options", `${targetRef}^{commit}`])).stdout.trim();
     if (!targetHead) throw new Error("Task workspace target ref does not resolve to a commit");

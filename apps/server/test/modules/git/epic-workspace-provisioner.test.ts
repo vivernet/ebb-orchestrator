@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -64,7 +63,7 @@ describe("EpicWorkspaceProvisioner", () => {
       expect(first).toEqual(second);
       expect(first.id).toBe(`epic:${f.epicId}`);
       expect(first.repoPath).toBe(f.repoPath);
-      expect(first.path).toBe(realpathSync(join(f.worktreeDir, `epic-${f.epicId}`)));
+      expect(first.path).toBe(join(f.worktreeDir, `epic-${f.epicId}`));
       expect(first.branch).toBe("epic/EPIC-123");
       expect((await f.git.run(f.repoPath, ["branch", "--show-current"])).stdout.trim()).toBe("master");
       expect((await f.git.run(first.path, ["branch", "--show-current"])).stdout.trim()).toBe("epic/EPIC-123");
@@ -113,7 +112,7 @@ describe("EpicWorkspaceProvisioner", () => {
 
       const recovered = await f.provisioner.provisionForEpic(f.epicId);
 
-      expect(recovered.path).toBe(realpathSync(worktreePath));
+      expect(recovered.path).toBe(worktreePath);
       expect(f.db.get<{ status: string }>("SELECT status FROM git_operations WHERE id='operation-1'")?.status).toBe("VERIFIED");
       expect(f.db.get<{ count: number }>("SELECT COUNT(*) AS count FROM worktrees WHERE id=$id AND removed_at IS NULL", { id: worktreeId })?.count).toBe(1);
     } finally {
