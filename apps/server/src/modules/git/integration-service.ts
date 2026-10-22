@@ -616,8 +616,11 @@ export class IntegrationService {
 
   /** Не позволяет cleanup удалить произвольный путь из недоверенной попытки. */
   private assertManagedWorktreePath(worktreePath: string): void {
-    const root = resolve(this.worktreeDir);
-    const candidate = resolve(worktreePath);
+    const canonical = (value: string): string => {
+      try { return realpathSync(value); } catch { return resolve(value); }
+    };
+    const root = canonical(this.worktreeDir);
+    const candidate = canonical(worktreePath);
     const relativePath = relative(root, candidate);
     if (!relativePath || relativePath.startsWith("..") || isAbsolute(relativePath)) {
       throw new Error(`Integration worktree path is outside the managed root: ${worktreePath}`);

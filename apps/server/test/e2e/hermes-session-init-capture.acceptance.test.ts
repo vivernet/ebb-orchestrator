@@ -346,7 +346,7 @@ async function setup(options: { leaveOwnerPrepared?: boolean; workspace?: string
     systemdControlGroup: process.platform === "linux" ? `/user.slice/ebb-${owner.containment_id}.service` : null,
     supervisorPid: ownerIdentityForContainmentKind(containmentKindForPlatform(process.platform)).supervisorPid ?? 202,
     supervisorStartIdentity: ownerIdentityForContainmentKind(containmentKindForPlatform(process.platform)).supervisorStartIdentity ?? "fixture-supervisor-start",
-    pid: 303,
+    pid: ownerIdentityForContainmentKind(containmentKindForPlatform(process.platform)).pid,
     platform: ownerIdentityForContainmentKind(containmentKindForPlatform(process.platform)).platform,
     processStartIdentity: ownerIdentityForContainmentKind(containmentKindForPlatform(process.platform)).processStartIdentity ?? "fixture-process-start",
     executableIdentity: ownerIdentityForContainmentKind(containmentKindForPlatform(process.platform)).executableIdentity ?? `sha256:${"d".repeat(64)}`,

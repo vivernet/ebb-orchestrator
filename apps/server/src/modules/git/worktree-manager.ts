@@ -223,8 +223,11 @@ export class WorktreeManager {
 
   /** Проверяет, что managed cleanup не выйдет за пределы назначенного корня. */
   private assertManagedWorktreePath(worktreePath: string): void {
-    const root = resolve(this.worktreeDir);
-    const candidate = resolve(worktreePath);
+    const canonical = (value: string): string => {
+      try { return realpathSync(value); } catch { return resolve(value); }
+    };
+    const root = canonical(this.worktreeDir);
+    const candidate = canonical(worktreePath);
     const relativePath = relative(root, candidate);
     if (!relativePath || relativePath.startsWith("..") || isAbsolute(relativePath)) {
       throw new Error(`Worktree path is outside the managed root: ${worktreePath}`);
