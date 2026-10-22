@@ -213,7 +213,10 @@ export class RunService {
             WHERE run.id=$runId`,
           { runId: capture.runId },
         );
-        if (!row || !isSameHermesCaptureGeneration(row, capture)) return "STALE";
+        if (!row) throw new Error("HERMES_SESSION_CAPTURE_STALE:ROW_MISSING");
+        if (!isSameHermesCaptureGeneration(row, capture)) {
+          throw new Error(`HERMES_SESSION_CAPTURE_STALE:DIFF:${describeHermesCaptureGenerationDiff(row, capture)}`);
+        }
         if (row.capture_state === "INVALID") return "INVALID";
         const resumeBinding = tx.get<{ original_session_id: string | null }>(
           "SELECT original_session_id FROM run_resume_bindings WHERE run_id=$runId", { runId: capture.runId });
@@ -1499,6 +1502,33 @@ function isIdempotentBoundHermesCapture(
     (row.run_status === "STARTED" || row.run_status === "IN_PROGRESS") &&
     row.session_id === capture.sessionId && row.output === null && row.ended_at === null &&
     row.owner_state === "LIVE" && row.capture_state === "BOUND";
+}
+
+function describeHermesCaptureGenerationDiff(row: HermesSessionCaptureRow, capture: HermesSessionCapture): string {
+  const owner = capture.owner;
+  const entries: Array<[string, string, string]> = [
+    ["runId", capture.runId, row.run_id],
+    ["attempt", String(capture.attempt), String(row.run_attempt)],
+    ["sourceTag", capture.sourceTag, row.source_tag],
+    ["hermesHome", capture.hermesHome, row.hermes_home],
+    ["owner.runId", owner.runId, row.run_id],
+    ["owner.state", owner.state, "LIVE"],
+    ["owner.containmentKind", owner.containmentKind, row.containment_kind],
+    ["owner.containmentId", owner.containmentId, row.containment_id],
+    ["owner.launchNonce", owner.launchNonce, row.launch_nonce],
+    ["owner.systemdInvocationId", String(owner.systemdInvocationId), String(row.systemd_invocation_id)],
+    ["owner.systemdControlGroup", String(owner.systemdControlGroup), String(row.systemd_control_group)],
+    ["owner.supervisorPid", String(owner.supervisorPid), String(row.supervisor_pid)],
+    ["owner.supervisorStartIdentity", String(owner.supervisorStartIdentity), String(row.supervisor_start_identity)],
+    ["owner.pid", String(owner.pid), String(row.pid)],
+    ["owner.platform", String(owner.platform), String(row.platform)],
+    ["owner.processStartIdentity", String(owner.processStartIdentity), String(row.process_start_identity)],
+    ["owner.executableIdentity", String(owner.executableIdentity), String(row.executable_identity)],
+  ];
+  const mismatches = entries
+    .filter(([, a, b]) => a !== b)
+    .map(([name, a, b]) => `${name}=${JSON.stringify(a)}!=${JSON.stringify(b)}`);
+  return mismatches.length > 0 ? mismatches.join(",") : "UNKNOWN";
 }
 
 function isSameHermesCaptureGeneration(row: HermesSessionCaptureRow, capture: HermesSessionCapture): boolean {

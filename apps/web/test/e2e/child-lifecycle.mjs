@@ -1,4 +1,4 @@
-import { execFile, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { closeSync, constants as fsConstants, fstatSync, openSync, readFileSync } from "node:fs";
 import { clearInterval, clearTimeout, setInterval, setTimeout } from "node:timers";
 
@@ -57,13 +57,14 @@ function signalProcessGroup(processGroupId, signal) {
 
 /**
  * Читает kernel start ticks и session identity Linux process из `/proc`.
- * На других платформах возвращает `undefined`, чтобы teardown не сигналил группу
- * без сильной process identity.
+ * На darwin использует `ps` (pid/pgid/sess/lstart). На остальных платформах
+ * возвращает `undefined`, чтобы teardown не сигналил группу без сильной identity.
  *
  * @param {number} pid PID проверяемого процесса.
  * @returns {{ pid: number, processGroupId: number, sessionId: number, startTicks: string } | undefined} Kernel identity или отсутствие поддерживаемого источника.
  */
 export function readLinuxProcessIdentity(pid) {
+  if (process.platform === "darwin") return readDarwinProcessIdentity(pid);
   if (process.platform !== "linux" || !Number.isInteger(pid) || pid <= 0) return undefined;
   try {
     const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
@@ -74,6 +75,24 @@ export function readLinuxProcessIdentity(pid) {
     const sessionId = Number(fields[3]);
     const startTicks = fields[19];
     if (!Number.isInteger(processGroupId) || !Number.isInteger(sessionId) || !/^\d+$/.test(startTicks ?? "")) return undefined;
+    return { pid, processGroupId, sessionId, startTicks };
+  } catch {
+    return undefined;
+  }
+}
+
+function readDarwinProcessIdentity(pid) {
+  if (process.platform !== "darwin" || !Number.isInteger(pid) || pid <= 0) return undefined;
+  try {
+    const out = execFileSync("ps", ["-p", String(pid), "-o", "pid=,pgid=,sess=,lstart="], {
+      encoding: "utf8", stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    const parts = out.split(/\s+/);
+    if (parts.length < 4) return undefined;
+    const processGroupId = Number(parts[1]);
+    const sessionId = Number(parts[2]);
+    const startTicks = parts.slice(3).join(" ");
+    if (!Number.isInteger(processGroupId) || !Number.isInteger(sessionId) || startTicks.length === 0) return undefined;
     return { pid, processGroupId, sessionId, startTicks };
   } catch {
     return undefined;
