@@ -234,8 +234,7 @@ export class DarwinRunSupervisor implements ProcessScopeSupervisor {
     const deadline = Date.now() + timeoutMs;
     do {
       const result = await this.inspect(owner);
-      if (result.state === "STOPPED" || result.state === "UNKNOWN") return result;
-      if (Date.now() + POLL_INTERVAL_MS > deadline) break;
+      if (result.state === "STOPPED") return result;
       await delay(POLL_INTERVAL_MS);
     } while (Date.now() <= deadline);
     return { state: "UNKNOWN", reason: "DARWIN_GROUP_STOP_TIMEOUT" };
