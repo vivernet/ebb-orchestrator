@@ -1,8 +1,7 @@
-import { writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { tmpdir } from "os";
-import { join } from "path";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, readFileSync } from "fs";
 
 import { GitCli } from "../../../src/modules/git/git-cli.js";
 import { WorktreeManager } from "../../../src/modules/git/worktree-manager.js";
