@@ -14,11 +14,59 @@ const STOP_TIMEOUT_MS = 30_000;
 const POLL_INTERVAL_MS = 100;
 const READY_TIMEOUT_MS = 60_000;
 const INSPECTION_TIMEOUT_MS = 30_000;
+const FRAME_MAGIC = 0x45424233; // "EBB3"
+const MAX_ARGS = 512;
+const MAX_ENV = 128;
+const MAX_STRING_BYTES = 16 * 1024;
+const MAX_FRAME_BYTES = 256 * 1024;
 const DARWIN_ENV_ALLOWLIST = new Set([
   "PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "NODE_ENV",
   "HERMES_HOME", "HERMES_PROFILE", "HERMES_CONFIG", "HERMES_MODEL",
   "HERMES_DATA_DIR_SUFFIX", "HERMES_RUNTIME_DIR",
 ]);
+
+/** Записывает весь буфер в поток и ждёт flush. */
+async function writeAll(stream: NodeJS.WritableStream, chunk: Buffer): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    stream.write(chunk, (error?: Error | null) => error ? reject(error) : resolve());
+  });
+}
+
+/**
+ * Собирает бинарный фрейм метаданных launch (magic/frame_len/counts и строки)
+ * для C anchor по протоколу read_metadata. Возвращает Buffer с проверенными лимитами.
+ */
+function buildMetadataFrame(request: ProcessScopeLaunchRequest, environment: Record<string, string>): Buffer {
+  const entries = Object.entries(environment);
+  if (request.args.length > MAX_ARGS || entries.length > MAX_ENV) {
+    throw new Error("DARWIN_METADATA_FRAME_INVALID");
+  }
+  const strings: Buffer[] = [];
+  const push = (value: string): void => {
+    const raw = Buffer.from(value, "utf8");
+    if (raw.byteLength > MAX_STRING_BYTES) throw new Error("DARWIN_METADATA_FRAME_INVALID");
+    strings.push(raw);
+  };
+  push(request.executable);
+  push(request.cwd);
+  for (const arg of request.args) push(arg);
+  for (const [key, value] of entries) { push(key); push(value); }
+  let stringBytes = 0;
+  for (const s of strings) stringBytes += 4 + s.byteLength;
+  const frameLen = 16 + stringBytes;
+  if (frameLen > MAX_FRAME_BYTES) throw new Error("DARWIN_METADATA_FRAME_INVALID");
+  const frame = Buffer.allocUnsafe(frameLen);
+  let offset = 0;
+  frame.writeUInt32BE(FRAME_MAGIC, offset); offset += 4;
+  frame.writeUInt32BE(frameLen, offset); offset += 4;
+  frame.writeUInt32BE(request.args.length, offset); offset += 4;
+  frame.writeUInt32BE(entries.length, offset); offset += 4;
+  for (const s of strings) {
+    frame.writeUInt32BE(s.byteLength, offset); offset += 4;
+    s.copy(frame, offset); offset += s.byteLength;
+  }
+  return frame;
+}
 
 interface LocalLaunchAttempt {
   control?: NodeJS.ReadWriteStream;
@@ -40,7 +88,8 @@ interface AnchorChild {
 /**
  * Первый канонический anchor: живая сессия/группа для одного Run.
  * Протокол: приватный control-канал (fd 3) отделён от stdout/stderr payload;
- * READY/ACK/STOP nonce-bound; EOF закрывает гейт и запускает self-stop.
+ * READY/UNKNOWN выводятся на stdout anchor; ACK/STOP nonce-bound идут по control;
+ * EOF закрывает гейт и запускает self-stop.
  * Ebb никогда не шлёт числовые PID/PGID-сигналы.
  */
 export class DarwinRunSupervisor implements ProcessScopeSupervisor {
@@ -94,8 +143,18 @@ export class DarwinRunSupervisor implements ProcessScopeSupervisor {
       child.once("error", reject);
       child.once("close", (code) => resolve({ exitCode: code ?? 1, stdout: payloadStdout, stderr: payloadStderr }));
     });
+    const frame = buildMetadataFrame(request, environment);
+    try {
+      await writeAll(control, frame);
+    } catch (error) {
+      control.end();
+      await completion.catch(() => undefined);
+      this.launchAttempts.delete(key);
+      this.launchAttemptNonces.delete(owner.containmentId);
+      throw error;
+    }
 
-    const identity = await readReadyLine(control, owner, READY_TIMEOUT_MS).catch(async (error: unknown) => {
+    const identity = await readReadyLine(child.stdout, owner, READY_TIMEOUT_MS).catch(async (error: unknown) => {
       control.end();
       await completion.catch(() => undefined);
       this.launchAttempts.delete(key);
@@ -200,22 +259,15 @@ export class DarwinRunSupervisor implements ProcessScopeSupervisor {
 }
 
 function readReadyLine(
-  control: NodeJS.WritableStream & NodeJS.ReadableStream,
+  output: NodeJS.ReadableStream,
   owner: ProcessScopeIdentity,
   timeoutMs: number,
 ): Promise<ProcessScopeIdentity> {
   return new Promise((resolve, reject) => {
     let buffered = Buffer.alloc(0);
     let settled = false;
-    const timer = setTimeout(() => { settle(new Error("DARWIN_ANCHOR_HANDSHAKE_TIMEOUT")); }, timeoutMs);
-    const settle = (error: Error | null, line?: string) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (error) reject(error);
-      else resolve(parseLiveIdentity(line!, owner));
-    };
-    control.on("data", (chunk: Buffer) => {
+    const timer = setTimeout(() => settle(new Error("DARWIN_ANCHOR_HANDSHAKE_TIMEOUT")), timeoutMs);
+    const onData = (chunk: Buffer): void => {
       buffered = Buffer.concat([buffered, Buffer.from(chunk)]);
       const newline = buffered.indexOf(0x0a);
       if (newline < 0) {
@@ -225,16 +277,29 @@ function readReadyLine(
       const line = buffered.subarray(0, newline).toString("utf8");
       if (line.startsWith("UNKNOWN\t")) settle(new Error(`DARWIN_ANCHOR_NATIVE_UNKNOWN:${line.slice(8)}`));
       else settle(null, line);
-    });
-    control.on("error", () => settle(new Error("DARWIN_ANCHOR_CHANNEL_FAILED")));
-    control.on("end", () => settle(new Error("DARWIN_ANCHOR_CHANNEL_CLOSED")));
+    };
+    const onError = (): void => settle(new Error("DARWIN_ANCHOR_CHANNEL_FAILED"));
+    const onEnd = (): void => settle(new Error("DARWIN_ANCHOR_CHANNEL_CLOSED"));
+    const settle = (error: Error | null, line?: string): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      output.removeListener("data", onData);
+      output.removeListener("error", onError);
+      output.removeListener("end", onEnd);
+      if (error) reject(error);
+      else resolve(parseLiveIdentity(line!, owner));
+    };
+    output.on("data", onData);
+    output.on("error", onError);
+    output.on("end", onEnd);
   });
 }
 
 /**
- * Разбирает READY-строку anchor-протокола (fd 3) в durable Darwin ProcessScopeIdentity.
+ * Разбирает READY-строку anchor-протокола (stdout anchor) в durable Darwin ProcessScopeIdentity.
  * Строка: EBB_DARWIN_READY\t<containmentId>\t<launchNonce>\t1\t<bootSessionUUID>\t<anchorPid>\t<anchorSec>\t<anchorUsec>\t<pgid>\t<sid>\t<runnerPid>\t<runnerSec>\t<runnerUsec>\t<execIdentity>.
- * PROверяет ровно 14 полей, nonce-биндинг, pgid/sid == anchor pid и формат exec-identity.
+ * Проверяет ровно 14 полей, nonce-биндинг, pgid == anchor pid и формат exec-identity.
  */
 export function parseLiveIdentity(line: string, owner: ProcessScopeIdentity): ProcessScopeIdentity {
   const fields = line.split("\t");
