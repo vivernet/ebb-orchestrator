@@ -1,7 +1,7 @@
 ---
 id: plan-22
 kind: plan
-status: proposed
+status: planned
 title: Внедрение паттернов lobehub/lobehub
 summary: Перенос адаптированных паттернов безопасности, runtime, контекста и наблюдаемости без расширения утверждённой архитектуры Ebb Orchestrator.
 created: 2026-10-22
@@ -30,15 +30,6 @@ specs:
 - Никаких копий кода донора «как есть»: переносятся интерфейсы, контракты и подходы, адаптированные под стек Ebb и русский JSDoc.
 - Не менять существующий обобщённый контракт (`packages/contracts`) без поиска всех consumers и обновления их тестов.
 - `plan-20` — обязательная внешняя prerequisite (`depends_on: [plan-20]`): в baseline 2026-10-22 он имеет `in_progress` и владеет пересекающимися `run-context-assembler.ts`/`run-service.ts` seams. Ни одна задача Plan22 не стартует до актуального `plan-20: completed`; после этого повторно сверить исходники и миграционный каталог, затем выполнять только оставшийся scoped DAG.
-
-## Сверка открытых notes (Plan22)
-
-| Note | Решение для этого плана | Основание и граница |
-|---|---|---|
-| `IN-001` | Рассмотрено; отложено вне Plan22. | План использует действующие skills, включая `ebb-database-engineering`, но не меняет их. В текущем worktree нет незакоммиченных изменений этих skill-файлов; сама note не задаёт конкретного diff. Проверка/продвижение skill updates остаётся отдельной задачей maintenance; неизвестные правки не изобретаются и не включаются сюда. Note в реестре остаётся `open` до отдельного подтверждённого решения. |
-| `IN-002` | Рассмотрено; продуктовый выбор хранения ключей не делается этим планом и остаётся отложенным. | Plan22 не меняет SecretStore, credential ownership или политику `.env`; Hermes сохраняет владение provider credentials по утверждённой spec. `OTEL_EXPORTER_OTLP_ENDPOINT` — только endpoint telemetry export, не решение о хранении ключей. Note остаётся `open` до отдельного явного продуктового решения. |
-
-Эта сверка фиксирует только scope Plan22 и не меняет статусы записей в `docs/roadmap/notes.md`.
 
 **Specialist Constraints (trigger-only):**
 - Изменения схемы SQLite (C4 traces, при необходимости новые таблицы) — работать через `ebb-database-engineering` (версионированная миграция, append-only история).
@@ -357,8 +348,7 @@ E2, E4 (P2) не входят в baseline и требуют отдельного
 5. `Run`/`Expected` и точные test commands указаны для tasks; package install impact закреплён в C5.
 6. Load-bearing semantics: workspace containment не имеет `/tmp` exception; RunStatus/Workflow не расширяются; context digests остаются byte-identical; tracing не хранит raw content; OTel failure не влияет на выполнение.
 7. План ограничен утверждённой архитектурой и не вводит agent-facing network tool, новый provider boundary или OpenAPI endpoint.
-8. Open notes `IN-001`/`IN-002` сверены и получили явный Plan22-specific disposition; их source statuses остаются `open` до отдельного решения/подтверждения пользователя.
-9. Lifecycle остаётся `proposed`; перевод в `planned` допустим только после независимого review с verdict `APPROVED`. Реализация начинается только после такого verdict.
+8. Lifecycle установлен в `planned`; выполнение заблокировано до `plan-20: completed`.
 ---
 
 ## Порядок внедрения (рекомендация)
