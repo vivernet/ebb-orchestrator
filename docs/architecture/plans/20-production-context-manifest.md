@@ -567,5 +567,14 @@ Producer coverage is keyed by exactly 18 stable source-backed labels and each mu
 - Task5C-M — приёмка interrupted no-auto-resume/UNKNOWN lock retention на физическом Mac (`NOT RUN`);
 - свежие whole-change и whole-plan review Plan20, закрытие Task6/Task7-остатков и конечный lifecycle-переход.
 
+## 2026-10-22 — финальная доработка macOS Task5A-M и зелёный hosted CI
+
+- **Darwin anchor — запуск без обязательной session leader:** в `cmd_launch` anchor создаёт новую группу процессов (`setpgid`, либо `setsid` при возможности) и продолжает работу, только если `getpgrp()==getpid()`; `getsid()` не обязан быть равен `pid`. Код `inspect` и TS-парсеры согласованно больше не требуют `sid==anchor_pid`, а проверяют только `pgid==anchor_pid` и boot-session-совпадение anchor/runner. Это закрывает `DARWIN_SESSION_LEADER_UNAVAILABLE` на hosted macOS runner, где `setsid()` возвращает `EPERM`, а группа процессов уже корректна.
+- **Metadata-фрейм (EBB3):** TS-обёртка передаёт бинарный фрейм (magic/frame_len/счётчики и строки) на fd-3 перед ожиданием READY; READY/UNKNOWN читаются из control-канала. Фрейм валидируется в C (`read_metadata`) с диагностическими кодами. Найдена и исправлена C-ошибка, которая сравнивала строку `value` с `strchr(value, '\0') != NULL` (недопустимо для C-строк): NUL-значения не отклоняются, а лимиты фрейма контролируются длиной.
+- **Диагоностика supervisor:** временно логировались отправка фрейма и identity (`EBB_DARWIN_FRAME_SENT` / `EBB_DARWIN_IDENTITY`); оставлены как нешумные stderr-диагностики.
+- **Shared-фикстуры и git-пути:** добавлены `stopEvidenceForContainmentKind`/`ownerIdentityForContainmentKind`; переходы LIVE/STOPPED в run-service/session-capture/context-manifest/epic-тестах используют единый helper вместо платформенных ветвлений. Пути в git-журналах worktree и в `assertManagedWorktreePath` канонизируются через `realpathSync` (macOS: `/var` → `/private/var`), что устраняет ложные расхождения на hosted macOS runner.
+- **Hosted CI:** `process-scope-darwin-acceptance` (macos-14/arm64) собирается и проходит; `keyring-acceptance (macos-14)` проходит; `quality-security (macos-14)` после фиксов путей/identity снова зелёный; `hermes-process-scope-acceptance` (Windows) проходит после rerun (один прогон упал на таймауте VC-hook, повторный — зелёный).
+- **Локальные gates:** `pnpm lint` PASS, server typecheck PASS, targeted suites (git/run/session/epic/context) PASS.
+
 Plan20 остаётся `in_progress`; план 19 закрыт ранее (metadata `completed`).
 
