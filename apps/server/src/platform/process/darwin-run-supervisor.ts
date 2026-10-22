@@ -163,6 +163,7 @@ export class DarwinRunSupervisor implements ProcessScopeSupervisor {
       this.launchAttemptNonces.delete(owner.containmentId);
       throw error;
     });
+    process.stderr.write(`EBB_DARWIN_IDENTITY super=${identity.supervisorStartIdentity} runner=${identity.processStartIdentity}\n`);
     await persistVerifiedIdentity(identity);
     if (request.signal?.aborted) {
       control.end();
