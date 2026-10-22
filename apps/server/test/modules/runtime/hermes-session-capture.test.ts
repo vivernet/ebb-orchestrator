@@ -44,8 +44,9 @@ class CompletionFailureSupervisor implements ProcessScopeSupervisor {
     this.liveIdentity = {
       ...owner, state: "LIVE",
       platform: kindIdentity.platform,
-      supervisorPid: 202, supervisorStartIdentity: "supervisor-start",
-      pid: 303,
+      supervisorPid: kindIdentity.supervisorPid,
+      supervisorStartIdentity: kindIdentity.supervisorStartIdentity,
+      pid: kindIdentity.pid,
       processStartIdentity: kindIdentity.processStartIdentity,
       executableIdentity: kindIdentity.executableIdentity,
       systemdInvocationId: kindIdentity.systemdInvocationId,
