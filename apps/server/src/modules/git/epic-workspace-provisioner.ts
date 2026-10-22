@@ -61,7 +61,6 @@ export class EpicWorkspaceProvisioner {
     const branch = `epic/${onboarding.display_id}`;
     assertSafeGitRef(branch);
     const worktreeId = `epic:${onboarding.id}`;
-    const worktreePath = join(this.worktreeDir, `epic-${onboarding.id}`);
     const prior = this.db.all<{ id: string; repo_path: string; path: string; branch: string; removed_at: string | null }>(
       "SELECT id,repo_path,path,branch,removed_at FROM worktrees WHERE id=$id",
       { id: worktreeId },
@@ -72,6 +71,7 @@ export class EpicWorkspaceProvisioner {
     );
 
     this.ensureManagedRoot();
+    const worktreePath = join(realpathSync(this.worktreeDir), `epic-${onboarding.id}`);
     const targetHead = (await this.git.run(repoPath, ["rev-parse", "--verify", "--end-of-options", `${targetRef}^{commit}`])).stdout.trim();
     if (!targetHead) throw new Error("Epic workspace target ref does not resolve to a commit");
     if (prior.length || journal.length) {
