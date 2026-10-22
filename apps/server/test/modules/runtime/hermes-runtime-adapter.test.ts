@@ -13,6 +13,7 @@ import * as orchestratorHomeModule from "../../../src/platform/home/orchestrator
 import { HermesCliBuilder } from "../../../src/modules/runtime/hermes/hermes-cli.js";
 import { HERMES_PROVIDER_SELECTION_SOURCE } from "../../../src/modules/runtime/hermes/hermes-source-identity.js";
 import { containmentKindForPlatform } from "../../../src/modules/runtime/run-process-owner.js";
+import { stopEvidenceForContainmentKind } from "../../helpers/run-process-owner-fixture.js";
 import { createHermesLaunchTicket, type HermesLaunchTicketFactory } from "../../../src/modules/runtime/hermes/hermes-launch-ticket.js";
 import { createSqliteDatabase } from "../../../src/platform/database/sqlite-database.js";
 import {
@@ -156,7 +157,7 @@ class MockProcessScopeSupervisor implements ProcessScopeSupervisor {
 }
 
 function stoppedEvidence(owner: ProcessScopeIdentity): string {
-  return owner.containmentKind === "windows-job" ? "WINDOWS_JOB_EMPTY" : "SYSTEMD_CGROUP_EMPTY";
+  return stopEvidenceForContainmentKind(owner.containmentKind);
 }
 
 function createProcessOwnerGenerationFixture(database: ReturnType<typeof createSqliteDatabase>): void {

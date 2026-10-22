@@ -1,13 +1,26 @@
+---
+id: plan-22
+kind: plan
+status: proposed
+title: Внедрение паттернов lobehub/lobehub
+summary: Перенос адаптированных паттернов безопасности, runtime, контекста и наблюдаемости без расширения утверждённой архитектуры Ebb Orchestrator.
+created: 2026-10-22
+updated: 2026-10-22
+depends_on: []
+specs:
+  - ../specs/01-system-design.md
+---
+
 # Внедрение проверенных паттернов из lobehub/lobehub — Implementation Plan
 
-**Goal:** внедрить в Ebb Orchestrator проверенные паттерны и контракты из открытого репозитория lobehub/lobehub (canary), усилия безопасность инструментов, durable recovery, контекст/наблюдаемость и контракты — без изменения утверждённой архитектуры и инвариантов.
+**Goal:** внедрить в Ebb Orchestrator проверенные паттерны и контракты из открытого репозитория lobehub/lobehub (canary), усилить безопасность инструментов, улучшить durable recovery, контекст и наблюдаемость — без изменения утверждённой архитектуры и инвариантов.
 
-**Architecture:** заимствование выполняется как перенос **паттернов и контрактов**, а не кода (стеки расходятся: у донора PostgreSQL/Drizzle/Hono/tRPC + `@lobechat/*` и React-хост; у Ebb — SQLite/better-sqlite3, Express-подобный backend, собственный порт `AgentRuntime`). Улучшения сгруппированы в четыре независимо оцениваемых слоя: (A) Security Foundation, (B) Runtime & Recovery Execution, (C) Context & Observability, (D) Transport / Contracts / New Tools. Каждый слой сохраняет существующие порты Ebb (`AgentRuntime`, `ActionGateway`, `PermissionEngine`, `ContextBuilder`/`ContextManifest`) и расширяет их изнутри.
+**Architecture:** заимствование выполняется как перенос **паттернов и контрактов**, а не кода (стеки расходятся: у донора PostgreSQL/Drizzle/Hono/tRPC + `@lobechat/*` и React-хост; у Ebb — SQLite/better-sqlite3, Fastify, собственный порт `AgentRuntime`). Работа ограничена тремя слоями: (A) Security Foundation, (B) Runtime & Recovery Execution, (C) Context & Observability. Каждый слой сохраняет существующие порты Ebb (`AgentRuntime`, `ActionGateway`, `PermissionEngine`, `ContextBuilder`/`ContextManifest`) и расширяет их изнутри.
 
 **Authority:**
 - `docs/architecture/specs/01-system-design.md` (утверждённая архитектура v1);
 - `AGENTS.md`, `.hermes.md`, `apps/server/AGENTS.md`, `packages/contracts/AGENTS.md`;
-- Аудит донора от 2026-10-22 (два read-only исследования lobehub/lobehub, ветка `canary`; локальный клон: `C:\Users\alex1\lobehub-research`).
+- Исследованный источник lobehub/lobehub: ветка `canary`, точный commit `d1ffc35de345c9a590f79a24ec1c0dbaf9f5d1b1` (локальный read-only clone `C:\Users\alex1\lobehub-research`, наблюдён 2026-10-22). Исследования и паттерны сверяются только с этим commit; новый `canary` HEAD не заменяет зафиксированный источник.
 
 **Global Constraints:**
 - Не нарушать инварианты: детерминированность-first; modular monolith + Ports & Adapters; Git — источник истины для кода, SQLite — для оркестрационного состояния; все AI-запуски через порт `AgentRuntime`; действия агента через `ActionGateway`/`PermissionEngine` (fail-closed, unknown → deny); Scheduler без LLM; recovery до новой работы.
@@ -18,12 +31,12 @@
 
 **Specialist Constraints (trigger-only):**
 - Изменения схемы SQLite (C4 traces, при необходимости новые таблицы) — работать через `ebb-database-engineering` (версионированная миграция, append-only история).
-- Любые изменения security-границ (A3/A4) — обязательный security-focused review и evidence.
-- Если в ходе исполнения потребуется расширение интерфейса `AgentRuntime` (B2/B4) — проверить всех реализаторов (HermesRuntimeAdapter, тестовые fake) и обновить их тесты.
+- Любые изменения security-границ (A3) — обязательный security-focused review и evidence.
+- Если B2 меняет observer/adapter contracts — проверить существующих реализаторов и тестовые fake; не добавлять и не менять общий `AgentRuntime` contract без отдельного решения.
 
 **Review Focus (наивысшие риски):**
 - Расширение `PermissionEngine` matcher-логикой (A3) не должно ослабить most-restrictive-wins и unknown → deny.
-- Новая сетевая capability (A4) не должна создать неконтролируемый канал выхода данных из оркестратора (SSRF, размер ответа).
+- Сетевые agent-facing capabilities не входят в этот план; их нельзя добавлять через implementation tasks без отдельного решения по whitelist, confirmations и Permission Engine.
 - Рефакторинг `RunContextAssembler` в конвейер (C1) не должен изменить `prompt_hash`/`context_hash` (digest-семантика) и, как следствие, manifest и resume.
 - Step/event-модель (B2) не должна сломать существующий durable resume по `session_id`.
 - OTel (C5) — опциональный экспорт: локальный запуск без экспортёра должен работать без изменения поведения и без «тихого» падения.
@@ -37,10 +50,9 @@
 ### Security Foundation (Phase A)
 | Файл | Тип | Ответственность |
 |---|---|---|
-| `apps/server/src/platform/security/path-scope.ts` | new | Нормализация/резолвинг аргументов-путей с ограничением scope; `ALWAYS_ALLOWED_PATHS`; API в стиле `pathScope.ts` донора (normalizePathForScope, resolvePathWithScope, isPathWithinScope, resolveArgsWithScope) поверх существующего `PathResolver`. |
-| `apps/server/src/modules/permissions/intervention-checker.ts` | new | Матчеры аргументов (`exact/prefix/wildcard/regex`), политики `always/required/never`, «security blacklist побеждает всё», unknown → `required` (fail-closed). |
+| `apps/server/src/platform/security/path-scope.ts` | new | Нормализация/резолвинг аргументов-путей с ограничением scope; API в стиле `pathScope.ts` донора (normalizePathForScope, resolvePathWithScope, isPathWithinScope, resolveArgsWithScope) поверх существующего `PathResolver`; никакие вне-workspace пути не разрешаются. |
+| `apps/server/src/modules/permissions/intervention-checker.ts` | new | Чистый детерминированный matcher аргументов для security blacklist; совпадение возвращает только `ABSOLUTE_DENY`, без новой ASK/approval policy. |
 | `apps/server/src/modules/permissions/default-security-blacklist.ts` | new | Реестр regex-правил опасных действий (удаление данных, `/etc/passwd`, fork bomb, sudoers, firewall и т.п.), адаптированный к workspace-контексту. |
-| `apps/server/src/platform/network/ssrf-safe-fetch.ts` | new | SSRF-безопасный fetch: блокировка private/meta-адресов, allow/deny-списки, env-overrides, `maxContentLength`-обрезка, классификация ошибок. |
 | `apps/server/src/modules/execution/workspace-tools.ts` | modify | Проводить все входные пути через `resolveArgsWithScope`/`isPathWithinScope`. |
 | `apps/server/src/modules/execution/action-gateway.ts` | modify | Прогон аргументов через `InterventionChecker` до исполнения; защита от inbound `cwd`. |
 | `apps/server/src/modules/permissions/permission-types.ts`, `permission-engine.ts` | modify | Расширение `EvaluationInput` полем `args`; интеграция matchers/blacklist в оценку. |
@@ -50,11 +62,10 @@
 |---|---|---|
 | `apps/server/src/modules/runtime/provider-errors.ts` | new | Таксономия ошибок провайдера: `ErrorCategory`, `ErrorSeverity`, `ErrorAttribution`, стабильные numericId, `ErrorClassifier` (предикаты rate-limit/quota/context-window/auth/network). |
 | `apps/server/src/modules/runtime/usage-counter.ts` | new | Унифицированный аккумулятор usage/cost (единый формат `ModelUsage`). |
-| `apps/server/src/modules/runtime/run-step.ts` | new | Абстракция «шага» run (host-injected step): контракт `RunStepExecutor`, `RunStepContext`, стадии lock → persist → execute → events. |
-| `apps/server/src/modules/runtime/agent-events.ts` | new | Контракт событий агента (`AgentEvent`-подмножество): `llm_start/llm_result/tool_pending/tool_result/done/interrupted/resumed`, `FinishReason`. |
-| `apps/server/src/modules/runtime/hermes/external-cli-adapter.ts` | new | Интерфейс внешнего CLI-рантайма (по образцу adapter-слоя heterogeneous-agents): spawn, stream-нормализация, событийный протокол, обёртка ошибок. |
-| `apps/server/src/modules/runtime/run-service.ts` | modify | Подключение step/event-абстракций к существующему запуску; маппинг `FinishReason` → `RunStatus`; интеграция `UsageCounter`; вызов tracing-хуков (C4). |
-| `apps/server/src/modules/runtime/hermes/hermes-runtime-adapter.ts` | modify | Использование таксономии ошибок; типизация stream-чанков (D1); реализация `ExternalCliRuntimeAdapter`. |
+| `apps/server/src/modules/runtime/agent-events.ts` | new | Эфемерная discriminated union только для `run_started`, allowlisted `tool_pending`/`tool_result` и `run_finished`; без raw payload. |
+| `apps/server/src/modules/runtime/run-service.ts` | modify | Эмиссия эфемерных событий из существующего lifecycle; интеграция `UsageCounter`; вызов tracing-хуков (C4) без изменения RunStatus/Workflow transitions. |
+| `apps/server/src/modules/runtime/hermes/hermes-runtime-adapter.ts` | modify | Использование таксономии ошибок и `UsageCounter`; поведение запуска/session не меняется. |
+| `apps/server/src/modules/runtime/hermes/hermes-stream-session-observer.ts` | modify | Эмиссия только allowlisted tool lifecycle events без args/result payload; stream capture/session validation остаётся без изменения. |
 
 ### Context & Observability (Phase C)
 | Файл | Тип | Ответственность |
@@ -63,31 +74,37 @@
 | `apps/server/src/modules/runtime/context/token-accounting.ts` | new | Учёт токенов по бакетам (`TokenSourceType`, per-message/per-tool breakdown, `driftMultiplier`). |
 | `apps/server/src/modules/runtime/context/agent-config-snapshot.ts` | new | `AgentConfigSnapshot`: «намеренно plain data» — весь читаемый контекст собирается один раз, правила становятся чистыми функциями. |
 | `apps/server/src/modules/runtime/run-context-assembler.ts`, `context-budget.ts` | modify | Рефакторинг в конвейер процессоров; интеграция tokenAccounting. |
-| `apps/server/src/modules/runtime/tracing/tracing-payload.ts`, `tracing-store.ts` | new | `TracingPayload` (prompt_hash/prompt_version/scenario), `computePromptHash`, реестр сценариев, интерфейс хранилища. |
-| `apps/server/src/modules/runtime/tracing/migrations/*` | new | Миграция SQLite для trace-записей (сводная строка + полный payload в blob) — через `ebb-database-engineering`. |
+| `apps/server/src/modules/runtime/tracing/tracing-payload.ts`, `tracing-store.ts` | new | Безопасные trace metadata и digest contract; raw prompt/input/output не сохраняются. |
+| `apps/server/src/platform/database/migrations/048_run_traces.sql` | new | Additive migration для trace rows, связанных с Run; только после preflight подтверждения, что 048 остаётся следующим свободным номером. |
 | `apps/server/src/platform/observability/otel.ts` | new | Инициализация OTel OTLP HTTP; `gen_ai` semconv; middleware-трейсинг; гистограммы. |
-
-### Transport / Contracts / New Tools (Phase D)
-| Файл | Тип | Ответственность |
-|---|---|---|
-| `apps/server/src/modules/runtime/hermes/stream-chunk-types.ts` | new | Дискриминирующие юнионы чанков stream-json; ошибки chunk/parse/abort; Last-Event-ID конвенции. |
-| `apps/server/src/modules/runtime/hermes/hermes-stream-session-observer.ts` | modify | Применение типизации чанков. |
-| `packages/contracts/src/models.ts` | new | Схемы моделей/провайдеров (`AiModelType`, `ModelAbilities`) + zod-валидация (по образцу model-bank). |
-| `packages/contracts/src/tracing.ts` | new | Контракты tracing-событий (если пересекают API/process boundary). |
-| `apps/server/src/modules/execution/mcp/tool-registry.ts` | modify | Регистрация новых инструментов (network.fetch — только с явной capability), проверка args-scope. |
-| `apps/server/src/modules/runtime/context/context-engine-adapter.ts` | new (опц.) | Адаптер между конвейером и существующим `RunContextAssembler` (если потребуется изоляция digest-логики). |
+| `apps/server/package.json`, `pnpm-lock.yaml` | modify | Pinned OTel runtime dependencies из Task C5 для reproducible install/build. |
 
 ---
 
 ## Design decisions (зафиксированные решения)
 
-1. **Переносим паттерны, не код.** Единственный разрешённый «перенос кода» — компактные самодостаточные модули (path-scope, intervention-checker, ssrf-safe-fetch, provider-errors, stream-chunk-types), портированные с переписыванием JSDoc на русский и без зависимостей `@lobechat/*`.
+1. **Переносим паттерны, не код.** Разрешён только перенос компактных самодостаточных модулей из baseline scope (`path-scope`, `intervention-checker`, `provider-errors`), портированных под стек Ebb и с русским JSDoc; без зависимостей `@lobechat/*`.
 2. **Не переносим:** frontend/UI; `canvas-runtime`, `replica`, `edge-config`, `trpc` (React/Zustand/Vercel-специфика); крипто-протокол `secret-channel` целиком — берём только идею redaction-плейсхолдеров (P2); полный мультимодальный спектр `model-runtime` — берём только подкласс методов (chat/usage/stream) и таксономию ошибок; бизнес-логику чатов/плагинов/knowledge-base.
-3. **`pathScope` vs существующий `PathResolver`:** `PathResolver` уже обеспечивает symlink/junction-safe containment. Новый `path-scope` добавляет недостающее: нормализация и подстановка scope в аргументы инструментов (`resolveArgsWithScope`), разрешённые вне-workspace пути (`/tmp`), и единый вход для всех инструментов (включая будущие сетевые/файловые).
+3. **`pathScope` vs существующий `PathResolver`:** `PathResolver` уже обеспечивает symlink/junction-safe containment. Новый `path-scope` добавляет нормализацию и подстановку scope в аргументы инструментов (`resolveArgsWithScope`) и единый вход для всех workspace-инструментов. Любой канонический путь вне capability-bound workspace, включая `/tmp`, отклоняется; исключений из containment в этом плане нет.
 4. **Инвариант «модель не задаёт cwd»** — уже реализован принципиально в `CommandPolicy` («executable, cwd и лимиты агент не задаёт»). В плане это закрепляется регрессионными тестами, а не новой механикой.
-5. **`network.fetch`** вводится как capability-инструмент за `PermissionEngine`; до появления явного решения по whitelist доменов и UX подтверждений инструмент остаётся внутренним сервисом (используется только внутренним кодом), не выдаётся агентам.
-6. **Step-модель (B2)** вводится как *наблюдаемый* слой над существующим запуском Hermes (не переписывает запуск): на первом этапе фиксирует прогресс и события; переход к полноценному «персист шага» — отдельная фаза после стабилизации контракта событий.
-7. **OTel (C5)** — опционально, включается только при наличии `OTEL_EXPORTER_OTLP_ENDPOINT`; без него код работает в no-op режиме.
+5. **Сетевой fetch не входит в текущий scope.** Никакой SSRF helper, `ActionId` или MCP tool не добавляется; принятие такой задачи требует отдельного утверждённого плана после определения production consumer и security/UX contract.
+6. **Event-модель (B2)** вводится только как наблюдение существующего Run lifecycle. События эфемерны, не создают persisted step-state, новых таблиц, Run-статусов или Workflow transitions.
+7. **OTel (C5)** — опциональный экспорт, включается только при наличии `OTEL_EXPORTER_OTLP_ENDPOINT`; без него код работает в no-op режиме. Все OTel dependencies и их версии фиксируются в Task C5 до установки.
+
+---
+
+## Отложенная область (не входит в DAG этого плана)
+
+Следующие идеи не имеют подтверждённого production consumer или одобренного v1 scope и не должны реализовываться в рамках Plan22:
+
+- `network.fetch`, `ssrf-safe-fetch` и любая agent-facing network capability. Возобновление требует названного потребителя, отдельного scope/security решения, доменного allowlist и UX подтверждений; реализация должна отдельно закрыть DNS pinning, каждый redirect hop и ограничение реально прочитанного body.
+- Shared model/provider schemas (`AiModelType`, `ModelAbilities`) и provider-response validation. Возобновление требует source-backed producer/consumer на реальной trust boundary; Hermes-owned provider payload не объявляется входом Ebb без доказанного Ebb boundary.
+- Новая типовая система Hermes stream chunks: существующий `HermesStreamSessionObserver` уже ограничивает line size, проверяет UTF-8/JSON/init/session ID и экспортирует только bounded projections; отдельная задача допустима лишь при воспроизводимом пропуске конкретного malformed chunk.
+- OpenAPI route/endpoint generation. Возобновление требует отдельного решения о публичности/аутентификации `GET /openapi.json` и конкретного generator/dependency contract.
+- Connector-data normalization без существующего connector consumer.
+- Дополнительные `AgentRuntime` adapters и generic multi-runtime abstraction сверх существующего порта `AgentRuntime`. Возвращаться к этому только в отдельном утверждённом post-v1 плане; Plan22 не создаёт дублирующий adapter interface.
+
+Эти направления не являются задачами или зависимостями Plan22; включение требует отдельного утверждённого плана.
 
 ---
 
@@ -102,16 +119,16 @@
 - **Interfaces:**
   - `normalizePathForScope(value: string): string`
   - `resolvePathWithScope(workspace: string, arg: string, baseCwd?: string): { ok: true; path: string } | { ok: false; error: string }`
-  - `isPathWithinScope(workspace: string, target: string): boolean` (с `ALWAYS_ALLOWED_PATHS = ['/tmp']`)
+  - `isPathWithinScope(workspace: string, target: string): boolean` — true только для канонического пути внутри workspace после symlink/junction resolution.
   - `resolveArgsWithScope(workspace: string, args: Record<string, unknown>, pathFields: readonly string[]): { ok: true; args: Record<string, unknown> } | { ok: false; error: string }`
   - Семантика ошибок: `PATH_OUTSIDE_SCOPE`, `PATH_UNRESOLVABLE`.
-- **RED:** тест `path-scope.test.ts`: вызов `resolveArgsWithScope` с `../../etc/passwd` и Windows-стилем `C:\...` должен вернуть `{ ok: false }` до изменения production-кода (новый модуль отсутствует → compile/test failure).
-- **GREEN:** реализация поверх `PathResolver`; `pnpm --filter @ebb-orchestrator/server test -- path-scope` — PASS; интеграция в `workspace-tools.ts` сохраняет существующие тесты workspace-tools.
+- **RED:** расширить существующий `apps/server/test/modules/execution/workspace-tools.test.ts`: на POSIX создать в fixture literal filename `C:\\outside.txt`, затем доказать, что `WorkspaceTools.readFile('C:\\outside.txt')` fail-closed, а не трактует foreign absolute path как относительное имя файла внутри workspace. Это поведенческий RED на текущем production path. Дополнительные unit tests покрывают traversal, UNC/drive paths, absolute `/tmp` вне workspace и symlink/junction escape; отсутствие нового модуля само по себе не считается RED.
+- **GREEN:** `resolveArgsWithScope` проверяет исходное значение до native `path.resolve`, сохраняет containment `PathResolver` и отказывает cross-platform absolute input; команда `pnpm --filter @ebb-orchestrator/server exec vitest run test/platform/security/path-scope.test.ts test/modules/execution/workspace-tools.test.ts` — PASS.
 - **Gates:** `pnpm --filter @ebb-orchestrator/server typecheck`; `pnpm lint`.
-- **Review Focus:** Windows-пути (drive letters, обратные слеши), symlink-обход, `/tmp`-разрешённое исключение, отсутствие регрессий в `PathResolver`.
+- **Review Focus:** Windows-пути (drive letters, обратные слеши, UNC), symlink/junction-обход, отказ абсолютному `/tmp` вне workspace, отсутствие регрессий в `PathResolver`.
 
 #### Task A2. Регрессионная защита инварианта «модель не задаёт cwd»
-- **Depends on:** —
+- **Depends on:** A1 (общий `action-gateway.ts` owner/order).
 - **Create:** `apps/server/test/modules/execution/command-policy-cwd.test.ts`; расширение `action-gateway.test.ts`.
 - **Modify:** `apps/server/src/modules/execution/action-gateway.ts` (защита от inbound `cwd` во всех public-методах, включая новые), `command-policy.ts` (при необходимости — явное игнорирование inbound `cwd`).
 - **Interfaces:** контракт `CommandInvocation = { policyId; args }` остаётся без поля `cwd`; любой попавший `cwd` отклоняется (`CWD_NOT_ALLOWED`).
@@ -120,32 +137,22 @@
 - **Gates:** typecheck; `pnpm lint`; `pnpm --filter @ebb-orchestrator/server test`.
 - **Review Focus:** все пути вызова `exec`/`patch`/новых инструментов; отсутствие обходов через аргументы команд.
 
-#### Task A3. `InterventionChecker` + security blacklist в Permission Engine
-- **Depends on:** A1 (порядок оценки аргументов).
+#### Task A3. Детерминированный security blacklist в Permission Engine
+- **Depends on:** A1, A2 (нормализация args и завершённый общий `action-gateway.ts` change).
 - **Create:** `apps/server/src/modules/permissions/intervention-checker.ts`; `apps/server/src/modules/permissions/default-security-blacklist.ts`; `apps/server/test/modules/permissions/intervention-checker.test.ts`.
-- **Modify:** `permission-types.ts` (расширение `EvaluationInput` полем `args`; тип `InterventionMatcher`), `permission-engine.ts` (интеграция check'а), `action-gateway.ts`/`tool-registry.ts` (прогон args через `evaluate`).
+- **Modify:** `permission-types.ts` (`EvaluationInput.args?: Readonly<Record<string, unknown>>`); `permission-engine.ts` (проверка blacklist до capability allow); `action-gateway.ts`/`tool-registry.ts` (передача нормализованных args до любого side effect).
 - **Interfaces:**
-  - `InterventionMatcherType = 'exact' | 'prefix' | 'wildcard' | 'regex'`
-  - `InterventionRule { action: ActionId; matcher: InterventionMatcher; pattern: string; decision: PADecision }`
-  - `HumanInterventionPolicy = 'always' | 'required' | 'never'`
-  - `evaluate(input: EvaluationInput): EvaluationResult` — при `args` дополнительно возвращает `intervention` для ASK/required.
-  - Правило: `defaultSecurityBlacklist` побеждает всё (включая auto-run); неизвестные правила → `required` (ASK).
-- **RED:** тест: аргумент `rm -rf ~` для команды должен вернуть `DENY`/`ASK` (до реализации — PASS без проверки args, тест падает).
-- **GREEN:** реализация + интеграция; тесты PASS; существующие тесты Permission Engine (most-restrictive-wins, unknown → deny) остаются зелёными.
+  - `InterventionMatcherType = 'exact' | 'prefix' | 'wildcard' | 'regex'`; `InterventionMatcher = { type: InterventionMatcherType; pattern: string }`.
+  - `InterventionRule { id: string; action: ActionId; matcher: InterventionMatcher; reasonCode: string }` — blacklist rules только запрещают; effect фиксирован как `ABSOLUTE_DENY`, не настраивается на ALLOW/ASK.
+  - `InterventionChecker.evaluate(action: ActionId, args: Readonly<Record<string, unknown>>): { decision: PermissionDecision; reason: string }`.
+  - Match blacklist до обычного capability fallback и композировать её `ABSOLUTE_DENY` через текущий most-restrictive-wins. `ASK`/approval semantics существующих policies не изменяются; Action Gateway не исполняет ничего, кроме `ALLOW`.
+  - Некорректная blacklist rule/config, нераспознанное действие и oversized matcher/input fail closed; ограничить regex length/complexity и не принимать пользовательские regex без валидации.
+- **RED:** тест на `ActionId.CommandExec` + args `rm -rf ~` ожидает `ABSOLUTE_DENY` и доказывает, что fake executor не вызван; до реализации текущий capability-only ActionGateway пропускает команду. Добавить precedence test, что blacklist `ABSOLUTE_DENY` не ослабляется policy/capability ALLOW. RED должен падать по assertions.
+- **GREEN:** blacklist enforcement интегрирован перед реальным execution path; тесты PASS; существующие Permission Engine most-restrictive-wins, `ABSOLUTE_DENY`, unknown action и Action Gateway regression tests остаются зелёными.
+- **Run:** `pnpm --filter @ebb-orchestrator/server exec vitest run test/modules/permissions/intervention-checker.test.ts test/modules/permissions/permission-engine.test.ts test/modules/execution/action-gateway.test.ts`.
+- **Expected:** blacklisted action всегда `ABSOLUTE_DENY` до executor; capability/policy ALLOW не смягчает blacklist; существующие policy cases без blacklist сохраняют результаты.
 - **Gates:** typecheck; lint; test; security-ревью (specialist).
-- **Review Focus:** не ослабить `ABSOLUTE_DENY`; порядок композиции blacklist vs policy; матчеры не должны допускать ReDoS (ограничение длины pattern/входа).
-
-#### Task A4. `ssrf-safe-fetch`: безопасный сетевой fetch
-- **Depends on:** —
-- **Create:** `apps/server/src/platform/network/ssrf-safe-fetch.ts`; `apps/server/test/platform/network/ssrf-safe-fetch.test.ts`.
-- **Modify:** `permission-types.ts` (новый `ActionId.NetworkFetch = 'network.fetch'`), `tool-registry.ts` (регистрация инструмента только при наличии capability; по умолчанию внутренний сервис).
-- **Interfaces:**
-  - `ssrfSafeFetch(url: string, options: SSRFOptions): Promise<Response>` — блокировка private/meta-IP; `allowIPAddressList`, `allowPrivateIPAddress`, `maxContentLength`; env `SSRF_ALLOW_PRIVATE_IP_ADDRESS`, `SSRF_ALLOW_IP_ADDRESS_LIST`; ошибка `SSRF blocked: ...` с `cause`.
-  - `netZoneForUrl(url: string): 'public' | 'private' | 'loopback' | 'link-local' | 'reserved'`.
-- **RED:** тест: fetch на `http://127.0.0.1/` и `http://169.254.169.254/` должен блокироваться; до реализации модуль отсутствует (fail).
-- **GREEN:** реализация (адаптация под Node `fetch`/undici, а не node-fetch); тесты PASS (включая редиректы http→https и `maxContentLength`).
-- **Gates:** typecheck; lint; test; security-ревью.
-- **Review Focus:** SSRF-обходы (redirect, DNS-rebind, IPv6-mapped), ограничение размера ответа (memory blowup), явные списки allow/deny.
+- **Review Focus:** `ABSOLUTE_DENY` нельзя ослабить; fail-closed на invalid rules/args; ReDoS resistance; matcher является дополнительным deterministic guard, а не заменой capabilities, CommandPolicy или OS sandbox.
 
 ### Phase B — Runtime & Recovery Execution
 
@@ -163,22 +170,25 @@
 - **Gates:** typecheck; lint; test.
 - **Review Focus:** неизменность существующего `stderrCategory`-контракта; точность классификации без хранения текста ошибок.
 
-#### Task B2. Step/event-модель наблюдаемого запуска (durable step)
-- **Depends on:** B1 (ошибки), A3 (безопасность событий).
-- **Create:** `run-step.ts`, `agent-events.ts`; `apps/server/test/modules/runtime/agent-events.test.ts`; `apps/server/test/modules/runtime/run-step.test.ts`.
-- **Modify:** `run-service.ts` (эмиссия событий из существующего потока запуска; `FinishReason` → `RunStatus` маппинг), `hermes-runtime-adapter.ts` (прокидывание событий из stream-json).
+#### Task B2. Эфемерные события наблюдаемого Run
+- **Depends on:** B1 (ошибки).
+- **Create:** `apps/server/src/modules/runtime/agent-events.ts`; `apps/server/test/modules/runtime/agent-events.test.ts`.
+- **Modify:** `run-service.ts` (эмиссия событий из существующего lifecycle), `hermes-stream-session-observer.ts`/`hermes-runtime-adapter.ts` (allowlisted tool events).
 - **Interfaces:**
-  - `RunStep { id; kind; startedAt; finishedAt?; status; context }`
-  - `AgentEvent = { type: 'llm_start' | 'llm_result' | 'tool_pending' | 'tool_result' | 'done' | 'interrupted' | 'resumed'; ... }`
-  - `FinishReason = 'completed' | 'user_requested' | 'max_steps_exceeded' | 'cost_limit_exceeded' | 'error_recovery' | 'interrupted'`
-  - Маппинг: `completed → COMPLETED`, `error_recovery → RECOVERING/FAILED` (согласовать с существующими статусами Run), `interrupted → INTERRUPTED` (если статус существует, иначе CANCELLED).
-- **RED:** тест: `runAgentLoop`-подобный цикл на фикстуре завершается с `done/FinishReason.completed` и эмитит `llm_start → tool_pending → tool_result → done`; до реализации события отсутствуют (fail).
-- **GREEN:** реализация наблюдаемого слоя; тесты PASS; существующий e2e-тест resume по `session_id` остаётся зелёным (критично).
-- **Gates:** typecheck; lint; test; соответствующие e2e (`epic-restart-production`, `hermes-session-handoff`).
-- **Review Focus:** совместимость с текущим `resumeRun` (session binding); отсутствие изменения порядка/семантики существующих статусов; идемпотентность событий.
+  - `AgentEvent` — discriminated union: `{ type: 'run_started'; runId; occurredAt }`, `{ type: 'tool_pending'; runId; toolId }`, `{ type: 'tool_result'; runId; toolId; success; errorCategory? }`, `{ type: 'run_finished'; runId; status: 'COMPLETED' | 'FAILED' | 'CANCELLED' }`.
+  - Tool events разрешены только для существующего `RuntimeDiagnosticToolId`; результат содержит только boolean/fixed error category, не tool arguments, stdout или result payload.
+  - `run_started`/`run_finished` эмитятся из уже выполняемых RunService lifecycle hooks; `run_finished` только после сохранения terminal RunStatus. Никакой event не запускает state transition.
+  - Events process-local/ephemeral: не сохраняются в SQLite/outbox, не replay-ятся после restart; payload содержит только Run/tool identity, terminal status и allowlisted error category.
+  - Не вводить `llm_start`/`llm_result` или hidden model events, если их нет в наблюдаемом Hermes transport; не выдавать stdout/stream event за structured result.
+- **RED:** production RunService test с FakeAgentRuntime показывает отсутствие `run_started` и terminal `run_finished`; ожидает эти события вокруг существующего start/result/commit path. Observer fixture отдельно использует фактические `tool_use`/`tool_result` JSON формы для allowlisted tool ID и ожидает safe `tool_pending`/`tool_result`. Invalid/missing structured result не должен приводить к `run_finished: COMPLETED`. RED должен падать по assertions.
+- **GREEN:** event union эмитится в указанном порядке; `run_finished` отражает только persisted terminal status; отсутствие подписчика/ошибка observer не меняет Run outcome; restart/resume по `session_id` остаётся без изменения.
+- **Run:** `pnpm --filter @ebb-orchestrator/server exec vitest run test/modules/runtime/agent-events.test.ts test/modules/runtime/run-service.test.ts test/modules/runtime/hermes-stream-session-observer.test.ts`.
+- **Expected:** RunService события окружают существующий committed lifecycle; allowlisted Hermes stream fixtures дают только безопасные tool events; malformed/missing structured result никогда не выдаёт `COMPLETED`.
+- **Gates:** typecheck; lint; test; точные e2e `test/e2e/epic-restart-production.acceptance.test.ts` и `test/e2e/hermes-session-handoff.acceptance.test.ts`.
+- **Review Focus:** no new RunStatus/Workflow lifecycle; event payload без prompt/tool data; event delivery не authority для completion, cancellation или recovery.
 
 #### Task B3. Унифицированный `UsageCounter`
-- **Depends on:** B1.
+- **Depends on:** B1, B2 (изменения `run-service.ts` и `hermes-runtime-adapter.ts` выполняются последовательно).
 - **Create:** `usage-counter.ts`; `apps/server/test/modules/runtime/usage-counter.test.ts`.
 - **Modify:** `hermes-runtime-adapter.ts`, `run-service.ts` (использование единого счётчика вместо дублирующего `parseUsage`/`sessionObserver.usage`).
 - **Interfaces:** `ModelUsage { inputTokens; cachedInputTokens; outputTokens; cost: number | null }`; `UsageCounter.merge(...)/snapshot()`.
@@ -186,17 +196,6 @@
 - **GREEN:** реализация; тесты PASS; существующие тесты `collectUsage` зелёные.
 - **Gates:** typecheck; lint; test.
 - **Review Focus:** правило «NULL cost не подменяется оценкой» сохранено.
-
-#### Task B4. Интерфейс `ExternalCliRuntimeAdapter` (подготовка к мульти-runtime)
-- **Depends on:** B1, B2 (события).
-- **Create:** `external-cli-adapter.ts`; `apps/server/test/modules/runtime/external-cli-adapter.test.ts` (на fake-runtime).
-- **Modify:** `hermes-runtime-adapter.ts` (реализация интерфейса; поведение не меняется).
-- **Interfaces:**
-  - `ExternalCliRuntimeAdapter { startRun; resumeRun; cancelRun; inspectRun; collectResult; collectUsage; healthCheck; prepareHermesRunSelection }` — общий контракт для внешних CLI (референс: adapter-слой heterogeneous-agents).
-- **RED:** тест: `HermesRuntimeAdapter` удовлетворяет типу `ExternalCliRuntimeAdapter` (compile-time) — падает до правок.
-- **GREEN:** выделение интерфейса и реализация; typecheck/test PASS; поведенческие тесты Hermes adapter зелёные.
-- **Gates:** typecheck; lint; test.
-- **Review Focus:** отсутствие изменения поведения; чистота интерфейса (без Hermes-специфики в сигнатурах).
 
 ### Phase C — Context & Observability
 
@@ -211,7 +210,7 @@
   - **Ключевой инвариант:** финальные `prompt_hash`/`context_hash` (digest) идентичны текущим для тех же входов.
 - **RED:** golden-тест: для фиксированного набора входов digest совпадает с текущим эталоном; после рефакторинга без сохранения семантики — fail.
 - **GREEN:** рефакторинг с сохранением digest-семантики; golden-тест PASS; существующие тесты context/`ContextManifest` зелёные.
-- **Gates:** typecheck; lint; test; e2e manifest (`context-manifest-production.acceptance`).
+- **Gates:** typecheck; lint; test; `test/e2e/context-manifest-production.acceptance.test.ts`.
 - **Review Focus:** не изменить семантику digest; идентичность результата для тех же входов; обработка abort.
 
 #### Task C2. Учёт токенов по бакетам (`tokenAccounting`)
@@ -234,74 +233,39 @@
 - **Gates:** typecheck; lint; test.
 - **Review Focus:** неизменность входного контекста; отсутствие побочных эффектов в правилах.
 
-#### Task C4. LLM-generation tracing (payload + store)
+#### Task C4. LLM-generation tracing (без raw prompt payload)
 - **Depends on:** B3 (usage), C1 (digest).
-- **Create:** `tracing/tracing-payload.ts`, `tracing/tracing-store.ts`; миграция `run_traces` (через `ebb-database-engineering`); `apps/server/test/modules/runtime/tracing/tracing-store.test.ts`.
-- **Modify:** `run-service.ts` (запись trace при завершении Run), `packages/contracts/src/tracing.ts` (если пересекает API-границу).
-- **Interfaces:**
-  - `TracingPayload { tracing_id; scenario; prompt_version; prompt_hash; input; output; model_metadata; validation_failed; error; created_at; version: '1.0' }`
-  - `computePromptHash(systemPrompt, schema): string` (sha256, 6 hex)
-  - `ITracingStore { save; get?; list? }` — SQLite-реализация (сводная строка + blob).
-- **RED:** миграция применяется на свежей БД; тест сохранения/чтения trace падает до реализации.
-- **GREEN:** миграция + реализация; тесты PASS; существующие миграционные тесты зелёные.
-- **Gates:** database-engineering gates; typecheck; lint; test; fresh-install migration acceptance.
-- **Review Focus:** append-only/forward-only миграция; отсутствие секретов в payload; стабильность `prompt_hash`.
+- **Create:** `apps/server/src/modules/runtime/tracing/tracing-payload.ts`, `tracing-store.ts`; `apps/server/src/platform/database/migrations/048_run_traces.sql`; `apps/server/test/modules/runtime/tracing/tracing-store.test.ts`; migration test `apps/server/test/platform/database/run-traces-migration.test.ts`.
+- **Modify:** `run-service.ts` (запись trace при завершении Run).
+- **Database ownership / desired state:** новый `run_traces` — таблица runtime/tracing owner; migration additive, не меняет существующие таблицы и строки. Колонки: `id TEXT PRIMARY KEY`, `run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE`, `scenario TEXT NOT NULL`, `prompt_version TEXT NOT NULL`, `prompt_hash TEXT NOT NULL CHECK (64 lowercase hex)`, `context_hash TEXT NOT NULL CHECK (64 lowercase hex)`, `model_metadata_json TEXT NOT NULL`, `usage_json TEXT NOT NULL`, `validation_failed INTEGER NOT NULL CHECK (0,1)`, nullable stable `error_category`, `created_at TEXT NOT NULL`, `version TEXT NOT NULL`. Несколько trace rows на Run разрешены; индекс `(run_id, created_at)`. Нет backfill для исторических Runs; удаление Run каскадно удаляет его traces.
+- **Data / trust contract:** не сохранять и не экспортировать raw prompt, raw input/output, stderr, credentials, endpoint URL или headers. Trace содержит только hashes, несекретные model/runtime IDs, usage, validation outcome и stable error category. API projection в этой задаче не добавляется.
+- **Interfaces:** `TracingPayload { tracing_id; run_id; scenario; prompt_version; prompt_hash; context_hash; model_metadata; usage; validation_failed; error_category; created_at; version: '1.0' }`; `computePromptHash(finalPromptBytes: Uint8Array): string` делегирует текущему `digestRunPromptBytesV1`, выдаёт полный 64-char lowercase SHA-256 для точных сохранённых prompt bytes; `ITracingStore.save(...)` использует один SQLite transaction boundary с записью trace.
+- **Migration preflight:** на текущем catalog последняя migration — 047; перед исполнением подтвердить, что 048 остаётся следующим свободным номером. Если catalog изменился, обновить migration path/version и acceptance references в этом плане до реализации. Не переписывать опубликованные migrations.
+- **RED:** тесты по отдельности доказывают fresh install 001–048 и populated upgrade 047→048; чтение новой записи; rollback при ошибке; `PRAGMA foreign_key_check`; cascade semantics; проверку `prompt_hash`/`context_hash` длиной 64; отсутствие raw prompt/input/output в payload/DB projection. RED должен падать по assertion.
+- **GREEN:** migration + store проходят upgrade/fresh path; существующие rows остаются неизменными; повторный `save` с тем же `tracing_id` и тем же payload идемпотентно возвращает прежний результат, а с тем же ID и другим payload возвращает stable conflict без update; существующие migration suites зелёные.
+- **Run:** `pnpm --filter @ebb-orchestrator/server exec vitest run test/modules/runtime/tracing/tracing-store.test.ts test/platform/database/run-traces-migration.test.ts test/platform/database/fresh-install-migrations.acceptance.test.ts`.
+- **Expected:** populated 047→048 и fresh 001→048 проходят, старые rows неизменны, retry не создаёт duplicate, FK/cascade checks зелёные, raw content нигде не сохраняется.
+- **Gates:** `ebb-database-engineering`; focused migration/store tests; typecheck; lint; test; fresh-install migration acceptance.
+- **Review Focus:** immutable/forward-only migration; trace data minimization; точное соответствие manifest `prompt_hash`; transaction/idempotency boundary; отсутствие новой raw-content API.
 
 #### Task C5. OTel-наблюдаемость (gen_ai semconv + middleware)
-- **Depends on:** C4 (данные для трейсов).
-- **Create:** `platform/observability/otel.ts`; `apps/server/test/platform/observability/otel.test.ts` (no-op без endpoint); `apps/server/src/modules/observability/` (если потребуется расширение).
-- **Modify:** `create-app.ts` (подключение middleware), `run-service.ts` (эмиссия спанов запусков).
-- **Interfaces:** `registerOtel(options): Promise<ShutdownFn>` (OTLP HTTP trace+metrics); `ATTR_GEN_AI_*` (модель, токены, finish reasons); селекторы включения через env (`OTEL_EXPORTER_OTLP_ENDPOINT`).
-- **RED:** тест: без endpoint инициализация не падает и не меняет поведение (no-op); с mocked endpoint — экспорт спанов. До реализации fail.
-- **GREEN:** реализация; тесты PASS; локальный запуск без env зелёный.
-- **Gates:** typecheck; lint; test; e2e smoke.
-- **Review Focus:** отсутствие влияния на бизнес-результат при сбое экспортёра; не блокировать старт сервера.
+- **Depends on:** C4 (данные для trace metadata).
+- **Create:** `apps/server/src/platform/observability/otel.ts`; `apps/server/test/platform/observability/otel.test.ts` (no-op без endpoint).
+- **Modify:** `apps/server/src/app/create-app.ts`, `apps/server/src/modules/runtime/run-service.ts`, `apps/server/package.json`, `pnpm-lock.yaml`.
+- **Dependencies (exact):** `@opentelemetry/api@1.10.0`, `@opentelemetry/sdk-node@0.300.0`, `@opentelemetry/exporter-trace-otlp-http@0.300.0`, `@opentelemetry/exporter-metrics-otlp-http@0.300.0`, `@opentelemetry/semantic-conventions@1.43.0`. `sdk-node@0.300.0` peer contract требует `@opentelemetry/api >=1.10.0 <1.11.0`; оба OTLP exporters `0.300.0` принимают `@opentelemetry/api ^1.3.0`. Добавить как production dependencies server package, exact versions без ranges и без transitive-only dependency. Если peer/Node compatibility изменилась к моменту исполнения, приостановить C5 и получить review обновлённой dependency-матрицы до установки.
+- **Interfaces:** `registerOtel(options): Promise<ShutdownFn>`; OTLP HTTP trace+metrics; `gen_ai` attributes из закреплённой semantic-conventions версии; включение только через `OTEL_EXPORTER_OTLP_ENDPOINT`; shutdown встроен в текущий lifecycle.
+- **RED:** тест без endpoint доказывает no-op без изменения бизнес-результата; mocked endpoint принимает export только с endpoint; exporter failure не блокирует startup/run и не изменяет Run outcome. RED должен падать по assertion.
+- **GREEN:** реализация; tests PASS; локальный startup без env остаётся no-op; shutdown flush/timeout ограничены и проверены.
+- **Install:** `pnpm --filter @ebb-orchestrator/server add --save-exact @opentelemetry/api@1.10.0 @opentelemetry/sdk-node@0.300.0 @opentelemetry/exporter-trace-otlp-http@0.300.0 @opentelemetry/exporter-metrics-otlp-http@0.300.0 @opentelemetry/semantic-conventions@1.43.0`.
+- **Verify:** `pnpm install --frozen-lockfile`; `pnpm --filter @ebb-orchestrator/server typecheck`; `pnpm --filter @ebb-orchestrator/server build`; `pnpm --filter @ebb-orchestrator/server test`; `pnpm lint`.
+- **Review Focus:** отсутствие влияния экспортёра на бизнес-результат; не блокировать старт сервера; не экспортировать prompt/raw context/секреты; проверка pinned OTel dependency compatibility.
 
-### Phase D — Transport / Contracts / New Tools
+### Deferred P2 Improvements
 
-#### Task D1. Типизация SSE-чанков stream-json
-- **Depends on:** B2 (события).
-- **Create:** `hermes/stream-chunk-types.ts`; `apps/server/test/modules/runtime/hermes/stream-chunk-types.test.ts`.
-- **Modify:** `hermes-stream-session-observer.ts` (применение юнионов; ошибки chunk/parse/abort).
-- **Interfaces:** `StreamChunk = MessageTextChunk | MessageToolCallsChunk | MessageReasoningChunk | MessageUsageChunk | StopChunk`; `StreamChunkError`; `finishedType = 'done' | 'abort' | 'error'`.
-- **RED:** тест парсинга фикстуры stream-json (usage/tool_calls/stop) падает до реализации.
-- **GREEN:** реализация; тесты PASS; существующие тесты session-observer зелёные.
-- **Gates:** typecheck; lint; test.
-- **Review Focus:** обратная совместимость с существующим разбором; корректная обработка abort.
+Эти улучшения не входят в baseline acceptance и выполняются только после отдельного явного выбора scope; не трактовать `P2` как автоматическое разрешение на расширение v1.
 
-#### Task D2. Контракты: zod-валидация на trust boundaries
-- **Depends on:** —
-- **Create:** `packages/contracts/src/models.ts` (схемы моделей) + тесты; `packages/contracts/src/validation.ts` (общие zod-хелперы).
-- **Modify:** статьи, где внешние payload валидируются (например, `output-validator.ts` при необходимости).
-- **Interfaces:** `AiModelType`/`ModelAbilities` zod-схемы (референс model-bank); контракт: «схемы валидируют входящие данные на trust boundaries».
-- **RED:** тест валидации внешнего payload (например, ответа провайдера) с невалидной схемой падает до реализации.
-- **GREEN:** реализация; тесты PASS; `pnpm --filter @ebb-orchestrator/contracts typecheck && test`.
-- **Gates:** contracts gates; lint.
-- **Review Focus:** не протекать в implementation details; минимальность контрактов.
-
-#### Task D3. OpenAPI-генерация из живых маршрутов + CI-паритет
-- **Depends on:** D2 (валидация).
-- **Create:** `apps/server/src/api/openapi.ts` (сборка спека из роутера); `scripts/generate-openapi.mjs` (generate/--check); коммиченный `openapi.yml`.
-- **Modify:** `create-app.ts` (регистрация `GET /openapi.json`), `package.json` (скрипты).
-- **Interfaces:** `GET /openapi.json`; `pnpm generate:openapi --check` — падает, если маршрут отсутствует/лишний в спеке.
-- **RED:** `--check` на текущем коде не проходит (спека нет) — ожидаемое падение.
-- **GREEN:** генерация спека; `--check` PASS; существующие API-тесты зелёные.
-- **Gates:** typecheck; lint; test; diff --check.
-- **Review Focus:** исключение внутренних эндпоинтов; стабильность спека (versioned artifact).
-
-#### Task D4. Капабилити `network.fetch` как инструмент (после A4)
-- **Depends on:** A4, D2.
-- **Modify:** `tool-registry.ts` (регистрация `network.fetch` только при capabilities), `permission-types.ts` (ActionId уже добавлен в A4), тесты e2e MCP.
-- **Interfaces:** MCP-инструмент `network.fetch { url; method?; headers?; body?; maxContentLength? }` — результат проходит `ssrfSafeFetch`.
-- **RED:** e2e-тест: вызов `network.fetch` без capability → `DENY`; с capability на локальный адрес → `SSRF blocked`.
-- **GREEN:** реализация; тесты PASS.
-- **Gates:** typecheck; lint; test; security-ревью.
-- **Review Focus:** выход за пределы whitelist; размер ответа; заголовки (запрет передачи секретов).
-
-#### Task E1..E4 (P2, опциональные улучшения)
 - **E1. Транзакционные патчи `partiallyApplied`:** расширить `workspace.patch` контрактом частичного применения (по образцу `ModifyOperationResult`), с явным статусом `partiallyApplied`; тесты. (Depends: A1.)
 - **E2. Redaction-плейсхолдеры:** защитить секреты в логах/диагностике: модуль `platform/security/redact.ts` + применение в диагностических путях; тесты. (Depends: —)
-- **E3. Нормализация внешних данных (connector-data-подход):** zod-валидация + нормализация внешних ответов в markdown с лимитами; используется будущими web-инструментами. (Depends: D4.)
 - **E4. Типизированная валидация конфига:** zod-схемы для env-конфигурации при старте (fail-fast). (Depends: —)
 
 ---
@@ -317,47 +281,48 @@ pnpm --filter @ebb-orchestrator/contracts test
 git diff --check
 ```
 
-Специализированные gates (вызываются по trigger задач): e2e (`epic-restart-production`, `hermes-session-handoff`, `context-manifest-production.acceptance`, `fresh-install-migrations.acceptance`), security-ревью для A3/A4/D4, database-engineering для C4.
+Специализированные gates (вызываются по trigger задач): e2e (`test/e2e/epic-restart-production.acceptance.test.ts`, `test/e2e/hermes-session-handoff.acceptance.test.ts`, `test/e2e/context-manifest-production.acceptance.test.ts`, `test/platform/database/fresh-install-migrations.acceptance.test.ts`); security review для A3; database-engineering для C4.
 
 ---
 
 ## Зависимости задач (DAG)
 
 ```
-A1 ─┬─ A2
-     ├─ A3 ── B2 ── D1
-     └─ (A1 используется C1, E1)
-A4 ── D4 ── E3
-B1 ── B2 ── B4
-B3 ── C4
-C1 ── C2, C3, C4
-C4 ── C5
-D2 ── D3, D4
-E2, E4 — независимы
+A1 ── A2 ── A3
+│
+├── C1 ──┬── C2
+│        ├── C3
+│        └── C4 ── C5
+│
+B1 ── B2 ── B3
+          ├──── C4
+
+E1 (P2) зависит от A1 и выполняется только после отдельного выбора scope.
+E2, E4 (P2) не входят в baseline и требуют отдельного выбора scope.
 ```
 
-Все зависимости ацикличны. Производитель существует до потребителя.
+Все зависимости ацикличны. Каждый production file имеет одного task owner за раз: общие `action-gateway.ts` changes строго A1→A2→A3; общие `run-service.ts`/`hermes-runtime-adapter.ts` changes строго B1→B2→B3. C4 начинается только после C1 и B3; C5 — после C4. Deferred scope и P2 improvements не создают рёбер baseline DAG.
 
 ---
 
 ## Self-review
 
-1. Каждое требование из аудита (P0/P1/P2) имеет задачу-владельца: A1–A4 (pathScope, cwd-invariant, InterventionChecker/blacklist, SSRF), B1–B4 (taxonomy, step/events, usage, CLI-adapter), C1–C5 (pipeline, tokenAccounting, snapshot, tracing, OTel), D1–D4 (SSE, contracts, OpenAPI, network.fetch), E1–E4 (P2).
-2. Task dependencies ацикличны (см. DAG); producer существует до consumer.
-3. Имена/интерфейсы согласованы между задачами (path-scope API используется в workspace-tools/action-gateway; provider-errors используется в adapter/run-service; события используются в B2/D1).
-4. RED действительно падает до изменения (модуль absent/behavior не определён), GREEN проверяет нужный production path.
-5. Commands существуют и конкретны; Expected проверяемы.
-6. High-risk failure modes покрыты: digest-семантика (C1), resume-совместимость (B2), fail-closed (A3/A4), no-op OTel (C5).
-7. План не является транскриптом кода; тела приводятся только там, где без них остаётся неоднозначность.
-8. Коммит: только этот файл плана (rules repository governance); реализация начинается только после независимого review с verdict `APPROVED`.
+1. Требования baseline scope имеют владельцев: A1–A3 (path-scope, cwd invariant, InterventionChecker/blacklist), B1–B3 (error taxonomy, ephemeral events, usage), C1–C5 (context pipeline, token accounting/snapshot, tracing, OTel). Unsupported network/model/OpenAPI/connector/extra-runtime items явно вынесены из DAG; P2 E1/E2/E4 не входят в baseline acceptance.
+2. Все task dependencies перечислены в `Depends on` и DAG; пересечения `action-gateway.ts` и runtime adapter/service выполняются в заданном последовательном порядке.
+3. Producer/consumer interfaces сверены: `path-scope` → workspace tools; provider errors/usage/events → Hermes adapter/RunService; tracing ← Run/Context digest.
+4. RED должен падать на ожидаемой behavioral assertion в реальном production seam; отсутствие нового модуля само по себе не принимается как RED. GREEN включает focused и neighboring tests.
+5. `Run`/`Expected` и точные test commands указаны для tasks; package install impact закреплён в C5.
+6. Load-bearing semantics: workspace containment не имеет `/tmp` exception; RunStatus/Workflow не расширяются; context digests остаются byte-identical; tracing не хранит raw content; OTel failure не влияет на выполнение.
+7. План ограничен утверждённой архитектурой и не вводит agent-facing network tool, новый provider boundary или OpenAPI endpoint.
+8. Lifecycle остаётся `proposed`; перевод в `planned` допустим только после независимого review с verdict `APPROVED`. Реализация начинается только после такого verdict.
 
 ---
 
 ## Порядок внедрения (рекомендация)
 
-Фаза 1 (безопасность): A1 → A2 → A3 → A4.
-Фаза 2 (runtime): B1 → B2 → B3 → B4.
+Фаза 1 (безопасность): A1 → A2 → A3.
+Фаза 2 (runtime): B1 → B2 → B3.
 Фаза 3 (контекст/наблюдаемость): C1 → C2 → C3 → C4 → C5.
-Фаза 4 (транспорт/контракты/инструменты): D1 → D2 → D3 → D4, затем E1–E4.
+P2 E1/E2/E4 — только после отдельного выбора scope; не часть baseline DAG.
 
-Каждая фаза завершается полными gates и независимым review; фазы последовательны по перекрытию файлов (run-service и adapter разделяют B и C — исполнять B до C4 по зависимостям).
+Каждая фаза завершается своими focused/full gates и независимым review; общие файлы редактируются только в указанном task order. B выполняется до C4 по зависимости B3 → C4.

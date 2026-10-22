@@ -25,6 +25,8 @@ import { createSqliteDatabase } from "../../src/platform/database/sqlite-databas
 import { runMigrations } from "../../src/platform/database/migrator.js";
 import type { Database } from "../../src/platform/database/database.js";
 import { loadTestMigrations } from "../helpers/migrations.js";
+import type { RunContainmentKind } from "../../src/modules/runtime/run-process-owner.js";
+import { stopEvidenceForContainmentKind } from "../helpers/run-process-owner-fixture.js";
 import { createTestAuthService, TEST_COOKIE, TEST_CSRF_TOKEN } from "../helpers/auth.js";
 import { WorkflowEngine } from "../../src/modules/workflow/workflow-engine.js";
 import { WorkflowRegistry } from "../../src/modules/workflow/workflow-registry.js";
@@ -548,7 +550,7 @@ describe("production context manifest acceptance", () => {
           return { state: "UNKNOWN" as const, reason: "TEST_IDENTITY_MISMATCH" };
         }
         inspectedOwners.push({ runId: owner.runId, containmentId: owner.containmentId, launchNonce: owner.launchNonce });
-        return { state: "STOPPED" as const, evidence: owner.containmentKind === "windows-job" ? "WINDOWS_JOB_EMPTY" : "SYSTEMD_CGROUP_EMPTY" };
+        return { state: "STOPPED" as const, evidence: stopEvidenceForContainmentKind(owner.containmentKind as RunContainmentKind | null | undefined) };
       },
       launch: async () => { throw new Error("restart acceptance must not launch an OS process"); },
       stop: async () => ({ state: "UNKNOWN" as const, reason: "NOT_USED" }),
@@ -608,7 +610,7 @@ describe("production context manifest acceptance", () => {
     );
     expect(stoppedOwner).toEqual({
       state: "STOPPED",
-      stop_evidence: stoppedOwner?.containment_kind === "windows-job" ? "WINDOWS_JOB_EMPTY" : "SYSTEMD_CGROUP_EMPTY",
+      stop_evidence: stoppedOwner ? stopEvidenceForContainmentKind(stoppedOwner.containment_kind as RunContainmentKind | null | undefined) : null,
       containment_kind: stoppedOwner?.containment_kind,
     });
     expect(taskStageBeforeResume).toBe("DEVELOPMENT");

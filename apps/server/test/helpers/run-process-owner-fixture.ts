@@ -8,6 +8,56 @@ export interface RunProcessOwnerPlatformFixture {
   unavailableReason: string | null;
 }
 
+/**
+ * Возвращает авторитетное stop evidence для durable containment kind.
+ * Используется shared-тестами вместо платформенных ветвлений windows/else.
+ */
+export function stopEvidenceForContainmentKind(kind: RunContainmentKind | null | undefined): string {
+  if (kind === "windows-job") return "WINDOWS_JOB_EMPTY";
+  if (kind === "darwin-process-group") return "DARWIN_GROUP_EMPTY";
+  return "SYSTEMD_CGROUP_EMPTY";
+}
+
+/**
+ * Возвращает осмысленную LIVE identity для durable containment kind.
+ * Darwin использует versioned anchor/runner tuple; Linux — systemd поля.
+ */
+export function ownerIdentityForContainmentKind(kind: RunContainmentKind | null | undefined): {
+  platform: string;
+  supervisorPid: number | null;
+  supervisorStartIdentity: string | null;
+  pid: number;
+  processStartIdentity: string | null;
+  executableIdentity: string | null;
+  systemdInvocationId: string | null;
+  systemdControlGroup: string | null;
+} {
+  if (kind === "windows-job") {
+    return {
+      platform: "win32", supervisorPid: 101, supervisorStartIdentity: "supervisor", pid: 102,
+      processStartIdentity: "process", executableIdentity: "executable",
+      systemdInvocationId: null, systemdControlGroup: null,
+    };
+  }
+  if (kind === "darwin-process-group") {
+    const boot = {
+      formatVersion: 1 as const, bootSessionUUID: "0f1a2b3c-4d5e-6f70-8a9b-0c1d2e3f4a5b",
+      pid: 101, startTvsec: 1738000000, startUsec: 123456, pgid: 101, sid: 1,
+    };
+    return {
+      platform: "darwin", supervisorPid: 101, supervisorStartIdentity: encodeDarwinProcessGroupIdentityV1(boot),
+      pid: 102, processStartIdentity: encodeDarwinProcessGroupIdentityV1({ ...boot, pid: 102, startTvsec: 1738000001, startUsec: 654321 }),
+      executableIdentity: `sha256:${"c".repeat(64)}`,
+      systemdInvocationId: null, systemdControlGroup: null,
+    };
+  }
+  return {
+    platform: "linux", supervisorPid: null, supervisorStartIdentity: null, pid: 102,
+    processStartIdentity: null, executableIdentity: null,
+    systemdInvocationId: "invocation", systemdControlGroup: "/test-cgroup",
+  };
+}
+
 /** Возвращает данные только для проверки общего owner-контракта, без запуска OS supervisor. */
 export function runProcessOwnerFixtureForPlatform(platform: NodeJS.Platform): RunProcessOwnerPlatformFixture {
   const containmentKind = containmentKindForPlatform(platform);

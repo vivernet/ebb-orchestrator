@@ -18,6 +18,7 @@ import { containmentKindForPlatform, getRunProcessOwner, isAuthoritativeRunProce
   syncCurrentRunProcessGenerationTx, transitionRunProcessOwnerTx } from "../../../src/modules/runtime/run-process-owner.js";
 import { captureWorkspaceSnapshotV1, createResumeContextBaselineV1, digestResumeBindingV1 } from "../../../src/modules/context/resume-eligibility.js";
 import { seedApprovedProjectConfig } from "../../helpers/approved-project-config.js";
+import { ownerIdentityForContainmentKind, stopEvidenceForContainmentKind } from "../../helpers/run-process-owner-fixture.js";
 import { McpServer } from "../../../src/modules/execution/mcp/mcp-server.js";
 import { loadValidatedCapability } from "../../../src/modules/execution/capability-validation.js";
 import type { RunCapability } from "../../../src/modules/execution/run-capability.js";
@@ -622,15 +623,12 @@ describe("RunService with FakeAgentRuntime", () => {
     db!.transaction((tx) => {
       transitionRunProcessOwnerTx(tx, { runId: run.id, expectedState: "PREPARED", nextState: "LAUNCHING" });
       transitionRunProcessOwnerTx(tx, { runId: run.id, expectedState: "LAUNCHING", nextState: "LIVE", identity:
-        owner.containmentKind === "windows-job"
-          ? { platform: "win32", supervisorPid: 101, supervisorStartIdentity: "supervisor", pid: 102,
-              processStartIdentity: "process", executableIdentity: "executable" }
-          : { platform: "linux", pid: 102, systemdInvocationId: "invocation", systemdControlGroup: "/test-cgroup" } });
+        ownerIdentityForContainmentKind(owner.containmentKind) });
       tx.run("UPDATE agent_runs SET status='IN_PROGRESS',session_id='original-session' WHERE id=$runId", { runId: run.id });
       tx.run("UPDATE run_process_owners SET capture_state='BOUND' WHERE run_id=$runId", { runId: run.id });
       syncCurrentRunProcessGenerationTx(tx, run.id);
       transitionRunProcessOwnerTx(tx, { runId: run.id, expectedState: "LIVE", nextState: "STOPPED",
-        evidence: owner.containmentKind === "windows-job" ? "WINDOWS_JOB_EMPTY" : "SYSTEMD_CGROUP_EMPTY" });
+        evidence: stopEvidenceForContainmentKind(owner.containmentKind) });
       const contextHash = tx.get<{ context_hash: string }>("SELECT context_hash FROM context_manifests WHERE run_id=$runId", { runId: run.id })!.context_hash;
       tx.run(`INSERT INTO run_resume_bindings(run_id,schema_version,baseline_jcs,context_hash,workspace_snapshot_version,
         workspace_snapshot_hash,resume_binding_hash,original_session_id,created_at)
@@ -718,13 +716,12 @@ describe("RunService with FakeAgentRuntime", () => {
     db!.transaction((tx) => {
       transitionRunProcessOwnerTx(tx, { runId: run.id, expectedState: "PREPARED", nextState: "LAUNCHING" });
       transitionRunProcessOwnerTx(tx, { runId: run.id, expectedState: "LAUNCHING", nextState: "LIVE", identity:
-        owner.containmentKind === "windows-job" ? { platform: "win32", supervisorPid: 101, supervisorStartIdentity: "supervisor", pid: 102, processStartIdentity: "process", executableIdentity: "executable" }
-          : { platform: "linux", pid: 102, systemdInvocationId: "invocation", systemdControlGroup: "/test-cgroup" } });
+        ownerIdentityForContainmentKind(owner.containmentKind) });
       tx.run("UPDATE agent_runs SET session_id='original-session' WHERE id=$runId", { runId: run.id });
       tx.run("UPDATE run_resume_bindings SET original_session_id='original-session' WHERE run_id=$runId", { runId: run.id });
       tx.run("UPDATE run_process_owners SET capture_state='BOUND' WHERE run_id=$runId", { runId: run.id });
       syncCurrentRunProcessGenerationTx(tx, run.id);
-      transitionRunProcessOwnerTx(tx, { runId: run.id, expectedState: "LIVE", nextState: "STOPPED", evidence: owner.containmentKind === "windows-job" ? "WINDOWS_JOB_EMPTY" : "SYSTEMD_CGROUP_EMPTY" });
+      transitionRunProcessOwnerTx(tx, { runId: run.id, expectedState: "LIVE", nextState: "STOPPED", evidence: stopEvidenceForContainmentKind(owner.containmentKind) });
     });
     const restarted = new RunService(db!, fakeRuntime);
     await expect(restarted.verifyCurrentResumeContext(run.id)).resolves.toBeUndefined();
@@ -795,7 +792,7 @@ describe("RunService with FakeAgentRuntime", () => {
       tx.run("UPDATE run_resume_bindings SET original_session_id='original-session' WHERE run_id=$runId", { runId: run.id });
       tx.run("UPDATE run_process_owners SET capture_state='BOUND' WHERE run_id=$runId", { runId: run.id });
       syncCurrentRunProcessGenerationTx(tx, run.id);
-      transitionRunProcessOwnerTx(tx, { runId: run.id, expectedState: "LIVE", nextState: "STOPPED", evidence: owner.containmentKind === "windows-job" ? "WINDOWS_JOB_EMPTY" : "SYSTEMD_CGROUP_EMPTY" });
+      transitionRunProcessOwnerTx(tx, { runId: run.id, expectedState: "LIVE", nextState: "STOPPED", evidence: stopEvidenceForContainmentKind(owner.containmentKind) });
       tx.run("UPDATE integration_attempts SET status='MERGING' WHERE id=$id", { id: attemptId });
     });
     const restarted = new RunService(db!, fakeRuntime);

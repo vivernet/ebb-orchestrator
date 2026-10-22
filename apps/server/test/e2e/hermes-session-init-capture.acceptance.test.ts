@@ -14,7 +14,8 @@ import { HermesRuntimeAdapter } from "../../src/modules/runtime/hermes/hermes-ru
 import { HERMES_PROVIDER_SELECTION_SOURCE } from "../../src/modules/runtime/hermes/hermes-source-identity.js";
 import type { HermesManagedRunSelection } from "../../src/modules/runtime/hermes/hermes-run-selection.js";
 import { createHermesLaunchTicket } from "../../src/modules/runtime/hermes/hermes-launch-ticket.js";
-import { transitionRunProcessOwnerTx } from "../../src/modules/runtime/run-process-owner.js";
+import { transitionRunProcessOwnerTx, containmentKindForPlatform } from "../../src/modules/runtime/run-process-owner.js";
+import { stopEvidenceForContainmentKind } from "../helpers/run-process-owner-fixture.js";
 import type { ProcessScopeIdentity, ProcessScopeObservation } from "../../src/platform/process/process-inspector.js";
 import type { Database } from "../../src/platform/database/database.js";
 import { createSqliteDatabase } from "../../src/platform/database/sqlite-database.js";
@@ -91,7 +92,7 @@ class ControlledCaptureSupervisor implements ProcessScopeSupervisor {
   }
 
   private stoppedEvidence(): string {
-    return process.platform === "win32" ? "WINDOWS_JOB_EMPTY" : "SYSTEMD_CGROUP_EMPTY";
+    return stopEvidenceForContainmentKind(containmentKindForPlatform(process.platform));
   }
 
   async waitForStopped(): Promise<ProcessScopeObservation> {

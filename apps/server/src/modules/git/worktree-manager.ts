@@ -255,8 +255,11 @@ export class WorktreeManager {
 }
 
 function samePathValue(left: string, right: string): boolean {
-  const a = resolve(left);
-  const b = resolve(right);
+  const canonical = (value: string): string => {
+    try { return realpathSync(value); } catch { return resolve(value); }
+  };
+  const a = canonical(left);
+  const b = canonical(right);
   return process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b;
 }
 

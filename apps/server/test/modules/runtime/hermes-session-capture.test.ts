@@ -13,11 +13,12 @@ import type { PreparedRunContext } from "../../../src/modules/context/context-ty
 import { digestRunPromptBytesV1 } from "../../../src/modules/context/context-provenance.js";
 import type { HermesSessionCapture, HermesSessionCapturePort } from "../../../src/modules/runtime/hermes-session-capture-port.js";
 import type { ProcessScopeIdentity } from "../../../src/platform/process/process-inspector.js";
-import { syncCurrentRunProcessGenerationTx, transitionRunProcessOwnerTx } from "../../../src/modules/runtime/run-process-owner.js";
+import { syncCurrentRunProcessGenerationTx, transitionRunProcessOwnerTx, type RunContainmentKind } from "../../../src/modules/runtime/run-process-owner.js";
 import { HermesRuntimeAdapter } from "../../../src/modules/runtime/hermes/hermes-runtime-adapter.js";
 import { createHermesLaunchTicket } from "../../../src/modules/runtime/hermes/hermes-launch-ticket.js";
 import { HERMES_PROVIDER_SELECTION_SOURCE } from "../../../src/modules/runtime/hermes/hermes-source-identity.js";
 import { ProcessExecutor } from "../../../src/platform/process/process-executor.js";
+import { ownerIdentityForContainmentKind, stopEvidenceForContainmentKind } from "../../helpers/run-process-owner-fixture.js";
 import type { ProcessScopeLaunchRequest, ProcessScopeSupervisor } from "../../../src/platform/process/run-scope-supervisor.js";
 import type { ProcessScopeObservation } from "../../../src/platform/process/process-inspector.js";
 
@@ -39,12 +40,10 @@ class CompletionFailureSupervisor implements ProcessScopeSupervisor {
     request: ProcessScopeLaunchRequest,
     persistVerifiedIdentity: (identity: ProcessScopeIdentity) => Promise<void>,
   ) {
-    this.liveIdentity = owner.containmentKind === "windows-job"
-      ? { ...owner, state: "LIVE", platform: "win32", supervisorPid: 202, supervisorStartIdentity: "supervisor-start",
-          pid: 303, processStartIdentity: "process-start", executableIdentity: "sha256:" + "d".repeat(64) }
-      : { ...owner, state: "LIVE", platform: "linux", pid: 303,
-          systemdInvocationId: "12345678-1234-1234-1234-123456789abc",
-          systemdControlGroup: `/user.slice/ebb-${owner.containmentId}.service` };
+    this.liveIdentity = { ...owner, state: "LIVE", ...ownerIdentityForContainmentKind(owner.containmentKind),
+      supervisorPid: 202, supervisorStartIdentity: "supervisor-start", pid: 303,
+      systemdInvocationId: "12345678-1234-1234-1234-123456789abc",
+      systemdControlGroup: `/user.slice/ebb-${owner.containmentId}.service` };
     await persistVerifiedIdentity(this.liveIdentity);
     if (request.onStdoutChunk) {
       await request.onStdoutChunk(new TextEncoder().encode(
@@ -66,7 +65,7 @@ class CompletionFailureSupervisor implements ProcessScopeSupervisor {
   }
 
   private stoppedEvidence(): string {
-    return this.liveIdentity?.containmentKind === "windows-job" ? "WINDOWS_JOB_EMPTY" : "SYSTEMD_CGROUP_EMPTY";
+    return stopEvidenceForContainmentKind(this.liveIdentity?.containmentKind);
   }
 
   async waitForStopped(): Promise<ProcessScopeObservation> {
@@ -340,7 +339,7 @@ describe("Hermes live session capture bridge", () => {
     const containmentKind = database!.get<{ containment_kind: string }>(
       "SELECT containment_kind FROM run_process_owners WHERE run_id=$runId", { runId: fixture.run.id },
     )?.containment_kind;
-    const stopEvidence = containmentKind === "windows-job" ? "WINDOWS_JOB_EMPTY" : "SYSTEMD_CGROUP_EMPTY";
+    const stopEvidence = stopEvidenceForContainmentKind(containmentKind as RunContainmentKind | null | undefined);
     database!.run("UPDATE run_process_owners SET state='STOPPED',stop_evidence=$stopEvidence WHERE run_id=$runId", {
       runId: fixture.run.id, stopEvidence,
     });

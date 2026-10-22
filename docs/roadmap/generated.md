@@ -48,6 +48,7 @@ updated: 2026-10-22
 | plan-19 | completed | План разблокирования и завершения открытых планов v1 |
 | plan-20 | in_progress | Production ContextManifest lifecycle for every Run binding |
 | plan-21 | superseded | Проверяемое Linux AppArmor attachment evidence |
+| plan-22 | proposed | Внедрение паттернов lobehub/lobehub |
 | plan-00 | completed | Documentation Governance Refactoring |
 | plan-00-02 | completed | Проверка и исправление политики AGENTS |
 | plan-00-05 | completed | Интеграция политик документации и governance |

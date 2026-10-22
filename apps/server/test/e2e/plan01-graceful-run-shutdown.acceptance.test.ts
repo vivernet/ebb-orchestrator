@@ -10,7 +10,9 @@ import type { RunOutcome } from "../../src/modules/runtime/run-types.js";
 import { digestRunPromptBytesV1 } from "../../src/modules/context/context-provenance.js";
 import type { PreparedRunContext } from "../../src/modules/context/context-types.js";
 import { transitionRunProcessOwnerTx } from "../../src/modules/runtime/run-process-owner.js";
-import { createSqliteDatabase } from "../../src/platform/database/sqlite-database.js";
+
+import { containmentKindForPlatform } from "../../src/modules/runtime/run-process-owner.js";
+import { stopEvidenceForContainmentKind } from "../helpers/run-process-owner-fixture.js";import { createSqliteDatabase } from "../../src/platform/database/sqlite-database.js";
 import { runMigrations } from "../../src/platform/database/migrator.js";
 import { shutdownSystem, StatusTracker, type BackgroundWorker } from "../../src/platform/process/system-lifecycle.js";
 import { loadTestMigrations } from "../helpers/migrations.js";
@@ -250,8 +252,8 @@ class ControlledScopeRuntime implements AgentRuntime {
   }
 }
 
-function enabledStopEvidence(): "WINDOWS_JOB_EMPTY" | "SYSTEMD_CGROUP_EMPTY" {
-  return process.platform === "win32" ? "WINDOWS_JOB_EMPTY" : "SYSTEMD_CGROUP_EMPTY";
+function enabledStopEvidence(): string {
+  return stopEvidenceForContainmentKind(containmentKindForPlatform(process.platform));
 }
 
 function preparedContext(prompt: string, role: string, subject: PreparedRunContext["subject"]): PreparedRunContext {
