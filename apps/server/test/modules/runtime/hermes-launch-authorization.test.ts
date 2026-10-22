@@ -14,7 +14,7 @@ describe("direct installed Hermes launch authorization", () => {
   });
 
   it("registers Ebb MCP in memory and binds the shared Hermes home to one Run", async () => {
-    const platform = process.platform === "win32" ? "win32" : "linux";
+    const platform = process.platform === "win32" ? "win32" as const : (process.platform === "darwin" ? "darwin" as const : "linux" as const);
     const paths = platform === "win32" ? path.win32 : path.posix;
     const root = await import("node:os").then(({ tmpdir }) => tmpdir());
     const runId = randomUUID();

@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -30,7 +31,7 @@ describe('ActionGateway', () => {
 
   describe('workspace.read', () => {
     it('should read files within workspace', async () => {
-      const file = path.join(workspaceDir, 'test.txt');
+      const file = path.join(realpathSync(workspaceDir), 'test.txt');
       fs.writeFileSync(file, 'content');
       
       const result = await gateway.readFile('test.txt');

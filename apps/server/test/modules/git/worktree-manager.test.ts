@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, readFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -61,7 +61,7 @@ describe("WorktreeManager", () => {
       const worktree = await manager.createTaskWorkspace("task-123", repoPath, "master");
 
       expect(worktree.id).toBe("task-123");
-      expect(worktree.repoPath).toBe(repoPath);
+      expect(worktree.repoPath).toBe(realpathSync(repoPath));
       expect(worktree.branch).toBe("task/task-123");
       
        // Проверяем наличие worktree и правильность его ветки.
@@ -111,7 +111,7 @@ describe("WorktreeManager", () => {
 
         const recovered = await new WorktreeManager({ db, worktreeDir }).createTaskWorkspace(taskId, repoPath, "master");
 
-        expect(recovered.path).toBe(worktreePath);
+        expect(recovered.path).toBe(realpathSync(worktreePath));
         expect(db.get<{ status: string }>("SELECT status FROM git_operations WHERE id='task-operation'")?.status).toBe("VERIFIED");
         expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM worktrees WHERE id=$taskId AND removed_at IS NULL", { taskId })?.count).toBe(1);
       } finally {
@@ -150,7 +150,7 @@ describe("WorktreeManager", () => {
 
         const recovered = await new WorktreeManager({ db, worktreeDir }).createTaskWorkspace(taskId, repoPath, "master");
 
-        expect(recovered.path).toBe(worktreePath);
+        expect(recovered.path).toBe(realpathSync(worktreePath));
         expect(db.get<{ status: string }>("SELECT status FROM git_operations WHERE worktree_id=$taskId", { taskId })?.status).toBe("VERIFIED");
         expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM worktrees WHERE id=$taskId AND removed_at IS NULL", { taskId })?.count).toBe(1);
       } finally {
@@ -186,7 +186,7 @@ describe("WorktreeManager", () => {
 
         const recovered = await new WorktreeManager({ db, worktreeDir }).createTaskWorkspace(taskId, repoPath, "master");
 
-        expect(recovered.path).toBe(worktreePath);
+        expect(recovered.path).toBe(realpathSync(worktreePath));
         expect(db.get<{ status: string }>("SELECT status FROM git_operations WHERE worktree_id=$taskId", { taskId })?.status).toBe("VERIFIED");
         expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM worktrees WHERE id=$taskId AND removed_at IS NULL", { taskId })?.count).toBe(1);
       } finally {

@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, rm, writeFile, chmod } from "node:fs/promises";
+import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, win32 } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -44,8 +45,8 @@ describe("direct installed Hermes resolver", () => {
         }), stderr: "" };
       },
     });
-    expect(resolution.executablePath).toBe(paths.launcher);
-    expect(resolution.runtimeExecutablePath).toBe(paths.python);
+    expect(resolution.executablePath).toBe(realpathSync(paths.launcher));
+    expect(resolution.runtimeExecutablePath).toBe(realpathSync(paths.python));
     expect(resolution.hermesProjectRoot).toBe(paths.source);
     expect(resolution.sourceCommit).toBe(HERMES_PROVIDER_SELECTION_SOURCE.commit);
     expect(resolution.hermesConfigHome).toBe(paths.hermesHome);
@@ -114,8 +115,8 @@ describe("direct installed Hermes resolver", () => {
         }), stderr: "" };
       },
     });
-    expect(verifiedPaths).toEqual([paths.launcher, paths.python]);
-    expect(resolution.runtimeExecutablePath).toBe(paths.python);
+    expect(verifiedPaths).toEqual([realpathSync(paths.launcher), realpathSync(paths.python)]);
+    expect(resolution.runtimeExecutablePath).toBe(realpathSync(paths.python));
   });
 
   it.runIf(process.platform === "win32")("finds the shared runtime store when HERMES_HOME points at a profile", async () => {
@@ -135,7 +136,7 @@ describe("direct installed Hermes resolver", () => {
       },
     });
     expect(resolution.hermesConfigHome).toBe(paths.profileHome);
-    expect(resolution.runtimeExecutablePath).toBe(paths.python);
+    expect(resolution.runtimeExecutablePath).toBe(realpathSync(paths.python));
   });
 
   it.runIf(process.platform === "win32")("prefers the launcher inside the configured Hermes home over ambiguous PATH candidates", async () => {
@@ -154,10 +155,10 @@ describe("direct installed Hermes resolver", () => {
         }), stderr: "" };
       },
     });
-    expect(resolution.executablePath).toBe(paths.launcher);
+    expect(resolution.executablePath).toBe(realpathSync(paths.launcher));
     expect(resolution.hermesProjectRoot).toBe(paths.source);
     expect(resolution.hermesConfigHome).toBe(paths.hermesHome);
-    expect(resolution.runtimeExecutablePath).toBe(paths.python);
+    expect(resolution.runtimeExecutablePath).toBe(realpathSync(paths.python));
   });
 });
 

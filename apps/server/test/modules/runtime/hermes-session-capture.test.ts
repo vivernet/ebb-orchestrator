@@ -130,11 +130,10 @@ describe("Hermes live session capture bridge", () => {
       systemdInvocationId: null, systemdControlGroup: null, supervisorPid: null, supervisorStartIdentity: null,
       pid: null, platform: null, processStartIdentity: null, executableIdentity: null, state: "LIVE",
     };
-    const liveIdentity: ProcessScopeIdentity = process.platform === "win32"
-      ? { ...baseIdentity, platform: "win32", supervisorPid: 102, supervisorStartIdentity: "supervisor-start", pid: 103,
-          processStartIdentity: "process-start", executableIdentity: "sha256:" + "d".repeat(64) }
-      : { ...baseIdentity, platform: "linux", pid: 103, systemdInvocationId: "12345678-1234-1234-1234-123456789abc",
-          systemdControlGroup: `/user.slice/ebb-${row.containment_id}.service` };
+    const liveIdentity: ProcessScopeIdentity = {
+      ...baseIdentity,
+      ...ownerIdentityForContainmentKind(row.containment_kind as RunContainmentKind),
+    };
     database.transaction((tx) => {
       transitionRunProcessOwnerTx(tx, { runId: run.id, expectedState: "PREPARED", nextState: "LAUNCHING" });
       transitionRunProcessOwnerTx(tx, {
@@ -246,7 +245,7 @@ describe("Hermes live session capture bridge", () => {
     );
     database!.transaction((tx) => syncCurrentRunProcessGenerationTx(tx, fixture.run.id));
     const supervisor = new CompletionFailureSupervisor();
-    const platform = process.platform === "win32" ? "win32" as const : "linux" as const;
+    const platform = process.platform === "win32" ? "win32" as const : (process.platform === "darwin" ? "darwin" as const : "linux" as const);
     const objectIdentity = platform === "win32"
       ? { platform, volumeSerial: "0123456789abcdef", fileId: "0123456789abcdef0123456789abcdef" } as const
       : { platform, device: "1", inode: "1" } as const;

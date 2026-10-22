@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { realpathSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -87,7 +88,7 @@ describe("TaskWorkspaceProvisioner", () => {
       await provisioner.provisionForEpic(epicId);
 
       const operation = db.get<{ status: string; branch_name: string; target_ref: string; repo_path: string }>("SELECT status,branch_name,target_ref,repo_path FROM git_operations WHERE worktree_id=$taskId", { taskId });
-      expect(operation).toEqual({ status: "VERIFIED", branch_name: `task/${taskId}`, target_ref: "epic/EPIC-1", repo_path: repo });
+      expect(operation).toEqual({ status: "VERIFIED", branch_name: `task/${taskId}`, target_ref: "epic/EPIC-1", repo_path: realpathSync(repo) });
       expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM git_operations WHERE worktree_id=$taskId", { taskId })?.count).toBe(1);
       expect(db.get<{ count: number }>("SELECT COUNT(*) AS count FROM worktrees WHERE id=$taskId AND removed_at IS NULL", { taskId })?.count).toBe(1);
     } finally {
