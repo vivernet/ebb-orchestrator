@@ -26,7 +26,7 @@ import { runMigrations } from "../../src/platform/database/migrator.js";
 import type { Database } from "../../src/platform/database/database.js";
 import { loadTestMigrations } from "../helpers/migrations.js";
 import type { RunContainmentKind } from "../../src/modules/runtime/run-process-owner.js";
-import { stopEvidenceForContainmentKind } from "../helpers/run-process-owner-fixture.js";
+import { ownerIdentityForContainmentKind, stopEvidenceForContainmentKind } from "../helpers/run-process-owner-fixture.js";
 import { createTestAuthService, TEST_COOKIE, TEST_CSRF_TOKEN } from "../helpers/auth.js";
 import { WorkflowEngine } from "../../src/modules/workflow/workflow-engine.js";
 import { WorkflowRegistry } from "../../src/modules/workflow/workflow-registry.js";
@@ -86,7 +86,7 @@ import { registerCoordinatorPlanningJob } from "../../src/modules/planning/coord
 import { EpicWorkspaceProvisioner } from "../../src/modules/git/epic-workspace-provisioner.js";
 import { TaskWorkspaceProvisioner } from "../../src/modules/git/task-workspace-provisioner.js";
 import { WorktreeManager } from "../../src/modules/git/worktree-manager.js";
-import { transitionRunProcessOwnerTx } from "../../src/modules/runtime/run-process-owner.js";
+import { transitionRunProcessOwnerTx, containmentKindForPlatform } from "../../src/modules/runtime/run-process-owner.js";
 import { EventBus } from "../../src/platform/events/event-bus.js";
 import { EventDispatcher } from "../../src/platform/events/event-dispatcher.js";
 import { RuntimeOrchestrator } from "../../src/modules/runtime/run-orchestrator.js";
@@ -1191,7 +1191,8 @@ function assertFakeRuntimeNeverLaunched(database: Database, runId: string): void
 
 /** Persisted only as a test restart checkpoint; it does not represent a native or provider-backed process. */
 function fakeLiveProcessIdentity(runId: string) {
-  if (process.platform === "win32") {
+  const kind = containmentKindForPlatform(process.platform);
+  if (kind === "windows-job") {
     return {
       platform: "win32",
       supervisorPid: process.pid,
@@ -1200,6 +1201,9 @@ function fakeLiveProcessIdentity(runId: string) {
       processStartIdentity: `acceptance-test-process:${runId}`,
       executableIdentity: "acceptance-test-runtime",
     };
+  }
+  if (kind === "darwin-process-group") {
+    return ownerIdentityForContainmentKind("darwin-process-group");
   }
   return {
     platform: "linux",

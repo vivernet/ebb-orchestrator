@@ -441,7 +441,7 @@ function assertLiveIdentity(identity: RunProcessOwnerIdentity): void {
     const runner = parseDarwinProcessGroupIdentityV1(identity.processStartIdentity);
     if (identity.systemdInvocationId != null || identity.systemdControlGroup != null ||
         identity.supervisorPid !== anchor.pid || identity.pid !== runner.pid ||
-        anchor.bootSessionUUID !== runner.bootSessionUUID || anchor.pgid !== anchor.pid || anchor.sid !== anchor.pid ||
+        anchor.bootSessionUUID !== runner.bootSessionUUID || anchor.pgid !== anchor.pid ||
         runner.pgid !== anchor.pgid || runner.sid !== anchor.sid) {
       throw new TypeError('DARWIN_PROCESS_IDENTITY_UNAVAILABLE');
     }

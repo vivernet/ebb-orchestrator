@@ -9,10 +9,9 @@ import { effectiveRunToolIds, RunService } from "../../src/modules/runtime/run-s
 import type { RunOutcome } from "../../src/modules/runtime/run-types.js";
 import { digestRunPromptBytesV1 } from "../../src/modules/context/context-provenance.js";
 import type { PreparedRunContext } from "../../src/modules/context/context-types.js";
-import { transitionRunProcessOwnerTx } from "../../src/modules/runtime/run-process-owner.js";
-
-import { containmentKindForPlatform } from "../../src/modules/runtime/run-process-owner.js";
-import { stopEvidenceForContainmentKind } from "../helpers/run-process-owner-fixture.js";import { createSqliteDatabase } from "../../src/platform/database/sqlite-database.js";
+import { transitionRunProcessOwnerTx, containmentKindForPlatform } from "../../src/modules/runtime/run-process-owner.js";
+import { ownerIdentityForContainmentKind, stopEvidenceForContainmentKind } from "../helpers/run-process-owner-fixture.js";
+import { createSqliteDatabase } from "../../src/platform/database/sqlite-database.js";
 import { runMigrations } from "../../src/platform/database/migrator.js";
 import { shutdownSystem, StatusTracker, type BackgroundWorker } from "../../src/platform/process/system-lifecycle.js";
 import { loadTestMigrations } from "../helpers/migrations.js";
@@ -187,9 +186,7 @@ describe.skipIf(!enabled)("Plan 01 graceful shutdown with an active Run scope", 
         runId,
         expectedState: "LAUNCHING",
         nextState: "LIVE",
-        identity: process.platform === "win32"
-          ? { platform: "win32", supervisorPid: 1, supervisorStartIdentity: "fixture-supervisor", pid: 2, processStartIdentity: "fixture-process", executableIdentity: "fixture-runtime" }
-          : { platform: "linux", systemdInvocationId: "fixture-invocation", systemdControlGroup: "/user.slice/fixture.scope", pid: 2 },
+        identity: ownerIdentityForContainmentKind(containmentKindForPlatform(process.platform)),
       });
     });
     runtime.scope.live = true;

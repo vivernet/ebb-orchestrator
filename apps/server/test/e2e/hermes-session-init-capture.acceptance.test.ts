@@ -14,8 +14,8 @@ import { HermesRuntimeAdapter } from "../../src/modules/runtime/hermes/hermes-ru
 import { HERMES_PROVIDER_SELECTION_SOURCE } from "../../src/modules/runtime/hermes/hermes-source-identity.js";
 import type { HermesManagedRunSelection } from "../../src/modules/runtime/hermes/hermes-run-selection.js";
 import { createHermesLaunchTicket } from "../../src/modules/runtime/hermes/hermes-launch-ticket.js";
-import { transitionRunProcessOwnerTx, containmentKindForPlatform } from "../../src/modules/runtime/run-process-owner.js";
-import { stopEvidenceForContainmentKind } from "../helpers/run-process-owner-fixture.js";
+import { transitionRunProcessOwnerTx, containmentKindForPlatform, type RunContainmentKind } from "../../src/modules/runtime/run-process-owner.js";
+import { ownerIdentityForContainmentKind, stopEvidenceForContainmentKind } from "../helpers/run-process-owner-fixture.js";
 import type { ProcessScopeIdentity, ProcessScopeObservation } from "../../src/platform/process/process-inspector.js";
 import type { Database } from "../../src/platform/database/database.js";
 import { createSqliteDatabase } from "../../src/platform/database/sqlite-database.js";
@@ -328,7 +328,7 @@ async function setup(options: { leaveOwnerPrepared?: boolean; workspace?: string
   const owner = database.get<{
     source_tag: string;
     hermes_home: string;
-    containment_kind: "windows-job" | "systemd-user-service";
+    containment_kind: RunContainmentKind;
     containment_id: string;
     launch_nonce: string;
   }>(
@@ -344,12 +344,12 @@ async function setup(options: { leaveOwnerPrepared?: boolean; workspace?: string
     launchNonce: owner.launch_nonce,
     systemdInvocationId: process.platform === "linux" ? "12345678-1234-1234-1234-123456789abc" : null,
     systemdControlGroup: process.platform === "linux" ? `/user.slice/ebb-${owner.containment_id}.service` : null,
-    supervisorPid: process.platform === "win32" ? 202 : null,
-    supervisorStartIdentity: process.platform === "win32" ? "fixture-supervisor-start" : null,
+    supervisorPid: ownerIdentityForContainmentKind(containmentKindForPlatform(process.platform)).supervisorPid ?? 202,
+    supervisorStartIdentity: ownerIdentityForContainmentKind(containmentKindForPlatform(process.platform)).supervisorStartIdentity ?? "fixture-supervisor-start",
     pid: 303,
-    platform: process.platform,
-    processStartIdentity: process.platform === "win32" ? "fixture-process-start" : null,
-    executableIdentity: process.platform === "win32" ? `sha256:${"d".repeat(64)}` : null,
+    platform: ownerIdentityForContainmentKind(containmentKindForPlatform(process.platform)).platform,
+    processStartIdentity: ownerIdentityForContainmentKind(containmentKindForPlatform(process.platform)).processStartIdentity ?? "fixture-process-start",
+    executableIdentity: ownerIdentityForContainmentKind(containmentKindForPlatform(process.platform)).executableIdentity ?? `sha256:${"d".repeat(64)}`,
     state: "LIVE",
   };
   if (!options.leaveOwnerPrepared) {

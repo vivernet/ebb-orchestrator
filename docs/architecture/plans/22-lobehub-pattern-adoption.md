@@ -6,7 +6,8 @@ title: Внедрение паттернов lobehub/lobehub
 summary: Перенос адаптированных паттернов безопасности, runtime, контекста и наблюдаемости без расширения утверждённой архитектуры Ebb Orchestrator.
 created: 2026-10-22
 updated: 2026-10-22
-depends_on: []
+depends_on:
+  - plan-20
 specs:
   - ../specs/01-system-design.md
 ---
@@ -27,7 +28,8 @@ specs:
 - `master` и remote read-only; работа только в worktree `develop`; никаких push/merge/force.
 - Новые и изменённые production-комментарии и JSDoc — только на русском; технические идентификаторы не переводятся.
 - Никаких копий кода донора «как есть»: переносятся интерфейсы, контракты и подходы, адаптированные под стек Ebb и русский JSDoc.
-- Не менять существующий обощённый контракт (`packages/contracts`) без поиска всех consumers и обновления их тестов.
+- Не менять существующий обобщённый контракт (`packages/contracts`) без поиска всех consumers и обновления их тестов.
+- `plan-20` — обязательная внешняя prerequisite: он остаётся `in_progress` и владеет пересекающимися `run-context-assembler.ts`/`run-service.ts` seams. Ни одна задача Plan22 не стартует до `plan-20: completed`; после этого повторно сверить исходники и миграционный каталог, затем выполнять только оставшийся scoped DAG.
 
 **Specialist Constraints (trigger-only):**
 - Изменения схемы SQLite (C4 traces, при необходимости новые таблицы) — работать через `ebb-database-engineering` (версионированная миграция, append-only история).
@@ -52,7 +54,7 @@ specs:
 |---|---|---|
 | `apps/server/src/platform/security/path-scope.ts` | new | Нормализация/резолвинг аргументов-путей с ограничением scope; API в стиле `pathScope.ts` донора (normalizePathForScope, resolvePathWithScope, isPathWithinScope, resolveArgsWithScope) поверх существующего `PathResolver`; никакие вне-workspace пути не разрешаются. |
 | `apps/server/src/modules/permissions/intervention-checker.ts` | new | Чистый детерминированный matcher аргументов для security blacklist; совпадение возвращает только `ABSOLUTE_DENY`, без новой ASK/approval policy. |
-| `apps/server/src/modules/permissions/default-security-blacklist.ts` | new | Реестр regex-правил опасных действий (удаление данных, `/etc/passwd`, fork bomb, sudoers, firewall и т.п.), адаптированный к workspace-контексту. |
+| `apps/server/src/modules/permissions/default-security-blacklist.ts` | new | Реестр source-owned безопасных matcher-правил опасных команд (`exact/prefix/wildcard`) для `command.exec`; scope-aware без пользовательских regex. |
 | `apps/server/src/modules/execution/workspace-tools.ts` | modify | Проводить все входные пути через `resolveArgsWithScope`/`isPathWithinScope`. |
 | `apps/server/src/modules/execution/action-gateway.ts` | modify | Прогон аргументов через `InterventionChecker` до исполнения; защита от inbound `cwd`. |
 | `apps/server/src/modules/permissions/permission-types.ts`, `permission-engine.ts` | modify | Расширение `EvaluationInput` полем `args`; интеграция matchers/blacklist в оценку. |
@@ -74,7 +76,7 @@ specs:
 | `apps/server/src/modules/runtime/context/token-accounting.ts` | new | Учёт токенов по бакетам (`TokenSourceType`, per-message/per-tool breakdown, `driftMultiplier`). |
 | `apps/server/src/modules/runtime/context/agent-config-snapshot.ts` | new | `AgentConfigSnapshot`: «намеренно plain data» — весь читаемый контекст собирается один раз, правила становятся чистыми функциями. |
 | `apps/server/src/modules/runtime/run-context-assembler.ts`, `context-budget.ts` | modify | Рефакторинг в конвейер процессоров; интеграция tokenAccounting. |
-| `apps/server/src/modules/runtime/tracing/tracing-payload.ts`, `tracing-store.ts` | new | Безопасные trace metadata и digest contract; raw prompt/input/output не сохраняются. |
+| `apps/server/src/modules/runtime/tracing/tracing-payload.ts`, `tracing-store.ts` | new | Безопасные Run-level trace metadata и digest contract; raw prompt/input/output не сохраняются. |
 | `apps/server/src/platform/database/migrations/048_run_traces.sql` | new | Additive migration для trace rows, связанных с Run; только после preflight подтверждения, что 048 остаётся следующим свободным номером. |
 | `apps/server/src/platform/observability/otel.ts` | new | Инициализация OTel OTLP HTTP; `gen_ai` semconv; middleware-трейсинг; гистограммы. |
 | `apps/server/package.json`, `pnpm-lock.yaml` | modify | Pinned OTel runtime dependencies из Task C5 для reproducible install/build. |
@@ -140,19 +142,20 @@ specs:
 #### Task A3. Детерминированный security blacklist в Permission Engine
 - **Depends on:** A1, A2 (нормализация args и завершённый общий `action-gateway.ts` change).
 - **Create:** `apps/server/src/modules/permissions/intervention-checker.ts`; `apps/server/src/modules/permissions/default-security-blacklist.ts`; `apps/server/test/modules/permissions/intervention-checker.test.ts`.
-- **Modify:** `permission-types.ts` (`EvaluationInput.args?: Readonly<Record<string, unknown>>`); `permission-engine.ts` (проверка blacklist до capability allow); `action-gateway.ts`/`tool-registry.ts` (передача нормализованных args до любого side effect).
+- **Modify:** `permission-types.ts` (`EvaluationInput.args?: { executable: string; argv: readonly string[] }`); `permission-engine.ts` (решение blacklist до capability fallback); `action-gateway.ts` (в `exec` сначала выполнить `CommandPolicy.resolve`, передать в Permission Engine разрешённый вектор команды и запустить процесс только при `ALLOW`). Схема/вызов `tool-registry.ts` не меняются.
 - **Interfaces:**
-  - `InterventionMatcherType = 'exact' | 'prefix' | 'wildcard' | 'regex'`; `InterventionMatcher = { type: InterventionMatcherType; pattern: string }`.
-  - `InterventionRule { id: string; action: ActionId; matcher: InterventionMatcher; reasonCode: string }` — blacklist rules только запрещают; effect фиксирован как `ABSOLUTE_DENY`, не настраивается на ALLOW/ASK.
-  - `InterventionChecker.evaluate(action: ActionId, args: Readonly<Record<string, unknown>>): { decision: PermissionDecision; reason: string }`.
-  - Match blacklist до обычного capability fallback и композировать её `ABSOLUTE_DENY` через текущий most-restrictive-wins. `ASK`/approval semantics существующих policies не изменяются; Action Gateway не исполняет ничего, кроме `ALLOW`.
-  - Некорректная blacklist rule/config, нераспознанное действие и oversized matcher/input fail closed; ограничить regex length/complexity и не принимать пользовательские regex без валидации.
-- **RED:** тест на `ActionId.CommandExec` + args `rm -rf ~` ожидает `ABSOLUTE_DENY` и доказывает, что fake executor не вызван; до реализации текущий capability-only ActionGateway пропускает команду. Добавить precedence test, что blacklist `ABSOLUTE_DENY` не ослабляется policy/capability ALLOW. RED должен падать по assertions.
-- **GREEN:** blacklist enforcement интегрирован перед реальным execution path; тесты PASS; существующие Permission Engine most-restrictive-wins, `ABSOLUTE_DENY`, unknown action и Action Gateway regression tests остаются зелёными.
+  - В этой задаче matcher применяется только к `ActionId.CommandExec`; workspace-пути остаются в scope A1/`PathResolver`, произвольные object/JSON поля не просматриваются.
+  - `InterventionMatcherType = 'exact' | 'prefix' | 'wildcard'`; `InterventionMatcher = { type: InterventionMatcherType; pattern: string }` сравнивает всю каноническую строку `JSON.stringify([executableBasename, ...argv])`. `exact` требует полного равенства, `prefix` — совпадения с начала, wildcard anchored к полной строке: `*` означает любую последовательность, `?` — один символ, escape syntax отсутствует. Wildcard реализуется детерминированным алгоритмом с худшей сложностью `O(patternLength × vectorLength)`; JavaScript `RegExp` не используется.
+  - Нормализация влияет только на проверку: basename executable извлекается по `/` и `\\`, приводится к ASCII lower-case и очищается от `.exe`; каждый проверенный `CommandPolicy` аргумент нормализуется в NFKC с сохранением границ аргументов. При запуске используются исходные validated executable/argv.
+  - `InterventionRule { id: string; action: ActionId.CommandExec; matcher: InterventionMatcher; reasonCode: string }`; допустимы только константные правила из source; их effect фиксирован как `ABSOLUTE_DENY`.
+  - `InterventionChecker.evaluate(action: ActionId, args: { executable: string; argv: readonly string[] }): { decision: PermissionDecision; reason: string }`. Отсутствующие/некорректные поля и значения нестрокового типа блокируются; candidate JSON ограничен 8192 UTF-8 bytes, pattern — 256 символами.
+  - `PermissionEngine.evaluate` для `CommandExec` требует уже проверенный вектор команды. Совпадение композируется как `ABSOLUTE_DENY` до обычного capability ALLOW; существующая семантика ASK/approval не меняется.
+- **RED:** тест на каноническом векторе команды `['rm', '-rf', '~']` ожидает `ABSOLUTE_DENY`; `ActionGateway.exec` с соответствующим `CommandPolicy` не должен вызывать process executor. Тест приоритетов доказывает, что capability/policy ALLOW не смягчает blacklist. До исправления capability-only Gateway пропускает разрешённую policy команду, поэтому тест падает по assertion.
+- **GREEN:** matcher запускается после `CommandPolicy.resolve` и до процесса; тесты подтверждают сохранение границ аргументов (без shell-join), NFKC/basename нормализацию, отказ malformed vectors, most-restrictive-wins и неизменное поведение для команд без совпадений.
 - **Run:** `pnpm --filter @ebb-orchestrator/server exec vitest run test/modules/permissions/intervention-checker.test.ts test/modules/permissions/permission-engine.test.ts test/modules/execution/action-gateway.test.ts`.
-- **Expected:** blacklisted action всегда `ABSOLUTE_DENY` до executor; capability/policy ALLOW не смягчает blacklist; существующие policy cases без blacklist сохраняют результаты.
+- **Expected:** команда из blacklist получает `ABSOLUTE_DENY` до executor; capability/policy ALLOW не смягчает deny; существующие cases без совпадения сохраняют прежний результат.
 - **Gates:** typecheck; lint; test; security-ревью (specialist).
-- **Review Focus:** `ABSOLUTE_DENY` нельзя ослабить; fail-closed на invalid rules/args; ReDoS resistance; matcher является дополнительным deterministic guard, а не заменой capabilities, CommandPolicy или OS sandbox.
+- **Review Focus:** `ABSOLUTE_DENY` нельзя ослабить; malformed command vectors всегда fail closed; worst-case matcher complexity ограничена; canonicalization влияет только на проверку и не меняет запускаемый argv.
 
 ### Phase B — Runtime & Recovery Execution
 
@@ -233,20 +236,23 @@ specs:
 - **Gates:** typecheck; lint; test.
 - **Review Focus:** неизменность входного контекста; отсутствие побочных эффектов в правилах.
 
-#### Task C4. LLM-generation tracing (без raw prompt payload)
+#### Task C4. Best-effort Run-level tracing (без raw payload)
 - **Depends on:** B3 (usage), C1 (digest).
 - **Create:** `apps/server/src/modules/runtime/tracing/tracing-payload.ts`, `tracing-store.ts`; `apps/server/src/platform/database/migrations/048_run_traces.sql`; `apps/server/test/modules/runtime/tracing/tracing-store.test.ts`; migration test `apps/server/test/platform/database/run-traces-migration.test.ts`.
-- **Modify:** `run-service.ts` (запись trace при завершении Run).
-- **Database ownership / desired state:** новый `run_traces` — таблица runtime/tracing owner; migration additive, не меняет существующие таблицы и строки. Колонки: `id TEXT PRIMARY KEY`, `run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE`, `scenario TEXT NOT NULL`, `prompt_version TEXT NOT NULL`, `prompt_hash TEXT NOT NULL CHECK (64 lowercase hex)`, `context_hash TEXT NOT NULL CHECK (64 lowercase hex)`, `model_metadata_json TEXT NOT NULL`, `usage_json TEXT NOT NULL`, `validation_failed INTEGER NOT NULL CHECK (0,1)`, nullable stable `error_category`, `created_at TEXT NOT NULL`, `version TEXT NOT NULL`. Несколько trace rows на Run разрешены; индекс `(run_id, created_at)`. Нет backfill для исторических Runs; удаление Run каскадно удаляет его traces.
-- **Data / trust contract:** не сохранять и не экспортировать raw prompt, raw input/output, stderr, credentials, endpoint URL или headers. Trace содержит только hashes, несекретные model/runtime IDs, usage, validation outcome и stable error category. API projection в этой задаче не добавляется.
-- **Interfaces:** `TracingPayload { tracing_id; run_id; scenario; prompt_version; prompt_hash; context_hash; model_metadata; usage; validation_failed; error_category; created_at; version: '1.0' }`; `computePromptHash(finalPromptBytes: Uint8Array): string` делегирует текущему `digestRunPromptBytesV1`, выдаёт полный 64-char lowercase SHA-256 для точных сохранённых prompt bytes; `ITracingStore.save(...)` использует один SQLite transaction boundary с записью trace.
+- **Modify:** `run-service.ts`.
+- **Coverage / lifecycle owners:** один общий best-effort `recordCompletedRunTrace(runId)` hook вызывается после commit в обоих путях: обычный `collectRuntimeResult() → collectResult() → optional collectUsage()` и restart-recovery `reconcileInterruptedRuns() → finalizePersistedSubmission()`. В normal path hook вызывается после попытки optional usage collection; recovery использует persisted usage или `NULL`, если он неизвестен. Hook читает Run/manifest/usage в одном consistent DB snapshot; `created_at` берётся из persisted `AgentRun.endedAt`, а не от текущих часов. Трассируются только валидированные успешные `COMPLETED` Runs; failed/interrupted/cancelled Runs не создают trace. Trace — sidecar, не completion authority.
+- **Atomicity / failure policy:** trace пишется в отдельной transaction только после durable `AgentRunCompleted`; это намеренно не атомарно с Run transition. Любая ошибка validation/storage/logging trace не меняет и не откатывает завершённый Run, не блокирует recovery/READY; ошибка логируется только фиксированным безопасным code. Автоматический retry не обещается: crash между Run commit и trace insert может оставить Run без trace. Повторный вызов hook идемпотентен по `run_id`.
+- **Database ownership / desired state:** `run_traces` — additive table runtime/tracing owner; migration не меняет существующие таблицы/строки и не backfill-ит исторические Runs. Колонки: `run_id TEXT PRIMARY KEY REFERENCES agent_runs(id) ON DELETE CASCADE`, nullable `scenario TEXT CHECK (scenario IS NULL OR length(scenario) <= 128)`, nullable `prompt_version TEXT CHECK (prompt_version IS NULL OR length(prompt_version) <= 128)`, `prompt_hash TEXT NOT NULL CHECK (length(prompt_hash) = 64 AND prompt_hash NOT GLOB '*[^0-9a-f]*')`, `context_hash TEXT NOT NULL CHECK (length(context_hash) = 64 AND context_hash NOT GLOB '*[^0-9a-f]*')`, `model_metadata_json TEXT NOT NULL CHECK (length(CAST(model_metadata_json AS BLOB)) <= 1024)`, nullable `usage_json TEXT CHECK (usage_json IS NULL OR length(CAST(usage_json AS BLOB)) <= 512)`, `created_at TEXT NOT NULL`, `version TEXT NOT NULL CHECK (version = '1.0')`. Один trace на Run; `run_id` primary key задаёт idempotency, FK cascade — retention boundary.
+- **Allowlist / runtime validation:** `TracingPayloadSchema` — strict schema без unknown/nested fields. `model_metadata` допускает только `{ runtime: string; model: string }` из persisted `AgentRun`; каждое значение non-empty, до 256 символов, соответствует `^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,255}$`, при этом `://` запрещён. `usage` — `ModelUsage | null`; объект допускает только `inputTokens`, `cachedInputTokens`, `outputTokens` (non-negative safe integers) и `cost` (finite non-negative number или `null`); `null` сохраняется как SQL NULL. Serialized metadata/usage валидируются и ограничиваются по UTF-8 bytes до SQL; запрещённые/неизвестные поля отклоняются, не обрезаются. `scenario` берётся только из persisted `RunTrigger | null`; `prompt_version` — из persisted `contextVersion | null`, ограничен 128 символами; missing значения остаются `NULL`, не синтезируются.
+- **Data / trust contract:** не сохранять и не экспортировать raw prompt, raw input/output, stderr, credentials, endpoint URL или headers. Хранить только canonical hashes, указанные allowlisted IDs, nullable bounded usage и timestamps. API projection в этой задаче не добавляется.
+- **Interfaces:** `TracingPayload { run_id; scenario: RunTrigger | null; prompt_version: string | null; prompt_hash; context_hash; model_metadata: { runtime; model }; usage: ModelUsage | null; created_at; version: '1.0' }`; `computePromptHash(finalPromptBytes: Uint8Array): string` делегирует текущему `digestRunPromptBytesV1`, выдаёт полный 64-char lowercase SHA-256 для точных сохранённых prompt bytes. `ITracingStore.save(payload)` использует `run_id` как idempotency key: идентичный payload — no-op/success, другой payload для того же Run — stable conflict без update.
 - **Migration preflight:** на текущем catalog последняя migration — 047; перед исполнением подтвердить, что 048 остаётся следующим свободным номером. Если catalog изменился, обновить migration path/version и acceptance references в этом плане до реализации. Не переписывать опубликованные migrations.
-- **RED:** тесты по отдельности доказывают fresh install 001–048 и populated upgrade 047→048; чтение новой записи; rollback при ошибке; `PRAGMA foreign_key_check`; cascade semantics; проверку `prompt_hash`/`context_hash` длиной 64; отсутствие raw prompt/input/output в payload/DB projection. RED должен падать по assertion.
-- **GREEN:** migration + store проходят upgrade/fresh path; существующие rows остаются неизменными; повторный `save` с тем же `tracing_id` и тем же payload идемпотентно возвращает прежний результат, а с тем же ID и другим payload возвращает stable conflict без update; существующие migration suites зелёные.
-- **Run:** `pnpm --filter @ebb-orchestrator/server exec vitest run test/modules/runtime/tracing/tracing-store.test.ts test/platform/database/run-traces-migration.test.ts test/platform/database/fresh-install-migrations.acceptance.test.ts`.
-- **Expected:** populated 047→048 и fresh 001→048 проходят, старые rows неизменны, retry не создаёт duplicate, FK/cascade checks зелёные, raw content нигде не сохраняется.
-- **Gates:** `ebb-database-engineering`; focused migration/store tests; typecheck; lint; test; fresh-install migration acceptance.
-- **Review Focus:** immutable/forward-only migration; trace data minimization; точное соответствие manifest `prompt_hash`; transaction/idempotency boundary; отсутствие новой raw-content API.
+- **RED:** отдельные tests доказывают fresh install 001–048 и populated upgrade 047→048; запись/чтение допустимого payload; отказ unknown/nested fields, endpoint/secret-like values, невалидного usage и превышения JSON byte limits; conflict/idempotency по `run_id`; rollback; `PRAGMA foreign_key_check`; cascade; `prompt_hash`/`context_hash` длиной 64. Тесты для обоих terminal paths инъецируют storage failure после Run commit и доказывают, что Run остаётся `COMPLETED`, а recovery завершается.
+- **GREEN:** оба пути вызывают общий hook после terminal commit; storage failure остаётся best-effort и не меняет Run outcome; migration/store проходят fresh/upgrade path, старые rows неизменны, повторная запись идемпотентна.
+- **Run:** `pnpm --filter @ebb-orchestrator/server exec vitest run test/modules/runtime/tracing/tracing-store.test.ts test/modules/runtime/run-service.test.ts test/platform/database/run-traces-migration.test.ts test/platform/database/fresh-install-migrations.acceptance.test.ts`.
+- **Expected:** populated 047→048 и fresh 001→048 проходят; normal и restart-recovery completions вызывают один trace hook; trace failures не меняют terminal Run/READY; invalid payload отклоняется; FK/cascade и retry/conflict expectations выполняются.
+- **Gates:** `ebb-database-engineering`; focused migration/store/runtime tests; typecheck; lint; test; fresh-install migration acceptance.
+- **Review Focus:** immutable/forward-only migration; точная граница best-effort после Run commit; trace data minimization/allowlist; точное соответствие manifest `prompt_hash`; отсутствие raw-content API.
 
 #### Task C5. OTel-наблюдаемость (gen_ai semconv + middleware)
 - **Depends on:** C4 (данные для trace metadata).
