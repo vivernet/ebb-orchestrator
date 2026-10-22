@@ -321,8 +321,7 @@ function signalVerifiedRootGroup(identity, child, signal, processIdentityProvide
     return { sent: false, error: undefined };
   }
   const current = processIdentityProvider(identity.pid);
-  const rootLeader = isRootSessionLeader(identity, child.pid);
-  const identityMatches = rootLeader && Boolean(current) && sameStrongIdentity(current, {
+  const identityMatches = isRootSessionLeader(identity, child.pid) && Boolean(current) && sameStrongIdentity(current, {
     leaderPid: identity.pid,
     processGroupId: identity.processGroupId,
     sessionId: identity.sessionId,
@@ -330,12 +329,6 @@ function signalVerifiedRootGroup(identity, child, signal, processIdentityProvide
   });
   if (!identityMatches) {
     const groupExists = processGroupExistsProvider(identity.processGroupId);
-    // Процесс мог успеть выйти между чтением identity и teardown (current === undefined),
-    // либо на darwin weak-identity могла незначительно разойтись; владение группой
-    // зафиксировано при spawn (pgid==pid), поэтому сигналим только эту группу.
-    if (groupExists && (rootLeader || typeof current === "undefined")) {
-      return { sent: signalProcessGroupProvider(identity.processGroupId, signal), error: undefined };
-    }
     return {
       sent: false,
       error: groupExists
