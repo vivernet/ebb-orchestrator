@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
-import { realpathSync } from 'node:fs';
 import * as path from 'node:path';
 import { tmpdir } from 'node:os';
 import crypto from 'node:crypto';
@@ -33,7 +32,7 @@ describe('CommandPolicy', () => {
   it('resolves a declared policy to its fixed executable and bounded resources', () => {
     expect(policy.resolve({ policyId: 'package-check', args: ['--version'] })).toMatchObject({
       valid: true,
-      command: { executable: process.execPath, args: ['--version'], cwd: realpathSync(workspaceDir), timeout: 5_000, maxOutput: 1_024 },
+      command: { executable: process.execPath, args: ['--version'], cwd: workspaceDir, timeout: 5_000, maxOutput: 1_024 },
     });
   });
 

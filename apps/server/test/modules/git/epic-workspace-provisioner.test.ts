@@ -62,8 +62,8 @@ describe("EpicWorkspaceProvisioner", () => {
 
       expect(first).toEqual(second);
       expect(first.id).toBe(`epic:${f.epicId}`);
-      expect(first.repoPath).toBe(realpathSync(f.repoPath));
-      expect(first.path).toBe(realpathSync(join(f.worktreeDir, `epic-${f.epicId}`)));
+      expect(first.repoPath).toBe(f.repoPath);
+      expect(first.path).toBe(join(f.worktreeDir, `epic-${f.epicId}`));
       expect(first.branch).toBe("epic/EPIC-123");
       expect((await f.git.run(f.repoPath, ["branch", "--show-current"])).stdout.trim()).toBe("master");
       expect((await f.git.run(first.path, ["branch", "--show-current"])).stdout.trim()).toBe("epic/EPIC-123");

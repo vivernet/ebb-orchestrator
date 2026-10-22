@@ -18,7 +18,7 @@ import { HermesRuntimeAdapter } from "../../../src/modules/runtime/hermes/hermes
 import { createHermesLaunchTicket } from "../../../src/modules/runtime/hermes/hermes-launch-ticket.js";
 import { HERMES_PROVIDER_SELECTION_SOURCE } from "../../../src/modules/runtime/hermes/hermes-source-identity.js";
 import { ProcessExecutor } from "../../../src/platform/process/process-executor.js";
-import { ownerIdentityForContainmentKind, stopEvidenceForContainmentKind } from "../../helpers/run-process-owner-fixture.js";
+import { ownerIdentityForContainmentKind, runProcessOwnerFixtureForPlatform, stopEvidenceForContainmentKind } from "../../helpers/run-process-owner-fixture.js";
 import type { ProcessScopeLaunchRequest, ProcessScopeSupervisor } from "../../../src/platform/process/run-scope-supervisor.js";
 import type { ProcessScopeObservation } from "../../../src/platform/process/process-inspector.js";
 
@@ -125,14 +125,22 @@ describe("Hermes live session capture bridge", () => {
       containment_id: string; launch_nonce: string;
     }>("SELECT source_tag,hermes_home,containment_kind,containment_id,launch_nonce FROM run_process_owners WHERE run_id=$runId", { runId: run.id });
     if (!row) throw new Error("test owner missing");
-    const baseIdentity: ProcessScopeIdentity = {
-      runId: run.id, containmentKind: row.containment_kind, containmentId: row.containment_id, launchNonce: row.launch_nonce,
-      systemdInvocationId: null, systemdControlGroup: null, supervisorPid: null, supervisorStartIdentity: null,
-      pid: null, platform: null, processStartIdentity: null, executableIdentity: null, state: "LIVE",
-    };
+    const fixtureIdentity = runProcessOwnerFixtureForPlatform(process.platform).identity;
+    if (!fixtureIdentity) throw new Error("unsupported platform for test owner");
     const liveIdentity: ProcessScopeIdentity = {
-      ...baseIdentity,
-      ...ownerIdentityForContainmentKind(row.containment_kind as RunContainmentKind),
+      runId: run.id,
+      containmentKind: row.containment_kind as RunContainmentKind,
+      containmentId: row.containment_id,
+      launchNonce: row.launch_nonce,
+      systemdInvocationId: fixtureIdentity.systemdInvocationId,
+      systemdControlGroup: fixtureIdentity.systemdControlGroup,
+      supervisorPid: fixtureIdentity.supervisorPid,
+      supervisorStartIdentity: fixtureIdentity.supervisorStartIdentity,
+      pid: fixtureIdentity.pid,
+      platform: fixtureIdentity.platform,
+      processStartIdentity: fixtureIdentity.processStartIdentity,
+      executableIdentity: fixtureIdentity.executableIdentity,
+      state: "LIVE",
     };
     database.transaction((tx) => {
       transitionRunProcessOwnerTx(tx, { runId: run.id, expectedState: "PREPARED", nextState: "LAUNCHING" });

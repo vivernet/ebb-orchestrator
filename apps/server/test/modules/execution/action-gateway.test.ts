@@ -188,7 +188,7 @@ describe('ActionGateway', () => {
     });
 
     it('rejects a file replaced between verification and descriptor acquisition', async () => {
-      const file = path.join(workspaceDir, 'test.txt');
+      const file = path.join(realpathSync(workspaceDir), 'test.txt');
       const replacement = path.join(testDir, 'replacement.txt');
       fs.writeFileSync(file, 'initial');
       fs.writeFileSync(replacement, 'replacement');
