@@ -18,7 +18,11 @@ if (ledgerPath || e2eHome) {
     if (!ledgerPath || !e2eHome) throw new Error("E2E detached process ledger environment is incomplete");
     const resolvedHome = fs.realpathSync(e2eHome);
     const resolvedLedger = path.resolve(ledgerPath);
-    if (path.dirname(resolvedLedger) !== resolvedHome) throw new Error("E2E detached process ledger is outside its isolated home");
+    // На macOS $TMPDIR (/var/folders/...) является симлинком на /private/var/
+    // folders/...; сравниваем канонические каталоги, иначе проверка всегда
+    // ложная и detached-процессы отказываются сигналить при teardown.
+    const resolvedLedgerDir = fs.realpathSync(path.dirname(resolvedLedger));
+    if (resolvedLedgerDir !== resolvedHome) throw new Error("E2E detached process ledger is outside its isolated home");
     const stat = fs.lstatSync(resolvedLedger);
     if (stat.isSymbolicLink() || !stat.isFile() || (stat.mode & 0o777) !== 0o600) {
       throw new Error("E2E detached process ledger is not a private regular file");
