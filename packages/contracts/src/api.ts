@@ -347,3 +347,148 @@ export const apiPaths = {
   onboardingApprove: (id: string) => `/api/v1/onboarding/${pathSegment(id)}/approve`,
   onboardingActivate: (id: string) => `/api/v1/onboarding/${pathSegment(id)}/activate`,
 } as const;
+
+/**
+ * Способы аутентификации провайдеров (plan-24, Task 1).
+ * Совпадает с `ProviderAuthMethod` серверного каталога провайдеров.
+ */
+export type ProviderAuthMethod =
+  | "api-key"
+  | "credential-fields"
+  | "subscription-token"
+  | "oauth-device-code"
+  | "oauth-pkce"
+  | "cloud-identity"
+  | "local-endpoint";
+
+/** Категория провайдера по основной модельной линии (plan-24, Task 1). */
+export type ProviderCategory =
+  | "chat"
+  | "image"
+  | "video"
+  | "embedding"
+  | "platform"
+  | "gateway"
+  | "local";
+
+/** Возможности провайдера (plan-24, Task 1). */
+export type ProviderCapability =
+  | "chat"
+  | "streaming"
+  | "toolCalling"
+  | "structuredOutput"
+  | "vision"
+  | "audio"
+  | "imageGeneration"
+  | "videoGeneration"
+  | "embeddings"
+  | "reranking";
+
+/** Версия публичной проекции каталога провайдеров. */
+export const PROVIDER_CATALOG_PROJECTION_VERSION = 1 as const;
+
+/**
+ * Безопасная display-проекция провайдера для Web/API: только идентичность и
+ * несекретные метаданные. Без credential/config-схем, значений и endpoint URL.
+ */
+export interface ProviderCatalogEntryProjection {
+  readonly id: string;
+  readonly displayName: string;
+  readonly category: ProviderCategory;
+  readonly authMethods: readonly ProviderAuthMethod[];
+  readonly capabilities: readonly ProviderCapability[];
+}
+
+/**
+ * Статичная проекция каталога (86 записей, закреплённый источник LobeHub
+ * d1ffc35de345c9a590f79a24ec1c0dbaf9f5d1b1). Содержит только display-метаданные;
+ * значения секретов и endpoints отсутствуют.
+ */
+export const PROVIDER_CATALOG_PROJECTION: readonly ProviderCatalogEntryProjection[] = [
+  { id: "ai21", displayName: "Ai21Labs", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming", "toolCalling"] },
+  { id: "ai302", displayName: "302.AI", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming"] },
+  { id: "ai360", displayName: "360 AI", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming", "toolCalling", "vision"] },
+  { id: "aihubmix", displayName: "AIHubMix", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "imageGeneration", "streaming", "structuredOutput", "toolCalling", "videoGeneration", "vision"] },
+  { id: "akashchat", displayName: "AkashChat", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming", "toolCalling", "vision"] },
+  { id: "antgroup", displayName: "AntGroup", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming", "toolCalling"] },
+  { id: "anthropic", displayName: "Anthropic", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming", "toolCalling", "vision"] },
+  { id: "azure", displayName: "Azure OpenAI", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "imageGeneration", "streaming", "toolCalling", "vision"] },
+  { id: "azureai", displayName: "Azure AI", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming", "toolCalling", "vision"] },
+  { id: "baichuan", displayName: "Baichuan", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming", "toolCalling"] },
+  { id: "bailiancodingplan", displayName: "Aliyun Bailian Coding Plan", category: "chat", authMethods: ["subscription-token"], capabilities: ["chat", "streaming", "toolCalling", "videoGeneration", "vision"] },
+  { id: "bedrock", displayName: "Bedrock", category: "chat", authMethods: ["credential-fields", "cloud-identity"], capabilities: ["chat", "streaming", "toolCalling", "vision"] },
+  { id: "bfl", displayName: "Black Forest Labs", category: "image", authMethods: ["api-key"], capabilities: ["imageGeneration"] },
+  { id: "cerebras", displayName: "Cerebras", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming", "toolCalling", "vision"] },
+  { id: "chatgpt", displayName: "ChatGPT", category: "chat", authMethods: ["oauth-device-code"], capabilities: ["chat", "streaming"] },
+  { id: "cloudflare", displayName: "Cloudflare Workers AI", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming", "toolCalling"] },
+  { id: "cohere", displayName: "Cohere", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming", "toolCalling", "vision"] },
+  { id: "cometapi", displayName: "CometAPI", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming", "toolCalling", "vision"] },
+  { id: "comfyui", displayName: "ComfyUI", category: "local", authMethods: ["local-endpoint", "api-key"], capabilities: ["imageGeneration"] },
+  { id: "deepseek", displayName: "DeepSeek", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming", "toolCalling", "vision"] },
+  { id: "fal", displayName: "Fal", category: "image", authMethods: ["api-key"], capabilities: ["imageGeneration", "videoGeneration"] },
+  { id: "fireworksai", displayName: "Fireworks AI", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming", "toolCalling", "vision"] },
+  { id: "giteeai", displayName: "Gitee AI", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "imageGeneration", "streaming", "toolCalling", "vision"] },
+  { id: "github", displayName: "GitHub", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming", "toolCalling", "vision"] },
+  { id: "githubcopilot", displayName: "GitHub Copilot", category: "chat", authMethods: ["oauth-device-code"], capabilities: ["chat", "streaming", "structuredOutput", "toolCalling", "vision"] },
+  { id: "glmcodingplan", displayName: "GLM Coding Plan", category: "chat", authMethods: ["subscription-token"], capabilities: ["chat", "streaming", "toolCalling"] },
+  { id: "google", displayName: "Google", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "imageGeneration", "streaming", "toolCalling", "videoGeneration", "vision"] },
+  { id: "groq", displayName: "Groq", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming", "toolCalling", "vision"] },
+  { id: "higress", displayName: "Higress", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming", "toolCalling", "vision"] },
+  { id: "huggingface", displayName: "HuggingFace", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming"] },
+  { id: "hunyuan", displayName: "Hunyuan", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "imageGeneration", "streaming", "toolCalling", "videoGeneration", "vision"] },
+  { id: "infiniai", displayName: "InfiniAI", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming", "toolCalling", "vision"] },
+  { id: "internlm", displayName: "InternLM", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming", "toolCalling", "vision"] },
+  { id: "jina", displayName: "Jina AI", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming"] },
+  { id: "kimicodingplan", displayName: "Kimi Code", category: "chat", authMethods: ["subscription-token"], capabilities: ["chat", "streaming", "toolCalling", "videoGeneration", "vision"] },
+  { id: "lmstudio", displayName: "LM Studio", category: "local", authMethods: ["local-endpoint"], capabilities: ["chat", "streaming"] },
+  { id: "lobehub", displayName: "LobeHub", category: "platform", authMethods: ["subscription-token"], capabilities: ["chat", "streaming"] },
+  { id: "longcat", displayName: "LongCat", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming", "toolCalling"] },
+  { id: "meta", displayName: "Meta", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming", "toolCalling", "vision"] },
+  { id: "minimax", displayName: "Minimax", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "imageGeneration", "streaming", "toolCalling", "videoGeneration", "vision"] },
+  { id: "minimaxcodingplan", displayName: "MiniMax Token Plan", category: "chat", authMethods: ["subscription-token"], capabilities: ["chat", "streaming", "toolCalling"] },
+  { id: "mistral", displayName: "Mistral", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming", "toolCalling", "vision"] },
+  { id: "modelscope", displayName: "ModelScope", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming", "toolCalling"] },
+  { id: "moonshot", displayName: "Moonshot", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming", "toolCalling", "videoGeneration", "vision"] },
+  { id: "nebius", displayName: "Nebius", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "embeddings", "streaming", "toolCalling", "vision"] },
+  { id: "newapi", displayName: "New API", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming", "structuredOutput"] },
+  { id: "novita", displayName: "Novita", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming", "toolCalling", "vision"] },
+  { id: "nvidia", displayName: "Nvidia", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming", "toolCalling", "vision"] },
+  { id: "ollama", displayName: "Ollama", category: "local", authMethods: ["local-endpoint"], capabilities: ["chat", "streaming", "toolCalling", "vision"] },
+  { id: "ollamacloud", displayName: "Ollama Cloud", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming", "toolCalling", "vision"] },
+  { id: "openai", displayName: "OpenAI", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming", "structuredOutput", "toolCalling", "vision"] },
+  { id: "opencodecodingplan", displayName: "OpenCode Go", category: "chat", authMethods: ["subscription-token"], capabilities: ["chat", "streaming", "toolCalling", "vision"] },
+  { id: "opencodezen", displayName: "OpenCode Zen", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming", "toolCalling", "vision"] },
+  { id: "openrouter", displayName: "OpenRouter", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "imageGeneration", "streaming", "toolCalling", "videoGeneration", "vision"] },
+  { id: "perplexity", displayName: "Perplexity", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming", "vision"] },
+  { id: "ppio", displayName: "PPIO", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming", "vision"] },
+  { id: "qiniu", displayName: "Qiniu", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming", "toolCalling"] },
+  { id: "qwen", displayName: "Aliyun Bailian", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "imageGeneration", "streaming", "toolCalling", "videoGeneration", "vision"] },
+  { id: "replicate", displayName: "Replicate", category: "image", authMethods: ["api-key"], capabilities: ["imageGeneration"] },
+  { id: "sambanova", displayName: "SambaNova", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming", "toolCalling", "vision"] },
+  { id: "search1api", displayName: "Search1API", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming"] },
+  { id: "sensenova", displayName: "SenseNova", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "imageGeneration", "streaming", "toolCalling", "vision"] },
+  { id: "siliconcloud", displayName: "SiliconCloud", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "imageGeneration", "streaming", "toolCalling", "videoGeneration", "vision"] },
+  { id: "spark", displayName: "Spark", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming", "toolCalling"] },
+  { id: "stepfun", displayName: "Stepfun", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "imageGeneration", "streaming", "toolCalling", "videoGeneration", "vision"] },
+  { id: "straico", displayName: "Straico", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming"] },
+  { id: "streamlake", displayName: "StreamLake", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming", "toolCalling", "videoGeneration", "vision"] },
+  { id: "supergrok", displayName: "SuperGrok", category: "chat", authMethods: ["oauth-device-code"], capabilities: ["chat", "streaming", "toolCalling", "vision"] },
+  { id: "taichu", displayName: "Taichu", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming", "toolCalling", "vision"] },
+  { id: "tencentcloud", displayName: "TencentCloud", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming"] },
+  { id: "togetherai", displayName: "Together AI", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming", "toolCalling", "vision"] },
+  { id: "unsloth", displayName: "Unsloth", category: "local", authMethods: ["local-endpoint"], capabilities: ["chat", "streaming", "toolCalling", "vision"] },
+  { id: "upstage", displayName: "Upstage", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming", "toolCalling"] },
+  { id: "v0", displayName: "Vercel (v0)", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming", "toolCalling", "vision"] },
+  { id: "vercelaigateway", displayName: "Vercel AI Gateway", category: "gateway", authMethods: ["api-key"], capabilities: ["chat", "embeddings", "streaming", "toolCalling", "vision"] },
+  { id: "vertexai", displayName: "Vertex AI", category: "chat", authMethods: ["api-key", "cloud-identity"], capabilities: ["chat", "imageGeneration", "streaming", "toolCalling", "videoGeneration", "vision"] },
+  { id: "vllm", displayName: "vLLM", category: "local", authMethods: ["local-endpoint"], capabilities: ["chat", "streaming", "toolCalling"] },
+  { id: "volcengine", displayName: "Volcengine", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "imageGeneration", "streaming", "structuredOutput", "toolCalling", "videoGeneration", "vision"] },
+  { id: "volcenginecodingplan", displayName: "Volcengine Coding Plan", category: "chat", authMethods: ["subscription-token"], capabilities: ["chat", "streaming", "toolCalling", "videoGeneration", "vision"] },
+  { id: "wenxin", displayName: "Wenxin", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "imageGeneration", "streaming", "toolCalling", "videoGeneration", "vision"] },
+  { id: "xai", displayName: "xAI", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "imageGeneration", "streaming", "toolCalling", "videoGeneration", "vision"] },
+  { id: "xiaomimimo", displayName: "Xiaomi MiMo", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming", "toolCalling", "videoGeneration", "vision"] },
+  { id: "xinference", displayName: "Xinference", category: "local", authMethods: ["local-endpoint"], capabilities: ["chat", "streaming", "toolCalling", "vision"] },
+  { id: "zenmux", displayName: "ZenMux", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "imageGeneration", "streaming", "toolCalling", "vision"] },
+  { id: "zeroone", displayName: "01.AI", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "streaming", "toolCalling", "vision"] },
+  { id: "zhipu", displayName: "ZhiPu", category: "chat", authMethods: ["api-key"], capabilities: ["chat", "imageGeneration", "streaming", "toolCalling", "videoGeneration", "vision"] },
+];

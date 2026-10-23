@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { apiPaths, type ContextManifestSubjectProjection, type SettingsProjection } from '@ebb-orchestrator/contracts';
+import { apiPaths, PROVIDER_CATALOG_PROJECTION, type ContextManifestSubjectProjection, type SettingsProjection } from '@ebb-orchestrator/contracts';
 import { Link } from 'react-router';
 import { ApiError, apiClient, toClientPath } from '../../api/client.js';
 import { ErrorAlert, PageState } from '../../components/ui/PageState.js';
@@ -38,9 +38,22 @@ const ANTHROPIC_MODELS: readonly string[] = Object.freeze([
   'claude-opus-4-20250514', 'claude-sonnet-4-20250514', 'claude-haiku-4-5-20251001',
 ]);
 
-/** Возвращает имя built-in провайдера для модели или undefined для неизвестных. */
+/**
+ * Карта display-имён провайдеров из каталога Ebb (plan-24, Task 1).
+ * Статичная безопасная проекция контрактов; секретов/endpoint не содержит.
+ */
+const PROVIDER_DISPLAY_NAME: ReadonlyMap<string, string> = new Map(
+  PROVIDER_CATALOG_PROJECTION.map((entry) => [entry.id, entry.displayName]),
+);
+
+/** Маппинг legacy-имён реестра Hermes → ID каталога Ebb. */
+const REGISTRY_TO_CATALOG_ID: Readonly<Record<string, string>> = Object.freeze({
+  'openai-api': 'openai',
+});
+
+/** Возвращает ID каталога провайдера для модели или undefined для неизвестных. */
 function providerForModel(model: string): string | undefined {
-  if ((OPENAI_API_MODELS as readonly string[]).includes(model)) return 'openai-api';
+  if ((OPENAI_API_MODELS as readonly string[]).includes(model)) return 'openai';
   if ((ANTHROPIC_MODELS as readonly string[]).includes(model)) return 'anthropic';
   return undefined;
 }
@@ -50,10 +63,13 @@ function runModelLabel(model: string): string {
   return model === 'default' ? 'по умолчанию (Ebb)' : model;
 }
 
-/** Подпись провайдера; для `default` и неизвестных моделей не выдумывается. */
+/** Подпись провайдера из каталога Ebb; для `default` и неизвестных моделей не выдумывается. */
 function runProviderLabel(model: string): string {
   if (model === 'default') return 'по умолчанию (Ebb)';
-  return providerForModel(model) ?? 'Недоступно';
+  const providerId = providerForModel(model);
+  if (!providerId) return 'Недоступно';
+  const catalogId = REGISTRY_TO_CATALOG_ID[providerId] ?? providerId;
+  return PROVIDER_DISPLAY_NAME.get(catalogId) ?? 'Недоступно';
 }
 
 interface AgentRun {
