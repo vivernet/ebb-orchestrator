@@ -1,7 +1,7 @@
 ---
 id: plan-23
 kind: plan
-status: in_progress
+status: completed
 title: Web UI: настройка ИИ-провайдеров и моделей (IN-005)
 summary: Перенос владения настройкой ИИ-провайдеров/моделей Orchestrator Runs в Ebb (built-in провайдеры Hermes, ключи в EBB_ORCHESTRATOR_HOME/.env) и read-only отображение в Web UI.
 created: 2026-10-23
