@@ -196,4 +196,3 @@ describe("DarwinRunSupervisor env gate", () => {
     expect(spawnHarness.spawnCalls).toHaveLength(0);
   });
 });
-
