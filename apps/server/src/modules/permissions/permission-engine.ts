@@ -9,6 +9,7 @@ import type {
   EvaluationResult,
 } from './permission-types.js';
 import { composeDecisions, getMatchingRules } from './permission-policy.js';
+import { InterventionChecker } from './intervention-checker.js';
 
 /**
  * Типы решений Permission Engine — оценивает действия на основе композитных политик из нескольких scopes.
@@ -18,6 +19,7 @@ import { composeDecisions, getMatchingRules } from './permission-policy.js';
  */
 export class PermissionEngine {
   private readonly canonicalActions: Set<string>;
+  private readonly interventionChecker = new InterventionChecker();
 
   constructor() {
     // Формирует set of known/canonical action IDs
@@ -49,6 +51,19 @@ export class PermissionEngine {
         reason: `Unknown action ID: ${action}. Only registered actions are permitted.`,
         matchedPolicyRefs: [],
       };
+    }
+
+    // Security blacklist: применяется только к CommandExec и проверяется до
+    // capability fallback; ABSOLUTE_DENY не ослабляется ни одной политикой.
+    if (action === ActionId.CommandExec) {
+      const intervention = this.interventionChecker.evaluate(action, input.args);
+      if (intervention.decision === PermissionDecision.ABSOLUTE_DENY) {
+        return {
+          decision: intervention.decision,
+          reason: intervention.reason,
+          matchedPolicyRefs: [],
+        };
+      }
     }
 
     // Получает all matching rules from all policy scopes

@@ -1023,6 +1023,67 @@ describe("RunService with FakeAgentRuntime", () => {
     expect(persisted).not.toContain("private stderr");
   });
 
+  async function providerErrorNormalPathFixture(stderr: string) {
+    await setup();
+    const run = prepareRun({ role: "developer", model: "default", taskId, epicId: null,
+      triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1" });
+    const output = JSON.stringify({ version: "1.0.0", outcome: "COMPLETED", commitSha: "test-commit-sha" });
+    fakeRuntime.startRun = async (run) => { markFakeRunNeverLaunched(run.id); };
+    fakeRuntime.collectResult = async (runId) => {
+      const accepted = await runService.completionStore().accept(runService.getCapabilityReference(runId), {
+        runId, role: "developer", output: JSON.parse(output),
+      });
+      expect(accepted).toBe(true);
+      return {
+        success: false,
+        exitCode: 0,
+        output: "AGENT_OUTPUT_MISSING",
+        validatedSubmission: false,
+        diagnostics: { runId, sessionId: null, stderr, exitCode: 0, artifactReferences: [] },
+      };
+    };
+    return runService.executePreparedRun(run.id);
+  }
+
+  it.each([
+    ["HTTP 429 Too Many Requests", "capacity"],
+    ["HTTP 401 Unauthorized", "auth"],
+  ])("adds providerError category %s to diagnostics on the normal execution path", async (stderr, category) => {
+    const { outcome } = await providerErrorNormalPathFixture(stderr);
+    expect(outcome.diagnostics?.providerError?.category).toBe(category);
+    expect(outcome.diagnostics?.providerError?.id).toMatch(/^E\d+$/);
+    expect(outcome.diagnostics?.stderr).toBe(stderr);
+  });
+
+  it("does not add providerError for unrecognized stderr on the normal execution path", async () => {
+    const { outcome } = await providerErrorNormalPathFixture("npm ERR! code ENOENT");
+    expect(outcome.diagnostics?.providerError).toBeUndefined();
+    expect(outcome.diagnostics?.stderr).toBe("npm ERR! code ENOENT");
+  });
+
+  it("adds providerError diagnostics to the recovered outcome during same-session recovery", async () => {
+    const run = await recoveryFixture();
+    runService = new RunService(db!, fakeRuntime, undefined, { verifyContext: async () => {},
+      claimInTransaction: (tx, input) => { rotateRunProcessOwnerForResumeTx(tx, input); } });
+    const output = JSON.stringify({ version: "1", outcome: "PASS" });
+    vi.spyOn(fakeRuntime, "collectResult").mockImplementation(async (runId) => {
+      expect(await runService.completionStore().accept(runService.getCapabilityReference(runId), {
+        runId, role: "reviewer", output: JSON.parse(output),
+      })).toBe(true);
+      markFakeRunNeverLaunched(runId);
+      return { success: true, exitCode: 0, output, validatedSubmission: true,
+        diagnostics: { runId, sessionId: "original-session", stderr: "HTTP 429 Too Many Requests", exitCode: 0, artifactReferences: [] } };
+    });
+    const persist = vi.spyOn(runService, "collectResult");
+    const completed = await runService.resumeRun(run.id, { attempt: 1 });
+    expect(completed.status).toBe("COMPLETED");
+    expect(persist).toHaveBeenCalledWith(run.id, expect.objectContaining({
+      diagnostics: expect.objectContaining({
+        providerError: expect.objectContaining({ category: "capacity", id: "E3001" }),
+      }),
+    }));
+  });
+
   it("recovers a missing runtime result file from the authenticated durable submission", async () => {
     await setup();
     const run = prepareRun({ role: "developer", model: "default", taskId, epicId: null,

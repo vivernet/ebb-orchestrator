@@ -5,6 +5,7 @@
 import type { ToolId } from "../execution/run-capability.js";
 import type { ProjectConfig } from "../execution/project-actions.js";
 import type { PrepareRunContextInput } from "./run-context-assembler.js";
+import type { ProviderErrorClassification } from "./provider-errors.js";
 
 export interface RunOutcome {
   success: boolean;
@@ -22,6 +23,8 @@ export interface RunOutcome {
     submitResultCalls?: number;
     submitResultErrors?: number;
     toolCounts?: RuntimeToolEventCounts;
+    /** Классификация ошибки провайдера, распознанной в stderr (без текста ошибки). */
+    providerError?: ProviderErrorClassification;
   };
 }
 

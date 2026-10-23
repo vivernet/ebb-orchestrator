@@ -19,4 +19,20 @@ describe('WorkspaceTools', () => {
       rmSync(workspace, { recursive: true, force: true });
     }
   });
+
+  it.skipIf(process.platform === 'win32')('fail-closed: refuses a literal Windows absolute path instead of reading it as a relative file inside the workspace', async () => {
+    const workspace = mkdtempSync(join(tmpdir(), 'workspace-tools-'));
+    try {
+      // Литеральное имя файла с Windows-синтаксисом существует внутри fixture.
+      writeFileSync(join(workspace, 'C:\\outside.txt'), 'forbidden');
+      const tools = new WorkspaceTools(new PathResolver(), workspace);
+
+      const result = await tools.readFile('C:\\outside.txt');
+
+      expect(result.success).toBe(false);
+      expect(result.content).toBeUndefined();
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
 });

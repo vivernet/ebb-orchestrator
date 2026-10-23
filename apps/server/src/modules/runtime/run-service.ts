@@ -39,6 +39,8 @@ import type { HermesSessionCapture, HermesSessionCapturePort } from "./hermes-se
 import { bindHermesRunSelectionToOptions } from "./hermes/hermes-run-selection.js";
 import type { HermesRuntimeSelection } from "./hermes/hermes-run-selection.js";
 import { DEVELOPER_COMMIT_SHA_INSTRUCTION } from "./prompt-builder.js";
+import { classifyProviderError } from "./provider-errors.js";
+import { UsageCounter, type ModelUsage } from "./usage-counter.js";
 import type { IntegrationService, IntegrationAttempt } from "../git/integration-service.js";
 
 export interface HermesRunPreflight {
@@ -912,7 +914,7 @@ export class RunService {
   private async collectRuntimeResult(run: AgentRun): Promise<{ run: AgentRun; outcome: RunOutcome }> {
     let failureExitCode: number | undefined;
     try {
-      const outcome = await this.runtime.collectResult(run.id);
+      const outcome = enrichDiagnosticsWithProviderError(await this.runtime.collectResult(run.id));
       if (outcome.validatedSubmission !== true) {
         failureExitCode = Number.isSafeInteger(outcome.exitCode) ? outcome.exitCode : -1;
         const diagnosticsMatch = outcome.diagnostics?.runId === run.id &&
@@ -1336,23 +1338,23 @@ export class RunService {
 
   /**
    * Обновляет run with collected usage.
+   *
+   * Принимает единый формат `ModelUsage` и проводит объединение через
+   * `UsageCounter`: «NULL cost не подменяется оценкой» и пороговые
+   * проверки применяются до записи в БД.
    */
-  async collectUsage(runId: string, usage: {
-    inputTokens: number;
-    cachedInputTokens: number;
-    outputTokens: number;
-    cost: number | null;
-  }): Promise<void> {
+  async collectUsage(runId: string, usage: ModelUsage): Promise<void> {
+    const accumulated = new UsageCounter().merge(usage).snapshot();
     this.db.transaction((tx) => {
       tx.run(
         `UPDATE agent_runs SET input_tokens = $input_tokens, cached_input_tokens = $cached_input_tokens,
           output_tokens = $output_tokens, cost = $cost WHERE id = $id`,
         {
           id: runId,
-          input_tokens: usage.inputTokens,
-          cached_input_tokens: usage.cachedInputTokens,
-          output_tokens: usage.outputTokens,
-          cost: usage.cost,
+          input_tokens: accumulated.inputTokens,
+          cached_input_tokens: accumulated.cachedInputTokens,
+          output_tokens: accumulated.outputTokens,
+          cost: accumulated.cost,
         }
       );
     });
@@ -1400,6 +1402,26 @@ export class RunService {
         ...(row.capability_ref ? { capabilityRef: row.capability_ref as string } : {}),
     };
   }
+}
+
+/**
+ * Обогащает диагностику результата классифицированной информацией об ошибке
+ * провайдера. Текст stderr не хранится: в диагностику включается только
+ * классификация (код, numericId, категория, severity, attribution).
+ */
+function enrichDiagnosticsWithProviderError(outcome: RunOutcome): RunOutcome {
+  const diagnostics = outcome.diagnostics;
+  const stderr = diagnostics?.stderr;
+  if (!diagnostics || !stderr) return outcome;
+  const classification = classifyProviderError(stderr);
+  if (!classification) return outcome;
+  return {
+    ...outcome,
+    diagnostics: {
+      ...diagnostics,
+      providerError: classification,
+    },
+  };
 }
 
 /** Проверяет только persisted структуру кандидата; actual workspace и Scheduler проверяются recovery hooks перед claim. */

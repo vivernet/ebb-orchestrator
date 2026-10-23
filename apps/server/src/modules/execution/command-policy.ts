@@ -24,6 +24,9 @@ export type CommandPolicyDefinition = {
 
 /** Запрос агента ссылается на policy ID; executable, cwd и лимиты он не задаёт. */
 export type CommandInvocation = { policyId: string; args: unknown[] };
+
+/** Код отклонения вызова, нарушившего инвариант «модель не задаёт cwd». */
+export const CWD_NOT_ALLOWED = 'CWD_NOT_ALLOWED';
 export type ValidatedCommand = { executable: string; args: string[]; cwd: string; timeout: number; maxOutput: number };
 
 const MAX_TIMEOUT = 5 * 60 * 1000;
@@ -138,9 +141,17 @@ export class CommandPolicy {
     return [...this.policies.values()];
   }
 
+  /**
+   * Разрешает только зарегистрированную команду и валидирует её аргументы/пути.
+   * Контракт вызова не содержит поля `cwd`; любой попавший `cwd`
+   * отклоняется как `CWD_NOT_ALLOWED` до применения policy.
+   */
   resolve(invocation: CommandInvocation): { valid: true; command: ValidatedCommand } | { valid: false; error: string } {
     if (!invocation || typeof invocation.policyId !== 'string' || !Array.isArray(invocation.args)) {
       return { valid: false, error: 'invalid command policy invocation' };
+    }
+    if ('cwd' in invocation) {
+      return { valid: false, error: CWD_NOT_ALLOWED };
     }
     const policy = this.policies.get(invocation.policyId);
     if (!policy) return { valid: false, error: 'unknown command policy' };

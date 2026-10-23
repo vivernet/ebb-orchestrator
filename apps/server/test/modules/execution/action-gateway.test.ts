@@ -5,6 +5,8 @@ import * as path from 'node:path';
 import { tmpdir } from 'node:os';
 import crypto from 'node:crypto';
 import { ActionGateway } from '../../../src/modules/execution/action-gateway.js';
+import { CWD_NOT_ALLOWED, type CommandInvocation } from '../../../src/modules/execution/command-policy.js';
+import { PATH_OUTSIDE_SCOPE } from '../../../src/platform/security/path-scope.js';
 import { PathResolver } from '../../../src/platform/security/path-resolver.js';
 
 describe('ActionGateway', () => {
@@ -55,7 +57,14 @@ describe('ActionGateway', () => {
       
       const result = await gateway.readFile('../outside.txt');
       expect(result.success).toBe(false);
-      expect(result.error).toContain('outside workspace');
+      expect(result.error).toBe(PATH_OUTSIDE_SCOPE);
+    });
+
+    it.skipIf(process.platform === 'win32')('fail-closes on a foreign absolute path such as C:\\outside.txt', async () => {
+      const literalName = 'C:\\outside.txt';
+      fs.writeFileSync(path.join(workspaceDir, literalName), 'external content');
+      const result = await gateway.readFile(literalName);
+      expect(result.success).toBe(false);
     });
   });
 
@@ -108,7 +117,44 @@ describe('ActionGateway', () => {
     });
 
     await expect(commandGateway.exec({ policyId: 'node-version', args: ['--version'] }))
-      .resolves.toMatchObject({ success: false, stderr: expect.stringContaining('Permission denied') });
+      .resolves.toMatchObject({ success: false, stderr: expect.stringContaining('Default deny') });
+  });
+
+  it('rejects a command invocation that carries cwd', async () => {
+    const commandGateway = new ActionGateway(resolver, workspaceDir, ['command.exec'], {
+      commands: {},
+      commandPolicies: [{
+        id: 'node-version', executable: process.execPath,
+        args: [{ type: 'string', enum: ['--version'] }],
+        allowedRoots: [workspaceDir], timeout: 5_000, maxOutput: 1_024,
+      }],
+    });
+    const invocation = { policyId: 'node-version', args: ['--version'], cwd: testDir } as unknown as CommandInvocation;
+
+    await expect(commandGateway.exec(invocation))
+      .resolves.toMatchObject({ success: false, stderr: CWD_NOT_ALLOWED });
+  });
+
+  it('rejects cwd even when no command policy is declared', async () => {
+    const commandGateway = new ActionGateway(resolver, workspaceDir, ['command.exec']);
+    const invocation = { policyId: 'node-version', args: ['--version'], cwd: testDir } as unknown as CommandInvocation;
+
+    await expect(commandGateway.exec(invocation))
+      .resolves.toMatchObject({ success: false, stderr: CWD_NOT_ALLOWED });
+  });
+
+  it('rejects a null invocation without throwing', async () => {
+    const commandGateway = new ActionGateway(resolver, workspaceDir, ['command.exec'], {
+      commands: {},
+      commandPolicies: [{
+        id: 'node-version', executable: process.execPath,
+        args: [{ type: 'string', enum: ['--version'] }],
+        allowedRoots: [workspaceDir], timeout: 5_000, maxOutput: 1_024,
+      }],
+    });
+
+    await expect(commandGateway.exec(null as unknown as CommandInvocation))
+      .resolves.toMatchObject({ success: false });
   });
 
   it('enforces policy timeout and output caps on the spawned process', async () => {
@@ -128,6 +174,44 @@ describe('ActionGateway', () => {
       .resolves.toMatchObject({ success: false, stderr: expect.stringContaining('timed out') });
     await expect(commandGateway.exec({ policyId: 'output', args: ['output.js'] }))
       .resolves.toMatchObject({ success: false, stderr: expect.stringContaining('output buffer exceeded') });
+  });
+
+  describe('command.exec security blacklist (A3)', () => {
+    const blacklistGateway = () => new ActionGateway(resolver, workspaceDir, ['command.exec'], {
+      commands: {},
+      commandPolicies: [{
+        id: 'rm-rf', executable: path.join(workspaceDir, 'rm'),
+        args: [{ type: 'string', enum: ['-rf'] }, { type: 'workspace-path' }],
+        allowedRoots: [workspaceDir], timeout: 5_000, maxOutput: 1_024,
+      }],
+    });
+
+    it('блокирует blacklist-команду до запуска процесса, даже при capability ALLOW', async () => {
+      fs.writeFileSync(path.join(workspaceDir, 'target.txt'), 'x');
+
+      const result = await blacklistGateway().exec({ policyId: 'rm-rf', args: ['-rf', 'target.txt'] });
+
+      expect(result.success).toBe(false);
+      expect(result.stderr).toContain('cmd-rm-rf');
+      expect(result.stderr).not.toContain('spawn');
+      expect(result.stdout).toBe('');
+    });
+
+    it('near-miss команда не блокируется и доходит до process executor', async () => {
+      const gateway = new ActionGateway(resolver, workspaceDir, ['command.exec'], {
+        commands: {},
+        commandPolicies: [{
+          id: 'rm-single', executable: path.join(workspaceDir, 'rm'),
+          args: [{ type: 'string', enum: ['-f'] }],
+          allowedRoots: [workspaceDir], timeout: 5_000, maxOutput: 1_024,
+        }],
+      });
+
+      const result = await gateway.exec({ policyId: 'rm-single', args: ['-f'] });
+
+      expect(result.success).toBe(false);
+      expect(result.stderr).not.toContain('security blacklist');
+    });
   });
 
   describe('workspace.search', () => {
@@ -161,6 +245,20 @@ describe('ActionGateway', () => {
       
       const results = await gateway.search('outside', '*.txt');
       expect(results.length).toBe(0);
+    });
+
+    it('does not follow a symlinked directory pointing outside the workspace', async () => {
+      const outside = path.join(testDir, 'outside-search');
+      fs.mkdirSync(outside);
+      fs.writeFileSync(path.join(outside, 'leak.txt'), 'needle content');
+      try {
+        fs.symlinkSync(outside, path.join(workspaceDir, 'escape'), process.platform === 'win32' ? 'junction' : 'dir');
+      } catch {
+        return; // Symlink может не поддерживаться на всех платформах.
+      }
+
+      const results = await gateway.search('needle', '*.txt');
+      expect(results).toEqual([]);
     });
   });
 

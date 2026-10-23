@@ -167,6 +167,7 @@ const testCases: TestCase[] = [
     input: {
       capability: [ActionId.CommandExec],
       action: ActionId.CommandExec,
+      args: { executable: 'git', argv: ['status'] },
       rolePolicy: [
         {
           scope: PolicyScope.Role,
@@ -278,6 +279,80 @@ describe('PermissionEngine', () => {
           expect(result.matchedPolicyRefs.length).toBe(expectedMatchedRefsCount);
         }
       });
+    });
+  });
+
+  describe('evaluate с security blacklist (A3)', () => {
+    it('blacklist перекрывает capability ALLOW для CommandExec', () => {
+      const result = engine.evaluate({
+        capability: [ActionId.CommandExec],
+        action: ActionId.CommandExec,
+        args: { executable: 'rm', argv: ['-rf', 'x'] },
+      });
+      expect(result.decision).toBe(PermissionDecision.ABSOLUTE_DENY);
+      expect(result.reason).toContain('cmd-rm-rf');
+      expect(result.matchedPolicyRefs).toEqual([]);
+    });
+
+    it('blacklist не ослабляется policy ALLOW', () => {
+      const result = engine.evaluate({
+        capability: [ActionId.CommandExec],
+        action: ActionId.CommandExec,
+        globalPolicy: [
+          {
+            scope: PolicyScope.Global,
+            actions: [ActionId.CommandExec],
+            type: PolicyRuleType.Allow,
+          },
+        ],
+        args: { executable: 'iptables', argv: ['-L'] },
+      });
+      expect(result.decision).toBe(PermissionDecision.ABSOLUTE_DENY);
+      expect(result.reason).toContain('cmd-firewall-iptables');
+    });
+
+    it('blacklist не ослабляется ASK', () => {
+      const result = engine.evaluate({
+        capability: [ActionId.CommandExec],
+        action: ActionId.CommandExec,
+        rolePolicy: [
+          {
+            scope: PolicyScope.Role,
+            scopeRef: 'admin',
+            actions: [ActionId.CommandExec],
+            type: PolicyRuleType.Ask,
+          },
+        ],
+        args: { executable: 'dd', argv: ['if=/dev/zero', 'of=/dev/'] },
+      });
+      expect(result.decision).toBe(PermissionDecision.ABSOLUTE_DENY);
+      expect(result.reason).toContain('cmd-dd-device-output');
+    });
+
+    it('missing/malformed args для CommandExec fail closed', () => {
+      const missing = engine.evaluate({ capability: [ActionId.CommandExec], action: ActionId.CommandExec });
+      expect(missing.decision).toBe(PermissionDecision.ABSOLUTE_DENY);
+
+      const malformed = engine.evaluate({
+        capability: [ActionId.CommandExec],
+        action: ActionId.CommandExec,
+        args: { executable: '', argv: [] },
+      });
+      expect(malformed.decision).toBe(PermissionDecision.ABSOLUTE_DENY);
+    });
+
+    it('near-miss вектор сохраняет прежний результат (capability ALLOW)', () => {
+      const result = engine.evaluate({
+        capability: [ActionId.CommandExec],
+        action: ActionId.CommandExec,
+        args: { executable: 'git', argv: ['status'] },
+      });
+      expect(result.decision).toBe(PermissionDecision.ALLOW);
+    });
+
+    it('не-CommandExec действия не затрагиваются каталогом', () => {
+      const result = engine.evaluate({ capability: [ActionId.WorkspaceRead], action: ActionId.WorkspaceRead });
+      expect(result.decision).toBe(PermissionDecision.ALLOW);
     });
   });
 

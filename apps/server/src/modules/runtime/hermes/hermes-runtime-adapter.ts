@@ -22,6 +22,8 @@ import {
 } from "./hermes-executable-resolver.js";
 import type { HermesManagedRunSelection, HermesRunSelectionPreflight, HermesRuntimeSelection } from "./hermes-run-selection.js";
 import { validateRoleOutput } from "../output-validator.js";
+import { classifyProviderError, type ErrorCategory } from "../provider-errors.js";
+import { UsageCounter, type ModelUsage } from "../usage-counter.js";
 import * as path from "path";
 import * as fs from "fs/promises";
 import * as os from "os";
@@ -50,7 +52,7 @@ interface RunState {
   checkpointPath: string | null;
   submittedResult: string | null;
   resultPath: string;
-  usage: RunUsage | null;
+  usage: ModelUsage | null;
   submitResultCounts?: HermesSubmitResultStreamCounts;
   toolEventCounts?: HermesToolEventCounts;
 }
@@ -60,13 +62,6 @@ interface RunStartControl {
   cancelled: boolean;
   stopProven: boolean;
   startPromise?: Promise<void>;
-}
-
-interface RunUsage {
-  inputTokens: number;
-  cachedInputTokens: number;
-  outputTokens: number;
-  cost: number | null;
 }
 
 /**
@@ -391,6 +386,18 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
     this.artifactStore.saveArtifacts(run.id, this.hermesSessionCaptureHandler ? "" : processOutput.stdout,
       this.hermesSessionCaptureHandler ? "" : processOutput.stderr, processOutput.exitCode);
 
+    // Единый счётчик объединяет все доступные источники usage запуска
+    // (живой stream-наблюдатель и legacy-разбор stdout) в один снимок.
+    const usageCounter = new UsageCounter();
+    if (!this.hermesSessionCaptureHandler) {
+      const parsedUsage = this.parseUsage(processOutput.stdout);
+      if (parsedUsage) usageCounter.merge(parsedUsage);
+    } else if (sessionObserver?.usage) {
+      // Stream-наблюдатель не раскрывает cost: источник не сообщил
+      // стоимость, и она не подменяется оценкой (остаётся null).
+      usageCounter.merge({ ...sessionObserver.usage, cost: null });
+    }
+
     const state: RunState = {
       run: { ...run, status: "IN_PROGRESS" as RunStatus, sessionId: null },
       pid: pid || null,
@@ -407,9 +414,7 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
       checkpointPath: await this.getCheckpointPath(run.id),
       submittedResult: await this.readSubmittedResult(run.id, run.role),
       resultPath,
-      usage: this.hermesSessionCaptureHandler
-        ? (sessionObserver?.usage ? { ...sessionObserver.usage, cost: null } : null)
-        : this.parseUsage(processOutput.stdout),
+      usage: usageCounter.isEmpty ? null : usageCounter.snapshot(),
       ...(sessionObserver ? { submitResultCounts: sessionObserver.submitResultCounts } : {}),
       ...(sessionObserver ? { toolEventCounts: sessionObserver.toolEventCountsSnapshot } : {}),
     };
@@ -939,12 +944,7 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
   /**
    * Получает токен использование из Объект run.
    */
-  async collectUsage(runId: string): Promise<{
-    inputTokens: number;
-    cachedInputTokens: number;
-    outputTokens: number;
-    cost: number | null;
-  }> {
+  async collectUsage(runId: string): Promise<ModelUsage> {
     const state = this.runs.get(runId);
     if (!state?.usage) {
       throw new Error(`HERMES_USAGE_MISSING: no usage values were emitted for run ${runId}`);
@@ -1115,7 +1115,7 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
     return role.toLowerCase();
   }
 
-  private parseUsage(stdout: string): RunUsage | null {
+  private parseUsage(stdout: string): ModelUsage | null {
     const match = stdout.match(/"usage"\s*:\s*(\{[^\n]*\})/);
     if (!match?.[1]) return null;
     try {
@@ -1163,13 +1163,32 @@ function ownerToScopeIdentity(owner: RunProcessOwner): ProcessScopeIdentity {
   };
 }
 
+/** Легаси-значение `stderrCategory` (публичный контракт диагностики). */
+type StderrCategory = NonNullable<NonNullable<RunOutcome["diagnostics"]>["stderrCategory"]>;
+
+/**
+ * Маппинг категорий таксономии на legacy-значения `stderrCategory`.
+ * Контракт существующего `stderrCategory` не меняется: для всех прежних
+ * распознаваемых входов возвращаемые значения остаются идентичными.
+ * Категории без legacy-представления (request, safety, stream, provider,
+ * config) legacy-категорию не изменяют.
+ */
+const LEGACY_STDERR_CATEGORY_BY_ERROR_CATEGORY: Partial<Record<ErrorCategory, StderrCategory>> = {
+  auth: "AUTH",
+  quota: "RATE_LIMIT",
+  capacity: "RATE_LIMIT",
+  network: "NETWORK",
+};
+
 /** Возвращает безопасную фиксированную категорию stderr без сохранения его текста. */
-function classifyHermesStderr(stderr: string): NonNullable<NonNullable<RunOutcome["diagnostics"]>["stderrCategory"]> {
+function classifyHermesStderr(stderr: string): StderrCategory {
   if (!stderr) return "EMPTY";
   const text = stderr.slice(0, 8_192).toLowerCase();
-  if (/\b(?:401|unauthorized|authentication failed|invalid api key)\b/u.test(text)) return "AUTH";
-  if (/\b(?:429|rate limit|quota exceeded)\b/u.test(text)) return "RATE_LIMIT";
-  if (/\b(?:connection error|connection refused|network unreachable|name resolution|dns error|ssl error)\b/u.test(text)) return "NETWORK";
+  const classified = classifyProviderError(text);
+  if (classified) {
+    const legacy = LEGACY_STDERR_CATEGORY_BY_ERROR_CATEGORY[classified.category];
+    if (legacy) return legacy;
+  }
   if (/\b(?:timeout|timed out)\b/u.test(text)) return "TIMEOUT";
   if (/\b(?:mcp|tool call)\b/u.test(text)) return "MCP";
   if (/\b(?:traceback|exception|fatal error|failed|error)\b/u.test(text)) return "PROCESS_ERROR";

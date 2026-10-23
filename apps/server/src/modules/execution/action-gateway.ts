@@ -7,10 +7,11 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { ProjectActions, type ProjectAction, type ProjectConfig, type ActionResult } from './project-actions.js';
 import { CommandTools, type ExecResult } from './command-tools.js';
-import { CommandPolicy, type CommandInvocation } from './command-policy.js';
+import { CommandPolicy, CWD_NOT_ALLOWED, type CommandInvocation } from './command-policy.js';
 import { PermissionEngine } from '../permissions/permission-engine.js';
 import { approvedConfigFileForPath } from './approved-config-file.js';
 import { ActionId, PermissionDecision, type EvaluationInput } from '../permissions/permission-types.js';
+import { resolvePathWithScope } from '../../platform/security/path-scope.js';
 
 export type FilePatch = { start: number; end: number; content: string };
 export type FilePatchResult = { success: boolean; error?: string };
@@ -103,16 +104,29 @@ export class ActionGateway {
 
   /**
    * Выполняет явный executable с аргументами без shell-интерпретации.
+   * Контракт вызова не содержит поля `cwd`; любой попавший `cwd` (включая
+   * вызов без объявленных policies) отклоняется как `CWD_NOT_ALLOWED`.
+   * Сначала выполняется `CommandPolicy.resolve`, затем разрешённый вектор
+   * команды передаётся в Permission Engine; процесс запускается только при
+   * `ALLOW` (security blacklist даёт `ABSOLUTE_DENY` до executor).
    * @param invocation ID объявленной команды и её аргументы.
    * @returns Результат процесса.
    */
   async exec(invocation: CommandInvocation): Promise<ExecResult> {
-    if (!this.checkPermission(ActionId.CommandExec)) {
-      return { success: false, stdout: '', stderr: 'Permission denied: command.exec action not allowed', exitCode: null };
+    if (invocation != null && 'cwd' in invocation) {
+      return { success: false, stdout: '', stderr: CWD_NOT_ALLOWED, exitCode: null };
     }
     if (!this.commandPolicy) return { success: false, stdout: '', stderr: 'command.exec has no declared policies', exitCode: null };
     const resolved = this.commandPolicy.resolve(invocation);
     if (!resolved.valid) return { success: false, stdout: '', stderr: resolved.error, exitCode: null };
+    const verdict = this.permissionEngine.evaluate({
+      capability: (this.capabilities || []) as ActionId[],
+      action: ActionId.CommandExec,
+      args: { executable: resolved.command.executable, argv: resolved.command.args },
+    });
+    if (verdict.decision !== PermissionDecision.ALLOW) {
+      return { success: false, stdout: '', stderr: verdict.reason, exitCode: null };
+    }
     return this.commandTools.exec(resolved.command, resolved.command.cwd);
   }
 
@@ -120,6 +134,9 @@ export class ActionGateway {
 
   /**
    * Читает файл из workspace.
+   * Путь проверяется через `resolvePathWithScope` до нативного `path.resolve`:
+   * foreign absolute пути (например `C:\outside.txt` на POSIX) отклоняются
+   * fail-closed, а не трактуются как относительные имена внутри workspace.
    * @param relPath Относительный путь к файлу.
    * @returns Результат операции: успех, содержимое или ошибка.
    */
@@ -131,15 +148,14 @@ export class ActionGateway {
     if (approved.applies) return approved.content === undefined
       ? { success: false, error: 'File is absent from approved Project Config snapshot' }
       : { success: true, content: approved.content };
-    const fullPath = path.resolve(this.workspace, relPath);
-    const result = this.resolver.resolveSafePathSync(this.workspace, fullPath);
+    const resolved = resolvePathWithScope(this.workspace, relPath, undefined, this.resolver);
 
-    if (!result.success) {
-      return { success: false, ...(result.error && { error: result.error }) };
+    if (!resolved.ok) {
+      return { success: false, error: resolved.error };
     }
 
     try {
-      const content = this.readVerifiedFile(result.path!);
+      const content = this.readVerifiedFile(resolved.path);
       return { success: true, content };
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : 'Read failed' };
@@ -148,6 +164,8 @@ export class ActionGateway {
 
   /**
    * Выполняет поиск по шаблону в workspace.
+   * Корень обхода разрешается через `resolvePathWithScope`; обход не следует
+   * симлинкам и не выходит за пределы workspace.
    * @param pattern Литеральный текст для case-insensitive поиска.
    * @param ext Фильтр по расширению файла (например, '.txt').
    * @returns Список путей к файлам, содержащим совпадения.
@@ -195,8 +213,9 @@ export class ActionGateway {
         }
     };
 
-    const root = this.resolver.resolveSafePathSync(this.workspace, this.workspace);
-    if (root.success && root.path) searchDir(root.path, 0);
+    const rootResolved = resolvePathWithScope(this.workspace, this.workspace, undefined, this.resolver);
+    if (!rootResolved.ok) return [];
+    searchDir(rootResolved.path, 0);
     return results;
   }
 
@@ -210,15 +229,14 @@ export class ActionGateway {
     if (!this.checkPermission(ActionId.WorkspacePatch)) {
       return { success: false, error: 'Permission denied: workspace.patch action not allowed' };
     }
-    const fullPath = path.resolve(this.workspace, relPath);
-    const result = this.resolver.resolveSafePathSync(this.workspace, fullPath);
+    const resolved = resolvePathWithScope(this.workspace, relPath, undefined, this.resolver);
 
-    if (!result.success) {
-      return { success: false, ...(result.error && { error: result.error }) };
+    if (!resolved.ok) {
+      return { success: false, error: resolved.error };
     }
 
     try {
-      const descriptor = this.openVerifiedFile(result.path!, fs.constants.O_RDWR);
+      const descriptor = this.openVerifiedFile(resolved.path, fs.constants.O_RDWR);
       try {
         const content = fs.readFileSync(descriptor, 'utf8');
         if (!this.areValidPatches(patches, content.length)) {

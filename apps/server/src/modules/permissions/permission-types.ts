@@ -68,6 +68,12 @@ export interface EvaluationInput {
   projectPolicy?: PolicyRule[];
   rolePolicy?: PolicyRule[];
   taskPolicy?: PolicyRule[];
+  /**
+   * Проверенный вектор команды для `ActionId.CommandExec`: executable и argv
+   * уже разрешённого `CommandPolicy.resolve`. Отсутствие/некорректность поля
+   * для `CommandExec` трактуется fail-closed (ABSOLUTE_DENY).
+   */
+  args?: { executable: string; argv: readonly string[] };
 }
 
 // Результат result with reasoning
