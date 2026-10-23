@@ -1,11 +1,11 @@
 ---
 id: plan-22
 kind: plan
-status: planned
+status: completed
 title: Внедрение паттернов lobehub/lobehub
 summary: Перенос адаптированных паттернов безопасности, runtime, контекста и наблюдаемости без расширения утверждённой архитектуры Ebb Orchestrator.
 created: 2026-10-22
-updated: 2026-10-22
+updated: 2026-10-23
 depends_on:
   - plan-20
 specs:
