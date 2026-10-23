@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { spawn } from "node:child_process";
 
 import {
   startSystem,
@@ -20,6 +21,14 @@ import {
   createStartupSignalHandler,
   runStartupBoundary,
 } from "../../../src/platform/process/startup-boundary.js";
+
+function spawnedDeadPid(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ["-e", ""]);
+    child.once("error", reject);
+    child.once("exit", () => resolve(child.pid!));
+  });
+}
 
 describe("startup lifecycle", () => {
   let tmpDir: string;
@@ -650,17 +659,15 @@ describe("startup lifecycle", () => {
   // Ошибка не должна выбрасываться.
   });
 
-  it("fails closed without changing stale, malformed, or legacy lock files", async () => {
+  it("fails closed without changing malformed or legacy lock files", async () => {
     const cases = ["12345", "{malformed", "v0:12345:legacy-token"];
     const backing = await import("node:fs/promises");
-    let readCalls = 0;
     for (const [index, contents] of cases.entries()) {
       const lockPath = join(tmpDir, `existing-${index}.lock`);
       await writeFile(lockPath, contents, "utf-8");
-      readCalls = 0;
       const lock = new SingleInstanceLock(lockPath, {
         open: (path, flags) => backing.open(path, flags),
-        readFile: async (path) => { readCalls += 1; return backing.readFile(path); },
+        readFile: (path) => backing.readFile(path),
         unlink: (path) => backing.unlink(path),
         createOwnerToken: () => Buffer.alloc(16),
       });
@@ -668,13 +675,35 @@ describe("startup lifecycle", () => {
 
       try {
         await expect(lock.acquire()).rejects.toThrow(lockPath);
-        expect(readCalls).toBe(0);
         expect(await readFile(lockPath, "utf-8")).toBe(contents);
         expect(killSpy).not.toHaveBeenCalled();
       } finally {
         killSpy.mockRestore();
       }
     }
+  });
+
+  it("keeps a lock whose owner PID is alive and fails closed", async () => {
+    const lockPath = join(tmpDir, "alive-v1.lock");
+    const contents = `v1:${process.pid}:00000000000000000000000000000000\n`;
+    await writeFile(lockPath, contents, "utf-8");
+
+    const lock = new SingleInstanceLock(lockPath);
+    await expect(lock.acquire()).rejects.toThrow(lockPath);
+    expect(await readFile(lockPath, "utf-8")).toBe(contents);
+  });
+
+  it("auto-recovers a stale v1 lock whose owner PID is dead", async () => {
+    const deadPid = await spawnedDeadPid();
+    const lockPath = join(tmpDir, "stale-v1.lock");
+    await writeFile(lockPath, `v1:${deadPid}:00000000000000000000000000000000\n`, "utf-8");
+
+    const lock = new SingleInstanceLock(lockPath);
+    await lock.acquire();
+
+    const after = await readFile(lockPath, "utf-8");
+    expect(after).toMatch(new RegExp(`^v1:${process.pid}:[0-9a-f]{32}\n$`));
+    await lock.release();
   });
 
   it("preserves a same-PID replacement with a different owner token on release", async () => {
