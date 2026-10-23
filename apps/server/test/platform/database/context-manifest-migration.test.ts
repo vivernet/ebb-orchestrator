@@ -106,7 +106,7 @@ describe("context manifest v2 migration", () => {
     expect(db.all("PRAGMA foreign_key_check")).toEqual([]);
     expect(db.get("SELECT version FROM schema_migrations WHERE version=47")).toBeUndefined();
 
-    expect(runMigrations(db, migrations).applied).toBe(1);
+    expect(runMigrations(db, migrations).applied).toBe(2);
     expect(db.all<Row>("SELECT * FROM run_process_owners ORDER BY run_id")).toEqual(ownerRows);
     expect(db.all<Row>("SELECT * FROM run_process_owner_generations ORDER BY run_id,generation")).toEqual(generationRows);
     for (const before of ownerSchema) {

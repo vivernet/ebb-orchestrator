@@ -26,6 +26,7 @@ import { AgentEventBus, type AgentEvent, type AgentEventSink } from "../../../sr
 import { createProductionComposition } from "../../../src/platform/home/production-composition.js";
 import { resolveOrchestratorHome } from "../../../src/platform/home/orchestrator-home.js";
 import type { Platform } from "../../../src/platform/config/app-config.js";
+import type { ITracingStore } from "../../../src/modules/runtime/tracing/tracing-store.js";
 
 const fixtureRuntimeIdentity = "fixture-installed-hermes";
 
@@ -1468,6 +1469,170 @@ describe("RunService with FakeAgentRuntime", () => {
       await runService.executePreparedRun(run.id);
 
       expect(seen.map((event) => event.type)).toEqual(["run_started", "run_finished"]);
+    });
+  });
+
+  describe("best-effort run traces", () => {
+    function traceRow(runId: string): Record<string, unknown> | undefined {
+      return db!.get("SELECT * FROM run_traces WHERE run_id=$runId", { runId });
+    }
+
+    async function completePreparedRunViaRuntime(
+      run: { id: string; role: string },
+      triggerReason?: string,
+    ): Promise<void> {
+      if (triggerReason !== undefined) {
+        db!.run("UPDATE agent_runs SET trigger_reason=$triggerReason WHERE id=$runId", { runId: run.id, triggerReason });
+      }
+      const output = JSON.stringify({ version: "1.0.0", outcome: "COMPLETED", commitSha: "test-commit-sha" });
+      fakeRuntime.startRun = async (started) => { markFakeRunNeverLaunched(started.id); };
+      fakeRuntime.collectResult = async (collectRunId) => {
+        const accepted = await runService.completionStore().accept(runService.getCapabilityReference(collectRunId), {
+          runId: collectRunId, role: run.role, output: JSON.parse(output),
+        });
+        expect(accepted).toBe(true);
+        return {
+          success: true, exitCode: 0, output, validatedSubmission: true,
+          diagnostics: { runId: collectRunId, sessionId: null, stderr: "", exitCode: 0, artifactReferences: [] },
+        };
+      };
+      await runService.executePreparedRun(run.id);
+    }
+
+    it("writes one canonical best-effort trace after the normal completion path", async () => {
+      await setup();
+      const run = await startRun({ role: "developer", model: "default", taskId, epicId: null,
+        triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
+        capability: { workspace: tmpDir, allowedTools: ["submit_result"] } });
+      await completePreparedRunViaRuntime(run);
+
+      const row = traceRow(run.id)!;
+      expect(row.scenario).toBe("task-assignment");
+      expect(row.prompt_hash).toBe(digestRunPromptBytesV1(new TextEncoder().encode(run.prompt!)));
+      expect(row.context_hash).toBe("b".repeat(64));
+      expect(row.usage_json).toBeNull();
+      expect(row.version).toBe("1.0");
+      const endedAt = db!.get<{ ended_at: string }>("SELECT ended_at FROM agent_runs WHERE id=$runId", { runId: run.id })!.ended_at;
+      expect(row.created_at).toBe(endedAt);
+      expect(db!.all("SELECT * FROM run_traces")).toHaveLength(1);
+    });
+
+    it("maps persisted usage into the trace when collection succeeded", async () => {
+      await setup();
+      const run = await startRun({ role: "developer", model: "default", taskId, epicId: null,
+        triggerReason: "test-assignment", contextVersion: "1", outputSchemaVersion: "1",
+        capability: { workspace: tmpDir, allowedTools: ["submit_result"] } });
+      await runService.collectUsage(run.id, { inputTokens: 11, cachedInputTokens: 2, outputTokens: 5, cost: 0.75 });
+      await completePreparedRunViaRuntime(run);
+
+      expect(traceRow(run.id)!.usage_json)
+        .toBe(JSON.stringify({ inputTokens: 11, cachedInputTokens: 2, outputTokens: 5, cost: 0.75 }));
+    });
+
+    it("maps known epic phase triggers to the epic-phase scenario", async () => {
+      await setup();
+      const run = await startRun({ role: "developer", model: "default", taskId, epicId: null,
+        triggerReason: "custom", contextVersion: "1", outputSchemaVersion: "1",
+        capability: { workspace: tmpDir, allowedTools: ["submit_result"] } });
+      await completePreparedRunViaRuntime(run, "epic-integration");
+      expect(traceRow(run.id)!.scenario).toBe("epic-phase");
+    });
+
+    it("skips unknown triggers with only the stable diagnostic", async () => {
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        await setup();
+        const run = await startRun({ role: "developer", model: "default", taskId, epicId: null,
+          triggerReason: "custom", contextVersion: "1", outputSchemaVersion: "1",
+          capability: { workspace: tmpDir, allowedTools: ["submit_result"] } });
+        await completePreparedRunViaRuntime(run, "epic-mystery-phase");
+        expect(traceRow(run.id)).toBeUndefined();
+        const logged = errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
+        expect(logged).toContain("TRACE_SCENARIO_UNMAPPED");
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+
+    it("does not trace failed runs", async () => {
+      await setup();
+      const run = await startRun({ role: "developer", model: "default", taskId, epicId: null,
+        triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
+        capability: { workspace: tmpDir, allowedTools: ["submit_result"] } });
+      fakeRuntime.script("developer", [{
+        success: false, exitCode: 1, output: "",
+        diagnostics: { runId: run.id, sessionId: null, stderr: "boom", exitCode: 1, artifactReferences: [] },
+      }]);
+      await expect(runService.executePreparedRun(run.id)).rejects.toThrow(/AGENT_OUTPUT_MISSING/);
+      expect(db!.get<{ status: string }>("SELECT status FROM agent_runs WHERE id=$runId", { runId: run.id })!.status)
+        .toBe("FAILED");
+      expect(traceRow(run.id)).toBeUndefined();
+    });
+
+    it("keeps the Run COMPLETED when trace storage fails after commit", async () => {
+      await setup();
+      const failingStore: ITracingStore = { save: () => { throw new Error("storage down"); } };
+      runService = new RunService(db!, fakeRuntime, {
+        prepare: (_tx, input) => preparedContext(input.prompt, input.role, input.subject),
+      }, undefined, undefined, failingStore);
+      const run = await startRun({ role: "developer", model: "default", taskId, epicId: null,
+        triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1",
+        capability: { workspace: tmpDir, allowedTools: ["submit_result"] } });
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        await completePreparedRunViaRuntime(run);
+        expect(db!.get<{ status: string }>("SELECT status FROM agent_runs WHERE id=$runId", { runId: run.id })!.status)
+          .toBe("COMPLETED");
+        expect(traceRow(run.id)).toBeUndefined();
+        const logged = errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
+        expect(logged).toContain("TRACE_STORE_FAILED");
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+
+    it("finalizes a trace after restart recovery and repeats idempotently", async () => {
+      const run = await recoveryFixture();
+      const output = JSON.stringify({ version: "1", outcome: "PASS" });
+      await runService.completionStore().accept(run.capabilityRef!, {
+        runId: run.id, role: run.role, output: JSON.parse(output),
+      });
+      const restarted = new RunService(db!, fakeRuntime);
+      expect(restarted.reconcileInterruptedRuns()).toBe(1);
+
+      const row = traceRow(run.id)!;
+      expect(row.scenario).toBe("review-request");
+      expect(row.usage_json).toBeNull();
+      expect(row.created_at).toBe(db!.get<{ ended_at: string }>("SELECT ended_at FROM agent_runs WHERE id=$runId", { runId: run.id })!.ended_at);
+
+      expect(() => Reflect.apply(
+        (restarted as unknown as Record<string, unknown>)["recordCompletedRunTrace"] as (...args: unknown[]) => unknown,
+        restarted,
+        [run.id],
+      )).not.toThrow();
+      expect(db!.all("SELECT * FROM run_traces WHERE run_id=$runId", { runId: run.id })).toHaveLength(1);
+      expect(traceRow(run.id)!.created_at).toBe(row.created_at);
+    });
+
+    it("keeps recovery completing when trace storage fails", async () => {
+      const run = await recoveryFixture();
+      const output = JSON.stringify({ version: "1", outcome: "PASS" });
+      await runService.completionStore().accept(run.capabilityRef!, {
+        runId: run.id, role: run.role, output: JSON.parse(output),
+      });
+      const failingStore: ITracingStore = { save: () => { throw new Error("storage down"); } };
+      const restarted = new RunService(db!, fakeRuntime, undefined, undefined, undefined, failingStore);
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        expect(restarted.reconcileInterruptedRuns()).toBe(1);
+        expect(db!.get<{ status: string }>("SELECT status FROM agent_runs WHERE id=$runId", { runId: run.id })!.status)
+          .toBe("COMPLETED");
+        expect(traceRow(run.id)).toBeUndefined();
+        const logged = errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
+        expect(logged).toContain("TRACE_STORE_FAILED");
+      } finally {
+        errorSpy.mockRestore();
+      }
     });
   });
 });

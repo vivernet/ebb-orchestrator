@@ -43,6 +43,16 @@ import { classifyProviderError } from "./provider-errors.js";
 import { UsageCounter, type ModelUsage } from "./usage-counter.js";
 import type { IntegrationService, IntegrationAttempt } from "../git/integration-service.js";
 import { AgentEventBus, type AgentEvent, type AgentEventSink } from "./agent-events.js";
+import { TracingStore, type ITracingStore } from "./tracing/tracing-store.js";
+import {
+  computePromptHash,
+  resolveTraceScenario,
+  TRACE_DIAGNOSTIC_CODES,
+  TRACE_VERSION,
+  TracingPayloadSchema,
+  type TracingPayload,
+} from "./tracing/tracing-payload.js";
+import { recordGenAiUsageTelemetry } from "../../platform/observability/otel.js";
 
 export interface HermesRunPreflight {
   readonly options: StartRunOptions;
@@ -164,6 +174,7 @@ export class RunService {
     contextAssembler: Pick<RunContextAssembler, "prepare"> = new RunContextAssembler(),
     private readonly recoveryHooks?: RunRecoveryHooks,
     private readonly agentEvents: AgentEventSink = new AgentEventBus(),
+    private readonly tracingStore: ITracingStore = new TracingStore(db),
   ) {
     this.contextAssembler = contextAssembler;
     const capturePort = asHermesSessionCapturePort(runtime);
@@ -362,7 +373,10 @@ export class RunService {
         if (completed) this.appendLifecycleEvent(tx, runId, "AgentRunCompleted");
         return completed;
       });
-      if (completed) this.emitAgentEvent({ type: "run_finished", runId, status: "COMPLETED" });
+      if (completed) {
+        this.emitAgentEvent({ type: "run_finished", runId, status: "COMPLETED" });
+        this.recordCompletedRunTrace(runId);
+      }
       return completed;
     } catch {
       return false;
@@ -951,6 +965,7 @@ export class RunService {
           } catch {
             // использование является optional для runtimes который не expose it.
           }
+          this.recordCompletedRunTrace(run.id);
           return { run: this.getRun(this.db, run.id), outcome: recoveredOutcome };
         }
         const submitResultCalls = outcome.diagnostics?.submitResultCalls;
@@ -968,6 +983,7 @@ export class RunService {
       } catch {
         // использование является optional для runtimes который не expose it.
       }
+      this.recordCompletedRunTrace(run.id);
       return { run: this.getRun(this.db, run.id), outcome };
     } catch (error) {
       this.failRun(run.id, error, failureExitCode);
@@ -1404,6 +1420,74 @@ export class RunService {
       payload: { runId, taskId: run.task_id, epicId: run.epic_id, role: run.role, status: run.status } }));
   }
 
+  /** Логирует только фиксированный безопасный диагностический код trace; никаких данных Run. */
+  private logTraceDiagnostic(code: string): void {
+    console.error(`[ebb-orchestrator] ${code}`);
+  }
+
+  /**
+   * Best-effort sidecar trace успешно завершённого валидированного COMPLETED Run.
+   * Вызывается только после durable перехода в COMPLETED; пишется в отдельной
+   * transaction и не является completion authority. Любая ошибка здесь не меняет
+   * и не откатывает Run и не блокирует recovery/READY. Повторный вызов
+   * идемпотентен по run_id. Использует один consistent snapshot Run/manifest/usage;
+   * created_at берётся из persisted ended_at, не из текущих часов.
+   */
+  private recordCompletedRunTrace(runId: string): void {
+    try {
+      const snapshot = this.db.transaction((tx) => tx.get<{
+        status: string;
+        trigger_reason: string | null;
+        prompt: string | null;
+        ended_at: string | null;
+        input_tokens: number | null;
+        cached_input_tokens: number | null;
+        output_tokens: number | null;
+        cost: number | null;
+        manifest_context_hash: string | null;
+      }>(
+        `SELECT r.status,r.trigger_reason,r.prompt,r.ended_at,r.input_tokens,r.cached_input_tokens,r.output_tokens,r.cost,
+                m.context_hash AS manifest_context_hash
+           FROM agent_runs r JOIN context_manifests m ON m.run_id=r.id
+          WHERE r.id=$runId`, { runId }));
+      if (!snapshot || snapshot.status !== "COMPLETED" || typeof snapshot.prompt !== "string" ||
+          snapshot.ended_at === null || snapshot.manifest_context_hash === null) {
+        return;
+      }
+      const resolved = resolveTraceScenario(snapshot.trigger_reason);
+      if (!resolved.ok) {
+        this.logTraceDiagnostic(TRACE_DIAGNOSTIC_CODES.SCENARIO_UNMAPPED);
+        return;
+      }
+      const payload: TracingPayload = {
+        runId,
+        scenario: resolved.scenario,
+        promptHash: computePromptHash(new TextEncoder().encode(snapshot.prompt)),
+        contextHash: snapshot.manifest_context_hash,
+        usage: persistedUsageOrNull(snapshot),
+        createdAt: snapshot.ended_at,
+        version: TRACE_VERSION,
+      };
+      if (!TracingPayloadSchema.safeParse(payload).success) {
+        this.logTraceDiagnostic(TRACE_DIAGNOSTIC_CODES.PAYLOAD_INVALID);
+        return;
+      }
+      if (this.tracingStore.save(payload) === "conflict") {
+        this.logTraceDiagnostic(TRACE_DIAGNOSTIC_CODES.CONFLICT);
+      }
+      // OTel-эмиссия — независимый best-effort sidecar: не влияет на Run.
+      this.recordOtelRunUsageTelemetry(snapshot);
+    } catch {
+      this.logTraceDiagnostic(TRACE_DIAGNOSTIC_CODES.STORE_FAILED);
+    }
+  }
+
+  /** Эмитит только allowlisted gen_ai usage в OTel; best-effort, не влияет на Run. */
+  private recordOtelRunUsageTelemetry(snapshot: { input_tokens: number | null; output_tokens: number | null }): void {
+    if (snapshot.input_tokens === null || snapshot.output_tokens === null) return;
+    recordGenAiUsageTelemetry(snapshot.input_tokens, snapshot.output_tokens);
+  }
+
   /** Получает Run из указанного transaction snapshot по его точному ID. */
    private getRun(tx: DatabaseTx, runId: string): AgentRun {
     const row = tx.get(
@@ -1437,6 +1521,22 @@ export class RunService {
         ...(row.capability_ref ? { capabilityRef: row.capability_ref as string } : {}),
     };
   }
+}
+
+/** Собирает persisted usage для trace; при неизвестных токенах — SQL NULL. */
+function persistedUsageOrNull(row: {
+  input_tokens: number | null;
+  cached_input_tokens: number | null;
+  output_tokens: number | null;
+  cost: number | null;
+}): ModelUsage | null {
+  if (row.input_tokens === null || row.cached_input_tokens === null || row.output_tokens === null) return null;
+  return {
+    inputTokens: row.input_tokens,
+    cachedInputTokens: row.cached_input_tokens,
+    outputTokens: row.output_tokens,
+    cost: row.cost,
+  };
 }
 
 /**

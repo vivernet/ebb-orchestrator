@@ -40,6 +40,7 @@ import { secretsRoutes } from "./routes/secrets.js";
 import type { GitHubSyncWorker } from "../modules/github/github-sync-worker.js";
 import type { DiagnosticsService } from "../platform/diagnostics/diagnostics-service.js";
 import type { SecretStore } from "../platform/security/secret-store.js";
+import { beginHttpRequestTracing, registerOtel } from "../platform/observability/otel.js";
 import { DependencyService } from "../modules/work/dependency-service.js";
 import { dependencyRoutes, type DependencyCommandService } from "./routes/dependencies.js";
 import { finalMergeRoutes, type FinalMergeServiceFactory } from "./routes/final-merge.js";
@@ -124,6 +125,26 @@ export function createApp(deps: AppDeps): OrchestratorApp {
   const dependencyService = deps.dependencyService ?? (deps.db ? new DependencyService(deps.db) : undefined);
 
   const app = Fastify({ logger: false }) as unknown as OrchestratorApp;
+
+  // ── Интеграция OTel (опционально, только при OTEL_EXPORTER_OTLP_ENDPOINT) ──
+  // Без endpoint registerOtel возвращает no-op shutdown. Shutdown встроен
+  // в lifecycle приложения (onClose) и ограничен по времени, поэтому OTel
+  // никогда не блокирует старт или остановку сервера.
+  const otelShutdown = registerOtel();
+  app.addHook("onClose", async () => {
+    await (await otelShutdown)();
+  });
+
+  // Middleware-трейсинг: span с постоянными атрибутами и гистограмма
+  // длительности на каждый запрос. Без зарегистрированного SDK — no-op.
+  const requestTelemetry = new WeakMap<object, { finish(): void }>();
+  app.addHook("onRequest", async (request) => {
+    requestTelemetry.set(request, beginHttpRequestTracing());
+  });
+  app.addHook("onResponse", async (request) => {
+    requestTelemetry.get(request)?.finish();
+    requestTelemetry.delete(request);
+  });
 
   // Невалидный JSON Fastify отклоняет до route handler; login всё равно обязан
   // вернуть тот же versioned `AUTH_INVALID_REQUEST`, что и ручная валидация DTO.
