@@ -83,6 +83,7 @@ describe("auth/onboarding contract v1", () => {
       "runRecovery",
       "usage",
       "settings",
+      "hermesStatus",
       "onboardingDiscover",
       "onboarding",
       "onboardingApproval",

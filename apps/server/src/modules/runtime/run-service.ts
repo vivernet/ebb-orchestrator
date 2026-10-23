@@ -1037,7 +1037,11 @@ export class RunService {
       ? resolveProviderForModel(input.versions.model)?.provider
       : undefined;
     const includeProviderName = resumeMode ? baselineHasProviderName : providerName !== undefined;
-    const builderVersion = resumeMode ? baselineFingerprint!.contextBuilderVersion : FINGERPRINT_CONTEXT_BUILDER_VERSION;
+    const builderVersion = resumeMode
+      ? baselineFingerprint!.contextBuilderVersion
+      : providerName !== undefined
+        ? FINGERPRINT_CONTEXT_BUILDER_VERSION
+        : fingerprint.contextBuilderVersion;
     if (builderVersion === fingerprint.contextBuilderVersion && !includeProviderName) return prepared;
     const fingerprintInput: ContextFingerprintInputV1 = {
       ...fingerprint,
