@@ -115,6 +115,113 @@ describe('AgentRunPage', () => {
     expect(screen.getByText('task-456')).toBeInTheDocument();
   });
 
+  test('для модели default показывает «по умолчанию (Ebb)» вместо имени модели и провайдера', async () => {
+    vi.spyOn(runApi, 'getRunEvents').mockResolvedValue([]);
+    vi.spyOn(runApi, 'getRunTools').mockResolvedValue({ runId: 'test-run-123', tools: [] });
+    vi.spyOn(runApi, 'getRunPermissions').mockResolvedValue([]);
+    vi.spyOn(runApi, 'getRunRecovery').mockResolvedValue({ runId: 'test-run-123', taskId: null, runStatus: 'COMPLETED', recovery: null });
+    vi.spyOn(runApi, 'getRunArtifacts').mockResolvedValue([]);
+    vi.spyOn(runApi, 'getRunContextManifests').mockResolvedValue({ availability: 'unknown', runId: 'test-run-123', subject: null, role: 'unknown' });
+
+    vi.spyOn(queryModule, 'useQuery').mockReturnValue({
+      status: 'success',
+      data: {
+        id: 'test-run-123',
+        role: 'Code Reviewer',
+        runtime: 'node',
+        model: 'default',
+        status: 'COMPLETED',
+        triggerReason: null,
+        taskId: null,
+        epicId: null,
+        startedAt: '2026-01-15T10:00:00Z',
+        endedAt: null,
+        usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, cost: 0 },
+      },
+      error: null,
+      ...queryMeta,
+      refetch: vi.fn(),
+    });
+
+    renderWithRouter(<AgentRunPage id="test-run-123" />);
+
+    expect(screen.getAllByText('по умолчанию (Ebb)')).toHaveLength(2);
+    expect(screen.queryByText('default')).not.toBeInTheDocument();
+    expect(screen.queryByText(/sk-[A-Za-z0-9]+/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/OPENAI_API_KEY|ANTHROPIC_API_KEY/)).not.toBeInTheDocument();
+  });
+
+  test('для явной модели показывает модель и провайдер без значений ключей', async () => {
+    vi.spyOn(runApi, 'getRunEvents').mockResolvedValue([]);
+    vi.spyOn(runApi, 'getRunTools').mockResolvedValue({ runId: 'test-run-123', tools: [] });
+    vi.spyOn(runApi, 'getRunPermissions').mockResolvedValue([]);
+    vi.spyOn(runApi, 'getRunRecovery').mockResolvedValue({ runId: 'test-run-123', taskId: null, runStatus: 'COMPLETED', recovery: null });
+    vi.spyOn(runApi, 'getRunArtifacts').mockResolvedValue([]);
+    vi.spyOn(runApi, 'getRunContextManifests').mockResolvedValue({ availability: 'unknown', runId: 'test-run-123', subject: null, role: 'unknown' });
+
+    vi.spyOn(queryModule, 'useQuery').mockReturnValue({
+      status: 'success',
+      data: {
+        id: 'test-run-123',
+        role: 'Code Reviewer',
+        runtime: 'node',
+        model: 'gpt-4.1',
+        status: 'COMPLETED',
+        triggerReason: null,
+        taskId: null,
+        epicId: null,
+        startedAt: '2026-01-15T10:00:00Z',
+        endedAt: null,
+        usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, cost: 0 },
+      },
+      error: null,
+      ...queryMeta,
+      refetch: vi.fn(),
+    });
+
+    renderWithRouter(<AgentRunPage id="test-run-123" />);
+
+    expect(screen.getByText('gpt-4.1')).toBeInTheDocument();
+    expect(screen.getByText('openai-api')).toBeInTheDocument();
+    expect(screen.queryByText('по умолчанию (Ebb)')).not.toBeInTheDocument();
+    expect(screen.queryByText(/sk-[A-Za-z0-9]+/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/OPENAI_API_KEY|ANTHROPIC_API_KEY/)).not.toBeInTheDocument();
+  });
+
+  test('для неизвестной модели не выдумывает провайдера', async () => {
+    vi.spyOn(runApi, 'getRunEvents').mockResolvedValue([]);
+    vi.spyOn(runApi, 'getRunTools').mockResolvedValue({ runId: 'test-run-123', tools: [] });
+    vi.spyOn(runApi, 'getRunPermissions').mockResolvedValue([]);
+    vi.spyOn(runApi, 'getRunRecovery').mockResolvedValue({ runId: 'test-run-123', taskId: null, runStatus: 'COMPLETED', recovery: null });
+    vi.spyOn(runApi, 'getRunArtifacts').mockResolvedValue([]);
+    vi.spyOn(runApi, 'getRunContextManifests').mockResolvedValue({ availability: 'unknown', runId: 'test-run-123', subject: null, role: 'unknown' });
+
+    vi.spyOn(queryModule, 'useQuery').mockReturnValue({
+      status: 'success',
+      data: {
+        id: 'test-run-123',
+        role: 'Code Reviewer',
+        runtime: 'node',
+        model: 'some-legacy-model',
+        status: 'COMPLETED',
+        triggerReason: null,
+        taskId: null,
+        epicId: null,
+        startedAt: '2026-01-15T10:00:00Z',
+        endedAt: null,
+        usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, cost: 0 },
+      },
+      error: null,
+      ...queryMeta,
+      refetch: vi.fn(),
+    });
+
+    renderWithRouter(<AgentRunPage id="test-run-123" />);
+
+    expect(screen.getByText('some-legacy-model')).toBeInTheDocument();
+    expect(screen.getByText('Недоступно')).toBeInTheDocument();
+  });
+
   test('показывает Events section с данными', async () => {
     vi.spyOn(runApi, 'getRunEvents').mockResolvedValue([
       { id: 'evt-1', type: 'run_started', payload: {}, createdAt: '2026-01-15T10:00:00Z', aggregateType: 'Run', aggregateId: 'test-run-123', availableAt: '2026-01-15T10:00:00Z', processedAt: null, attempts: 1 },

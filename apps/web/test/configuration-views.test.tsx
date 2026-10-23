@@ -122,6 +122,7 @@ describe('Settings page configuration hierarchy', () => {
         taskEpic: null,
       },
       securitySettings: { mostRestrictiveWins: null, localModeEnabled: null },
+      providerSelection: { defaultModel: 'default', models: [] },
     });
 
     render(<SettingsPage />);
@@ -139,6 +140,7 @@ describe('Settings page configuration hierarchy', () => {
     vi.spyOn(apiClient, 'get').mockResolvedValue({
       effectiveHierarchy: { global: { schemaVersion: null, globalMax: null, projectMax: null, roleCapacity: null }, project: null, role: null, taskEpic: null },
       securitySettings: { mostRestrictiveWins: null, localModeEnabled: null },
+      providerSelection: { defaultModel: 'default', models: [] },
     });
 
     render(<SettingsPage />);
@@ -153,6 +155,7 @@ describe('Settings page configuration hierarchy', () => {
     const get = vi.spyOn(apiClient, 'get').mockRejectedValueOnce(new Error('secret: settings unavailable')).mockResolvedValueOnce({
       effectiveHierarchy: { global: { schemaVersion: 1, globalMax: 4, projectMax: 3, roleCapacity: {} }, project: null, role: null, taskEpic: null },
       securitySettings: { mostRestrictiveWins: null, localModeEnabled: null },
+      providerSelection: { defaultModel: 'default', models: [] },
     });
 
     render(<SettingsPage />);
@@ -172,6 +175,62 @@ describe('Settings page configuration hierarchy', () => {
 
     expect(await screen.findByText('Не удалось загрузить настройки: Доступ запрещён.')).toBeInTheDocument();
     expect(screen.queryByText(/secret:/)).not.toBeInTheDocument();
+  });
+});
+
+describe('Settings page AI provider selection', () => {
+  test('отображает read-only список моделей с провайдерами, статусом ключа и дефолтом', async () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue({
+      effectiveHierarchy: { global: { schemaVersion: 1, globalMax: 7, projectMax: 3, roleCapacity: { developer: 4 } }, project: null, role: null, taskEpic: null },
+      securitySettings: { mostRestrictiveWins: true, localModeEnabled: true },
+      providerSelection: {
+        defaultModel: 'claude-sonnet-5',
+        models: [
+          { model: 'gpt-6-luna', provider: 'openai-api', keyConfigured: true },
+          { model: 'claude-sonnet-5', provider: 'anthropic', keyConfigured: false },
+        ],
+      },
+    });
+
+    render(<SettingsPage />);
+
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'ИИ-провайдеры и модели' })).toBeInTheDocument());
+    expect(screen.getByText('gpt-6-luna')).toBeInTheDocument();
+    expect(screen.getByText('openai-api')).toBeInTheDocument();
+    expect(screen.getByText('claude-sonnet-5')).toBeInTheDocument();
+    expect(screen.getByText('anthropic')).toBeInTheDocument();
+    expect(screen.getByText('Настроен')).toBeInTheDocument();
+    expect(screen.getByText('Не настроен')).toBeInTheDocument();
+    expect(screen.getByText('Модель по умолчанию: claude-sonnet-5')).toBeInTheDocument();
+    expect(screen.getByText(/Ключи хранятся в EBB_ORCHESTRATOR_HOME\/\.env и не отображаются\. Модель для запуска выбирается в Ebb\./)).toBeInTheDocument();
+    expect(screen.queryByText(/sk-[A-Za-z0-9]+/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/OPENAI_API_KEY|ANTHROPIC_API_KEY/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    vi.restoreAllMocks();
+  });
+
+  test('не отображает значения ключей, когда ключи настроены', async () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue({
+      effectiveHierarchy: { global: { schemaVersion: null, globalMax: null, projectMax: null, roleCapacity: null }, project: null, role: null, taskEpic: null },
+      securitySettings: { mostRestrictiveWins: null, localModeEnabled: null },
+      providerSelection: {
+        defaultModel: 'default',
+        models: [
+          { model: 'gpt-6-luna', provider: 'openai-api', keyConfigured: true },
+          { model: 'claude-opus-5', provider: 'anthropic', keyConfigured: true },
+        ],
+      },
+    });
+
+    render(<SettingsPage />);
+
+    expect(await screen.findByRole('heading', { name: 'ИИ-провайдеры и модели' })).toBeInTheDocument();
+    expect(screen.getAllByText('Настроен')).toHaveLength(2);
+    expect(screen.queryByText('Не настроен')).not.toBeInTheDocument();
+    expect(screen.queryByText(/sk-[A-Za-z0-9]+/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/OPENAI_API_KEY|ANTHROPIC_API_KEY/)).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/sk-[A-Za-z0-9]{6,}/);
+    vi.restoreAllMocks();
   });
 });
 

@@ -20,6 +20,42 @@ import {
   type RunContextManifest,
 } from './api.js';
 
+/**
+ * Клиентское зеркало реестра built-in моделей Hermes (Task 8 плана 23, IN-005).
+ * Совпадает с серверным `hermes-provider-registry.ts`; хранит только имена.
+ */
+const OPENAI_API_MODELS: readonly string[] = Object.freeze([
+  'gpt-6.1-sol', 'gpt-6.1-sol-pro', 'gpt-6-sol', 'gpt-6-sol-pro', 'gpt-6-luna', 'gpt-6-luna-pro',
+  'gpt-5.6-sol', 'gpt-5.6-sol-pro', 'gpt-5.6-terra', 'gpt-5.6-terra-pro', 'gpt-5.6-luna',
+  'gpt-5.6-luna-pro', 'gpt-5.5', 'gpt-5.5-pro', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.4-nano',
+  'gpt-5-mini', 'gpt-5.3-codex', 'gpt-4.1', 'gpt-4o', 'gpt-4o-mini',
+]);
+
+const ANTHROPIC_MODELS: readonly string[] = Object.freeze([
+  'claude-fable-5.1', 'claude-fable-5', 'claude-opus-5-5', 'claude-opus-5', 'claude-sonnet-5',
+  'claude-opus-4-8', 'claude-opus-4-7', 'claude-opus-4-6',
+  'claude-sonnet-4-6', 'claude-opus-4-5-20251101', 'claude-sonnet-4-5-20250929',
+  'claude-opus-4-20250514', 'claude-sonnet-4-20250514', 'claude-haiku-4-5-20251001',
+]);
+
+/** Возвращает имя built-in провайдера для модели или undefined для неизвестных. */
+function providerForModel(model: string): string | undefined {
+  if ((OPENAI_API_MODELS as readonly string[]).includes(model)) return 'openai-api';
+  if ((ANTHROPIC_MODELS as readonly string[]).includes(model)) return 'anthropic';
+  return undefined;
+}
+
+/** Подпись модели для отображения; `default` — legacy-путь без явного выбора. */
+function runModelLabel(model: string): string {
+  return model === 'default' ? 'по умолчанию (Ebb)' : model;
+}
+
+/** Подпись провайдера; для `default` и неизвестных моделей не выдумывается. */
+function runProviderLabel(model: string): string {
+  if (model === 'default') return 'по умолчанию (Ebb)';
+  return providerForModel(model) ?? 'Недоступно';
+}
+
 interface AgentRun {
   id: string;
   role: string;
@@ -168,10 +204,12 @@ export default function AgentRunPage({ id }: AgentRunPageProps) {
       <section className="detail-grid" aria-label="Сведения о запуске">
         <div><span>Роль</span><strong>{run.role}</strong></div>
         <div><span>Среда выполнения</span><strong>{run.runtime}</strong></div>
-        <div><span>Модель</span><strong>{run.model}</strong></div>
+        <div><span>Модель</span><strong>{runModelLabel(run.model)}</strong></div>
+        <div><span>Провайдер</span><strong>{runProviderLabel(run.model)}</strong></div>
         <div><span>Причина запуска</span><strong>{runTriggerLabel(run.triggerReason)}</strong></div>
         <div><span>Задача</span><strong>{run.taskId ? <Link to={`/tasks/${encodeURIComponent(run.taskId)}`}>{run.taskId}</Link> : 'Системный запуск'}</strong></div>
         <div><span>Эпик</span><strong>{run.epicId ? <Link to={`/epics/${encodeURIComponent(run.epicId)}`}>{run.epicId}</Link> : '—'}</strong></div>
+        <p role="note">Выбор модели выполняется в Ebb.</p>
       </section>
 
       <section aria-label="Время запуска"><h2>Время</h2><p>Начало: {run.startedAt ? new Date(run.startedAt).toLocaleString() : 'Не указано'}</p><p>Завершение: {run.endedAt ? new Date(run.endedAt).toLocaleString() : 'Выполняется'}</p></section>

@@ -11,6 +11,10 @@ function valueOrUnavailable(value: unknown): string {
 }
 
 /** Представляет read-only Settings projection; unsupported policy не выводится как факт. */
+function providerModelLabel(model: string): string {
+  return model === 'default' ? 'по умолчанию (Ebb)' : model;
+}
+
 export default function SettingsPage() {
   const settingsPath = toClientPath(apiPaths.settings);
   const fetcher = useCallback((signal: AbortSignal) => apiClient.get<SettingsProjection>(settingsPath, { signal }), [settingsPath]);
@@ -53,6 +57,27 @@ export default function SettingsPage() {
         <p><strong>Локальный режим:</strong> {valueOrUnavailable(security.localModeEnabled)}</p>
         {security.localModeEnabled && <p role="note">Local Mode изолирует policy, tools и credentials, но не является OS sandbox и не изолирует process, filesystem или network при запуске кода проекта.</p>}
       </section>
+
+      {query.data.providerSelection && (
+        <section aria-label="ИИ-провайдеры и модели">
+          <h2>ИИ-провайдеры и модели</h2>
+          {query.data.providerSelection.models.length === 0 ? (
+            <p>Нет доступных моделей.</p>
+          ) : (
+            <>
+              <p>Модель по умолчанию: {providerModelLabel(query.data.providerSelection.defaultModel)}</p>
+              <ul>
+                {query.data.providerSelection.models.map((option) => (
+                  <li key={option.model}>
+                    <strong>{option.model}</strong> — <span>{option.provider}</span> — {option.keyConfigured ? <span>Настроен</span> : <span>Не настроен</span>}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+          <p role="note">Ключи хранятся в EBB_ORCHESTRATOR_HOME/.env и не отображаются. Модель для запуска выбирается в Ebb.</p>
+        </section>
+      )}
     </div>
   );
 }
