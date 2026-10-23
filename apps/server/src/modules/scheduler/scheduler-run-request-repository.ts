@@ -10,6 +10,9 @@ export interface SchedulerRunRequest {
   readonly idempotencyKey: string;
   readonly role: string;
   readonly model: string;
+  /** Опциональная явная привязка провайдера (plan-24 Task 5); NULL — legacy-путь. */
+  readonly providerId: string | null;
+  readonly authMethodId: string | null;
   readonly originType: SchedulerRunRequestOrigin;
   readonly originId: string;
   readonly status: SchedulerRunRequestStatus;
@@ -24,12 +27,15 @@ export interface EnqueueSchedulerRunRequest {
   readonly idempotencyKey: string;
   readonly role: string;
   readonly model: string;
+  readonly providerId?: string | null;
+  readonly authMethodId?: string | null;
   readonly originType: SchedulerRunRequestOrigin;
   readonly originId: string;
 }
 
 interface SchedulerRunRequestRow {
   id: string; task_id: string; idempotency_key: string; role: string; model: string;
+  provider_id: string | null; auth_method_id: string | null;
   origin_type: SchedulerRunRequestOrigin; origin_id: string; status: SchedulerRunRequestStatus;
   created_at: string; updated_at: string; run_id: string | null; failure_code: string | null;
 }
@@ -37,7 +43,8 @@ interface SchedulerRunRequestRow {
 function project(row: SchedulerRunRequestRow): SchedulerRunRequest {
   return {
     id: row.id, taskId: row.task_id, idempotencyKey: row.idempotency_key, role: row.role,
-    model: row.model, originType: row.origin_type, originId: row.origin_id, status: row.status,
+    model: row.model, providerId: row.provider_id, authMethodId: row.auth_method_id,
+    originType: row.origin_type, originId: row.origin_id, status: row.status,
     createdAt: row.created_at, updatedAt: row.updated_at, runId: row.run_id, failureCode: row.failure_code,
   };
 }
@@ -66,9 +73,10 @@ export class SchedulerRunRequestRepository {
     const now = this.clock().toISOString();
     try {
       tx.run(`INSERT INTO scheduler_run_requests
-        (id,task_id,idempotency_key,role,model,origin_type,origin_id,status,created_at,updated_at)
-        VALUES($id,$taskId,$key,$role,$model,$originType,$originId,'PENDING',$now,$now)`, {
+        (id,task_id,idempotency_key,role,model,provider_id,auth_method_id,origin_type,origin_id,status,created_at,updated_at)
+        VALUES($id,$taskId,$key,$role,$model,$providerId,$authMethodId,$originType,$originId,'PENDING',$now,$now)`, {
         id, taskId: input.taskId, key: input.idempotencyKey, role: input.role, model: input.model,
+        providerId: input.providerId ?? null, authMethodId: input.authMethodId ?? null,
         originType: input.originType, originId: input.originId, now,
       });
     } catch (error) {
@@ -121,5 +129,6 @@ function validateInput(input: EnqueueSchedulerRunRequest): void {
 
 function samePayload(row: SchedulerRunRequestRow, input: EnqueueSchedulerRunRequest): boolean {
   return row.task_id === input.taskId && row.role === input.role && row.model === input.model &&
+    row.provider_id === (input.providerId ?? null) && row.auth_method_id === (input.authMethodId ?? null) &&
     row.origin_type === input.originType && row.origin_id === input.originId;
 }

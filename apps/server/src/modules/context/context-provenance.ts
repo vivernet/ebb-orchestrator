@@ -369,7 +369,7 @@ export function digestRunContextV1(input: ContextFingerprintInputV1): string {
     'role', 'roleVersion', 'runtime', 'runtimeVersion', 'model', 'modelVersion', 'outputSchemaVersion',
     'contextVersion', 'workspaceIdentity', 'targetHead',
     'targetBranch', 'effectiveCapabilityIds', 'projectConfigRevisionId', 'projectConfigHash', 'policyIdentity',
-  ], 'Run context fingerprint', ['providerName']);
+  ], 'Run context fingerprint', ['providerName', 'providerSelection']);
   assertSha256(input.promptHash, 'promptHash');
   if (!['TASK', 'EPIC', 'REQUEST'].includes(input.subjectType)) {
     throw new TypeError('Run context subjectType must be TASK, EPIC, or REQUEST.');
@@ -384,6 +384,18 @@ export function digestRunContextV1(input: ContextFingerprintInputV1): string {
   assertNullableNonEmptyString(input.model, 'model');
   assertNullableNonEmptyString(input.modelVersion, 'modelVersion');
   if (input.providerName !== undefined) assertNonEmptyString(input.providerName, 'providerName');
+  if (input.providerSelection !== undefined) {
+    if (typeof input.providerSelection !== 'object' || Array.isArray(input.providerSelection)) {
+      throw new TypeError('Provider selection must be a plain object.');
+    }
+    assertExactFields(input.providerSelection, ['providerId', 'modelId', 'authMethodId', 'configRevision'], 'Provider selection');
+    assertNonEmptyString(input.providerSelection.providerId, 'providerSelection.providerId');
+    assertNonEmptyString(input.providerSelection.modelId, 'providerSelection.modelId');
+    assertNonEmptyString(input.providerSelection.authMethodId, 'providerSelection.authMethodId');
+    if (!Number.isSafeInteger(input.providerSelection.configRevision) || input.providerSelection.configRevision < 1) {
+      throw new TypeError('Provider selection config revision must be a positive safe integer.');
+    }
+  }
   assertNullableNonEmptyString(input.outputSchemaVersion, 'outputSchemaVersion');
   assertNullableNonEmptyString(input.contextVersion, 'contextVersion');
   assertNullableNonEmptyString(input.targetHead, 'targetHead');
@@ -423,6 +435,16 @@ export function digestRunContextV1(input: ContextFingerprintInputV1): string {
     model: input.model,
     model_version: input.modelVersion,
     ...(input.providerName !== undefined ? { provider_name: input.providerName } : {}),
+    ...(input.providerSelection !== undefined
+      ? {
+          provider_selection: {
+            provider_id: input.providerSelection.providerId,
+            model_id: input.providerSelection.modelId,
+            auth_method_id: input.providerSelection.authMethodId,
+            config_revision: input.providerSelection.configRevision,
+          },
+        }
+      : {}),
     output_schema_version: input.outputSchemaVersion,
     context_version: input.contextVersion,
     workspace_identity: {

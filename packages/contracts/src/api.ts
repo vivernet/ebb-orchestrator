@@ -138,6 +138,14 @@ export interface TaskOverviewProjection { task: unknown; contract: unknown; life
 export interface SchedulerSettingsProjection { schemaVersion: number | null; globalMax: number | null; projectMax: number | null; roleCapacity: Record<string, number> | null; }
 /** Одна запись выбора модели: имя модели, провайдер и признак настроенного ключа (без значения). */
 export interface ModelOptionProjection { model: string; provider: string; keyConfigured: boolean; }
+/** Безопасная проекция durable выбора провайдера Run: только стабильные ID,
+ * никогда endpoint URL, токен, аккаунт или секрет (plan-24 Task 5). */
+export interface ProviderSelectionProjection {
+  providerId: string;
+  modelId: string;
+  authMethodId: string;
+  configRevision: number;
+}
 /** Read-only Settings projection с явными unavailable/null для неподтверждённых scopes. */
 export interface SettingsProjection {
   effectiveHierarchy: { global: SchedulerSettingsProjection; project: null; role: null; taskEpic: null };

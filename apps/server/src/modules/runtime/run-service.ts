@@ -40,6 +40,12 @@ import type { HermesSessionCapture, HermesSessionCapturePort } from "./hermes-se
 import { bindHermesRunSelectionToOptions } from "./hermes/hermes-run-selection.js";
 import type { HermesRuntimeSelection } from "./hermes/hermes-run-selection.js";
 import { assertSupportedModel, resolveProviderForModel } from "./hermes/hermes-provider-registry.js";
+import {
+  resolveRunProviderSelection,
+  type ProviderSelectionReader,
+  type ResolvedRunProviderSelection,
+} from "./providers/run-provider-selection.js";
+import { createProviderSettingsRepository, type ProviderSettingsRepository, type RunProviderSelectionRecord } from "./providers/provider-settings-repository.js";
 import { DEVELOPER_COMMIT_SHA_INSTRUCTION } from "./prompt-builder.js";
 import { classifyProviderError } from "./provider-errors.js";
 import { UsageCounter, type ModelUsage } from "./usage-counter.js";
@@ -58,6 +64,9 @@ import { recordGenAiUsageTelemetry } from "../../platform/observability/otel.js"
 
 /** Версия контекстного builder для fingerprint входов после включения имени провайдера (dual-version). */
 const FINGERPRINT_CONTEXT_BUILDER_VERSION = "1.0.1";
+/** Версия контекстного builder для fingerprint входов с durable выбором провайдера
+ * (plan-24 Task 5): включает стабильные ID провайдера/модели/auth-метода/ревизии. */
+const FINGERPRINT_CONTEXT_BUILDER_VERSION_PROVIDER_SELECTION = "1.0.2";
 
 export interface HermesRunPreflight {
   readonly options: StartRunOptions;
@@ -180,6 +189,7 @@ export class RunService {
     private readonly recoveryHooks?: RunRecoveryHooks,
     private readonly agentEvents: AgentEventSink = new AgentEventBus(),
     private readonly tracingStore: ITracingStore = new TracingStore(db),
+    private readonly providerSettingsRepository: ProviderSettingsRepository = createProviderSettingsRepository(db),
   ) {
     this.contextAssembler = contextAssembler;
     const capturePort = asHermesSessionCapturePort(runtime);
@@ -202,6 +212,32 @@ export class RunService {
   validateTaskRequestModel(model: string): void {
     if (model === "default") return;
     assertSupportedModel(model);
+  }
+
+  /**
+   * Проверяет модель и опциональную явную привязку провайдера до enqueue
+   * (plan-24 Task 5). Без провайдера поведение полностью legacy; с провайдером
+   * выполняется fail-closed валидация через каталог/настройки: неизвестный или
+   * отключённый провайдер, неизвестная модель, неподдерживаемая capability и
+   * отсутствующий credential завершаются типизированной ошибкой.
+   */
+  validateTaskRequestSelection(model: string, selection?: { providerId: string; authMethodId?: string }, role?: string): void {
+    if (!selection) {
+      this.validateTaskRequestModel(model);
+      return;
+    }
+    resolveRunProviderSelection(
+      {
+        explicit: {
+          providerId: selection.providerId,
+          ...(model !== "default" ? { modelId: model } : {}),
+          ...(selection.authMethodId !== undefined ? { authMethodId: selection.authMethodId } : {}),
+        },
+        model,
+        role: role ?? "developer",
+      },
+      this.providerSelectionReader(this.db),
+    );
   }
 
   /**
@@ -564,7 +600,8 @@ export class RunService {
     const input = this.contextInput(options);
     this.assertEffectiveCapabilities(options, input);
     return this.db.transaction((tx) => {
-      const prepared = this.prepareContextWithFingerprint(tx, input);
+      const resolvedProvider = this.resolveProviderSelectionForRun(tx, options);
+      const prepared = this.prepareContextWithFingerprint(tx, input, undefined, resolvedProvider ?? undefined);
       return this.prepareRunInTransaction(tx, { ...options, prompt: prepared.finalPrompt }, prepared);
     });
   }
@@ -575,7 +612,10 @@ export class RunService {
   prepareRunContext(options: StartRunOptions): PreparedRunContext {
     const input = this.contextInput(options);
     this.assertEffectiveCapabilities(options, input);
-    return this.db.transaction((tx) => this.prepareContextWithFingerprint(tx, input));
+    return this.db.transaction((tx) => {
+      const resolvedProvider = this.resolveProviderSelectionForRun(tx, options);
+      return this.prepareContextWithFingerprint(tx, input, undefined, resolvedProvider ?? undefined);
+    });
   }
 
   /**
@@ -657,7 +697,8 @@ export class RunService {
       const input = this.contextInput(boundOptions);
       this.assertEffectiveCapabilities(boundOptions, input);
       const run = this.db.transaction((tx) => {
-        const prepared = this.prepareContextWithFingerprint(tx, input);
+        const resolvedProvider = this.resolveProviderSelectionForRun(tx, boundOptions);
+        const prepared = this.prepareContextWithFingerprint(tx, input, undefined, resolvedProvider ?? undefined);
         return this.prepareRunInTransaction(tx, { ...boundOptions, prompt: prepared.finalPrompt }, prepared);
       });
       await commit();
@@ -677,7 +718,13 @@ export class RunService {
       assertPreparedRunBinding(options, preparedContext);
       const input = this.contextInput(options);
       this.assertEffectiveCapabilities(options, input);
-      const recomputed = this.prepareContextWithFingerprint(tx, input);
+      const resolvedProvider = this.resolveProviderSelectionForRun(tx, options);
+      // Fail-closed до любых записей: runtime, не потребляющий provider-привязку,
+      // не может выполнить Run с разрешённым выбором провайдера.
+      if (resolvedProvider && !this.runtime.supportsProviderSelections) {
+        throw new Error("PROVIDER_RUN_SELECTION_UNSUPPORTED_BY_RUNTIME");
+      }
+      const recomputed = this.prepareContextWithFingerprint(tx, input, undefined, resolvedProvider ?? undefined);
       assertPreparedRunContextEqual(recomputed, preparedContext);
       const requestPlanning = options.taskId === null && options.epicId === null;
       const epicExecution = options.taskId === null && options.epicId !== null;
@@ -816,6 +863,16 @@ export class RunService {
 
       insertContextManifestTx(tx, preparedContext, id);
       if (selection && (selection.runId !== id || !selection.runtimeIdentity)) throw new Error("HERMES_RUN_SELECTION_BINDING_MISMATCH");
+      if (resolvedProvider) {
+        // Фиксация durable выбора в той же транзакции, что и Run (plan-24 Task 5).
+        this.providerSettingsRepository.createRunSelectionTx(tx, {
+          runId: id,
+          providerId: resolvedProvider.providerId,
+          modelId: resolvedProvider.modelId,
+          authMethodId: resolvedProvider.authMethodId,
+          configRevision: resolvedProvider.configRevision,
+        });
+      }
       const owner = prepareRunProcessOwner(
         id,
         selection?.hermesHome ?? path.join(resolveOrchestratorHome(process.env, validatePlatform(process.platform)).runtime, "hermes", "runs", id),
@@ -1006,7 +1063,41 @@ export class RunService {
   private runtimeRun(run: AgentRun): AgentRuntimeRun {
     const selection = this.runSelections.get(run.id);
     if (this.runtime.prepareHermesRunSelection && !selection) throw new Error("HERMES_RUN_SELECTION_UNAVAILABLE");
-    return { ...run, ...(selection ? { hermesSelection: selection } : {}) };
+    const providerSelection = this.providerSettingsRepository.getRunSelection(run.id);
+    return { ...run, ...(selection ? { hermesSelection: selection } : {}), ...(providerSelection ? { providerSelection } : {}) };
+  }
+
+  /** Читатель настроек провайдеров для разрешения выбора в заданной транзакции. */
+  private providerSelectionReader(source: DatabaseTx): ProviderSelectionReader {
+    return {
+      getProviderConfiguration: (providerId) => this.providerSettingsRepository.getProviderConfigurationTx(source, providerId),
+      listProviderConfigurations: () => this.providerSettingsRepository.listProviderConfigurationsTx(source),
+      getCredentialMetadata: (providerId, authMethodId) => this.providerSettingsRepository.getCredentialMetadataTx(source, providerId, authMethodId),
+    };
+  }
+
+  /**
+   * Разрешает durable выбор провайдера для Run в той же транзакции, что и
+   * создание Run (plan-24 Task 5). Возвращает `null` для legacy-пути без
+   * привязки (существующее поведение Hermes).
+   */
+  private resolveProviderSelectionForRun(tx: DatabaseTx, options: StartRunOptions): ResolvedRunProviderSelection | null {
+    return resolveRunProviderSelection(
+      {
+        ...(options.providerSelection
+          ? {
+              explicit: {
+                providerId: options.providerSelection.providerId,
+                ...(options.providerSelection.modelId !== undefined ? { modelId: options.providerSelection.modelId } : {}),
+                ...(options.providerSelection.authMethodId !== undefined ? { authMethodId: options.providerSelection.authMethodId } : {}),
+              },
+            }
+          : {}),
+        model: options.model,
+        role: options.role,
+      },
+      this.providerSelectionReader(tx),
+    );
   }
 
   private contextInput(options: StartRunOptions): NonNullable<StartRunOptions["contextInput"]> {
@@ -1016,39 +1107,57 @@ export class RunService {
   }
 
   /**
-   * Готовит контекст и дополняет fingerprint-input именем провайдера для явной модели.
-   * Для свежих Run версия builder инкрементируется, а `providerName` добавляется только
-   * при разрешённой явной модели (`default` и неизвестные модели опускают поле).
+   * Готовит контекст и дополняет fingerprint-input именем провайдера и/или
+   * durable выбором провайдера (plan-24 Task 5).
+   * Для свежих Run версия builder инкрементируется, а `providerName` добавляется
+   * только при разрешённой явной модели (`default` и неизвестные модели опускают
+   * поле); `providerSelection` добавляется только при разрешённом durable выборе.
    * Для восстановления (`baselineFingerprint`) сохраняется схема сохранённой baseline:
-   * отсутствие поля `providerName` не добавляет его, а версия builder берётся из baseline,
+   * отсутствие полей не добавляет их, а версия builder берётся из baseline,
    * чтобы исторические Run оставались сверяемыми без пересчёта старых манифестов.
    */
   private prepareContextWithFingerprint(
     tx: DatabaseTx,
     input: PrepareRunContextInput,
     baselineFingerprint?: ContextResumeBaselineV1["fingerprint"],
+    providerSelection?: Pick<RunProviderSelectionRecord, "providerId" | "modelId" | "authMethodId" | "configRevision">,
   ): PreparedRunContext {
     const prepared = this.contextAssembler.prepare(tx, input);
     const fingerprint = prepared.fingerprintInput;
     if (!fingerprint) return prepared;
     const resumeMode = baselineFingerprint !== undefined;
     const baselineHasProviderName = resumeMode && Object.prototype.hasOwnProperty.call(baselineFingerprint, "providerName");
+    const baselineHasProviderSelection = resumeMode && Object.prototype.hasOwnProperty.call(baselineFingerprint, "providerSelection");
     const providerName = input.versions.model !== null && input.versions.model !== "default"
       ? resolveProviderForModel(input.versions.model)?.provider
       : undefined;
     const includeProviderName = resumeMode ? baselineHasProviderName : providerName !== undefined;
+    const includeProviderSelection = resumeMode ? baselineHasProviderSelection : providerSelection !== undefined;
     const builderVersion = resumeMode
       ? baselineFingerprint!.contextBuilderVersion
-      : providerName !== undefined
-        ? FINGERPRINT_CONTEXT_BUILDER_VERSION
-        : fingerprint.contextBuilderVersion;
-    if (builderVersion === fingerprint.contextBuilderVersion && !includeProviderName) return prepared;
+      : includeProviderSelection
+        ? FINGERPRINT_CONTEXT_BUILDER_VERSION_PROVIDER_SELECTION
+        : providerName !== undefined
+          ? FINGERPRINT_CONTEXT_BUILDER_VERSION
+          : fingerprint.contextBuilderVersion;
+    const nextBuilderVersion = builderVersion ?? fingerprint.contextBuilderVersion ?? "1.0.0";
+    if (nextBuilderVersion === fingerprint.contextBuilderVersion && !includeProviderName && !includeProviderSelection) return prepared;
     const fingerprintInput: ContextFingerprintInputV1 = {
       ...fingerprint,
-      contextBuilderVersion: builderVersion,
+      contextBuilderVersion: nextBuilderVersion,
+      ...(includeProviderSelection && providerSelection !== undefined
+        ? {
+            providerSelection: {
+              providerId: providerSelection.providerId,
+              modelId: providerSelection.modelId,
+              authMethodId: providerSelection.authMethodId,
+              configRevision: providerSelection.configRevision,
+            },
+          }
+        : {}),
       ...(includeProviderName && providerName !== undefined ? { providerName } : {}),
     };
-    return { ...prepared, fingerprintInput, contextHash: digestRunContextV1(fingerprintInput) };
+    return { ...prepared, fingerprintInput, contextHash: digestRunContextV1(fingerprintInput), contextBuilderVersion: nextBuilderVersion };
   }
 
   private assertEffectiveCapabilities(options: StartRunOptions, input: PrepareRunContextInput): void {
@@ -1138,6 +1247,13 @@ export class RunService {
             !resumeSelection.runtimeIdentity || !sameRepositoryPath(resumeSelection.hermesHome, owner.hermesHome)) {
           throw new Error("HERMES_RUN_SELECTION_BINDING_MISMATCH");
         }
+      }
+      // Исходный durable выбор провайдера читается из SQLite (run_provider_selections)
+      // и никогда не принимается от вызывающего кода; runtime без поддержки
+      // provider-привязки не может возобновить такой Run (fail-closed, без replay).
+      const resumeProviderSelection = this.providerSettingsRepository.getRunSelection(runId);
+      if (resumeProviderSelection && !this.runtime.supportsProviderSelections) {
+        throw new Error("PROVIDER_RUN_SELECTION_UNSUPPORTED_BY_RUNTIME");
       }
       const sessionId = this.db.transaction((tx) => {
       const currentRun = tx.get<{
@@ -1233,7 +1349,8 @@ export class RunService {
 
       try {
         await this.runtime.resumeRun(runId, { sessionId, attempt: options.attempt,
-          ...(resumeSelection ? { hermesSelection: resumeSelection } : {}) });
+          ...(resumeSelection ? { hermesSelection: resumeSelection } : {}),
+          ...(resumeProviderSelection ? { providerSelection: resumeProviderSelection } : {}) });
       } catch (error) {
         this.failRun(runId, error);
         throw error;

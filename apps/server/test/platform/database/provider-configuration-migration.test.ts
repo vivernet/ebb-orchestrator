@@ -33,13 +33,13 @@ describe("provider configuration migration 049", () => {
     return path;
   }
 
-  describe("fresh install 001-049", () => {
-    it("applies 001-049 and creates additive provider tables with integrity", () => {
+  describe("fresh install 001-050", () => {
+    it("applies 001-050 and creates additive provider tables with integrity", () => {
       freshDb();
       const migrations = loadTestMigrations();
-      expect(migrations.map(({ version }) => version)).toEqual(Array.from({ length: 49 }, (_, index) => index + 1));
-      expect(migrations.at(-1)?.name).toBe("049_provider_configuration");
-      expect(runMigrations(db!, migrations).applied).toBe(49);
+      expect(migrations.map(({ version }) => version)).toEqual(Array.from({ length: 50 }, (_, index) => index + 1));
+      expect(migrations.at(-1)?.name).toBe("050_scheduler_run_request_provider_selection");
+      expect(runMigrations(db!, migrations).applied).toBe(50);
 
       expect(db!.all<{ name: string }>("PRAGMA table_info(provider_configurations)").map(({ name }) => name))
         .toEqual(["provider_id", "enabled", "selected_auth_method", "config_json", "model_selection_json", "current_revision", "created_at", "updated_at"]);
@@ -105,7 +105,7 @@ describe("provider configuration migration 049", () => {
       )).toThrow(/FOREIGN KEY/i);
 
       expect(db!.all("PRAGMA foreign_key_check")).toEqual([]);
-      expect(db!.get<{ applied: number }>("SELECT COUNT(*) AS applied FROM schema_migrations")!.applied).toBe(49);
+      expect(db!.get<{ applied: number }>("SELECT COUNT(*) AS applied FROM schema_migrations")!.applied).toBe(50);
     });
   });
 
@@ -125,7 +125,7 @@ describe("provider configuration migration 049", () => {
       const runsBefore = db!.all("SELECT * FROM agent_runs");
       const secretsBefore = db!.all("SELECT * FROM secrets");
 
-      expect(runMigrations(db!, migrations).applied).toBe(1);
+      expect(runMigrations(db!, migrations).applied).toBe(2);
       expect(db!.all("SELECT * FROM agent_runs")).toEqual(runsBefore);
       expect(db!.all("SELECT * FROM secrets")).toEqual(secretsBefore);
 

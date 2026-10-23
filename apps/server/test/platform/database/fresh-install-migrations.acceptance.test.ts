@@ -18,11 +18,11 @@ describe("fresh-install migration acceptance", () => {
     if (tmpDir) await rm(tmpDir, { recursive: true, force: true });
   });
 
-  it("applies migrations 001-049 with durable scheduler RunRequests, Darwin owner kind, run traces and provider configuration", async () => {
+  it("applies migrations 001-050 with durable scheduler RunRequests, Darwin owner kind, run traces and provider configuration", async () => {
     tmpDir = await mkdtemp(join(tmpdir(), "ebb-fresh-install-migrations-"));
     db = createSqliteDatabase(join(tmpDir, `fresh-${randomUUID()}.sqlite`));
     const migrations = loadTestMigrations();
-    const expectedVersions = Array.from({ length: 49 }, (_, index) => index + 1);
+    const expectedVersions = Array.from({ length: 50 }, (_, index) => index + 1);
 
     expect(migrations.map(({ version }) => version)).toEqual(expectedVersions);
     expect(migrations.find(({ version }) => version === 40)?.name).toBe("040_run_hermes_source_snapshot");
@@ -35,8 +35,9 @@ describe("fresh-install migration acceptance", () => {
     expect(migrations.find(({ version }) => version === 47)?.name).toBe("047_darwin_process_group");
     expect(migrations.find(({ version }) => version === 48)?.name).toBe("048_run_traces");
     expect(migrations.find(({ version }) => version === 49)?.name).toBe("049_provider_configuration");
-    expect(migrations.at(-1)?.name).toBe("049_provider_configuration");
-    expect(runMigrations(db, migrations).applied).toBe(49);
+    expect(migrations.find(({ version }) => version === 50)?.name).toBe("050_scheduler_run_request_provider_selection");
+    expect(migrations.at(-1)?.name).toBe("050_scheduler_run_request_provider_selection");
+    expect(runMigrations(db, migrations).applied).toBe(50);
     expect(db.all("PRAGMA table_info(tasks)")).toContainEqual(expect.objectContaining({ name: "capacity_wait_started_at", type: "TEXT", notnull: 0, dflt_value: null }));
     expect(db.all("SELECT * FROM run_process_owner_generations")).toEqual([]);
     expect(db.all("SELECT * FROM run_resume_bindings")).toEqual([]);

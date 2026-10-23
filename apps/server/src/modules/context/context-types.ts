@@ -160,6 +160,18 @@ export interface ContextFingerprintInputV1 {
    * чтобы старые baseline без этого поля оставались валидными (dual-version).
    */
   providerName?: string;
+  /**
+   * Durable выбор провайдера/модели/auth-метода/ревизии конфигурации Run
+   * (plan-24 Task 5). Содержит только стабильные идентификаторы — никогда
+   * endpoint URL, токен, аккаунт или секрет. Поле опционально: старые baseline
+   * без него остаются валидными (dual-version decode).
+   */
+  providerSelection?: {
+    readonly providerId: string;
+    readonly modelId: string;
+    readonly authMethodId: string;
+    readonly configRevision: number;
+  };
   outputSchemaVersion: string | null;
   contextVersion: string | null;
   workspaceIdentity: ContextWorkspaceIdentityV1;

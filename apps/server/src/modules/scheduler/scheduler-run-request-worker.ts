@@ -2,6 +2,7 @@ import type { Database } from "../../platform/database/database.js";
 import type { RunService } from "../runtime/run-service.js";
 import type { WorkflowEngine } from "../workflow/workflow-engine.js";
 import { prepareTaskRunOptions, prepareTaskIntegrationOptions } from "../runtime/task-run-context.js";
+import { RunProviderSelectionError } from "../runtime/providers/run-provider-selection.js";
 import type { IntegrationService, IntegrationAttempt } from "../git/integration-service.js";
 import type { SchedulerService } from "./scheduler-service.js";
 import type { EventBus } from "../../platform/events/event-bus.js";
@@ -104,6 +105,9 @@ export class SchedulerRunRequestWorker {
         } catch (error) {
           const code = error instanceof Error ? INTEGRITY_FAILURES.get(error.message) : undefined;
           if (code) { scheduler.failRunRequest(request.id, code); continue; }
+          // Fail-closed ошибки валидации выбора провайдера терминальны: повторный
+          // проход не изменит результат до исправления настроек/запроса.
+          if (error instanceof RunProviderSelectionError) { scheduler.failRunRequest(request.id, error.code); continue; }
           // Snapshot/order changes and infrastructure faults keep PENDING; avoid a tight retry loop.
           break;
         } finally {

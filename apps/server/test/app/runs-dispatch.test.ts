@@ -4,7 +4,22 @@ import { createSqliteDatabase } from "../../src/platform/database/sqlite-databas
 import { runMigrations } from "../../src/platform/database/migrator.js";
 import { loadTestMigrations } from "../helpers/migrations.js";
 import { SchedulerService } from "../../src/modules/scheduler/scheduler-service.js";
+import { SqliteProviderSettingsRepository } from "../../src/modules/runtime/providers/provider-settings-repository.js";
 import { createTestAuthService, TEST_COOKIE, TEST_CSRF_TOKEN } from "../helpers/auth.js";
+
+function seedProvider(db: ReturnType<typeof createSqliteDatabase>, overrides: { enabled?: boolean; defaultModelId?: string | null; roleDefaults?: Record<string, string> } = {}) {
+  const repository = new SqliteProviderSettingsRepository(db);
+  repository.saveProviderConfiguration({
+    providerId: "openai", enabled: overrides.enabled ?? true, selectedAuthMethod: "api-key", config: {},
+    modelSelection: { defaultModelId: overrides.defaultModelId ?? "gpt-4o", roleDefaults: overrides.roleDefaults ?? {} },
+  });
+  db.run("INSERT INTO secrets(reference_id,service,name,created_at,updated_at) VALUES('ref-prov-1','ai-provider','prov:openai:api-key',0,0)");
+  repository.attachCredentialMetadata({
+    providerId: "openai", authMethodId: "api-key",
+    secretName: "prov:openai:api-key", referenceId: "ref-prov-1",
+    status: "ACTIVE", now: new Date().toISOString(),
+  });
+}
 
 describe("task dispatch route durable producer", () => {
   const cleanups: (() => Promise<void>)[] = [];
@@ -15,14 +30,14 @@ describe("task dispatch route durable producer", () => {
     db.run("INSERT INTO projects(id,name,display_name,status,created_at,updated_at) VALUES('project-1','p','P','ACTIVE',$now,$now)", { now });
     db.run("INSERT INTO tasks(id,project_id,display_id,title,status,contract_json,created_at,updated_at) VALUES('task-1','project-1','T-1','Task','READY','{}',$now,$now)", { now });
     const scheduler = new SchedulerService(db);
-    const runService = { cancelRun: vi.fn(), prepareRun: vi.fn(), executePreparedRun: vi.fn(), validateTaskRequestModel: vi.fn() };
+    const runService = { cancelRun: vi.fn(), prepareRun: vi.fn(), executePreparedRun: vi.fn(), validateTaskRequestModel: vi.fn(), validateTaskRequestSelection: vi.fn() };
     const app = createApp({ db, scheduler, runService, authService: createTestAuthService() });
     cleanups.push(async () => { await app.close(); db.close(); });
     const headers = { cookie: TEST_COOKIE, origin: "http://127.0.0.1:3000", "x-csrf-token": TEST_CSRF_TOKEN, "idempotency-key": "caller-1" };
     return { app, db, scheduler, runService, headers };
   }
   it("rejects an unsupported model selection before persistence", async () => {
-    const f = setup(); f.runService.validateTaskRequestModel.mockImplementation(() => { throw new Error("RUN_REQUEST_MODEL_UNSUPPORTED"); });
+    const f = setup(); f.runService.validateTaskRequestSelection.mockImplementation(() => { throw new Error("RUN_REQUEST_MODEL_UNSUPPORTED"); });
     const response = await f.app.inject({ method: "POST", url: "/api/v1/tasks/task-1/dispatch", headers: f.headers, payload: { model: "explicit-model" } });
     expect(response.statusCode).toBe(400);
     expect(response.json()).toMatchObject({ error: { code: "RUN_REQUEST_MODEL_UNSUPPORTED", message: "Неизвестная модель. Доступные модели указаны в настройках." } });
@@ -30,7 +45,7 @@ describe("task dispatch route durable producer", () => {
     expect(f.runService.prepareRun).not.toHaveBeenCalled();
   });
   it("rejects an unknown model by name with the Russian error message", async () => {
-    const f = setup(); f.runService.validateTaskRequestModel.mockImplementation(() => { throw new Error("RUN_REQUEST_MODEL_UNSUPPORTED"); });
+    const f = setup(); f.runService.validateTaskRequestSelection.mockImplementation(() => { throw new Error("RUN_REQUEST_MODEL_UNSUPPORTED"); });
     const response = await f.app.inject({ method: "POST", url: "/api/v1/tasks/task-1/dispatch", headers: f.headers, payload: { model: "nonexistent-model" } });
     expect(response.statusCode).toBe(400);
     expect(response.json()).toEqual({ error: { code: "RUN_REQUEST_MODEL_UNSUPPORTED", message: "Неизвестная модель. Доступные модели указаны в настройках." } });
@@ -79,5 +94,61 @@ describe("task dispatch route durable producer", () => {
     const f = setup(); const { "idempotency-key": _key, ...headers } = f.headers;
     expect((await f.app.inject({ method: "POST", url: "/api/v1/tasks/task-1/dispatch", headers })).statusCode).toBe(400);
     expect(f.db.all("SELECT * FROM scheduler_run_requests")).toEqual([]);
+  });
+
+  it("rejects an unknown provider with a Russian 400 message before persistence", async () => {
+    const f = setup();
+    f.runService.validateTaskRequestSelection = vi.fn(() => { throw new Error("RUN_REQUEST_PROVIDER_UNKNOWN"); });
+    const response = await f.app.inject({ method: "POST", url: "/api/v1/tasks/task-1/dispatch", headers: f.headers, payload: { providerId: "no-such-provider" } });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: { code: "RUN_REQUEST_PROVIDER_UNKNOWN", message: "Неизвестный провайдер." } });
+    expect(f.db.all("SELECT * FROM scheduler_run_requests")).toEqual([]);
+  });
+
+  it("rejects a disabled provider with a Russian 400 message", async () => {
+    const f = setup();
+    f.runService.validateTaskRequestSelection = vi.fn(() => { throw new Error("RUN_REQUEST_PROVIDER_DISABLED"); });
+    const response = await f.app.inject({ method: "POST", url: "/api/v1/tasks/task-1/dispatch", headers: f.headers, payload: { providerId: "openai" } });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: { code: "RUN_REQUEST_PROVIDER_DISABLED", message: "Провайдер отключен." } });
+    expect(f.db.all("SELECT * FROM scheduler_run_requests")).toEqual([]);
+  });
+
+  it("rejects a missing credential as 400 when an explicit provider is selected", async () => {
+    const f = setup();
+    f.runService.validateTaskRequestSelection = vi.fn(() => { throw new Error("RUN_REQUEST_PROVIDER_CREDENTIAL_MISSING"); });
+    const response = await f.app.inject({ method: "POST", url: "/api/v1/tasks/task-1/dispatch", headers: f.headers, payload: { providerId: "openai" } });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: { code: "RUN_REQUEST_PROVIDER_CREDENTIAL_MISSING", message: "Для провайдера не настроены учётные данные." } });
+    expect(f.db.all("SELECT * FROM scheduler_run_requests")).toEqual([]);
+  });
+
+  it("rejects authMethodId without providerId as an invalid body", async () => {
+    const f = setup();
+    const response = await f.app.inject({ method: "POST", url: "/api/v1/tasks/task-1/dispatch", headers: f.headers, payload: { authMethodId: "api-key" } });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: { code: "RUN_REQUEST_OPTIONS_INVALID" } });
+    expect(f.db.all("SELECT * FROM scheduler_run_requests")).toEqual([]);
+  });
+
+  it("persists the explicit provider binding in the durable request and reflects it in projections", async () => {
+    const f = setup();
+    seedProvider(f.db);
+    const response = await f.app.inject({ method: "POST", url: "/api/v1/tasks/task-1/dispatch", headers: f.headers, payload: { providerId: "openai" } });
+    expect(response.statusCode).toBe(202);
+    expect(response.json()).toMatchObject({ providerId: "openai", authMethodId: null });
+    const row = f.db.get<{ provider_id: string | null; auth_method_id: string | null }>(
+      "SELECT provider_id,auth_method_id FROM scheduler_run_requests",
+    );
+    expect(row).toEqual({ provider_id: "openai", auth_method_id: null });
+    const read = await f.app.inject({ method: "GET", url: `/api/v1/tasks/task-1/dispatch-requests/${response.json().requestId}`, headers: f.headers });
+    expect(read.json()).toMatchObject({ providerId: "openai" });
+  });
+
+  it("treats a different provider payload as an idempotency conflict", async () => {
+    const f = setup();
+    const call = (providerId: string) => f.app.inject({ method: "POST", url: "/api/v1/tasks/task-1/dispatch", headers: f.headers, payload: { providerId } });
+    expect((await call("openai")).statusCode).toBe(202);
+    expect((await call("anthropic")).statusCode).toBe(409);
   });
 });

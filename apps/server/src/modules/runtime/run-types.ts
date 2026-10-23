@@ -58,6 +58,14 @@ export interface ResumeRunOptions {
   attempt: number;
 }
 
+/** Явный Run override провайдера (plan-24 Task 5): опционален; без него
+ * применяются дефолты роли/глобальные из настроек провайдеров. */
+export interface StartRunProviderSelection {
+  readonly providerId: string;
+  readonly modelId?: string;
+  readonly authMethodId?: string;
+}
+
 interface BaseStartRunOptions {
   runId?: string;
   model: string;
@@ -69,6 +77,8 @@ interface BaseStartRunOptions {
   prompt?: string;
   /** Exact caller-owned inputs consumed inside the same preparation transaction. */
   contextInput?: PrepareRunContextInput;
+  /** Явная привязка провайдера; разрешение и фиксация — в транзакции Run. */
+  providerSelection?: StartRunProviderSelection;
 }
 
 export type StartRunOptions = BaseStartRunOptions & (

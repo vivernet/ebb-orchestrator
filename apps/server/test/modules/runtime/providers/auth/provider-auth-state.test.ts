@@ -93,13 +93,15 @@ describe("provider-auth-state: срок действия", () => {
 });
 
 describe("provider-auth-state: секретный vault", () => {
-  it("take извлекает one-use запись и обнуляет значения", () => {
+  it("take возвращает копию one-use записи, затем обнуляет и удаляет оригинал", () => {
     const vault = new AuthFlowSecretVault();
     vault.set("f1", { deviceCode: "device-code-1", verifier: "v", state: "s" });
     const entry = vault.take("f1");
-    expect(entry?.deviceCode).toBe("");
-    expect(entry?.verifier).toBe("");
-    expect(entry?.state).toBe("");
+    // Возвращается копия с исходными значениями (читаемый API).
+    expect(entry?.deviceCode).toBe("device-code-1");
+    expect(entry?.verifier).toBe("v");
+    expect(entry?.state).toBe("s");
+    // Оригинал обнулён и удалён.
     expect(vault.get("f1")).toBeUndefined();
   });
 

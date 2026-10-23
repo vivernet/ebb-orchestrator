@@ -19,6 +19,8 @@ export interface RunCommandService {
   executePreparedRun?(runId: string): Promise<unknown>;
   failPreparedRun?(runId: string, error: unknown): boolean;
   validateTaskRequestModel?(model: string): void;
+  /** Валидация модели и опциональной явной привязки провайдера (plan-24 Task 5). */
+  validateTaskRequestSelection?(model: string, selection?: { providerId: string; authMethodId?: string }, role?: string): void;
 }
 
 export interface RunRouteDeps {
@@ -74,12 +76,18 @@ export async function runRoutes(app: FastifyInstance, deps: RunRouteDeps = {}): 
     }
     const options = parseDispatchBody(request.body);
     if (!options) return reply.code(400).send({ error: { code: "RUN_REQUEST_OPTIONS_INVALID" } });
+    const validateNew = deps.runService?.validateTaskRequestSelection
+      ? () => deps.runService?.validateTaskRequestSelection?.(options.model,
+          options.providerId ? { providerId: options.providerId, ...(options.authMethodId ? { authMethodId: options.authMethodId } : {}) } : undefined, options.role)
+      : () => deps.runService?.validateTaskRequestModel?.(options.model);
     try {
       const accepted = deps.scheduler.enqueueRunRequest({ taskId: request.params.id, ...options,
-        idempotencyKey: key, originType: "TASK_API", originId: `task-api:${request.params.id}` }, () => deps.runService?.validateTaskRequestModel?.(options.model));
+        idempotencyKey: key, originType: "TASK_API", originId: `task-api:${request.params.id}` }, validateNew);
       return reply.code(202).send(dispatchProjection(accepted));
     } catch (error) {
       const code = error instanceof Error ? error.message : "RUN_REQUEST_UNAVAILABLE";
+      const providerError = PROVIDER_SELECTION_ERROR_MESSAGES[code];
+      if (providerError) return reply.code(400).send({ error: { code, message: providerError } });
       if (code === "RUN_REQUEST_MODEL_UNSUPPORTED") return reply.code(400).send({ error: { code, message: "Неизвестная модель. Доступные модели указаны в настройках." } });
       if (code === "RUN_REQUEST_TASK_NOT_READY") return reply.code(409).send({ error: { code } });
       if (code === "RUN_REQUEST_EPIC_TASK_UNSUPPORTED") return reply.code(409).send({ error: { code } });
@@ -113,6 +121,13 @@ export async function runRoutes(app: FastifyInstance, deps: RunRouteDeps = {}): 
       { id: request.params.id },
     );
     if (!run) return reply.code(404).send({ error: "run not found" });
+    const providerSelection = deps.db.get<{
+      provider_id: string; model_id: string; auth_method_id: string; config_revision: number;
+    }>(
+      `SELECT provider_id, model_id, auth_method_id, config_revision
+         FROM run_provider_selections WHERE run_id = $id`,
+      { id: run.id },
+    );
     return {
       id: run.id,
       role: run.role,
@@ -130,6 +145,14 @@ export async function runRoutes(app: FastifyInstance, deps: RunRouteDeps = {}): 
         outputTokens: run.output_tokens ?? 0,
         cost: run.cost ?? 0,
       },
+      providerSelection: providerSelection
+        ? {
+            providerId: providerSelection.provider_id,
+            modelId: providerSelection.model_id,
+            authMethodId: providerSelection.auth_method_id,
+            configRevision: providerSelection.config_revision,
+          }
+        : null,
     };
   });
 
@@ -340,13 +363,39 @@ function normalizeContextManifestRole(value: string): (typeof CONTEXT_MANIFEST_R
   return CONTEXT_MANIFEST_ROLES.find((role) => role === value) ?? "unknown";
 }
 
-function parseDispatchBody(value: unknown): { role: "developer" | "reviewer" | "qa" | "integration"; model: string } | null {
+/** Русские user-facing сообщения ошибок выбора провайдера (plan-24 Task 5). */
+const PROVIDER_SELECTION_ERROR_MESSAGES: Record<string, string> = {
+  RUN_REQUEST_PROVIDER_UNKNOWN: "Неизвестный провайдер.",
+  RUN_REQUEST_PROVIDER_NOT_CONFIGURED: "Провайдер не настроен.",
+  RUN_REQUEST_PROVIDER_DISABLED: "Провайдер отключен.",
+  RUN_REQUEST_AUTH_METHOD_UNKNOWN: "Неизвестный способ аутентификации.",
+  RUN_REQUEST_AUTH_METHOD_SNAPSHOT_MISMATCH: "Способ аутентификации не совпадает с ревизией конфигурации провайдера.",
+  RUN_REQUEST_PROVIDER_CAPABILITY_UNSUPPORTED: "Модель не поддерживает требуемые возможности для выбранной роли.",
+  RUN_REQUEST_PROVIDER_CREDENTIAL_MISSING: "Для провайдера не настроены учётные данные.",
+};
+
+function parseDispatchBody(value: unknown): {
+  role: "developer" | "reviewer" | "qa" | "integration";
+  model: string;
+  providerId?: string;
+  authMethodId?: string;
+} | null {
   if (value === undefined) return { role: "developer", model: "default" };
-  if (!isPlainObject(value) || Object.keys(value).some((key) => key !== "role" && key !== "model")) return null;
+  if (!isPlainObject(value) || Object.keys(value).some((key) => key !== "role" && key !== "model" && key !== "providerId" && key !== "authMethodId")) return null;
   const role = value.role === undefined ? "developer" : value.role;
   const model = value.model === undefined ? "default" : value.model;
   if (!isNonEmptyString(role) || !["developer", "reviewer", "qa", "integration"].includes(role.toLowerCase()) || !isNonEmptyString(model)) return null;
-  return { role: role.toLowerCase() as "developer" | "reviewer" | "qa" | "integration", model };
+  const providerId = value.providerId === undefined ? undefined : value.providerId;
+  const authMethodId = value.authMethodId === undefined ? undefined : value.authMethodId;
+  if (providerId !== undefined && !isNonEmptyString(providerId)) return null;
+  if (authMethodId !== undefined && !isNonEmptyString(authMethodId)) return null;
+  if (authMethodId !== undefined && providerId === undefined) return null;
+  return {
+    role: role.toLowerCase() as "developer" | "reviewer" | "qa" | "integration",
+    model,
+    ...(providerId !== undefined ? { providerId } : {}),
+    ...(authMethodId !== undefined ? { authMethodId } : {}),
+  };
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -359,5 +408,6 @@ function isNonEmptyString(value: unknown): value is string {
 
 function dispatchProjection(request: import("../../modules/scheduler/scheduler-run-request-repository.js").SchedulerRunRequest) {
   return { requestId: request.id, taskId: request.taskId, status: request.status, runId: request.runId,
-    role: request.role, model: request.model, failureCode: request.failureCode };
+    role: request.role, model: request.model, failureCode: request.failureCode,
+    ...(request.providerId ? { providerId: request.providerId, authMethodId: request.authMethodId } : {}) };
 }

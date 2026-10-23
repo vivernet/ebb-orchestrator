@@ -501,6 +501,7 @@ describe("orchestrator read API", () => {
       id: "run-1", role: "Developer", runtime: "hermes", model: "model", status: "IN_PROGRESS", taskId: "task-1", epicId: null,
       triggerReason: "DEVELOPMENT", startedAt: "2026-09-20T00:00:00.000Z", endedAt: null,
       usage: { inputTokens: 10, cachedTokens: 2, outputTokens: 3, cost: 0.42 },
+      providerSelection: null,
     });
     await app.close();
     db.close();

@@ -152,6 +152,8 @@ function toolResultContent(result: { success: boolean; result?: unknown; error?:
 export class ProviderAgentRuntime implements AgentRuntime {
   public active = 0;
   public maxActive = 0;
+  /** Provider-рантайм потребляет durable provider-привязку (plan-24 Task 5). */
+  public supportsProviderSelections = true;
   public readonly calls: Array<{ phase: string; role: string; taskId?: string; targetBranch?: string }> = [];
 
   private readonly runs = new Map<string, ProviderRunState>();

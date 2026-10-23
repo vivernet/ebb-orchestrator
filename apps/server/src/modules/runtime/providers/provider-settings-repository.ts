@@ -144,6 +144,15 @@ export interface ProviderSettingsRepository {
   deleteProviderConfiguration(providerId: string): boolean;
   createRunSelection(input: CreateRunSelectionInput): RunProviderSelectionRecord;
   getRunSelection(runId: string): RunProviderSelectionRecord | undefined;
+  /**
+   * Транзакционные чтения/запись для Task 5: разрешение и фиксация выбора
+   * провайдера выполняются в той же SQLite транзакции, что и создание Run,
+   * чтобы изменение дефолтов между preflight и dispatch не создавало окна.
+   */
+  getProviderConfigurationTx(tx: DatabaseTx, providerId: string): ProviderConfigurationRecord | undefined;
+  listProviderConfigurationsTx(tx: DatabaseTx): ProviderConfigurationRecord[];
+  getCredentialMetadataTx(tx: DatabaseTx, providerId: string, authMethodId: string): ProviderCredentialMetadataRecord | undefined;
+  createRunSelectionTx(tx: DatabaseTx, input: CreateRunSelectionInput): RunProviderSelectionRecord;
 }
 
 type ConfigurationRow = {
@@ -417,13 +426,23 @@ export class SqliteProviderSettingsRepository implements ProviderSettingsReposit
 
   /** Возвращает конфигурацию провайдера или undefined для неизвестного id. */
   getProviderConfiguration(providerId: string): ProviderConfigurationRecord | undefined {
-    const row = readConfigurationRow(this.database, providerId);
+    return this.getProviderConfigurationTx(this.database, providerId);
+  }
+
+  /** Возвращает конфигурацию провайдера в заданной транзакции. */
+  getProviderConfigurationTx(tx: DatabaseTx, providerId: string): ProviderConfigurationRecord | undefined {
+    const row = readConfigurationRow(tx, providerId);
     return row ? toConfigurationRecord(row) : undefined;
   }
 
   /** Возвращает все сохранённые конфигурации без секретных значений. */
   listProviderConfigurations(): ProviderConfigurationRecord[] {
-    return this.database.all<ConfigurationRow>(
+    return this.listProviderConfigurationsTx(this.database);
+  }
+
+  /** Возвращает все сохранённые конфигурации в заданной транзакции. */
+  listProviderConfigurationsTx(tx: DatabaseTx): ProviderConfigurationRecord[] {
+    return tx.all<ConfigurationRow>(
       "SELECT provider_id, enabled, selected_auth_method, config_json, model_selection_json, current_revision, created_at, updated_at FROM provider_configurations ORDER BY provider_id",
     ).map(toConfigurationRecord);
   }
@@ -472,7 +491,12 @@ export class SqliteProviderSettingsRepository implements ProviderSettingsReposit
 
   /** Возвращает метаданные credential-записи или undefined, если записи нет. */
   getCredentialMetadata(providerId: string, authMethodId: string): ProviderCredentialMetadataRecord | undefined {
-    const row = this.database.get<CredentialRow>(
+    return this.getCredentialMetadataTx(this.database, providerId, authMethodId);
+  }
+
+  /** Возвращает метаданные credential-записи в заданной транзакции. */
+  getCredentialMetadataTx(tx: DatabaseTx, providerId: string, authMethodId: string): ProviderCredentialMetadataRecord | undefined {
+    const row = tx.get<CredentialRow>(
       "SELECT provider_id, auth_method_id, secret_name, reference_id, status, created_at, updated_at FROM provider_credentials WHERE provider_id = $providerId AND auth_method_id = $authMethodId",
       { providerId, authMethodId },
     );
@@ -521,56 +545,59 @@ export class SqliteProviderSettingsRepository implements ProviderSettingsReposit
 
   /** Создаёт Run-selection snapshot; требование — существование снимка ревизии (fail-closed). */
   createRunSelection(input: CreateRunSelectionInput): RunProviderSelectionRecord {
+    return this.database.transaction((tx) => this.createRunSelectionTx(tx, input));
+  }
+
+  /** Создаёт Run-selection snapshot в заданной транзакции (Task 5: одна транзакция с Run). */
+  createRunSelectionTx(tx: DatabaseTx, input: CreateRunSelectionInput): RunProviderSelectionRecord {
     if (input.runId.length === 0 || input.modelId.length === 0 || input.authMethodId.length === 0) {
       throw new Error("Run selection fields must not be empty");
     }
-    return this.database.transaction((tx) => {
-      if (!readConfigurationRow(tx, input.providerId)) {
-        throw new ProviderConfigurationMissingError(input.providerId);
-      }
-      const snapshotExists = tx.get<{ one: number }>(
-        "SELECT 1 AS one FROM provider_config_snapshots WHERE provider_id = $providerId AND revision = $revision",
-        { providerId: input.providerId, revision: input.configRevision },
+    if (!readConfigurationRow(tx, input.providerId)) {
+      throw new ProviderConfigurationMissingError(input.providerId);
+    }
+    const snapshotExists = tx.get<{ one: number }>(
+      "SELECT 1 AS one FROM provider_config_snapshots WHERE provider_id = $providerId AND revision = $revision",
+      { providerId: input.providerId, revision: input.configRevision },
+    );
+    if (!snapshotExists) {
+      throw new ProviderConfigSnapshotUnknownError(input.providerId, input.configRevision);
+    }
+    const snapshot = tx.get<SnapshotRow>(
+      "SELECT provider_id, revision, selected_auth_method, config_json, model_selection_json, captured_at FROM provider_config_snapshots WHERE provider_id = $providerId AND revision = $revision",
+      { providerId: input.providerId, revision: input.configRevision },
+    );
+    if (snapshot && snapshot.selected_auth_method !== input.authMethodId) {
+      throw new InvalidProviderConfigurationError(
+        `Run selection auth method '${input.authMethodId}' does not match snapshot revision ${input.configRevision}`,
       );
-      if (!snapshotExists) {
-        throw new ProviderConfigSnapshotUnknownError(input.providerId, input.configRevision);
-      }
-      const snapshot = tx.get<SnapshotRow>(
-        "SELECT provider_id, revision, selected_auth_method, config_json, model_selection_json, captured_at FROM provider_config_snapshots WHERE provider_id = $providerId AND revision = $revision",
-        { providerId: input.providerId, revision: input.configRevision },
+    }
+    const now = new Date().toISOString();
+    try {
+      tx.run(
+        `INSERT INTO run_provider_selections(run_id, provider_id, model_id, auth_method_id, config_revision, created_at)
+         VALUES($runId, $providerId, $modelId, $authMethodId, $configRevision, $now)`,
+        {
+          runId: input.runId,
+          providerId: input.providerId,
+          modelId: input.modelId,
+          authMethodId: input.authMethodId,
+          configRevision: input.configRevision,
+          now,
+        },
       );
-      if (snapshot && snapshot.selected_auth_method !== input.authMethodId) {
-        throw new InvalidProviderConfigurationError(
-          `Run selection auth method '${input.authMethodId}' does not match snapshot revision ${input.configRevision}`,
-        );
+    } catch (error) {
+      if (error instanceof Error && /UNIQUE|PRIMARY KEY/i.test(error.message)) {
+        throw new RunSelectionImmutableError(input.runId);
       }
-      const now = new Date().toISOString();
-      try {
-        tx.run(
-          `INSERT INTO run_provider_selections(run_id, provider_id, model_id, auth_method_id, config_revision, created_at)
-           VALUES($runId, $providerId, $modelId, $authMethodId, $configRevision, $now)`,
-          {
-            runId: input.runId,
-            providerId: input.providerId,
-            modelId: input.modelId,
-            authMethodId: input.authMethodId,
-            configRevision: input.configRevision,
-            now,
-          },
-        );
-      } catch (error) {
-        if (error instanceof Error && /UNIQUE|PRIMARY KEY/i.test(error.message)) {
-          throw new RunSelectionImmutableError(input.runId);
-        }
-        throw error;
-      }
-      const row = tx.get<SelectionRow>(
-        "SELECT run_id, provider_id, model_id, auth_method_id, config_revision, created_at FROM run_provider_selections WHERE run_id = $runId",
-        { runId: input.runId },
-      );
-      if (!row) throw new Error("Run selection insert returned no row");
-      return toSelectionRecord(row);
-    });
+      throw error;
+    }
+    const row = tx.get<SelectionRow>(
+      "SELECT run_id, provider_id, model_id, auth_method_id, config_revision, created_at FROM run_provider_selections WHERE run_id = $runId",
+      { runId: input.runId },
+    );
+    if (!row) throw new Error("Run selection insert returned no row");
+    return toSelectionRecord(row);
   }
 
   /** Возвращает зафиксированный выбор для Run или undefined. */

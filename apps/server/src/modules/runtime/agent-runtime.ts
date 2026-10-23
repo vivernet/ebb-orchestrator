@@ -32,6 +32,13 @@ export interface AgentRuntime {
   calls: Array<{ phase: string; role: string; taskId?: string; targetBranch?: string }>;
 
   /**
+   * Признак поддержки runtime-ом durable provider-привязки
+   * (`AgentRuntimeRun.providerSelection`, plan-24 Task 5). Если признак не задан,
+   * Run с разрешённым выбором провайдера завершается fail-closed до dispatch.
+   */
+  supportsProviderSelections?: boolean;
+
+  /**
     * запускать Объект новый run с Объект указанного options.
     */
   startRun(run: AgentRuntimeRun): Promise<void>;
@@ -42,7 +49,13 @@ export interface AgentRuntime {
   /**
    * Возобновление a run that was paused.
    */
-  resumeRun(runId: string, options: { sessionId: string; attempt: number; hermesSelection?: HermesRuntimeSelection }): Promise<void>;
+  resumeRun(runId: string, options: {
+    sessionId: string;
+    attempt: number;
+    hermesSelection?: HermesRuntimeSelection;
+    /** Исходный durable выбор провайдера из run_provider_selections (загрузка при resume). */
+    providerSelection?: RunProviderSelectionRecord;
+  }): Promise<void>;
 
   /**
    * Отмена an in-progress run.
