@@ -4,7 +4,7 @@ status: in_progress
 kind: development
 title: Разработка Ebb Orchestrator через Hermes
 created: 2026-09-23
-updated: 2026-10-13
+updated: 2026-10-23
 ---
 
 # Разработка Ebb Orchestrator через Hermes
@@ -18,8 +18,9 @@ production `AgentRuntime` / `HermesRuntimeAdapter` задаётся архите
 - Выполняйте repository-команды из корня выбранного Git worktree.
 - Нужны Node.js и pnpm из требований корневого README, Git и доступный в `PATH`
   Hermes Agent с командами config и project trust.
-- Установка Hermes, первичная настройка provider/model и проверочный запрос
-  описаны в [первом запуске в README](../../README.md#первый-запуск-hermes).
+- Установка Hermes и проверочный запрос описаны в
+  [первом запуске в README](../../README.md#первый-запуск-hermes); выбор
+  провайдера/модели для Runs выполняет Ebb (см. «Production provider и runtime»).
 - В worktree должны присутствовать `.hermes.md` и canonical source `.agents/skills/`.
 - Полный актуальный набор из 21 Ebb skills находится в
   [единственном README inventory](../../README.md#hermes-development-skills).
@@ -28,10 +29,10 @@ production `AgentRuntime` / `HermesRuntimeAdapter` задаётся архите
 
 ### Project trust и prerequisites
 
-Сначала настройте сам Hermes и проверьте его provider по шагам из README. Это
+Сначала установите Hermes и проверьте его работу по шагам из README. Это
 отдельно от project trust Ebb: команды ниже изменяют настройки текущего
 пользовательского Hermes home/profile, но не добавляют и не аутентифицируют
-provider.
+provider (ключи провайдеров хранятся в `EBB_ORCHESTRATOR_HOME/.env`).
 
 ```bash
 pnpm hermes:check
@@ -71,15 +72,16 @@ runtime skill index/provenance требует отдельной runtime accepta
 
 ### Production provider и runtime
 
-Hermes-native auth является предусмотренной границей владения учётными данными:
-не копируйте provider credentials в корневой `.env` Ebb Orchestrator или Ebb
-SecretStore. Production Run использует уже настроенный пользователем Hermes
-home/profile и его provider/model/auth. Ebb не создаёт per-Run Hermes profile/home,
-не копирует профиль и не читает credential values. Если provider уже настроен в
-Hermes, не перенастраивайте его для Ebb. Для новой установки выполняйте Hermes
-настройку и первый запрос по [инструкции README](../../README.md#первый-запуск-hermes);
-при необходимости OAuth или ключ вводится непосредственно в Hermes-native flow.
-Никогда не пересылайте credential values в чат и не помещайте их в Ebb `.env`.
+Выбор провайдера/модели для Runs принадлежит Ebb: Ebb хранит реестр доступных
+built-in провайдеров Hermes (`openai-api`, `anthropic` и т.д.) с моделями;
+список и текущий выбор отображаются в Settings Web UI. API-ключи хранятся
+только в `EBB_ORCHESTRATOR_HOME/.env` (изолированно от репозитория) и не
+попадают в корневой `.env`, SecretStore, SQLite, логи или артефакты. При
+запуске Run Ebb передаёт выбор провайдера/модели в Hermes явными
+неинтерактивными средствами и не мутирует пользовательский профиль Hermes:
+пользовательские Hermes home/profile/config/auth не читаются, не копируются и
+не меняются; отдельный per-Run Hermes profile не создаётся. Никогда не
+пересылайте credential values в чат.
 
 Реальный Windows provider acceptance через production Run path пройден
 2026-10-11: один Run получил ответ настроенного provider и валидированный
@@ -93,15 +95,17 @@ platform/recovery gates, полный Task7 или Plan20. Статусы и п�
 `pnpm hermes:check` проверяет CLI и Ebb project prerequisites, но не вызывает
 provider API. `pnpm hermes:setup` при необходимости настраивает project
 trust/discovery/delegation в активном Hermes home/profile и изменяет эти
-настройки; отдельная копия профиля не требуется. Для Ebb `.env` задаёт только
-настройки приложения, например `EBB_ORCHESTRATOR_HOME` и `PORT`; provider
-credentials остаются в Hermes.
+настройки; отдельная копия профиля не требуется. Корневой `.env` задаёт только
+настройки приложения, например `EBB_ORCHESTRATOR_HOME` и `PORT`; ключи
+провайдеров хранятся в `EBB_ORCHESTRATOR_HOME/.env`.
 
 ### Первый production Run и troubleshooting
 
-Пошаговый clean-checkout flow — установка Hermes, `hermes setup` / `hermes model`,
-запуск Ebb, активация локального проекта и безопасная проверка Coordinator Run —
-приведён в [README, «Первый запуск Hermes»](../../README.md#первый-запуск-hermes).
+Пошаговый clean-checkout flow — установка/проверка CLI Hermes, запуск Ebb,
+активация локального проекта и безопасная проверка Coordinator Run — приведён в
+[README, «Первый запуск Hermes»](../../README.md#первый-запуск-hermes). Команды
+`hermes setup` / `hermes model` для Ebb не используются; Ebb выбирает
+провайдера/модель из своего реестра.
 Для проверки runtime достаточно отправить ограниченный planning request и
 убедиться, что появился сохранённый план `PLAN_PENDING_APPROVAL`; не одобряйте
 Epic, если не собираетесь запускать его реализацию. Hermes/Ebb provider-запросы
@@ -118,12 +122,13 @@ command-execution capabilities. Сам запрос, Runs и preview сохра�
   из корня и проверьте `PATH` процесса backend. После изменения `PATH` перезапустите
   backend. Не создавайте отдельный Hermes profile для Ebb.
 - Hermes сообщает об отсутствующем/неоднозначном provider или model: проверьте
-  текущий выбор через `hermes model`, выполните `hermes doctor` и
-  `hermes chat --oneshot -q "Reply with OK"`. Ebb использует настроенный Hermes
-  default; `HERMES_MODEL_OVERRIDE_UNSUPPORTED` означает, что Run запросил override.
-- Auth/refresh failure: следуйте сообщению Hermes и исправьте вход только через
-  Hermes-native setup/model flow. Не переносите credentials в Ebb `.env` или
-  Ebb SecretStore и не отправляйте их в чат.
+  выбор провайдера/модели в настройках Ebb (Settings → «ИИ-провайдеры и
+  модели») и наличие ключа в `EBB_ORCHESTRATOR_HOME/.env`. Ebb передаёт явный
+  выбор built-in провайдера; `model=default` использует дефолт реестра Ebb.
+- Auth/refresh failure: проверьте ключ провайдера в
+  `EBB_ORCHESTRATOR_HOME/.env` (не в корневом `.env`, SecretStore или
+  репозитории). Не отправляйте credential values в чат; пользовательский
+  Hermes auth/config не читается и не меняется.
 - `HERMES_LAUNCHER_NOT_FOUND`, `HERMES_PATH_IDENTITY_INVALID` или
   `HERMES_EBB_MCP_REGISTRATION_FAILED`: это ошибка обнаружения/подготовки/запуска;
   сохраняйте точный код и Run ID, не диагностируйте её проверкой ACL или владельцев
@@ -202,9 +207,10 @@ trust выполните `pnpm hermes:setup`; эта команда меняет
 активного Hermes home. Не создавайте копию профиля как требование Ebb.
 
 **Provider не отвечает или Hermes сообщает об authentication/refresh error:**
-проверьте сообщение Hermes и состояние provider через уже используемый вами
-Hermes setup. `pnpm hermes:check` не диагностирует provider auth и не отправляет
-запрос. Не переносите credentials в Ebb `.env`.
+проверьте ключ провайдера в `EBB_ORCHESTRATOR_HOME/.env` и соответствие
+выбранного провайдера/модели реестру Ebb. `pnpm hermes:check` не диагностирует
+provider auth и не отправляет запрос. Пользовательский Hermes profile/config/auth
+не читается и не меняется; не отправляйте credentials в чат.
 
 **Hermes не запускается, не останавливается или не захватил session ID:**
 сохраните точный безопасный код/диагностику Ebb и Run ID. Ошибка запуска или

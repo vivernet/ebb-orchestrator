@@ -4,7 +4,7 @@ status: current
 kind: roadmap
 title: Текущая сверка и последовательность закрытия работ
 created: 2026-09-28
-updated: 2026-10-14
+updated: 2026-10-23
 ---
 
 # Текущая сверка и последовательность закрытия работ
@@ -147,6 +147,6 @@ Production run `37862703264` завершился `FAILURE`, несмотря н
 ## Дополнение от 2026-10-07 — Plan16 documentation scout
 
 - Read-only review на `a9148f6` проверил `README.md`, `docs/README.md` и `docs/development/05-hermes.md`: документы на русском, без metadata в README, canonical Hermes guide сохраняет guideline metadata; 25 относительных Markdown-ссылок не имеют сломанных целей. Указанные `pnpm` scripts сопоставляются с package manifests; `pnpm docs:link:sync` отдельно обозначена как неподдерживаемая команда, не являющаяся проверкой.
-- Review подтверждает, что provider credentials принадлежат Hermes-native auth, запрещены в root `.env` и Ebb SecretStore, а `pnpm hermes:check` не заявлена как provider probe. Критерий 405 не закрыт: `README.md:254–257` и `:322–324` требуют отдельный Hermes home/копию для `pnpm hermes:setup`, что конфликтует с требованием использовать уже настроенный Hermes auth. Plan20 Task7 владеет финальной инструкцией per-Run; до его завершения эти предупреждения требуют согласованного исправления, без копирования credentials или повторной настройки provider.
+- Review подтверждает, что ключи провайдеров хранятся только в `EBB_ORCHESTRATOR_HOME/.env` и не размещаются в корневом `.env`, SecretStore или репозитории, а `pnpm hermes:check` не заявлена как provider probe. Критерий 405 не закрыт: `README.md:254–257` и `:322–324` требуют отдельный Hermes home/копию для `pnpm hermes:setup`, что конфликтует с требованием использовать уже настроенный Hermes auth. Plan20 Task7 владеет финальной инструкцией per-Run; до его завершения эти предупреждения требуют согласованного исправления, без копирования credentials или повторной настройки provider.
 - Неблокирующее замечание: `docs/development/05-hermes.md` содержит `updated: 2026-09-23`, хотя guide менялся 2026-10-03; проверить/обновить при следующей редакции. Review был read-only: чекбоксы, файлы и lifecycle status Plan16 не менялись.
 - После этого review дата Plan16 синхронизирована с последним изменением `2026-10-07`; точный PowerShell snippet, `pnpm docs:check`, `pnpm docs:test` (20/20), `pnpm docs:inventory` (76 файлов), roadmap dry-run (34 Plan), проверки `.gitignore`/source tests и `git diff --check` прошли. По этому evidence отмечены только acceptance criteria 404, 406 и 407; 405 и 408 остаются открытыми, статус `blocked` сохранён.

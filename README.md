@@ -115,8 +115,11 @@ pnpm typecheck
 pnpm test
 ```
 
-Перед первым запуском AI-роли установите и настройте Hermes по разделу
-[Первый запуск Hermes](#первый-запуск-hermes); Hermes использует свой provider/auth.
+Перед первым запуском AI-роли установите Hermes CLI по разделу
+[Первый запуск Hermes](#первый-запуск-hermes). Выбор ИИ-провайдера/модели
+выполняется в Ebb (Settings): API-ключи хранятся только в
+`EBB_ORCHESTRATOR_HOME/.env`, пользовательские Hermes secrets не читаются и не
+копируются.
 
 Запустить backend в режиме разработки:
 
@@ -273,26 +276,23 @@ curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
 Эти команды устанавливают Hermes; поддержка Hermes со стороны Ebb на конкретной
 ОС отдельно подтверждается platform acceptance и пока не завершена для всех ОС.
 
-Если Hermes уже настроен, пропустите `hermes setup` и `hermes model`. Для новой
-настройки выполните мастер Hermes и выберите provider и model:
+Для Runs Ebb не требует настройки провайдера в Hermes: выбор ИИ-провайдера/
+модели принадлежит Ebb (Settings → «ИИ-провайдеры и модели», built-in
+провайдеры Hermes), а API-ключи хранятся только в
+`EBB_ORCHESTRATOR_HOME/.env`. Пользовательские Hermes home/profile/config/auth не
+читаются, не копируются и не меняются; интерактивные команды `hermes model` /
+`hermes auth` для Ebb не используются.
+
+Чтобы убедиться, что CLI установлен и работает, выполните:
 
 ```bash
-hermes setup
-hermes model
-hermes doctor
+hermes --version
 hermes chat --oneshot -q "Reply with OK"
 ```
 
-В `hermes setup` / `hermes model` проходите OAuth или вводите ключ непосредственно
-в Hermes согласно его подсказкам. Не отправляйте credentials в чат, не копируйте
-их в корневой `.env`/`.env.example` Ebb и не создавайте для них записи в Ebb
-SecretStore. `hermes model` — терминальная настройка provider/model; `/model`
-внутри открытого Hermes chat переключает только уже настроенный вариант.
-Подробности приведены в официальном разделе [Configuring Models](https://hermes-agent.nousresearch.com/docs/user-guide/configuring-models).
-
-`hermes doctor` должен завершиться с exit code `0`; короткий `hermes chat --oneshot -q`
-должен вернуть ответ от настроенного provider. Это проверяет Hermes отдельно;
-это не доказательство успешного Ebb Run.
+`hermes chat --oneshot -q` — самостоятельная проверка Hermes отдельно от Ebb;
+без настроенного в Hermes провайдера она может запросить настройку и не является
+проверкой успешного Ebb Run. Не отправляйте credentials в чат.
 
 Затем из корня репозитория установите зависимости и проверьте интеграционные
 предпосылки Ebb:
@@ -310,10 +310,12 @@ home/profile; это не настраивает provider и не требует
 и не подтверждает его аутентификацию.
 
 Далее запустите backend и Web UI по разделу [Быстрый старт](#быстрый-старт).
-Корневой `.env` необязателен и содержит только настройки приложения Ebb.
-В `.env.example` намеренно нет provider-key параметров: Ebb не использует их для
-Hermes.
-Production Runs используют уже настроенный Hermes home/profile и provider/auth.
+Корневой `.env` необязателен и содержит только настройки приложения Ebb
+(например, `EBB_ORCHESTRATOR_HOME` и `PORT`); `model=default` означает модель по
+умолчанию из реестра Ebb. Ключи ИИ-провайдеров хранятся только в
+`EBB_ORCHESTRATOR_HOME/.env` (изолированно от репозитория) и не попадают в
+корневой `.env`/`.env.example`, SecretStore, SQLite, логи или артефакты.
+Production Runs используют выбранный в Ebb провайдер/модель.
 Подтверждены один Windows provider Run (Task5B slice) и Windows same-Run/session
 restart acceptance (Task5C, 1/1); полные Plan20 gates, Linux/macOS acceptance и
 end-to-end UI acceptance ещё открыты. См. [Plan20](docs/architecture/plans/20-production-context-manifest.md).
@@ -347,7 +349,7 @@ pnpm web:dev
 > Подготовь план небольшого документационного Epic: опиши назначение основных каталогов этого репозитория. Только анализ и план; не изменяй файлы, не запускай команды и не создавай commit.
 
 При классификации запроса как Epic Orchestrator выполнит Coordinator, Product
-Manager и Architect Runs с уже настроенным Hermes provider. Успешная проверка
+Manager и Architect Runs с выбранным в Ebb ИИ-провайдером. Успешная проверка
 покажет сохранённый план со статусом «План ожидает одобрения»; UI позволяет
 проверить план до отдельного одобрения Epic. Чтобы проверить только Hermes/Ebb
 Run path и не запускать реализацию, **не нажимайте «Одобрить план и запустить
@@ -367,13 +369,17 @@ Runs и предложенный план в локальной базе; одо
   или исправьте `PATH` для процесса Ebb; после изменения `PATH` перезапустите
   backend. `hermes:check` подтверждает наличие CLI и проектные prerequisites,
   но не проверяет provider.
-- **Provider/model не выбран или выбор неоднозначен:** проверьте его в Hermes
-  командой `hermes model`, затем выполните `hermes doctor` и
-  `hermes chat --oneshot -q "Reply with OK"`. Ebb использует Hermes default;
-  явная модель в Ebb Run не поддерживается (`HERMES_MODEL_OVERRIDE_UNSUPPORTED`).
-- **Ошибка auth или refresh:** исправьте вход/provider только в Hermes-native
-  setup/model flow по сообщению самого Hermes и повторите Hermes smoke test.
-  Не добавляйте ключ в Ebb `.env` или SecretStore и не публикуйте credential.
+- **Provider/model не выбран или выбор неоднозначен:** выберите built-in
+  провайдера и модель в Web UI (Settings → «ИИ-провайдеры и модели»); список
+  моделей ограничен реестром Ebb (`openai-api`, `anthropic` и т.д.).
+  Убедитесь, что ключ выбранного провайдера находится в
+  `EBB_ORCHESTRATOR_HOME/.env`. `model=default` означает модель по умолчанию
+  из реестра Ebb.
+- **Ошибка auth или refresh:** проверьте ключ провайдера в
+  `EBB_ORCHESTRATOR_HOME/.env` (он не передаётся через корневой `.env`,
+  SecretStore или репозиторий) и повторите Hermes smoke test. Пользовательский
+  Hermes профиль/config/auth не читаются, не копируются и не меняются; не
+  публикуйте credential.
 - **CLI/path/launch ошибка:** проверьте, что `hermes --version` работает из
   того же окружения, откуда запущен backend. Коды `HERMES_LAUNCHER_NOT_FOUND`,
   `HERMES_PATH_IDENTITY_INVALID` и `HERMES_EBB_MCP_REGISTRATION_FAILED` указывают
@@ -433,9 +439,11 @@ pnpm start
 
 ### Hermes
 
-Установка Hermes, первичная настройка provider/model и первый smoke test описаны
+Установка/проверка CLI Hermes и первый smoke test описаны
 в разделе [Первый запуск Hermes](#первый-запуск-hermes). Здесь приведены команды
-интеграции Ebb; production Runs используют активный Hermes home/profile пользователя.
+интеграции Ebb; production Runs запускаются через установленный CLI Hermes
+с явным выбором провайдера/модели из реестра Ebb — пользовательский профиль
+не используется.
 
 ```bash
 pnpm hermes:setup
@@ -558,15 +566,14 @@ cp .env.example .env
 
 Секреты интеграций Ebb Orchestrator, например GitHub или Infisical, не храните
 в `.env` или Git; в production передавайте их через защищённое окружение или
-secret manager. Настройки из корневого `.env` относятся к приложению Ebb и не
-используются для аутентификации Hermes у AI-провайдера. По
-[системному дизайну](docs/architecture/specs/01-system-design.md) выбор
-провайдера и разрешение его учётных данных принадлежат `Agent Runtime`; для
-Hermes credentials должны разрешаться его встроенным механизмом, без
-дублирования provider credentials или endpoint/key mapping в Ebb `.env` или
-`SecretStore`. [Руководство по Hermes](docs/development/05-hermes.md) описывает
-project trust и подтверждённый Windows provider acceptance, а также честно
-перечисляет незакрытые recovery, cross-platform и clean-checkout проверки.
+secret manager. Выбор ИИ-провайдера/модели для Runs принадлежит Ebb: список
+доступных built-in провайдеров Hermes и текущий выбор отображаются в Settings Web
+UI, API-ключи хранятся только в `EBB_ORCHESTRATOR_HOME/.env` (изолированно от
+репозитория) и не попадают в корневой `.env`, SecretStore, SQLite, логи или
+артефакты. Пользовательские Hermes home/profile/config/auth не читаются, не
+копируются и не меняются. [Руководство по Hermes](docs/development/05-hermes.md)
+описывает project trust и подтверждённый Windows provider acceptance, а также
+честно перечисляет незакрытые recovery, cross-platform и clean-checkout проверки.
 
 Для параметров самого приложения приоритет значений: окружение процесса, затем
 корневой `.env`, затем defaults приложения.
