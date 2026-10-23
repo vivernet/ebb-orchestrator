@@ -36,6 +36,7 @@ import type { SecretStore } from "../security/secret-store.js";
 import { createProviderSettingsRepository } from "../../modules/runtime/providers/provider-settings-repository.js";
 import { createProviderCredentialStore } from "../../modules/runtime/providers/provider-credential-store.js";
 import { ProviderNetworkGateway } from "../../modules/runtime/providers/provider-network-gateway.js";
+import { ProviderAuthFlowService } from "../../modules/runtime/providers/auth/provider-auth-flow.js";
 import { PROVIDER_ADAPTER_REGISTRY } from "../../modules/runtime/providers/adapters/registry.js";
 import { ProviderAgentRuntime } from "../../modules/runtime/providers/provider-agent-runtime.js";
 import { loadValidatedCapability } from "../../modules/execution/capability-validation.js";
@@ -159,6 +160,16 @@ export function createProductionComposition(options: ProductionCompositionOption
   };
 
   /**
+   * Создаёт сервис авторизации провайдеров (plan-24 Task 4). Требует
+   * SecretStore: без keyring сервис не создаётся (fail-closed).
+   */
+  const createProviderAuthFlowService = (secretStore: NonNullable<ProductionCompositionOptions["secretStore"]>) => new ProviderAuthFlowService({
+    gateway: providerGateway,
+    credentialStore: createProviderCredentialStore(secretStore, providerSettingsRepository),
+    settingsRepository: providerSettingsRepository,
+  });
+
+  /**
    * Создаёт полный набор recovery callbacks после migrations. Они выполняются
    * lifecycle до старта workers и перехода в READY; Git checks остаются local-only.
    */
@@ -237,6 +248,8 @@ export function createProductionComposition(options: ProductionCompositionOption
     providerAgentRuntimeFactory,
     providerSettingsRepository,
     providerGateway,
+    /** Сервис авторизации провайдеров (plan-24 Task 4); создаётся с SecretStore. */
+    createProviderAuthFlowService,
     providerAdapterRegistry: PROVIDER_ADAPTER_REGISTRY,
     createStartupReconciliation,
     /** Создаёт shared production queue без запуска timer/runtime; lifecycle запускает её до READY. */

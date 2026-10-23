@@ -213,6 +213,45 @@ export class ProviderCredentialStore {
     }
   }
 
+  /**
+   * Читает текущий payload credentials для управляющих операций (refresh/
+   * ротация, disconnect). В отличие от `resolveCredentialForRun`, не требует
+   * ревизии снимка Run: это management-путь auth-flow (Task 4). Возвращает
+   * ограниченный объект без изменений хранилища; вызывающий код обязан не
+   * логировать значения и не возвращать их наружу.
+   */
+  async readCredentialPayload(
+    providerId: string,
+    authMethodId: string,
+  ): Promise<Readonly<Record<string, string>>> {
+    const metadata = this.repository.getCredentialMetadata(providerId, authMethodId);
+    if (!metadata) {
+      throw new ProviderCredentialMissingError(`Credential for '${providerId}/${authMethodId}' is not configured`);
+    }
+    if (metadata.status !== "ACTIVE") {
+      throw new ProviderCredentialMissingError(`Credential for '${providerId}/${authMethodId}' is not active`);
+    }
+    let value: string | undefined;
+    try {
+      value = await this.secretStore.resolveForService(PROVIDER_CREDENTIAL_SERVICE, metadata.secretName);
+    } catch (error) {
+      if (isSecretStoreUnavailableError(error)) {
+        throw new ProviderCredentialStoreUnavailableError();
+      }
+      throw error;
+    }
+    if (value === undefined) {
+      throw new ProviderCredentialMissingError(`Credential value for '${providerId}/${authMethodId}' is missing`);
+    }
+    const parsed = JSON.parse(value) as Record<string, string>;
+    for (const key of Object.keys(parsed)) {
+      if (typeof parsed[key] !== "string") {
+        throw new ProviderCredentialMissingError(`Credential field '${key}' has invalid type`);
+      }
+    }
+    return parsed;
+  }
+
   /** Удаляет локальный credential провайдера: keyring + метаданные (транзакционно по метаданным). */
   async deleteLocalCredential(providerId: string, authMethodId: string): Promise<boolean> {
     const metadata = this.repository.getCredentialMetadata(providerId, authMethodId);

@@ -165,6 +165,7 @@ const production = createProductionComposition({
   home,
 });
 const { paths: productionPaths, runtime, artifactStore, epicWorkspaceProvisioner, taskWorkspaceProvisioner, integrationServiceFactory, epicMergeAuthority, agentEventBus } = production;
+const providerAuthFlows = production.createProviderAuthFlowService(secretStore);
 const workflowRegistry = new WorkflowRegistry();
 for (const template of Object.values(templates)) workflowRegistry.register(template);
 const workflowEngine = new WorkflowEngine(database, workflowRegistry);
@@ -208,7 +209,7 @@ const epicOrchestrator = new EpicOrchestrator(
 );
 mkdirSync(home.artifacts, { recursive: true });
 
-const app = createApp({ host, port, db: database, scheduler, runtime, runService, artifactStore, secretStore, epicOrchestrator, status, eventBus, authService, approvalService, onboardingService, projectConfigService, humanFeedbackService, githubSyncWorker, diagnostics, ...(existsSync(webRoot) ? { webRoot } : {}) });
+const app = createApp({ host, port, db: database, scheduler, runtime, runService, artifactStore, secretStore, epicOrchestrator, status, eventBus, authService, approvalService, onboardingService, projectConfigService, humanFeedbackService, githubSyncWorker, diagnostics, providerAuthFlows, ...(existsSync(webRoot) ? { webRoot } : {}) });
 
 // Composition собирает callbacks после migrations; lifecycle запускает их
 // до workers, listener и перехода в READY.

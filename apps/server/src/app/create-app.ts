@@ -7,7 +7,7 @@
  * @see spec §13.2 — режим только loopback, аутентификация local session,
  *                    валидация origin, защита CSRF, закрытый CORS и SSE для live-обновлений.
  */
-import Fastify, { type FastifyInstance } from "fastify";
+import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { extname, isAbsolute, relative, resolve, sep } from "node:path";
 import { AUTH_CONTRACT_VERSION, AUTH_COOKIE_CONTRACT, AUTH_TOKEN_BYTES, type AuthErrorCode } from "@ebb-orchestrator/contracts";
@@ -38,6 +38,8 @@ import { schedulerRoutes } from "./routes/scheduler.js";
 import { githubRoutes } from "./routes/github.js";
 import { diagnosticsRoutes } from "./routes/diagnostics.js";
 import { secretsRoutes } from "./routes/secrets.js";
+import { providerAuthRoutes } from "./routes/provider-auth.js";
+import type { ProviderAuthFlowService } from "../modules/runtime/providers/auth/provider-auth-flow.js";
 import type { GitHubSyncWorker } from "../modules/github/github-sync-worker.js";
 import type { DiagnosticsService } from "../platform/diagnostics/diagnostics-service.js";
 import type { SecretStore } from "../platform/security/secret-store.js";
@@ -98,6 +100,8 @@ export interface AppDeps {
   authService: AuthService;
   /** Test/custom seams для Hermes status route (резолв executable и проба версии). */
   hermesStatus?: HermesStatusRouteDeps;
+  /** Сервис авторизации провайдеров (plan-24 Task 4); без него auth-маршруты отвечают 503. */
+  providerAuthFlows?: ProviderAuthFlowService;
 }
 
 export type OrchestratorApp = FastifyInstance;
@@ -209,6 +213,7 @@ export function createApp(deps: AppDeps): OrchestratorApp {
           sendAuthError(reply, authenticated.code === "UNAVAILABLE" ? 503 : authenticated.code === "SESSION_INVALID" ? 401 : 403, authenticated.code === "UNAVAILABLE" ? "AUTH_UNAVAILABLE" : authenticated.code === "SESSION_INVALID" ? "AUTH_SESSION_INVALID" : "AUTH_CSRF_INVALID");
           return reply;
         }
+        (request as FastifyRequest & { sessionId?: string }).sessionId = authenticated.value.id;
         return;
       }
 
@@ -217,6 +222,7 @@ export function createApp(deps: AppDeps): OrchestratorApp {
         sendAuthError(reply, authenticated.code === "UNAVAILABLE" ? 503 : 401, authenticated.code === "UNAVAILABLE" ? "AUTH_UNAVAILABLE" : "AUTH_SESSION_INVALID");
         return reply;
       }
+      (request as FastifyRequest & { sessionId?: string }).sessionId = authenticated.value.id;
     } finally {
       rawCsrfToken?.fill(0);
       rawSessionToken.fill(0);
@@ -301,6 +307,8 @@ export function createApp(deps: AppDeps): OrchestratorApp {
     await humanFeedbackRoutes(instance, { ...(humanFeedbackService ? { service: humanFeedbackService } : {}), ...(deps.githubSyncWorker ? { worker: deps.githubSyncWorker } : {}) });
     await settingsRoutes(instance, { scheduler: deps.scheduler });
     await hermesStatusRoutes(instance, deps.hermesStatus ?? {});
+    const providerAuthDeps = deps.providerAuthFlows ? { service: deps.providerAuthFlows } : {};
+    await providerAuthRoutes(instance, providerAuthDeps);
     await usageRoutes(instance, { db: deps.db });
     await secretsRoutes(instance, {
       db: deps.db,
