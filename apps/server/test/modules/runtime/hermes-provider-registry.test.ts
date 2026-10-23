@@ -4,7 +4,6 @@ import {
   assertSupportedModel,
   listSupportedModels,
   resolveProviderForModel,
-  type ProviderRegistryEntry,
 } from "../../../src/modules/runtime/hermes/hermes-provider-registry.js";
 
 /** Документированные стандартные env-имена built-in провайдеров (контракт Task 1). */

@@ -7,7 +7,9 @@ import { computeDarwinExecutableIdentity, DarwinRunSupervisor, parseInspection, 
 import type { ProcessScopeLaunchRequest } from "../../../src/platform/process/run-scope-supervisor.js";
 
 const spawnHarness = vi.hoisted(() => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { EventEmitter } = require("node:events");
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { Duplex, PassThrough } = require("node:stream");
   type FakePassThrough = InstanceType<typeof PassThrough>;
   class FakeControl extends Duplex {

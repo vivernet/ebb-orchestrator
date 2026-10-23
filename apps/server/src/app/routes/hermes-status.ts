@@ -38,11 +38,9 @@ export async function hermesStatusRoutes(app: FastifyInstance, deps: HermesStatu
   app.get("/api/v1/hermes/status", async (): Promise<HermesStatusProjection> => {
     let hermesVersion: string | null = null;
     try {
-      const resolution = await resolveExecutable();
-      hermesVersion = await probeVersion(resolution);
+      hermesVersion = await probeVersion(await resolveExecutable());
     } catch {
       // Резолв/проба недоступны — версия остаётся null; статус не падает.
-      hermesVersion = null;
     }
 
     const modelSelection = listSupportedModels().map((entry) => ({

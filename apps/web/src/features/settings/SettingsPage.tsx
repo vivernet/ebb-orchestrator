@@ -15,6 +15,10 @@ function providerModelLabel(model: string): string {
   return model === 'default' ? 'по умолчанию (Ebb)' : model;
 }
 
+/**
+ * Страница «Настройки»: показывает read-only projection действующей иерархии
+ * конфигурации и параметров безопасности; при ошибке загрузки предлагает retry.
+ */
 export default function SettingsPage() {
   const settingsPath = toClientPath(apiPaths.settings);
   const fetcher = useCallback((signal: AbortSignal) => apiClient.get<SettingsProjection>(settingsPath, { signal }), [settingsPath]);
