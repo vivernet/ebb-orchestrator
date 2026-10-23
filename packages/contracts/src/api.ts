@@ -136,10 +136,21 @@ export interface EpicOverviewProjection { epic: unknown; contract: unknown; life
 export interface TaskOverviewProjection { task: unknown; contract: unknown; lifecycle: LifecycleProjection; git: GitProjection; runs: TaskRunProjection[]; findings: unknown[]; defects: unknown[]; dependencies: DependencyProjection[]; approvals: ApprovalProjection[]; events: EventProjection[]; usage: UsageSummary; scheduler: SchedulerEligibilityProjection; }
 /** Авторитетные scheduler fields, доступные Settings без выдумывания model/security policy. */
 export interface SchedulerSettingsProjection { schemaVersion: number | null; globalMax: number | null; projectMax: number | null; roleCapacity: Record<string, number> | null; }
+/** Одна запись выбора модели: имя модели, провайдер и признак настроенного ключа (без значения). */
+export interface ModelOptionProjection { model: string; provider: string; keyConfigured: boolean; }
 /** Read-only Settings projection с явными unavailable/null для неподтверждённых scopes. */
 export interface SettingsProjection {
   effectiveHierarchy: { global: SchedulerSettingsProjection; project: null; role: null; taskEpic: null };
   securitySettings: { mostRestrictiveWins: boolean | null; localModeEnabled: boolean | null };
+  providerSelection: { defaultModel: string; models: ModelOptionProjection[] };
+}
+/** Read-only статус установленного Hermes; без секретов и endpoint URL провайдеров. */
+export interface HermesStatusProjection {
+  hermesVersion: string | null;
+  defaultProvider: string;
+  defaultModel: string;
+  keyConfigured: boolean;
+  modelSelection: ModelOptionProjection[];
 }
 /** Снимок очереди Scheduler с активными, ожидающими и заблокированными Task. */
 export interface ExecutionQueueProjection { running: ActiveAgent[]; waiting: Array<{ taskId: string; reason: WaitReason }>; blocked: Array<{ taskId: string; reason: ProjectionBlockReason }>; }
@@ -329,6 +340,7 @@ export const apiPaths = {
   runRecovery: (id: string) => `/api/v1/runs/${pathSegment(id)}/recovery`,
   usage: "/api/v1/usage",
   settings: "/api/v1/settings",
+  hermesStatus: "/api/v1/hermes/status",
   onboardingDiscover: "/api/v1/onboarding/discover",
   onboarding: (id: string) => `/api/v1/onboarding/${pathSegment(id)}`,
   onboardingApproval: (id: string) => `/api/v1/onboarding/${pathSegment(id)}/approval`,

@@ -16,6 +16,7 @@ import { healthRoutes } from "./routes/health.js";
 import { eventRoutes } from "./routes/events.js";
 import { onboardingRoutes, type OnboardingCommandService } from "./routes/onboarding.js";
 import { settingsRoutes } from "./routes/settings.js";
+import { hermesStatusRoutes, type HermesStatusRouteDeps } from "./routes/hermes-status.js";
 import { usageRoutes } from "./routes/usage.js";
 import type { Database } from "../platform/database/database.js";
 import { DashboardProjection } from "./read-models/dashboard-projection.js";
@@ -95,6 +96,8 @@ export interface AppDeps {
   webRoot?: string;
   /** Единственная auth authority; production не использует process-local session. */
   authService: AuthService;
+  /** Test/custom seams для Hermes status route (резолв executable и проба версии). */
+  hermesStatus?: HermesStatusRouteDeps;
 }
 
 export type OrchestratorApp = FastifyInstance;
@@ -297,6 +300,7 @@ export function createApp(deps: AppDeps): OrchestratorApp {
     await projectConfigRoutes(instance, projectConfigService ? { service: projectConfigService } : {});
     await humanFeedbackRoutes(instance, { ...(humanFeedbackService ? { service: humanFeedbackService } : {}), ...(deps.githubSyncWorker ? { worker: deps.githubSyncWorker } : {}) });
     await settingsRoutes(instance, { scheduler: deps.scheduler });
+    await hermesStatusRoutes(instance, deps.hermesStatus ?? {});
     await usageRoutes(instance, { db: deps.db });
     await secretsRoutes(instance, {
       db: deps.db,

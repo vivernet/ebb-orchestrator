@@ -51,6 +51,35 @@ function makeAppWithDatabase() {
   return { app: createApp({ db, scheduler, runtime: mockRuntime, authService, approvalService, onboardingService }), db, authService };
 }
 
+const originalProviderEnv = {
+  home: process.env.EBB_ORCHESTRATOR_HOME,
+  openai: process.env.OPENAI_API_KEY,
+  anthropic: process.env.ANTHROPIC_API_KEY,
+};
+
+function restoreProviderEnv(): void {
+  if (originalProviderEnv.home === undefined) delete process.env.EBB_ORCHESTRATOR_HOME;
+  else process.env.EBB_ORCHESTRATOR_HOME = originalProviderEnv.home;
+  if (originalProviderEnv.openai === undefined) delete process.env.OPENAI_API_KEY;
+  else process.env.OPENAI_API_KEY = originalProviderEnv.openai;
+  if (originalProviderEnv.anthropic === undefined) delete process.env.ANTHROPIC_API_KEY;
+  else process.env.ANTHROPIC_API_KEY = originalProviderEnv.anthropic;
+}
+
+/** Направляет `loadOrchestratorEnv` в пустой временный home (все keyConfigured = false). */
+async function withEmptyOrchestratorHome(fn: () => Promise<void>): Promise<void> {
+  const home = await mkdtemp(join(tmpdir(), "ebb-status-home-"));
+  try {
+    process.env.EBB_ORCHESTRATOR_HOME = home;
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    await fn();
+  } finally {
+    restoreProviderEnv();
+    await rm(home, { recursive: true, force: true });
+  }
+}
+
 const validContract = {
   version: 1,
   goal: "Implement health endpoint",
@@ -568,5 +597,71 @@ describe("orchestrator read API", () => {
     });
     expect(response.statusCode).toBe(400);
     await app.close();
+  });
+
+  it("exposes Hermes status with model selection and without secrets", async () => {
+    await withEmptyOrchestratorHome(async () => {
+      const app = makeApp();
+      const response = await app.inject({
+        method: "GET",
+        url: "/api/v1/hermes/status",
+        headers: { cookie: TEST_COOKIE },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.headers["content-type"]).toContain("application/json");
+      const body = JSON.parse(response.body);
+      expect(body.hermesVersion === null || typeof body.hermesVersion === "string").toBe(true);
+      expect(body.defaultProvider).toBe("hermes-managed");
+      expect(body.defaultModel).toBe("default");
+      expect(body.keyConfigured).toBe(false);
+      expect(Array.isArray(body.modelSelection)).toBe(true);
+      expect(body.modelSelection.length).toBeGreaterThan(0);
+      for (const entry of body.modelSelection) {
+        expect(typeof entry.model).toBe("string");
+        expect(typeof entry.provider).toBe("string");
+        expect(entry.keyConfigured).toBe(false);
+      }
+      expect(response.body).not.toContain("OPENAI_API_KEY");
+      expect(response.body).not.toContain("ANTHROPIC_API_KEY");
+      expect(response.body).not.toMatch(/sk-[A-Za-z0-9]{8,}/);
+      await app.close();
+    });
+  });
+
+  it("reports null hermesVersion when the Hermes CLI is unavailable", async () => {
+    await withEmptyOrchestratorHome(async () => {
+      const db = createSqliteDatabase(":memory:");
+      runMigrations(db, migrations);
+      const scheduler = new SchedulerService(db);
+      const app = createApp({
+        db,
+        scheduler,
+        runtime: mockRuntime,
+        authService: createTestAuthService(),
+        hermesStatus: {
+          resolveHermesExecutable: async () => {
+            throw new Error("HERMES_LAUNCHER_NOT_FOUND");
+          },
+        },
+      });
+
+      const response = await app.inject({
+        method: "GET",
+        url: "/api/v1/hermes/status",
+        headers: { cookie: TEST_COOKIE },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.body);
+      expect(body.hermesVersion).toBeNull();
+      expect(body.defaultProvider).toBe("hermes-managed");
+      expect(body.defaultModel).toBe("default");
+      expect(Array.isArray(body.modelSelection)).toBe(true);
+      expect(body.modelSelection.length).toBeGreaterThan(0);
+      expect(response.body).not.toContain("OPENAI_API_KEY");
+      await app.close();
+      db.close();
+    });
   });
 });
