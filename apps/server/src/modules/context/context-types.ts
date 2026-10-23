@@ -155,6 +155,11 @@ export interface ContextFingerprintInputV1 {
   runtimeVersion: string | null;
   model: string | null;
   modelVersion: string | null;
+  /**
+   * Имя выбранного провайдера для явной модели Run; опускается для `default`,
+   * чтобы старые baseline без этого поля оставались валидными (dual-version).
+   */
+  providerName?: string;
   outputSchemaVersion: string | null;
   contextVersion: string | null;
   workspaceIdentity: ContextWorkspaceIdentityV1;

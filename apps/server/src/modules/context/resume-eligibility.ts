@@ -18,7 +18,7 @@ export function createResumeContextBaselineV1(fingerprint: ContextFingerprintInp
   return { formatVersion: 1, fingerprint: projection };
 }
 
-/** Разбирает strict persisted baseline; неизвестные поля, версия и повторные JSON keys запрещают recovery. */
+/** Разбирает strict persisted baseline; принимает обе схемы v1 (с `providerName` и без — dual-version); неизвестные поля, версия и повторные JSON keys запрещают recovery. */
 export function decodeResumeContextBaselineV1(source: string): ContextResumeBaselineV1 {
   try {
     const parsed = parsePersistedContextJsonV1(source);

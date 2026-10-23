@@ -18,7 +18,7 @@ import { realpathSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import * as path from "node:path";
 import { RunContextAssembler } from "./run-context-assembler.js";
-import type { PreparedRunContext } from "../context/context-types.js";
+import type { PreparedRunContext, ContextFingerprintInputV1 } from "../context/context-types.js";
 import { getContextManifest, insertContextManifestTx } from "../context/context-manifest-repository.js";
 import {
   containmentKindForPlatform,
@@ -39,7 +39,7 @@ import { assertResumeContextEligible, captureWorkspaceSnapshotV1, createResumeCo
 import type { HermesSessionCapture, HermesSessionCapturePort } from "./hermes-session-capture-port.js";
 import { bindHermesRunSelectionToOptions } from "./hermes/hermes-run-selection.js";
 import type { HermesRuntimeSelection } from "./hermes/hermes-run-selection.js";
-import { assertSupportedModel } from "./hermes/hermes-provider-registry.js";
+import { assertSupportedModel, resolveProviderForModel } from "./hermes/hermes-provider-registry.js";
 import { DEVELOPER_COMMIT_SHA_INSTRUCTION } from "./prompt-builder.js";
 import { classifyProviderError } from "./provider-errors.js";
 import { UsageCounter, type ModelUsage } from "./usage-counter.js";
@@ -55,6 +55,9 @@ import {
   type TracingPayload,
 } from "./tracing/tracing-payload.js";
 import { recordGenAiUsageTelemetry } from "../../platform/observability/otel.js";
+
+/** Версия контекстного builder для fingerprint входов после включения имени провайдера (dual-version). */
+const FINGERPRINT_CONTEXT_BUILDER_VERSION = "1.0.1";
 
 export interface HermesRunPreflight {
   readonly options: StartRunOptions;
@@ -513,10 +516,10 @@ export class RunService {
       execution: { workspaceIdentity, targetHead, targetBranch, effectiveCapabilityIds: capability.allowedTools,
         policyIdentity: { providerId: null, providerPolicyId: null, runtimeId: run.runtime, runtimePolicyId: null } } };
     const reconstructed = this.db.transaction((tx) => {
-      const withoutTrailingNewline = this.contextAssembler.prepare(tx, input);
+      const withoutTrailingNewline = this.prepareContextWithFingerprint(tx, input, baseline);
       if (withoutTrailingNewline.promptHash === baseline.promptHash) return withoutTrailingNewline;
       // Assembler appends one newline to a caller prefix already ending in newline; hash selects the exact prefix.
-      const withTrailingNewline = this.contextAssembler.prepare(tx, { ...input, prompt: `${input.prompt}\n` });
+      const withTrailingNewline = this.prepareContextWithFingerprint(tx, { ...input, prompt: `${input.prompt}\n` }, baseline);
       return withTrailingNewline.promptHash === baseline.promptHash ? withTrailingNewline : withoutTrailingNewline;
     });
     this.verifyResumeContext(runId, { reconstructedContextHash: reconstructed.contextHash,
@@ -561,7 +564,7 @@ export class RunService {
     const input = this.contextInput(options);
     this.assertEffectiveCapabilities(options, input);
     return this.db.transaction((tx) => {
-      const prepared = this.contextAssembler.prepare(tx, input);
+      const prepared = this.prepareContextWithFingerprint(tx, input);
       return this.prepareRunInTransaction(tx, { ...options, prompt: prepared.finalPrompt }, prepared);
     });
   }
@@ -572,7 +575,7 @@ export class RunService {
   prepareRunContext(options: StartRunOptions): PreparedRunContext {
     const input = this.contextInput(options);
     this.assertEffectiveCapabilities(options, input);
-    return this.db.transaction((tx) => this.contextAssembler.prepare(tx, input));
+    return this.db.transaction((tx) => this.prepareContextWithFingerprint(tx, input));
   }
 
   /**
@@ -654,7 +657,7 @@ export class RunService {
       const input = this.contextInput(boundOptions);
       this.assertEffectiveCapabilities(boundOptions, input);
       const run = this.db.transaction((tx) => {
-        const prepared = this.contextAssembler.prepare(tx, input);
+        const prepared = this.prepareContextWithFingerprint(tx, input);
         return this.prepareRunInTransaction(tx, { ...boundOptions, prompt: prepared.finalPrompt }, prepared);
       });
       await commit();
@@ -674,7 +677,7 @@ export class RunService {
       assertPreparedRunBinding(options, preparedContext);
       const input = this.contextInput(options);
       this.assertEffectiveCapabilities(options, input);
-      const recomputed = this.contextAssembler.prepare(tx, input);
+      const recomputed = this.prepareContextWithFingerprint(tx, input);
       assertPreparedRunContextEqual(recomputed, preparedContext);
       const requestPlanning = options.taskId === null && options.epicId === null;
       const epicExecution = options.taskId === null && options.epicId !== null;
@@ -1010,6 +1013,38 @@ export class RunService {
     const input = options.contextInput;
     if (!input) throw new Error("PREPARED_CONTEXT_INPUT_REQUIRED");
     return input;
+  }
+
+  /**
+   * Готовит контекст и дополняет fingerprint-input именем провайдера для явной модели.
+   * Для свежих Run версия builder инкрементируется, а `providerName` добавляется только
+   * при разрешённой явной модели (`default` и неизвестные модели опускают поле).
+   * Для восстановления (`baselineFingerprint`) сохраняется схема сохранённой baseline:
+   * отсутствие поля `providerName` не добавляет его, а версия builder берётся из baseline,
+   * чтобы исторические Run оставались сверяемыми без пересчёта старых манифестов.
+   */
+  private prepareContextWithFingerprint(
+    tx: DatabaseTx,
+    input: PrepareRunContextInput,
+    baselineFingerprint?: ContextResumeBaselineV1["fingerprint"],
+  ): PreparedRunContext {
+    const prepared = this.contextAssembler.prepare(tx, input);
+    const fingerprint = prepared.fingerprintInput;
+    if (!fingerprint) return prepared;
+    const resumeMode = baselineFingerprint !== undefined;
+    const baselineHasProviderName = resumeMode && Object.prototype.hasOwnProperty.call(baselineFingerprint, "providerName");
+    const providerName = input.versions.model !== null && input.versions.model !== "default"
+      ? resolveProviderForModel(input.versions.model)?.provider
+      : undefined;
+    const includeProviderName = resumeMode ? baselineHasProviderName : providerName !== undefined;
+    const builderVersion = resumeMode ? baselineFingerprint!.contextBuilderVersion : FINGERPRINT_CONTEXT_BUILDER_VERSION;
+    if (builderVersion === fingerprint.contextBuilderVersion && !includeProviderName) return prepared;
+    const fingerprintInput: ContextFingerprintInputV1 = {
+      ...fingerprint,
+      contextBuilderVersion: builderVersion,
+      ...(includeProviderName && providerName !== undefined ? { providerName } : {}),
+    };
+    return { ...prepared, fingerprintInput, contextHash: digestRunContextV1(fingerprintInput) };
   }
 
   private assertEffectiveCapabilities(options: StartRunOptions, input: PrepareRunContextInput): void {

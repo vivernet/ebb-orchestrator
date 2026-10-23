@@ -369,7 +369,7 @@ export function digestRunContextV1(input: ContextFingerprintInputV1): string {
     'role', 'roleVersion', 'runtime', 'runtimeVersion', 'model', 'modelVersion', 'outputSchemaVersion',
     'contextVersion', 'workspaceIdentity', 'targetHead',
     'targetBranch', 'effectiveCapabilityIds', 'projectConfigRevisionId', 'projectConfigHash', 'policyIdentity',
-  ], 'Run context fingerprint');
+  ], 'Run context fingerprint', ['providerName']);
   assertSha256(input.promptHash, 'promptHash');
   if (!['TASK', 'EPIC', 'REQUEST'].includes(input.subjectType)) {
     throw new TypeError('Run context subjectType must be TASK, EPIC, or REQUEST.');
@@ -383,6 +383,7 @@ export function digestRunContextV1(input: ContextFingerprintInputV1): string {
   assertNullableNonEmptyString(input.runtimeVersion, 'runtimeVersion');
   assertNullableNonEmptyString(input.model, 'model');
   assertNullableNonEmptyString(input.modelVersion, 'modelVersion');
+  if (input.providerName !== undefined) assertNonEmptyString(input.providerName, 'providerName');
   assertNullableNonEmptyString(input.outputSchemaVersion, 'outputSchemaVersion');
   assertNullableNonEmptyString(input.contextVersion, 'contextVersion');
   assertNullableNonEmptyString(input.targetHead, 'targetHead');
@@ -421,6 +422,7 @@ export function digestRunContextV1(input: ContextFingerprintInputV1): string {
     runtime_version: input.runtimeVersion,
     model: input.model,
     model_version: input.modelVersion,
+    ...(input.providerName !== undefined ? { provider_name: input.providerName } : {}),
     output_schema_version: input.outputSchemaVersion,
     context_version: input.contextVersion,
     workspace_identity: {
@@ -566,7 +568,7 @@ function digestCanonicalValue(domain: string, value: unknown): string {
   return sha256DomainDigest(domain, new TextEncoder().encode(canonicalizeContextValueV1(value)));
 }
 
-function assertExactFields(value: unknown, required: readonly string[], label: string): asserts value is Record<string, unknown> {
+function assertExactFields(value: unknown, required: readonly string[], label: string, optional: readonly string[] = []): asserts value is Record<string, unknown> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     throw new TypeError(`${label} must be a plain object.`);
   }
@@ -575,10 +577,10 @@ function assertExactFields(value: unknown, required: readonly string[], label: s
   const ownKeys = Reflect.ownKeys(value);
   if (ownKeys.some((key) => typeof key !== 'string')) throw new TypeError(`${label} must not contain symbol fields.`);
   const fields = ownKeys as string[];
-  const expected = new Set(required);
-  if (fields.length !== expected.size || fields.some((field) => !expected.has(field))) {
-    const missing = required.filter((field) => !fields.includes(field));
-    const extra = fields.filter((field) => !expected.has(field));
+  const expected = new Set([...required, ...optional]);
+  const missing = required.filter((field) => !fields.includes(field));
+  const extra = fields.filter((field) => !expected.has(field));
+  if (missing.length > 0 || extra.length > 0) {
     throw new TypeError(`${label} fields do not match the v1 contract (missing: ${missing.join(', ') || 'none'}; extra: ${extra.join(', ') || 'none'}).`);
   }
   for (const field of fields) {

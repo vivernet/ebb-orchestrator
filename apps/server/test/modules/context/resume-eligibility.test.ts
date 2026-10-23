@@ -55,6 +55,40 @@ describe("resume context eligibility", () => {
     expect(decodeResumeContextBaselineV1(source)).toEqual(baseline);
     expect(() => decodeResumeContextBaselineV1(source.replace('"formatVersion":1', '"formatVersion":2'))).toThrow("RESUME_BASELINE_UNAVAILABLE");
   });
+  it("accepts both baseline schemas: with and without providerName (dual-version)", () => {
+    const base: ContextFingerprintInputV1 = {
+      promptHash: "a".repeat(64), subjectType: "TASK", subjectId: "task-1", contractOrRequestDigest: "b".repeat(64),
+      items: [], contextBuilderVersion: "1", role: "developer", roleVersion: "1", runtime: "hermes",
+      runtimeVersion: "1", model: "model-a", modelVersion: null, outputSchemaVersion: "1", contextVersion: "1",
+      workspaceIdentity: { repository: "private-repo-path", workspace: "private-workspace-path", worktree: "private-worktree-path" },
+      targetHead: "a".repeat(40), targetBranch: "task-1", effectiveCapabilityIds: ["workspace.read"],
+      projectConfigRevisionId: null, projectConfigHash: null,
+      policyIdentity: { providerId: null, providerPolicyId: null, runtimeId: "default", runtimePolicyId: null },
+    };
+    // Старая запись без providerName по-прежнему валидна.
+    const legacyBaseline = createResumeContextBaselineV1(base);
+    expect(decodeResumeContextBaselineV1(JSON.stringify(legacyBaseline))).toEqual(legacyBaseline);
+    // Новая запись с providerName тоже.
+    const withProvider = { ...base, providerName: "anthropic" };
+    const baseline = createResumeContextBaselineV1(withProvider);
+    const source = JSON.stringify(baseline);
+    expect(source).toContain("providerName");
+    expect(decodeResumeContextBaselineV1(source)).toEqual(baseline);
+  });
+  it("fails closed for a malformed providerName in a persisted baseline", () => {
+    const base: ContextFingerprintInputV1 = {
+      promptHash: "a".repeat(64), subjectType: "TASK", subjectId: "task-1", contractOrRequestDigest: "b".repeat(64),
+      items: [], contextBuilderVersion: "1", role: "developer", roleVersion: "1", runtime: "hermes",
+      runtimeVersion: "1", model: "model-a", modelVersion: null, outputSchemaVersion: "1", contextVersion: "1",
+      workspaceIdentity: { repository: "r", workspace: "w", worktree: "t" },
+      targetHead: "a".repeat(40), targetBranch: "task-1", effectiveCapabilityIds: ["workspace.read"],
+      projectConfigRevisionId: null, projectConfigHash: null,
+      policyIdentity: { providerId: null, providerPolicyId: null, runtimeId: "default", runtimePolicyId: null },
+    };
+    const source = JSON.stringify(createResumeContextBaselineV1({ ...base, providerName: "anthropic" }))
+      .replace('"providerName":"anthropic"', '"providerName":123');
+    expect(() => decodeResumeContextBaselineV1(source)).toThrow("RESUME_BASELINE_UNAVAILABLE");
+  });
   it("captures ignored/untracked contents, index changes and stable repeat snapshots without returning raw paths", () => {
     directory = mkdtempSync(join(tmpdir(), "ebb-resume-snapshot-"));
     const git = (args: string[]) => execFileSync("git", ["-c", "core.hooksPath=", ...args], { cwd: directory, stdio: "pipe" });

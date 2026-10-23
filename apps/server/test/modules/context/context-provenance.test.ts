@@ -295,6 +295,52 @@ describe('domain-separated provenance digests', () => {
     expect(unknowns).not.toBe(baseDigest);
   });
 
+  it('keeps the legacy digest without providerName and changes it when the field is included', () => {
+    const legacy = {
+      promptHash: '1'.repeat(64),
+      subjectType: 'TASK',
+      subjectId: 'TASK-1',
+      contractOrRequestDigest: '2'.repeat(64),
+      items: [
+        { id: 'GL-2', version: 2, digest: 'b'.repeat(64) },
+        { id: 'GL-1', version: null, digest: null },
+      ],
+      contextBuilderVersion: '2.1.0',
+      role: 'developer',
+      roleVersion: null,
+      runtime: 'hermes',
+      runtimeVersion: '1.0.0',
+      model: 'model-a',
+      modelVersion: '2026-01',
+      outputSchemaVersion: 'output-v1',
+      contextVersion: 'context-v1',
+      workspaceIdentity: { repository: 'C:/repo', workspace: 'C:/repo/.ebb-orchestrator/worktrees/TASK-1', worktree: 'TASK-1' },
+      targetHead: 'abcdef0123456789',
+      targetBranch: 'feature/context',
+      effectiveCapabilityIds: ['workspace.read', 'workspace.write'],
+      projectConfigRevisionId: '11111111-1111-4111-8111-111111111111',
+      projectConfigHash: '3'.repeat(64),
+      policyIdentity: {
+        providerId: 'provider-a', providerPolicyId: 'provider-local-v1',
+        runtimeId: 'hermes', runtimePolicyId: 'hermes-local-v1',
+      },
+    } satisfies ContextFingerprintInputV1;
+
+    // Регрессия: старая форма без providerName обязана давать прежний digest.
+    const legacyDigest = semanticDigest('digestRunContextV1', legacy);
+    expect(legacyDigest).toBe('907c1b191f35afb474d4a6b4fa121113b6d06955c54328fee7e80f720fab6616');
+    expect(semanticDigest('digestRunContextV1', { ...legacy })).toBe(legacyDigest);
+
+    // Новое поле меняет hash и стабильно при равных входах.
+    const withProvider = { ...legacy, providerName: 'anthropic' };
+    const providerDigest = semanticDigest('digestRunContextV1', withProvider);
+    expect(providerDigest).not.toBe(legacyDigest);
+    expect(semanticDigest('digestRunContextV1', { ...withProvider })).toBe(providerDigest);
+    expect(semanticDigest('digestRunContextV1', { ...withProvider, providerName: 'openai-api' })).not.toBe(providerDigest);
+    expect(() => semanticDigest('digestRunContextV1', { ...withProvider, providerName: '' })).toThrow(/providerName/i);
+    expect(() => semanticDigest('digestRunContextV1', { ...withProvider, providerName: 123 as unknown as string })).toThrow(/providerName/i);
+  });
+
   it('sorts item provenance tuples deterministically while preserving null unknowns', () => {
     const digestA = 'a'.repeat(64);
     const digestB = 'b'.repeat(64);
