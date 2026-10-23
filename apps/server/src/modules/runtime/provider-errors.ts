@@ -33,6 +33,20 @@ export const PROVIDER_ERROR_CODES = [
   "CAPACITY_RATE_LIMIT_EXCEEDED",
   "REQUEST_CONTEXT_WINDOW_EXCEEDED",
   "NETWORK_CONNECTION_REFUSED",
+  // --- plan-24 Task 3: коды provider runtime/gateway (append-only) ---
+  "AUTH_DEVICE_FLOW_TOKEN_MISSING",
+  "REQUEST_TOOL_VALIDATION_FAILED",
+  "REQUEST_PROVIDER_CAPABILITY_UNSUPPORTED",
+  "NETWORK_DNS_RESOLUTION_FAILED",
+  "NETWORK_FORBIDDEN_DESTINATION",
+  "NETWORK_RESPONSE_TOO_LARGE",
+  "NETWORK_REQUEST_TIMEOUT",
+  "STREAM_PROTOCOL_ERROR",
+  "PROVIDER_RESPONSE_PARSE_ERROR",
+  "PROVIDER_API_ERROR",
+  "CONFIG_ENDPOINT_MISSING",
+  "CONFIG_LOCAL_ENDPOINT_NOT_ALLOWED",
+  "PROVIDER_CLOUD_IDENTITY_CREDENTIALS_UNAVAILABLE",
 ] as const;
 export type ProviderErrorCode = typeof PROVIDER_ERROR_CODES[number];
 
@@ -79,6 +93,58 @@ export const PROVIDER_ERROR_SPECS: Readonly<Record<ProviderErrorCode, ProviderEr
   NETWORK_CONNECTION_REFUSED: {
     code: "NETWORK_CONNECTION_REFUSED", numericId: 6001, category: "network",
     severity: "error", attribution: "system", retryable: true,
+  },
+  AUTH_DEVICE_FLOW_TOKEN_MISSING: {
+    code: "AUTH_DEVICE_FLOW_TOKEN_MISSING", numericId: 1010, category: "auth",
+    severity: "warning", attribution: "user", retryable: false,
+  },
+  REQUEST_TOOL_VALIDATION_FAILED: {
+    code: "REQUEST_TOOL_VALIDATION_FAILED", numericId: 4010, category: "request",
+    severity: "warning", attribution: "harness", retryable: false,
+  },
+  REQUEST_PROVIDER_CAPABILITY_UNSUPPORTED: {
+    code: "REQUEST_PROVIDER_CAPABILITY_UNSUPPORTED", numericId: 4020, category: "request",
+    severity: "error", attribution: "harness", retryable: false,
+  },
+  NETWORK_DNS_RESOLUTION_FAILED: {
+    code: "NETWORK_DNS_RESOLUTION_FAILED", numericId: 6010, category: "network",
+    severity: "error", attribution: "system", retryable: true,
+  },
+  NETWORK_FORBIDDEN_DESTINATION: {
+    code: "NETWORK_FORBIDDEN_DESTINATION", numericId: 6020, category: "network",
+    severity: "critical", attribution: "system", retryable: false,
+  },
+  NETWORK_RESPONSE_TOO_LARGE: {
+    code: "NETWORK_RESPONSE_TOO_LARGE", numericId: 6030, category: "network",
+    severity: "error", attribution: "system", retryable: false,
+  },
+  NETWORK_REQUEST_TIMEOUT: {
+    code: "NETWORK_REQUEST_TIMEOUT", numericId: 6040, category: "network",
+    severity: "error", attribution: "system", retryable: true,
+  },
+  STREAM_PROTOCOL_ERROR: {
+    code: "STREAM_PROTOCOL_ERROR", numericId: 7010, category: "stream",
+    severity: "error", attribution: "provider", retryable: true,
+  },
+  PROVIDER_RESPONSE_PARSE_ERROR: {
+    code: "PROVIDER_RESPONSE_PARSE_ERROR", numericId: 7020, category: "stream",
+    severity: "error", attribution: "provider", retryable: false,
+  },
+  PROVIDER_API_ERROR: {
+    code: "PROVIDER_API_ERROR", numericId: 7030, category: "provider",
+    severity: "error", attribution: "provider", retryable: false,
+  },
+  CONFIG_ENDPOINT_MISSING: {
+    code: "CONFIG_ENDPOINT_MISSING", numericId: 9010, category: "config",
+    severity: "warning", attribution: "user", retryable: false,
+  },
+  CONFIG_LOCAL_ENDPOINT_NOT_ALLOWED: {
+    code: "CONFIG_LOCAL_ENDPOINT_NOT_ALLOWED", numericId: 9020, category: "config",
+    severity: "error", attribution: "user", retryable: false,
+  },
+  PROVIDER_CLOUD_IDENTITY_CREDENTIALS_UNAVAILABLE: {
+    code: "PROVIDER_CLOUD_IDENTITY_CREDENTIALS_UNAVAILABLE", numericId: 9030, category: "config",
+    severity: "error", attribution: "user", retryable: false,
   },
 });
 

@@ -5,9 +5,17 @@
 import type { AgentRun } from "@ebb-orchestrator/contracts";
 import type { RunOutcome } from "./run-types.js";
 import type { HermesRuntimeSelection, HermesRunSelectionPreflight } from "./hermes/hermes-run-selection.js";
+import type { RunProviderSelectionRecord } from "./providers/provider-settings-repository.js";
 
-/** AgentRun plus its non-persisted selection for this initial, already-preflighted launch. */
-export type AgentRuntimeRun = AgentRun & { readonly hermesSelection?: HermesRuntimeSelection };
+/**
+ * AgentRun plus its non-persisted selection for this initial, already-preflighted launch.
+ * `providerSelection` — канонический выбор провайдера для provider-рантайма
+ * (потребляет Task 5); Hermes-адаптер его игнорирует.
+ */
+export type AgentRuntimeRun = AgentRun & {
+  readonly hermesSelection?: HermesRuntimeSelection;
+  readonly providerSelection?: RunProviderSelectionRecord;
+};
 
 export interface AgentRuntime {
   /**

@@ -32,6 +32,14 @@ import type { ProjectConfigService } from "../../modules/projects/project-config
 import { SchedulerRunRequestWorker } from "../../modules/scheduler/scheduler-run-request-worker.js";
 import type { WorkflowEngine } from "../../modules/workflow/workflow-engine.js";
 import type { EventBus } from "../events/event-bus.js";
+import type { SecretStore } from "../security/secret-store.js";
+import { createProviderSettingsRepository } from "../../modules/runtime/providers/provider-settings-repository.js";
+import { createProviderCredentialStore } from "../../modules/runtime/providers/provider-credential-store.js";
+import { ProviderNetworkGateway } from "../../modules/runtime/providers/provider-network-gateway.js";
+import { PROVIDER_ADAPTER_REGISTRY } from "../../modules/runtime/providers/adapters/registry.js";
+import { ProviderAgentRuntime } from "../../modules/runtime/providers/provider-agent-runtime.js";
+import { loadValidatedCapability } from "../../modules/execution/capability-validation.js";
+import type { RunProviderSelectionRecord } from "../../modules/runtime/providers/provider-settings-repository.js";
 
 /** Зависимости для построения production adapters без старта процессов. */
 export interface ProductionCompositionOptions {
@@ -43,6 +51,11 @@ export interface ProductionCompositionOptions {
   gitReconciler?: Pick<GitReconciler, "initialize" | "reconcile">;
   /** Платформенный supervisor можно подменить только в provider-free tests. */
   processScopeSupervisor?: ProcessScopeSupervisor;
+  /**
+   * OS SecretStore для provider-credentials (plan-24). При отсутствии
+   * ProviderAgentRuntime регистрируется как недоступный.
+   */
+  secretStore?: SecretStore;
 }
 
 /** Зависимости application services, необходимые для startup recovery callbacks. */
@@ -127,6 +140,24 @@ export function createProductionComposition(options: ProductionCompositionOption
     });
   const artifactStore = new ArtifactStore(home.artifacts, new ArtifactRepository(database));
 
+  /** provider-рантайм (plan-24 Task 3): доступность регистрируется без смены дефолта RunService. */
+  const providerSettingsRepository = createProviderSettingsRepository(database);
+  const providerGateway = new ProviderNetworkGateway();
+  const providerAgentRuntimeFactory = (selectionResolver: (runId: string) => RunProviderSelectionRecord | undefined) => {
+    if (!options.secretStore) {
+      throw new Error("PROVIDER_RUNTIME_SECRET_STORE_UNAVAILABLE");
+    }
+    const credentialStore = createProviderCredentialStore(options.secretStore, providerSettingsRepository);
+    return new ProviderAgentRuntime({
+      gateway: providerGateway,
+      credentialStore,
+      settingsRepository: providerSettingsRepository,
+      registry: PROVIDER_ADAPTER_REGISTRY,
+      loadCapability: (capabilityRef) => loadValidatedCapability(database, capabilityRef),
+      selectionResolver,
+    });
+  };
+
   /**
    * Создаёт полный набор recovery callbacks после migrations. Они выполняются
    * lifecycle до старта workers и перехода в READY; Git checks остаются local-only.
@@ -202,6 +233,11 @@ export function createProductionComposition(options: ProductionCompositionOption
     processExecutor,
     processScopeSupervisor,
     gitReconciler,
+    /** Доступность ProviderAgentRuntime (plan-24 Task 3); RunService-дефолт не меняется. */
+    providerAgentRuntimeFactory,
+    providerSettingsRepository,
+    providerGateway,
+    providerAdapterRegistry: PROVIDER_ADAPTER_REGISTRY,
     createStartupReconciliation,
     /** Создаёт shared production queue без запуска timer/runtime; lifecycle запускает её до READY. */
     createTaskRunQueue: (dependencies: { scheduler: SchedulerService; runs: RunService; workflow: WorkflowEngine; status: StatusTrackerInterface; eventBus: EventBus }) =>
