@@ -4,7 +4,8 @@ const DEFAULT_SCHEME_VERSION = 1;
 const ALL_ROLES = [
   "coordinator", "product-manager", "product_manager",
   "architect", "developer", "middle-developer", "middle_developer",
-  "senior-developer", "senior_developer", "reviewer", "qa",
+  "senior-developer", "senior_developer", "senior_dev",
+  "reviewer", "qa",
   "qa-agent", "qa_agent", "integration", "devops",
 ] as const;
 
@@ -112,7 +113,7 @@ export class SchedulerService {
 
   /** Recovery enqueues новую source-bound попытку вместе с детерминированным Workflow retry. */
   enqueueRunRequestInTransaction(tx: DatabaseTx, input: EnqueueSchedulerRunRequest): SchedulerRunRequest {
-    if (!["developer", "reviewer", "qa", "integration"].includes(input.role)) throw new Error("RUN_REQUEST_ROLE_INVALID");
+    if (!["developer", "reviewer", "qa", "integration", "senior_dev"].includes(input.role)) throw new Error("RUN_REQUEST_ROLE_INVALID");
     const task = tx.get<{ epic_id: string | null }>("SELECT epic_id FROM tasks WHERE id=$id", { id: input.taskId });
     if (!task) throw new Error("RUN_REQUEST_TASK_NOT_FOUND");
     if (task.epic_id !== null) throw new Error("RUN_REQUEST_EPIC_TASK_UNSUPPORTED");

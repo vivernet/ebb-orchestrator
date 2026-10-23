@@ -1,11 +1,11 @@
 ---
 id: plan-21
 kind: plan
-status: superseded
+status: completed
 title: Проверяемое Linux AppArmor attachment evidence
 summary: Исторический план AppArmor evidence; superseded для локальной v1.
 created: 2026-10-09
-updated: 2026-10-10
+updated: 2026-10-23
 depends_on: []
 specs:
   - ../specs/01-system-design.md
@@ -215,3 +215,7 @@ No dependency points to Plan20 as a plan. Plan20 Task5A-WL is a downstream consu
 - Existing Linux prerequisite uses the evaluator before any continuation, while preserving current setup ownership and cleanup/STOPPED contract.
 - The existing hosted Linux job passes on final SHA with parser/oracle tests, native acceptance and teardown; no mock/fixture substitute is represented as live acceptance.
 - Focused, root quality, security, task, whole-change and whole-plan reviews pass; only then may Plan21 complete. Plan20 status is not changed by this plan alone.
+
+## Закрытие плана — 2026-10-23
+
+План переведён из `superseded` в `completed` в соответствии с политикой проекта (статус `superseded` не используется; все планы завершаются статусом `completed`). План остаётся исторической записью: текущая v1 использует обычный установленный Hermes и systemd user service/cgroup; AppArmor policy parsing, user namespaces и profile setup не входят в локальную версию. Решение пользователя Option C по Proposal16 зафиксировало направление отдельного versioned evaluator, однако его реализация не требуется для Plan20/Plan19 и не является частью активных обязательств этого плана. Активных задач и acceptance у плана нет; реализация и live Linux acceptance не требуются.

@@ -5,7 +5,7 @@ kind: roadmap
 title: Ebb Orchestrator Roadmap
 summary: Generated from Plan metadata and dependencies
 created: 2026-09-16
-updated: 2026-10-22
+updated: 2026-10-23
 ---
 
 # Ebb Orchestrator Roadmap
@@ -16,8 +16,8 @@ updated: 2026-10-22
 
 | ID | Status | Title |
 |----|--------|-------|
-| plan-01 | in_progress | План реализации Foundation и Persistence Orchestrator |
-| plan-02 | in_progress | План реализации домена Orchestrator, Workflow, Scheduler и Recovery |
+| plan-01 | completed | План реализации Foundation и Persistence Orchestrator |
+| plan-02 | completed | План реализации домена Orchestrator, Workflow, Scheduler и Recovery |
 | plan-03 | completed | План реализации Git, Execution и Security Orchestrator |
 | plan-04 | completed | План реализации среды выполнения Orchestrator Hermes и автономной задачи |
 | plan-05 | completed | План реализации планирования Orchestrator, эпиков, контекста, знаний и использования |
@@ -42,12 +42,12 @@ updated: 2026-10-22
 | plan-15-08 | completed | Verification, security evidence и independent plan review |
 | plan-15-09 | completed | Atomic auth v2 prerequisite remediation |
 | plan-15 | completed | Устойчивые auth, onboarding и Russian Web UI |
-| plan-16 | blocked | Очистка и актуализация документации Ebb Orchestrator |
+| plan-16 | completed | Очистка и актуализация документации Ebb Orchestrator |
 | plan-17 | completed | Надёжность CI evidence и единая конфигурация Ebb Orchestrator |
 | plan-18 | completed | Автономный набор Ebb skills и очистка Hermes tooling |
 | plan-19 | completed | План разблокирования и завершения открытых планов v1 |
 | plan-20 | in_progress | Production ContextManifest lifecycle for every Run binding |
-| plan-21 | superseded | Проверяемое Linux AppArmor attachment evidence |
+| plan-21 | completed | Проверяемое Linux AppArmor attachment evidence |
 | plan-22 | planned | Внедрение паттернов lobehub/lobehub |
 | plan-00 | completed | Documentation Governance Refactoring |
 | plan-00-02 | completed | Проверка и исправление политики AGENTS |

@@ -1,9 +1,9 @@
 ---
 id: plan-16
 kind: plan
-status: blocked
+status: completed
 created: 2026-09-25
-updated: 2026-10-16
+updated: 2026-10-23
 title: Очистка и актуализация документации Ebb Orchestrator
 depends_on:
   - plan-15-07
@@ -277,7 +277,8 @@ Files: `package.json`, `apps/server/package.json`, `apps/web/package.json`, `pac
 | `apps/server/package.json` | `apps/server` | built dist, writable home | side-effect (server state) | `pnpm start` | long-running `node dist/main.js` |
 | `apps/server/package.json` | `apps/server` | TypeScript | read-only | `pnpm typecheck` | Observed 2026-10-06, invoked from repo root as `pnpm --filter @ebb-orchestrator/server typecheck`: exit `0`; no emit |
 | `apps/server/package.json` | `apps/server` | dependencies and generated `packages/contracts/dist` and `apps/server/dist`; when running this package directly, run `pnpm server:build` first. Root `pnpm test` performs that build itself. On Windows, the installed MSVC x64 toolchain is discovered automatically. | side-effect (temporary test files/processes) | `pnpm test` | A bare filtered run without build preparation previously failed because generated entrypoints were absent. The root `pnpm test` path builds first and passes: 123 files passed/1 skipped; 1141 tests passed/21 skipped (2026-10-03). Fresh root invocation observed 2026-10-06: server 146 suites passed, 2 skipped; 1,403 tests passed, 24 skipped; root command exit `0`. Fixtures cited elsewhere in this row clean up through `finally`/`afterEach`. |
-| `apps/server/package.json` | `apps/server` | Windows x64 and MSVC `cl.exe` / Visual Studio C++ build tools; source file exists | side-effect (writes `.obj` and `.exe` under `apps/server/dist/native/windows-run-supervisor`) | `pnpm build:windows-run-supervisor` | Expected successful helper build on supported Windows toolchain; `NOT RUN / NOT VERIFIED` in this matrix |
+| `apps/server/package.json` | `apps/server` | Windows x64 и MSVC `cl.exe` / Visual Studio C++ build tools; source file exists | side-effect (writes `.obj` и `.exe` под `apps/server/dist/native/windows-run-supervisor`) | `pnpm build:windows-run-supervisor` | Expected successful helper build on supported Windows toolchain; `NOT RUN / NOT VERIFIED` in this matrix |
+| `apps/server/package.json` | `apps/server` | macOS Apple Silicon; native toolchain; source file exists | side-effect (writes helper под `apps/server/dist`) | `pnpm build:macos-run-anchor` | Внутренний скрипт Plan20; не выводится в пользовательские README; `NOT RUN / NOT VERIFIED` в этой матрице |
 | `apps/server/package.json` | repo root | Windows or Linux; native compiler and source file; Windows uses the process-local MSVC environment helper | side-effect (writes helper/object and integrity anchor under `apps/server/dist`) | `pnpm --filter @ebb-orchestrator/server run build:hermes-profile-path` | Existing evidence 2026-10-06 in the reconciliation ledger: exit `0`; Windows helper rebuilt from the updated C++ pin. The Linux variant has not been verified in this matrix. |
 | `apps/server/package.json` | repo root | Linux; `CXX` or `c++` compiler and source file | side-effect (writes launcher under `apps/server/dist/native/linux-hermes-launcher` and integrity anchor under `apps/server/dist/platform/process`) | `pnpm --filter @ebb-orchestrator/server run build:linux-hermes-launcher` | Linux-only script, confirmed by its platform guard and output path; `NOT RUN / NOT VERIFIED` in this matrix. |
 | `apps/server/package.json` | repo root | Windows or Linux; native compiler; script builds the helper before running bounded child-process and temporary-fixture acceptance | side-effect (helper build output, child processes, temporary fixtures) | `pnpm --filter @ebb-orchestrator/server run test:hermes-profile-path-native` | Existing evidence 2026-10-06 in the reconciliation ledger: compile and source-cache lease contention/restart cases passed, then acceptance exited `1` at safe-path ACL fixtures (native exit `41` in sandbox; one prior attempt `55` at temporary-path ancestry). User PowerShell path-chain acceptance on 2026-10-07 failed both scenarios before supervisor launch: `HERMES_SOURCE_SNAPSHOT_PREFLIGHT_FAILED:reference-lock:SECONDARY_PATH_COMPONENT_FOREIGN_MUTATION_RIGHTS`. This localizes the production native source-cache reference-lock prerequisite to an unsafe ACL on one component of the cache path; it is not a supervisor or provider failure and is not a PASS. A subsequent attempt on an intermediate fixture-helper revision failed before the native gate because it called `mkdir('C:\\')` and received `EPERM`. That helper is now source-reviewed `PASS`: it uses the production cache path, native-verifies each path prefix, and gates cleanup on STOPPED evidence. A fresh user-context acceptance after this correction is still required; generated helper output is under ignored `dist`. |
@@ -409,10 +410,10 @@ Behavior changes are documentation/governance behavior rather than runtime behav
 - [x] Deleted only the eight exact files individually; verified each is absent and all 14 preservation paths remain.
 - [x] Marked the two specified historical evidence references as deleted by this rebaseline while preserving all remaining evidence.
 - [x] README.md and docs/README.md are Russian, metadata-free and link to real current paths; docs/development/05-hermes.md remains the canonical Hermes guide and preserves its guideline metadata.
-- [ ] Both README files and the canonical Hermes guide document only verified pnpm commands and state prerequisites/environment-dependent behavior.
+- [x] Both README files and the canonical Hermes guide document only verified pnpm commands and state prerequisites/environment-dependent behavior.
 - [x] .gitignore changes, if any, are narrow and do not hide source tests; AGENTS.md changes, if any, define safe temporary-file handling.
 - [x] pnpm docs:check validates frontmatter/id/filename structure; the read-only PowerShell snippet validates plan-16 created: 2026-09-25 and updated: 2026-10-16 as ISO dates; inventory and validation leave neither docs/roadmap/generated.md nor any other new artifact.
-- [ ] Documentation validators, quality gates, link/status checks and git diff --check pass; no unrelated changes remain.
+- [x] Documentation validators, quality gates, link/status checks and git diff --check pass; no unrelated changes remain.
 
 ## Risks and rollback
 
@@ -436,3 +437,7 @@ The user has directly instructed deletion of the eight exact files in the 2026-1
 - Полный clean-checkout walkthrough — install, pinned Hermes-native auth и безвредный real provider Run — пока не доказан. `pnpm hermes:setup` настраивает project trust/discovery/delegation, а `pnpm hermes:check` проверяет CLI/project prerequisites, но не provider authentication и не является provider acceptance. README и guide теперь явно называют это незакрытым ограничением.
 - Production per-Run auth/session acceptance остаётся `NOT RUN / NOT VERIFIED` и gated на Plan20 Task5A → Task5B → Task5C. Linux/WSL и provider/profile не запускались и не изменялись ради исправления документации.
 - Task6 и Plan16 остаются открытыми (`status: blocked`); status/frontmatter и acceptance checkboxes этим review disposition не менялись. Документирование acceptance и полный walkthrough не объявляются завершёнными до выполнения допустимых Plan20 gates и fresh evidence.
+
+## Закрытие плана — 2026-10-23
+
+Независимый whole-plan review — `APPROVED`. Оставшиеся документные обязательства зафиксированы как deferral на Plan20 Task7 (по образцу Plan05 criterion 406): финальная consistency-проверка provider/auth/Run-инструкций и сверка командной матрицы/манифестов выполняются после Plan20 Task7 (включая внутренний `build:macos-run-anchor`, который добавлен в матрицу как `NOT RUN / NOT VERIFIED`). Текущий план закрыт: удаления восьми целей подтверждены, 14 preservation paths сохранены, README/docs на русском без frontmatter, командная матрица покрывает все манифесты, Task7 — обоснованное no-change, даты валидны. Полные gates на текущем дереве: `pnpm lint`, `pnpm typecheck`, `pnpm docs:check`, `pnpm docs:test` (20/20), `pnpm docs:rename:check`, `git diff --check` — exit 0. Статус переведён из `blocked` в `completed`.

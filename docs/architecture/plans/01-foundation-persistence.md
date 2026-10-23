@@ -1,10 +1,10 @@
 ---
 id: plan-01
 kind: plan
-status: in_progress
+status: completed
 title: План реализации Foundation и Persistence Orchestrator
 created: 2026-09-23
-updated: 2026-10-16
+updated: 2026-10-23
 depends_on: []
 specs:
   - ../specs/01-system-design.md
@@ -844,3 +844,7 @@ SHA из исходного frontmatter подтверждены через `git
 Независимый whole-plan re-review от 2026-10-16 сопоставил T1–T8 с source/tests/acceptance и завершился `APPROVED`. Дополнительно проверенное предположение, будто v1 обязан автоматически удалять stale lock, отозвано как `FALSE_POSITIVE`: README прямо требует операторскую проверку перед ручным удалением lock; spec §19.5 не требует automatic reclaim. Этот review не является основанием вводить новую locking subsystem.
 
 Это evidence закрывает прежний source-level finding, сохраняя `status: in_progress` до итоговых quality gates и lifecycle reconciliation. Исторические procedural RED checkboxes не отмечаются задним числом; macOS runtime остаётся отдельной зависимостью Plan20.
+
+## Финальное закрытие — 2026-10-23
+
+После устранения shutdown blocker и независимого whole-plan re-review `APPROVED` (2026-10-16) выполнены полные repository gates на HEAD `4b8e597`: `pnpm lint` и `pnpm typecheck` — exit 0; полный `pnpm test` — exit 0 (включая server suite и root acceptance scripts 71/71); `pnpm docs:check` и `pnpm docs:test` (20/20) — exit 0; `git diff --check` — exit 0. Исторические procedural RED checkboxes не отмечались задним числом. Статус плана переведён из `in_progress` в `completed`.

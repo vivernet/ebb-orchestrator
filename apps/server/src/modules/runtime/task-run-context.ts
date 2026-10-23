@@ -41,7 +41,11 @@ export async function prepareTaskRunOptions(db: Database, request: Pick<Schedule
   let prompt: string;
   let roleInputs: unknown;
   if (request.role === "developer") prompt = taskDeveloperPrompt();
-  else if (request.role === "reviewer") {
+  else if (request.role === "senior_dev") {
+    // Senior Developer использует общий developer-контракт задачи; выделенный senior-промпт
+    // отсутствует, а уровень роли определяется контрактом senior_dev (SeniorDevContract).
+    prompt = taskDeveloperPrompt();
+  } else if (request.role === "reviewer") {
     const operation = db.get<{ target_ref: string | null }>(
       "SELECT target_ref FROM git_operations WHERE type='CREATE_WORKTREE' AND status='VERIFIED' AND repo_path=$repository AND worktree_id=$taskId AND branch_name=$branch ORDER BY verified_at DESC LIMIT 1",
       { repository: worktree.repoPath, taskId: request.taskId, branch: worktree.branch });

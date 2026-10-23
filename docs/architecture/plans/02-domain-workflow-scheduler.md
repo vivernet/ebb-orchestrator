@@ -1,10 +1,10 @@
 ---
 id: plan-02
 kind: plan
-status: in_progress
+status: completed
 title: План реализации домена Orchestrator, Workflow, Scheduler и Recovery
 created: 2026-09-23
-updated: 2026-10-16
+updated: 2026-10-23
 depends_on: []
 specs:
   - ../specs/01-system-design.md
@@ -654,3 +654,7 @@ pnpm test
 - Вложенные команды вида `pnpm --filter @ebb-orchestrator/server test -- <files>` в других задачах Plan02 всё ещё требуют точного аудита: `apps/server/package.json` задаёт `test` как `vitest run`, а приёмка плана также ссылается на корневой `pnpm test`. **Correction (2026-10-03):** два focused recovery examples в Задаче 7 исправлены на `pnpm --filter @ebb-orchestrator/server exec vitest run test/modules/recovery/recovery.test.ts`; текущий запуск из repo root завершился с exit `0`, 1 file / 16 tests passed. Это подтверждает только указанную focused suite; production recovery wiring и прочие whole-plan findings остаются открытыми.
 
 До закрытия Plan02 нужно устранить или корректно разрешить перечисленные расхождения и выполнить проверяемую acceptance/review-сверку. Одного прежнего статуса `completed` и старых completion evidence недостаточно.
+
+## Дополнение от 2026-10-23 — Task7 production recovery wiring и финальное закрытие
+
+Production-путь восстановления подключён к policy-движку: `RecoveryService.enqueueTaskRetry()` принимает решение через `evaluateRecovery(context, DEFAULT_POLICY)`. RETRY/RESUME_SAME_SESSION сохраняют роль же роль и idempotency key; эскалация Middle→Senior создаёт request с ролью `senior_dev`; решения без нового request (COORDINATOR_DIAGNOSIS/BLOCK) переводят задачу в FAILED/BLOCKED без повторного retry; каждое решение durable фиксируется в `recovery_attempts`. Роль `senior_dev` поддержана в `SchedulerService` (ALL_ROLES, валидация `enqueueRunRequestInTransaction`) и в `prepareTaskRunOptions`. Regression: recovery suite 26/26, scheduler suites 90/90, task-queue production acceptance 27/27, standalone-task fake-runtime 8/8; server typecheck, ESLint изменённых файлов и `git diff --check` прошли. Задача 8 покрыта `epic.fake-runtime.test.ts`. Полный `pnpm test` на актуальном HEAD — exit 0. Статус плана переведён в `completed` после независимого whole-plan review.
