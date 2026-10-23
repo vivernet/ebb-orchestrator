@@ -11,6 +11,7 @@ const HERMES_CHILD_ENV_KEYS = new Set([
   "HOMEDRIVE", "HOMEPATH", "SYSTEMROOT", "TEMP", "TMP", "PATH", "NODE_PATH", "NODE_ENV",
   "HOME", "HERMES_HOME", "HERMES_PROFILE", "HERMES_CONFIG", "HERMES_MODEL",
   "HERMES_DATA_DIR_SUFFIX", "HERMES_RUNTIME_DIR",
+  "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
 ]);
 const STOP_TIMEOUT_MS = 30_000;
 const POLL_INTERVAL_MS = 500;
@@ -66,6 +67,8 @@ const { spawn } = require("node:child_process");
 const { constants, fstatSync, openSync, closeSync, readFileSync } = require("node:fs");
 const { createHash } = require("node:crypto");
 const safeEnvironmentKeys = [
+  // Ключи провайдеров реестра Hermes должны доходить до payload-ребёнка через spawn env.
+  "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
   "HOMEDRIVE", "HOMEPATH", "SYSTEMROOT", "TEMP", "TMP", "PATH", "NODE_PATH", "NODE_ENV",
   "HOME", "HERMES_HOME", "HERMES_PROFILE", "HERMES_CONFIG", "HERMES_MODEL",
   "HERMES_DATA_DIR_SUFFIX", "HERMES_RUNTIME_DIR",
@@ -531,7 +534,11 @@ function systemdManagerStatusFailureCode(stdout: string): SystemdPrerequisiteFai
   return "SYSTEMD_MANAGER_STATUS_CHECK_UNAVAILABLE";
 }
 
+/** Стандартные env-имена ключей провайдеров реестра Hermes (разрешены к инъекции). */
+const PROVIDER_ENV_KEY_ALLOWLIST = new Set(["OPENAI_API_KEY", "ANTHROPIC_API_KEY"]);
+
 function isCredentialEnvironmentKey(key: string): boolean {
+  if (PROVIDER_ENV_KEY_ALLOWLIST.has(key)) return false;
   return /(?:TOKEN|SECRET|PASSWORD|CREDENTIAL|API[_-]?KEY)/i.test(key);
 }
 

@@ -309,7 +309,8 @@ describe("SystemdRunSupervisor", () => {
     const payloadWrapper = call?.args.find((argument) => argument.includes("safeEnvironmentKeys"));
     expect(payloadWrapper).toContain('"HERMES_DATA_DIR_SUFFIX"');
     expect(payloadWrapper).toContain('"HERMES_RUNTIME_DIR"');
-    expect(call?.args.join(" ")).not.toContain("OPENAI_API_KEY");
+    expect(call?.args.join(" ")).not.toContain("OPENAI_API_KEY=");
+    expect(call?.args.join(" ")).not.toContain("ANTHROPIC_API_KEY=");
     expect(call?.args.join(" ")).toContain("/proc/self/fd/3");
     expect(call?.args.join(" ")).toContain("openSync");
     expect(call?.args.join(" ")).toContain("createHash");
@@ -902,23 +903,41 @@ describe("SystemdRunSupervisor", () => {
     expect(executor.sessionCall).toBeUndefined();
   });
 
-  it("rejects credential-shaped Hermes environment keys from systemd unit properties", async () => {
-    const request = {
-      ...launchRequest,
-      environment: { ...launchRequest.environment, AWS_SECRET_ACCESS_KEY: "SECRET_CANARY_UNIT_PROPERTY" },
-    };
-    await expect(supervisor.launch(owner, request, async () => undefined))
-      .rejects.toThrow("PROCESS_SCOPE_ENVIRONMENT_REJECTED");
-    expect(executor.sessionCall).toBeUndefined();
+  it("rejects other credential-shaped and unknown Hermes environment keys before spawning systemd-run", async () => {
+    for (const key of ["AWS_SECRET_ACCESS_KEY", "FOO_API_KEY", "SOME_AUTH_TOKEN", "UNKNOWN_ENV_VAR"]) {
+      const request = {
+        ...launchRequest,
+        environment: { ...launchRequest.environment, [key]: "dummy-secret" },
+      };
+      await expect(supervisor.launch(owner, request, async () => undefined))
+        .rejects.toThrow("PROCESS_SCOPE_ENVIRONMENT_REJECTED");
+      expect(executor.sessionCall).toBeUndefined();
+    }
   });
 
-  it("rejects OpenAI provider-key overlays before creating a transient service", async () => {
+  it("allows registry provider-key env overlays before creating a transient service", async () => {
     const request = {
       ...launchRequest,
-      environment: { ...launchRequest.environment, OPENAI_API_KEY: "dummy-provider-env-sentinel" },
+      environment: {
+        ...launchRequest.environment,
+        OPENAI_API_KEY: "dummy-openai-key",
+        ANTHROPIC_API_KEY: "dummy-anthropic-key",
+      },
     };
-    await expect(supervisor.launch(owner, request, async () => undefined))
-      .rejects.toThrow("PROCESS_SCOPE_ENVIRONMENT_REJECTED");
-    expect(executor.sessionCall).toBeUndefined();
+    const handle = await supervisor.launch(owner, request, async () => undefined);
+    const call = executor.sessionCall;
+    expect(call?.args.join(" ")).toContain("OPENAI_API_KEY=dummy-openai-key");
+    expect(call?.args.join(" ")).toContain("ANTHROPIC_API_KEY=dummy-anthropic-key");
+    // Back the env -i entries with safeEnvironmentKeys membership so both keys reach
+    // the payload child's spawn env, not just the wrapper's own environment.
+    const payloadWrapper = call?.args.find((argument) => argument.includes("safeEnvironmentKeys"));
+    expect(payloadWrapper).toBeDefined();
+    const safeKeysSource = payloadWrapper!.match(/const safeEnvironmentKeys = \[([\s\S]*?)\];/);
+    expect(safeKeysSource).not.toBeNull();
+    const safeKeys = [...(safeKeysSource![1]!.matchAll(/"([A-Za-z0-9_]+)"/g))].map((m) => m[1]!);
+    expect(safeKeys).toEqual(expect.arrayContaining(["OPENAI_API_KEY", "ANTHROPIC_API_KEY"]));
+    unitState = "absent";
+    executor.finish();
+    await expect(handle.completion).resolves.toMatchObject({ exitCode: 0 });
   });
 });

@@ -350,7 +350,10 @@ bool allowedEnvironmentName(const std::wstring& name) {
     L"HOMEDRIVE", L"HOMEPATH", L"SYSTEMROOT", L"TEMP", L"TMP", L"PATH", L"NODE_PATH", L"NODE_ENV",
     L"USERPROFILE", L"LOCALAPPDATA",
     L"HOME", L"HERMES_HOME", L"HERMES_PROFILE", L"HERMES_CONFIG", L"HERMES_MODEL",
-    L"HERMES_DATA_DIR_SUFFIX", L"HERMES_RUNTIME_DIR"
+    L"HERMES_DATA_DIR_SUFFIX", L"HERMES_RUNTIME_DIR",
+    /* Исключение для ключей LLM-провайдеров: несмотря на суффикс API_KEY,
+       OPENAI_API_KEY и ANTHROPIC_API_KEY разрешены для передачи в дочерний процесс. */
+    L"OPENAI_API_KEY", L"ANTHROPIC_API_KEY"
   };
   if (name.empty() || !((name[0] >= L'A' && name[0] <= L'Z') || name[0] == L'_')) return false;
   for (wchar_t c : name) if (!((c >= L'A' && c <= L'Z') || (c >= L'0' && c <= L'9') || c == L'_')) return false;

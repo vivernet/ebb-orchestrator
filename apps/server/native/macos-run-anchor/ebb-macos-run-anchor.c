@@ -212,6 +212,9 @@ static bool allowed_env_name(const char *name) {
     "PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "NODE_ENV",
     "HERMES_HOME", "HERMES_PROFILE", "HERMES_CONFIG", "HERMES_MODEL",
     "HERMES_DATA_DIR_SUFFIX", "HERMES_RUNTIME_DIR",
+    /* Исключение для ключей LLM-провайдеров: несмотря на суффикс API_KEY,
+       OPENAI_API_KEY и ANTHROPIC_API_KEY разрешены для передачи в дочерний процесс. */
+    "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
     NULL,
   };
   if (name[0] == '\0') return false;
@@ -228,7 +231,11 @@ static bool allowed_env_name(const char *name) {
 }
 
 static bool is_credential_env_key(const char *name) {
-  /* Отражает TS isCredentialEnvironmentKey: отклоняем секретные имена. */
+  /* Отражает TS isCredentialEnvironmentKey: отклоняем секретные имена.
+   * Исключение: OPENAI_API_KEY и ANTHROPIC_API_KEY разрешены как ключи
+   * LLM-провайдеров, несмотря на суффикс API_KEY (см. allowed_env_name). */
+  if (strcmp(name, "OPENAI_API_KEY") == 0 || strcmp(name, "ANTHROPIC_API_KEY") == 0)
+    return false;
   return strstr(name, "TOKEN") != NULL || strstr(name, "SECRET") != NULL ||
          strstr(name, "PASSWORD") != NULL || strstr(name, "CREDENTIAL") != NULL ||
          strstr(name, "API_KEY") != NULL;

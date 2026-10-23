@@ -9,6 +9,10 @@ export interface LaunchArgs {
   ignoreRules: boolean;
   source: string;
   maxTurns: number;
+  /** Имя провайдера при явном выборе модели (built-in реестр). */
+  provider?: string;
+  /** Явно выбранная модель (отлична от "default"). */
+  model?: string;
 }
 
 export interface ResumeArgs {
@@ -19,6 +23,10 @@ export interface ResumeArgs {
   ignoreRules: boolean;
   source: string;
   maxTurns: number;
+  /** Имя провайдера при явном выборе модели (built-in реестр). */
+  provider?: string;
+  /** Явно выбранная модель (отлична от "default"). */
+  model?: string;
 }
 
 /**
@@ -54,6 +62,15 @@ export class HermesCliBuilder {
     // --max-turns <role-limit>
     result.push("--max-turns", String(args.maxTurns));
 
+    // Явный выбор провайдера/модели: фиксирует provider/model и отключает
+    // чтение пользовательской конфигурации Hermes (oneshot, ignore-user-config).
+    if (args.provider && args.model) {
+      result.push("--provider", args.provider);
+      result.push("-m", args.model);
+      result.push("--oneshot");
+      result.push("--ignore-user-config");
+    }
+
     return result;
   }
 
@@ -86,6 +103,15 @@ export class HermesCliBuilder {
 
     // --max-turns <role-limit>
     result.push("--max-turns", String(args.maxTurns));
+
+    // Явный выбор провайдера/модели: фиксирует provider/model и отключает
+    // чтение пользовательской конфигурации Hermes (oneshot, ignore-user-config).
+    if (args.provider && args.model) {
+      result.push("--provider", args.provider);
+      result.push("-m", args.model);
+      result.push("--oneshot");
+      result.push("--ignore-user-config");
+    }
 
     return result;
   }

@@ -10,6 +10,7 @@ import * as os from "node:os";
 import { HermesRuntimeAdapter } from "../../../src/modules/runtime/hermes/hermes-runtime-adapter.js";
 import { validatePlatform } from "../../../src/platform/config/app-config.js";
 import * as orchestratorHomeModule from "../../../src/platform/home/orchestrator-home.js";
+import * as orchestratorEnvModule from "../../../src/platform/config/orchestrator-env-loader.js";
 import { HermesCliBuilder } from "../../../src/modules/runtime/hermes/hermes-cli.js";
 import { HERMES_PROVIDER_SELECTION_SOURCE } from "../../../src/modules/runtime/hermes/hermes-source-identity.js";
 import { containmentKindForPlatform } from "../../../src/modules/runtime/run-process-owner.js";
@@ -276,6 +277,118 @@ class MockArtifactStore {
   getArtifacts(runId: string) {
     return this.artifacts[runId];
   }
+}
+
+/**
+ * Создаёт durable SQLite окружение для resume-теста: run с сохранённой моделью,
+ * PREPARED-owner процесса и все таблицы, нужные для валидации capability workspace.
+ */
+async function seedDurableResumeDatabase(root: string, runId: string, model: string) {
+  const workspace = path.join(root, "managed-worktree");
+  const repository = path.join(root, "repository");
+  const databasePath = path.join(root, "state.sqlite");
+  const resultDirectory = path.join(root, "results");
+  const checkpointDirectory = path.join(root, "checkpoints");
+  await fs.mkdir(workspace);
+  await fs.mkdir(repository);
+  const database = createSqliteDatabase(databasePath);
+  database.exec(`
+    CREATE TABLE agent_runs (
+      id TEXT PRIMARY KEY, role TEXT NOT NULL, runtime TEXT NOT NULL, model TEXT NOT NULL,
+      status TEXT NOT NULL, task_id TEXT, epic_id TEXT, session_id TEXT, attempt INTEGER,
+      output TEXT, ended_at TEXT, prompt TEXT, capability_ref TEXT UNIQUE, capability_json TEXT
+    );
+    CREATE TABLE run_process_owners (
+      run_id TEXT PRIMARY KEY, source_tag TEXT NOT NULL, hermes_home TEXT NOT NULL,
+      containment_kind TEXT NOT NULL, containment_id TEXT NOT NULL, launch_nonce TEXT NOT NULL,
+      systemd_invocation_id TEXT, systemd_control_group TEXT, supervisor_pid INTEGER,
+      supervisor_start_identity TEXT, pid INTEGER, platform TEXT, process_start_identity TEXT,
+      executable_identity TEXT, state TEXT NOT NULL, stop_evidence TEXT, updated_at TEXT NOT NULL,
+      hermes_source_snapshot_key TEXT, capture_state TEXT NOT NULL DEFAULT 'UNBOUND',
+      current_generation INTEGER NOT NULL DEFAULT 1
+    );
+    CREATE TABLE run_process_owner_generations (
+      run_id TEXT NOT NULL, generation INTEGER NOT NULL, run_attempt INTEGER,
+      source_tag TEXT NOT NULL, hermes_home TEXT NOT NULL, hermes_source_snapshot_key TEXT,
+      capture_state TEXT NOT NULL, containment_kind TEXT NOT NULL, containment_id TEXT NOT NULL,
+      launch_nonce TEXT NOT NULL, systemd_invocation_id TEXT, systemd_control_group TEXT,
+      supervisor_pid INTEGER, supervisor_start_identity TEXT, pid INTEGER, platform TEXT,
+      process_start_identity TEXT, executable_identity TEXT, state TEXT NOT NULL,
+      stop_evidence TEXT, updated_at TEXT NOT NULL, PRIMARY KEY(run_id,generation)
+    );
+    CREATE TABLE projects (id TEXT PRIMARY KEY, status TEXT NOT NULL);
+    CREATE TABLE epics (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, display_id TEXT);
+    CREATE TABLE tasks (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, epic_id TEXT);
+    CREATE TABLE approvals (id TEXT PRIMARY KEY, subject_id TEXT, subject_type TEXT, type TEXT, status TEXT);
+    CREATE TABLE onboarding_configs (project_id TEXT, repository_path TEXT, facts_json TEXT, proposed_json TEXT, status TEXT, approval_id TEXT);
+    CREATE TABLE worktrees (id TEXT PRIMARY KEY, repo_path TEXT, path TEXT, branch TEXT, removed_at TEXT);
+    CREATE TABLE git_operations (id TEXT PRIMARY KEY, type TEXT, status TEXT, repo_path TEXT, branch_name TEXT, worktree_id TEXT, target_ref TEXT, created_at TEXT, verified_at TEXT);
+    CREATE TABLE run_resume_bindings (run_id TEXT PRIMARY KEY, original_session_id TEXT NOT NULL);
+  `);
+  database.run("INSERT INTO projects VALUES ('project-1','ACTIVE')");
+  database.run("INSERT INTO tasks VALUES ('persisted-task','project-1',NULL)");
+  database.run("INSERT INTO approvals VALUES ('onboarding-approval','project-1','PROJECT','WORKFLOW_CHANGE','APPROVED')");
+  database.run(
+    "INSERT INTO onboarding_configs VALUES ('project-1',$repository,'{}',$proposed,'ACTIVE','onboarding-approval')",
+    { repository, proposed: JSON.stringify({ defaultBranch: "master" }) },
+  );
+  database.run(
+    `INSERT INTO agent_runs (id,role,runtime,model,status,task_id,epic_id,session_id,attempt,output,ended_at,prompt,capability_ref,capability_json)
+     VALUES ($id,$role,$runtime,$model,'STARTED',$taskId,NULL,NULL,NULL,NULL,NULL,NULL,$capabilityRef,$capabilityJson)`,
+    {
+      id: runId,
+      role: "Developer",
+      runtime: "hermes",
+      model,
+      taskId: "persisted-task",
+      capabilityRef: "persisted-capability",
+      capabilityJson: JSON.stringify({
+        runId,
+        capabilityRef: "persisted-capability",
+        role: "developer",
+        workspace,
+        allowedTools: ["submit_result"],
+      }),
+    },
+  );
+  database.run(
+    "INSERT INTO worktrees VALUES ('persisted-task',$repoPath,$path,'task/persisted-task',NULL)",
+    { repoPath: repository, path: workspace },
+  );
+  const verifiedAt = new Date().toISOString();
+  database.run(
+    `INSERT INTO git_operations (id,type,status,repo_path,branch_name,worktree_id,target_ref,created_at,verified_at)
+     VALUES ('worktree-op','CREATE_WORKTREE','VERIFIED',$repoPath,'task/persisted-task','persisted-task','master',$verifiedAt,$verifiedAt)`,
+    { repoPath: repository, verifiedAt },
+  );
+  const persistedSelection = await testHermesSelection(runId, model, resultDirectory);
+  database.run(
+    `INSERT INTO run_process_owners(
+      run_id,source_tag,hermes_home,containment_kind,containment_id,launch_nonce,
+      systemd_invocation_id,systemd_control_group,supervisor_pid,supervisor_start_identity,pid,platform,
+      process_start_identity,executable_identity,state,stop_evidence,updated_at,hermes_source_snapshot_key
+    ) VALUES($runId,$sourceTag,$hermesHome,$kind,$containmentId,$launchNonce,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'PREPARED',NULL,$now,$snapshotKey)`,
+    {
+      runId,
+      sourceTag: `ebb-run:${runId}`,
+      hermesHome: persistedSelection.hermesHome,
+      snapshotKey: null,
+      kind: process.platform === "win32" ? "windows-job" : "systemd-user-service",
+      containmentId: "a".repeat(64),
+      launchNonce: "b".repeat(64),
+      now: new Date().toISOString(),
+    },
+  );
+  insertCurrentProcessOwnerGenerationFixture(database, runId);
+  database.run(
+    "UPDATE agent_runs SET status='IN_PROGRESS',attempt=1,session_id='saved-session',prompt=$prompt WHERE id=$runId",
+    {
+      runId,
+      prompt: "Original task: implement the requested feature.\nAcceptance: preserve existing user data.\nContract: use submit_result with the Developer output schema.",
+    },
+  );
+  database.run("INSERT INTO run_resume_bindings VALUES ($runId,'saved-session')", { runId });
+  return { database, databasePath, workspace, resultDirectory, checkpointDirectory, persistedSelection, runId };
 }
 
 describe("HermesRuntimeAdapter", () => {
@@ -930,6 +1043,175 @@ describe("HermesRuntimeAdapter", () => {
       expect(mockExecutor.getCalls()[0]?.args).not.toContain("--provider");
       await expect(fs.stat(path.join(resultDirectory, "configured-hermes", "config.yaml"))).rejects.toMatchObject({ code: "ENOENT" });
       await fs.rm(resultDirectory, { recursive: true, force: true });
+    });
+
+    it("forwards an explicit model as Hermes CLI flags and injects only its provider env key", async () => {
+      const resultDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-provider-model-"));
+      const loadEnvSpy = vi.spyOn(orchestratorEnvModule, "loadOrchestratorEnv").mockReturnValue({
+        OPENAI_API_KEY: "openai-test-key-value-123456",
+      });
+      const supervisor = new MockProcessScopeSupervisor(mockExecutor);
+      try {
+        adapter = createTestRuntimeAdapter(mockExecutor, mockArtifactStore, {
+          resultDirectory,
+          managedWorktree: path.join(os.tmpdir(), "hermes-test-workspace"),
+          checkpointDirectory: sharedCheckpointDirectory,
+        }, supervisor);
+        const run = {
+          id: "b94e0cd6-2f17-4bc5-8f83-7f7a3c4f1a2b", role: "Developer", runtime: "hermes", model: "gpt-4o",
+          taskId: null, epicId: null, status: "STARTED" as const, sessionId: null, attempt: null,
+          triggerReason: null, contextVersion: "v1", outputSchemaVersion: "v1", startedAt: new Date(),
+          endedAt: null, exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
+        };
+        mockExecutor.setNextResult({ exitCode: 0, stdout: "session: provider-model", stderr: "" });
+        await adapter.startRun(run);
+
+        expect(loadEnvSpy).toHaveBeenCalledWith(["OPENAI_API_KEY"]);
+        expect(supervisor.lastRequest?.environment.OPENAI_API_KEY).toBe("openai-test-key-value-123456");
+        expect(supervisor.lastRequest?.environment.ANTHROPIC_API_KEY).toBeUndefined();
+        const args = supervisor.lastRequest!.args;
+        expect(args.slice(args.indexOf("--provider"), args.indexOf("--provider") + 2)).toEqual(["--provider", "openai-api"]);
+        expect(args.slice(args.indexOf("-m"), args.indexOf("-m") + 2)).toEqual(["-m", "gpt-4o"]);
+        expect(args).toContain("--oneshot");
+        expect(args).toContain("--ignore-user-config");
+        expect(args).toContain("--query-file");
+        expect(args).toContain("--format");
+      } finally {
+        loadEnvSpy.mockRestore();
+        await fs.rm(resultDirectory, { recursive: true, force: true });
+      }
+    });
+
+    it("keeps legacy launch behavior for model=default without provider flags or env keys", async () => {
+      const resultDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-default-model-"));
+      const loadEnvSpy = vi.spyOn(orchestratorEnvModule, "loadOrchestratorEnv").mockReturnValue({
+        OPENAI_API_KEY: "must-not-be-read",
+      });
+      const supervisor = new MockProcessScopeSupervisor(mockExecutor);
+      try {
+        adapter = createTestRuntimeAdapter(mockExecutor, mockArtifactStore, {
+          resultDirectory,
+          managedWorktree: path.join(os.tmpdir(), "hermes-test-workspace"),
+          checkpointDirectory: sharedCheckpointDirectory,
+        }, supervisor);
+        const run = {
+          id: "e7b25ea4-91b5-48c1-a822-44ca09f3aa31", role: "Developer", runtime: "hermes", model: "default",
+          taskId: null, epicId: null, status: "STARTED" as const, sessionId: null, attempt: null,
+          triggerReason: null, contextVersion: "v1", outputSchemaVersion: "v1", startedAt: new Date(),
+          endedAt: null, exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
+        };
+        mockExecutor.setNextResult({ exitCode: 0, stdout: "session: default-model", stderr: "" });
+        await adapter.startRun(run);
+
+        expect(loadEnvSpy).not.toHaveBeenCalled();
+        expect(supervisor.lastRequest?.environment.OPENAI_API_KEY).toBeUndefined();
+        const args = supervisor.lastRequest!.args;
+        expect(args).not.toContain("--provider");
+        expect(args).not.toContain("-m");
+        expect(args).not.toContain("--oneshot");
+        expect(args).not.toContain("--ignore-user-config");
+      } finally {
+        loadEnvSpy.mockRestore();
+        await fs.rm(resultDirectory, { recursive: true, force: true });
+      }
+    });
+
+    it("launches an explicit model without the provider env key when its value is unavailable", async () => {
+      const resultDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-missing-env-key-"));
+      const loadEnvSpy = vi.spyOn(orchestratorEnvModule, "loadOrchestratorEnv").mockReturnValue({});
+      const supervisor = new MockProcessScopeSupervisor(mockExecutor);
+      try {
+        adapter = createTestRuntimeAdapter(mockExecutor, mockArtifactStore, {
+          resultDirectory,
+          managedWorktree: path.join(os.tmpdir(), "hermes-test-workspace"),
+          checkpointDirectory: sharedCheckpointDirectory,
+        }, supervisor);
+        const run = {
+          id: "81c0e6fd-b473-422f-87de-56678abf5aef", role: "Developer", runtime: "hermes", model: "gpt-4o-mini",
+          taskId: null, epicId: null, status: "STARTED" as const, sessionId: null, attempt: null,
+          triggerReason: null, contextVersion: "v1", outputSchemaVersion: "v1", startedAt: new Date(),
+          endedAt: null, exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
+        };
+        mockExecutor.setNextResult({ exitCode: 0, stdout: "session: missing-key", stderr: "" });
+        await adapter.startRun(run);
+
+        expect(supervisor.lastRequest?.environment.OPENAI_API_KEY).toBeUndefined();
+        expect(supervisor.lastRequest!.args).toContain("--provider");
+        expect(supervisor.lastRequest!.args).toContain("--oneshot");
+      } finally {
+        loadEnvSpy.mockRestore();
+        await fs.rm(resultDirectory, { recursive: true, force: true });
+      }
+    });
+
+    it("never leaks the injected provider key into args, stderr, artifacts, or diagnostics", async () => {
+      const resultDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-provider-leak-"));
+      const apiKey = "sk-" + "a".repeat(24);
+      const loadEnvSpy = vi.spyOn(orchestratorEnvModule, "loadOrchestratorEnv").mockReturnValue({
+        OPENAI_API_KEY: apiKey,
+      });
+      const supervisor = new MockProcessScopeSupervisor(mockExecutor);
+      try {
+        adapter = createTestRuntimeAdapter(mockExecutor, mockArtifactStore, {
+          resultDirectory,
+          managedWorktree: path.join(os.tmpdir(), "hermes-test-workspace"),
+          checkpointDirectory: sharedCheckpointDirectory,
+        }, supervisor);
+        const run = {
+          id: "5caf3b74-87dc-47b5-b05b-29ccbb10f1dd", role: "Developer", runtime: "hermes", model: "gpt-4o",
+          taskId: null, epicId: null, status: "STARTED" as const, sessionId: null, attempt: null,
+          triggerReason: null, contextVersion: "v1", outputSchemaVersion: "v1", startedAt: new Date(),
+          endedAt: null, exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
+        };
+        mockExecutor.setNextResult({ exitCode: 1, stdout: "", stderr: `provider startup failed: ${apiKey}` });
+        await adapter.startRun(run);
+
+        expect(JSON.stringify(supervisor.lastRequest?.args ?? [])).not.toContain(apiKey);
+        const outcome = await adapter.collectResult(run.id);
+        expect(outcome.diagnostics?.stderr).not.toContain(apiKey);
+        expect(JSON.stringify(outcome.diagnostics)).not.toContain(apiKey);
+        const artifacts = mockArtifactStore.getArtifacts(run.id);
+        expect(artifacts?.stderr).not.toContain(apiKey);
+        expect(supervisor.lastRequest?.environment.OPENAI_API_KEY).toBe(apiKey);
+      } finally {
+        loadEnvSpy.mockRestore();
+        await fs.rm(resultDirectory, { recursive: true, force: true });
+      }
+    });
+
+    it("still rejects unknown runtime environment variables before dispatch", async () => {
+      const supervisor = new MockProcessScopeSupervisor(mockExecutor);
+      const child = createTestRuntimeAdapter(mockExecutor, mockArtifactStore, {
+        managedWorktree: path.join(os.tmpdir(), "hermes-test-workspace"),
+        checkpointDirectory: sharedCheckpointDirectory,
+        environment: { UNKNOWN_RUNTIME_VAR: "x" },
+      }, supervisor);
+      const run = {
+        id: "77a6a2e0-78cd-41a1-8a49-93ffda51ae73", role: "Developer", runtime: "hermes", model: "default",
+        taskId: null, epicId: null, status: "STARTED" as const, sessionId: null, attempt: null,
+        triggerReason: null, contextVersion: "v1", outputSchemaVersion: "v1", startedAt: new Date(),
+        endedAt: null, exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
+      };
+      await expect(child.startRun(run)).rejects.toThrow(/Forbidden or unknown Hermes environment variable/);
+      expect(supervisor.launchCalls).toBe(0);
+      expect(mockExecutor.getCalls()).toHaveLength(0);
+    });
+
+    it("still rejects *TOKEN and *SECRET suffixed runtime environment variables", async () => {
+      const supervisor = new MockProcessScopeSupervisor(mockExecutor);
+      const child = createTestRuntimeAdapter(mockExecutor, mockArtifactStore, {
+        managedWorktree: path.join(os.tmpdir(), "hermes-test-workspace"),
+        checkpointDirectory: sharedCheckpointDirectory,
+        environment: { SOME_SERVICE_TOKEN: "x", ANOTHER_INTERNAL_SECRET: "y" },
+      }, supervisor);
+      const run = {
+        id: "8f3d5e56-52fc-4367-9fa4-26bb7512a9d8", role: "Developer", runtime: "hermes", model: "default",
+        taskId: null, epicId: null, status: "STARTED" as const, sessionId: null, attempt: null,
+        triggerReason: null, contextVersion: "v1", outputSchemaVersion: "v1", startedAt: new Date(),
+        endedAt: null, exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
+      };
+      await expect(child.startRun(run)).rejects.toThrow(/Forbidden credential/);
+      expect(supervisor.launchCalls).toBe(0);
     });
 
     it("does not create or write a Hermes profile during launch", async () => {
@@ -1748,6 +2030,70 @@ describe("HermesRuntimeAdapter", () => {
         .rejects.toThrow("HERMES_RESUME_DURABLE_RUNTIME_REQUIRED");
       expect(mockExecutor.getCalls()).toHaveLength(0);
     });
+
+    it("resumes an explicit saved model with the same provider flags and env key", async () => {
+      const root = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-resume-explicit-"));
+      const seed = await seedDurableResumeDatabase(root, "1fde93aa-4a27-4341-a6cf-c3f8379bbd17", "gpt-4o");
+      const loadEnvSpy = vi.spyOn(orchestratorEnvModule, "loadOrchestratorEnv").mockReturnValue({
+        OPENAI_API_KEY: "resume-openai-key-value",
+      });
+      const supervisor = new MockProcessScopeSupervisor(mockExecutor);
+      try {
+        const resumeAdapter = allowTestManagedHermesSelection(new HermesRuntimeAdapter(mockExecutor, mockArtifactStore, {
+          databasePath: seed.databasePath,
+          resultDirectory: seed.resultDirectory,
+          checkpointDirectory: seed.checkpointDirectory,
+        }, supervisor));
+        (resumeAdapter as unknown as { verifiedManagedSelections: WeakSet<HermesManagedRunSelection> }).verifiedManagedSelections.add(seed.persistedSelection);
+        mockExecutor.setNextResult({ exitCode: 0, stdout: "session: resume-explicit", stderr: "" });
+        await resumeAdapter.resumeRun(seed.runId, { sessionId: "saved-session", attempt: 1, hermesSelection: seed.persistedSelection });
+
+        expect(loadEnvSpy).toHaveBeenCalledWith(["OPENAI_API_KEY"]);
+        expect(supervisor.lastRequest?.environment.OPENAI_API_KEY).toBe("resume-openai-key-value");
+        const resumeArgs = supervisor.lastRequest!.args;
+        expect(resumeArgs.slice(resumeArgs.indexOf("--provider"), resumeArgs.indexOf("--provider") + 2)).toEqual(["--provider", "openai-api"]);
+        expect(resumeArgs.slice(resumeArgs.indexOf("-m"), resumeArgs.indexOf("-m") + 2)).toEqual(["-m", "gpt-4o"]);
+        expect(resumeArgs).toContain("--oneshot");
+        expect(resumeArgs).toContain("--ignore-user-config");
+        expect(resumeArgs).toContain("--resume");
+      } finally {
+        loadEnvSpy.mockRestore();
+        seed.database.close();
+        await fs.rm(root, { recursive: true, force: true });
+      }
+    });
+
+    it("resumes a default saved model without provider flags or env keys", async () => {
+      const root = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-resume-default-"));
+      const seed = await seedDurableResumeDatabase(root, "2c6f3e42-89d1-4d34-9c5c-71ae54b1e008", "default");
+      const loadEnvSpy = vi.spyOn(orchestratorEnvModule, "loadOrchestratorEnv").mockReturnValue({
+        OPENAI_API_KEY: "must-not-be-read-resume",
+      });
+      const supervisor = new MockProcessScopeSupervisor(mockExecutor);
+      try {
+        const resumeAdapter = allowTestManagedHermesSelection(new HermesRuntimeAdapter(mockExecutor, mockArtifactStore, {
+          databasePath: seed.databasePath,
+          resultDirectory: seed.resultDirectory,
+          checkpointDirectory: seed.checkpointDirectory,
+        }, supervisor));
+        (resumeAdapter as unknown as { verifiedManagedSelections: WeakSet<HermesManagedRunSelection> }).verifiedManagedSelections.add(seed.persistedSelection);
+        mockExecutor.setNextResult({ exitCode: 0, stdout: "session: resume-default", stderr: "" });
+        await resumeAdapter.resumeRun(seed.runId, { sessionId: "saved-session", attempt: 1, hermesSelection: seed.persistedSelection });
+
+        expect(loadEnvSpy).not.toHaveBeenCalled();
+        expect(supervisor.lastRequest?.environment.OPENAI_API_KEY).toBeUndefined();
+        const resumeArgs = supervisor.lastRequest!.args;
+        expect(resumeArgs).not.toContain("--provider");
+        expect(resumeArgs).not.toContain("-m");
+        expect(resumeArgs).not.toContain("--oneshot");
+        expect(resumeArgs).not.toContain("--ignore-user-config");
+        expect(resumeArgs).toContain("--resume");
+      } finally {
+        loadEnvSpy.mockRestore();
+        seed.database.close();
+        await fs.rm(root, { recursive: true, force: true });
+      }
+    });
   });
 
   describe("cancelRun", () => {
@@ -2166,6 +2512,30 @@ describe("HermesRuntimeAdapter", () => {
       expect(args.slice(args.indexOf("--format"), args.indexOf("--format") + 2)).toEqual(["--format", "stream-json"]);
       expect(args).toContain("--in");
       expect(args).toContain("/managed/worktree");
+    });
+
+    it("adds provider flags when launch args select an explicit model", () => {
+      const args = new HermesCliBuilder().buildLaunchArgs({
+        queryFile: "/tmp/prompt.txt", toolsets: ["mcp-ebb-orchestrator"], worktree: "/managed/worktree",
+        ignoreRules: true, source: "tool", maxTurns: 20,
+        provider: "openai-api", model: "gpt-4o",
+      });
+      expect(args.slice(args.indexOf("--provider"), args.indexOf("--provider") + 2)).toEqual(["--provider", "openai-api"]);
+      expect(args.slice(args.indexOf("-m"), args.indexOf("-m") + 2)).toEqual(["-m", "gpt-4o"]);
+      expect(args).toContain("--oneshot");
+      expect(args).toContain("--ignore-user-config");
+    });
+
+    it("adds provider flags when resume args select an explicit model", () => {
+      const args = new HermesCliBuilder().buildResumeArgs({
+        sessionId: "resume-123", queryFile: "/tmp/continuation.txt", toolsets: ["mcp-ebb-orchestrator"],
+        worktree: "/managed/worktree", ignoreRules: true, source: "tool", maxTurns: 20,
+        provider: "anthropic", model: "claude-sonnet-5",
+      });
+      expect(args.slice(args.indexOf("--provider"), args.indexOf("--provider") + 2)).toEqual(["--provider", "anthropic"]);
+      expect(args.slice(args.indexOf("-m"), args.indexOf("-m") + 2)).toEqual(["-m", "claude-sonnet-5"]);
+      expect(args).toContain("--oneshot");
+      expect(args).toContain("--ignore-user-config");
     });
 
   });

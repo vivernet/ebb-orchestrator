@@ -7,6 +7,7 @@ import type { AgentRun, RunStatus } from "@ebb-orchestrator/contracts";
 import type { RunOutcome } from "../run-types.js";
 import { ProcessExecutor, type ProcessResult } from "../../../platform/process/process-executor.js";
 import { HermesCliBuilder } from "./hermes-cli.js";
+import { resolveProviderForModel } from "./hermes-provider-registry.js";
 import { buildHermesMcpServer } from "./hermes-mcp-server.js";
 import { parseSessionId } from "./hermes-session-parser.js";
 import { HermesStreamSessionObserver } from "./hermes-stream-session-observer.js";
@@ -33,6 +34,7 @@ import { createSqliteDatabase } from "../../../platform/database/sqlite-database
 import { loadValidatedCapability } from "../../execution/capability-validation.js";
 import { validatePlatform, type Platform } from "../../../platform/config/app-config.js";
 import { resolveOrchestratorHome, type HomeEnv } from "../../../platform/home/orchestrator-home.js";
+import { loadOrchestratorEnv } from "../../../platform/config/orchestrator-env-loader.js";
 import { ProcessScopeLaunchNotDispatchedError, type ProcessScopeLaunchRequest, type ProcessScopeSupervisor } from "../../../platform/process/run-scope-supervisor.js";
 import type { ProcessScopeIdentity, ProcessScopeObservation } from "../../../platform/process/process-inspector.js";
 import { containmentKindForPlatform, getRunProcessOwner, isAuthoritativeRunProcessStopEvidence, prepareRunProcessOwner, syncCurrentRunProcessGenerationTx, transitionRunProcessOwnerTx, type RunProcessOwner, type RunProcessOwnerState } from "../run-process-owner.js";
@@ -242,6 +244,7 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
     const hermesHome = preparedOwner.hermesHome;
     const resultPath = path.join(this.resultDirectory, `${run.id}.json`);
     let args: string[];
+    const modelEntry = resolveProviderForModel(run.model);
     if (resumeSessionId !== undefined) {
       if (!/^[A-Za-z0-9_-]{1,256}$/.test(resumeSessionId)) throw new Error("RESUME_ORIGINAL_SESSION_UNAVAILABLE");
       if (typeof run.prompt !== "string" || !run.prompt.trim()) throw new Error("HERMES_RESUME_PROMPT_UNAVAILABLE");
@@ -256,12 +259,14 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
       args = this.cliBuilder.buildResumeArgs({
         sessionId: resumeSessionId, queryFile, toolsets: ["mcp-ebb-orchestrator"], worktree: workspace,
         ignoreRules: this.ignoreRules, source: preparedOwner.sourceTag, maxTurns: this.roleLimit,
+        ...(modelEntry ? { provider: modelEntry.provider, model: run.model } : {}),
       });
     } else {
       const promptFile = await this.writePromptFile(run);
       args = this.cliBuilder.buildLaunchArgs({
         queryFile: promptFile, toolsets: ["mcp-ebb-orchestrator"], worktree: workspace,
         ignoreRules: this.ignoreRules, source: preparedOwner.sourceTag, maxTurns: this.roleLimit,
+        ...(modelEntry ? { provider: modelEntry.provider, model: run.model } : {}),
       });
     }
     if (this.finishCancelledBeforeLaunch(run.id, control)) return;
@@ -1010,8 +1015,13 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
     return promptFile;
   }
 
-  /** Передаёт только не-secret переменные, нужные установленному Hermes и OS runtime. */
-  private configuredEnvironment(): Record<string, string> {
+  /**
+   * Передаёт только не-secret переменные, нужные установленному Hermes и OS runtime.
+   * При явном выборе модели (не "default"), известной built-in реестру, allowlist
+   * расширяется ровно на её стандартную env-переменную; значение берётся из
+   * `loadOrchestratorEnv` (при отсутствии значения переменная не добавляется).
+   */
+  private configuredEnvironment(modelSelection?: string): Record<string, string> {
     const allowed = ["HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "SYSTEMROOT", "TEMP", "TMP", "PATH", "NODE_PATH", "NODE_ENV", "LOCALAPPDATA", "HERMES_DATA_DIR_SUFFIX", "HERMES_RUNTIME_DIR", "HERMES_HOME", "HERMES_CONFIG", "HERMES_PROFILE", "HERMES_MODEL"];
     const environment: Record<string, string> = {};
     for (const key of allowed) {
@@ -1024,11 +1034,18 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
       }
       if (!allowed.includes(key)) throw new Error(`Forbidden or unknown Hermes environment variable: ${key}`);
     }
+    if (modelSelection && modelSelection !== "default") {
+      const entry = resolveProviderForModel(modelSelection);
+      if (entry) {
+        const value = loadOrchestratorEnv([entry.envKey])[entry.envKey];
+        if (value !== undefined) environment[entry.envKey] = value;
+      }
+    }
     return environment;
   }
 
-  private buildEnvironment(_run: AgentRun, _hermesHome: string): Record<string, string> {
-    return this.configuredEnvironment();
+  private buildEnvironment(run: AgentRun, _hermesHome: string): Record<string, string> {
+    return this.configuredEnvironment(run.model);
   }
 
   private assertManagedHermesReady(run: AgentRuntimeRun, owner: RunProcessOwner, selection: HermesManagedRunSelection): void {

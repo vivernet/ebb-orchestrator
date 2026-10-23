@@ -191,14 +191,27 @@ describe("WindowsJobSupervisor", () => {
     expect(executor.startSession).not.toHaveBeenCalled();
   });
 
-  it("rejects provider-key overlays before serializing the Hermes child frame", async () => {
+  it("allows registry provider-key env overlays before starting the native helper", async () => {
     Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
     const executor = new FakeExecutor();
     const supervisor = new WindowsJobSupervisor(executor, "native-helper.exe", createTestHelperInvocation);
     await expect(supervisor.launch(owner, {
       ...request,
-      environment: { ...request.environment, OPENAI_API_KEY: "dummy-provider-env-sentinel" },
-    }, async () => undefined)).rejects.toThrow("PROCESS_SCOPE_ENVIRONMENT_REJECTED");
+      environment: { ...request.environment, OPENAI_API_KEY: "dummy-openai-key", ANTHROPIC_API_KEY: "dummy-anthropic-key" },
+    }, async () => undefined)).rejects.toThrow("HELPER_STARTED");
+    expect(executor.startSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects other credential-shaped and unknown environment keys before starting the native helper", async () => {
+    Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+    const executor = new FakeExecutor();
+    const supervisor = new WindowsJobSupervisor(executor, "native-helper.exe", createTestHelperInvocation);
+    for (const key of ["FOO_API_KEY", "SOME_AUTH_TOKEN", "AWS_SECRET_ACCESS_KEY", "UNKNOWN_ENV_VAR"]) {
+      await expect(supervisor.launch(owner, {
+        ...request,
+        environment: { ...request.environment, [key]: "dummy-secret" },
+      }, async () => undefined)).rejects.toThrow("PROCESS_SCOPE_ENVIRONMENT_REJECTED");
+    }
     expect(executor.startSession).not.toHaveBeenCalled();
   });
 

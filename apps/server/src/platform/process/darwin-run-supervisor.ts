@@ -23,6 +23,7 @@ const DARWIN_ENV_ALLOWLIST = new Set([
   "PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "NODE_ENV",
   "HERMES_HOME", "HERMES_PROFILE", "HERMES_CONFIG", "HERMES_MODEL",
   "HERMES_DATA_DIR_SUFFIX", "HERMES_RUNTIME_DIR",
+  "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
 ]);
 
 /** Записывает весь буфер в поток и ждёт flush. */
@@ -388,7 +389,11 @@ function assertRequest(request: ProcessScopeLaunchRequest): void {
   }
 }
 
+/** Стандартные env-имена ключей провайдеров реестра Hermes (разрешены к инъекции). */
+const PROVIDER_ENV_KEY_ALLOWLIST = new Set(["OPENAI_API_KEY", "ANTHROPIC_API_KEY"]);
+
 function isCredentialEnvironmentKey(key: string): boolean {
+  if (PROVIDER_ENV_KEY_ALLOWLIST.has(key)) return false;
   return /(?:TOKEN|SECRET|PASSWORD|CREDENTIAL|API[_-]?KEY)/i.test(key);
 }
 
