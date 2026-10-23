@@ -51,9 +51,16 @@ summary: Неавторитетный реестр предложений и з�
   status: open
   summary: Решить по поводу хранилища ключей: оставить только внешнее хранилище и .env
   context: Запись пользователя. Касается политики хранения ключей/секретов (external key storage и .env) — требует продуктового решения.
+- id: IN-004
+  date: 2026-10-22
+  source: user
+  status: open
+  summary: Зафиксировано решение по статусам планов 19/20: план 19 completed, план 20 остаётся in_progress до физического Mac-приёмки Task5C-M
+  context: Пользователь выбрал рекомендованный вариант: не менять статусы. План 20 не переводится в completed без физической Apple Silicon/macOS 13.5+ приёмки Task5C-M (interruption/no-auto-resume) и финального whole-plan review; macOS quality-security CI временно отложена (IN-003).
+
 - id: IN-003
   date: 2026-10-22
   source: user
   status: open
-  summary: Довести до зелёного macOS quality-security CI (macos-14 arm64) — отложено, вернуться позже
+  summary: Довести до зелёного macOS quality-security CI (macos-14 arm64) — отложено, вернуться позже; Plan20 остаётся in_progress до физического Mac-приёмки Task5C-M
   context: Джоба quality-security (macos-14, 24.x, node@24) на HEAD develop в течение серии прогонов не доходит до зелёного: либо не стартует из-за перегруженной arm64-очереди GitHub Actions (started_at=null, снятие через час), либо упирается в таймаут шага pnpm test. Исправлены E2E teardown на macOS (канонизация каталога ledger через realpathSync), пути тестов и fastify-аудит; пользователь решил пока отложить доводку этой джобы и вернуться позже. Другая macOS-джоба process-scope-darwin-acceptance проходит стабильно.
