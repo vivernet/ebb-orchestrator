@@ -1,7 +1,7 @@
 ---
 id: plan-23
 kind: plan
-status: planned
+status: in_progress
 title: Web UI: настройка ИИ-провайдеров и моделей (IN-005)
 summary: Перенос владения настройкой ИИ-провайдеров/моделей Orchestrator Runs в Ebb (built-in провайдеры Hermes, ключи в EBB_ORCHESTRATOR_HOME/.env) и read-only отображение в Web UI.
 created: 2026-10-23
@@ -62,7 +62,7 @@ proposals:
 
 **Create:** `apps/server/test/e2e/hermes-provider-selection-spike.acceptance.test.ts` (marker-gated, read-only; не вызывает provider API).
 
-**Interfaces:** Верифицирует на установленном Hermes: (а) `hermes chat --help` содержит `--provider`, `-m/--model`, `--oneshot`, `--ignore-user-config`, `--format stream-json`; (б) `hermes config get model.provider/model.default` маскирует credentials; (в) для перечня built-in моделей реестра — подтверждение стандартного env-имени (`<NAME>_API_KEY`) без чтения `.env`; (г) при `--ignore-user-config` — фактический источник ключа: переданная env-переменная процесса vs пользовательский `~/.hermes/.env` (кто побеждает при совпадении имён; фиксируется политика предотвращения затенения: если пользовательский `.env` перекрывает — либо уникальные имена в `.env` Ebb, либо явная документированная политика приоритета).
+**Interfaces:** Верифицирует на установленном Hermes: (а) `hermes chat --help` содержит `--provider`, `-m/--model`, `--oneshot`, `--ignore-user-config`, `--format stream-json`; (б) `hermes config get model.provider/model.default` маскирует credentials; (в) для перечня built-in моделей реестра — подтверждение стандартного env-имени (`<NAME>_API_KEY`) без чтения `.env`; (г) при `--ignore-user-config` — фиксируется политика предотвращения затенения: пользовательский `~/.hermes/.env` НЕ читается (запрет), фактический приоритет источника ключа определяется поведенчески (через CLI/наблюдение, без чтения файлов) и документируется; если пользовательский `.env` перекрывает переданный env — применяются уникальные имена в `.env` Ebb, либо документированная политика приоритета.
 
 **RED:** Marker-тест падает, пока не выполнен с `EBB_RUN_PROVIDER_SPIKE_ACCEPTANCE='I_UNDERSTAND_THIS_IS_A_READ_ONLY_PROBE'` (guard), и не собран контракт.
 
@@ -172,7 +172,7 @@ proposals:
 
 **Depends on:** Task 4.
 
-**Modify:** `README.md` (строки ~370–376), `docs/development/05-hermes.md`, `docs/architecture/.../02-current-state.md` (~150).
+**Modify:** `README.md` (строки ~370–376), `docs/development/05-hermes.md`, `docs/roadmap/02-current-state.md` (~150).
 
 **Interfaces:** Описать: (а) явный выбор провайдера/модели в Ebb (built-in, список моделей в Settings); (б) ключи — только в `EBB_ORCHESTRATOR_HOME/.env`, не в репозиторий/SecretStore; (в) запреты чтения/копирования пользовательских Hermes secrets сохраняются; (г) удалить `HERMES_MODEL_OVERRIDE_UNSUPPORTED`-упоминания.
 
