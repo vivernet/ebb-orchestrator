@@ -182,7 +182,7 @@ describe('AgentRunPage', () => {
     renderWithRouter(<AgentRunPage id="test-run-123" />);
 
     expect(screen.getByText('gpt-4.1')).toBeInTheDocument();
-    expect(screen.getByText('openai-api')).toBeInTheDocument();
+    expect(screen.getByText('OpenAI')).toBeInTheDocument();
     expect(screen.queryByText('по умолчанию (Ebb)')).not.toBeInTheDocument();
     expect(screen.queryByText(/sk-[A-Za-z0-9]+/)).not.toBeInTheDocument();
     expect(screen.queryByText(/OPENAI_API_KEY|ANTHROPIC_API_KEY/)).not.toBeInTheDocument();

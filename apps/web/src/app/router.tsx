@@ -7,6 +7,8 @@ import EpicPage from '../features/epics/EpicPage.js';
 import TaskPage from '../features/tasks/TaskPage.js';
 import OnboardingPage from '../features/onboarding/OnboardingPage.js';
 import SettingsPage from '../features/settings/SettingsPage.js';
+import ProviderCatalogPage from '../features/settings/providers/ProviderCatalogPage.js';
+import ProviderDetailPage from '../features/settings/providers/ProviderDetailPage.js';
 import UsagePage from '../features/usage/UsagePage.js';
 import ApprovalInboxPage from '../features/approvals/ApprovalInboxPage.js';
 import ExecutionPage from '../features/execution/ExecutionPage.js';
@@ -20,6 +22,8 @@ const TaskRoute = () => <TaskPage id={useParams().id ?? ''} />;
 const OnboardingRoute = () => <OnboardingPage />;
 const OnboardingProjectRoute = () => <OnboardingPage projectId={useParams().id ?? ''} />;
 const SettingsRoute = () => <SettingsPage />;
+const ProviderCatalogRoute = () => <ProviderCatalogPage />;
+const ProviderDetailRoute = () => <ProviderDetailPage />;
 const UsageRoute = () => <UsagePage />;
 const ApprovalRoute = () => <ApprovalInboxPage />;
 const ExecutionRoute = () => <ExecutionPage />;
@@ -137,6 +141,16 @@ export const router = createBrowserRouter([
         path: 'settings',
         handle: { breadcrumbLabel: ru.breadcrumbs.settings },
         Component: SettingsRoute,
+      },
+      {
+        path: 'settings/providers',
+        handle: { breadcrumbLabel: ru.breadcrumbs.providers },
+        Component: ProviderCatalogRoute,
+      },
+      {
+        path: 'settings/providers/:providerId',
+        handle: { breadcrumbLabel: ru.breadcrumbs.providers },
+        Component: ProviderDetailRoute,
       },
       {
         path: 'projects/new',

@@ -262,6 +262,11 @@ export class ProviderSettingsService {
       updatedAt: configuration.updatedAt,
     };
   }
+
+  /** Удаляет локальный credential провайдера (keyring + метаданные); true, если существовал. */
+  async deleteCredential(providerId: string, authMethodId: string): Promise<boolean> {
+    return this.credentialStore.deleteLocalCredential(providerId, authMethodId);
+  }
 }
 
 /** Создаёт сервис настроек провайдеров поверх репозитория, credential-хранилища и SecretStore. */

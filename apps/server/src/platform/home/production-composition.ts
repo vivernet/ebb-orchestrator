@@ -35,6 +35,8 @@ import type { EventBus } from "../events/event-bus.js";
 import type { SecretStore } from "../security/secret-store.js";
 import { createProviderSettingsRepository } from "../../modules/runtime/providers/provider-settings-repository.js";
 import { createProviderCredentialStore } from "../../modules/runtime/providers/provider-credential-store.js";
+import { ProviderSettingsService } from "../../modules/runtime/providers/provider-settings-service.js";
+import { createProviderCustomModelsRepository } from "../../modules/runtime/providers/provider-management.js";
 import { ProviderNetworkGateway } from "../../modules/runtime/providers/provider-network-gateway.js";
 import { ProviderAuthFlowService } from "../../modules/runtime/providers/auth/provider-auth-flow.js";
 import { PROVIDER_ADAPTER_REGISTRY } from "../../modules/runtime/providers/adapters/registry.js";
@@ -163,11 +165,31 @@ export function createProductionComposition(options: ProductionCompositionOption
    * Создаёт сервис авторизации провайдеров (plan-24 Task 4). Требует
    * SecretStore: без keyring сервис не создаётся (fail-closed).
    */
+  /**
+   * Создаёт credential-хранилище провайдеров поверх переданного SecretStore
+   * (общий репозиторий, единый keyring-сервис).
+   */
+  const createProviderCredentialStoreBound = (secretStore: NonNullable<ProductionCompositionOptions["secretStore"]>) =>
+    createProviderCredentialStore(secretStore, providerSettingsRepository);
+
   const createProviderAuthFlowService = (secretStore: NonNullable<ProductionCompositionOptions["secretStore"]>) => new ProviderAuthFlowService({
     gateway: providerGateway,
-    credentialStore: createProviderCredentialStore(secretStore, providerSettingsRepository),
+    credentialStore: createProviderCredentialStoreBound(secretStore),
     settingsRepository: providerSettingsRepository,
   });
+
+  /** Пользовательские модели провайдеров (plan-24 Task 6). */
+  const providerCustomModels = createProviderCustomModelsRepository(database);
+
+  /**
+   * Создаёт сервис настроек провайдеров (plan-24 Task 6). Требует SecretStore:
+   * без keyring настройки с credentials не обслуживаются (fail-closed).
+   */
+  const createProviderSettingsService = (secretStore: NonNullable<ProductionCompositionOptions["secretStore"]>) => new ProviderSettingsService(
+    providerSettingsRepository,
+    createProviderCredentialStoreBound(secretStore),
+    secretStore,
+  );
 
   /**
    * Создаёт полный набор recovery callbacks после migrations. Они выполняются
@@ -248,8 +270,13 @@ export function createProductionComposition(options: ProductionCompositionOption
     providerAgentRuntimeFactory,
     providerSettingsRepository,
     providerGateway,
+    providerCustomModels,
     /** Сервис авторизации провайдеров (plan-24 Task 4); создаётся с SecretStore. */
     createProviderAuthFlowService,
+    /** Сервис настроек провайдеров (plan-24 Task 6); создаётся с SecretStore. */
+    createProviderSettingsService,
+    /** Создаёт credential-хранилище провайдеров поверх SecretStore. */
+    createProviderCredentialStore: createProviderCredentialStoreBound,
     providerAdapterRegistry: PROVIDER_ADAPTER_REGISTRY,
     createStartupReconciliation,
     /** Создаёт shared production queue без запуска timer/runtime; lifecycle запускает её до READY. */

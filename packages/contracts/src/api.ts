@@ -317,6 +317,109 @@ function pathSegment(value: string): string {
 }
 
 /**
+ * Провайдерные контракты (plan-24, Task 6): безопасные проекции настроек,
+ * каталога, моделей и проверки соединения. Проекции никогда не содержат
+ * секретов, endpoint URL и credential-ссылок — только статусные булевы значения
+ * и schema-метаданные.
+ */
+
+/** Версия публичного HTTP-контракта каталога провайдеров. */
+export const PROVIDER_CATALOG_CONTRACT_VERSION = 1 as const;
+
+/** Безопасная status-проекция настроек провайдера: без config-значений, endpoint URL и credential-ссылок. */
+export interface ProviderSettingsProjection {
+  readonly providerId: string;
+  readonly enabled: boolean;
+  readonly selectedAuthMethod: string;
+  readonly currentRevision: number;
+  readonly hasCredential: boolean;
+  readonly credentialStatus: "ACTIVE" | "DISCONNECTED" | "NONE";
+  readonly defaultModelId: string | null;
+  readonly roleDefaults: Readonly<Record<string, string>>;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+/** Публичная проекция каталога: 86 записей без schema/секретов. */
+export interface ProviderCatalogProjection {
+  readonly contractVersion: typeof PROVIDER_CATALOG_CONTRACT_VERSION;
+  readonly version: number;
+  readonly sourcePin: string;
+  readonly providers: readonly ProviderCatalogEntryProjection[];
+}
+
+/** Тип способа аутентификации с точки зрения Web-формы. */
+export type ProviderAuthMethodKind = "form" | "interactive" | "ambient" | "endpoint";
+
+/** Поле schema конфигурации/credentials без значений (безопасно для Web). */
+export interface ProviderSchemaFieldProjection {
+  readonly name: string;
+  readonly label: string;
+  readonly kind: string;
+  readonly required: boolean;
+  readonly managedByAuthFlow?: boolean;
+}
+
+/** Детальная безопасная проекция провайдера: definition + schema-метаданные + опциональный статус. */
+export interface ProviderDetailProjection extends ProviderCatalogEntryProjection {
+  readonly authMethodKinds: Readonly<Record<ProviderAuthMethod, ProviderAuthMethodKind>>;
+  readonly configFields: readonly ProviderSchemaFieldProjection[];
+  readonly credentialFields: readonly ProviderSchemaFieldProjection[];
+  readonly modelSource: {
+    readonly kind: string;
+    readonly providerCatalog: boolean;
+    readonly userCustom: boolean;
+    readonly localEndpoint: boolean;
+    readonly modelCount: number;
+  };
+  readonly status?: ProviderSettingsProjection;
+}
+
+/** Запись модели в проекции модельного каталога провайдера. */
+export interface ProviderModelEntryProjection {
+  readonly modelId: string;
+  readonly displayName: string;
+  readonly type: string;
+  readonly capabilities: readonly string[];
+  readonly contextWindowTokens: number | null;
+  readonly maxOutput: number | null;
+  readonly origin: "catalog" | "custom" | "api";
+}
+
+/** Проекция списка моделей провайдера (каталог + custom; api после refresh). */
+export interface ProviderModelsProjection {
+  readonly providerId: string;
+  readonly source: "catalog" | "custom" | "api";
+  readonly refreshedAt: string | null;
+  readonly entries: readonly ProviderModelEntryProjection[];
+}
+
+/** Входные данные добавления пользовательской модели. */
+export interface ProviderCustomModelInput {
+  readonly modelId: string;
+  readonly displayName?: string;
+}
+
+/** Типизированные коды ошибок проверки соединения (без сетевых деталей). */
+export type ProviderConnectionErrorKind =
+  | "timeout"
+  | "forbidden-destination"
+  | "dns-resolution-failed"
+  | "transport"
+  | "unavailable"
+  | "auth-required"
+  | "http-status";
+
+/** Проекция результата проверки соединения с провайдером. */
+export interface ProviderConnectionTestProjection {
+  readonly providerId: string;
+  readonly ok: boolean;
+  readonly status: number | null;
+  readonly durationMs: number;
+  readonly errorKind: ProviderConnectionErrorKind | null;
+}
+
+/**
  * Канонические API paths, используемые web-клиентом и backend-контрактами.
  * Шаблоны сохраняются для документации, builders — для runtime URL без ручной конкатенации.
  */
@@ -349,6 +452,22 @@ export const apiPaths = {
   usage: "/api/v1/usage",
   settings: "/api/v1/settings",
   hermesStatus: "/api/v1/hermes/status",
+  providerCatalog: "/api/v1/providers/catalog",
+  providerStatuses: "/api/v1/providers/status",
+  provider: (id: string) => `/api/v1/providers/${pathSegment(id)}`,
+  providerConfig: (id: string) => `/api/v1/providers/${pathSegment(id)}/config`,
+  providerCredential: (id: string) => `/api/v1/providers/${pathSegment(id)}/credential`,
+  providerTestConnection: (id: string) => `/api/v1/providers/${pathSegment(id)}/test-connection`,
+  providerModels: (id: string) => `/api/v1/providers/${pathSegment(id)}/models`,
+  providerModelsRefresh: (id: string) => `/api/v1/providers/${pathSegment(id)}/models/refresh`,
+  providerCustomModels: (id: string) => `/api/v1/providers/${pathSegment(id)}/models/custom`,
+  providerCustomModel: (id: string, modelId: string) => `/api/v1/providers/${pathSegment(id)}/models/custom/${pathSegment(modelId)}`,
+  providerAuthStart: "/api/v1/providers/auth/start",
+  providerAuthFlow: (flowId: string) => `/api/v1/providers/auth/${pathSegment(flowId)}`,
+  providerAuthPoll: (flowId: string) => `/api/v1/providers/auth/${pathSegment(flowId)}/poll`,
+  providerAuthCancel: (flowId: string) => `/api/v1/providers/auth/${pathSegment(flowId)}/cancel`,
+  providerAuthDisconnect: "/api/v1/providers/auth/disconnect",
+  providerAuthStatus: (providerId: string) => `/api/v1/providers/auth/status/${pathSegment(providerId)}`,
   onboardingDiscover: "/api/v1/onboarding/discover",
   onboarding: (id: string) => `/api/v1/onboarding/${pathSegment(id)}`,
   onboardingApproval: (id: string) => `/api/v1/onboarding/${pathSegment(id)}/approval`,

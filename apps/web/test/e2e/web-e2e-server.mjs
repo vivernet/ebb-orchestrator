@@ -38,6 +38,12 @@ const [
   import("../../../server/dist/modules/projects/onboarding-service.js"),
 ]);
 const { seedE2ELocalUser } = await import("../../../server/test/e2e/fixtures/auth-fixture.mjs");
+const { ProviderSettingsService } = await import("../../../server/dist/modules/runtime/providers/provider-settings-service.js");
+const { createProviderSettingsRepository } = await import("../../../server/dist/modules/runtime/providers/provider-settings-repository.js");
+const { createProviderCredentialStore } = await import("../../../server/dist/modules/runtime/providers/provider-credential-store.js");
+const { ProviderNetworkGateway } = await import("../../../server/dist/modules/runtime/providers/provider-network-gateway.js");
+const { createProviderCustomModelsRepository } = await import("../../../server/dist/modules/runtime/providers/provider-management.js");
+const { InMemorySecretStore } = await import("../../../server/dist/platform/security/secret-store.js");
 const host = "127.0.0.1";
 let canonicalDatabasePath;
 let seeded = false;
@@ -100,7 +106,13 @@ async function startBackend() {
     await status.set("READY");
     const approvalService = new ApprovalService(database);
     const onboardingService = new OnboardingService(database, approvalService);
-    app = createApp({ host, port: backendPort, db: database, scheduler: new SchedulerService(database), runtime: loadRuntime(), authService: createAuthService(repository, passwordHasher, { now: () => new Date().toISOString() }), approvalService, onboardingService, status });
+    const providerSettingsRepository = createProviderSettingsRepository(database);
+    const providerSecretStore = new InMemorySecretStore(database);
+    const providerCredentialStore = createProviderCredentialStore(providerSecretStore, providerSettingsRepository);
+    const providerSettingsService = new ProviderSettingsService(providerSettingsRepository, providerCredentialStore, providerSecretStore);
+    const providerGateway = new ProviderNetworkGateway();
+    const providerCustomModels = createProviderCustomModelsRepository(database);
+    app = createApp({ host, port: backendPort, db: database, scheduler: new SchedulerService(database), runtime: loadRuntime(), authService: createAuthService(repository, passwordHasher, { now: () => new Date().toISOString() }), approvalService, onboardingService, status, providerSettings: { service: providerSettingsService, gateway: providerGateway }, providerModels: { service: providerSettingsService, gateway: providerGateway, customModels: providerCustomModels, credentialStore: providerCredentialStore } });
     await app.listen({ host, port: backendPort });
     backend = { app, database, lock, appClosed: false, databaseClosed: false, lockReleased: false };
     const backendUrl = `http://${host}:${backendPort}`;

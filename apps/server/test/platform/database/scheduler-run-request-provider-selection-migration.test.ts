@@ -23,12 +23,12 @@ describe("scheduler RunRequest provider selection migration 050", () => {
     db = createSqliteDatabase(join(tmpDir, `${randomUUID()}.sqlite`));
   }
 
-  it("applies 001-050 and adds nullable provider binding columns to scheduler_run_requests", async () => {
+  it("applies 001-051 and adds nullable provider binding columns to scheduler_run_requests", async () => {
     await freshDb();
     const migrations = loadTestMigrations();
-    expect(migrations.map(({ version }) => version)).toEqual(Array.from({ length: 50 }, (_, index) => index + 1));
-    expect(migrations.at(-1)?.name).toBe("050_scheduler_run_request_provider_selection");
-    expect(runMigrations(db!, migrations).applied).toBe(50);
+    expect(migrations.map(({ version }) => version)).toEqual(Array.from({ length: 51 }, (_, index) => index + 1));
+    expect(migrations.at(-1)?.name).toBe("051_provider_custom_models");
+    expect(runMigrations(db!, migrations).applied).toBe(51);
 
     expect(db!.all<{ name: string }>("PRAGMA table_info(scheduler_run_requests)").map(({ name }) => name))
       .toEqual(expect.arrayContaining(["provider_id", "auth_method_id"]));
@@ -59,8 +59,11 @@ describe("scheduler RunRequest provider selection migration 050", () => {
 
     const rowsBefore = db!.all("SELECT id,task_id,idempotency_key,role,model,origin_type,origin_id,status,created_at,updated_at,run_id,failure_code FROM scheduler_run_requests");
     const queueIndexBefore = db!.get<{ sql: string }>("SELECT sql FROM sqlite_master WHERE name='idx_scheduler_run_requests_queue'")?.sql;
-    expect(runMigrations(db!, migrations).applied).toBe(1);
+    expect(runMigrations(db!, migrations).applied).toBe(2);
     expect(db!.all("SELECT id,task_id,idempotency_key,role,model,origin_type,origin_id,status,created_at,updated_at,run_id,failure_code FROM scheduler_run_requests")).toEqual(rowsBefore);
+    // Миграция 051 добавила таблицу пользовательских моделей (additive, без FK).
+    expect(db!.all<{ name: string }>("PRAGMA table_info(provider_custom_models)").map(({ name }) => name))
+      .toEqual(["provider_id", "model_id", "display_name", "created_at"]);
     // Существующие индексы не изменяются; новые столбцы добавляются как nullable.
     expect(db!.get<{ sql: string }>("SELECT sql FROM sqlite_master WHERE name='idx_scheduler_run_requests_queue'")?.sql).toBe(queueIndexBefore);
     expect(db!.get("SELECT provider_id,auth_method_id FROM scheduler_run_requests")).toEqual({ provider_id: null, auth_method_id: null });

@@ -39,6 +39,8 @@ import { githubRoutes } from "./routes/github.js";
 import { diagnosticsRoutes } from "./routes/diagnostics.js";
 import { secretsRoutes } from "./routes/secrets.js";
 import { providerAuthRoutes } from "./routes/provider-auth.js";
+import { providerSettingsRoutes, type ProviderSettingsRouteDeps } from "./routes/provider-settings.js";
+import { providerModelsRoutes, type ProviderModelsRouteDeps } from "./routes/provider-models.js";
 import type { ProviderAuthFlowService } from "../modules/runtime/providers/auth/provider-auth-flow.js";
 import type { GitHubSyncWorker } from "../modules/github/github-sync-worker.js";
 import type { DiagnosticsService } from "../platform/diagnostics/diagnostics-service.js";
@@ -102,6 +104,10 @@ export interface AppDeps {
   hermesStatus?: HermesStatusRouteDeps;
   /** Сервис авторизации провайдеров (plan-24 Task 4); без него auth-маршруты отвечают 503. */
   providerAuthFlows?: ProviderAuthFlowService;
+  /** Настройки провайдеров (plan-24 Task 6); без сервиса маршруты отвечают 503. */
+  providerSettings?: ProviderSettingsRouteDeps;
+  /** Модельный каталог провайдеров (plan-24 Task 6). */
+  providerModels?: ProviderModelsRouteDeps;
 }
 
 export type OrchestratorApp = FastifyInstance;
@@ -309,6 +315,8 @@ export function createApp(deps: AppDeps): OrchestratorApp {
     await hermesStatusRoutes(instance, deps.hermesStatus ?? {});
     const providerAuthDeps = deps.providerAuthFlows ? { service: deps.providerAuthFlows } : {};
     await providerAuthRoutes(instance, providerAuthDeps);
+    await providerSettingsRoutes(instance, deps.providerSettings ?? {});
+    await providerModelsRoutes(instance, deps.providerModels ?? {});
     await usageRoutes(instance, { db: deps.db });
     await secretsRoutes(instance, {
       db: deps.db,

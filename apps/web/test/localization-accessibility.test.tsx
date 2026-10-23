@@ -32,6 +32,11 @@ const inventory = [
   'features/runs/AgentRunPage.tsx', 'features/usage/UsagePage.tsx',
   'features/settings/SettingsPage.tsx', 'features/onboarding/OnboardingPage.tsx',
   'features/onboarding/ProjectOnboardingPage.tsx',
+  'features/settings/providers/ProviderCatalogPage.tsx',
+  'features/settings/providers/ProviderDetailPage.tsx',
+  'features/settings/providers/ProviderAuthForm.tsx',
+  'features/settings/providers/ProviderModelSelector.tsx',
+  'features/settings/providers/ProviderStatus.tsx',
 ];
 
 const sourceFiles = import.meta.glob('../src/**/*.{ts,tsx}', {

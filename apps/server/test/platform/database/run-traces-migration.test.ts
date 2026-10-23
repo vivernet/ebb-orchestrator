@@ -31,14 +31,14 @@ describe("run traces migration", () => {
     );
   }
 
-  describe("fresh install through 050", () => {
-    it("applies 001-050 and creates an additive run_traces table", async () => {
+  describe("fresh install through 051", () => {
+    it("applies 001-051 and creates an additive run_traces table", async () => {
       tmpDir = await mkdtemp(join(tmpdir(), "ebb-run-traces-fresh-"));
       db = createSqliteDatabase(join(tmpDir, `${randomUUID()}.sqlite`));
       const migrations = loadTestMigrations();
-      expect(migrations.map(({ version }) => version)).toEqual(Array.from({ length: 50 }, (_, index) => index + 1));
-      expect(migrations.at(-1)?.name).toBe("050_scheduler_run_request_provider_selection");
-      expect(runMigrations(db, migrations).applied).toBe(50);
+      expect(migrations.map(({ version }) => version)).toEqual(Array.from({ length: 51 }, (_, index) => index + 1));
+      expect(migrations.at(-1)?.name).toBe("051_provider_custom_models");
+      expect(runMigrations(db, migrations).applied).toBe(51);
 
       const columns = db.all<{ name: string; type: string; notnull: number; pk: number }>("PRAGMA table_info(run_traces)");
       expect(columns.map(({ name, type, notnull, pk }) => ({ name, type, notnull, pk }))).toEqual([
@@ -74,7 +74,7 @@ describe("run traces migration", () => {
       db!.run("DELETE FROM agent_runs WHERE id=$runId", { runId });
       expect(db!.all("SELECT * FROM run_traces")).toEqual([]);
       expect(db!.all("PRAGMA foreign_key_check")).toEqual([]);
-      expect(db!.get<{ applied: number }>("SELECT COUNT(*) AS applied FROM schema_migrations")!.applied).toBe(50);
+      expect(db!.get<{ applied: number }>("SELECT COUNT(*) AS applied FROM schema_migrations")!.applied).toBe(51);
     });
   });
 
@@ -98,7 +98,7 @@ describe("run traces migration", () => {
       const runRowsBefore = db!.all("SELECT * FROM agent_runs");
       const taskRowsBefore = db!.all("SELECT * FROM tasks");
 
-      expect(runMigrations(db, migrations).applied).toBe(3);
+      expect(runMigrations(db, migrations).applied).toBe(4);
       expect(db!.all("SELECT * FROM agent_runs")).toEqual(runRowsBefore);
       expect(db!.all("SELECT * FROM tasks")).toEqual(taskRowsBefore);
 

@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Прототип Web «ИИ-провайдеры» — Ebb Orchestrator (plan-24, Task 6)</title>
+<style>
+  :root {
+    --bg: #0a101c; --panel: #111a2a; --panel2: #17243a; --line: #293c5b;
+    --text: #e8eef7; --muted: #8fa0bb; --accent: #8ab4f8; --green: #7ee2a8;
+    --yellow: #e8c87e; --red: #ffb9c9; --blue: #9db8dd;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, "Segoe UI", sans-serif; }
+  .shell { display: grid; grid-template-columns: 220px minmax(0,1fr); min-height: 100vh; }
+  .nav { background: #0d1524; border-right: 1px solid var(--line); padding: 18px 14px; display: grid; gap: 14px; align-content: start; }
+  .nav .brand { display: flex; gap: 8px; align-items: center; }
+  .nav .mark { background: #1f3f68; border-radius: 8px; padding: 4px 8px; font-weight: 700; }
+  .nav a { color: #a6b4cc; text-decoration: none; padding: 8px 10px; border-radius: 8px; }
+  .nav a.active { background: #192b4a; color: #eff5ff; }
+  .main { padding: 24px; display: grid; gap: 18px; max-width: 1200px; }
+  .eyebrow { color: var(--muted); font-size: 12px; margin: 0 0 4px; }
+  h1 { margin: 0; font-size: 22px; }
+  h2 { font-size: 16px; margin: 0 0 8px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; display: grid; gap: 10px; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px,1fr)); gap: 10px; }
+  .chip { background: #182642; border: 1px solid #2c4a76; border-radius: 999px; color: var(--blue); font-size: 12px; padding: 2px 10px; }
+  .badge { border-radius: 999px; font-size: 12px; padding: 3px 10px; }
+  .b-connected { background:#123524; color:#7ee2a8; border:1px solid #1f5c3c; }
+  .b-empty, .b-disabled { background:#1c2638; color:#8fa0bb; border:1px solid #2c3d5c; }
+  .b-pending { background:#352a12; color:#e8c87e; border:1px solid #6b5520; }
+  .b-expired { background:#3a231a; color:#f0b08a; border:1px solid #7a4a2c; }
+  .b-disconnected { background:#2a2f3c; color:#aebacf; border:1px solid #454f63; }
+  .b-error { background:#3e202b; color:#ffb9c9; border:1px solid #7a3446; }
+  input, select, button { background:#0f1830; border:1px solid #2a3d5e; border-radius:8px; color:var(--text); padding:8px 10px; font: inherit; }
+  button { background:#1c3a5f; border-color:#2f5f92; cursor:pointer; }
+  button.danger { background:#3e202b; border-color:#6f3446; color:#ffdce4; }
+  label.field { display:grid; gap:4px; max-width:480px; }
+  label.field > span { color: var(--muted); font-size:12px; }
+  .model-list { list-style:none; margin:0; padding:0; display:grid; gap:6px; }
+  .model-list li { background:#121c30; border:1px solid #263a59; border-radius:10px; padding:8px 12px; display:flex; gap:10px; justify-content:space-between; align-items:center; flex-wrap:wrap; }
+  .flow { border:1px dashed #3c5b8c; border-radius:10px; padding:12px; display:grid; gap:8px; background:#0e1830; }
+  .code { font-family: ui-monospace, monospace; font-size:18px; letter-spacing:2px; color:var(--yellow); }
+  .muted { color: var(--muted); }
+  .note { color: var(--muted); font-size:12px; }
+  .secret { background:#0f1830; border:1px solid #2a3d5e; border-radius:8px; padding:8px 10px; color:#3a4a66; }
+  .states { display:grid; grid-template-columns: repeat(auto-fill,minmax(150px,1fr)); gap:8px; }
+  .states div { border:1px solid var(--line); border-radius:10px; padding:8px; display:grid; gap:6px; align-content:start; }
+  @media (max-width: 760px) {
+    .shell { grid-template-columns: 1fr; }
+    .nav { display:flex; overflow-x:auto; padding:10px; }
+    .main { padding:16px; }
+    .grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="nav" aria-label="Основная навигация">
+    <div class="brand"><span class="mark">E</span>Ebb Orchestrator</div>
+    <a href="#">Обзор</a><a href="#">Проекты</a><a href="#">Согласования</a><a href="#">Выполнение</a><a href="#">Использование</a>
+    <a href="#" class="active">Настройки</a>
+  </aside>
+  <main class="main">
+
+    <!-- ==================== Экран 1: каталог ==================== -->
+    <section class="card" aria-label="Каталог провайдеров">
+      <p class="eyebrow">Настройки</p>
+      <h1>ИИ-провайдеры</h1>
+      <p class="muted">Каталог из 86 провайдеров. Выберите провайдера, чтобы настроить подключение и модели.</p>
+      <div class="row">
+        <input type="search" placeholder="Поиск по названию или ID…" aria-label="Поиск" style="flex:1;min-width:220px">
+        <select aria-label="Категория"><option>Все категории</option><option>Чат</option><option>Изображения</option><option>Локальные</option></select>
+      </div>
+      <div class="grid">
+        <div class="card"><div class="row" style="justify-content:space-between"><strong>OpenAI</strong><span class="badge b-connected">Подключён</span></div><div class="row"><span class="chip">Чат</span><code class="muted">openai</code></div><div class="row"><span class="chip">Стриминг</span><span class="chip">Инструменты</span></div></div>
+        <div class="card"><div class="row" style="justify-content:space-between"><strong>Anthropic</strong><span class="badge b-empty">Не настроен</span></div><div class="row"><span class="chip">Чат</span><code class="muted">anthropic</code></div></div>
+        <div class="card"><div class="row" style="justify-content:space-between"><strong>ChatGPT</strong><span class="badge b-pending">Ожидает подтверждения</span></div><div class="row"><span class="chip">Чат</span><code class="muted">chatgpt</code></div></div>
+        <div class="card"><div class="row" style="justify-content:space-between"><strong>Ollama</strong><span class="badge b-disconnected">Отключён</span></div><div class="row"><span class="chip">Локальные</span><code class="muted">ollama</code></div></div>
+        <div class="card"><div class="row" style="justify-content:space-between"><strong>Bedrock</strong><span class="badge b-expired">Срок подтверждения истёк</span></div><div class="row"><span class="chip">Чат</span><code class="muted">bedrock</code></div></div>
+        <div class="card"><div class="row" style="justify-content:space-between"><strong>vLLM</strong><span class="badge b-empty">Не настроен</span></div><div class="row"><span class="chip">Локальные</span><code class="muted">vllm</code></div></div>
+      </div>
+      <p class="note">Все 86 ID каталога отображаются; неизвестные/неподдерживаемые состояния показываются с причиной.</p>
+    </section>
+
+    <!-- ==================== Экран 2: детали провайдера ==================== -->
+    <section class="card" aria-label="Детали провайдера">
+      <p class="eyebrow"><a href="#" style="color:var(--accent)">← К списку провайдеров</a></p>
+      <div class="row" style="justify-content:space-between;align-items:flex-start">
+        <div><h1 style="font-size:20px">OpenAI</h1><div class="row"><span class="chip">Чат</span><span class="chip">Инструменты</span><span class="chip">Зрение</span></div></div>
+        <span class="badge b-connected">Подключён</span>
+      </div>
+
+      <h2>Состояния статусного баннера</h2>
+      <div class="states">
+        <div>Загрузка<span class="badge b-empty">Загрузка…</span></div>
+        <div>Не настроен (empty)<span class="badge b-empty">Не настроен</span></div>
+        <div>Ошибка загрузки<span class="badge b-error">Ошибка</span></div>
+        <div>Недоступен<span class="badge b-empty">Недоступно</span></div>
+        <div>Подключён<span class="badge b-connected">Подключён</span></div>
+        <div>Ожидает подтверждения<span class="badge b-pending">Ожидает подтверждения</span></div>
+        <div>Срок истёк<span class="badge b-expired">Срок подтверждения истёк</span></div>
+        <div>Отключён<span class="badge b-disconnected">Отключён</span></div>
+      </div>
+
+      <h2>Конфигурация</h2>
+      <label class="field"><span>Включить провайдера</span><input type="checkbox" checked></label>
+      <label class="field" style="margin-top:6px"><span>Метод аутентификации</span>
+        <select><option>API-ключ</option><option>OAuth (устройство)</option><option>Облачная идентичность</option></select>
+      </label>
+      <label class="field"><span>Загружать список моделей из API провайдера</span><select><option>Нет</option><option selected>Да</option></select></label>
+
+      <h2>Аутентификация: API-ключ (форма, без эха)</h2>
+      <label class="field"><span>API-ключ *</span><div class="secret">не отображается</div></label>
+      <p class="note">Значения не сохраняются в интерфейсе; при сохранении ключ заменяется. Поле — type="password", autocomplete выключен.</p>
+      <div class="row"><button>Заменить</button><button class="danger">Удалить учётные данные</button><button>Проверить соединение</button></div>
+
+      <h2>Аутентификация: устройство/OAuth (pending-состояние)</h2>
+      <div class="flow">
+        <p class="muted">Откройте ссылку, введите код и подтвердите доступ на устройстве.</p>
+        <a href="#" style="color:var(--accent);overflow-wrap:anywhere">https://auth.example.com/device</a>
+        <div class="row"><span>Код:</span><span class="code">ABCD-EFGH</span></div>
+        <p class="muted">Срок действия: 24.10.2026, 14:30</p>
+        <div class="row"><button class="danger">Отменить</button><span class="badge b-pending">Ожидает подтверждения…</span></div>
+      </div>
+
+      <h2>Аутентификация: токен подписки (subscription-token)</h2>
+      <label class="field"><span>Токен подписки *</span><div class="secret">не отображается</div></label>
+
+      <h2>Аутентификация: учётные данные облака (credential-fields)</h2>
+      <label class="field"><span>Access Key ID *</span><div class="secret">не отображается</div></label>
+      <label class="field"><span>Secret Access Key *</span><div class="secret">не отображается</div></label>
+      <label class="field"><span>Session Token</span><div class="secret">не отображается</div></label>
+
+      <h2>Аутентификация: облачная идентичность (ambient)</h2>
+      <p class="muted">Используется идентичность окружения; ввод ключей не требуется.</p>
+
+      <h2>Аутентификация: локальный endpoint</h2>
+      <label class="field"><span>Endpoint API *</span><input type="url" placeholder="http://127.0.0.1:11434"></label>
+      <p class="note">Локальный endpoint выполняется на этой машине. Убедитесь, что вы доверяете этому сервису.</p>
+
+      <h2>Модели: каталог, дефолты, роли, пользовательские</h2>
+      <div class="row"><input type="search" placeholder="Поиск моделей…" aria-label="Поиск моделей" style="flex:1;min-width:200px"><button>Загрузить из API</button></div>
+      <label class="field"><span>Модель по умолчанию</span><select><option>GPT-4o</option><option>GPT-4o mini</option></select></label>
+      <div class="card">
+        <strong>Дефолты по ролям</strong>
+        <div class="row"><code class="muted">developer</code><select><option>GPT-4o mini</option></select><button class="danger">×</button></div>
+        <div class="row"><input placeholder="Роль (например, developer)" aria-label="Новая роль"><button>Добавить роль</button></div>
+      </div>
+      <div class="row"><input placeholder="ID модели (например, my-model)" aria-label="ID модели"><button>Добавить модель</button></div>
+      <ul class="model-list">
+        <li><div><strong>GPT-4o</strong> <code class="muted">gpt-4o</code></div><div class="row"><span class="chip">Каталог</span><span class="muted">Контекст: 128000</span></div></li>
+        <li><div><strong>Моя модель</strong> <code class="muted">my-model</code></div><div class="row"><span class="chip">Пользовательская</span><button class="danger">×</button></div></li>
+        <li><div><strong>API Model</strong> <code class="muted">api-model-1</code></div><div class="row"><span class="chip">Из API</span></div></li>
+      </ul>
+    </section>
+
+    <!-- ==================== Экран 3: Run selection ==================== -->
+    <section class="card" aria-label="Запуск: выбор провайдера и модели">
+      <h2>Сведения о запуске (run selection)</h2>
+      <div class="row" style="justify-content:space-between">
+        <div><span class="muted">Роль</span><br><strong>developer</strong></div>
+        <div><span class="muted">Модель</span><br><strong>gpt-4o</strong></div>
+        <div><span class="muted">Провайдер (durable)</span><br><strong>OpenAI</strong></div>
+        <div><span class="muted">Конфигурация</span><br><strong>ревизия 3</strong></div>
+      </div>
+      <p class="note">Выбор фиксируется на этапе запуска; схем дефолтов применяется к новым запускам.</p>
+    </section>
+
+  </main>
+</div>
+</body>
+</html>

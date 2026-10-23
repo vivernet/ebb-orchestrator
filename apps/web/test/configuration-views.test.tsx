@@ -1,5 +1,6 @@
 import { describe, test, expect, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
+import { MemoryRouter } from 'react-router';
 import ProjectOnboardingPage from '../src/features/onboarding/ProjectOnboardingPage.js';
 import SettingsPage from '../src/features/settings/SettingsPage.js';
 import UsagePage from '../src/features/usage/UsagePage.js';
@@ -125,7 +126,7 @@ describe('Settings page configuration hierarchy', () => {
       providerSelection: { defaultModel: 'default', models: [] },
     });
 
-    render(<SettingsPage />);
+    render(<MemoryRouter><SettingsPage /></MemoryRouter>);
 
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Глобально' })).toBeInTheDocument());
     expect(screen.getByRole('heading', { name: 'Проект' })).toBeInTheDocument();
@@ -143,7 +144,7 @@ describe('Settings page configuration hierarchy', () => {
       providerSelection: { defaultModel: 'default', models: [] },
     });
 
-    render(<SettingsPage />);
+    render(<MemoryRouter><SettingsPage /></MemoryRouter>);
 
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Безопасность' })).toBeInTheDocument());
     expect(screen.getAllByText(/Недоступно/).length).toBeGreaterThan(0);
@@ -158,7 +159,7 @@ describe('Settings page configuration hierarchy', () => {
       providerSelection: { defaultModel: 'default', models: [] },
     });
 
-    render(<SettingsPage />);
+    render(<MemoryRouter><SettingsPage /></MemoryRouter>);
 
     expect(await screen.findByText('Не удалось загрузить настройки: Не удалось выполнить запрос.')).toBeInTheDocument();
     expect(screen.queryByText(/secret:/)).not.toBeInTheDocument();
@@ -171,7 +172,7 @@ describe('Settings page configuration hierarchy', () => {
   test('maps recognized settings API error codes to safe Russian copy', async () => {
     vi.spyOn(apiClient, 'get').mockRejectedValueOnce(new ApiError('secret: settings detail', 403, 'AUTH_FORBIDDEN'));
 
-    render(<SettingsPage />);
+    render(<MemoryRouter><SettingsPage /></MemoryRouter>);
 
     expect(await screen.findByText('Не удалось загрузить настройки: Доступ запрещён.')).toBeInTheDocument();
     expect(screen.queryByText(/secret:/)).not.toBeInTheDocument();
@@ -192,7 +193,7 @@ describe('Settings page AI provider selection', () => {
       },
     });
 
-    render(<SettingsPage />);
+    render(<MemoryRouter><SettingsPage /></MemoryRouter>);
 
     await waitFor(() => expect(screen.getByRole('heading', { name: 'ИИ-провайдеры и модели' })).toBeInTheDocument());
     expect(screen.getByText('gpt-6-luna')).toBeInTheDocument();
@@ -222,7 +223,7 @@ describe('Settings page AI provider selection', () => {
       },
     });
 
-    render(<SettingsPage />);
+    render(<MemoryRouter><SettingsPage /></MemoryRouter>);
 
     expect(await screen.findByRole('heading', { name: 'ИИ-провайдеры и модели' })).toBeInTheDocument();
     expect(screen.getAllByText('Настроен')).toHaveLength(2);

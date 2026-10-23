@@ -22,7 +22,7 @@ describe('routing and session bootstrap', () => {
     const routes = router.routes[0]?.children ?? [];
     expect(routes.map((route) => route.path)).toEqual([
       '', 'projects', 'projects/:id', 'epics/:id', 'projects/:projectId/epics/:epicId', 'tasks/:id', 'projects/:projectId/tasks/:taskId', 'approvals', 'execution',
-      'runs/:id', 'projects/:projectId/runs/:runId', 'usage', 'settings', 'projects/new', 'onboarding/:id', '*',
+      'runs/:id', 'projects/:projectId/runs/:runId', 'usage', 'settings', 'settings/providers', 'settings/providers/:providerId', 'projects/new', 'onboarding/:id', '*',
     ]);
     expect(routes.find((route) => route.path === '*')?.id).toBe('not-found');
     expect(router.routes[0]?.errorElement).toBeDefined();
@@ -35,7 +35,7 @@ describe('routing and session bootstrap', () => {
       { breadcrumbLabel: 'Обзор' }, { breadcrumbLabel: 'Проекты' }, { breadcrumbLabel: 'Проект' }, { breadcrumbLabel: 'Эпик' },
       { breadcrumbLabel: 'Эпик' }, { breadcrumbLabel: 'Задача' }, { breadcrumbLabel: 'Задача' }, { breadcrumbLabel: 'Согласования' },
       { breadcrumbLabel: 'Выполнение' }, { breadcrumbLabel: 'Запуск' }, { breadcrumbLabel: 'Запуск' }, { breadcrumbLabel: 'Использование' },
-      { breadcrumbLabel: 'Настройки' }, { breadcrumbLabel: 'Создание проекта' }, { breadcrumbLabel: 'Создание проекта' }, { breadcrumbLabel: 'Страница не найдена' },
+      { breadcrumbLabel: 'Настройки' }, { breadcrumbLabel: 'Провайдеры' }, { breadcrumbLabel: 'Провайдеры' }, { breadcrumbLabel: 'Создание проекта' }, { breadcrumbLabel: 'Создание проекта' }, { breadcrumbLabel: 'Страница не найдена' },
     ]);
   });
 

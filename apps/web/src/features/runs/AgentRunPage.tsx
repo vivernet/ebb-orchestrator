@@ -84,6 +84,12 @@ interface AgentRun {
   startedAt: string | null;
   endedAt: string | null;
   usage: { inputTokens: number; cachedTokens: number; outputTokens: number; cost: number };
+  providerSelection: {
+    providerId: string;
+    modelId: string;
+    authMethodId: string;
+    configRevision: number;
+  } | null;
 }
 
 interface AgentRunPageProps {
@@ -222,6 +228,13 @@ export default function AgentRunPage({ id }: AgentRunPageProps) {
         <div><span>Среда выполнения</span><strong>{run.runtime}</strong></div>
         <div><span>Модель</span><strong>{runModelLabel(run.model)}</strong></div>
         <div><span>Провайдер</span><strong>{runProviderLabel(run.model)}</strong></div>
+        {run.providerSelection && (
+          <>
+            <div><span>Модель провайдера</span><strong>{run.providerSelection.modelId}</strong></div>
+            <div><span>Провайдер (durable)</span><strong>{PROVIDER_DISPLAY_NAME.get(run.providerSelection.providerId) ?? run.providerSelection.providerId}</strong></div>
+            <div><span>Конфигурация</span><strong>ревизия {run.providerSelection.configRevision}</strong></div>
+          </>
+        )}
         <div><span>Причина запуска</span><strong>{runTriggerLabel(run.triggerReason)}</strong></div>
         <div><span>Задача</span><strong>{run.taskId ? <Link to={`/tasks/${encodeURIComponent(run.taskId)}`}>{run.taskId}</Link> : 'Системный запуск'}</strong></div>
         <div><span>Эпик</span><strong>{run.epicId ? <Link to={`/epics/${encodeURIComponent(run.epicId)}`}>{run.epicId}</Link> : '—'}</strong></div>

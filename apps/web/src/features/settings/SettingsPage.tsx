@@ -1,4 +1,5 @@
 import { useCallback } from 'react';
+import { Link } from 'react-router';
 import { apiPaths, type SettingsProjection } from '@ebb-orchestrator/contracts';
 import { ApiError, apiClient, toClientPath } from '../../api/client.js';
 import { PageState } from '../../components/ui/PageState.js';
@@ -36,6 +37,12 @@ export default function SettingsPage() {
   return (
     <div className="settings-page">
       <h1>Настройки</h1>
+
+      <section aria-label="ИИ-провайдеры" className="provider-settings-entry">
+        <h2>ИИ-провайдеры</h2>
+        <p>Управление каталогом из 86 провайдеров: подключение, учётные данные, модели и дефолты.</p>
+        <Link to="/settings/providers">Открыть каталог провайдеров</Link>
+      </section>
 
       <section aria-label="Иерархия конфигурации">
         <h2>Действующая иерархия</h2>
