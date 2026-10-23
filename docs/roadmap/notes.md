@@ -64,3 +64,9 @@ summary: Неавторитетный реестр предложений и з�
   status: open
   summary: Довести до зелёного macOS quality-security CI (macos-14 arm64) — отложено, вернуться позже; Plan20 остаётся in_progress до физического Mac-приёмки Task5C-M
   context: Джоба quality-security (macos-14, 24.x, node@24) на HEAD develop в течение серии прогонов не доходит до зелёного: либо не стартует из-за перегруженной arm64-очереди GitHub Actions (started_at=null, снятие через час), либо упирается в таймаут шага pnpm test. Исправлены E2E teardown на macOS (канонизация каталога ledger через realpathSync), пути тестов и fastify-аудит; пользователь решил пока отложить доводку этой джобы и вернуться позже. Другая macOS-джоба process-scope-darwin-acceptance проходит стабильно.
+- id: IN-005
+  date: 2026-10-23
+  source: user
+  status: open
+  summary: Создать план по модернизации веб-интерфейса и добавлению возможности настройки ИИ-провайдеров и моделей
+  context: Запись пользователя. Триггер — после полной реализации плана 22 (22-lobehub-pattern-adoption). Настройка провайдеров/моделей должна учитывать границу доверия Ebb↔Hermes (proposal 09) и существующие ограничения Plan20.
