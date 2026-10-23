@@ -2,14 +2,16 @@
 id: proposal-09
 kind: proposal
 title: Reuse the configured Hermes provider for Orchestrator Runs
-status: accepted
+status: superseded
 created: 2026-10-01
-updated: 2026-10-10
+updated: 2026-10-23
+superseded_by: proposal-18
+accepted: 2026-10-10
 ---
 
 # Proposal 09: Reuse the configured Hermes provider for Orchestrator Runs
 
-**Current decision (2026-10-10):** The user explicitly rejected the per-Run isolated Hermes profile as unnecessary for the first version and directed Ebb to use the Hermes setup that is already configured. This decision supersedes the 2026-10-02 conditional approval of Alternative C below. It changes the product contract; it does not assert implementation or runtime acceptance is complete.
+**Superseded (2026-10-23):** Решение пользователя (2026-10-23) переносит владение настройкой ИИ-провайдеров и моделей для Orchestrator Runs в Ebb (Proposal 18, `accepted`). Ebb хранит реестр built-in провайдеров/моделей Hermes, хранит API-ключи в `EBB_ORCHESTRATOR_HOME/.env` и передаёт выбор при запуске через `hermes chat … --provider -m --oneshot --ignore-user-config` + env-переменную провайдера. Обязательства «не читать/не копировать/не менять пользовательские Hermes credentials и профиль» сохраняются. Данный документ остаётся исторической записью принятого ранее контракта.
 
 ## Contract for v1
 

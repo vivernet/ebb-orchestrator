@@ -67,9 +67,10 @@ summary: Неавторитетный реестр предложений и з�
 - id: IN-005
   date: 2026-10-23
   source: user
-  status: open
+  status: promoted
+  linked_plan: plan-23
   summary: Создать план по модернизации веб-интерфейса и добавлению возможности настройки ИИ-провайдеров и моделей
-  context: Запись пользователя. Триггер — после полной реализации плана 22 (22-lobehub-pattern-adoption). Настройка провайдеров/моделей должна учитывать границу доверия Ebb↔Hermes (proposal 09) и существующие ограничения Plan20.
+  context: Запись пользователя. Триггер — после полной реализации плана 22 (22-lobehub-pattern-adoption). Пользователь принял решение перенести владение настройкой провайдеров/моделей в Ebb (Proposal 18 accepted, 2026-10-23; Proposal 09 superseded; spec-01 §10.2/§13.1 и Plan20 Task5B/5C амендированы). В v1 — только built-in провайдеры Hermes; API-ключи в EBB_ORCHESTRATOR_HOME/.env; UI read-only. Создан план 23-web-ui-ai-provider-settings.md (прошёл независимый review).
 - id: IN-006
   date: 2026-10-23
   source: user
