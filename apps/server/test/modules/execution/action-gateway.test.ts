@@ -353,4 +353,91 @@ describe('ActionGateway', () => {
       expect(result.success).toBe(false);
     });
   });
+
+  describe('workspace.patch частичное применение (E1)', () => {
+    it('применяет все операции полного мульти-патча со статусом applied', async () => {
+      fs.writeFileSync(path.join(workspaceDir, 'a.txt'), 'alpha');
+      fs.writeFileSync(path.join(workspaceDir, 'b.txt'), 'beta');
+
+      const result = await gateway.patch([
+        { path: 'a.txt', patches: [{ start: 0, end: 5, content: 'ALPHA' }] },
+        { path: 'b.txt', patches: [{ start: 0, end: 4, content: 'BETA' }] },
+      ]);
+
+      expect(result).toEqual({
+        success: true,
+        status: 'applied',
+        applied: [
+          { path: 'a.txt', success: true },
+          { path: 'b.txt', success: true },
+        ],
+        failed: [],
+      });
+      expect(fs.readFileSync(path.join(workspaceDir, 'a.txt'), 'utf8')).toBe('ALPHA');
+      expect(fs.readFileSync(path.join(workspaceDir, 'b.txt'), 'utf8')).toBe('BETA');
+    });
+
+    it('пустой мульти-патч успешен и ничего не применяет', async () => {
+      const result = await gateway.patch([]);
+
+      expect(result).toEqual({ success: true, status: 'applied', applied: [], failed: [] });
+    });
+
+    it('возвращает partiallyApplied при частично неприменимых операциях без утечки содержимого', async () => {
+      fs.writeFileSync(path.join(workspaceDir, 'keep.txt'), 'secret-content');
+
+      const result = await gateway.patch([
+        { path: 'keep.txt', patches: [{ start: 0, end: 14, content: 'patched' }] },
+        { path: 'missing.txt', patches: [{ start: 0, end: 1, content: 'x' }] },
+      ]);
+
+      expect(result.success).toBe(false);
+      expect(result.status).toBe('partiallyApplied');
+      expect(result.applied).toEqual([{ path: 'keep.txt', success: true }]);
+      expect(result.failed).toHaveLength(1);
+      expect(result.failed[0]).toMatchObject({ path: 'missing.txt', success: false });
+      expect(result.failed[0]?.error).toBeDefined();
+      expect(fs.readFileSync(path.join(workspaceDir, 'keep.txt'), 'utf8')).toBe('patched');
+      // Результат не содержит содержимого файлов.
+      expect(JSON.stringify(result)).not.toContain('secret-content');
+      expect(JSON.stringify(result)).not.toContain('patched');
+    });
+
+    it('отклоняет все неприменимые операции статусом failed без применения', async () => {
+      const result = await gateway.patch([
+        { path: 'one-missing.txt', patches: [{ start: 0, end: 1, content: 'x' }] },
+        { path: 'two-missing.txt', patches: [{ start: 0, end: 1, content: 'y' }] },
+      ]);
+
+      expect(result).toEqual({
+        success: false,
+        status: 'failed',
+        applied: [],
+        failed: [
+          { path: 'one-missing.txt', success: false, error: expect.any(String) },
+          { path: 'two-missing.txt', success: false, error: expect.any(String) },
+        ],
+      });
+      expect(fs.existsSync(path.join(workspaceDir, 'one-missing.txt'))).toBe(false);
+      expect(fs.existsSync(path.join(workspaceDir, 'two-missing.txt'))).toBe(false);
+    });
+
+    it('валидационный отказ пути отклоняет весь батч до применения', async () => {
+      fs.writeFileSync(path.join(workspaceDir, 'valid.txt'), 'untouched');
+
+      const result = await gateway.patch([
+        { path: 'valid.txt', patches: [{ start: 0, end: 9, content: 'changed' }] },
+        { path: '../outside.txt', patches: [{ start: 0, end: 1, content: 'x' }] },
+      ]);
+
+      expect(result).toEqual({
+        success: false,
+        status: 'failed',
+        applied: [],
+        failed: [],
+        error: PATH_OUTSIDE_SCOPE,
+      });
+      expect(fs.readFileSync(path.join(workspaceDir, 'valid.txt'), 'utf8')).toBe('untouched');
+    });
+  });
 });

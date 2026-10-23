@@ -15,6 +15,7 @@
  * 7. Start HTTP server
  */
 import { createApp } from "./app/create-app.js";
+import { parseEnvConfig, type ServerEnv } from "./platform/config/env-config.js";
 import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -71,8 +72,19 @@ import { GitHubSyncWorker, SqliteFeedbackDeliveryState } from "./modules/github/
 async function startServer(): Promise<void> {
 let startupCleanup: () => Promise<void> = async () => {};
 try {
+// Валидация окружения на границе чтения: невалидная или недостающая
+// обязательная переменная останавливает запуск до создания сервисов.
+let envConfig: ServerEnv;
+try {
+  envConfig = parseEnvConfig({ ...process.env, PORT: process.env.PORT ?? "3000" });
+} catch (error) {
+  console.error(
+    `[ebb-orchestrator] invalid environment configuration: ${error instanceof Error ? error.message : String(error)}`,
+  );
+  process.exit(1);
+}
 const host = "127.0.0.1";
-const port = Number(process.env["PORT"] ?? 3000);
+const port = envConfig.PORT;
 let serverReady = false;
 const startupAbortController = new AbortController();
 const handleLifecycleSignal = createStartupSignalHandler({
@@ -145,7 +157,7 @@ const githubSyncWorker = new GitHubSyncWorker(githubAdapter, new GitHubSyncServi
   persistFeedback: (comment) => Promise.resolve(humanFeedbackService.receiveComment(comment)),
 });
 const diagnostics = new DiagnosticsService(database, {
-  appVersion: process.env["EBB_ORCHESTRATOR_VERSION"] ?? "development",
+  appVersion: envConfig.EBB_ORCHESTRATOR_VERSION,
   schemaVersion: Math.max(0, ...migrations.map((migration) => migration.version)),
 });
 const production = createProductionComposition({

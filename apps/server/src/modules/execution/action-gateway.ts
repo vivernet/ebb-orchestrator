@@ -15,6 +15,29 @@ import { resolvePathWithScope } from '../../platform/security/path-scope.js';
 
 export type FilePatch = { start: number; end: number; content: string };
 export type FilePatchResult = { success: boolean; error?: string };
+
+/** Операция батч-патча: файл + набор патчей. */
+export type PatchOperation = { path: string; patches: FilePatch[] };
+
+/** Результат одной операции батч-патча. */
+export type PatchOperationResult = { path: string; success: boolean; error?: string };
+
+/** Статус батч-патча: полное применение, частичное или полный отказ. */
+export type PatchStatus = 'applied' | 'partiallyApplied' | 'failed';
+
+/**
+ * Результат батч-патча с контрактом частичного применения.
+ * Статус `partiallyApplied` возвращается, когда часть операций применилась,
+ * а часть нет. Списки `applied`/`failed` содержат только пути и статусы
+ * операций — без содержимого файлов.
+ */
+export type WorkspacePatchResult = {
+  success: boolean;
+  status: PatchStatus;
+  applied: PatchOperationResult[];
+  failed: PatchOperationResult[];
+  error?: string;
+};
 type OpenFile = (filePath: string, flags: number) => number;
 
 const MAX_SEARCH_DEPTH = 32;
@@ -219,24 +242,101 @@ export class ActionGateway {
     return results;
   }
 
-  /**\
-   * Применяет патчи к файлу в workspace.
-   * @param relPath Относительный путь к файлу.
-   * @param patches Массив изменений с диапазонами и новым содержимым.
-   * @returns Результат операции замены.
+  /**
+   * Применяет патчи к файлам workspace.
+   *
+   * Поддерживаются две формы вызова:
+   * - `patch(relPath, patches)` — применение набора патчей к одному файлу
+   *   (обратная совместимость; результат — `FilePatchResult`);
+   * - `patch(operations)` — батч-применение к нескольким файлам с контрактом
+   *   частичного применения: если часть операций применилась, а часть нет,
+   *   возвращается статус `partiallyApplied` со списками применённых и
+   *   неприменённых операций. Ошибки валидации путей (path-scope/PathResolver)
+   *   отклоняют весь батч до применения; частичное применение допустимо только
+   *   для операций, прошедших валидацию. Результат не содержит содержимого
+   *   файлов — только пути и статусы операций.
    */
-  async patch(relPath: string, patches: FilePatch[]): Promise<FilePatchResult> {
+  async patch(relPath: string, patches: FilePatch[]): Promise<FilePatchResult>;
+  async patch(operations: PatchOperation[]): Promise<WorkspacePatchResult>;
+  async patch(
+    targetOrOperations: string | PatchOperation[],
+    patches?: FilePatch[],
+  ): Promise<FilePatchResult | WorkspacePatchResult> {
+    if (typeof targetOrOperations === 'string') {
+      return this.patchSingleFile(targetOrOperations, patches ?? []);
+    }
+    return this.patchBatch(targetOrOperations);
+  }
+
+  /** Применяет набор патчей к одному файлу с проверкой capability и scope. */
+  private async patchSingleFile(relPath: string, patches: FilePatch[]): Promise<FilePatchResult> {
     if (!this.checkPermission(ActionId.WorkspacePatch)) {
       return { success: false, error: 'Permission denied: workspace.patch action not allowed' };
     }
     const resolved = resolvePathWithScope(this.workspace, relPath, undefined, this.resolver);
-
     if (!resolved.ok) {
       return { success: false, error: resolved.error };
     }
+    return this.applyResolvedPatch(resolved.path, patches);
+  }
 
+  /**
+   * Применяет батч операций к нескольким файлам.
+   * Все пути валидируются до любого применения (fail-closed): ошибка
+   * валидации отклоняет весь батч без применения. Операция считается
+   * неприменённой, если применение к её файлу завершилось ошибкой
+   * (файл отсутствует, заблокирован и т.п.). Списки результата содержат
+   * только пути и статусы операций, без содержимого файлов.
+   */
+  private async patchBatch(operations: PatchOperation[]): Promise<WorkspacePatchResult> {
+    if (!this.checkPermission(ActionId.WorkspacePatch)) {
+      return {
+        success: false,
+        status: 'failed',
+        applied: [],
+        failed: [],
+        error: 'Permission denied: workspace.patch action not allowed',
+      };
+    }
+
+    const targets: { relPath: string; absPath: string; patches: FilePatch[] }[] = [];
+    for (const operation of operations) {
+      const resolved = resolvePathWithScope(this.workspace, operation.path, undefined, this.resolver);
+      if (!resolved.ok) {
+        return { success: false, status: 'failed', applied: [], failed: [], error: resolved.error };
+      }
+      targets.push({ relPath: operation.path, absPath: resolved.path, patches: operation.patches });
+    }
+
+    const applied: PatchOperationResult[] = [];
+    const failed: PatchOperationResult[] = [];
+    for (const target of targets) {
+      const outcome = await this.applyResolvedPatch(target.absPath, target.patches);
+      const entry: PatchOperationResult = {
+        path: target.relPath,
+        success: outcome.success,
+        ...(outcome.error !== undefined ? { error: outcome.error } : {}),
+      };
+      (outcome.success ? applied : failed).push(entry);
+    }
+
+    if (failed.length === 0) {
+      return { success: true, status: 'applied', applied, failed };
+    }
+    if (applied.length === 0) {
+      return { success: false, status: 'failed', applied, failed };
+    }
+    return { success: false, status: 'partiallyApplied', applied, failed };
+  }
+
+  /**
+   * Применяет уже разрешённые патчи к файлу по абсолютному пути.
+   * Файл открывается через проверенный descriptor; при любой ошибке
+   * открытия/чтения/записи возвращается неуспех без исключения.
+   */
+  private async applyResolvedPatch(absPath: string, patches: FilePatch[]): Promise<FilePatchResult> {
     try {
-      const descriptor = this.openVerifiedFile(resolved.path, fs.constants.O_RDWR);
+      const descriptor = this.openVerifiedFile(absPath, fs.constants.O_RDWR);
       try {
         const content = fs.readFileSync(descriptor, 'utf8');
         if (!this.areValidPatches(patches, content.length)) {

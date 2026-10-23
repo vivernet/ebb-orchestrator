@@ -33,6 +33,7 @@ import { resolveOrchestratorHome } from "../../platform/home/orchestrator-home.j
 import { validatePlatform } from "../../platform/config/app-config.js";
 import { canonicalizeContextValueV1, digestRunContextV1, digestRunPromptBytesV1, parsePersistedContextJsonV1 } from "../context/context-provenance.js";
 import { loadValidatedCapability } from "../execution/capability-validation.js";
+import { safeRedact } from "../../platform/security/redact.js";
 import { assertResumeContextEligible, captureWorkspaceSnapshotV1, createResumeContextBaselineV1,
   decodeResumeContextBaselineV1, digestResumeBindingV1, type ContextResumeBaselineV1 } from "../context/resume-eligibility.js";
 import type { HermesSessionCapture, HermesSessionCapturePort } from "./hermes-session-capture-port.js";
@@ -1211,7 +1212,9 @@ export class RunService {
   }
 
   private failRun(runId: string, error: unknown, exitCode = -1, eventType: "AgentRunFailed" | "AgentRunInterrupted" = "AgentRunFailed"): boolean {
-    const diagnostics = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+    const reason = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+    // Redaction причины ошибки: секреты (токены/credentials) не должны попадать в persisted output.
+    const diagnostics = safeRedact(reason);
     const current = this.db.get<{ status: RunStatus }>("SELECT status FROM agent_runs WHERE id=$runId", { runId });
     if (!current) return false;
     let owner;
@@ -1543,6 +1546,10 @@ function persistedUsageOrNull(row: {
  * Обогащает диагностику результата классифицированной информацией об ошибке
  * провайдера. Текст stderr не хранится: в диагностику включается только
  * классификация (код, numericId, категория, severity, attribution).
+ * Классификатор выполняется по уже редэктированному тексту stderr
+ * (adapter сохраняет только redacted stderr). Допущение: для реалистичных
+ * сообщений redaction не меняет категорию — preset-паттерны заменяют только
+ * фрагменты, похожие на секреты, а не ключевые слова классификации.
  */
 function enrichDiagnosticsWithProviderError(outcome: RunOutcome): RunOutcome {
   const diagnostics = outcome.diagnostics;

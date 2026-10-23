@@ -24,6 +24,7 @@ import {
 import type { HermesManagedRunSelection, HermesRunSelectionPreflight, HermesRuntimeSelection } from "./hermes-run-selection.js";
 import { validateRoleOutput } from "../output-validator.js";
 import { classifyProviderError, type ErrorCategory } from "../provider-errors.js";
+import { safeRedact } from "../../../platform/security/redact.js";
 import { UsageCounter, type ModelUsage } from "../usage-counter.js";
 import * as path from "path";
 import * as fs from "fs/promises";
@@ -388,8 +389,12 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
     // legacy diagnostic-only projection остаётся только для adapter callers без RunService sink.
     const observedSessionId = this.hermesSessionCaptureHandler ? null : parseSessionId(processOutput.stdout);
     const pid = this.extractPid(processOutput?.stdout ?? "");
+    // stderr сохраняется/экспортируется только в redacted виде (защита секретов в диагностике).
+    // Классификация stderrCategory в legacy-пути выполняется по этому же redacted тексту;
+    // допущение: для реалистичных сообщений замена секретов не меняет категорию.
+    const storedStderr = this.hermesSessionCaptureHandler ? "" : safeRedact(processOutput.stderr);
     this.artifactStore.saveArtifacts(run.id, this.hermesSessionCaptureHandler ? "" : processOutput.stdout,
-      this.hermesSessionCaptureHandler ? "" : processOutput.stderr, processOutput.exitCode);
+      storedStderr, processOutput.exitCode);
 
     // Единый счётчик объединяет все доступные источники usage запуска
     // (живой stream-наблюдатель и legacy-разбор stdout) в один снимок.
@@ -409,10 +414,10 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
       sessionId: null,
       observedSessionId: observedSessionId || null,
       stdout: this.hermesSessionCaptureHandler ? "" : processOutput.stdout,
-      stderr: this.hermesSessionCaptureHandler ? "" : processOutput.stderr,
+      stderr: storedStderr,
       stderrCategory: this.hermesSessionCaptureHandler
         ? startupDiagnostic.category
-        : classifyHermesStderr(processOutput.stderr),
+        : classifyHermesStderr(storedStderr),
       exitCode: processOutput.exitCode,
       startTime: new Date(),
       abortController,
@@ -1185,7 +1190,14 @@ const LEGACY_STDERR_CATEGORY_BY_ERROR_CATEGORY: Partial<Record<ErrorCategory, St
   network: "NETWORK",
 };
 
-/** Возвращает безопасную фиксированную категорию stderr без сохранения его текста. */
+/**
+ * Возвращает безопасную фиксированную категорию stderr без сохранения его текста.
+ * Допущение: в legacy-пути классификация выполняется по редэктированному тексту
+ * (`safeRedact(...)` результат); для реалистичных сообщений замена секретов на
+ * `[REDACTED]` не меняет категорию, так как preset-паттерны совпадают только
+ * с токеноподобными фрагментами, а не с ключевыми словами классификации
+ * (error/timeout/mcp/...).
+ */
 function classifyHermesStderr(stderr: string): StderrCategory {
   if (!stderr) return "EMPTY";
   const text = stderr.slice(0, 8_192).toLowerCase();

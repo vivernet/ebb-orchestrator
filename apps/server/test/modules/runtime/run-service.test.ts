@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createSqliteDatabase } from "../../../src/platform/database/sqlite-database.js";
+import { REDACTED_PLACEHOLDER } from "../../../src/platform/security/redact.js";
 import { runMigrations } from "../../../src/platform/database/migrator.js";
 import type { Database } from "../../../src/platform/database/database.js";
 import { createRunContextInput, effectiveRunToolIds, RunService } from "../../../src/modules/runtime/run-service.js";
@@ -1434,6 +1435,26 @@ describe("RunService with FakeAgentRuntime", () => {
       db!.run("UPDATE agent_runs SET status='FAILED' WHERE id=$id", { id: run.id });
 
       expect(runService.failPreparedRun(run.id, new Error("boom"))).toBe(false);
+    });
+
+    it("persists only redacted error text when the failure reason contains secrets", async () => {
+      await setup();
+      const skToken = `sk-proj-${"A".repeat(30)}`;
+      const jwt = `eyJ${"B".repeat(12)}.${"C".repeat(12)}.${"D".repeat(16)}`;
+      const run = prepareRun({ role: "developer", model: "default", taskId, epicId: null,
+        triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1" });
+      markFakeRunNeverLaunched(run.id);
+
+      expect(runService.failPreparedRun(run.id, new Error(`Provider auth failed: ${skToken}; id_token=${jwt}`))).toBe(true);
+
+      const persisted = db!.get<{ status: string; output: string }>(
+        "SELECT status,output FROM agent_runs WHERE id=$runId", { runId: run.id },
+      );
+      expect(persisted?.status).toBe("FAILED");
+      expect(persisted?.output).not.toContain(skToken);
+      expect(persisted?.output).not.toContain(jwt);
+      expect(persisted?.output).toContain(REDACTED_PLACEHOLDER);
+      expect(persisted?.output).toContain("Provider auth failed");
     });
   });
 

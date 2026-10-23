@@ -16,6 +16,7 @@ import { containmentKindForPlatform } from "../../../src/modules/runtime/run-pro
 import { stopEvidenceForContainmentKind } from "../../helpers/run-process-owner-fixture.js";
 import { createHermesLaunchTicket, type HermesLaunchTicketFactory } from "../../../src/modules/runtime/hermes/hermes-launch-ticket.js";
 import { createSqliteDatabase } from "../../../src/platform/database/sqlite-database.js";
+import { REDACTED_PLACEHOLDER } from "../../../src/platform/security/redact.js";
 import {
   ProcessExecutor,
   ExitCodeError,
@@ -1965,6 +1966,40 @@ describe("HermesRuntimeAdapter", () => {
         artifactReferences: [path.join(resultDirectory, `${run.id}.json`), `run-artifacts://${run.id}`],
       });
       await fs.rm(resultDirectory, { recursive: true, force: true });
+    });
+
+    it("redacts secrets from stderr diagnostics and artifacts", async () => {
+      const resultDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-stderr-redact-"));
+      const skToken = `sk-proj-${"A".repeat(30)}`;
+      const jwt = `eyJ${"B".repeat(12)}.${"C".repeat(12)}.${"D".repeat(16)}`;
+      const run = {
+        id: "a51e1f0c-6b3d-4b8f-9c2e-1d4a5b6c7d8e", role: "Developer", runtime: "hermes", model: "claude-3",
+        taskId: "task-redact", epicId: null, status: "STARTED" as const, sessionId: null, attempt: null,
+        triggerReason: null, contextVersion: "v1", outputSchemaVersion: "v1", startedAt: new Date(),
+        endedAt: null, exitCode: null, inputTokens: null, cachedInputTokens: null, outputTokens: null, cost: null,
+      };
+      mockExecutor.setNextResult({ exitCode: 1, stdout: "session: redact-session",
+        stderr: `provider error: ${skToken}; id_token=${jwt}` });
+      const redactAdapter = createTestRuntimeAdapter(mockExecutor, mockArtifactStore, {
+        resultDirectory,
+        managedWorktree: path.join(os.tmpdir(), "hermes-test-workspace"),
+        checkpointDirectory: sharedCheckpointDirectory,
+      });
+      try {
+        await redactAdapter.startRun(run);
+
+        const outcome = await redactAdapter.collectResult(run.id);
+        expect(outcome.diagnostics?.stderr).not.toContain(skToken);
+        expect(outcome.diagnostics?.stderr).not.toContain(jwt);
+        expect(outcome.diagnostics?.stderr).toContain(REDACTED_PLACEHOLDER);
+        expect(outcome.diagnostics?.stderrCategory).toBe("PROCESS_ERROR");
+        const artifacts = mockArtifactStore.getArtifacts(run.id);
+        expect(artifacts?.stderr).not.toContain(skToken);
+        expect(artifacts?.stderr).not.toContain(jwt);
+        expect(artifacts?.stderr).toContain(REDACTED_PLACEHOLDER);
+      } finally {
+        await fs.rm(resultDirectory, { recursive: true, force: true });
+      }
     });
 
     it("re-reads and validates the exact run result at collection time", async () => {

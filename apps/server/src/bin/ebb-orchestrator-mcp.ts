@@ -13,6 +13,7 @@ import { createSqliteDatabase } from '../platform/database/sqlite-database.js';
 import { DatabaseCompletionStore } from '../modules/execution/mcp/submit-result-tool.js';
 import { extractSuccessfulSubmission } from '../modules/execution/mcp/submission-result.js';
 import { createInterface } from 'node:readline';
+import { safeRedact } from '../platform/security/redact.js';
 
 function parseArgs(): { capabilityRef: string | undefined; resultFile: string | undefined; database: string | undefined } {
   const args = process.argv.slice(2);
@@ -91,6 +92,6 @@ async function main() {
 }
 
 main().catch(err => {
-  console.error(err);
+  console.error(safeRedact(err instanceof Error ? err.stack ?? err.message : String(err)));
   process.exit(1);
 });
