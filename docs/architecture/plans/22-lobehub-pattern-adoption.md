@@ -359,3 +359,13 @@ E2, E4 (P2) не входят в baseline и требуют отдельного
 P2 E1/E2/E4 — только после отдельного выбора scope; не часть baseline DAG.
 
 Каждая фаза завершается своими focused/full gates и независимым review; общие файлы редактируются только в указанном task order. B выполняется до C4 по зависимости B3 → C4.
+
+## Дополнение от 2026-10-23 — реализация Deferred P2 (E1/E2/E4)
+
+По явному выбору scope пользователем («реализовать полностью план 22») deferred P2 улучшения реализованы:
+
+- **E1** (partiallyApplied): `workspace.patch` расширен батч-формой `patch(operations)` с `WorkspacePatchResult` (`applied`/`partiallyApplied`/`failed`); валидация путей (path-scope) выполняется до любого применения (fail-closed), частичное применение допустимо только для прошедших валидацию операций; результат без содержимого файлов. Legacy-форма `patch(relPath, patches)` сохранена без изменения поведения.
+- **E2** (redaction): модуль `platform/security/redact.ts` — `Redactor` с предопределённым allowlist (JWT, `sk-*`, `ghp_`/`github_pat_`, `AKIA`/`ASIA`, `xoxb-`, PRIVATE KEY-блоки, `scheme://user:pass@host`, `Authorization: Bearer`, query `api_key`/`token`, `name=value`/`name: value`), плейсхолдер `[REDACTED]`, идемпотентность, детерминизм, лимит 65536 (`redact` → RangeError; `safeRedact` обрезает). Применён в `failRun` (persisted output), Hermes adapter (stderr перед сохранением артефактов/диагностики), MCP CLI `console.error`; классификация `stderrCategory` не меняется (документированное допущение).
+- **E4** (env-валидация): `platform/config/env-config.ts` — `ServerEnvSchema` (zod v4): PORT обязательная целая 1–65535 (пустая → 3000; отсутствие обрабатывается лаунчером → 3000), HOME/USERPROFILE/EBB_ORCHESTRATOR_HOME optional, VERSION default `development`, неизвестные переменные игнорируются; `EnvValidationError` без утечки значений. `main.ts`: валидация до создания сервисов, fail-fast (`console.error` + `process.exit(1)`).
+
+Проверки: каждая задача — RED→GREEN + независимый review (E1 APPROVED, E2 APPROVED, E4 APPROVED); независимый whole-plan re-review P2 — APPROVED; полный `pnpm test` на финальном HEAD — exit 0; lint/typecheck/docs:check/git diff --check — PASS. План 22 полностью реализован (baseline A1–C5 + P2 E1/E2/E4).
