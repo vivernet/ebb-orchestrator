@@ -16,9 +16,9 @@ describe("Hermes-managed Run selection", () => {
   it("preserves default request metadata without inventing a configured model", () => {
     expect(bindHermesRunSelectionToOptions(options, selection)).toEqual(options);
   });
-  it("rejects an explicit model override instead of silently ignoring it", () => {
-    expect(() => bindHermesRunSelectionToOptions({ ...options, model: "custom-model" }, selection))
-      .toThrow("HERMES_MODEL_OVERRIDE_UNSUPPORTED");
+  it("allows an explicit model to pass through the binding unchanged", () => {
+    expect(bindHermesRunSelectionToOptions({ ...options, model: "custom-model" }, selection))
+      .toEqual({ ...options, model: "custom-model" });
   });
   it("binds the installed runtime selection to the same Run UUID", () => {
     expect(() => bindHermesRunSelectionToOptions({ ...options, runId: "another-run" }, selection))

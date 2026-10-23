@@ -18,10 +18,14 @@ export interface HermesRunSelectionPreflight {
 /**
  * Связывает установленный Hermes с Run, сохраняя выбор provider/model за Hermes.
  *
- * @param options Подготовленные входные данные того же Run с моделью `default`.
+ * Модель не ограничена `default`: и legacy `default`, и явная модель проходят
+ * без отклонения; валидация явных моделей выполняется отдельно через реестр
+ * built-in моделей.
+ *
+ * @param options Подготовленные входные данные того же Run.
  * @param selection Runtime identity; provider config and auth are not read.
  * @returns Options со стабильной runtime identity и неизвестной provider identity.
- * @throws {Error} При несовпадении Run/source identity или явной подмене модели.
+ * @throws {Error} При несовпадении Run/source identity.
  */
 export function bindHermesRunSelectionToOptions<T extends StartRunOptions>(
   options: T,
@@ -31,6 +35,5 @@ export function bindHermesRunSelectionToOptions<T extends StartRunOptions>(
       !path.isAbsolute(selection.hermesHome) || !selection.runtimeIdentity) {
     throw new Error("HERMES_RUN_SELECTION_BINDING_MISMATCH");
   }
-  if (options.model !== "default") throw new Error("HERMES_MODEL_OVERRIDE_UNSUPPORTED");
   return options;
 }

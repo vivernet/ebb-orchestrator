@@ -234,7 +234,7 @@ describe("RunService with FakeAgentRuntime", () => {
     await expect(fakeRuntime.inspectRun(run.id)).rejects.toThrow();
   });
 
-  it("rejects an explicit managed Hermes model before a Run write", async () => {
+  it("accepts the default model for a managed Hermes run and persists it", async () => {
     await setup();
     const runId = randomUUID();
     Object.assign(fakeRuntime, {
@@ -242,12 +242,27 @@ describe("RunService with FakeAgentRuntime", () => {
         selection: { mode: "HERMES_MANAGED", runId: id, hermesHome: join(tmpDir, "configured-hermes"), runtimeIdentity: fixtureRuntimeIdentity },
       }),
     });
-    await expect(runService.prepareRunWithHermesPreflight(withTestContext({
-      runId, role: "developer", model: "explicit-model", taskId, epicId: null,
+    const run = await runService.prepareRunWithHermesPreflight(withTestContext({
+      runId, role: "developer", model: "default", taskId, epicId: null,
       triggerReason: "runtime-request", contextVersion: "1", outputSchemaVersion: "1",
-    }))).rejects.toThrow("HERMES_MODEL_OVERRIDE_UNSUPPORTED");
-    expect(db!.get("SELECT id FROM agent_runs WHERE id=$runId", { runId })).toBeUndefined();
-    expect(db!.get("SELECT run_id FROM run_process_owners WHERE run_id=$runId", { runId })).toBeUndefined();
+    }));
+    expect(run.model).toBe("default");
+    expect(db!.get("SELECT id FROM agent_runs WHERE id=$runId", { runId })).toBeDefined();
+  });
+
+  it("validateTaskRequestModel passes default without registry validation", async () => {
+    await setup();
+    expect(() => runService.validateTaskRequestModel("default")).not.toThrow();
+  });
+
+  it("validateTaskRequestModel accepts a known built-in model", async () => {
+    await setup();
+    expect(() => runService.validateTaskRequestModel("gpt-4o")).not.toThrow();
+  });
+
+  it("validateTaskRequestModel rejects an unknown model", async () => {
+    await setup();
+    expect(() => runService.validateTaskRequestModel("nonexistent-model")).toThrow("RUN_REQUEST_MODEL_UNSUPPORTED");
   });
 
   it("persists the configured Hermes root before execution", async () => {

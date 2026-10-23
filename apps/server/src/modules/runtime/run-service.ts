@@ -39,6 +39,7 @@ import { assertResumeContextEligible, captureWorkspaceSnapshotV1, createResumeCo
 import type { HermesSessionCapture, HermesSessionCapturePort } from "./hermes-session-capture-port.js";
 import { bindHermesRunSelectionToOptions } from "./hermes/hermes-run-selection.js";
 import type { HermesRuntimeSelection } from "./hermes/hermes-run-selection.js";
+import { assertSupportedModel } from "./hermes/hermes-provider-registry.js";
 import { DEVELOPER_COMMIT_SHA_INSTRUCTION } from "./prompt-builder.js";
 import { classifyProviderError } from "./provider-errors.js";
 import { UsageCounter, type ModelUsage } from "./usage-counter.js";
@@ -194,9 +195,10 @@ export class RunService {
     }
   }
 
-  /** Проверяет поддерживаемый selector до enqueue; установленный Hermes выбирает model из своего профиля. */
+  /** Проверяет модель до enqueue: `default` пропускается, явные модели — через реестр built-in моделей. */
   validateTaskRequestModel(model: string): void {
-    if (this.runtime.prepareHermesRunSelection && model !== "default") throw new Error("HERMES_MODEL_OVERRIDE_UNSUPPORTED");
+    if (model === "default") return;
+    assertSupportedModel(model);
   }
 
   /**

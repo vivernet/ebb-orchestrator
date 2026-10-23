@@ -21,13 +21,20 @@ describe("task dispatch route durable producer", () => {
     const headers = { cookie: TEST_COOKIE, origin: "http://127.0.0.1:3000", "x-csrf-token": TEST_CSRF_TOKEN, "idempotency-key": "caller-1" };
     return { app, db, scheduler, runService, headers };
   }
-  it("rejects unsupported Hermes model selection before persistence", async () => {
-    const f = setup(); f.runService.validateTaskRequestModel.mockImplementation(() => { throw new Error("HERMES_MODEL_OVERRIDE_UNSUPPORTED"); });
+  it("rejects an unsupported model selection before persistence", async () => {
+    const f = setup(); f.runService.validateTaskRequestModel.mockImplementation(() => { throw new Error("RUN_REQUEST_MODEL_UNSUPPORTED"); });
     const response = await f.app.inject({ method: "POST", url: "/api/v1/tasks/task-1/dispatch", headers: f.headers, payload: { model: "explicit-model" } });
     expect(response.statusCode).toBe(400);
-    expect(response.json()).toMatchObject({ error: { code: "HERMES_MODEL_OVERRIDE_UNSUPPORTED" } });
+    expect(response.json()).toMatchObject({ error: { code: "RUN_REQUEST_MODEL_UNSUPPORTED", message: "Неизвестная модель. Доступные модели указаны в настройках." } });
     expect(f.db.all("SELECT * FROM scheduler_run_requests")).toEqual([]);
     expect(f.runService.prepareRun).not.toHaveBeenCalled();
+  });
+  it("rejects an unknown model by name with the Russian error message", async () => {
+    const f = setup(); f.runService.validateTaskRequestModel.mockImplementation(() => { throw new Error("RUN_REQUEST_MODEL_UNSUPPORTED"); });
+    const response = await f.app.inject({ method: "POST", url: "/api/v1/tasks/task-1/dispatch", headers: f.headers, payload: { model: "nonexistent-model" } });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: { code: "RUN_REQUEST_MODEL_UNSUPPORTED", message: "Неизвестная модель. Доступные модели указаны в настройках." } });
+    expect(f.db.all("SELECT * FROM scheduler_run_requests")).toEqual([]);
   });
   it("acknowledges durable pending without preparing or launching in the route", async () => {
     const f = setup(); const response = await f.app.inject({ method: "POST", url: "/api/v1/tasks/task-1/dispatch", headers: f.headers });

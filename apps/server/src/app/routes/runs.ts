@@ -80,7 +80,7 @@ export async function runRoutes(app: FastifyInstance, deps: RunRouteDeps = {}): 
       return reply.code(202).send(dispatchProjection(accepted));
     } catch (error) {
       const code = error instanceof Error ? error.message : "RUN_REQUEST_UNAVAILABLE";
-      if (code === "HERMES_MODEL_OVERRIDE_UNSUPPORTED") return reply.code(400).send({ error: { code, message: "Модель выбирается в Hermes. Для запуска используйте model=default." } });
+      if (code === "RUN_REQUEST_MODEL_UNSUPPORTED") return reply.code(400).send({ error: { code, message: "Неизвестная модель. Доступные модели указаны в настройках." } });
       if (code === "RUN_REQUEST_TASK_NOT_READY") return reply.code(409).send({ error: { code } });
       if (code === "RUN_REQUEST_EPIC_TASK_UNSUPPORTED") return reply.code(409).send({ error: { code } });
       if (code === "RUN_REQUEST_TASK_NOT_FOUND") return reply.code(404).send({ error: { code } });
