@@ -11,6 +11,7 @@ import { buildHermesMcpServer } from "./hermes-mcp-server.js";
 import { parseSessionId } from "./hermes-session-parser.js";
 import { HermesStreamSessionObserver } from "./hermes-stream-session-observer.js";
 import type { HermesSubmitResultStreamCounts, HermesToolEventCounts } from "./hermes-stream-session-observer.js";
+import type { AgentEventSink } from "../agent-events.js";
 import type { HermesSessionCapture, HermesSessionCaptureFailure, HermesSessionCapturePort } from "../hermes-session-capture-port.js";
 import {
   createHermesLaunchTicket,
@@ -112,6 +113,7 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
   private readonly mcpArgs: string[];
   private readonly processScopeSupervisor: ProcessScopeSupervisor | undefined;
   private readonly hermesLaunchTicketFactory: HermesLaunchTicketFactory | undefined;
+  private readonly agentEvents?: AgentEventSink;
   private readonly verifiedManagedSelections = new WeakSet<HermesManagedRunSelection>();
   private readonly activeScopes = new Map<string, { owner: ProcessScopeIdentity; durable: boolean; abortController: AbortController }>();
   private readonly startingRuns = new Map<string, RunStartControl>();
@@ -137,6 +139,8 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
       mcpArgs?: string[];
       /** Test seam; production проверяет executable/source identity до запуска. */
       hermesLaunchTicketFactory?: HermesLaunchTicketFactory;
+      /** Приёмник эфемерных событий Run для allowlisted tool events живого потока. */
+      agentEvents?: AgentEventSink;
     },
     processScopeSupervisor?: ProcessScopeSupervisor,
   ) {
@@ -160,6 +164,7 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
     this.mcpArgs = config?.mcpArgs ?? [];
     this.processScopeSupervisor = processScopeSupervisor;
     this.hermesLaunchTicketFactory = config?.hermesLaunchTicketFactory;
+    if (config?.agentEvents) this.agentEvents = config.agentEvents;
     this.cliBuilder = new HermesCliBuilder();
   }
 
@@ -270,7 +275,7 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
     const preparedLaunch = await this.createLaunchAuthorization(run, workspace, hermesHome, environment, resultPath);
 
     let processOutput: ProcessResult;
-    const sessionObserver = this.hermesSessionCaptureHandler ? new HermesStreamSessionObserver() : undefined;
+    const sessionObserver = this.hermesSessionCaptureHandler ? new HermesStreamSessionObserver(run.id, this.agentEvents) : undefined;
     let liveCaptureOwner: ProcessScopeIdentity | undefined;
     let captureInvalidReported = false;
     let captureInvalidReason: HermesSessionCaptureFailure | undefined;

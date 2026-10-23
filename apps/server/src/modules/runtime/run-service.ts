@@ -42,6 +42,7 @@ import { DEVELOPER_COMMIT_SHA_INSTRUCTION } from "./prompt-builder.js";
 import { classifyProviderError } from "./provider-errors.js";
 import { UsageCounter, type ModelUsage } from "./usage-counter.js";
 import type { IntegrationService, IntegrationAttempt } from "../git/integration-service.js";
+import { AgentEventBus, type AgentEvent, type AgentEventSink } from "./agent-events.js";
 
 export interface HermesRunPreflight {
   readonly options: StartRunOptions;
@@ -162,6 +163,7 @@ export class RunService {
     private readonly runtime: AgentRuntime,
     contextAssembler: Pick<RunContextAssembler, "prepare"> = new RunContextAssembler(),
     private readonly recoveryHooks?: RunRecoveryHooks,
+    private readonly agentEvents: AgentEventSink = new AgentEventBus(),
   ) {
     this.contextAssembler = contextAssembler;
     const capturePort = asHermesSessionCapturePort(runtime);
@@ -170,6 +172,15 @@ export class RunService {
 
   /** Composition подключает существующий Integration service без изменения runtime/security policy. */
   setTaskIntegrationFactory(factory: (runId: string) => IntegrationService): void { this.taskIntegrationFactory = factory; }
+
+  /** Публикует эфемерное событие; ошибки подписчиков не влияют на lifecycle Run. */
+  private emitAgentEvent(event: AgentEvent): void {
+    try {
+      this.agentEvents.emit(event);
+    } catch {
+      // Доставка событий не является authority для completion/cancellation/recovery.
+    }
+  }
 
   /** Проверяет поддерживаемый selector до enqueue; установленный Hermes выбирает model из своего профиля. */
   validateTaskRequestModel(model: string): void {
@@ -337,7 +348,7 @@ export class RunService {
     try { parsed = JSON.parse(submission.output) as unknown; } catch { return false; }
     if (!validateRoleOutput(submission.role.toLowerCase(), parsed).valid) return false;
     try {
-      return this.db.transaction((tx) => {
+      const completed = this.db.transaction((tx) => {
         const run = tx.get<{ id: string; role: string; status: string; output: string | null; ended_at: string | null }>(
           "SELECT id,role,status,output,ended_at FROM agent_runs WHERE id=$runId", { runId });
         const owner = getRunProcessOwner(tx, runId);
@@ -351,6 +362,8 @@ export class RunService {
         if (completed) this.appendLifecycleEvent(tx, runId, "AgentRunCompleted");
         return completed;
       });
+      if (completed) this.emitAgentEvent({ type: "run_finished", runId, status: "COMPLETED" });
+      return completed;
     } catch {
       return false;
     }
@@ -827,6 +840,7 @@ export class RunService {
       this.failRun(record.id, error);
       throw error;
     }
+    this.emitAgentEvent({ type: "run_started", runId: record.id, occurredAt: new Date().toISOString() });
     return record;
   }
 
@@ -845,6 +859,7 @@ export class RunService {
       this.failRun(run.id, error);
       throw error;
     }
+    this.emitAgentEvent({ type: "run_started", runId: run.id, occurredAt: new Date().toISOString() });
     return this.collectRuntimeResult(run);
   }
 
@@ -907,6 +922,7 @@ export class RunService {
     if (!run) return undefined;
     try { await this.runtime.startRun(this.runtimeRun(run)); }
     catch (error) { this.failRun(run.id, error); throw error; }
+    this.emitAgentEvent({ type: "run_started", runId: run.id, occurredAt: new Date().toISOString() });
     return this.collectRuntimeResult(run);
   }
 
@@ -1165,6 +1181,8 @@ export class RunService {
         throw error;
       }
 
+      this.emitAgentEvent({ type: "run_started", runId, occurredAt: new Date().toISOString() });
+
       return (await this.collectRuntimeResult(this.getRun(this.db, runId))).run;
     } finally {
       this.resumingRuns.delete(runId);
@@ -1203,19 +1221,30 @@ export class RunService {
       return false;
     }
     try {
-      return this.db.transaction((tx) => {
+      let transitioned = false;
+      const accepted = this.db.transaction((tx) => {
         const latest = tx.get<{ status: RunStatus }>("SELECT status FROM agent_runs WHERE id=$runId", { runId });
         if (!latest) return false;
-        if (this.isTerminalState(latest.status)) return true;
+        if (this.isTerminalState(latest.status)) {
+          // Уже-terminal Run: контракт возвращает true при canonical STOPPED proof или
+          // ownerless legacy terminal; run_finished не эмитится — перехода не было.
+          const terminalOwner = getRunProcessOwner(tx, runId);
+          return !terminalOwner || (terminalOwner.state === "STOPPED" && isAuthoritativeRunProcessStopEvidence(terminalOwner.stopEvidence, terminalOwner.containmentKind));
+        }
         if (!("STARTED" === latest.status || "IN_PROGRESS" === latest.status || "COMPLETING" === latest.status)) return false;
         tx.run(`UPDATE agent_runs SET status = 'FAILED', ended_at = $ended_at,
           exit_code = $exit_code, output = $output, capability_ref = NULL, capability_json = NULL
           WHERE id = $id AND status IN ('STARTED','IN_PROGRESS','COMPLETING')`,
         { id: runId, ended_at: new Date().toISOString(), exit_code: exitCode, output: diagnostics });
         const failed = (tx.get<{ changes: number }>("SELECT changes() AS changes")?.changes ?? 0) === 1;
-        if (failed) this.appendLifecycleEvent(tx, runId, eventType);
+        if (failed) {
+          this.appendLifecycleEvent(tx, runId, eventType);
+          transitioned = true;
+        }
         return failed;
       });
+      if (transitioned) this.emitAgentEvent({ type: "run_finished", runId, status: "FAILED" });
+      return accepted;
     } catch {
       // The owner proof remains authoritative; failed cleanup is retried by durable recovery.
       return false;
@@ -1235,13 +1264,13 @@ export class RunService {
       // Keep the durable Run/capability active if the exact OS scope cannot be stopped.
       await this.runtime.cancelRun(runId);
     }
-    return this.db.transaction((tx) => {
+    const cancelled = this.db.transaction((tx) => {
       const stored = tx.get<{ id: string; status: string; task_id: string | null }>(
         "SELECT id, status, task_id FROM agent_runs WHERE id = $id", { id: runId },
       );
       if (!stored) throw new Error(`Run ${runId} not found`);
       if (stored.status === "CANCELLED" || stored.status === "FAILED" || stored.status === "COMPLETED") {
-        return; // Idempotent: already terminal.
+        return false; // Idempotent: already terminal.
       }
       if (stopProofRequired) {
         const owner = getRunProcessOwner(tx, runId);
@@ -1255,6 +1284,7 @@ export class RunService {
           capability_ref = NULL, capability_json = NULL WHERE id = $id AND status IN ('STARTED','IN_PROGRESS','COMPLETING')`,
         { id: runId, ended_at: now },
       );
+      const cancelled = (tx.get<{ changes: number }>("SELECT changes() AS changes")?.changes ?? 0) === 1;
       // Добавляет durable outbox event.
       const event = DomainEvent.create({
         type: "RunCancelled",
@@ -1269,7 +1299,9 @@ export class RunService {
         `INSERT INTO audit_log(id,action,actor,aggregate_type,aggregate_id,details_json,created_at) VALUES($id,$action,$actor,$aggregate_type,$aggregate_id,$details,$created_at)`,
         { id: crypto.randomUUID(), action: "RUN_CANCELLED", actor: "local-user", aggregate_type: "AgentRun", aggregate_id: runId, details: JSON.stringify({ runId, status: "CANCELLED", previousStatus: stored.status }), created_at: now },
       );
+      return cancelled;
     });
+    if (cancelled) this.emitAgentEvent({ type: "run_finished", runId, status: "CANCELLED" });
   }
 
   /** Останавливает runtime scopes текущих активных Runs, сохраняя их durable state для startup recovery. */
@@ -1297,7 +1329,7 @@ export class RunService {
    * Collect результат и обновляет run статус.
    */
   async collectResult(runId: string, outcome: RunOutcome): Promise<AgentRun> {
-    return this.db.transaction((tx) => {
+    const completed = this.db.transaction((tx) => {
       const stored = tx.get<{ id: string; role: string; status: string }>(
         "SELECT id, role, status FROM agent_runs WHERE id = $id", { id: runId });
       if (!stored) throw new Error(`Run ${runId} not found`);
@@ -1334,6 +1366,9 @@ export class RunService {
       this.appendLifecycleEvent(tx, runId, "AgentRunCompleted");
       return this.getRun(tx, runId);
     });
+    // Событие публикуется только после коммита transaction с terminal COMPLETED.
+    this.emitAgentEvent({ type: "run_finished", runId, status: "COMPLETED" });
+    return completed;
   }
 
   /**

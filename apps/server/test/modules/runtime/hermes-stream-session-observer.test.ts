@@ -4,6 +4,7 @@ import {
   HERMES_STREAM_MAX_INIT_EVENT_BYTES,
   HERMES_STREAM_MAX_LINE_BYTES,
 } from "../../../src/modules/runtime/hermes/hermes-stream-session-observer.js";
+import type { AgentEvent } from "../../../src/modules/runtime/agent-events.js";
 
 const encoder = new TextEncoder();
 
@@ -314,5 +315,55 @@ describe("Hermes live stream session observer", () => {
     expect(observer.push(initEvent("session_finished"))).toMatchObject({ status: "captured" });
     expect(observer.finish()).toEqual({ status: "captured" });
     expect(observer.push(initEvent("session_late"))).toEqual({ status: "invalid", reason: "STREAM_FINISHED" });
+  });
+});
+
+describe("Hermes stream observer allowlisted tool events", () => {
+  it("emits tool_pending and tool_result for an allowlisted tool without any payload", () => {
+    const events: AgentEvent[] = [];
+    const secretMarker = "must-not-escape-tool-event";
+    const observer = new HermesStreamSessionObserver("run-123", { emit: (event) => events.push(event) });
+    observer.push(initEvent("tool-event-session"));
+    feedAll(observer, [
+      { type: "tool_use", name: "mcp__ebb_orchestrator__workspace_read", input: { secret: secretMarker } },
+      { type: "tool_result", name: "mcp__ebb_orchestrator__workspace_read", is_error: true, output: { error: `INVALID_TOOL_ARGS: ${secretMarker}` } },
+    ].map((event) => JSON.stringify(event)).join("\n") + "\n");
+
+    expect(events).toEqual([
+      { type: "tool_pending", runId: "run-123", toolId: "workspace.read" },
+      { type: "tool_result", runId: "run-123", toolId: "workspace.read", success: false, errorCategory: "INVALID_ARGUMENTS" },
+    ]);
+    expect(JSON.stringify(events)).not.toContain(secretMarker);
+    expect(JSON.stringify(events)).not.toContain("input");
+    expect(JSON.stringify(events)).not.toContain("output");
+  });
+
+  it("emits success tool_result without errorCategory and emits nothing for untrusted tools", () => {
+    const events: AgentEvent[] = [];
+    const observer = new HermesStreamSessionObserver("run-123", { emit: (event) => events.push(event) });
+    observer.push(initEvent("tool-event-session"));
+    feedAll(observer, [
+      { type: "tool_use", name: "submit_result", input: {} },
+      { type: "tool_result", name: "submit_result", is_error: false, output: { ok: true } },
+      { type: "tool_use", name: "mcp__untrusted__secret_tool", input: { secret: "x" } },
+      { type: "tool_result", name: "mcp__untrusted__secret_tool", is_error: true, output: { secret: "x" } },
+    ].map((event) => JSON.stringify(event)).join("\n") + "\n");
+
+    expect(events).toEqual([
+      { type: "tool_pending", runId: "run-123", toolId: "submit_result" },
+      { type: "tool_result", runId: "run-123", toolId: "submit_result", success: true },
+    ]);
+  });
+
+  it("does not emit tool events without a bound runId and tolerates a throwing sink", () => {
+    const unbounded = new HermesStreamSessionObserver();
+    unbounded.push(initEvent("no-events-session"));
+    feedAll(unbounded, `${JSON.stringify({ type: "tool_use", name: "mcp__ebb_orchestrator__project_test", input: {} })}\n`);
+    expect(unbounded.toolEventCountsSnapshot["project.test"].uses).toBe(1);
+
+    const throwing = new HermesStreamSessionObserver("run-123", { emit: () => { throw new Error("observer boom"); } });
+    throwing.push(initEvent("no-events-session"));
+    expect(() => feedAll(throwing, `${JSON.stringify({ type: "tool_use", name: "mcp__ebb_orchestrator__project_test", input: {} })}\n`)).not.toThrow();
+    expect(throwing.toolEventCountsSnapshot["project.test"].uses).toBe(1);
   });
 });

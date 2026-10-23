@@ -3,6 +3,7 @@ import type { Database } from "../database/database.js";
 import { ArtifactRepository } from "../artifacts/artifact-repository.js";
 import { ArtifactStore } from "../artifacts/artifact-store.js";
 import { HermesRuntimeAdapter } from "../../modules/runtime/hermes/hermes-runtime-adapter.js";
+import { AgentEventBus } from "../../modules/runtime/agent-events.js";
 import { ProcessExecutor } from "../process/process-executor.js";
 import { SystemdRunSupervisor } from "../process/systemd-run-supervisor.js";
 import { WindowsJobSupervisor } from "../process/windows-job-supervisor.js";
@@ -97,10 +98,17 @@ export function createProductionComposition(options: ProductionCompositionOption
   const processExecutor = new ProcessExecutor();
   const processScopeSupervisor = options.processScopeSupervisor ?? createPlatformSupervisor(processExecutor);
   const gitReconciler = options.gitReconciler ?? new GitReconciler(new GitCli(processExecutor));
+  /**
+   * Общая шина эфемерных событий Run: один экземпляр делится между Hermes
+   * runtime adapter (tool события) и RunService (lifecycle события), чтобы
+   * production события не уходили в пустую default-шину.
+   */
+  const agentEventBus = new AgentEventBus();
   const runtime = new HermesRuntimeAdapter(processExecutor, undefined, {
     databasePath: paths.hermesDatabasePath,
     resultDirectory: paths.hermesResultDirectory,
     checkpointDirectory: paths.hermesCheckpointDirectory,
+    agentEvents: agentEventBus,
   }, processScopeSupervisor);
   const taskWorkspaceProvisioner = new TaskWorkspaceProvisioner({
     database,
@@ -185,6 +193,8 @@ export function createProductionComposition(options: ProductionCompositionOption
   return {
     paths,
     runtime,
+    /** Общая производственная шина эфемерных событий Run для adapter и RunService. */
+    agentEventBus,
     epicWorkspaceProvisioner,
     taskWorkspaceProvisioner,
     integrationServiceFactory,

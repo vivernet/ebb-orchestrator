@@ -22,6 +22,10 @@ import { ownerIdentityForContainmentKind, stopEvidenceForContainmentKind } from 
 import { McpServer } from "../../../src/modules/execution/mcp/mcp-server.js";
 import { loadValidatedCapability } from "../../../src/modules/execution/capability-validation.js";
 import type { RunCapability } from "../../../src/modules/execution/run-capability.js";
+import { AgentEventBus, type AgentEvent, type AgentEventSink } from "../../../src/modules/runtime/agent-events.js";
+import { createProductionComposition } from "../../../src/platform/home/production-composition.js";
+import { resolveOrchestratorHome } from "../../../src/platform/home/orchestrator-home.js";
+import type { Platform } from "../../../src/platform/config/app-config.js";
 
 const fixtureRuntimeIdentity = "fixture-installed-hermes";
 
@@ -842,8 +846,10 @@ describe("RunService with FakeAgentRuntime", () => {
 
   it("finalizes same-session recovery through authenticated submission and persists runtime usage", async () => {
     const run = await recoveryFixture();
+    const events: AgentEvent[] = [];
+    const sink: AgentEventSink = { emit: (event) => events.push(event) };
     runService = new RunService(db!, fakeRuntime, undefined, { verifyContext: async () => {},
-      claimInTransaction: (tx, input) => { rotateRunProcessOwnerForResumeTx(tx, input); } });
+      claimInTransaction: (tx, input) => { rotateRunProcessOwnerForResumeTx(tx, input); } }, sink);
     const output = JSON.stringify({ version: "1", outcome: "PASS" });
     const collectResult = vi.spyOn(fakeRuntime, "collectResult").mockImplementation(async (runId) => {
       expect(await runService.completionStore().accept(runService.getCapabilityReference(runId), {
@@ -858,6 +864,8 @@ describe("RunService with FakeAgentRuntime", () => {
     const completed = await runService.resumeRun(run.id, { attempt: 1 });
 
     expect(collectResult).toHaveBeenCalledWith(run.id);
+    expect(events.map((event) => event.type)).toEqual(["run_started", "run_finished"]);
+    expect(events[0]).toMatchObject({ type: "run_started", runId: run.id });
     expect(completed).toMatchObject({ id: run.id, status: "COMPLETED", sessionId: "original-session", attempt: 1, cost: 0.25 });
     expect(completed.capabilityRef).toBeUndefined();
     expect(db!.get("SELECT input_tokens,cached_input_tokens,output_tokens,cost,capability_json,output FROM agent_runs WHERE id=$runId", { runId: run.id }))
@@ -1221,5 +1229,245 @@ describe("RunService with FakeAgentRuntime", () => {
     })).rejects.toThrow("crash");
     await expect(runService.resumeRun(db!.get<{ id: string }>("SELECT id FROM agent_runs ORDER BY started_at DESC LIMIT 1")!.id, { attempt: 1 }))
       .rejects.toThrow(/terminal state/);
+  });
+
+  describe("RunService ephemeral agent events", () => {
+    function recordingSink(): { events: AgentEvent[]; sink: AgentEventSink } {
+      const events: AgentEvent[] = [];
+      const sink: AgentEventSink = { emit: (event) => events.push(event) };
+      return { events, sink };
+    }
+
+    function completedOutcome(runId: string, output: string): RunOutcome {
+      return {
+        success: true,
+        exitCode: 0,
+        output,
+        validatedSubmission: true,
+        diagnostics: { runId, sessionId: null, stderr: "", exitCode: 0, artifactReferences: [] },
+      };
+    }
+
+    function scriptValidatedCompletion(runId: string, output: string): void {
+      fakeRuntime.startRun = async (run) => { markFakeRunNeverLaunched(run.id); };
+      fakeRuntime.collectResult = async (collectRunId) => {
+        const accepted = await runService.completionStore().accept(runService.getCapabilityReference(collectRunId), {
+          runId: collectRunId, role: "developer", output: JSON.parse(output),
+        });
+        expect(accepted).toBe(true);
+        return completedOutcome(collectRunId, output);
+      };
+    }
+
+    it("emits run_started then run_finished around the existing start/result/commit path", async () => {
+      await setup();
+      const run = prepareRun({ role: "developer", model: "default", taskId, epicId: null,
+        triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1" });
+      const output = JSON.stringify({ version: "1.0.0", outcome: "COMPLETED", commitSha: "test-commit-sha" });
+      scriptValidatedCompletion(run.id, output);
+      const { events, sink } = recordingSink();
+      runService = new RunService(db!, fakeRuntime, {
+        prepare: (_tx, input) => preparedContext(input.prompt, input.role, input.subject),
+      }, undefined, sink);
+
+      await runService.executePreparedRun(run.id);
+
+      expect(events.map((event) => event.type)).toEqual(["run_started", "run_finished"]);
+      expect(events[0]).toMatchObject({ type: "run_started", runId: run.id });
+      expect(typeof (events[0] as Extract<AgentEvent, { type: "run_started" }>).occurredAt).toBe("string");
+      expect(events[1]).toEqual({ type: "run_finished", runId: run.id, status: "COMPLETED" });
+    });
+
+    it("emits run_finished only after the terminal status is persisted", async () => {
+      await setup();
+      const run = prepareRun({ role: "developer", model: "default", taskId, epicId: null,
+        triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1" });
+      const output = JSON.stringify({ version: "1.0.0", outcome: "COMPLETED", commitSha: "test-commit-sha" });
+      scriptValidatedCompletion(run.id, output);
+      const statusAtFinish: string[] = [];
+      runService = new RunService(db!, fakeRuntime, {
+        prepare: (_tx, input) => preparedContext(input.prompt, input.role, input.subject),
+      }, undefined, {
+        emit: (event) => {
+          if (event.type === "run_finished") {
+            statusAtFinish.push(db!.get<{ status: string }>("SELECT status FROM agent_runs WHERE id=$runId", { runId: run.id })!.status);
+          }
+        },
+      });
+
+      await runService.executePreparedRun(run.id);
+
+      expect(statusAtFinish).toEqual(["COMPLETED"]);
+    });
+
+    it("emits run_finished FAILED, never COMPLETED, when the structured result is missing or invalid", async () => {
+      await setup();
+      const run = prepareRun({ role: "developer", model: "default", taskId, epicId: null,
+        triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1" });
+      fakeRuntime.startRun = async (started) => { markFakeRunNeverLaunched(started.id); };
+      fakeRuntime.collectResult = async (runId) => ({
+        success: false,
+        exitCode: 0,
+        output: "AGENT_OUTPUT_MISSING",
+        validatedSubmission: false,
+        diagnostics: { runId, sessionId: null, stderr: "", exitCode: 0, artifactReferences: [] },
+      });
+      const { events, sink } = recordingSink();
+      runService = new RunService(db!, fakeRuntime, {
+        prepare: (_tx, input) => preparedContext(input.prompt, input.role, input.subject),
+      }, undefined, sink);
+
+      await expect(runService.executePreparedRun(run.id)).rejects.toThrow("AGENT_OUTPUT_MISSING");
+
+      expect(events.filter((event) => event.type === "run_finished")).toEqual([
+        { type: "run_finished", runId: run.id, status: "FAILED" },
+      ]);
+    });
+
+    it("emits run_finished CANCELLED only after cancellation persists the terminal status", async () => {
+      await setup();
+      const run = await startRun({ role: "developer", model: "default", taskId, epicId: null,
+        triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1" });
+      const { events, sink } = recordingSink();
+      runService = new RunService(db!, fakeRuntime, undefined, undefined, sink);
+
+      await runService.cancelRun(run.id);
+
+      expect(events).toEqual([{ type: "run_finished", runId: run.id, status: "CANCELLED" }]);
+      expect(db!.get<{ status: string }>("SELECT status FROM agent_runs WHERE id=$runId", { runId: run.id })?.status).toBe("CANCELLED");
+    });
+
+    it("does not re-emit run_finished when an already terminal run is cancelled again", async () => {
+      await setup();
+      const run = await startRun({ role: "developer", model: "default", taskId, epicId: null,
+        triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1" });
+      const { events, sink } = recordingSink();
+      runService = new RunService(db!, fakeRuntime, undefined, undefined, sink);
+
+      await runService.cancelRun(run.id);
+      expect(events).toHaveLength(1);
+      await runService.cancelRun(run.id);
+      expect(events).toHaveLength(1);
+    });
+
+    it("emits run_finished COMPLETED when restart reconciliation finalizes a persisted submission", async () => {
+      const run = await recoveryFixture();
+      const output = JSON.stringify({ version: "1", outcome: "PASS" });
+      expect(await runService.completionStore().accept(run.capabilityRef!, {
+        runId: run.id, role: run.role, output: JSON.parse(output),
+      })).toBe(true);
+      const { events, sink } = recordingSink();
+      const restarted = new RunService(db!, fakeRuntime, undefined, undefined, sink);
+
+      expect(restarted.reconcileInterruptedRuns()).toBe(1);
+
+      expect(events).toEqual([{ type: "run_finished", runId: run.id, status: "COMPLETED" }]);
+    });
+
+    it("emits run_finished FAILED when restart reconciliation fails an interrupted run", async () => {
+      await setup();
+      const run = prepareRun({ role: "developer", model: "default", taskId, epicId: null,
+        triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1" });
+      const { events, sink } = recordingSink();
+      const restarted = new RunService(db!, fakeRuntime, undefined, undefined, sink);
+
+      expect(restarted.reconcileInterruptedRuns()).toBe(1);
+
+      expect(events).toEqual([{ type: "run_finished", runId: run.id, status: "FAILED" }]);
+    });
+
+    it("does not let an event sink error affect the run outcome", async () => {
+      await setup();
+      const run = prepareRun({ role: "developer", model: "default", taskId, epicId: null,
+        triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1" });
+      const output = JSON.stringify({ version: "1.0.0", outcome: "COMPLETED", commitSha: "test-commit-sha" });
+      scriptValidatedCompletion(run.id, output);
+      runService = new RunService(db!, fakeRuntime, {
+        prepare: (_tx, input) => preparedContext(input.prompt, input.role, input.subject),
+      }, undefined, { emit: () => { throw new Error("observer boom"); } });
+
+      const completed = await runService.executePreparedRun(run.id);
+
+      expect(completed.run.status).toBe("COMPLETED");
+    });
+  });
+
+  describe("failRun terminal contract", () => {
+    function recordingSink(): { events: AgentEvent[]; sink: AgentEventSink } {
+      const events: AgentEvent[] = [];
+      const sink: AgentEventSink = { emit: (event) => events.push(event) };
+      return { events, sink };
+    }
+
+    it("returns true for an already-terminal run with canonical STOPPED proof without re-emitting run_finished", async () => {
+      await setup();
+      const run = prepareRun({ role: "developer", model: "default", taskId, epicId: null,
+        triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1" });
+      db!.run("UPDATE agent_runs SET status='FAILED' WHERE id=$id", { id: run.id });
+      markFakeRunNeverLaunched(run.id);
+      const { events, sink } = recordingSink();
+      const service = new RunService(db!, fakeRuntime, undefined, undefined, sink);
+
+      expect(service.failPreparedRun(run.id, new Error("boom"))).toBe(true);
+      expect(events).toEqual([]);
+      expect(db!.get<{ status: string }>("SELECT status FROM agent_runs WHERE id=$id", { id: run.id })?.status).toBe("FAILED");
+    });
+
+    it("returns true for an ownerless legacy terminal run and emits nothing", async () => {
+      await setup();
+      const run = prepareRun({ role: "developer", model: "default", taskId, epicId: null,
+        triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1" });
+      db!.run("UPDATE agent_runs SET status='CANCELLED' WHERE id=$id", { id: run.id });
+      db!.run("DELETE FROM run_process_owners WHERE run_id=$runId", { runId: run.id });
+      const { events, sink } = recordingSink();
+      const service = new RunService(db!, fakeRuntime, undefined, undefined, sink);
+
+      expect(service.failPreparedRun(run.id, new Error("boom"))).toBe(true);
+      expect(events).toEqual([]);
+    });
+
+    it("returns false for a terminal run without canonical STOPPED proof", async () => {
+      await setup();
+      const run = prepareRun({ role: "developer", model: "default", taskId, epicId: null,
+        triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1" });
+      db!.run("UPDATE agent_runs SET status='FAILED' WHERE id=$id", { id: run.id });
+
+      expect(runService.failPreparedRun(run.id, new Error("boom"))).toBe(false);
+    });
+  });
+
+  describe("production AgentEventBus wiring", () => {
+    it("shares one AgentEventBus between the runtime adapter and RunService", async () => {
+      await setup();
+      const production = createProductionComposition({
+        database: db!,
+        home: resolveOrchestratorHome({ EBB_ORCHESTRATOR_HOME: tmpDir }, process.platform as Platform),
+      });
+      const bus = production.agentEventBus;
+      expect(bus).toBeInstanceOf(AgentEventBus);
+      expect((production.runtime as unknown as { agentEvents?: unknown }).agentEvents).toBe(bus);
+
+      const seen: AgentEvent[] = [];
+      bus.addListener((event) => seen.push(event));
+      const run = prepareRun({ role: "developer", model: "default", taskId, epicId: null,
+        triggerReason: "task-assignment", contextVersion: "1", outputSchemaVersion: "1" });
+      const output = JSON.stringify({ version: "1.0.0", outcome: "COMPLETED", commitSha: "test-commit-sha" });
+      fakeRuntime.startRun = async (started) => { markFakeRunNeverLaunched(started.id); };
+      fakeRuntime.collectResult = async (collectRunId) => {
+        const accepted = await runService.completionStore().accept(runService.getCapabilityReference(collectRunId), {
+          runId: collectRunId, role: "developer", output: JSON.parse(output),
+        });
+        expect(accepted).toBe(true);
+        return { success: true, exitCode: 0, output, validatedSubmission: true,
+          diagnostics: { runId: collectRunId, sessionId: null, stderr: "", exitCode: 0, artifactReferences: [] } };
+      };
+      runService = new RunService(db!, fakeRuntime, {
+        prepare: (_tx, input) => preparedContext(input.prompt, input.role, input.subject),
+      }, undefined, bus);
+
+      await runService.executePreparedRun(run.id);
+
+      expect(seen.map((event) => event.type)).toEqual(["run_started", "run_finished"]);
+    });
   });
 });

@@ -28,6 +28,7 @@ import { ProjectService } from "../modules/projects/project-service.js";
 import { ApprovalService } from "../modules/approvals/approval-service.js";
 import { RunService } from "../modules/runtime/run-service.js";
 import type { AgentRuntime } from "../modules/runtime/agent-runtime.js";
+import type { AgentEventSink } from "../modules/runtime/agent-events.js";
 import { SchedulerService } from "../modules/scheduler/scheduler-service.js";
 import { WorkflowEngine } from "../modules/workflow/workflow-engine.js";
 import { WorkflowRegistry } from "../modules/workflow/workflow-registry.js";
@@ -87,6 +88,8 @@ export interface AppDeps {
   status?: StatusTrackerInterface;
   /** Источник потока событий только для чтения для аутентифицированных SSE-клиентов. */
   eventBus?: EventBus;
+  /** Общая шина эфемерных событий Run; production передаёт AgentEventBus из composition. */
+  agentEvents?: AgentEventSink;
   /** Абсолютный путь к собранному Vite bundle для same-origin production UI. */
   webRoot?: string;
   /** Единственная auth authority; production не использует process-local session. */
@@ -117,7 +120,7 @@ export function createApp(deps: AppDeps): OrchestratorApp {
   const projectConfigService = deps.projectConfigService;
   const humanFeedbackService = deps.humanFeedbackService;
   if (deps.db && !deps.runtime && !deps.runService) throw new Error("production runtime is required");
-  const runService = deps.runService ?? (deps.db && deps.runtime ? new RunService(deps.db, deps.runtime) : undefined);
+  const runService = deps.runService ?? (deps.db && deps.runtime ? new RunService(deps.db, deps.runtime, undefined, undefined, deps.agentEvents) : undefined);
   const dependencyService = deps.dependencyService ?? (deps.db ? new DependencyService(deps.db) : undefined);
 
   const app = Fastify({ logger: false }) as unknown as OrchestratorApp;

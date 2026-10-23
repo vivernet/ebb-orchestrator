@@ -1,4 +1,5 @@
 import { RUNTIME_TOOL_ERROR_CATEGORIES, type RuntimeDiagnosticToolId, type RuntimeToolErrorCategory, type RuntimeToolEventCounts } from "../run-types.js";
+import type { AgentEvent, AgentEventSink } from "../agent-events.js";
 
 /** Максимум UTF-8-байтов, временно удерживаемых для одной незавершённой строки JSONL. */
 export const HERMES_STREAM_MAX_LINE_BYTES = 65_536;
@@ -117,6 +118,16 @@ export class HermesStreamSessionObserver {
   private terminalResultSeen = false;
   private tokenUsage: HermesStreamTokenUsage | null = null;
   private readonly toolEventCounts = emptyToolCounts();
+
+  /**
+   * Создаёт наблюдатель потока одного Run.
+   * @param runId Идентификатор наблюдаемого Run; без него tool events не публикуются.
+   * @param agentEvents Приёмник эфемерных событий; без него tool events не публикуются.
+   */
+  constructor(
+    private readonly runId?: string,
+    private readonly agentEvents?: AgentEventSink,
+  ) {}
 
   /** Возвращает только числовую проекцию одного correlated result; неизвестный cost здесь не выводится. */
   get usage(): HermesStreamTokenUsage | null {
@@ -265,16 +276,25 @@ export class HermesStreamSessionObserver {
     if (diagnosticToolId && record.type === "tool_use") {
       const counts = this.toolEventCounts[diagnosticToolId];
       counts.uses = incrementSafeCounter(counts.uses);
+      this.emitToolEvent({ type: "tool_pending", runId: this.runId!, toolId: diagnosticToolId });
     } else if (diagnosticToolId && record.type === "tool_result") {
       const counts = this.toolEventCounts[diagnosticToolId];
       counts.results = incrementSafeCounter(counts.results);
-      if (record.is_error === false) {
+      const isError = record.is_error === true;
+      if (!isError && record.is_error === false) {
         counts.successes = incrementSafeCounter(counts.successes);
-      } else if (record.is_error === true) {
+      } else if (isError) {
         counts.errors = incrementSafeCounter(counts.errors);
         const category = classifyToolError(record.output);
         counts.errorCategories[category] = incrementSafeCounter(counts.errorCategories[category]);
       }
+      this.emitToolEvent({
+        type: "tool_result",
+        runId: this.runId!,
+        toolId: diagnosticToolId,
+        success: record.is_error === false,
+        ...(isError ? { errorCategory: classifyToolError(record.output) } : {}),
+      });
     }
     if (record.type === "result") {
       const duplicate = this.terminalResultSeen;
@@ -295,6 +315,16 @@ export class HermesStreamSessionObserver {
       }
     }
     return { kind: "ignored" };
+  }
+
+  /** Публикует allowlisted tool event без payload; ошибки подписчиков не ломают разбор потока. */
+  private emitToolEvent(event: Extract<AgentEvent, { type: "tool_pending" | "tool_result" }>): void {
+    if (!this.runId || !this.agentEvents) return;
+    try {
+      this.agentEvents.emit(event);
+    } catch {
+      // Доставка tool events не влияет на результат Run.
+    }
   }
 
   private clearLine(): void {

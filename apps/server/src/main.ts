@@ -152,7 +152,7 @@ const production = createProductionComposition({
   database,
   home,
 });
-const { paths: productionPaths, runtime, artifactStore, epicWorkspaceProvisioner, taskWorkspaceProvisioner, integrationServiceFactory, epicMergeAuthority } = production;
+const { paths: productionPaths, runtime, artifactStore, epicWorkspaceProvisioner, taskWorkspaceProvisioner, integrationServiceFactory, epicMergeAuthority, agentEventBus } = production;
 const workflowRegistry = new WorkflowRegistry();
 for (const template of Object.values(templates)) workflowRegistry.register(template);
 const workflowEngine = new WorkflowEngine(database, workflowRegistry);
@@ -176,7 +176,7 @@ const runService: RunService = new RunService(database, runtime, undefined, {
       previousAttempt: input.previousAttempt,
     });
   },
-});
+}, agentEventBus);
 const runtimeOrchestrator = new RuntimeOrchestrator(database, workflowEngine, eventBus, eventDispatcher, scheduler, runService, () => status.get() === "READY");
 runtimeOrchestrator.initialize();
 const planningService = new PlanningService(database);
