@@ -12,6 +12,18 @@ supersedes:
 
 # Proposal 18: Ebb-owned provider configuration for Orchestrator Runs
 
+> **Amendment 2026-10-23 (plan-24, APPROVED):** Plan 24 расширяет этот proposal:
+> Ebb-owned provider-конфигурация покрывает **полный каталог** провайдеров
+> закреплённого LobeHub источника — все 86 provider ID — и управляется из Web.
+> Credentials хранятся в OS `SecretStore` (keyring), а не в `.env`; SQLite
+> хранит только opaque reference и несекретные настройки. Auth-lifecycle
+> (API-ключи, subscription/coding-plan токены, OAuth device flow, refresh,
+> disconnect) реализуется в Ebb (Tasks 2–6 плана 24). Hermes остаётся
+> рантаймом по умолчанию (default selection). Пункты ниже, противоречащие
+> этому amendment (read-only UI, ограничение двумя built-in провайдерами,
+> `.env` как хранилище секретов, исключение OAuth/токен-флоу из v1),
+> считаются superseded для реализации и сохранены как история.
+
 ## Решение (направление)
 
 Пользователь принял решение (2026-10-23): **Ebb становится владельцем настройки ИИ-провайдеров и моделей** для Orchestrator Runs. Это заменяет Proposal 09 («Reuse the configured Hermes provider») для v1: Ebb хранит реестр провайдеров/моделей, а при запуске Run передаёт выбор в Hermes явными неинтерактивными средствами, не мутируя пользовательский профиль Hermes.
