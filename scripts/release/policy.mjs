@@ -148,8 +148,18 @@ export function validateConfig(config) {
       for (const entry of pending) {
         if (!known.has(entry.field)) fail('CONFIG_PENDING_BINDING_UNKNOWN', 'pendingBindings', `unknown pending field ${entry.field}`);
       }
-    } else if (pending.length > 0) {
-      fail('CONFIG_PENDING_BINDINGS_ON_BOUND', 'pendingBindings', 'bound config must have empty pendingBindings');
+    } else {
+      // bound: only unresolved blocked/pending platform-gate fields may remain;
+      // trusted-binding fields must be resolved (real full SHAs) and removed.
+      const known = new Set(blockedPlatformFields);
+      for (const entry of pending) {
+        if (!known.has(entry.field)) {
+          fail('CONFIG_PENDING_BINDINGS_ON_BOUND', 'pendingBindings', `bound config must not keep pending entry ${entry.field}`);
+        }
+      }
+      for (const field of blockedPlatformFields) {
+        if (!seen.has(field)) fail('CONFIG_PENDING_BINDING_UNRESOLVED', 'pendingBindings', `missing pending entry for blocked platform ${field}`);
+      }
     }
   }
 
@@ -290,14 +300,18 @@ export function validateInput(rawInput, config) {
     if (config.bindingStatus !== 'bound') {
       fail('MUTATION_NOT_ALLOWED', 'bindingStatus', `mutation intent "${intent}" requires bindingStatus bound; config is ${config.bindingStatus}`);
     }
-    for (const entry of config.pendingBindings ?? []) {
-      fail('PENDING_TRUSTED_BINDING', entry.field, `${entry.producerTask}: ${entry.blocker}`);
+    if (config.bindingStatus === 'pending') {
+      for (const entry of config.pendingBindings ?? []) {
+        fail('PENDING_TRUSTED_BINDING', entry.field, `${entry.producerTask}: ${entry.blocker}`);
+      }
     }
     const covered = new Set((rawInput.evidence?.platforms ?? []).map((platform) => platform.id));
     for (const blocker of collectGateBlockers(config, [...covered])) blockers.push(blocker);
   } else if (masterPush) {
-    for (const entry of config.pendingBindings ?? []) {
-      fail('PENDING_TRUSTED_BINDING', entry.field, `${entry.producerTask}: ${entry.blocker}`);
+    if (config.bindingStatus === 'pending') {
+      for (const entry of config.pendingBindings ?? []) {
+        fail('PENDING_TRUSTED_BINDING', entry.field, `${entry.producerTask}: ${entry.blocker}`);
+      }
     }
   }
 

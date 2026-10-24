@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "policyName": "PolicyV1",
-  "bindingStatus": "pending",
+  "bindingStatus": "bound",
   "createdAt": "2026-10-24",
   "repository": {
     "id": 1372710981,
@@ -57,7 +57,7 @@
         "node": "24.x",
         "status": "blocked",
         "blocker": "BLOCKED_SELF_HOSTED_RUNNER: repo has 0 registered runners; no self-hosted/ebb-systemd-cgroup-v2 labels in workflows; Linux native acceptance currently push-only on hosted ubuntu-24.04",
-        "producerTask": "Task8",
+        "producerTask": "Task11",
         "requiredChecks": ["native process-scope acceptance"]
       },
       {
@@ -93,44 +93,26 @@
   "trustedBindings": {
     "workflows": {
       "release-validation.yml": {
-        "fullSha": null,
-        "bindingStatus": "pending",
-        "producerTask": "Task8",
-        "blocker": "trusted validation workflow not created yet; Task8 creates and pins its full reviewed commit SHA"
+        "fullSha": "96c691c4dc8941f588cc5a42a1c152c94c151a18",
+        "bindingStatus": "bound",
+        "note": "pin = git hash-object .github/workflows/release-validation.yml at reviewed W2 commit 537f391b1dd03b30c83bc12838b846640efa898d; blob hash is stable and independent of this config commit (no circular reference). Exact pin-match verification is external operation evidence."
       },
       "release-operations.yml": {
-        "fullSha": null,
-        "bindingStatus": "pending",
-        "producerTask": "Task8",
-        "blocker": "trusted operations workflow not created yet; Task8 creates and pins its full reviewed commit SHA"
+        "fullSha": "2493e25b99a2b10257037bd078f21368293760aa",
+        "bindingStatus": "bound",
+        "note": "pin = git hash-object .github/workflows/release-operations.yml at reviewed W2 commit 537f391b1dd03b30c83bc12838b846640efa898d; blob hash is stable and independent of this config commit (no circular reference). Exact pin-match verification is external operation evidence."
       }
     },
     "scriptBundle": {
-      "fullSha": null,
-      "bindingStatus": "pending",
-      "producerTask": "Task8",
-      "blocker": "approved release script bundle full SHA produced and pinned by Task8"
+      "fullSha": "e70d95331ffc023eb946902cccf4b109e7956d3c",
+      "bindingStatus": "bound",
+      "note": "pin = git rev-parse 537f391b1dd03b30c83bc12838b846640efa898d:scripts/release tree hash (deterministic whole-bundle tree chosen over per-file blobs; atomic bundle identity, stable across config commits). Exact pin-match verification is external operation evidence."
     }
   },
   "pendingBindings": [
     {
-      "field": "trustedBindings.workflows.release-validation.yml.fullSha",
-      "producerTask": "Task8",
-      "blocker": "release-validation.yml not created; Task8 must create + review + pin full commit SHA"
-    },
-    {
-      "field": "trustedBindings.workflows.release-operations.yml.fullSha",
-      "producerTask": "Task8",
-      "blocker": "release-operations.yml not created; Task8 must create + review + pin full commit SHA"
-    },
-    {
-      "field": "trustedBindings.scriptBundle.fullSha",
-      "producerTask": "Task8",
-      "blocker": "approved release script bundle full SHA pending until Task8 binding review"
-    },
-    {
       "field": "gates.requiredPlatforms.native-linux-node24-selfhosted.status",
-      "producerTask": "Task8",
+      "producerTask": "Task11",
       "blocker": "BLOCKED_SELF_HOSTED_RUNNER: 0 registered runners; ebb-systemd-cgroup-v2 label absent"
     },
     {
@@ -155,6 +137,6 @@
   "mutationPolicy": {
     "requiresBindingStatus": "bound",
     "requiresTrustedBindingsFullSha": true,
-    "note": "bootstrap config is NOT a valid mutation config; all public release mutations fail closed until Task8 binds trusted identities and Task11 completes gate acceptance"
+    "note": "trusted identities now bound (Task8 part 2); public release mutations still fail closed until Task11 completes gate acceptance and Task9 resolves Docker."
   }
 }
