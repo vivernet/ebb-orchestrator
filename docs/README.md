@@ -15,6 +15,7 @@
 | `audit/` | Аудиты, проверочные отчёты и снимки состояния |
 | `development/` | Правила разработки, документации и JSDoc |
 | `issues/` | Зафиксированные проблемы и их контекст |
+| `releases/` | Резервирования версий и release-артефакты политики |
 | `roadmap/` | Сгенерированная карта зависимостей и исторические снимки |
 
 ## Архитектура и планы
@@ -22,6 +23,8 @@
 - [Системный дизайн](architecture/specs/01-system-design.md) — текущая
   архитектурная спецификация.
 - [Каталог планов](architecture/plans/) — актуальные и исторические планы.
+- [Политика веток и release-публикаций](architecture/policies/branch-and-release-policy.md);
+  реестр резервирований версий — `releases/version-reservations.json`.
 - [Последовательность закрытия обязательств](roadmap/02-current-state.md) — текущая сверка с evidence и решениями.
 - [План governance документации](architecture/plans/governance/00-01-documentation-governance.md).
 - [Интеграция governance](architecture/plans/governance/00-05-governance-integration.md).

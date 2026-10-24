@@ -485,6 +485,41 @@ pnpm docs:rename:check
 `README.md`. Карта — исторический снимок: текущие canonical target paths не
 обязаны существовать, если документы позднее перемещались или объединялись.
 
+### Release-инструменты (plan-26)
+
+Политика веток и release-публикаций определена в
+[branch-and-release-policy](docs/architecture/policies/branch-and-release-policy.md)
+и плане
+[26-branch-and-release-policy](docs/architecture/plans/26-branch-and-release-policy.md).
+Каноническая версия зафиксирована в корневом `release.json` (сейчас `1.0.0`);
+резервирования версий ведутся в append-only реестре
+[docs/releases/version-reservations.json](docs/releases/version-reservations.json).
+Публичных production release/GHCR-операций не выполнялось; публикация остаётся
+отключённой до acceptance Task11 и финального одобрения.
+
+Read-only проверка policy-конфигурации `.ebb/release-policy.json` по валидированному
+event-файлу (скрипт `release:policy:check` требует аргумент `--event-file`):
+
+```bash
+node scripts/release/policy.mjs check --event-file <validated-path>
+```
+
+CLI `scripts/release.mjs` поддерживает режимы `prepare|validate|rollback|resume|status`
+(режима `publish` в CLI нет), выдаёт JSON OperationReport и завершается кодом 0 только
+при подтверждённом успехе этапа, 1 — `BLOCKED`/`PARTIAL`/`CONFLICT`, 2 — при
+некорректном вводе:
+
+| Режим | Назначение | Обязательные флаги |
+|---|---|---|
+| `prepare` | Проверяет policy/reservation/inventory, создаёт кандидата и локальное состояние операции; remote refs не меняет. | `--version`, `--source-sha`, `--source-tree`, `--inventory-file`, `--commit-inputs-file` |
+| `validate` | Оценивает evidence gates подготовленной операции и формирует ApprovalBundle (подтверждение остаётся null). | `--operation`, `--evidence-file` |
+| `rollback` | Готовит withdrawal опубликованного release (по умолчанию ничего не удаляет). | `--operation`, `--inventory-file` |
+| `resume` | Возвращает `BLOCKED` (mutation backend не реализован). | — |
+| `status` | Read-only статус операции; никогда не чинит состояние. | `--operation` |
+
+Публичные мутации выполняются только через trusted workflow
+`.github/workflows/release-operations.yml`.
+
 ### Дополнительные package scripts
 
 ```bash
