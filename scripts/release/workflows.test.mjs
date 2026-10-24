@@ -242,6 +242,14 @@ test('release-validation.yml: publish-mode jobs are gated on mode=publish, never
   for (const jobId of ['release-module-tests', 'governance-docs-skills', 'pinned-tree-equality']) {
     assert.equal(doc.jobs[jobId]?.if, undefined, `job ${jobId} must not be mode-gated`);
   }
+  // regression jobs that need full git history (pins reference the reviewed W2
+  // commit) must check out with fetch-depth: 0; shallow checkout breaks
+  // `git rev-parse <W2>:scripts/release` in policy.test.mjs on CI.
+  for (const jobId of ['release-module-tests', 'pinned-tree-equality']) {
+    const checkout = doc.jobs[jobId].steps.find((s) => s.uses?.startsWith('actions/checkout'));
+    assert.ok(checkout, `job ${jobId} must have an actions/checkout step`);
+    assert.equal(checkout.with?.['fetch-depth'], 0, `job ${jobId} checkout must use fetch-depth: 0`);
+  }
   assert.equal(doc.jobs['validation-summary'].if, '${{ always() }}', 'summary must run for every dispatch (always)');
 });
 
