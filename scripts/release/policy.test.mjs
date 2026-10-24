@@ -219,15 +219,15 @@ test('full SHA pattern accepts 40-hex and rejects short ids', () => {
 });
 
 test('bound config pins match the reviewed workflow/script identities (exact git hashes)', () => {
-  // The reviewed workflow/script commit is W3 (parent of this config commit),
-  // the fetch-depth fix for the release-module job. Pins are blob/tree hashes
-  // of THAT reviewed tree — deliberately not this config commit's own tree
-  // (no circular self-reference).
-  const W3 = '64ef57e6d3a63e95bedd423b945088f43e77ec42';
+  // Pins are blob/tree hashes of the reviewed HEAD tree — computed from git
+  // HEAD itself, so the test is independent of working-tree state (shallow
+  // fetch-safe) and never self-referential: the config lives outside
+  // scripts/release and .github/workflows, so its own commit/tree is not part
+  // of any pinned identity.
   const git = (args) => spawnSync('git', args, { cwd: REPO_ROOT, encoding: 'utf8' });
-  const validationBlob = git(['hash-object', '.github/workflows/release-validation.yml']).stdout.trim();
-  const operationsBlob = git(['hash-object', '.github/workflows/release-operations.yml']).stdout.trim();
-  const scriptTree = git(['rev-parse', `${W3}:scripts/release`]).stdout.trim();
+  const validationBlob = git(['rev-parse', 'HEAD:.github/workflows/release-validation.yml']).stdout.trim();
+  const operationsBlob = git(['rev-parse', 'HEAD:.github/workflows/release-operations.yml']).stdout.trim();
+  const scriptTree = git(['rev-parse', 'HEAD:scripts/release']).stdout.trim();
   assert.equal(validationBlob.length, 40);
   assert.equal(operationsBlob.length, 40);
   assert.equal(scriptTree.length, 40);
