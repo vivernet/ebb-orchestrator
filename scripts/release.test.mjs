@@ -391,23 +391,60 @@ test('status is read-only and reports the persisted state', async () => {
   const base = await prepareBase(dir);
   const run = runCli(PREPARE_ARGS(base), { cwd: dir });
   assert.equal(run.status, 0, run.stdout);
-  const sRun = runCli(['status', '--operation', OP], { cwd: dir });
+  const sRun = runCli(['status', '--config', base.cfgPath, '--operation', OP], { cwd: dir });
   assert.equal(sRun.status, 0, sRun.stdout);
   const report = parseReport(sRun);
   assert.equal(report.status, 'PREPARED');
   assert.equal(report.mode, 'status');
+  assert.deepEqual(report.remainingIdentities, []);
+  assert.deepEqual(report.ambiguities, []);
   await rm(dir, { recursive: true, force: true });
 });
 
 test('status on a PARTIAL operation exits nonzero (incomplete mutation is never success)', async () => {
   const dir = await makeWorkRepo();
+  const base = await prepareBase(dir);
   const statePath = join(opDir(dir, OP), 'state.json');
   await mkdir(opDir(dir, OP), { recursive: true });
   await writeJson(statePath, { schemaVersion: 1, operationId: OP, status: 'PARTIAL', stage: 'publishing', updatedAt: NOW, mode: 'publish', version: '1.0.0' });
-  const sRun = runCli(['status', '--operation', OP], { cwd: dir });
+  const sRun = runCli(['status', '--config', base.cfgPath, '--operation', OP], { cwd: dir });
   assert.equal(sRun.status, 1, sRun.stdout);
   const report = parseReport(sRun);
   assert.equal(report.status, 'PARTIAL');
+  await rm(dir, { recursive: true, force: true });
+});
+
+test('status surfaces the operation state machine: remaining identities and ambiguities, never repairs', async () => {
+  const dir = await makeWorkRepo();
+  const base = await prepareBase(dir);
+  const statePath = join(opDir(dir, OP), 'state.json');
+  await mkdir(opDir(dir, OP), { recursive: true });
+  await writeJson(statePath, {
+    schemaVersion: 1,
+    operationId: OP,
+    status: 'PARTIAL',
+    stage: 'publishing',
+    updatedAt: NOW,
+    mode: 'publish',
+    version: '1.0.0',
+    steps: {
+      verify: { status: 'confirmed' },
+      'ghcr-publish': { status: 'confirmed' },
+      'git-cas': { status: 'requested', requestedAt: NOW },
+      'github-release': { status: 'planned' },
+      'final-readback': { status: 'planned' },
+    },
+    order: ['verify', 'ghcr-publish', 'git-cas', 'github-release', 'final-readback'],
+    ambiguities: [{ code: 'GHCR_ELIGIBILITY_UNKNOWN', field: 'versions', detail: 'download count unavailable' }],
+  });
+  const sRun = runCli(['status', '--config', base.cfgPath, '--operation', OP], { cwd: dir });
+  assert.equal(sRun.status, 1, sRun.stdout);
+  const report = parseReport(sRun);
+  assert.equal(report.status, 'PARTIAL');
+  assert.deepEqual(report.remainingIdentities, ['git-cas', 'github-release', 'final-readback']);
+  assert.ok(report.ambiguities.some((ambiguity) => ambiguity.code === 'GHCR_ELIGIBILITY_UNKNOWN'));
+  const walk = gitRun(dir, ['status', '--porcelain']).stdout;
+  assert.equal(walk.trim(), '');
   await rm(dir, { recursive: true, force: true });
 });
 

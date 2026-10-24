@@ -42,6 +42,7 @@ import { ABSENT, createCandidate, validatePinnedSource } from './release/snapsho
 import { createReservationProof, validateLedger, validateReservationProof } from './release/version-reservations.mjs';
 import { inventoryHashOf } from './release/github.mjs';
 import { buildApprovalBundle, evaluateGates, planGates } from './release/gates.mjs';
+import { statusOperation } from './release/operations.mjs';
 
 const FULL_SHA_RE = /^[0-9a-f]{40}$/;
 const STABLE_SEMVER_RE = new RegExp(`^${STABLE_SEMVER_PATTERN}$`);
@@ -549,42 +550,12 @@ function cmdResume(opts) {
 
 async function cmdStatus(opts) {
   const operationId = requireValue(opts, 'operationId', '--operation', UUID_RE, 'OPERATION_ID_INVALID');
+  const { config } = loadConfig(opts);
   const commonDir = await resolveCommonDir({ cwd: process.cwd() });
-  const stateRead = await readState({ commonDir, operationId });
-  if (!stateRead.ok) {
-    return emit(makeReport({ operationId, mode: 'status', status: 'BLOCKED', blockers: [{ code: stateRead.code, field: 'state', detail: stateRead.detail }] }), 1);
-  }
-  const state = stateRead.state;
-  const inventoryRead = await readInventory({ commonDir, operationId });
-  const inventory = inventoryRead.ok ? inventoryRead.value : null;
-  const messageRead = await readApproval({ commonDir, operationId });
-  const approval = messageRead.ok ? messageRead.value : null;
-  const incomplete = ['PARTIAL', 'CONFLICT'].includes(state.status);
-  return emit(
-    makeReport({
-      operationId,
-      mode: 'status',
-      status: state.status,
-      stage: state.stage,
-      repositoryId: state.repositoryId ?? null,
-      version: state.version,
-      sourceRef: state.pinnedSource?.sourceRef,
-      sourceSha: state.pinnedSource?.sourceSha,
-      sourceTree: state.pinnedSource?.sourceTree,
-      oldMaster: state.pinnedSource?.oldMaster,
-      candidateSha: state.candidate?.candidateSha,
-      candidateTree: state.candidate?.candidateTree,
-      policyHash: state.policyHash,
-      reservationProof: state.reservationProof,
-      inventoryHash: state.inventoryHash ?? (inventory ? inventoryHashOf(inventory) : null),
-      gateEvidenceHash: approval?.gateEvidenceHash ?? null,
-      confirmationHash: approval?.receipt?.confirmationHash ?? null,
-      remoteIdentities: inventory ? remoteIdentitiesOf(inventory) : null,
-      blockers: incomplete ? [{ code: 'INCOMPLETE_MUTATION', field: 'state.status', detail: `operation is ${state.status}; incomplete mutation is never success` }] : [],
-      nextAction: null,
-    }),
-    incomplete ? 1 : 0,
-  );
+  const report = await statusOperation({ commonDir, operationId, config });
+  const incomplete = ['PARTIAL', 'CONFLICT'].includes(report.status);
+  const stateUnreadable = report.status === 'BLOCKED' && Array.isArray(report.blockers) && report.blockers.some((blocker) => blocker.field === 'state');
+  return emit(report, incomplete || stateUnreadable ? 1 : 0);
 }
 
 async function main(argv) {
