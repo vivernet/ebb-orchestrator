@@ -34,3 +34,9 @@
 ## Deployment gate
 
 Для каждого changed/new skill: frontmatter → links → cross-skill refs → autonomy scan → trigger matrix → relevant pressure/application scenarios → package manifest. Не называй skill ready только потому, что markdown выглядит убедительно.
+
+## Branch / release / docs trigger controls
+
+Record trigger positive, negative and authority cases: ordinary task completion → finish/PR squash develop, never release; explicit user ebb-release → operation owner; affected setup/config/API → changed-scope docs sync even without a separate docs request; unrelated task → no full docs audit. Root/nested README/.env.example content and file operations must have different named owners. Verify task approved SHA, integrated source and release candidate are not conflated. Scan for local task merge, master target, force/permission bypass and implicit publication/rollback/tag. Legacy master transition is separate Plan26, no dummy/baseline/restore/archive commit retained.
+
+Autonomy test: proceed inside already approved scope; stop only for actual named unresolved authority/destructive/external side effect. Record static checks as static, dynamic scenarios as executed only with actual observations. Preserve technical retry/fix rules and approved shared implementer/reviewer concurrency policy; controller coordination does not authorize implementation.

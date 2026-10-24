@@ -1,0 +1,355 @@
+{
+  "scope": "structural archive validation only",
+  "checks": [
+    {
+      "check": "22 canonical skills: 20 originals plus two owners",
+      "pass": true
+    },
+    {
+      "check": "ebb-curate-skills: frontmatter",
+      "pass": true
+    },
+    {
+      "check": ".agents/skills/ebb-curate-skills/SKILL.md: link references/decision-matrix.md",
+      "pass": true
+    },
+    {
+      "check": ".agents/skills/ebb-curate-skills/SKILL.md: link references/skill-authoring-protocol.md",
+      "pass": true
+    },
+    {
+      "check": "ebb-database-engineering: frontmatter",
+      "pass": true
+    },
+    {
+      "check": ".agents/skills/ebb-database-engineering/SKILL.md: link references/database-change-gates.md",
+      "pass": true
+    },
+    {
+      "check": ".agents/skills/ebb-database-engineering/SKILL.md: link references/migration-lifecycle-policy.md",
+      "pass": true
+    },
+    {
+      "check": ".agents/skills/ebb-database-engineering/SKILL.md: link references/database-verification.md",
+      "pass": true
+    },
+    {
+      "check": "ebb-debug-issue: frontmatter",
+      "pass": true
+    },
+    {
+      "check": ".agents/skills/ebb-debug-issue/SKILL.md: link references/architectural-debugging-checklist.md",
+      "pass": true
+    },
+    {
+      "check": "ebb-design-change: frontmatter",
+      "pass": true
+    },
+    {
+      "check": ".agents/skills/ebb-design-change/SKILL.md: link references/design-format.md",
+      "pass": true
+    },
+    {
+      "check": "ebb-dispatch-agents: frontmatter",
+      "pass": true
+    },
+    {
+      "check": ".agents/skills/ebb-dispatch-agents/SKILL.md: link references/dispatch-brief.md",
+      "pass": true
+    },
+    {
+      "check": "ebb-execute-plan: frontmatter",
+      "pass": true
+    },
+    {
+      "check": ".agents/skills/ebb-execute-plan/SKILL.md: link references/execution-state-machine.md",
+      "pass": true
+    },
+    {
+      "check": ".agents/skills/ebb-execute-plan/SKILL.md: link references/ledger-format.md",
+      "pass": true
+    },
+    {
+      "check": ".agents/skills/ebb-execute-plan/SKILL.md: link references/subagent-mode.md",
+      "pass": true
+    },
+    {
+      "check": "ebb-final-review: frontmatter",
+      "pass": true
+    },
+    {
+      "check": "ebb-finish-branch: frontmatter",
+      "pass": true
+    },
+    {
+      "check": "ebb-handle-review-feedback: frontmatter",
+      "pass": true
+    },
+    {
+      "check": "ebb-implement-task: frontmatter",
+      "pass": true
+    },
+    {
+      "check": ".agents/skills/ebb-implement-task/SKILL.md: link references/tdd-protocol.md",
+      "pass": true
+    },
+    {
+      "check": "ebb-maintain-project-docs: frontmatter",
+      "pass": true
+    },
+    {
+      "check": ".agents/skills/ebb-maintain-project-docs/SKILL.md: link references/scope-mapping.md",
+      "pass": true
+    },
+    {
+      "check": ".agents/skills/ebb-maintain-project-docs/SKILL.md: link references/readme-recipe.md",
+      "pass": true
+    },
+    {
+      "check": ".agents/skills/ebb-maintain-project-docs/SKILL.md: link references/env-sync.md",
+      "pass": true
+    },
+    {
+      "check": ".agents/skills/ebb-maintain-project-docs/SKILL.md: link references/verification.md",
+      "pass": true
+    },
+    {
+      "check": "ebb-orchestrate-work: frontmatter",
+      "pass": true
+    },
+    {
+      "check": ".agents/skills/ebb-orchestrate-work/SKILL.md: link references/workflow-router.md",
+      "pass": true
+    },
+    {
+      "check": "ebb-quality-gates: frontmatter",
+      "pass": true
+    },
+    {
+      "check": ".agents/skills/ebb-quality-gates/SKILL.md: link references/completion-evidence.md",
+      "pass": true
+    },
+    {
+      "check": "ebb-release: frontmatter",
+      "pass": true
+    },
+    {
+      "check": ".agents/skills/ebb-release/SKILL.md: link references/release-policy.md",
+      "pass": true
+    },
+    {
+      "check": ".agents/skills/ebb-release/SKILL.md: link references/release-tool-contract.md",
+      "pass": true
+    },
+    {
+      "check": ".agents/skills/ebb-release/SKILL.md: link references/rollback-recovery.md",
+      "pass": true
+    },
+    {
+      "check": ".agents/skills/ebb-release/SKILL.md: link references/release-evidence.md",
+      "pass": true
+    },
+    {
+      "check": "ebb-repository-context: frontmatter",
+      "pass": true
+    },
+    {
+      "check": "ebb-repository-maintenance: frontmatter",
+      "pass": true
+    },
+    {
+      "check": ".agents/skills/ebb-repository-maintenance/SKILL.md: link references/cross-platform-script-checklist.md",
+      "pass": true
+    },
+    {
+      "check": ".agents/skills/ebb-repository-maintenance/SKILL.md: link references/documentation-checklist.md",
+      "pass": true
+    },
+    {
+      "check": ".agents/skills/ebb-repository-maintenance/SKILL.md: link references/repository-maintenance-checklist.md",
+      "pass": true
+    },
+    {
+      "check": "ebb-review-plan: frontmatter",
+      "pass": true
+    },
+    {
+      "check": ".agents/skills/ebb-review-plan/SKILL.md: link references/plan-review-checklist.md",
+      "pass": true
+    },
+    {
+      "check": "ebb-review-task: frontmatter",
+      "pass": true
+    },
+    {
+      "check": "ebb-security-review: frontmatter",
+      "pass": true
+    },
+    {
+      "check": ".agents/skills/ebb-security-review/SKILL.md: link references/security-testing-checklist.md",
+      "pass": true
+    },
+    {
+      "check": "ebb-web-e2e: frontmatter",
+      "pass": true
+    },
+    {
+      "check": ".agents/skills/ebb-web-e2e/SKILL.md: link references/localization-accessibility-checklist.md",
+      "pass": true
+    },
+    {
+      "check": "ebb-worktree: frontmatter",
+      "pass": true
+    },
+    {
+      "check": ".agents/skills/ebb-worktree/SKILL.md: link references/worktree-safety.md",
+      "pass": true
+    },
+    {
+      "check": "ebb-write-plan: frontmatter",
+      "pass": true
+    },
+    {
+      "check": ".agents/skills/ebb-write-plan/SKILL.md: link references/plan-format.md",
+      "pass": true
+    },
+    {
+      "check": "ebb-curate-skills: original files preserved",
+      "pass": true
+    },
+    {
+      "check": "ebb-database-engineering: original files preserved",
+      "pass": true
+    },
+    {
+      "check": "ebb-debug-issue: original files preserved",
+      "pass": true
+    },
+    {
+      "check": "ebb-design-change: original files preserved",
+      "pass": true
+    },
+    {
+      "check": "ebb-dispatch-agents: original files preserved",
+      "pass": true
+    },
+    {
+      "check": "ebb-execute-plan: original files preserved",
+      "pass": true
+    },
+    {
+      "check": "ebb-final-review: original files preserved",
+      "pass": true
+    },
+    {
+      "check": "ebb-finish-branch: original files preserved",
+      "pass": true
+    },
+    {
+      "check": "ebb-handle-review-feedback: original files preserved",
+      "pass": true
+    },
+    {
+      "check": "ebb-implement-task: original files preserved",
+      "pass": true
+    },
+    {
+      "check": "ebb-orchestrate-work: original files preserved",
+      "pass": true
+    },
+    {
+      "check": "ebb-quality-gates: original files preserved",
+      "pass": true
+    },
+    {
+      "check": "ebb-repository-context: original files preserved",
+      "pass": true
+    },
+    {
+      "check": "ebb-repository-maintenance: original files preserved",
+      "pass": true
+    },
+    {
+      "check": "ebb-review-plan: original files preserved",
+      "pass": true
+    },
+    {
+      "check": "ebb-review-task: original files preserved",
+      "pass": true
+    },
+    {
+      "check": "ebb-security-review: original files preserved",
+      "pass": true
+    },
+    {
+      "check": "ebb-web-e2e: original files preserved",
+      "pass": true
+    },
+    {
+      "check": "ebb-worktree: original files preserved",
+      "pass": true
+    },
+    {
+      "check": "ebb-write-plan: original files preserved",
+      "pass": true
+    },
+    {
+      "check": "ebb-release: invocation metadata",
+      "pass": true
+    },
+    {
+      "check": "ebb-maintain-project-docs: invocation metadata",
+      "pass": true
+    },
+    {
+      "check": "release forbids implicit invocation",
+      "pass": true
+    },
+    {
+      "check": "codeql.yml: YAML",
+      "pass": true
+    },
+    {
+      "check": "codeql.yml: only approved PR target change",
+      "pass": true
+    },
+    {
+      "check": "production-gates.yml: YAML",
+      "pass": true
+    },
+    {
+      "check": "production-gates.yml: only approved PR target change",
+      "pass": true
+    },
+    {
+      "check": "security-audit-failure-paths.yml: YAML",
+      "pass": true
+    },
+    {
+      "check": "security-audit-failure-paths.yml: only approved PR target change",
+      "pass": true
+    },
+    {
+      "check": "no nonexistent release implementation shipped",
+      "pass": true
+    },
+    {
+      "check": "no supplied npm manifest replaced",
+      "pass": true
+    },
+    {
+      "check": "plan26 present",
+      "pass": true
+    },
+    {
+      "check": "prelaunch instructions present",
+      "pass": true
+    },
+    {
+      "check": "no docs/superpowers",
+      "pass": true
+    }
+  ],
+  "passed": 87,
+  "failed": 0
+}

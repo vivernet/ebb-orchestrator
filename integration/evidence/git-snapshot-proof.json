@@ -1,0 +1,50 @@
+{
+  "scope": "disposable local Git repository and bare remote; no GitHub/GHCR live operations",
+  "git_version": "git version 2.51.1",
+  "checks": [
+    {
+      "check": "first snapshot has zero parents",
+      "result": "PASS"
+    },
+    {
+      "check": "first release tree equals source",
+      "result": "PASS"
+    },
+    {
+      "check": "later release has exactly previous master as parent",
+      "result": "PASS"
+    },
+    {
+      "check": "second release tree equals source",
+      "result": "PASS"
+    },
+    {
+      "check": "stale expected ref rejected without master mutation",
+      "result": "PASS"
+    },
+    {
+      "check": "atomic initial publication to disposable remote succeeds",
+      "result": "PASS"
+    },
+    {
+      "check": "atomic remote rollback restores prior master and deletes release tag",
+      "result": "PASS"
+    },
+    {
+      "check": "rollback only remaining root removes master ref",
+      "result": "PASS"
+    },
+    {
+      "check": "development commits preserved after both rollbacks",
+      "result": "PASS"
+    },
+    {
+      "check": "new first retained release starts new root",
+      "result": "PASS"
+    }
+  ],
+  "limitations": [
+    "Not a test of future release CLI",
+    "No Docker, GitHub API, CI runners, actual project tests or credentials were exercised"
+  ]
+}

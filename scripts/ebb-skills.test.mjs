@@ -9,8 +9,10 @@ const expectedNames = [
   'ebb-curate-skills', 'ebb-database-engineering', 'ebb-debug-issue', 'ebb-design-change',
   'ebb-dispatch-agents', 'ebb-execute-plan', 'ebb-final-review',
   'ebb-finish-branch', 'ebb-handle-review-feedback', 'ebb-implement-task',
+  'ebb-maintain-project-docs',
   'ebb-notes',
-  'ebb-orchestrate-work', 'ebb-quality-gates', 'ebb-repository-context',
+  'ebb-orchestrate-work', 'ebb-quality-gates', 'ebb-release',
+  'ebb-repository-context',
   'ebb-repository-maintenance', 'ebb-review-plan', 'ebb-review-task',
   'ebb-security-review', 'ebb-web-e2e', 'ebb-worktree', 'ebb-write-plan',
 ];
@@ -33,13 +35,15 @@ const triggerMatrix = [
   ['Bug/failing test/build/unexpected behavior', 'ebb-debug-issue', /bug, failing test\/build.*unexpected behavior.*root cause до исправления/u, 'Ошибка / failing test / build'],
   ['About to claim PASS/DONE/fixed', 'ebb-quality-gates', /перед любым утверждением PASS\/DONE\/fixed\/ready/u, 'Completion claim'],
   ['Whole-change final readiness', 'ebb-final-review', /после реализации всего change\/plan.*whole-change review/u, 'Whole-change readiness'],
-  ['Verified branch needs PR/merge/handoff', 'ebb-finish-branch', /реализация.*завершена и проверена.*branch в PR\/merge/u, 'Branch/PR integration'],
-  ['Cleanup/move/setup/docs/tooling', 'ebb-repository-maintenance', /cleanup, move\/rename, documentation restructuring, setup\/dev-script/u, 'Cleanup/move/setup/docs'],
+  ['Verified branch needs PR/merge/handoff', 'ebb-finish-branch', /реализация.*завершена.*PR handoff или проверка.*интеграции в develop/u, 'Branch/PR integration'],
+  ['Cleanup/move/setup/docs/tooling', 'ebb-repository-maintenance', /cleanup, move\/rename, documentation restructuring, setup\/dev-script/u, 'Cleanup/move/rename/docs structure/setup tooling'],
   ['Auth/secrets/permissions/process/persistence boundary', 'ebb-security-review', /trust boundary, auth, secrets, permissions, process.*persistence/u, 'Trust boundary/auth/secrets/process'],
   ['Browser/HTTP/session/SSE behavior', 'ebb-web-e2e', /Web UI, HTTP, sessions, SSE.*browser-visible/u, 'Browser-visible HTTP/session/SSE'],
   ['Add/edit/audit Ebb skills', 'ebb-curate-skills', /создать, изменить, объединить, удалить или оценить skill/u, 'Skill authoring/curation'],
   ['Add/read/resolve user notes/ideas', 'ebb-notes', /заметки.*предложения пользователя|реестр входящих предложений/u, 'Заметки/предложения пользователя'],
   ['Database schema, migration or persistence work', 'ebb-database-engineering', /database schema, migrations, persisted-data representation/u],
+  ['First-party README/.env.example content sync', 'ebb-maintain-project-docs', /first-party README и \.env\.example/u, 'Root/nested README/.env.example content; affected setup/config/API/commands'],
+  ['Manual release/publish/hotfix/rollback/resume', 'ebb-release', /явном вызове пользователем.*публикации.*отката.*восстановления прерванного релиза/u, 'Explicit user invocation ebb-release (release/hotfix/rollback/resume/status)'],
 ];
 
 function skillDescription(name) {
@@ -111,7 +115,7 @@ const actualNames = readdirSync(skillsRoot, { withFileTypes: true })
     return entry.name;
   }).sort();
 
-test('canonical workflow exposes exactly the 21 approved skill owners', () => {
+test('canonical workflow exposes exactly the 23 approved skill owners', () => {
   assert.deepEqual(actualNames, expectedNames);
 });
 

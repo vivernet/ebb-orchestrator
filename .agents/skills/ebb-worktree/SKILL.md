@@ -3,7 +3,7 @@ name: ebb-worktree
 description: Используй, когда нужно проверить или создать изолированный Git worktree для Ebb Orchestrator либо безопасно определить, что текущий workspace уже является worktree.
 metadata:
   project: "ebb-orchestrator"
-  version: "5.0.0"
+  version: "5.2.0"
 ---
 
 # Ebb Worktree
@@ -11,8 +11,8 @@ metadata:
 Изоляция не должна создавать второй случайный workspace или ломать host-managed environment.
 
 1. Сначала определи repository root, `git rev-parse --git-dir`, `--git-common-dir`, текущую branch и superproject status. `git-dir != git-common-dir` означает linked worktree только если это не submodule.
-2. Если уже находишься в нужном worktree, **не создавай вложенный worktree**. Проверь branch/status и продолжай.
-3. Новый worktree создавай только если это требует approved workflow/plan или пользователь. Предпочитай host-native workspace mechanism; `git worktree add` — fallback.
+2. Если уже находишься в нужном worktree, **не создавай вложенный worktree**. Проверь branch/status, принадлежность задаче и ancestry относительно pinned `develop_base_sha`; несовпадение — named blocker, не повод незаметно reset/rebase/recreate.
+3. Новый worktree создавай только если это требует approved workflow/plan или пользователь. Обычную task branch создавай от зафиксированного полного `develop_base_sha`, PR target — `develop`. Предпочитай host-native workspace mechanism; `git worktree add` — fallback. Published-release hotfix имеет отдельный явный source/forward-port contract в `ebb-release`.
 4. Для project-local `.worktrees/`/`worktrees/` до создания докажи `git check-ignore`; не допускай случайного tracking дерева worktree.
 5. После создания выполни project setup по фактическому manifest и baseline verification. Красный baseline фиксируется отдельно; не приписывай его новой реализации.
 6. Не auto-create worktree из `ebb-execute-plan`: execution работает в предоставленном workspace и вызывает этот skill только при явной необходимости.

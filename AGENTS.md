@@ -66,32 +66,36 @@ Roadmap описывает возможные будущие направлен�
 2. объяснить, какое изменение scope требуется;
 3. не реализовывать без явного подтверждения.
 
-Перед составлением или существенным обновлением плана обязательно сверять открытые
-записи реестра входящих предложений (`docs/roadmap/notes.md`) и фиксировать решение
-по каждой из них (учтено / отклонено / перенесено). Реестр не является утверждённым
-планом и сам по себе не разрешает реализацию.
-
 ## 4. Git policy
 
-Основная ветка этого репозитория:
+Default/integration branch этого репозитория — `develop`. Обычные feature/bugfix/audit/documentation/chore задачи начинаются от зафиксированного актуального `develop` в отдельной task branch и изолированном Git worktree. Review фиксирует task SHA; после squash PR в `develop` отдельно фиксируется integrated SHA. Это разные identities; зелёные проверки task SHA не доказывают проверки integrated/release SHA.
 
-`master`
+Все обычные PR направляются в `develop` и интегрируются squash merge. Ветка `master` принадлежит только опубликованным release snapshots, не является обычной integration/deployment branch и отсутствует до первого production release. Legacy `master`, синхронный `develop`, удаляется отдельным подтверждённым переходом после проверки фактической истории/refs и миграции default branch. До этого перехода публикация BLOCKED; не удалять master на основании старого утверждения о равенстве веток.
 
-Feature/bugfix/audit/documentation work выполняется в отдельной ветке и отдельном Git worktree.
+Первый release commit — root с точным tree одобренного pinned source. Следующий имеет ровно один parent — предыдущий `master` — и точный tree нового pinned source. Не merge/squash develop history в master; не создавать dummy baseline, restore или archival commits. Release candidate SHA отличается от task/integrated SHA.
 
-Не выполнять без явного разрешения пользователя:
+Release запускается только ручным явным вызовом пользователем `ebb-release`. Автоматическое завершение task/plan не запускает release. Release включает master snapshot, annotated version tag, GitHub Release/assets и PUBLIC version-only GHCR Docker images; deployment в этот scope не входит. Полный mandatory local+CI matrix exact source/candidate и image tests выполняются до финального конкретного подтверждения пользователя. Версия, repository/package identities и action inventory фиксируются заранее.
 
-- `git push`;
-- final merge в `master`;
+Withdrawal/rollback последнего surviving release удаляет exact target-only GHCR version identities, Release/assets/tag и последний master snapshot; root rollback удаляет саму master branch. Он не deploy старого кода и не изменяет БД. Полный withdrawal safety набор обязателен, но дефектные product tests не запрещают отзыв. Durable append-only reservation на защищённой develop сохраняет consumed version навсегда, включая partial/cancel/rollback. Remote side effects исполняет единственный trusted manual serialized release-operations workflow; journal находится вне tracked tree.
+
+Подробный контракт: `docs/architecture/policies/branch-and-release-policy.md`; план перехода и инструментов: `docs/architecture/plans/26-branch-and-release-policy.md`. До завершения prerequisite/gates этих инструментов skill сообщает BLOCKED. Hotfix может исходить из published source, если develop не готов; forward-port в develop должен быть учтён до следующего normal release.
+
+По умолчанию implementation и independent review выполняются task subagents, одновременно максимум два subagents всех roles; увеличение лимита требует нового явного разрешения пользователя. Контроллер координирует и интегрирует, не подменяет implementation/review inline.
+
+Авторизованная implementation-задача разрешает создание своей task branch/worktree в указанном scope; повторное разрешение на каждый локальный шаг не требуется. Не выполнять без явного разрешения пользователя:
+
+- `git push`, включая temporary release-candidate refs;
+- final squash merge в `develop`;
+- публикацию или withdrawal release и соответствующие Git/GitHub/GHCR mutations;
+- изменение default branch/rulesets, legacy master retirement или предоставление workflow mutation rights;
 - `git rebase` существующей рабочей ветки;
 - `git reset --hard`;
 - `git clean -fd` / `git clean -fdx`;
-- force push;
+- force push вне конкретно одобренного release CAS transaction;
 - удаление worktree с незакоммиченными файлами;
-- удаление ветки с неинтегрированными commit;
-- создание новой ветки без предварительного одобрения.
+- удаление ветки с неинтегрированными commit.
 
-Не считать задачу завершённой только потому, что implementation steps выполнены.
+Уже данное в текущей сессии разрешение сохраняется в своём exact scope. Не обходить protections/admin settings; narrow withdrawal rights подтверждаются отдельно. Не считать задачу завершённой только потому, что implementation steps выполнены.
 
 ## 5. Обязательный quality gate
 
@@ -244,6 +248,9 @@ Managed Git operations должны:
 
 ## 12. Documentation
 
+`ebb-maintain-project-docs` владеет содержанием first-party README и `.env.example`: changed-scope sync при изменении команд/config/API; full audit только при явном запросе полного аудита. Claims и environment keys выводить из актуальных manifests/loaders, не читать настоящие `.env`/secrets. Generated outputs обновлять через source/generator; точные файлы сохранять. Rename/move/delete/restructuring и docs tooling остаются у `ebb-repository-maintenance`; использовать существующий docs governance, не создавать дублирующий. Root README без numeric filename prefix и служебного metadata header.
+
+
 Публичный и нетривиальный first-party API должен иметь полезный JSDoc на русском языке согласно:
 
 `docs/development/07-jsdoc-style-guide.md`
@@ -284,6 +291,7 @@ JSDoc должен объяснять:
 - Implementation plans: `docs/architecture/plans/`
 - JSDoc policy: `docs/development/07-jsdoc-style-guide.md`
 - Human-facing project documentation: `README.md`
+- Branch/release policy: `docs/architecture/policies/branch-and-release-policy.md`
 
 Не копировать крупные части этих документов в новые policy-файлы без необходимости.
 
@@ -297,5 +305,7 @@ JSDoc должен объяснять:
 - required gates зелёные;
 - working tree соответствует заявленному состоянию;
 - итоговый отчёт не преувеличивает результат.
+
+Для обычной задачи completion report различает reviewed task SHA, integrated SHA и фактически выполненные проверки. Для release/withdrawal отчёт различает PREPARED/VALIDATED/PARTIAL/terminal state и подтверждённые remote identities. Нельзя объявлять release-ready, пока Docker/runner/provider prerequisites или обязательные local/CI gates BLOCKED; подготовка документов не доказывает реализацию CLI/API.
 
 Evidence before assertion.

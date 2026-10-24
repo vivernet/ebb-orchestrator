@@ -1,15 +1,15 @@
 # Migration lifecycle policy
 
-## Pre-v1 development history
+## Unpublished development history
 
-До первого стабильного production release migration history считается mutable development history, **пока project authority явно не объявила её production contract**.
+До первой поддерживаемой production installation migration history может считаться mutable development history, **только если project authority и фактическая publication/installation history подтверждают отсутствие published upgrade contract**. Первая поддерживаемая production installation может быть `0.x`; номер `v1.0` не является границей безопасности.
 
 Разрешены verified correction/consolidation/squash/rebaseline, если это не ломает базу, которую обязаны поддерживать.
 
-Перед `v1.0` выполни dedicated rebaseline, когда schema release-ready:
+Dedicated rebaseline до первого published upgrade contract выполняется только в отдельном approved database scope, когда schema release-ready и production safety gate ниже доказан:
 
 ```text
-empty database -> canonical v1.0 baseline -> v1.0 schema
+empty database -> approved canonical baseline -> target schema
 ```
 
 Baseline описывает конечное состояние, а не археологию `create -> rename -> alter -> drop`. Предпочитай одну initial migration, если framework естественно это поддерживает; не ломай conventions ради ровно одного физического файла.
@@ -18,11 +18,13 @@ Baseline описывает конечное состояние, а не арх�
 
 Перед rewrite history докажи: существуют ли installations/staging/production databases, которые обязаны продолжать upgrade через текущие migration IDs/history? Если да — destructive squash блокируется до отдельного compatibility design.
 
-## From v1.0 onward
+## Published upgrade contract, including 0.x
 
-Migration, которая могла быть применена к production installation, является immutable production upgrade contract. Не переписывай, не удаляй, не renumber и не меняй её meaning ради чистоты. Новые schema changes идут новыми forward migrations.
+Published migration IDs/history, которые являются supported installation/upgrade contract или могли быть применены к production installation, immutable уже до `v1.0`. Не переписывай, не удаляй, не renumber и не меняй их meaning ради чистоты. Новые schema changes идут новыми forward migrations.
 
 Если история позже станет большой, fresh-install baseline/snapshot может быть добавлен отдельной стратегией **без потери legacy upgrade path**.
+
+Release publication withdrawal не откатывает deployment, данные или применённые migrations и не делает опубликованные IDs снова mutable. Recovery/data rollback требует отдельного database/deployment design и authority. Изменение Git branch/release policy не является trigger нового DB baseline или переписывания migration history.
 
 ## Canonical source of truth
 

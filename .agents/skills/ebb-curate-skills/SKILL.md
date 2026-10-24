@@ -3,7 +3,7 @@ name: ebb-curate-skills
 description: Используй, когда нужно создать, изменить, объединить, удалить или оценить skill в каноническом ebb-* наборе Ebb Orchestrator.
 metadata:
   project: "ebb-orchestrator"
-  version: "5.1.0"
+  version: "5.2.0"
 ---
 
 # Ebb Curate Skills
@@ -20,5 +20,12 @@ Source of truth — repository `.agents/skills/`. Полезная обязат�
 6. Каждый top-level skill имеет уникальную responsibility/trigger. Domain-specific skill владеет domain policy; generic callers **маршрутизируют к owner по имени**, а не копируют его checklist/workflow.
 7. Валидируй frontmatter, relative links, cross-skill references, отсутствие host-specific runtime dependencies, Codex/Hermes discovery layout и stale paths.
 8. Выпусти review + migration map + trigger/pressure matrix + limitations. Candidate, созданный self-improvement механизмом, не становится canonical без этого процесса.
+
+## Trigger / autonomy validation
+
+- Ordinary task branch/integration → `ebb-finish-branch` (pinned develop, PR squash develop, distinct task/integrated evidence); completion не запускает release/tag/rollback.
+- `ebb-release` имеет только explicit-user trigger; docs owner `ebb-maintain-project-docs` имеет automatic affected setup/config/API/README/example trigger. Full docs audit требует explicit scope; file operations маршрутизируются в maintenance.
+- Проверяй autonomy в обоих направлениях: не требуй повторного разрешения уже approved reversible scope и не превращай routing/gate PASS в разрешение внешних публикаций/destructive actions. Concrete final release/withdrawal confirmation определяется owner policy, не generic completion.
+- Статическая gap/retrieval проверка и dynamic pressure run — разные evidence. Если dynamic test недоступен, отмечай `NOT_RUN` и ограничения, не выдумывай RED/GREEN наблюдения. Archive-only request не означает personal installation и не разрешает изменение исходного проекта.
 
 См. [decision matrix](references/decision-matrix.md) и [authoring protocol](references/skill-authoring-protocol.md).

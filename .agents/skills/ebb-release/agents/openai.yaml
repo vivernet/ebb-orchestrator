@@ -1,0 +1,7 @@
+interface:
+  display_name: "Ebb Release"
+  short_description: "Релиз, откат и восстановление публикации Ebb"
+  default_prompt: "Используй $ebb-release для подготовки конкретного релиза Ebb Orchestrator."
+
+policy:
+  allow_implicit_invocation: false

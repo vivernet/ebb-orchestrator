@@ -18,6 +18,7 @@
 - До изменения — полный reference scan.
 - После изменения — scan старого path/name; remaining matches классифицированы как intentional historical text или defect.
 - Docs/skills/scripts/tests обновляются в том же dependency-ordered plan.
+- README/.env.example content correctness after moves or changed setup/config/API is verified by `ebb-maintain-project-docs` on affected owner/consumer closure; maintenance retains exact file-operation ownership.
 
 ## Command audit
 

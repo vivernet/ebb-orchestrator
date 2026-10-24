@@ -1,0 +1,4 @@
+interface:
+  display_name: "Ebb Project Docs"
+  short_description: "README и env-примеры по фактическому коду"
+  default_prompt: "Используй $ebb-maintain-project-docs для актуализации README и .env.example в затронутых областях проекта."

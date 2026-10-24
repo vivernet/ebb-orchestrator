@@ -10,6 +10,8 @@
 | Browser/process | ports, readiness, shared state/restart, IPC, teardown, secret lifetime | mocked UI выдан за backend contract |
 | Repository governance | реальные evidence, exact paths, naming/lifecycle, DAG, command ownership | будущий artifact указан как evidence |
 | Verification | meaningful RED/GREEN, focused/neighboring/broader gates, original symptom | agent summary выдан за свежий output |
+| Branch/integration | pinned develop base → task → PR squash develop; approved task SHA и integrated SHA отдельно, post-integration gates | task HEAD выдан за проверенный integrated source |
+| Docs/config | affected owners/consumers → ebb-maintain-project-docs changed-scope sync; file operations → maintenance | API/config change принят без README/example evidence |
 
 Дополнительно при применимости:
 

@@ -3,12 +3,12 @@ name: ebb-review-task
 description: Используй, когда нужен независимый read-only review одной реализованной задачи Ebb Orchestrator перед её принятием.
 metadata:
   project: "ebb-orchestrator"
-  version: "5.1.0"
+  version: "5.2.0"
 ---
 
 # Ebb Review Task
 
-Reviewer работает в свежем контексте и получает task requirements, exact diff/range, evidence и relevant rulings — не историю implementer.
+Reviewer работает в свежем контексте и получает task requirements, pinned `develop_base_sha`, task branch/target `develop`, exact task HEAD и diff/range, evidence и relevant rulings — не историю implementer. Verdict привязан к этому SHA/tree; subsequent edit инвалидирует затронутое evidence. Task PASS не доказывает будущий squash-integrated source или release candidate.
 
 1. Сначала проверь spec/task compliance: реализовано ли требуемое, не пропущены ли acceptance/negative paths.
 2. Затем quality: scope creep, failure semantics, ownership/contracts, persistence/restart/concurrency, security boundary, tests/docs и accidental generated/history changes при применимости.
@@ -18,5 +18,6 @@ Reviewer работает в свежем контексте и получает
 6. `PASS` только при отсутствии подтверждённых `BLOCKER/IMPORTANT`; иначе `CHANGES_REQUIRED`.
 7. Review read-only. Feedback передаётся implementer через `ebb-handle-review-feedback`; reviewer не «чинит за автора».
 8. Specialist scope не заменяется generic review: database → `ebb-database-engineering` evidence, security → `ebb-security-review`, browser/HTTP/session/SSE → `ebb-web-e2e`.
+9. Для docs-worthy setup/config/API/command change проверь affected-owner closure и evidence `ebb-maintain-project-docs`; root/nested README и `.env.example` имеют одного content owner, file operations — `ebb-repository-maintenance`. Полный docs audit не требуется без явного scope.
 
 Style preference без correctness/maintainability impact не является blocker.

@@ -21,6 +21,8 @@
 - no scope expansion
 - no push/merge/publish
 - preserve unrelated changes
+- shared active-subagent limit: default 2 across implementers/fixes/reviewers/scouts; lower plan/runtime limit applies; higher limit requires explicit user policy amendment
+- controller coordinates; no controller task implementation to evade the limit
 
 ## Return contract
 - result/verdict
