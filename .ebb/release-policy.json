@@ -1,0 +1,147 @@
+{
+  "schemaVersion": 1,
+  "policyName": "PolicyV1",
+  "bindingStatus": "pending",
+  "createdAt": "2026-10-24",
+  "repository": {
+    "id": 1372710981,
+    "owner": "vivernet",
+    "name": "ebb-orchestrator",
+    "remote": "https://github.com/vivernet/ebb-orchestrator.git",
+    "defaultBranch": "develop",
+    "releaseBranch": "refs/heads/master",
+    "visibility": "public"
+  },
+  "versionEncoding": {
+    "kind": "semver",
+    "stableOnly": true,
+    "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
+    "allowPrerelease": false,
+    "allowBuildMetadata": false,
+    "note": "stable MAJOR.MINOR.PATCH only; prerelease/build metadata and suffixes forbidden"
+  },
+  "gates": {
+    "requiredPlatforms": [
+      {
+        "id": "quality-security-ubuntu-node24",
+        "platform": "ubuntu-24.04",
+        "node": "24.x",
+        "status": "configured",
+        "requiredChecks": [
+          "pnpm lint",
+          "pnpm typecheck",
+          "pnpm test",
+          "pnpm server:build",
+          "node scripts/local-user-stdin-smoke.mjs",
+          "pnpm web:build",
+          "node --test scripts/security-audit-evidence.test.mjs apps/web/test/e2e/credential-handoff.test.mjs",
+          "dependency audit (security-audit-evidence.mjs)",
+          "git diff --check",
+          "Playwright Chromium/browser E2E"
+        ]
+      },
+      {
+        "id": "native-windows-node24",
+        "platform": "windows-latest",
+        "node": "24.x",
+        "status": "configured",
+        "requiredChecks": [
+          "pnpm --filter @ebb-orchestrator/server build:windows-run-supervisor",
+          "native process-scope acceptance (EBB_RUN_NATIVE_SCOPE_ACCEPTANCE=1)"
+        ]
+      },
+      {
+        "id": "native-linux-node24-selfhosted",
+        "platform": "self-hosted",
+        "runtimeLabels": ["self-hosted", "Linux", "X64", "ebb-systemd-cgroup-v2"],
+        "node": "24.x",
+        "status": "blocked",
+        "blocker": "BLOCKED_SELF_HOSTED_RUNNER: repo has 0 registered runners; no self-hosted/ebb-systemd-cgroup-v2 labels in workflows; Linux native acceptance currently push-only on hosted ubuntu-24.04",
+        "producerTask": "Task8",
+        "requiredChecks": ["native process-scope acceptance"]
+      },
+      {
+        "id": "keyring-linux-windows-node24",
+        "platform": "matrix ubuntu-latest/windows-latest",
+        "node": "24.x",
+        "status": "configured",
+        "requiredChecks": [
+          "node --test scripts/keyring-acceptance.test.mjs",
+          "pnpm exec tsx apps/server/scripts/keyring-smoke.ts"
+        ]
+      },
+      {
+        "id": "codeql-ubuntu",
+        "platform": "ubuntu-latest",
+        "status": "configured",
+        "requiredChecks": ["CodeQL analyze (JavaScript/TypeScript, build-mode none)"]
+      },
+      {
+        "id": "governance-release-docker",
+        "platform": "docker",
+        "status": "blocked",
+        "blocker": "BLOCKED_DOCKER_DEPENDENCY: zero Dockerfile/compose/GHCR/docker-action references in repo or workflows; release image path has no basis yet",
+        "producerTask": "Task9",
+        "requiredChecks": [
+          "configured image/platform build+smoke",
+          "version/labels/digests/public metadata",
+          "every release module/CLI regression"
+        ]
+      }
+    ]
+  },
+  "trustedBindings": {
+    "workflows": {
+      "release-validation.yml": {
+        "fullSha": null,
+        "bindingStatus": "pending",
+        "producerTask": "Task8",
+        "blocker": "trusted validation workflow not created yet; Task8 creates and pins its full reviewed commit SHA"
+      },
+      "release-operations.yml": {
+        "fullSha": null,
+        "bindingStatus": "pending",
+        "producerTask": "Task8",
+        "blocker": "trusted operations workflow not created yet; Task8 creates and pins its full reviewed commit SHA"
+      }
+    },
+    "scriptBundle": {
+      "fullSha": null,
+      "bindingStatus": "pending",
+      "producerTask": "Task8",
+      "blocker": "approved release script bundle full SHA produced and pinned by Task8"
+    }
+  },
+  "pendingBindings": [
+    {
+      "field": "trustedBindings.workflows.release-validation.yml.fullSha",
+      "producerTask": "Task8",
+      "blocker": "release-validation.yml not created; Task8 must create + review + pin full commit SHA"
+    },
+    {
+      "field": "trustedBindings.workflows.release-operations.yml.fullSha",
+      "producerTask": "Task8",
+      "blocker": "release-operations.yml not created; Task8 must create + review + pin full commit SHA"
+    },
+    {
+      "field": "trustedBindings.scriptBundle.fullSha",
+      "producerTask": "Task8",
+      "blocker": "approved release script bundle full SHA pending until Task8 binding review"
+    },
+    {
+      "field": "gates.requiredPlatforms.native-linux-node24-selfhosted.status",
+      "producerTask": "Task8",
+      "blocker": "BLOCKED_SELF_HOSTED_RUNNER: 0 registered runners; ebb-systemd-cgroup-v2 label absent"
+    },
+    {
+      "field": "gates.requiredPlatforms.governance-release-docker.status",
+      "producerTask": "Task9",
+      "blocker": "BLOCKED_DOCKER_DEPENDENCY: no Docker/GHCR basis in repo"
+    }
+  ],
+  "mutationPolicy": {
+    "requiresBindingStatus": "bound",
+    "requiresTrustedBindingsFullSha": true,
+    "note": "bootstrap config is NOT a valid mutation config; all public release mutations fail closed until Task8 binds trusted identities and Task11 completes gate acceptance"
+  }
+}

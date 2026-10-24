@@ -17,6 +17,7 @@
     "plan06:project-config:acceptance": "pnpm server:build && node scripts/plan06-project-config-restart-acceptance.mjs",
     "plan06:github-inbox:acceptance": "pnpm server:build && node scripts/plan06-github-inbox-restart-acceptance.mjs",
     "hermes:session-tag:acceptance": "node scripts/hermes-session-tag-acceptance.mjs",
+    "release:policy:check": "node scripts/release/policy.mjs check",
     "web:build": "pnpm --filter @ebb-orchestrator/web build",
     "hermes:setup": "node scripts/hermes-dev.mjs setup",
     "hermes:check": "node scripts/hermes-dev.mjs check",
