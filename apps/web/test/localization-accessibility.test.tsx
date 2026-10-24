@@ -1,5 +1,7 @@
+// @vitest-environment jsdom
+import '@testing-library/jest-dom/vitest';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import WorkflowTimeline from '../src/components/WorkflowTimeline.js';
 import { ConnectionIndicator } from '../src/components/ui/ConnectionIndicator.js';
 import { NotificationIndicator } from '../src/components/ui/NotificationIndicator.js';
@@ -16,7 +18,10 @@ const sensitiveApiError = () => new Response(JSON.stringify({
   error: { message: 'SYNTHETIC_SECRET_TOKEN_7f3a private/database/path Bearer sensitive-test-value', code: 'SYNTHETIC_UNKNOWN_BACKEND_CODE' },
 }), { status: 500, headers: { 'Content-Type': 'application/json' } });
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 const inventory = [
   'components/AppShell.tsx', 'app/router.tsx', 'components/ui/PageState.tsx',
@@ -37,6 +42,12 @@ const inventory = [
   'features/settings/providers/ProviderAuthForm.tsx',
   'features/settings/providers/ProviderModelSelector.tsx',
   'features/settings/providers/ProviderStatus.tsx',
+  'features/chat/ApprovalInline.tsx',
+  'features/chat/ChatPanel.tsx',
+  'features/chat/ChatPanel.test.tsx',
+  'features/chat/Composer.tsx',
+  'features/chat/ThreadView.tsx',
+  'features/chat/ThreadView.test.tsx',
 ];
 
 const sourceFiles = import.meta.glob('../src/**/*.{ts,tsx}', {
@@ -135,7 +146,8 @@ describe('Russian UI and accessibility inventory', () => {
     expect(login).toMatch(/aria-describedby=/);
     expect(login).toMatch(/role="alert"|aria-live=/);
     expect(login).toContain('focus(');
-    expect(src('features/settings/SettingsPage.tsx')).not.toMatch(/<button|<input|<select/);
+    expect(src('features/settings/SettingsPage.tsx')).toContain('/api/v1/scheduler/config');
+    expect(src('features/settings/SettingsPage.tsx')).not.toMatch(/type="password"|API-ключ|ANTHROPIC_API_KEY/);
   });
 
   it('rejects untranslated and mixed-language visible copy across seven work pages', () => {
@@ -162,8 +174,8 @@ describe('Russian UI and accessibility inventory', () => {
     expect(src('features/runs/AgentRunPage.tsx')).not.toContain('Cached токенов');
     expect(src('features/runs/AgentRunPage.tsx')).not.toContain('Output токенов');
     expect(src('features/tasks/TaskPage.tsx')).toContain('ru.common.loading');
-    expect(src('features/tasks/TaskPage.tsx')).toContain('ru.tasks.relatedWorkUnavailable');
-    expect(src('features/epics/EpicPage.tsx')).toContain('ru.epics.branchApprovalsUnavailable');
+    expect(src('features/tasks/TaskPage.tsx')).toContain('ru.tasks.tabs');
+    expect(src('features/epics/EpicPage.tsx')).toContain('ru.epics.lifecycleTitle');
     expect(src('features/runs/AgentRunPage.tsx')).toContain('ru.runs.notFound');
     expect(src('features/runs/AgentRunPage.tsx')).toContain('ru.runs.inputTokens');
     expect(src('i18n/ru.ts')).toContain("inputTokens: 'Входные токены'");

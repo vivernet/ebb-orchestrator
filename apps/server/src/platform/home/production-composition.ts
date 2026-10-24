@@ -33,6 +33,9 @@ import { SchedulerRunRequestWorker } from "../../modules/scheduler/scheduler-run
 import type { WorkflowEngine } from "../../modules/workflow/workflow-engine.js";
 import type { EventBus } from "../events/event-bus.js";
 import type { SecretStore } from "../security/secret-store.js";
+import { ChatRepository } from "../../modules/chat/chat-repository.js";
+import { ChatService } from "../../modules/chat/chat-service.js";
+import { registerChatEventListeners } from "../../modules/chat/chat-events.js";
 import { createProviderSettingsRepository } from "../../modules/runtime/providers/provider-settings-repository.js";
 import { createProviderCredentialStore } from "../../modules/runtime/providers/provider-credential-store.js";
 import { ProviderSettingsService } from "../../modules/runtime/providers/provider-settings-service.js";
@@ -201,6 +204,10 @@ export function createProductionComposition(options: ProductionCompositionOption
   /** Пользовательские модели провайдеров (plan-24 Task 6). */
   const providerCustomModels = createProviderCustomModelsRepository(database);
 
+  /** Модуль чата координатора (plan-25 Task 3): сервис сообщений и listener событий. */
+  const chatRepository = new ChatRepository(database);
+  const chatService = new ChatService(database, chatRepository);
+
   /**
    * Создаёт сервис настроек провайдеров (plan-24 Task 6). Требует SecretStore:
    * без keyring настройки с credentials не обслуживаются (fail-closed).
@@ -307,6 +314,10 @@ export function createProductionComposition(options: ProductionCompositionOption
         integrationFactory: (runId) => new IntegrationService({ database, integrationRunId: runId,
           worktreeDir: join(paths.integrationWorktreeRoot, "standalone"), advanceTargetBranch: false,
           finalizeRunFailure: (id, error) => dependencies.runs.failPreparedRun(id, error) }) }),
+    chatRepository,
+    chatService,
+    /** Регистрирует listener чата на прикладном EventBus (plan-25 Task 3). */
+    createChatEventListeners: (eventBus: EventBus) => registerChatEventListeners(eventBus, { db: database, chat: chatRepository }),
     epicMergeAuthority: createEpicMergeAuthority(database),
   };
 }

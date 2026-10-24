@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ebb Orchestrator v2 — новый дизайн (план 25)</title>
+<style>
+  :root{
+    --bg:#0b0d10; --panel:#12161b; --panel2:#171c22; --panel3:#202731;
+    --border:#252c34; --border2:#2c3542;
+    --text:#eef2f6; --muted:#8e9aa7; --dim:#5d6d82;
+    --accent:#8ab4ff; --accent2:#5f95eb;
+    --good:#77d19a; --warn:#e8c66a; --bad:#ef8e8e; --violet:#b79cff;
+    --shadow:0 8px 30px rgba(0,0,0,.45);
+    --radius:14px;
+    --sidebar:230px;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:var(--bg);color:var(--text);font-family:'Inter',-apple-system,'Segoe UI',system-ui,sans-serif;font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased}
+  .app{display:grid;grid-template-columns:var(--sidebar) 1fr;min-height:100vh}
+
+  /* ===== Sidebar ===== */
+  .sidebar{background:linear-gradient(180deg,var(--panel),var(--bg));border-right:1px solid var(--border);padding:18px 12px;display:flex;flex-direction:column;gap:2px}
+  .logo{display:flex;align-items:center;gap:11px;padding:6px 10px 20px;font-weight:800;font-size:15.5px;letter-spacing:.2px}
+  .logo .mark{width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,var(--accent),var(--violet));display:grid;place-items:center;font-size:15px;box-shadow:0 4px 14px rgba(138,180,255,.35)}
+  .nav-group{font-size:10.5px;text-transform:uppercase;letter-spacing:1.1px;color:var(--dim);padding:14px 10px 6px}
+  .nav-item{display:flex;align-items:center;gap:11px;padding:9.5px 10px;border-radius:9px;color:var(--muted);cursor:pointer;user-select:none;font-weight:500;transition:background .15s,color .15s}
+  .nav-item:hover{background:var(--panel2);color:var(--text)}
+  .nav-item.active{background:linear-gradient(90deg,rgba(138,180,255,.16),transparent);color:var(--accent);font-weight:600;border-left:2px solid var(--accent)}
+  .nav-item .ic{width:18px;text-align:center;font-size:15px}
+  .nav-item .count{margin-left:auto;background:var(--panel3);color:var(--warn);font-size:11px;font-weight:700;border-radius:20px;padding:1px 7px}
+  .nav-sep{height:1px;background:var(--border);margin:10px 6px}
+
+  /* ===== Main ===== */
+  .main{padding:22px 30px;display:flex;flex-direction:column;gap:20px;max-width:1280px}
+  .topbar{display:flex;align-items:center;justify-content:space-between;gap:16px}
+  .topbar h1{font-size:21px;font-weight:800;letter-spacing:-.2px}
+  .topbar .sub{color:var(--muted);font-size:13px;margin-top:2px}
+  .top-actions{display:flex;gap:10px;align-items:center}
+  .search{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:8px 14px;color:var(--muted);min-width:260px;font-size:13px;outline:none;transition:border-color .15s}
+  .search:focus{border-color:var(--accent)}
+  .avatar{width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,var(--violet),var(--accent2));display:grid;place-items:center;font-weight:700;cursor:pointer}
+
+  .badge{display:inline-flex;align-items:center;gap:6px;padding:3px 11px;border-radius:999px;font-size:12px;font-weight:600;white-space:nowrap}
+  .badge.good{background:rgba(119,209,154,.12);color:var(--good)}
+  .badge.warn{background:rgba(232,198,106,.12);color:var(--warn)}
+  .badge.bad{background:rgba(239,142,142,.12);color:var(--bad)}
+  .badge.accent{background:rgba(138,180,255,.13);color:var(--accent)}
+  .badge.violet{background:rgba(183,156,255,.13);color:var(--violet)}
+  .badge.dim{background:var(--panel3);color:var(--muted)}
+
+  .btn{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#071018;border:none;border-radius:10px;padding:9px 18px;font-weight:700;font-size:13.5px;cursor:pointer;box-shadow:0 4px 14px rgba(95,149,235,.28);transition:transform .1s,box-shadow .15s}
+  .btn:hover{transform:translateY(-1px);box-shadow:0 6px 20px rgba(95,149,235,.36)}
+  .btn.ghost{background:transparent;color:var(--accent);box-shadow:none;border:1px solid var(--border2)}
+  .btn.ghost:hover{border-color:var(--accent);background:rgba(138,180,255,.07)}
+  .btn.good{background:linear-gradient(135deg,var(--good),#45a878);box-shadow:0 4px 14px rgba(119,209,154,.25)}
+  .btn.bad{background:linear-gradient(135deg,var(--bad),#dc6b6b);box-shadow:0 4px 14px rgba(239,142,142,.25)}
+
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:18px;transition:border-color .15s,transform .15s}
+  .card:hover{border-color:var(--border2)}
+  .card .label{color:var(--muted);font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;display:flex;align-items:center;gap:6px}
+  .card .value{font-size:28px;font-weight:800;letter-spacing:-.5px}
+  .card .trend{font-size:12px;margin-top:6px;display:flex;align-items:center;gap:4px}
+  .card .trend.up{color:var(--good)}
+  .card .trend.down{color:var(--bad)}
+  .cards{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .panel{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:18px}
+  .panel-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+  .panel-head h3{font-size:15px;font-weight:700}
+  .panel-head .more{color:var(--accent);font-size:13px;cursor:pointer;font-weight:600}
+  .row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)}
+  .row:last-child{border-bottom:none}
+  .row .l{display:flex;flex-direction:column;gap:2px;min-width:0}
+  .row .l b{font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .row .l span{color:var(--muted);font-size:12px}
+  .muted{color:var(--muted)}
+
+  /* ===== Chat ===== */
+  .chat{display:flex;flex-direction:column;height:400px;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+  .chat-head{padding:13px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;background:linear-gradient(180deg,var(--panel2),var(--panel))}
+  .chat-status{display:flex;align-items:center;gap:8px;font-weight:600;font-size:13.5px}
+  .pulse{width:9px;height:9px;border-radius:50%;background:var(--good);box-shadow:0 0 0 0 rgba(119,209,154,.6);animation:pulse 2s infinite}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(119,209,154,.5)}70%{box-shadow:0 0 0 8px rgba(119,209,154,0)}100%{box-shadow:0 0 0 0 rgba(119,209,154,0)}}
+  .chat-body{flex:1;overflow-y:auto;padding:16px 18px;display:flex;flex-direction:column;gap:11px}
+  .msg{max-width:78%;padding:11px 15px;border-radius:14px;font-size:13.5px;position:relative;animation:msgIn .25s ease}
+  @keyframes msgIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  .msg.user{align-self:flex-end;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#071018;border-bottom-right-radius:4px;font-weight:500}
+  .msg.coord{align-self:flex-start;background:var(--panel2);border:1px solid var(--border);border-bottom-left-radius:4px}
+  .msg.sys{align-self:center;background:rgba(183,156,255,.1);color:var(--violet);font-size:12px;border-radius:20px;padding:6px 14px;max-width:90%}
+  .msg.err{align-self:flex-start;background:rgba(239,142,142,.1);border:1px solid rgba(239,142,142,.3);color:var(--bad)}
+  .msg .meta{font-size:11px;color:var(--muted);margin-top:7px;display:flex;gap:8px;align-items:center}
+  .approval{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+  .chat-input{display:flex;gap:10px;padding:12px 16px;border-top:1px solid var(--border);background:var(--panel2)}
+  .chat-input input{flex:1;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:10px 14px;color:var(--text);font-size:13.5px;outline:none}
+  .chat-input input:focus{border-color:var(--accent)}
+  .chat-input .send{width:42px;height:42px;border-radius:10px;background:linear-gradient(135deg,var(--accent),var(--accent2));display:grid;place-items:center;cursor:pointer;font-size:17px;color:#071018}
+
+  /* ===== Tabs ===== */
+  .tabs{display:flex;gap:2px;border-bottom:1px solid var(--border);overflow-x:auto;margin-bottom:16px}
+  .tab{padding:9px 16px;cursor:pointer;color:var(--muted);font-weight:500;font-size:13.5px;border-bottom:2px solid transparent;white-space:nowrap;transition:color .15s}
+  .tab:hover{color:var(--text)}
+  .tab.active{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
+
+  table{width:100%;border-collapse:collapse}
+  th{text-align:left;color:var(--muted);font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.6px;padding:9px;border-bottom:1px solid var(--border)}
+  td{padding:11px 9px;border-bottom:1px solid var(--border);font-size:13px}
+  tr:last-child td{border-bottom:none}
+  tr:hover td{background:rgba(138,180,255,.03)}
+
+  .steps{display:flex;gap:10px;flex-wrap:wrap}
+  .step{flex:1;min-width:120px;background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:12px;text-align:center}
+  .step .n{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;margin:0 auto 8px;font-size:12px;font-weight:700}
+  .step.done .n{background:rgba(119,209,154,.2);color:var(--good)}
+  .step.cur .n{background:rgba(138,180,255,.2);color:var(--accent)}
+  .step .t{font-size:12.5px;font-weight:600}
+  .step.done{border-color:rgba(119,209,154,.3)}
+  .step.cur{border-color:var(--accent)}
+  .hidden{display:none}
+
+  .skeleton{background:linear-gradient(90deg,var(--panel2),var(--panel3),var(--panel2));background-size:200% 100%;animation:sk 1.4s infinite;border-radius:6px}
+  @keyframes sk{0%{background-position:0% 0}100%{background-position:200% 0}}
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- ===== Sidebar ===== -->
+  <div class="sidebar">
+    <div class="logo"><span class="mark">◆</span>Ebb Orchestrator</div>
+    <div class="nav-group">Рабочее пространство</div>
+    <div class="nav-item active" data-screen="dashboard"><span class="ic">▦</span>Панель</div>
+    <div class="nav-item" data-screen="projects"><span class="ic">🗂</span>Проекты</div>
+    <div class="nav-item" data-screen="epics"><span class="ic">◈</span>Эпики</div>
+    <div class="nav-item" data-screen="tasks"><span class="ic">✓</span>Задачи</div>
+    <div class="nav-item" data-screen="onboarding"><span class="ic">🛠</span>Онбординг</div>
+    <div class="nav-sep"></div>
+    <div class="nav-group">Контроль</div>
+    <div class="nav-item" data-screen="approvals"><span class="ic">🛡</span>Согласования <span class="count">2</span></div>
+    <div class="nav-item" data-screen="execution"><span class="ic">⚙</span>Очередь</div>
+    <div class="nav-item" data-screen="usage"><span class="ic">📈</span>Использование</div>
+    <div class="nav-sep"></div>
+    <div class="nav-item" data-screen="settings"><span class="ic">⚙</span>Настройки</div>
+  </div>
+
+  <div class="main">
+    <!-- ===== DASHBOARD ===== -->
+    <div id="screen-dashboard">
+      <div class="topbar">
+        <div>
+          <h1>Панель</h1>
+          <div class="sub">Суббота, 24 октября 2026</div>
+        </div>
+        <div class="top-actions">
+          <input class="search" placeholder="Поиск: проекты, задачи, плоскости, запуски…">
+          <div class="avatar">АК</div>
+        </div>
+      </div>
+
+      <div class="cards">
+        <div class="card"><div class="label">Активные проекты</div><div class="value">3</div><div class="trend up">▲ 1 за неделю</div></div>
+        <div class="card"><div class="label">Ожидают согласования</div><div class="value">2</div><div class="trend down">▼ нужно внимание</div></div>
+        <div class="card"><div class="label">Задачи в работе</div><div class="value">14</div><div class="trend up">▲ 3 за день</div></div>
+        <div class="card"><div class="label">Потрачено токенов</div><div class="value">1.2k</div><div class="trend" style="color:var(--muted)">из 5k лимита</div></div>
+      </div>
+
+      <div class="grid2">
+        <div class="panel">
+          <div class="panel-head"><h3>Центр согласований</h3><span class="more">Все →</span></div>
+          <div class="row"><div class="l"><b>План «Миграция БД чата»</b><span>Запрос #RQ-40 · Ebb</span></div><span class="badge warn">Ожидает</span></div>
+          <div class="row"><div class="l"><b>Изменение модели провайдера</b><span>Запрос #RQ-41</span></div><span class="badge warn">Ожидает</span></div>
+          <div class="row"><div class="l"><b>Запрос на доступ к репозиторию</b><span>Запрос #RQ-38</span></div><span class="badge violet">Changes</span></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h3>Очередь выполнения</h3><span class="more">Все →</span></div>
+          <div class="row"><div class="l"><b>run_7f2a</b><span>epic · миграция</span></div><span class="badge good">Выполняется</span></div>
+          <div class="row"><div class="l"><b>run_91ac</b><span>task · новый портал</span></div><span class="badge accent">В очереди</span></div>
+          <div class="row"><div class="l"><b>run_23be</b><span>task · доступы</span></div><span class="badge bad">Lock</span></div>
+        </div>
+      </div>
+
+      <div class="panel" style="margin-top:4px">
+        <div class="panel-head"><h3>Чат с координатором</h3><span class="badge good"><span class="pulse"></span>онлайн</span></div>
+        <div class="chat">
+          <div class="chat-head"><div class="chat-status"><span class="pulse"></span> Координатор</div><span class="badge dim" style="margin-left:auto">planning.epic</span></div>
+          <div class="chat-body">
+            <div class="msg coord">Здравствуйте, Александр. Я готов спланировать и скоординировать задачи. С чего начнём?</div>
+            <div class="msg user">Спланируй миграцию БД для чата с координатором.</div>
+            <div class="msg sys">✓ Сообщение принято · запрос поставлен в планирование</div>
+            <div class="msg coord">Составляю план. Разбиваю на этапы 0–8 и сверяю с roadmap notes.</div>
+            <div class="msg sys">● Статус: PLAN_PENDING_APPROVAL</div>
+            <div class="msg coord">
+              <div><b>План #PL-12</b> · версия 3 · «Чат с координатором»</div>
+              <div class="approval">
+                <span class="btn good">Одобрить</span>
+                <span class="btn bad">Отклонить</span>
+                <span class="btn ghost">Запросить изменения</span>
+              </div>
+              <div class="meta">подготовлен 24.10 · 8 задач</div>
+            </div>
+          </div>
+          <div class="chat-input"><input placeholder="Сообщение координатору…"><div class="send">➤</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== PROJECTS ===== -->
+    <div id="screen-projects" class="hidden">
+      <div class="topbar"><div><h1>Проекты</h1><div class="sub">2 активных · 1 завершён</div></div><div class="top-actions"><span class="btn">+ Новый проект</span></div></div>
+      <div class="panel">
+        <table>
+          <tr><th>Название</th><th>Статус</th><th>Epics</th><th>Задачи</th><th>Онбординг</th></tr>
+          <tr><td><b>Ebb Orchestrator</b><div class="muted" style="font-size:12px">основной продукт</div></td><td><span class="badge good">ACTIVE</span></td><td>5</td><td>28</td><td><span class="badge good">завершён</span></td></tr>
+          <tr><td><b>Клиентский портал</b><div class="muted" style="font-size:12px">новый</div></td><td><span class="badge accent">ACTIVE</span></td><td>2</td><td>9</td><td><span class="badge warn">4/5 шагов</span></td></tr>
+        </table>
+      </div>
+    </div>
+
+    <!-- ===== TASKS ===== -->
+    <div id="screen-tasks" class="hidden">
+      <div class="topbar"><div><h1>Задача TSK-104</h1><div class="sub">проект Ebb Orchestrator</div></div><div class="top-actions"><span class="badge accent">В работе</span></div></div>
+      <div class="tabs">
+        <div class="tab active">Обзор</div><div class="tab">Контракт</div><div class="tab">Запуски</div>
+        <div class="tab">Review</div><div class="tab">QA</div><div class="tab">Git</div><div class="tab">Использование</div>
+      </div>
+      <div class="grid2">
+        <div class="panel"><div class="panel-head"><h3>Описание</h3></div><div class="muted">Спланировать полноценную переработку панели управления и внедрить чат с координатором по макетам reference-ui.</div></div>
+        <div class="panel"><div class="panel-head"><h3>Состояние</h3></div><div class="row"><span class="muted">План</span><span class="badge good">MATERIALIZED</span></div><div class="row"><span class="muted">Run</span><span class="badge accent">active</span></div><div class="row"><span class="muted">Ветка</span><span class="badge dim">develop</span></div></div>
+      </div>
+    </div>
+
+    <!-- ===== APPROVALS ===== -->
+    <div id="screen-approvals" class="hidden">
+      <div class="topbar"><div><h1>Центр согласований</h1><div class="sub">2 ожидают решения</div></div></div>
+      <div class="panel">
+        <div class="row"><div class="l"><b>План «Миграция БД чата»</b><span>Запрос #RQ-40 · проект Ebb · версия 3</span></div><span class="badge warn">Ожидает</span></div>
+        <div class="row"><div class="l"><b>Изменение модели провайдера</b><span>Запрос #RQ-41</span></div><span class="badge warn">Ожидает</span></div>
+        <div style="margin-top:16px;display:flex;gap:10px">
+          <span class="btn good">Одобрить</span>
+          <span class="btn bad">Отклонить</span>
+          <span class="btn ghost">Запросить изменения</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== EXECUTION ===== -->
+    <div id="screen-execution" class="hidden">
+      <div class="topbar"><div><h1>Очередь выполнения</h1><div class="sub">capacity 2/4</div></div></div>
+      <div class="panel">
+        <div class="row"><div class="l"><b>run_7f2a</b><span>epic · миграция БД</span></div><span class="badge good">Выполняется</span></div>
+        <div class="row"><div class="l"><b>run_91ac</b><span>task · новый портал</span></div><span class="badge accent">В очереди</span></div>
+        <div class="row"><div class="l"><b>run_23be</b><span>task · доступы</span></div><span class="badge bad">Lock exhausted</span><span class="muted" style="font-size:12px">capacity 0/2</span></div>
+      </div>
+    </div>
+
+    <!-- ===== USAGE ===== -->
+    <div id="screen-usage" class="hidden">
+      <div class="topbar"><div><h1>Использование и бюджет</h1><div class="sub">месячный отчёт</div></div></div>
+      <div class="cards" style="grid-template-columns:repeat(3,1fr)">
+        <div class="card"><div class="label">Токены</div><div class="value">824k</div></div>
+        <div class="card"><div class="label">Израсходовано</div><div class="value">1.2k / 5k</div></div>
+        <div class="card"><div class="label">Бюджет проекта</div><div class="value">$240</div></div>
+      </div>
+    </div>
+
+    <!-- ===== SETTINGS ===== -->
+    <div id="screen-settings" class="hidden">
+      <div class="topbar"><div><h1>Настройки</h1><div class="sub">конфигурация пространства</div></div></div>
+      <div class="panel">
+        <div class="row"><div class="l"><b>Роли и модели</b><span>распределение моделей по ролям</span></div><span class="btn ghost">Изменить</span></div>
+        <div class="row"><div class="l"><b>Планировщик (scheduler)</b><span>расписание и приоритеты</span></div><span class="btn ghost">Изменить</span></div>
+        <div class="row"><div class="l"><b>Восстановление (recovery)</b><span>стадии A–F восстановления запусков</span></div><span class="btn ghost">Изменить</span></div>
+        <div class="row"><div class="l"><b>Git / GitHub</b><span>интеграция репозитория</span></div><span class="btn ghost">Изменить</span></div>
+      </div>
+    </div>
+    <!-- ===== PROJECT DETAIL ===== -->
+    <div id="screen-project" class="hidden">
+      <div class="topbar"><div><h1>Проект Ebb AI Hub</h1><div class="sub">ветка master · GitHub подключён</div></div><div class="top-actions"><span class="badge good">ACTIVE</span></div></div>
+      <div class="tabs">
+        <div class="tab active">Обзор</div><div class="tab">Контракт</div><div class="tab">Запуски</div>
+        <div class="tab">Review</div><div class="tab">QA</div><div class="tab">Git</div><div class="tab">Использование</div>
+      </div>
+      <div class="grid2">
+        <div class="panel">
+          <div class="panel-head"><h3>Состояние проекта</h3></div>
+          <div class="row"><span class="muted">Git</span><span class="badge good">Синхронизировано</span></div>
+          <div class="row"><span class="muted">Параллельность</span><span>3 агента</span></div>
+          <div class="row"><span class="muted">Стратегия слияния</span><span>merge</span></div>
+          <div class="row"><span class="muted">Бюджет</span><span>$18.72 / $30 soft</span></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h3>Активные эпики</h3><span class="more">Все →</span></div>
+          <div class="row"><div class="l"><b>EPIC-42 · Anthropic Provider</b><span>7/9 задач интегрировано</span></div><span class="badge accent">72%</span></div>
+          <div class="row"><div class="l"><b>EPIC-43 · Чат с координатором</b><span>5/8 задач</span></div><span class="badge violet">В работе</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== EPIC ===== -->
+    <div id="screen-epic" class="hidden">
+      <div class="topbar"><div><h1>EPIC-42 · Anthropic Provider</h1><div class="sub">проект Ebb AI Hub · ветка epic/42-anthropic-provider</div></div><div class="top-actions"><span class="badge accent">В работе</span></div></div>
+      <div class="tabs">
+        <div class="tab active">Обзор</div><div class="tab">Контракт</div><div class="tab">Запуски</div>
+        <div class="tab">Review</div><div class="tab">QA</div><div class="tab">Git</div><div class="tab">Использование</div>
+      </div>
+      <div class="grid2">
+        <div class="panel">
+          <div class="panel-head"><h3>Жизненный цикл эпика</h3></div>
+          <div class="row"><span class="badge good">Plan ✓</span><span class="badge good">Архитектура ✓</span><span class="badge accent">Выполнение ●</span></div>
+          <div class="row" style="margin-top:8px"><span class="badge dim">Ревью эпика</span><span class="badge dim">QA эпика</span><span class="badge dim">Слияние → master</span></div>
+          <div class="row" style="margin-top:10px"><span class="muted">Обязательные задачи</span><span>7 / 9 · 72%</span></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h3>Контракт эпика</h3><span class="badge violet">Согласован</span></div>
+          <div class="row"><span class="muted">Цель</span><span>полная поддержка провайдера через общий Provider API</span></div>
+          <div class="row"><span class="muted">Blocked</span><span class="badge warn">TASK-428 · ждёт 425+426</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== ONBOARDING ===== -->
+    <div id="screen-onboarding" class="hidden">
+      <div class="topbar"><div><h1>Онбординг проекта</h1><div class="sub">«Клиентский портал» · шаг 3 из 5</div></div><div class="top-actions"><span class="badge warn">4/5 шагов</span></div></div>
+      <div class="steps">
+        <div class="step done"><div class="n">✓</div><div class="t">Репозиторий</div></div>
+        <div class="step done"><div class="n">✓</div><div class="t">Обнаружение</div></div>
+        <div class="step cur"><div class="n">3</div><div class="t">Проверка результатов</div></div>
+        <div class="step"><div class="n">4</div><div class="t">Согласовать config</div></div>
+        <div class="step"><div class="n">5</div><div class="t">Активация</div></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h3>Проверка обнаруженных фактов и предложений координатора</h3></div>
+        <div class="row"><div class="l"><b>Default ветка</b><span>обнаружено в локальном Git</span></div><span class="badge good">факт</span></div>
+        <div class="row"><div class="l"><b>Процесс разработки</b><span>Development → Review → QA → Integration</span></div><span class="badge accent">рекомендация</span></div>
+        <div class="row"><div class="l"><b>Параллельные агенты</b><span>лимит проекта</span></div><span class="muted">3</span></div>
+        <div style="margin-top:16px;display:flex;gap:10px;justify-content:flex-end">
+          <span class="btn ghost">Назад</span><span class="btn">Далее</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+  document.querySelectorAll('.nav-item').forEach(function(el){
+    el.addEventListener('click',function(){
+      document.querySelectorAll('.nav-item').forEach(function(n){n.classList.remove('active')});
+      document.querySelectorAll('.main > div[id^="screen-"]').forEach(function(s){s.classList.add('hidden')});
+      el.classList.add('active');
+      var id='screen-'+el.dataset.screen;
+      document.getElementById(id).classList.remove('hidden');
+    });
+  });
+</script>
+</body>
+</html>

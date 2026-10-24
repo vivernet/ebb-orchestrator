@@ -34,7 +34,7 @@ interface Approval {
 }
 
 interface ApprovalInboxProps {
-  projectId?: string;
+  projectId?: never;
 }
 
 const statusMap: Record<string, Approval['status']> = {
@@ -74,28 +74,33 @@ function errorMessage(error: unknown): string {
 /**
  * Представляет пользовательский экран ApprovalInboxPage; авторитетные проверки выполняются backend.
  */
-export default function ApprovalInboxPage({ projectId }: ApprovalInboxProps) {
-  void projectId;
+export default function ApprovalInboxPage(_props: ApprovalInboxProps) {
   const queryStore = useMemo(() => createQueryStore(), []);
   const approvalsPath = toClientPath(apiPaths.approvals);
   const fetcher = useCallback((signal: AbortSignal) => apiClient.get<{ approvals: ApprovalRow[] }>(approvalsPath, { signal }), [approvalsPath]);
   const query = useQuery(queryStore, approvalsPath, undefined, fetcher);
   const mutationStore = useMemo(() => createMutationStore(), []);
   const [mutationState, setMutationState] = useState<MutationState<unknown>>(() => mutationStore.get('approve'));
+  const [notes, setNotes] = useState<Record<string, string>>({});
   useEffect(() => mutationStore.subscribe('approve', setMutationState), [mutationStore]);
   const retry = useCallback(() => { void query.refetch().catch(() => undefined); }, [query.refetch]);
   useOnSSEReconnect(retry);
 
+  const decisionBody = (id: string) => {
+    const note = notes[id]?.trim();
+    return note ? { note } : {};
+  };
+
   const handleApprove = async (id: string) => {
-    await mutationStore.execute('approve', () => apiClient.post(toClientPath(apiPaths.approvalApprove(id)), {}), query.refetch).catch(() => undefined);
+    await mutationStore.execute('approve', () => apiClient.post(toClientPath(apiPaths.approvalApprove(id)), decisionBody(id)), query.refetch).catch(() => undefined);
   };
 
   const handleReject = async (id: string) => {
-    await mutationStore.execute('reject', () => apiClient.post(toClientPath(apiPaths.approvals + '/' + id + '/reject'), {}), query.refetch).catch(() => undefined);
+    await mutationStore.execute('reject', () => apiClient.post(toClientPath(apiPaths.approvals + '/' + id + '/reject'), decisionBody(id)), query.refetch).catch(() => undefined);
   };
 
   const handleRequestChanges = async (id: string) => {
-    await mutationStore.execute('request-changes', () => apiClient.post(toClientPath(apiPaths.approvals + '/' + id + '/request-changes'), {}), query.refetch).catch(() => undefined);
+    await mutationStore.execute('request-changes', () => apiClient.post(toClientPath(apiPaths.approvals + '/' + id + '/request-changes'), decisionBody(id)), query.refetch).catch(() => undefined);
   };
 
   const согласований = query.data?.approvals.map(mapApprovalRow) ?? [];
@@ -108,8 +113,13 @@ export default function ApprovalInboxPage({ projectId }: ApprovalInboxProps) {
   }
 
   return (
-    <div className="approval-inbox-page">
-      <h1>Входящие согласования</h1>
+    <div className="approval-inbox-page page-stack">
+      <div className="topbar">
+        <div>
+          <h1>Входящие согласования</h1>
+          <div className="sub">{`${pendingApprovals.length} ожидают решения`}</div>
+        </div>
+      </div>
       {mutationState.status === 'error' && <ErrorAlert message={`Не удалось обновить согласование: ${errorMessage(mutationState.error)}`} onRetry={retry} />}
       {pendingApprovals.length === 0 ? <EmptyState message="Нет согласований, ожидающих решения." /> : (
         <ul className="approval-list">
@@ -117,7 +127,18 @@ export default function ApprovalInboxPage({ projectId }: ApprovalInboxProps) {
             <li key={approval.id} className="approval-item">
               <div className="approval-header"><strong>{approvalTypeLabel(approval.action)}</strong><StatusBadge status={approval.scope} label={approval.scope} /></div>
               <p className="approval-description">{approvalSubjectLabel(approval.description.split(' ')[0] ?? '')} {approval.description.slice(approval.description.indexOf(' ') + 1)}</p>
-              <div className="approval-context"><small>Запросил(а): {approval.requestedBy}</small></div>
+              <div className="approval-context"><small>{approval.requestedBy}</small></div>
+              <div className="approval-content">
+                <label htmlFor={`approval-note-${approval.id}`}>Комментарий к решению</label>
+                <textarea
+                  id={`approval-note-${approval.id}`}
+                  value={notes[approval.id] ?? ''}
+                  onChange={(event) => setNotes((prev) => ({ ...prev, [approval.id]: event.target.value }))}
+                  placeholder="Комментарий (необязательно)…"
+                  rows={2}
+                  maxLength={2000}
+                />
+              </div>
               <div className="approval-actions">
                 <button type="button" disabled={mutationState.status === 'pending'} onClick={() => void handleApprove(approval.id)}>Согласовать</button>
                 <button type="button" disabled={mutationState.status === 'pending'} onClick={() => void handleReject(approval.id)} style={{ marginLeft: '8px' }}>Отклонить</button>

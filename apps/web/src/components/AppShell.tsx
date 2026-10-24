@@ -35,11 +35,16 @@ function AppShell() {
       <aside className="left-nav">
         <div className="brand"><span className="brand-mark" aria-hidden="true">E</span><div><strong>Ebb</strong><span>{ru.common.projectsBrand}</span></div></div>
         <nav aria-label={ru.common.primaryNavigation}>
+          <div className="nav-group">{ru.common.workspaceGroup}</div>
           <NavLink to="/" end>{ru.common.dashboard}</NavLink>
           <NavLink to="/projects">{ru.common.projects}</NavLink>
+          <NavLink to="/projects/new">{ru.common.onboarding}</NavLink>
+          <div className="nav-sep" />
+          <div className="nav-group">{ru.common.controlGroup}</div>
           <NavLink to="/approvals">{ru.common.approvals}</NavLink>
           <NavLink to="/execution">{ru.common.execution}</NavLink>
           <NavLink to="/usage">{ru.common.usage}</NavLink>
+          <div className="nav-sep" />
           <NavLink to="/settings">{ru.common.settings}</NavLink>
         </nav>
         <div className="nav-status">

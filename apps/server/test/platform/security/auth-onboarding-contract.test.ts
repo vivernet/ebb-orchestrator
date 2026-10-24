@@ -105,6 +105,11 @@ describe("auth/onboarding contract v1", () => {
       "onboardingApproval",
       "onboardingApprove",
       "onboardingActivate",
+      "conversations",
+      "conversationMessages",
+      "conversationEvents",
+      "planApprove",
+      "planReject",
     ]);
     expect(apiPaths.sessionLogin).toBe("/api/v1/session/login");
     expect(apiPaths.session).toBe("/api/v1/session");

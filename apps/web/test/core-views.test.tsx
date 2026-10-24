@@ -162,122 +162,147 @@ describe('Dashboard', () => {
 });
 
 describe('Task', () => {
-  test('renders the persisted current and completed lifecycle states', async () => {
-    const _get = vi.spyOn(apiClient, 'get').mockResolvedValue({
-      task: { title: 'Released task', status: 'DONE' }, contract: {},
-      lifecycle: { status: 'DONE', stage: 'DONE', updatedAt: '2026-09-16T00:00:00Z' },
-      git: { repositoryPath: '/repo', branch: 'task/1', defaultBranch: 'master', github: null, worktreePath: null },
+  function defaultTaskProjection(overrides: Record<string, unknown> = {}) {
+    return {
+      task: { title: 'Task', status: 'READY', project_id: 'p', epic_id: null }, contract: {},
+      lifecycle: { status: 'READY', stage: 'READY', updatedAt: null },
+      git: { repositoryPath: null, branch: null, defaultBranch: null, github: null, worktreePath: null },
       runs: [], findings: [], defects: [], dependencies: [], approvals: [], events: [],
-      usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 }, scheduler: { status: 'RUNNABLE', reason: null },
-    });
-    render(<TaskPage id="task-1" />);
+      usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 },
+      scheduler: { status: 'RUNNABLE', reason: null },
+      ...overrides,
+    };
+  }
+
+  const renderTask = (id = 'task-1') => render(<MemoryRouter><TaskPage id={id} /></MemoryRouter>);
+
+  async function openTab(name: string) {
+    fireEvent.click(screen.getByRole('tab', { name }));
+  }
+
+  test('renders the persisted current and completed lifecycle states', async () => {
+    const _get = vi.spyOn(apiClient, 'get').mockResolvedValue(defaultTaskProjection({
+      task: { title: 'Released task', status: 'DONE', project_id: null, epic_id: null },
+      lifecycle: { status: 'DONE', stage: 'DONE', updatedAt: '2026-09-16T00:00:00Z' },
+    }));
+    renderTask('task-1');
     await waitFor(() => expect(screen.getByText('Статус: Завершено')).toBeInTheDocument());
     expect(screen.getByText('Разработка')).toBeInTheDocument();
-    expect(screen.getByText('Завершено')).toHaveStyle({ color: '#fff', fontWeight: '600' });
+    expect(screen.getAllByText('Завершено').length).toBeGreaterThan(0);
     expect(screen.getByText('Выпущено')).toBeInTheDocument();
+    expect(_get).toHaveBeenCalledWith('/tasks/task-1', expect.objectContaining({ signal: expect.any(AbortSignal) }));
     vi.restoreAllMocks();
   });
 
   test('renders waiting and failure/cancellation statuses as timeline states', async () => {
-    const _get = vi.spyOn(apiClient, 'get').mockResolvedValue({
-      task: { title: 'Blocked task', status: 'FAILED' }, contract: {},
+    const _get = vi.spyOn(apiClient, 'get').mockResolvedValue(defaultTaskProjection({
+      task: { title: 'Blocked task', status: 'FAILED', project_id: null, epic_id: null },
       lifecycle: { status: 'FAILED', stage: 'FAILED', updatedAt: null },
-      git: { repositoryPath: null, branch: null, defaultBranch: null, github: null, worktreePath: null },
-      runs: [], findings: [], defects: [], dependencies: [], approvals: [], events: [],
-      usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 }, scheduler: { status: 'WAIT', reason: { code: 'WAITING_FOR_DEPENDENCY', message: 'Waiting for dependency' } },
-    });
-    render(<TaskPage id="task-2" />);
+      scheduler: { status: 'WAIT', reason: { code: 'WAITING_FOR_DEPENDENCY', message: 'Waiting for dependency' } },
+    }));
+    renderTask('task-2');
     await waitFor(() => expect(screen.getByText('Статус: Ошибка')).toBeInTheDocument());
     expect(screen.getByText('Ожидает зависимости')).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Восстановление' })).toHaveTextContent('Ожидается выполнение зависимости.');
+    expect(screen.getByRole('region', { name: 'Рабочий процесс' })).toHaveTextContent('Ожидается выполнение зависимости.');
     expect(screen.getByText('Отменено')).toBeInTheDocument();
+    expect(_get).toHaveBeenCalledWith('/tasks/task-2', expect.objectContaining({ signal: expect.any(AbortSignal) }));
     vi.restoreAllMocks();
   });
 
   test('renders a paused task and its localized scheduler reason', async () => {
-    const _get = vi.spyOn(apiClient, 'get').mockResolvedValue({
-      task: { title: 'Paused task', status: 'PAUSED' }, contract: {},
+    const _get = vi.spyOn(apiClient, 'get').mockResolvedValue(defaultTaskProjection({
+      task: { title: 'Paused task', status: 'PAUSED', project_id: null, epic_id: null },
       lifecycle: { status: 'PAUSED', stage: 'PAUSED', updatedAt: null },
-      git: { repositoryPath: null, branch: null, defaultBranch: null, github: null, worktreePath: null },
-      runs: [], findings: [], defects: [], dependencies: [], approvals: [], events: [],
-      usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 },
       scheduler: { status: 'WAIT', reason: { code: 'WAITING_FOR_PAUSE', message: 'Task is paused' } },
-    });
-    render(<TaskPage id="paused-task" />);
+    }));
+    renderTask('paused-task');
     expect(await screen.findByText('Статус: Приостановлено')).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Восстановление' })).toHaveTextContent('Ожидается возобновление задачи.');
+    expect(screen.getByRole('region', { name: 'Рабочий процесс' })).toHaveTextContent('Ожидается возобновление задачи.');
+    expect(_get).toHaveBeenCalledWith('/tasks/paused-task', expect.objectContaining({ signal: expect.any(AbortSignal) }));
     vi.restoreAllMocks();
   });
 
   test('renders explicit task not-found and empty subordinate states', async () => {
-    const _get = vi.spyOn(apiClient, 'get').mockResolvedValue({
+    const _get = vi.spyOn(apiClient, 'get').mockResolvedValue(defaultTaskProjection({
       task: null, contract: null,
       lifecycle: { status: 'UNKNOWN', stage: null, updatedAt: null },
-      git: { repositoryPath: null, branch: null, defaultBranch: null, github: null, worktreePath: null },
-      runs: [], findings: [], defects: [], dependencies: [], approvals: [], events: [],
-      usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 }, scheduler: { status: 'BLOCK', reason: { code: 'ONBOARDING_NOT_ACTIVE', message: 'Онбординг проекта не активирован' } },
-    });
-    render(<TaskPage id="missing/task" />);
+      scheduler: { status: 'BLOCK', reason: { code: 'ONBOARDING_NOT_ACTIVE', message: 'Онбординг проекта не активирован' } },
+    }));
+    renderTask('missing/task');
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Задача не найдена.');
-    expect(screen.getByText('Запуски агента недоступны.')).toBeInTheDocument();
-    expect(screen.getByText('Результаты проверки недоступны.')).toBeInTheDocument();
     expect(_get).toHaveBeenCalledWith('/tasks/missing%2Ftask', expect.objectContaining({ signal: expect.any(AbortSignal) }));
     vi.restoreAllMocks();
   });
 
   test('links only present task run, project, epic, and dependency IDs with encoding', async () => {
-    const _get = vi.spyOn(apiClient, 'get').mockResolvedValue({
-      task: { title: 'Linked task', status: 'READY', project_id: 'project/1', epic_id: 'epic/1' }, contract: {},
-      lifecycle: { status: 'READY', stage: 'READY', updatedAt: null },
-      git: { repositoryPath: null, branch: null, defaultBranch: null, github: null, worktreePath: null },
-      runs: [{ id: 'run/1', role: 'Developer', status: 'IN_PROGRESS' }], findings: [], defects: [],
+    const _get = vi.spyOn(apiClient, 'get').mockResolvedValue(defaultTaskProjection({
+      task: { title: 'Linked task', status: 'READY', project_id: 'project/1', epic_id: 'epic/1' },
+      runs: [{ id: 'run/1', role: 'Developer', status: 'IN_PROGRESS' }],
       dependencies: [{ id: 'dependency-1', taskId: 'task/1', dependsOnTaskId: 'dependency/task/1', type: 'BLOCKS', status: 'READY' }],
-      approvals: [], events: [], usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 }, scheduler: { status: 'RUNNABLE', reason: null },
-    });
-    render(<MemoryRouter><TaskPage id="task/1" /></MemoryRouter>);
+    }));
+    renderTask('task/1');
 
+    await screen.findByRole('tab', { name: 'Запуски' });
+    await openTab('Запуски');
     expect(await screen.findByRole('link', { name: /Developer · Выполняется/ })).toHaveAttribute('href', '/runs/run%2F1');
+
+    await openTab('Обзор');
     expect(screen.getByRole('link', { name: /Проект/ })).toHaveAttribute('href', '/projects/project%2F1');
     expect(screen.getByRole('link', { name: /Эпик/ })).toHaveAttribute('href', '/epics/epic%2F1');
     expect(screen.getAllByRole('link', { name: /task\/1/ }).find((link) => link.getAttribute('href') === '/tasks/task%2F1')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /dependency\/task\/1/ })).toHaveAttribute('href', '/tasks/dependency%2Ftask%2F1');
+    expect(_get).toHaveBeenCalledWith('/tasks/task%2F1', expect.objectContaining({ signal: expect.any(AbortSignal) }));
     vi.restoreAllMocks();
   });
 
-  test('exposes contract section', () => {
-    render(<TaskPage />);
-    expect(screen.getByText('Контракт')).toBeInTheDocument();
+  test('exposes contract tab', async () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue(defaultTaskProjection());
+    renderTask();
+    expect(await screen.findByRole('tab', { name: 'Контракт' })).toBeInTheDocument();
+    vi.restoreAllMocks();
   });
 
-  test('exposes workflow section', () => {
-    render(<TaskPage />);
-    expect(screen.getByText('Рабочий процесс')).toBeInTheDocument();
+  test('exposes workflow section', async () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue(defaultTaskProjection());
+    renderTask();
+    expect(await screen.findByText('Процесс задачи')).toBeInTheDocument();
+    vi.restoreAllMocks();
   });
 
-  test('exposes Agent Runs section', () => {
-    render(<TaskPage />);
-    expect(screen.getByText('Запуски агента')).toBeInTheDocument();
+  test('exposes Agent Runs tab', async () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue(defaultTaskProjection());
+    renderTask();
+    expect(await screen.findByRole('tab', { name: 'Запуски' })).toBeInTheDocument();
+    vi.restoreAllMocks();
   });
 
-  test('exposes findings/defects section', () => {
-    render(<TaskPage />);
-    expect(screen.getByText('Результаты проверки')).toBeInTheDocument();
+  test('exposes findings/defects tab', async () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue(defaultTaskProjection());
+    renderTask();
+    expect(await screen.findByRole('tab', { name: 'Review' })).toBeInTheDocument();
+    vi.restoreAllMocks();
   });
 
-  test('exposes Git state section', () => {
-    render(<TaskPage />);
-    expect(screen.getByText('Git')).toBeInTheDocument();
+  test('exposes Git tab', async () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue(defaultTaskProjection());
+    renderTask();
+    expect(await screen.findByRole('tab', { name: 'Git' })).toBeInTheDocument();
+    vi.restoreAllMocks();
   });
 
-  test('exposes recovery section', () => {
-    render(<TaskPage />);
-    expect(screen.getByText('Восстановление')).toBeInTheDocument();
+  test('exposes recovery section', async () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue(defaultTaskProjection());
+    renderTask();
+    expect(await screen.findByText('Восстановление')).toBeInTheDocument();
+    vi.restoreAllMocks();
   });
 
-  test('exposes usage section', () => {
-    render(<TaskPage />);
-    expect(screen.getByText('Использование')).toBeInTheDocument();
+  test('exposes usage tab', async () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue(defaultTaskProjection());
+    renderTask();
+    expect(await screen.findByRole('tab', { name: 'Использование' })).toBeInTheDocument();
+    vi.restoreAllMocks();
   });
 });
 
@@ -309,11 +334,18 @@ describe('Project', () => {
     vi.restoreAllMocks();
   });
 
-  test('renders project details', () => {
-    render(<ProjectPage id="1" />);
-    expect(screen.getByText(/Проект:/)).toBeInTheDocument();
+  test('renders project details', async () => {
+    vi.spyOn(projectApi, 'getProjectOverview').mockResolvedValue({
+      project: { id: 'project-1', name: 'Project', displayName: 'Project One', status: 'ACTIVE' },
+      git: { repositoryPath: '/repo', branch: null, defaultBranch: 'main', github: { status: 'CONNECTED', url: null }, worktreePath: null },
+      epics: [], tasks: [], approvals: [], blockers: [], events: [],
+      usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 },
+    });
+    render(<MemoryRouter><ProjectPage id="1" /></MemoryRouter>);
+    expect(await screen.findByText(/Проект:/)).toBeInTheDocument();
     expect(screen.getByText(/Репозиторий \/ путь \/ ветка \/ GitHub/)).toBeInTheDocument();
     expect(screen.queryByText(/Runs · Git · Guidelines · Usage/)).not.toBeInTheDocument();
+    vi.restoreAllMocks();
   });
 
   test('renders populated project activity without exposing event payload', async () => {
@@ -341,16 +373,17 @@ describe('Project', () => {
     }));
     const view = render(<MemoryRouter><ProjectPage id="route-project-a" /></MemoryRouter>);
 
-    expect(await screen.findByText('Активно · route-project-a')).toBeInTheDocument();
+    expect(await screen.findByText('Проект: Project route-project-a')).toBeInTheDocument();
+    expect(screen.getAllByText('Активно').length).toBeGreaterThan(0);
     view.rerender(<MemoryRouter><ProjectPage id="route-project-b" /></MemoryRouter>);
 
     await waitFor(() => expect(getProjectOverview).toHaveBeenLastCalledWith('route-project-b'));
-    expect(await screen.findByText('Активно · route-project-b')).toBeInTheDocument();
+    expect(await screen.findByText('Проект: Project route-project-b')).toBeInTheDocument();
     vi.restoreAllMocks();
   });
 
   test('renders explicit project not-found state when projection has no project', async () => {
-    const _get = vi.spyOn(apiClient, 'get').mockResolvedValue({
+    vi.spyOn(projectApi, 'getProjectOverview').mockResolvedValue({
       project: null, git: { repositoryPath: null, branch: null, defaultBranch: null, github: null, worktreePath: null },
       epics: [], tasks: [], approvals: [], blockers: [], events: [],
       usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 },
@@ -361,7 +394,7 @@ describe('Project', () => {
     expect(notFoundAlert).toHaveTextContent('Проект не найден.');
     expect(screen.queryByText(/Loading project/i)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Повторить' }));
-    await waitFor(() => expect(_get.mock.calls.length).toBeGreaterThanOrEqual(2));
+    await waitFor(() => expect(projectApi.getProjectOverview).toHaveBeenCalledTimes(2));
     vi.restoreAllMocks();
   });
 
@@ -376,7 +409,7 @@ describe('Project', () => {
     });
     render(<MemoryRouter><ProjectPage id="project-1" /></MemoryRouter>);
 
-    expect(await screen.findByText('Активно · Project')).toBeInTheDocument();
+    expect(await screen.findByText('Проект: Project One')).toBeInTheDocument();
     expect(await screen.findByRole('link', { name: /Encoded epic/ })).toHaveAttribute('href', '/epics/epic%2F1');
     expect(screen.getByRole('link', { name: /Encoded task/ })).toHaveAttribute('href', '/tasks/task%2F1');
     vi.restoreAllMocks();
@@ -384,11 +417,19 @@ describe('Project', () => {
 });
 
 describe('Epic', () => {
-  test('renders epic details', () => {
-    render(<EpicPage id="1" />);
-    expect(screen.getByText(/Эпик:/)).toBeInTheDocument();
-    expect(screen.getByText(/Жизненный цикл \/ граф параллельной работы/)).toBeInTheDocument();
+  test('renders epic details', async () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue({
+      epic: { title: 'Epic', status: 'READY' }, contract: null,
+      lifecycle: { status: 'READY', stage: null, updatedAt: null },
+      git: { repositoryPath: null, branch: null, defaultBranch: null, github: null, worktreePath: null },
+      tasks: [], approvals: [], blockers: [], events: [],
+      usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 },
+    });
+    render(<MemoryRouter><EpicPage id="1" /></MemoryRouter>);
+    expect(await screen.findByText(/Эпик:/)).toBeInTheDocument();
+    expect(screen.getByText(/Жизненный цикл эпика/)).toBeInTheDocument();
     expect(screen.getByText('Контракт эпика')).toBeInTheDocument();
+    vi.restoreAllMocks();
   });
 
   test('renders actual epic review, architecture review, QA and merge stages', async () => {
@@ -423,7 +464,7 @@ describe('Epic', () => {
     render(<EpicPage id="missing/epic" />);
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Эпик не найден.');
-    expect(screen.getByText('Задачи недоступны.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Повторить' })).toBeInTheDocument();
     vi.restoreAllMocks();
   });
 

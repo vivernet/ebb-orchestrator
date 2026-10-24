@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ApiError } from '../../api/client.js';
-import { apiErrorMessage } from '../../i18n/ru.js';
+import { apiErrorMessage, ru } from '../../i18n/ru.js';
 import { onboardingApi, type OnboardingDiscoveryResult } from './api.js';
 import StatusBadge from '../../components/ui/StatusBadge.js';
 
@@ -87,9 +87,28 @@ export default function OnboardingPage({ projectId }: { projectId?: string }) {
     }
   };
 
+  const steps = ru.onboarding.steps;
+  const stepIndex = !result ? 0 : result.status === 'DRAFT' ? 2 : result.status === 'APPROVAL_PENDING' ? 3 : 4;
+  const renderSteps = () => (
+    <ol className="steps" aria-label="Этапы онбординга">
+      {steps.map((label, index) => (
+        <li key={label} className={`step${index < stepIndex ? ' done' : ''}${index === stepIndex ? ' cur' : ''}`}>
+          <div className="n">{index < stepIndex ? '✓' : index + 1}</div>
+          <div className="t">{label}</div>
+        </li>
+      ))}
+    </ol>
+  );
+
   return (
     <main className="onboarding-page">
-      <h1 ref={headingRef} tabIndex={-1}>Настройка проекта</h1>
+      <div className="topbar">
+        <div>
+          <h1 ref={headingRef} tabIndex={-1}>Настройка проекта</h1>
+          <div className="sub">{`Онбординг проекта · шаг ${Math.min(stepIndex + 1, 5)} из 5`}</div>
+        </div>
+      </div>
+      {renderSteps()}
 
       {!result ? (
         <section aria-label="Поиск проекта">

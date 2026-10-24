@@ -195,7 +195,7 @@ describe('Settings page AI provider selection', () => {
 
     render(<MemoryRouter><SettingsPage /></MemoryRouter>);
 
-    await waitFor(() => expect(screen.getByRole('heading', { name: 'ИИ-провайдеры и модели' })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Роли и модели' })).toBeInTheDocument());
     expect(screen.getByText('gpt-6-luna')).toBeInTheDocument();
     expect(screen.getByText('openai-api')).toBeInTheDocument();
     expect(screen.getByText('claude-sonnet-5')).toBeInTheDocument();
@@ -206,7 +206,7 @@ describe('Settings page AI provider selection', () => {
     expect(screen.getByText(/Ключи хранятся в EBB_ORCHESTRATOR_HOME\/\.env и не отображаются\. Модель для запуска выбирается в Ebb\./)).toBeInTheDocument();
     expect(screen.queryByText(/sk-[A-Za-z0-9]+/)).not.toBeInTheDocument();
     expect(screen.queryByText(/OPENAI_API_KEY|ANTHROPIC_API_KEY/)).not.toBeInTheDocument();
-    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Изменить' })).toBeInTheDocument();
     vi.restoreAllMocks();
   });
 
@@ -225,7 +225,7 @@ describe('Settings page AI provider selection', () => {
 
     render(<MemoryRouter><SettingsPage /></MemoryRouter>);
 
-    expect(await screen.findByRole('heading', { name: 'ИИ-провайдеры и модели' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Роли и модели' })).toBeInTheDocument();
     expect(screen.getAllByText('Настроен')).toHaveLength(2);
     expect(screen.queryByText('Не настроен')).not.toBeInTheDocument();
     expect(screen.queryByText(/sk-[A-Za-z0-9]+/)).not.toBeInTheDocument();

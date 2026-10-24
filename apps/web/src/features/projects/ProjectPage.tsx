@@ -3,9 +3,10 @@ import { apiPaths } from '@ebb-orchestrator/contracts';
 import { Link } from 'react-router';
 import { ApiError, toClientPath } from '../../api/client.js';
 import { ErrorAlert } from '../../components/ui/PageState.js';
+import StatusBadge from '../../components/ui/StatusBadge.js';
 import { useQuery } from '../../state/use-query.js';
 import { getProjectOverview } from './api.js';
-import { apiErrorMessage, githubStatusLabel, statusLabel } from '../../i18n/ru.js';
+import { apiErrorMessage, githubStatusLabel, ru, statusLabel } from '../../i18n/ru.js';
 import ProjectConfigPanel from './ProjectConfigPanel.js';
 import HumanFeedbackPanel from './HumanFeedbackPanel.js';
 import CoordinatorRequestPanel from '../coordinator/CoordinatorRequestPanel.js';
@@ -25,43 +26,65 @@ export default function ProjectPage({ id }: ProjectPageProps) {
   const project = projection?.project;
   const retry = useCallback(() => { void query.refetch().catch(() => undefined); }, [query.refetch]);
   const notFound = query.status === 'success' && projection?.project === null;
+  const onboardingBlocked = Boolean(project && project.status !== 'ACTIVE');
   return (
-    <div className="project-page">
-      <h1>Проект: {project?.displayName ?? project?.name ?? id}</h1>
+    <div className="project-page page-stack">
+      <div className="topbar">
+        <div>
+          <h1>{`Проект: ${project?.displayName ?? project?.name ?? id}`}</h1>
+          <div className="sub">{project ? statusLabel(project.status) : ru.common.loading}</div>
+        </div>
+        {project && <StatusBadge status={project.status} />}
+      </div>
       {query.status === 'error' && <ErrorAlert message={`Не удалось загрузить проект: ${apiErrorMessage(query.error instanceof ApiError ? query.error.code : undefined)}`} onRetry={retry} />}
       {notFound && <ErrorAlert message="Проект не найден." onRetry={retry} />}
-      <section aria-label="Сведения о проекте">
-        <h2>Сведения</h2>
-        <p>{query.status === 'loading' || query.status === 'idle' ? 'Загрузка данных проекта…' : notFound ? 'Данные проекта недоступны.' : project ? `${statusLabel(project.status)} · ${project.name}` : 'Данные проекта недоступны.'}</p>
-        {projection && !notFound && <p>{projection.tasks.length} задач · {projection.epics.length} эпиков · ${projection.usage.cost.toFixed(2)} использовано</p>}
-      </section>
-      <section aria-label="Репозиторий и GitHub">
-        <h2>Репозиторий / путь / ветка / GitHub</h2>
-        <p>{projection && !notFound ? `${projection.git.repositoryPath ?? 'Репозиторий не указан'} · ${projection.git.defaultBranch ?? 'Ветка по умолчанию не указана'} · ${projection.git.github ? githubStatusLabel(projection.git.github.status) : 'GitHub не подключён'}` : notFound ? 'Проект не найден.' : 'Загрузка сведений о репозитории…'}</p>
-      </section>
+      {onboardingBlocked && (
+        <section className="local-mode-warning" role="note" aria-label="Онбординг проекта">
+          <h2>{ru.projects.onboardingGate.title}</h2>
+          <p>{ru.projects.onboardingGate.description}</p>
+          <Link to={`/onboarding/${encodeURIComponent(project!.id)}`}>{ru.projects.onboardingGate.goOnboarding}</Link>
+        </section>
+      )}
+      {projection && !notFound && (
+        <div className="grid2">
+          <section aria-label="Сведения о проекте">
+            <div className="panel-head"><h3>{ru.projects.stateCard}</h3></div>
+            <div className="row"><span className="muted">{ru.projects.table.status}</span><span>{project ? statusLabel(project.status) : '—'}</span></div>
+            <div className="row"><span className="muted">{ru.projects.gitLabel}</span><span>{projection.git.repositoryPath ?? '—'}</span></div>
+            <div className="row"><span className="muted">{ru.projects.mergeStrategy}</span><span>merge</span></div>
+            <div className="row"><span className="muted">{ru.projects.budgetLabel}</span><span>${projection.usage.cost.toFixed(2)}</span></div>
+            <div className="row"><span className="muted">{ru.projects.table.tasks}</span><span>{projection.tasks.length} · {ru.projects.table.epics.toLowerCase()}: {projection.epics.length}</span></div>
+          </section>
+          <section aria-label="Репозиторий и GitHub">
+            <div className="panel-head"><h3>{ru.projects.gitLabel}</h3></div>
+            <div className="row">
+              <span className="muted">Репозиторий / путь / ветка / GitHub</span>
+              <span>{projection.git.repositoryPath ?? 'Репозиторий не указан'} · {projection.git.defaultBranch ?? 'Ветка по умолчанию не указана'} · {projection.git.github ? githubStatusLabel(projection.git.github.status) : 'GitHub не подключён'}</span>
+            </div>
+          </section>
+          <section aria-label="Эпики и задачи">
+            <div className="panel-head"><h3>{ru.projects.epicsCard}</h3></div>
+            <ul>{projection.epics.length === 0 ? <li>{ru.projects.noEpics}</li> : projection.epics.map((epic) => <li key={epic.id}><Link to={`/epics/${encodeURIComponent(epic.id)}`}>{epic.title || epic.display_id}</Link></li>)}</ul>
+            <div className="panel-head"><h3>{ru.projects.tasksCard}</h3></div>
+            <ul>{projection.tasks.length === 0 ? <li>{ru.projects.noTasks}</li> : projection.tasks.map((task) => <li key={task.id}><Link to={`/tasks/${encodeURIComponent(task.id)}`}>{task.title || task.display_id}</Link></li>)}</ul>
+          </section>
+          <section aria-label="Активность проекта">
+            <div className="panel-head"><h3>{ru.projects.eventsCard}</h3></div>
+            <ul>
+              {projection.events.length === 0 ? <li>{ru.projects.noEvents}</li> : projection.events.map((event) => {
+                const timestamp = Date.parse(event.createdAt);
+                const displayTime = Number.isNaN(timestamp)
+                  ? event.createdAt
+                  : new Intl.DateTimeFormat('ru-RU', { dateStyle: 'medium', timeStyle: 'short' }).format(timestamp);
+                return <li key={event.id}><span>{event.type}</span> · <time dateTime={event.createdAt}>{displayTime}</time></li>;
+              })}
+            </ul>
+          </section>
+        </div>
+      )}
       {project && <ProjectConfigPanel projectId={id} />}
       {project && <CoordinatorRequestPanel key={id} projectId={id} />}
       {projection && !notFound && <HumanFeedbackPanel projectId={id} tasks={projection.tasks.map((task) => ({ id: task.id, title: task.title || task.display_id }))} epics={projection.epics.map((epic) => ({ id: epic.id, title: epic.title || epic.display_id }))} />}
-       <section aria-label="Зависимости и среда выполнения"><h2>Зависимости / среда выполнения</h2><p>{projection && !notFound ? `${projection.blockers.length} блокировок · ${projection.approvals.length} согласований` : notFound ? 'Зависимости проекта недоступны.' : 'Загрузка зависимостей проекта…'}</p></section>
-       <section aria-label="Активность и бюджет">
-        <h2>Активность / бюджет</h2>
-        {projection && !notFound ? <>
-          <p>{projection.events.length} событий · {projection.usage.totalTokens} токенов</p>
-          <ul aria-label="События проекта">
-            {projection.events.length === 0 ? <li>Событий пока нет.</li> : projection.events.map((event) => {
-              const timestamp = Date.parse(event.createdAt);
-              const displayTime = Number.isNaN(timestamp)
-                ? event.createdAt
-                : new Intl.DateTimeFormat('ru-RU', { dateStyle: 'medium', timeStyle: 'short' }).format(timestamp);
-              return <li key={event.id}><span>{event.type}</span> · <time dateTime={event.createdAt}>{displayTime}</time></li>;
-            })}
-          </ul>
-        </> : notFound ? <p>Данные об активности проекта недоступны.</p> : <p>Загрузка активности проекта…</p>}
-       </section>
-      <section aria-label="Эпики и задачи">
-        <h2>Эпики и задачи</h2>
-        {projection && !notFound ? <><ul>{projection.epics.length === 0 ? <li>Эпиков нет.</li> : projection.epics.map((epic) => <li key={epic.id}><Link to={`/epics/${encodeURIComponent(epic.id)}`}>{epic.title || epic.display_id}</Link></li>)}</ul><ul>{projection.tasks.length === 0 ? <li>Задач нет.</li> : projection.tasks.map((task) => <li key={task.id}><Link to={`/tasks/${encodeURIComponent(task.id)}`}>{task.title || task.display_id}</Link></li>)}</ul></> : notFound ? <p>Рабочие элементы проекта недоступны.</p> : null}
-      </section>
     </div>
   );
 }

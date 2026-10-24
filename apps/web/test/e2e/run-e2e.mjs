@@ -22,7 +22,9 @@ const viteCli = resolve(dirname(require.resolve("vite/package.json")), "bin/vite
 const pnpmCommand = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const buildCommand = process.platform === "win32" ? "cmd.exe" : pnpmCommand;
 const buildArgs = process.platform === "win32" ? ["/d", "/s", "/c", "pnpm.cmd run server:build"] : ["run", "server:build"];
-const password = Buffer.from(randomBytes(32).toString("base64url"), "utf8");
+const password = process.env.EBB_E2E_ATTACH_PASSWORD
+  ? Buffer.from(process.env.EBB_E2E_ATTACH_PASSWORD, "utf8")
+  : Buffer.from(randomBytes(32).toString("base64url"), "utf8");
 const children = new Map();
 const controlSockets = new Set();
 const inheritedEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/(?:password|passwd|token|secret|credential)/i.test(key)));

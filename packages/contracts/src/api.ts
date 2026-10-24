@@ -210,7 +210,7 @@ function isValidUtcTimestamp(value: string): boolean {
     && date.getUTCMilliseconds() === milliseconds;
 }
 
-const utcTimestampSchema = z.string()
+export const utcTimestampSchema = z.string()
   .regex(UTC_TIMESTAMP_PATTERN)
   .refine(isValidUtcTimestamp, "Must be a valid RFC3339 UTC timestamp");
 
@@ -473,6 +473,11 @@ export const apiPaths = {
   onboardingApproval: (id: string) => `/api/v1/onboarding/${pathSegment(id)}/approval`,
   onboardingApprove: (id: string) => `/api/v1/onboarding/${pathSegment(id)}/approve`,
   onboardingActivate: (id: string) => `/api/v1/onboarding/${pathSegment(id)}/activate`,
+  conversations: (projectId: string) => `/api/v1/projects/${pathSegment(projectId)}/conversations`,
+  conversationMessages: (id: string) => `/api/v1/conversations/${pathSegment(id)}/messages`,
+  conversationEvents: (id: string) => `/api/v1/conversations/${pathSegment(id)}/events`,
+  planApprove: (conversationId: string, planId: string) => `/api/v1/conversations/${pathSegment(conversationId)}/plans/${pathSegment(planId)}/approve`,
+  planReject: (conversationId: string, planId: string) => `/api/v1/conversations/${pathSegment(conversationId)}/plans/${pathSegment(planId)}/reject`,
 } as const;
 
 /**

@@ -209,4 +209,130 @@ describe("PlanningService", () => {
     ], epic: { title: "bad" } })).toThrow(/cyclic/i);
     expect(db?.get<{ count: number }>("SELECT COUNT(*) AS count FROM tasks")?.count).toBe(0);
   });
+
+  describe("planning.status outbox events", () => {
+    function planningStatusEvents(): { aggregate_id: string; payload_json: string }[] {
+      return db!.all<{ aggregate_id: string; payload_json: string }>(
+        "SELECT aggregate_id, payload_json FROM outbox_events WHERE type='planning.status' ORDER BY created_at, id",
+      );
+    }
+
+    async function claimedRequest(service: PlanningService, projectId: string): Promise<{ requestId: string; runId: string }> {
+      const request = service.createRequest(projectId, "Build a feature", "local-user");
+      const runId = randomUUID();
+      db?.run(
+        "INSERT INTO agent_runs (id,role,runtime,model,status,started_at) VALUES ($id,'coordinator','hermes','test','STARTED',$now)",
+        { id: runId, now: new Date().toISOString() },
+      );
+      expect(service.claimRequest(request.id, runId)).toBe(true);
+      return { requestId: request.id, runId };
+    }
+
+    it("emits PLANNING when claiming a request and nothing on a failed claim", async () => {
+      const { service, projectId } = await setup();
+      const { requestId } = await claimedRequest(service, projectId);
+      expect(service.claimRequest(requestId, randomUUID())).toBe(false);
+
+      const events = planningStatusEvents();
+      expect(events).toHaveLength(1);
+      expect(events[0]!.aggregate_id).toBe(requestId);
+      expect(JSON.parse(events[0]!.payload_json)).toEqual({ requestId, status: "PLANNING", projectId });
+    });
+
+    it("emits NEEDS_INPUT with the status transition", async () => {
+      const { service, projectId } = await setup();
+      const { requestId, runId } = await claimedRequest(service, projectId);
+      expect(service.markNeedsInput(requestId, runId)).toBe(true);
+
+      const events = planningStatusEvents();
+      expect(events).toHaveLength(2);
+      expect(JSON.parse(events[1]!.payload_json)).toEqual({ requestId, status: "NEEDS_INPUT", projectId });
+    });
+
+    it("emits FAILED with the failure code", async () => {
+      const { service, projectId } = await setup();
+      const { requestId, runId } = await claimedRequest(service, projectId);
+      expect(service.failRequest(requestId, runId, "COORDINATOR_RUN_FAILED")).toBe(true);
+
+      const events = planningStatusEvents();
+      expect(events).toHaveLength(2);
+      expect(JSON.parse(events[1]!.payload_json)).toEqual({
+        requestId,
+        status: "FAILED",
+        projectId,
+        failureCode: "COORDINATOR_RUN_FAILED",
+      });
+    });
+
+    it("emits PLAN_PENDING_APPROVAL with planId and MATERIALIZED on approval", async () => {
+      const { service, projectId } = await setup();
+      const { requestId, runId } = await claimedRequest(service, projectId);
+      const plan = service.completeRequest(requestId, runId, "EPIC", {
+        projectId,
+        epic: { title: "Feature" },
+        tasks: [
+          { ref: "task_first", title: "Foundation", acceptanceCriteria: ["done"], role: "developer", workflow: "standard" },
+          { ref: "task_second", title: "Follow-up", acceptanceCriteria: ["done"], role: "developer", workflow: "standard", dependsOn: ["task_first"] },
+        ],
+      });
+
+      let events = planningStatusEvents();
+      expect(events).toHaveLength(2);
+      expect(JSON.parse(events[1]!.payload_json)).toEqual({
+        requestId,
+        status: "PLAN_PENDING_APPROVAL",
+        projectId,
+        planId: plan.id,
+      });
+
+      service.approvePlan(plan.id, "local-user", requestId);
+      events = planningStatusEvents();
+      expect(events).toHaveLength(3);
+      expect(JSON.parse(events[2]!.payload_json)).toEqual({
+        requestId,
+        status: "MATERIALIZED",
+        projectId,
+        planId: plan.id,
+      });
+    });
+
+    it("emits REJECTED when a pending plan is rejected", async () => {
+      const { service, projectId } = await setup();
+      const { requestId, runId } = await claimedRequest(service, projectId);
+      const plan = service.completeRequest(requestId, runId, "EPIC", {
+        projectId,
+        epic: { title: "Feature" },
+        tasks: [
+          { ref: "task_first", title: "Foundation", acceptanceCriteria: ["done"], role: "developer", workflow: "standard" },
+          { ref: "task_second", title: "Follow-up", acceptanceCriteria: ["done"], role: "developer", workflow: "standard", dependsOn: ["task_first"] },
+        ],
+      });
+      service.rejectPlan(plan.id, "local-user");
+
+      const events = planningStatusEvents();
+      expect(events).toHaveLength(3);
+      expect(JSON.parse(events[2]!.payload_json)).toEqual({
+        requestId,
+        status: "REJECTED",
+        projectId,
+        planId: plan.id,
+      });
+    });
+
+    it("emits FAILED with PLANNING_INTERRUPTED during reconciliation", async () => {
+      const { service, projectId } = await setup();
+      const { requestId, runId } = await claimedRequest(service, projectId);
+      db?.run("UPDATE agent_runs SET status='FAILED' WHERE id=$id", { id: runId });
+      expect(service.reconcileInterruptedRequests()).toBe(1);
+
+      const events = planningStatusEvents();
+      expect(events).toHaveLength(2);
+      expect(JSON.parse(events[1]!.payload_json)).toEqual({
+        requestId,
+        status: "FAILED",
+        projectId,
+        failureCode: "PLANNING_INTERRUPTED",
+      });
+    });
+  });
 });

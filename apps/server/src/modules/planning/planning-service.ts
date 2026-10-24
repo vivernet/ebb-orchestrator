@@ -248,30 +248,40 @@ export class PlanningService {
   claimRequestTx(tx: DatabaseTx, requestId: string, coordinatorRunId: string): boolean {
       const run = tx.get<{ id: string }>("SELECT id FROM agent_runs WHERE id=$id AND lower(role)='coordinator' AND status='STARTED' AND task_id IS NULL AND epic_id IS NULL", { id: coordinatorRunId });
       if (!run) return false;
-      const result = tx.get<{ id: string }>(
-        "UPDATE planning_requests SET status='PLANNING', coordinator_run_id=$runId, updated_at=$now WHERE id=$requestId AND status='RECEIVED' AND coordinator_run_id IS NULL RETURNING id",
+      const result = tx.get<{ id: string; project_id: string }>(
+        "UPDATE planning_requests SET status='PLANNING', coordinator_run_id=$runId, updated_at=$now WHERE id=$requestId AND status='RECEIVED' AND coordinator_run_id IS NULL RETURNING id, project_id",
         { requestId, runId: coordinatorRunId, now: new Date().toISOString() },
       );
-      return Boolean(result);
+      if (!result) return false;
+      this.appendPlanningStatusEvent(tx, requestId, "PLANNING", result.project_id);
+      return true;
   }
 
   /** Завершает классификацию без плана, сохраняя связь с исходным Run. */
   markNeedsInput(requestId: string, coordinatorRunId: string): boolean {
-    const row = this.db.get<{ id: string }>(
-      "UPDATE planning_requests SET status='NEEDS_INPUT',classification='NEEDS_INPUT',updated_at=$now WHERE id=$id AND status='PLANNING' AND coordinator_run_id=$runId RETURNING id",
-      { id: requestId, runId: coordinatorRunId, now: new Date().toISOString() },
-    );
-    return Boolean(row);
+    return this.db.transaction((tx) => {
+      const row = tx.get<{ id: string; project_id: string }>(
+        "UPDATE planning_requests SET status='NEEDS_INPUT',classification='NEEDS_INPUT',updated_at=$now WHERE id=$id AND status='PLANNING' AND coordinator_run_id=$runId RETURNING id, project_id",
+        { id: requestId, runId: coordinatorRunId, now: new Date().toISOString() },
+      );
+      if (!row) return false;
+      this.appendPlanningStatusEvent(tx, requestId, "NEEDS_INPUT", row.project_id);
+      return true;
+    });
   }
 
   /** Записывает только фиксированный безопасный код отказа. */
   failRequest(requestId: string, coordinatorRunId: string, code: PlanningFailureCode): boolean {
     if (!["COORDINATOR_RUN_FAILED", "COORDINATOR_OUTPUT_INVALID", "PLANNING_DISPATCH_FAILED", "PLANNING_INTERRUPTED", "PLANNING_REVIEW_BLOCKED"].includes(code)) throw new Error("Unknown planning failure code");
-    const row = this.db.get<{ id: string }>(
-      "UPDATE planning_requests SET status='FAILED',failure_code=$code,updated_at=$now WHERE id=$id AND status='PLANNING' AND coordinator_run_id=$runId RETURNING id",
-      { id: requestId, runId: coordinatorRunId, code, now: new Date().toISOString() },
-    );
-    return Boolean(row);
+    return this.db.transaction((tx) => {
+      const row = tx.get<{ id: string; project_id: string }>(
+        "UPDATE planning_requests SET status='FAILED',failure_code=$code,updated_at=$now WHERE id=$id AND status='PLANNING' AND coordinator_run_id=$runId RETURNING id, project_id",
+        { id: requestId, runId: coordinatorRunId, code, now: new Date().toISOString() },
+      );
+      if (!row) return false;
+      this.appendPlanningStatusEvent(tx, requestId, "FAILED", row.project_id, { failureCode: code });
+      return true;
+    });
   }
 
   /**
@@ -281,17 +291,25 @@ export class PlanningService {
    * Возвращает количество Requests, переведённых в FAILED.
    */
   reconcileInterruptedRequests(): number {
-    this.db.run(
-      `UPDATE planning_requests
-          SET status='FAILED',failure_code='PLANNING_INTERRUPTED',updated_at=$now
-        WHERE status='PLANNING' AND
-          (coordinator_run_id IS NULL OR NOT EXISTS (
-            SELECT 1 FROM agent_runs r WHERE r.id=planning_requests.coordinator_run_id
-              AND r.status IN ('STARTED','IN_PROGRESS','COMPLETING','COMPLETED')
-          ))`,
-      { now: new Date().toISOString() },
-    );
-    const failed = this.db.get<{ changes: number }>("SELECT changes() AS changes")?.changes ?? 0;
+    const failed = this.db.transaction((tx) => {
+      const now = new Date().toISOString();
+      const toFail = tx.all<{ id: string; project_id: string }>(
+        `SELECT id, project_id FROM planning_requests
+          WHERE status='PLANNING' AND
+            (coordinator_run_id IS NULL OR NOT EXISTS (
+              SELECT 1 FROM agent_runs r WHERE r.id=planning_requests.coordinator_run_id
+                AND r.status IN ('STARTED','IN_PROGRESS','COMPLETING','COMPLETED')
+            ))`,
+      );
+      for (const request of toFail) {
+        tx.run(
+          "UPDATE planning_requests SET status='FAILED',failure_code='PLANNING_INTERRUPTED',updated_at=$now WHERE id=$id",
+          { id: request.id, now },
+        );
+        this.appendPlanningStatusEvent(tx, request.id, "FAILED", request.project_id, { failureCode: "PLANNING_INTERRUPTED" });
+      }
+      return toFail.length;
+    });
     this.db.transaction((tx) => {
       const recovered = tx.all<{ id: string; project_id: string }>(
         `SELECT q.id,q.project_id FROM planning_requests q JOIN agent_runs r ON r.id=q.coordinator_run_id
@@ -322,9 +340,11 @@ export class PlanningService {
       if (classification === "EPIC" && request.planning_decisions_required === 1 && decisions) assertLinkedReviewRuns(tx, requestId, decisions);
       const planInput = decisions ? { ...input, planningDecisions: decisions } : input;
       const plan = this.insertPlan(tx, planInput, effectivePlanningApprovalPolicy());
+      const status = plan.status === "PENDING" ? "PLAN_PENDING_APPROVAL" : "MATERIALIZED";
       tx.run("UPDATE planning_requests SET classification=$classification, plan_id=$planId, status=$status, updated_at=$now WHERE id=$id", {
-        classification, planId: plan.id, status: plan.status === "PENDING" ? "PLAN_PENDING_APPROVAL" : "MATERIALIZED", now: new Date().toISOString(), id: requestId,
+        classification, planId: plan.id, status, now: new Date().toISOString(), id: requestId,
       });
+      this.appendPlanningStatusEvent(tx, requestId, status, request.project_id, { planId: plan.id });
       return plan;
     });
   }
@@ -338,6 +358,28 @@ export class PlanningService {
   preparePlan(input: PlanningPlanInput, policy: Partial<ReturnType<typeof effectivePlanningApprovalPolicy>> = {}): PlanningPlan {
     validatePlan(input);
     return this.db.transaction((tx) => this.insertPlan(tx, input, policy));
+  }
+
+  /** Эмитит событие planning.status в той же транзакции, что и переход статуса. */
+  private appendPlanningStatusEvent(
+    tx: DatabaseTx,
+    requestId: string,
+    status: string,
+    projectId: string,
+    options?: { planId?: string; failureCode?: string },
+  ): void {
+    const payload: Record<string, unknown> = { requestId, status, projectId };
+    if (options?.planId) payload.planId = options.planId;
+    if (options?.failureCode) payload.failureCode = options.failureCode;
+    appendOutboxEvent(
+      tx,
+      DomainEvent.create({
+        type: "planning.status",
+        aggregateType: "PlanningRequest",
+        aggregateId: requestId,
+        payload,
+      }),
+    );
   }
 
   private insertPlan(tx: DatabaseTx, input: PlanningPlanInput, policy: Partial<ReturnType<typeof effectivePlanningApprovalPolicy>>): PlanningPlan {
@@ -388,7 +430,14 @@ export class PlanningService {
       if (!row) throw new Error(`Plan ${planId} not found`);
       if (row.status !== "PENDING") throw new Error(`Plan ${planId} is already resolved`);
       tx.run("UPDATE planning_plans SET status='REJECTED', approved_by=$actor, approved_at=$at WHERE id=$id", { id: planId, actor, at: new Date().toISOString() });
+      const rejectedRequests = tx.all<{ id: string; project_id: string }>(
+        "SELECT id, project_id FROM planning_requests WHERE plan_id=$planId AND status='PLAN_PENDING_APPROVAL'",
+        { planId },
+      );
       tx.run("UPDATE planning_requests SET status='REJECTED', updated_at=$at WHERE plan_id=$id AND status='PLAN_PENDING_APPROVAL'", { id: planId, at: new Date().toISOString() });
+      for (const request of rejectedRequests) {
+        this.appendPlanningStatusEvent(tx, request.id, "REJECTED", request.project_id, { planId });
+      }
       return { ...(JSON.parse(row.plan_json) as PlanningPlanInput), id: planId, status: "REJECTED", approvalRequired: row.approval_required === 1, temporaryIdMap: {}, createdAt: row.created_at };
     });
   }
@@ -431,7 +480,14 @@ export class PlanningService {
       appendOutboxEvent(tx, DomainEvent.create({ type: "DependencyCreated", aggregateType: "Task", aggregateId: taskId, payload: { taskId, dependsOnTaskId } }));
     }
     tx.run("UPDATE planning_plans SET status='APPROVED', temporary_id_map_json=$map, approved_by=$actor, approved_at=$at, epic_id=$epicId WHERE id=$id", { id: plan.id, map: JSON.stringify(map), actor, epicId, at: new Date().toISOString() });
+    const materializedRequests = tx.all<{ id: string; project_id: string }>(
+      "SELECT id, project_id FROM planning_requests WHERE plan_id=$planId AND status='PLAN_PENDING_APPROVAL'",
+      { planId: plan.id },
+    );
     tx.run("UPDATE planning_requests SET status='MATERIALIZED', updated_at=$at WHERE plan_id=$id AND status='PLAN_PENDING_APPROVAL'", { id: plan.id, at: new Date().toISOString() });
+    for (const request of materializedRequests) {
+      this.appendPlanningStatusEvent(tx, request.id, "MATERIALIZED", request.project_id, { planId: plan.id });
+    }
     appendOutboxEvent(tx, DomainEvent.create({ type: "PlanApproved", aggregateType: "PlanningPlan", aggregateId: plan.id, payload: { planId: plan.id, temporaryIdMap: map, approvedBy: actor } }));
     return { ...plan, status: "APPROVED", temporaryIdMap: map };
   }

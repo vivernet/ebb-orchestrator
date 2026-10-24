@@ -194,6 +194,7 @@ const runService: RunService = new RunService(database, runtime, undefined, {
 }, agentEventBus, undefined, undefined, production.providerAgentRuntimeFactory);
 const runtimeOrchestrator = new RuntimeOrchestrator(database, workflowEngine, eventBus, eventDispatcher, scheduler, runService, () => status.get() === "READY");
 runtimeOrchestrator.initialize();
+production.createChatEventListeners(eventBus);
 const planningService = new PlanningService(database);
 const epicOrchestrator = new EpicOrchestrator(
   database,

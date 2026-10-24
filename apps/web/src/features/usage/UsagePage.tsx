@@ -72,9 +72,32 @@ export default function UsagePage() {
   }
 
   return (
-    <div className="usage-page">
-      <h1>Использование</h1>
-      <p>Агрегированные показатели и состояние бюджетов доступны только для чтения.</p>
+    <div className="usage-page page-stack">
+      <div className="topbar">
+        <div>
+          <h1>Использование</h1>
+          <div className="sub">Агрегированные показатели и состояние бюджетов доступны только для чтения.</div>
+        </div>
+      </div>
+
+      <div className="cards" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+        <div className="card">
+          <div className="card-label">Токены</div>
+          <div className="card-value">{data.global.totalTokens}</div>
+          <div className="trend">{`вход ${data.global.inputTokens} · кэш ${data.global.cachedTokens} · выход ${data.global.outputTokens}`}</div>
+        </div>
+        <div className="card">
+          <div className="card-label">Израсходовано</div>
+          <div className="card-value">{formatCost(data.global.cost)}</div>
+          <div className="trend">{data.budget.configurations.length > 0 ? `лимитов: ${data.budget.configurations.length}` : 'лимиты не настроены'}</div>
+        </div>
+        <div className="card">
+          <div className="card-label">Бюджет проекта</div>
+          <div className="card-value">{data.budget.activeReservations.length}</div>
+          <div className="trend">активных резервирований</div>
+        </div>
+      </div>
+
       <section aria-label="Сводные показатели использования" className="metric-grid">
         {metricBucketLabels.map(([key, label]) => {
           const bucket = data[key];

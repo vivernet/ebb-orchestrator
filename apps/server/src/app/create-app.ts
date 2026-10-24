@@ -50,6 +50,7 @@ import { DependencyService } from "../modules/work/dependency-service.js";
 import { dependencyRoutes, type DependencyCommandService } from "./routes/dependencies.js";
 import { finalMergeRoutes, type FinalMergeServiceFactory } from "./routes/final-merge.js";
 import { epicRoutes } from "./routes/epics.js";
+import { chatRoutes } from "./routes/chat.js";
 import { projectConfigRoutes } from "./routes/project-config.js";
 import { humanFeedbackRoutes } from "./routes/human-feedback.js";
 import type { HumanFeedbackService } from "../modules/github/human-feedback-service.js";
@@ -306,6 +307,7 @@ export function createApp(deps: AppDeps): OrchestratorApp {
     await dependencyRoutes(instance, { db: deps.db, dependencyService });
     await finalMergeRoutes(instance, { db: deps.db, mergeServiceFactory: deps.finalMergeServiceFactory, workflow, epicOrchestrator: deps.epicOrchestrator });
     await epicRoutes(instance, { db: deps.db, epicOrchestrator: deps.epicOrchestrator });
+    await chatRoutes(instance, { db: deps.db, epicOrchestrator: deps.epicOrchestrator, eventBus: deps.eventBus });
     await approvalRoutes(instance, { db: deps.db, approvalService });
     await runRoutes(instance, { db: deps.db, runService, scheduler, workflow, artifactStore: deps.artifactStore });
     await onboardingRoutes(instance, onboardingService ? { onboardingService } : {});

@@ -19,7 +19,10 @@ Ebb Orchestrator — локально запускаемый modular monolith д
 - локальные события, outbox, фоновые jobs и восстановление после перезапуска;
 - необязательная синхронизация с GitHub;
 - Web UI для dashboard, проектов, задач, Epic, запусков, approvals, execution,
-  settings и usage.
+  settings и usage;
+- чат координатора: постоянная история сообщений, SSE-стриминг статусов
+  планирования, инлайн-одобрения планов (approve/reject) и продолжение беседы
+  при запросе уточнений.
 
 ### Граница текущей production-композиции
 
@@ -193,7 +196,7 @@ apps/web/src/           React Web UI
 packages/contracts/     общие доменные контракты и role contracts
 ```
 
-Внутри `apps/server/src/modules/` находятся `approvals`, `context`, `execution`, `git`, `github`, `knowledge`, `permissions`, `planning`, `projects`, `recovery`, `runtime`, `scheduler`, `usage`, `work`, `workflow`. Platform-слой содержит `artifacts`, `config`, `database`, `diagnostics`, `events`, `home`, `jobs`, `process`, `security`.
+Внутри `apps/server/src/modules/` находятся `approvals`, `chat`, `context`, `execution`, `git`, `github`, `knowledge`, `permissions`, `planning`, `projects`, `recovery`, `runtime`, `scheduler`, `usage`, `work`, `workflow`. Platform-слой содержит `artifacts`, `config`, `database`, `diagnostics`, `events`, `home`, `jobs`, `process`, `security`.
 
 ## Жизненный цикл standalone Task
 

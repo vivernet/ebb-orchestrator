@@ -19,6 +19,7 @@ describe('Epic recovery blocker projection', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Восстановление Epic заблокировано');
     expect(screen.getByRole('alert')).toHaveTextContent('EPIC_RECOVERY_FAILED');
-    expect(screen.getByRole('region', { name: 'Сведения об эпике' })).not.toHaveTextContent('Выполняется');
+    expect(screen.queryByText('Выполняется')).not.toBeInTheDocument();
+    expect(screen.getAllByText('Заблокировано').length).toBeGreaterThan(0);
   });
 });

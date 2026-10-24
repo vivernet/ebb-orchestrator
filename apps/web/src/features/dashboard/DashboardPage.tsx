@@ -4,6 +4,7 @@ import { Link } from 'react-router';
 import { ApiError } from '../../api/client.js';
 import { EmptyState, ErrorAlert, PageState } from '../../components/ui/PageState.js';
 import StatusBadge from '../../components/ui/StatusBadge.js';
+import ChatPanel from '../chat/ChatPanel.js';
 import { useOnSSEReconnect } from '../../hooks/useEventClient.js';
 import { useQuery } from '../../state/use-query.js';
 import { apiErrorMessage, waitReasonLabel } from '../../i18n/ru.js';
@@ -46,6 +47,9 @@ export default function DashboardPage() {
       <section aria-label="Очередь"><h2>Очередь</h2>{queueQuery.status === 'error' ? <ErrorAlert message={`Не удалось загрузить очередь: ${message(queueQuery.error)}`} onRetry={retryQueue} /> : queueQuery.status !== 'success' || !queue ? <PageState status="loading" message="Загрузка очереди…" /> : queue.waiting.length === 0 && queue.blocked.length === 0 ? <EmptyState message="Очередь пуста." /> : <><p>{`Ожидает: ${queue.waiting.length}, заблокировано: ${queue.blocked.length}`}</p><ul>{queue.waiting.map((item) => <li key={`waiting-${item.taskId}`}><Link to={`/tasks/${encodeURIComponent(item.taskId)}`}>{item.taskId}</Link>: {waitReasonLabel(item.reason.code)}</li>)}{queue.blocked.map((item) => <li key={`blocked-${item.taskId}`}><Link to={`/tasks/${encodeURIComponent(item.taskId)}`}>{item.taskId}</Link>: {waitReasonLabel(item.reason.code)}</li>)}</ul></>}</section>
       <section aria-label="Сводка согласований"><h2>Сводка согласований</h2>{projectionQuery.status === 'success' && projection && <p>{projection.approvals} согласований требуют внимания.</p>}</section>
       <section aria-label="Пул агентов"><h2>Пул агентов</h2>{projectionQuery.status === 'success' && projection && <p>{projection.activeAgents.length} активных агентов в доступном пуле.</p>}</section>
+      <section aria-label="Чат с координатором" style={{ gridColumn: '1 / -1' }}>
+        <ChatPanel projectId={projection && projection.projects.length > 0 ? projection.projects[0]!.id : null} />
+      </section>
       {projectionQuery.status === 'error' && <button type="button" onClick={retryProjection}>Повторить</button>}
     </div>
   );

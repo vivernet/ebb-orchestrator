@@ -20,7 +20,7 @@ describe("PlanningRequest linkage migration", () => {
         .toEqual({ status: "RECEIVED", updated_at: now });
       // Include all forward migrations after the legacy v30 fixture through the current schema head.
       expect(db.all<{ version: number }>("SELECT version FROM schema_migrations WHERE version>=31 ORDER BY version").map(({ version }) => version))
-        .toEqual([31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51]);
+        .toEqual([31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52]);
     } finally {
       db.close();
     }

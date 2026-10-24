@@ -41,7 +41,9 @@ function errorMessage(error: unknown): string {
 export default function ExecutionPage() {
   const mutationStore = useMemo(() => createMutationStore(), []);
   const [cancelState, setCancelState] = useState<MutationState<unknown>>(() => mutationStore.get('cancel-run'));
+  const [pauseState, setPauseState] = useState<MutationState<unknown>>(() => mutationStore.get('pause-all'));
   useEffect(() => mutationStore.subscribe('cancel-run', setCancelState), [mutationStore]);
+  useEffect(() => mutationStore.subscribe('pause-all', setPauseState), [mutationStore]);
   const executionPath = toClientPath(apiPaths.execution);
   const fetcher = useCallback((signal: AbortSignal) => apiClient.get<ExecutionProjection>(executionPath, { signal }), [executionPath]);
   const query = useQuery(null, executionPath, undefined, fetcher);
@@ -51,6 +53,14 @@ export default function ExecutionPage() {
 
   const cancelRun = async (runId: string) => {
     await mutationStore.execute('cancel-run', () => apiClient.post(toClientPath(apiPaths.runCancel(runId)), {}), query.refetch).catch(() => undefined);
+  };
+
+  const pauseAll = async (taskIds: string[]) => {
+    await mutationStore.execute('pause-all', async () => {
+      for (const taskId of taskIds) {
+        await apiClient.post(toClientPath(`/api/v1/tasks/${encodeURIComponent(taskId)}/pause`), {});
+      }
+    }, query.refetch).catch(() => undefined);
   };
 
   if (query.status === 'loading' || query.status === 'idle') return <PageState status="loading" message="Загрузка очереди выполнения…" />;
@@ -64,15 +74,25 @@ export default function ExecutionPage() {
     ...data.waiting.map((task) => ({ id: task.taskId, kind: 'waiting' as const, role: 'Планировщик', target: task.taskId, status: 'WAITING', reason: task.reason })),
     ...data.blocked.map((task) => ({ id: task.taskId, kind: 'blocked' as const, role: 'Планировщик', target: task.taskId, status: 'BLOCKED', reason: task.reason })),
   ];
+  const pauseTaskIds = [...new Set(rows.map((entry) => entry.kind === 'run' && entry.target !== 'Система' ? entry.target : entry.id))];
+  const disablePauseAll = pauseTaskIds.length === 0 || pauseState.status === 'pending';
 
   return (
     <div className="execution-page page-stack">
-      <header className="page-header">
-        <div><p className="eyebrow">Операции</p><h1>Монитор выполнения</h1></div>
-        <button type="button" onClick={retry}>Обновить</button>
-      </header>
+      <div className="topbar">
+        <div>
+          <p className="eyebrow">Операции</p>
+          <h1>Монитор выполнения</h1>
+          <div className="sub">Ёмкость: {data.running.length} выполняется · {data.waiting.length} ожидает · {data.blocked.length} заблокировано</div>
+        </div>
+        <div className="top-actions">
+          <button type="button" className="btn-ghost" onClick={retry}>Обновить</button>
+          <button type="button" className="btn-primary" disabled={disablePauseAll} onClick={() => void pauseAll(pauseTaskIds)}>Приостановить всё</button>
+        </div>
+      </div>
 
       {cancelState.status === 'error' && <ErrorAlert message={`Не удалось отменить запуск: ${errorMessage(cancelState.error)}`} />}
+      {pauseState.status === 'error' && <ErrorAlert message={`Не удалось приостановить очередь: ${errorMessage(pauseState.error)}`} />}
 
       <section aria-label="Сводка выполнения" className="metric-grid">
         <div><span className="metric-value">{data.running.length}</span><span className="metric-label">Выполняется</span></div>

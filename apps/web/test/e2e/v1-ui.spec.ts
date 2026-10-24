@@ -163,7 +163,7 @@ test('authenticated browser shows empty Dashboard, Approvals, Execution and the 
   await page.goto('/execution');
   await expect(page.getByRole('heading', { name: 'Монитор выполнения' })).toBeVisible();
   await expect(page.getByRole('region', { name: 'Очередь выполнения' })).toContainText('Нет активных, ожидающих или заблокированных задач.');
-  await expect(page.getByRole('button', { name: /Приостановить всё|Pause All/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Приостановить всё' })).toBeDisabled();
 
   const missingRunResponse = page.waitForResponse((response) => response.url().endsWith('/api/v1/runs/missing-run'));
   await page.goto('/runs/missing-run');
@@ -179,7 +179,7 @@ test('authenticated browser shows empty Dashboard, Approvals, Execution and the 
   await expect(page.getByRole('heading', { name: 'Настройки' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Глобально' })).toBeVisible();
   await expect(page.getByText(/Недоступно:/).first()).toBeVisible();
-  await expect(page.getByRole('button', { name: /Сохранить|Изменить|Обновить/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Изменить' })).toBeVisible();
   await assertNoBootstrapArtifacts(page);
 });
 

@@ -6,3 +6,43 @@ function createEventClient(): EventClient { const handlers = new Map<string, Set
 async function consumeEventStream(stream: ReadableStream<Uint8Array>, handlers: Map<string, Set<EventHandler>>, listeners: Set<InvalidationListener>): Promise<void> { const reader = stream.getReader(); const decoder = new TextDecoder(); let buffer = ''; try { while (true) { const { done, value } = await reader.read(); if (done) return; buffer += decoder.decode(value, { stream: true }); let boundary = buffer.indexOf('\n\n'); while (boundary !== -1) { notify(buffer.slice(0, boundary), handlers, listeners); buffer = buffer.slice(boundary + 2); boundary = buffer.indexOf('\n\n'); } } } finally { reader.releaseLock(); } }
 function notify(packet: string, handlers: Map<string, Set<EventHandler>>, listeners: Set<InvalidationListener>): void { let eventName = 'message'; const data: string[] = []; for (const line of packet.split('\n')) { if (line.startsWith('event:')) eventName = line.slice(6).trim(); if (line.startsWith('data:')) data.push(line.slice(5).trimStart()); } if (data.length === 0) return; try { const parsed: unknown = JSON.parse(data.join('\n')); for (const handler of handlers.get(eventName) ?? []) handler(parsed); for (const listener of listeners) listener(eventName, parsed); } catch { /* projections remain authoritative */ } }
 export const eventClient = createEventClient();
+
+/** Типизированный payload события беседы чата (поле `payload` доменного события). */
+export interface ConversationEventPayload {
+  conversationId?: string;
+  requestId?: string;
+  planId?: string;
+  status?: string;
+  messageId?: string;
+  kind?: string;
+  role?: string;
+  progress?: string;
+  failureCode?: string;
+}
+
+/** Названия событий беседы чата, доставляемых SSE-каналом. */
+export const CONVERSATION_EVENT_TYPES = [
+  'message.created',
+  'planning.status',
+  'message.delta',
+  'message.complete',
+  'conversation.updated',
+] as const;
+
+/**
+ * Подписывает на события беседы чата через общий SSE-клиент.
+ * Данные SSE — объект DomainEvent; фильтр повторяет серверный matchesConversation
+ * (payload.conversationId или aggregateId беседы).
+ */
+export function onConversationEvent(conversationId: string, handler: (data: ConversationEventPayload) => void): () => void {
+  const unsubscribes = CONVERSATION_EVENT_TYPES.map((eventName) =>
+    eventClient.on(eventName, (data) => {
+      if (typeof data !== 'object' || data === null) return;
+      const domain = data as { aggregateId?: unknown; payload?: unknown };
+      const payload = (typeof domain.payload === 'object' && domain.payload !== null ? domain.payload : data) as ConversationEventPayload;
+      const matches = domain.aggregateId === conversationId || payload.conversationId === conversationId;
+      if (matches) handler(payload);
+    }),
+  );
+  return () => { for (const unsubscribe of unsubscribes) unsubscribe(); };
+}

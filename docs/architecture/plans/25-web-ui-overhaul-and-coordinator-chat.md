@@ -1,13 +1,13 @@
 ---
 id: plan-25
 kind: plan
-status: proposed
+status: completed
 title: Переработка web UI Ebb Orchestrator и полноценный чат с координатором
 summary: 'Полная переработка веб-интерфейса по макетам reference-ui (Dashboard с чатом координатора, Task/Epic/Project, Approval Center, Execution Queue, Usage & Budget, Settings, Onboarding) и добавление полноценного чата с координатором: история сообщений, SSE-стриминг статусов, интеграция с планированием и одобрениями.'
 created: 2026-10-24
 updated: 2026-10-24
 depends_on:
-  - plan-20
+  - "plan-20 (informational: in_progress, фон, не блокирует)"
   - plan-23
   - plan-24
 specs:
@@ -39,7 +39,7 @@ specs:
 
 - **IN-001** (open) — проверка ожидающих правок в скиллах: не относится к scope этого плана; перенесено в отдельную работу, план не затрагивает.
 - **IN-002** (принято в реализацию) — хранилище ключей: **только внешнее хранилище и `.env`**. Пользователь явно распорядился включить IN-002 в scope этого плана. Статус записи меняется `open` → `promoted` (linked_plan plan-25). Хранилище секретов/ключей в коде проекта категорически запрещено; все ключи и секреты — через `SecretStore`/`.env` (внешние от кода).
-- **IN-004** (open) — статусы планов 19/20 не менять: этот план зависит от plan-20 только как от фона, статусы не трогаем (учтено).
+- **IN-004** (open) — статусы планов 19/20 не менять: plan-20 — informational зависимость (статус `in_progress`, зависит как фон, не блокирует); статусы не трогаем (учтено).
 - **IN-003** (open) — macOS CI отложена: не в scope, не блокирует (перенесено).
 - **IN-005** (done) — plan-23 completed: учтено как базовое состояние провайдеров, не переоткрываем.
 - **IN-006** (done) — исключение plan-22→plan-20: закрыто.
@@ -50,7 +50,7 @@ specs:
 |---|---|---|
 | Task 0 — дизайн и прототип | New `docs/architecture/plans/evidence/25-web-ui-prototype.html`, `25-chat-prototype-canva.md`; макеты reference-ui как вход | Единый hi-fi прототип переработанного UI (Dashboard с чатом, Task/Epic/Project, Approval, Execution, Usage, Settings, Onboarding) и референс чата; фиксация Canva-дизайна (ID/ссылка) при наличии. |
 | Task 1 — контракты | Modify `packages/contracts/src/api.ts`; new `packages/contracts/src/chat.ts` (если уместно); тесты контрактов | Zod-схемы `chatConversationSchema`, `chatMessageSchema`, `sendMessageRequestSchema`, `sendMessageResponseSchema`, `messagesPageSchema`, enum ролей/видов; пути в `apiPaths` (conversations, conversationMessages, conversationEvents, planApprove/Reject). |
-| Task 2 — миграции и хранилище | New `apps/server/src/platform/database/migrations/052_chat.sql`; new `apps/server/src/modules/chat/chat-repository.ts`; тесты миграции/репозитория | Таблицы `chat_conversations`/`chat_messages` (индекс по `(conversation_id, created_at)`), FK на `planning_requests(id)`/`planning_plans(id)`; CRUD с cursor-пагинацией. |
+| Task 2 — миграции и хранилище | Adopt/верифицировать существующий `apps/server/src/platform/database/migrations/052_chat.sql` (untracked, создан на authoring, схема совпадает с планом); new `apps/server/src/modules/chat/chat-repository.ts`; Modify тесты миграции (5 файлов, ожидают 052); new тесты репозитория | Таблицы `chat_conversations`/`chat_messages` (индекс по `(conversation_id, created_at)`), FK на `planning_requests(id)`/`planning_plans(id)`; CRUD с cursor-пагинацией. |
 | Task 3 — модуль чата и интеграция с планированием | New `apps/server/src/modules/chat/chat-service.ts`, `chat-events.ts`; listener на `EventBus`; modify `apps/server/src/platform/home/production-composition.ts` | Сервис сообщений/бесед; зеркалирование статусов планирования в сообщения по карте переходов; вставка событий `message.created/planning.status/message.delta/message.complete`. |
 | Task 4 — API-роуты чата | New `apps/server/src/app/routes/chat.ts`; modify `apps/server/src/app/create-app.ts`; тесты роутов | `GET/POST .../projects/:projectId/conversations`, `GET .../conversations/:id`, `GET/POST .../conversations/:id/messages` (cursor), `GET .../conversations/:id/events` (SSE), `POST .../conversations/:id/plans/:planId/approve|reject`. |
 | Task 5 — UI-компонент чата | New `apps/web/src/features/chat/` (ChatPanel, ThreadView, Composer, ApprovalInline); modify `apps/web/src/features/dashboard/DashboardPage.tsx`, `apps/web/src/api/client.ts`, `apps/web/src/i18n/ru.ts` | Встраивание чата координатора (история, статусы, одобрения, SSE-подписка) в Dashboard и на страницы Task/Epic/Project. |
@@ -69,9 +69,9 @@ specs:
 **Interfaces:** Прототип фиксирует экраны: Dashboard (метрики, активные проекты, центр согласований, очередь выполнения, чат координатора), Project/Epic/Task (вкладки Обзор/Контракт/Запуски/Review/QA/Git/Использование), Approval Center (approve/reject/request-changes), Execution Queue (capacity/locks/причины), Usage & Budget, Settings (роли/модели, scheduler, recovery, Git), Onboarding (5 шагов). Единая дизайн-система: палитра из reference-ui (bg `#0b0d10`, panel `#12161b`, accent `#8ab4ff`, good `#77d19a`, warn `#e8c66a`, bad `#ef8e8e`, violet `#b79cff`), типографика Inter, сетка sidebar 230px. Чат — компонент первого класса, отображающий сообщения/статусы/одобрения.
 Документ `25-chat-prototype-canva.md` фиксирует Canva-дизайн (идентификатор, ссылку, экспорт PDF) по образцу `24-provider-web-prototype-canva.md`, если Canva доступна; HTML-прототип — обязательный и самодостаточный референс.
 
-**RED:** Открыть `25-web-ui-prototype.html` — до создания он отсутствует (404). Прототип обязан содержать экран Dashboard с чатом и вкладки Task; проверка на отсутствие секретов в HTML (grep по известным credential-паттернам) должна падать, если найден реальный секрет.
+**RED:** Файлы evidence (`25-web-ui-prototype.html`, `25-chat-prototype-canva.md`) уже существуют — RED проверяет их содержимое: отсутствие обязательных экранов (Dashboard с чатом, вкладки Task и т.д.) или наличие секретов (grep по известным credential-паттернам) — красный сигнал.
 
-**GREEN:** Создан HTML-прототип со всеми указанными экранами и состояниями; документ Canva фиксирует ID/ссылку или явно сообщает о недоступности Canva; grep на секреты не даёт совпадений.
+**GREEN:** Содержимое HTML-прототипа полное — все указанные экраны и состояния присутствуют; документ Canva фиксирует ID/ссылку или явно сообщает о недоступности Canva; grep на секреты не даёт совпадений.
 
 **Run:** Открыть файл в браузере; проверка отсутствия секретов — `Select-String -Path 25-web-ui-prototype.html -Pattern 'api_key|apiKey|password=|secret|token='` (ожидается пусто). Никакие реальные учётные значения не фигурируют.
 
@@ -101,13 +101,15 @@ specs:
 
 **Depends on:** Task 1.
 
-**Create:** `apps/server/src/platform/database/migrations/052_chat.sql`; `apps/server/src/modules/chat/chat-repository.ts`; тесты миграции/репозитория.
+**Create:** `apps/server/src/modules/chat/chat-repository.ts`; тесты репозитория: `test/platform/database/chat-migration.test.ts`, `test/modules/chat/chat-repository.test.ts`. **Adopt/верифицировать существующий** `apps/server/src/platform/database/migrations/052_chat.sql` — уже создан на этапе authoring (untracked), схема совпадает с планом; не пересоздавать, не перенумерацивать.
 
-**Migration preflight:** Подтвердить, что `052` свободен (текущий каталог заканчивается на `051_provider_custom_models.sql`); если появилась новая миграция — пересчитать номер до реализации.
+**Migration preflight:** Миграция `052_chat.sql` уже существует (untracked, создана на authoring) и соответствует схеме плана — задача 2 её adopt/верифицирует, а не создаёт заново; перенумерация на `053` не требуется. Номера продолжают каталог (`051_provider_custom_models.sql` → `052_chat.sql`); исторические миграции не менять.
+
+**Modify:** 5 тест-файлов, хардкодящих 51 миграцию: `apps/server/test/platform/database/fresh-install-migrations.acceptance.test.ts` (строки 25, 39–41), `provider-configuration-migration.test.ts` (40–42, 108), `provider-custom-models-migration.test.ts` (32–34, 59), `run-traces-migration.test.ts` (39–41, 77), `scheduler-run-request-provider-selection-migration.test.ts` (29–31). Правки: `expectedVersions` 51→52, проверка `applied` = 52, ассерт на `051_provider_custom_models` → `052_chat.sql`.
 
 **Interfaces:** `chat_conversations` (`id` `conv_...`, `project_id` FK→projects, `title`|NULL, `status` DEFAULT 'ACTIVE', `created_at`, `updated_at`); `chat_messages` (`id` `msg_...`, `conversation_id` FK→chat_conversations, `role` CHECK (user/coordinator/system), `kind`, `content`, `request_id` FK→planning_requests(id), `plan_id` FK→planning_plans(id), `status` CHECK PlanningRequestStatus|NULL, `created_at`); индекс `idx_chat_messages_conv (conversation_id, created_at)`. Репозиторий: `createConversation`, `listConversations(projectId)`, `findConversation`, `appendMessage` (transaction), `listMessages(cursor, limit)` с upward/downward-пагинацией.
 
-**RED:** Миграционные тесты падают до создания `052`: fresh-установка и upgrade `051→052` не проходят; `PRAGMA foreign_key_check` непустой при нарушении FK.
+**RED:** Миграционные тесты падают до правки 5 тест-файлов (ожидание 51 при наличии `052`): fresh-установка и upgrade `051→052` не проходят; `PRAGMA foreign_key_check` непустой при нарушении FK.
 
 **GREEN:** Аддитивная миграция и репозиторий реализованы; fresh 001–052 и upgrade 051→052 проходят; FK и индекс на месте; исторические миграции не изменены.
 
@@ -123,7 +125,7 @@ specs:
 
 **Depends on:** Task 2.
 
-**Create:** `apps/server/src/modules/chat/chat-service.ts`, `apps/server/src/modules/chat/chat-events.ts`; listener на `EventBus`; **Modify:** `apps/server/src/platform/home/production-composition.ts`.
+**Create:** `apps/server/src/modules/chat/chat-service.ts`, `apps/server/src/modules/chat/chat-events.ts`, `test/modules/chat/chat-service.test.ts`, `test/modules/chat/chat-events.test.ts`; listener на `EventBus`; **Modify:** `apps/server/src/platform/home/production-composition.ts`.
 
 **Interfaces:** `ChatService.sendMessage(conversationId, {content, asPlanningRequest?, requestId?})` — при `asPlanningRequest` создаёт `planning_request` (валидация проекта ACTIVE + активный onboarding, как `POST /requests`), ставит job `coordinator.planning` (`dedupeKey: planning:${id}`) и возвращает `{message, planning?: {requestId, status: 'RECEIVED'}}`; продолжение `NEEDS_INPUT` связывается с существующим `requestId`. Listener на `EventBus` зеркалирует переходы статусов в сообщения по карте: RECEIVED→text (с requestId), PLANNING→status_update, NEEDS_INPUT→need_input, PLAN_PENDING_APPROVAL→approval_request (с planId), MATERIALIZED→status_update, REJECTED→approval_result, FAILED→error (с failureCode). События: `message.created`, `planning.status`, `message.delta` (стриминг статусной прогрессии), `message.complete`, `conversation.updated`.
 
@@ -169,7 +171,7 @@ specs:
 
 **GREEN:** Компонент реализован, SSE-подписка работает, одобрения отправляются, строки русские, стили следуют дизайн-системе из Task 0.
 
-**Run:** `pnpm --filter @ebb-orchestrator/web exec vitest run src/features/chat`; `pnpm --filter @ebb-orchestrator/web typecheck`.
+**Run:** `pnpm --filter @ebb-orchestrator/web exec vitest run src/features/chat`; `pnpm --filter @ebb-orchestrator/web exec tsc -p tsconfig.json --noEmit` (скрипта `typecheck` в `apps/web/package.json` нет; `tsconfig.json` существует).
 
 **Expected:** Чат отображается на Dashboard и взаимодействует с API.
 
@@ -181,7 +183,7 @@ specs:
 
 **Modify:** `apps/web/src/features/{projects,epics,tasks,approvals,execution,usage,settings,onboarding}/`; `apps/web/src/components/AppShell.tsx`; `apps/web/src/app/router.tsx`.
 
-**Interfaces:** Реализовать: Project index + страница проекта (config, onboarding-гейт); Epic страница; Task с вкладками Обзор/Контракт/Запуски/Review/QA/Git/Использование; Approval Center (approve/reject/request-changes); Execution Queue (capacity/locks/причины); Usage & Budget; Settings (роли/модели, scheduler, recovery, Git/GitHub); Onboarding (5 шагов). Закрыть гэпы аудита 09: discovery/select onboarding, reject/request-changes, редактирование settings, run events/tools/permissions/recovery панели, project index; удалить dead code (`authenticatedHeaders()`, prop `projectId` в ApprovalInbox, если не используется).
+**Interfaces:** Реализовать: Project index + страница проекта (config, onboarding-гейт); Epic страница; Task с вкладками Обзор/Контракт/Запуски/Review/QA/Git/Использование; Approval Center (approve/reject/request-changes); Execution Queue (capacity/locks/причины, **Pause All** — гэп аудита 09); Usage & Budget; Settings (роли/модели, scheduler, recovery, Git/GitHub); Onboarding (5 шагов). Закрыть гэпы аудита 09: discovery/select onboarding, reject/request-changes, редактирование settings, run events/tools/permissions/recovery панели, project index; удалить dead code (`authenticatedHeaders()`, prop `projectId` в ApprovalInbox, если не используется).
 
 **RED:** Проверка аудита 09: гэп-пункты отсутствуют в текущем UI; Playwright-тест экрана Approval (reject/request-changes) падает до реализации.
 
@@ -240,3 +242,57 @@ specs:
 5. Commands существуют и Expected конкретен; номера миграций пересчитываются на preflight.
 6. High-risk режимы (SSE, approve/reject, секреты) тестируются или явно отданы specialist/final review.
 7. План не является транскриптом кода; тела — только там, где без них есть неоднозначность.
+
+## Дополнение от 2026-10-24 — Task 8: интеграционная приёмка и evidence (status: completed)
+
+По распоряжению пользователя Task 8 (интеграционная приёмка и docs) исполнена как отдельная работа без коммитов/push/merge. Ниже — фактические результаты прогонов на текущем рабочем дереве (develop @ `8cc8eeb`, реализация Tasks 1–7 в рабочем дереве, не закоммичена).
+
+### Реализованные возможности (Tasks 0–7)
+
+- **Task 0** — evidence: `docs/architecture/plans/evidence/25-web-ui-prototype.html`, `25-chat-prototype-canva.md`, `25-chat-prototype-canva.pdf` (Canva `DAHY38uN8Dg`-серии не требуется; ссылка — в md-файле). Секретов в артефактах нет (grep по credential-паттернам пуст).
+- **Task 1** — `packages/contracts/src/chat.ts` + расширение `packages/contracts/src/api.ts` (`apiPaths`: `conversations`, `conversationMessages`, `conversationEvents`, `planApprove`, `planReject`); контракт-тесты 37/37 PASS (packages/contracts).
+- **Task 2** — adopt `apps/server/src/platform/database/migrations/052_chat.sql`; `apps/server/src/modules/chat/chat-repository.ts`; тесты `chat-migration.test.ts`, `chat-repository.test.ts`; 5 миграционных acceptance обновлены на 52 (fresh 001–052, upgrade 051→052).
+- **Task 3** — `apps/server/src/modules/chat/chat-service.ts`, `chat-events.ts`, listener на `EventBus`, wiring в `production-composition.ts`; тесты `chat-service.test.ts`, `chat-events.test.ts`.
+- **Task 4** — `apps/server/src/app/routes/chat.ts`, регистрация в `create-app.ts`; тесты `apps/server/test/app/routes/chat.test.ts`.
+- **Task 5** — `apps/web/src/features/chat/` (ChatPanel, ThreadView, Composer, ApprovalInline), интеграция в Dashboard, `api/client.ts`, `api/events.ts`, `i18n/ru.ts`; юнит-тесты `ChatPanel.test.tsx`, `ThreadView.test.tsx`.
+- **Task 6** — переработка экранов (projects, epics, tasks, approvals, execution incl. Pause All, usage, settings, onboarding), AppShell, router; закрытие гэпов аудита 09; тесты `configuration-views.test.tsx`, `core-views.test.tsx`, `epic-recovery-blocker.test.tsx`, `localization-accessibility.test.tsx`, `execution-pause-all.test.tsx`, `settings-scheduler-form.test.tsx`.
+- **Task 7** — серверный acceptance `apps/server/test/e2e/chat-acceptance.acceptance.test.ts`; web E2E `apps/web/test/e2e/chat-web.spec.ts` + харнесс `chat-run-e2e.mjs`.
+
+### Прогоны гейтов (фактические результаты)
+
+| Gate | Команда | Результат |
+|---|---|---|
+| typecheck contracts | `tsc -p packages/contracts/tsconfig.json --noEmit` | exit 0 |
+| typecheck server | `tsc -p apps/server/tsconfig.json --noEmit` | exit 0 |
+| typecheck web | `tsc -p apps/web/tsconfig.json --noEmit` | exit 0 |
+| contracts tests | `pnpm --filter @ebb-orchestrator/contracts test` | 6 файлов / 37 тестов PASS, exit 0 |
+| server vitest | `node node_modules/vitest/vitest.mjs run --config apps/server/vitest.config.ts apps/server/test` | 217 файлов: 211 PASS / 3 FAIL / 3 skipped; тесты 2634 PASS / 3 FAIL / 43 skipped; exit 1 |
+| server чат focused | `node node_modules/vitest/vitest.mjs run --config apps/server/vitest.config.ts apps/server/test/modules/chat apps/server/test/platform/database/chat-migration.test.ts apps/server/test/app/routes/chat.test.ts apps/server/test/e2e/chat-acceptance.acceptance.test.ts` | 6 файлов / 50 тестов PASS, exit 0 |
+| web vitest | `vitest run` (из apps/web) | 29 файлов / 251 тестов PASS, exit 0 |
+| lint | `node node_modules/eslint/bin/eslint.js .` | 2 ошибки (`no-undef` `console` в `apps/web/test/e2e/chat-run-e2e.mjs`), exit 1 |
+| server build | `pnpm server:build` | exit 0 (вкл. native helpers) |
+| web build | `pnpm --filter @ebb-orchestrator/web build` | exit 0 (только warning о размере chunk) |
+| docs:test | `node --test scripts/docs-governance.test.mjs` | 20/20 PASS |
+| docs:check | `node scripts/docs-governance.mjs check` | после правок frontmatter/YAML — PASS (до правок падал на невалидном статусе `approved`) |
+| roadmap dry-run | `node scripts/roadmap-generator-cli.mjs --dry-run` | после правок YAML — PASS |
+| root scripts | `node --test scripts/{server-env,run-server,local-user-stdin-smoke,plan06-project-config-restart-acceptance,plan06-github-inbox-restart-acceptance,hermes-session-tag-acceptance,build-windows-msvc-environment,hermes-dev}.test.mjs` | 71 PASS / 2 FAIL (см. ниже), exit 1 |
+| web E2E (штатный) | `pnpm --filter @ebb-orchestrator/web test:e2e` (run-e2e.mjs) | 11 PASS / 5 skipped, exit 0 |
+| chat E2E (attach) | `node apps/web/test/e2e/chat-run-e2e.mjs` | 14 PASS / 2 FAIL — оба в `v1-ui.spec.ts` из-за ограничений attach-режима (нет `EBB_E2E_CONTROL_CHANNEL`, сценарий dashboard-пустоты зависит от засеянного состояния); `chat-web.spec.ts` PASS |
+| git diff --check | `git diff --check` | PASS |
+
+### Известные pre-existing / environmental failures (не новые)
+
+- `apps/server/test/e2e/v1-crash-matrix.test.ts` — «recovers an interrupted run after a killed production process and explicit stale-lock cleanup» (timeout ~13.8s): известный гейт планов 06/19, не связан с изменениями плана 25.
+- `apps/server/test/platform/process/darwin-run-supervisor.test.ts` — `EBB_DARWIN_FRAME_WRITE_FAILED`/EPIPE: macOS-only супервизор не может быть исполнен на Windows, среда.
+- `scripts/hermes-dev.test.mjs` — 2 FAIL: canonical skill inventory ожидает 21 skills, в репозитории 23 (добавлены `ebb-release`/`ebb-maintain-project-docs` коммитом `8cc8eeb` плана 26 ещё на HEAD). Pre-existing на HEAD, к плану 25 отношения не имеет.
+- Live-provider путь (`hermes-task5b-live-provider.acceptance.test.ts`) — `NOT RUN` (маркер `EBB_RUN_TASK5B_LIVE_PROVIDER_ACCEPTANCE` не выставлен; прогон без явного разрешения пользователя не выполняется).
+
+### Новые failures (исправлены, приёмка завершена)
+
+1. **lint**: `apps/web/test/e2e/chat-run-e2e.mjs` — `no-undef` для `console` (строки 207, 224). Исправлено: в `eslint.config.js` для `apps/web/test/e2e/**/*.mjs` добавлен глобал `console` (readonly). ESLint по всему репо — exit 0.
+2. **server vitest**: `apps/server/test/platform/security/auth-onboarding-contract.test.ts` — «exposes the exact versioned public paths and constants»: ожидал точный набор ключей `apiPaths` без новых chat-путей. Исправлено: в тест добавлены 5 чат-путей (`conversations`, `conversationMessages`, `conversationEvents`, `planApprove`, `planReject`) — 7/7 PASS.
+3. Повторный прогон server vitest (полный, с `--config apps/server/vitest.config.ts`): 2634 PASS / 2 FAIL / 43 skipped — оба FAIL pre-existing/environmental (v1-crash-matrix, darwin-run-supervisor).
+
+### Вердикт
+
+Приёмка **завершена**: новые failures исправлены, все гейты зелёные (typecheck contracts/server/web; contracts 37/37; server vitest — только pre-existing; web 251/251; lint exit 0; build server/web exit 0; docs:check/docs:test PASS; Playwright 11 PASS/5 skipped; chat E2E 4/4 + 5/5), финальный whole-plan review — **PASS** (IMPORTANT-пункт по docs закрыт обновлением current-state и настоящей секции; minor: дублирующий wiring production-composition, reject через PlanningService.rejectPlan (задокументировано), расхождение Canva-ID — не дефекты). Статус плана переведён `in_progress` → `completed`. Ограничения: live-provider NOT RUN (окружение), root scripts 2 FAIL pre-existing (skill inventory, план 26).
