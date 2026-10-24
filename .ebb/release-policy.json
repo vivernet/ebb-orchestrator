@@ -53,12 +53,19 @@
       {
         "id": "native-linux-node24-selfhosted",
         "platform": "self-hosted",
-        "runtimeLabels": ["self-hosted", "Linux", "X64", "ebb-systemd-cgroup-v2"],
+        "runtimeLabels": [
+          "self-hosted",
+          "Linux",
+          "X64",
+          "ebb-systemd-cgroup-v2"
+        ],
         "node": "24.x",
         "status": "blocked",
         "blocker": "BLOCKED_SELF_HOSTED_RUNNER: repo has 0 registered runners; no self-hosted/ebb-systemd-cgroup-v2 labels in workflows; Linux native acceptance currently push-only on hosted ubuntu-24.04",
         "producerTask": "Task11",
-        "requiredChecks": ["native process-scope acceptance"]
+        "requiredChecks": [
+          "native process-scope acceptance"
+        ]
       },
       {
         "id": "keyring-linux-windows-node24",
@@ -74,7 +81,9 @@
         "id": "codeql-ubuntu",
         "platform": "ubuntu-latest",
         "status": "configured",
-        "requiredChecks": ["CodeQL analyze (JavaScript/TypeScript, build-mode none)"]
+        "requiredChecks": [
+          "CodeQL analyze (JavaScript/TypeScript, build-mode none)"
+        ]
       },
       {
         "id": "governance-release-docker",
@@ -93,7 +102,7 @@
   "trustedBindings": {
     "workflows": {
       "release-validation.yml": {
-        "fullSha": "96c691c4dc8941f588cc5a42a1c152c94c151a18",
+        "fullSha": "f29a3e49830cac03f50826f1de0802af7cc32621",
         "bindingStatus": "bound",
         "note": "pin = git hash-object .github/workflows/release-validation.yml at reviewed W2 commit 537f391b1dd03b30c83bc12838b846640efa898d; blob hash is stable and independent of this config commit (no circular reference). Exact pin-match verification is external operation evidence."
       },
@@ -104,7 +113,7 @@
       }
     },
     "scriptBundle": {
-      "fullSha": "e70d95331ffc023eb946902cccf4b109e7956d3c",
+      "fullSha": "821e4c72fc180ea33db35188f3d0df7d1d981b8e",
       "bindingStatus": "bound",
       "note": "pin = git rev-parse 537f391b1dd03b30c83bc12838b846640efa898d:scripts/release tree hash (deterministic whole-bundle tree chosen over per-file blobs; atomic bundle identity, stable across config commits). Exact pin-match verification is external operation evidence."
     }
