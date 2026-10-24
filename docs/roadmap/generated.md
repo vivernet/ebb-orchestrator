@@ -5,7 +5,7 @@ kind: roadmap
 title: Ebb Orchestrator Roadmap
 summary: Generated from Plan metadata and dependencies
 created: 2026-09-16
-updated: 2026-10-23
+updated: 2026-10-24
 ---
 
 # Ebb Orchestrator Roadmap
@@ -49,6 +49,9 @@ updated: 2026-10-23
 | plan-20 | in_progress | Production ContextManifest lifecycle for every Run binding |
 | plan-21 | completed | Проверяемое Linux AppArmor attachment evidence |
 | plan-22 | completed | Внедрение паттернов lobehub/lobehub |
+| plan-23 | completed | Web UI: настройка ИИ-провайдеров и моделей (IN-005) |
+| plan-24 | completed | Полный каталог AI-провайдеров и управление ими через Web |
+| plan-25 | proposed | Переработка web UI Ebb Orchestrator и полноценный чат с координатором |
 | plan-00 | completed | Documentation Governance Refactoring |
 | plan-00-02 | completed | Проверка и исправление политики AGENTS |
 | plan-00-05 | completed | Интеграция политик документации и governance |
@@ -88,4 +91,10 @@ plan-13 → plan-15
 plan-15-07 → plan-16
 plan-15-08 → plan-16
 plan-20 → plan-22
+plan-22 → plan-23
+plan-20 → plan-24
+plan-23 → plan-24
+plan-20 → plan-25
+plan-23 → plan-25
+plan-24 → plan-25
 plan-00 → plan-00-05
