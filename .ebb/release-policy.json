@@ -113,7 +113,7 @@
       }
     },
     "scriptBundle": {
-      "fullSha": "821e4c72fc180ea33db35188f3d0df7d1d981b8e",
+      "fullSha": "409025bb03337704a38d2f04aa16904f3416bbb8",
       "bindingStatus": "bound",
       "note": "pin = git rev-parse 537f391b1dd03b30c83bc12838b846640efa898d:scripts/release tree hash (deterministic whole-bundle tree chosen over per-file blobs; atomic bundle identity, stable across config commits). Exact pin-match verification is external operation evidence."
     }
