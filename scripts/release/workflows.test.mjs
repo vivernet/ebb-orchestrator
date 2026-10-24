@@ -196,6 +196,17 @@ test('release-validation.yml: top-level read-only permissions, no publish rights
   });
 });
 
+test('release-validation.yml: quality/security job runs an explicit server build step', async () => {
+  const doc = await readWorkflow(VALIDATION);
+  const job = doc.jobs['quality-security-ubuntu-node24'];
+  const runs = runTextsOf(job);
+  assert.ok(runs.includes('pnpm server:build'), 'quality/security job must run server:build explicitly (not only transitively via pnpm test)');
+  const steps = stepsOf(job);
+  const testIdx = steps.findIndex((step) => typeof step?.run === 'string' && step.run === 'pnpm test');
+  const buildIdx = steps.findIndex((step) => typeof step?.run === 'string' && step.run === 'pnpm server:build');
+  assert.ok(testIdx >= 0 && buildIdx >= 0, 'quality/security job must contain both pnpm test and pnpm server:build steps');
+});
+
 test('release-validation.yml: full publish matrix present with exact platform/node jobs', async () => {
   const doc = await readWorkflow(VALIDATION);
   const jobs = doc.jobs ?? {};

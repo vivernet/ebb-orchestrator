@@ -194,6 +194,8 @@ jobs:
         run: pnpm typecheck
       - name: Unit and integration tests
         run: pnpm test
+      - name: Server build
+        run: pnpm server:build
       - name: Local-user stdin smoke and web build
         run: |
           node scripts/local-user-stdin-smoke.mjs
