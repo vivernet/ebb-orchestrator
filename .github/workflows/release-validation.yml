@@ -1,0 +1,499 @@
+# plan-26 Task8 (part 1): trusted exact-SHA validation executor.
+#
+# Manual workflow_dispatch only. The source tree is checked out at the EXACT
+# pinned source-sha (never a floating HEAD); the candidate snapshot is fetched
+# by its immutable full SHA and its tree is proven equal to the source tree
+# before any product evidence is produced. Publisher scripts are never
+# executed from the candidate: this workflow is read-only + tests only and has
+# no publish rights.
+#
+# Inputs are untrusted. They are first validated by the validate-inputs gate
+# and then reach every `run:` command exclusively through env variables
+# referenced as quoted argv ("$VAR") — never via ${{ inputs.* }} shell text
+# interpolation. Child processes spawned by the release modules use validated
+# argv and shell:false (see scripts/release/snapshot.mjs etc.).
+#
+# Full PUBLISH matrix (plan-26 §15): quality/security Ubuntu Node24, native
+# Windows Node24, native Linux Node24 (BLOCKED — no self-hosted runner;
+# job exists and fails closed with an explicit note), OS keyring
+# Linux/Windows Node24, CodeQL Ubuntu (build-mode none, same actions as
+# codeql.yml), release module/CLI regression suite, docs/skills gates, and
+# Docker scope (BLOCKED — no Docker artifact basis; fails closed until Task9).
+#
+# The validation-summary job records exact run/check identity evidence
+# (run id, run attempt, workflow SHA, source/candidate metadata, per-job
+# results) as an artifact so Task8 part 2 can pin required checks by exact
+# IDs.
+
+name: Release validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: >-
+          Validation intent. publish runs the full exact-source matrix plus
+          the explicit BLOCKED notes for self-hosted Linux and Docker scope;
+          withdraw runs the read-only regression/safety subset (release module
+          tests, docs/skills gates, repository integrity). Product app tests
+          are not required green for withdrawal.
+        required: true
+        type: choice
+        options:
+          - publish
+          - withdraw
+      source-ref:
+        description: Full ref (refs/...) of the pinned source branch.
+        required: true
+        type: string
+        default: refs/heads/develop
+      source-sha:
+        description: Full 40-hex commit SHA of the exact source tree to validate.
+        required: true
+        type: string
+      candidate-ref:
+        description: Full ref of the ephemeral release candidate (publish only).
+        required: false
+        type: string
+      candidate-sha:
+        description: Full 40-hex commit SHA of the release candidate snapshot (publish only).
+        required: false
+        type: string
+      operation-id:
+        description: Canonical lowercase RFC 4122 UUID of the release operation (publish only).
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  validate-inputs:
+    name: Validate dispatch inputs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Assert input shapes (untrusted inputs -> validated argv)
+        env:
+          MODE: ${{ inputs.mode }}
+          SOURCE_REF: ${{ inputs.source-ref }}
+          SOURCE_SHA: ${{ inputs.source-sha }}
+          CANDIDATE_REF: ${{ inputs.candidate-ref }}
+          CANDIDATE_SHA: ${{ inputs.candidate-sha }}
+          OPERATION_ID: ${{ inputs.operation-id }}
+        run: |
+          set -euo pipefail
+          full_sha='^[0-9a-f]{40}$'
+          uuid_re='^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+          case "$MODE" in
+            publish|withdraw) ;;
+            *) echo "invalid mode: $MODE" >&2; exit 1 ;;
+          esac
+          case "$SOURCE_REF" in
+            refs/*) ;;
+            *) echo "source-ref must be a refs/ ref" >&2; exit 1 ;;
+          esac
+          [[ "$SOURCE_SHA" =~ $full_sha ]] || { echo "source-sha must be a full 40-hex SHA" >&2; exit 1; }
+          if [[ -n "$CANDIDATE_REF" ]]; then
+            case "$CANDIDATE_REF" in
+              refs/*) ;;
+              *) echo "candidate-ref must be a refs/ ref" >&2; exit 1 ;;
+            esac
+          fi
+          if [[ -n "$CANDIDATE_SHA" ]]; then
+            [[ "$CANDIDATE_SHA" =~ $full_sha ]] || { echo "candidate-sha must be a full 40-hex SHA" >&2; exit 1; }
+          fi
+          if [[ -n "$OPERATION_ID" ]]; then
+            [[ "$OPERATION_ID" =~ $uuid_re ]] || { echo "operation-id must be a canonical UUID" >&2; exit 1; }
+          fi
+          if [[ "$MODE" == publish ]]; then
+            [[ -n "$CANDIDATE_SHA" ]] || { echo "publish requires candidate-sha" >&2; exit 1; }
+            [[ -n "$CANDIDATE_REF" || -n "$OPERATION_ID" ]] || { echo "publish requires candidate-ref or operation-id" >&2; exit 1; }
+          fi
+
+  pinned-tree-equality:
+    name: Pin source and candidate trees
+    needs: validate-inputs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact source tree
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source-sha }}
+          fetch-depth: 0
+      - name: Prove candidate snapshot tree equals source tree (publish)
+        if: ${{ inputs.mode == 'publish' && inputs.candidate-sha != '' }}
+        env:
+          SOURCE_SHA: ${{ inputs.source-sha }}
+          CANDIDATE_REF: ${{ inputs.candidate-ref }}
+          CANDIDATE_SHA: ${{ inputs.candidate-sha }}
+          OPERATION_ID: ${{ inputs.operation-id }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$CANDIDATE_REF" ]]; then
+            CANDIDATE_REF="refs/heads/ebb-release-candidates/${OPERATION_ID}"
+          fi
+          git fetch origin "$CANDIDATE_REF"
+          git rev-parse --verify "${CANDIDATE_SHA}^{commit}" >/dev/null
+          source_tree="$(git rev-parse 'HEAD^{tree}')"
+          candidate_tree="$(git rev-parse "${CANDIDATE_SHA}^{tree}")"
+          if [[ "$source_tree" != "$candidate_tree" ]]; then
+            echo "BLOCKED_TREE_MISMATCH: candidate tree ${candidate_tree} != source tree ${source_tree}" >&2
+            exit 1
+          fi
+          mkdir -p artifacts
+          cat > artifacts/release-validation-tree-evidence.json <<EOF
+          {
+            "schemaVersion": 1,
+            "mode": "publish",
+            "sourceSha": "$SOURCE_SHA",
+            "sourceTree": "$source_tree",
+            "candidateSha": "$CANDIDATE_SHA",
+            "candidateTree": "$candidate_tree"
+          }
+          EOF
+          node -e "JSON.parse(require('fs').readFileSync('artifacts/release-validation-tree-evidence.json','utf8'))"
+      - name: Upload tree equality evidence
+        if: ${{ inputs.mode == 'publish' && inputs.candidate-sha != '' }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-validation-tree-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/release-validation-tree-evidence.json
+          if-no-files-found: error
+
+  quality-security-ubuntu-node24:
+    name: Quality/security (Ubuntu Node 24)
+    needs: [validate-inputs, pinned-tree-equality]
+    if: ${{ inputs.mode == 'publish' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout exact source tree
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source-sha }}
+      - name: Setup pnpm
+        uses: pnpm/setup@v1
+        with:
+          version: ">=12.0.0"
+          runtime: node@24
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24.x"
+          cache: pnpm
+      - name: Install dependencies
+        id: install-dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Install Chromium
+        run: pnpm --dir apps/web exec playwright install --with-deps chromium
+      - name: Lint
+        run: pnpm lint
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Unit and integration tests
+        run: pnpm test
+      - name: Local-user stdin smoke and web build
+        run: |
+          node scripts/local-user-stdin-smoke.mjs
+          pnpm web:build
+      - name: E2E harness contracts
+        run: node --test scripts/security-audit-evidence.test.mjs apps/web/test/e2e/credential-handoff.test.mjs
+      - name: Dependency audit
+        id: dependency-audit
+        if: ${{ !cancelled() && steps.install-dependencies.outcome == 'success' }}
+        continue-on-error: true
+        env:
+          SOURCE_SHA: ${{ inputs.source-sha }}
+        run: node scripts/security-audit-evidence.mjs --output "artifacts/security/pnpm-audit-prod-${SOURCE_SHA}.json"
+      - name: Upload dependency audit evidence
+        if: ${{ !cancelled() && steps.dependency-audit.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: pnpm-audit-prod-${{ inputs.source-sha }}-ubuntu-24.04
+          path: artifacts/security/pnpm-audit-prod-${{ inputs.source-sha }}.json
+          if-no-files-found: error
+      - name: Fail if dependency audit failed
+        if: ${{ !cancelled() && steps.dependency-audit.outcome == 'failure' }}
+        run: exit 1
+      - name: Repository integrity
+        run: git diff --check
+      - name: Browser E2E
+        run: pnpm --dir apps/web test:e2e
+
+  native-windows-node24:
+    name: Native Windows Node 24
+    needs: [validate-inputs, pinned-tree-equality]
+    if: ${{ inputs.mode == 'publish' }}
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      EBB_RUN_NATIVE_SCOPE_ACCEPTANCE: "1"
+    steps:
+      - name: Checkout exact source tree
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source-sha }}
+      - name: Setup pnpm
+        uses: pnpm/setup@v1
+        with:
+          version: ">=12.0.0"
+          runtime: node@24
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24.x"
+          cache: pnpm
+      - name: Setup Python for synthetic native payload
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build Windows native helper with Visual Studio 2022
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+          $installPath = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if ($LASTEXITCODE -ne 0 -or -not $installPath) { throw "VISUAL_STUDIO_CXX_BUILD_TOOLS_UNAVAILABLE" }
+          $developerCommand = 'call "' + (Join-Path $installPath "Common7\Tools\VsDevCmd.bat") + '" -arch=amd64 -host_arch=amd64 && set'
+          $environmentLines = & cmd.exe /d /s /c $developerCommand
+          if ($LASTEXITCODE -ne 0) { throw "VISUAL_STUDIO_DEVELOPER_ENVIRONMENT_FAILED" }
+          foreach ($line in $environmentLines) {
+            $separator = $line.IndexOf('=')
+            if ($separator -gt 0) {
+              $name = $line.Substring(0, $separator)
+              $value = $line.Substring($separator + 1)
+              Set-Item -Path "Env:$name" -Value $value
+            }
+          }
+          pnpm --filter @ebb-orchestrator/server build:hermes-profile-path
+          if ($LASTEXITCODE -ne 0) { throw "WINDOWS_HERMES_PROFILE_HELPER_BUILD_FAILED" }
+          pnpm --filter @ebb-orchestrator/server build:windows-run-supervisor
+          if ($LASTEXITCODE -ne 0) { throw "WINDOWS_PROCESS_SCOPE_HELPER_BUILD_FAILED" }
+      - name: Run native provider-free process-scope acceptance
+        run: pnpm --filter @ebb-orchestrator/server exec vitest run test/e2e/hermes-process-scope.acceptance.test.ts
+      - name: Run Windows file identity helper acceptance
+        run: node apps/server/scripts/test-hermes-profile-path-native.mjs
+      - name: Run executable launch frame and nonce-ACK acceptance
+        run: node apps/server/scripts/test-windows-run-supervisor-frame.mjs
+
+  native-linux-node24-selfhosted:
+    name: Native Linux Node 24 (self-hosted — BLOCKED)
+    needs: [validate-inputs, pinned-tree-equality]
+    if: ${{ inputs.mode == 'publish' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact source tree
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source-sha }}
+      - name: Report BLOCKED self-hosted runner (fail closed)
+        run: |
+          printf '%s\n' \
+            'BLOCKED_SELF_HOSTED_RUNNER: repo has 0 registered runners;' \
+            'labels [self-hosted, Linux, X64, ebb-systemd-cgroup-v2] unavailable.' \
+            'Native Linux process-scope acceptance cannot run; publish remains BLOCKED until Task11 provides a runner.' \
+            >&2
+          exit 1
+
+  keyring-linux-windows-node24:
+    name: OS keyring (Linux/Windows Node 24)
+    needs: [validate-inputs, pinned-tree-equality]
+    if: ${{ inputs.mode == 'publish' }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+    steps:
+      - name: Checkout exact source tree
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source-sha }}
+      - name: Setup pnpm
+        uses: pnpm/setup@v1
+        with:
+          version: ">=12.0.0"
+          runtime: node@24
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24.x"
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Validate keyring acceptance workflow
+        run: node --test scripts/keyring-acceptance.test.mjs
+      - name: Run real OS keyring acceptance
+        run: pnpm exec tsx apps/server/scripts/keyring-smoke.ts
+
+  codeql-ubuntu:
+    name: CodeQL analyze (JavaScript/TypeScript, build-mode none)
+    needs: [validate-inputs, pinned-tree-equality]
+    if: ${{ inputs.mode == 'publish' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout exact source tree
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source-sha }}
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: javascript-typescript
+          build-mode: none
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v4
+
+  release-module-tests:
+    name: Release module and CLI regression suite
+    needs: validate-inputs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact source tree
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source-sha }}
+      - name: Setup pnpm
+        uses: pnpm/setup@v1
+        with:
+          version: ">=12.0.0"
+          runtime: node@24
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24.x"
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Run release module regression suite
+        run: node --test scripts/release.test.mjs scripts/release/*.test.mjs
+
+  governance-docs-skills:
+    name: Docs and skills gates
+    needs: validate-inputs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact source tree
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source-sha }}
+      - name: Setup pnpm
+        uses: pnpm/setup@v1
+        with:
+          version: ">=12.0.0"
+          runtime: node@24
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24.x"
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Docs gates
+        run: |
+          pnpm docs:check
+          pnpm docs:test
+      - name: Skills gates
+        run: |
+          pnpm skills:test
+          pnpm skills:dependencies:test
+
+  docker-scope:
+    name: Docker scope (BLOCKED)
+    needs: [validate-inputs, pinned-tree-equality]
+    if: ${{ inputs.mode == 'publish' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact source tree
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source-sha }}
+      - name: Report BLOCKED Docker dependency (fail closed)
+        run: |
+          printf '%s\n' \
+            'BLOCKED_DOCKER_DEPENDENCY: zero Dockerfile/compose/GHCR/docker-action references;' \
+            'release image path has no basis yet (Task9). Publish remains BLOCKED.' \
+            >&2
+          exit 1
+
+  validation-summary:
+    name: Record exact run/check identity evidence
+    if: ${{ always() }}
+    needs:
+      - validate-inputs
+      - pinned-tree-equality
+      - quality-security-ubuntu-node24
+      - native-windows-node24
+      - native-linux-node24-selfhosted
+      - keyring-linux-windows-node24
+      - codeql-ubuntu
+      - release-module-tests
+      - governance-docs-skills
+      - docker-scope
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Assemble validation evidence
+        env:
+          MODE: ${{ inputs.mode }}
+          SOURCE_SHA: ${{ inputs.source-sha }}
+          CANDIDATE_SHA: ${{ inputs.candidate-sha }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          WORKFLOW_SHA: ${{ github.sha }}
+          TREE: ${{ needs.pinned-tree-equality.result }}
+          QS: ${{ needs.quality-security-ubuntu-node24.result }}
+          WIN: ${{ needs.native-windows-node24.result }}
+          LIN: ${{ needs.native-linux-node24-selfhosted.result }}
+          KR: ${{ needs.keyring-linux-windows-node24.result }}
+          CQ: ${{ needs.codeql-ubuntu.result }}
+          MOD: ${{ needs.release-module-tests.result }}
+          GOV: ${{ needs.governance-docs-skills.result }}
+          DKR: ${{ needs.docker-scope.result }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          cat > artifacts/release-validation-evidence.json <<EOF
+          {
+            "schemaVersion": 1,
+            "mode": "$MODE",
+            "sourceSha": "$SOURCE_SHA",
+            "candidateSha": "${CANDIDATE_SHA:-null}",
+            "workflowSha": "$WORKFLOW_SHA",
+            "runId": "$RUN_ID",
+            "runAttempt": "$RUN_ATTEMPT",
+            "jobs": {
+              "pinned-tree-equality": "$TREE",
+              "quality-security-ubuntu-node24": "$QS",
+              "native-windows-node24": "$WIN",
+              "native-linux-node24-selfhosted": "$LIN",
+              "keyring-linux-windows-node24": "$KR",
+              "codeql-ubuntu": "$CQ",
+              "release-module-tests": "$MOD",
+              "governance-docs-skills": "$GOV",
+              "docker-scope": "$DKR"
+            }
+          }
+          EOF
+          node -e "JSON.parse(require('fs').readFileSync('artifacts/release-validation-evidence.json','utf8'))"
+      - name: Upload validation evidence
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-validation-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/release-validation-evidence.json
+          if-no-files-found: error

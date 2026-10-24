@@ -1,0 +1,127 @@
+# plan-26 Task8 (part 1): the ONLY trusted manual PUBLISH/WITHDRAW/RESUME
+# writer. Every public release mutation is serialized through this workflow:
+#
+#   - one repository-level concurrency group for publish/withdraw/resume with
+#     cancel-in-progress: false (a queued run waits; the active run is never
+#     cancelled)
+#   - queue semantics are whatever GitHub provides: no FIFO/persistent pending
+#     queue is promised. Queue wait/termination/pending replacement or
+#     cancellation is observed through the Actions run status (pending ->
+#     in_progress) by the operator or the release CLI status readback.
+#   - finite job timeout; no unbounded queue or run
+#   - trusted minimal permissions: contents write (master ref/tag/Release
+#     mutation via git+API), packages write (GHCR package versions), actions
+#     read (validation run/check readback). Never write-all, nothing broader.
+#   - the release CLI (node scripts/release.mjs <mode> --operation <id>) is
+#     the only execution surface. Workflow inputs are untrusted and reach the
+#     shell only as quoted argv words via env variables — never as ${{ inputs.* }}
+#     interpolation inside run text. Child processes spawned by the CLI use
+#     validated argv and shell:false.
+#   - the checkout is the pinned workflow ref (the reviewed trusted script
+#     bundle). Candidate code is never checked out or executed here.
+#   - artifacts carry the OperationReport and the journal readback only; no
+#     secrets ever (journal has no credentials by contract).
+#
+# Modes: publish/rollback/resume/status are routed verbatim to the release CLI,
+# which validates them. Until Task8 part 2 binds reviewed identities and the
+# CLI publish mode is wired, unsupported modes fail closed (CLI exit 2 /
+# BLOCKED) — the writer never silently no-ops.
+
+name: Release operations
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation-id:
+        description: Canonical lowercase RFC 4122 UUID of the operation to drive (prepared + validated, or published for rollback).
+        required: true
+        type: string
+      mode:
+        description: Trusted writer intent; routed verbatim to the release CLI for validated argv.
+        required: true
+        type: choice
+        options:
+          - publish
+          - rollback
+          - resume
+          - status
+
+concurrency:
+  group: release-operations-publish-withdraw-resume
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  packages: write
+  actions: read
+
+jobs:
+  operate:
+    name: Execute trusted release operation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout trusted script bundle (pinned workflow ref — never candidate)
+        uses: actions/checkout@v6
+      - name: Setup pnpm
+        uses: pnpm/setup@v1
+        with:
+          version: ">=12.0.0"
+          runtime: node@24
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24.x"
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Execute release CLI (untrusted inputs -> validated argv)
+        env:
+          MODE: ${{ inputs.mode }}
+          OPERATION_ID: ${{ inputs.operation-id }}
+        run: |
+          set -o pipefail
+          mkdir -p artifacts
+          node scripts/release.mjs "$MODE" --operation "$OPERATION_ID" 2>&1 \
+            | tee artifacts/release-operation-report.json
+      - name: Record trusted run identity readback
+        env:
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          WORKFLOW_SHA: ${{ github.sha }}
+          MODE: ${{ inputs.mode }}
+          OPERATION_ID: ${{ inputs.operation-id }}
+        run: |
+          set -euo pipefail
+          cat > artifacts/release-operation-readback.json <<EOF
+          {
+            "schemaVersion": 1,
+            "runId": "$RUN_ID",
+            "runAttempt": "$RUN_ATTEMPT",
+            "workflowSha": "$WORKFLOW_SHA",
+            "mode": "$MODE",
+            "operationId": "$OPERATION_ID"
+          }
+          EOF
+          node -e "JSON.parse(require('fs').readFileSync('artifacts/release-operation-readback.json','utf8'))"
+      - name: Upload OperationReport
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-operation-report-${{ inputs.operation-id }}-${{ github.run_id }}
+          path: artifacts/release-operation-report.json
+          if-no-files-found: warn
+      - name: Upload run identity readback
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-operation-readback-${{ inputs.operation-id }}-${{ github.run_id }}
+          path: artifacts/release-operation-readback.json
+          if-no-files-found: warn
+      - name: Upload journal readback (state/events/inventory/gates/approval — no secrets)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-operation-journal-${{ inputs.operation-id }}-${{ github.run_id }}
+          path: .git/ebb-release/operations/${{ inputs.operation-id }}
+          if-no-files-found: warn
