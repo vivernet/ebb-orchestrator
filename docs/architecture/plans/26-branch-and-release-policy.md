@@ -1,7 +1,7 @@
 ---
 id: plan-26
 kind: plan
-status: proposed
+status: in_progress
 title: Политика веток и безопасных release snapshots
 summary: 'Переход на develop как default/integration ветку, отделение master snapshots и реализация проверяемой ручной публикации/withdrawal GitHub/GHCR без deployment.'
 created: 2026-10-24
@@ -10,7 +10,7 @@ updated: 2026-10-24
 
 # 26. Политика веток и безопасных release snapshots — Implementation Plan
 
-**Статус:** подготовленный план для preflight настоящего репозитория; implementation не выполнена.
+**Статус:** план выполняется (`in_progress`). Tasks 2–8 и 10 реализованы и прошли независимый review на verified HEAD `f6937f2` (chore/plan26): release CLI, policy/gates/snapshot/journal/operations модули, trusted exact-SHA validation workflow и единственный public writer с полными SHA pins. Task9 (Docker dependency) BLOCKED — approved Docker work отсутствует. Live acceptance Task11 НЕ выполнялась; публикация/withdrawal/resume остаются выключенными до Task11 gate acceptance и финального approval.
 **Goal:** перейти на develop как default/integration, отделить master snapshots и реализовать проверяемую ручную публикацию/withdrawal GitHub/GHCR без deployment.
 **Architecture:** portable Node CLI управляет pinned immutable operation; pure policy/snapshot/gates отделены от GitHub/GHCR adapters. Append-only reservation на develop — authoritative no-reuse record, journal в git-common-dir — recoverable cache. Public mutations выполняет один trusted manual serialized workflow; отдельный validation workflow даёт exact-SHA evidence.
 **Authority:** подтверждённая политика [branch-and-release-policy](../policies/branch-and-release-policy.md), актуальные root/scoped `AGENTS.md`, system design и roadmap после Task0; `ebb-release/references/release-tool-contract.md` и `rollback-recovery.md` внутри `.agents/skills/`.

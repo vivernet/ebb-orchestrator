@@ -375,14 +375,14 @@ test('rollback prepares inventory only: ROLLBACK_PREPARED, no deletion, refs unt
   await rm(dir, { recursive: true, force: true });
 });
 
-test('resume is BLOCKED until the mutation backend exists (Task8)', async () => {
+test('resume is BLOCKED until Task11 gate acceptance enables the pinned mutation backend', async () => {
   const dir = await makeWorkRepo();
   const run = runCli(['resume', '--operation', OP], { cwd: dir });
   assert.equal(run.status, 1, run.stdout);
   const report = parseReport(run);
   assert.equal(report.status, 'BLOCKED');
   assert.equal(report.mode, 'resume');
-  assert.ok(report.nextAction && String(report.nextAction).includes('Task8'));
+  assert.ok(report.nextAction && String(report.nextAction).includes('Task11'));
   await rm(dir, { recursive: true, force: true });
 });
 

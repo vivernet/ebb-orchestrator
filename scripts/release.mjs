@@ -6,7 +6,7 @@
 // - validate: evaluates gate evidence against the persisted plan; on success
 //   produces the ApprovalBundle (receipt confirmationHash stays null).
 // - rollback: by default prepares inventory, never deletes anything.
-// - resume: BLOCKED until the mutation backend exists (Task8).
+// - resume: BLOCKED until Task11 gate acceptance enables the pinned mutation backend.
 // - status: read-only reconciliation; never repairs.
 // Exit contract: 0 only for a verified stage success; 1 for BLOCKED/PARTIAL/
 // CONFLICT (incomplete mutation is never 0); 2 for malformed input. All child
@@ -539,10 +539,10 @@ function cmdResume(opts) {
         {
           code: 'RESUME_MUTATION_BACKEND',
           field: 'resume',
-          detail: 'the serialized mutation backend (trusted release-operations workflow) does not exist yet; resume is BLOCKED until Task8 binds it',
+          detail: 'the trusted release-operations workflow exists and is pinned; resume/publish execution remains disabled until Task11 gate acceptance and final approval',
         },
       ],
-      nextAction: 'Task8: create and pin the trusted release-operations workflow before resume is possible',
+      nextAction: 'Task11: complete full gate acceptance and final approval before resume/publish execution is enabled',
     }),
     1,
   );

@@ -743,19 +743,42 @@ function withdrawSteps(ctx, adapters, { now }) {
       id: 'ghcr-delete',
       kind: 'execute',
       reconcile: async () => {
+        const prior = ctx.state.steps['ghcr-delete'];
+        const recordedPartial =
+          prior?.status === 'requested' &&
+          Array.isArray(prior?.result?.deleted) && prior.result.deleted.length > 0 &&
+          Array.isArray(prior?.result?.remaining) && prior.result.remaining.length > 0;
+        // on resume after PARTIAL_GHCR_DELETION the approved scope is the
+        // remaining set; already-deleted versions must not be re-targeted
+        const pending = recordedPartial
+          ? targets.filter((target) => prior.result.remaining.includes(target.version))
+          : targets;
         const present = [];
-        for (const target of targets) {
+        for (const target of pending) {
           const v = await adapters.ghcr.readPublicVersion({ packageName: target.packageName, version: target.version });
           if (v) present.push(target);
         }
         if (present.length === 0) return { done: true, result: { deleted: targets.map((target) => target.version), remaining: [] } };
-        if (present.length < targets.length) {
+        if (!recordedPartial && present.length < targets.length) {
           return { conflict: true, blockers: [{ code: 'UNKNOWN_ARTIFACT_ID', field: 'ghcr', detail: 'partial remote presence does not match the approved deletion scope' }] };
         }
         return { done: false };
       },
       execute: async () => {
-        const result = await adapters.ghcr.deleteVersionObjects({ targets });
+        const prior = ctx.state.steps['ghcr-delete'];
+        const recordedPartial =
+          prior?.status === 'requested' &&
+          Array.isArray(prior?.result?.deleted) && prior.result.deleted.length > 0 &&
+          Array.isArray(prior?.result?.remaining) && prior.result.remaining.length > 0;
+        const pending = recordedPartial
+          ? targets.filter((target) => prior.result.remaining.includes(target.version))
+          : targets;
+        const present = [];
+        for (const target of pending) {
+          const v = await adapters.ghcr.readPublicVersion({ packageName: target.packageName, version: target.version });
+          if (v) present.push(target);
+        }
+        const result = await adapters.ghcr.deleteVersionObjects({ targets: present.length > 0 ? present : pending });
         if (result.status === 'BLOCKED') {
           throw new OperationError(result.refusal?.code ?? 'GHCR_SERVER_REFUSAL', `GHCR deletion refused for ${result.refusal?.version ?? 'target'}`);
         }

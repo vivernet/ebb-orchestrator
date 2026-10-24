@@ -6,7 +6,7 @@ title: Политика веток и публикаций Ebb
 
 # Политика веток и публикаций Ebb
 
-Статус: согласованный целевой контракт; переход и release tooling ещё должны быть реализованы и проверены по [Plan26](../plans/26-branch-and-release-policy.md). Наличие этого документа и skill не разрешает отсутствующим инструментам выполнять публикацию.
+Статус: согласованный целевой контракт. Release tooling реализован и проверен по [Plan26](../plans/26-branch-and-release-policy.md) (Tasks 2–8, 10 на verified HEAD `f6937f2`), однако публикация/withdrawal/resume остаются выключенными до live acceptance Task11 и финального approval; до этого наличие документа и tooling не разрешает никакие public release mutations.
 
 ## 1. Ветки и identities
 

@@ -1007,6 +1007,87 @@ test('withdraw GHCR deletion refusal after one success is PARTIAL; later Release
   await rm(dir, { recursive: true, force: true });
 });
 
+test('resume completes remaining GHCR deletions after PARTIAL_GHCR_DELETION', async () => {
+  const dir = await makeJournal();
+  const targets = [
+    { version: '1.0.0', packageName: 'ebb-orchestrator', digest: GHCR_DIGEST, platforms: ['linux/amd64'] },
+    { version: '1.0.0', packageName: 'ebb-orchestrator-extra', digest: GHCR_DIGEST_2, platforms: ['linux/arm64'] },
+  ];
+  const seeded = await seedOperation(dir, {
+    mode: 'withdraw', status: 'ROLLBACK_PREPARED', stage: 'rollback-prepared', oldMaster: 'ABSENT', root: true,
+    inventory: {
+      repositoryId: 1372710981,
+      refs: [
+        { ref: 'refs/heads/develop', sha: E },
+        { ref: 'refs/heads/master', sha: C },
+      ],
+      releases: [{ id: REL_ID, tag_name: 'v1.0.0', name: 'Release v1.0.0', draft: false, prerelease: false, assets: [] }],
+      assets: [],
+      packages: [{ id: 42, name: 'ebb-orchestrator', visibility: 'public', owner: 'vivernet' }],
+      versions: targets,
+      ociObjects: [
+        { version: '1.0.0', tag: 'v1.0.0', topDigest: GHCR_DIGEST, childDigests: [] },
+        { version: '1.0.0', tag: 'v1.0.0', topDigest: GHCR_DIGEST_2, childDigests: [] },
+      ],
+      ownership: { owner: 'vivernet', owned: true, public: true },
+      observedAt: '2026-10-24T11:59:00Z',
+    },
+  });
+  const remote = {
+    refs: [
+      { ref: 'refs/heads/develop', sha: E },
+      { ref: 'refs/heads/master', sha: C },
+      { ref: 'refs/tags/v1.0.0', sha: TAG_OBJ },
+    ],
+    parents: { [C]: [] },
+    publicVersions: new Map([
+      ['ebb-orchestrator@1.0.0', { digest: GHCR_DIGEST, labels: { version: '1.0.0' }, visibility: 'public' }],
+      ['ebb-orchestrator-extra@1.0.0', { digest: GHCR_DIGEST_2, labels: { version: '1.0.0' }, visibility: 'public' }],
+    ]),
+    releases: new Map([['v1.0.0', { id: REL_ID, tag_name: 'v1.0.0', html_url: 'https://github.com/vivernet/ebb-orchestrator/releases/tag/v1.0.0', assets: [] }]]),
+  };
+  // first attempt: provider deletes only the first target, refuses the second
+  const { adapters } = makeAdapters({
+    _state: remote,
+    ghcr: {
+      deleteVersionObjects: async ({ targets: t }) => ({
+        status: 'PARTIAL',
+        deleted: [t[0].version],
+        remaining: [t[1].version],
+        refusal: { code: 'GHCR_SERVER_REFUSAL', version: t[1].version },
+      }),
+    },
+  });
+  const first = await withdraw({
+    commonDir: dir, operationId: OP, config: CFG,
+    receipt: seeded.receipt, evidence: withdrawEvidence({ root: true }), runIdentity: runIdentityFixture(),
+    adapters, faults: noFaults, now: NOW,
+  });
+  assert.equal(first.status, 'PARTIAL');
+  assert.ok(first.blockers.some((blocker) => blocker.code === 'PARTIAL_GHCR_DELETION'));
+  // resume: the already-deleted version is absent remotely; only the remaining one is re-targeted
+  const remoteAfterPartial = {
+    refs: remote.refs,
+    parents: remote.parents,
+    publicVersions: new Map([['ebb-orchestrator-extra@1.0.0', { digest: GHCR_DIGEST_2, labels: { version: '1.0.0' }, visibility: 'public' }]]),
+    releases: remote.releases,
+  };
+  const { adapters: againAdapters, log: againLog } = makeAdapters({ _state: remoteAfterPartial });
+  const again = await resume({
+    commonDir: dir, operationId: OP, config: CFG,
+    receipt: seeded.receipt, evidence: withdrawEvidence({ root: true }), runIdentity: runIdentityFixture(),
+    adapters: againAdapters, faults: noFaults, now: NOW,
+  });
+  assert.equal(again.status, 'ROLLED_BACK', JSON.stringify(again.blockers));
+  const deletes = againLog.filter((entry) => entry.slot === 'ghcr' && entry.name === 'delete');
+  assert.equal(deletes.length, 1);
+  assert.deepEqual(deletes[0].payload.targets, [targets[1]]);
+  const state = await readJson(dir, 'state.json');
+  assert.equal(state.status, 'ROLLED_BACK');
+  assert.deepEqual(state.steps['ghcr-delete'].result.remaining, []);
+  await rm(dir, { recursive: true, force: true });
+});
+
 test('withdraw provider refusal before any success is BLOCKED; Release/refs untouched', async () => {
   const dir = await makeJournal();
   const seeded = await seedOperation(dir, { mode: 'withdraw', status: 'ROLLBACK_PREPARED', stage: 'rollback-prepared', oldMaster: 'ABSENT', root: true });
