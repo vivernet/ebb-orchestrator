@@ -139,6 +139,19 @@
       "blocker": "BLOCKED_DOCKER_DEPENDENCY: no Docker/GHCR basis in repo"
     }
   ],
+  "canonicalVersionSource": {
+    "kind": "release-json",
+    "path": "release.json",
+    "schema": {
+      "version": "<stable SemVer>"
+    },
+    "note": "fallback reviewed contract per plan-26 Task3; root package.json is private and does not substitute for the canonical version"
+  },
+  "reservationLedger": {
+    "path": "docs/releases/version-reservations.json",
+    "schemaVersion": 1,
+    "note": "append-only no-reuse ledger on protected develop; versions are consumed forever even after removal/cancellation"
+  },
   "mutationPolicy": {
     "requiresBindingStatus": "bound",
     "requiresTrustedBindingsFullSha": true,
