@@ -193,27 +193,30 @@ export function buildProviderRequest(
 
 /**
  * Прикрепляет секретный credential к подготовленному запросу (схема auth).
- * Значение заголовка может быть Buffer (общая память с байтами credential),
- * чтобы избежать необнуляемой строковой копии секрета; query-схема требует
- * строку в URL (GC-only участок).
+ * Значение credential принимается только как `Uint8Array` (Buffer) — байты
+ * секрета, — чтобы не создавать необнуляемых строковых копий в заголовках.
+ * Для header/bearer-схем Buffer-значения либо разделяют память с исходным
+ * credential, либо являются его Buffer-копией (обнуляемой после использования);
+ * query-схема требует строку в URL (неизбежный GC-only участок) — конвертация
+ * выполняется здесь через `TextDecoder` без промежуточной копии наружу.
  */
 export function attachCredentialToRequest(
   request: ProviderPreparedRequest,
-  credentialHeaderValue: string | Buffer | null,
+  credentialHeaderValue: Uint8Array | null,
 ): { url: string; headers: Record<string, string | Buffer>; body: string | null } {
   const headers: Record<string, string | Buffer> = { ...request.headers };
   let url = request.url;
   if (request.auth.kind === "bearer") {
     if (credentialHeaderValue === null) throw new ProviderRuntimeError("AUTH_DEVICE_FLOW_TOKEN_MISSING");
-    headers.authorization = Buffer.isBuffer(credentialHeaderValue)
-      ? Buffer.concat([Buffer.from("Bearer "), credentialHeaderValue])
-      : `Bearer ${credentialHeaderValue}`;
+    headers.authorization = Buffer.concat([Buffer.from("Bearer "), credentialHeaderValue]);
   } else if (request.auth.kind === "header") {
-    headers[request.auth.headerName] = credentialHeaderValue ?? "";
+    headers[request.auth.headerName] = credentialHeaderValue === null
+      ? ""
+      : Buffer.from(credentialHeaderValue.buffer, credentialHeaderValue.byteOffset, credentialHeaderValue.byteLength);
   } else if (request.auth.kind === "query") {
     if (credentialHeaderValue === null) throw new ProviderRuntimeError("AUTH_DEVICE_FLOW_TOKEN_MISSING");
     const parsed = new URL(request.url);
-    parsed.searchParams.set(request.auth.paramName, credentialHeaderValue.toString("utf8"));
+    parsed.searchParams.set(request.auth.paramName, new TextDecoder().decode(credentialHeaderValue));
     url = parsed.toString();
   }
   return { url, headers, body: request.body };

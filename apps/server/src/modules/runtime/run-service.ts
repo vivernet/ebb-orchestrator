@@ -76,6 +76,16 @@ export interface HermesRunPreflight {
   cleanup(): Promise<void>;
   isCommitted(): boolean;
 }
+
+/** Фабрика provider-рантайма (plan-24 Task 7): создаёт экземпляр `AgentRuntime`
+ * для Runs с durable выбором провайдера. Опциональна: без неё выбор провайдера
+ * остаётся fail-closed (`PROVIDER_RUN_SELECTION_UNSUPPORTED_BY_RUNTIME`).
+ * Фабрика получает резолвер selection по runId (чтение durable
+ * `run_provider_selections` из SQLite) и должна вернуть рантайм, потребляющий
+ * `AgentRuntimeRun.providerSelection`/резолвер. */
+export type ProviderRuntimeFactory = (
+  selectionResolver: (runId: string) => RunProviderSelectionRecord | undefined,
+) => AgentRuntime;
 /** Проверенные production hooks recovery; вызываются только для исходного durable Run/session. */
 export interface RunRecoveryHooks {
   /** Перепроверяет READY, исходный context fingerprint и доступный workspace; не dispatch-ит runtime. */
@@ -181,6 +191,8 @@ export class RunService {
   private readonly runSelections = new Map<string, HermesRuntimeSelection>();
   private readonly pendingRunSelections = new Map<string, HermesRuntimeSelection>();
   private readonly resumingRuns = new Set<string>();
+  /** Единый лениво созданный provider-рантайм (plan-24 Task 7). */
+  private providerRuntimeInstance: AgentRuntime | undefined;
 
   constructor(
     private readonly db: Database,
@@ -190,6 +202,7 @@ export class RunService {
     private readonly agentEvents: AgentEventSink = new AgentEventBus(),
     private readonly tracingStore: ITracingStore = new TracingStore(db),
     private readonly providerSettingsRepository: ProviderSettingsRepository = createProviderSettingsRepository(db),
+    private readonly providerRuntimeFactory?: ProviderRuntimeFactory,
   ) {
     this.contextAssembler = contextAssembler;
     const capturePort = asHermesSessionCapturePort(runtime);
@@ -719,9 +732,10 @@ export class RunService {
       const input = this.contextInput(options);
       this.assertEffectiveCapabilities(options, input);
       const resolvedProvider = this.resolveProviderSelectionForRun(tx, options);
-      // Fail-closed до любых записей: runtime, не потребляющий provider-привязку,
-      // не может выполнить Run с разрешённым выбором провайдера.
-      if (resolvedProvider && !this.runtime.supportsProviderSelections) {
+      // Fail-closed до любых записей: без поддержки provider-привязки (ни через
+      // runtime, ни через фабрику provider-рантайма) Run с разрешённым выбором
+      // провайдера не может быть выполнен.
+      if (resolvedProvider && !this.providerRuntimeSupported()) {
         throw new Error("PROVIDER_RUN_SELECTION_UNSUPPORTED_BY_RUNTIME");
       }
       const recomputed = this.prepareContextWithFingerprint(tx, input, undefined, resolvedProvider ?? undefined);
@@ -912,7 +926,7 @@ export class RunService {
     // Readiness barrier не возвращает Run до завершения adapter launch preparation.
     try {
       this.assertDurablePreparedRun(record);
-      await this.runtime.startRun(this.runtimeRun(record));
+      await this.runtimeForRun(record.id).startRun(this.runtimeRun(record));
     } catch (error) {
       this.failRun(record.id, error);
       throw error;
@@ -931,7 +945,7 @@ export class RunService {
     }
     try {
       this.assertDurablePreparedRun(run);
-      await this.runtime.startRun(this.runtimeRun(run));
+      await this.runtimeForRun(run.id).startRun(this.runtimeRun(run));
     } catch (error) {
       this.failRun(run.id, error);
       throw error;
@@ -997,7 +1011,7 @@ export class RunService {
       return prepared;
     });
     if (!run) return undefined;
-    try { await this.runtime.startRun(this.runtimeRun(run)); }
+    try { await this.runtimeForRun(run.id).startRun(this.runtimeRun(run)); }
     catch (error) { this.failRun(run.id, error); throw error; }
     this.emitAgentEvent({ type: "run_started", runId: run.id, occurredAt: new Date().toISOString() });
     return this.collectRuntimeResult(run);
@@ -1006,8 +1020,9 @@ export class RunService {
   /** Принимает результат только из authenticated submit_result после доказанной остановки runtime; сохраняет доступный usage. */
   private async collectRuntimeResult(run: AgentRun): Promise<{ run: AgentRun; outcome: RunOutcome }> {
     let failureExitCode: number | undefined;
+    const runtime = this.runtimeForRun(run.id);
     try {
-      const outcome = enrichDiagnosticsWithProviderError(await this.runtime.collectResult(run.id));
+      const outcome = enrichDiagnosticsWithProviderError(await runtime.collectResult(run.id));
       if (outcome.validatedSubmission !== true) {
         failureExitCode = Number.isSafeInteger(outcome.exitCode) ? outcome.exitCode : -1;
         const diagnosticsMatch = outcome.diagnostics?.runId === run.id &&
@@ -1024,7 +1039,7 @@ export class RunService {
           };
           await this.collectResult(run.id, recoveredOutcome);
           try {
-            await this.collectUsage(run.id, await this.runtime.collectUsage(run.id));
+            await this.collectUsage(run.id, await runtime.collectUsage(run.id));
           } catch {
             // использование является optional для runtimes который не expose it.
           }
@@ -1042,7 +1057,7 @@ export class RunService {
       }
       await this.collectResult(run.id, outcome);
       try {
-        await this.collectUsage(run.id, await this.runtime.collectUsage(run.id));
+        await this.collectUsage(run.id, await runtime.collectUsage(run.id));
       } catch {
         // использование является optional для runtimes который не expose it.
       }
@@ -1074,6 +1089,35 @@ export class RunService {
       listProviderConfigurations: () => this.providerSettingsRepository.listProviderConfigurationsTx(source),
       getCredentialMetadata: (providerId, authMethodId) => this.providerSettingsRepository.getCredentialMetadataTx(source, providerId, authMethodId),
     };
+  }
+
+  /** Поддерживает ли текущая композиция Runs с выбором провайдера. */
+  private providerRuntimeSupported(): boolean {
+    return this.runtime.supportsProviderSelections === true || this.providerRuntimeFactory !== undefined;
+  }
+
+  /** Единый provider-рантайм, лениво создаваемый фабрикой при первой потребности. */
+  private providerRuntimeRuntime(): AgentRuntime {
+    if (this.providerRuntimeInstance) return this.providerRuntimeInstance;
+    const factory = this.providerRuntimeFactory;
+    if (!factory) throw new Error("PROVIDER_RUN_SELECTION_UNSUPPORTED_BY_RUNTIME");
+    this.providerRuntimeInstance = factory((runId) => this.providerSettingsRepository.getRunSelection(runId));
+    return this.providerRuntimeInstance;
+  }
+
+  /**
+   * Возвращает runtime для dispatch конкретного Run (plan-24 Task 7):
+   * provider-рантайм (из фабрики), если у Run есть durable выбор провайдера и
+   * Hermes-рефолт его не поддерживает; иначе — рантайм по умолчанию.
+   * Переключение происходит только по явной durable привязке; без поддержки
+   * вызов завершается fail-closed ошибкой.
+   */
+  private runtimeForRun(runId: string): AgentRuntime {
+    const hasSelection = this.providerSettingsRepository.getRunSelection(runId) !== undefined;
+    if (hasSelection && this.runtime.supportsProviderSelections !== true) {
+      return this.providerRuntimeRuntime();
+    }
+    return this.runtime;
   }
 
   /**
@@ -1249,10 +1293,10 @@ export class RunService {
         }
       }
       // Исходный durable выбор провайдера читается из SQLite (run_provider_selections)
-      // и никогда не принимается от вызывающего кода; runtime без поддержки
+      // и никогда не принимается от вызывающего кода; композиция без поддержки
       // provider-привязки не может возобновить такой Run (fail-closed, без replay).
       const resumeProviderSelection = this.providerSettingsRepository.getRunSelection(runId);
-      if (resumeProviderSelection && !this.runtime.supportsProviderSelections) {
+      if (resumeProviderSelection && !this.providerRuntimeSupported()) {
         throw new Error("PROVIDER_RUN_SELECTION_UNSUPPORTED_BY_RUNTIME");
       }
       const sessionId = this.db.transaction((tx) => {
@@ -1348,7 +1392,7 @@ export class RunService {
       if (resumeSelection) this.runSelections.set(runId, resumeSelection);
 
       try {
-        await this.runtime.resumeRun(runId, { sessionId, attempt: options.attempt,
+        await this.runtimeForRun(runId).resumeRun(runId, { sessionId, attempt: options.attempt,
           ...(resumeSelection ? { hermesSelection: resumeSelection } : {}),
           ...(resumeProviderSelection ? { providerSelection: resumeProviderSelection } : {}) });
       } catch (error) {
@@ -1439,7 +1483,7 @@ export class RunService {
     const stopProofRequired = ["STARTED", "IN_PROGRESS", "COMPLETING"].includes(current.status);
     if (stopProofRequired) {
       // Keep the durable Run/capability active if the exact OS scope cannot be stopped.
-      await this.runtime.cancelRun(runId);
+      await this.runtimeForRun(runId).cancelRun(runId);
     }
     const cancelled = this.db.transaction((tx) => {
       const stored = tx.get<{ id: string; status: string; task_id: string | null }>(
@@ -1487,7 +1531,7 @@ export class RunService {
       "SELECT id FROM agent_runs WHERE status IN ('STARTED','IN_PROGRESS','COMPLETING') ORDER BY id",
     );
     await Promise.all(activeRuns.map(async ({ id }) => {
-      await this.runtime.cancelRun(id);
+      await this.runtimeForRun(id).cancelRun(id);
       let owner = getRunProcessOwner(this.db, id);
       if (owner?.state === "PREPARED") {
         this.db.transaction((tx) => transitionRunProcessOwnerTx(tx, {

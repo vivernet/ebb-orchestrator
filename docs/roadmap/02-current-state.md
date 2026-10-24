@@ -4,7 +4,7 @@ status: current
 kind: roadmap
 title: Текущая сверка и последовательность закрытия работ
 created: 2026-09-28
-updated: 2026-10-23
+updated: 2026-10-24
 ---
 
 # Текущая сверка и последовательность закрытия работ
@@ -150,3 +150,10 @@ Production run `37862703264` завершился `FAILURE`, несмотря н
 - Review подтверждает, что ключи провайдеров хранятся только в `EBB_ORCHESTRATOR_HOME/.env` и не размещаются в корневом `.env`, SecretStore или репозитории, а `pnpm hermes:check` не заявлена как provider probe. Критерий 405 не закрыт: `README.md:254–257` и `:322–324` требуют отдельный Hermes home/копию для `pnpm hermes:setup`, что конфликтует с требованием использовать уже настроенный Hermes auth. Plan20 Task7 владеет финальной инструкцией per-Run; до его завершения эти предупреждения требуют согласованного исправления, без копирования credentials или повторной настройки provider.
 - Неблокирующее замечание: `docs/development/05-hermes.md` содержит `updated: 2026-09-23`, хотя guide менялся 2026-10-03; проверить/обновить при следующей редакции. Review был read-only: чекбоксы, файлы и lifecycle status Plan16 не менялись.
 - После этого review дата Plan16 синхронизирована с последним изменением `2026-10-07`; точный PowerShell snippet, `pnpm docs:check`, `pnpm docs:test` (20/20), `pnpm docs:inventory` (76 файлов), roadmap dry-run (34 Plan), проверки `.gitignore`/source tests и `git diff --check` прошли. По этому evidence отмечены только acceptance criteria 404, 406 и 407; 405 и 408 остаются открытыми, статус `blocked` сохранён.
+
+## Дополнение от 2026-10-24 — plan-24: интеграция provider-runtime и документация
+
+- Plan-24 Task 7: provider-рантайм подключён к production RunService. Фабрика `ProviderAgentRuntime` из composition (secretStore, настройки провайдеров, сетевой шлюз, реестр адаптеров, загрузчик capability, `DatabaseCompletionStore`, честное доказательство остановки `NEVER_LAUNCHED`) используется для Runs с durable выбором провайдера; Runs без выбора сохраняют Hermes-дефолт. Resume provider-Run остаётся недоступным (`PROVIDER_RESUME_UNAVAILABLE`) и завершается `FAILED` без повторного платного запроса.
+- Каталог из 86 провайдеров управляется через Web (Settings → «ИИ-провайдеры и модели»); credentials хранятся только в OS SecretStore (keyring); `EBB_ORCHESTRATOR_HOME/.env` для ключей провайдеров больше не используется. README, `docs/development/05-hermes.md` и этот документ обновлены.
+- Live-provider smoke остаётся `NOT RUN` до явного разрешения пользователя; provider-free acceptance на mock-апстримах (полный lifecycle, resume fail-closed, cancel, отсутствие fallback, legacy-регрессия) добавлена в серверный suite.
+- Plan-23 YAML `title` закавычен (незакавыченный двоеточие ломал парсинг); валидаторы метаданных планов (`docs-governance.mjs`, `roadmap-generator-cli.mjs`) принимают поле `proposals` (используется plan-23/24). `pnpm docs:roadmap -- --dry-run` проходит.

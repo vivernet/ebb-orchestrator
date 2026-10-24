@@ -191,7 +191,7 @@ const runService: RunService = new RunService(database, runtime, undefined, {
       previousAttempt: input.previousAttempt,
     });
   },
-}, agentEventBus);
+}, agentEventBus, undefined, undefined, production.providerAgentRuntimeFactory);
 const runtimeOrchestrator = new RuntimeOrchestrator(database, workflowEngine, eventBus, eventDispatcher, scheduler, runService, () => status.get() === "READY");
 runtimeOrchestrator.initialize();
 const planningService = new PlanningService(database);

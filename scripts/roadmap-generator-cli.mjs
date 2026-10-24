@@ -20,11 +20,11 @@ function parsePlan(content, source) {
   const metadata = yaml.load(match[1], { schema: yaml.JSON_SCHEMA });
   if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) throw new Error(`${source}: metadata must be an object`);
   const required = ['id', 'kind', 'status', 'title', 'created', 'updated'];
-  const optional = ['summary', 'depends_on', 'specs', 'evidence'];
+  const optional = ['summary', 'depends_on', 'specs', 'evidence', 'proposals'];
   for (const field of [...required, ...optional]) {
     if (!Object.hasOwn(metadata, field)) continue;
     if (['id', 'title', 'summary'].includes(field) && typeof metadata[field] !== 'string') throw new Error(`${source}: ${field} must be a string`);
-    if (['depends_on', 'specs', 'evidence'].includes(field) && (!Array.isArray(metadata[field]) || !metadata[field].every((value) => typeof value === 'string'))) throw new Error(`${source}: ${field} must be a string array`);
+    if (['depends_on', 'specs', 'evidence', 'proposals'].includes(field) && (!Array.isArray(metadata[field]) || !metadata[field].every((value) => typeof value === 'string'))) throw new Error(`${source}: ${field} must be a string array`);
   }
   for (const field of required) if (!Object.hasOwn(metadata, field)) throw new Error(`${source}: missing ${field}`);
   for (const field of Object.keys(metadata)) if (![...required, ...optional].includes(field)) throw new Error(`${source}: unknown field ${field}`);

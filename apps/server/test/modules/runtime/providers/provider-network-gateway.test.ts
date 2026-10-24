@@ -72,6 +72,7 @@ describe("provider-network-gateway: запрещённые диапазоны", 
     ["127.0.0.1", "loopback-127"],
     ["10.0.0.1", "private-10"],
     ["100.64.0.1", "cgnat-100.64"],
+    ["100.100.100.200", "cloud-metadata"],
     ["169.254.169.254", "cloud-metadata"],
     ["172.16.0.1", "private-172.16"],
     ["192.168.1.1", "private-192.168"],
@@ -108,6 +109,15 @@ describe("provider-network-gateway: запрещённые диапазоны", 
       gateway.execute({
         method: "POST",
         url: "https://[fd00:ec2::254]/latest/meta-data",
+        headers: {},
+        allowPrivateDestination: true,
+      }),
+    ).rejects.toThrow(/FORBIDDEN-DESTINATION/);
+    // Alibaba Cloud IMDS (100.100.100.200) блокируется всегда
+    await expect(
+      gateway.execute({
+        method: "POST",
+        url: "https://100.100.100.200/latest/meta-data",
         headers: {},
         allowPrivateDestination: true,
       }),
@@ -271,6 +281,65 @@ describe("provider-network-gateway: redirect-политика", () => {
     await expect(
       gw.execute({ method: "POST", url: "https://a.example.com/v1", headers: {}, followRedirects: true }),
     ).rejects.toThrow(/REDIRECT-POLICY/);
+  });
+
+  it("cross-host redirect снимает секретные заголовки (Authorization/API-key/cookie)", async () => {
+    let hop = 0;
+    const { connect, calls } = fakeConnect((_params) => {
+      hop += 1;
+      if (hop === 1) return { status: 302, headers: { location: "https://b.example.com/v2" } };
+      return { status: 200, body: "{}" };
+    });
+    const gw = new ProviderNetworkGateway({}, {
+      lookup: lookupFor({ "a.example.com": [PUBLIC_IP], "b.example.com": [PUBLIC_IP] }),
+      connect,
+    });
+    await gw.execute({
+      method: "POST",
+      url: "https://a.example.com/v1",
+      headers: {
+        authorization: "Bearer sk-secret",
+        "x-api-key": "abc123",
+        cookie: "session=secret",
+        "content-type": "application/json",
+        "x-custom": "public",
+      },
+      followRedirects: true,
+    });
+    expect(calls.length).toBe(2);
+    const second = calls[1]!.headers;
+    expect(second.authorization).toBeUndefined();
+    expect(second["x-api-key"]).toBeUndefined();
+    expect(second.cookie).toBeUndefined();
+    expect(second["content-type"]).toBe("application/json");
+    expect(second["x-custom"]).toBe("public");
+  });
+
+  it("same-host redirect сохраняет секретные заголовки", async () => {
+    let hop = 0;
+    const { connect, calls } = fakeConnect((_params) => {
+      hop += 1;
+      if (hop === 1) return { status: 302, headers: { location: "https://a.example.com/v2" } };
+      return { status: 200, body: "{}" };
+    });
+    const gw = new ProviderNetworkGateway({}, {
+      lookup: lookupFor({ "a.example.com": [PUBLIC_IP] }),
+      connect,
+    });
+    await gw.execute({
+      method: "POST",
+      url: "https://a.example.com/v1",
+      headers: {
+        authorization: "Bearer sk-secret",
+        "x-api-key": "abc123",
+        "content-type": "application/json",
+      },
+      followRedirects: true,
+    });
+    expect(calls.length).toBe(2);
+    expect(calls[1]!.headers.authorization).toBe("Bearer sk-secret");
+    expect(calls[1]!.headers["x-api-key"]).toBe("abc123");
+    expect(calls[1]!.headers["content-type"]).toBe("application/json");
   });
 });
 

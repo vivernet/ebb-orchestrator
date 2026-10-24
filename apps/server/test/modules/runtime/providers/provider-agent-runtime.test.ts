@@ -139,9 +139,9 @@ class FakeSettingsRepository implements Pick<ProviderSettingsRepository, "getCon
 }
 
 class FakeGateway {
-  public calls: Array<{ url: string; headers: Record<string, string>; body?: string }> = [];
+  public calls: Array<{ url: string; headers: Record<string, string | Buffer>; body?: string }> = [];
   public responses: Array<{ status: number; body: string } | Error | ((spec: { signal?: AbortSignal }) => Promise<{ status: number; body: string }>)> = [];
-  public async execute(spec: { method: string; url: string; headers: Record<string, string>; body?: string; signal?: AbortSignal }) {
+  public async execute(spec: { method: string; url: string; headers: Record<string, string | Buffer>; body?: string; signal?: AbortSignal }) {
     this.calls.push({
       url: spec.url,
       headers: spec.headers,
@@ -372,6 +372,26 @@ describe("ProviderAgentRuntime: credentials", () => {
     expect(outcome.success).toBe(false);
     expect(outcome.diagnostics?.providerError?.code).toBe("AUTH_INVALID_CREDENTIALS");
     expect(gateway.calls.length).toBe(0);
+  });
+
+  it("bearer-заголовок (Buffer) обнуляется после запроса", async () => {
+    const { gateway, runtime, selection, run } = setup({
+      scenarios: [
+        {
+          toolCalls: [
+            { id: "call_1", name: "submit_result", args: JSON.stringify({ payload: DEVELOPER_SUBMISSION }) },
+          ],
+          finish: "tool_calls",
+        },
+      ],
+    });
+    await runtime.startRun({ ...run, providerSelection: selection });
+    expect(gateway.calls.length).toBe(1);
+    const authorization = gateway.calls[0]!.headers.authorization;
+    expect(Buffer.isBuffer(authorization)).toBe(true);
+    for (const byte of authorization as Buffer) {
+      expect(byte).toBe(0);
+    }
   });
 });
 

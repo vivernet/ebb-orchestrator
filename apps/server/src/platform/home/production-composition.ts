@@ -42,6 +42,8 @@ import { ProviderAuthFlowService } from "../../modules/runtime/providers/auth/pr
 import { PROVIDER_ADAPTER_REGISTRY } from "../../modules/runtime/providers/adapters/registry.js";
 import { ProviderAgentRuntime } from "../../modules/runtime/providers/provider-agent-runtime.js";
 import { loadValidatedCapability } from "../../modules/execution/capability-validation.js";
+import { DatabaseCompletionStore } from "../../modules/execution/mcp/submit-result-tool.js";
+import { transitionRunProcessOwnerTx } from "../../modules/runtime/run-process-owner.js";
 import type { RunProviderSelectionRecord } from "../../modules/runtime/providers/provider-settings-repository.js";
 
 /** Зависимости для построения production adapters без старта процессов. */
@@ -143,7 +145,8 @@ export function createProductionComposition(options: ProductionCompositionOption
     });
   const artifactStore = new ArtifactStore(home.artifacts, new ArtifactRepository(database));
 
-  /** provider-рантайм (plan-24 Task 3): доступность регистрируется без смены дефолта RunService. */
+  /** provider-рантайм (plan-24 Task 7): фабрика, потребляемая RunService для Runs
+   * с durable выбором провайдера. Требует SecretStore (fail-closed без keyring). */
   const providerSettingsRepository = createProviderSettingsRepository(database);
   const providerGateway = new ProviderNetworkGateway();
   const providerAgentRuntimeFactory = (selectionResolver: (runId: string) => RunProviderSelectionRecord | undefined) => {
@@ -156,8 +159,25 @@ export function createProductionComposition(options: ProductionCompositionOption
       credentialStore,
       settingsRepository: providerSettingsRepository,
       registry: PROVIDER_ADAPTER_REGISTRY,
+      // Authenticated submit_result фиксирует COMPLETING и результат в той же SQLite
+      // (единый DatabaseCompletionStore с RunService), иначе сбор результата невозможен.
+      completion: new DatabaseCompletionStore(database),
       loadCapability: (capabilityRef) => loadValidatedCapability(database, capabilityRef),
       selectionResolver,
+      // Provider-рантайм не запускает OS-процесс: при завершении Run фиксируем
+      // честное доказательство NEVER_LAUNCHED (PREPARED → STOPPED) для гейтов
+      // STOPPED-proof RunService.
+      stopProof: {
+        markNeverLaunched: (runId) => {
+          try {
+            database.transaction((tx) => transitionRunProcessOwnerTx(tx, {
+              runId, expectedState: "PREPARED", nextState: "STOPPED", evidence: "NEVER_LAUNCHED",
+            }));
+          } catch {
+            // Гейт STOPPED-proof ниже сам завершится fail-closed при отсутствии proof.
+          }
+        },
+      },
     });
   };
 
@@ -266,7 +286,8 @@ export function createProductionComposition(options: ProductionCompositionOption
     processExecutor,
     processScopeSupervisor,
     gitReconciler,
-    /** Доступность ProviderAgentRuntime (plan-24 Task 3); RunService-дефолт не меняется. */
+    /** Фабрика ProviderAgentRuntime для Runs с выбором провайдера (plan-24 Task 7);
+     * потребляется RunService; Hermes остаётся дефолтом. */
     providerAgentRuntimeFactory,
     providerSettingsRepository,
     providerGateway,

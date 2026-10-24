@@ -117,9 +117,11 @@ pnpm test
 
 Перед первым запуском AI-роли установите Hermes CLI по разделу
 [Первый запуск Hermes](#первый-запуск-hermes). Выбор ИИ-провайдера/модели
-выполняется в Ebb (Settings): API-ключи хранятся только в
-`EBB_ORCHESTRATOR_HOME/.env`, пользовательские Hermes secrets не читаются и не
-копируются.
+выполняется в Ebb (Settings → «ИИ-провайдеры и модели»): каталог из 86
+провайдеров управляется через Web, а ключи/токены провайдеров хранятся только в
+OS SecretStore (keyring) и никогда — в `EBB_ORCHESTRATOR_HOME/.env`, корневом
+`.env`, SQLite, логах или артефактах. Пользовательские Hermes secrets не читаются
+и не копируются.
 
 Запустить backend в режиме разработки:
 
@@ -277,9 +279,10 @@ curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
 ОС отдельно подтверждается platform acceptance и пока не завершена для всех ОС.
 
 Для Runs Ebb не требует настройки провайдера в Hermes: выбор ИИ-провайдера/
-модели принадлежит Ebb (Settings → «ИИ-провайдеры и модели», built-in
-провайдеры Hermes), а API-ключи хранятся только в
-`EBB_ORCHESTRATOR_HOME/.env`. Пользовательские Hermes home/profile/config/auth не
+модели принадлежит Ebb (Settings → «ИИ-провайдеры и модели», каталог из 86
+провайдеров), а ключи/токены провайдеров хранятся только в OS SecretStore
+(keyring) и не попадают в `EBB_ORCHESTRATOR_HOME/.env`, SQLite, логи,
+артефакты или репозиторий. Пользовательские Hermes home/profile/config/auth не
 читаются, не копируются и не меняются; интерактивные команды `hermes model` /
 `hermes auth` для Ebb не используются.
 
@@ -312,9 +315,9 @@ home/profile; это не настраивает provider и не требует
 Далее запустите backend и Web UI по разделу [Быстрый старт](#быстрый-старт).
 Корневой `.env` необязателен и содержит только настройки приложения Ebb
 (например, `EBB_ORCHESTRATOR_HOME` и `PORT`); `model=default` означает модель по
-умолчанию из реестра Ebb. Ключи ИИ-провайдеров хранятся только в
-`EBB_ORCHESTRATOR_HOME/.env` (изолированно от репозитория) и не попадают в
-корневой `.env`/`.env.example`, SecretStore, SQLite, логи или артефакты.
+умолчанию из реестра Ebb. Ключи ИИ-провайдеров хранятся только в OS SecretStore
+(keyring) и не попадают в корневой `.env`/`.env.example`,
+`EBB_ORCHESTRATOR_HOME/.env`, SQLite, логи или артефакты.
 Production Runs используют выбранный в Ebb провайдер/модель.
 Подтверждены один Windows provider Run (Task5B slice) и Windows same-Run/session
 restart acceptance (Task5C, 1/1); полные Plan20 gates, Linux/macOS acceptance и
@@ -369,17 +372,18 @@ Runs и предложенный план в локальной базе; одо
   или исправьте `PATH` для процесса Ebb; после изменения `PATH` перезапустите
   backend. `hermes:check` подтверждает наличие CLI и проектные prerequisites,
   но не проверяет provider.
-- **Provider/model не выбран или выбор неоднозначен:** выберите built-in
-  провайдера и модель в Web UI (Settings → «ИИ-провайдеры и модели»); список
-  моделей ограничен реестром Ebb (`openai-api`, `anthropic` и т.д.).
-  Убедитесь, что ключ выбранного провайдера находится в
-  `EBB_ORCHESTRATOR_HOME/.env`. `model=default` означает модель по умолчанию
-  из реестра Ebb.
-- **Ошибка auth или refresh:** проверьте ключ провайдера в
-  `EBB_ORCHESTRATOR_HOME/.env` (он не передаётся через корневой `.env`,
-  SecretStore или репозиторий) и повторите Hermes smoke test. Пользовательский
-  Hermes профиль/config/auth не читаются, не копируются и не меняются; не
-  публикуйте credential.
+- **Provider/model не выбран или выбор неоднозначен:** выберите провайдера и
+  модель в Web UI (Settings → «ИИ-провайдеры и модели»); каталог Ebb содержит
+  86 провайдеров, список моделей ограничен реестром Ebb. Убедитесь, что провайдер
+  включён и для выбранного auth-метода сохранён credential в OS SecretStore
+  (через Web-форму; ключи в `.env` не читаются). `model=default` означает модель
+  по умолчанию из реестра Ebb.
+- **Ошибка auth или refresh:** проверьте credential провайдера в Web
+  (Settings → провайдер) — он хранится только в OS SecretStore (keyring) и не
+  передаётся через корневой `.env`, `EBB_ORCHESTRATOR_HOME/.env`, SQLite или
+  репозиторий — и повторите Hermes smoke test. Пользовательский Hermes
+  профиль/config/auth не читаются, не копируются и не меняются; не публикуйте
+  credential.
 - **CLI/path/launch ошибка:** проверьте, что `hermes --version` работает из
   того же окружения, откуда запущен backend. Коды `HERMES_LAUNCHER_NOT_FOUND`,
   `HERMES_PATH_IDENTITY_INVALID` и `HERMES_EBB_MCP_REGISTRATION_FAILED` указывают
@@ -566,12 +570,12 @@ cp .env.example .env
 
 Секреты интеграций Ebb Orchestrator, например GitHub или Infisical, не храните
 в `.env` или Git; в production передавайте их через защищённое окружение или
-secret manager. Выбор ИИ-провайдера/модели для Runs принадлежит Ebb: список
-доступных built-in провайдеров Hermes и текущий выбор отображаются в Settings Web
-UI, API-ключи хранятся только в `EBB_ORCHESTRATOR_HOME/.env` (изолированно от
-репозитория) и не попадают в корневой `.env`, SecretStore, SQLite, логи или
-артефакты. Пользовательские Hermes home/profile/config/auth не читаются, не
-копируются и не меняются. [Руководство по Hermes](docs/development/05-hermes.md)
+secret manager. Выбор ИИ-провайдера/модели для Runs принадлежит Ebb: каталог
+из 86 провайдеров и текущий выбор отображаются в Settings Web UI, ключи/токены
+провайдеров хранятся только в OS SecretStore (keyring) и не попадают в корневой
+`.env`, `EBB_ORCHESTRATOR_HOME/.env`, SQLite, логи или артефакты.
+Пользовательские Hermes home/profile/config/auth не читаются, не копируются и не
+меняются. [Руководство по Hermes](docs/development/05-hermes.md)
 описывает project trust и подтверждённый Windows provider acceptance, а также
 честно перечисляет незакрытые recovery, cross-platform и clean-checkout проверки.
 
@@ -665,6 +669,32 @@ INFISICAL_ENVIRONMENT=production
 безопасный механизм deployment environment, а не через Git, prompts или UI.
 При включённом Infisical неполная конфигурация останавливает startup; ошибка
 remote backend возвращает `503` и не переключается неявно на другой storage.
+
+### ИИ-провайдеры Ebb (plan-24)
+
+- **Каталог из 86 провайдеров** (закреплённый источник LobeHub) управляется
+  через Web: Settings → «ИИ-провайдеры и модели». Для каждого провайдера
+  доступны формы auth-методов и полей конфигурации из исходного каталога.
+- **Ключи/токены/подписки и OAuth:** API-ключи, subscription-токены,
+  device-code/OAuth PKCE-потоки и refresh/disconnect настраиваются через Web;
+  значения credentials хранятся только в OS SecretStore (keyring, service
+  `ai-provider`) и никогда — в `EBB_ORCHESTRATOR_HOME/.env`, корневом `.env`,
+  SQLite, логах, артефактах или API-ответах. Настройки приложения в корневом
+  `.env` (например `EBB_ORCHESTRATOR_HOME`, `PORT`) с ключами провайдеров не
+  связаны.
+- **Локальные/частные endpoint-ы:** провайдеры, объявляющие поддержку
+  `local-endpoint` (например Ollama, LM Studio, vLLM), могут использовать
+  локальный/частный endpoint, заданный в Web. Весь исходящий трафик
+  провайдеров проходит через единый сетевой шлюз: частные диапазоны
+  разрешаются только для таких провайдеров, адреса cloud metadata (включая
+  Alibaba `100.100.100.200`) блокируются всегда.
+- **Выбор провайдера для Run:** разрешается в порядке «явный выбор Run →
+  дефолт роли → глобальный дефолт», фиксируется в Run до dispatch и
+  используется при resume. Run без выбора остаётся на Hermes-адаптере
+  (дефолт); fallback на другой провайдер/модель после ошибок отсутствует.
+- **Live-provider smoke:** реальные запросы к провайдерам не выполняются без
+  явного разрешения пользователя; статус live-проверок — `NOT RUN` до такого
+  разрешения. Provider-free acceptance и mock-апстримы входят в CI.
 
 ## Локальные данные
 

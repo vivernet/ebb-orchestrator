@@ -13,7 +13,7 @@ import { loadMigrationMap, validateLinks, validatePlanLifecycle } from './docs-g
 
 const PLAN_STATUSES = new Set(['proposed', 'planned', 'in_progress', 'blocked', 'completed', 'superseded', 'cancelled']);
 const PLAN_REQUIRED = ['id', 'kind', 'status', 'title', 'created', 'updated'];
-const PLAN_OPTIONAL = ['summary', 'depends_on', 'specs', 'evidence'];
+const PLAN_OPTIONAL = ['summary', 'depends_on', 'specs', 'evidence', 'proposals'];
 const NON_PLAN_KINDS = new Set(['roadmap', 'spec', 'audit', 'proposal', 'guideline', 'ledger', 'reference', 'index', 'governance-evidence']);
 /** Ошибка, указывающая на нарушение контракта metadata документа Plan. */
 export class PlanMetadataError extends Error {
@@ -46,7 +46,7 @@ export function validatePlanMetadata(metadata, source = '<metadata>') {
   if (typeof metadata.status !== 'string' || !PLAN_STATUSES.has(metadata.status)) fail('invalid Plan status');
   for (const key of ['created', 'updated']) if (!validCalendarDate(metadata[key])) fail(`invalid ${key} date`);
   if (Object.hasOwn(metadata, 'summary') && typeof metadata.summary !== 'string') fail('summary must be a string');
-  for (const key of ['depends_on', 'specs', 'evidence']) if (Object.hasOwn(metadata, key) && (!Array.isArray(metadata[key]) || !metadata[key].every(value => typeof value === 'string'))) fail(`${key} must be a string array`);
+  for (const key of ['depends_on', 'specs', 'evidence', 'proposals']) if (Object.hasOwn(metadata, key) && (!Array.isArray(metadata[key]) || !metadata[key].every(value => typeof value === 'string'))) fail(`${key} must be a string array`);
   return metadata;
 }
 

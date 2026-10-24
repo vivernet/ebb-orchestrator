@@ -60,6 +60,18 @@ export class ProviderRunCapabilityUnavailableError extends Error {
   }
 }
 
+/**
+ * Порт доказательства остановки Run (plan-24 Task 7). Provider-рантайм не
+ * запускает OS-процесс, поэтому при завершении Run (успех/ошибка/отмена) он
+ * фиксирует честное доказательство `NEVER_LAUNCHED` для durable
+ * `run_process_owners` (PREPARED → STOPPED). Опциональен: без него рантайм
+ * остаётся чисто in-memory (unit-тесты), а RunService-гейты STOPPED-proof
+ * завершатся fail-closed.
+ */
+export interface ProviderRunStopProofPort {
+  markNeverLaunched(runId: string): void;
+}
+
 /** Входные зависимости рантайма. */
 export interface ProviderAgentRuntimeOptions {
   readonly gateway: ProviderNetworkGateway;
@@ -71,6 +83,8 @@ export interface ProviderAgentRuntimeOptions {
   readonly selectionResolver?: (runId: string) => RunProviderSelectionRecord | undefined;
   readonly maxTurns?: number;
   readonly systemPromptBuilder?: (run: AgentRun) => string;
+  /** Порт доказательства остановки Run (см. ProviderRunStopProofPort). */
+  readonly stopProof?: ProviderRunStopProofPort;
 }
 
 interface ProviderToolStats {
@@ -232,28 +246,33 @@ export class ProviderAgentRuntime implements AgentRuntime {
   /** Отменяет run: прерывает активный запрос и помечает run отменённым. */
   public async cancelRun(runId: string): Promise<void> {
     const state = this.runs.get(runId);
-    if (!state) return;
-    state.cancelled = true;
-    state.abortController.abort();
-    if (!state.finished) {
-      state.finished = true;
-      state.run = { ...state.run, status: "CANCELLED", endedAt: new Date() };
-      state.outcome = {
-        success: false,
-        exitCode: -1,
-        output: "",
-        validatedSubmission: false,
-        diagnostics: {
-          runId,
-          sessionId: null,
-          stderr: "",
-          stderrCategory: "OTHER",
+    if (state) {
+      state.cancelled = true;
+      state.abortController.abort();
+      if (!state.finished) {
+        state.finished = true;
+        state.run = { ...state.run, status: "CANCELLED", endedAt: new Date() };
+        state.outcome = {
+          success: false,
           exitCode: -1,
-          artifactReferences: [],
-          ...this.diagnosticCounts(state),
-        },
-      };
+          output: "",
+          validatedSubmission: false,
+          diagnostics: {
+            runId,
+            sessionId: null,
+            stderr: "",
+            stderrCategory: "OTHER",
+            exitCode: -1,
+            artifactReferences: [],
+            ...this.diagnosticCounts(state),
+          },
+        };
+      }
     }
+    // Provider-рантайм не запускал OS-процесс (ни для активного, ни для ещё не
+    // стартовавшего Run): фиксируем честное доказательство остановки
+    // (NEVER_LAUNCHED), чтобы RunService-гейт STOPPED-proof прошёл.
+    this.markNeverLaunched(runId);
   }
 
   /** Возвращает текущий снимок run. */
@@ -339,9 +358,10 @@ export class ProviderAgentRuntime implements AgentRuntime {
         // Секретные байты передаются в заголовок как Buffer (для header-схем —
         // общая память с `credential`; для bearer — Buffer-копия с префиксом),
         // необнуляемая строковая копия секрета не создаётся. Исключение:
-        // query-схема auth требует строку в URL (неизбежный GC-only участок).
-        // После выполнения запроса все Buffer-значения заголовков и `credential`
-        // обнуляются в finally ниже.
+        // query-схема auth требует строку в URL (неизбежный GC-only участок);
+        // конвертация выполняется внутри `attachCredentialToRequest` без
+        // промежуточной копии наружу. После выполнения запроса все Buffer-значения
+        // заголовков и `credential` обнуляются в finally ниже.
         let finalRequest: { url: string; headers: Record<string, string | Buffer>; body: string | null } | null = null;
         try {
           const prepared = state.adapter.buildRequest({
@@ -354,9 +374,7 @@ export class ProviderAgentRuntime implements AgentRuntime {
           });
           const credentialHeaderValue = credential === null
             ? null
-            : prepared.auth.kind === "query"
-              ? Buffer.from(credential).toString("utf8")
-              : Buffer.from(credential.buffer, credential.byteOffset, credential.byteLength);
+            : Buffer.from(credential.buffer, credential.byteOffset, credential.byteLength);
           finalRequest = attachCredentialToRequest(prepared, credentialHeaderValue);
           const response = await this.options.gateway.execute({
             method: prepared.method,
@@ -554,6 +572,15 @@ export class ProviderAgentRuntime implements AgentRuntime {
     return false;
   }
 
+  private markNeverLaunched(runId: string): void {
+    try {
+      this.options.stopProof?.markNeverLaunched(runId);
+    } catch {
+      // Доказательство остановки не влияет на outcome: без него RunService-гейт
+      // STOPPED-proof завершится fail-closed (без ложного успеха).
+    }
+  }
+
   private finish(state: ProviderRunState, outcome: RunOutcome): void {
     if (state.finished) return;
     state.finished = true;
@@ -564,5 +591,6 @@ export class ProviderAgentRuntime implements AgentRuntime {
       endedAt: new Date(),
       exitCode: outcome.exitCode,
     };
+    this.markNeverLaunched(state.run.id);
   }
 }

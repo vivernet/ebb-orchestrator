@@ -153,7 +153,7 @@ describe("provider-request: тело запроса", () => {
 });
 
 describe("provider-request: credential-прикрепление", () => {
-  it("bearer-схема добавляет Authorization", () => {
+  it("bearer-схема добавляет Authorization (Buffer-значение, без строковой копии)", () => {
     const adapter = createOpenAICompatibleAdapter({
       providerId: "openai",
       family: "openai-compatible",
@@ -165,8 +165,10 @@ describe("provider-request: credential-прикрепление", () => {
       messages: [{ role: "user", content: "x" }],
       stream: false,
     });
-    const final = attachCredentialToRequest(prepared, "sk-secret");
-    expect(final.headers.authorization).toBe("Bearer sk-secret");
+    const credential = Buffer.from("sk-secret");
+    const final = attachCredentialToRequest(prepared, credential);
+    expect(Buffer.isBuffer(final.headers.authorization)).toBe(true);
+    expect(final.headers.authorization!.toString()).toBe("Bearer sk-secret");
   });
 
   it("bearer без значения → AUTH_DEVICE_FLOW_TOKEN_MISSING для oauth", () => {
