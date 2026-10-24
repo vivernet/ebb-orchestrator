@@ -1,11 +1,11 @@
 ---
 id: plan-24
 kind: plan
-status: proposed
+status: completed
 title: Полный каталог AI-провайдеров и управление ими через Web
 summary: Полная настройка каталога провайдеров и моделей LobeHub в Ebb Orchestrator через Web, включая провайдерские токены, subscription/OAuth flows, runtime-интеграцию, модельные настройки и безопасное хранение credentials.
 created: 2026-10-23
-updated: 2026-10-23
+updated: 2026-10-24
 depends_on:
   - plan-20
   - plan-23
@@ -278,3 +278,15 @@ Task 2 owns migration 049 and the stored provider-selection snapshot schema; no 
 5. Migration 049 is additive and forward-only; user data is not migrated from personal Hermes profile or copied from user `.env`.
 6. Every task includes RED/GREEN, exact run commands, expected behavior, and Review Focus. Provider integration is data-driven across the 86 exact IDs; all auth modes receive their own wire/error tests.
 7. Plan remains `proposed` until a fresh independent `ebb-review-plan` returns `APPROVED` and the user explicitly authorizes execution. No implementation, provider network request, credential read, Canva asset creation, commit or push is performed by this plan-authoring task.
+
+## Дополнение от 2026-10-24 — реализация завершена (status: completed)
+
+По явному распоряжению пользователя план исполнен параллельно с plan-20 (исключение из gate `plan-20: completed` зафиксировано в execution ledger как Ruling, прецедент IN-006; задача 0 и задача 5 согласовали общие контракты с Plan20 только в рамках разрешённого пересечения). Коммиты реализации: `244bbf9` (Task 0), `9ff5057` (Task 1), `5b95b1d` (Task 2), `105e852` (Task 3), `f64e108` (Task 4), `9237f37` (Task 5), `31f7ee5` (Task 6), `a6c5b44` (Task 7), `4ecf722` (.gitattributes binary).
+
+Принятые решения и факты:
+
+- В полном объёме реализованы: каталог 86 провайдеров (сверка 86/86, missing=0), модельный каталог (1874 статических записей; remote-only провайдеры — без статических моделей), Web-управление конфигурацией и credentials (api-key/subscription-token/oauth-device-code/credential-fields/cloud-identity/local-endpoint, PKCE-движок покрыт фикстурами), единый provider network gateway (SSRF-защита incl. Alibaba IMDS `100.100.100.200`, DNS pinning, redirects revalidation, redaction), ProviderAgentRuntime с контролируемым tool-циклом через ActionGateway, durable выбор provider/model/auth/configRevision для Run (explicit → role → global; запись в той же транзакции; resume из SQLite; fingerprint версии 1.0.2 с dual-version decode), миграции 049/050/051, серверные API-роуты, русский Web-UI, Canva-прототип (`DAHY38uN8Dg`, https://canva.link/lm1p7cxiwa3dyf9, PDF 10 стр.) и HTML-прототип в evidence.
+- Секреты хранятся только в OS SecretStore (service `ai-provider`); SQLite/API/UI/логи/артефакты не содержат значений ключей, токенов, endpoint URL и credential reference. `EBB_ORCHESTRATOR_HOME/.env` больше не используется для ключей провайдеров.
+- Независимые ревью: Task 0 — PASS (после fix-цикла); Task 1 — PASS; Task 2 — PASS; Task 3 — PASS (после security-fix); Task 4 — PASS (после ручного fix MINOR); Task 5 — PASS (после fix api.test.ts); Task 6 — PASS (после fix миграционных acceptance + docs frontmatter); Task 7 — PASS; финальный whole-plan review — APPROVED (3 MINOR: генерация generated.md заблокирована внешним plan-25; git diff --check по PDF закрыт `.gitattributes`; паспортная заметка про status обновлена здесь).
+- **Live-provider smoke: NOT RUN** — по решению пользователя реальные оплачиваемые запросы к провайдерам не запускались и фиксируются как NOT RUN; мок-фикстуры и локальные loopback upstream-серверы не заменяют provider-backed acceptance.
+- Ограничения: полный `pnpm test` и `pnpm docs:roadmap --dry-run` на текущем рабочем дереве блокируются параллельной внешней работой plan-25 (untracked `052_chat.sql` и невалидный YAML в `25-web-ui-overhaul-and-coordinator-chat.md`); при их исключении все gates плана зелёные. Plan-20 остаётся `in_progress` (зависимость выполнена по исключению).
