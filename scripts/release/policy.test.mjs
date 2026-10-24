@@ -219,14 +219,15 @@ test('full SHA pattern accepts 40-hex and rejects short ids', () => {
 });
 
 test('bound config pins match the reviewed workflow/script identities (exact git hashes)', () => {
-  // The reviewed workflow/script commit is W2 (parent of this config commit).
-  // Pins are blob/tree hashes of THAT reviewed tree — deliberately not this
-  // config commit's own tree (no circular self-reference).
-  const W2 = '537f391b1dd03b30c83bc12838b846640efa898d';
+  // The reviewed workflow/script commit is W3 (parent of this config commit),
+  // the fetch-depth fix for the release-module job. Pins are blob/tree hashes
+  // of THAT reviewed tree — deliberately not this config commit's own tree
+  // (no circular self-reference).
+  const W3 = '64ef57e6d3a63e95bedd423b945088f43e77ec42';
   const git = (args) => spawnSync('git', args, { cwd: REPO_ROOT, encoding: 'utf8' });
   const validationBlob = git(['hash-object', '.github/workflows/release-validation.yml']).stdout.trim();
   const operationsBlob = git(['hash-object', '.github/workflows/release-operations.yml']).stdout.trim();
-  const scriptTree = git(['rev-parse', `${W2}:scripts/release`]).stdout.trim();
+  const scriptTree = git(['rev-parse', `${W3}:scripts/release`]).stdout.trim();
   assert.equal(validationBlob.length, 40);
   assert.equal(operationsBlob.length, 40);
   assert.equal(scriptTree.length, 40);
