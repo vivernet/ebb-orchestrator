@@ -720,6 +720,7 @@ getEligibility(taskId: string, scope?: { projectId: string }): Eligibility {
     if (!reservation) throw new Error("RUN_RESUME_RESERVATION_UNAVAILABLE");
     if (tx.get("SELECT 1 FROM scheduler_resource_locks WHERE reservation_id=$id LIMIT 1", { id: reservation.id })) return;
     assertProjectDispatchableTx(tx, reservation.project_id);
+    assertDispatchPauseAllowedTx(tx, { projectId: reservation.project_id });
     const limits = this.getLimits(reservation.project_id);
     if (this.countTx(tx, "status='RESERVED' AND kind <> 'LOCK'") > limits.globalMax
       || this.countTx(tx, "status='RESERVED' AND kind <> 'LOCK' AND project_id=$projectId", { projectId: reservation.project_id }) > limits.projectMax

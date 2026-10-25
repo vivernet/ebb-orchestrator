@@ -16,7 +16,7 @@ import { createHermesManagedSelectionFixture } from "../../helpers/hermes-manage
 import { digestRunPromptBytesV1 } from "../../../src/modules/context/context-provenance.js";
 import type { PreparedRunContext } from "../../../src/modules/context/context-types.js";
 import type { AgentRuntime } from "../../../src/modules/runtime/agent-runtime.js";
-import { containmentKindForPlatform, getRunProcessOwner, isAuthoritativeRunProcessStopEvidence, rotateRunProcessOwnerForResumeTx,
+import { containmentKindForPlatform, getRunProcessOwner, isAuthoritativeRunProcessStopEvidence, rotateRunProcessOwnerForPauseResumeTx, rotateRunProcessOwnerForResumeTx,
   syncCurrentRunProcessGenerationTx, transitionRunProcessOwnerTx } from "../../../src/modules/runtime/run-process-owner.js";
 import { captureWorkspaceSnapshotV1, createResumeContextBaselineV1, digestResumeBindingV1 } from "../../../src/modules/context/resume-eligibility.js";
 import { seedApprovedProjectConfig } from "../../helpers/approved-project-config.js";
@@ -1941,5 +1941,125 @@ describe("run control service transitions (plan-27 Task 3)", () => {
     expect(restarted.requestRunControl).toBeTypeOf("function");
     expect(controlDb!.get("SELECT state FROM run_control_state WHERE run_id=$runId", { runId: run.id })?.state).toBe("PAUSED");
     expect(controlDb!.all("SELECT * FROM run_checkpoints WHERE run_id=$runId", { runId: run.id })).toHaveLength(1);
+  });
+
+  /** Живой Run (LIVE owner, BOUND session, binding) без stop proof — для PAUSE_REQUESTED revert. */
+  async function liveActiveRun() {
+    const run = await startControlRun();
+    const owner = getRunProcessOwner(controlDb!, run.id)!;
+    controlDb!.transaction((tx) => {
+      transitionRunProcessOwnerTx(tx, { runId: run.id, expectedState: "PREPARED", nextState: "LAUNCHING" });
+      transitionRunProcessOwnerTx(tx, { runId: run.id, expectedState: "LAUNCHING", nextState: "LIVE", identity: ownerIdentityForContainmentKind(owner.containmentKind) });
+      tx.run("UPDATE agent_runs SET status='IN_PROGRESS',session_id='original-session' WHERE id=$runId", { runId: run.id });
+      tx.run("UPDATE run_process_owners SET capture_state='BOUND' WHERE run_id=$runId", { runId: run.id });
+      syncCurrentRunProcessGenerationTx(tx, run.id);
+      const contextHash = tx.get<{ context_hash: string }>("SELECT context_hash FROM context_manifests WHERE run_id=$runId", { runId: run.id })!.context_hash;
+      tx.run(`INSERT INTO run_resume_bindings(run_id,schema_version,baseline_jcs,context_hash,workspace_snapshot_version,workspace_snapshot_hash,resume_binding_hash,original_session_id,created_at)
+        VALUES($runId,1,$baseline,$contextHash,1,$workspaceHash,$bindingHash,'original-session',$now)`, {
+        runId: run.id, contextHash, workspaceHash: "b".repeat(64), bindingHash: digestResumeBindingV1(contextHash, "b".repeat(64)),
+        now: new Date().toISOString(),
+        baseline: JSON.stringify(createResumeContextBaselineV1({ ...controlContextInput({ taskId: controlTaskId, epicId: null, role: "reviewer" }).versions,
+          promptHash: digestRunPromptBytesV1(new TextEncoder().encode(run.prompt!)), subjectType: "TASK", subjectId: controlTaskId,
+          contractOrRequestDigest: null, items: [], contextBuilderVersion: "1.0.0", role: "reviewer",
+          workspaceIdentity: { repository: controlTmp, workspace: controlTmp, worktree: controlTaskId }, targetHead: null, targetBranch: null,
+          effectiveCapabilityIds: effectiveRunToolIds("reviewer"), projectConfigRevisionId: null, projectConfigHash: null,
+          policyIdentity: { providerId: null, providerPolicyId: null, runtimeId: "default", runtimePolicyId: null } })),
+      });
+    });
+    return run;
+  }
+
+  it("restart at PAUSE_REQUESTED with STOPPED owner proof finalizes to PAUSED", async () => {
+    await setupControl();
+    const run = await pauseReadyRun();
+    const now = new Date().toISOString();
+    controlDb!.transaction((tx) => {
+      tx.run("INSERT INTO run_control_commands(request_id,run_id,attempt,command,expected_version,status,created_at,updated_at) VALUES('req-pause-crash',$runId,1,'PAUSE',0,'REQUESTED',$now,$now)", { runId: run.id, now });
+      tx.run("INSERT INTO run_control_state(run_id,attempt,state,checkpoint_id,version,updated_at) VALUES($runId,1,'PAUSE_REQUESTED',NULL,1,$now)", { runId: run.id, now });
+    });
+
+    const restarted = new RunService(controlDb!, new FakeAgentRuntime(), {
+      prepare: (_tx, input) => controlPreparedContext(input.prompt, input.role, input.subject),
+    });
+    expect(restarted.reconcileRunControlStates()).toBe(1);
+
+    expect(controlDb!.get("SELECT state,checkpoint_id FROM run_control_state WHERE run_id=$runId", { runId: run.id }))
+      .toMatchObject({ state: "PAUSED", checkpoint_id: expect.any(String) });
+    expect(controlDb!.get("SELECT status FROM run_control_commands WHERE request_id='req-pause-crash'")?.status).toBe("COMPLETED");
+    expect(controlDb!.all("SELECT * FROM run_checkpoints WHERE run_id=$runId", { runId: run.id })).toHaveLength(1);
+    expect(controlDb!.all("SELECT * FROM outbox_events WHERE aggregate_id=$runId AND type='RunPaused'", { runId: run.id })).toHaveLength(1);
+  });
+
+  it("restart at PAUSE_REQUESTED without stop proof reverts to ACTIVE", async () => {
+    await setupControl();
+    const run = await liveActiveRun();
+    const now = new Date().toISOString();
+    controlDb!.transaction((tx) => {
+      tx.run("INSERT INTO run_control_commands(request_id,run_id,attempt,command,expected_version,status,created_at,updated_at) VALUES('req-pause-crash-live',$runId,1,'PAUSE',0,'REQUESTED',$now,$now)", { runId: run.id, now });
+      tx.run("INSERT INTO run_control_state(run_id,attempt,state,checkpoint_id,version,updated_at) VALUES($runId,1,'PAUSE_REQUESTED',NULL,1,$now)", { runId: run.id, now });
+    });
+
+    const restarted = new RunService(controlDb!, new FakeAgentRuntime(), {
+      prepare: (_tx, input) => controlPreparedContext(input.prompt, input.role, input.subject),
+    });
+    expect(restarted.reconcileRunControlStates()).toBe(1);
+
+    expect(controlDb!.get("SELECT state,checkpoint_id FROM run_control_state WHERE run_id=$runId", { runId: run.id }))
+      .toMatchObject({ state: "ACTIVE", checkpoint_id: null });
+    expect(controlDb!.get("SELECT status FROM run_control_commands WHERE request_id='req-pause-crash-live'")?.status).toBe("FAILED");
+    expect(controlDb!.all("SELECT * FROM run_checkpoints WHERE run_id=$runId", { runId: run.id })).toHaveLength(0);
+  });
+
+  it("restart at RESUME_PENDING reverts to PAUSED when the resume launch never became active", async () => {
+    await setupControl();
+    const run = await pauseReadyRun();
+    controlRuntime.pauseRun = vi.fn(async () => {});
+    await controlService.requestRunControl(run.id, "PAUSE", "req-pause-for-resume-crash");
+    const paused = controlDb!.get<{ version: number; checkpoint_id: string }>("SELECT version,checkpoint_id FROM run_control_state WHERE run_id=$runId", { runId: run.id })!;
+    const now = new Date().toISOString();
+    controlDb!.transaction((tx) => {
+      tx.run("INSERT INTO run_control_commands(request_id,run_id,attempt,command,expected_version,status,created_at,updated_at) VALUES('req-resume-crash',$runId,1,'RESUME',$version,'REQUESTED',$now,$now)", { runId: run.id, version: paused.version, now });
+      tx.run("UPDATE run_control_state SET state='RESUME_PENDING',version=version+1,updated_at=$now WHERE run_id=$runId AND version=$version", { runId: run.id, version: paused.version, now });
+    });
+
+    const restarted = new RunService(controlDb!, new FakeAgentRuntime(), {
+      prepare: (_tx, input) => controlPreparedContext(input.prompt, input.role, input.subject),
+    });
+    expect(restarted.reconcileRunControlStates()).toBe(1);
+
+    expect(controlDb!.get("SELECT state,checkpoint_id FROM run_control_state WHERE run_id=$runId", { runId: run.id }))
+      .toMatchObject({ state: "PAUSED", checkpoint_id: paused.checkpoint_id });
+    expect(controlDb!.get("SELECT status FROM run_control_commands WHERE request_id='req-resume-crash'")?.status).toBe("FAILED");
+    expect(controlDb!.all("SELECT * FROM run_checkpoints WHERE run_id=$runId", { runId: run.id })).toHaveLength(1);
+    expect(controlDb!.get("SELECT state FROM run_process_owners WHERE run_id=$runId", { runId: run.id })?.state).toBe("STOPPED");
+  });
+
+  it("restart at RESUME_PENDING resolves to ACTIVE when the resumed run is actually active", async () => {
+    await setupControl();
+    const run = await pauseReadyRun();
+    controlRuntime.pauseRun = vi.fn(async () => {});
+    await controlService.requestRunControl(run.id, "PAUSE", "req-pause-for-resume-active");
+    controlDb!.transaction((tx) => { rotateRunProcessOwnerForPauseResumeTx(tx, { runId: run.id, attempt: 1 }); });
+    const owner = getRunProcessOwner(controlDb!, run.id)!;
+    controlDb!.transaction((tx) => {
+      transitionRunProcessOwnerTx(tx, { runId: run.id, expectedState: "PREPARED", nextState: "LAUNCHING" });
+      transitionRunProcessOwnerTx(tx, { runId: run.id, expectedState: "LAUNCHING", nextState: "LIVE", identity: ownerIdentityForContainmentKind(owner.containmentKind) });
+    });
+    const paused = controlDb!.get<{ version: number; checkpoint_id: string }>("SELECT version,checkpoint_id FROM run_control_state WHERE run_id=$runId", { runId: run.id })!;
+    const now = new Date().toISOString();
+    controlDb!.transaction((tx) => {
+      tx.run("INSERT INTO run_control_commands(request_id,run_id,attempt,command,expected_version,status,created_at,updated_at) VALUES('req-resume-active',$runId,1,'RESUME',$version,'REQUESTED',$now,$now)", { runId: run.id, version: paused.version, now });
+      tx.run("UPDATE run_control_state SET state='RESUME_PENDING',version=version+1,updated_at=$now WHERE run_id=$runId AND version=$version", { runId: run.id, version: paused.version, now });
+    });
+
+    const restarted = new RunService(controlDb!, new FakeAgentRuntime(), {
+      prepare: (_tx, input) => controlPreparedContext(input.prompt, input.role, input.subject),
+    });
+    expect(restarted.reconcileRunControlStates()).toBe(1);
+
+    expect(controlDb!.get("SELECT state,checkpoint_id FROM run_control_state WHERE run_id=$runId", { runId: run.id }))
+      .toMatchObject({ state: "ACTIVE", checkpoint_id: null });
+    expect(controlDb!.get("SELECT status FROM run_control_commands WHERE request_id='req-resume-active'")?.status).toBe("COMPLETED");
+    expect(controlDb!.all("SELECT * FROM outbox_events WHERE aggregate_id=$runId AND type='RunResumed'", { runId: run.id })).toHaveLength(1);
   });
 });

@@ -397,6 +397,9 @@ export class RunService {
 
   /** До READY принимает уже сохранённые submit_result, сохраняет resumable Runs и закрывает прочие прерывания. */
   reconcileInterruptedRuns(): number {
+    // Сначала разрешаем stuck run-control состояния на durable границах restart
+    // (PAUSE_REQUESTED/RESUME_PENDING), чтобы fail-loop ниже не видел их как interrupted.
+    this.reconcileRunControlStates();
     const interrupted = this.db.all<{ id: string; status: string }>(
       "SELECT id,status FROM agent_runs WHERE status IN ('STARTED','IN_PROGRESS','COMPLETING') ORDER BY id");
     let reconciled = 0;
@@ -1644,6 +1647,21 @@ export class RunService {
     return this.runResumeCommand(runId, requestId, logicalAttempt);
   }
 
+  /** Публичный делегат run-control команды CHECKPOINT для HTTP-маршрутов. */
+  createCheckpoint(runId: string, requestId: string): Promise<RunControlCommandResult> {
+    return this.requestRunControl(runId, "CHECKPOINT", requestId);
+  }
+
+  /** Публичный делегат run-control команды PAUSE для HTTP-маршрутов. */
+  pauseRun(runId: string, requestId: string): Promise<RunControlCommandResult> {
+    return this.requestRunControl(runId, "PAUSE", requestId);
+  }
+
+  /** Публичный делегат run-control команды RESUME для HTTP-маршрутов. */
+  resumeRunControl(runId: string, requestId: string): Promise<RunControlCommandResult> {
+    return this.requestRunControl(runId, "RESUME", requestId);
+  }
+
   /** Отменяет только подтверждённый набор Run; результат упорядочен по expectedRunIds. */
   async cancelAllRuns(expectedRunIds: string[]): Promise<CancelAllRunsResult> {
     const results: { runId: string; outcome: "CANCELLED" | "NOT_ACTIVE" | "FAILED" }[] = [];
@@ -1665,6 +1683,100 @@ export class RunService {
       }
     }
     return { results };
+  }
+
+  /**
+   * Startup recovery для run-control состояний, застрявших на durable границах
+   * restart (plan-27 Task 3, F2). Вызывается до fail-loop interrupted-runs.
+   *
+   * PAUSE_REQUESTED:
+   *   - owner STOPPED с authoritative evidence -> finalize PAUSED (proven checkpoint,
+   *     command COMPLETED, RunPaused, hold released);
+   *   - иначе -> revert ACTIVE (command FAILED).
+   * RESUME_PENDING:
+   *   - owner LIVE c поколением дальше checkpoint -> ACTIVE (command COMPLETED, RunResumed);
+   *   - иначе -> revert PAUSED (checkpoint сохраняется, неиспользованное launch-поколение
+   *     останавливается, hold released, command FAILED).
+   */
+  reconcileRunControlStates(): number {
+    const rows = this.db.all<{ run_id: string; attempt: number; state: string }>(
+      "SELECT run_id,attempt,state FROM run_control_state WHERE state IN ('PAUSE_REQUESTED','RESUME_PENDING') ORDER BY run_id",
+    );
+    let reconciled = 0;
+    for (const row of rows) {
+      try {
+        if (this.resolveStuckRunControlState(row.run_id, row.state)) reconciled += 1;
+      } catch { /* leave unresolved; retried on next startup */ }
+    }
+    return reconciled;
+  }
+
+  private resolveStuckRunControlState(runId: string, state: string): boolean {
+    return this.db.transaction((tx) => {
+      const control = readRunControlRow(tx, runId);
+      if (!control || control.state !== state) return false;
+      const run = tx.get<{ status: RunStatus }>("SELECT status FROM agent_runs WHERE id=$runId", { runId });
+      if (!run || this.isTerminalState(run.status)) return false;
+      const owner = tx.get<{ state: string; current_generation: number; stop_evidence: string | null; containment_kind: string }>(
+        "SELECT state,current_generation,stop_evidence,containment_kind FROM run_process_owners WHERE run_id=$runId", { runId });
+
+      if (state === "PAUSE_REQUESTED") {
+        const stoppedProof = owner !== undefined && owner.state === "STOPPED" &&
+          isAuthoritativeRunProcessStopEvidence(owner.stop_evidence, owner.containment_kind);
+        if (stoppedProof) {
+          const provenance = buildCheckpointProvenanceTx(tx, runId, control.attempt);
+          const requestId = this.pendingControlRequestId(tx, runId, "PAUSE");
+          if (!provenance || !requestId) return false; // corrupt pause records stay unresolved
+          const checkpointId = crypto.randomUUID();
+          const current = readRunControlRow(tx, runId)!;
+          insertRunCheckpointTx(tx, { checkpointId, runId, attempt: control.attempt, requestId, provenance });
+          transitionRunControlTx(tx, runId, current.version, "PAUSED", checkpointId);
+          this.finalizePendingControlCommands(tx, runId, "PAUSE", "COMPLETED", JSON.stringify({ checkpointId }));
+          appendOutboxEvent(tx, DomainEvent.create({ type: "RunPaused", aggregateType: "AgentRun", aggregateId: runId, payload: { runId, checkpointId, sessionId: provenance.sessionId } }));
+          tx.run("DELETE FROM scheduler_resource_locks WHERE reservation_id=(SELECT id FROM scheduler_reservations WHERE run_id=$runId AND status='RESERVED' AND kind <> 'LOCK' LIMIT 1)", { runId });
+          return true;
+        }
+        const current = readRunControlRow(tx, runId)!;
+        transitionRunControlTx(tx, runId, current.version, "ACTIVE");
+        this.finalizePendingControlCommands(tx, runId, "PAUSE", "FAILED", undefined, "RUN_PAUSE_UNPROVEN");
+        return true;
+      }
+
+      // RESUME_PENDING
+      const checkpoint = control.checkpoint_id ? tx.get<{ owner_generation: number }>(
+        "SELECT owner_generation FROM run_checkpoints WHERE id=$cp AND run_id=$runId", { cp: control.checkpoint_id, runId }) : undefined;
+      const active = owner !== undefined && checkpoint !== undefined && owner.state === "LIVE" && owner.current_generation > checkpoint.owner_generation;
+      const current = readRunControlRow(tx, runId)!;
+      if (active) {
+        transitionRunControlTx(tx, runId, current.version, "ACTIVE");
+        this.finalizePendingControlCommands(tx, runId, "RESUME", "COMPLETED", JSON.stringify({ sessionId: tx.get<{ session_id: string | null }>("SELECT session_id FROM agent_runs WHERE id=$runId", { runId })?.session_id }));
+        appendOutboxEvent(tx, DomainEvent.create({ type: "RunResumed", aggregateType: "AgentRun", aggregateId: runId, payload: { runId, sessionId: tx.get<{ session_id: string | null }>("SELECT session_id FROM agent_runs WHERE id=$runId", { runId })?.session_id } }));
+        return true;
+      }
+      transitionRunControlTx(tx, runId, current.version, "PAUSED", control.checkpoint_id as string);
+      if (owner && owner.state === "PREPARED" && checkpoint && owner.current_generation > checkpoint.owner_generation) {
+        transitionRunProcessOwnerTx(tx, { runId, expectedState: "PREPARED", nextState: "STOPPED", evidence: "NEVER_LAUNCHED" });
+      }
+      this.finalizePendingControlCommands(tx, runId, "RESUME", "FAILED", undefined, "RUN_RESUME_RECOVERY_REVERTED");
+      tx.run("DELETE FROM scheduler_resource_locks WHERE reservation_id=(SELECT id FROM scheduler_reservations WHERE run_id=$runId AND status='RESERVED' AND kind <> 'LOCK' LIMIT 1)", { runId });
+      return true;
+    });
+  }
+
+  private pendingControlRequestId(tx: DatabaseTx, runId: string, command: "PAUSE" | "RESUME"): string | undefined {
+    return tx.get<{ request_id: string }>(
+      "SELECT request_id FROM run_control_commands WHERE run_id=$runId AND command=$command AND status='REQUESTED' ORDER BY created_at LIMIT 1",
+      { runId, command },
+    )?.request_id;
+  }
+
+  private finalizePendingControlCommands(tx: DatabaseTx, runId: string, command: "PAUSE" | "RESUME", status: "COMPLETED" | "FAILED", resultJson?: string, failureCode?: string): void {
+    const rows = tx.all<{ request_id: string }>(
+      "SELECT request_id FROM run_control_commands WHERE run_id=$runId AND command=$command AND status='REQUESTED'", { runId, command });
+    for (const row of rows) {
+      if (status === "FAILED") finalizeRunControlCommandFailedTx(tx, row.request_id, failureCode ?? "RUN_CONTROL_COMMAND_FAILED");
+      else finalizeRunControlCommandTx(tx, row.request_id, status, resultJson ?? "{}");
+    }
   }
 
   private async runCheckpointCommand(runId: string, requestId: string, logicalAttempt: number): Promise<RunControlCommandResult> {

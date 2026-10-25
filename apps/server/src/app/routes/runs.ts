@@ -294,22 +294,39 @@ export async function runRoutes(app: FastifyInstance, deps: RunRouteDeps = {}): 
       if (typeof key !== "string" || !/^[\x21-\x7e]{1,256}$/.test(key)) {
         return reply.code(400).send({ error: { code: "RUN_REQUEST_IDEMPOTENCY_KEY_REQUIRED" } });
       }
+      const runId = request.params.id;
+      if (command === "resumeRunControl") {
+        // Pre-launch scheduler admission (plan-27 Task 3, F1): capacity/project/scope
+        // gates run BEFORE the service relaunches the paused run. Rejection aborts
+        // resume (run stays PAUSED, failure recorded durably), never swallows it.
+        if (deps.scheduler) {
+          try {
+            deps.scheduler.reacquirePausedRunHold(runId);
+          } catch (error) {
+            const code = error instanceof Error ? error.message : "WAITING_FOR_CAPACITY";
+            recordFailedRunControlCommand(deps.db, runId, key, "RESUME", code);
+            return reply.code(409).send({ error: { code } });
+          }
+        }
+      }
       try {
-        const result = await fn.call(deps.runService, request.params.id, key);
+        const result = await fn.call(deps.runService, runId, key);
         if (command === "createCheckpoint" && result.status === "FAILED") {
           return reply.code(503).send({ error: { code: result.failureCode ?? "CHECKPOINT_UNPROVEN" } });
         }
         if (command === "pauseRun" && result.status === "COMPLETED" && result.control?.state === "PAUSED") {
-          try { deps.scheduler?.releasePausedRunHold(request.params.id); } catch { /* locks остаются, reservation сохранена; reconcile восстановит */ }
+          try { deps.scheduler?.releasePausedRunHold(runId); } catch { /* locks остаются, reservation сохранена; reconcile восстановит */ }
         }
-        if (command === "resumeRunControl" && result.status === "COMPLETED" && result.control?.state === "ACTIVE") {
-          try { deps.scheduler?.reacquirePausedRunHold(request.params.id); } catch { /* capacity-расы не ломают запущенный runtime */ }
+        if (command === "resumeRunControl" && (result.status === "FAILED" || result.control?.state !== "ACTIVE")) {
+          try { deps.scheduler?.releasePausedRunHold(runId); } catch { /* reconcile восстановит */ }
         }
         return result;
       } catch (error) {
+        if (command === "resumeRunControl") {
+          try { deps.scheduler?.releasePausedRunHold(runId); } catch { /* reconcile восстановит */ }
+        }
         const code = error instanceof Error ? error.message : "RUN_CONTROL_COMMAND_FAILED";
-        if (code === "RUN_CONTROL_STATE_CONFLICT" || code === "RUN_CONTROL_COMMAND_CONFLICT" ||
-            code === "RUN_CONTROL_TERMINAL" || code === "RUN_CONTROL_ALREADY_PAUSED" || code === "RUN_CONTROL_NOT_PAUSED") {
+        if (RUN_CONTROL_CONFLICT_CODES.has(code)) {
           return reply.code(409).send({ error: { code } });
         }
         if (/not found/i.test(code)) return reply.code(404).send({ error: { code: "RUN_NOT_FOUND" } });
@@ -470,6 +487,51 @@ function readRunManifestSubject(
 
 function normalizeContextManifestRole(value: string): (typeof CONTEXT_MANIFEST_ROLES)[number] | "unknown" {
   return CONTEXT_MANIFEST_ROLES.find((role) => role === value) ?? "unknown";
+}
+
+/** Коды конфликтов run-control/адмиссии, проецируемые в HTTP 409. */
+const RUN_CONTROL_CONFLICT_CODES = new Set([
+  "RUN_CONTROL_STATE_CONFLICT",
+  "RUN_CONTROL_COMMAND_CONFLICT",
+  "RUN_CONTROL_TERMINAL",
+  "RUN_CONTROL_ALREADY_PAUSED",
+  "RUN_CONTROL_NOT_PAUSED",
+  "WAITING_FOR_CAPACITY",
+  "WAITING_FOR_ROLE_CAPACITY",
+  "WAITING_FOR_PAUSE",
+  "WAITING_FOR_RESOURCE_LOCK",
+  "WAITING_FOR_BUDGET",
+  "BLOCKED_BY_PROJECT_STATE",
+  "PROJECT_NOT_ACTIVE",
+  "ONBOARDING_NOT_ACTIVE",
+  "PROJECT_CONFIG_DEGRADED",
+  "DISPATCH_PAUSED_GLOBAL",
+  "DISPATCH_PAUSED_PROJECT",
+  "DISPATCH_PAUSED_EPIC",
+]);
+
+/**
+ * Записывает durable FAILED run-control команду при отклонении resume-адмиссии
+ * до запуска runtime (best-effort; idempotent по request_id).
+ */
+function recordFailedRunControlCommand(
+  db: Database | undefined,
+  runId: string,
+  requestId: string,
+  command: "PAUSE" | "RESUME" | "CHECKPOINT",
+  failureCode: string,
+): void {
+  if (!db) return;
+  try {
+    if (db.get("SELECT request_id FROM run_control_commands WHERE request_id=$requestId", { requestId })) return;
+    const control = db.get<{ attempt: number; version: number }>("SELECT attempt,version FROM run_control_state WHERE run_id=$runId", { runId });
+    const attempt = control?.attempt ?? db.get<{ attempt: number | null }>("SELECT attempt FROM agent_runs WHERE id=$runId", { runId })?.attempt ?? 1;
+    const now = new Date().toISOString();
+    db.run(
+      "INSERT INTO run_control_commands(request_id,run_id,attempt,command,expected_version,status,result_json,created_at,updated_at) VALUES($requestId,$runId,$attempt,$command,$expectedVersion,'FAILED',$result,$now,$now)",
+      { requestId, runId, attempt: attempt ?? 1, command, expectedVersion: control?.version ?? 0, result: JSON.stringify({ failureCode }), now },
+    );
+  } catch { /* best-effort audit row; no throw from the route */ }
 }
 
 /** Маппинг run_control_state строки в typed discriminated projection. */

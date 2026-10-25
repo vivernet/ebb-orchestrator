@@ -7,6 +7,8 @@ import { SchedulerService } from "../../src/modules/scheduler/scheduler-service.
 import { createTestAuthService, TEST_COOKIE, TEST_CSRF_TOKEN } from "../helpers/auth.js";
 import type { CancelAllRunsResult, RunControlCommandResult } from "@ebb-orchestrator/contracts";
 import type { RunCommandService } from "../../src/app/routes/runs.js";
+import { randomUUID } from "node:crypto";
+import { seedApprovedProjectConfig } from "../helpers/approved-project-config.js";
 
 const NOW = "2026-10-25T00:00:00.000Z";
 
@@ -37,6 +39,23 @@ function insertEvent(db: ReturnType<typeof createSqliteDatabase>, id: string, ru
      VALUES($id,$type,'AgentRun',$runId,$payload,$createdAt,$createdAt,0)`,
     { id, type, runId, payload: JSON.stringify(payload), createdAt },
   );
+}
+
+/** Делает проект dispatch-элигибельным (onboarding + approved project config). */
+function seedDispatchEligibleProject(db: ReturnType<typeof createSqliteDatabase>) {
+  const now = NOW;
+  db.run("INSERT INTO approvals(id,type,subject_id,subject_type,status,requested_by,created_at) VALUES($id,'WORKFLOW_CHANGE','project-1','PROJECT','APPROVED','test',$now)", { id: randomUUID(), now });
+  seedApprovedProjectConfig(db, "project-1");
+  const approvalId = db.get<{ id: string }>("SELECT id FROM approvals WHERE subject_id='project-1' AND type='WORKFLOW_CHANGE' ORDER BY created_at DESC LIMIT 1")!.id;
+  db.run("INSERT INTO onboarding_configs(project_id,repository_path,facts_json,proposed_json,status,approval_id,created_at,updated_at) VALUES('project-1','/tmp','{}','{}','ACTIVE',$approvalId,$now,$now)", { approvalId, now });
+}
+
+/** Резервирует PHASE-слот Run с удержанным resource lock (как после dispatch). */
+function insertRunReservation(db: ReturnType<typeof createSqliteDatabase>, runId: string) {
+  const reservationId = randomUUID();
+  const now = NOW;
+  db.run("INSERT INTO scheduler_reservations(id,kind,subject_id,project_id,owner_id,reserved_at,estimate_cost,status,role,model,run_id) VALUES($id,'PHASE',$runId,'project-1',$ownerId,$now,1,'RESERVED','reviewer','default',$runId)", { id: reservationId, runId, ownerId: `run:${runId}`, now });
+  db.run("INSERT INTO scheduler_resource_locks(resource_key,reservation_id,project_id,owner_id,locked_at) VALUES($key,$id,'project-1',$ownerId,$now)", { key: `run:${runId}`, id: reservationId, ownerId: `run:${runId}`, now });
 }
 
 describe("run controls HTTP routes", () => {
@@ -227,6 +246,8 @@ describe("run controls HTTP routes", () => {
       },
     });
     seedRun(db, "run-1");
+    seedDispatchEligibleProject(db);
+    insertRunReservation(db, "run-1");
 
     const pause = await app.inject({ method: "POST", url: "/api/v1/runs/run-1/pause", headers: { ...headers, "idempotency-key": "key-pause" } });
     expect(pause.statusCode).toBe(200);

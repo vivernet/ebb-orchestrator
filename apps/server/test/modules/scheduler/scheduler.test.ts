@@ -1098,4 +1098,24 @@ describe("SchedulerService", () => {
       expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_reservations WHERE subject_id='race-task' AND status='RESERVED'")?.count).toBe(0);
     });
   });
+
+  it("release/reacquire paused-run hold round-trips locks and enforces dispatch-pause", async () => {
+    await setup();
+    const runId = randomUUID();
+    const now = new Date().toISOString();
+    db!.run("INSERT INTO agent_runs(id,role,runtime,model,task_id,status,trigger_reason,context_version,prompt,output_schema_version,started_at,capability_ref,capability_json) VALUES($id,'developer','hermes','model',NULL,'IN_PROGRESS','DEVELOPMENT','1','prompt','1',$now,$capRef,'{}')", { id: runId, now, capRef: `cap-${runId}` });
+    db!.run("INSERT INTO scheduler_reservations(id,kind,subject_id,project_id,owner_id,reserved_at,estimate_cost,status,role,model,run_id) VALUES($id,'PHASE',$runId,$projectId,$ownerId,$now,1,'RESERVED','developer','default',$runId)", { id: randomUUID(), runId, projectId, ownerId: `run:${runId}`, now });
+    const reservation = db!.get<{ id: string }>("SELECT id FROM scheduler_reservations WHERE run_id=$runId", { runId })!;
+    db!.run("INSERT INTO scheduler_resource_locks(resource_key,reservation_id,project_id,owner_id,locked_at) VALUES($key,$id,$projectId,$ownerId,$now)", { key: `run:${runId}`, id: reservation.id, projectId, ownerId: `run:${runId}`, now });
+
+    scheduler.releasePausedRunHold(runId);
+    expect(db!.all("SELECT * FROM scheduler_resource_locks WHERE reservation_id=$id", { id: reservation.id })).toHaveLength(0);
+
+    scheduler.reacquirePausedRunHold(runId);
+    expect(db!.all("SELECT * FROM scheduler_resource_locks WHERE reservation_id=$id", { id: reservation.id })).toHaveLength(1);
+
+    scheduler.releasePausedRunHold(runId);
+    scheduler.setDispatchState({ paused: true });
+    expect(() => scheduler.reacquirePausedRunHold(runId)).toThrow("DISPATCH_PAUSED_GLOBAL");
+  });
 });
