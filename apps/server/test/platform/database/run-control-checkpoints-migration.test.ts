@@ -69,9 +69,9 @@ describe("run control checkpoints migration 054", () => {
     db = createSqliteDatabase(":memory:");
     const migrations = loadTestMigrations();
 
-    expect(migrations.map(({ version }) => version)).toEqual(Array.from({ length: 54 }, (_, index) => index + 1));
-    expect(migrations.at(-1)?.name).toBe("054_run_control_checkpoints");
-    expect(runMigrations(db, migrations).applied).toBe(54);
+    expect(migrations.map(({ version }) => version)).toEqual(Array.from({ length: 55 }, (_, index) => index + 1));
+    expect(migrations.at(-1)?.name).toBe("055_project_config_write_journal");
+    expect(runMigrations(db, migrations).applied).toBe(55);
     expect(db.all<{ version: number; name: string }>("SELECT version, name FROM schema_migrations ORDER BY version"))
       .toEqual(migrations.map(({ version, name }) => ({ version, name })));
     expect(runMigrations(db, migrations).applied).toBe(0);
@@ -238,7 +238,7 @@ describe("run control checkpoints migration 054", () => {
     database.run("INSERT INTO scheduler_resource_locks(resource_key,reservation_id,project_id,owner_id,locked_at) VALUES('task:task-1','res-1','p-1','task:task-1',$now)", { now });
 
     const upgraded = runMigrations(database, migrations);
-    expect(upgraded.applied).toBe(2);
+    expect(upgraded.applied).toBe(3);
 
     expect(database.get("SELECT id,status,run_id FROM scheduler_reservations WHERE id='res-1'"))
       .toEqual({ id: "res-1", status: "RESERVED", run_id: "run-1" });

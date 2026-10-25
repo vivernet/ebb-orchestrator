@@ -6,6 +6,9 @@ import type { SchedulerService } from "../../modules/scheduler/scheduler-service
 import type { Epic, Task, TaskContract } from "../../modules/work/work-types.js";
 export interface WorkCommandService {
   pauseTask(taskId: string): unknown | Promise<unknown>;
+  resumeTask(taskId: string): unknown | Promise<unknown>;
+  setTaskPriority(taskId: string, priority: number): unknown | Promise<unknown>;
+  replanEpic(epicId: string): unknown | Promise<unknown>;
   createStandaloneTask(projectId: string, contract: TaskContract): Task | Promise<Task>;
   createEpic(projectId: string, contract: TaskContract): Epic | Promise<Epic>;
   createEpicTask(epicId: string, contract: TaskContract): Task | Promise<Task>;
@@ -55,8 +58,71 @@ export async function workRoutes(app: FastifyInstance, deps: WorkRouteDeps = {})
   app.get<{ Params: { id: string } }>("/api/v1/tasks/:id", async (request) => taskProjection.get(request.params.id) ?? { task: null, contract: null, lifecycle: { status: "UNKNOWN", stage: null, updatedAt: null }, git: { repositoryPath: null, branch: null, defaultBranch: null, github: null, worktreePath: null }, runs: [], findings: [], defects: [], dependencies: [], approvals: [], events: [], usage: emptyUsage, scheduler: { status: "BLOCK", reason: { code: "BLOCKED", message: "Task projection unavailable" } } });
   app.post<{ Params: { id: string } }>("/api/v1/tasks/:id/pause", async (request, reply) => {
     if (!deps.workService) return reply.code(503).send({ error: "work service unavailable" });
-    return deps.workService.pauseTask(request.params.id);
+    try {
+      const result = await deps.workService.pauseTask(request.params.id) as { priorStage?: string };
+      return { taskId: request.params.id, state: "PAUSED", priorStage: result.priorStage ?? null, updatedAt: new Date().toISOString() };
+    } catch (error) {
+      return reply.code(409).send({ error: (error as Error).message });
+    }
   });
+
+  app.post<{ Params: { id: string } }>("/api/v1/tasks/:id/resume", async (request, reply) => {
+    if (!deps.workService) return reply.code(503).send({ error: "work service unavailable" });
+    try {
+      return await deps.workService.resumeTask(request.params.id);
+    } catch (error) {
+      return reply.code(409).send({ error: (error as Error).message });
+    }
+  });
+
+  app.post<{ Params: { id: string }; Body: unknown }>("/api/v1/tasks/:id/priority", async (request, reply) => {
+    if (!deps.workService) return reply.code(503).send({ error: "work service unavailable" });
+    const priority = parsePriorityBody(request.body);
+    if (priority === undefined) return reply.code(400).send({ error: "invalid priority" });
+    try {
+      return await deps.workService.setTaskPriority(request.params.id, priority);
+    } catch (error) {
+      return reply.code(400).send({ error: (error as Error).message });
+    }
+  });
+
+  app.post<{ Params: { id: string } }>("/api/v1/epics/:id/pause", async (request, reply) => {
+    if (!deps.scheduler) return reply.code(503).send({ error: "scheduler unavailable" });
+    try {
+      const result = deps.scheduler.pauseScope("EPIC", request.params.id, "local-user", true);
+      return { epicId: request.params.id, state: result.state, updatedAt: result.updatedAt };
+    } catch (error) {
+      return reply.code(404).send({ error: (error as Error).message });
+    }
+  });
+
+  app.post<{ Params: { id: string } }>("/api/v1/epics/:id/resume", async (request, reply) => {
+    if (!deps.scheduler) return reply.code(503).send({ error: "scheduler unavailable" });
+    try {
+      const result = deps.scheduler.pauseScope("EPIC", request.params.id, "local-user", false);
+      return { epicId: request.params.id, state: result.state, updatedAt: result.updatedAt };
+    } catch (error) {
+      return reply.code(404).send({ error: (error as Error).message });
+    }
+  });
+
+  app.post<{ Params: { id: string } }>("/api/v1/epics/:id/replan", async (request, reply) => {
+    if (!deps.workService) return reply.code(503).send({ error: "work service unavailable" });
+    try {
+      return await deps.workService.replanEpic(request.params.id);
+    } catch (error) {
+      return reply.code(404).send({ error: (error as Error).message });
+    }
+  });
+}
+
+function parsePriorityBody(value: unknown): number | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const body = value as Record<string, unknown>;
+  if (Object.keys(body).length !== 1 || typeof body.priority !== "number") return undefined;
+  const priority = body.priority;
+  if (!Number.isInteger(priority) || priority < 1 || priority > 1000) return undefined;
+  return priority;
 }
 
 const taskContractKeys = [

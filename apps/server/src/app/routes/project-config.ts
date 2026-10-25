@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { ProjectConfigError, type ProjectConfigCandidate, type ProjectConfigRevision, type ProjectConfigService } from "../../modules/projects/project-config-service.js";
+import { projectConfigCandidateEditorRequestSchema, journalReconcileRequestSchema } from "@ebb-orchestrator/contracts";
 
 export interface ProjectConfigRouteDeps { service?: ProjectConfigService; }
 
@@ -31,6 +32,25 @@ export async function projectConfigRoutes(app: FastifyInstance, deps: ProjectCon
     if (!isEmptyObject(request.body)) return reply.code(400).send({ error: "request body must be empty" });
     try { return reply.code(201).send({ candidate: deps.service.capture(request.params.projectId) }); }
     catch (error) { return sendError(reply, error); }
+  });
+
+  app.post<{ Params: { projectId: string }; Body: unknown }>("/api/v1/projects/:projectId/config/candidates/editor", async (request, reply) => {
+    if (!deps.service) return reply.code(503).send({ error: "Project Config service unavailable" });
+    const parsed = projectConfigCandidateEditorRequestSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: { code: "PROJECT_CONFIG_INVALID", message: "invalid editor candidate body" } });
+    try {
+      const candidate = deps.service.saveEditorCandidate(request.params.projectId, parsed.data.expectedManifestHash, parsed.data.settings);
+      return reply.code(201).send({ candidate });
+    } catch (error) { return sendError(reply, error); }
+  });
+
+  app.post<{ Params: { projectId: string; journalId: string }; Body: unknown }>("/api/v1/projects/:projectId/config/journals/:journalId/reconcile", async (request, reply) => {
+    if (!deps.service) return reply.code(503).send({ error: "Project Config service unavailable" });
+    const parsed = journalReconcileRequestSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: { code: "PROJECT_CONFIG_INVALID", message: "invalid reconcile body" } });
+    try {
+      return deps.service.reconcileJournal(request.params.projectId, request.params.journalId, parsed.data);
+    } catch (error) { return sendError(reply, error); }
   });
 
   app.post<{ Params: { projectId: string; candidateId: string }; Body: unknown }>("/api/v1/projects/:projectId/config/candidates/:candidateId/approve", async (request, reply) => {

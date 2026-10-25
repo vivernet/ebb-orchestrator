@@ -113,6 +113,32 @@ export class SchedulerService {
     return { paused: input.paused, updatedAt: now };
   }
 
+  /**
+   * Scoped pause/resume проекта или эпика (plan-27 Task 4). Пишет в
+   * `scheduler_scope_pauses` из Task 2; пауза блокирует только НОВЫЕ reservation.
+   */
+  pauseScope(scope: "PROJECT" | "EPIC", scopeId: string, actor: string, paused = true): { state: "PAUSED" | "ACTIVE"; updatedAt: string } {
+    const now = this.clock().toISOString();
+    this.db.transaction((tx) => {
+      if (scope === "PROJECT" && !tx.get("SELECT id FROM projects WHERE id=$id", { id: scopeId })) {
+        throw new Error("PROJECT_NOT_FOUND");
+      }
+      if (scope === "EPIC") {
+        const epic = tx.get<{ project_id: string }>("SELECT project_id FROM epics WHERE id=$id", { id: scopeId });
+        if (!epic) throw new Error("EPIC_NOT_FOUND");
+      }
+      if (paused) {
+        tx.run(
+          "INSERT INTO scheduler_scope_pauses(scope,scope_id,paused_at,actor) VALUES($scope,$scopeId,$now,$actor) ON CONFLICT(scope,scope_id) DO UPDATE SET paused_at=excluded.paused_at,actor=excluded.actor",
+          { scope, scopeId, now, actor },
+        );
+      } else {
+        tx.run("DELETE FROM scheduler_scope_pauses WHERE scope=$scope AND scope_id=$scopeId", { scope, scopeId });
+      }
+    });
+    return { state: paused ? "PAUSED" : "ACTIVE", updatedAt: now };
+  }
+
   assertProjectDispatchable(projectId: string): void {
     this.db.transaction((tx) => assertProjectDispatchableTx(tx, projectId));
   }

@@ -41,6 +41,30 @@ export interface ProjectConfigStateRecord {
   config_status: "READY" | "DEGRADED";
 }
 
+/** Фазы журнала записи Project Config (plan-27 Task 4). */
+export type ProjectConfigWriteJournalPhase =
+  | "PREPARED" | "WRITING" | "APPLIED"
+  | "DEGRADED" | "RECONCILED_EXTERNAL" | "RECONCILED_RESTORED";
+
+/** Представляет durable журнал записи прикладных изменений Project Config. */
+export interface ProjectConfigWriteJournalRecord {
+  id: string;
+  project_id: string;
+  candidate_id: string;
+  approval_id: string;
+  expected_manifest_hash: string;
+  old_files_json: string;
+  new_files_json: string;
+  phase: ProjectConfigWriteJournalPhase;
+  failure_code: string | null;
+  resolution: string | null;
+  resolved_by: string | null;
+  resolved_manifest_hash: string | null;
+  resolved_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 /** Описывает capture, подготовленный service до транзакционной записи candidate. */
 export interface NewProjectConfigCandidate {
   projectId: string;
@@ -261,5 +285,146 @@ export class ProjectConfigRepository {
        JOIN approvals a ON a.id=r.approval_id AND a.subject_id=r.project_id AND a.subject_type='PROJECT' AND a.type='WORKFLOW_CHANGE'
        WHERE r.project_id=$projectId AND r.revision_id=$revisionId`, { projectId, revisionId },
     );
+  }
+
+  // ── Project Config write journal (plan-27 Task 4) ──────────────────────
+
+  /** Возвращает активный (non-terminal) журнал записи проекта, если он есть. */
+  getActiveJournal(projectId: string): ProjectConfigWriteJournalRecord | undefined {
+    const table = this.database.get<{ name: string }>("SELECT name FROM sqlite_master WHERE type='table' AND name='project_config_write_journal'");
+    if (!table) return undefined;
+    return this.database.get<ProjectConfigWriteJournalRecord>(
+      `SELECT * FROM project_config_write_journal
+       WHERE project_id=$projectId AND phase IN ('PREPARED','WRITING','DEGRADED')
+       ORDER BY created_at DESC, id DESC LIMIT 1`, { projectId },
+    );
+  }
+
+  /** Возвращает все журналы проекта от новых к старым. */
+  listJournals(projectId: string): ProjectConfigWriteJournalRecord[] {
+    return this.database.all<ProjectConfigWriteJournalRecord>(
+      "SELECT * FROM project_config_write_journal WHERE project_id=$projectId ORDER BY created_at DESC, id DESC", { projectId },
+    );
+  }
+
+  /** Проверяет наличие активного журнала внутри вызывающей транзакции (dispatch gate). */
+  static hasActiveJournalTx(tx: DatabaseTx, projectId: string): boolean {
+    if (!tx.get<{ name: string }>("SELECT name FROM sqlite_master WHERE type='table' AND name='project_config_write_journal'")) return false;
+    return Boolean(tx.get(
+      "SELECT 1 FROM project_config_write_journal WHERE project_id=$projectId AND phase IN ('PREPARED','WRITING','DEGRADED') LIMIT 1",
+      { projectId },
+    ));
+  }
+
+  /**
+   * Фиксирует exact-hash approval и immutable revision БЕЗ активации: candidate
+   * остаётся `PENDING_REVIEW`, `active_revision_id` не меняется. Журнал создаётся
+   * отдельно тем же сервисом; активация происходит только после проверенной записи
+   * файлов (applyJournalTx).
+   */
+  approvePreparedCandidate(
+    projectId: string,
+    candidateId: string,
+    expectedManifestHash: string,
+    createApproval: (tx: DatabaseTx, candidate: ProjectConfigCandidateRecord) => ProjectConfigApprovalWrite,
+  ): { revision: ProjectConfigRevisionRecord; candidate: ProjectConfigCandidateRecord } | undefined {
+    return this.database.transaction((tx) => {
+      const state = this.getState(projectId, tx);
+      const candidate = this.getCandidate(projectId, candidateId, tx);
+      if (!state || state.current_candidate_id !== candidateId || !candidate || candidate.status !== "PENDING_REVIEW" || candidate.manifest_hash !== expectedManifestHash) return undefined;
+      const write = createApproval(tx, candidate);
+      tx.run(
+        `INSERT INTO project_config_revisions(revision_id,project_id,candidate_id,schema_version,normalized_payload_json,source_head,manifest_json,source_files_json,manifest_hash,revision_hash,approval_id,created_at)
+         VALUES($revisionId,$projectId,$candidateId,$schemaVersion,$payload,$sourceHead,$manifestJson,$sourceFilesJson,$manifestHash,$revisionHash,$approvalId,$now)`,
+        { revisionId: write.revisionId, projectId, candidateId, schemaVersion: candidate.schema_version, payload: candidate.normalized_payload_json, sourceHead: candidate.source_head, manifestJson: candidate.manifest_json, sourceFilesJson: candidate.source_files_json, manifestHash: candidate.manifest_hash, revisionHash: write.revisionHash, approvalId: write.approvalId, now: write.createdAt },
+      );
+      const revision = tx.get<ProjectConfigRevisionRecord>("SELECT * FROM project_config_revisions WHERE revision_id=$revisionId AND project_id=$projectId", { revisionId: write.revisionId, projectId });
+      if (!revision) return undefined;
+      return { revision, candidate };
+    });
+  }
+
+  /** Создаёт журнал в фазе PREPARED внутри вызывающей транзакции. */
+  createJournalInTransaction(tx: DatabaseTx, input: {
+    id: string; projectId: string; candidateId: string; approvalId: string;
+    expectedManifestHash: string; oldFilesJson: string; newFilesJson: string; now: string;
+  }): void {
+    tx.run(
+      `INSERT INTO project_config_write_journal(id,project_id,candidate_id,approval_id,expected_manifest_hash,old_files_json,new_files_json,phase,created_at,updated_at)
+       VALUES($id,$projectId,$candidateId,$approvalId,$expectedManifestHash,$oldFilesJson,$newFilesJson,'PREPARED',$now,$now)`,
+      input,
+    );
+  }
+
+  /** Помечает фазу журнала (CAS): только предсказуемый переход фазы фиксируется. */
+  updateJournalPhase(journalId: string, expectedPhase: ProjectConfigWriteJournalPhase, phase: ProjectConfigWriteJournalPhase, now: string, failureCode?: string): boolean {
+    return this.database.transaction((tx) => {
+      tx.run(
+        "UPDATE project_config_write_journal SET phase=$phase,failure_code=$failureCode,updated_at=$now WHERE id=$id AND phase=$expectedPhase",
+        { id: journalId, phase, expectedPhase, failureCode: failureCode ?? null, now },
+      );
+      return tx.get<{ changes: number }>("SELECT changes() AS changes")?.changes === 1;
+    });
+  }
+
+  /** Помечает журнал DEGRADED и состояние проекта DEGRADED (CAS по фазе). */
+  markJournalDegraded(journalId: string, projectId: string, failureCode: string, now: string): boolean {
+    return this.database.transaction((tx) => {
+      tx.run(
+        "UPDATE project_config_write_journal SET phase='DEGRADED',failure_code=$failureCode,updated_at=$now WHERE id=$id AND phase IN ('PREPARED','WRITING')",
+        { id: journalId, failureCode, now },
+      );
+      const journalChanged = tx.get<{ changes: number }>("SELECT changes() AS changes")?.changes === 1;
+      if (journalChanged) {
+        tx.run("UPDATE project_config_state SET config_status='DEGRADED',updated_at=$now WHERE project_id=$projectId", { projectId, now });
+      }
+      return journalChanged;
+    });
+  }
+
+  /** Терминальная фаза reconcile: CAS по DEGRADED и незаполненной resolution. */
+  closeJournalReconciledTx(tx: DatabaseTx, journalId: string, input: {
+    resolution: "ACCEPT_EXTERNAL" | "RESTORE_APPROVED";
+    resolvedBy: string; resolvedManifestHash: string; resolvedAt: string;
+  }): boolean {
+    tx.run(
+      `UPDATE project_config_write_journal
+       SET phase=$phase,resolution=$resolution,resolved_by=$resolvedBy,resolved_manifest_hash=$resolvedManifestHash,resolved_at=$resolvedAt,updated_at=$resolvedAt
+       WHERE id=$id AND phase='DEGRADED' AND resolved_manifest_hash IS NULL`,
+      { id: journalId, phase: input.resolution === "ACCEPT_EXTERNAL" ? "RECONCILED_EXTERNAL" : "RECONCILED_RESTORED", ...input },
+    );
+    return tx.get<{ changes: number }>("SELECT changes() AS changes")?.changes === 1;
+  }
+
+  /** Обновляет current candidate указатель и сбрасывает config_status в READY. */
+  setCurrentCandidateTx(tx: DatabaseTx, projectId: string, candidateId: string, now: string): void {
+    tx.run(
+      "UPDATE project_config_state SET current_candidate_id=$candidateId,config_status='READY',updated_at=$now WHERE project_id=$projectId",
+      { projectId, candidateId, now },
+    );
+  }
+
+  /**
+   * Единственная транзакция применения: journal APPLIED + candidate APPROVED_ACTIVE
+   * + advance active revision. Прежняя active revision остаётся authoritative до
+   * этого commit; CAS-сбой откатывает всё.
+   */
+  applyJournalTx(tx: DatabaseTx, journalId: string, projectId: string, candidateId: string, revisionId: string, expectedActiveRevisionId: string | null, now: string): boolean {
+    tx.run(
+      "UPDATE project_config_write_journal SET phase='APPLIED',updated_at=$now WHERE id=$id AND phase IN ('PREPARED','WRITING')",
+      { id: journalId, now },
+    );
+    if (tx.get<{ changes: number }>("SELECT changes() AS changes")?.changes !== 1) return false;
+    tx.run(
+      "UPDATE project_config_candidates SET status='APPROVED_ACTIVE' WHERE candidate_id=$candidateId AND project_id=$projectId AND status='PENDING_REVIEW'",
+      { candidateId, projectId },
+    );
+    if (tx.get<{ changes: number }>("SELECT changes() AS changes")?.changes !== 1) return false;
+    tx.run(
+      `UPDATE project_config_state SET active_revision_id=$revisionId,config_status='READY',updated_at=$now
+       WHERE project_id=$projectId AND current_candidate_id=$candidateId AND active_revision_id IS $expectedActiveRevision`,
+      { projectId, candidateId, revisionId, expectedActiveRevision: expectedActiveRevisionId, now },
+    );
+    return tx.get<{ changes: number }>("SELECT changes() AS changes")?.changes === 1;
   }
 }

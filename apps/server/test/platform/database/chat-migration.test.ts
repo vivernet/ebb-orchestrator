@@ -45,9 +45,9 @@ describe("chat migration 052", () => {
     it("applies 001-053 and creates chat tables with CHECK/FK/index invariants", async () => {
       await freshDb();
       const migrations = loadTestMigrations();
-      expect(migrations.map(({ version }) => version)).toEqual(Array.from({ length: 54 }, (_, index) => index + 1));
-      expect(migrations.at(-1)?.name).toBe("054_run_control_checkpoints");
-      expect(runMigrations(db!, migrations).applied).toBe(54);
+      expect(migrations.map(({ version }) => version)).toEqual(Array.from({ length: 55 }, (_, index) => index + 1));
+      expect(migrations.at(-1)?.name).toBe("055_project_config_write_journal");
+      expect(runMigrations(db!, migrations).applied).toBe(55);
 
       expect(db!.all<{ name: string; type: string; notnull: number; dflt_value: unknown; pk: number }>(
         "PRAGMA table_info(chat_conversations)",
@@ -134,7 +134,7 @@ describe("chat migration 052", () => {
       )).toEqual({ role: "coordinator", kind: "status_update", request_id: requestId, plan_id: planId, status: "RECEIVED" });
 
       expect(db!.all("PRAGMA foreign_key_check")).toEqual([]);
-      expect(db!.get<{ applied: number }>("SELECT COUNT(*) AS applied FROM schema_migrations")!.applied).toBe(54);
+      expect(db!.get<{ applied: number }>("SELECT COUNT(*) AS applied FROM schema_migrations")!.applied).toBe(55);
     });
   });
 
@@ -156,7 +156,7 @@ describe("chat migration 052", () => {
       const requestsBefore = db!.all("SELECT * FROM planning_requests");
       const plansBefore = db!.all("SELECT * FROM planning_plans");
 
-      expect(runMigrations(db!, migrations).applied).toBe(3);
+      expect(runMigrations(db!, migrations).applied).toBe(4);
       expect(db!.all("SELECT * FROM projects")).toEqual(projectsBefore);
       expect(db!.all("SELECT * FROM planning_requests")).toEqual(requestsBefore);
       expect(db!.all("SELECT * FROM planning_plans")).toEqual(plansBefore);
