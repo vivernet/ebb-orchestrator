@@ -1,7 +1,7 @@
 ---
 id: plan-27
 kind: plan
-status: planned
+status: in_progress
 title: 'Web UI по reference-ui: визуальная точность и backend-покрытие'
 summary: 'Точное компактное соответствие Web UI всем десяти reference-ui макетам с закрытием необходимых backend API, durable state и проверок.'
 created: 2026-10-25
