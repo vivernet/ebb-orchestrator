@@ -3,6 +3,7 @@ import { apiPaths, type TaskOverviewProjection } from '@ebb-orchestrator/contrac
 import { Link } from 'react-router';
 import { ApiError, apiClient, pauseTask, resumeTask, setTaskPriority, toClientPath } from '../../api/client.js';
 import { ErrorAlert } from '../../components/ui/PageState.js';
+import UnsupportedBlock from '../../components/ui/Unavailable.js';
 import WorkflowTimeline, { TASK_LIFECYCLE_STAGES } from '../../components/WorkflowTimeline.js';
 import { useOnSSEReconnect } from '../../hooks/useEventClient.js';
 import { apiErrorMessage, ru, statusLabel, waitReasonLabel } from '../../i18n/ru.js';
@@ -147,6 +148,7 @@ export default function TaskPage({ id = '' }: TaskPageProps) {
                 )}
                 <div className="panel-head"><h3>{ru.tasks.overview.events}</h3></div>
                 <p>{`${projection.events.length} событий · ${projection.approvals.length} согласований`}</p>
+                <UnsupportedBlock reason="ACCEPTANCE_PROJECTION_UNAVAILABLE" label="Критерии приёмки" />
               </section>
               <section className="reference-panel" aria-label="Связанная работа">
                 <div className="panel-head"><h3>{ru.tasks.overview.related}</h3></div>

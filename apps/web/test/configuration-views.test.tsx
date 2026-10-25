@@ -5,26 +5,34 @@ import ProjectOnboardingPage from '../src/features/onboarding/ProjectOnboardingP
 import SettingsPage from '../src/features/settings/SettingsPage.js';
 import UsagePage from '../src/features/usage/UsagePage.js';
 import { ApiError, apiClient } from '../src/api/client.js';
-import type { UsagePageProjection } from '@ebb-orchestrator/contracts';
+import type { UsageWindowProjection } from '@ebb-orchestrator/contracts';
 
-function usageFixture(
-  overrides: Partial<Record<'global' | 'project' | 'epic' | 'task', object>> = {},
-  budgetOverrides: Partial<UsagePageProjection['budget']> = {},
-): UsagePageProjection {
-  const bucket = { inputTokens: 10, cachedTokens: 2, outputTokens: 3, totalTokens: 15, tokens: 15, cost: 1.25, aggregation: 'all_records' as const };
+function windowFixture(
+  overrides: { summary?: Partial<UsageWindowProjection['summary']>; dailySeries?: UsageWindowProjection['dailySeries']; budgets?: Partial<UsageWindowProjection['budgets']> } = {},
+): UsageWindowProjection {
   return {
-    global: { ...bucket, ...overrides.global },
-    project: { ...bucket, aggregation: 'records_with_project_id', ...overrides.project },
-    epic: { ...bucket, aggregation: 'records_with_epic_id', ...overrides.epic },
-    task: { ...bucket, aggregation: 'records_with_task_id', ...overrides.task },
-    budget: {
-      configurations: budgetOverrides.configurations ?? [],
-      contexts: budgetOverrides.contexts ?? [{
-        scope: 'global', scopeId: 'global', projectId: null, epicId: null, taskId: null,
-        applicableLimits: [], effectiveLimit: null,
-      }],
-      activeReservations: budgetOverrides.activeReservations ?? [],
+    window: { from: '2026-09-24T00:00:00.000Z', to: '2026-10-24T23:59:59.999Z', granularity: 'day' },
+    summary: { inputTokens: 10, cachedTokens: 2, outputTokens: 3, totalTokens: 15, cost: 1.25, ...overrides.summary },
+    dailySeries: overrides.dailySeries ?? [{ date: '2026-09-25', usage: { inputTokens: 10, cachedTokens: 2, outputTokens: 3, totalTokens: 15, cost: 1.25 } }],
+    breakdowns: { byRole: [], byReason: [], byModel: [] },
+    modelComparison: [],
+    budgets: {
+      configurations: [],
+      contexts: [{ scope: 'global', scopeId: 'global', projectId: null, epicId: null, taskId: null, applicableLimits: [], effectiveLimit: null }],
+      activeReservations: [],
+      ...overrides.budgets,
     },
+    efficiency: {
+      cacheShare: { availability: 'unavailable', reason: 'NO_APPROVED_POLICY' },
+      averageInitialContextTokens: { availability: 'unavailable', reason: 'NO_APPROVED_POLICY' },
+      averageOutputTokens: { availability: 'unavailable', reason: 'NO_APPROVED_POLICY' },
+      aiRunsPerTask: { availability: 'unavailable', reason: 'NO_APPROVED_POLICY' },
+      reworkCyclesPerTask: { availability: 'unavailable', reason: 'NO_APPROVED_POLICY' },
+      deterministicCheckCount: { availability: 'unavailable', reason: 'NO_DURABLE_CHECK_EXECUTION_SOURCE' },
+      deterministicCheckCost: { availability: 'unavailable', reason: 'NO_DURABLE_CHECK_EXECUTION_SOURCE' },
+    },
+    anomaly: { availability: 'unavailable', reason: 'NO_APPROVED_POLICY' },
+    taskRecoveryShare: { availability: 'unavailable', reason: 'NO_APPROVED_POLICY' },
   };
 }
 
@@ -245,61 +253,54 @@ describe('Usage page budget tracking', () => {
     vi.restoreAllMocks();
   });
 
-  test('shows corrected token metrics with honest aggregate labels', async () => {
-    const get = vi.spyOn(apiClient, 'get').mockResolvedValue(usageFixture({
-      global: { inputTokens: 100, cachedTokens: 20, outputTokens: 30, totalTokens: 150, tokens: 150, cost: 10 },
+  test('selects a deterministic default UTC window and renders authoritative summary', async () => {
+    const get = vi.spyOn(apiClient, 'get').mockResolvedValue(windowFixture({
+      summary: { inputTokens: 100, cachedTokens: 20, outputTokens: 30, totalTokens: 150, cost: 10 },
     }));
 
     render(<UsagePage />);
 
-    await waitFor(() => expect(screen.getByRole('heading', { name: 'Все записи' })).toBeInTheDocument());
-    expect(screen.getByRole('heading', { name: 'Записи с project_id' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Записи с epic_id' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Записи с task_id' })).toBeInTheDocument();
-    const allRecords = screen.getByRole('heading', { name: 'Все записи' }).closest('article');
-    expect(allRecords).not.toBeNull();
-    expect(within(allRecords!).getByText('100')).toBeInTheDocument();
-    expect(within(allRecords!).getByText('20')).toBeInTheDocument();
-    expect(within(allRecords!).getByText('30')).toBeInTheDocument();
-    expect(within(allRecords!).getByText('150')).toBeInTheDocument();
-    expect(allRecords).toHaveTextContent('$10.00');
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Использование и бюджет' })).toBeInTheDocument());
+    const summary = screen.getByRole('region', { name: 'Сводка использования' });
+    expect(within(summary).getByText('150')).toBeInTheDocument();
+    expect(within(summary).getByText('$10.00')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Дневная серия' })).toBeInTheDocument();
     expect(screen.getByText('Настроенных лимитов нет.')).toBeInTheDocument();
-    expect(screen.queryByText('global')).not.toBeInTheDocument();
-    expect(get).toHaveBeenCalledWith('/usage', expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    expect(get).toHaveBeenCalledWith(expect.stringMatching(/^\/usage\?from=/));
+    expect(get).not.toHaveBeenCalledWith('/usage', expect.anything());
     vi.restoreAllMocks();
   });
 
-  test('shows explicit empty state for zero aggregate usage', async () => {
-    vi.spyOn(apiClient, 'get').mockResolvedValue(usageFixture({
-      global: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, totalTokens: 0, tokens: 0, cost: 0 },
-      project: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, totalTokens: 0, tokens: 0, cost: 0 },
-      epic: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, totalTokens: 0, tokens: 0, cost: 0 },
-      task: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, totalTokens: 0, tokens: 0, cost: 0 },
+  test('shows explicit empty state for an empty default window', async () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue(windowFixture({
+      summary: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 },
+      dailySeries: [],
     }));
 
     render(<UsagePage />);
 
-    expect(await screen.findByText('Нет данных об использовании, лимитов бюджета или активных резервирований.')).toBeInTheDocument();
+    expect(await screen.findByText('За период записей нет.')).toBeInTheDocument();
+    expect(screen.queryByText('Нет данных об использовании, лимитов бюджета или активных резервирований.')).not.toBeInTheDocument();
     vi.restoreAllMocks();
   });
 
   test('renders retryable error and refetches authoritative usage', async () => {
     const get = vi.spyOn(apiClient, 'get')
       .mockRejectedValueOnce(new Error('usage unavailable'))
-      .mockResolvedValueOnce(usageFixture());
+      .mockResolvedValueOnce(windowFixture());
 
     render(<UsagePage />);
 
     expect(await screen.findByText('Не удалось загрузить данные об использовании: Не удалось выполнить запрос.')).toBeInTheDocument();
-    get.mockResolvedValue(usageFixture());
+    get.mockResolvedValue(windowFixture());
     screen.getByRole('button', { name: 'Повторить' }).click();
-    await waitFor(() => expect(screen.getByRole('heading', { name: 'Все записи' })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Использование и бюджет' })).toBeInTheDocument());
     expect(get).toHaveBeenCalledTimes(2);
     vi.restoreAllMocks();
   });
 
   test('refetches usage after SSE reconnect', async () => {
-    const get = vi.spyOn(apiClient, 'get').mockResolvedValue(usageFixture());
+    const get = vi.spyOn(apiClient, 'get').mockResolvedValue(windowFixture());
 
     render(<UsagePage />);
 
@@ -317,13 +318,15 @@ describe('Usage page budget tracking', () => {
       estimateCost: 2.5, status: 'RESERVED', role: 'developer', model: 'model-x',
       triggerReason: 'DEVELOPMENT', reworkCategory: null, createdAt: '2026-09-30T12:00:00.000Z',
     } as const;
-    vi.spyOn(apiClient, 'get').mockResolvedValue(usageFixture({}, {
-      configurations: [globalLimit, projectLimit],
-      contexts: [
-        { scope: 'global', scopeId: 'global', projectId: null, epicId: null, taskId: null, applicableLimits: [globalLimit], effectiveLimit: globalLimit },
-        { scope: 'project', scopeId: 'project-1', projectId: 'project-1', epicId: null, taskId: null, applicableLimits: [globalLimit, projectLimit], effectiveLimit: projectLimit },
-      ],
-      activeReservations: [reservation],
+    vi.spyOn(apiClient, 'get').mockResolvedValue(windowFixture({
+      budgets: {
+        configurations: [globalLimit, projectLimit],
+        contexts: [
+          { scope: 'global', scopeId: 'global', projectId: null, epicId: null, taskId: null, applicableLimits: [globalLimit], effectiveLimit: globalLimit },
+          { scope: 'project', scopeId: 'project-1', projectId: 'project-1', epicId: null, taskId: null, applicableLimits: [globalLimit, projectLimit], effectiveLimit: projectLimit },
+        ],
+        activeReservations: [reservation],
+      },
     }));
 
     render(<UsagePage />);

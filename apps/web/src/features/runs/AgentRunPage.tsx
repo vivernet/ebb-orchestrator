@@ -96,6 +96,12 @@ function isActiveStatus(status: string): boolean {
   return (ACTIVE_RUN_STATUSES as readonly string[]).includes(status);
 }
 
+const TERMINAL_RUN_STATUSES = ['COMPLETED', 'FAILED', 'CANCELLED'] as const;
+
+function isTerminalStatus(status: string): boolean {
+  return (TERMINAL_RUN_STATUSES as readonly string[]).includes(status);
+}
+
 /** Wire-значение недоступности поля (собрано без литерала, чтобы не травмировать копирайт-сканер). */
 type UnavailableWire = `${'unavail'}${'able'}`;
 const UNAVAIL: UnavailableWire = ('unavail' + 'able') as UnavailableWire;
@@ -228,6 +234,11 @@ interface RunCapability {
 }
 
 function runCapability(run: RunDetailView): RunCapability {
+  // Терминальный статус run закрывает управление даже при ACTIVE run_control_state
+  // (например после отмены): checkpoint/pause/resume/cancel не показываются.
+  if (isTerminalStatus(run.status)) {
+    return { checkpoint: false, pause: false, resume: false, cancel: false, busy: null };
+  }
   const ctrl = run.control;
   if (ctrl) {
     switch (ctrl.state) {

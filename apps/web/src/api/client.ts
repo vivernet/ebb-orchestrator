@@ -167,17 +167,36 @@ export async function cancelAllRuns(expectedRunIds: string[]): Promise<CancelAll
 
 /** Создаёт durable checkpoint Run без остановки. */
 export async function createRunCheckpoint(runId: string): Promise<RunControlCommandResult> {
-  return validate(runControlCommandResultSchema, await apiClient.post<unknown>(toClientPath(apiPaths.runCheckpoint(runId))));
+  return validate(runControlCommandResultSchema, await apiClient.post<unknown>(
+    toClientPath(apiPaths.runCheckpoint(runId)),
+    undefined,
+    { headers: { 'idempotency-key': runControlIdempotencyKey(runId, 'checkpoint') } },
+  ));
 }
 
 /** Кооперативная пауза Run. */
 export async function pauseRun(runId: string): Promise<RunControlCommandResult> {
-  return validate(runControlCommandResultSchema, await apiClient.post<unknown>(toClientPath(apiPaths.runPause(runId))));
+  return validate(runControlCommandResultSchema, await apiClient.post<unknown>(
+    toClientPath(apiPaths.runPause(runId)),
+    undefined,
+    { headers: { 'idempotency-key': runControlIdempotencyKey(runId, 'pause') } },
+  ));
+}
+
+/** Устойчивый idempotency-key для UI-мутаций run-control: стабилен для
+ *  (run, команда), поэтому повторная отправка той же команды дедуплицируется
+ *  backend-ом, а разные команды/запуски никогда не конфликтуют. */
+function runControlIdempotencyKey(runId: string, command: 'checkpoint' | 'pause' | 'resume'): string {
+  return `ebb-ui:run-control:${runId}:${command}`;
 }
 
 /** Валидированное возобновление Run после подтверждённого checkpoint. */
 export async function resumeRun(runId: string): Promise<RunControlCommandResult> {
-  return validate(runControlCommandResultSchema, await apiClient.post<unknown>(toClientPath(apiPaths.runResume(runId))));
+  return validate(runControlCommandResultSchema, await apiClient.post<unknown>(
+    toClientPath(apiPaths.runResume(runId)),
+    undefined,
+    { headers: { 'idempotency-key': runControlIdempotencyKey(runId, 'resume') } },
+  ));
 }
 
 /** Sanitized persisted terminal Run; unavailable-состояние сохраняется без fallback. */

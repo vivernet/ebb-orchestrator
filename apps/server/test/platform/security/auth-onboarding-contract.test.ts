@@ -74,6 +74,8 @@ describe("auth/onboarding contract v1", () => {
       "execution",
       "approvals",
       "approvalApprove",
+      "approvalReject",
+      "approvalRequestChanges",
       "runs",
       "run",
       "runCancel",

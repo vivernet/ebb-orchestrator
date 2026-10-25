@@ -17,7 +17,8 @@ const readme = readFileSync(join(root, 'README.md'), 'utf8');
 const expectedSkills = [
   'ebb-curate-skills', 'ebb-database-engineering', 'ebb-debug-issue', 'ebb-design-change', 'ebb-dispatch-agents',
   'ebb-execute-plan', 'ebb-final-review', 'ebb-finish-branch', 'ebb-handle-review-feedback',
-  'ebb-implement-task', 'ebb-notes', 'ebb-orchestrate-work', 'ebb-quality-gates', 'ebb-repository-context',
+  'ebb-implement-task', 'ebb-maintain-project-docs', 'ebb-notes', 'ebb-orchestrate-work', 'ebb-quality-gates',
+  'ebb-release', 'ebb-repository-context',
   'ebb-repository-maintenance', 'ebb-review-plan', 'ebb-review-task', 'ebb-security-review',
   'ebb-web-e2e', 'ebb-worktree', 'ebb-write-plan',
 ];
@@ -293,10 +294,10 @@ test('Hermes project discovery check requires the documented enabled setting', (
 test('Hermes setup and check do not copy or hash profile assets', () => {
   const source = readFileSync(join(root, 'scripts', 'hermes-dev.mjs'), 'utf8');
   assert.doesNotMatch(source, /copyFileSync|createHash|sha256|skills\.create_dir/);
-  assert.match(source, /Canonical project skills \(21\)/);
+  assert.match(source, /Canonical project skills \(23\)/);
 });
 
-test('canonical skill validation enforces the 21-skill project inventory', () => {
+test('canonical skill validation enforces the 23-skill project inventory', () => {
   const result = validateCanonicalSkills(join(root, '.agents', 'skills'));
   assert.deepEqual(result.skills, canonicalSkills);
   assert.equal(result.valid, true);
@@ -346,7 +347,7 @@ test('README points to Hermes guide and canonical skills', () => {
   assert.match(readme, /\]\(docs\/development\/05-hermes\.md\)/);
   assert.match(readme, /`\.agents\/skills\/`/);
   assert.doesNotMatch(readme, /tools\/hermes\/README\.md/);
-  assert.match(readme, /21 repository-local Ebb skills/);
+  assert.match(readme, /23 repository-local Ebb skills/);
   const documentedSkills = [...readme.matchAll(/^- `([a-z\d-]+)` —/gmu)]
     .map((match) => match[1]).filter((name) => name.startsWith('ebb-')).sort();
   assert.deepEqual(documentedSkills, expectedSkills);

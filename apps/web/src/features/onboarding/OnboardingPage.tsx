@@ -3,6 +3,7 @@ import { ApiError } from '../../api/client.js';
 import { apiErrorMessage, ru, statusLabel } from '../../i18n/ru.js';
 import { onboardingApi, type OnboardingDiscoveryResult } from './api.js';
 import StatusBadge from '../../components/ui/StatusBadge.js';
+import UnsupportedBlock from '../../components/ui/Unavailable.js';
 
 /**
  * Представляет экран онбординга проекта с полным flow: discovery → review → approve → activate.
@@ -109,6 +110,7 @@ export default function OnboardingPage({ projectId }: { projectId?: string }) {
         </div>
       </header>
       {renderSteps()}
+      {!result && <UnsupportedBlock reason="UI_NOT_IMPLEMENTED" label="Этапы 3–5 (проверка и активация)" />}
 
       {!result ? (
         <div className="onboarding-layout">

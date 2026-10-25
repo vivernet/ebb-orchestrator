@@ -8,6 +8,7 @@
  * threshold (по умолчанию 51/255 ≈ 0.2 — согласовано с Playwright).
  */
 
+import { Buffer } from "node:buffer";
 import { inflateSync } from "node:zlib";
 
 export const DEFAULT_PIXEL_THRESHOLD = 51;
@@ -27,9 +28,9 @@ export function decodePng(buffer) {
   let offset = 8;
   let width = 0;
   let height = 0;
-  let bitDepth = 0;
+  let bitDepth;
   let colorType = 0;
-  let interlace = 0;
+  let interlace;
   const idatChunks = [];
   let sawIhdr = false;
   let sawIend = false;

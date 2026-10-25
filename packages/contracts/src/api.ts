@@ -481,6 +481,8 @@ export const apiPaths = {
   execution: "/api/v1/execution",
   approvals: "/api/v1/approvals",
   approvalApprove: (id: string) => `/api/v1/approvals/${pathSegment(id)}/approve`,
+  approvalReject: (id: string) => `/api/v1/approvals/${pathSegment(id)}/reject`,
+  approvalRequestChanges: (id: string) => `/api/v1/approvals/${pathSegment(id)}/request-changes`,
   runs: "/api/v1/runs/:id",
   run: (id: string) => `/api/v1/runs/${pathSegment(id)}`,
   runCancel: (id: string) => `/api/v1/runs/${pathSegment(id)}/cancel`,

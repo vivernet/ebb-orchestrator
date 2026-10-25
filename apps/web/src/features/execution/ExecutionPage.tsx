@@ -61,6 +61,10 @@ function isActiveStatus(status: string): boolean {
   return ['STARTED', 'IN_PROGRESS', 'COMPLETING'].includes(status);
 }
 
+function isTerminalStatus(status: string): boolean {
+  return ['COMPLETED', 'FAILED', 'CANCELLED'].includes(status);
+}
+
 interface RunControlView {
   pause: boolean;
   resume: boolean;
@@ -69,6 +73,11 @@ interface RunControlView {
 }
 
 function controlView(run: SelectedRunProjection): RunControlView {
+  // Терминальный статус run скрывает управление (checkpoint/pause/resume/cancel)
+  // даже если run_control_state ещё ACTIVE (например после отмены).
+  if (isTerminalStatus(run.status)) {
+    return { pause: false, resume: false, cancel: false, busy: null };
+  }
   const ctrl = run.control;
   if (ctrl) {
     switch (ctrl.state) {

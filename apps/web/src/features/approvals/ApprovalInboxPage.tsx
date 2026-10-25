@@ -242,7 +242,9 @@ export default function ApprovalInboxPage(_props: ApprovalInboxProps) {
     const key = action === 'approve' ? 'approve' : action === 'reject' ? 'reject' : 'request-changes';
     const path = action === 'approve'
       ? toClientPath(apiPaths.approvalApprove(id))
-      : toClientPath(`${apiPaths.approvalApprove(id)}`.replace(/\/approve$/, `/${action}`));
+      : action === 'reject'
+        ? toClientPath(apiPaths.approvalReject(id))
+        : toClientPath(apiPaths.approvalRequestChanges(id));
     await mutationStore.execute(key, () => apiClient.post(path, decisionBody(id)), query.refetch).catch(() => undefined);
   };
 

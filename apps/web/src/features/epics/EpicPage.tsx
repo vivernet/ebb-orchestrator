@@ -5,6 +5,7 @@ import { ApiError, apiClient, pauseEpic, replanEpic, resumeEpic, toClientPath } 
 import { ErrorAlert } from '../../components/ui/PageState.js';
 import { useOnSSEReconnect } from '../../hooks/useEventClient.js';
 import { apiErrorMessage, epicStageLabel, statusLabel, ru } from '../../i18n/ru.js';
+import UnsupportedBlock from '../../components/ui/Unavailable.js';
 import { useQuery } from '../../state/use-query.js';
 
 interface EpicPageProps { id: string; }
@@ -91,6 +92,8 @@ export default function EpicPage({ id }: EpicPageProps) {
               {projection.lifecycle.stages?.map((stage) => <li key={stage.id} data-status={stage.status}>{epicStageLabel(stage.id)}: {statusLabel(stage.status)}</li>) ?? null}
             </ol>
             <div className="row"><span className="muted">Использование</span><span>{`${projection.usage.totalTokens} токенов · $${projection.usage.cost.toFixed(2)}`}</span></div>
+            <UnsupportedBlock reason="GRAPH_PROJECTION_UNAVAILABLE" label="Граф параллельной работы" />
+            <UnsupportedBlock reason="BUDGET_PROJECTION_UNAVAILABLE" label="Бюджет" />
           </section>
           <section className="reference-panel" aria-label="Контракт эпика">
             <div className="panel-head"><h3>{ru.epics.contractTitle}</h3></div>

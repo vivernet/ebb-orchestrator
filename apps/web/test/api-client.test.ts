@@ -228,6 +228,15 @@ describe('Типизированные адаптеры API (Task 1 пути)', 
     expect(spyGet).toHaveBeenCalledWith('/settings');
     expect(spyGet).toHaveBeenCalledWith('/projects/project-1/config');
     expect(spyPost).toHaveBeenCalledWith('/runs/cancel-all', { expectedRunIds: ['run-1'] });
+    expect(spyPost).toHaveBeenCalledWith('/runs/run-1/checkpoint', undefined, expect.objectContaining({
+      headers: expect.objectContaining({ 'idempotency-key': 'ebb-ui:run-control:run-1:checkpoint' }),
+    }));
+    expect(spyPost).toHaveBeenCalledWith('/runs/run-1/pause', undefined, expect.objectContaining({
+      headers: expect.objectContaining({ 'idempotency-key': 'ebb-ui:run-control:run-1:pause' }),
+    }));
+    expect(spyPost).toHaveBeenCalledWith('/runs/run-1/resume', undefined, expect.objectContaining({
+      headers: expect.objectContaining({ 'idempotency-key': 'ebb-ui:run-control:run-1:resume' }),
+    }));
     expect(spyPost).toHaveBeenCalledWith('/epics/epic-1/replan', {});
     expect(spyPost).toHaveBeenCalledWith('/tasks/task-1/resume');
     expect(spyPost).toHaveBeenCalledWith('/tasks/task-1/pause');
@@ -238,6 +247,27 @@ describe('Типизированные адаптеры API (Task 1 пути)', 
     expect(spyGet).toHaveBeenCalledWith('/usage?from=2026-01-01T00%3A00%3A00.000Z&to=2026-01-02T00%3A00%3A00.000Z&granularity=day');
     expect(spyGet).toHaveBeenCalledWith('/execution');
     expect(hit).toContainEqual({ method: 'put', url: '/scheduler/dispatch-state', body: { paused: false } });
+  });
+
+  test('run-control мутации шлют стабильный idempotency-key без page.request-обхода', async () => {
+    const requests: Array<{ url: string; init?: unknown }> = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: unknown, init?: unknown) => {
+      requests.push({ url: String(input), init });
+      return jsonResponse(controlFixture);
+    });
+    await api.createRunCheckpoint('run-1');
+    await api.createRunCheckpoint('run-1');
+    await api.pauseRun('run-1');
+    await api.resumeRun('run-1');
+    const headerFor = (suffix: string) => requests
+      .filter((r) => r.url.endsWith(suffix))
+      .map((r) => (r.init as { headers?: Record<string, string> } | undefined)?.headers?.['idempotency-key']);
+    expect(headerFor('/api/v1/runs/run-1/checkpoint')).toEqual([
+      'ebb-ui:run-control:run-1:checkpoint',
+      'ebb-ui:run-control:run-1:checkpoint',
+    ]);
+    expect(headerFor('/api/v1/runs/run-1/pause')).toEqual(['ebb-ui:run-control:run-1:pause']);
+    expect(headerFor('/api/v1/runs/run-1/resume')).toEqual(['ebb-ui:run-control:run-1:resume']);
   });
 
   test('адаптеры отвергают malformed ответы как INVALID_RESPONSE', async () => {

@@ -33,6 +33,7 @@ let controlEndpoint;
 let controlChannel;
 let frontendPort;
 const attachedBackendUrl = process.env.EBB_E2E_ATTACH_BACKEND_URL;
+let backendReady;
 let playwrightExitCode = 0;
 let primaryError;
 let detachedProcessLedgerFailure = false;
@@ -405,7 +406,6 @@ try {
     }
   };
 
-  let backendReady;
   if (!attachedBackendUrl) {
     await runBuild();
     const firstPort = await allocateLoopbackPort();

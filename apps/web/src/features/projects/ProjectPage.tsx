@@ -9,6 +9,7 @@ import { getProjectOverview } from './api.js';
 import { apiErrorMessage, approvalTypeLabel, githubStatusLabel, ru, statusLabel } from '../../i18n/ru.js';
 import ProjectConfigPanel from './ProjectConfigPanel.js';
 import HumanFeedbackPanel from './HumanFeedbackPanel.js';
+import UnsupportedBlock from '../../components/ui/Unavailable.js';
 import CoordinatorRequestPanel from '../coordinator/CoordinatorRequestPanel.js';
 
 interface ProjectPageProps {
@@ -117,6 +118,8 @@ export default function ProjectPage({ id }: ProjectPageProps) {
             <div className="row"><span className="muted">{ru.projects.table.status}</span><span>{project ? statusLabel(project.status) : '—'}</span></div>
             <div className="row"><span className="muted">{ru.projects.gitLabel}</span><span>{projection.git.repositoryPath ?? '—'}</span></div>
             <div className="row"><span className="muted">{ru.projects.table.tasks}</span><span>{projection.tasks.length} · {ru.projects.table.epics.toLowerCase()}: {projection.epics.length}</span></div>
+            <UnsupportedBlock reason="BUDGET_PROJECTION_UNAVAILABLE" label="Бюджет и прогресс" />
+            <UnsupportedBlock reason="GRAPH_PROJECTION_UNAVAILABLE" label="Граф зависимостей" />
           </section>
           <section className="reference-panel" aria-label="Репозиторий и GitHub">
             <div className="panel-head"><h3>{ru.projects.gitLabel}</h3></div>

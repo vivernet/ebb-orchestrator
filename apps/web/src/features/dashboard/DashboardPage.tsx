@@ -4,6 +4,7 @@ import { Link } from 'react-router';
 import { ApiError } from '../../api/client.js';
 import { EmptyState, ErrorAlert, PageState } from '../../components/ui/PageState.js';
 import StatusBadge from '../../components/ui/StatusBadge.js';
+import UnsupportedBlock from '../../components/ui/Unavailable.js';
 import ChatPanel from '../chat/ChatPanel.js';
 import { useOnSSEReconnect } from '../../hooks/useEventClient.js';
 import { useQuery } from '../../state/use-query.js';
@@ -85,6 +86,7 @@ export default function DashboardPage() {
                     ))}
                   </ul>
                 )}
+                <UnsupportedBlock reason="NO_AUTHORITATIVE_SOURCE" label="Прогресс проектов" />
           </section>
 
           <section className="reference-panel" aria-label="Активная работа">
@@ -114,6 +116,7 @@ export default function DashboardPage() {
               projectionQuery.status !== 'success' || !projection ? <PageState status="loading" message="Загрузка согласований…" /> :
                 projection.approvals === 0 ? <EmptyState message="Ожидающих согласований нет." /> :
                   <p className="reference-callout">{projection.approvals} запросов требуют решения человека.</p>}
+            <UnsupportedBlock reason="APPROVALS_LIST_PROJECTION_UNAVAILABLE" label="Список согласований" />
           </section>
 
           <section className="reference-panel" aria-label="Очередь выполнения">

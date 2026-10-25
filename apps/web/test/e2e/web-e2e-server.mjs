@@ -155,7 +155,7 @@ function createHarnessRunService(getDb) {
       const version = current.version + 1;
       const attempt = version;
       recordCommand(db, runId, requestId, "CHECKPOINT", "COMPLETED", version, { checkpointId: `ckpt-${runId}-${version}` });
-      const checkpointId = upsertCheckpoint(db, runId, requestId, version, attempt);
+      const _checkpointId = upsertCheckpoint(db, runId, requestId, version, attempt);
       const control = writeControlState(db, runId, "ACTIVE", null, version, attempt);
       return { command: "CHECKPOINT", status: "COMPLETED", control, failureCode: null };
     },

@@ -26,7 +26,7 @@ afterEach(() => {
 const inventory = [
   'components/AppShell.tsx', 'app/router.tsx', 'components/ui/PageState.tsx',
   'components/ui/StatusBadge.tsx', 'components/ui/ConnectionIndicator.tsx',
-  'components/ui/NotificationIndicator.tsx', 'components/WorkflowTimeline.tsx',
+  'components/ui/NotificationIndicator.tsx', 'components/ui/Unavailable.tsx', 'components/WorkflowTimeline.tsx',
   'components/SanitizedTerminal.tsx', 'app/App.tsx', 'main.tsx',
   'features/auth/LoginPage.tsx', 'features/coordinator/CoordinatorRequestPanel.tsx', 'features/dashboard/DashboardPage.tsx',
   'features/projects/ProjectsIndex.tsx', 'features/projects/ProjectPage.tsx',

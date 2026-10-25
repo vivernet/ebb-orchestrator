@@ -412,6 +412,10 @@ export const ru = {
     unknownProvider: 'Провайдер не найден.',
     localEndpointWarning: 'Локальный endpoint выполняется на этой машине. Убедитесь, что вы доверяете этому сервису.',
   },
+  unavailable: {
+    title: 'Недоступно',
+    reasonDefault: 'авторитетный источник недоступен',
+  },
 } as const;
 
 /** Возвращает локализованную подпись недоступной provenance-записи Run. */

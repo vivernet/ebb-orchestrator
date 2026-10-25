@@ -87,7 +87,14 @@ export default function UsagePage() {
   const [from, setFrom] = useState(fromDefault);
   const [to, setTo] = useState(toDefault);
   const [granularity, setGranularity] = useState<'day' | 'hour' | 'month'>('day');
-  const [windowQuery, setWindowQuery] = useState<{ from: string; to: string; granularity: 'day' | 'hour' | 'month' } | null>(null);
+  // Детерминированное UTC-окно по умолчанию (последние 30 суток): страница
+  // всегда запрашивает авторитетную проекцию /usage?from&to вместо legacy-пути,
+  // чтобы не попадать в load-error при отсутствии выбранного окна.
+  const [windowQuery, setWindowQuery] = useState<{ from: string; to: string; granularity: 'day' | 'hour' | 'month' } | null>(() => ({
+    from: `${fromDefault}T00:00:00.000Z`,
+    to: `${toDefault}T23:59:59.999Z`,
+    granularity: 'day',
+  }));
 
   const path = windowQuery ? toClientPath(apiPaths.usageWindow(windowQuery.from, windowQuery.to, windowQuery.granularity)) : usagePath;
   const fetcher = useCallback((signal: AbortSignal): Promise<UsageView> => {

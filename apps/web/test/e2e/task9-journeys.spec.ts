@@ -54,13 +54,6 @@ async function loginThroughUi(page, password) {
   await expect(page.getByRole("navigation", { name: "Основная навигация" })).toBeVisible();
 }
 
-async function capturePageErrors(page) {
-  const errors = [];
-  page.on("pageerror", (error) => errors.push(`pageerror: ${error.message}`));
-  page.on("requestfailed", (request) => errors.push(`requestfailed: ${request.url()} ${request.failure()?.errorText ?? ""}`));
-  return errors;
-}
-
 test.describe.configure({ mode: "serial" });
 
 test("queue pause persists across backend restart and resume through UI", async ({ page, e2ePassword }) => {
@@ -117,35 +110,30 @@ test("partial cancel-all stops only the confirmed subset and keeps the rest runn
   record({ journey: "partial-cancel-all", cancelled: ["run-846", "run-852"], remaining: ["run-841"], ok: true });
 });
 
-test("run checkpoint/pause/restart/resume/cancel is durable and backend-confirmed", async ({ page, e2ePassword }) => {
+test("run checkpoint/pause/restart/resume/cancel is durable, UI-initiated and backend-confirmed", async ({ page, e2ePassword }) => {
   await loginThroughUi(page, e2ePassword);
   await page.goto("/runs/run-841");
   await expect(page.getByRole("heading", { name: "Запуск агента: run-841" })).toBeVisible();
 
-  // UI отображает управление и отправляет команды; API-контракт требует
-  // Idempotency-Key, которого браузерный клиент пока не добавляет (finding):
-  // команды выполняются через реальные HTTP-маршруты с этим заголовком,
-  // а UI-кнопки проверяются на наличие и отсутствие краха.
-  await expect(page.getByRole("button", { name: "Создать контрольную точку" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Приостановить запуск" })).toBeVisible();
+  // UI-кнопки реально отправляют команды (без page.request-обхода): браузерный
+  // клиент обязан добавлять Idempotency-Key, иначе runControl вернёт 400.
+  const checkpointButton = page.getByRole("button", { name: "Создать контрольную точку" });
+  const pauseButton = page.getByRole("button", { name: "Приостановить запуск" });
+  await expect(checkpointButton).toBeVisible();
+  await expect(pauseButton).toBeVisible();
 
-  const runControl = async (path, suffix) => {
-    const session = await (await page.request.get("/api/v1/session")).json();
-    const response = await page.request.post(`/api/v1/runs/run-841/${path}`, {
-      headers: {
-        "Idempotency-Key": `e2e-${suffix}-${randomUUID()}`,
-        "X-CSRF-Token": session.csrfToken,
-      },
-    });
-    expect(response.status(), `runControl ${path} status ${response.status()} body ${await response.text()}`).toBe(200);
-    return response.json();
-  };
+  await checkpointButton.click();
+  await expect.poll(async () => {
+    const detail = await (await page.request.get("/api/v1/runs/run-841")).json();
+    return detail.control;
+  }, { timeout: 10_000 }).toMatchObject({ state: "ACTIVE", version: 1 });
 
-  const checkpoint = await runControl("checkpoint", "ckpt");
-  expect(checkpoint.control).toMatchObject({ state: "ACTIVE", version: 1 });
+  await pauseButton.click();
+  await expect.poll(async () => {
+    const detail = await (await page.request.get("/api/v1/runs/run-841")).json();
+    return detail.control;
+  }, { timeout: 10_000 }).toMatchObject({ state: "PAUSED" });
 
-  const paused = await runControl("pause", "pause");
-  expect(paused.control).toMatchObject({ state: "PAUSED" });
   await page.reload();
   await expect(page.getByRole("button", { name: "Возобновить запуск" })).toBeVisible();
 
@@ -158,11 +146,14 @@ test("run checkpoint/pause/restart/resume/cancel is durable and backend-confirme
     return detail.control;
   }).toMatchObject({ state: "PAUSED" });
 
-  const resumed = await runControl("resume", "resume");
-  expect(resumed.control).toMatchObject({ state: "ACTIVE" });
+  await page.getByRole("button", { name: "Возобновить запуск" }).click();
+  await expect.poll(async () => {
+    const detail = await (await page.request.get("/api/v1/runs/run-841")).json();
+    return detail.control;
+  }, { timeout: 10_000 }).toMatchObject({ state: "ACTIVE" });
 
   // Отмена через реальный HTTP-маршрут со свежим CSRF (после рестарта backend
-  // браузерный клиент может держать устаревший CSRF-токен — finding).
+  // браузерный клиент может держать устаревший CSRF-токен — documented finding).
   const freshSession = await (await page.request.get("/api/v1/session")).json();
   const cancelResponse = await page.request.post("/api/v1/runs/run-841/cancel", {
     headers: { "X-CSRF-Token": freshSession.csrfToken },
@@ -173,10 +164,12 @@ test("run checkpoint/pause/restart/resume/cancel is durable and backend-confirme
   await page.reload();
   await expect.poll(async () => (await page.request.get("/api/v1/runs/run-841")).json(), { timeout: 10_000 })
     .toMatchObject({ status: "CANCELLED" });
-  // Отмена скрывает действие отмены; контрольные кнопки остаются из-за overlay
-  // run_control_state (ACTIVE) — documented finding, не блокирует journey.
+  // Терминальный статус запуска скрывает управление (checkpoint/pause/resume/cancel)
+  // даже при ACTIVE run_control_state.
   await expect(page.getByRole("button", { name: "Отменить запуск" })).toHaveCount(0);
-  record({ journey: "run-control-durable", checkpointVersion: 1, restarted: true, idempotencyHeader: true, cancelViaHttpAfterRestart: true, controlNotClosedOnCancel: true, ok: true });
+  await expect(page.getByRole("button", { name: "Приостановить запуск" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Создать контрольную точку" })).toHaveCount(0);
+  record({ journey: "run-control-durable", checkpointVersion: 1, restarted: true, idempotencyHeader: true, uiInitiated: true, cancelViaHttpAfterRestart: true, controlsHiddenOnTerminal: true, ok: true });
 });
 
 test("run timeline HTTP cursor paging returns all seeded events and UI 'load more' pages through", async ({ page, e2ePassword }) => {
@@ -219,7 +212,6 @@ test("run timeline HTTP cursor paging returns all seeded events and UI 'load mor
 
 test("SSE reconnect triggers authoritative refetch of projections", async ({ page, e2ePassword }) => {
   let dashboardRequests = 0;
-  let sseReconnectFired = 0;
   await page.route("**/api/v1/events", (route) => route.abort());
   await page.route("**/api/v1/dashboard", async (route) => {
     dashboardRequests += 1;
@@ -234,7 +226,7 @@ test("SSE reconnect triggers authoritative refetch of projections", async ({ pag
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Обзор" })).toBeVisible();
   await page.waitForTimeout(12_000);
-  sseReconnectFired = await page.evaluate(() => window.__sseReconnectCount ?? 0);
+  const sseReconnectFired = await page.evaluate(() => window.__sseReconnectCount ?? 0);
   expect(sseReconnectFired).toBeGreaterThanOrEqual(1);
   expect(dashboardRequests).toBeGreaterThanOrEqual(2);
   record({ journey: "sse-reconnect-refetch", sseReconnectFired, dashboardRequests, ok: true });
@@ -350,7 +342,7 @@ test("approvals detail, resolved history, policies and approve action use real b
   await page.goto("/approvals");
   await expect(page.getByRole("heading", { name: "Входящие согласования" })).toBeVisible();
 
-  const pending = page.locator(".approval-layout").first();
+  const _pending = page.locator(".approval-layout").first();
   await expect(page.getByText("Ожидают решения").first()).toBeVisible();
   // список не отображает сырые id (appr-*); вместо этого проверяем реальные
   // данные из проекции (категория/проект) и переход к политикам.

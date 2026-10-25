@@ -22,7 +22,7 @@ production `AgentRuntime` / `HermesRuntimeAdapter` задаётся архите
   [первом запуске в README](../../README.md#первый-запуск-hermes); выбор
   провайдера/модели для Runs выполняет Ebb (см. «Production provider и runtime»).
 - В worktree должны присутствовать `.hermes.md` и canonical source `.agents/skills/`.
-- Полный актуальный набор из 21 Ebb skills находится в
+|- Полный актуальный набор из 23 Ebb skills находится в
   [единственном README inventory](../../README.md#hermes-development-skills).
 
 ## Первоначальная настройка

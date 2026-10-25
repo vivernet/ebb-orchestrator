@@ -307,7 +307,9 @@ describe('Task 8 — Execution Queue: dispatch pause, cancel-all и выбран
     await screen.findByRole('button', { name: 'Приостановить запуск' });
 
     fireEvent.click(screen.getByRole('button', { name: 'Приостановить запуск' }));
-    await waitFor(() => expect(post).toHaveBeenCalledWith('/runs/run-1/pause'));
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/runs/run-1/pause', undefined, expect.objectContaining({
+      headers: expect.objectContaining({ 'idempotency-key': 'ebb-ui:run-control:run-1:pause' }),
+    })));
     expect(get).toHaveBeenCalledWith('/runs/run-1');
   });
 
@@ -468,7 +470,8 @@ describe('Task 8 — Usage: UTC-окно и поле-уровневая недо
     fireEvent.click(screen.getByRole('button', { name: 'Применить окно' }));
 
     await waitFor(() => {
-      const call = get.mock.calls.find(([path]) => typeof path === 'string' && path.startsWith('/usage?'));
+      const calls = get.mock.calls.filter(([path]) => typeof path === 'string' && path.startsWith('/usage?from='));
+      const call = calls.find(([path]) => String(path).includes('from=2026-09-24T00%3A00%3A00'));
       expect(call).toBeDefined();
       expect(String(call![0])).toContain('granularity=day');
       expect(String(call![0])).toMatch(/from=2026-09-24T00%3A00%3A00/);
@@ -621,7 +624,9 @@ describe('Task 8 — Agent Run: durable timeline, terminal и контроль �
 
     expect(await screen.findByText(/Контрольная точка недоступна/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Создать контрольную точку' })).toBeDisabled();
-    expect(post).toHaveBeenCalledWith('/runs/run-1/checkpoint');
+    expect(post).toHaveBeenCalledWith('/runs/run-1/checkpoint', undefined, expect.objectContaining({
+      headers: expect.objectContaining({ 'idempotency-key': 'ebb-ui:run-control:run-1:checkpoint' }),
+    }));
     expect(get).toHaveBeenCalledWith('/runs/run-1', expect.objectContaining({ signal: expect.any(AbortSignal) }));
   });
 
@@ -642,7 +647,9 @@ describe('Task 8 — Agent Run: durable timeline, terminal и контроль �
 
     const resume = await screen.findByRole('button', { name: 'Возобновить запуск' });
     fireEvent.click(resume);
-    await waitFor(() => expect(post).toHaveBeenCalledWith('/runs/run-1/resume'));
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/runs/run-1/resume', undefined, expect.objectContaining({
+      headers: expect.objectContaining({ 'idempotency-key': 'ebb-ui:run-control:run-1:resume' }),
+    })));
     expect(screen.queryByRole('button', { name: 'Создать контрольную точку' })).not.toBeInTheDocument();
   });
 

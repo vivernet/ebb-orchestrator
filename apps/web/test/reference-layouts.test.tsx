@@ -164,17 +164,33 @@ describe('Композиция экранов по утверждённым ма
 
   test('Usage groups concrete metrics, saved budgets and reservations', async () => {
     vi.spyOn(apiClient, 'get').mockResolvedValue({
-      global: { inputTokens: 12, cachedTokens: 3, outputTokens: 9, totalTokens: 21, tokens: 21, cost: 0.2, aggregation: 'all_records' },
-      project: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, totalTokens: 0, tokens: 0, cost: 0, aggregation: 'records_with_project_id' },
-      epic: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, totalTokens: 0, tokens: 0, cost: 0, aggregation: 'records_with_epic_id' },
-      task: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, totalTokens: 0, tokens: 0, cost: 0, aggregation: 'records_with_task_id' },
-      budget: { configurations: [], contexts: [], activeReservations: [] },
+      window: { from: '2026-09-24T00:00:00.000Z', to: '2026-10-24T23:59:59.999Z', granularity: 'day' },
+      summary: { inputTokens: 12, cachedTokens: 3, outputTokens: 9, totalTokens: 21, cost: 0.2 },
+      dailySeries: [{ date: '2026-09-25', usage: { inputTokens: 12, cachedTokens: 3, outputTokens: 9, totalTokens: 21, cost: 0.2 } }],
+      breakdowns: { byRole: [], byReason: [], byModel: [] },
+      modelComparison: [],
+      budgets: {
+        configurations: [],
+        contexts: [{ scope: 'global', scopeId: 'global', projectId: null, epicId: null, taskId: null, applicableLimits: [], effectiveLimit: null }],
+        activeReservations: [],
+      },
+      efficiency: {
+        cacheShare: { availability: 'unavailable', reason: 'NO_APPROVED_POLICY' },
+        averageInitialContextTokens: { availability: 'unavailable', reason: 'NO_APPROVED_POLICY' },
+        averageOutputTokens: { availability: 'unavailable', reason: 'NO_APPROVED_POLICY' },
+        aiRunsPerTask: { availability: 'unavailable', reason: 'NO_APPROVED_POLICY' },
+        reworkCyclesPerTask: { availability: 'unavailable', reason: 'NO_APPROVED_POLICY' },
+        deterministicCheckCount: { availability: 'unavailable', reason: 'NO_DURABLE_CHECK_EXECUTION_SOURCE' },
+        deterministicCheckCost: { availability: 'unavailable', reason: 'NO_DURABLE_CHECK_EXECUTION_SOURCE' },
+      },
+      anomaly: { availability: 'unavailable', reason: 'NO_APPROVED_POLICY' },
+      taskRecoveryShare: { availability: 'unavailable', reason: 'NO_APPROVED_POLICY' },
     });
     renderPage(<UsagePage />);
 
     expect(await screen.findByRole('heading', { name: 'Использование и бюджет' })).toBeInTheDocument();
     expectLayout('usage', 'reference-columns');
-    expect(screen.getByRole('region', { name: 'Сводные показатели использования' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Дневная серия' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Лимиты бюджета' })).toBeInTheDocument();
     vi.restoreAllMocks();
   });

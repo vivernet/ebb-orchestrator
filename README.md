@@ -233,7 +233,7 @@ MCP-инструменты проверяют capability и аргументы. 
 
 ### Hermes development skills
 
-Канонический каталог из 21 repository-local Ebb skills находится в
+Канонический каталог из 23 repository-local Ebb skills находится в
 `.agents/skills/`; [руководство разработки через Hermes](docs/development/05-hermes.md) описывает
 настройку trust и проверку runtime prerequisites.
 
@@ -249,9 +249,11 @@ MCP-инструменты проверяют capability и аргументы. 
 - `ebb-finish-branch` — проверка готовности ветки и передача результата для разрешённой интеграции;
 - `ebb-handle-review-feedback` — проверка review findings и устранение подтверждённых замечаний;
 - `ebb-implement-task` — реализация одной задачи, TDD, review и необходимые локальные проверки;
+- `ebb-maintain-project-docs` — сопровождение first-party README и `.env.example` content (sync при изменении команд/config/API);
 - `ebb-notes` — добавление, чтение и перевод статусов заметок пользователя из реестра входящих предложений;
 - `ebb-orchestrate-work` — выбор Ebb workflow и владельцев этапов инженерной работы;
 - `ebb-quality-gates` — выбор и выполнение необходимых проверок с evidence;
+- `ebb-release` — ручной выпуск/publish/hotfix/rollback/resume по явному вызову пользователя;
 - `ebb-repository-context` — разведка репозитория и компактный Context Brief для контроллера;
 - `ebb-repository-maintenance` — безопасное изменение структуры, tooling scripts и документации;
 - `ebb-review-plan` — независимая read-only проверка плана;
@@ -557,12 +559,15 @@ provider-settings, chat-web) и populated-фазу с детерминирова
 (reference-ui-routes, reference-ui-visual, task9-journeys). Визуальная фаза
 сравнивает все 10 экранов с reference-концептами (`docs/architecture/reference-ui`)
 на desktop 1440×900 и narrow 390×844 и требует `maxDiffPixelRatio <= 0.01`.
-Спеки фиксируют документированные content-class exclusions: панели reference,
-которые v1-поверхность UI не реализует (рендерят contract-`unavailable`/пропускают
-панель), пропускаются с причиной; произвольный UI-контент и сам порог не
-игнорируются. Populated-фаза выполняется одним worker-ом: journey-тесты
-рестартуют общий backend, и параллельные worker-ы ложно краснели бы на
-`ECONNRESET`.
+Спеки фиксируют документированные регион-исключения: исключаются только
+недетерминированные chrome-элементы (хлебные крошки, полоса прокрутки),
+относительное время и панели reference без авторитетного источника, которые
+рендерят контрактный блок «недоступно» (см. `components/ui/Unavailable.tsx`).
+Экраны никогда не пропускаются целиком: доля исключённой площади ограничена
+(<= 85%), поэтому гейт реально сравнивает контент и может падать на различии UI.
+Произвольный UI-контент и сам порог не игнорируются. Populated-фаза выполняется
+одним worker-ом: journey-тесты рестартуют общий backend, и параллельные worker-ы
+ложно краснели бы на `ECONNRESET`.
 `apps/server/test/e2e/fixtures/health-service` не входит в workspace glob; его
 команды запускаются из каталога fixture отдельно:
 
