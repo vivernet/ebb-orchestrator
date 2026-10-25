@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -7,12 +8,13 @@ import { createSqliteDatabase } from "../../../src/platform/database/sqlite-data
 import { runMigrations } from "../../../src/platform/database/migrator.js";
 import { containmentKindForPlatform, encodeDarwinProcessGroupIdentityV1, getRunProcessOwner, insertRunProcessOwnerTx,
   isAuthoritativeRunProcessStopEvidence, parseDarwinProcessGroupIdentityV1, prepareRunProcessOwner, preflightRunProcessOwners,
+  rotateRunProcessOwnerForPauseResumeTx,
   syncCurrentRunProcessGenerationTx, transitionRunProcessOwnerTx } from "../../../src/modules/runtime/run-process-owner.js";
 import { safeRestartChildFailureCode } from "../../helpers/restart-child-diagnostics.js";
 import type { ProcessScopeIdentity, ProcessScopeObservation } from "../../../src/platform/process/process-inspector.js";
 import type { ProcessScopeSupervisor } from "../../../src/platform/process/run-scope-supervisor.js";
 import { loadTestMigrations } from "../../helpers/migrations.js";
-import { runProcessOwnerFixtureForPlatform } from "../../helpers/run-process-owner-fixture.js";
+import { runProcessOwnerFixtureForPlatform, stopEvidenceForContainmentKind } from "../../helpers/run-process-owner-fixture.js";
 
 const snapshotIdentity = {
   formatVersion: 1,
@@ -660,5 +662,89 @@ describe("Run process owner", () => {
     expect(database.get<{ state: string; stop_evidence: string | null }>(
       "SELECT state,stop_evidence FROM run_process_owners WHERE run_id='z-stopped-unproven-run'",
     )).toEqual({ state: "STOPPED", stop_evidence: evidence });
+  });
+});
+
+describe("rotateRunProcessOwnerForPauseResumeTx (plan-27 Task 3)", () => {
+  let rotateDb: Database | undefined;
+  let rotateTmp: string;
+
+  afterEach(async () => {
+    rotateDb?.close();
+    rotateDb = undefined;
+    if (rotateTmp) await rm(rotateTmp, { recursive: true, force: true });
+  });
+
+  function openDb(): Database {
+    rotateTmp = join(tmpdir(), "ebb-owner-pause-resume-");
+    rotateDb = createSqliteDatabase(":memory:");
+    runMigrations(rotateDb, loadTestMigrations());
+    return rotateDb;
+  }
+
+  function seedPausedOwner(db: Database, runId: string, attempt = 1): void {
+    const now = new Date().toISOString();
+    db.run("INSERT OR IGNORE INTO projects(id,name,display_name,status,created_at,updated_at) VALUES('p-1','p','P','ACTIVE',$now,$now)", { now });
+    db.run("INSERT OR IGNORE INTO tasks(id,project_id,display_id,title,status,contract_json,created_at,updated_at) VALUES('task-1','p-1','T-1','Task','READY','{}',$now,$now)", { now });
+    db.run(
+      `INSERT INTO agent_runs(id,role,runtime,model,task_id,status,session_id,attempt,trigger_reason,context_version,prompt,output_schema_version,started_at,capability_ref,capability_json)
+       VALUES($id,'developer','hermes','model','task-1','IN_PROGRESS','session-1',$attempt,'DEVELOPMENT','1','prompt','1',$now,$capRef,'{}')`,
+      { id: runId, attempt, now, capRef: `cap-${runId}` },
+    );
+    const owner = prepareRunProcessOwner(runId, `/home/${runId}`, containmentKindForPlatform(process.platform)!, null);
+    db.transaction((tx) => {
+      insertRunProcessOwnerTx(tx, owner);
+      const identity = owner.containmentKind === "windows-job"
+        ? { platform: "win32", supervisorPid: 101, supervisorStartIdentity: "supervisor", pid: 102, processStartIdentity: "process", executableIdentity: "executable" }
+        : owner.containmentKind === "darwin-process-group"
+          ? { platform: "darwin", supervisorStartIdentity: JSON.stringify({ formatVersion: 1, bootSessionUUID: "a1b2c3d4-e5f6-4789-abcd-0123456789ab", pid: 401, startTvsec: 1792000000, startUsec: 0, pgid: 401, sid: 401 }), processStartIdentity: JSON.stringify({ formatVersion: 1, bootSessionUUID: "a1b2c3d4-e5f6-4789-abcd-0123456789ab", pid: 402, startTvsec: 1792000000, startUsec: 0, pgid: 401, sid: 401 }), executableIdentity: "executable" }
+          : { platform: "linux", pid: 102, systemdInvocationId: "invocation", systemdControlGroup: "/test-cgroup" };
+      transitionRunProcessOwnerTx(tx, { runId, expectedState: "PREPARED", nextState: "LAUNCHING" });
+      transitionRunProcessOwnerTx(tx, { runId, expectedState: "LAUNCHING", nextState: "LIVE", identity });
+      tx.run("UPDATE run_process_owners SET capture_state='BOUND' WHERE run_id=$runId", { runId });
+      syncCurrentRunProcessGenerationTx(tx, runId);
+      transitionRunProcessOwnerTx(tx, {
+        runId, expectedState: "LIVE", nextState: "STOPPED", evidence: stopEvidenceForContainmentKind(owner.containmentKind),
+      });
+    });
+  }
+
+  it("rotates to a fresh PREPARED generation keeping the same attempt and BOUND capture", () => {
+    const db = openDb();
+    const runId = randomUUID();
+    seedPausedOwner(db, runId, 1);
+    const before = db.get("SELECT current_generation,state,capture_state FROM run_process_owners WHERE run_id=$runId", { runId });
+    expect(before).toEqual({ current_generation: 1, state: "STOPPED", capture_state: "BOUND" });
+    const oldGeneration = db.get("SELECT * FROM run_process_owner_generations WHERE run_id=$runId AND generation=1", { runId });
+
+    const generation = db.transaction((tx) => rotateRunProcessOwnerForPauseResumeTx(tx, { runId, attempt: 1 }));
+
+    expect(generation).toBe(2);
+    expect(db.get("SELECT current_generation,state,capture_state FROM run_process_owners WHERE run_id=$runId", { runId }))
+      .toEqual({ current_generation: 2, state: "PREPARED", capture_state: "BOUND" });
+    const nextGeneration = db.get("SELECT * FROM run_process_owner_generations WHERE run_id=$runId AND generation=2", { runId });
+    expect(nextGeneration!).toMatchObject({ state: "PREPARED", capture_state: "BOUND", run_attempt: 1 });
+    expect(nextGeneration!.containment_id).not.toBe(oldGeneration!.containment_id);
+    expect(nextGeneration!.launch_nonce).not.toBe(oldGeneration!.launch_nonce);
+    // Исходное stopped-поколение остаётся неизменной историей.
+    expect(db.get("SELECT * FROM run_process_owner_generations WHERE run_id=$runId AND generation=1", { runId })).toEqual(oldGeneration!);
+    expect(db.all("PRAGMA foreign_key_check")).toEqual([]);
+  });
+
+  it("rejects rotation when the owner is not STOPPED with authoritative evidence or attempt mismatches", () => {
+    const db = openDb();
+    const runId = randomUUID();
+    seedPausedOwner(db, runId, 1);
+
+    // Чужой attempt относительно run_attempt не принимается.
+    expect(() => db.transaction((tx) => rotateRunProcessOwnerForPauseResumeTx(tx, { runId, attempt: 2 })))
+      .toThrow(/RUN_PROCESS_GENERATION_STOP_UNPROVEN/);
+
+    // LIVE owner не может ротироваться как paused (отклоняется до ротации).
+    const secondRun = randomUUID();
+    seedPausedOwner(db, secondRun, 1);
+    db.run("UPDATE run_process_owners SET state='LIVE' WHERE run_id=$runId", { runId: secondRun });
+    expect(() => db.transaction((tx) => rotateRunProcessOwnerForPauseResumeTx(tx, { runId: secondRun, attempt: 1 })))
+      .toThrow();
   });
 });

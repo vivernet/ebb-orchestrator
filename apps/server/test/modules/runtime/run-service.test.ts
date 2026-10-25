@@ -15,6 +15,7 @@ import { loadTestMigrations } from "../../helpers/migrations.js";
 import { createHermesManagedSelectionFixture } from "../../helpers/hermes-managed-selection-fixture.js";
 import { digestRunPromptBytesV1 } from "../../../src/modules/context/context-provenance.js";
 import type { PreparedRunContext } from "../../../src/modules/context/context-types.js";
+import type { AgentRuntime } from "../../../src/modules/runtime/agent-runtime.js";
 import { containmentKindForPlatform, getRunProcessOwner, isAuthoritativeRunProcessStopEvidence, rotateRunProcessOwnerForResumeTx,
   syncCurrentRunProcessGenerationTx, transitionRunProcessOwnerTx } from "../../../src/modules/runtime/run-process-owner.js";
 import { captureWorkspaceSnapshotV1, createResumeContextBaselineV1, digestResumeBindingV1 } from "../../../src/modules/context/resume-eligibility.js";
@@ -1670,5 +1671,275 @@ describe("RunService with FakeAgentRuntime", () => {
         errorSpy.mockRestore();
       }
     });
+  });
+});
+
+describe("run control service transitions (plan-27 Task 3)", () => {
+  let controlDb: Database | undefined;
+  let controlTmp: string;
+  let controlRuntime: FakeAgentRuntime & {
+    pauseRun?: ReturnType<typeof vi.fn>;
+    createCheckpoint?: ReturnType<typeof vi.fn>;
+  };
+  let controlService: RunService;
+  let controlTaskId: string;
+  let controlProjectId: string;
+
+  beforeEach(() => {
+    controlTmp = "";
+  });
+
+  afterEach(async () => {
+    controlDb?.close();
+    controlDb = undefined;
+    if (controlTmp) await rm(controlTmp, { recursive: true, force: true });
+  });
+
+  async function setupControlDb(): Promise<Database> {
+    controlTmp = await mkdtemp(join(tmpdir(), "orch-run-control-test-"));
+    const database = createSqliteDatabase(join(controlTmp, `test-${randomUUID()}.db`));
+    runMigrations(database, migrations);
+    return database;
+  }
+
+  function controlPreparedContext(finalPrompt: string, role = "developer", subject: PreparedRunContext["subject"] = { type: "TASK", id: controlTaskId }): PreparedRunContext {
+    return {
+      finalPrompt, subject, role: role as PreparedRunContext["role"], contractDigest: null, items: [],
+      contextBuilderVersion: "1.0.0",
+      promptHash: digestRunPromptBytesV1(new TextEncoder().encode(finalPrompt)),
+      contextHash: "b".repeat(64), initialTokenSize: null, workspaceFingerprint: "c".repeat(64),
+    };
+  }
+
+  function controlContextInput(options: { taskId: string | null; epicId: string | null; role: string; prompt?: string }) {
+    const subject = options.taskId !== null ? { type: "TASK" as const, id: options.taskId }
+      : { type: "EPIC" as const, id: options.epicId ?? "epic-test" };
+    return {
+      prompt: options.prompt ?? "test caller prompt", subject,
+      role: options.role.toLowerCase() as PreparedRunContext["role"], roleInputs: {},
+      versions: { roleVersion: null, runtime: "default", runtimeVersion: null, model: "test", modelVersion: null, outputSchemaVersion: "1", contextVersion: "1" },
+      execution: {
+        workspaceIdentity: { repository: "test-repository", workspace: "test-worktree", worktree: "test-worktree" },
+        targetHead: null, targetBranch: null, effectiveCapabilityIds: effectiveRunToolIds(options.role, undefined, false),
+        policyIdentity: { providerId: null, providerPolicyId: null, runtimeId: "default", runtimePolicyId: null },
+      },
+    };
+  }
+
+  async function setupControl(): Promise<void> {
+    controlDb = await setupControlDb();
+    controlProjectId = randomUUID();
+    controlTaskId = randomUUID();
+    const now = new Date().toISOString();
+    controlDb.run("INSERT INTO projects(id,name,display_name,status,created_at,updated_at) VALUES($id,'runtime','Runtime','ACTIVE',$now,$now)", { id: controlProjectId, now });
+    controlDb.run("INSERT INTO tasks(id,project_id,display_id,title,status,contract_json,required,created_at,updated_at) VALUES($id,$projectId,'TASK-RUN','Runtime task','READY','{}',1,$now,$now)", { id: controlTaskId, projectId: controlProjectId, now });
+    controlRuntime = new FakeAgentRuntime();
+    controlService = new RunService(controlDb, controlRuntime as unknown as AgentRuntime, {
+      prepare: (_tx, input) => controlPreparedContext(input.prompt, input.role, input.subject),
+    });
+    controlRuntime.cancelRun = async (runId) => {
+      const owner = controlDb!.get<{ state: string }>("SELECT state FROM run_process_owners WHERE run_id=$runId", { runId });
+      if (owner?.state === "PREPARED") {
+        controlDb!.transaction((tx) => transitionRunProcessOwnerTx(tx, {
+          runId, expectedState: "PREPARED", nextState: "STOPPED", evidence: "NEVER_LAUNCHED",
+        }));
+      }
+    };
+  }
+
+  async function startControlRun() {
+    return controlService.startRun({
+      role: "reviewer", model: "default", taskId: controlTaskId, epicId: null,
+      triggerReason: "review-request", contextVersion: "1", outputSchemaVersion: "1",
+      capability: { workspace: controlTmp },
+      contextInput: controlContextInput({ taskId: controlTaskId, epicId: null, role: "reviewer" }),
+    });
+  }
+
+  /** Доводит Run до состояния, пригодного для pause: STOPPED owner, BOUND session, resume binding. */
+  async function pauseReadyRun() {
+    const run = await startControlRun();
+    const owner = getRunProcessOwner(controlDb!, run.id)!;
+    controlDb!.transaction((tx) => {
+      transitionRunProcessOwnerTx(tx, { runId: run.id, expectedState: "PREPARED", nextState: "LAUNCHING" });
+      transitionRunProcessOwnerTx(tx, { runId: run.id, expectedState: "LAUNCHING", nextState: "LIVE", identity:
+        ownerIdentityForContainmentKind(owner.containmentKind) });
+      tx.run("UPDATE agent_runs SET status='IN_PROGRESS',session_id='original-session' WHERE id=$runId", { runId: run.id });
+      tx.run("UPDATE run_process_owners SET capture_state='BOUND' WHERE run_id=$runId", { runId: run.id });
+      syncCurrentRunProcessGenerationTx(tx, run.id);
+      transitionRunProcessOwnerTx(tx, { runId: run.id, expectedState: "LIVE", nextState: "STOPPED",
+        evidence: stopEvidenceForContainmentKind(owner.containmentKind) });
+      const contextHash = tx.get<{ context_hash: string }>("SELECT context_hash FROM context_manifests WHERE run_id=$runId", { runId: run.id })!.context_hash;
+      tx.run(`INSERT INTO run_resume_bindings(run_id,schema_version,baseline_jcs,context_hash,workspace_snapshot_version,
+        workspace_snapshot_hash,resume_binding_hash,original_session_id,created_at)
+        VALUES($runId,1,$baseline,$contextHash,1,$workspaceHash,$bindingHash,'original-session',$now)`, {
+        runId: run.id, contextHash, workspaceHash: "b".repeat(64), bindingHash: digestResumeBindingV1(contextHash, "b".repeat(64)),
+        now: new Date().toISOString(),
+        baseline: JSON.stringify(createResumeContextBaselineV1({
+          ...controlContextInput({ taskId: controlTaskId, epicId: null, role: "reviewer" }).versions,
+          promptHash: digestRunPromptBytesV1(new TextEncoder().encode(run.prompt!)), subjectType: "TASK", subjectId: controlTaskId,
+          contractOrRequestDigest: null, items: [], contextBuilderVersion: "1.0.0", role: "reviewer",
+          workspaceIdentity: { repository: controlTmp, workspace: controlTmp, worktree: controlTaskId }, targetHead: null, targetBranch: null,
+          effectiveCapabilityIds: effectiveRunToolIds("reviewer"), projectConfigRevisionId: null, projectConfigHash: null,
+          policyIdentity: { providerId: null, providerPolicyId: null, runtimeId: "default", runtimePolicyId: null },
+        })),
+      });
+    });
+    return run;
+  }
+
+  function markControlRunNeverLaunched(runId: string) {
+    controlDb!.transaction((tx) => {
+      const owner = tx.get<{ state: string }>("SELECT state FROM run_process_owners WHERE run_id=$runId", { runId });
+      if (owner?.state === "PREPARED") {
+        transitionRunProcessOwnerTx(tx, { runId, expectedState: "PREPARED", nextState: "STOPPED", evidence: "NEVER_LAUNCHED" });
+      }
+    });
+  }
+
+  it("pause persists a proven checkpoint and transitions to PAUSED without touching agent_runs.status", async () => {
+    await setupControl();
+    const run = await pauseReadyRun();
+    controlRuntime.pauseRun = vi.fn(async () => {});
+
+    const result = await controlService.requestRunControl(run.id, "PAUSE", "req-pause-1");
+
+    expect(result.status).toBe("COMPLETED");
+    expect(result.control?.state).toBe("PAUSED");
+    expect(result.control?.checkpointId).toBeTruthy();
+    expect(controlDb!.get("SELECT status,session_id,attempt FROM agent_runs WHERE id=$runId", { runId: run.id }))
+      .toEqual({ status: "IN_PROGRESS", session_id: "original-session", attempt: null });
+    const checkpoint = controlDb!.get("SELECT * FROM run_checkpoints WHERE run_id=$runId", { runId: run.id }) as Record<string, unknown> | undefined;
+    expect(checkpoint!).toMatchObject({ session_id: "original-session", event_cursor: "", checkpoint_hash: expect.stringMatching(/^[a-f0-9]{64}$/) });
+    expect(controlRuntime.pauseRun).toHaveBeenCalledWith(run.id);
+    expect(controlDb!.all("SELECT * FROM outbox_events WHERE aggregate_id=$runId AND type='RunPaused'", { runId: run.id })).toHaveLength(1);
+  });
+
+  it("failed pause reverts to ACTIVE, leaves command FAILED and creates no checkpoint", async () => {
+    await setupControl();
+    const run = await pauseReadyRun();
+    controlRuntime.pauseRun = vi.fn(async () => { throw new Error("RUN_PAUSE_UNPROVEN"); });
+
+    await expect(controlService.requestRunControl(run.id, "PAUSE", "req-pause-fail")).rejects.toThrow("RUN_PAUSE_UNPROVEN");
+
+    expect(controlDb!.get("SELECT state FROM run_control_state WHERE run_id=$runId", { runId: run.id })?.state).toBe("ACTIVE");
+    expect(controlDb!.get("SELECT status FROM run_control_commands WHERE request_id='req-pause-fail'"))
+      .toMatchObject({ status: "FAILED" });
+    expect(controlDb!.all("SELECT * FROM run_checkpoints WHERE run_id=$runId", { runId: run.id })).toHaveLength(0);
+  });
+
+  it("manual checkpoint cannot prove an in-process safe checkpoint and fails closed without changing control state", async () => {
+    await setupControl();
+    const run = await pauseReadyRun();
+
+    const result = await controlService.requestRunControl(run.id, "CHECKPOINT", "req-cp-1");
+
+    expect(result.status).toBe("FAILED");
+    expect(result.failureCode).toBe("CHECKPOINT_UNPROVEN");
+    expect(result.control?.state).toBe("ACTIVE");
+    expect(controlDb!.all("SELECT * FROM run_checkpoints WHERE run_id=$runId", { runId: run.id })).toHaveLength(0);
+  });
+
+  it("duplicate request replay returns the stored outcome without re-executing the runtime", async () => {
+    await setupControl();
+    const run = await pauseReadyRun();
+    controlRuntime.pauseRun = vi.fn(async () => {});
+
+    const first = await controlService.requestRunControl(run.id, "PAUSE", "req-replay");
+    const replay = await controlService.requestRunControl(run.id, "PAUSE", "req-replay");
+
+    expect(replay).toEqual(first);
+    expect(controlRuntime.pauseRun).toHaveBeenCalledTimes(1);
+    expect(controlDb!.all("SELECT * FROM run_control_commands WHERE request_id='req-replay'")).toHaveLength(1);
+  });
+
+  it("concurrent pause requests: exactly one wins; the second fails with a typed state conflict", async () => {
+    await setupControl();
+    const run = await pauseReadyRun();
+    controlRuntime.pauseRun = vi.fn(async () => {});
+
+    const outcomes = await Promise.allSettled([
+      controlService.requestRunControl(run.id, "PAUSE", "req-concurrent-1"),
+      controlService.requestRunControl(run.id, "PAUSE", "req-concurrent-2"),
+    ]);
+
+    const fulfilled = outcomes.filter((entry) => entry.status === "fulfilled");
+    const rejected = outcomes.filter((entry): entry is PromiseRejectedResult => entry.status === "rejected");
+    expect(fulfilled).toHaveLength(1);
+    expect((fulfilled[0] as PromiseFulfilledResult<Awaited<ReturnType<typeof controlService.requestRunControl>>>).value.control?.state).toBe("PAUSED");
+    expect(rejected).toHaveLength(1);
+    expect(String((rejected[0] as PromiseRejectedResult).reason)).toMatch(/RUN_CONTROL_STATE_CONFLICT|RUN_CONTROL_ALREADY_PAUSED/);
+  });
+
+  it("a confirmed terminal Run closes the control overlay and blocks further pause", async () => {
+    await setupControl();
+    const run = await pauseReadyRun();
+    controlRuntime.pauseRun = vi.fn(async () => {});
+    await controlService.requestRunControl(run.id, "PAUSE", "req-pause-close");
+
+    await controlService.cancelRun(run.id);
+
+    expect(controlDb!.get("SELECT state FROM run_control_state WHERE run_id=$runId", { runId: run.id })?.state).toBe("CLOSED");
+    await expect(controlService.requestRunControl(run.id, "PAUSE", "req-pause-terminal")).rejects.toThrow("RUN_CONTROL_TERMINAL");
+  });
+
+  it("resume performs validated admission, rotates the owner generation and relaunches under the same session", async () => {
+    await setupControl();
+    const run = await pauseReadyRun();
+    controlRuntime.pauseRun = vi.fn(async () => {});
+    await controlService.requestRunControl(run.id, "PAUSE", "req-pause-resume");
+    expect(controlDb!.get("SELECT current_generation FROM run_process_owners WHERE run_id=$runId", { runId: run.id })?.current_generation).toBe(1);
+
+    const resumeSpy = vi.spyOn(controlRuntime, "resumeRun").mockImplementation(async (runId) => {
+      expect(controlDb!.get("SELECT current_generation,state,capture_state FROM run_process_owners WHERE run_id=$runId", { runId })?.current_generation).toBe(2);
+    });
+    vi.spyOn(controlRuntime, "collectResult").mockImplementation(async (runId) => {
+      const output = JSON.stringify({ version: "1", outcome: "PASS" });
+      await controlService.completionStore().accept(controlService.getCapabilityReference(runId), {
+        runId, role: "reviewer", output: JSON.parse(output),
+      });
+      markControlRunNeverLaunched(runId);
+      return { success: true, exitCode: 0, output, validatedSubmission: true,
+        diagnostics: { runId, sessionId: "original-session", stderr: "", exitCode: 0, artifactReferences: [] } };
+    });
+    vi.spyOn(controlRuntime, "collectUsage").mockResolvedValue({ inputTokens: 2, cachedInputTokens: 0, outputTokens: 1, cost: 0.1 });
+
+    const result = await controlService.requestRunControl(run.id, "RESUME", "req-resume-1");
+
+    expect(result.status).toBe("COMPLETED");
+    expect(result.control?.state).toBe("ACTIVE");
+    expect(resumeSpy).toHaveBeenCalledWith(run.id, expect.objectContaining({ sessionId: "original-session", attempt: 1 }));
+    expect(controlDb!.get("SELECT current_generation FROM run_process_owners WHERE run_id=$runId", { runId: run.id })?.current_generation).toBe(2);
+    // Терминальный COMPLETED закрывает overlay.
+    expect(controlDb!.get("SELECT state FROM run_control_state WHERE run_id=$runId", { runId: run.id })?.state).toBe("CLOSED");
+  });
+
+  it("failed resume returns to PAUSED, releases the new launch pre-generation and keeps the checkpoint", async () => {
+    await setupControl();
+    const run = await pauseReadyRun();
+    controlRuntime.pauseRun = vi.fn(async () => {});
+    await controlService.requestRunControl(run.id, "PAUSE", "req-pause-failresume");
+    vi.spyOn(controlRuntime, "resumeRun").mockImplementation(async () => { throw new Error("RESUME_LAUNCH_FAILED"); });
+
+    await expect(controlService.requestRunControl(run.id, "RESUME", "req-resume-fail")).rejects.toThrow("RESUME_LAUNCH_FAILED");
+
+    expect(controlDb!.get("SELECT state,checkpoint_id FROM run_control_state WHERE run_id=$runId", { runId: run.id }))
+      .toMatchObject({ state: "PAUSED", checkpoint_id: expect.any(String) });
+    expect(controlDb!.get("SELECT state FROM run_process_owners WHERE run_id=$runId", { runId: run.id })?.state).toBe("STOPPED");
+    expect(controlDb!.get("SELECT status FROM run_control_commands WHERE request_id='req-resume-fail'")?.status).toBe("FAILED");
+  });
+
+  it("preserves control durability across a service restart at the PAUSED boundary", async () => {
+    await setupControl();
+    const run = await pauseReadyRun();
+    controlRuntime.pauseRun = vi.fn(async () => {});
+    await controlService.requestRunControl(run.id, "PAUSE", "req-pause-restart");
+
+    const restarted = new RunService(controlDb!, new FakeAgentRuntime(), {
+      prepare: (_tx, input) => controlPreparedContext(input.prompt, input.role, input.subject),
+    });
+    expect(restarted.requestRunControl).toBeTypeOf("function");
+    expect(controlDb!.get("SELECT state FROM run_control_state WHERE run_id=$runId", { runId: run.id })?.state).toBe("PAUSED");
+    expect(controlDb!.all("SELECT * FROM run_checkpoints WHERE run_id=$runId", { runId: run.id })).toHaveLength(1);
   });
 });

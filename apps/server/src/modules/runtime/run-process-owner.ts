@@ -424,6 +424,56 @@ export function rotateRunProcessOwnerForResumeTx(tx: DatabaseTx, input: {
   return generation;
 }
 
+/**
+ * Создаёт PREPARED поколение того же Run после доказанной паузы (STOPPED + BOUND),
+ * сохраняя тот же attempt/session (в отличие от recovery-ротации, attempt не растёт).
+ * Необходимо для validated resume: новый launch получает новую OS-идентичность,
+ * а исходное поколение остаётся неизменной stopped-историей checkpoint.
+ *
+ * Требует owner в состоянии STOPPED с BOUND capture и authoritative stop evidence;
+ * @ возвращает номер нового поколения.
+ */
+export function rotateRunProcessOwnerForPauseResumeTx(tx: DatabaseTx, input: {
+  runId: string; attempt: number;
+}): number {
+  if (!Number.isSafeInteger(input.attempt) || input.attempt <= 0) {
+    throw new Error('RUN_PROCESS_GENERATION_ATTEMPT_INVALID');
+  }
+  const owner = getRunProcessOwner(tx, input.runId);
+  if (!owner) throw new Error('RUN_PROCESS_OWNER_MISSING');
+  const current = tx.get<{ current_generation: number; capture_state: string; state: string;
+    containment_kind: string; containment_id: string; launch_nonce: string; stop_evidence: string | null;
+    run_attempt: number | null }>(`SELECT o.*,r.attempt AS run_attempt FROM run_process_owners o
+      JOIN agent_runs r ON r.id=o.run_id WHERE o.run_id=$runId`, { runId: input.runId });
+  if (!current || current.capture_state !== 'BOUND' || current.state !== 'STOPPED' ||
+      (current.run_attempt !== null && current.run_attempt !== input.attempt) ||
+      !isAuthoritativeRunProcessStopEvidence(current.stop_evidence, current.containment_kind)) {
+    throw new Error('RUN_PROCESS_GENERATION_STOP_UNPROVEN');
+  }
+  const history = tx.get<{ state: string; containment_id: string; launch_nonce: string; stop_evidence: string | null }>(
+    'SELECT state,containment_id,launch_nonce,stop_evidence FROM run_process_owner_generations WHERE run_id=$runId AND generation=$generation',
+    { runId: input.runId, generation: current.current_generation });
+  if (!history || history.state !== 'STOPPED' || history.containment_id !== current.containment_id ||
+      history.launch_nonce !== current.launch_nonce || history.stop_evidence !== current.stop_evidence) {
+    throw new Error('RUN_PROCESS_GENERATION_STOP_UNPROVEN');
+  }
+  const generation = current.current_generation + 1;
+  const nextOwner = prepareRunProcessOwner(input.runId, owner.hermesHome, owner.containmentKind, owner.hermesSourceSnapshotKey);
+  insertPreparedRunProcessGenerationTx(tx, nextOwner, generation, input.attempt, 'BOUND');
+  tx.run(`UPDATE run_process_owners SET current_generation=$generation,
+    containment_id=$containmentId,launch_nonce=$launchNonce,state='PREPARED',stop_evidence=NULL,
+    systemd_invocation_id=NULL,systemd_control_group=NULL,supervisor_pid=NULL,supervisor_start_identity=NULL,
+    pid=NULL,platform=NULL,process_start_identity=NULL,executable_identity=NULL,updated_at=$updatedAt
+    WHERE run_id=$runId AND current_generation=$previousGeneration AND state='STOPPED' AND capture_state='BOUND'
+      AND containment_id=$previousContainment AND launch_nonce=$previousNonce`, {
+      runId: input.runId, generation, previousGeneration: current.current_generation,
+      containmentId: nextOwner.containmentId, launchNonce: nextOwner.launchNonce,
+      previousContainment: current.containment_id, previousNonce: current.launch_nonce, updatedAt: nextOwner.updatedAt,
+    });
+  if ((tx.get<{ changes: number }>('SELECT changes() AS changes')?.changes ?? 0) !== 1) throw new Error('RUN_PROCESS_GENERATION_CHANGED');
+  return generation;
+}
+
 function assertLiveIdentity(identity: RunProcessOwnerIdentity): void {
   if (identity.platform === 'linux') {
     assertNonEmpty(identity.systemdInvocationId ?? '', 'systemdInvocationId');

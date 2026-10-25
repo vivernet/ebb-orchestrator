@@ -894,6 +894,63 @@ export class HermesRuntimeAdapter implements AgentRuntime, HermesSessionCaptureP
   }
 
   /**
+   * Пауза: останавливает точный OS scope активного Run с доказанным STOPPED,
+   * сохраняя session/состояние Run для последующего validated resume.
+   * Без живого доказуемого процесса — fail-closed.
+   */
+  async pauseRun(runId: string): Promise<void> {
+    const starting = this.startingRuns.get(runId);
+    if (starting) {
+      starting.cancelled = true;
+      starting.abortController.abort();
+      let startFailure: unknown;
+      try {
+        await starting.startPromise;
+      } catch (error) {
+        startFailure = error;
+      }
+      try {
+        this.assertStopProof(runId, starting);
+      } catch (error) {
+        if (startFailure !== undefined) throw startFailure;
+        throw error;
+      }
+      return;
+    }
+    const activeScope = this.activeScopes.get(runId);
+    if (activeScope) {
+      const supervisor = this.processScopeSupervisor;
+      if (!supervisor) throw new Error("PROCESS_SCOPE_SUPERVISOR_REQUIRED");
+      let owner = activeScope.owner;
+      if (owner.state === "LIVE") {
+        if (activeScope.durable) this.transitionOwner(owner, "LIVE", "STOPPING");
+        owner = { ...owner, state: "STOPPING" };
+        activeScope.owner = owner;
+      }
+      const stopped = await supervisor.stop(owner);
+      const final = stopped.state === "STOPPED" ? stopped : await supervisor.waitForStopped(owner, 30_000);
+      if (final.state !== "STOPPED") {
+        if (activeScope.durable && owner.state !== "UNKNOWN") {
+          this.transitionOwner(owner, owner.state, "UNKNOWN", undefined, "OS_STATE_UNPROVEN");
+        }
+        throw new Error("PROCESS_SCOPE_STOP_UNPROVEN");
+      }
+      if (activeScope.durable) this.transitionOwner(owner, owner.state, "STOPPED", undefined, final.evidence);
+      return;
+    }
+    // Нет живого процесса — нельзя доказать безопасную паузу.
+    throw new Error("RUN_PAUSE_NO_ACTIVE_PROCESS");
+  }
+
+  /**
+   * Validated safe checkpoint активного Run: runtime не имеет in-process снимка,
+   * поэтому никогда не фабрикует checkpoint и возвращает unavailable (fail-closed).
+   */
+  async createCheckpoint(_runId: string): Promise<{ availability: "unavailable"; reason: string }> {
+    return { availability: "unavailable", reason: "CHECKPOINT_UNPROVEN" };
+  }
+
+  /**
    * Inspect Объект текущее состояние of Объект run.
    */
   async inspectRun(runId: string): Promise<AgentRun> {

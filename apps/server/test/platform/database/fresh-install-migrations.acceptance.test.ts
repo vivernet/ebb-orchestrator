@@ -22,7 +22,7 @@ describe("fresh-install migration acceptance", () => {
     tmpDir = await mkdtemp(join(tmpdir(), "ebb-fresh-install-migrations-"));
     db = createSqliteDatabase(join(tmpDir, `fresh-${randomUUID()}.sqlite`));
     const migrations = loadTestMigrations();
-    const expectedVersions = Array.from({ length: 53 }, (_, index) => index + 1);
+    const expectedVersions = Array.from({ length: 54 }, (_, index) => index + 1);
 
     expect(migrations.map(({ version }) => version)).toEqual(expectedVersions);
     expect(migrations.find(({ version }) => version === 40)?.name).toBe("040_run_hermes_source_snapshot");
@@ -39,8 +39,9 @@ describe("fresh-install migration acceptance", () => {
     expect(migrations.find(({ version }) => version === 51)?.name).toBe("051_provider_custom_models");
     expect(migrations.find(({ version }) => version === 52)?.name).toBe("052_chat");
     expect(migrations.find(({ version }) => version === 53)?.name).toBe("053_scheduler_dispatch_controls");
-    expect(migrations.at(-1)?.name).toBe("053_scheduler_dispatch_controls");
-    expect(runMigrations(db, migrations).applied).toBe(53);
+    expect(migrations.find(({ version }) => version === 54)?.name).toBe("054_run_control_checkpoints");
+    expect(migrations.at(-1)?.name).toBe("054_run_control_checkpoints");
+    expect(runMigrations(db, migrations).applied).toBe(54);
     expect(db.all("PRAGMA table_info(tasks)")).toContainEqual(expect.objectContaining({ name: "capacity_wait_started_at", type: "TEXT", notnull: 0, dflt_value: null }));
     expect(db.all("SELECT * FROM run_process_owner_generations")).toEqual([]);
     expect(db.all("SELECT * FROM run_resume_bindings")).toEqual([]);

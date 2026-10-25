@@ -63,6 +63,23 @@ export interface AgentRuntime {
   cancelRun(runId: string): Promise<void>;
 
   /**
+   * Пауза: останавливает активный процесс Run с доказанным STOPPED-границей.
+   * Coоперативная пауза не изменяет session/состояние Run; caller после успеха
+   * фиксирует checkpoint provenance в durable run_control_state. Отсутствие
+   * живого доказуемого процесса — ошибка (fail-closed).
+   */
+  pauseRun?(runId: string): Promise<void>;
+
+  /**
+   * Запрашивает validated safe checkpoint у runtime. Для активного процесса без
+   * in-process снимка runtime обязан вернуть `unavailable` (никогда не фабриковать).
+   */
+  createCheckpoint?(runId: string): Promise<
+    | { availability: "available"; checkpoint: { checkpointHash: string; eventCursor: string } }
+    | { availability: "unavailable"; reason: string }
+  >;
+
+  /**
    * Inspect Объект текущее состояние of Объект run.
    */
   inspectRun(runId: string): Promise<AgentRun>;

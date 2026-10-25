@@ -61,6 +61,13 @@ import {
   type TracingPayload,
 } from "./tracing/tracing-payload.js";
 import { recordGenAiUsageTelemetry } from "../../platform/observability/otel.js";
+import { createHash } from "node:crypto";
+import {
+  type CancelAllRunsResult,
+  type RunControlCommandResult,
+  type RunControlState,
+} from "@ebb-orchestrator/contracts";
+import { rotateRunProcessOwnerForPauseResumeTx } from "./run-process-owner.js";
 
 /** Версия контекстного builder для fingerprint входов после включения имени провайдера (dual-version). */
 const FINGERPRINT_CONTEXT_BUILDER_VERSION = "1.0.1";
@@ -425,7 +432,10 @@ export class RunService {
           capability_ref=NULL,capability_json=NULL WHERE id=$runId AND status='COMPLETING' AND output=$output AND ended_at IS NULL`,
         { runId, output: submission.output, endedAt: new Date().toISOString() });
         const completed = (tx.get<{ changes: number }>("SELECT changes() AS changes")?.changes ?? 0) === 1;
-        if (completed) this.appendLifecycleEvent(tx, runId, "AgentRunCompleted");
+        if (completed) {
+          closeRunControlTx(tx, runId);
+          this.appendLifecycleEvent(tx, runId, "AgentRunCompleted");
+        }
         return completed;
       });
       if (completed) {
@@ -1459,6 +1469,7 @@ export class RunService {
         { id: runId, ended_at: new Date().toISOString(), exit_code: exitCode, output: diagnostics });
         const failed = (tx.get<{ changes: number }>("SELECT changes() AS changes")?.changes ?? 0) === 1;
         if (failed) {
+          closeRunControlTx(tx, runId);
           this.appendLifecycleEvent(tx, runId, eventType);
           transitioned = true;
         }
@@ -1506,6 +1517,7 @@ export class RunService {
         { id: runId, ended_at: now },
       );
       const cancelled = (tx.get<{ changes: number }>("SELECT changes() AS changes")?.changes ?? 0) === 1;
+      if (cancelled) closeRunControlTx(tx, runId);
       // Добавляет durable outbox event.
       const event = DomainEvent.create({
         type: "RunCancelled",
@@ -1584,6 +1596,7 @@ export class RunService {
           ended_at: new Date().toISOString(),
         }
       );
+      closeRunControlTx(tx, runId);
       this.appendLifecycleEvent(tx, runId, "AgentRunCompleted");
       return this.getRun(tx, runId);
     });
@@ -1614,6 +1627,214 @@ export class RunService {
         }
       );
     });
+  }
+
+  /**
+   * Выполняет run-control команду (CHECKPOINT/PAUSE/RESUME): durable intent,
+   * optimistic CAS по версии run_control_state и идемпотентный replay по requestId.
+   * Возвращает результат команды с текущей control-проекцией.
+   */
+  async requestRunControl(runId: string, command: "CHECKPOINT" | "PAUSE" | "RESUME", requestId: string): Promise<RunControlCommandResult> {
+    if (!/^[\x21-\x7e]{1,256}$/.test(requestId)) throw new Error("RUN_REQUEST_IDEMPOTENCY_KEY_INVALID");
+    const run = this.getRun(this.db, runId);
+    const logicalAttempt = run.attempt ?? 1;
+    if (this.isTerminalState(run.status)) throw new Error("RUN_CONTROL_TERMINAL");
+    if (command === "CHECKPOINT") return this.runCheckpointCommand(runId, requestId, logicalAttempt);
+    if (command === "PAUSE") return this.runPauseCommand(runId, requestId, logicalAttempt);
+    return this.runResumeCommand(runId, requestId, logicalAttempt);
+  }
+
+  /** Отменяет только подтверждённый набор Run; результат упорядочен по expectedRunIds. */
+  async cancelAllRuns(expectedRunIds: string[]): Promise<CancelAllRunsResult> {
+    const results: { runId: string; outcome: "CANCELLED" | "NOT_ACTIVE" | "FAILED" }[] = [];
+    for (const runId of expectedRunIds) {
+      const run = this.db.get<{ status: RunStatus }>("SELECT status FROM agent_runs WHERE id=$runId", { runId });
+      if (!run) {
+        results.push({ runId, outcome: "FAILED" });
+        continue;
+      }
+      if (!["STARTED", "IN_PROGRESS", "COMPLETING"].includes(run.status)) {
+        results.push({ runId, outcome: "NOT_ACTIVE" });
+        continue;
+      }
+      try {
+        await this.cancelRun(runId);
+        results.push({ runId, outcome: "CANCELLED" });
+      } catch {
+        results.push({ runId, outcome: "FAILED" });
+      }
+    }
+    return { results };
+  }
+
+  private async runCheckpointCommand(runId: string, requestId: string, logicalAttempt: number): Promise<RunControlCommandResult> {
+    const created = this.db.transaction((tx) => {
+      ensureRunControlActiveTx(tx, runId, logicalAttempt);
+      const state = readRunControlRow(tx, runId) as RunControlRow;
+      return insertRunControlCommandTx(tx, { requestId, runId, attempt: logicalAttempt, command: "CHECKPOINT", expectedVersion: state.version });
+    });
+    if (!created) return this.storedControlResult(requestId, runId);
+    const runtimeCheckpoint = this.runtime.createCheckpoint
+      ? await this.runtime.createCheckpoint(runId)
+      : { availability: "unavailable" as const, reason: "CHECKPOINT_UNSUPPORTED" };
+    if (runtimeCheckpoint.availability !== "available") {
+      this.db.transaction((tx) => finalizeRunControlCommandFailedTx(tx, requestId, "CHECKPOINT_UNPROVEN"));
+      return { command: "CHECKPOINT", status: "FAILED", control: this.currentControlProjection(runId), failureCode: "CHECKPOINT_UNPROVEN" };
+    }
+    const checkpointId = crypto.randomUUID();
+    this.db.transaction((tx) => {
+      const provenance = buildCheckpointProvenanceTx(tx, runId, logicalAttempt);
+      if (!provenance) throw new Error("CHECKPOINT_UNPROVEN");
+      insertRunCheckpointTx(tx, { checkpointId, runId, attempt: logicalAttempt, requestId, provenance });
+      finalizeRunControlCommandTx(tx, requestId, "COMPLETED", JSON.stringify({ checkpointId }));
+    });
+    return { command: "CHECKPOINT", status: "COMPLETED", control: this.currentControlProjection(runId), failureCode: null };
+  }
+
+  private async runPauseCommand(runId: string, requestId: string, logicalAttempt: number): Promise<RunControlCommandResult> {
+    const prepared = this.db.transaction((tx) => {
+      ensureRunControlActiveTx(tx, runId, logicalAttempt);
+      const state = readRunControlRow(tx, runId) as RunControlRow;
+      const created = insertRunControlCommandTx(tx, { requestId, runId, attempt: logicalAttempt, command: "PAUSE", expectedVersion: state.version });
+      if (!created) return false;
+      if (state.state !== "ACTIVE") {
+        throw new Error(state.state === "PAUSED" ? "RUN_CONTROL_ALREADY_PAUSED" : "RUN_CONTROL_STATE_CONFLICT");
+      }
+      transitionRunControlTx(tx, runId, state.version, "PAUSE_REQUESTED");
+      return true;
+    });
+    if (!prepared) return this.storedControlResult(requestId, runId);
+
+    try {
+      if (!this.runtime.pauseRun) throw new Error("RUN_CONTROL_UNSUPPORTED_BY_RUNTIME");
+      await this.runtime.pauseRun(runId);
+    } catch (error) {
+      this.db.transaction((tx) => {
+        const state = readRunControlRow(tx, runId);
+        if (state?.state === "PAUSE_REQUESTED") transitionRunControlTx(tx, runId, state.version, "ACTIVE");
+        finalizeRunControlCommandFailedTx(tx, requestId, error instanceof Error ? error.message : "RUN_PAUSE_UNPROVEN");
+      });
+      throw error;
+    }
+
+    let completed: RunControlRow;
+    try {
+      completed = this.db.transaction((tx) => {
+        const provenance = buildCheckpointProvenanceTx(tx, runId, logicalAttempt);
+        if (!provenance) throw new Error("RUN_PAUSE_UNPROVEN");
+        const state = readRunControlRow(tx, runId);
+        if (!state || state.state !== "PAUSE_REQUESTED") throw new Error("RUN_CONTROL_STATE_CONFLICT");
+        const checkpointId = crypto.randomUUID();
+        insertRunCheckpointTx(tx, { checkpointId, runId, attempt: logicalAttempt, requestId, provenance });
+        const next = transitionRunControlTx(tx, runId, state.version, "PAUSED", checkpointId);
+        finalizeRunControlCommandTx(tx, requestId, "COMPLETED", JSON.stringify({ checkpointId }));
+        appendOutboxEvent(tx, DomainEvent.create({
+          type: "RunPaused", aggregateType: "AgentRun", aggregateId: runId,
+          payload: { runId, checkpointId, sessionId: provenance.sessionId },
+        }));
+        return next;
+      });
+    } catch (error) {
+      this.db.transaction((tx) => {
+        const state = readRunControlRow(tx, runId);
+        if (state?.state === "PAUSE_REQUESTED") transitionRunControlTx(tx, runId, state.version, "ACTIVE");
+        finalizeRunControlCommandFailedTx(tx, requestId, error instanceof Error ? error.message : "RUN_PAUSE_UNPROVEN");
+      });
+      throw error;
+    }
+    return { command: "PAUSE", status: "COMPLETED", control: controlProjection(completed), failureCode: null };
+  }
+
+  private async runResumeCommand(runId: string, requestId: string, logicalAttempt: number): Promise<RunControlCommandResult> {
+    const prepared = this.db.transaction((tx) => {
+      const state = readRunControlRow(tx, runId);
+      if (!state || state.state !== "PAUSED") throw new Error(!state ? "RUN_CONTROL_STATE_CONFLICT" : "RUN_CONTROL_NOT_PAUSED");
+      if (!state.checkpoint_id) throw new Error("RUN_CONTROL_STATE_CONFLICT");
+      verifyCheckpointForResumeTx(tx, runId, state.checkpoint_id, logicalAttempt);
+      const created = insertRunControlCommandTx(tx, { requestId, runId, attempt: logicalAttempt, command: "RESUME", expectedVersion: state.version });
+      if (!created) return false;
+      tx.run("UPDATE agent_runs SET status='IN_PROGRESS' WHERE id=$runId AND status='STARTED'", { runId });
+      transitionRunControlTx(tx, runId, state.version, "RESUME_PENDING", state.checkpoint_id as string);
+      return true;
+    });
+    if (!prepared) return this.storedControlResult(requestId, runId);
+
+    let resumeSelection: HermesRuntimeSelection | undefined;
+    if (this.runtime.prepareHermesRunSelection) {
+      resumeSelection = (await this.runtime.prepareHermesRunSelection(runId)).selection;
+      const owner = getRunProcessOwner(this.db, runId);
+      if (!owner || resumeSelection.runId !== runId || resumeSelection.mode !== "HERMES_MANAGED" ||
+          !resumeSelection.runtimeIdentity || !sameRepositoryPath(resumeSelection.hermesHome, owner.hermesHome)) {
+        throw new Error("HERMES_RUN_SELECTION_BINDING_MISMATCH");
+      }
+    }
+    this.db.transaction((tx) => { rotateRunProcessOwnerForPauseResumeTx(tx, { runId, attempt: logicalAttempt }); });
+    const sessionId = this.db.get<{ session_id: string | null }>("SELECT session_id FROM agent_runs WHERE id=$runId", { runId })?.session_id;
+    if (!sessionId || !/^[A-Za-z0-9_-]{1,256}$/.test(sessionId)) throw new Error("RESUME_ORIGINAL_SESSION_UNAVAILABLE");
+
+    try {
+      if (resumeSelection) this.runSelections.set(runId, resumeSelection);
+      await this.runtimeForRun(runId).resumeRun(runId, {
+        sessionId, attempt: logicalAttempt,
+        ...(resumeSelection ? { hermesSelection: resumeSelection } : {}),
+      });
+    } catch (error) {
+      this.db.transaction((tx) => {
+        const state = readRunControlRow(tx, runId);
+        if (state?.state === "RESUME_PENDING") transitionRunControlTx(tx, runId, state.version, "PAUSED", state.checkpoint_id as string);
+        const owner = tx.get<{ state: string }>("SELECT state FROM run_process_owners WHERE run_id=$runId", { runId });
+        if (owner?.state === "PREPARED") {
+          transitionRunProcessOwnerTx(tx, { runId, expectedState: "PREPARED", nextState: "STOPPED", evidence: "NEVER_LAUNCHED" });
+        }
+        finalizeRunControlCommandFailedTx(tx, requestId, error instanceof Error ? error.message : "RUN_RESUME_LAUNCH_FAILED");
+      });
+      throw error;
+    }
+
+    const runAfter = this.getRun(this.db, runId);
+    const finalized = this.db.transaction((tx) => {
+      const state = readRunControlRow(tx, runId);
+      if (!state) return undefined;
+      if (this.isTerminalState(runAfter.status)) {
+        transitionRunControlTx(tx, runId, state.version, "CLOSED");
+        finalizeRunControlCommandTx(tx, requestId, "COMPLETED", JSON.stringify({ sessionId }));
+        return readRunControlRow(tx, runId);
+      }
+      if (state.state === "RESUME_PENDING") {
+        const next = transitionRunControlTx(tx, runId, state.version, "ACTIVE");
+        finalizeRunControlCommandTx(tx, requestId, "COMPLETED", JSON.stringify({ sessionId }));
+        appendOutboxEvent(tx, DomainEvent.create({
+          type: "RunResumed", aggregateType: "AgentRun", aggregateId: runId,
+          payload: { runId, sessionId },
+        }));
+        return next;
+      }
+      return state;
+    });
+    await this.collectRuntimeResult(runAfter);
+    return {
+      command: "RESUME", status: "COMPLETED",
+      control: finalized ? controlProjection(finalized) : this.currentControlProjection(runId),
+      failureCode: null,
+    };
+  }
+
+  private storedControlResult(requestId: string, runId: string): RunControlCommandResult {
+    const command = this.db.get<{
+      command: "CHECKPOINT" | "PAUSE" | "RESUME"; status: "REQUESTED" | "COMPLETED" | "FAILED"; result_json: string | null;
+    }>("SELECT command,status,result_json FROM run_control_commands WHERE request_id=$requestId", { requestId });
+    if (!command) throw new Error("RUN_CONTROL_COMMAND_UNAVAILABLE");
+    let failureCode: string | null = null;
+    if (command.status === "FAILED") {
+      try { failureCode = (JSON.parse(command.result_json ?? "{}") as { failureCode?: string }).failureCode ?? null; } catch { failureCode = null; }
+    }
+    return { command: command.command, status: command.status, control: this.currentControlProjection(runId), failureCode };
+  }
+
+  private currentControlProjection(runId: string): RunControlState {
+    const row = readRunControlRow(this.db, runId);
+    if (!row) throw new Error("RUN_CONTROL_STATE_UNAVAILABLE");
+    return controlProjection(row);
   }
 
   /** Записывает одно событие принятого Run transition в той же transaction; result и diagnostics не публикуются. */
@@ -1725,6 +1946,208 @@ export class RunService {
        ...(row.prompt ? { prompt: row.prompt as string } : {}),
         ...(row.capability_ref ? { capabilityRef: row.capability_ref as string } : {}),
     };
+  }
+}
+
+type RunControlStateName = "ACTIVE" | "PAUSE_REQUESTED" | "PAUSED" | "RESUME_PENDING" | "CLOSED";
+
+interface RunControlCommandRow {
+  request_id: string;
+  run_id: string;
+  attempt: number;
+  command: "CHECKPOINT" | "PAUSE" | "RESUME";
+  expected_version: number;
+  status: "REQUESTED" | "COMPLETED" | "FAILED";
+  result_json: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface RunControlRow {
+  run_id: string;
+  attempt: number;
+  state: RunControlStateName;
+  checkpoint_id: string | null;
+  version: number;
+  updated_at: string;
+}
+
+function readRunControlRow(tx: DatabaseTx, runId: string): RunControlRow | undefined {
+  return tx.get<RunControlRow>(
+    "SELECT run_id,attempt,state,checkpoint_id,version,updated_at FROM run_control_state WHERE run_id=$runId",
+    { runId },
+  );
+}
+
+/** Гарантирует ACTIVE-строку overlay (absent→ACTIVE) с логическим attempt. */
+function ensureRunControlActiveTx(tx: DatabaseTx, runId: string, logicalAttempt: number): void {
+  if (readRunControlRow(tx, runId)) return;
+  tx.run(
+    "INSERT INTO run_control_state(run_id,attempt,state,checkpoint_id,version,updated_at) VALUES($runId,$attempt,'ACTIVE',NULL,0,$now)",
+    { runId, attempt: logicalAttempt, now: new Date().toISOString() },
+  );
+}
+
+/** CAS-переход версии состояния; любое расхождение — конфликт. */
+function transitionRunControlTx(tx: DatabaseTx, runId: string, expectedVersion: number, nextState: RunControlStateName, checkpointId?: string): RunControlRow {
+  tx.run(
+    "UPDATE run_control_state SET state=$state,checkpoint_id=$cp,version=version+1,updated_at=$now WHERE run_id=$runId AND version=$expectedVersion",
+    { state: nextState, cp: checkpointId ?? null, runId, expectedVersion, now: new Date().toISOString() },
+  );
+  if ((tx.get<{ changes: number }>("SELECT changes() AS changes")?.changes ?? 0) !== 1) {
+    throw new Error("RUN_CONTROL_STATE_CONFLICT");
+  }
+  return readRunControlRow(tx, runId)!;
+}
+
+/** Вставляет команду; точный replay возвращает false, чужой/изменённый request_id — конфликт. */
+function insertRunControlCommandTx(tx: DatabaseTx, input: {
+  requestId: string; runId: string; attempt: number; command: RunControlCommandRow["command"]; expectedVersion: number;
+}): boolean {
+  const existing = tx.get<RunControlCommandRow>("SELECT * FROM run_control_commands WHERE request_id=$requestId", { requestId: input.requestId });
+  if (existing) {
+    if (existing.run_id !== input.runId || existing.command !== input.command) {
+      throw new Error("RUN_CONTROL_COMMAND_CONFLICT");
+    }
+    return false;
+  }
+  const now = new Date().toISOString();
+  tx.run(
+    `INSERT INTO run_control_commands(request_id,run_id,attempt,command,expected_version,status,created_at,updated_at)
+     VALUES($requestId,$runId,$attempt,$command,$expectedVersion,'REQUESTED',$now,$now)`,
+    { requestId: input.requestId, runId: input.runId, attempt: input.attempt, command: input.command, expectedVersion: input.expectedVersion, now },
+  );
+  return true;
+}
+
+function finalizeRunControlCommandTx(tx: DatabaseTx, requestId: string, status: RunControlCommandRow["status"], resultJson: string | null): void {
+  tx.run(
+    "UPDATE run_control_commands SET status=$status,result_json=$result,updated_at=$now WHERE request_id=$requestId AND status='REQUESTED'",
+    { requestId, status, result: resultJson, now: new Date().toISOString() },
+  );
+  if ((tx.get<{ changes: number }>("SELECT changes() AS changes")?.changes ?? 0) !== 1) {
+    throw new Error("RUN_CONTROL_COMMAND_STATE_CONFLICT");
+  }
+}
+
+function finalizeRunControlCommandFailedTx(tx: DatabaseTx, requestId: string, failureCode: string): void {
+  finalizeRunControlCommandTx(tx, requestId, "FAILED", JSON.stringify({ failureCode }));
+}
+
+function controlProjection(row: RunControlRow): RunControlState {
+  const base = { version: row.version, updatedAt: row.updated_at };
+  switch (row.state) {
+    case "ACTIVE": return { ...base, state: "ACTIVE", checkpointId: null };
+    case "PAUSE_REQUESTED": return { ...base, state: "PAUSE_REQUESTED", checkpointId: null };
+    case "PAUSED": return { ...base, state: "PAUSED", checkpointId: row.checkpoint_id as string };
+    case "RESUME_PENDING": return { ...base, state: "RESUME_PENDING", checkpointId: row.checkpoint_id as string };
+    case "CLOSED": return { ...base, state: "CLOSED", checkpointId: row.checkpoint_id };
+  }
+}
+
+/** Закрывает overlay при любом подтверждённом терминальном переходе Run. */
+function closeRunControlTx(tx: DatabaseTx, runId: string): void {
+  tx.run(
+    "UPDATE run_control_state SET state='CLOSED',version=version+1,updated_at=$now WHERE run_id=$runId AND state <> 'CLOSED'",
+    { runId, now: new Date().toISOString() },
+  );
+}
+
+interface RunCheckpointProvenance {
+  sessionId: string;
+  ownerGeneration: number;
+  containmentRef: string;
+  launchNonceHash: string;
+  contextHash: string;
+  workspaceSnapshotHash: string;
+  eventCursor: string;
+}
+
+/** Собирает доказуемую provenance checkpoint только из persisted authoritative records. */
+function buildCheckpointProvenanceTx(tx: DatabaseTx, runId: string, logicalAttempt: number): RunCheckpointProvenance | undefined {
+  const run = tx.get<{ session_id: string | null; attempt: number | null }>(
+    "SELECT session_id,attempt FROM agent_runs WHERE id=$runId", { runId });
+  if (!run || !run.session_id || !/^[A-Za-z0-9_-]{1,256}$/.test(run.session_id) ||
+      (run.attempt !== null && run.attempt !== logicalAttempt)) return undefined;
+  const binding = tx.get<{ context_hash: string | null; workspace_snapshot_hash: string | null }>(
+    "SELECT context_hash,workspace_snapshot_hash FROM run_resume_bindings WHERE run_id=$runId", { runId });
+  if (!binding || !/^[a-f0-9]{64}$/.test(binding.context_hash ?? "") || !/^[a-f0-9]{64}$/.test(binding.workspace_snapshot_hash ?? "")) return undefined;
+  const owner = tx.get<{ current_generation: number; containment_kind: string; containment_id: string; launch_nonce: string }>(
+    "SELECT current_generation,containment_kind,containment_id,launch_nonce FROM run_process_owners WHERE run_id=$runId", { runId });
+  if (!owner || !/^[a-f0-9]{64}$/.test(owner.containment_id) || !/^[a-f0-9]{64}$/.test(owner.launch_nonce)) return undefined;
+  const eventCursor = tx.get<{ id: string }>(
+    "SELECT id FROM outbox_events WHERE aggregate_id=$runId AND aggregate_type='AgentRun' ORDER BY created_at DESC, id DESC LIMIT 1",
+    { runId })?.id ?? "";
+  return {
+    sessionId: run.session_id,
+    ownerGeneration: owner.current_generation,
+    containmentRef: `${owner.containment_kind}:${owner.containment_id}`,
+    launchNonceHash: createHash("sha256").update(owner.launch_nonce).digest("hex"),
+    contextHash: binding.context_hash as string,
+    workspaceSnapshotHash: binding.workspace_snapshot_hash as string,
+    eventCursor,
+  };
+}
+
+function computeCheckpointHash(runId: string, provenance: RunCheckpointProvenance): string {
+  const canonical = JSON.stringify({
+    runId,
+    sessionId: provenance.sessionId,
+    ownerGeneration: provenance.ownerGeneration,
+    containmentRef: provenance.containmentRef,
+    launchNonceHash: provenance.launchNonceHash,
+    contextHash: provenance.contextHash,
+    workspaceSnapshotHash: provenance.workspaceSnapshotHash,
+    eventCursor: provenance.eventCursor,
+  });
+  return createHash("sha256").update(canonical).digest("hex");
+}
+
+function insertRunCheckpointTx(tx: DatabaseTx, input: {
+  checkpointId: string; runId: string; attempt: number; requestId: string; provenance: RunCheckpointProvenance;
+}): void {
+  tx.run(
+    `INSERT INTO run_checkpoints(id,run_id,attempt,request_id,session_id,owner_generation,containment_ref,launch_nonce_hash,context_hash,workspace_snapshot_hash,event_cursor,checkpoint_hash,created_at)
+     VALUES($id,$runId,$attempt,$requestId,$sessionId,$ownerGeneration,$containmentRef,$launchNonceHash,$contextHash,$workspaceSnapshotHash,$eventCursor,$checkpointHash,$now)`,
+    {
+      id: input.checkpointId, runId: input.runId, attempt: input.attempt, requestId: input.requestId,
+      sessionId: input.provenance.sessionId, ownerGeneration: input.provenance.ownerGeneration,
+      containmentRef: input.provenance.containmentRef, launchNonceHash: input.provenance.launchNonceHash,
+      contextHash: input.provenance.contextHash, workspaceSnapshotHash: input.provenance.workspaceSnapshotHash,
+      eventCursor: input.provenance.eventCursor,
+      checkpointHash: computeCheckpointHash(input.runId, input.provenance), now: new Date().toISOString(),
+    },
+  );
+}
+
+/** Resume-вход: сверяет checkpoint с текущим Run/session/attempt и immutable stopped-поколением. */
+function verifyCheckpointForResumeTx(tx: DatabaseTx, runId: string, checkpointId: string, logicalAttempt: number): void {
+  const checkpoint = tx.get<{
+    attempt: number; session_id: string; owner_generation: number; containment_ref: string; launch_nonce_hash: string;
+    context_hash: string; workspace_snapshot_hash: string;
+  }>("SELECT attempt,session_id,owner_generation,containment_ref,launch_nonce_hash,context_hash,workspace_snapshot_hash FROM run_checkpoints WHERE id=$checkpointId AND run_id=$runId", { checkpointId, runId });
+  if (!checkpoint) throw new Error("RUN_CONTROL_CHECKPOINT_UNAVAILABLE");
+  if (checkpoint.attempt !== logicalAttempt) throw new Error("RUN_CONTROL_ATTEMPT_MISMATCH");
+  const run = tx.get<{ session_id: string | null; attempt: number | null }>("SELECT session_id,attempt FROM agent_runs WHERE id=$runId", { runId });
+  if (!run || run.session_id !== checkpoint.session_id || (run.attempt !== null && run.attempt !== logicalAttempt)) {
+    throw new Error("RUN_CONTROL_SESSION_MISMATCH");
+  }
+  const generation = tx.get<{ containment_id: string; launch_nonce: string; state: string }>(
+    "SELECT containment_id,launch_nonce,state FROM run_process_owner_generations WHERE run_id=$runId AND generation=$generation",
+    { runId, generation: checkpoint.owner_generation });
+  if (!generation || generation.state !== "STOPPED") throw new Error("RUN_CONTROL_OWNER_GENERATION_MISMATCH");
+  const separator = checkpoint.containment_ref.indexOf(":");
+  const containmentKind = separator > 0 ? checkpoint.containment_ref.slice(0, separator) : "";
+  if (checkpoint.containment_ref !== `${containmentKind}:${generation.containment_id}`) {
+    throw new Error("RUN_CONTROL_CONTAINMENT_MISMATCH");
+  }
+  if (createHash("sha256").update(generation.launch_nonce).digest("hex") !== checkpoint.launch_nonce_hash) {
+    throw new Error("RUN_CONTROL_NONCE_MISMATCH");
+  }
+  const binding = tx.get<{ context_hash: string | null; workspace_snapshot_hash: string | null }>(
+    "SELECT context_hash,workspace_snapshot_hash FROM run_resume_bindings WHERE run_id=$runId", { runId });
+  if (!binding || binding.context_hash !== checkpoint.context_hash || binding.workspace_snapshot_hash !== checkpoint.workspace_snapshot_hash) {
+    throw new Error("RUN_CONTROL_WORKSPACE_MISMATCH");
   }
 }
 

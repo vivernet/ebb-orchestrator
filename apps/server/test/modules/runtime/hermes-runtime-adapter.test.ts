@@ -2540,3 +2540,18 @@ describe("HermesRuntimeAdapter", () => {
 
   });
 });
+
+describe("Hermes runtime adapter run controls (plan-27 Task 3)", () => {
+  it("createCheckpoint never fabricates an in-process checkpoint for an active run", async () => {
+    const adapter = new HermesRuntimeAdapter(new MockProcessExecutor());
+    await expect(adapter.createCheckpoint("run-1")).resolves.toEqual({
+      availability: "unavailable",
+      reason: "CHECKPOINT_UNPROVEN",
+    });
+  });
+
+  it("pauseRun fails closed without a live provable process", async () => {
+    const adapter = new HermesRuntimeAdapter(new MockProcessExecutor());
+    await expect(adapter.pauseRun("run-1")).rejects.toThrow("RUN_PAUSE_NO_ACTIVE_PROCESS");
+  });
+});

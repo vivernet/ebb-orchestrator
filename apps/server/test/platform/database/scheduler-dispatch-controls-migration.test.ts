@@ -36,9 +36,9 @@ describe("scheduler dispatch controls migration 053", () => {
     db = createSqliteDatabase(":memory:");
     const migrations = loadTestMigrations();
 
-    expect(migrations.map(({ version }) => version)).toEqual(Array.from({ length: 53 }, (_, index) => index + 1));
-    expect(migrations.at(-1)?.name).toBe("053_scheduler_dispatch_controls");
-    expect(runMigrations(db, migrations).applied).toBe(53);
+    expect(migrations.map(({ version }) => version)).toEqual(Array.from({ length: 54 }, (_, index) => index + 1));
+    expect(migrations.at(-1)?.name).toBe("054_run_control_checkpoints");
+    expect(runMigrations(db, migrations).applied).toBe(54);
     expect(db.all<{ version: number; name: string }>("SELECT version, name FROM schema_migrations ORDER BY version"))
       .toEqual(migrations.map(({ version, name }) => ({ version, name })));
     expect(runMigrations(db, migrations).applied).toBe(0);
@@ -115,7 +115,7 @@ describe("scheduler dispatch controls migration 053", () => {
     database.run("INSERT INTO scheduler_resource_locks(resource_key,reservation_id,project_id,owner_id,locked_at) VALUES('task:task-1','res-1','p-1','task:task-1',$now)", { now });
 
     const upgraded = runMigrations(database, migrations);
-    expect(upgraded.applied).toBe(1);
+    expect(upgraded.applied).toBe(2);
 
     // Конфигурация и номер строки сохранены; dispatch_paused получает дефолт 0.
     expect(database.get("SELECT id, config_json, dispatch_paused, dispatch_paused_at FROM scheduler_config WHERE id=1"))

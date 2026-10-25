@@ -1,8 +1,18 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { Database } from "../../platform/database/database.js";
 import { ExecutionProjection } from "../read-models/execution-projection.js";
 import type { SchedulerService } from "../../modules/scheduler/scheduler-service.js";
 import { contextManifestProjectionSchema, type AgentRun } from "@ebb-orchestrator/contracts";
+import {
+  availabilityFromNullable,
+  cancelAllRunsRequestSchema,
+  cancelAllRunsResultSchema,
+  runEventsQuerySchema,
+  type CancelAllRunsResult,
+  type RunControlCommandResult,
+  type RunControlState,
+} from "@ebb-orchestrator/contracts";
+import { safeRedact } from "../../platform/security/redact.js";
 import type { StartRunOptions } from "../../modules/runtime/run-types.js";
 import type { WorkflowEngine } from "../../modules/workflow/workflow-engine.js";
 import { WorktreeRepository } from "../../modules/git/worktree-repository.js";
@@ -21,6 +31,11 @@ export interface RunCommandService {
   validateTaskRequestModel?(model: string): void;
   /** Валидация модели и опциональной явной привязки провайдера (plan-24 Task 5). */
   validateTaskRequestSelection?(model: string, selection?: { providerId: string; authMethodId?: string }, role?: string): void;
+  /** Run controls (plan-27 Task 3): checkpoint/pause/resume с requestId-идемпотентностью. */
+  createCheckpoint?(runId: string, requestId: string): Promise<RunControlCommandResult>;
+  pauseRun?(runId: string, requestId: string): Promise<RunControlCommandResult>;
+  resumeRunControl?(runId: string, requestId: string): Promise<RunControlCommandResult>;
+  cancelAllRuns?(expectedRunIds: string[]): Promise<CancelAllRunsResult>;
 }
 
 export interface RunRouteDeps {
@@ -105,7 +120,8 @@ export async function runRoutes(app: FastifyInstance, deps: RunRouteDeps = {}): 
   });
 
   /**
-   * Возвращает базовую информацию о запуске (run).
+   * Возвращает базовую информацию о запуске (run) с null-vs-zero usage проекцией
+   * и orthogonal run_control_state overlay (plan-27 Task 3).
    */
   app.get<{ Params: { id: string } }>("/api/v1/runs/:id", async (request, reply) => {
     if (!deps.db) return reply.code(503).send({ error: "database unavailable" });
@@ -113,10 +129,10 @@ export async function runRoutes(app: FastifyInstance, deps: RunRouteDeps = {}): 
       id: string; role: string; runtime: string; model: string; status: string; task_id: string | null; epic_id: string | null;
       trigger_reason: string | null; started_at: string | null; ended_at: string | null; input_tokens: number | null;
       cached_input_tokens: number | null; output_tokens: number | null; cost: number | null;
-      capability_json: string | null;
+      session_id: string | null; attempt: number | null; exit_code: number | null;
     }>(
       `SELECT id, role, runtime, model, status, task_id, epic_id, trigger_reason, started_at, ended_at,
-        input_tokens, cached_input_tokens, output_tokens, cost, capability_json
+        input_tokens, cached_input_tokens, output_tokens, cost, session_id, attempt, exit_code
        FROM agent_runs WHERE id = $id`,
       { id: request.params.id },
     );
@@ -126,6 +142,10 @@ export async function runRoutes(app: FastifyInstance, deps: RunRouteDeps = {}): 
     }>(
       `SELECT provider_id, model_id, auth_method_id, config_revision
          FROM run_provider_selections WHERE run_id = $id`,
+      { id: run.id },
+    );
+    const controlRow = deps.db.get<{ state: string; checkpoint_id: string | null; version: number; updated_at: string }>(
+      "SELECT state,checkpoint_id,version,updated_at FROM run_control_state WHERE run_id=$id",
       { id: run.id },
     );
     return {
@@ -139,12 +159,16 @@ export async function runRoutes(app: FastifyInstance, deps: RunRouteDeps = {}): 
       triggerReason: run.trigger_reason,
       startedAt: run.started_at,
       endedAt: run.ended_at,
+      sessionId: run.session_id,
+      attempt: run.attempt,
+      exitCode: run.exit_code,
       usage: {
-        inputTokens: run.input_tokens ?? 0,
-        cachedTokens: run.cached_input_tokens ?? 0,
-        outputTokens: run.output_tokens ?? 0,
-        cost: run.cost ?? 0,
+        inputTokens: availabilityFromNullable(run.input_tokens),
+        cachedInputTokens: availabilityFromNullable(run.cached_input_tokens),
+        outputTokens: availabilityFromNullable(run.output_tokens),
+        effectiveCost: availabilityFromNullable(run.cost),
       },
+      control: controlRow ? runControlProjection(controlRow) : null,
       providerSelection: providerSelection
         ? {
             providerId: providerSelection.provider_id,
@@ -202,25 +226,110 @@ export async function runRoutes(app: FastifyInstance, deps: RunRouteDeps = {}): 
   });
   
   /**
-   * Возвращает события для указанного run.
+   * Возвращает события для указанного run: durable, Run-scoped outbox страница
+   * с bounded cursor (afterId) и порядком (created_at,id). Не SSE и не терминальный вывод.
    */
   app.get<{ Params: { id: string } }>("/api/v1/runs/:id/events", async (request, reply) => {
     if (!deps.db) return reply.code(503).send({ error: "database unavailable" });
-    const rows = deps.db.all<OutboxEventRow>(
-      "SELECT id, type, aggregate_type, aggregate_id, payload_json, created_at, available_at, processed_at, attempts FROM outbox_events WHERE aggregate_id = $id AND aggregate_type = 'AgentRun' ORDER BY created_at",
-      { id: request.params.id },
+    const query = request.query as { afterId?: string; limit?: string };
+    const parsed = runEventsQuerySchema.safeParse({
+      afterId: query.afterId,
+      limit: query.limit === undefined ? undefined : Number(query.limit),
+    });
+    if (!parsed.success) return reply.code(400).send({ error: { code: "INVALID_CURSOR" } });
+    const { afterId, limit } = parsed.data;
+    const run = deps.db.get<{ id: string }>("SELECT id FROM agent_runs WHERE id=$id", { id: request.params.id });
+    if (!run) return reply.code(404).send({ error: "run not found" });
+    const cursor = afterId === undefined ? undefined : deps.db.get<{ id: string }>(
+      "SELECT id FROM outbox_events WHERE id=$afterId AND aggregate_id=$runId AND aggregate_type='AgentRun'",
+      { afterId, runId: request.params.id },
     );
-    return rows.map((row) => ({
-      id: row.id,
-      type: row.type,
-      aggregateType: row.aggregate_type,
-      aggregateId: row.aggregate_id,
-      payload: JSON.parse(row.payload_json),
-      createdAt: row.created_at,
-      availableAt: row.available_at,
-      processedAt: row.processed_at,
-      attempts: row.attempts,
-    }));
+    if (afterId !== undefined && !cursor) return reply.code(400).send({ error: { code: "INVALID_CURSOR" } });
+    const pageSize = limit ?? 50;
+    let cursorParams: Record<string, string> = {};
+    if (cursor) {
+      const cursorCreatedAt = deps.db.get<{ created_at: string }>("SELECT created_at FROM outbox_events WHERE id=$cursorId", { cursorId: cursor.id })?.created_at;
+      cursorParams = { cursorCreatedAt: cursorCreatedAt ?? "", cursorId: cursor.id };
+    }
+    const rows = deps.db.all<OutboxEventRow>(
+      `SELECT id, type, aggregate_type, aggregate_id, payload_json, created_at, available_at, processed_at, attempts
+         FROM outbox_events
+        WHERE aggregate_id = $id AND aggregate_type = 'AgentRun'
+          ${cursor ? `AND (created_at > $cursorCreatedAt OR (created_at = $cursorCreatedAt AND id > $cursorId))` : ""}
+        ORDER BY created_at, id
+        LIMIT $limit`,
+      { id: request.params.id, limit: pageSize + 1, ...cursorParams },
+    );
+    const paged = rows.slice(0, pageSize);
+    const nextCursor = rows.length > pageSize && paged.length > 0 ? paged[paged.length - 1]!.id : null;
+    return {
+      items: paged.map((row) => ({
+        id: row.id,
+        type: row.type,
+        createdAt: row.created_at,
+        payload: redactEventPayload(row.payload_json),
+      })),
+      nextCursor,
+    };
+  });
+
+  /**
+   * Возвращает sanitized terminal: только persisted-источник, явно назначенный
+   * владельцем Run как sanitized. Такого источника нет — typed unavailable.
+   */
+  app.get<{ Params: { id: string } }>("/api/v1/runs/:id/terminal", async (request, reply) => {
+    if (!deps.db) return reply.code(503).send({ error: "database unavailable" });
+    const run = deps.db.get<{ id: string }>("SELECT id FROM agent_runs WHERE id=$id", { id: request.params.id });
+    if (!run) return reply.code(404).send({ error: "run not found" });
+    return { availability: "unavailable", reason: "NO_SANITIZED_PERSISTED_SOURCE" };
+  });
+
+  /** Общий обработчик run-control команд (checkpoint/pause/resume). */
+  const runControl = (command: "createCheckpoint" | "pauseRun" | "resumeRunControl") =>
+    async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
+      if (!deps.runService) return reply.code(503).send({ error: { code: "RUN_SERVICE_UNAVAILABLE" } });
+      const fn = deps.runService[command];
+      if (typeof fn !== "function") return reply.code(503).send({ error: { code: "RUN_CONTROL_UNSUPPORTED_BY_RUNTIME" } });
+      const key = request.headers["idempotency-key"];
+      if (typeof key !== "string" || !/^[\x21-\x7e]{1,256}$/.test(key)) {
+        return reply.code(400).send({ error: { code: "RUN_REQUEST_IDEMPOTENCY_KEY_REQUIRED" } });
+      }
+      try {
+        const result = await fn.call(deps.runService, request.params.id, key);
+        if (command === "createCheckpoint" && result.status === "FAILED") {
+          return reply.code(503).send({ error: { code: result.failureCode ?? "CHECKPOINT_UNPROVEN" } });
+        }
+        if (command === "pauseRun" && result.status === "COMPLETED" && result.control?.state === "PAUSED") {
+          try { deps.scheduler?.releasePausedRunHold(request.params.id); } catch { /* locks остаются, reservation сохранена; reconcile восстановит */ }
+        }
+        if (command === "resumeRunControl" && result.status === "COMPLETED" && result.control?.state === "ACTIVE") {
+          try { deps.scheduler?.reacquirePausedRunHold(request.params.id); } catch { /* capacity-расы не ломают запущенный runtime */ }
+        }
+        return result;
+      } catch (error) {
+        const code = error instanceof Error ? error.message : "RUN_CONTROL_COMMAND_FAILED";
+        if (code === "RUN_CONTROL_STATE_CONFLICT" || code === "RUN_CONTROL_COMMAND_CONFLICT" ||
+            code === "RUN_CONTROL_TERMINAL" || code === "RUN_CONTROL_ALREADY_PAUSED" || code === "RUN_CONTROL_NOT_PAUSED") {
+          return reply.code(409).send({ error: { code } });
+        }
+        if (/not found/i.test(code)) return reply.code(404).send({ error: { code: "RUN_NOT_FOUND" } });
+        return reply.code(503).send({ error: { code } });
+      }
+    };
+
+  app.post<{ Params: { id: string } }>("/api/v1/runs/:id/checkpoint", runControl("createCheckpoint"));
+  app.post<{ Params: { id: string } }>("/api/v1/runs/:id/pause", runControl("pauseRun"));
+  app.post<{ Params: { id: string } }>("/api/v1/runs/:id/resume", runControl("resumeRunControl"));
+
+  /** Подтверждённый cancel-all: только expectedRunIds, упорядоченные per-ID исходы. */
+  app.post<{ Body: unknown }>("/api/v1/runs/cancel-all", async (request, reply) => {
+    if (!deps.runService || typeof deps.runService.cancelAllRuns !== "function") {
+      return reply.code(503).send({ error: { code: "RUN_SERVICE_UNAVAILABLE" } });
+    }
+    const parsed = cancelAllRunsRequestSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: { code: "CANCEL_ALL_INVALID_REQUEST" } });
+    const result = await deps.runService.cancelAllRuns(parsed.data.expectedRunIds);
+    return cancelAllRunsResultSchema.parse(result);
   });
   
   /**
@@ -361,6 +470,27 @@ function readRunManifestSubject(
 
 function normalizeContextManifestRole(value: string): (typeof CONTEXT_MANIFEST_ROLES)[number] | "unknown" {
   return CONTEXT_MANIFEST_ROLES.find((role) => role === value) ?? "unknown";
+}
+
+/** Маппинг run_control_state строки в typed discriminated projection. */
+function runControlProjection(row: { state: string; checkpoint_id: string | null; version: number; updated_at: string }): RunControlState {
+  const base = { version: row.version, updatedAt: row.updated_at };
+  switch (row.state) {
+    case "ACTIVE": return { ...base, state: "ACTIVE", checkpointId: null };
+    case "PAUSE_REQUESTED": return { ...base, state: "PAUSE_REQUESTED", checkpointId: null };
+    case "PAUSED": return { ...base, state: "PAUSED", checkpointId: row.checkpoint_id as string };
+    case "RESUME_PENDING": return { ...base, state: "RESUME_PENDING", checkpointId: row.checkpoint_id as string };
+    default: return { ...base, state: "CLOSED", checkpointId: row.checkpoint_id };
+  }
+}
+
+/** Редэктирует secret-shaped строки в payload события перед отдачей (никогда raw secret). */
+function redactEventPayload(payloadJson: string): unknown {
+  try {
+    return JSON.parse(safeRedact(payloadJson)) as unknown;
+  } catch {
+    return {};
+  }
 }
 
 /** Русские user-facing сообщения ошибок выбора провайдера (plan-24 Task 5). */

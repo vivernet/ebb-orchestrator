@@ -695,6 +695,60 @@ getEligibility(taskId: string, scope?: { projectId: string }): Eligibility {
   }
 
   /**
+   * Снимает resource-блокировки paused Run, сохраняя reservation (capacity/budget).
+   * Вызывается после подтверждённого PAUSED; повторный вызов идемпотентен.
+   */
+  releasePausedRunHoldInTransaction(tx: DatabaseTx, runId: string): void {
+    const reservation = tx.get<{ id: string }>(
+      "SELECT id FROM scheduler_reservations WHERE run_id=$runId AND status='RESERVED' AND kind <> 'LOCK' LIMIT 1",
+      { runId },
+    );
+    if (!reservation) return;
+    tx.run("DELETE FROM scheduler_resource_locks WHERE reservation_id=$id", { id: reservation.id });
+  }
+
+  /**
+   * Возвращает resource-блокировки при validated resume paused Run.
+   * Повторно проверяет capacity/project gates до reacquire; уже удержанные блокировки
+   * не дублируются. Недостаток capacity завершается ошибкой (failed resume → PAUSED).
+   */
+  reacquirePausedRunHoldInTransaction(tx: DatabaseTx, runId: string): void {
+    const reservation = tx.get<{ id: string; project_id: string; owner_id: string; role: string; kind: string; subject_id: string }>(
+      "SELECT id,project_id,owner_id,role,kind,subject_id FROM scheduler_reservations WHERE run_id=$runId AND status='RESERVED' AND kind <> 'LOCK' LIMIT 1",
+      { runId },
+    );
+    if (!reservation) throw new Error("RUN_RESUME_RESERVATION_UNAVAILABLE");
+    if (tx.get("SELECT 1 FROM scheduler_resource_locks WHERE reservation_id=$id LIMIT 1", { id: reservation.id })) return;
+    assertProjectDispatchableTx(tx, reservation.project_id);
+    const limits = this.getLimits(reservation.project_id);
+    if (this.countTx(tx, "status='RESERVED' AND kind <> 'LOCK'") > limits.globalMax
+      || this.countTx(tx, "status='RESERVED' AND kind <> 'LOCK' AND project_id=$projectId", { projectId: reservation.project_id }) > limits.projectMax
+      || this.countTx(tx, "status='RESERVED' AND kind <> 'LOCK' AND lower(role)=lower($role)", { role: reservation.role }) > this.getRoleCapacity(reservation.role)) {
+      throw new Error("WAITING_FOR_CAPACITY");
+    }
+    const resourceKey = reservation.kind === "TASK" ? `task:${reservation.subject_id}` : `run:${runId}`;
+    const now = this.clock().toISOString();
+    tx.run(
+      "INSERT INTO scheduler_resource_locks(resource_key,reservation_id,project_id,owner_id,locked_at) VALUES($key,$id,$projectId,$owner,$now)",
+      { key: resourceKey, id: reservation.id, projectId: reservation.project_id, owner: reservation.owner_id, now },
+    );
+  }
+
+  /**
+   * Снимает resource-блокировки paused Run (отдельная transaction, идемпотентно).
+   */
+  releasePausedRunHold(runId: string): void {
+    this.db.transaction((tx) => this.releasePausedRunHoldInTransaction(tx, runId));
+  }
+
+  /**
+   * Возвращает resource-блокировки при resume paused Run; capacity-gate повторяется.
+   */
+  reacquirePausedRunHold(runId: string): void {
+    this.db.transaction((tx) => this.reacquirePausedRunHoldInTransaction(tx, runId));
+  }
+
+  /**
    * Читает минимальную identity исходной активной reservation внутри recovery tx.
    * Отсутствие либо неоднозначность возвращают undefined; результат не заменяет
    * повторную проверку gates и точной записи перед generation/attempt CAS.
