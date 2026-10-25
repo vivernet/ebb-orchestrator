@@ -28,11 +28,15 @@ import {
   runEventsQuerySchema,
   runTerminalProjectionSchema,
   runUsageProjectionSchema,
+  schedulerConfigSchema,
+  schedulerConfigUpdateRequestSchema,
+  settingsProjectionSchema,
   taskPriorityRequestSchema,
   taskPriorityResponseSchema,
   taskControlResponseSchema,
   usageWindowProjectionSchema,
   usageWindowQuerySchema,
+  projectConfigReadProjectionSchema,
 } from "../src/reference-projections.js";
 
 const UTF_TIMESTAMP = "2026-10-25T12:00:00.000Z";
@@ -96,6 +100,11 @@ describe("reference screen contracts: apiPaths additions", () => {
     expect(apiPaths.usageWindow("2026-10-01T00:00:00.000Z", "2026-10-25T00:00:00.000Z", "day")).toBe(
       "/api/v1/usage?from=2026-10-01T00%3A00%3A00.000Z&to=2026-10-25T00%3A00%3A00.000Z&granularity=day",
     );
+  });
+
+  it("строит пути scheduler config и чтения конфигурации проекта", () => {
+    expect(apiPaths.schedulerConfig).toBe("/api/v1/scheduler/config");
+    expect(apiPaths.projectConfig("p/1")).toBe("/api/v1/projects/p%2F1/config");
   });
 });
 
@@ -486,5 +495,74 @@ describe("scoped work controls", () => {
     expect(dispatchStateRequestSchema.parse({ paused: true }).paused).toBe(true);
     expect(dispatchStateRequestSchema.safeParse({ paused: true, extra: true }).success).toBe(false);
     expect(dispatchStateResponseSchema.parse({ paused: true, updatedAt: UTF_TIMESTAMP }).paused).toBe(true);
+  });
+});
+
+describe("scheduler config, settings projection and project config read", () => {
+  it("принимает валидную scheduler-конфигурацию и строго отвергает malformed", () => {
+    const config = {
+      schemaVersion: 1,
+      globalMax: 4,
+      projectMax: 2,
+      roleCapacity: { developer: 4, qa: 2 },
+    };
+    expect(schedulerConfigSchema.parse(config)).toEqual(config);
+    expect(schedulerConfigUpdateRequestSchema.parse(config).globalMax).toBe(4);
+    // update-запрос допускает null-лимиты (пустая форма) и строго отвергает лишнее.
+    expect(schedulerConfigUpdateRequestSchema.safeParse({ ...config, globalMax: null }).success).toBe(true);
+    expect(schedulerConfigUpdateRequestSchema.safeParse({ ...config, projectMax: null }).success).toBe(true);
+    expect(schedulerConfigUpdateRequestSchema.safeParse({ ...config, extra: true }).success).toBe(false);
+    expect(schedulerConfigSchema.safeParse({ ...config, extra: true }).success).toBe(false);
+    expect(schedulerConfigSchema.safeParse({ ...config, globalMax: 0 }).success).toBe(false);
+    expect(schedulerConfigSchema.safeParse({ ...config, projectMax: 1001 }).success).toBe(false);
+    expect(schedulerConfigSchema.safeParse({ ...config, roleCapacity: { developer: 0 } }).success).toBe(false);
+    expect(schedulerConfigSchema.safeParse({ ...config, schemaVersion: null }).success).toBe(false);
+  });
+
+  it("принимает валидную Settings-проекцию и отвергает неизвестные поля", () => {
+    const projection = {
+      effectiveHierarchy: {
+        global: { schemaVersion: 1, globalMax: 4, projectMax: 2, roleCapacity: null },
+        project: null,
+        role: null,
+        taskEpic: null,
+      },
+      securitySettings: { mostRestrictiveWins: true, localModeEnabled: false },
+      providerSelection: { defaultModel: "default", models: [] },
+    };
+    expect(settingsProjectionSchema.parse(projection).securitySettings.localModeEnabled).toBe(false);
+    expect(settingsProjectionSchema.safeParse({ ...projection, extra: true }).success).toBe(false);
+    expect(settingsProjectionSchema.safeParse({
+      ...projection,
+      providerSelection: { defaultModel: "default", models: [{ model: "m", provider: "p", keyConfigured: false, extra: true }] },
+    }).success).toBe(false);
+  });
+
+  it("принимает read-проекцию конфигурации проекта (active revision + degraded flags)", () => {
+    const projection = {
+      current: null,
+      active: {
+        revisionId: "rev-1",
+        candidateId: "cand-0",
+        projectId: "p-1",
+        schemaVersion: 2,
+        normalizedConfig: { projectDisplayName: "Ebb" },
+        manifestHash: HASH64,
+        revisionHash: HASH64,
+        manifest: [{ path: ".ebb-orchestrator/config.json", state: "present", sha256: HASH64 }],
+        files: {},
+        createdAt: UTF_TIMESTAMP,
+      },
+      revisions: [],
+      degraded: false,
+      candidateInvalid: false,
+    };
+    expect(projectConfigReadProjectionSchema.parse(projection).active?.manifestHash).toBe(HASH64);
+    expect(projectConfigReadProjectionSchema.safeParse({ ...projection, extra: true }).success).toBe(false);
+    expect(projectConfigReadProjectionSchema.safeParse({ ...projection, active: null }).success).toBe(true);
+    expect(projectConfigReadProjectionSchema.safeParse({
+      ...projection,
+      active: { ...projection.active!, extra: true },
+    }).success).toBe(false);
   });
 });

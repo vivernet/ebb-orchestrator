@@ -60,6 +60,26 @@ const executionQueueFixture = {
   capacity: { configured: 4, used: 0 }, locks: [], recentEvents: [],
   dispatchState: { paused: false, updatedAt: null },
 };
+const schedulerConfigFixture = {
+  schemaVersion: 1, globalMax: 4, projectMax: 2, roleCapacity: { developer: 4 },
+};
+const settingsProjectionFixture = {
+  effectiveHierarchy: {
+    global: { schemaVersion: 1, globalMax: 4, projectMax: 2, roleCapacity: null },
+    project: null, role: null, taskEpic: null,
+  },
+  securitySettings: { mostRestrictiveWins: true, localModeEnabled: false },
+  providerSelection: { defaultModel: 'default', models: [] },
+};
+const projectConfigReadFixture = {
+  current: null,
+  active: {
+    revisionId: 'rev-1', candidateId: 'cand-0', projectId: 'project-1', schemaVersion: 2,
+    normalizedConfig: { projectDisplayName: 'Ebb' }, manifestHash: H, revisionHash: H,
+    manifest: [], files: {}, createdAt: T,
+  },
+  revisions: [], degraded: false, candidateInvalid: false,
+};
 const usageWindowFixture = {
   window: { from: '2026-01-01T00:00:00.000Z', to: '2026-01-02T00:00:00.000Z', granularity: 'day' },
   summary: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 },
@@ -97,6 +117,7 @@ const task1AdapterNames = [
   'syncProjectGithub', 'pauseTask',
   'saveProjectConfigCandidate', 'reconcileProjectConfigJournal',
   'listApprovals', 'getApprovalDetail', 'getApprovalPolicies', 'getUsageWindow',
+  'updateSchedulerConfig', 'getSettings', 'getProjectConfig',
 ];
 
 const fixturesByClientPath: Record<string, unknown> = {
@@ -125,6 +146,9 @@ const fixturesByClientPath: Record<string, unknown> = {
   '/approvals/policies': approvalPolicyFixture,
   '/usage?from=2026-01-01T00%3A00%3A00.000Z&to=2026-01-02T00%3A00%3A00.000Z&granularity=day': usageWindowFixture,
   '/execution': executionQueueFixture,
+  '/scheduler/config': schedulerConfigFixture,
+  '/settings': settingsProjectionFixture,
+  '/projects/project-1/config': projectConfigReadFixture,
 };
 
 function fixture(path: string): unknown {
@@ -195,8 +219,14 @@ describe('Типизированные адаптеры API (Task 1 пути)', 
     await api.getApprovalPolicies();
     await api.getUsageWindow('2026-01-01T00:00:00.000Z', '2026-01-02T00:00:00.000Z', 'day');
     await api.getExecutionQueue();
+    await api.updateSchedulerConfig(schedulerConfigFixture);
+    await api.getSettings();
+    await api.getProjectConfig('project-1');
 
     expect(spyPut).toHaveBeenCalledWith('/scheduler/dispatch-state', { paused: false });
+    expect(spyPut).toHaveBeenCalledWith('/scheduler/config', schedulerConfigFixture);
+    expect(spyGet).toHaveBeenCalledWith('/settings');
+    expect(spyGet).toHaveBeenCalledWith('/projects/project-1/config');
     expect(spyPost).toHaveBeenCalledWith('/runs/cancel-all', { expectedRunIds: ['run-1'] });
     expect(spyPost).toHaveBeenCalledWith('/epics/epic-1/replan', {});
     expect(spyPost).toHaveBeenCalledWith('/tasks/task-1/resume');

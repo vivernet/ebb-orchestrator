@@ -604,3 +604,89 @@ export const taskControlResponseSchema = z.object({
   updatedAt: utcTimestampSchema,
 }).strict();
 export type TaskControlResponse = z.infer<typeof taskControlResponseSchema>;
+
+/** Полная конфигурация scheduler (GET/PUT /api/v1/scheduler/config). */
+export const schedulerConfigSchema = z.object({
+  schemaVersion: z.number().int().min(1).max(100),
+  globalMax: z.number().int().min(1).max(1000),
+  projectMax: z.number().int().min(1).max(1000),
+  roleCapacity: z.record(z.string().min(1), z.number().int().min(1).max(1000)),
+}).strict();
+export type SchedulerConfig = z.infer<typeof schedulerConfigSchema>;
+
+/**
+ * Запрос обновления scheduler-конфигурации. Строгий по форме (неизвестные поля
+ * отвергаются, типы проверяются), но limit-поля допускают null: пустая форма
+ * редактора передаёт «не задано», а решение отклоняет/нормализует backend.
+ * schemaVersion опционален — сервер подставляет дефолт.
+ */
+export const schedulerConfigUpdateRequestSchema = z.object({
+  schemaVersion: z.number().int().min(1).max(100).optional(),
+  globalMax: z.number().int().min(1).max(1000).nullable(),
+  projectMax: z.number().int().min(1).max(1000).nullable(),
+  roleCapacity: z.record(z.string().min(1), z.number().int().min(1).max(1000)),
+}).strict();
+export type SchedulerConfigUpdateRequest = z.infer<typeof schedulerConfigUpdateRequestSchema>;
+
+/** Read-only проекция «Настройки» (GET /api/v1/settings). */
+export const settingsProjectionSchema = z.object({
+  effectiveHierarchy: settingsHierarchyProjectionSchema,
+  securitySettings: z.object({
+    mostRestrictiveWins: z.boolean().nullable(),
+    localModeEnabled: z.boolean().nullable(),
+  }).strict(),
+  providerSelection: z.object({
+    defaultModel: z.string(),
+    models: z.array(z.object({
+      model: z.string(),
+      provider: z.string(),
+      keyConfigured: z.boolean(),
+    }).strict()),
+  }).strict(),
+}).strict();
+
+/** Снимок файла в манифесте конфигурации проекта (opaque, без содержимого). */
+export const projectConfigFileSnapshotSchema = z.object({
+  path: z.string(),
+  state: z.enum(["present", "deleted"]),
+  sha256: z.string().nullable(),
+}).strict();
+
+/** Активная approved revision проекта (read-only проекция строки репозитория). */
+export const projectConfigRevisionReadProjectionSchema = z.object({
+  revisionId: z.string(),
+  candidateId: z.string(),
+  projectId: z.string(),
+  schemaVersion: z.number().int(),
+  normalizedConfig: z.record(z.string(), z.unknown()),
+  manifestHash: z.string(),
+  revisionHash: z.string(),
+  manifest: z.array(projectConfigFileSnapshotSchema),
+  files: z.record(z.string(), z.string()),
+  createdAt: utcTimestampSchema,
+}).strict();
+export type ProjectConfigRevisionReadProjection = z.infer<typeof projectConfigRevisionReadProjectionSchema>;
+
+/** Сохранённый кандидат (доменный объект read-проекции; не путать с editor-ответом). */
+export const projectConfigCandidateReadProjectionSchema = z.object({
+  candidateId: z.string(),
+  projectId: z.string(),
+  sourceHead: z.string(),
+  manifest: z.array(projectConfigFileSnapshotSchema),
+  manifestHash: z.string(),
+  files: z.record(z.string(), z.string()),
+  normalizedPreview: z.record(z.string(), z.unknown()),
+  status: z.enum(["PENDING_REVIEW", "APPROVED_ACTIVE", "STALE", "SUPERSEDED"]),
+  createdAt: utcTimestampSchema,
+}).strict();
+export type ProjectConfigCandidateReadProjection = z.infer<typeof projectConfigCandidateReadProjectionSchema>;
+
+/** Полная read-проекция состояния конфигурации проекта (GET /projects/:id/config). */
+export const projectConfigReadProjectionSchema = z.object({
+  current: projectConfigCandidateReadProjectionSchema.nullable(),
+  active: projectConfigRevisionReadProjectionSchema.nullable(),
+  revisions: z.array(projectConfigRevisionReadProjectionSchema),
+  degraded: z.boolean(),
+  candidateInvalid: z.boolean(),
+}).strict();
+export type ProjectConfigReadProjection = z.infer<typeof projectConfigReadProjectionSchema>;

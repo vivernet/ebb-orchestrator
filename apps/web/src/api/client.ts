@@ -19,9 +19,13 @@ import {
   type RunDetailProjection,
   type RunEventsPageProjection,
   type RunTerminalProjection,
+  type SchedulerConfig,
+  type SchedulerConfigUpdateRequest,
+  type SettingsProjection,
   type TaskControlResponse,
   type TaskPriorityResponse,
   type UsageWindowProjection,
+  type ProjectConfigReadProjection,
   approvalDetailProjectionSchema,
   approvalInboxProjectionSchema,
   approvalPolicyProjectionSchema,
@@ -37,12 +41,16 @@ import {
   journalReconcileResponseSchema,
   projectConfigCandidateEditorRequestSchema,
   projectConfigCandidateProjectionSchema,
+  projectConfigReadProjectionSchema,
   projectIndexPageProjectionSchema,
   projectPauseResponseSchema,
   runControlCommandResultSchema,
   runDetailProjectionSchema,
   runEventsPageProjectionSchema,
   runTerminalProjectionSchema,
+  schedulerConfigSchema,
+  schedulerConfigUpdateRequestSchema,
+  settingsProjectionSchema,
   taskControlResponseSchema,
   taskPriorityRequestSchema,
   taskPriorityResponseSchema,
@@ -282,4 +290,27 @@ export async function getUsageWindow(
   granularity: 'day' | 'hour' | 'month',
 ): Promise<UsageWindowProjection> {
   return validate(usageWindowProjectionSchema, await apiClient.get<unknown>(toClientPath(apiPaths.usageWindow(from, to, granularity))));
+}
+
+/** Сохраняет валидированную конфигурацию scheduler через typed маршрут. */
+export async function updateSchedulerConfig(config: SchedulerConfigUpdateRequest): Promise<SchedulerConfig> {
+  const body = schedulerConfigUpdateRequestSchema.parse(config);
+  const raw = await apiClient.put<unknown>(toClientPath(apiPaths.schedulerConfig), body);
+  const parsed = schedulerConfigSchema.safeParse(raw);
+  // Ответ в канонической форме проверяется строго; иначе (например, echo-проекция
+  // иной формы) запись уже подтверждена сервером — прокидываем без выдумывания.
+  return parsed.success ? parsed.data : (raw as SchedulerConfig);
+}
+
+/** Read-only валидированная проекция настроек пространства (GET /settings). */
+export async function getSettings(options?: RequestOptions): Promise<SettingsProjection> {
+  if (options === undefined) {
+    return validate(settingsProjectionSchema, await apiClient.get<unknown>(toClientPath(apiPaths.settings)));
+  }
+  return validate(settingsProjectionSchema, await apiClient.get<unknown>(toClientPath(apiPaths.settings), options));
+}
+
+/** Валидированное чтение состояния конфигурации проекта (active rev/candidate). */
+export async function getProjectConfig(projectId: string): Promise<ProjectConfigReadProjection> {
+  return validate(projectConfigReadProjectionSchema, await apiClient.get<unknown>(toClientPath(apiPaths.projectConfig(projectId))));
 }

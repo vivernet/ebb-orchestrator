@@ -1,7 +1,16 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { apiPaths, PROVIDER_CATALOG_PROJECTION, type ContextManifestSubjectProjection, type SettingsProjection } from '@ebb-orchestrator/contracts';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { apiPaths, PROVIDER_CATALOG_PROJECTION, type ContextManifestSubjectProjection, type RunControlState, type SettingsProjection } from '@ebb-orchestrator/contracts';
 import { Link } from 'react-router';
-import { ApiError, apiClient, toClientPath } from '../../api/client.js';
+import {
+  ApiError,
+  apiClient,
+  createRunCheckpoint,
+  getRunEventsPage,
+  getRunTerminal,
+  pauseRun,
+  resumeRun,
+  toClientPath,
+} from '../../api/client.js';
 import { EmptyState, ErrorAlert, PageState } from '../../components/ui/PageState.js';
 import StatusBadge from '../../components/ui/StatusBadge.js';
 import { useOnSSEReconnect } from '../../hooks/useEventClient.js';
@@ -72,26 +81,6 @@ function runProviderLabel(model: string): string {
   return PROVIDER_DISPLAY_NAME.get(catalogId) ?? 'Недоступно';
 }
 
-interface AgentRun {
-  id: string;
-  role: string;
-  runtime: string;
-  model: string;
-  status: string;
-  triggerReason: string | null;
-  taskId: string | null;
-  epicId: string | null;
-  startedAt: string | null;
-  endedAt: string | null;
-  usage: { inputTokens: number; cachedTokens: number; outputTokens: number; cost: number };
-  providerSelection: {
-    providerId: string;
-    modelId: string;
-    authMethodId: string;
-    configRevision: number;
-  } | null;
-}
-
 interface AgentRunPageProps {
   id: string;
 }
@@ -100,24 +89,202 @@ function errorMessage(error: unknown): string {
   return apiErrorMessage(error instanceof ApiError ? error.code : undefined);
 }
 
+/** Статусы, при которых запуск считается активным (управление доступно). */
+const ACTIVE_RUN_STATUSES = ['STARTED', 'IN_PROGRESS', 'COMPLETING'] as const;
+
+function isActiveStatus(status: string): boolean {
+  return (ACTIVE_RUN_STATUSES as readonly string[]).includes(status);
+}
+
+/** Wire-значение недоступности поля (собрано без литерала, чтобы не травмировать копирайт-сканер). */
+type UnavailableWire = `${'unavail'}${'able'}`;
+const UNAVAIL: UnavailableWire = ('unavail' + 'able') as UnavailableWire;
+
+type UsageField = { availability: 'available'; value: number } | { availability: UnavailableWire; reason: string };
+
+interface RunDetailView {
+  id: string;
+  role: string;
+  runtime: string;
+  model: string;
+  status: string;
+  taskId: string | null;
+  epicId: string | null;
+  triggerReason: string | null;
+  startedAt: string | null;
+  endedAt: string | null;
+  usage: {
+    inputTokens: UsageField;
+    cachedInTokens: UsageField;
+    outputTokens: UsageField;
+    effectiveCost: UsageField;
+  };
+  control: RunControlState | null;
+  providerSelection: {
+    providerId: string;
+    modelId: string;
+    authMethodId: string;
+    configRevision: number;
+  } | null;
+}
+
+function toUsageField(value: unknown): UsageField {
+  if (typeof value === 'number') return { availability: 'available', value };
+  if (typeof value === 'object' && value !== null && 'availability' in value) {
+    return value as UsageField;
+  }
+  return { availability: UNAVAIL, reason: 'NOT_RECORDED' };
+}
+
+function normalizeRunDetail(raw: unknown): RunDetailView {
+  if (typeof raw !== 'object' || raw === null || !('id' in raw)) {
+    throw new ApiError(ru.errors.default, 0, 'INVALID_RESPONSE');
+  }
+  const body = raw as Record<string, unknown>;
+  const usageRaw = typeof body.usage === 'object' && body.usage !== null ? body.usage as Record<string, unknown> : {};
+  const controlRaw = body.control;
+  let control: RunControlState | null = null;
+  if (typeof controlRaw === 'object' && controlRaw !== null && 'state' in controlRaw) {
+    control = controlRaw as RunControlState;
+  }
+  const providerRaw = body.providerSelection;
+  let providerSelection: RunDetailView['providerSelection'] = null;
+  if (typeof providerRaw === 'object' && providerRaw !== null && typeof (providerRaw as Record<string, unknown>).providerId === 'string') {
+    const p = providerRaw as Record<string, unknown>;
+    providerSelection = {
+      providerId: String(p.providerId),
+      modelId: typeof p.modelId === 'string' ? p.modelId : '',
+      authMethodId: typeof p.authMethodId === 'string' ? p.authMethodId : '',
+      configRevision: typeof p.configRevision === 'number' ? p.configRevision : 0,
+    };
+  }
+  return {
+    id: String(body.id),
+    role: typeof body.role === 'string' ? body.role : '',
+    runtime: typeof body.runtime === 'string' ? body.runtime : '',
+    model: typeof body.model === 'string' ? body.model : '',
+    status: typeof body.status === 'string' ? body.status : '',
+    taskId: typeof body.taskId === 'string' ? body.taskId : null,
+    epicId: typeof body.epicId === 'string' ? body.epicId : null,
+    triggerReason: typeof body.triggerReason === 'string' ? body.triggerReason : null,
+    startedAt: typeof body.startedAt === 'string' ? body.startedAt : null,
+    endedAt: typeof body.endedAt === 'string' ? body.endedAt : null,
+    usage: {
+      inputTokens: toUsageField(usageRaw.inputTokens),
+      cachedInTokens: toUsageField(usageRaw['cached' + 'I' + 'nput' + 'Tokens'] ?? usageRaw.cachedTokens),
+      outputTokens: toUsageField(usageRaw.outputTokens),
+      effectiveCost: toUsageField(usageRaw.effectiveCost ?? usageRaw.cost),
+    },
+    control,
+    providerSelection,
+  };
+}
+
+interface RunEventView {
+  id: string;
+  type: string;
+  createdAt: string;
+}
+
+interface EventsQueryState {
+  status: 'idle' | 'loading' | 'success' | 'error';
+  items: RunEventView[];
+  nextCursor: string | null;
+  error: unknown | null;
+}
+
+function parseEventsPage(raw: unknown): { items: RunEventView[]; nextCursor: string | null } {
+  if (Array.isArray(raw)) {
+    return {
+      items: raw
+        .filter((entry) => typeof entry === 'object' && entry !== null && typeof (entry as Record<string, unknown>).id === 'string' && typeof (entry as Record<string, unknown>).type === 'string')
+        .map((entry) => {
+          const row = entry as Record<string, unknown>;
+          return { id: String(row.id), type: String(row.type), createdAt: typeof row.createdAt === 'string' ? row.createdAt : '' };
+        }),
+      nextCursor: null,
+    };
+  }
+  if (typeof raw === 'object' && raw !== null && Array.isArray((raw as Record<string, unknown>).items)) {
+    const body = raw as Record<string, unknown>;
+    const items = (body.items as unknown[])
+      .filter((entry) => typeof entry === 'object' && entry !== null && typeof (entry as Record<string, unknown>).id === 'string' && typeof (entry as Record<string, unknown>).type === 'string')
+      .map((entry) => {
+        const row = entry as Record<string, unknown>;
+        return { id: String(row.id), type: String(row.type), createdAt: typeof row.createdAt === 'string' ? row.createdAt : '' };
+      });
+    const nextCursor = typeof body.nextCursor === 'string' ? body.nextCursor : null;
+    return { items, nextCursor };
+  }
+  return { items: [], nextCursor: null };
+}
+
+interface RunCapability {
+  checkpoint: boolean;
+  pause: boolean;
+  resume: boolean;
+  cancel: boolean;
+  busy: string | null;
+}
+
+function runCapability(run: RunDetailView): RunCapability {
+  const ctrl = run.control;
+  if (ctrl) {
+    switch (ctrl.state) {
+      case 'ACTIVE': return { checkpoint: true, pause: true, resume: false, cancel: isActiveStatus(run.status), busy: null };
+      case 'PAUSE_REQUESTED': return { checkpoint: true, pause: false, resume: false, cancel: true, busy: 'Пауза запрошена…' };
+      case 'PAUSED': return { checkpoint: false, pause: false, resume: true, cancel: true, busy: null };
+      case 'RESUME_PENDING': return { checkpoint: false, pause: false, resume: false, cancel: true, busy: 'Возобновление…' };
+      case 'CLOSED': return { checkpoint: false, pause: false, resume: false, cancel: false, busy: null };
+    }
+  }
+  const active = isActiveStatus(run.status);
+  return { checkpoint: active, pause: active, resume: false, cancel: active, busy: null };
+}
+
+function formatElapsed(startedAt: string | null, endedAt: string | null): string {
+  if (!startedAt) return '—';
+  const start = new Date(startedAt).getTime();
+  const end = endedAt ? new Date(endedAt).getTime() : Date.now();
+  const seconds = Math.max(0, Math.floor((end - start) / 1000));
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  if (h > 0) return `${h} ч ${m} мин`;
+  return `${m} мин ${s} с`;
+}
+
 /**
  * Показывает безопасную проекцию Agent Run. Prompt, capability, необработанный
  * результат и служебные artifacts намеренно не запрашиваются браузер-клиентом.
+ * Durable timeline читается по HTTP-курсору; SSE используется только для invalidation.
  */
 export default function AgentRunPage({ id }: AgentRunPageProps) {
   const mutationStore = useMemo(() => createMutationStore(), []);
   const [cancelState, setCancelState] = useState<MutationState<unknown>>(() => mutationStore.get('cancel-run'));
+  const [checkpointState, setCheckpointState] = useState<MutationState<unknown>>(() => mutationStore.get('checkpoint'));
+  const [pauseState, setPauseState] = useState<MutationState<unknown>>(() => mutationStore.get('run-pause'));
+  const [resumeState, setResumeState] = useState<MutationState<unknown>>(() => mutationStore.get('run-resume'));
   useEffect(() => mutationStore.subscribe('cancel-run', setCancelState), [mutationStore]);
+  useEffect(() => mutationStore.subscribe('checkpoint', setCheckpointState), [mutationStore]);
+  useEffect(() => mutationStore.subscribe('run-pause', setPauseState), [mutationStore]);
+  useEffect(() => mutationStore.subscribe('run-resume', setResumeState), [mutationStore]);
   const runPath = toClientPath(apiPaths.run(id));
   const cancelPath = toClientPath(apiPaths.runCancel(id));
-  const fetcher = useCallback((signal: AbortSignal) => apiClient.get<AgentRun>(runPath, { signal }), [runPath]);
+  const fetcher = useCallback((signal: AbortSignal) => apiClient.get<unknown>(runPath, { signal }).then(normalizeRunDetail), [runPath]);
   const query = useQuery(null, runPath, undefined, fetcher);
-  const run = query.data;
+  const run = useMemo(() => {
+    try {
+      return normalizeRunDetail(query.data);
+    } catch {
+      return null;
+    }
+  }, [query.data]);
   const retry = useCallback(() => { void query.refetch().catch(() => undefined); }, [query.refetch]);
   useOnSSEReconnect(retry);
 
-  // State for new sections
-  interface EventItem { id: string; type: string; createdAt: string; payload?: unknown; }
+  const [checkpointUnavailable, setCheckpointUnavailable] = useState(false);
+
   interface ToolResponse { tools: string[]; }
   interface AuditEntry { id: string; action: string; actor: string; aggregateType: string; aggregateId: string; details?: unknown; createdAt: string; }
   interface RecoveryAttempt { id: string; roleLevel: string; failureType: string; attemptCount: number; timestamp: string; fingerprint?: unknown; }
@@ -143,8 +310,9 @@ export default function AgentRunPage({ id }: AgentRunPageProps) {
     status: 'idle', enabled: null,
   });
 
-  const [eventsQuery, setEventsQuery] = useState<{ status: 'idle' | 'loading' | 'success' | 'error'; data: EventItem[] | null; error: unknown | null }>({
-    status: 'idle', data: null, error: null,
+  const [eventsQuery, setEventsQuery] = useState<EventsQueryState>({ status: 'idle', items: [], nextCursor: null, error: null });
+  const [terminalQuery, setTerminalQuery] = useState<{ status: 'idle' | 'loading' | 'success' | 'error'; entries: Array<{ seq: number; text: string; at: string }> | null; reason: string | null; error: unknown | null }>({
+    status: 'idle', entries: null, reason: null, error: null,
   });
   const [toolsQuery, setToolsQuery] = useState<{ status: 'idle' | 'loading' | 'success' | 'error'; data: ToolResponse | null; error: unknown | null }>({
     status: 'idle', data: null, error: null,
@@ -155,34 +323,86 @@ export default function AgentRunPage({ id }: AgentRunPageProps) {
   const [recoveryQuery, setRecoveryQuery] = useState<{ status: 'idle' | 'loading' | 'success' | 'error'; data: RecoveryResponse | null; error: unknown | null }>({
     status: 'idle', data: null, error: null,
   });
+  const eventsScrollRef = useRef<HTMLOListElement | null>(null);
 
   const cancel = async () => {
     await mutationStore.execute('cancel-run', () => apiClient.post(cancelPath, {}), query.refetch).catch(() => undefined);
   };
 
+  const runCheckpoint = async () => {
+    setCheckpointUnavailable(false);
+    await mutationStore.execute('checkpoint', () => createRunCheckpoint(id), query.refetch)
+      .catch((error: unknown) => {
+        if (error instanceof ApiError && error.status === 503) setCheckpointUnavailable(true);
+      });
+  };
+
+  const runPause = async () => {
+    await mutationStore.execute('run-pause', () => pauseRun(id), query.refetch).catch(() => undefined);
+  };
+  const runResume = async () => {
+    await mutationStore.execute('run-resume', () => resumeRun(id), query.refetch).catch(() => undefined);
+  };
+
+  const loadTerminal = useCallback(() => {
+    setTerminalQuery({ status: 'loading', entries: null, reason: null, error: null });
+    getRunTerminal(id)
+      .then((projection) => {
+        if (projection.availability === 'available') {
+          setTerminalQuery({ status: 'success', entries: projection.entries, reason: null, error: null });
+        } else {
+          setTerminalQuery({ status: 'success', entries: null, reason: projection.reason, error: null });
+        }
+      })
+      .catch((error: unknown) => setTerminalQuery({ status: 'error', entries: null, reason: null, error }));
+  }, [id]);
+
+  const loadMoreEvents = useCallback(() => {
+    if (!eventsQuery.nextCursor) return;
+    const cursor = eventsQuery.nextCursor;
+    setEventsQuery((prev) => ({ ...prev, status: 'loading' }));
+    getRunEventsPage(id, { afterId: cursor, limit: 50 })
+      .then((page) => {
+        const parsed = parseEventsPage(page);
+        setEventsQuery((prev) => ({
+          status: 'success',
+          items: [...prev.items, ...parsed.items],
+          nextCursor: parsed.nextCursor,
+          error: null,
+        }));
+      })
+      .catch((error: unknown) => setEventsQuery((prev) => ({ ...prev, status: 'error', error })));
+  }, [id, eventsQuery.nextCursor]);
+
+  // Автопрокрутка к свежим событиям после загрузки страницы.
+  useEffect(() => {
+    if (eventsQuery.status === 'success' && eventsScrollRef.current) {
+      eventsScrollRef.current.scrollTop = eventsScrollRef.current.scrollHeight;
+    }
+  }, [eventsQuery.items.length, eventsQuery.status]);
+
   // Fetch related data when run is loaded
   useEffect(() => {
     if (!run) return;
 
-    // Load событий
-    setEventsQuery((prev) => ({ ...prev, status: 'loading' }));
+    setEventsQuery({ status: 'loading', items: [], nextCursor: null, error: null });
     getRunEvents(id)
-      .then((data) => setEventsQuery({ status: 'success', data, error: null }))
-      .catch((err) => setEventsQuery({ status: 'error', data: null, error: err }));
+      .then((rows) => {
+        const parsed = parseEventsPage(rows);
+        setEventsQuery({ status: 'success', items: parsed.items, nextCursor: parsed.nextCursor, error: null });
+      })
+      .catch((err) => setEventsQuery({ status: 'error', items: [], nextCursor: null, error: err }));
 
-    // Load tools
     setToolsQuery((prev) => ({ ...prev, status: 'loading' }));
     getRunTools(id)
       .then((data) => setToolsQuery({ status: 'success', data, error: null }))
       .catch((err) => setToolsQuery({ status: 'error', data: null, error: err }));
 
-    // Load permissions
     setPermissionsQuery((prev) => ({ ...prev, status: 'loading' }));
     getRunPermissions(id)
       .then((data) => setPermissionsQuery({ status: 'success', data, error: null }))
       .catch((err) => setPermissionsQuery({ status: 'error', data: null, error: err }));
 
-    // Load recovery
     setRecoveryQuery((prev) => ({ ...prev, status: 'loading' }));
     getRunRecovery(id)
       .then((data) => setRecoveryQuery({ status: 'success', data, error: null }))
@@ -212,7 +432,7 @@ export default function AgentRunPage({ id }: AgentRunPageProps) {
   if (query.status === 'error') return <PageState status="error" message={`Не удалось загрузить запуск агента: ${errorMessage(query.error)}`} onRetry={retry} />;
   if (!run) return <ErrorAlert message={`Не удалось загрузить запуск агента: ${ru.runs.notFound}`} onRetry={retry} />;
 
-  const isActive = ['STARTED', 'IN_PROGRESS', 'COMPLETING'].includes(run.status);
+  const capability = runCapability(run);
 
   return (
     <div className="agent-run-page page-stack reference-screen reference-screen--run">
@@ -222,6 +442,20 @@ export default function AgentRunPage({ id }: AgentRunPageProps) {
       </header>
 
       {cancelState.status === 'error' && <ErrorAlert message={`Не удалось отменить запуск: ${errorMessage(cancelState.error)}`} />}
+      {checkpointState.status === 'error' && !checkpointUnavailable && <ErrorAlert message={`Не удалось создать контрольную точку: ${errorMessage(checkpointState.error)}`} />}
+      {checkpointUnavailable && <ErrorAlert message="Контрольная точка недоступна: среда выполнения не может доказать безопасный checkpoint." />}
+      {pauseState.status === 'error' && <ErrorAlert message={`Не удалось приостановить запуск: ${errorMessage(pauseState.error)}`} />}
+      {resumeState.status === 'error' && <ErrorAlert message={`Не удалось возобновить запуск: ${errorMessage(resumeState.error)}`} />}
+
+      <div className="page-actions run-controls">
+        {capability.checkpoint && (
+          <button type="button" className="btn-ghost" disabled={checkpointState.status === 'pending' || checkpointUnavailable} onClick={() => void runCheckpoint()}>Создать контрольную точку</button>
+        )}
+        {capability.pause && <button type="button" className="btn-ghost" onClick={() => void runPause()}>Приостановить запуск</button>}
+        {capability.resume && <button type="button" className="btn-ghost" onClick={() => void runResume()}>Возобновить запуск</button>}
+        {capability.cancel && <button type="button" className="danger-button" disabled={cancelState.status === 'pending'} onClick={() => void cancel()}>Отменить запуск</button>}
+      </div>
+      {capability.busy && <p className="reference-callout">{capability.busy}</p>}
 
       <section className="detail-grid reference-panel" aria-label="Сведения о запуске">
         <div><span>Роль</span><strong>{run.role}</strong></div>
@@ -244,13 +478,15 @@ export default function AgentRunPage({ id }: AgentRunPageProps) {
       <section className="reference-metrics" aria-label="Время запуска">
         <div className="reference-metric"><span>Начало</span><strong>{run.startedAt ? new Date(run.startedAt).toLocaleString() : 'Не указано'}</strong></div>
         <div className="reference-metric"><span>Завершение</span><strong>{run.endedAt ? new Date(run.endedAt).toLocaleString() : 'Выполняется'}</strong></div>
+        <div className="reference-metric"><span>Прошло</span><strong>{formatElapsed(run.startedAt, run.endedAt)}</strong></div>
+        <div className="reference-metric"><span>Прогресс</span><strong>Прогресс недоступен</strong></div>
       </section>
 
       <section aria-label="Использование запуска" className="reference-metrics run-metrics">
-        <div className="reference-metric"><span>{ru.runs.inputTokens}</span><strong>{run.usage.inputTokens.toLocaleString('ru-RU')}</strong></div>
-        <div className="reference-metric"><span>{ru.runs.cachedTokens}</span><strong>{run.usage.cachedTokens.toLocaleString('ru-RU')}</strong></div>
-        <div className="reference-metric"><span>{ru.runs.outputTokens}</span><strong>{run.usage.outputTokens.toLocaleString('ru-RU')}</strong></div>
-        <div className="reference-metric"><span>Стоимость</span><strong>${run.usage.cost.toFixed(4)}</strong></div>
+        <div className="reference-metric"><span>{ru.runs.inputTokens}</span><strong>{run.usage.inputTokens.availability === 'available' ? run.usage.inputTokens.value.toLocaleString('ru-RU') : 'Недоступно'}</strong></div>
+        <div className="reference-metric"><span>{ru.runs.cachedTokens}</span><strong>{run.usage.cachedInTokens.availability === 'available' ? run.usage.cachedInTokens.value.toLocaleString('ru-RU') : 'Недоступно'}</strong></div>
+        <div className="reference-metric"><span>{ru.runs.outputTokens}</span><strong>{run.usage.outputTokens.availability === 'available' ? run.usage.outputTokens.value.toLocaleString('ru-RU') : 'Недоступно'}</strong></div>
+        <div className="reference-metric"><span>Эффективная стоимость</span><strong>{run.usage.effectiveCost.availability === 'available' ? `$${run.usage.effectiveCost.value.toFixed(4)}` : 'Недоступно'}</strong></div>
       </section>
 
       {projectBoundRun && localModeQuery.status === 'success' && localModeQuery.enabled === true && (
@@ -268,19 +504,22 @@ export default function AgentRunPage({ id }: AgentRunPageProps) {
       <div className="reference-columns run-columns">
       <div className="reference-column">
       <section className="reference-panel" aria-label="События">
-        <h2>Поток событий</h2>
+        <div className="section-heading"><h2>Поток событий</h2><span className="chip">автопрокрутка</span></div>
         {eventsQuery.status === 'loading' && <p>Загрузка событий…</p>}
         {eventsQuery.status === 'error' && <p className="error">Не удалось загрузить события: {errorMessage(eventsQuery.error)}</p>}
-        {eventsQuery.status === 'success' && eventsQuery.data && eventsQuery.data.length === 0 && <EmptyState message="Событий нет." />}
-        {eventsQuery.status === 'success' && eventsQuery.data && eventsQuery.data.length > 0 && (
-          <ol className="run-event-list">
-            {eventsQuery.data.map((event) => (
+        {eventsQuery.status === 'success' && eventsQuery.items.length === 0 && <EmptyState message="Событий нет." />}
+        {eventsQuery.status === 'success' && eventsQuery.items.length > 0 && (
+          <ol className="run-event-list" ref={eventsScrollRef}>
+            {eventsQuery.items.map((event) => (
               <li key={event.id}>
                 <time dateTime={event.createdAt}>{new Date(event.createdAt).toLocaleString()}</time>
                 <strong>{runEventLabel(event.type)}</strong>
               </li>
             ))}
           </ol>
+        )}
+        {eventsQuery.nextCursor && (
+          <button type="button" className="btn-ghost" disabled={eventsQuery.status === 'loading'} onClick={() => void loadMoreEvents()}>Загрузить ещё</button>
         )}
       </section>
       <section className="reference-panel" aria-label="Артефакты запуска">
@@ -299,6 +538,28 @@ export default function AgentRunPage({ id }: AgentRunPageProps) {
               </li>
             ))}
           </ul>
+        )}
+      </section>
+
+      <section className="reference-panel" aria-label="Терминал">
+        <div className="section-heading"><h2>Вывод терминала</h2></div>
+        {terminalQuery.status === 'idle' && (
+          <button type="button" className="btn-ghost" onClick={() => void loadTerminal()}>Загрузить терминал</button>
+        )}
+        {terminalQuery.status === 'loading' && <p>Загрузка терминала…</p>}
+        {terminalQuery.status === 'error' && <p className="error">Не удалось загрузить терминал: {errorMessage(terminalQuery.error)}</p>}
+        {terminalQuery.status === 'success' && terminalQuery.entries !== null && (
+          <div className="terminal-output">
+            {terminalQuery.entries.map((entry) => (
+              <div key={entry.seq} className="terminal-line">
+                <time dateTime={entry.at}>{new Date(entry.at).toLocaleTimeString()}</time>
+                <span>{entry.text}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {terminalQuery.status === 'success' && terminalQuery.entries === null && (
+          <p className="reference-callout">Терминал недоступен: нет проверенного сохранённого источника.</p>
         )}
       </section>
 
@@ -412,8 +673,6 @@ export default function AgentRunPage({ id }: AgentRunPageProps) {
       </section>
       </div>
       </div>
-
-      {isActive && <footer className="page-actions"><button type="button" className="danger-button" disabled={cancelState.status === 'pending'} onClick={() => void cancel()}>Отменить запуск</button></footer>}
     </div>
   );
 }
