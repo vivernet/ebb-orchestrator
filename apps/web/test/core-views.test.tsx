@@ -54,6 +54,7 @@ describe('Dashboard', () => {
     vi.spyOn(dashboardApi, 'getExecutionQueue').mockResolvedValue({
       running: [], waiting: [{ taskId: 'task-2', reason: { code: 'WAITING_FOR_RESOURCE_LOCK', message: 'Secret backend detail' } }],
       blocked: [{ taskId: 'task-3', reason: { code: 'BLOCKED_BY_WORKFLOW', message: 'Secret backend detail' } }],
+      capacity: { configured: 4, used: 0 }, locks: [], recentEvents: [], dispatchState: { paused: false, updatedAt: null },
     });
     render(<MemoryRouter><DashboardPage /></MemoryRouter>);
     expect(await screen.findByRole('link', { name: /Blocked work/ })).toHaveTextContent('Проект не активен.');
@@ -69,7 +70,7 @@ describe('Dashboard', () => {
       approvals: 2, usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 2, totalTokens: 3, cost: 0.42 },
       projects: [{ id: 'project-1', name: 'Project', displayName: 'Project One', status: 'ACTIVE' }],
     });
-    vi.spyOn(dashboardApi, 'getExecutionQueue').mockResolvedValue({ running: [], waiting: [], blocked: [] });
+    vi.spyOn(dashboardApi, 'getExecutionQueue').mockResolvedValue({ running: [], waiting: [], blocked: [], capacity: { configured: 4, used: 0 }, locks: [], recentEvents: [], dispatchState: { paused: false, updatedAt: null } });
     render(<MemoryRouter><DashboardPage /></MemoryRouter>);
     await waitFor(() => expect(screen.getByText(/Ship projection/)).toBeInTheDocument());
     expect(screen.getByRole('link', { name: /Developer/ })).toHaveAttribute('href', '/runs/run-1');
@@ -87,7 +88,7 @@ describe('Dashboard', () => {
       approvals: 0, usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 },
       projects: [{ id: 'project/1', name: 'Project', displayName: 'Encoded project', status: 'ACTIVE' }],
     });
-    vi.spyOn(dashboardApi, 'getExecutionQueue').mockResolvedValue({ running: [], waiting: [], blocked: [] });
+    vi.spyOn(dashboardApi, 'getExecutionQueue').mockResolvedValue({ running: [], waiting: [], blocked: [], capacity: { configured: 4, used: 0 }, locks: [], recentEvents: [], dispatchState: { paused: false, updatedAt: null } });
     render(<MemoryRouter><DashboardPage /></MemoryRouter>);
 
     await waitFor(() => expect(screen.getByRole('link', { name: /Encoded task/ })).toHaveAttribute('href', '/tasks/task%2F1'));
@@ -98,7 +99,7 @@ describe('Dashboard', () => {
 
   test('keeps dashboard projection and queue failures independent', async () => {
     vi.spyOn(dashboardApi, 'getDashboard').mockRejectedValue(new Error('dashboard unavailable'));
-    vi.spyOn(dashboardApi, 'getExecutionQueue').mockResolvedValue({ running: [], waiting: [], blocked: [] });
+    vi.spyOn(dashboardApi, 'getExecutionQueue').mockResolvedValue({ running: [], waiting: [], blocked: [], capacity: { configured: 4, used: 0 }, locks: [], recentEvents: [], dispatchState: { paused: false, updatedAt: null } });
     render(<MemoryRouter><DashboardPage /></MemoryRouter>);
 
     expect(await screen.findByText('Не удалось загрузить сводные показатели: Не удалось выполнить запрос.')).toBeInTheDocument();
@@ -112,7 +113,7 @@ describe('Dashboard', () => {
       activeAgents: [], activeWork: [], approvals: 0,
       usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 }, projects: [],
     });
-    const execution = vi.spyOn(dashboardApi, 'getExecutionQueue').mockResolvedValue({ running: [], waiting: [], blocked: [] });
+    const execution = vi.spyOn(dashboardApi, 'getExecutionQueue').mockResolvedValue({ running: [], waiting: [], blocked: [], capacity: { configured: 4, used: 0 }, locks: [], recentEvents: [], dispatchState: { paused: false, updatedAt: null } });
     render(<MemoryRouter><DashboardPage /></MemoryRouter>);
 
     await waitFor(() => {
