@@ -148,7 +148,7 @@ export interface ProviderSelectionProjection {
 }
 /** Read-only Settings projection с явными unavailable/null для неподтверждённых scopes. */
 export interface SettingsProjection {
-  effectiveHierarchy: { global: SchedulerSettingsProjection; project: null; role: null; taskEpic: null };
+  effectiveHierarchy: { global: SchedulerSettingsProjection; project: SchedulerSettingsProjection | null; role: SchedulerSettingsProjection | null; taskEpic: SchedulerSettingsProjection | null };
   securitySettings: { mostRestrictiveWins: boolean | null; localModeEnabled: boolean | null };
   providerSelection: { defaultModel: string; models: ModelOptionProjection[] };
 }
@@ -160,8 +160,38 @@ export interface HermesStatusProjection {
   keyConfigured: boolean;
   modelSelection: ModelOptionProjection[];
 }
-/** Снимок очереди Scheduler с активными, ожидающими и заблокированными Task. */
-export interface ExecutionQueueProjection { running: ActiveAgent[]; waiting: Array<{ taskId: string; reason: WaitReason }>; blocked: Array<{ taskId: string; reason: ProjectionBlockReason }>; }
+/** Удерживаемая resource lock в capacity-проекции очереди выполнения. */
+export interface ResourceLockProjection {
+  id: string;
+  resource: string;
+  runId: string;
+  kind: string;
+  heldAt: string;
+}
+
+/** Событие scheduler-очереди из durable outbox (без payload-секретов). */
+export interface SchedulerEventProjection {
+  id: string;
+  type: string;
+  createdAt: string;
+}
+
+/** Durable состояние паузы диспетчеризации scheduler. */
+export interface DispatchStateProjection {
+  paused: boolean;
+  updatedAt: string | null;
+}
+
+/** Снимок очереди Scheduler: capacity, locks, события и состояние dispatch. */
+export interface ExecutionQueueProjection {
+  running: ActiveAgent[];
+  waiting: Array<{ taskId: string; reason: WaitReason }>;
+  blocked: Array<{ taskId: string; reason: ProjectionBlockReason }>;
+  capacity: { configured: number; used: number };
+  locks: ResourceLockProjection[];
+  recentEvents: SchedulerEventProjection[];
+  dispatchState: DispatchStateProjection;
+}
 
 /** Версия публичного HTTP-контракта локальной аутентификации. */
 export const AUTH_CONTRACT_VERSION = 1 as const;
@@ -419,6 +449,15 @@ export interface ProviderConnectionTestProjection {
   readonly errorKind: ProviderConnectionErrorKind | null;
 }
 
+/** Кодирует query-параметры контрактных builder'ов, пропуская undefined-значения. */
+function withQuery(path: string, params: Record<string, string | number | undefined>): string {
+  const entries = Object.entries(params).filter((entry) => entry[1] !== undefined);
+  if (entries.length === 0) return path;
+  return `${path}?${entries
+    .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`)
+    .join("&")}`;
+}
+
 /**
  * Канонические API paths, используемые web-клиентом и backend-контрактами.
  * Шаблоны сохраняются для документации, builders — для runtime URL без ручной конкатенации.
@@ -478,6 +517,28 @@ export const apiPaths = {
   conversationEvents: (id: string) => `/api/v1/conversations/${pathSegment(id)}/events`,
   planApprove: (conversationId: string, planId: string) => `/api/v1/conversations/${pathSegment(conversationId)}/plans/${pathSegment(planId)}/approve`,
   planReject: (conversationId: string, planId: string) => `/api/v1/conversations/${pathSegment(conversationId)}/plans/${pathSegment(planId)}/reject`,
+  schedulerDispatchState: "/api/v1/scheduler/dispatch-state",
+  runsCancelAll: "/api/v1/runs/cancel-all",
+  runCheckpoint: (id: string) => `/api/v1/runs/${pathSegment(id)}/checkpoint`,
+  runPause: (id: string) => `/api/v1/runs/${pathSegment(id)}/pause`,
+  runResume: (id: string) => `/api/v1/runs/${pathSegment(id)}/resume`,
+  runTerminal: (id: string) => `/api/v1/runs/${pathSegment(id)}/terminal`,
+  runEventsPage: (id: string, opts?: { afterId?: string; limit?: number }) => withQuery(`/api/v1/runs/${pathSegment(id)}/events`, { afterId: opts?.afterId, limit: opts?.limit }),
+  projectPause: (id: string) => `/api/v1/projects/${pathSegment(id)}/pause`,
+  projectResume: (id: string) => `/api/v1/projects/${pathSegment(id)}/resume`,
+  epicPause: (id: string) => `/api/v1/epics/${pathSegment(id)}/pause`,
+  epicResume: (id: string) => `/api/v1/epics/${pathSegment(id)}/resume`,
+  epicReplan: (id: string) => `/api/v1/epics/${pathSegment(id)}/replan`,
+  taskResume: (id: string) => `/api/v1/tasks/${pathSegment(id)}/resume`,
+  taskPriority: (id: string) => `/api/v1/tasks/${pathSegment(id)}/priority`,
+  projectIndex: (opts?: { cursor?: string; limit?: number }) => withQuery("/api/v1/projects", { cursor: opts?.cursor, limit: opts?.limit }),
+  projectConfigEditorCandidate: (id: string) => `/api/v1/projects/${pathSegment(id)}/config/candidates/editor`,
+  projectConfigJournalReconcile: (id: string, journalId: string) => `/api/v1/projects/${pathSegment(id)}/config/journals/${pathSegment(journalId)}/reconcile`,
+  approval: (id: string) => `/api/v1/approvals/${pathSegment(id)}`,
+  approvalPolicies: "/api/v1/approvals/policies",
+  approvalsList: (status?: "pending" | "resolved") => withQuery("/api/v1/approvals", { status }),
+  usageWindow: (from: string, to: string, granularity: "day" | "hour" | "month") =>
+    withQuery("/api/v1/usage", { from, to, granularity }),
 } as const;
 
 /**
