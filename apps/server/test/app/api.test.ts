@@ -500,7 +500,14 @@ describe("orchestrator read API", () => {
     expect(JSON.parse(response.body)).toEqual({
       id: "run-1", role: "Developer", runtime: "hermes", model: "model", status: "IN_PROGRESS", taskId: "task-1", epicId: null,
       triggerReason: "DEVELOPMENT", startedAt: "2026-09-20T00:00:00.000Z", endedAt: null,
-      usage: { inputTokens: 10, cachedTokens: 2, outputTokens: 3, cost: 0.42 },
+      sessionId: null, attempt: null, exitCode: null,
+      usage: {
+        inputTokens: { availability: "available", value: 10 },
+        cachedInputTokens: { availability: "available", value: 2 },
+        outputTokens: { availability: "available", value: 3 },
+        effectiveCost: { availability: "available", value: 0.42 },
+      },
+      control: null,
       providerSelection: null,
     });
     await app.close();
