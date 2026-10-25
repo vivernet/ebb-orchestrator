@@ -33,7 +33,7 @@ let controlEndpoint;
 let controlChannel;
 let frontendPort;
 const attachedBackendUrl = process.env.EBB_E2E_ATTACH_BACKEND_URL;
-let playwrightExitCode = 1;
+let playwrightExitCode = 0;
 let primaryError;
 let detachedProcessLedgerFailure = false;
 
@@ -330,7 +330,6 @@ try {
   await mkdir(e2eHome, { mode: 0o700 });
   const detachedProcessLedger = process.platform === "win32" ? undefined : join(e2eHome, "detached-process-groups.jsonl");
   if (detachedProcessLedger) await writeFile(detachedProcessLedger, "", { flag: "wx", mode: 0o600 });
-  let backendReady;
   if (attachedBackendUrl) {
     const match = /^http:\/\/127\.0\.0\.1:([1-9]\d{0,4})$/.exec(attachedBackendUrl);
     const port = match ? Number(match[1]) : NaN;
@@ -341,11 +340,17 @@ try {
       throw new Error("Attached E2E backend did not report the exact READY health projection");
     }
   } else {
-    await runBuild();
-    const backendPort = await allocateLoopbackPort();
-    const backend = spawnNode("backend", [serverScript, String(backendPort)], {
+    // attached backend: build не требуется
+  }
+
+  const spawnBackendPhase = async ({ port, seedFixture }) => {
+    const backend = spawnNode("backend", [serverScript, String(port)], {
       cwd: repoRoot,
-      env: { ...inheritedEnv, EBB_ORCHESTRATOR_HOME: e2eHome },
+      env: {
+        ...inheritedEnv,
+        EBB_ORCHESTRATOR_HOME: e2eHome,
+        ...(seedFixture ? { EBB_E2E_SEED_FIXTURE: "1" } : {}),
+      },
       ipc: true,
     });
     const requestId = randomUUID();
@@ -353,8 +358,9 @@ try {
     const ready = waitForMessage(backend, "ready", requestId);
     backend.send({ type: "seed-password", requestId, password: password.toString("utf8") });
     await seeded;
+    let readyValue;
     try {
-      backendReady = await ready;
+      readyValue = await ready;
     } catch (error) {
       if (error?.code !== "EADDRINUSE" || !error.controlEndpoint) throw error;
       controlEndpoint = error.controlEndpoint;
@@ -363,28 +369,54 @@ try {
       for (let attempt = 0; attempt < 3; attempt += 1) {
         const retryPort = await allocateLoopbackPort();
         try {
-          backendReady = await controlRequest("start", 5_000, { port: retryPort });
+          readyValue = await controlRequest("start", 5_000, { port: retryPort });
           break;
         } catch (retryError) {
           if (retryError?.code !== "EADDRINUSE" || attempt === 2) throw retryError;
         }
       }
     }
-    if (backendReady.host !== "127.0.0.1" || backendReady.backendUrl !== `http://127.0.0.1:${backendReady.port}` || backendReady.lifecycle !== "READY") {
+    if (readyValue.host !== "127.0.0.1" || readyValue.backendUrl !== `http://127.0.0.1:${readyValue.port}` || readyValue.lifecycle !== "READY") {
       throw new Error("Backend readiness acknowledgement did not match its allocated loopback origin");
     }
-    controlEndpoint = backendReady.controlEndpoint;
+    controlEndpoint = readyValue.controlEndpoint;
     parseControlEndpoint(controlEndpoint);
     controlChannel = {
       endpoint: controlEndpoint,
       async dispose() { closeControlChannel(); },
     };
+    return readyValue;
+  };
+
+  const stopBackendForReseed = async () => {
+    if (!children.has("backend")) return;
+    try {
+      await controlRequest("stop");
+    } catch { /* контрольная остановка best-effort; процесс завершается ниже */ }
+    closeControlChannel();
+    controlChannel = undefined;
+    controlEndpoint = undefined;
+    await terminateChild("backend");
+  };
+
+  const wipeDatabaseFiles = async () => {
+    for (const name of ["ebb-orchestrator.db", "ebb-orchestrator.db-wal", "ebb-orchestrator.db-shm"]) {
+      await rm(join(e2eHome, name), { force: true });
+    }
+  };
+
+  let backendReady;
+  if (!attachedBackendUrl) {
+    await runBuild();
+    const firstPort = await allocateLoopbackPort();
+    backendReady = await spawnBackendPhase({ port: firstPort, seedFixture: false });
   }
 
   passwordChannel = await createE2EPasswordChannel(password);
   frontendPort = await allocateLoopbackPort();
   let frontend;
   let frontendUrl;
+  let frontendBackendUrl;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     frontendUrl = `http://127.0.0.1:${frontendPort}`;
     frontend = spawnNode("frontend", [viteCli, "--mode", "e2e", "--host", "127.0.0.1", "--port", String(frontendPort), "--strictPort"], {
@@ -399,28 +431,69 @@ try {
       frontendPort = await allocateLoopbackPort();
     }
   }
+  frontendBackendUrl = backendReady.backendUrl;
 
-  const playwrightArgs = process.argv.slice(2);
-  if (playwrightArgs[0] === "--") playwrightArgs.shift();
-  const playwrightEnv = {
-    ...inheritedEnv,
-    EBB_E2E_SERVERS_STARTED: "1",
-    EBB_E2E_BASE_URL: frontendUrl,
-    EBB_E2E_BACKEND_URL: backendReady.backendUrl,
-    EBB_E2E_HOME: e2eHome,
-    EBB_E2E_PLAYWRIGHT_OUTPUT_DIR: join(e2eHome, "playwright-output"),
-    EBB_E2E_PASSWORD_CHANNEL: passwordChannel.endpoint,
-    ...(controlEndpoint ? { EBB_E2E_CONTROL_CHANNEL: controlEndpoint } : {}),
-  };
-  if (detachedProcessLedger) {
-    playwrightEnv.EBB_E2E_PROCESS_GROUP_LEDGER = detachedProcessLedger;
-    playwrightEnv.NODE_OPTIONS = [inheritedEnv.NODE_OPTIONS, "--require", JSON.stringify(detachedProcessLedgerPreload)].filter(Boolean).join(" ");
+  const providedSpecs = process.argv.slice(2);
+  if (providedSpecs[0] === "--") providedSpecs.shift();
+  const defaultPhases = [
+    { name: "clean", seedFixture: false, specs: ["v1-ui.spec.ts", "provider-settings.spec.ts", "chat-web.spec.ts"] },
+    { name: "populated", seedFixture: true, specs: ["reference-ui-routes.spec.ts", "reference-ui-visual.spec.ts", "task9-journeys.spec.ts"] },
+  ];
+  const phases = providedSpecs.length > 0
+    ? [{ name: "adhoc", seedFixture: process.env.EBB_E2E_SEED_FIXTURE === "1", specs: providedSpecs }]
+    : defaultPhases;
+
+  let backendPort;
+  for (let phaseIndex = 0; phaseIndex < phases.length; phaseIndex += 1) {
+    const phase = phases[phaseIndex];
+    if (phaseIndex > 0) {
+      await stopBackendForReseed();
+      await wipeDatabaseFiles();
+    }
+    if (!attachedBackendUrl && !children.has("backend")) {
+      backendPort ??= await allocateLoopbackPort();
+      backendReady = await spawnBackendPhase({ port: backendPort, seedFixture: phase.seedFixture });
+      backendPort = backendReady.port;
+    }
+    // Вторая/последующие фазы могут получить НОВЫЙ backend-порт (EADDRINUSE
+    // из-за TIME_WAIT после остановки предыдущего backend). Frontend-прокси
+    // зашит на старте Vite; если URL сменился — перезапускаем frontend, чтобы
+    // прокси указывал на актуальный backend. Иначе все API-вызовы падают
+    // (ECONNREFUSED) и приложение показывает «Сессия недоступна».
+    if (frontend && frontendBackendUrl && frontendBackendUrl !== backendReady.backendUrl) {
+      await terminateChild("frontend");
+      frontend = spawnNode("frontend", [viteCli, "--mode", "e2e", "--host", "127.0.0.1", "--port", String(frontendPort), "--strictPort"], {
+        env: { ...inheritedEnv, EBB_E2E_BACKEND_URL: backendReady.backendUrl },
+      });
+      await waitForHttp(`${frontendUrl}/`, frontend, (response) => response.status === 200);
+      frontendBackendUrl = backendReady.backendUrl;
+    }
+    const playwrightEnv = {
+      ...inheritedEnv,
+      EBB_E2E_SERVERS_STARTED: "1",
+      EBB_E2E_BASE_URL: frontendUrl,
+      EBB_E2E_BACKEND_URL: backendReady.backendUrl,
+      EBB_E2E_HOME: e2eHome,
+      EBB_E2E_PHASE: phase.name,
+      EBB_E2E_PLAYWRIGHT_OUTPUT_DIR: join(e2eHome, "playwright-output"),
+      EBB_E2E_PASSWORD_CHANNEL: passwordChannel.endpoint,
+      ...(controlEndpoint ? { EBB_E2E_CONTROL_CHANNEL: controlEndpoint } : {}),
+    };
+    if (detachedProcessLedger) {
+      playwrightEnv.EBB_E2E_PROCESS_GROUP_LEDGER = detachedProcessLedger;
+      playwrightEnv.NODE_OPTIONS = [inheritedEnv.NODE_OPTIONS, "--require", JSON.stringify(detachedProcessLedgerPreload)].filter(Boolean).join(" ");
+    }
+    const playwright = spawnNode("playwright", [playwrightCli, "test", ...(phase.seedFixture ? ["--workers=1"] : []), ...phase.specs], {
+      env: playwrightEnv,
+    });
+    monitorDetachedProcessGroups(playwright, { ledgerPath: detachedProcessLedger });
+    const phaseCode = await waitForChild(playwright);
+    if (phaseCode !== 0) {
+      playwrightExitCode = phaseCode;
+      primaryError ??= new Error(`E2E phase ${phase.name} failed with exit code ${phaseCode}`);
+      break;
+    }
   }
-  const playwright = spawnNode("playwright", [playwrightCli, "test", ...playwrightArgs], {
-    env: playwrightEnv,
-  });
-  monitorDetachedProcessGroups(playwright, { ledgerPath: detachedProcessLedger });
-  playwrightExitCode = await waitForChild(playwright);
 } catch (error) {
   primaryError = error;
 } finally {

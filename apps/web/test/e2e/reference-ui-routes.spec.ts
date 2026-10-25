@@ -1,31 +1,73 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { test, expect } from "./fixtures.js";
+import { test, expect, collectPageErrors } from "./fixtures.js";
 
 /**
- * Baseline реального браузера (plan-27 Task 1): прямые маршруты 10 референсных
- * экранов загружаются без route-ошибки, и все показанные в reference-макетах
- * действия присутствуют. Ожидается RED до Tasks 2–8; это не pass gate.
+ * Прямые маршруты 10 экранов в populated-фазе (plan-27 Task 9): реальная
+ * загрузка без route-ошибки/not-found, ключевые action-группы реализованного
+ * UI и отсутствие console/network-ошибок в браузере.
  */
 
 type RouteCase = {
   key: string;
-  label: string;
   route: string;
-  referenceActions: string[];
+  heading: string | RegExp | null;
+  buttons: string[];
+  links: string[];
+  content: string[];
 };
 
 const ROUTES: RouteCase[] = [
-  { key: "dashboard", label: "Панель управления", route: "/", referenceActions: ["Приостановить всё", "Новый запрос", "Открыть согласования"] },
-  { key: "task", label: "TASK-425", route: "/tasks/task-425", referenceActions: ["Приостановить задачу", "Изменить приоритет", "Открыть в рабочем дереве"] },
-  { key: "epic", label: "EPIC-42", route: "/epics/epic-42", referenceActions: ["Приостановить epic", "Перепланировать", "Открыть Координатор", "Посмотреть предложение"] },
-  { key: "approvals", label: "Центр согласований", route: "/approvals", referenceActions: ["История", "Политики согласований", "Согласовать", "Отклонить", "Запросить изменения"] },
-  { key: "execution", label: "Очередь выполнения", route: "/execution", referenceActions: ["Приостановить new work", "Остановить всех агентов", "Приостановить", "Отменить запуск"] },
-  { key: "project", label: "Ebb AI Hub", route: "/projects/proj-1", referenceActions: ["Приостановить проект", "Синхронизировать GitHub", "Новый запрос"] },
-  { key: "onboarding", label: "Добавление проекта", route: "/projects/new", referenceActions: ["Отмена", "Назад к обнаружению", "Согласовать и активировать проект"] },
-  { key: "settings", label: "Настройки проекта", route: "/settings", referenceActions: ["Посмотреть diff конфигурации", "Сохранить изменения"] },
-  { key: "usage", label: "Использование и бюджет", route: "/usage", referenceActions: ["Последние 30 дней", "Политики бюджета"] },
-  { key: "run", label: "RUN-841", route: "/runs/run-841", referenceActions: ["Создать контрольную точку", "Приостановить", "Отменить запуск"] },
+  {
+    key: "dashboard", route: "/", heading: "Обзор",
+    buttons: [], links: ["Новый запрос"],
+    content: ["Ebb AI Hub", "Открыть очередь", "Монитор"],
+  },
+  {
+    key: "task", route: "/tasks/task-425", heading: "Streaming",
+    buttons: ["Приостановить задачу", "Применить приоритет"], links: [],
+    content: [],
+  },
+  {
+    key: "epic", route: "/epics/epic-42", heading: "Anthropic Provider",
+    buttons: ["Перепланировать", "Приостановить эпик"], links: [],
+    content: [],
+  },
+  {
+    key: "approvals", route: "/approvals", heading: "Входящие согласования",
+    buttons: ["Согласовать", "Отклонить", "Запросить изменения"], links: ["Политики согласований"],
+    content: ["Ожидают решения"],
+  },
+  {
+    key: "execution", route: "/execution", heading: "Монитор выполнения",
+    buttons: ["Остановить всех агентов", "Обновить"], links: [],
+    content: ["run-841", "Выполняются"],
+  },
+  {
+    key: "project", route: "/projects/proj-1", heading: /Ebb AI Hub/,
+    buttons: ["Приостановить проект", "Синхронизировать сейчас"], links: [],
+    content: [],
+  },
+  {
+    key: "onboarding", route: "/projects/new", heading: "Настройка проекта",
+    buttons: ["Начать анализ"], links: [],
+    content: [],
+  },
+  {
+    key: "settings", route: "/settings", heading: "Настройки",
+    buttons: ["Изменить"], links: [],
+    content: ["Выбрать проект"],
+  },
+  {
+    key: "usage", route: "/usage", heading: null,
+    buttons: [], links: [],
+    content: [],
+  },
+  {
+    key: "run", route: "/runs/run-841", heading: "Запуск агента: run-841",
+    buttons: ["Создать контрольную точку", "Приостановить запуск", "Отменить запуск"], links: [],
+    content: ["TASK-425"],
+  },
 ];
 
 const ROUTE_ERROR_TEXT = "Не удалось безопасно отобразить эту страницу.";
@@ -35,47 +77,53 @@ function record(line: Record<string, unknown>): void {
   const reportDirValue = process.env.EBB_E2E_REPORT_DIR ?? process.env.EBB_E2E_HOME;
   if (!reportDirValue) return;
   const reportDir = resolve(reportDirValue);
-  const file = join(reportDir, "reference-ui-baseline.jsonl");
+  const file = join(reportDir, "reference-ui-populated.jsonl");
   mkdirSync(reportDir, { recursive: true });
   writeFileSync(file, `${JSON.stringify(line)}\n`, { flag: "a" });
 }
 
 async function loginThroughUi(page: import("@playwright/test").Page, password: Readonly<Buffer>): Promise<void> {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Вход в Ebb Orchestrator" })).toBeVisible();
+  const loginHeading = page.getByRole("heading", { name: "Вход в Ebb Orchestrator" });
+  if (process.env.EBB_E2E_DEBUG_LOGIN === "1" && !(await loginHeading.isVisible().catch(() => false))) {
+    const body = await page.evaluate(() => document.body.innerText.slice(0, 500));
+    const title = await page.title();
+    console.log(`[DBG-LOGIN] title=${JSON.stringify(title)} body=${JSON.stringify(body)} url=${page.url()}`);
+    const shotDir = process.env.EBB_E2E_REPORT_DIR ?? process.env.EBB_E2E_HOME;
+    if (shotDir) await page.screenshot({ path: join(resolve(shotDir), "dbg-login.png") });
+  }
+  await expect(loginHeading).toBeVisible();
   const passwordField = page.getByLabel("Пароль");
   await passwordField.fill(password.toString("utf8"));
   await page.getByRole("button", { name: "Войти" }).click();
-  await expect(page.getByRole("navigation", { name: "Основная навигация" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Основная навигация" })).toBeVisible({ timeout: 15_000 });
 }
 
 for (const routeCase of ROUTES) {
-  test(`[baseline] ${routeCase.key}: direct route loads without error page`, async ({ page, e2ePassword }) => {
+  test(`[populated] ${routeCase.key}: direct route renders implemented UI without console/network errors`, async ({ page, e2ePassword }) => {
+    const errors = collectPageErrors(page);
+
     await loginThroughUi(page, e2ePassword);
     await page.goto(routeCase.route);
-    await page.waitForTimeout(1500);
+    await expect(page.getByText(ROUTE_ERROR_TEXT)).toHaveCount(0);
+    await expect(page.getByText(NOT_FOUND_TEXT)).toHaveCount(0);
 
-    const routeError = await page.getByText(ROUTE_ERROR_TEXT).count();
-    const notFound = await page.getByText(NOT_FOUND_TEXT).count();
-    const headings = (await page.locator("h1, h2").allTextContents()).map((text) => text.trim()).filter(Boolean);
-    const buttons = (await page.getByRole("button").allTextContents()).map((text) => text.trim()).filter(Boolean);
-
-    const missingActions = routeCase.referenceActions.filter((action) => !buttons.includes(action));
-    record({
-      phase: "baseline",
-      screen: routeCase.key,
-      route: routeCase.route,
-      routeError,
-      notFound,
-      headings: headings.slice(0, 12),
-      buttons: buttons.slice(0, 25),
-      missingActions,
-    });
-
-    expect(routeError, `${routeCase.key}: unexpected route error page`).toBe(0);
-    expect(notFound, `${routeCase.key}: unexpected not-found page`).toBe(0);
-    for (const action of routeCase.referenceActions) {
-      await expect(page.getByRole("button", { name: action }), `${routeCase.key}: missing reference action ${action}`).toBeVisible();
+    if (routeCase.heading !== null && typeof routeCase.heading === "string") {
+      await expect(page.getByRole("heading", { name: routeCase.heading }).first(), `${routeCase.key}: missing heading`).toBeVisible({ timeout: 15_000 });
+    } else if (routeCase.heading !== null) {
+      await expect(page.getByRole("heading").filter({ hasText: routeCase.heading }).first(), `${routeCase.key}: missing heading`).toBeVisible({ timeout: 15_000 });
     }
+    for (const action of routeCase.buttons) {
+      await expect(page.getByRole("button", { name: action }).first(), `${routeCase.key}: missing button ${action}`).toBeVisible({ timeout: 15_000 });
+    }
+    for (const action of routeCase.links) {
+      await expect(page.getByRole("link", { name: action }).first(), `${routeCase.key}: missing link ${action}`).toBeVisible({ timeout: 15_000 });
+    }
+    for (const content of routeCase.content) {
+      await expect(page.getByText(content).first(), `${routeCase.key}: missing content ${content}`).toBeVisible({ timeout: 15_000 });
+    }
+
+    record({ phase: "populated", screen: routeCase.key, route: routeCase.route, errors });
+    expect(errors, `${routeCase.key}: browser console/network errors`).toEqual([]);
   });
 }

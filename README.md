@@ -551,6 +551,18 @@ production subprocess tests; отдельная предварительная �
 PowerShell. Web E2E требует браузерного окружения и создаёт артефакты; серверные
 тесты могут создавать временные каталоги и worker-процессы. Приведённые
 fixtures удаляются в `finally`/`afterEach`.
+`pnpm --filter @ebb-orchestrator/web test:e2e` запускает две фазы на одном
+изолированном `EBB_ORCHESTRATOR_HOME`: clean-фазу (auth-only фикстур: v1-ui,
+provider-settings, chat-web) и populated-фазу с детерминированным SQLite-фикстуром
+(reference-ui-routes, reference-ui-visual, task9-journeys). Визуальная фаза
+сравнивает все 10 экранов с reference-концептами (`docs/architecture/reference-ui`)
+на desktop 1440×900 и narrow 390×844 и требует `maxDiffPixelRatio <= 0.01`.
+Спеки фиксируют документированные content-class exclusions: панели reference,
+которые v1-поверхность UI не реализует (рендерят contract-`unavailable`/пропускают
+панель), пропускаются с причиной; произвольный UI-контент и сам порог не
+игнорируются. Populated-фаза выполняется одним worker-ом: journey-тесты
+рестартуют общий backend, и параллельные worker-ы ложно краснели бы на
+`ECONNRESET`.
 `apps/server/test/e2e/fixtures/health-service` не входит в workspace glob; его
 команды запускаются из каталога fixture отдельно:
 

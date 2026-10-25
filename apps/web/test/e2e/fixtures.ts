@@ -19,3 +19,20 @@ export const test = base.extend<{}, E2EWorkerFixtures>({
 });
 
 export { expect } from "@playwright/test";
+
+/**
+ * Собирает console/network-ошибки страницы, игнорируя документированное
+ * браузерное отключение SSE-потока (`/api/v1/events`, ERR_ABORTED): оно
+ * возникает при навигации/teardown и не является дефектом приложения.
+ */
+export function collectPageErrors(page: import("@playwright/test").Page): string[] {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(`pageerror: ${error.message}`));
+  page.on("requestfailed", (request) => {
+    const failure = request.failure();
+    const url = request.url();
+    const isSseAbort = /\/api\/v1\/events$/.test(url) && failure?.errorText === "net::ERR_ABORTED";
+    if (!isSseAbort) errors.push(`requestfailed: ${url} ${failure?.errorText ?? ""}`);
+  });
+  return errors;
+}

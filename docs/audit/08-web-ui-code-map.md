@@ -83,7 +83,7 @@ date: 2026-09-23
 ## Tests
 
 - Unit/component suites: `apps/web/test/{app-shell,core-views,operations-views,configuration-views,query-store,query-hook,mutation-store,api-client-foundation,routing-bootstrap,ui-api-remediation}.test.*`.
-- E2E: `apps/web/test/e2e/v1-ui.spec.ts`, launched by `test/e2e/run-e2e.mjs` with an isolated in-memory backend and Vite proxy.
+- E2E: `apps/web/test/e2e/{v1-ui,provider-settings,chat-web,reference-ui-routes,reference-ui-visual,task9-journeys}.spec.ts`, launched by `test/e2e/run-e2e.mjs` with an isolated backend (dynamic loopback ports, fixed `EBB_ORCHESTRATOR_HOME`, deterministic SQLite fixture in the populated phase) and Vite proxy. The visual phase compares the 10 screens with `docs/architecture/reference-ui/*` concepts at 1440×900 and 390×844 (`maxDiffPixelRatio <= 0.01`); screens whose reference content classes are not implemented on the v1 surface are skipped with documented reasons in `reference-ui-visual.spec.ts` (EXCLUDED_SCREENS) and recorded to `reference-ui-visual.jsonl`. The populated phase runs with a single Playwright worker because journeys restart the shared backend (parallel workers would see transient `ECONNRESET`).
 - Current web unit suite cannot load because `vite.config.ts` references deleted `test/setup.ts`; this is a pre-existing checkout condition.
 
 ## Backend Routes and Read Models
