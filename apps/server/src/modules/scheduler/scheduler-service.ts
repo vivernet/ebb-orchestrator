@@ -22,10 +22,11 @@ import type {
   ReservationReleaseResult,
   SchedulerReconciliationResult,
   SchedulerLimits,
+  SchedulerDispatchState,
 } from "./scheduler-types.js";
 import { agedPriority, compareTasks } from "./scheduler-policy.js";
 import { ResourceLockService } from "./resource-lock-service.js";
-import { assertProjectDispatchableTx, projectDispatchEligibilityTx } from "./project-dispatch-guard.js";
+import { assertProjectDispatchableTx, assertDispatchPauseAllowedTx, projectDispatchEligibilityTx, dispatchPauseEligibilityTx } from "./project-dispatch-guard.js";
 import { SchedulerRunRequestRepository, type EnqueueSchedulerRunRequest, type SchedulerRunRequest } from "./scheduler-run-request-repository.js";
 import { appendOutboxEvent } from "../../platform/events/outbox-repository.js";
 import { DomainEvent } from "../../platform/events/domain-event.js";
@@ -87,6 +88,29 @@ export class SchedulerService {
   /**\n   * Возвращает сервис блокировок ресурсов для внешнего использования.\n   */
   get resourceLockService(): ResourceLockService {
     return this.lockService;
+  }
+
+  /** Возвращает durable состояние паузы диспетчеризации. */
+  getDispatchState(): SchedulerDispatchState {
+    const row = this.db.get<{ dispatch_paused: number; dispatch_paused_at: string | null }>(
+      "SELECT dispatch_paused, dispatch_paused_at FROM scheduler_config WHERE id=1",
+    );
+    return { paused: row?.dispatch_paused === 1, updatedAt: row?.dispatch_paused_at ?? null };
+  }
+
+  /**
+   * Транзакционно обновляет dispatch-состояние. Возвращает подтверждённое
+   * состояние с UTC ISO инстантом изменения; идемпотентно.
+   */
+  setDispatchState(input: { paused: boolean }): { paused: boolean; updatedAt: string } {
+    const now = this.clock().toISOString();
+    this.db.transaction((tx) => {
+      tx.run(
+        "UPDATE scheduler_config SET dispatch_paused=$paused, dispatch_paused_at=$at, updated_at=$at WHERE id=1",
+        { paused: input.paused ? 1 : 0, at: now },
+      );
+    });
+    return { paused: input.paused, updatedAt: now };
   }
 
   assertProjectDispatchable(projectId: string): void {
@@ -209,6 +233,7 @@ export class SchedulerService {
   }
 
   private reserveTaskRunTx(tx: DatabaseTx, task: SchedulableTask, runId: string, role: string, model: string): void {
+    assertDispatchPauseAllowedTx(tx, { projectId: task.projectId, epicId: task.epicId });
     const existing = tx.get<{ id: string; status: string }>("SELECT id,status FROM scheduler_reservations WHERE subject_id=$taskId", { taskId: task.id });
     if (existing && existing.status !== "RELEASED") throw new Error("RUN_REQUEST_RESERVATION_CONFLICT");
     const estimate = this.estimateCostTx(tx, task.projectId, role, model);
@@ -569,8 +594,8 @@ getEligibility(taskId: string, scope?: { projectId: string }): Eligibility {
    ): void {
     const options = typeof triggerReasonOrOptions === "string" ? { triggerReason: triggerReasonOrOptions } : triggerReasonOrOptions;
     const triggerReason = options.triggerReason ?? "epic-child";
-    const task = this.db.get<{ project_id: string; status: string; contract_json: string }>(
-      "SELECT project_id, status, contract_json FROM tasks WHERE id = $id", { id: taskId });
+    const task = this.db.get<{ project_id: string; epic_id: string | null; status: string; contract_json: string }>(
+      "SELECT project_id, epic_id, status, contract_json FROM tasks WHERE id = $id", { id: taskId });
     if (!task) throw new Error(`Task ${taskId} not found`);
     if (task.status !== "READY") throw new Error(`Task ${taskId} is not READY`);
     this.db.transaction((tx) => {
@@ -600,6 +625,7 @@ getEligibility(taskId: string, scope?: { projectId: string }): Eligibility {
       }
       const existing = tx.get<{ id: string; run_id: string | null; status: string }>("SELECT id,run_id,status FROM scheduler_reservations WHERE subject_id=$taskId", { taskId });
       if (!existing || existing.status === "RELEASED") {
+         assertDispatchPauseAllowedTx(tx, { projectId: task.project_id, epicId: task.epic_id });
          const estimate = this.estimateCostTx(tx, task.project_id, role, "default");
         const budget = tx.get<{ limit_cost: number; spent_cost: number; reserved_cost: number }>("SELECT limit_cost,spent_cost,reserved_cost FROM scheduler_budgets WHERE project_id=$projectId", { projectId: task.project_id });
         if (budget && budget.spent_cost + budget.reserved_cost + estimate > budget.limit_cost) throw new Error("Task " + taskId + " is not schedulable: WAITING_FOR_BUDGET");
@@ -635,6 +661,7 @@ getEligibility(taskId: string, scope?: { projectId: string }): Eligibility {
   dispatchAgentRun(runId: string, projectId: string, role: string, model: string, resourceKey = `run:${runId}`, options: { approvalId?: string } = {}): void {
     this.db.transaction((tx) => {
       assertProjectDispatchableTx(tx, projectId);
+      assertDispatchPauseAllowedTx(tx, { projectId });
       const existing = tx.get<{ status: string; run_id: string | null }>("SELECT status,run_id FROM scheduler_reservations WHERE subject_id=$runId", { runId });
       if (existing?.status === "RESERVED") {
         if (existing.run_id !== runId) {
@@ -642,7 +669,8 @@ getEligibility(taskId: string, scope?: { projectId: string }): Eligibility {
         }
         return;
       }
-       const projectState = tx.get<{ status: string }>("SELECT status FROM projects WHERE id=$projectId", { projectId });
+      assertDispatchPauseAllowedTx(tx, { projectId });
+      const projectState = tx.get<{ status: string }>("SELECT status FROM projects WHERE id=$projectId", { projectId });
        if (projectState && projectState.status !== "ACTIVE") throw new Error(`Run ${runId} is not schedulable: BLOCKED_BY_PROJECT_STATE`);
        const global = tx.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_reservations WHERE status='RESERVED' AND kind <> 'LOCK'")?.count ?? 0;
        const project = tx.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_reservations WHERE project_id=$projectId AND status='RESERVED' AND kind <> 'LOCK'", { projectId })?.count ?? 0;
@@ -891,6 +919,7 @@ getEligibility(taskId: string, scope?: { projectId: string }): Eligibility {
 
   private nonCapacityGatesPassTx(tx: DatabaseTx, task: SchedulableTask, active: SchedulableTask[], requestedRole?: string, model = "default"): boolean {
     if (!projectDispatchEligibilityTx(tx, task.projectId).allowed || task.status !== "READY") return false;
+    if (!dispatchPauseEligibilityTx(tx, { projectId: task.projectId, epicId: task.epicId }).allowed) return false;
     if (task.dependsOnTaskIds.some((id) => active.some((candidate) => candidate.id === id))) return false;
     if (tx.get("SELECT 1 FROM scheduler_resource_locks WHERE owner_id<>$owner AND resource_key IN ('global',$resource)", { owner: `task:${task.id}`, resource: `task:${task.id}` })) return false;
     if (this.hasPendingApprovalTx(tx, task.id)) return false;
@@ -945,6 +974,9 @@ getEligibility(taskId: string, scope?: { projectId: string }): Eligibility {
   private evaluateEligibilityTx(tx: DatabaseTx, task: SchedulableTask, activeTasks: SchedulableTask[]): Eligibility {
     const projectBoundary = projectDispatchEligibilityTx(tx, task.projectId);
     if (!projectBoundary.allowed) return { status: "BLOCK", reason: projectBoundary.reason };
+    if (!dispatchPauseEligibilityTx(tx, { projectId: task.projectId, epicId: task.epicId }).allowed) {
+      return { status: "WAIT", reason: "WAITING_FOR_PAUSE" };
+    }
     if (task.status === "PAUSED") return { status: "WAIT", reason: "WAITING_FOR_PAUSE" };
     if (isTerminalStatus(task.status) || task.status === "DRAFT") return { status: "BLOCK", reason: task.status === "DRAFT" ? "BLOCKED_BY_PROJECT_STATE" : "BLOCKED_BY_WORKFLOW" };
     if (task.status !== "READY") {

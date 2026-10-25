@@ -9,6 +9,8 @@ import { ProjectProjection } from "../../../src/app/read-models/project-projecti
 import { EpicProjection } from "../../../src/app/read-models/epic-projection.js";
 import { ExecutionProjection } from "../../../src/app/read-models/execution-projection.js";
 import { listActiveApprovedOnboardingRepositories } from "../../../src/modules/projects/onboarding-service.js";
+import { SchedulerService } from "../../../src/modules/scheduler/scheduler-service.js";
+import { executionQueueProjectionSchema } from "@ebb-orchestrator/contracts";
 
 function setup() {
   const db = createSqliteDatabase(":memory:");
@@ -88,6 +90,60 @@ describe("scheduler projection serialization", () => {
     expect(new TaskProjection(db).get(taskId)?.git.repositoryPath).toBe("/approved/repository");
     expect(new ProjectProjection(db).get(projectId)?.git.repositoryPath).toBe("/approved/repository");
     expect(new EpicProjection(db).get(epicId)?.git.repositoryPath).toBe("/approved/repository");
+    db.close();
+  });
+});
+
+describe("execution queue projection contract (plan-27 Task 2)", () => {
+  function activeProject(db: ReturnType<typeof createSqliteDatabase>, id: string, now: string): void {
+    db.run("INSERT INTO projects(id,name,display_name,status,created_at,updated_at) VALUES($id,'p','P','ACTIVE',$now,$now)", { id, now });
+    const approvalId = randomUUID();
+    db.run("INSERT INTO approvals(id,type,subject_id,subject_type,status,requested_by,created_at) VALUES($approvalId,'WORKFLOW_CHANGE',$id,'PROJECT','APPROVED','test',$now)", { approvalId, id, now });
+    db.run("INSERT INTO onboarding_configs(project_id,repository_path,facts_json,proposed_json,status,approval_id,created_at,updated_at) VALUES($id,'/tmp','{}','{}','ACTIVE',$approvalId,$now,$now)", { id, approvalId, now });
+  }
+
+  it("serializes the full ExecutionQueueProjection from persisted owners", () => {
+    const db = createSqliteDatabase(":memory:");
+    runMigrations(db, loadTestMigrations());
+    const now = new Date().toISOString();
+    const projectId = randomUUID();
+    activeProject(db, projectId, now);
+    const scheduler = new SchedulerService(db);
+
+    db.run("INSERT INTO agent_runs(id,role,runtime,model,status,task_id) VALUES('run-1','developer','hermes','test','IN_PROGRESS','task-1')", {});
+    db.run("INSERT INTO scheduler_reservations(id,kind,subject_id,project_id,owner_id,reserved_at,estimate_cost,status,role,model,run_id) VALUES('res-1','TASK','task-1',$projectId,'task:task-1',$now,5,'RESERVED','developer','default','run-1')", { projectId, now });
+    db.run("INSERT INTO scheduler_resource_locks(resource_key,reservation_id,project_id,owner_id,locked_at) VALUES('task:task-1','res-1',$projectId,'task:task-1',$now)", { projectId, now });
+    db.run("INSERT INTO outbox_events(id,type,aggregate_type,aggregate_id,payload_json,created_at,available_at,attempts) VALUES('evt-1','AgentRunRequested','Task','task-1','{}',$now,$now,0)", { now });
+    scheduler.setDispatchState({ paused: true });
+
+    const projection = new ExecutionProjection(db, scheduler).get();
+    const parsed = executionQueueProjectionSchema.parse(projection);
+    expect(parsed.running).toContainEqual(expect.objectContaining({ runId: "run-1" }));
+    expect(parsed.capacity.used).toBe(1);
+    expect(parsed.capacity.configured).toBe(scheduler.getLimits().globalMax);
+    expect(parsed.locks).toContainEqual(expect.objectContaining({ resource: "task:task-1", runId: "run-1", heldAt: now }));
+    expect(parsed.recentEvents).toContainEqual(expect.objectContaining({ id: "evt-1", type: "AgentRunRequested", createdAt: now }));
+    expect(parsed.dispatchState).toEqual({ paused: true, updatedAt: expect.any(String) });
+    db.close();
+  });
+
+  it("returns empty minima and unpaused dispatch state when no capacity/locks/events exist", () => {
+    const db = createSqliteDatabase(":memory:");
+    runMigrations(db, loadTestMigrations());
+    const now = new Date().toISOString();
+    const projectId = randomUUID();
+    activeProject(db, projectId, now);
+    const scheduler = new SchedulerService(db);
+
+    const projection = new ExecutionProjection(db, scheduler).get();
+    const parsed = executionQueueProjectionSchema.parse(projection);
+    expect(parsed.running).toEqual([]);
+    expect(parsed.waiting).toEqual([]);
+    expect(parsed.blocked).toEqual([]);
+    expect(parsed.capacity).toEqual({ configured: scheduler.getLimits().globalMax, used: 0 });
+    expect(parsed.locks).toEqual([]);
+    expect(parsed.recentEvents).toEqual([]);
+    expect(parsed.dispatchState).toEqual({ paused: false, updatedAt: null });
     db.close();
   });
 });

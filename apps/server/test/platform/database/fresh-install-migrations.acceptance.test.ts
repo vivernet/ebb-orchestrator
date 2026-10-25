@@ -18,11 +18,11 @@ describe("fresh-install migration acceptance", () => {
     if (tmpDir) await rm(tmpDir, { recursive: true, force: true });
   });
 
-  it("applies migrations 001-052 with durable scheduler RunRequests, Darwin owner kind, run traces and provider configuration", async () => {
+  it("applies migrations 001-053 with durable scheduler RunRequests, Darwin owner kind, run traces, provider configuration and dispatch controls", async () => {
     tmpDir = await mkdtemp(join(tmpdir(), "ebb-fresh-install-migrations-"));
     db = createSqliteDatabase(join(tmpDir, `fresh-${randomUUID()}.sqlite`));
     const migrations = loadTestMigrations();
-    const expectedVersions = Array.from({ length: 52 }, (_, index) => index + 1);
+    const expectedVersions = Array.from({ length: 53 }, (_, index) => index + 1);
 
     expect(migrations.map(({ version }) => version)).toEqual(expectedVersions);
     expect(migrations.find(({ version }) => version === 40)?.name).toBe("040_run_hermes_source_snapshot");
@@ -38,8 +38,9 @@ describe("fresh-install migration acceptance", () => {
     expect(migrations.find(({ version }) => version === 50)?.name).toBe("050_scheduler_run_request_provider_selection");
     expect(migrations.find(({ version }) => version === 51)?.name).toBe("051_provider_custom_models");
     expect(migrations.find(({ version }) => version === 52)?.name).toBe("052_chat");
-    expect(migrations.at(-1)?.name).toBe("052_chat");
-    expect(runMigrations(db, migrations).applied).toBe(52);
+    expect(migrations.find(({ version }) => version === 53)?.name).toBe("053_scheduler_dispatch_controls");
+    expect(migrations.at(-1)?.name).toBe("053_scheduler_dispatch_controls");
+    expect(runMigrations(db, migrations).applied).toBe(53);
     expect(db.all("PRAGMA table_info(tasks)")).toContainEqual(expect.objectContaining({ name: "capacity_wait_started_at", type: "TEXT", notnull: 0, dflt_value: null }));
     expect(db.all("SELECT * FROM run_process_owner_generations")).toEqual([]);
     expect(db.all("SELECT * FROM run_resume_bindings")).toEqual([]);

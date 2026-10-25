@@ -15,6 +15,13 @@ export interface SchedulerLimits {
   reviewerMax: number;
 }
 
+/** Durable состояние паузы диспетчеризации (plan-27 Task 2). */
+export interface SchedulerDispatchState {
+  paused: boolean;
+  /** UTC ISO инстант последнего изменения; null до первого перехода. */
+  updatedAt: string | null;
+}
+
 /**
  * Уровни приоритета: задачи с более высоким приоритетом запускаются первыми.
  */

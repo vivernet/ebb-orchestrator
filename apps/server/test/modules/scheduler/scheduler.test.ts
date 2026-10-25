@@ -994,4 +994,108 @@ describe("SchedulerService", () => {
     expect(scoped.runnables.length).toBe(2);
     expect(scoped.runnables.some((t) => t.id === "task-c")).toBe(false);
   });
+
+  // ── Durable dispatch controls (plan-27 Task 2) ─────────────────────────
+  describe("durable dispatch controls", () => {
+    const transition = { transitionInTransaction: () => undefined } as never;
+
+    it("blocks new task reservations while global dispatch is paused without cancelling current runs", async () => {
+      await setup();
+      const taskId = insertTask(db!, projectId, { id: "global-paused-task", status: "READY" }).id;
+      // Текущий Run уже имеет reservation и lock — пауза не должна его отменять.
+      scheduler.dispatchAgentRun("run-current", projectId, "developer", "default", "run:run-current");
+
+      expect(scheduler.setDispatchState({ paused: true })).toMatchObject({ paused: true, updatedAt: expect.any(String) });
+      expect(scheduler.getDispatchState()).toMatchObject({ paused: true, updatedAt: expect.any(String) });
+
+      expect(() => scheduler.dispatchTask(taskId, transition, () => undefined)).toThrow(/WAITING_FOR_PAUSE/);
+      expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_reservations WHERE subject_id=$taskId AND status='RESERVED'", { taskId })?.count).toBe(0);
+      expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_resource_locks WHERE owner_id=$owner", { owner: `task:${taskId}` })?.count).toBe(0);
+      // Существующий Run и его reservation сохранены.
+      expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_reservations WHERE subject_id='run-current' AND status='RESERVED'")?.count).toBe(1);
+
+      expect(scheduler.setDispatchState({ paused: false })).toMatchObject({ paused: false });
+      scheduler.dispatchTask(taskId, transition, () => undefined);
+      expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_reservations WHERE subject_id=$taskId AND status='RESERVED'", { taskId })?.count).toBe(1);
+    });
+
+    it("blocks dispatch for a paused project and a paused epic without affecting others", async () => {
+      await setup();
+      const now = new Date().toISOString();
+      const epicId = randomUUID();
+      db!.run("INSERT INTO epics(id,project_id,display_id,title,status,contract_json,created_at,updated_at) VALUES($id,$projectId,'E-1','Epic','OPEN','{}',$now,$now)", { id: epicId, projectId, now });
+      const epicTask = insertTask(db!, projectId, { id: "epic-task", status: "READY", epicId }).id;
+      const plainTask = insertTask(db!, projectId, { id: "plain-task", status: "READY" }).id;
+
+      db!.run("INSERT INTO scheduler_scope_pauses(scope,scope_id,paused_at,actor) VALUES('EPIC',$epicId,$now,'test')", { epicId, now });
+      expect(() => scheduler.dispatchTask(epicTask, transition, () => undefined)).toThrow(/WAITING_FOR_PAUSE/);
+      expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_reservations WHERE subject_id='epic-task' AND status='RESERVED'")?.count).toBe(0);
+      // Task без epica в том же проекте продолжает диспатчиться.
+      scheduler.dispatchTask(plainTask, transition, () => undefined);
+      expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_reservations WHERE subject_id='plain-task' AND status='RESERVED'")?.count).toBe(1);
+
+      db!.run("INSERT INTO scheduler_scope_pauses(scope,scope_id,paused_at,actor) VALUES('PROJECT',$projectId,$now,'test')", { projectId, now });
+      const otherTask = insertTask(db!, projectId, { id: "other-task", status: "READY" }).id;
+      expect(() => scheduler.dispatchTask(otherTask, transition, () => undefined)).toThrow(/WAITING_FOR_PAUSE/);
+      expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_reservations WHERE subject_id='other-task' AND status='RESERVED'")?.count).toBe(0);
+    });
+
+    it("reports tasks in a paused scope as waiting with WAITING_FOR_PAUSE", async () => {
+      await setup();
+      const now = new Date().toISOString();
+      const epicId = randomUUID();
+      db!.run("INSERT INTO epics(id,project_id,display_id,title,status,contract_json,created_at,updated_at) VALUES($id,$projectId,'E-1','Epic','OPEN','{}',$now,$now)", { id: epicId, projectId, now });
+      insertTask(db!, projectId, { id: "paused-scope-task", status: "READY", epicId });
+      insertTask(db!, projectId, { id: "normal-task", status: "READY" });
+      db!.run("INSERT INTO scheduler_scope_pauses(scope,scope_id,paused_at,actor) VALUES('EPIC',$epicId,$now,'test')", { epicId, now });
+
+      expect(scheduler.getEligibility("paused-scope-task")).toEqual({ status: "WAIT", reason: "WAITING_FOR_PAUSE" });
+      expect(scheduler.getWaitReason("paused-scope-task")).toBe("WAITING_FOR_PAUSE");
+      const result = scheduler.recalculate();
+      expect(result.waiting.some(({ task }) => task.id === "paused-scope-task")).toBe(true);
+      expect(result.runnables.some((task) => task.id === "paused-scope-task")).toBe(false);
+      expect(result.runnables.some((task) => task.id === "normal-task")).toBe(true);
+    });
+
+    it("persists dispatch pause across restart and stays idempotent", async () => {
+      await setup();
+      const databasePath = db!.get<{ file: string }>("PRAGMA database_list")?.file;
+      expect(databasePath).toBeTruthy();
+      const pausedAt = "2026-10-25T10:00:00.000Z";
+      db!.run("UPDATE scheduler_config SET dispatch_paused=1, dispatch_paused_at=$pausedAt WHERE id=1", { pausedAt });
+      db!.close();
+      db = createSqliteDatabase(databasePath!);
+      scheduler = new SchedulerService(db!);
+      expect(scheduler.getDispatchState()).toEqual({ paused: true, updatedAt: pausedAt });
+      expect(scheduler.setDispatchState({ paused: true })).toMatchObject({ paused: true, updatedAt: expect.any(String) });
+      expect(scheduler.getDispatchState().paused).toBe(true);
+      expect(scheduler.setDispatchState({ paused: false })).toMatchObject({ paused: false });
+      expect(scheduler.getDispatchState()).toEqual({ paused: false, updatedAt: expect.any(String) });
+    });
+
+    it("proves no new run reservation commits after a pause commit under a second connection", async () => {
+      await setup();
+      insertTask(db!, projectId, { id: "race-task", status: "READY" });
+      scheduler.setDispatchState({ paused: true });
+
+      // Первая сессия: reservation отклонена, ничего не закоммичено.
+      expect(() => scheduler.dispatchTask("race-task", transition, () => undefined)).toThrow(/WAITING_FOR_PAUSE/);
+      expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_reservations WHERE subject_id='race-task' AND status='RESERVED'")?.count).toBe(0);
+
+      // Вторая сессия поверх того же файла наблюдает тот же committed-паузу
+      // и тоже не может создать reservation.
+      const databasePath = db!.get<{ file: string }>("PRAGMA database_list")?.file;
+      if (!databasePath) throw new Error("expected a real database file for the restart race test");
+      const other = createSqliteDatabase(databasePath);
+      try {
+        const otherScheduler = new SchedulerService(other);
+        expect(otherScheduler.getDispatchState().paused).toBe(true);
+        expect(() => otherScheduler.dispatchTask("race-task", transition, () => undefined)).toThrow(/WAITING_FOR_PAUSE/);
+        expect(other.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_reservations WHERE subject_id='race-task' AND status='RESERVED'")?.count).toBe(0);
+      } finally {
+        other.close();
+      }
+      expect(db!.get<{ count: number }>("SELECT COUNT(*) AS count FROM scheduler_reservations WHERE subject_id='race-task' AND status='RESERVED'")?.count).toBe(0);
+    });
+  });
 });

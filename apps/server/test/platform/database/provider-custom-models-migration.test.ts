@@ -29,9 +29,9 @@ describe("provider custom models migration 051", () => {
     it("applies 001-051 and creates provider_custom_models with PK/index and no FK", async () => {
       await freshDb();
       const migrations = loadTestMigrations();
-      expect(migrations.map(({ version }) => version)).toEqual(Array.from({ length: 52 }, (_, index) => index + 1));
-      expect(migrations.at(-1)?.name).toBe("052_chat");
-      expect(runMigrations(db!, migrations).applied).toBe(52);
+      expect(migrations.map(({ version }) => version)).toEqual(Array.from({ length: 53 }, (_, index) => index + 1));
+      expect(migrations.at(-1)?.name).toBe("053_scheduler_dispatch_controls");
+      expect(runMigrations(db!, migrations).applied).toBe(53);
 
       const columns = db!.all<{ name: string; type: string; notnull: number; dflt_value: unknown; pk: number }>(
         "PRAGMA table_info(provider_custom_models)",
@@ -56,7 +56,7 @@ describe("provider custom models migration 051", () => {
       // Без FK: пользовательские модели могут существовать до конфигурации провайдера.
       expect(db!.all("PRAGMA foreign_key_list(provider_custom_models)")).toEqual([]);
       expect(db!.all("PRAGMA foreign_key_check")).toEqual([]);
-      expect(db!.get<{ applied: number }>("SELECT COUNT(*) AS applied FROM schema_migrations")!.applied).toBe(52);
+      expect(db!.get<{ applied: number }>("SELECT COUNT(*) AS applied FROM schema_migrations")!.applied).toBe(53);
     });
   });
 
@@ -90,7 +90,7 @@ describe("provider custom models migration 051", () => {
       const tasksBefore = db!.all("SELECT * FROM tasks");
       const requestsBefore = db!.all("SELECT * FROM scheduler_run_requests");
 
-      expect(runMigrations(db!, migrations).applied).toBe(2);
+      expect(runMigrations(db!, migrations).applied).toBe(3);
       expect(db!.all("SELECT * FROM agent_runs")).toEqual(runsBefore);
       expect(db!.all("SELECT * FROM tasks")).toEqual(tasksBefore);
       expect(db!.all("SELECT * FROM scheduler_run_requests")).toEqual(requestsBefore);

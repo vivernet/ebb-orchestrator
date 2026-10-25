@@ -37,9 +37,9 @@ describe("provider configuration migration 049", () => {
     it("applies 001-051 and creates additive provider tables with integrity", () => {
       freshDb();
       const migrations = loadTestMigrations();
-      expect(migrations.map(({ version }) => version)).toEqual(Array.from({ length: 52 }, (_, index) => index + 1));
-      expect(migrations.at(-1)?.name).toBe("052_chat");
-      expect(runMigrations(db!, migrations).applied).toBe(52);
+      expect(migrations.map(({ version }) => version)).toEqual(Array.from({ length: 53 }, (_, index) => index + 1));
+      expect(migrations.at(-1)?.name).toBe("053_scheduler_dispatch_controls");
+      expect(runMigrations(db!, migrations).applied).toBe(53);
 
       expect(db!.all<{ name: string }>("PRAGMA table_info(provider_configurations)").map(({ name }) => name))
         .toEqual(["provider_id", "enabled", "selected_auth_method", "config_json", "model_selection_json", "current_revision", "created_at", "updated_at"]);
@@ -105,7 +105,7 @@ describe("provider configuration migration 049", () => {
       )).toThrow(/FOREIGN KEY/i);
 
       expect(db!.all("PRAGMA foreign_key_check")).toEqual([]);
-      expect(db!.get<{ applied: number }>("SELECT COUNT(*) AS applied FROM schema_migrations")!.applied).toBe(52);
+      expect(db!.get<{ applied: number }>("SELECT COUNT(*) AS applied FROM schema_migrations")!.applied).toBe(53);
     });
   });
 
@@ -125,7 +125,7 @@ describe("provider configuration migration 049", () => {
       const runsBefore = db!.all("SELECT * FROM agent_runs");
       const secretsBefore = db!.all("SELECT * FROM secrets");
 
-      expect(runMigrations(db!, migrations).applied).toBe(4);
+      expect(runMigrations(db!, migrations).applied).toBe(5);
       expect(db!.all("SELECT * FROM agent_runs")).toEqual(runsBefore);
       expect(db!.all("SELECT * FROM secrets")).toEqual(secretsBefore);
 

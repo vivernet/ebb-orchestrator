@@ -36,9 +36,9 @@ describe("run traces migration", () => {
       tmpDir = await mkdtemp(join(tmpdir(), "ebb-run-traces-fresh-"));
       db = createSqliteDatabase(join(tmpDir, `${randomUUID()}.sqlite`));
       const migrations = loadTestMigrations();
-      expect(migrations.map(({ version }) => version)).toEqual(Array.from({ length: 52 }, (_, index) => index + 1));
-      expect(migrations.at(-1)?.name).toBe("052_chat");
-      expect(runMigrations(db, migrations).applied).toBe(52);
+      expect(migrations.map(({ version }) => version)).toEqual(Array.from({ length: 53 }, (_, index) => index + 1));
+      expect(migrations.at(-1)?.name).toBe("053_scheduler_dispatch_controls");
+      expect(runMigrations(db, migrations).applied).toBe(53);
 
       const columns = db.all<{ name: string; type: string; notnull: number; pk: number }>("PRAGMA table_info(run_traces)");
       expect(columns.map(({ name, type, notnull, pk }) => ({ name, type, notnull, pk }))).toEqual([
@@ -74,7 +74,7 @@ describe("run traces migration", () => {
       db!.run("DELETE FROM agent_runs WHERE id=$runId", { runId });
       expect(db!.all("SELECT * FROM run_traces")).toEqual([]);
       expect(db!.all("PRAGMA foreign_key_check")).toEqual([]);
-      expect(db!.get<{ applied: number }>("SELECT COUNT(*) AS applied FROM schema_migrations")!.applied).toBe(52);
+      expect(db!.get<{ applied: number }>("SELECT COUNT(*) AS applied FROM schema_migrations")!.applied).toBe(53);
     });
   });
 
@@ -98,7 +98,7 @@ describe("run traces migration", () => {
       const runRowsBefore = db!.all("SELECT * FROM agent_runs");
       const taskRowsBefore = db!.all("SELECT * FROM tasks");
 
-      expect(runMigrations(db, migrations).applied).toBe(5);
+      expect(runMigrations(db, migrations).applied).toBe(6);
       expect(db!.all("SELECT * FROM agent_runs")).toEqual(runRowsBefore);
       expect(db!.all("SELECT * FROM tasks")).toEqual(taskRowsBefore);
 
