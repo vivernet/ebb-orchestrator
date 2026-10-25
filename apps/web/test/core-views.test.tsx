@@ -47,20 +47,29 @@ describe('Workflow lifecycle display mapping', () => {
 
 describe('Dashboard', () => {
   test('renders coded active-work and queue reasons in Russian without backend messages', async () => {
-    vi.spyOn(apiClient, 'get').mockImplementation(async (path) => path === '/dashboard'
-      ? { activeAgents: [], activeWork: [{ id: 'task-1', title: 'Blocked work', status: 'BLOCKED', eligibility: { status: 'BLOCK', reason: { code: 'PROJECT_NOT_ACTIVE', message: 'Secret backend detail' } } }], approvals: 0, usage: { totalTokens: 0, cost: 0 }, projects: [] }
-      : { running: [], waiting: [{ taskId: 'task-2', reason: { code: 'WAITING_FOR_RESOURCE_LOCK', message: 'Secret backend detail' } }], blocked: [{ taskId: 'task-3', reason: { code: 'BLOCKED_BY_WORKFLOW', message: 'Secret backend detail' } }] });
+    vi.spyOn(dashboardApi, 'getDashboard').mockResolvedValue({
+      activeAgents: [], activeWork: [{ id: 'task-1', title: 'Blocked work', status: 'BLOCKED', eligibility: { status: 'BLOCK', reason: { code: 'PROJECT_NOT_ACTIVE', message: 'Secret backend detail' } } }],
+      approvals: 0, usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 }, projects: [],
+    });
+    vi.spyOn(dashboardApi, 'getExecutionQueue').mockResolvedValue({
+      running: [], waiting: [{ taskId: 'task-2', reason: { code: 'WAITING_FOR_RESOURCE_LOCK', message: 'Secret backend detail' } }],
+      blocked: [{ taskId: 'task-3', reason: { code: 'BLOCKED_BY_WORKFLOW', message: 'Secret backend detail' } }],
+    });
     render(<MemoryRouter><DashboardPage /></MemoryRouter>);
     expect(await screen.findByRole('link', { name: /Blocked work/ })).toHaveTextContent('Проект не активен.');
-    expect(screen.getByRole('region', { name: 'Очередь' })).toHaveTextContent('Ожидается освобождение ресурса.');
-    expect(screen.getByRole('region', { name: 'Очередь' })).toHaveTextContent('Заблокировано рабочим процессом.');
+    expect(screen.getByRole('region', { name: 'Очередь выполнения' })).toHaveTextContent('Ожидается освобождение ресурса.');
+    expect(screen.getByRole('region', { name: 'Очередь выполнения' })).toHaveTextContent('Заблокировано рабочим процессом.');
     expect(screen.queryByText(/Secret backend detail/)).not.toBeInTheDocument();
     vi.restoreAllMocks();
   });
   test('renders values from the dashboard projection', async () => {
-    const _get = vi.spyOn(apiClient, 'get').mockImplementation(async (path) => path === '/dashboard'
-      ? { activeAgents: [{ runId: 'run-1', role: 'Developer', taskId: 'task-1', status: 'IN_PROGRESS' }], activeWork: [{ id: 'task-1', title: 'Ship projection', status: 'DEV', eligibility: { status: 'RUNNABLE', reason: null } }], approvals: 2, usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 2, cost: 0.42 }, projects: [{ id: 'project-1', name: 'Project', displayName: 'Project One', status: 'ACTIVE' }] }
-      : { running: [], waiting: [], blocked: [] });
+    vi.spyOn(dashboardApi, 'getDashboard').mockResolvedValue({
+      activeAgents: [{ runId: 'run-1', role: 'Developer', taskId: 'task-1', status: 'IN_PROGRESS' }],
+      activeWork: [{ id: 'task-1', title: 'Ship projection', status: 'DEV', eligibility: { status: 'RUNNABLE', reason: null } }],
+      approvals: 2, usage: { inputTokens: 1, cachedTokens: 0, outputTokens: 2, totalTokens: 3, cost: 0.42 },
+      projects: [{ id: 'project-1', name: 'Project', displayName: 'Project One', status: 'ACTIVE' }],
+    });
+    vi.spyOn(dashboardApi, 'getExecutionQueue').mockResolvedValue({ running: [], waiting: [], blocked: [] });
     render(<MemoryRouter><DashboardPage /></MemoryRouter>);
     await waitFor(() => expect(screen.getByText(/Ship projection/)).toBeInTheDocument());
     expect(screen.getByRole('link', { name: /Developer/ })).toHaveAttribute('href', '/runs/run-1');
@@ -72,13 +81,17 @@ describe('Dashboard', () => {
   });
 
   test('encodes projection IDs in detail links', async () => {
-    const _get = vi.spyOn(apiClient, 'get').mockImplementation(async (path) => path === '/dashboard'
-      ? { activeAgents: [{ runId: 'run/1', role: 'Developer', taskId: 'task/1', status: 'IN_PROGRESS' }], activeWork: [{ id: 'task/1', title: 'Encoded task', status: 'DEV', eligibility: { status: 'RUNNABLE', reason: null } }], approvals: 0, usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 }, projects: [{ id: 'project/1', name: 'Project', displayName: 'Encoded project', status: 'ACTIVE' }] }
-      : { running: [], waiting: [], blocked: [] });
+    vi.spyOn(dashboardApi, 'getDashboard').mockResolvedValue({
+      activeAgents: [{ runId: 'run/1', role: 'Developer', taskId: 'task/1', status: 'IN_PROGRESS' }],
+      activeWork: [{ id: 'task/1', title: 'Encoded task', status: 'DEV', eligibility: { status: 'RUNNABLE', reason: null } }],
+      approvals: 0, usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 },
+      projects: [{ id: 'project/1', name: 'Project', displayName: 'Encoded project', status: 'ACTIVE' }],
+    });
+    vi.spyOn(dashboardApi, 'getExecutionQueue').mockResolvedValue({ running: [], waiting: [], blocked: [] });
     render(<MemoryRouter><DashboardPage /></MemoryRouter>);
 
     await waitFor(() => expect(screen.getByRole('link', { name: /Encoded task/ })).toHaveAttribute('href', '/tasks/task%2F1'));
-    expect(screen.getByRole('link', { name: /Developer · Выполняется/ })).toHaveAttribute('href', '/runs/run%2F1');
+    expect(screen.getByRole('link', { name: /Developer/ })).toHaveAttribute('href', '/runs/run%2F1');
     expect(screen.getByRole('link', { name: /Encoded project/ })).toHaveAttribute('href', '/projects/project%2F1');
     vi.restoreAllMocks();
   });
@@ -88,36 +101,36 @@ describe('Dashboard', () => {
     vi.spyOn(dashboardApi, 'getExecutionQueue').mockResolvedValue({ running: [], waiting: [], blocked: [] });
     render(<MemoryRouter><DashboardPage /></MemoryRouter>);
 
-    expect(await screen.findByText('Не удалось загрузить обзор: Не удалось выполнить запрос.')).toBeInTheDocument();
+    expect(await screen.findByText('Не удалось загрузить сводные показатели: Не удалось выполнить запрос.')).toBeInTheDocument();
     expect(screen.getByText('Очередь пуста.')).toBeInTheDocument();
     expect(screen.queryByText('Не удалось загрузить очередь:')).not.toBeInTheDocument();
     vi.restoreAllMocks();
   });
 
   test('refetches dashboard and execution projections after SSE reconnect', async () => {
-    const _get = vi.spyOn(apiClient, 'get').mockImplementation(async (path) =>
-      path === '/dashboard'
-        ? { activeAgents: [], activeWork: [], approvals: 0, usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 }, projects: [] }
-        : { running: [], waiting: [], blocked: [] }
-    );
+    const dashboard = vi.spyOn(dashboardApi, 'getDashboard').mockResolvedValue({
+      activeAgents: [], activeWork: [], approvals: 0,
+      usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 }, projects: [],
+    });
+    const execution = vi.spyOn(dashboardApi, 'getExecutionQueue').mockResolvedValue({ running: [], waiting: [], blocked: [] });
     render(<MemoryRouter><DashboardPage /></MemoryRouter>);
 
     await waitFor(() => {
-      expect(_get.mock.calls.filter(([path]) => path === '/dashboard')).toHaveLength(1);
-      expect(_get.mock.calls.filter(([path]) => path === '/execution')).toHaveLength(1);
+      expect(dashboard).toHaveBeenCalledTimes(1);
+      expect(execution).toHaveBeenCalledTimes(1);
     });
     window.dispatchEvent(new CustomEvent('sse-reconnect'));
 
     await waitFor(() => {
-      expect(_get.mock.calls.filter(([path]) => path === '/dashboard')).toHaveLength(2);
-      expect(_get.mock.calls.filter(([path]) => path === '/execution')).toHaveLength(2);
+      expect(dashboard).toHaveBeenCalledTimes(2);
+      expect(execution).toHaveBeenCalledTimes(2);
     });
     vi.restoreAllMocks();
   });
 
-  test('exposes Running agents section', () => {
+  test('exposes the agent pool section', () => {
     renderDashboard();
-    expect(screen.getByText(/Работающие агенты/i)).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Пул агентов' })).toBeInTheDocument();
   });
 
   test('exposes Active work section', () => {
@@ -125,14 +138,14 @@ describe('Dashboard', () => {
     expect(screen.getByText(/Активная работа/i)).toBeInTheDocument();
   });
 
-  test('exposes Need approval section', () => {
+  test('exposes the approval center', () => {
     renderDashboard();
-    expect(screen.getByText(/Требуют согласования/i)).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Центр согласований' })).toBeInTheDocument();
   });
 
-  test('exposes AI spend section', () => {
+  test('exposes key indicators', () => {
     renderDashboard();
-    expect(screen.getByText(/Расходы на ИИ/i)).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Ключевые показатели' })).toBeInTheDocument();
   });
 
   test('exposes active projects section', () => {
@@ -140,9 +153,9 @@ describe('Dashboard', () => {
     expect(screen.getByText('Активные проекты')).toBeInTheDocument();
   });
 
-  test('exposes queue section', () => {
+  test('exposes execution queue section', () => {
     renderDashboard();
-    expect(screen.getByText('Очередь')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Очередь выполнения' })).toBeInTheDocument();
   });
 
   test('does not expose an unsupported Coordinator Chat entry', () => {
@@ -153,7 +166,7 @@ describe('Dashboard', () => {
 
   test('exposes the approved dashboard operations', () => {
     renderDashboard();
-    expect(screen.getByText('Сводка согласований')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Центр согласований' })).toBeInTheDocument();
     expect(screen.getByText('Пул агентов')).toBeInTheDocument();
     expect(screen.queryByText('Coordinator Chat')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Pause All' })).not.toBeInTheDocument();

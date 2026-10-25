@@ -20,30 +20,17 @@ interface ExecutionProjection {
   blocked: Array<{ taskId: string; reason: WaitReason }>;
 }
 
-interface ExecutionRow {
-  id: string;
-  kind: 'run' | 'waiting' | 'blocked';
-  role: string;
-  target: string;
-  status: string;
-  reason: WaitReason | null;
-}
-
 function errorMessage(error: unknown): string {
   return apiErrorMessage(error instanceof ApiError ? error.code : undefined);
 }
 
 /**
- * Отображает авторитетную проекцию scheduler: активные runs, ожидающие и
- * заблокированные задачи. UI не выводит действия, для которых backend не
- * предоставляет endpoint или policy-проверку.
+ * Отображает только авторитетные группы очереди; отмена применяется к одному Run и подтверждается refetch.
  */
 export default function ExecutionPage() {
   const mutationStore = useMemo(() => createMutationStore(), []);
   const [cancelState, setCancelState] = useState<MutationState<unknown>>(() => mutationStore.get('cancel-run'));
-  const [pauseState, setPauseState] = useState<MutationState<unknown>>(() => mutationStore.get('pause-all'));
   useEffect(() => mutationStore.subscribe('cancel-run', setCancelState), [mutationStore]);
-  useEffect(() => mutationStore.subscribe('pause-all', setPauseState), [mutationStore]);
   const executionPath = toClientPath(apiPaths.execution);
   const fetcher = useCallback((signal: AbortSignal) => apiClient.get<ExecutionProjection>(executionPath, { signal }), [executionPath]);
   const query = useQuery(null, executionPath, undefined, fetcher);
@@ -55,59 +42,79 @@ export default function ExecutionPage() {
     await mutationStore.execute('cancel-run', () => apiClient.post(toClientPath(apiPaths.runCancel(runId)), {}), query.refetch).catch(() => undefined);
   };
 
-  const pauseAll = async (taskIds: string[]) => {
-    await mutationStore.execute('pause-all', async () => {
-      for (const taskId of taskIds) {
-        await apiClient.post(toClientPath(`/api/v1/tasks/${encodeURIComponent(taskId)}/pause`), {});
-      }
-    }, query.refetch).catch(() => undefined);
-  };
-
   if (query.status === 'loading' || query.status === 'idle') return <PageState status="loading" message="Загрузка очереди выполнения…" />;
   if (query.status === 'error' || !projection) {
     return <PageState status="error" message={`Не удалось загрузить очередь выполнения: ${errorMessage(query.error)}`} onRetry={retry} />;
   }
 
   const data = projection;
-  const rows: ExecutionRow[] = [
-    ...data.running.map((run) => ({ id: run.runId, kind: 'run' as const, role: run.role, target: run.taskId ?? 'Система', status: run.status, reason: null })),
-    ...data.waiting.map((task) => ({ id: task.taskId, kind: 'waiting' as const, role: 'Планировщик', target: task.taskId, status: 'WAITING', reason: task.reason })),
-    ...data.blocked.map((task) => ({ id: task.taskId, kind: 'blocked' as const, role: 'Планировщик', target: task.taskId, status: 'BLOCKED', reason: task.reason })),
-  ];
-  const pauseTaskIds = [...new Set(rows.map((entry) => entry.kind === 'run' && entry.target !== 'Система' ? entry.target : entry.id))];
-  const disablePauseAll = pauseTaskIds.length === 0 || pauseState.status === 'pending';
 
   return (
-    <div className="execution-page page-stack">
+    <div className="execution-page page-stack reference-screen reference-screen--execution">
       <div className="topbar">
         <div>
-          <p className="eyebrow">Операции</p>
           <h1>Монитор выполнения</h1>
-          <div className="sub">Ёмкость: {data.running.length} выполняется · {data.waiting.length} ожидает · {data.blocked.length} заблокировано</div>
+          <div className="sub">Состояние очереди и причины ожидания из проекции Scheduler.</div>
         </div>
         <div className="top-actions">
           <button type="button" className="btn-ghost" onClick={retry}>Обновить</button>
-          <button type="button" className="btn-primary" disabled={disablePauseAll} onClick={() => void pauseAll(pauseTaskIds)}>Приостановить всё</button>
         </div>
       </div>
 
-      {cancelState.status === 'error' && <ErrorAlert message={`Не удалось отменить запуск: ${errorMessage(cancelState.error)}`} />}
-      {pauseState.status === 'error' && <ErrorAlert message={`Не удалось приостановить очередь: ${errorMessage(pauseState.error)}`} />}
+      {cancelState.status === 'error' && <ErrorAlert message={`Не удалось отменить запуск: ${errorMessage(cancelState.error)}`} onRetry={retry} />}
 
-      <section aria-label="Сводка выполнения" className="metric-grid">
-        <div><span className="metric-value">{data.running.length}</span><span className="metric-label">Выполняется</span></div>
-        <div><span className="metric-value">{data.waiting.length}</span><span className="metric-label">Ожидает</span></div>
-        <div><span className="metric-value">{data.blocked.length}</span><span className="metric-label">Заблокировано</span></div>
+      <section className="reference-metrics" aria-label="Сводка выполнения">
+        <div className="reference-metric"><span>Выполняется</span><strong>{data.running.length}</strong></div>
+        <div className="reference-metric"><span>Ожидает</span><strong>{data.waiting.length}</strong></div>
+        <div className="reference-metric"><span>Заблокировано</span><strong>{data.blocked.length}</strong></div>
       </section>
 
-      <section aria-label="Очередь выполнения" className="table-card">
-        <div className="section-heading"><h2>Очередь</h2><p>Причины указаны в данных планировщика.</p></div>
-        {rows.length === 0 ? <EmptyState message="Нет активных, ожидающих или заблокированных задач." /> : (
-          <div className="table-scroll"><table className="execution-queue-table"><thead><tr><th>Роль</th><th>Цель</th><th>Статус</th><th>Причина ожидания</th><th aria-label="Действия" /></tr></thead><tbody>
-            {rows.map((entry) => <tr key={`${entry.kind}-${entry.id}`}><td>{entry.kind === 'run' ? <Link to={`/runs/${encodeURIComponent(entry.id)}`}>{entry.role}</Link> : entry.role}</td><td>{entry.kind === 'run' && data.running.find((run) => run.runId === entry.id)?.taskId ? <Link to={`/tasks/${encodeURIComponent(data.running.find((run) => run.runId === entry.id)?.taskId ?? '')}`}>{entry.target}</Link> : entry.kind !== 'run' ? <Link to={`/tasks/${encodeURIComponent(entry.id)}`}>{entry.target}</Link> : entry.target}</td><td><StatusBadge status={entry.status} /></td><td>{entry.reason ? <span className="reason-message">{waitReasonLabel(entry.reason.code)}</span> : '—'}</td><td>{entry.kind === 'run' && <button type="button" className="danger-button" disabled={cancelState.status === 'pending'} onClick={() => void cancelRun(entry.id)}>Отменить</button>}</td></tr>)}
-          </tbody></table></div>
-        )}
-      </section>
+      <div className="reference-columns execution-columns">
+        <section className="reference-panel" aria-label="Активные запуски">
+          <div className="section-heading"><h2>Выполняются</h2><span>{data.running.length}</span></div>
+          {data.running.length === 0 ? <EmptyState message="Активных запусков нет." /> : (
+            <ul className="reference-record-list execution-run-list">
+              {data.running.map((run) => (
+                <li key={run.runId}>
+                  <div>
+                    <Link to={`/runs/${encodeURIComponent(run.runId)}`}><strong>{run.role}</strong></Link>
+                    <span>{run.taskId ? <Link to={`/tasks/${encodeURIComponent(run.taskId)}`}>{run.taskId}</Link> : 'Системный запуск'} · <StatusBadge status={run.status} /></span>
+                  </div>
+                  <button type="button" className="btn-bad" disabled={cancelState.status === 'pending'} onClick={() => void cancelRun(run.runId)}>Отменить</button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <div className="reference-column">
+          <section className="reference-panel" aria-label="Очередь ожидания">
+            <div className="section-heading"><h2>Ожидают</h2><span>{data.waiting.length}</span></div>
+            {data.waiting.length === 0 ? <EmptyState message="Задач в очереди ожидания нет." /> : (
+              <ul className="reference-record-list">
+                {data.waiting.map((task) => (
+                  <li key={task.taskId}>
+                    <Link to={`/tasks/${encodeURIComponent(task.taskId)}`}><strong>{task.taskId}</strong><span>{waitReasonLabel(task.reason.code)}</span></Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          <section className="reference-panel" aria-label="Заблокированная работа">
+            <div className="section-heading"><h2>Заблокировано</h2><span>{data.blocked.length}</span></div>
+            {data.blocked.length === 0 ? <EmptyState message="Заблокированных задач нет." /> : (
+              <ul className="reference-record-list">
+                {data.blocked.map((task) => (
+                  <li key={task.taskId}>
+                    <Link to={`/tasks/${encodeURIComponent(task.taskId)}`}><strong>{task.taskId}</strong><span>{waitReasonLabel(task.reason.code)}</span></Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </div>
+      </div>
     </div>
   );
 }

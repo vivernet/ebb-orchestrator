@@ -70,19 +70,26 @@ export default function SettingsPage() {
   const security = query.data.securitySettings;
 
   return (
-    <div className="settings-page page-stack">
+    <div className="settings-page page-stack reference-screen reference-screen--settings">
       <div className="topbar">
         <div>
           <h1>Настройки</h1>
-          <div className="sub">Конфигурация пространства и политики выполнения.</div>
+          <div className="sub">Глобальные лимиты, выбор провайдера и сведения о безопасности.</div>
         </div>
       </div>
 
       {saveState.status === 'error' && <p className="inline-alert" role="alert">{`Не удалось сохранить настройки: ${apiErrorMessage(saveState.error instanceof ApiError ? saveState.error.code : undefined)}`}</p>}
       {saveState.status === 'success' && <p role="status">Настройки сохранены</p>}
 
-      <div className="grid2">
-        <section aria-label="Роли и модели">
+      <div className="settings-layout">
+        <nav className="settings-section-nav" aria-label="Разделы настроек">
+          <a href="#settings-models">Провайдеры и модели</a>
+          <a href="#settings-scheduler">Планировщик</a>
+          <a href="#settings-hierarchy">Иерархия лимитов</a>
+          <a href="#settings-security">Безопасность</a>
+        </nav>
+        <div className="reference-column settings-content">
+        <section className="reference-panel" id="settings-models" aria-label="Роли и модели">
           <div className="panel-head"><h3>Роли и модели</h3></div>
           <p>Распределение моделей по ролям и управление провайдерами.</p>
           <Link to="/settings/providers">Открыть каталог провайдеров</Link>
@@ -101,7 +108,7 @@ export default function SettingsPage() {
           <p role="note">Ключи хранятся в EBB_ORCHESTRATOR_HOME/.env и не отображаются. Модель для запуска выбирается в Ebb.</p>
         </section>
 
-        <section aria-label="Планировщик">
+        <section className="reference-panel" id="settings-scheduler" aria-label="Планировщик">
           <div className="panel-head"><h3>Планировщик (scheduler)</h3></div>
           <p>Детерминированные лимиты параллельности и приоритеты.</p>
           <div className="row"><span className="muted">Версия схемы</span><span>{valueOrUnavailable(global.schemaVersion)}</span></div>
@@ -130,22 +137,7 @@ export default function SettingsPage() {
           )}
         </section>
 
-        <section aria-label="Восстановление">
-          <div className="panel-head"><h3>Восстановление (recovery)</h3></div>
-          <p>Стадии A–F восстановления запусков и политика повторных попыток.</p>
-          <div className="row"><span className="muted">Стадии восстановления</span><span>A → B → C → D → E → F</span></div>
-          <div className="row"><span className="muted">Повторные попытки</span><span>Middle → Senior → эскалация</span></div>
-        </section>
-
-        <section aria-label="Git и GitHub">
-          <div className="panel-head"><h3>Git / GitHub</h3></div>
-          <p>Интеграция репозитория и необязательная синхронизация с GitHub.</p>
-          <div className="row"><span className="muted">Стратегия слияния</span><span>merge</span></div>
-          <div className="row"><span className="muted">Интеграция с GitHub</span><span>GitHub не подключён</span></div>
-        </section>
-      </div>
-
-      <section aria-label="Действующая иерархия">
+      <section className="reference-panel" id="settings-hierarchy" aria-label="Действующая иерархия">
         <h2>Действующая иерархия</h2>
         <h3>Глобально</h3>
         <p>Версия схемы: {valueOrUnavailable(global.schemaVersion)}</p>
@@ -163,12 +155,14 @@ export default function SettingsPage() {
         <p>Недоступно: эта конечная точка только для чтения не предоставляет переопределения задач и эпиков.</p>
       </section>
 
-      <section aria-label="Параметры безопасности">
+      <section className="reference-panel" id="settings-security" aria-label="Безопасность">
         <h2>Безопасность</h2>
         <p><strong>Действует наиболее строгое ограничение:</strong> {valueOrUnavailable(security.mostRestrictiveWins)}</p>
         <p><strong>Локальный режим:</strong> {valueOrUnavailable(security.localModeEnabled)}</p>
         {security.localModeEnabled && <p role="note">Local Mode изолирует policy, tools и credentials, но не является OS sandbox и не изолирует process, filesystem или network при запуске кода проекта.</p>}
       </section>
+      </div>
+      </div>
     </div>
   );
 }

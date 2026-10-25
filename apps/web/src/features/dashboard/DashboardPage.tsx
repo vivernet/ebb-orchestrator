@@ -16,7 +16,7 @@ function message(error: unknown): string {
 }
 
 /**
- * Представляет пользовательский экран DashboardPage; авторитетные проверки выполняются backend.
+ * Представляет сводные данные backend без локальных оценок мощности или переходов workflow.
  */
 export default function DashboardPage() {
   const dashboardPath = toClientPath(apiPaths.dashboard);
@@ -36,21 +36,145 @@ export default function DashboardPage() {
 
   useOnSSEReconnect(refresh);
 
+  const projects = projection?.projects ?? [];
+  const firstProject = projects[0];
+  const waiting = queue?.waiting ?? [];
+  const blocked = queue?.blocked ?? [];
+  const running = queue?.running ?? [];
+
   return (
-    <div className="dashboard-page">
-      <h1>Обзор</h1>
-      <section aria-label="Работающие агенты"><h2>Работающие агенты</h2>{projectionQuery.status === 'error' ? <ErrorAlert message={`Не удалось загрузить обзор: ${message(projectionQuery.error)}`} /> : projectionQuery.status !== 'success' || !projection ? <PageState status="loading" message="Загрузка обзора…" /> : projection.activeAgents.length === 0 ? <EmptyState message="Нет работающих агентов." /> : <><p>{projection.activeAgents.length} активных агентов</p><ul>{projection.activeAgents.map((agent) => <li key={agent.runId}><Link to={`/runs/${encodeURIComponent(agent.runId)}`}>{agent.role} · <StatusBadge status={agent.status} /></Link></li>)}</ul></>}</section>
-      <section aria-label="Активная работа"><h2>Активная работа</h2>{projectionQuery.status === 'error' ? <ErrorAlert message="Данные обзора недоступны." /> : projectionQuery.status !== 'success' || !projection ? <PageState status="loading" message="Загрузка обзора…" /> : projection.activeWork.length === 0 ? <EmptyState message="Нет активной работы." /> : <><p>{projection.activeWork.length} элементов работы</p><ul>{projection.activeWork.map((work) => <li key={work.id}><Link to={`/tasks/${encodeURIComponent(work.id)}`}>{work.title || work.id} · <StatusBadge status={work.status} />{work.eligibility.status === 'BLOCK' && <span> · {waitReasonLabel(work.eligibility.reason.code)}</span>}</Link></li>)}</ul></>}</section>
-      <section aria-label="Требуют согласования"><h2>Требуют согласования</h2>{projectionQuery.status === 'error' ? <ErrorAlert message="Данные обзора недоступны." /> : projectionQuery.status !== 'success' || !projection ? <PageState status="loading" message="Загрузка обзора…" /> : <p>{projection.approvals} ожидающих согласования</p>}</section>
-      <section aria-label="Расходы на ИИ"><h2>Расходы на ИИ</h2>{projectionQuery.status === 'error' ? <ErrorAlert message="Данные обзора недоступны." /> : projectionQuery.status !== 'success' || !projection ? <PageState status="loading" message="Загрузка обзора…" /> : <p>{projection.usage.totalTokens} токенов · ${projection.usage.cost.toFixed(2)}</p>}</section>
-      <section aria-label="Активные проекты"><h2>Активные проекты</h2>{projectionQuery.status === 'error' ? <ErrorAlert message="Данные обзора недоступны." /> : projectionQuery.status !== 'success' || !projection ? <PageState status="loading" message="Загрузка обзора…" /> : projection.projects.length === 0 ? <EmptyState message="Нет активных проектов." /> : <ul>{projection.projects.map((project) => <li key={project.id}><Link to={`/projects/${encodeURIComponent(project.id)}`}>{project.displayName || project.name} · <StatusBadge status={project.status} /></Link></li>)}</ul>}</section>
-      <section aria-label="Очередь"><h2>Очередь</h2>{queueQuery.status === 'error' ? <ErrorAlert message={`Не удалось загрузить очередь: ${message(queueQuery.error)}`} onRetry={retryQueue} /> : queueQuery.status !== 'success' || !queue ? <PageState status="loading" message="Загрузка очереди…" /> : queue.waiting.length === 0 && queue.blocked.length === 0 ? <EmptyState message="Очередь пуста." /> : <><p>{`Ожидает: ${queue.waiting.length}, заблокировано: ${queue.blocked.length}`}</p><ul>{queue.waiting.map((item) => <li key={`waiting-${item.taskId}`}><Link to={`/tasks/${encodeURIComponent(item.taskId)}`}>{item.taskId}</Link>: {waitReasonLabel(item.reason.code)}</li>)}{queue.blocked.map((item) => <li key={`blocked-${item.taskId}`}><Link to={`/tasks/${encodeURIComponent(item.taskId)}`}>{item.taskId}</Link>: {waitReasonLabel(item.reason.code)}</li>)}</ul></>}</section>
-      <section aria-label="Сводка согласований"><h2>Сводка согласований</h2>{projectionQuery.status === 'success' && projection && <p>{projection.approvals} согласований требуют внимания.</p>}</section>
-      <section aria-label="Пул агентов"><h2>Пул агентов</h2>{projectionQuery.status === 'success' && projection && <p>{projection.activeAgents.length} активных агентов в доступном пуле.</p>}</section>
-      <section aria-label="Чат с координатором" style={{ gridColumn: '1 / -1' }}>
-        <ChatPanel projectId={projection && projection.projects.length > 0 ? projection.projects[0]!.id : null} />
+    <div className="dashboard-page reference-screen reference-screen--dashboard">
+      <header className="reference-heading">
+        <div>
+          <h1>Обзор</h1>
+          <p>Текущее состояние проектов и выполнения — из актуальных проекций системы.</p>
+        </div>
+      </header>
+
+      <section className="reference-metrics" aria-label="Ключевые показатели">
+        {projectionQuery.status === 'success' && projection ? (
+          <>
+            <div className="reference-metric"><span>Активные агенты</span><strong>{projection.activeAgents.length}</strong></div>
+            <div className="reference-metric"><span>Активная работа</span><strong>{projection.activeWork.length}</strong></div>
+            <div className="reference-metric"><span>Ожидают согласования</span><strong>{projection.approvals}</strong></div>
+            <div className="reference-metric"><span>Использование</span><strong>{projection.usage.totalTokens.toLocaleString('ru-RU')} токенов</strong><small>${projection.usage.cost.toFixed(2)}</small></div>
+          </>
+        ) : projectionQuery.status === 'error' ? (
+          <ErrorAlert message={`Не удалось загрузить сводные показатели: ${message(projectionQuery.error)}`} onRetry={retryProjection} />
+        ) : <PageState status="loading" message="Загрузка сводных показателей…" />}
       </section>
-      {projectionQuery.status === 'error' && <button type="button" onClick={retryProjection}>Повторить</button>}
+
+      <div className="reference-columns dashboard-columns">
+        <div className="reference-column">
+          <section className="reference-panel" aria-label="Активные проекты">
+            <div className="section-heading"><h2>Активные проекты</h2><Link to="/projects">Все проекты</Link></div>
+            {projectionQuery.status === 'error' ? <ErrorAlert message={`Не удалось загрузить проекты: ${message(projectionQuery.error)}`} onRetry={retryProjection} /> :
+              projectionQuery.status !== 'success' || !projection ? <PageState status="loading" message="Загрузка проектов…" /> :
+                projection.projects.length === 0 ? <EmptyState message="Нет проектов в обзоре. Добавьте проект через онбординг." /> : (
+                  <ul className="reference-record-list">
+                    {projection.projects.map((project) => (
+                      <li key={project.id}>
+                        <Link to={`/projects/${encodeURIComponent(project.id)}`}>
+                          <strong>{project.displayName || project.name}</strong>
+                          <span><StatusBadge status={project.status} /></span>
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+          </section>
+
+          <section className="reference-panel" aria-label="Активная работа">
+            <div className="section-heading"><h2>Активная работа</h2><span>{projection?.activeWork.length ?? '—'}</span></div>
+            {projectionQuery.status === 'error' ? <ErrorAlert message={`Не удалось загрузить активную работу: ${message(projectionQuery.error)}`} onRetry={retryProjection} /> :
+              projectionQuery.status !== 'success' || !projection ? <PageState status="loading" message="Загрузка активной работы…" /> :
+                projection.activeWork.length === 0 ? <EmptyState message="Нет активной работы." /> : (
+                  <ul className="reference-record-list">
+                    {projection.activeWork.map((work) => (
+                      <li key={work.id}>
+                        <Link to={`/tasks/${encodeURIComponent(work.id)}`}>
+                          <strong>{work.title || work.id}</strong>
+                          <span><StatusBadge status={work.status} />{work.eligibility.status === 'BLOCK' && ` · ${waitReasonLabel(work.eligibility.reason.code)}`}</span>
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+          </section>
+
+        </div>
+
+        <div className="reference-column">
+          <section className="reference-panel" aria-label="Центр согласований">
+            <div className="section-heading"><h2>Центр согласований</h2><Link to="/approvals">Открыть очередь</Link></div>
+            {projectionQuery.status === 'error' ? <ErrorAlert message={`Не удалось загрузить число согласований: ${message(projectionQuery.error)}`} onRetry={retryProjection} /> :
+              projectionQuery.status !== 'success' || !projection ? <PageState status="loading" message="Загрузка согласований…" /> :
+                projection.approvals === 0 ? <EmptyState message="Ожидающих согласований нет." /> :
+                  <p className="reference-callout">{projection.approvals} запросов требуют решения человека.</p>}
+          </section>
+
+          <section className="reference-panel" aria-label="Очередь выполнения">
+            <div className="section-heading"><h2>Очередь выполнения</h2><Link to="/execution">Монитор</Link></div>
+            {queueQuery.status === 'error' ? <ErrorAlert message={`Не удалось загрузить очередь: ${message(queueQuery.error)}`} onRetry={retryQueue} /> :
+              queueQuery.status !== 'success' || !queue ? <PageState status="loading" message="Загрузка очереди…" /> : (
+                <>
+                  <div className="queue-counts" aria-label="Состояние очереди">
+                    <span><strong>{running.length}</strong> выполняется</span>
+                    <span><strong>{waiting.length}</strong> ожидает</span>
+                    <span><strong>{blocked.length}</strong> заблокировано</span>
+                  </div>
+                  {running.length + waiting.length + blocked.length === 0 ? <EmptyState message="Очередь пуста." /> : (
+                    <ul className="reference-record-list">
+                      {running.map((agent) => (
+                        <li key={`run-${agent.runId}`}>
+                          <Link to={`/runs/${encodeURIComponent(agent.runId)}`}>
+                            <strong>{agent.role}</strong><span>{agent.taskId ?? 'Системный запуск'} · <StatusBadge status={agent.status} /></span>
+                          </Link>
+                        </li>
+                      ))}
+                      {waiting.map((item) => (
+                        <li key={`waiting-${item.taskId}`}>
+                          <Link to={`/tasks/${encodeURIComponent(item.taskId)}`}>
+                            <strong>{item.taskId}</strong><span>{waitReasonLabel(item.reason.code)}</span>
+                          </Link>
+                        </li>
+                      ))}
+                      {blocked.map((item) => (
+                        <li key={`blocked-${item.taskId}`}>
+                          <Link to={`/tasks/${encodeURIComponent(item.taskId)}`}>
+                            <strong>{item.taskId}</strong><span>{waitReasonLabel(item.reason.code)}</span>
+                          </Link>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </>
+              )}
+          </section>
+
+          <section className="reference-panel" aria-label="Пул агентов">
+            <div className="section-heading"><h2>Пул агентов</h2><span>{projection?.activeAgents.length ?? '—'} активных</span></div>
+            {projectionQuery.status === 'error' ? <ErrorAlert message={`Не удалось загрузить активных агентов: ${message(projectionQuery.error)}`} onRetry={retryProjection} /> :
+              projectionQuery.status !== 'success' || !projection ? <PageState status="loading" message="Загрузка агентов…" /> :
+                projection.activeAgents.length === 0 ? <EmptyState message="Сейчас нет работающих агентов." /> : (
+                  <ul className="reference-record-list">
+                    {projection.activeAgents.map((agent) => (
+                      <li key={agent.runId}>
+                        <Link to={`/runs/${encodeURIComponent(agent.runId)}`}>
+                          <strong>{agent.role}</strong><span><StatusBadge status={agent.status} /></span>
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+          </section>
+        </div>
+
+        <section className="reference-panel dashboard-chat-panel" aria-label="Координатор">
+          <div className="section-heading"><h2>Координатор</h2><p>Обсуждение работы проекта</p></div>
+          <ChatPanel projectId={firstProject?.id ?? null} />
+        </section>
+      </div>
     </div>
   );
 }

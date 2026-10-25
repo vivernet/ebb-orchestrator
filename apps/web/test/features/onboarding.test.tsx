@@ -92,7 +92,7 @@ describe('OnboardingPage', () => {
     fireEvent.click(button);
 
     await waitFor(() => {
-      expect(screen.getByText('Ошибка')).toBeVisible();
+      expect(screen.getByText('Ошибка анализа')).toBeVisible();
     });
   });
 

@@ -10,7 +10,7 @@
     }
   },
   "dependencies": {
-    "zod": "^4.6.0"
+    "zod": "^4.6.6"
   },
   "scripts": {
     "prebuild": "node scripts/clean-dist.mjs",

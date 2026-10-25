@@ -127,6 +127,7 @@ test('localized route errors, loading and empty states render through the dynami
   expect(projectResponse.status()).toBe(200);
   expect((await projectResponse.json()).project).toBeNull();
   await expect(page.getByRole('heading', { name: 'Проект: missing-project' })).toBeVisible();
+  await expect(page.locator('.reference-screen--project')).toBeVisible();
   await expect(page.getByRole('alert').filter({ hasText: 'Проект не найден.' })).toBeVisible();
   await assertNoBootstrapArtifacts(page);
 });
@@ -137,20 +138,39 @@ test('authenticated browser shows empty Dashboard, Approvals, Execution and the 
 
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Обзор' })).toBeVisible();
-  await expect(page.getByRole('region', { name: 'Работающие агенты' })).toContainText('Нет работающих агентов.');
+  await expect(page.locator('.reference-screen--dashboard')).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Пул агентов' })).toContainText('Сейчас нет работающих агентов.');
   await expect(page.getByRole('region', { name: 'Активная работа' })).toContainText('Нет активной работы.');
-  await expect(page.getByRole('region', { name: 'Очередь' })).toContainText('Очередь пуста.');
+  await expect(page.getByRole('region', { name: 'Очередь выполнения' })).toContainText('Очередь пуста.');
+  await expect(page.getByRole('region', { name: 'Центр согласований' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Чат с координатором' })).toBeVisible();
+  const dashboardChatLayout = await page.locator('.dashboard-chat-panel').evaluate((element) => {
+    const grid = document.querySelector('.dashboard-columns');
+    const gridBounds = grid?.getBoundingClientRect();
+    const chatBounds = element.getBoundingClientRect();
+    return {
+      directGridChild: element.parentElement === grid,
+      gridColumn: getComputedStyle(element).gridColumn,
+      gridWidth: gridBounds?.width ?? 0,
+      chatWidth: chatBounds.width,
+    };
+  });
+  expect(dashboardChatLayout.directGridChild).toBe(true);
+  expect(dashboardChatLayout.gridColumn).toBe('1 / -1');
+  expect(dashboardChatLayout.chatWidth).toBeGreaterThanOrEqual(dashboardChatLayout.gridWidth - 1);
 
   const missingEpicResponse = page.waitForResponse((response) => response.url().endsWith('/api/v1/epics/missing-epic'));
   await page.goto('/epics/missing-epic');
   expect((await missingEpicResponse).status()).toBe(200);
   await expect(page.getByRole('heading', { name: 'Эпик: missing-epic' })).toBeVisible();
+  await expect(page.locator('.reference-screen--epic')).toBeVisible();
   await expect(page.getByRole('alert').filter({ hasText: 'Эпик не найден.' })).toBeVisible();
 
   const missingTaskResponse = page.waitForResponse((response) => response.url().endsWith('/api/v1/tasks/missing-task'));
   await page.goto('/tasks/missing-task');
   expect((await missingTaskResponse).status()).toBe(200);
   await expect(page.getByRole('heading', { name: 'Задача: missing-task' })).toBeVisible();
+  await expect(page.locator('.reference-screen--task')).toBeVisible();
   await expect(page.getByRole('alert').filter({ hasText: 'Задача не найдена.' })).toBeVisible();
   await page.reload();
   await expect(page.getByRole('navigation', { name: 'Навигационная цепочка' })).toContainText('Задача missing-task');
@@ -158,12 +178,16 @@ test('authenticated browser shows empty Dashboard, Approvals, Execution and the 
 
   await page.goto('/approvals');
   await expect(page.getByRole('heading', { name: 'Входящие согласования' })).toBeVisible();
+  await expect(page.locator('.reference-screen--approvals')).toBeVisible();
   await expect(page.getByText('Нет согласований, ожидающих решения.')).toBeVisible();
 
   await page.goto('/execution');
   await expect(page.getByRole('heading', { name: 'Монитор выполнения' })).toBeVisible();
-  await expect(page.getByRole('region', { name: 'Очередь выполнения' })).toContainText('Нет активных, ожидающих или заблокированных задач.');
-  await expect(page.getByRole('button', { name: 'Приостановить всё' })).toBeDisabled();
+  await expect(page.locator('.reference-screen--execution')).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Активные запуски' })).toContainText('Активных запусков нет.');
+  await expect(page.getByRole('region', { name: 'Очередь ожидания' })).toContainText('Задач в очереди ожидания нет.');
+  await expect(page.getByRole('region', { name: 'Заблокированная работа' })).toContainText('Заблокированных задач нет.');
+  await expect(page.getByRole('button', { name: 'Приостановить всё' })).toHaveCount(0);
 
   const missingRunResponse = page.waitForResponse((response) => response.url().endsWith('/api/v1/runs/missing-run'));
   await page.goto('/runs/missing-run');
@@ -173,14 +197,37 @@ test('authenticated browser shows empty Dashboard, Approvals, Execution and the 
 
   await page.goto('/usage');
   await expect(page.getByRole('heading', { name: 'Использование' })).toBeVisible();
+  await expect(page.locator('.reference-screen--usage')).toBeVisible();
   await expect(page.getByText('Нет данных об использовании, лимитов бюджета или активных резервирований.')).toBeVisible();
 
   await page.goto('/settings');
   await expect(page.getByRole('heading', { name: 'Настройки' })).toBeVisible();
+  await expect(page.locator('.reference-screen--settings')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Глобально' })).toBeVisible();
   await expect(page.getByText(/Недоступно:/).first()).toBeVisible();
   await expect(page.getByRole('button', { name: 'Изменить' })).toBeVisible();
   await assertNoBootstrapArtifacts(page);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  for (const route of ['/', '/projects/missing-project', '/epics/missing-epic', '/tasks/missing-task', '/approvals', '/execution', '/projects/new', '/settings', '/usage']) {
+    await page.goto(route);
+    await expect(page.locator('.reference-screen').first()).toBeVisible();
+    const overflow = await page.evaluate(() => ({
+      documentWidth: document.documentElement.scrollWidth,
+      viewportWidth: document.documentElement.clientWidth,
+      layout: ['.app-shell', '.left-nav', '.left-nav nav', '.main-content', '.route-outlet'].map((selector) => {
+        const element = document.querySelector(selector);
+        const rect = element?.getBoundingClientRect();
+        return { selector, width: element?.clientWidth, scrollWidth: element?.scrollWidth, left: rect?.left, right: rect?.right, overflow: element ? getComputedStyle(element).overflowX : null };
+      }),
+      elements: Array.from(document.querySelectorAll('body *'))
+        .map((element) => ({ element, rect: element.getBoundingClientRect() }))
+        .filter(({ element, rect }) => !element.closest('.left-nav') && (rect.right > document.documentElement.clientWidth + 1 || rect.left < -1))
+        .map(({ element, rect }) => `${element.tagName.toLowerCase()}.${typeof element.className === 'string' ? element.className : ''} (${Math.round(rect.left)}..${Math.round(rect.right)}) ${(element.textContent ?? '').slice(0, 40)}`)
+        .slice(0, 10),
+    }));
+    expect(overflow.documentWidth <= overflow.viewportWidth, `mobile layout overflows horizontally on ${route}: ${JSON.stringify(overflow)}`).toBe(true);
+  }
 });
 
 test('authenticated Chromium renders all populated Agent Run sections from run projections', async ({ page, e2ePassword }) => {
@@ -239,6 +286,7 @@ test('authenticated Chromium renders all populated Agent Run sections from run p
 
   await page.goto(`/runs/${runId}`);
   await expect(page.getByRole('heading', { name: `Запуск агента: ${runId}` })).toBeVisible();
+  await expect(page.locator('.reference-screen--run')).toBeVisible();
   const details = page.getByRole('region', { name: 'Сведения о запуске' });
   await expect(details).toContainText('Code Reviewer');
   await expect(details).toContainText('gpt-4.1');
@@ -249,8 +297,8 @@ test('authenticated Chromium renders all populated Agent Run sections from run p
   await expect(contextManifest).toContainText('Задача · task-456');
   await expect(contextManifest).toContainText('Не измерен');
   await expect(contextManifest).toContainText('builder-v2');
-  await expect(page.getByRole('region', { name: 'Время запуска' })).toContainText('Завершение:');
-  await expect(page.getByRole('region', { name: 'Использование запуска' })).toContainText('5000');
+  await expect(page.getByRole('region', { name: 'Время запуска' })).toContainText('Завершение');
+  await expect(page.getByRole('region', { name: 'Использование запуска' })).toContainText('5\u00a0000');
   await expect(page.getByRole('region', { name: 'События' })).toContainText('Запуск начат');
   await expect(page.getByRole('region', { name: 'Инструменты' })).toContainText('git');
   await expect(page.getByRole('region', { name: 'Разрешения' })).toContainText('Чтение кода');
@@ -260,6 +308,11 @@ test('authenticated Chromium renders all populated Agent Run sections from run p
   await expect(recovery).toContainText('Причина восстановления недоступна');
   await expect(recovery).not.toContainText('recovered after timeout');
   expect([...requested].sort()).toEqual(Object.keys(projections).sort());
+  await page.setViewportSize({ width: 390, height: 844 });
+  const mobileMetricColumns = await page.getByRole('region', { name: 'Использование запуска' }).evaluate((element) => (
+    getComputedStyle(element).gridTemplateColumns.trim().split(/\s+/).length
+  ));
+  expect(mobileMetricColumns).toBe(2);
   await assertNoBootstrapArtifacts(page);
 });
 
@@ -283,6 +336,7 @@ test('authenticated browser completes real onboarding and renders the populated 
   await page.goto('/projects/new');
 
   await expect(page.getByRole('heading', { name: 'Настройка проекта' })).toBeVisible();
+  await expect(page.locator('.reference-screen--onboarding')).toBeVisible();
   await page.getByLabel('Путь к репозиторию').fill(resolve(process.cwd(), '../..'));
   const draftResponsePromise = page.waitForResponse((response) => response.url().includes('/api/v1/onboarding/discover') && response.request().method() === 'POST');
   await page.getByRole('button', { name: 'Начать анализ' }).click();
@@ -291,7 +345,7 @@ test('authenticated browser completes real onboarding and renders the populated 
   expect(draftResponse.status()).toBe(201);
   const draft = await draftResponse.json();
   expect(draft.status).toBe('DRAFT');
-  await expect(page.getByRole('region', { name: 'Результаты анализа' })).toContainText('Статус: Черновик');
+  await expect(page.getByRole('region', { name: 'Результаты анализа' })).toContainText('Черновик');
   await expect(page.getByRole('region', { name: 'Результаты анализа' })).toContainText(draft.repository.path);
   expect((await (await page.request.get(`/api/v1/onboarding/${draft.projectId}`)).json()).status).toBe('DRAFT');
 
@@ -302,7 +356,7 @@ test('authenticated browser completes real onboarding and renders the populated 
   const pendingProjection = await (await page.request.get(`/api/v1/onboarding/${draft.projectId}`)).json();
   expect(pendingProjection.status).toBe('APPROVAL_PENDING');
   expect(pendingProjection.approval.status).toBe('PENDING');
-  await expect(page.getByRole('region', { name: 'Результаты анализа' })).toContainText('Статус: Ожидает согласования');
+  await expect(page.getByRole('region', { name: 'Результаты анализа' })).toContainText('Ожидает согласования');
 
   await page.goto('/approvals');
   await expect(page.getByRole('heading', { name: 'Входящие согласования' })).toBeVisible();
@@ -313,7 +367,7 @@ test('authenticated browser completes real onboarding and renders the populated 
   expect(await changesRequested.json()).toEqual({ status: 'CHANGES_REQUESTED' });
   await expect(page.getByText('Нет согласований, ожидающих решения.')).toBeVisible();
   await page.goto(`/onboarding/${draft.projectId}`);
-  await expect(page.getByRole('region', { name: 'Результаты анализа' })).toContainText('Статус: Черновик');
+  await expect(page.getByRole('region', { name: 'Результаты анализа' })).toContainText('Черновик');
   expect((await (await page.request.get(`/api/v1/onboarding/${draft.projectId}`)).json()).status).toBe('DRAFT');
   const repeatedAfterChanges = page.waitForResponse((response) => response.url().includes(`/api/v1/onboarding/${draft.projectId}/approval`) && response.request().method() === 'POST');
   await page.getByRole('button', { name: 'Запросить согласование' }).click();
@@ -321,13 +375,13 @@ test('authenticated browser completes real onboarding and renders the populated 
   expect(requestedAfterChanges.status()).toBe(201);
   const projectionAfterChanges = await requestedAfterChanges.json();
   expect(projectionAfterChanges.approval.id).not.toBe(pendingProjection.approval.id);
-  await expect(page.getByRole('region', { name: 'Результаты анализа' })).toContainText('Статус: Ожидает согласования');
+  await expect(page.getByRole('region', { name: 'Результаты анализа' })).toContainText('Ожидает согласования');
 
   await page.goto('/approvals');
   await page.getByRole('button', { name: 'Отклонить' }).click();
   await expect(page.getByText('Нет согласований, ожидающих решения.')).toBeVisible();
   await page.goto(`/onboarding/${draft.projectId}`);
-  await expect(page.getByRole('region', { name: 'Результаты анализа' })).toContainText('Статус: Черновик');
+  await expect(page.getByRole('region', { name: 'Результаты анализа' })).toContainText('Черновик');
   expect((await (await page.request.get(`/api/v1/onboarding/${draft.projectId}`)).json()).status).toBe('DRAFT');
   const repeatedRequest = page.waitForResponse((response) => response.url().includes(`/api/v1/onboarding/${draft.projectId}/approval`) && response.request().method() === 'POST');
   await page.getByRole('button', { name: 'Запросить согласование' }).click();
@@ -335,7 +389,7 @@ test('authenticated browser completes real onboarding and renders the populated 
   expect(requestedAfterRejection.status()).toBe(201);
   const projectionAfterRejection = await requestedAfterRejection.json();
   expect(projectionAfterRejection.approval.id).not.toBe(projectionAfterChanges.approval.id);
-  await expect(page.getByRole('region', { name: 'Результаты анализа' })).toContainText('Статус: Ожидает согласования');
+  await expect(page.getByRole('region', { name: 'Результаты анализа' })).toContainText('Ожидает согласования');
 
   const approveResponsePromise = page.waitForResponse((response) => response.url().includes(`/api/v1/onboarding/${draft.projectId}/approve`) && response.request().method() === 'POST');
   await page.getByRole('button', { name: 'Утвердить' }).click();
@@ -344,7 +398,7 @@ test('authenticated browser completes real onboarding and renders the populated 
   const approvedProjection = await (await page.request.get(`/api/v1/onboarding/${draft.projectId}`)).json();
   expect(approvedProjection.status).toBe('APPROVED');
   expect(approvedProjection.approval.status).toBe('APPROVED');
-  await expect(page.getByRole('region', { name: 'Результаты анализа' })).toContainText('Статус: Согласовано');
+  await expect(page.getByRole('region', { name: 'Результаты анализа' })).toContainText('Согласовано');
 
   const activateResponsePromise = page.waitForResponse((response) => response.url().includes(`/api/v1/onboarding/${draft.projectId}/activate`) && response.request().method() === 'POST');
   await page.getByRole('button', { name: 'Активировать' }).click();
@@ -353,7 +407,7 @@ test('authenticated browser completes real onboarding and renders the populated 
   const activeProjection = await (await page.request.get(`/api/v1/onboarding/${draft.projectId}`)).json();
   expect(activeProjection.status).toBe('ACTIVE');
   expect(activeProjection.approval.status).toBe('APPROVED');
-  await expect(page.getByRole('region', { name: 'Результаты анализа' })).toContainText('Статус: Активно');
+  await expect(page.getByRole('region', { name: 'Результаты анализа' })).toContainText('Активно');
 
   const projectResponsePromise = page.waitForResponse((response) => response.url().endsWith(`/api/v1/projects/${draft.projectId}`));
   await page.goto(`/projects/${encodeURIComponent(draft.projectId)}`);
@@ -364,6 +418,7 @@ test('authenticated browser completes real onboarding and renders the populated 
   expect(project.git.repositoryPath).toBe(resolve(process.cwd(), '../..'));
 
   await expect(page.getByRole('heading', { name: `Проект: ${project.project.displayName ?? project.project.name}` })).toBeVisible();
+  await expect(page.locator('.reference-screen--project')).toBeVisible();
   await expect(page.getByRole('region', { name: 'Сведения о проекте' })).toContainText('Активно');
   await expect(page.getByRole('region', { name: 'Репозиторий и GitHub' })).toContainText(project.git.repositoryPath);
   await expect(page.getByRole('region', { name: 'Эпики и задачи' })).toContainText('Эпиков нет.');

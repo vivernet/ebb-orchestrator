@@ -1,5 +1,6 @@
 import { describe, expect, test, vi, beforeEach, afterEach } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { MemoryRouter } from 'react-router';
 import ApprovalInboxPage, { mapApprovalRow } from '../src/features/approvals/ApprovalInboxPage.js';
 import DashboardPage from '../src/features/dashboard/DashboardPage.js';
 import * as dashboardApi from '../src/features/dashboard/api.js';
@@ -28,11 +29,11 @@ describe('approval UI/API remediation', () => {
       resolution_note: null, created_at: '2026-09-17T00:00:00Z', resolved_at: null,
     }] });
     const post = vi.spyOn(apiClient, 'post').mockResolvedValue({});
-    render(<ApprovalInboxPage />);
+    render(<MemoryRouter><ApprovalInboxPage /></MemoryRouter>);
     expect(await screen.findByRole('button', { name: 'Согласовать' })).toBeInTheDocument();
-    expect(screen.getByText('Задача')).toHaveAttribute('data-status', 'task');
-    expect(screen.getByText('Финальное слияние')).toBeInTheDocument();
-    expect(screen.getByText('Задача task-1')).toBeInTheDocument();
+    const details = screen.getByRole('region', { name: 'Детали согласования' });
+    expect(details).toHaveTextContent('Финальное слияние');
+    expect(details).toHaveTextContent('Задача task-1');
     expect(screen.queryByText(/FINAL_MERGE|TASK task-1/)).not.toBeInTheDocument();
     expect(await screen.findByRole('button', { name: 'Отклонить' })).toBeInTheDocument();
     expect(await screen.findByRole('button', { name: 'Запросить изменения' })).toBeInTheDocument();
@@ -43,16 +44,17 @@ describe('approval UI/API remediation', () => {
   test('uses safe fallback labels for unknown approval codes while preserving the DTO', async () => {
     const row = { id: 'approval-unknown', type: 'SECRET_APPROVAL_123', subject_id: 'task-1', subject_type: 'SECRET_SCOPE_123', status: 'PENDING', requested_by: 'orchestrator', resolved_by: null, resolution_note: null, created_at: '2026-09-17T00:00:00Z', resolved_at: null };
     vi.spyOn(apiClient, 'get').mockResolvedValue({ approvals: [row] });
-    render(<ApprovalInboxPage />);
-    expect(await screen.findByText('Неизвестный тип согласования')).toBeInTheDocument();
-    expect(screen.getByText('Объект task-1')).toBeInTheDocument();
+    render(<MemoryRouter><ApprovalInboxPage /></MemoryRouter>);
+    const details = await screen.findByRole('region', { name: 'Детали согласования' });
+    expect(details).toHaveTextContent('Неизвестный тип согласования');
+    expect(details).toHaveTextContent('Объект task-1');
     expect(screen.queryByText(/SECRET_APPROVAL_123|SECRET_SCOPE_123/)).not.toBeInTheDocument();
     expect(mapApprovalRow(row)).toMatchObject({ action: row.type, description: `${row.subject_type} ${row.subject_id}` });
   });
 
   test('loads the inbox through the canonical query path with AbortSignal', async () => {
     const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ approvals: [] });
-    render(<ApprovalInboxPage />);
+    render(<MemoryRouter><ApprovalInboxPage /></MemoryRouter>);
 
     expect(await screen.findByText('Нет согласований, ожидающих решения.')).toBeInTheDocument();
     expect(get).toHaveBeenCalledWith('/approvals', expect.objectContaining({ signal: expect.any(AbortSignal) }));
@@ -60,7 +62,7 @@ describe('approval UI/API remediation', () => {
 
   test('refetches the inbox after SSE reconnect and keeps the empty state explicit', async () => {
     const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ approvals: [] });
-    render(<ApprovalInboxPage />);
+    render(<MemoryRouter><ApprovalInboxPage /></MemoryRouter>);
 
     await screen.findByText('Нет согласований, ожидающих решения.');
     window.dispatchEvent(new CustomEvent('sse-reconnect'));
@@ -79,7 +81,7 @@ describe('approval UI/API remediation', () => {
       }] })
       .mockResolvedValueOnce({ approvals: [] });
     const post = vi.spyOn(apiClient, 'post').mockReturnValue(approve);
-    render(<ApprovalInboxPage />);
+    render(<MemoryRouter><ApprovalInboxPage /></MemoryRouter>);
 
     const button = await screen.findByRole('button', { name: 'Согласовать' });
     fireEvent.click(button);
@@ -94,7 +96,7 @@ describe('approval UI/API remediation', () => {
 
   test('renders approval load failures with a retry affordance', async () => {
     const get = vi.spyOn(apiClient, 'get').mockRejectedValueOnce(new Error('network down')).mockResolvedValueOnce({ approvals: [] });
-    render(<ApprovalInboxPage />);
+    render(<MemoryRouter><ApprovalInboxPage /></MemoryRouter>);
     expect(await screen.findByText('Не удалось загрузить согласования: Не удалось выполнить запрос.')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Повторить' }));
     await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
@@ -108,7 +110,7 @@ describe('approval UI/API remediation', () => {
       resolution_note: null, created_at: '2026-09-17T00:00:00Z', resolved_at: null,
     }] });
     vi.spyOn(apiClient, 'post').mockRejectedValue(new Error('approval unavailable'));
-    render(<ApprovalInboxPage />);
+    render(<MemoryRouter><ApprovalInboxPage /></MemoryRouter>);
     fireEvent.click(await screen.findByRole('button', { name: 'Согласовать' }));
     expect(await screen.findByText('Не удалось обновить согласование: Не удалось выполнить запрос.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Согласовать' })).not.toBeDisabled();
@@ -129,11 +131,13 @@ describe('dashboard failure states', () => {
   test('renders explicit projection and queue errors with retry affordances', async () => {
     vi.spyOn(dashboardApi, 'getDashboard').mockRejectedValue(new Error('server unavailable'));
     vi.spyOn(dashboardApi, 'getExecutionQueue').mockRejectedValue(new Error('server unavailable'));
-    render(<DashboardPage />);
-    expect(await screen.findByText('Не удалось загрузить обзор: Не удалось выполнить запрос.')).toBeInTheDocument();
+    render(<MemoryRouter><DashboardPage /></MemoryRouter>);
+    expect(await screen.findByText('Не удалось загрузить сводные показатели: Не удалось выполнить запрос.')).toBeInTheDocument();
     expect(screen.getByText('Не удалось загрузить очередь: Не удалось выполнить запрос.')).toBeInTheDocument();
-    const retryButtons = screen.getAllByRole('button', { name: 'Повторить' });
-    expect(retryButtons).toHaveLength(2);
+    const retryButtons = [
+      within(screen.getByRole('region', { name: 'Ключевые показатели' })).getByRole('button', { name: 'Повторить' }),
+      within(screen.getByRole('region', { name: 'Очередь выполнения' })).getByRole('button', { name: 'Повторить' }),
+    ];
     // Clicking retry buttons should not crash
     fireEvent.click(retryButtons.at(0)!);
     fireEvent.click(retryButtons.at(1)!);
@@ -142,15 +146,15 @@ describe('dashboard failure states', () => {
   test('localizes recognized API codes and never renders arbitrary error details', async () => {
     vi.spyOn(dashboardApi, 'getDashboard').mockRejectedValue(new ApiError('secret: db host=internal', 403, 'AUTH_FORBIDDEN'));
     vi.spyOn(dashboardApi, 'getExecutionQueue').mockRejectedValue(new Error('secret: queue backend detail'));
-    render(<DashboardPage />);
+    render(<MemoryRouter><DashboardPage /></MemoryRouter>);
 
-    expect(await screen.findByText('Не удалось загрузить обзор: Доступ запрещён.')).toBeInTheDocument();
+    expect(await screen.findByText('Не удалось загрузить сводные показатели: Доступ запрещён.')).toBeInTheDocument();
     expect(screen.getByText('Не удалось загрузить очередь: Не удалось выполнить запрос.')).toBeInTheDocument();
     expect(screen.queryByText(/secret:|internal|backend detail/)).not.toBeInTheDocument();
   });
 
   test('does not expose dead dashboard actions', () => {
-    render(<DashboardPage />);
+    render(<MemoryRouter><DashboardPage /></MemoryRouter>);
     expect(screen.queryByRole('button', { name: /Приостановить|Пауза/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Новый запрос|Создать запрос/ })).not.toBeInTheDocument();
   });

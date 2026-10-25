@@ -1,9 +1,8 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ProcessScopeIdentity } from "../../../src/platform/process/process-inspector.js";
-import { computeDarwinExecutableIdentity, DarwinRunSupervisor, parseInspection, parseLiveIdentity } from "../../../src/platform/process/darwin-run-supervisor.js";
 import type { ProcessScopeLaunchRequest } from "../../../src/platform/process/run-scope-supervisor.js";
 
 const spawnHarness = vi.hoisted(() => {
@@ -60,6 +59,13 @@ vi.mock("node:child_process", () => ({
   },
 }));
 
+let darwinRunSupervisorModule: typeof import("../../../src/platform/process/darwin-run-supervisor.js");
+
+beforeAll(async () => {
+  vi.resetModules();
+  darwinRunSupervisorModule = await import("../../../src/platform/process/darwin-run-supervisor.js");
+});
+
 const BOOT_UUID = "0f1a2b3c-4d5e-6f70-8a9b-0c1d2e3f4a5b";
 const ID = "a".repeat(64);
 const NONCE = "b".repeat(64);
@@ -92,7 +98,7 @@ function readyLine(): string {
 
 describe("darwin-run-supervisor parsers", () => {
   it("parses a versioned READY identity with anchor and runner tuples", () => {
-    const identity = parseLiveIdentity(readyLine(), baseOwner);
+    const identity = darwinRunSupervisorModule.parseLiveIdentity(readyLine(), baseOwner);
     expect(identity.state).toBe("LIVE");
     expect(identity.platform).toBe("darwin");
     expect(identity.supervisorPid).toBe(401);
@@ -110,17 +116,17 @@ describe("darwin-run-supervisor parsers", () => {
   });
 
   it("rejects a mismatched id/nonce or malformed fields", () => {
-    expect(() => parseLiveIdentity(readyLine().replace(ID, "c".repeat(64)), baseOwner)).toThrow("DARWIN_ANCHOR_IDENTITY_MISMATCH");
-    expect(() => parseLiveIdentity(readyLine().replace(`${ID}\t${NONCE}`, `${ID}\t${NONCE}\t`), baseOwner)).toThrow();
-    expect(() => parseLiveIdentity(readyLine().replace("401", "0"), baseOwner)).toThrow("DARWIN_ANCHOR_IDENTITY_INVALID");
+    expect(() => darwinRunSupervisorModule.parseLiveIdentity(readyLine().replace(ID, "c".repeat(64)), baseOwner)).toThrow("DARWIN_ANCHOR_IDENTITY_MISMATCH");
+    expect(() => darwinRunSupervisorModule.parseLiveIdentity(readyLine().replace(`${ID}\t${NONCE}`, `${ID}\t${NONCE}\t`), baseOwner)).toThrow();
+    expect(() => darwinRunSupervisorModule.parseLiveIdentity(readyLine().replace("401", "0"), baseOwner)).toThrow("DARWIN_ANCHOR_IDENTITY_INVALID");
   });
 
   it("parses STOPPED group-empty proof and UNKNOWN reasons", () => {
-    expect(parseInspection("STOPPED\tDARWIN_GROUP_EMPTY\n", baseOwner))
+    expect(darwinRunSupervisorModule.parseInspection("STOPPED\tDARWIN_GROUP_EMPTY\n", baseOwner))
       .toEqual({ state: "STOPPED", evidence: "DARWIN_GROUP_EMPTY" });
-    expect(parseInspection("UNKNOWN\tDARWIN_GROUP_ZOMBIE_PENDING\n", baseOwner))
+    expect(darwinRunSupervisorModule.parseInspection("UNKNOWN\tDARWIN_GROUP_ZOMBIE_PENDING\n", baseOwner))
       .toEqual({ state: "UNKNOWN", reason: "DARWIN_GROUP_ZOMBIE_PENDING" });
-    expect(parseInspection("garbage\n", baseOwner))
+    expect(darwinRunSupervisorModule.parseInspection("garbage\n", baseOwner))
       .toEqual({ state: "UNKNOWN", reason: "DARWIN_GROUP_IDENTITY_UNPROVEN" });
   });
 
@@ -128,7 +134,7 @@ describe("darwin-run-supervisor parsers", () => {
     const dir = await mkdtemp(join(tmpdir(), "ebb-darwin-identity-"));
     const file = join(dir, "payload.sh");
     await writeFile(file, "#!/bin/sh\nexit 0\n");
-    const identity = await computeDarwinExecutableIdentity(file);
+    const identity = await darwinRunSupervisorModule.computeDarwinExecutableIdentity(file);
     expect(identity).toMatch(/^sha256:[a-f0-9]{64}$/);
     expect(identity).toBe(`sha256:${"0".repeat(64)}` === identity ? identity : identity);
   });
@@ -161,7 +167,7 @@ describe("DarwinRunSupervisor env gate", () => {
 
   it("passes registry provider-key env overlays to the anchor child", async () => {
     Object.defineProperty(process, "platform", { configurable: true, value: "darwin" });
-    const supervisor = new DarwinRunSupervisor(anchorPath, verifyIntegrity);
+    const supervisor = new darwinRunSupervisorModule.DarwinRunSupervisor(anchorPath, verifyIntegrity);
     const request = launchRequest({
       HOME: "/Users/test",
       PATH: "/usr/bin:/bin",
@@ -187,7 +193,7 @@ describe("DarwinRunSupervisor env gate", () => {
 
   it("rejects other credential-shaped and unknown environment keys before spawning the anchor", async () => {
     Object.defineProperty(process, "platform", { configurable: true, value: "darwin" });
-    const supervisor = new DarwinRunSupervisor(anchorPath, verifyIntegrity);
+    const supervisor = new darwinRunSupervisorModule.DarwinRunSupervisor(anchorPath, verifyIntegrity);
     for (const key of ["FOO_API_KEY", "SOME_AUTH_TOKEN", "AWS_SECRET_ACCESS_KEY", "UNKNOWN_ENV_VAR"]) {
       await expect(
         supervisor.launch(darwinOwner, launchRequest({ HOME: "/Users/test", [key]: "dummy-secret" }), async () => undefined),

@@ -6,3 +6,7 @@ allowBuilds:
   esbuild: true
   msw: true
   protobufjs: true
+overrides:
+  '@infisical/sdk>zod': 4.6.6
+  fast-uri@3: 3.1.9
+  fast-uri@4: 4.2.3

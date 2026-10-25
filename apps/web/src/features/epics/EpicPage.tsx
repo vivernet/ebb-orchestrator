@@ -27,7 +27,7 @@ export default function EpicPage({ id }: EpicPageProps) {
   useOnSSEReconnect(refresh);
 
   return (
-    <div className="epic-page page-stack">
+    <div className="epic-page page-stack reference-screen reference-screen--epic">
       <div className="topbar">
         <div>
           <h1>{`Эпик: ${epic?.title ?? epic?.display_id ?? id}`}</h1>
@@ -39,8 +39,15 @@ export default function EpicPage({ id }: EpicPageProps) {
       {notFound && <ErrorAlert message="Эпик не найден." onRetry={retry} />}
       {recoveryFailureCode && <p role="alert">Восстановление Epic заблокировано. Код ошибки: <code>{recoveryFailureCode}</code>.</p>}
       {projection && !notFound && (
-        <div className="grid2">
-          <section aria-label="Жизненный цикл эпика и граф параллельной работы">
+        <>
+        <section className="reference-metrics" aria-label="Сводка эпика">
+          <div className="reference-metric"><span>Статус</span><strong>{statusLabel(recoveryFailureCode ? 'BLOCKED' : epic?.status)}</strong></div>
+          <div className="reference-metric"><span>Задачи</span><strong>{projection.tasks.length}</strong></div>
+          <div className="reference-metric"><span>Согласования</span><strong>{projection.approvals.length}</strong></div>
+          <div className="reference-metric"><span>Использование</span><strong>{projection.usage.totalTokens.toLocaleString('ru-RU')} токенов</strong><small>${projection.usage.cost.toFixed(2)}</small></div>
+        </section>
+        <div className="grid2 reference-columns">
+          <section className="reference-panel" aria-label="Жизненный цикл эпика и граф параллельной работы">
             <div className="panel-head"><h3>{ru.epics.lifecycleTitle}</h3></div>
             <p>{`${projection.lifecycle.stage ? epicStageLabel(projection.lifecycle.stage) : statusLabel(epic?.status)} · ${projection.tasks?.length ?? 0} задач`}</p>
             <ol aria-label="Этапы жизненного цикла эпика">
@@ -48,11 +55,11 @@ export default function EpicPage({ id }: EpicPageProps) {
             </ol>
             <div className="row"><span className="muted">Использование</span><span>{`${projection.usage.totalTokens} токенов · $${projection.usage.cost.toFixed(2)}`}</span></div>
           </section>
-          <section aria-label="Контракт эпика">
+          <section className="reference-panel" aria-label="Контракт эпика">
             <div className="panel-head"><h3>{ru.epics.contractTitle}</h3></div>
             <p>{projection.contract ? JSON.stringify(projection.contract) : ru.epics.noContract}</p>
           </section>
-          <section aria-label="Ветка / согласования / блокировки">
+          <section className="reference-panel" aria-label="Ветка / согласования / блокировки">
             <div className="panel-head"><h3>{ru.epics.branchTitle}</h3></div>
             <p>{`${projection.git.branch ?? 'Ветка не указана'} · ${projection.git.repositoryPath ?? 'Репозиторий не указан'} · ${projection.approvals.length} согласований · ${projection.blockers.length} блокировок`}</p>
             <div className="panel-head"><h3>{ru.epics.blockersTitle}</h3></div>
@@ -60,14 +67,14 @@ export default function EpicPage({ id }: EpicPageProps) {
               {projection.blockers.length === 0 ? <li>Блокировок нет.</li> : projection.blockers.map((blocker) => <li key={blocker.id}>{blocker.reason ?? blocker.status}</li>)}
             </ul>
           </section>
-          <section aria-label="События / проверка / контроль качества / слияние">
+          <section className="reference-panel" aria-label="События / проверка / контроль качества / слияние">
             <div className="panel-head"><h3>{ru.epics.eventsTitle}</h3></div>
             <p>{`${projection.events.length} событий`}</p>
             <ul>
               {projection.events.length === 0 ? <li>Событий нет.</li> : projection.events.map((event) => <li key={event.id}>{event.type} · <time dateTime={event.createdAt}>{new Date(event.createdAt).toLocaleString()}</time></li>)}
             </ul>
           </section>
-          <section aria-label="Задачи">
+          <section className="reference-panel epic-tasks-panel" aria-label="Задачи">
             <div className="panel-head"><h3>{ru.epics.tasksTitle}</h3></div>
             <ul>
               {projection.tasks.length === 0 ? <li>{ru.epics.tasksEmpty}</li> : projection.tasks.map((task) => {
@@ -77,6 +84,7 @@ export default function EpicPage({ id }: EpicPageProps) {
             </ul>
           </section>
         </div>
+        </>
       )}
     </div>
   );

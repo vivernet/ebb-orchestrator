@@ -67,6 +67,13 @@ export function mapApprovalRow(row: ApprovalRow): Approval {
   };
 }
 
+function approvalSubjectDescription(description: string): string {
+  const separator = description.indexOf(' ');
+  const type = separator < 0 ? description : description.slice(0, separator);
+  const id = separator < 0 ? '' : description.slice(separator + 1);
+  return [approvalSubjectLabel(type), id].filter(Boolean).join(' ');
+}
+
 function errorMessage(error: unknown): string {
   return apiErrorMessage(error instanceof ApiError ? error.code : undefined);
 }
@@ -82,6 +89,7 @@ export default function ApprovalInboxPage(_props: ApprovalInboxProps) {
   const mutationStore = useMemo(() => createMutationStore(), []);
   const [mutationState, setMutationState] = useState<MutationState<unknown>>(() => mutationStore.get('approve'));
   const [notes, setNotes] = useState<Record<string, string>>({});
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   useEffect(() => mutationStore.subscribe('approve', setMutationState), [mutationStore]);
   const retry = useCallback(() => { void query.refetch().catch(() => undefined); }, [query.refetch]);
   useOnSSEReconnect(retry);
@@ -105,6 +113,7 @@ export default function ApprovalInboxPage(_props: ApprovalInboxProps) {
 
   const согласований = query.data?.approvals.map(mapApprovalRow) ?? [];
   const pendingApprovals = согласований.filter((approval) => approval.status === 'pending');
+  const selectedApproval = pendingApprovals.find((approval) => approval.id === selectedId) ?? pendingApprovals[0] ?? null;
 
   if (query.status === 'loading' || query.status === 'idle') return <PageState status="loading" message="Загрузка согласований…" />;
 
@@ -113,7 +122,7 @@ export default function ApprovalInboxPage(_props: ApprovalInboxProps) {
   }
 
   return (
-    <div className="approval-inbox-page page-stack">
+    <div className="approval-inbox-page page-stack reference-screen reference-screen--approvals">
       <div className="topbar">
         <div>
           <h1>Входящие согласования</h1>
@@ -122,32 +131,56 @@ export default function ApprovalInboxPage(_props: ApprovalInboxProps) {
       </div>
       {mutationState.status === 'error' && <ErrorAlert message={`Не удалось обновить согласование: ${errorMessage(mutationState.error)}`} onRetry={retry} />}
       {pendingApprovals.length === 0 ? <EmptyState message="Нет согласований, ожидающих решения." /> : (
-        <ul className="approval-list">
-          {pendingApprovals.map((approval) => (
-            <li key={approval.id} className="approval-item">
-              <div className="approval-header"><strong>{approvalTypeLabel(approval.action)}</strong><StatusBadge status={approval.scope} label={approval.scope} /></div>
-              <p className="approval-description">{approvalSubjectLabel(approval.description.split(' ')[0] ?? '')} {approval.description.slice(approval.description.indexOf(' ') + 1)}</p>
-              <div className="approval-context"><small>{approval.requestedBy}</small></div>
+        <div className="approval-layout">
+          <section className="reference-panel approval-queue" aria-label="Очередь согласований">
+            <div className="section-heading"><h2>Ожидают решения</h2><span>{pendingApprovals.length}</span></div>
+            <ul className="approval-list">
+              {pendingApprovals.map((approval) => (
+                <li key={approval.id} className="approval-item">
+                  <button
+                    type="button"
+                    className="approval-select"
+                    aria-pressed={selectedApproval?.id === approval.id}
+                    onClick={() => setSelectedId(approval.id)}
+                  >
+                    <span className="approval-select__title">{approvalTypeLabel(approval.action)}</span>
+                    <span className="approval-select__subject">{approvalSubjectDescription(approval.description)}</span>
+                    <span className="approval-select__meta">{approval.requestedBy} · <StatusBadge status={approval.scope} label={approval.scope} /></span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </section>
+          {selectedApproval && (
+            <section className="reference-panel approval-detail" aria-label="Детали согласования">
+              <div className="section-heading">
+                <div><h2>{approvalTypeLabel(selectedApproval.action)}</h2><p>{approvalSubjectDescription(selectedApproval.description)}</p></div>
+                <StatusBadge status={selectedApproval.scope} label={selectedApproval.scope} />
+              </div>
+              <dl className="approval-facts">
+                <div><dt>Запросил</dt><dd>{selectedApproval.requestedBy}</dd></div>
+                <div><dt>Создано</dt><dd><time dateTime={selectedApproval.createdAt}>{new Date(selectedApproval.createdAt).toLocaleString()}</time></dd></div>
+              </dl>
+              <p className="reference-callout">Текущий API предоставляет только краткую запись согласования, без связанного evidence или истории изменений.</p>
               <div className="approval-content">
-                <label htmlFor={`approval-note-${approval.id}`}>Комментарий к решению</label>
+                <label htmlFor={`approval-note-${selectedApproval.id}`}>Комментарий к решению</label>
                 <textarea
-                  id={`approval-note-${approval.id}`}
-                  value={notes[approval.id] ?? ''}
-                  onChange={(event) => setNotes((prev) => ({ ...prev, [approval.id]: event.target.value }))}
+                  id={`approval-note-${selectedApproval.id}`}
+                  value={notes[selectedApproval.id] ?? ''}
+                  onChange={(event) => setNotes((prev) => ({ ...prev, [selectedApproval.id]: event.target.value }))}
                   placeholder="Комментарий (необязательно)…"
-                  rows={2}
+                  rows={3}
                   maxLength={2000}
                 />
               </div>
               <div className="approval-actions">
-                <button type="button" disabled={mutationState.status === 'pending'} onClick={() => void handleApprove(approval.id)}>Согласовать</button>
-                <button type="button" disabled={mutationState.status === 'pending'} onClick={() => void handleReject(approval.id)} style={{ marginLeft: '8px' }}>Отклонить</button>
-                <button type="button" disabled={mutationState.status === 'pending'} onClick={() => void handleRequestChanges(approval.id)} style={{ marginLeft: '8px' }}>Запросить изменения</button>
+                <button type="button" className="btn-good" disabled={mutationState.status === 'pending'} onClick={() => void handleApprove(selectedApproval.id)}>Согласовать</button>
+                <button type="button" className="btn-bad" disabled={mutationState.status === 'pending'} onClick={() => void handleReject(selectedApproval.id)}>Отклонить</button>
+                <button type="button" className="btn-ghost" disabled={mutationState.status === 'pending'} onClick={() => void handleRequestChanges(selectedApproval.id)}>Запросить изменения</button>
               </div>
-              <div className="approval-meta"><small>Создано: {new Date(approval.createdAt).toLocaleString()}</small></div>
-            </li>
-          ))}
-        </ul>
+            </section>
+          )}
+        </div>
       )}
     </div>
   );

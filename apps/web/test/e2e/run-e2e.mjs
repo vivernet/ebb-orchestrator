@@ -2,8 +2,7 @@ import { Buffer } from "node:buffer";
 import { createRequire } from "node:module";
 import { clearTimeout, setTimeout } from "node:timers";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { randomBytes, randomUUID } from "node:crypto";
 import { createServer, connect } from "node:net";
@@ -325,7 +324,10 @@ async function assertCleanSqliteAndHome() {
 
 try {
   frontendPort = await allocateLoopbackPort();
-  e2eHome = await mkdtemp(join(tmpdir(), "ebb-orchestrator-e2e-"));
+  const repositoryTempRoot = join(repoRoot, "temp");
+  await mkdir(repositoryTempRoot, { recursive: true });
+  e2eHome = join(repositoryTempRoot, `ebb-orchestrator-e2e-${process.pid}-${randomUUID()}`);
+  await mkdir(e2eHome, { mode: 0o700 });
   const detachedProcessLedger = process.platform === "win32" ? undefined : join(e2eHome, "detached-process-groups.jsonl");
   if (detachedProcessLedger) await writeFile(detachedProcessLedger, "", { flag: "wx", mode: 0o600 });
   let backendReady;

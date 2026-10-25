@@ -68,9 +68,9 @@ Roadmap описывает возможные будущие направлен�
 
 ## 4. Git policy
 
-Default/integration branch этого репозитория — `develop`. Обычные feature/bugfix/audit/documentation/chore задачи начинаются от зафиксированного актуального `develop` в отдельной task branch и изолированном Git worktree. Review фиксирует task SHA; после squash PR в `develop` отдельно фиксируется integrated SHA. Это разные identities; зелёные проверки task SHA не доказывают проверки integrated/release SHA.
+Default/integration branch этого репозитория — `develop`. Обычные feature/bugfix/audit/documentation/chore задачи начинаются от зафиксированного актуального `develop` в отдельной task branch и изолированном Git worktree. До первого опубликованного production release действует временный режим: после независимого review и обязательных gates task branch интегрируется прямым fast-forward в `develop`, без PR, squash или merge commit. Этот режим заменяет PR-only workflow в общих `ebb-*` skills; review и проверки не отменяются. После первого production release необходимо восстановить PR-review protection и обычную интеграцию через squash PR. Task SHA и фактический integrated SHA фиксируются раздельно, даже если fast-forward сохраняет тот же SHA; checks task SHA сами по себе не доказывают проверки integrated/release SHA.
 
-Все обычные PR направляются в `develop` и интегрируются squash merge. Ветка `master` принадлежит только опубликованным release snapshots, не является обычной integration/deployment branch и отсутствует до первого production release. Legacy `master`, синхронный `develop`, удаляется отдельным подтверждённым переходом после проверки фактической истории/refs и миграции default branch. До этого перехода публикация BLOCKED; не удалять master на основании старого утверждения о равенстве веток.
+Временный pre-first-release режим снимает только требование создавать PR для обновления `develop`; запрет удаления веток и force-push остаётся включённым. Требуемые локальные/CI gates, независимое review и подтверждение exact fast-forward сохраняются. После первого опубликованного production release PR requirement и review requirement должны быть восстановлены; `master` принадлежит только опубликованным release snapshots, не является обычной integration/deployment branch и отсутствует до первого production release. Legacy `master`, синхронный `develop`, удаляется отдельным подтверждённым переходом после проверки фактической истории/refs и миграции default branch. До этого перехода публикация BLOCKED; не удалять master на основании старого утверждения о равенстве веток.
 
 Первый release commit — root с точным tree одобренного pinned source. Следующий имеет ровно один parent — предыдущий `master` — и точный tree нового pinned source. Не merge/squash develop history в master; не создавать dummy baseline, restore или archival commits. Release candidate SHA отличается от task/integrated SHA.
 
@@ -82,12 +82,12 @@ Withdrawal/rollback последнего surviving release удаляет exact 
 
 По умолчанию implementation и independent review выполняются task subagents, одновременно максимум два subagents всех roles; увеличение лимита требует нового явного разрешения пользователя. Контроллер координирует и интегрирует, не подменяет implementation/review inline.
 
-Авторизованная implementation-задача разрешает создание своей task branch/worktree в указанном scope; повторное разрешение на каждый локальный шаг не требуется. Не выполнять без явного разрешения пользователя:
+Авторизованная implementation-задача разрешает создание своей task branch/worktree в указанном scope; повторное разрешение на каждый локальный шаг не требуется. До первого production release пользователь также разрешил прямые fast-forward обновления `develop` после обязательных gates/review и временное снятие только `pull_request` rule с `develop-protection`; удаление/force-push protections остаются активны. Не выполнять без отдельного явного разрешения пользователя:
 
-- `git push`, включая temporary release-candidate refs;
+- `git push`, кроме описанного выше fast-forward в `develop`;
 - final squash merge в `develop`;
 - публикацию или withdrawal release и соответствующие Git/GitHub/GHCR mutations;
-- изменение default branch/rulesets, legacy master retirement или предоставление workflow mutation rights;
+- любые другие изменения default branch/rulesets, legacy master retirement или предоставление workflow mutation rights;
 - `git rebase` существующей рабочей ветки;
 - `git reset --hard`;
 - `git clean -fd` / `git clean -fdx`;

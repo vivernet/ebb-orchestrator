@@ -68,42 +68,32 @@ export default function UsagePage() {
     ? [{ context, limit: context.effectiveLimit }]
     : []);
   if (!hasUsage(data)) {
-    return <div className="usage-page"><h1>Использование</h1><EmptyState message="Нет данных об использовании, лимитов бюджета или активных резервирований." /></div>;
+    return <div className="usage-page reference-screen reference-screen--usage"><h1>Использование</h1><EmptyState message="Нет данных об использовании, лимитов бюджета или активных резервирований." /></div>;
   }
 
   return (
-    <div className="usage-page page-stack">
+    <div className="usage-page page-stack reference-screen reference-screen--usage">
       <div className="topbar">
         <div>
-          <h1>Использование</h1>
+          <h1>Использование и бюджет</h1>
           <div className="sub">Агрегированные показатели и состояние бюджетов доступны только для чтения.</div>
         </div>
       </div>
 
-      <div className="cards" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
-        <div className="card">
-          <div className="card-label">Токены</div>
-          <div className="card-value">{data.global.totalTokens}</div>
-          <div className="trend">{`вход ${data.global.inputTokens} · кэш ${data.global.cachedTokens} · выход ${data.global.outputTokens}`}</div>
-        </div>
-        <div className="card">
-          <div className="card-label">Израсходовано</div>
-          <div className="card-value">{formatCost(data.global.cost)}</div>
-          <div className="trend">{data.budget.configurations.length > 0 ? `лимитов: ${data.budget.configurations.length}` : 'лимиты не настроены'}</div>
-        </div>
-        <div className="card">
-          <div className="card-label">Бюджет проекта</div>
-          <div className="card-value">{data.budget.activeReservations.length}</div>
-          <div className="trend">активных резервирований</div>
-        </div>
-      </div>
+      <section className="reference-metrics" aria-label="Сводка использования">
+        <div className="reference-metric"><span>Токены</span><strong>{data.global.totalTokens.toLocaleString('ru-RU')}</strong><small>{`вход ${data.global.inputTokens} · кэш ${data.global.cachedTokens} · выход ${data.global.outputTokens}`}</small></div>
+        <div className="reference-metric"><span>Израсходовано</span><strong>{formatCost(data.global.cost)}</strong><small>{data.budget.configurations.length > 0 ? `лимитов: ${data.budget.configurations.length}` : 'лимиты не настроены'}</small></div>
+        <div className="reference-metric"><span>Активные резервирования</span><strong>{data.budget.activeReservations.length}</strong></div>
+      </section>
 
-      <section aria-label="Сводные показатели использования" className="metric-grid">
+      <section className="reference-panel" aria-label="Сводные показатели использования">
+        <div className="section-heading"><h2>Использование по областям</h2><p>Группировка записей отражает scope, указанный в read model.</p></div>
+        <div className="usage-scope-grid">
         {metricBucketLabels.map(([key, label]) => {
           const bucket = data[key];
           return (
-            <article key={key} className="table-card">
-              <h2>{label}</h2>
+            <article key={key} className="usage-scope">
+              <h3>{label}</h3>
               <dl>
                 <div><dt>Входные токены</dt><dd>{bucket.inputTokens}</dd></div>
                 <div><dt>Кэшированные токены</dt><dd>{bucket.cachedTokens}</dd></div>
@@ -114,14 +104,16 @@ export default function UsagePage() {
             </article>
           );
         })}
+        </div>
       </section>
 
-      <section aria-labelledby="usage-budget-heading">
+      <div className="reference-columns usage-columns">
+      <section className="reference-panel" aria-labelledby="usage-budget-heading">
         <h2 id="usage-budget-heading">Лимиты бюджета</h2>
         {data.budget.configurations.length === 0 ? (
           <p>Настроенных лимитов нет.</p>
         ) : (
-          <div className="table-card">
+          <div className="table-card"><div className="table-scroll">
             <table>
               <caption>Сохранённые конфигурации лимитов</caption>
               <thead><tr><th scope="col">Область</th><th scope="col">ID области</th><th scope="col">Лимит</th><th scope="col">Мягкий лимит</th><th scope="col">Политика</th><th scope="col">Потрачено</th><th scope="col">Зарезервировано</th></tr></thead>
@@ -136,13 +128,14 @@ export default function UsagePage() {
               </tbody>
             </table>
           </div>
+          </div>
         )}
 
         <h3>Эффективный ограничивающий лимит</h3>
         {contextsWithEffectiveLimit.length === 0 ? (
           <p>Для доступных областей эффективный лимит не настроен.</p>
         ) : (
-          <div className="table-card">
+          <div className="table-card"><div className="table-scroll">
             <table>
               <caption>Наиболее строгая применимая конфигурация для каждой области</caption>
               <thead><tr><th scope="col">Контекст</th><th scope="col">Применимые области</th><th scope="col">Ограничивающая конфигурация</th><th scope="col">Лимит</th><th scope="col">Политика этой конфигурации</th></tr></thead>
@@ -159,15 +152,16 @@ export default function UsagePage() {
               </tbody>
             </table>
           </div>
+          </div>
         )}
       </section>
 
-      <section aria-labelledby="usage-reservations-heading">
+      <section className="reference-panel" aria-labelledby="usage-reservations-heading">
         <h2 id="usage-reservations-heading">Текущие резервирования</h2>
         {data.budget.activeReservations.length === 0 ? (
           <p>Активных резервирований нет.</p>
         ) : (
-          <div className="table-card">
+          <div className="table-card"><div className="table-scroll">
             <table>
               <caption>Записи со статусом RESERVED</caption>
               <thead><tr><th scope="col">ID</th><th scope="col">Проект</th><th scope="col">Эпик</th><th scope="col">Задача</th><th scope="col">Оценка</th><th scope="col">Роль / модель</th><th scope="col">Причина запуска</th><th scope="col">Создано</th></tr></thead>
@@ -185,8 +179,10 @@ export default function UsagePage() {
               </tbody>
             </table>
           </div>
+          </div>
         )}
       </section>
+      </div>
     </div>
   );
 }

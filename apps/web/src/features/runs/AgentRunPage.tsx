@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiPaths, PROVIDER_CATALOG_PROJECTION, type ContextManifestSubjectProjection, type SettingsProjection } from '@ebb-orchestrator/contracts';
 import { Link } from 'react-router';
 import { ApiError, apiClient, toClientPath } from '../../api/client.js';
-import { ErrorAlert, PageState } from '../../components/ui/PageState.js';
+import { EmptyState, ErrorAlert, PageState } from '../../components/ui/PageState.js';
 import StatusBadge from '../../components/ui/StatusBadge.js';
 import { useOnSSEReconnect } from '../../hooks/useEventClient.js';
 import { apiErrorMessage, auditActionLabel, recoveryFailureLabel, recoveryReasonLabel, recoveryRoleLabel, ru, runContextManifestUnavailableLabel, runEventLabel, runTriggerLabel, statusLabel } from '../../i18n/ru.js';
@@ -215,15 +215,15 @@ export default function AgentRunPage({ id }: AgentRunPageProps) {
   const isActive = ['STARTED', 'IN_PROGRESS', 'COMPLETING'].includes(run.status);
 
   return (
-    <div className="agent-run-page page-stack">
+    <div className="agent-run-page page-stack reference-screen reference-screen--run">
       <header className="page-header">
-        <div><p className="eyebrow">Активность агента</p><h1>Запуск агента: {run.id}</h1></div>
+        <div><h1>Запуск агента: {run.id}</h1><p className="run-subtitle">{run.role} · {run.runtime} · {runModelLabel(run.model)}</p></div>
         <StatusBadge status={run.status} />
       </header>
 
       {cancelState.status === 'error' && <ErrorAlert message={`Не удалось отменить запуск: ${errorMessage(cancelState.error)}`} />}
 
-      <section className="detail-grid" aria-label="Сведения о запуске">
+      <section className="detail-grid reference-panel" aria-label="Сведения о запуске">
         <div><span>Роль</span><strong>{run.role}</strong></div>
         <div><span>Среда выполнения</span><strong>{run.runtime}</strong></div>
         <div><span>Модель</span><strong>{runModelLabel(run.model)}</strong></div>
@@ -241,13 +241,16 @@ export default function AgentRunPage({ id }: AgentRunPageProps) {
         <p role="note">Выбор модели выполняется в Ebb.</p>
       </section>
 
-      <section aria-label="Время запуска"><h2>Время</h2><p>Начало: {run.startedAt ? new Date(run.startedAt).toLocaleString() : 'Не указано'}</p><p>Завершение: {run.endedAt ? new Date(run.endedAt).toLocaleString() : 'Выполняется'}</p></section>
+      <section className="reference-metrics" aria-label="Время запуска">
+        <div className="reference-metric"><span>Начало</span><strong>{run.startedAt ? new Date(run.startedAt).toLocaleString() : 'Не указано'}</strong></div>
+        <div className="reference-metric"><span>Завершение</span><strong>{run.endedAt ? new Date(run.endedAt).toLocaleString() : 'Выполняется'}</strong></div>
+      </section>
 
-      <section aria-label="Использование запуска" className="metric-grid">
-        <div><span className="metric-value">{run.usage.inputTokens}</span><span className="metric-label">{ru.runs.inputTokens}</span></div>
-        <div><span className="metric-value">{run.usage.cachedTokens}</span><span className="metric-label">{ru.runs.cachedTokens}</span></div>
-        <div><span className="metric-value">{run.usage.outputTokens}</span><span className="metric-label">{ru.runs.outputTokens}</span></div>
-        <div><span className="metric-value">${run.usage.cost.toFixed(4)}</span><span className="metric-label">Стоимость</span></div>
+      <section aria-label="Использование запуска" className="reference-metrics run-metrics">
+        <div className="reference-metric"><span>{ru.runs.inputTokens}</span><strong>{run.usage.inputTokens.toLocaleString('ru-RU')}</strong></div>
+        <div className="reference-metric"><span>{ru.runs.cachedTokens}</span><strong>{run.usage.cachedTokens.toLocaleString('ru-RU')}</strong></div>
+        <div className="reference-metric"><span>{ru.runs.outputTokens}</span><strong>{run.usage.outputTokens.toLocaleString('ru-RU')}</strong></div>
+        <div className="reference-metric"><span>Стоимость</span><strong>${run.usage.cost.toFixed(4)}</strong></div>
       </section>
 
       {projectBoundRun && localModeQuery.status === 'success' && localModeQuery.enabled === true && (
@@ -262,7 +265,25 @@ export default function AgentRunPage({ id }: AgentRunPageProps) {
         </section>
       )}
 
-      <section aria-label="Артефакты запуска">
+      <div className="reference-columns run-columns">
+      <div className="reference-column">
+      <section className="reference-panel" aria-label="События">
+        <h2>Поток событий</h2>
+        {eventsQuery.status === 'loading' && <p>Загрузка событий…</p>}
+        {eventsQuery.status === 'error' && <p className="error">Не удалось загрузить события: {errorMessage(eventsQuery.error)}</p>}
+        {eventsQuery.status === 'success' && eventsQuery.data && eventsQuery.data.length === 0 && <EmptyState message="Событий нет." />}
+        {eventsQuery.status === 'success' && eventsQuery.data && eventsQuery.data.length > 0 && (
+          <ol className="run-event-list">
+            {eventsQuery.data.map((event) => (
+              <li key={event.id}>
+                <time dateTime={event.createdAt}>{new Date(event.createdAt).toLocaleString()}</time>
+                <strong>{runEventLabel(event.type)}</strong>
+              </li>
+            ))}
+          </ol>
+        )}
+      </section>
+      <section className="reference-panel" aria-label="Артефакты запуска">
         <h2>Артефакты запуска</h2>
         {artifactsQuery.status === 'loading' && <p>Загрузка списка артефактов…</p>}
         {artifactsQuery.status === 'error' && <p className="error">Не удалось загрузить список артефактов: {errorMessage(artifactsQuery.error)}</p>}
@@ -281,7 +302,7 @@ export default function AgentRunPage({ id }: AgentRunPageProps) {
         )}
       </section>
 
-      <section aria-label="Манифест контекста">
+      <section className="reference-panel" aria-label="Манифест контекста">
         <h2>Манифест контекста</h2>
         {contextManifestsQuery.status === 'loading' && <p>{ru.runs.contextManifest.loading}</p>}
         {contextManifestsQuery.status === 'error' && <p className="error">{ru.runs.contextManifest.requestFailed} {errorMessage(contextManifestsQuery.error)}</p>}
@@ -327,25 +348,9 @@ export default function AgentRunPage({ id }: AgentRunPageProps) {
         )}
       </section>
 
-      {/* Events section */}
-      <section aria-label="События">
-        <h2>События</h2>
-        {eventsQuery.status === 'loading' && <p>Загрузка событий…</p>}
-        {eventsQuery.status === 'error' && <p className="error">Не удалось загрузить события: {errorMessage(eventsQuery.error)}</p>}
-        {eventsQuery.status === 'success' && eventsQuery.data && eventsQuery.data.length === 0 && <p>Событий нет.</p>}
-        {eventsQuery.status === 'success' && eventsQuery.data && eventsQuery.data.length > 0 && (
-          <ul>
-            {eventsQuery.data.map((event) => (
-              <li key={event.id}>
-                <strong>{runEventLabel(event.type)}</strong> — {new Date(event.createdAt).toLocaleString()}
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      {/* Tools section */}
-      <section aria-label="Инструменты">
+      </div>
+      <div className="reference-column">
+      <section className="reference-panel" aria-label="Инструменты">
         <h2>Разрешённые инструменты</h2>
         {toolsQuery.status === 'loading' && <p>Загрузка инструментов…</p>}
         {toolsQuery.status === 'error' && <p className="error">Не удалось загрузить инструменты: {errorMessage(toolsQuery.error)}</p>}
@@ -359,8 +364,7 @@ export default function AgentRunPage({ id }: AgentRunPageProps) {
         )}
       </section>
 
-      {/* Permissions/Audit section */}
-      <section aria-label="Разрешения">
+      <section className="reference-panel" aria-label="Разрешения">
         <h2>Разрешения и журнал аудита</h2>
         {permissionsQuery.status === 'loading' && <p>Загрузка разрешений…</p>}
         {permissionsQuery.status === 'error' && <p className="error">Не удалось загрузить разрешения: {errorMessage(permissionsQuery.error)}</p>}
@@ -376,8 +380,7 @@ export default function AgentRunPage({ id }: AgentRunPageProps) {
         )}
       </section>
 
-      {/* Раздел восстановления */}
-      <section aria-label="Восстановление">
+      <section className="reference-panel" aria-label="Восстановление">
         <h2>Восстановление</h2>
         {recoveryQuery.status === 'loading' && <p>Загрузка данных восстановления…</p>}
         {recoveryQuery.status === 'error' && <p className="error">Не удалось загрузить данные восстановления: {errorMessage(recoveryQuery.error)}</p>}
@@ -407,6 +410,8 @@ export default function AgentRunPage({ id }: AgentRunPageProps) {
           </div>
         )}
       </section>
+      </div>
+      </div>
 
       {isActive && <footer className="page-actions"><button type="button" className="danger-button" disabled={cancelState.status === 'pending'} onClick={() => void cancel()}>Отменить запуск</button></footer>}
     </div>

@@ -33,7 +33,7 @@ export default function TaskPage({ id = '' }: TaskPageProps) {
   const contract = notFound ? 'Контракт задачи недоступен.' : projection?.contract ? JSON.stringify(projection.contract) : query.status === 'success' ? ru.tasks.noContract : ru.tasks.loadingContract;
 
   return (
-    <div className="task-page page-stack">
+    <div className="task-page page-stack reference-screen reference-screen--task">
       <div className="topbar">
         <div>
           <h1>{`Задача: ${(task?.title ?? task?.display_id ?? id) || ru.common.loading}`}</h1>
@@ -45,6 +45,12 @@ export default function TaskPage({ id = '' }: TaskPageProps) {
       {notFound && <ErrorAlert message="Задача не найдена." onRetry={retry} />}
       {projection && !notFound && (
         <>
+          <section className="reference-metrics" aria-label="Сводка задачи">
+            <div className="reference-metric"><span>Статус</span><strong>{statusLabel(projection.lifecycle.status ?? task?.status)}</strong></div>
+            <div className="reference-metric"><span>Запуски</span><strong>{projection.runs.length}</strong></div>
+            <div className="reference-metric"><span>Проверка результатов</span><strong>{projection.findings.length + projection.defects.length}</strong></div>
+            <div className="reference-metric"><span>Использование</span><strong>{projection.usage.totalTokens.toLocaleString('ru-RU')} токенов</strong><small>${projection.usage.cost.toFixed(2)}</small></div>
+          </section>
           <div className="tabs" role="tablist" aria-label="Разделы задачи">
             {(Object.keys(ru.tasks.tabs) as TaskTab[]).map((key) => (
               <button
@@ -61,8 +67,8 @@ export default function TaskPage({ id = '' }: TaskPageProps) {
           </div>
 
           {tab === 'overview' && (
-            <div className="grid2">
-              <section aria-label="Рабочий процесс">
+            <div className="grid2 reference-columns">
+              <section className="reference-panel" aria-label="Рабочий процесс">
                 <div className="panel-head"><h3>{ru.tasks.overview.process}</h3></div>
                 <p>{`Статус: ${statusLabel(projection.lifecycle.status ?? task?.status)}`}</p>
                 <WorkflowTimeline stages={TASK_LIFECYCLE_STAGES} currentStage={projection.lifecycle.stage ?? projection.lifecycle.status} />
@@ -83,7 +89,7 @@ export default function TaskPage({ id = '' }: TaskPageProps) {
                 <div className="panel-head"><h3>{ru.tasks.overview.events}</h3></div>
                 <p>{`${projection.events.length} событий · ${projection.approvals.length} согласований`}</p>
               </section>
-              <section aria-label="Связанная работа">
+              <section className="reference-panel" aria-label="Связанная работа">
                 <div className="panel-head"><h3>{ru.tasks.overview.related}</h3></div>
                 <p>
                   {task?.project_id ? <Link to={`/projects/${encodeURIComponent(task.project_id)}`}>{ru.tasks.overview.project}</Link> : null}
@@ -99,14 +105,14 @@ export default function TaskPage({ id = '' }: TaskPageProps) {
           )}
 
           {tab === 'contract' && (
-            <section aria-label="Контракт">
+            <section className="reference-panel" aria-label="Контракт">
               <div className="panel-head"><h3>{ru.tasks.contractTitle}</h3></div>
               <p>{contract}</p>
             </section>
           )}
 
           {tab === 'runs' && (
-            <section aria-label="Запуски агента">
+            <section className="reference-panel" aria-label="Запуски агента">
               <div className="panel-head"><h3>{ru.tasks.runsTitle}</h3></div>
               <ul>
                 {projection.runs.length === 0 ? <li>{ru.tasks.runsEmpty}</li> : projection.runs.map((run) => {
@@ -118,28 +124,28 @@ export default function TaskPage({ id = '' }: TaskPageProps) {
           )}
 
           {tab === 'review' && (
-            <section aria-label="Результаты проверки">
+            <section className="reference-panel" aria-label="Результаты проверки">
               <div className="panel-head"><h3>{ru.tasks.reviewTitle}</h3></div>
               <p>{projection.findings.length === 0 && projection.defects.length === 0 ? ru.tasks.reviewEmpty : `${projection.findings.length} замечаний · ${projection.defects.length} дефектов`}</p>
             </section>
           )}
 
           {tab === 'qa' && (
-            <section aria-label="Контроль качества">
+            <section className="reference-panel" aria-label="Контроль качества">
               <div className="panel-head"><h3>{ru.tasks.qaTitle}</h3></div>
               <p>{projection.defects.length === 0 ? ru.tasks.qaEmpty : `${projection.defects.length} дефектов`}</p>
             </section>
           )}
 
           {tab === 'git' && (
-            <section aria-label="Git">
+            <section className="reference-panel" aria-label="Git">
               <div className="panel-head"><h3>{ru.tasks.gitTitle}</h3></div>
               <p>{`${projection.git.branch ?? 'Ветка не указана'} · ${projection.git.repositoryPath ?? 'Репозиторий не указан'}${projection.git.github?.url ? ` · ${projection.git.github.url}` : ''}`}</p>
             </section>
           )}
 
           {tab === 'usage' && (
-            <section aria-label="Использование">
+            <section className="reference-panel" aria-label="Использование">
               <div className="panel-head"><h3>{ru.tasks.usageTitle}</h3></div>
               <p>{`${projection.usage.totalTokens} токенов · $${projection.usage.cost.toFixed(2)}`}</p>
             </section>

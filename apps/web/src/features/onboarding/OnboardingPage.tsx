@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ApiError } from '../../api/client.js';
-import { apiErrorMessage, ru } from '../../i18n/ru.js';
+import { apiErrorMessage, ru, statusLabel } from '../../i18n/ru.js';
 import { onboardingApi, type OnboardingDiscoveryResult } from './api.js';
 import StatusBadge from '../../components/ui/StatusBadge.js';
 
@@ -12,7 +12,7 @@ export default function OnboardingPage({ projectId }: { projectId?: string }) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<OnboardingDiscoveryResult | null>(null);
-  const errorRef = useRef<HTMLElement>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
 
   useEffect(() => {
@@ -101,112 +101,92 @@ export default function OnboardingPage({ projectId }: { projectId?: string }) {
   );
 
   return (
-    <main className="onboarding-page">
-      <div className="topbar">
+    <div className="onboarding-page reference-screen reference-screen--onboarding">
+      <header className="topbar">
         <div>
           <h1 ref={headingRef} tabIndex={-1}>Настройка проекта</h1>
           <div className="sub">{`Онбординг проекта · шаг ${Math.min(stepIndex + 1, 5)} из 5`}</div>
         </div>
-      </div>
+      </header>
       {renderSteps()}
 
       {!result ? (
-        <section aria-label="Поиск проекта">
-          <h2>Поиск проекта</h2>
-          <form onSubmit={handleSubmit} aria-describedby="onboarding-instructions">
-            <p id="onboarding-instructions">
-              Введите абсолютный путь к локальному репозиторию для анализа.
-            </p>
-            <div>
+        <div className="onboarding-layout">
+          <section className="reference-panel onboarding-form-panel" aria-label="Поиск проекта">
+            <div className="section-heading"><h2>Выберите репозиторий</h2><span>Локальный путь</span></div>
+            <p id="onboarding-instructions">Укажите путь к репозиторию. Сначала Orchestrator покажет обнаруженные факты и отдельно — предлагаемые настройки.</p>
+            <form onSubmit={handleSubmit} aria-describedby="onboarding-instructions">
               <label htmlFor="repository-path">Путь к репозиторию</label>
               <input
                 id="repository-path"
                 type="text"
                 value={repositoryPath}
                 onChange={(e) => setRepositoryPath(e.target.value)}
-                placeholder="/path/to/repo"
+                placeholder="C:\путь\к\репозиторию"
                 required
                 aria-required="true"
                 aria-invalid={error ? 'true' : undefined}
                 aria-describedby={error ? 'onboarding-error' : 'onboarding-instructions'}
               />
-            </div>
-            <button type="submit" disabled={loading}>
-              {loading ? 'Анализ...' : 'Начать анализ'}
-            </button>
-          </form>
-
-          {error && (
-            <section ref={errorRef} tabIndex={-1} role="alert" aria-live="assertive" aria-label="Ошибка">
-              <h2>Ошибка</h2>
-              <p>{error}</p>
-              <button type="button" onClick={() => setError(null)}>Очистить</button>
-            </section>
-          )}
-        </section>
+              <button type="submit" className="btn-primary" disabled={loading}>
+                {loading ? 'Анализ…' : 'Начать анализ'}
+              </button>
+            </form>
+            {error && (
+              <div ref={errorRef} tabIndex={-1} role="alert" aria-live="assertive" aria-label="Ошибка">
+                <h2>Ошибка анализа</h2>
+                <p id="onboarding-error">{error}</p>
+                <button type="button" className="btn-ghost" onClick={() => setError(null)}>Очистить</button>
+              </div>
+            )}
+          </section>
+          <aside className="reference-panel onboarding-guidance">
+            <h2>Перед активацией</h2>
+            <p>Факты, найденные в репозитории, останутся отдельно от предложений конфигурации.</p>
+            <p>Переходы согласования и активации выполняются только через backend и требуют подтверждённого состояния проекта.</p>
+          </aside>
+        </div>
       ) : (
-        <section aria-label="Результаты анализа">
-          <h2>Результаты анализа</h2>
-
-          <section aria-label="Репозиторий">
-            <h3>Репозиторий</h3>
-            <p>{result.repository.path ?? 'Не обнаружен'}</p>
-          </section>
-
-          <section aria-label="Обнаружено">
-            <h3>Обнаружено</h3>
-            <p>Основная ветка: {result.detected.defaultBranch}</p>
-            <p>Менеджер пакетов: {result.detected.packageManager}</p>
-            <p>Конфигурация оркестратора найдена: {result.detected.untrustedExistingConfig ? 'Да' : 'Нет'}</p>
-          </section>
-
-          <section aria-label="Предложение">
-            <h3>Предложение</h3>
-            <p>Рабочий процесс: {result.proposed?.workflow ?? 'Не указано'}</p>
-            <p>Роли: {result.proposed?.roles.join(', ') || 'Не указано'}</p>
-          </section>
-
-          <section aria-label="Статус согласования">
-            <h3>Статус утверждения</h3>
-            <p>Статус: <StatusBadge status={result.status} label={result.status} /></p>
-            <p>Семантическая конфигурация утверждена: {result.status === 'APPROVED' || result.status === 'ACTIVE' ? 'Да' : 'Нет'}</p>
-          </section>
-
-          {result.status === 'DRAFT' && (
-            <section aria-label="Действия">
-              <h3>Действия</h3>
-              <button type="button" onClick={handleRequestApproval} disabled={loading}>
-                Запросить согласование
-              </button>
+        <section aria-label="Результаты анализа" className="onboarding-layout onboarding-results">
+          <div className="reference-column">
+            <section className="reference-panel" aria-label="Репозиторий и обнаруженные факты">
+              <div className="section-heading"><h2>Репозиторий</h2><StatusBadge status={result.status} label={result.status} /></div>
+              <p className="repository-path">{result.repository.path ?? 'Не обнаружен'}</p>
+              <div className="reference-facts">
+                <div><span>Основная ветка</span><strong>{result.detected.defaultBranch}</strong></div>
+                <div><span>Менеджер пакетов</span><strong>{result.detected.packageManager}</strong></div>
+                <div><span>Существующая конфигурация</span><strong>{result.detected.untrustedExistingConfig ? 'Обнаружена · не доверена' : 'Не обнаружена'}</strong></div>
+              </div>
             </section>
-          )}
 
-          {result.status === 'APPROVAL_PENDING' && (
-            <section aria-label="Действия">
-              <h3>Действия</h3>
-              <button type="button" onClick={handleApprove} disabled={loading}>
-                Утвердить
-              </button>
+            <section className="reference-panel" aria-label="Предложения координатора">
+              <div className="section-heading"><h2>Предложения координатора</h2><span>Не утверждённая конфигурация</span></div>
+              <div className="reference-facts">
+                <div><span>Рабочий процесс</span><strong>{result.proposed?.workflow ?? 'Не указано'}</strong></div>
+                <div><span>Роли</span><strong>{result.proposed?.roles.join(', ') || 'Не указаны'}</strong></div>
+                <div><span>Рекомендации</span><strong>{result.proposed?.guidelines.length ? result.proposed.guidelines.join(', ') : 'Не указаны'}</strong></div>
+              </div>
             </section>
-          )}
+          </div>
 
-          {result.status === 'APPROVED' && (
-            <section aria-label="Действия">
-              <h3>Действия</h3>
-              <button type="button" onClick={handleActivate} disabled={loading}>
-                Активировать
-              </button>
+          <div className="reference-column">
+            <section className="reference-panel" aria-label="Статус согласования">
+              <div className="section-heading"><h2>Статус проекта</h2><StatusBadge status={result.status} label={statusLabel(result.status)} /></div>
+              <p>Семантическая конфигурация утверждена: {result.status === 'APPROVED' || result.status === 'ACTIVE' ? 'Да' : 'Нет'}</p>
+              {result.status === 'DRAFT' && <button type="button" className="btn-primary" onClick={handleRequestApproval} disabled={loading}>Запросить согласование</button>}
+              {result.status === 'APPROVAL_PENDING' && <button type="button" className="btn-primary" onClick={handleApprove} disabled={loading}>Утвердить</button>}
+              {result.status === 'APPROVED' && <button type="button" className="btn-primary" onClick={handleActivate} disabled={loading}>Активировать</button>}
+              {result.status === 'ACTIVE' && <p role="status">Проект активирован.</p>}
             </section>
-          )}
-
-          {error && (
-            <section ref={errorRef} tabIndex={-1} role="alert" aria-live="assertive" aria-label="Ошибка">
-              <h2>Ошибка</h2>
-              <p>{error}</p>
-            </section>
-          )}
+            {error && (
+              <section ref={errorRef} tabIndex={-1} role="alert" aria-live="assertive" aria-label="Ошибка" className="reference-panel">
+                <h2>Не удалось продолжить онбординг</h2>
+                <p>{error}</p>
+              </section>
+            )}
+          </div>
         </section>
       )}
-    </main>
+    </div>
   );
 }

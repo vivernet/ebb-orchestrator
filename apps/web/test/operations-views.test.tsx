@@ -49,7 +49,7 @@ describe('Queue row wait reason', () => {
     render(<MemoryRouter><ExecutionPage /></MemoryRouter>);
 
     expect(await screen.findByText('Ожидается согласование.')).toBeInTheDocument();
-    expect(screen.getByRole('row', { name: /task-1/ })).not.toHaveTextContent('WAITING_FOR_APPROVAL');
+    expect(screen.getByText('task-1', { exact: true }).closest('li')).not.toHaveTextContent('WAITING_FOR_APPROVAL');
     await waitFor(() => expect(apiClient.get).toHaveBeenCalledWith('/execution', expect.objectContaining({ signal: expect.any(AbortSignal) })));
     vi.restoreAllMocks();
   });
@@ -73,9 +73,9 @@ describe('Queue row wait reason', () => {
     ] as const;
     vi.spyOn(apiClient, 'get').mockResolvedValue({ running: [], waiting: reasons.map(([code], index) => ({ taskId: `task-${index}`, reason: { code, message: 'Secret backend English detail' } })), blocked: [] });
     render(<MemoryRouter><ExecutionPage /></MemoryRouter>);
-    await screen.findByRole('link', { name: 'task-0' });
+    await screen.findByText('task-0', { exact: true });
     reasons.forEach(([code, label], index) => {
-      const row = screen.getByRole('link', { name: `task-${index}` }).closest('tr');
+      const row = screen.getByText(`task-${index}`, { exact: true }).closest('li');
       expect(row).toHaveTextContent(label);
       expect(row).not.toHaveTextContent(code);
       expect(row).not.toHaveTextContent('Secret backend English detail');

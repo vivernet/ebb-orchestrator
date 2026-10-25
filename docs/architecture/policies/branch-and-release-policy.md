@@ -6,11 +6,11 @@ title: Политика веток и публикаций Ebb
 
 # Политика веток и публикаций Ebb
 
-Статус: согласованный целевой контракт. Release tooling реализован и проверен по [Plan26](../plans/26-branch-and-release-policy.md) (Tasks 2–8, 10 на verified HEAD `f6937f2`), однако публикация/withdrawal/resume остаются выключенными до live acceptance Task11 и финального approval; до этого наличие документа и tooling не разрешает никакие public release mutations.
+Статус: согласованный целевой контракт. Release tooling реализован и проверен по [Plan26](../plans/26-branch-and-release-policy.md) (Tasks 2–8, 10 на verified HEAD `f6937f2`), однако публикация/withdrawal/resume остаются выключенными до live acceptance Task11 и финального approval; до этого наличие документа и tooling не разрешает никакие public release mutations. До первого опубликованного production release действует временное пользовательское исключение из PR-only интеграции; оно не ослабляет требования review/gates и не меняет release-контракт.
 
 ## 1. Ветки и identities
 
-`develop` — default branch, integration и источник обычных задач. Обычная task branch начинается от полного pinned SHA актуального `develop` в отдельном worktree; PR проходит review и squash merge в `develop`. Review evidence связан с task SHA; интеграция порождает другой integrated SHA; release snapshot — третий candidate SHA. Evidence не переносится между ними только по совпадению имени ветки.
+`develop` — default branch, integration и источник обычных задач. Обычная task branch начинается от полного pinned SHA актуального `develop` в отдельном worktree. До первого опубликованного production release её проверенный HEAD интегрируется прямым fast-forward в `develop`, без PR, squash или merge commit; независимое review и обязательные локальные/CI gates остаются обязательными. Временно отключается только `pull_request` rule для `develop`; запреты удаления и force-push сохраняются. После первого production release PR/review protection и squash-PR workflow восстанавливаются. Review evidence связан с task SHA; фактический integrated SHA и release candidate SHA фиксируются отдельно. Evidence не переносится между ними только по совпадению имени ветки.
 
 `master` — только последовательность surviving production release snapshots. До первого релиза ветка отсутствует; legacy master удаляется при подтверждённом переходе, а не сохраняется до первой публикации. GitHub default branch предварительно переводится на develop. Проверяются текущие refs/history, отсутствие релизов/unique master commits/не сохранённых данных, protections и worktrees. Историческое утверждение master==develop не заменяет доказательство. Dummy baseline, restore, archive commits/tags и скрытые backup refs запрещены.
 
@@ -26,7 +26,7 @@ Version source обнаруживается в реальном репозито
 
 ## 3. Reservation, approval и orchestration
 
-`docs/releases/version-reservations.json` — durable append-only no-reuse ledger на защищённой develop. Schema и CI контролируют уникальность версии/operationId, timestamp, неизменность старых records. Reservation проходит reviewed develop PR **до** source pin. Не записывать circular self SourceSHA: source pin происходит после commit reservation. Удалённый/cancelled/partial релиз потребляет версию навсегда; master/tags/Release inventory не является полным ledger.
+`docs/releases/version-reservations.json` — durable append-only no-reuse ledger на защищённой develop. Schema и CI контролируют уникальность версии/operationId, timestamp, неизменность старых records. Reservation проходит reviewed change в `develop` **до** source pin: до первого production release — direct fast-forward с независимым review и gates, после него — reviewed develop PR. Не записывать circular self SourceSHA: source pin происходит после commit reservation. Удалённый/cancelled/partial релиз потребляет версию навсегда; master/tags/Release inventory не является полным ledger.
 
 Journal/checkpoints находятся в `git-common-dir/ebb-release/`, вне release tree, с validated UUID paths, integrity checks, atomic file writes и без secrets. Перед каждым remote side effect persist intent и immutable IDs, после — reconciliation/result. Resume сохраняет original operation/version/source/candidate/tag object; не генерирует новый commit. Потеря cache требует verified backup или однозначного восстановления из remote metadata/reservations; ambiguity — BLOCKED.
 
@@ -59,7 +59,7 @@ Git atomic transaction охватывает только refs, а Git/GitHub/GHC
 
 ## 6. Защита и доказательства
 
-Server protections для develop/required checks и master namespace обязательны; machine CI проверки PR targets и master snapshot history дополняют их. Правила для ещё отсутствующего master задаются по имени. Narrow rollback mutation rights согласуются отдельно; не отключать protections и не расширять admin bypass молча.
+Server protections для develop и master namespace обязательны. До первого production release `develop-protection` намеренно не содержит `pull_request` rule, но сохраняет запрет удаления и force-push; обязательные CI/review gates остаются частью task workflow. После первого production release PR/review rule с approval и thread-resolution requirements восстанавливается. Machine CI проверки PR targets и master snapshot history дополняют server protections. Правила для ещё отсутствующего master задаются по имени. Narrow rollback mutation rights согласуются отдельно; не отключать другие protections и не расширять admin bypass молча.
 
 GHCR public packages бесплатны; container image storage/bandwidth сейчас бесплатны, но Actions compute/artifact quotas — отдельные ограничения. Free registry не означает бесплатность всего CI. Provider capabilities актуализируются в Task0 и перед операции; ссылки и границы сведены в [SOURCES](../../../integration/SOURCES.md).
 

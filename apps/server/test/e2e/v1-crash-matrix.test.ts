@@ -317,7 +317,7 @@ describe('v1 production recovery paths', () => {
     )?.reserved_cost).toBe(0);
   });
 
-  it('recovers an interrupted run after a killed production process and explicit stale-lock cleanup', async () => {
+  it('recovers an interrupted run after a killed production process and automatic stale-lock cleanup', async () => {
     tempDirectory ??= await mkdtemp(join(tmpdir(), 'orchestrator-v1-recovery-'));
     const home = join(tempDirectory, 'production-home');
     await mkdir(home);
@@ -326,7 +326,7 @@ describe('v1 production recovery paths', () => {
     const databasePath = resolveOrchestratorHome({ EBB_ORCHESTRATOR_HOME: home }, platform).database;
     let firstProcess: ProductionChild | undefined;
     let restartedProcess: ProductionChild | undefined;
-    let restartRejected: ProductionChild | undefined;
+    let concurrentProcess: ProductionChild | undefined;
 
     try {
       firstProcess = launchProductionChild(home, port, true);
@@ -339,19 +339,19 @@ describe('v1 production recovery paths', () => {
       db.close();
       db = undefined;
 
+      const lockPath = join(home, 'orchestrator.lock');
+      concurrentProcess = launchProductionChild(home, port, false);
+      await waitForProductionExit(concurrentProcess, 10_000);
+      expect(concurrentProcess.process.exitCode).toBe(1);
+      expect(concurrentProcess.output).toContain('Could not acquire the startup lock');
+
       expect(firstProcess.process.kill('SIGKILL')).toBe(true);
       await waitForProductionExit(firstProcess, 15_000);
       expect(firstProcess.process.exitCode !== null || firstProcess.process.signalCode !== null).toBe(true);
 
-      const lockPath = join(home, 'orchestrator.lock');
       expect(existsSync(lockPath)).toBe(true);
       expect(await readFile(lockPath, 'utf8')).toContain(`v1:${firstProcess.process.pid}:`);
-      restartRejected = launchProductionChild(home, port, false);
-      await waitForProductionExit(restartRejected, 10_000);
-      expect(restartRejected.process.exitCode).toBe(1);
-      expect(restartRejected.output).toContain('Could not acquire the startup lock');
 
-      await rm(lockPath);
       restartedProcess = launchProductionChild(home, port, false);
       await waitForProductionReady(restartedProcess, port);
       db = createSqliteDatabase(databasePath);
@@ -365,7 +365,7 @@ describe('v1 production recovery paths', () => {
     } finally {
       db?.close();
       db = undefined;
-      for (const child of [firstProcess, restartRejected, restartedProcess]) {
+      for (const child of [firstProcess, concurrentProcess, restartedProcess]) {
         if (!child || child.process.exitCode !== null || child.process.signalCode !== null) continue;
         child.process.kill('SIGTERM');
         await waitForProductionExit(child, 15_000).catch(() => undefined);
