@@ -94,6 +94,7 @@ const task1AdapterNames = [
   'getRunTerminal', 'getRunEventsPage', 'getRunDetail',
   'pauseProject', 'resumeProject', 'pauseEpic', 'resumeEpic', 'replanEpic',
   'resumeTask', 'setTaskPriority', 'getProjectIndex',
+  'syncProjectGithub', 'pauseTask',
   'saveProjectConfigCandidate', 'reconcileProjectConfigJournal',
   'listApprovals', 'getApprovalDetail', 'getApprovalPolicies', 'getUsageWindow',
 ];
@@ -113,7 +114,9 @@ const fixturesByClientPath: Record<string, unknown> = {
   '/epics/epic-1/resume': epicPauseFixture,
   '/epics/epic-1/replan': epicReplanFixture,
   '/tasks/task-1/resume': taskControlFixture,
+  '/tasks/task-1/pause': taskControlFixture,
   '/tasks/task-1/priority': taskPriorityFixture,
+  '/projects/project-1/github/sync': { status: 'SYNCED' },
   '/projects?cursor=c1&limit=20': projectIndexFixture,
   '/projects/project-1/config/candidates/editor': candidateFixture,
   '/projects/project-1/config/journals/journal-1/reconcile': reconcileFixture,
@@ -179,7 +182,9 @@ describe('Типизированные адаптеры API (Task 1 пути)', 
     await api.resumeEpic('epic-1');
     await api.replanEpic('epic-1');
     await api.resumeTask('task-1');
+    await api.pauseTask('task-1');
     await api.setTaskPriority('task-1', 5);
+    await api.syncProjectGithub('project-1');
     await api.getProjectIndex({ cursor: 'c1', limit: 20 });
     await api.saveProjectConfigCandidate('project-1', { expectedManifestHash: H, settings: v2Settings });
     await api.reconcileProjectConfigJournal('project-1', 'journal-1', {
@@ -195,6 +200,8 @@ describe('Типизированные адаптеры API (Task 1 пути)', 
     expect(spyPost).toHaveBeenCalledWith('/runs/cancel-all', { expectedRunIds: ['run-1'] });
     expect(spyPost).toHaveBeenCalledWith('/epics/epic-1/replan', {});
     expect(spyPost).toHaveBeenCalledWith('/tasks/task-1/resume');
+    expect(spyPost).toHaveBeenCalledWith('/tasks/task-1/pause');
+    expect(spyPost).toHaveBeenCalledWith('/projects/project-1/github/sync');
     expect(spyGet).toHaveBeenCalledWith('/runs/run-1/events?afterId=evt-1&limit=50');
     expect(spyGet).toHaveBeenCalledWith('/projects?cursor=c1&limit=20');
     expect(spyGet).toHaveBeenCalledWith('/approvals?status=resolved');
@@ -212,6 +219,12 @@ describe('Типизированные адаптеры API (Task 1 пути)', 
 
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ items: [{ id: 'e1' }], nextCursor: null }));
     await expect(api.getRunEventsPage('run-1')).rejects.toMatchObject({ name: 'ApiError', code: 'INVALID_RESPONSE' });
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ nope: true }));
+    await expect(api.pauseTask('task-1')).rejects.toMatchObject({ name: 'ApiError', code: 'INVALID_RESPONSE' });
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ bogus: true }));
+    await expect(api.syncProjectGithub('project-1')).rejects.toMatchObject({ name: 'ApiError', code: 'INVALID_RESPONSE' });
   });
 
   test('ошибки сервера сохраняют HTTP статус и код без fallback', async () => {

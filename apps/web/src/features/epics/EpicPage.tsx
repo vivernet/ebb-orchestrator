@@ -1,7 +1,7 @@
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { apiPaths, type EpicOverviewProjection } from '@ebb-orchestrator/contracts';
 import { Link } from 'react-router';
-import { ApiError, apiClient, toClientPath } from '../../api/client.js';
+import { ApiError, apiClient, pauseEpic, replanEpic, resumeEpic, toClientPath } from '../../api/client.js';
 import { ErrorAlert } from '../../components/ui/PageState.js';
 import { useOnSSEReconnect } from '../../hooks/useEventClient.js';
 import { apiErrorMessage, epicStageLabel, statusLabel, ru } from '../../i18n/ru.js';
@@ -15,16 +15,40 @@ function errorMessage(error: unknown): string {
 
 /** Представляет пользовательский экран EpicPage; авторитетные проверки выполняются backend. */
 export default function EpicPage({ id }: EpicPageProps) {
+  const [controlBusy, setControlBusy] = useState(false);
+  const [controlError, setControlError] = useState<string | null>(null);
   const epicPath = toClientPath(apiPaths.epic(id));
   const fetcher = useCallback((signal: AbortSignal) => apiClient.get<EpicOverviewProjection>(epicPath, { signal }), [epicPath]);
   const query = useQuery(null, epicPath, undefined, fetcher);
   const projection = query.data;
   const epic = projection?.epic as { title?: string; display_id?: string; status?: string } | null | undefined;
+  const epicPaused = epic?.status === 'PAUSED';
   const recoveryFailureCode = projection?.lifecycle?.recoveryFailureCode;
   const notFound = query.status === 'success' && projection?.epic === null;
   const retry = useCallback(() => { void query.refetch().catch(() => undefined); }, [query.refetch]);
   const refresh = useCallback(() => { void query.refetch().catch(() => undefined); }, [query.refetch]);
   useOnSSEReconnect(refresh);
+
+  const applyControl = useCallback(async (action: () => Promise<unknown>) => {
+    setControlBusy(true);
+    setControlError(null);
+    try {
+      await action();
+      void query.refetch().catch(() => undefined);
+    } catch (cause) {
+      setControlError(apiErrorMessage(cause instanceof ApiError ? cause.code : undefined));
+    } finally {
+      setControlBusy(false);
+    }
+  }, [query.refetch]);
+
+  const togglePause = useCallback(() => {
+    void applyControl(epicPaused ? () => resumeEpic(id) : () => pauseEpic(id));
+  }, [applyControl, epicPaused, id]);
+
+  const replan = useCallback(() => {
+    void applyControl(() => replanEpic(id));
+  }, [applyControl, id]);
 
   return (
     <div className="epic-page page-stack reference-screen reference-screen--epic">
@@ -33,10 +57,23 @@ export default function EpicPage({ id }: EpicPageProps) {
           <h1>{`Эпик: ${epic?.title ?? epic?.display_id ?? id}`}</h1>
           {epic && <div className="sub">{statusLabel(recoveryFailureCode ? 'BLOCKED' : epic.status)}</div>}
         </div>
-        {epic && <span className="badge accent">{statusLabel(recoveryFailureCode ? 'BLOCKED' : epic.status)}</span>}
+        <div className="top-actions">
+          {epic && (
+            <>
+              <button type="button" className="btn" disabled={controlBusy} onClick={togglePause}>
+                {epicPaused ? 'Возобновить эпик' : 'Приостановить эпик'}
+              </button>
+              <button type="button" className="btn" disabled={controlBusy} onClick={replan}>
+                Перепланировать
+              </button>
+              <span className="badge accent">{statusLabel(recoveryFailureCode ? 'BLOCKED' : epic.status)}</span>
+            </>
+          )}
+        </div>
       </div>
       {query.status === 'error' && <ErrorAlert message={`Не удалось загрузить эпик: ${errorMessage(query.error)}`} onRetry={retry} />}
       {notFound && <ErrorAlert message="Эпик не найден." onRetry={retry} />}
+      {controlError && <ErrorAlert message={`Не удалось изменить состояние эпика: ${controlError}`} onRetry={togglePause} />}
       {recoveryFailureCode && <p role="alert">Восстановление Epic заблокировано. Код ошибки: <code>{recoveryFailureCode}</code>.</p>}
       {projection && !notFound && (
         <>

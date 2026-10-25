@@ -49,6 +49,9 @@ export default function DashboardPage() {
           <h1>Обзор</h1>
           <p>Текущее состояние проектов и выполнения — из актуальных проекций системы.</p>
         </div>
+        <div className="top-actions">
+          <Link className="btn-primary" to="/projects/new">Новый запрос</Link>
+        </div>
       </header>
 
       <section className="reference-metrics" aria-label="Ключевые показатели">

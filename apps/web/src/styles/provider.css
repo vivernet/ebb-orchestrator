@@ -12,7 +12,7 @@
 .provider-toolbar input[type="search"] { flex: 1 1 260px; }
 
 .provider-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); list-style: none; padding: 0; margin: 0; }
-.provider-card { background: linear-gradient(145deg, #17243a, #111a2a); border: 1px solid #293c5b; border-radius: 12px; display: grid; gap: 10px; padding: 16px; text-decoration: none; color: inherit; height: 100%; }
+.provider-card { background: #111a2a; border: 1px solid #293c5b; border-radius: 12px; display: grid; gap: 10px; padding: 16px; text-decoration: none; color: inherit; height: 100%; }
 .provider-card:hover { border-color: #3c5b8c; background: #16233c; }
 .provider-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
 .provider-card-head strong { font-size: 15px; }

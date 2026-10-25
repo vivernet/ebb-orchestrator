@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react';
 import { apiPaths, type TaskOverviewProjection } from '@ebb-orchestrator/contracts';
 import { Link } from 'react-router';
-import { ApiError, apiClient, toClientPath } from '../../api/client.js';
+import { ApiError, apiClient, pauseTask, resumeTask, setTaskPriority, toClientPath } from '../../api/client.js';
 import { ErrorAlert } from '../../components/ui/PageState.js';
 import WorkflowTimeline, { TASK_LIFECYCLE_STAGES } from '../../components/WorkflowTimeline.js';
 import { useOnSSEReconnect } from '../../hooks/useEventClient.js';
@@ -21,6 +21,10 @@ type TaskTab = keyof typeof ru.tasks.tabs;
  */
 export default function TaskPage({ id = '' }: TaskPageProps) {
   const [tab, setTab] = useState<TaskTab>('overview');
+  const [controlBusy, setControlBusy] = useState(false);
+  const [controlError, setControlError] = useState<string | null>(null);
+  const [controlKind, setControlKind] = useState<'resume' | 'priority' | 'pause'>('resume');
+  const [priorityValue, setPriorityValue] = useState('50');
   const taskPath = toClientPath(apiPaths.task(id));
   const fetcher = useCallback((signal: AbortSignal) => apiClient.get<TaskOverviewProjection>(taskPath, { signal }), [taskPath]);
   const query = useQuery(null, taskPath, undefined, fetcher, { enabled: Boolean(id) });
@@ -31,6 +35,38 @@ export default function TaskPage({ id = '' }: TaskPageProps) {
   const refresh = useCallback(() => { void query.refetch().catch(() => undefined); }, [query.refetch]);
   useOnSSEReconnect(refresh);
   const contract = notFound ? 'Контракт задачи недоступен.' : projection?.contract ? JSON.stringify(projection.contract) : query.status === 'success' ? ru.tasks.noContract : ru.tasks.loadingContract;
+  const isPaused = projection?.lifecycle?.status === 'PAUSED'
+    || (projection?.scheduler?.status === 'WAIT' && projection.scheduler.reason?.code === 'WAITING_FOR_PAUSE');
+
+  const applyControl = useCallback(async (action: () => Promise<unknown>) => {
+    setControlBusy(true);
+    setControlError(null);
+    try {
+      await action();
+      void query.refetch().catch(() => undefined);
+    } catch (cause) {
+      setControlError(apiErrorMessage(cause instanceof ApiError ? cause.code : undefined));
+    } finally {
+      setControlBusy(false);
+    }
+  }, [query.refetch]);
+
+  const resume = useCallback(() => {
+    setControlKind('resume');
+    void applyControl(() => resumeTask(id));
+  }, [applyControl, id]);
+
+  const pause = useCallback(() => {
+    setControlKind('pause');
+    void applyControl(() => pauseTask(id));
+  }, [applyControl, id]);
+
+  const applyPriority = useCallback(() => {
+    const priority = Number(priorityValue);
+    if (!Number.isInteger(priority) || priority < 1 || priority > 1000) return;
+    setControlKind('priority');
+    void applyControl(() => setTaskPriority(id, priority));
+  }, [applyControl, id, priorityValue]);
 
   return (
     <div className="task-page page-stack reference-screen reference-screen--task">
@@ -39,10 +75,33 @@ export default function TaskPage({ id = '' }: TaskPageProps) {
           <h1>{`Задача: ${(task?.title ?? task?.display_id ?? id) || ru.common.loading}`}</h1>
           {task && <div className="sub">{statusLabel(task.status)}</div>}
         </div>
-        {task && <span className="badge accent">{statusLabel(task.status)}</span>}
+        <div className="top-actions">
+          {projection && !notFound && (
+            <>
+              {isPaused && (
+                <button type="button" className="btn" disabled={controlBusy} onClick={resume}>Возобновить задачу</button>
+              )}
+              {!isPaused && (
+                <button type="button" className="btn" disabled={controlBusy} onClick={pause}>Приостановить задачу</button>
+              )}
+              <label htmlFor="task-priority">Приоритет задачи</label>
+              <input
+                id="task-priority"
+                type="number"
+                min={1}
+                max={1000}
+                value={priorityValue}
+                onChange={(event) => setPriorityValue(event.target.value)}
+              />
+              <button type="button" className="btn" disabled={controlBusy} onClick={applyPriority}>Применить приоритет</button>
+            </>
+          )}
+          {task && <span className="badge accent">{statusLabel(task.status)}</span>}
+        </div>
       </div>
       {query.status === 'error' && <ErrorAlert message={`Не удалось загрузить задачу: ${errorMessage(query.error)}`} onRetry={retry} />}
       {notFound && <ErrorAlert message="Задача не найдена." onRetry={retry} />}
+      {controlError && <ErrorAlert message={`Не удалось изменить задачу: ${controlError}`} onRetry={controlKind === 'priority' ? applyPriority : controlKind === 'pause' ? pause : resume} />}
       {projection && !notFound && (
         <>
           <section className="reference-metrics" aria-label="Сводка задачи">
@@ -141,6 +200,7 @@ export default function TaskPage({ id = '' }: TaskPageProps) {
             <section className="reference-panel" aria-label="Git">
               <div className="panel-head"><h3>{ru.tasks.gitTitle}</h3></div>
               <p>{`${projection.git.branch ?? 'Ветка не указана'} · ${projection.git.repositoryPath ?? 'Репозиторий не указан'}${projection.git.github?.url ? ` · ${projection.git.github.url}` : ''}`}</p>
+              {projection.git.worktreePath && <p>Рабочее дерево: <code>{projection.git.worktreePath}</code></p>}
             </section>
           )}
 

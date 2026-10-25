@@ -526,10 +526,12 @@ export const apiPaths = {
   runEventsPage: (id: string, opts?: { afterId?: string; limit?: number }) => withQuery(`/api/v1/runs/${pathSegment(id)}/events`, { afterId: opts?.afterId, limit: opts?.limit }),
   projectPause: (id: string) => `/api/v1/projects/${pathSegment(id)}/pause`,
   projectResume: (id: string) => `/api/v1/projects/${pathSegment(id)}/resume`,
+  githubSync: (id: string) => `/api/v1/projects/${pathSegment(id)}/github/sync`,
   epicPause: (id: string) => `/api/v1/epics/${pathSegment(id)}/pause`,
   epicResume: (id: string) => `/api/v1/epics/${pathSegment(id)}/resume`,
   epicReplan: (id: string) => `/api/v1/epics/${pathSegment(id)}/replan`,
   taskResume: (id: string) => `/api/v1/tasks/${pathSegment(id)}/resume`,
+  taskPause: (id: string) => `/api/v1/tasks/${pathSegment(id)}/pause`,
   taskPriority: (id: string) => `/api/v1/tasks/${pathSegment(id)}/priority`,
   projectIndex: (opts?: { cursor?: string; limit?: number }) => withQuery("/api/v1/projects", { cursor: opts?.cursor, limit: opts?.limit }),
   projectConfigEditorCandidate: (id: string) => `/api/v1/projects/${pathSegment(id)}/config/candidates/editor`,
@@ -540,6 +542,12 @@ export const apiPaths = {
   usageWindow: (from: string, to: string, granularity: "day" | "hour" | "month") =>
     withQuery("/api/v1/usage", { from, to, granularity }),
 } as const;
+
+/** Результат синхронизации GitHub (scoped worker): только стабильный статус без деталей. */
+export const gitHubSyncResponseSchema = z.object({
+  status: z.enum(["SYNCED", "SYNC_PENDING"]),
+}).strict();
+export type GitHubSyncResponse = z.infer<typeof gitHubSyncResponseSchema>;
 
 /**
  * Способы аутентификации провайдеров (plan-24, Task 1).

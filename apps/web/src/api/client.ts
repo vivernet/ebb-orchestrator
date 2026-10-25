@@ -10,6 +10,7 @@ import {
   type DispatchStateResponse,
   type EpicPauseResponse,
   type EpicReplanResponse,
+  type GitHubSyncResponse,
   type ProjectConfigCandidateProjection,
   type ProjectConfigV2,
   type ProjectIndexPageProjection,
@@ -30,6 +31,7 @@ import {
   dispatchStateResponseSchema,
   epicPauseResponseSchema,
   epicReplanResponseSchema,
+  gitHubSyncResponseSchema,
   executionQueueProjectionSchema,
   journalReconcileRequestSchema,
   journalReconcileResponseSchema,
@@ -221,6 +223,16 @@ export async function replanEpic(epicId: string): Promise<EpicReplanResponse> {
 /** Task resume сохраняет prior stage; переход подтверждается backend. */
 export async function resumeTask(taskId: string): Promise<TaskControlResponse> {
   return validate(taskControlResponseSchema, await apiClient.post<unknown>(toClientPath(apiPaths.taskResume(taskId))));
+}
+
+/** Команда паузы Task; переход подтверждается backend. */
+export async function pauseTask(taskId: string): Promise<TaskControlResponse> {
+  return validate(taskControlResponseSchema, await apiClient.post<unknown>(toClientPath(apiPaths.taskPause(taskId))));
+}
+
+/** Типизированная синхронизация GitHub проекта (scoped); backend подтверждает статус. */
+export async function syncProjectGithub(projectId: string): Promise<GitHubSyncResponse> {
+  return validate(gitHubSyncResponseSchema, await apiClient.post<unknown>(toClientPath(apiPaths.githubSync(projectId))));
 }
 
 /** Команда изменения канонического приоритета Task. */

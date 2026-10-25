@@ -74,7 +74,9 @@ describe("reference screen contracts: apiPaths additions", () => {
     expect(apiPaths.epicResume("e-1")).toBe("/api/v1/epics/e-1/resume");
     expect(apiPaths.epicReplan("e-1")).toBe("/api/v1/epics/e-1/replan");
     expect(apiPaths.taskResume("t-1")).toBe("/api/v1/tasks/t-1/resume");
+    expect(apiPaths.taskPause("t-1")).toBe("/api/v1/tasks/t-1/pause");
     expect(apiPaths.taskPriority("t/1")).toBe("/api/v1/tasks/t%2F1/priority");
+    expect(apiPaths.githubSync("p/1")).toBe("/api/v1/projects/p%2F1/github/sync");
   });
 
   it("строит пути проектного индекса и config candidate/journal", () => {
