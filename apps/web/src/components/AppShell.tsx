@@ -32,6 +32,7 @@ function RouteBreadcrumbs() {
 function AppShell() {
   return (
     <div className="app-shell">
+      <a className="skip-link" href="#main-content">{ru.common.skipToContent}</a>
       <aside className="left-nav">
         <div className="brand"><span className="brand-mark" aria-hidden="true">E</span><div><strong>Ebb</strong><span>{ru.common.projectsBrand}</span></div></div>
         <nav aria-label={ru.common.primaryNavigation}>
@@ -53,7 +54,7 @@ function AppShell() {
         </div>
         <p className="nav-footnote">{ru.common.localFirst}</p>
       </aside>
-      <main className="main-content">
+      <main id="main-content" className="main-content">
         <RouteBreadcrumbs />
         <div className="route-outlet">
           <Outlet />

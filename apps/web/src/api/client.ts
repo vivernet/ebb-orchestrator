@@ -1,4 +1,53 @@
-import { apiPaths, type ChatConversation, type MessagesPage, type SendMessageResponse } from '@ebb-orchestrator/contracts';
+import {
+  apiPaths,
+  type ChatConversation,
+  type MessagesPage,
+  type SendMessageResponse,
+  type ApprovalDetailProjection,
+  type ApprovalInboxProjection,
+  type ApprovalPolicyProjection,
+  type CancelAllRunsResult,
+  type DispatchStateResponse,
+  type EpicPauseResponse,
+  type EpicReplanResponse,
+  type ProjectConfigCandidateProjection,
+  type ProjectConfigV2,
+  type ProjectIndexPageProjection,
+  type ProjectPauseResponse,
+  type RunControlCommandResult,
+  type RunDetailProjection,
+  type RunEventsPageProjection,
+  type RunTerminalProjection,
+  type TaskControlResponse,
+  type TaskPriorityResponse,
+  type UsageWindowProjection,
+  approvalDetailProjectionSchema,
+  approvalInboxProjectionSchema,
+  approvalPolicyProjectionSchema,
+  cancelAllRunsRequestSchema,
+  cancelAllRunsResultSchema,
+  dispatchStateRequestSchema,
+  dispatchStateResponseSchema,
+  epicPauseResponseSchema,
+  epicReplanResponseSchema,
+  executionQueueProjectionSchema,
+  journalReconcileRequestSchema,
+  journalReconcileResponseSchema,
+  projectConfigCandidateEditorRequestSchema,
+  projectConfigCandidateProjectionSchema,
+  projectIndexPageProjectionSchema,
+  projectPauseResponseSchema,
+  runControlCommandResultSchema,
+  runDetailProjectionSchema,
+  runEventsPageProjectionSchema,
+  runTerminalProjectionSchema,
+  taskControlResponseSchema,
+  taskPriorityRequestSchema,
+  taskPriorityResponseSchema,
+  usageWindowProjectionSchema,
+} from '@ebb-orchestrator/contracts';
+import { z } from 'zod';
+import { ru } from '../i18n/ru.js';
 
 const API_BASE = '/api/v1';
 /** Переводит canonical API path в относительный путь клиента. */
@@ -71,4 +120,154 @@ export function planApprove(conversationId: string, planId: string, requestId?: 
 /** Отклоняет план из беседы. */
 export function planReject(conversationId: string, planId: string): Promise<void> {
   return apiClient.post<void>(toClientPath(apiPaths.planReject(conversationId, planId)), {});
+}
+
+/* ==========================================================================
+   Типизированные адаптеры Task 1 API путей (plan-27).
+   Все URL строятся только через apiPaths route builders; ответы проверяются
+   контрактными схемами. Ошибки сервера и состояния unavailable сохраняются,
+   fallback-данные никогда не выдумываются.
+   ========================================================================== */
+
+interface ZodSchemaLike<T> { safeParse(input: unknown): { success: true; data: T } | { success: false }; }
+
+/** Проверяет payload по контрактной схеме; несоответствие — безопасная ошибка клиента. */
+function validate<T>(schema: ZodSchemaLike<T>, data: unknown): T {
+  const parsed = schema.safeParse(data);
+  if (parsed.success) return parsed.data;
+  throw new ApiError(ru.errors.default, 0, 'INVALID_RESPONSE');
+}
+
+/** Снимок очереди Scheduler по контрактной проекции. */
+export async function getExecutionQueue(): Promise<z.infer<typeof executionQueueProjectionSchema>> {
+  return validate(executionQueueProjectionSchema, await apiClient.get<unknown>(toClientPath(apiPaths.execution)));
+}
+
+/** Durable пауза/возобновление диспетчеризации scheduler. */
+export async function setDispatchState(paused: boolean): Promise<DispatchStateResponse> {
+  const body = dispatchStateRequestSchema.parse({ paused });
+  return validate(dispatchStateResponseSchema, await apiClient.put<unknown>(toClientPath(apiPaths.schedulerDispatchState), body));
+}
+
+/** Подтверждённая массовая отмена Run; результат упорядочен по expectedRunIds. */
+export async function cancelAllRuns(expectedRunIds: string[]): Promise<CancelAllRunsResult> {
+  const body = cancelAllRunsRequestSchema.parse({ expectedRunIds });
+  return validate(cancelAllRunsResultSchema, await apiClient.post<unknown>(toClientPath(apiPaths.runsCancelAll), body));
+}
+
+/** Создаёт durable checkpoint Run без остановки. */
+export async function createRunCheckpoint(runId: string): Promise<RunControlCommandResult> {
+  return validate(runControlCommandResultSchema, await apiClient.post<unknown>(toClientPath(apiPaths.runCheckpoint(runId))));
+}
+
+/** Кооперативная пауза Run. */
+export async function pauseRun(runId: string): Promise<RunControlCommandResult> {
+  return validate(runControlCommandResultSchema, await apiClient.post<unknown>(toClientPath(apiPaths.runPause(runId))));
+}
+
+/** Валидированное возобновление Run после подтверждённого checkpoint. */
+export async function resumeRun(runId: string): Promise<RunControlCommandResult> {
+  return validate(runControlCommandResultSchema, await apiClient.post<unknown>(toClientPath(apiPaths.runResume(runId))));
+}
+
+/** Sanitized persisted terminal Run; unavailable-состояние сохраняется без fallback. */
+export async function getRunTerminal(runId: string): Promise<RunTerminalProjection> {
+  return validate(runTerminalProjectionSchema, await apiClient.get<unknown>(toClientPath(apiPaths.runTerminal(runId))));
+}
+
+/** Опции пейджинга Run timeline (opaque outbox курсор + bounded limit). */
+export interface RunEventsPageOptions { afterId?: string; limit?: number }
+
+/** Страница durable Run событий по HTTP cursor; никогда не обещает SSE replay. */
+export async function getRunEventsPage(runId: string, options?: RunEventsPageOptions): Promise<RunEventsPageProjection> {
+  return validate(runEventsPageProjectionSchema, await apiClient.get<unknown>(toClientPath(apiPaths.runEventsPage(runId, options))));
+}
+
+/** Run detail DTO: usage-поля сохраняют null-vs-zero (availability). */
+export async function getRunDetail(runId: string): Promise<RunDetailProjection> {
+  return validate(runDetailProjectionSchema, await apiClient.get<unknown>(toClientPath(apiPaths.run(runId))));
+}
+
+/** Пагинированный проектный индекс без repository-путей. */
+export async function getProjectIndex(options?: { cursor?: string; limit?: number }): Promise<ProjectIndexPageProjection> {
+  return validate(projectIndexPageProjectionSchema, await apiClient.get<unknown>(toClientPath(apiPaths.projectIndex(options))));
+}
+
+/** Scoped pause проекта без отмены текущих Run. */
+export async function pauseProject(projectId: string): Promise<ProjectPauseResponse> {
+  return validate(projectPauseResponseSchema, await apiClient.post<unknown>(toClientPath(apiPaths.projectPause(projectId))));
+}
+
+/** Scoped resume проекта. */
+export async function resumeProject(projectId: string): Promise<ProjectPauseResponse> {
+  return validate(projectPauseResponseSchema, await apiClient.post<unknown>(toClientPath(apiPaths.projectResume(projectId))));
+}
+
+/** Scoped pause эпика. */
+export async function pauseEpic(epicId: string): Promise<EpicPauseResponse> {
+  return validate(epicPauseResponseSchema, await apiClient.post<unknown>(toClientPath(apiPaths.epicPause(epicId))));
+}
+
+/** Scoped resume эпика. */
+export async function resumeEpic(epicId: string): Promise<EpicPauseResponse> {
+  return validate(epicPauseResponseSchema, await apiClient.post<unknown>(toClientPath(apiPaths.epicResume(epicId))));
+}
+
+/** Epic replan создаёт planning request под существующим coordinator/approval lifecycle. */
+export async function replanEpic(epicId: string): Promise<EpicReplanResponse> {
+  return validate(epicReplanResponseSchema, await apiClient.post<unknown>(toClientPath(apiPaths.epicReplan(epicId)), {}));
+}
+
+/** Task resume сохраняет prior stage; переход подтверждается backend. */
+export async function resumeTask(taskId: string): Promise<TaskControlResponse> {
+  return validate(taskControlResponseSchema, await apiClient.post<unknown>(toClientPath(apiPaths.taskResume(taskId))));
+}
+
+/** Команда изменения канонического приоритета Task. */
+export async function setTaskPriority(taskId: string, priority: number): Promise<TaskPriorityResponse> {
+  const body = taskPriorityRequestSchema.parse({ priority });
+  return validate(taskPriorityResponseSchema, await apiClient.post<unknown>(toClientPath(apiPaths.taskPriority(taskId)), body));
+}
+
+/** Сохраняет изолированный unapproved кандидат Project Config (не активирует). */
+export async function saveProjectConfigCandidate(
+  projectId: string,
+  candidate: { expectedManifestHash: string; settings: ProjectConfigV2 },
+): Promise<ProjectConfigCandidateProjection> {
+  const body = projectConfigCandidateEditorRequestSchema.parse(candidate);
+  return validate(projectConfigCandidateProjectionSchema, await apiClient.post<unknown>(toClientPath(apiPaths.projectConfigEditorCandidate(projectId)), body));
+}
+
+/** CAS-bound reconciliation DEGRADED-журнала конфигурации проекта. */
+export async function reconcileProjectConfigJournal(
+  projectId: string,
+  journalId: string,
+  command: { expectedPhase: 'DEGRADED'; observedManifestHash: string; resolution: 'ACCEPT_EXTERNAL' | 'RESTORE_APPROVED' },
+): Promise<z.infer<typeof journalReconcileResponseSchema>> {
+  const body = journalReconcileRequestSchema.parse(command);
+  return validate(journalReconcileResponseSchema, await apiClient.post<unknown>(toClientPath(apiPaths.projectConfigJournalReconcile(projectId, journalId)), body));
+}
+
+/** Список согласований (pending/resolved) по стабильному фильтру. */
+export async function listApprovals(status?: 'pending' | 'resolved'): Promise<ApprovalInboxProjection> {
+  return validate(approvalInboxProjectionSchema, await apiClient.get<unknown>(toClientPath(apiPaths.approvalsList(status))));
+}
+
+/** Детальная проекция согласования: proposal, evidence, impact, decision. */
+export async function getApprovalDetail(approvalId: string): Promise<ApprovalDetailProjection> {
+  return validate(approvalDetailProjectionSchema, await apiClient.get<unknown>(toClientPath(apiPaths.approval(approvalId))));
+}
+
+/** Эффективная политика согласований (read-only). */
+export async function getApprovalPolicies(): Promise<ApprovalPolicyProjection> {
+  return validate(approvalPolicyProjectionSchema, await apiClient.get<unknown>(toClientPath(apiPaths.approvalPolicies)));
+}
+
+/** Периодизированная проекция Usage & Budget по строгому UTC-окну. */
+export async function getUsageWindow(
+  from: string,
+  to: string,
+  granularity: 'day' | 'hour' | 'month',
+): Promise<UsageWindowProjection> {
+  return validate(usageWindowProjectionSchema, await apiClient.get<unknown>(toClientPath(apiPaths.usageWindow(from, to, granularity))));
 }

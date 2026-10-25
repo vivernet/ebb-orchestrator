@@ -1,3 +1,4 @@
+/// <reference types="node" />
 import { describe, expect, test, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
@@ -13,6 +14,14 @@ import SettingsPage from '../src/features/settings/SettingsPage.js';
 import UsagePage from '../src/features/usage/UsagePage.js';
 import AgentRunPage from '../src/features/runs/AgentRunPage.js';
 import * as projectApi from '../src/features/projects/api.js';
+import { apiErrorMessage, ru } from '../src/i18n/ru.js';
+import { readFileSync } from 'node:fs';
+
+const baseCssSrc = readFileSync('src/styles/base.css', 'utf8');
+
+function expectToken(name: string, value: string) {
+  expect(baseCssSrc, name).toMatch(new RegExp(`${name}:\\s*${value}`));
+}
 
 function renderPage(page: React.ReactNode) {
   return render(<MemoryRouter>{page}</MemoryRouter>);
@@ -192,5 +201,62 @@ describe('Композиция экранов по утверждённым ма
     expect(screen.getByRole('region', { name: 'Разрешения' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Создать контрольную точку' })).not.toBeInTheDocument();
     vi.restoreAllMocks();
+  });
+});
+
+describe('Фиксированная геометрия и токены по референсу', () => {
+  test('боковая панель ровно 230px без дублирующих override', () => {
+    expectToken('--sidebar', '230px');
+    expect(baseCssSrc).not.toContain('236px');
+    expect(baseCssSrc).toMatch(/\.app-shell\s*\{[^}]*grid-template-columns:\s*(?:var\(--sidebar\)|230px)/);
+  });
+
+  test('основное содержимое использует отступы 24px/28px/36px', () => {
+    expect(baseCssSrc).toMatch(/\.main-content\s*\{[^}]*padding:\s*24px 28px 36px/);
+  });
+
+  test('панели используют единый шаг 16px', () => {
+    expect(baseCssSrc).toMatch(/\.reference-panel[^{]*\{[^}]*padding:\s*16px/);
+  });
+
+  test('плоские поверхности: без градиентов и теней в базе', () => {
+    expect(baseCssSrc).not.toMatch(/gradient\(/);
+    expect(baseCssSrc).not.toMatch(/box-shadow:/);
+  });
+
+  test('палитра совпадает с референсом', () => {
+    expectToken('--bg', '#0b0d10');
+    expectToken('--panel', '#12161b');
+    expectToken('--panel2', '#171c22');
+    expectToken('--border', '#252c34');
+    expectToken('--text', '#eef2f6');
+    expectToken('--muted', '#8e9aa7');
+    expectToken('--accent', '#8ab4ff');
+    expectToken('--good', '#77d19a');
+    expectToken('--warn', '#e8c66a');
+    expectToken('--bad', '#ef8e8e');
+  });
+
+  test('типографика: база 14px, заголовок страницы 24px', () => {
+    expect(baseCssSrc).toMatch(/font-size:\s*14px/);
+    expect(baseCssSrc).toMatch(/\.page-header h1[^{]*\{[^}]*font-size:\s*24px/);
+  });
+});
+
+describe('Русские подписи разделов референса', () => {
+  test('все ключевые подписи присутствуют в ru.ts', () => {
+    expect(ru.dashboard.runningAgents).toBe('Работающие агенты');
+    expect(ru.dashboard.activeWork).toBe('Активная работа');
+    expect(ru.dashboard.pendingApprovals).toBe('Требуют согласования');
+    expect(ru.dashboard.aiSpendToday).toBe('Расходы ИИ сегодня');
+    expect(ru.dashboard.activeProjects).toBe('Активные проекты');
+    expect(ru.dashboard.newRequest).toBe('Новый запрос');
+    expect(ru.runs.createCheckpoint).toBe('Создать контрольную точку');
+  });
+
+  test('ошибки курсора и невалидного ответа локализованы', () => {
+    expect(apiErrorMessage('INVALID_RESPONSE')).toBe('Ответ сервера не соответствует контракту.');
+    expect(apiErrorMessage('INVALID_CURSOR')).not.toBe('Не удалось выполнить запрос.');
+    expect(apiErrorMessage('INVALID_CURSOR')).toMatch(/[А-Яа-яЁё]/);
   });
 });
