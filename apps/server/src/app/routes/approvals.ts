@@ -1,12 +1,14 @@
 import type { FastifyInstance } from "fastify";
 import type { Database } from "../../platform/database/database.js";
+import { ApprovalReadModel } from "../../modules/approvals/approval-read-model.js";
+import { approvalInboxFilterSchema } from "@ebb-orchestrator/contracts";
+
 export interface ApprovalCommandService {
   approve(id: string, actor: string, note?: string): unknown | Promise<unknown>;
   reject(id: string, actor: string, note?: string): unknown | Promise<unknown>;
   requestChanges(id: string, actor: string, note?: string): unknown | Promise<unknown>;
 }
 export interface ApprovalRouteDeps { db?: Database | undefined; approvalService?: ApprovalCommandService | undefined; }
-interface ApprovalRow { id: string; type: string; subject_id: string; subject_type: string; status: string; requested_by: string; resolved_by: string | null; resolution_note: string | null; created_at: string; resolved_at: string | null; }
 function parseApprovalBody(value: unknown): { note?: string } | null {
   if (value === undefined) return {};
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
@@ -27,11 +29,25 @@ function parseDecisionBody(value: unknown): { note?: string } | null {
  * Регистрирует HTTP-маршруты approvals и передаёт изменяющие состояние действия backend policy.
  */
 export async function approvalRoutes(app: FastifyInstance, deps: ApprovalRouteDeps = {}): Promise<void> {
-  app.get("/api/v1/approvals", async () => {
-    if (!deps.db) return { approvals: [] };
-     const rows = deps.db.all<ApprovalRow>("SELECT * FROM approvals WHERE status='PENDING' ORDER BY created_at");
-    return { approvals: rows };
+  app.get<{ Querystring: { status?: string } }>("/api/v1/approvals", async (request, reply) => {
+    const raw = request.query.status;
+    let filter: "pending" | "resolved" = "pending";
+    if (raw !== undefined) {
+      const parsed = approvalInboxFilterSchema.safeParse(raw);
+      if (!parsed.success) return reply.code(400).send({ error: "invalid status filter" });
+      filter = parsed.data;
+    }
+    return new ApprovalReadModel(deps.db).listInbox(filter);
   });
+
+  app.get("/api/v1/approvals/policies", async () => new ApprovalReadModel(deps.db).getPolicy());
+
+  app.get<{ Params: { id: string } }>("/api/v1/approvals/:id", async (request, reply) => {
+    const detail = new ApprovalReadModel(deps.db).getDetail(request.params.id);
+    if (!detail) return reply.code(404).send({ error: "approval not found" });
+    return detail;
+  });
+
   app.post<{ Params: { id: string }; Body: unknown }>("/api/v1/approvals/:id/approve", async (request, reply) => {
     if (!deps.approvalService) return reply.code(503).send({ error: "approval service unavailable" });
     const body = parseApprovalBody(request.body);

@@ -24,7 +24,19 @@ export class DashboardProjection {
     const activeAgents = hasTable(db, "agent_runs") ? db.all<AgentRow>("SELECT id,role,task_id,status FROM agent_runs WHERE status IN ('STARTED','IN_PROGRESS','COMPLETING') ORDER BY started_at").map((r) => ({ runId: r.id, role: r.role, taskId: r.task_id, status: r.status })) : [];
     const activeWork = hasTable(db, "tasks") ? db.all<SchedulerTaskRow>("SELECT id,title,status,project_id,wait_reason,contract_json FROM tasks WHERE status NOT IN ('DONE','CANCELLED','RELEASED') ORDER BY updated_at").map((t) => ({ id: t.id, title: t.title ?? "", status: t.status, eligibility: schedulerEligibility(db, t, this.scheduler) })) : [];
     const approvals = hasTable(db, "approvals") ? Number(db.get<CountRow>("SELECT COUNT(*) AS count FROM approvals WHERE status='PENDING'")?.count ?? 0) : 0;
-    const usage = hasTable(db, "usage_records") ? (db.get<UsageRow>("SELECT COALESCE(SUM(input_tokens),0) inputTokens, COALESCE(SUM(cached_tokens),0) cachedTokens, COALESCE(SUM(output_tokens),0) outputTokens, COALESCE(SUM(total_tokens),0) totalTokens, COALESCE(SUM(actual_cost),0) cost FROM usage_records") ?? emptyUsage()) : emptyUsage();
+    // Расход «сегодня» по UTC-окну: от начала текущих UTC-суток до текущего момента.
+    const todayStart = (() => {
+      const now = new Date();
+      now.setUTCHours(0, 0, 0, 0);
+      return now.toISOString();
+    })();
+    const usage = hasTable(db, "usage_records") ? (db.get<UsageRow>(
+      `SELECT COALESCE(SUM(input_tokens),0) inputTokens, COALESCE(SUM(cached_tokens),0) cachedTokens,
+              COALESCE(SUM(output_tokens),0) outputTokens, COALESCE(SUM(total_tokens),0) totalTokens,
+              COALESCE(SUM(actual_cost),0) cost
+       FROM usage_records WHERE created_at >= $todayStart`,
+      { todayStart },
+    ) ?? emptyUsage()) : emptyUsage();
     return { activeAgents, activeWork, approvals, usage, projects };
   }
 }

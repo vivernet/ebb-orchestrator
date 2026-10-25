@@ -16,11 +16,18 @@ const migrations: Migration[] = readdirSync(migrationDir)
     sql: readFileSync(join(migrationDir, file), "utf8"),
   }));
 
+const FROM = "2026-10-21T00:00:00.000Z";
+const TO = "2026-10-21T23:59:59.999Z";
+
+function windowUrl(from = FROM, to = TO, granularity = "day"): string {
+  return `/api/v1/usage?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&granularity=${granularity}`;
+}
+
 describe("usage route", () => {
-  it("aggregates authoritative token and actual-cost columns with an empty budget projection", async () => {
+  it("aggregates windows token and actual-cost columns with an empty budget projection", async () => {
     const db = createSqliteDatabase(":memory:");
     runMigrations(db, migrations);
-    const now = new Date().toISOString();
+    const now = FROM;
     db.run(
       "INSERT INTO projects (id,name,display_name,status,created_at,updated_at) VALUES ('project-1','p','P','ACTIVE',$now,$now)",
       { now },
@@ -37,71 +44,48 @@ describe("usage route", () => {
 
     const app = Fastify();
     await usageRoutes(app, { db });
-    const response = await app.inject({ method: "GET", url: "/api/v1/usage" });
+    const response = await app.inject({ method: "GET", url: windowUrl() });
 
     expect(response.statusCode).toBe(200);
-    expect(JSON.parse(response.body)).toEqual({
-      global: {
-        inputTokens: 12,
-        cachedTokens: 15,
-        outputTokens: 18,
-        totalTokens: 45,
-        tokens: 45,
-        cost: 4.25,
-        aggregation: "all_records",
-      },
-      project: {
-        inputTokens: 12,
-        cachedTokens: 15,
-        outputTokens: 18,
-        totalTokens: 45,
-        tokens: 45,
-        cost: 4.25,
-        aggregation: "records_with_project_id",
-      },
-      epic: {
-        inputTokens: 11,
-        cachedTokens: 13,
-        outputTokens: 15,
-        totalTokens: 39,
-        tokens: 39,
-        cost: 3.75,
-        aggregation: "records_with_epic_id",
-      },
-      task: {
-        inputTokens: 7,
-        cachedTokens: 8,
-        outputTokens: 9,
-        totalTokens: 24,
-        tokens: 24,
-        cost: 2.5,
-        aggregation: "records_with_task_id",
-      },
-      budget: {
-        configurations: [],
-        contexts: [
-          {
-            scope: "global",
-            scopeId: "global",
-            projectId: null,
-            epicId: null,
-            taskId: null,
-            applicableLimits: [],
-            effectiveLimit: null,
-          },
-          {
-            scope: "project",
-            scopeId: "project-1",
-            projectId: "project-1",
-            epicId: null,
-            taskId: null,
-            applicableLimits: [],
-            effectiveLimit: null,
-          },
-        ],
-        activeReservations: [],
-      },
+    const body = JSON.parse(response.body);
+    expect(body.window).toEqual({ from: FROM, to: TO, granularity: "day" });
+    expect(body.summary).toEqual({
+      inputTokens: 12,
+      cachedTokens: 15,
+      outputTokens: 18,
+      totalTokens: 45,
+      cost: 4.25,
     });
+    expect(body.dailySeries).toEqual([
+      { date: "2026-10-21", usage: { inputTokens: 12, cachedTokens: 15, outputTokens: 18, totalTokens: 45, cost: 4.25 } },
+    ]);
+    expect(body.budgets).toEqual({
+      configurations: [],
+      contexts: [
+        {
+          scope: "global",
+          scopeId: "global",
+          projectId: null,
+          epicId: null,
+          taskId: null,
+          applicableLimits: [],
+          effectiveLimit: null,
+        },
+        {
+          scope: "project",
+          scopeId: "project-1",
+          projectId: "project-1",
+          epicId: null,
+          taskId: null,
+          applicableLimits: [],
+          effectiveLimit: null,
+        },
+      ],
+      activeReservations: [],
+    });
+    expect(body.efficiency.deterministicCheckCount).toEqual({ availability: "unavailable", reason: "NO_DURABLE_CHECK_EXECUTION_SOURCE" });
+    expect(body.anomaly).toEqual({ availability: "unavailable", reason: "NO_APPROVED_POLICY" });
+    expect(body.taskRecoveryShare).toEqual({ availability: "unavailable", reason: "NO_APPROVED_POLICY" });
 
     await app.close();
     db.close();
@@ -110,7 +94,7 @@ describe("usage route", () => {
   it("projects hierarchical limits and only currently RESERVED entries without changing budget state", async () => {
     const db = createSqliteDatabase(":memory:");
     runMigrations(db, migrations);
-    const now = new Date().toISOString();
+    const now = FROM;
     db.run(
       "INSERT INTO projects (id,name,display_name,status,created_at,updated_at) VALUES ('project-1','p','P','ACTIVE',$now,$now)",
       { now },
@@ -142,27 +126,34 @@ describe("usage route", () => {
               ('reservation-done','project-1','epic-1','task-1',2,'RECONCILED','reviewer','model-y','CODE_REVIEW',$now)`,
       { now },
     );
+    db.run(
+      `INSERT INTO usage_records
+        (id,project_id,epic_id,task_id,input_tokens,cached_tokens,output_tokens,total_tokens,actual_cost,role,model,trigger_reason,created_at)
+       VALUES ('usage-1','project-1','epic-1','task-1',10,5,7,22,0.75,'developer','model-x','DEVELOPMENT',$now)`,
+      { now },
+    );
 
     const app = Fastify();
     await usageRoutes(app, { db });
-    const response = await app.inject({ method: "GET", url: "/api/v1/usage" });
+    const response = await app.inject({ method: "GET", url: windowUrl() });
     const body = JSON.parse(response.body);
 
     expect(response.statusCode).toBe(200);
-    expect(body.budget.configurations).toEqual([
+    expect(body.summary).toEqual({ inputTokens: 10, cachedTokens: 5, outputTokens: 7, totalTokens: 22, cost: 0.75 });
+    expect(body.budgets.configurations).toEqual([
       { scope: "global", scopeId: "global", limitCost: 100, softLimitCost: 75, policy: "hard", spentCost: 10, reservedCost: 5 },
       { scope: "project", scopeId: "project-1", limitCost: 80, softLimitCost: 60, policy: "soft", spentCost: 20, reservedCost: 3 },
       { scope: "epic", scopeId: "epic-1", limitCost: 30, softLimitCost: 25, policy: "hard", spentCost: 4, reservedCost: 2 },
       { scope: "task", scopeId: "task-1", limitCost: 40, softLimitCost: 35, policy: "soft", spentCost: 5, reservedCost: 1 },
     ]);
-    expect(body.budget.contexts).toEqual([
-      expect.objectContaining({ scope: "global", effectiveLimit: body.budget.configurations[0] }),
-      expect.objectContaining({ scope: "project", scopeId: "project-1", effectiveLimit: body.budget.configurations[1] }),
-      expect.objectContaining({ scope: "epic", scopeId: "epic-1", effectiveLimit: body.budget.configurations[2] }),
-      expect.objectContaining({ scope: "task", scopeId: "task-1", effectiveLimit: body.budget.configurations[2] }),
+    expect(body.budgets.contexts).toEqual([
+      expect.objectContaining({ scope: "global", effectiveLimit: body.budgets.configurations[0] }),
+      expect.objectContaining({ scope: "project", scopeId: "project-1", effectiveLimit: body.budgets.configurations[1] }),
+      expect.objectContaining({ scope: "epic", scopeId: "epic-1", effectiveLimit: body.budgets.configurations[2] }),
+      expect.objectContaining({ scope: "task", scopeId: "task-1", effectiveLimit: body.budgets.configurations[2] }),
     ]);
-    expect(body.budget.contexts[3].applicableLimits.map((limit: { scope: string }) => limit.scope)).toEqual(["global", "project", "epic", "task"]);
-    expect(body.budget.activeReservations).toEqual([
+    expect(body.budgets.contexts[3].applicableLimits.map((limit: { scope: string }) => limit.scope)).toEqual(["global", "project", "epic", "task"]);
+    expect(body.budgets.activeReservations).toEqual([
       {
         id: "reservation-active",
         projectId: "project-1",
@@ -181,6 +172,29 @@ describe("usage route", () => {
       { id: "reservation-active", status: "RESERVED" },
       { id: "reservation-done", status: "RECONCILED" },
     ]);
+
+    await app.close();
+    db.close();
+  });
+
+  it("rejects malformed or missing window parameters", async () => {
+    const db = createSqliteDatabase(":memory:");
+    runMigrations(db, migrations);
+    const app = Fastify();
+    await usageRoutes(app, { db });
+
+    const cases = [
+      "/api/v1/usage",
+      "/api/v1/usage?from=2026-10-21T00:00:00.000Z&to=2026-10-21T23:59:59.999Z",
+      "/api/v1/usage?from=2026-10-21T00:00:00.000Z&granularity=day",
+      windowUrl("not-a-timestamp", TO),
+      windowUrl(TO, FROM),
+      windowUrl(FROM, TO, "week"),
+    ] as const;
+    for (const url of cases) {
+      const response = await app.inject({ method: "GET", url });
+      expect(response.statusCode, url).toBe(400);
+    }
 
     await app.close();
     db.close();
