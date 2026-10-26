@@ -72,9 +72,15 @@ summary: Неавторитетный реестр предложений и з�
   linked_plan: plan-23
   summary: Создать план по модернизации веб-интерфейса и добавлению возможности настройки ИИ-провайдеров и моделей
   context: Запись пользователя. Триггер — после полной реализации плана 22 (22-lobehub-pattern-adoption). Пользователь принял решение перенести владение настройкой провайдеров/моделей в Ebb (Proposal 18 accepted, 2026-10-23; Proposal 09 superseded; spec-01 §10.2/§13.1 и Plan20 Task5B/5C амендированы). В v1 — только built-in провайдеры Hermes; API-ключи в EBB_ORCHESTRATOR_HOME/.env; UI read-only. План 23-web-ui-ai-provider-settings.md реализован полностью (Task 1–10, security-review PASS, финальный whole-plan review PASS) и переведён в completed.
-- id: IN-006
-  date: 2026-10-23
-  source: user
-  status: done
-  summary: Исключение по зависимости plan-22 → plan-20: разрешена реализация плана 22 до завершения плана 20 (в плане 20 осталась только интеграция на macOS)
-  context: Пользователь прямо распорядился приступить к реализации плана 22 при plan-20=in_progress, поскольку в плане 20 осталась только macOS-интеграция. Ограничение: задачи Plan22 не затрагивают открытые macOS-пути Plan20 (darwin supervisor/launcher/CI). План 22 реализован и переведён в completed; план 20 остаётся in_progress.
+|- id: IN-006
+|  date: 2026-10-23
+|  source: user
+|  status: done
+|  summary: Исключение по зависимости plan-22 → plan-20: разрешена реализация плана 22 до завершения плана 20 (в плане 20 осталась только интеграция на macOS)
+|  context: Пользователь прямо распорядился приступить к реализации плана 22 при plan-20=in_progress, поскольку в плане 20 осталась только macOS-интеграция. Ограничение: задачи Plan22 не затрагивают открытые macOS-пути Plan20 (darwin supervisor/launcher/CI). План 22 реализован и переведён в completed; план 20 остаётся in_progress.
+|- id: IN-007
+|  date: 2026-10-26
+|  source: user
+|  status: open
+|  summary: Оценить применимость OpenAI ChatKit (developers.openai.com/api/docs/guides/chatkit) и OpenAI Agents SDK quickstart (developers.openai.com/api/docs/guides/agents/quickstart) к Ebb Orchestrator
+|  context: Пользователь поделился ссылками на доки OpenAI как потенциально полезными для проекта. Предварительная оценка: ChatKit — прикладное построение чат-продуктов (треды/инструменты/стриминг), может служить ориентиром для расширения UX coordinator chat; Agents SDK — альтернативный рантайм-провайдер, который стоило бы оценивать через существующую абстракцию AgentRuntime (hermes-runtime-adapter.ts) и ebb-hermes-provider-selection, а не напрямую; любые агентские фичи должны проходить через ActionGateway/PermissionEngine. Контент страниц на момент записи не был извлечён (web extract backend недоступен) — требуется вычитка доков при планировании. Связано с открытым plan-27: визуальный гейт (20 скриншотов) остаётся красным, полные gates на интегрированном SHA (4964d3a) не перепрогнаны.
