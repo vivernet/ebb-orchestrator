@@ -1,0 +1,38 @@
+@import '../../styles/refui.css';
+
+/* Execution (reference 05) — повторяет макет: запуски, ожидание, ёмкость,
+   выбранный запуск, блокировки, события. */
+
+.ex-warn { color: var(--warn); }
+.ex-note.bad { color: var(--bad); }
+
+.ex-confirm { position: fixed; inset: 0; background: rgba(4, 6, 9, 0.7); display: flex; align-items: center; justify-content: center; z-index: 40; }
+.ex-confirm-box { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px; max-width: 420px; width: 100%; }
+
+.ex-grid > div { display: grid; gap: 16px; align-content: start; }
+
+.ex-run { display: grid; grid-template-columns: 1fr 120px 110px; gap: 12px; align-items: center; padding: 14px 0; border-top: 1px solid var(--border); }
+.ex-run:first-of-type { border-top: 0; }
+.ex-run b { font-size: 14px; }
+.ex-run-sub { margin-top: 4px; }
+.ex-run-meta { display: flex; gap: 6px; margin-top: 7px; flex-wrap: wrap; }
+.ex-run-time { text-align: right; }
+.ex-run-time b { display: block; font-size: 14px; margin-top: 3px; }
+
+.ex-qitem { padding: 11px 0; border-top: 1px solid var(--border); }
+.ex-qitem:first-of-type { border-top: 0; }
+.ex-qitem-head { display: flex; justify-content: space-between; gap: 12px; }
+.ex-qitem-sub { color: var(--muted); font-size: 12px; margin-top: 4px; }
+.ex-qitem-reason { color: var(--warn); font-size: 11px; margin-top: 4px; }
+
+.ex-limit { display: grid; grid-template-columns: 1fr auto; gap: 10px; padding: 9px 0; border-top: 1px solid var(--border); font-size: 13px; }
+.ex-limit:first-of-type { border-top: 0; }
+.ex-limit b { font-weight: 700; }
+
+.ex-selected-role { display: block; font-size: 14px; font-weight: 700; margin: 4px 0 0; }
+.ex-tool { padding: 10px 12px; background: var(--panel2); border: 1px solid var(--border); border-radius: 9px; margin-top: 8px; }
+.ex-tool code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+.ex-tool b { font-size: 13px; }
+.ex-selected-actions { display: flex; gap: 10px; margin-top: 12px; }
+
+.pf-btn.danger { border-color: #653535; background: #2f1818; color: #ffc2c2; }

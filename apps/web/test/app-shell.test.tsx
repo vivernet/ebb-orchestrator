@@ -62,7 +62,7 @@ describe('SSE EventClient integration', () => {
     expect(within(screen.getByRole('navigation', { name: 'Навигационная цепочка' })).getByRole('link', { name: 'Обзор' })).toHaveAttribute('href', '/');
     expect(screen.getByText('Task task-7')).toBeInTheDocument();
     expect(screen.getByText('Task body')).toBeInTheDocument();
-    expect(within(screen.getByRole('navigation', { name: 'Основная навигация' })).getByRole('link', { name: 'Обзор' })).not.toHaveAttribute('aria-current', 'page');
+    expect(within(screen.getByRole('navigation', { name: 'Основная навигация' })).getByRole('link', { name: 'Панель управления' })).not.toHaveAttribute('aria-current', 'page');
   });
 
   test('keeps the breadcrumb landmark outside the outlet content wrapper', () => {

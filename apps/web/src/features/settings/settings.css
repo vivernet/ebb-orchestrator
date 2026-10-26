@@ -1,0 +1,64 @@
+@import '../../styles/refui.css';
+
+/* Settings (reference 08) — повторяет макет один в один: карточки, строки,
+   поля-инпуты, переключатели и таблица ролей/моделей. */
+
+.st-layout { display: grid; grid-template-columns: 210px 1fr; gap: 16px; align-items: start; }
+
+.st-nav { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 10px; }
+.st-nav-item { padding: 10px 11px; border-radius: 8px; color: var(--muted); font-size: 14px; margin: 2px 0; cursor: pointer; }
+.st-nav-item.active { background: var(--panel2); color: var(--text); }
+
+.st-subtitle { color: var(--muted); font-size: 12px; margin-bottom: 14px; }
+
+.st-row { display: flex; gap: 16px; align-items: center; justify-content: space-between; padding: 11px 0; border-top: 1px solid var(--border); }
+.st-row:first-of-type { border-top: 0; }
+.st-row b { display: block; font-size: 14px; font-weight: 700; }
+.st-desc { color: var(--muted); font-size: 11px; margin-top: 3px; }
+.st-control { min-width: 200px; text-align: right; }
+
+.st-field, .st-select {
+  display: inline-block;
+  background: #0f1318;
+  border: 1px solid var(--border);
+  padding: 8px 10px;
+  border-radius: 8px;
+  color: var(--text);
+  min-width: 190px;
+  text-align: left;
+  font-size: 14px;
+}
+.st-select { color: var(--text); }
+
+.st-good { color: var(--good); }
+
+.st-switch { display: inline-flex; width: 38px; height: 22px; border-radius: 999px; background: #2a3138; align-items: center; padding: 3px; justify-content: flex-start; }
+.st-switch.on { background: #315c43; justify-content: flex-end; }
+.st-switch span { width: 16px; height: 16px; background: #fff; border-radius: 50%; }
+
+.st-table { width: 100%; border-collapse: collapse; }
+.st-table th, .st-table td { text-align: left; padding: 10px 8px; border-top: 1px solid var(--border); font-size: 12px; font-weight: 400; }
+.st-table th { color: var(--muted); font-weight: 500; border-top: 0; }
+.st-table td:last-child, .st-table th:last-child { text-align: left; }
+
+.st-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: #0f1318;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 12px;
+  font-size: 12px;
+  white-space: pre-wrap;
+  color: var(--text);
+  margin: 0;
+  line-height: 1.45;
+}
+
+.st-note { padding: 10px 12px; border-left: 3px solid var(--accent); background: var(--panel2); border-radius: 6px; margin-top: 12px; font-size: 13px; }
+.st-warn { padding: 10px 12px; border-left: 3px solid var(--warn); background: var(--panel2); border-radius: 6px; margin-top: 12px; font-size: 13px; }
+
+@media (max-width: 1000px) {
+  .st-layout { grid-template-columns: 1fr; }
+  .st-nav { display: flex; overflow-x: auto; gap: 4px; }
+  .st-nav-item { white-space: nowrap; }
+}

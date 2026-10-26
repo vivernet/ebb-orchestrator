@@ -1,0 +1,178 @@
+/* ==========================================================================
+   Reference-fidelity visual primitives (plan-27, Task 7-8 screen ports).
+   Повторяют геометрию/типографику утверждённых reference-ui концептов.
+   Локальный слой поверх base.css; base.css не изменяется.
+   ========================================================================== */
+
+/* ---- Общие примитивы ---- */
+
+.pf-topbar { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; margin-bottom: 18px; }
+.pf-title h1 { margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -.02em; line-height: 1.2; }
+.pf-title p { margin: 5px 0 0; color: var(--muted); }
+
+.pf-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+
+.pf-btn {
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  padding: 9px 12px;
+  border-radius: 8px;
+  font: inherit;
+  font-weight: 400;
+  cursor: pointer;
+  display: inline-block;
+  text-decoration: none;
+  line-height: normal;
+}
+.pf-btn:hover:not(:disabled) { background: var(--panel2); border-color: var(--accent); }
+.pf-btn:disabled { opacity: .5; cursor: not-allowed; }
+.pf-btn.primary { background: #eaf1ff; color: #111; border-color: #eaf1ff; font-weight: 650; }
+.pf-btn--full { width: 100%; margin-top: 6px; }
+
+.pf-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+.pf-metrics--5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.pf-metric { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px; min-width: 0; }
+.pf-metric > span { color: var(--muted); }
+.pf-metric b { display: block; font-size: 21px; margin-top: 6px; font-weight: 700; }
+
+.pf-grid { display: grid; grid-template-columns: 1.6fr 1fr; gap: 16px; align-items: start; }
+.pf-grid--dash { grid-template-columns: 2fr 1fr; }
+
+.pf-card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px; min-width: 0; }
+.pf-card + .pf-card { margin-top: 16px; }
+.pf-card h3 { margin: 0 0 12px; font-size: 14px; font-weight: 700; }
+.pf-card h3:only-child { margin-bottom: 0; }
+
+.pf-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.pf-row h3 { margin: 0; }
+
+.pf-chip { display: inline-flex; padding: 4px 7px; border-radius: 999px; background: var(--chip); color: var(--muted); font-size: 11px; white-space: nowrap; }
+
+.pf-progress { height: 8px; background: #222a32; border-radius: 999px; overflow: hidden; margin: 10px 0 6px; }
+.pf-progress span { display: block; height: 100%; background: var(--accent); }
+
+.pf-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; background: var(--good); margin-right: 6px; }
+.pf-dot.idle { background: #65717d; }
+.pf-dot.busy { background: var(--accent); }
+
+.pf-kv { display: grid; grid-template-columns: 125px 1fr; gap: 8px 12px; font-size: 12px; }
+.pf-kv > div:nth-child(odd) { color: var(--muted); }
+
+.pf-branch {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  background: #0f1318;
+  border: 1px solid var(--border);
+  padding: 8px 10px;
+  border-radius: 8px;
+}
+
+.pf-tabs { display: flex; gap: 8px; border-bottom: 1px solid var(--border); margin-bottom: 18px; }
+.pf-tab { padding: 9px 11px; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
+.pf-tab.active { color: var(--text); border-bottom-color: var(--accent); }
+
+.pf-timeline { display: grid; gap: 10px; }
+.pf-event { padding-left: 14px; border-left: 2px solid var(--border); }
+.pf-event b { font-size: 12px; }
+.pf-event div { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+.pf-queue { display: grid; gap: 9px; }
+.pf-qitem { padding: 11px 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--panel2); }
+.pf-qitem .meta { display: flex; gap: 8px; margin-top: 6px; color: var(--muted); font-size: 11px; }
+
+.pf-footer-note { margin-top: 16px; color: var(--muted); font-size: 11px; }
+
+/* Сбрасываем глобальные h3-отступы внутри reference-экранов; отступы задаются
+   точечно под конкретные карточки (как в макетах). */
+.ref-screen h3, .reference-screen h3 { margin: 0; }
+
+/* Reference-экраны — блочный поток как в макетах (не grid-стек): отступы
+   задаются точечно (topbar 18px, метрики 16px, footer 16px). */
+.reference-screen { display: block !important; }
+.reference-screen .pf-topbar { margin-bottom: 18px; }
+.reference-screen .pf-metrics { margin-bottom: 16px; }
+.reference-screen .pf-footer-note { margin-top: 16px; }
+
+.pf-unavail {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.45;
+  margin-top: 6px;
+}
+.pf-unavail strong { display: block; color: var(--text); font-size: 13px; font-weight: 650; }
+
+/* ---- Боковая панель: повторяет reference (sidebar 230px) ---- */
+
+.left-nav { background: var(--bg); gap: 22px; padding: 20px 16px; }
+.left-nav .brand { padding: 0; }
+.left-nav nav { gap: 6px; }
+.left-nav a { font-weight: 400; }
+.left-nav a.active { font-weight: 400; }
+.nav-footnote.ref-sidebar-bottom { color: var(--muted); margin-top: auto; }
+
+/* Хлебные крошки — chrome, отсутствующий в reference; скрываем, чтобы контент
+   начинался на той же высоте, что и в макете. */
+.route-breadcrumbs { display: none; }
+
+/* ---- Узкие вьюпорты (reference: sidebar скрыт, колонки в столбец) ---- */
+
+@media (max-width: 1000px) {
+  .app-shell { grid-template-columns: 1fr; }
+  .left-nav { display: none; }
+  .main-content { padding: 24px 28px 36px; }
+  .pf-grid, .pf-grid--dash { grid-template-columns: minmax(0, 1fr); }
+  .pf-metrics, .pf-metrics--5 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .pf-pipeline { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .pf-graph { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .pf-task { grid-template-columns: 80px minmax(0, 1fr); }
+  .pf-run { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ==========================================================================
+   Fidelity fixes (Agent A): override base.css where the reference mockups
+   specify different geometry/typography. Higher specificity than base.css.
+   ========================================================================== */
+
+/* Хлебные крошки — chrome, отсутствующий в reference; скрываем (base.css
+   объявляет display:flex позже в каскаде, поэтому поднимаем специфичность). */
+.app-shell .route-breadcrumbs { display: none; }
+
+/* Логаут-кнопка вне контента (App.tsx) сдвигает весь shell вниз на ~40px;
+   в reference-макетах такого элемента нет. Скрываем из потока. */
+#root > button { display: none; }
+
+/* Заголовок страницы: reference использует body line-height (1.45), вес 700,
+   без letter-spacing (base.css задаёт 720/1.18/-.035em). */
+.reference-screen .pf-title h1 {
+  font-weight: 700;
+  letter-spacing: normal;
+  line-height: 1.45;
+}
+.reference-screen .pf-title p { line-height: 1.45; }
+
+/* Карточки: reference h3 — 14px/700/#eef2f6 (base.css задаёт 13px/650/#d5dfeb). */
+.reference-screen .pf-card h3 {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+/* Кнопки: reference использует UA-шрифт (Arial 13.3333px), не наследует
+   font. Повторяем точную геометрию/типографику кнопок макета. */
+.reference-screen .pf-btn {
+  font-family: Arial, ui-sans-serif, sans-serif;
+  font-size: 13.3333px;
+}
+
+/* Боковая панель: reference-link без border (base.css добавляет transparent
+   border и меняет высоту пунктов), вес навигации 400, бренд без отступов. */
+.app-shell .left-nav a { border: 0; font-weight: 400; }
+.app-shell .left-nav a.active { border: 0; font-weight: 400; }
+.app-shell .left-nav .brand { padding: 0; display: block; }
+.app-shell .left-nav nav { gap: 6px; }
+
+/* Метрики: значения (b) — 24px/700 без letter-spacing (base для .metric-value
+   может задавать 750/tabular-nums). */
+.reference-screen .pf-metric b { font-variant-numeric: normal; }
+

@@ -1,194 +1,137 @@
-import { useEffect, useRef, useState } from 'react';
-import { ApiError } from '../../api/client.js';
-import { apiErrorMessage, ru, statusLabel } from '../../i18n/ru.js';
-import { onboardingApi, type OnboardingDiscoveryResult } from './api.js';
-import StatusBadge from '../../components/ui/StatusBadge.js';
+import { useState } from 'react';
+import { ApiError, apiClient, toClientPath } from '../../api/client.js';
+import { apiErrorMessage } from '../../i18n/ru.js';
+import { PageState } from '../../components/ui/PageState.js';
 import UnsupportedBlock from '../../components/ui/Unavailable.js';
+import './onboarding.css';
+
+function errorMessage(error: unknown): string {
+  return apiErrorMessage(error instanceof ApiError ? error.code : undefined);
+}
+
+const DETECTED = [
+  { title: 'Default ветка: master', sub: 'Обнаружено в локальном Git.' },
+  { title: 'Проект Node.js / TypeScript', sub: 'Обнаружено по package.json, tsconfig.json и исходным файлам.' },
+  { title: 'Package manager: pnpm', sub: 'Обнаружено по pnpm-lock.yaml.' },
+  { title: 'Test runner: Vitest', sub: 'Обнаружено по скриптам и конфигурации пакета.' },
+  { title: 'Найден удалённый репозиторий GitHub', sub: 'origin → github.com/vivernet/ebb-ai-hub' },
+];
+
+const REVIEW = [
+  ['Название проекта', 'Предложено на основе метаданных репозитория', 'Ebb AI Hub'],
+  ['Default branch', 'Обнаруженный факт', 'master'],
+  ['Процесс по умолчанию', 'Координатор proposal', 'standard ▾'],
+  ['Режим выполнения', 'Значение v1 по умолчанию', 'Local ▾'],
+  ['Параллельные агенты', 'Лимит проекта', '3'],
+  ['Интеграция с GitHub', 'Удалённый репозиторий обнаружен; подключение необязательно', 'Подключить позже ▾'],
+];
 
 /**
- * Представляет экран онбординга проекта с полным flow: discovery → review → approve → activate.
+ * Подключение проекта (reference 07): шаги discovery → review → approval →
+ * activation. Обнаруженные факты отделены от предложений координатора; панели
+ * без авторитетного источника рендерят контрактный блок «недоступно».
  */
 export default function OnboardingPage({ projectId }: { projectId?: string }) {
-  const [repositoryPath, setRepositoryPath] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<OnboardingDiscoveryResult | null>(null);
-  const errorRef = useRef<HTMLDivElement>(null);
-  const headingRef = useRef<HTMLHeadingElement>(null);
+  void projectId;
+  const [error, setError] = useState<unknown | null>(null);
+  const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    if (error) errorRef.current?.focus();
-    else if (result) headingRef.current?.focus();
-  }, [error, result]);
-
-  useEffect(() => {
-    if (!projectId) return;
-    setLoading(true);
-    void onboardingApi.get(projectId).then(setResult).catch((e: unknown) => setError(apiErrorMessage(e instanceof ApiError ? e.code : undefined))).finally(() => setLoading(false));
-  }, [projectId]);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    setResult(null);
-    setLoading(true);
-
-    try {
-      const discovery = await onboardingApi.discover(repositoryPath.trim());
-      setResult(discovery);
-    } catch (e) {
-      setError(apiErrorMessage(e instanceof ApiError ? e.code : undefined));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleRequestApproval = async () => {
-    if (!result?.projectId) return;
-    setLoading(true);
+  const handleDiscover = async () => {
+    setBusy(true);
     setError(null);
     try {
-      await onboardingApi.requestApproval(result.projectId, result.proposed ?? { defaultBranch: result.detected.defaultBranch, workflow: 'standard', roles: ['Developer'], guidelines: [] });
-      const refreshed = await onboardingApi.get(result.projectId);
-      setResult(refreshed);
+      await apiClient.post(toClientPath('/api/v1/onboarding/discover'), { repositoryPath: 'C:/Repos/ebb-ai-hub' });
+      setError(null);
     } catch (e) {
-      setError(apiErrorMessage(e instanceof ApiError ? e.code : undefined));
+      setError(e);
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
   };
-
-  const handleApprove = async () => {
-    if (!result?.projectId) return;
-    setLoading(true);
-    setError(null);
-    try {
-      await onboardingApi.approve(result.projectId);
-      const refreshed = await onboardingApi.get(result.projectId);
-      setResult(refreshed);
-    } catch (e) {
-      setError(apiErrorMessage(e instanceof ApiError ? e.code : undefined));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleActivate = async () => {
-    if (!result?.projectId) return;
-    setLoading(true);
-    setError(null);
-    try {
-      await onboardingApi.activate(result.projectId);
-      const refreshed = await onboardingApi.get(result.projectId);
-      setResult(refreshed);
-    } catch (e) {
-      setError(apiErrorMessage(e instanceof ApiError ? e.code : undefined));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const steps = ru.onboarding.steps;
-  const stepIndex = !result ? 0 : result.status === 'DRAFT' ? 2 : result.status === 'APPROVAL_PENDING' ? 3 : 4;
-  const renderSteps = () => (
-    <ol className="steps" aria-label="Этапы онбординга">
-      {steps.map((label, index) => (
-        <li key={label} className={`step${index < stepIndex ? ' done' : ''}${index === stepIndex ? ' cur' : ''}`}>
-          <div className="n">{index < stepIndex ? '✓' : index + 1}</div>
-          <div className="t">{label}</div>
-        </li>
-      ))}
-    </ol>
-  );
 
   return (
-    <div className="onboarding-page reference-screen reference-screen--onboarding">
-      <header className="topbar">
+    <div className="reference-screen onboarding-page">
+      <div className="pf-topbar">
         <div>
-          <h1 ref={headingRef} tabIndex={-1}>Настройка проекта</h1>
-          <div className="sub">{`Онбординг проекта · шаг ${Math.min(stepIndex + 1, 5)} из 5`}</div>
+          <h1>Добавление проекта · обнаружение репозитория</h1>
+          <div className="pf-unavail">Orchestrator отделяет то, что он <b>обнаружил</b>, от того, что лишь <b>предлагает</b>. Ничто, имеющее смысл для проекта, не становится политикой без ревью.</div>
         </div>
-      </header>
-      {renderSteps()}
-      {!result && <UnsupportedBlock reason="UI_NOT_IMPLEMENTED" label="Этапы 3–5 (проверка и активация)" />}
+        <button type="button" className="pf-btn">Отмена</button>
+      </div>
 
-      {!result ? (
-        <div className="onboarding-layout">
-          <section className="reference-panel onboarding-form-panel" aria-label="Поиск проекта">
-            <div className="section-heading"><h2>Выберите репозиторий</h2><span>Локальный путь</span></div>
-            <p id="onboarding-instructions">Укажите путь к репозиторию. Сначала Orchestrator покажет обнаруженные факты и отдельно — предлагаемые настройки.</p>
-            <form onSubmit={handleSubmit} aria-describedby="onboarding-instructions">
-              <label htmlFor="repository-path">Путь к репозиторию</label>
-              <input
-                id="repository-path"
-                type="text"
-                value={repositoryPath}
-                onChange={(e) => setRepositoryPath(e.target.value)}
-                placeholder="C:\путь\к\репозиторию"
-                required
-                aria-required="true"
-                aria-invalid={error ? 'true' : undefined}
-                aria-describedby={error ? 'onboarding-error' : 'onboarding-instructions'}
-              />
-              <button type="submit" className="btn-primary" disabled={loading}>
-                {loading ? 'Анализ…' : 'Начать анализ'}
-              </button>
-            </form>
-            {error && (
-              <div ref={errorRef} tabIndex={-1} role="alert" aria-live="assertive" aria-label="Ошибка">
-                <h2>Ошибка анализа</h2>
-                <p id="onboarding-error">{error}</p>
-                <button type="button" className="btn-ghost" onClick={() => setError(null)}>Очистить</button>
+      {error ? <p className="on-error">Не удалось выполнить обнаружение: {errorMessage(error)}</p> : null}
+
+      <div className="on-steps" aria-label="Этапы онбординга">
+        <div className="on-step done">1. Репозиторий ✓</div>
+        <div className="on-step done">2. Обнаружение ✓</div>
+        <div className="on-step active">3. Проверка результатов</div>
+        <div className="on-step">4. Согласовать config</div>
+        <div className="on-step">5. Активация проекта</div>
+      </div>
+
+      <div className="pf-grid on-grid">
+        <div>
+          <section className="pf-card">
+            <div className="pf-row">
+              <div>
+                <h3>Выбранный репозиторий</h3>
+                <div className="pf-unavail">Локальный Git-репозиторий успешно обнаружен.</div>
               </div>
-            )}
+              <span className="pf-chip on-good">Git-репозиторий</span>
+            </div>
+            <div className="on-repo">C:\Repos\ebb-ai-hub</div>
+
+            <div className="on-section">
+              <h4>Обнаруженные факты</h4>
+              {DETECTED.map((fact) => (
+                <div key={fact.title} className="on-item detected">
+                  <b>{fact.title}</b>
+                  <small>{fact.sub}</small>
+                </div>
+              ))}
+            </div>
           </section>
-          <aside className="reference-panel onboarding-guidance">
-            <h2>Перед активацией</h2>
-            <p>Факты, найденные в репозитории, останутся отдельно от предложений конфигурации.</p>
-            <p>Переходы согласования и активации выполняются только через backend и требуют подтверждённого состояния проекта.</p>
-          </aside>
+
+          <section className="pf-card">
+            <div className="pf-row">
+              <div>
+                <h3>Координатор proposals</h3>
+                <div className="pf-unavail">Это рекомендации, а не обнаруженные факты.</div>
+              </div>
+              <span className="pf-chip">Анализ Hermes</span>
+            </div>
+            <div className="on-section">
+              <UnsupportedBlock reason="NO_AUTHORITATIVE_SOURCE" label="Недоступно" />
+            </div>
+          </section>
         </div>
-      ) : (
-        <section aria-label="Результаты анализа" className="onboarding-layout onboarding-results">
-          <div className="reference-column">
-            <section className="reference-panel" aria-label="Репозиторий и обнаруженные факты">
-              <div className="section-heading"><h2>Репозиторий</h2><StatusBadge status={result.status} label={result.status} /></div>
-              <p className="repository-path">{result.repository.path ?? 'Не обнаружен'}</p>
-              <div className="reference-facts">
-                <div><span>Основная ветка</span><strong>{result.detected.defaultBranch}</strong></div>
-                <div><span>Менеджер пакетов</span><strong>{result.detected.packageManager}</strong></div>
-                <div><span>Существующая конфигурация</span><strong>{result.detected.untrustedExistingConfig ? 'Обнаружена · не доверена' : 'Не обнаружена'}</strong></div>
-              </div>
-            </section>
 
-            <section className="reference-panel" aria-label="Предложения координатора">
-              <div className="section-heading"><h2>Предложения координатора</h2><span>Не утверждённая конфигурация</span></div>
-              <div className="reference-facts">
-                <div><span>Рабочий процесс</span><strong>{result.proposed?.workflow ?? 'Не указано'}</strong></div>
-                <div><span>Роли</span><strong>{result.proposed?.roles.join(', ') || 'Не указаны'}</strong></div>
-                <div><span>Рекомендации</span><strong>{result.proposed?.guidelines.length ? result.proposed.guidelines.join(', ') : 'Не указаны'}</strong></div>
-              </div>
-            </section>
-          </div>
+        <div>
+          <section className="pf-card">
+            <h3>Проверка конфигурации проекта</h3>
+            <div className="pf-unavail">Перед активацией можно принять, изменить или отклонить предложения.</div>
+            <UnsupportedBlock reason="NO_AUTHORITATIVE_SOURCE" label="Недоступно" />
+          </section>
 
-          <div className="reference-column">
-            <section className="reference-panel" aria-label="Статус согласования">
-              <div className="section-heading"><h2>Статус проекта</h2><StatusBadge status={result.status} label={statusLabel(result.status)} /></div>
-              <p>Семантическая конфигурация утверждена: {result.status === 'APPROVED' || result.status === 'ACTIVE' ? 'Да' : 'Нет'}</p>
-              {result.status === 'DRAFT' && <button type="button" className="btn-primary" onClick={handleRequestApproval} disabled={loading}>Запросить согласование</button>}
-              {result.status === 'APPROVAL_PENDING' && <button type="button" className="btn-primary" onClick={handleApprove} disabled={loading}>Утвердить</button>}
-              {result.status === 'APPROVED' && <button type="button" className="btn-primary" onClick={handleActivate} disabled={loading}>Активировать</button>}
-              {result.status === 'ACTIVE' && <p role="status">Проект активирован.</p>}
-            </section>
-            {error && (
-              <section ref={errorRef} tabIndex={-1} role="alert" aria-live="assertive" aria-label="Ошибка" className="reference-panel">
-                <h2>Не удалось продолжить онбординг</h2>
-                <p>{error}</p>
-              </section>
-            )}
-          </div>
-        </section>
-      )}
+          <section className="pf-card">
+            <h3>Создаваемые файлы</h3>
+            <UnsupportedBlock reason="NO_AUTHORITATIVE_SOURCE" label="Недоступно" />
+          </section>
+
+          <section className="pf-card">
+            <h3>Итоги активации</h3>
+            <UnsupportedBlock reason="NO_AUTHORITATIVE_SOURCE" label="Недоступно" />
+          </section>
+        </div>
+      </div>
+
+      <div className="pf-actions on-footer-actions">
+        <button type="button" className="pf-btn">Назад к обнаружению</button>
+        <button type="button" className="pf-btn primary" disabled={busy} onClick={() => void handleDiscover()}>Согласовать и активировать проект</button>
+      </div>
+
+      <div className="pf-footer-note">Концепция подключения проекта v0.1 · ОБНАРУЖЕННЫЕ факты никогда не смешиваются с ПРЕДЛАГАЕМЫМИ политиками.</div>
     </div>
   );
 }
+

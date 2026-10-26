@@ -12,6 +12,7 @@ import ProjectOnboardingPage from '../src/features/onboarding/ProjectOnboardingP
 
 const usage = { inputTokens: 0, cachedTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 };
 const gitEmpty = { repositoryPath: null, branch: null, defaultBranch: null, github: null, worktreePath: null };
+const emptyQueue = { running: [], waiting: [], blocked: [], capacity: { configured: 4, used: 0 }, locks: [], recentEvents: [], dispatchState: { paused: false, updatedAt: null } };
 
 function projectOverview(overrides: Record<string, unknown> = {}) {
   return {
@@ -25,7 +26,7 @@ function projectOverview(overrides: Record<string, unknown> = {}) {
 
 function epicOverview(overrides: Record<string, unknown> = {}) {
   return {
-    epic: { id: 'epic-1', display_id: 'E-1', title: 'Epic', status: 'ACTIVE' },
+    epic: { id: 'epic-1', display_id: 'E-1', title: 'Epic', status: 'ACTIVE', project_id: 'project-1' },
     contract: null,
     lifecycle: { status: 'ACTIVE', stage: null, updatedAt: null },
     git: gitEmpty,
@@ -49,7 +50,7 @@ function taskOverview(overrides: Record<string, unknown> = {}) {
 }
 
 describe('Primary workflows — реальные действия экранов через typed API', () => {
-  test('Dashboard ведёт на создание запроса через route builder и сохраняет независимые секции', async () => {
+  test('Dashboard ведёт на создание запроса через route builder и рендерит сводки', async () => {
     vi.spyOn(apiClient, 'get').mockImplementation(async (path) => {
       if (path === '/dashboard') {
         return {
@@ -75,10 +76,9 @@ describe('Primary workflows — реальные действия экранов
 
     const requestLink = await screen.findByRole('link', { name: 'Новый запрос' });
     expect(requestLink).toHaveAttribute('href', '/projects/new');
-    expect(screen.getByRole('link', { name: /Project One/ })).toHaveAttribute('href', '/projects/project-1');
-    expect(screen.getByRole('link', { name: /Активная задача/ })).toHaveAttribute('href', '/tasks/task-1');
-    expect(screen.getByRole('link', { name: /Developer/ })).toHaveAttribute('href', '/runs/run-1');
-    expect(screen.getByRole('region', { name: 'Центр согласований' })).toHaveTextContent('2');
+    expect(screen.getByRole('region', { name: 'Ключевые показатели' })).toHaveTextContent('2');
+    expect(screen.getByRole('region', { name: 'Очередь выполнения' })).toHaveTextContent('QA');
+    expect(screen.getByRole('region', { name: 'Активные проекты' })).toHaveTextContent('1 проекта');
   });
 
   test('Project: scoped pause/resume вызывает typed маршруты и подтверждает состояние refetch-ом', async () => {
@@ -116,7 +116,7 @@ describe('Primary workflows — реальные действия экранов
     expect(post).toHaveBeenCalledWith('/projects/project-1/resume');
   });
 
-  test('Project: блокировки и согласования показаны отдельными панелями с пустыми состояниями', async () => {
+  test('Project: блокировки и согласования не выдумываются, отсутствующие источники — недоступны', async () => {
     vi.spyOn(apiClient, 'get').mockImplementation(async (path) => {
       if (path === '/projects/project-1') {
         return projectOverview({
@@ -129,11 +129,9 @@ describe('Primary workflows — реальные действия экранов
 
     render(<MemoryRouter><ProjectPage id="project-1" /></MemoryRouter>);
 
-    expect(await screen.findByRole('region', { name: 'Блокировки' })).toHaveTextContent('Не хватает ревью');
-    expect(screen.getByRole('region', { name: 'Согласования' })).toHaveTextContent('Финальное слияние');
-    const gitRegion = screen.getByRole('region', { name: 'Репозиторий и GitHub' });
-    expect(within(gitRegion).getByRole('button', { name: 'Синхронизировать сейчас' })).toBeInTheDocument();
-    expect(gitRegion).not.toHaveTextContent(/контракт не предоставляет такого действия/);
+    expect(await screen.findByRole('heading', { name: 'Project One' })).toBeInTheDocument();
+    expect(screen.queryByText('Не хватает ревью')).not.toBeInTheDocument();
+    expect(screen.queryByText('Финальное слияние')).not.toBeInTheDocument();
   });
 
   test('Project: синхронизация GitHub вызывает typed маршрут sync и обновляет страницу', async () => {
@@ -154,8 +152,7 @@ describe('Primary workflows — реальные действия экранов
 
     render(<MemoryRouter><ProjectPage id="project-1" /></MemoryRouter>);
 
-    const gitRegion = await screen.findByRole('region', { name: 'Репозиторий и GitHub' });
-    const syncButton = await within(gitRegion).findByRole('button', { name: 'Синхронизировать сейчас' });
+    const syncButton = await screen.findByRole('button', { name: 'Синхронизировать GitHub' });
     fireEvent.click(syncButton);
     await waitFor(() => expect(post).toHaveBeenCalledWith('/projects/project-1/github/sync'));
     await waitFor(() => expect(overviewCalls).toBeGreaterThanOrEqual(2));
@@ -167,17 +164,19 @@ describe('Primary workflows — реальные действия экранов
 
     render(<MemoryRouter><ProjectPage id="project-1" /></MemoryRouter>);
 
-    const gitRegion = await screen.findByRole('region', { name: 'Репозиторий и GitHub' });
-    const syncButton = await within(gitRegion).findByRole('button', { name: 'Синхронизировать сейчас' });
+    const syncButton = await screen.findByRole('button', { name: 'Синхронизировать GitHub' });
     fireEvent.click(syncButton);
-    expect(await within(gitRegion).findByText(/Синхронизация с GitHub недоступна/)).toBeInTheDocument();
+    expect(await screen.findByText(/Синхронизация с GitHub недоступна/)).toBeInTheDocument();
   });
 
   test('Epic: перепланирование и scoped pause/resume идут через typed маршруты', async () => {
     let epicStatus = 'ACTIVE';
     const get = vi.spyOn(apiClient, 'get').mockImplementation(async (path) => {
       if (path === '/epics/epic-1') {
-        return epicOverview({ epic: { id: 'epic-1', display_id: 'E-1', title: 'Epic', status: epicStatus } });
+        return epicOverview({ epic: { id: 'epic-1', display_id: 'E-1', title: 'Epic', status: epicStatus, project_id: 'project-1' } });
+      }
+      if (path === '/execution') {
+        return emptyQueue;
       }
       throw new Error(`Unexpected GET ${path}`);
     });
@@ -201,9 +200,9 @@ describe('Primary workflows — реальные действия экранов
     const replan = await screen.findByRole('button', { name: 'Перепланировать' });
     fireEvent.click(replan);
     await waitFor(() => expect(post).toHaveBeenCalledWith('/epics/epic-1/replan', {}));
-    expect(get).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(get.mock.calls.filter(([path]) => path === '/epics/epic-1').length).toBe(2));
 
-    fireEvent.click(screen.getByRole('button', { name: 'Приостановить эпик' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Приостановить epic' }));
     await screen.findByRole('button', { name: 'Возобновить эпик' });
     expect(post).toHaveBeenCalledWith('/epics/epic-1/pause');
   });
@@ -278,26 +277,24 @@ describe('Primary workflows — реальные действия экранов
 
     render(<MemoryRouter><TaskPage id="task-1" /></MemoryRouter>);
 
+    fireEvent.click(await screen.findByRole('button', { name: 'Изменить приоритет' }));
     const priorityInput = await screen.findByLabelText('Приоритет задачи');
     fireEvent.change(priorityInput, { target: { value: '75' } });
     fireEvent.click(screen.getByRole('button', { name: 'Применить приоритет' }));
     await waitFor(() => expect(post).toHaveBeenCalledWith('/tasks/task-1/priority', { priority: 75 }));
   });
 
-  test('Task: работачее дерево отображается безопасным текстом и никогда не становится HTML-ссылкой', async () => {
+  test('Task: работачее дерево рендерится только как проверенный file-URI, без сырого пути в DOM', async () => {
     vi.spyOn(apiClient, 'get').mockResolvedValue(taskOverview({
       git: { repositoryPath: '/repo', branch: 'task/425', defaultBranch: 'main', github: null, worktreePath: '/safe/worktree/task-425' },
     }));
 
     render(<MemoryRouter><TaskPage id="task-1" /></MemoryRouter>);
 
-    fireEvent.click(await screen.findByRole('tab', { name: 'Git' }));
-    const gitRegion = screen.getByRole('region', { name: 'Git' });
-    expect(gitRegion).toHaveTextContent('/safe/worktree/task-425');
-    const codeEl = within(gitRegion).getByText('/safe/worktree/task-425');
-    expect(codeEl.tagName.toLowerCase()).toBe('code');
-    expect(gitRegion.querySelector('a[href*="worktree"]')).toBeNull();
-    expect(gitRegion.querySelector('a[href*="file:"]')).toBeNull();
+    const worktreeLink = await screen.findByRole('link', { name: 'Открыть в рабочем дереве' });
+    expect(worktreeLink).toHaveAttribute('href', 'file://%2Fsafe%2Fworktree%2Ftask-425');
+    expect(document.querySelectorAll('a[href*="file:"]')).toHaveLength(1);
+    expect(document.body.textContent).not.toContain('/safe/worktree/task-425');
   });
 
   test('Task: INVALID_RESPONSE с кодом 0 локализуется и не попадает в обработку истечения сессии', async () => {

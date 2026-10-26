@@ -1,0 +1,30 @@
+@import '../../styles/refui.css';
+
+/* ---- Экран задачи (02-task-view-concept) ---- */
+
+.pf-pipeline--5 { grid-template-columns: repeat(5, minmax(0, 1fr)); margin-top: 0; }
+.pf-stage.done { border-color: #315c43; }
+.pf-stage.active { border-color: #5577b8; }
+.pf-stage.wait { opacity: .7; }
+
+.pf-contract { display: grid; gap: 12px; }
+.pf-block { padding: 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--panel2); }
+.pf-block strong { display: block; margin-bottom: 5px; }
+
+.pf-run { display: grid; grid-template-columns: 125px minmax(0, 1fr) auto; gap: 12px; align-items: start; padding: 12px 0; border-top: 1px solid var(--border); }
+.pf-run:first-of-type { border-top: 0; }
+.pf-run .kind { font-size: 11px; color: var(--muted); }
+.pf-run b { display: block; }
+.pf-run small { color: var(--muted); }
+.pf-chip.good { color: var(--good); }
+.pf-chip.warn { color: var(--warn); }
+
+/* Внутри контрактных блоков unavailable-надпись показываем плоско (как muted
+   строку), а не вложенным боксом — как контент в reference-макете. */
+.task-page .pf-block .reference-unsupported {
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+.task-page .pf-block .reference-unsupported-label { font-size: 12px; }
+.task-page .pf-block .reference-unsupported-reason { font-size: 12px; }

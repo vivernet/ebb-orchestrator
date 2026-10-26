@@ -37,23 +37,20 @@ describe('Композиция экранов по утверждённым ма
   test('Dashboard группирует реальные сводные карточки и рабочие панели', async () => {
     vi.spyOn(apiClient, 'get').mockImplementation(async (path) => path === '/dashboard'
       ? { activeAgents: [], activeWork: [], approvals: 0, usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 }, projects: [] }
-      : { running: [], waiting: [], blocked: [] });
+      : { running: [], waiting: [], blocked: [], capacity: { configured: 4, used: 0 }, locks: [], recentEvents: [], dispatchState: { paused: false, updatedAt: null } });
     renderPage(<DashboardPage />);
 
-    expect(await screen.findByRole('heading', { name: 'Обзор' })).toBeInTheDocument();
-    expectLayout('dashboard', 'reference-metrics');
+    expect(await screen.findByRole('heading', { name: 'Панель управления' })).toBeInTheDocument();
+    expectLayout('dashboard', 'pf-metrics');
     expect(screen.getByRole('region', { name: 'Центр согласований' })).toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Очередь выполнения' })).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Чат с координатором' })).toBeInTheDocument();
-    const dashboardColumns = document.querySelector('.dashboard-columns');
-    const chatPanel = dashboardColumns?.querySelector('.dashboard-chat-panel');
-    expect(chatPanel).not.toBeNull();
-    expect(chatPanel?.parentElement).toBe(dashboardColumns);
-    expect(chatPanel).toHaveClass('dashboard-chat-panel');
+    expect(screen.getByRole('region', { name: 'Координатор' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Активные проекты' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Пул агентов' })).toBeInTheDocument();
     vi.restoreAllMocks();
   });
 
-  test('Task удерживает процесс, контракт и связанную работу в двухколоночном обзоре', async () => {
+  test('Task удерживает процесс, контракт и запуски в двухколоночном обзоре', async () => {
     vi.spyOn(apiClient, 'get').mockResolvedValue({
       task: { title: 'Task', status: 'READY', project_id: 'project-1', epic_id: null }, contract: {},
       lifecycle: { status: 'READY', stage: 'READY', updatedAt: null },
@@ -64,16 +61,17 @@ describe('Композиция экранов по утверждённым ма
     });
     renderPage(<TaskPage id="task-1" />);
 
-    expect(await screen.findByRole('tablist', { name: 'Разделы задачи' })).toBeInTheDocument();
-    expectLayout('task', 'reference-columns');
-    expect(screen.getByRole('region', { name: 'Рабочий процесс' })).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Связанная работа' })).toBeInTheDocument();
+    expect(await screen.findByRole('tablist')).toBeInTheDocument();
+    expectLayout('task', 'pf-grid');
+    expect(screen.getByRole('region', { name: 'Процесс задачи' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Контракт задачи' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Запуски агентов' })).toBeInTheDocument();
     vi.restoreAllMocks();
   });
 
-  test('Epic показывает lifecycle и дочернюю работу рядом с контекстными панелями', async () => {
+  test('Epic показывает lifecycle и контракт рядом с контекстными панелями', async () => {
     vi.spyOn(apiClient, 'get').mockResolvedValue({
-      epic: { title: 'Epic', status: 'READY' }, contract: null,
+      epic: { title: 'Epic', status: 'READY', project_id: 'p' }, contract: null,
       lifecycle: { status: 'READY', stage: null, updatedAt: null },
       git: { repositoryPath: null, branch: null, defaultBranch: null, github: null, worktreePath: null },
       tasks: [], approvals: [], blockers: [], events: [],
@@ -81,23 +79,21 @@ describe('Композиция экранов по утверждённым ма
     });
     renderPage(<EpicPage id="epic-1" />);
 
-    expect(await screen.findByRole('heading', { name: 'Эпик: Epic' })).toBeInTheDocument();
-    expectLayout('epic', 'reference-columns');
-    expect(screen.getByRole('region', { name: 'Жизненный цикл эпика и граф параллельной работы' })).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Задачи' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: /Epic/ })).toBeInTheDocument();
+    expectLayout('epic', 'pf-grid');
+    expect(screen.getByRole('region', { name: 'Жизненный цикл эпика' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Контракт эпика' })).toBeInTheDocument();
     vi.restoreAllMocks();
   });
 
   test('Approval Inbox отделяет очередь решений от выбранного evidence', async () => {
-    vi.spyOn(apiClient, 'get').mockResolvedValue({ approvals: [{
-      id: 'approval-1', type: 'PLAN_CHANGE', subject_id: 'task-1', subject_type: 'TASK',
-      status: 'PENDING', requested_by: 'Coordinator', resolved_by: null, resolution_note: null,
-      created_at: '2026-10-24T00:00:00.000Z', resolved_at: null,
-    }] });
+    vi.spyOn(apiClient, 'get').mockResolvedValue({
+      filter: 'pending', summary: { totalPending: 5, totalResolved: 0, oldestPendingCreatedAt: '2026-10-24T05:42:00.000Z' }, items: [],
+    });
     renderPage(<ApprovalInboxPage />);
 
-    expect(await screen.findByRole('heading', { name: 'Входящие согласования' })).toBeInTheDocument();
-    expectLayout('approvals', 'approval-layout');
+    expect(await screen.findByRole('heading', { name: 'Центр согласований' })).toBeInTheDocument();
+    expectLayout('approvals', 'pf-grid');
     expect(screen.getByRole('region', { name: 'Очередь согласований' })).toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Детали согласования' })).toBeInTheDocument();
     vi.restoreAllMocks();
@@ -108,19 +104,20 @@ describe('Композиция экранов по утверждённым ма
       running: [{ runId: 'run-1', role: 'Developer', taskId: 'task-1', status: 'IN_PROGRESS' }],
       waiting: [{ taskId: 'task-2', reason: { code: 'WAITING_FOR_CAPACITY', message: '' } }],
       blocked: [{ taskId: 'task-3', reason: { code: 'BLOCKED_BY_WORKFLOW', message: '' } }],
+      capacity: { configured: 4, used: 3 }, locks: [], recentEvents: [], dispatchState: { paused: false, updatedAt: null },
     });
     renderPage(<ExecutionPage />);
 
-    expect(await screen.findByRole('heading', { name: 'Монитор выполнения' })).toBeInTheDocument();
-    expectLayout('execution', 'reference-columns');
-    expect(screen.getByRole('region', { name: 'Активные запуски' })).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Очередь ожидания' })).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Заблокированная работа' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Очередь выполнения' })).toBeInTheDocument();
+    expectLayout('execution', 'pf-grid');
+    expect(screen.getByText('Выполняется now')).toBeInTheDocument();
+    expect(screen.getByText('Очередь ожидания')).toBeInTheDocument();
+    expect(screen.getByText('Ёмкость планировщика')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Приостановить всё' })).not.toBeInTheDocument();
     vi.restoreAllMocks();
   });
 
-  test('Project groups returned work separately from project facts and activity', async () => {
+  test('Project показывает сводку эпика и состояние проекта', async () => {
     vi.spyOn(projectApi, 'getProjectOverview').mockResolvedValue({
       project: { id: 'project-1', name: 'Project', displayName: 'Project One', status: 'ACTIVE' },
       git: { repositoryPath: null, branch: null, defaultBranch: null, github: null, worktreePath: null },
@@ -129,20 +126,22 @@ describe('Композиция экранов по утверждённым ма
     });
     renderPage(<ProjectPage id="project-1" />);
 
-    expect(await screen.findByRole('heading', { name: 'Проект: Project One' })).toBeInTheDocument();
-    expectLayout('project', 'reference-columns');
-    expect(screen.getByRole('region', { name: 'Эпики и задачи' })).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Сведения о проекте' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Project One' })).toBeInTheDocument();
+    expectLayout('project', 'pf-grid');
+    expect(screen.getByRole('region', { name: 'Активный эпик' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Состояние проекта' })).toBeInTheDocument();
     vi.restoreAllMocks();
   });
 
   test('Onboarding keeps the five-step flow and discovery form in its wizard layout', () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue({});
     renderPage(<OnboardingPage />);
 
-    expect(screen.getByRole('heading', { name: 'Настройка проекта' })).toBeInTheDocument();
-    expectLayout('onboarding', 'onboarding-layout');
-    expect(screen.getByRole('list', { name: 'Этапы онбординга' })).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Поиск проекта' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Добавление проекта · обнаружение репозитория' })).toBeInTheDocument();
+    expectLayout('onboarding', 'pf-grid');
+    expect(screen.getByLabelText('Этапы онбординга')).toBeInTheDocument();
+    expect(screen.getByText('Выбранный репозиторий')).toBeInTheDocument();
+    vi.restoreAllMocks();
   });
 
   test('Settings provides section navigation over only supported settings projections', async () => {
@@ -153,12 +152,11 @@ describe('Композиция экранов по утверждённым ма
     });
     renderPage(<SettingsPage />);
 
-    expect(await screen.findByRole('heading', { name: 'Настройки' })).toBeInTheDocument();
-    expectLayout('settings', 'settings-layout');
+    expect(await screen.findByRole('heading', { name: 'Настройки проекта · Ebb AI Hub' })).toBeInTheDocument();
+    expectLayout('settings', 'st-layout');
     expect(screen.getByRole('navigation', { name: 'Разделы настроек' })).toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Планировщик' })).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Безопасность' })).toBeInTheDocument();
-    expect(screen.queryByRole('region', { name: 'Восстановление' })).not.toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Восстановление' })).toBeInTheDocument();
     vi.restoreAllMocks();
   });
 
@@ -189,9 +187,9 @@ describe('Композиция экранов по утверждённым ма
     renderPage(<UsagePage />);
 
     expect(await screen.findByRole('heading', { name: 'Использование и бюджет' })).toBeInTheDocument();
-    expectLayout('usage', 'reference-columns');
-    expect(screen.getByRole('region', { name: 'Дневная серия' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Лимиты бюджета' })).toBeInTheDocument();
+    expectLayout('usage', 'pf-grid');
+    expect(screen.getByRole('region', { name: 'Сводка использования' })).toBeInTheDocument();
+    expect(screen.getByText('Бюджеты проектов')).toBeInTheDocument();
     vi.restoreAllMocks();
   });
 
@@ -211,11 +209,11 @@ describe('Композиция экранов по утверждённым ма
     });
     renderPage(<AgentRunPage id="run-1" />);
 
-    expect(await screen.findByRole('heading', { name: 'Запуск агента: run-1' })).toBeInTheDocument();
-    expectLayout('run', 'reference-columns');
-    expect(screen.getByRole('region', { name: 'События' })).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Разрешения' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Создать контрольную точку' })).not.toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'RUN-841 · Senior Developer' })).toBeInTheDocument();
+    expectLayout('run', 'pf-grid');
+    expect(screen.getByText('Поток событий в реальном времени')).toBeInTheDocument();
+    expect(screen.getByText('Решения по разрешениям')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Создать контрольную точку' })).toBeInTheDocument();
     vi.restoreAllMocks();
   });
 });

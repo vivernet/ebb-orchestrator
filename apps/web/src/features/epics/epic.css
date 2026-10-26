@@ -1,0 +1,19 @@
+@import '../../styles/refui.css';
+
+/* ---- Экран эпика (03-epic-view-concept) ---- */
+
+.pf-pipeline { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; margin-top: 14px; }
+.pf-stage { padding: 10px; border: 1px solid var(--border); border-radius: 9px; background: var(--panel2); text-align: center; font-size: 11px; }
+
+.pf-agent { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; padding: 10px 0; border-top: 1px solid var(--border); }
+.pf-agent:first-of-type { border-top: 0; }
+
+.pf-approval { border-left: 3px solid var(--warn); padding-left: 12px; margin: 12px 0; }
+
+/* Unavailable-надписи в kv/блоках — плоско, как строки контента reference. */
+.epic-page .pf-kv .reference-unsupported,
+.epic-page .pf-branch + .pf-kv .reference-unsupported {
+  background: transparent;
+  border: 0;
+  padding: 0;
+}

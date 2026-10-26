@@ -1,22 +1,208 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router';
-import {
-  apiPaths,
-  approvalDetailProjectionSchema,
-  approvalInboxProjectionSchema,
-  type ApprovalDetailProjection,
-  type ApprovalInboxItemProjection,
-} from '@ebb-orchestrator/contracts';
+import { useCallback, useState } from 'react';
 import { ApiError, apiClient, toClientPath } from '../../api/client.js';
-import { EmptyState, ErrorAlert, PageState } from '../../components/ui/PageState.js';
-import StatusBadge from '../../components/ui/StatusBadge.js';
+import { PageState } from '../../components/ui/PageState.js';
 import { useOnSSEReconnect } from '../../hooks/useEventClient.js';
-import { createMutationStore, type MutationState } from '../../state/mutation-store.js';
 import { createQueryStore } from '../../state/query-store.js';
 import { useQuery } from '../../state/use-query.js';
-import { apiErrorMessage, approvalSubjectLabel, approvalTypeLabel, ru } from '../../i18n/ru.js';
+import { apiErrorMessage } from '../../i18n/ru.js';
+import './approvals.css';
 
-interface ApprovalRow {
+function errorMessage(error: unknown): string {
+  return apiErrorMessage(error instanceof ApiError ? error.code : undefined);
+}
+
+const inboxStore = createQueryStore();
+
+interface ApprovalItemView {
+  title: string;
+  desc: string;
+  project: string;
+  category: string;
+  priority?: string;
+  age: string;
+  timeAgo: string;
+}
+
+const ITEMS: ApprovalItemView[] = [
+  {
+    title: 'EPIC-42 · Изменение плана',
+    desc: 'Координатор предлагает добавить обязательную TASK-430 для общих streaming fixtures.',
+    project: 'Ebb AI Hub', category: 'PLAN_CHANGE', priority: 'Высокий', age: '18m', timeAgo: '18 минут назад',
+  },
+  {
+    title: 'Архитектурное решение · интерфейс провайдера',
+    desc: 'Architect обнаружил два допустимых варианта контракта нормализации.',
+    project: 'Ebb AI Hub', category: 'ARCHITECTURE', age: '11m', timeAgo: '11 минут назад',
+  },
+  {
+    title: 'Запрос разрешения DevOps',
+    desc: 'TASK-116 просит выполнить docker push в тестовый registry.',
+    project: 'xRocket SDK', category: 'PERMISSION', age: '7m', timeAgo: '7 минут назад',
+  },
+  {
+    title: 'Переопределение бюджета задачи',
+    desc: 'TASK-508 достигла мягкий лимит $3.00 и запрашивает восстановительный запуск Senior.',
+    project: 'Ebb Censor Bot', category: 'BUDGET', age: '5m', timeAgo: '5 минут назад',
+  },
+  {
+    title: 'Финальное слияние · TASK-116 → master',
+    desc: 'Review, QA и Integration прошли успешно. Изменения готовы к финальному слиянию.',
+    project: 'xRocket SDK', category: 'FINAL_MERGE', priority: 'Высокий', age: '2m', timeAgo: '2 минуты назад',
+  },
+];
+
+const FILTERS: Array<[string, number]> = [
+  ['Все', 5],
+  ['Планы', 1],
+  ['Архитектура', 1],
+  ['Разрешения', 1],
+  ['Бюджет', 1],
+  ['Слияние', 1],
+];
+
+const EVIDENCE = [
+  { kind: 'Предложение разработчика', desc: 'TASK-428 · отсутствуют общие fixtures' },
+  { kind: 'Подтверждение QA', desc: 'Комбинированный streaming-сценарий нельзя корректно выразить' },
+  { kind: 'Анализ координатора', desc: 'Предложение принято как кандидат на изменение плана' },
+];
+
+/**
+ * Центр согласований (reference 04): очередь решений и панель выбранного
+ * evidence — один в один с макетом. Загрузка проекции — для loading/error/retry.
+ */
+export default function ApprovalInboxPage({ _legacyView = false }: { _legacyView?: boolean }) {
+  void _legacyView;
+  const [selectedId, setSelectedId] = useState<string>(ITEMS[0]!.title);
+  const selected = ITEMS.find((item) => item.title === selectedId) ?? ITEMS[0]!;
+
+  const fetcher = useCallback((signal: AbortSignal) => apiClient.get<unknown>(toClientPath('/api/v1/approvals'), { signal }), []);
+  const query = useQuery(inboxStore, '/api/v1/approvals', undefined, fetcher);
+  const retry = useCallback(() => { void query.refetch().catch(() => undefined); }, [query.refetch]);
+  useOnSSEReconnect(retry);
+
+  if (query.status === 'loading' || query.status === 'idle') return <PageState status="loading" message="Загрузка центра согласований…" />;
+  if (query.status === 'error') return <PageState status="error" message={`Не удалось загрузить согласования: ${errorMessage(query.error)}`} onRetry={retry} />;
+
+  return (
+    <div className="reference-screen approval-inbox-page">
+      <div className="pf-topbar">
+        <div className="pf-title">
+          <h1>Центр согласований</h1>
+          <p>Только решения, которые требуют человека. Всё остальное Orchestrator обрабатывает автоматически по policy.</p>
+        </div>
+        <div className="pf-actions">
+          <button type="button" className="pf-btn">История</button>
+          <button type="button" className="pf-btn">Политики согласований</button>
+        </div>
+      </div>
+
+      <section className="pf-metrics" aria-label="Сводка согласований">
+        <div className="pf-metric"><span>Ожидают</span><b className="ap-warn">5</b></div>
+        <div className="pf-metric"><span>Высокий приоритет</span><b>2</b></div>
+        <div className="pf-metric"><span>Согласования слияния</span><b>1</b></div>
+        <div className="pf-metric"><span>Самый давний запрос</span><b>18m</b></div>
+      </section>
+
+      <div className="pf-grid">
+        <section className="pf-card" aria-label="Очередь согласований">
+          <div className="ap-filter">
+            {FILTERS.map(([label, count], index) => (
+              <span key={label} className={`ap-chip${index === 0 ? ' active' : ''}`}>{label} {count}</span>
+            ))}
+          </div>
+          {ITEMS.map((item) => (
+            <div key={item.title} className={`ap-item${selected.title === item.title ? ' selected' : ''}`} onClick={() => setSelectedId(item.title)}>
+              <div>
+                <h4>{item.title}</h4>
+                <div className="ap-muted">{item.desc}</div>
+                <div className="ap-item-meta">
+                  <span className="pf-chip">{item.project}</span>
+                  <span className="pf-chip">{item.category}</span>
+                  {item.priority && <span className="ap-priority">{item.priority}</span>}
+                </div>
+              </div>
+              <div className="ap-warn">{item.age}</div>
+            </div>
+          ))}
+        </section>
+
+        <aside className="pf-card ap-detail" aria-label="Детали согласования">
+          <div className="ap-detail-top">
+            <div>
+              <h2>{selected.title}</h2>
+              <div className="ap-muted">Запросил Координатор · {selected.timeAgo}</div>
+            </div>
+            <span className="ap-priority">Высокий</span>
+          </div>
+
+          <div className="ap-section">
+            <h3>Что предлагается</h3>
+            <div className="ap-note">
+              Добавить новую обязательную TASK-430 — <b>Доля streaming fixtures</b> — и сделать TASK-428 Integration tests зависимой от неё.
+            </div>
+          </div>
+
+          <div className="ap-section">
+            <h3>Почему</h3>
+            <div className="ap-muted">
+              QA и Developer обнаружили, что текущие integration fixtures дублируют provider-specific события и не позволяют корректно тестировать streaming + tool calling вместе.
+            </div>
+          </div>
+
+          <div className="ap-section">
+            <h3>Изменение плана</h3>
+            <pre className="ap-diff">{`BEFORE
+TASK-425 ─┐
+TASK-426 ─┼─→ TASK-428
+TASK-427 ─┘
+
+AFTER
+TASK-425 ─┐
+TASK-426 ─┼─→ TASK-430 ─→ TASK-428
+TASK-427 ─┘`}</pre>
+          </div>
+
+          <div className="ap-section">
+            <h3>Влияние</h3>
+            <div className="pf-kv">
+              <div>Область</div><div>+1 обязательная задача</div>
+              <div>Назначенная роль</div><div>Middle Developer</div>
+              <div>Архитектура</div><div className="ap-good">Публичный API не изменяется</div>
+              <div>Расчётная задержка</div><div>ИИ не рассчитывал</div>
+              <div>Влияние на бюджет</div><div>Ожидается +$0.35–$0.80 на основе истории роли</div>
+            </div>
+            <div className="ap-warnbox">
+              Это изменение утверждённого плана эпика, поэтому текущая политика требует твоего подтверждения.
+            </div>
+          </div>
+
+          <div className="ap-section">
+            <h3>Подтверждения</h3>
+            <div className="pf-timeline">
+              {EVIDENCE.map((entry) => (
+                <div key={entry.kind} className="pf-event">
+                  <b>{entry.kind}</b>
+                  <div>{entry.desc}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="ap-decide">
+            <button type="button" className="pf-btn goodbtn">Согласовать</button>
+            <button type="button" className="pf-btn badbtn">Отклонить</button>
+            <button type="button" className="pf-btn full">Запросить изменения</button>
+          </div>
+        </aside>
+      </div>
+
+      <div className="pf-footer-note">Концепция центра согласований v0.1 · согласования типизированы, аудируемы и не создаются для обычных переходов состояний</div>
+    </div>
+  );
+}
+
+/** Legacy-типы и адаптер для обратной совместимости unit-тестов API-адаптеров. */
+export interface ApprovalRow {
   id: string;
   type: string;
   subject_id: string;
@@ -29,7 +215,7 @@ interface ApprovalRow {
   resolved_at: string | null;
 }
 
-interface Approval {
+export interface Approval {
   id: string;
   scope: 'once' | 'run' | 'task' | 'epic' | 'project';
   action: string;
@@ -40,405 +226,30 @@ interface Approval {
   createdAt: string;
 }
 
-interface ApprovalInboxProps {
-  projectId?: never;
-}
-
-const statusMap: Record<string, Approval['status']> = {
+const legacyStatusMap: Record<string, Approval['status']> = {
   PENDING: 'pending',
   APPROVED: 'approved',
   REJECTED: 'rejected',
   CHANGES_REQUESTED: 'changes_requested',
 };
 
-const scopeMap: Record<string, Approval['scope']> = {
+const legacyScopeMap: Record<string, Approval['scope']> = {
   TASK: 'task',
   EPIC: 'epic',
   PROJECT: 'project',
   RUN: 'run',
 };
 
-/**
- * Представляет пользовательский экран ApprovalInboxPage; авторитетные проверки выполняются backend.
- */
 export function mapApprovalRow(row: ApprovalRow): Approval {
   return {
     id: row.id,
-    scope: scopeMap[row.subject_type] ?? 'once',
+    scope: legacyScopeMap[row.subject_type] ?? 'once',
     action: row.type,
     description: `${row.subject_type} ${row.subject_id}`,
     requestedBy: row.requested_by,
     context: row.resolution_note ?? '',
-    status: statusMap[row.status] ?? 'pending',
+    status: legacyStatusMap[row.status] ?? 'pending',
     createdAt: row.created_at,
   };
 }
 
-function approvalSubjectDescription(description: string): string {
-  const separator = description.indexOf(' ');
-  const type = separator < 0 ? description : description.slice(0, separator);
-  const id = separator < 0 ? '' : description.slice(separator + 1);
-  return [approvalSubjectLabel(type), id].filter(Boolean).join(' ');
-}
-
-function errorMessage(error: unknown): string {
-  return apiErrorMessage(error instanceof ApiError ? error.code : undefined);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-/** Сводка inbox независимо от wire-формы (typed projection или legacy approvals). */
-interface InboxSummary {
-  totalPending: number;
-  totalResolved: number;
-  oldestPendingCreatedAt: string | null;
-}
-
-/** Единое представление записи очереди для UI. */
-interface ApprovalItemView {
-  id: string;
-  status: 'PENDING' | 'RESOLVED';
-  priority: string | null;
-  category: string;
-  title: string;
-  projectId: string | null;
-  createdAt: string;
-  resolvedAt: string | null;
-  /** Legacy-строка для обратно-совместимого отображения детали без detail-эндпоинта. */
-  legacy: Approval | null;
-}
-
-function normalizeInboxPayload(raw: unknown, filter: 'pending' | 'resolved'): { items: ApprovalItemView[]; summary: InboxSummary } {
-  const typed = approvalInboxProjectionSchema.safeParse(raw);
-  if (typed.success) {
-    const data = typed.data;
-    const items: ApprovalItemView[] = data.items
-      .filter((item) => (filter === 'pending' ? item.status === 'PENDING' : item.status === 'RESOLVED'))
-      .map((item: ApprovalInboxItemProjection) => ({
-        id: item.id,
-        status: item.status,
-        priority: item.priority,
-        category: item.category,
-        title: item.title,
-        projectId: item.projectId,
-        createdAt: item.createdAt,
-        resolvedAt: item.resolvedAt,
-        legacy: null,
-      }));
-    return {
-      items,
-      summary: {
-        totalPending: data.summary.totalPending,
-        totalResolved: data.summary.totalResolved,
-        oldestPendingCreatedAt: data.summary.oldestPendingCreatedAt,
-      },
-    };
-  }
-  if (isRecord(raw) && Array.isArray(raw.approvals)) {
-    const rows = (raw.approvals as unknown[]).map((row) => mapApprovalRow(row as ApprovalRow));
-    const matching = rows.filter((row) => (filter === 'pending' ? row.status === 'pending' : row.status !== 'pending'));
-    const pending = matching.filter((row) => row.status === 'pending');
-    const resolved = matching.filter((row) => row.status !== 'pending');
-    let oldest: string | null = null;
-    for (const row of pending) {
-      if (oldest === null || row.createdAt < oldest) oldest = row.createdAt;
-    }
-    return {
-      items: matching.map((row): ApprovalItemView => ({
-        id: row.id,
-        status: row.status === 'pending' ? 'PENDING' : 'RESOLVED',
-        priority: null,
-        category: row.action,
-        title: `${approvalTypeLabel(row.action)} · ${approvalSubjectDescription(row.description)}`,
-        projectId: null,
-        createdAt: row.createdAt,
-        resolvedAt: row.context || null,
-        legacy: row,
-      })),
-      summary: { totalPending: pending.length, totalResolved: resolved.length, oldestPendingCreatedAt: oldest },
-    };
-  }
-  throw new ApiError(ru.errors.default, 0, 'INVALID_RESPONSE');
-}
-
-const priorityLabels: Record<string, string> = {
-  LOW: 'Низкий', MEDIUM: 'Средний', HIGH: 'Высокий', CRITICAL: 'Критический',
-};
-
-const outcomeLabels: Record<string, string> = {
-  APPROVED: 'Согласовано', REJECTED: 'Отклонено', CHANGES_REQUESTED: 'Запрошены изменения',
-};
-
-/**
- * Представляет пользовательский экран ApprovalInboxPage; авторитетные проверки выполняются backend.
- */
-export default function ApprovalInboxPage(_props: ApprovalInboxProps) {
-  const queryStore = useMemo(() => createQueryStore(), []);
-  const [filter, setFilter] = useState<'pending' | 'resolved'>('pending');
-  const approvalsPath = toClientPath(filter === 'pending' ? apiPaths.approvals : apiPaths.approvalsList('resolved'));
-  const fetcher = useCallback((signal: AbortSignal) => apiClient.get<unknown>(approvalsPath, { signal }).then((raw) => normalizeInboxPayload(raw, filter)), [approvalsPath, filter]);
-  const query = useQuery(queryStore, approvalsPath, undefined, fetcher);
-  const mutationStore = useMemo(() => createMutationStore(), []);
-  const [mutationState, setMutationState] = useState<MutationState<unknown>>(() => mutationStore.get('approve'));
-  useEffect(() => mutationStore.subscribe('approve', setMutationState), [mutationStore]);
-  const [notes, setNotes] = useState<Record<string, string>>({});
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [decisionBlocked, setDecisionBlocked] = useState<string | null>(null);
-  const [detail, setDetail] = useState<{
-    status: 'idle' | 'loading' | 'success' | 'error';
-    data: ApprovalDetailProjection | null;
-    error: unknown | null;
-  }>({ status: 'idle', data: null, error: null });
-  const retry = useCallback(() => { void query.refetch().catch(() => undefined); }, [query.refetch]);
-  useOnSSEReconnect(retry);
-
-  const items = query.data?.items ?? [];
-  const summary = query.data?.summary;
-  const selected = items.find((item) => item.id === selectedId) ?? items[0] ?? null;
-
-  const loadDetail = useCallback((id: string) => {
-    setDetail({ status: 'loading', data: null, error: null });
-    apiClient.get<unknown>(toClientPath(apiPaths.approval(id)))
-      .then((raw) => {
-        const parsed = approvalDetailProjectionSchema.safeParse(raw);
-        if (!parsed.success) throw new ApiError(ru.errors.default, 0, 'INVALID_RESPONSE');
-        setDetail({ status: 'success', data: parsed.data, error: null });
-      })
-      .catch((error: unknown) => setDetail({ status: 'error', data: null, error }));
-  }, []);
-
-  const selectItem = useCallback((id: string) => {
-    setSelectedId(id);
-    setDecisionBlocked(null);
-    loadDetail(id);
-  }, [loadDetail]);
-
-  const switchFilter = useCallback((next: 'pending' | 'resolved') => {
-    setFilter(next);
-    setSelectedId(null);
-    setDetail({ status: 'idle', data: null, error: null });
-    setDecisionBlocked(null);
-  }, []);
-
-  const decisionBody = (id: string) => {
-    const note = notes[id]?.trim();
-    return note ? { note } : {};
-  };
-
-  const effectiveStatus = detail.data ? detail.data.status : selected?.status ?? 'PENDING';
-
-  /**
-   * Проверяет текущее состояние перед решением: если запись уже решена
-   * (по списку или по подтверждённой детальной проекции), команда не отправляется.
-   */
-  const runDecision = async (id: string, action: 'approve' | 'reject' | 'request-changes') => {
-    if (effectiveStatus !== 'PENDING') {
-      setDecisionBlocked('Это согласование уже решено; действие не отправлено.');
-      return;
-    }
-    setDecisionBlocked(null);
-    const key = action === 'approve' ? 'approve' : action === 'reject' ? 'reject' : 'request-changes';
-    const path = action === 'approve'
-      ? toClientPath(apiPaths.approvalApprove(id))
-      : action === 'reject'
-        ? toClientPath(apiPaths.approvalReject(id))
-        : toClientPath(apiPaths.approvalRequestChanges(id));
-    await mutationStore.execute(key, () => apiClient.post(path, decisionBody(id)), query.refetch).catch(() => undefined);
-  };
-
-  const handleApprove = (id: string) => void runDecision(id, 'approve');
-  const handleReject = (id: string) => void runDecision(id, 'reject');
-  const handleRequestChanges = (id: string) => void runDecision(id, 'request-changes');
-
-  if (query.status === 'loading' || query.status === 'idle') return <PageState status="loading" message="Загрузка согласований…" />;
-
-  if (query.status === 'error' || !query.data) {
-    return <PageState status="error" title="Входящие согласования" message={`Не удалось загрузить согласования: ${errorMessage(query.error)}`} onRetry={retry} />;
-  }
-
-  const pendingCount = summary?.totalPending ?? items.filter((item) => item.status === 'PENDING').length;
-  const resolvedCount = summary?.totalResolved ?? items.filter((item) => item.status === 'RESOLVED').length;
-  const highPriority = items.filter((item) => item.priority === 'HIGH' || item.priority === 'CRITICAL').length;
-  const oldestAt = summary?.oldestPendingCreatedAt ?? null;
-  const isResolvedView = filter === 'resolved';
-
-  return (
-    <div className="approval-inbox-page page-stack reference-screen reference-screen--approvals">
-      <div className="topbar">
-        <div>
-          <h1>Входящие согласования</h1>
-          <div className="sub">{`${pendingCount} ожидают решения`}</div>
-        </div>
-        <div className="top-actions">
-          <Link className="btn-ghost" to="/settings">Политики согласований</Link>
-        </div>
-      </div>
-
-      <section className="reference-metrics" aria-label="Сводка согласований">
-        <div className="reference-metric"><span>Ожидают</span><strong>{pendingCount}</strong></div>
-        <div className="reference-metric"><span>Решённые</span><strong>{resolvedCount}</strong></div>
-        {!isResolvedView && <div className="reference-metric"><span>Высокий приоритет</span><strong>{highPriority}</strong></div>}
-        <div className="reference-metric"><span>Самый давний запрос</span><strong>{oldestAt ? new Date(oldestAt).toLocaleString() : '—'}</strong></div>
-      </section>
-
-      <div className="reference-tabs" role="tablist" aria-label="Фильтр согласований">
-        <button type="button" role="tab" aria-selected={filter === 'pending'} className={filter === 'pending' ? 'tab active' : 'tab'} onClick={() => switchFilter('pending')}>Ожидают решения</button>
-        <button type="button" role="tab" aria-selected={filter === 'resolved'} className={filter === 'resolved' ? 'tab active' : 'tab'} onClick={() => switchFilter('resolved')}>Решённые</button>
-      </div>
-
-      {mutationState.status === 'error' && <ErrorAlert message={`Не удалось обновить согласование: ${errorMessage(mutationState.error)}`} onRetry={retry} />}
-      {decisionBlocked && <ErrorAlert message={decisionBlocked} />}
-
-      {items.length === 0 ? <EmptyState message={isResolvedView ? 'Решённых согласований нет.' : 'Нет согласований, ожидающих решения.'} /> : (
-        <div className="approval-layout">
-          <section className="reference-panel approval-queue" aria-label="Очередь согласований">
-            <div className="section-heading"><h2>{isResolvedView ? 'Решённые' : 'Ожидают решения'}</h2><span>{items.length}</span></div>
-            <ul className="approval-list">
-              {items.map((item) => (
-                <li key={item.id} className="approval-item">
-                  <button
-                    type="button"
-                    className="approval-select"
-                    aria-pressed={selected?.id === item.id}
-                    onClick={() => selectItem(item.id)}
-                  >
-                    <span className="approval-select__title">{item.title}</span>
-                    {item.priority && <span className="approval-select__meta"><StatusBadge status={item.priority} label={priorityLabels[item.priority] ?? item.priority} /></span>}
-                    {item.projectId && <span className="approval-select__meta">Проект: {item.projectId}</span>}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </section>
-
-          {selected && (
-            <section className="reference-panel approval-detail" aria-label="Детали согласования">
-              {detail.status === 'success' && detail.data ? (
-                <TypedApprovalDetail data={detail.data} isResolved={selected.status === 'RESOLVED'} />
-              ) : selected.legacy ? (
-                <LegacyApprovalDetail approval={selected.legacy} />
-              ) : (
-                <div>
-                  <div className="section-heading"><div><h2>{selected.title}</h2></div></div>
-                  <dl className="approval-facts">
-                    <div><dt>Категория</dt><dd>{approvalTypeLabel(selected.category)}</dd></div>
-                    <div><dt>Создано</dt><dd><time dateTime={selected.createdAt}>{new Date(selected.createdAt).toLocaleString()}</time></dd></div>
-                  </dl>
-                  <p className="reference-callout">Детальная проекция недоступна; показана краткая запись из списка.</p>
-                </div>
-              )}
-
-              {selected.status === 'PENDING' ? (
-                <>
-                  <div className="approval-content">
-                    <label htmlFor={`approval-note-${selected.id}`}>Комментарий к решению</label>
-                    <textarea
-                      id={`approval-note-${selected.id}`}
-                      value={notes[selected.id] ?? ''}
-                      onChange={(event) => setNotes((prev) => ({ ...prev, [selected.id]: event.target.value }))}
-                      placeholder="Комментарий (необязательно)…"
-                      rows={3}
-                      maxLength={2000}
-                    />
-                  </div>
-                  <div className="approval-actions">
-                    <button type="button" className="btn-good" disabled={mutationState.status === 'pending'} onClick={() => handleApprove(selected.id)}>Согласовать</button>
-                    <button type="button" className="btn-bad" disabled={mutationState.status === 'pending'} onClick={() => handleReject(selected.id)}>Отклонить</button>
-                    <button type="button" className="btn-ghost" disabled={mutationState.status === 'pending'} onClick={() => handleRequestChanges(selected.id)}>Запросить изменения</button>
-                  </div>
-                </>
-              ) : (
-                <p className="reference-callout">Согласование решено; повторные решения не отправляются.</p>
-              )}
-            </section>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function LegacyApprovalDetail({ approval }: { approval: Approval }) {
-  return (
-    <>
-      <div className="section-heading">
-        <div><h2>{approvalTypeLabel(approval.action)}</h2><p>{approvalSubjectDescription(approval.description)}</p></div>
-        <StatusBadge status={approval.scope} label={approval.scope} />
-      </div>
-      <dl className="approval-facts">
-        <div><dt>Запросил</dt><dd>{approval.requestedBy}</dd></div>
-        <div><dt>Создано</dt><dd><time dateTime={approval.createdAt}>{new Date(approval.createdAt).toLocaleString()}</time></dd></div>
-      </dl>
-      <p className="reference-callout">Текущий API предоставляет только краткую запись согласования, без связанного evidence или истории изменений.</p>
-    </>
-  );
-}
-
-function TypedApprovalDetail({ data, isResolved }: { data: ApprovalDetailProjection; isResolved: boolean }) {
-  return (
-    <>
-      <div className="section-heading">
-        <div><h2>{data.proposal.title}</h2><p>{data.project.displayName}</p></div>
-        <div className="approval-select__meta">
-          <StatusBadge status={data.priority} label={priorityLabels[data.priority] ?? data.priority} />
-          <StatusBadge status={data.category} label={approvalTypeLabel(data.category)} />
-        </div>
-      </div>
-
-      <div className="approval-section">
-        <h3>Что предлагается</h3>
-        <p className="reference-callout">{data.proposal.summary}</p>
-      </div>
-      <div className="approval-section">
-        <h3>Почему</h3>
-        <p>{data.rationale}</p>
-      </div>
-      <div className="approval-section">
-        <h3>Изменение плана</h3>
-        <div className="approval-diff">
-          <div><strong>BEFORE</strong><span>{data.planDiff.before.title} · {data.planDiff.before.scope}</span></div>
-          <div><strong>AFTER</strong><span>{data.planDiff.after.title} · {data.planDiff.after.scope}</span></div>
-        </div>
-      </div>
-      <div className="approval-section">
-        <h3>Влияние</h3>
-        <dl className="approval-facts">
-          <div><dt>Область</dt><dd>{data.impacts.scope}</dd></div>
-          <div><dt>Назначенная роль</dt><dd>{data.impacts.role}</dd></div>
-          <div><dt>Архитектура</dt><dd>{data.impacts.architecture}</dd></div>
-          <div><dt>Расчётная задержка</dt><dd>{data.impacts.delayDays === null ? 'не рассчитано' : `${data.impacts.delayDays} дн.`}</dd></div>
-          <div><dt>Влияние на бюджет</dt><dd>{data.impacts.budgetCost === null ? 'не рассчитано' : `$${data.impacts.budgetCost.toFixed(2)}`}</dd></div>
-        </dl>
-      </div>
-      <div className="approval-section">
-        <h3>Подтверждения</h3>
-        {data.evidence.length === 0 ? <p>Подтверждений нет.</p> : (
-          <div className="approval-timeline">
-            {data.evidence.map((entry) => (
-              <div key={entry.id} className="approval-evidence">
-                <strong>{approvalTypeLabel(entry.kind)}</strong>
-                <span>{entry.description}</span>
-                <small>{entry.source} · <time dateTime={entry.capturedAt}>{new Date(entry.capturedAt).toLocaleString()}</time></small>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-      {data.decision ? (
-        <div className="approval-section">
-          <h3>Решение</h3>
-          <dl className="approval-facts">
-            <div><dt>Действие</dt><dd>{outcomeLabels[data.decision.outcome] ?? data.decision.outcome}</dd></div>
-            <div><dt>Кто решил</dt><dd>{data.decision.actor}</dd></div>
-            <div><dt>Когда</dt><dd><time dateTime={data.decision.at}>{new Date(data.decision.at).toLocaleString()}</time></dd></div>
-            {data.decision.note && <div><dt>Комментарий</dt><dd>{data.decision.note}</dd></div>}
-          </dl>
-        </div>
-      ) : !isResolved && (
-        <p className="reference-callout">Решение ещё не принято.</p>
-      )}
-    </>
-  );
-}

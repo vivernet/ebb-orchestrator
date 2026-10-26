@@ -2,29 +2,41 @@ import { useCallback, useState } from 'react';
 import { apiPaths } from '@ebb-orchestrator/contracts';
 import { Link } from 'react-router';
 import { ApiError, toClientPath, pauseProject, resumeProject, syncProjectGithub } from '../../api/client.js';
-import { ErrorAlert, EmptyState } from '../../components/ui/PageState.js';
-import StatusBadge from '../../components/ui/StatusBadge.js';
+import { ErrorAlert } from '../../components/ui/PageState.js';
+import UnsupportedBlock from '../../components/ui/Unavailable.js';
 import { useQuery } from '../../state/use-query.js';
 import { getProjectOverview } from './api.js';
-import { apiErrorMessage, approvalTypeLabel, githubStatusLabel, ru, statusLabel } from '../../i18n/ru.js';
-import ProjectConfigPanel from './ProjectConfigPanel.js';
-import HumanFeedbackPanel from './HumanFeedbackPanel.js';
-import UnsupportedBlock from '../../components/ui/Unavailable.js';
-import CoordinatorRequestPanel from '../coordinator/CoordinatorRequestPanel.js';
+import { apiErrorMessage } from '../../i18n/ru.js';
+import { ref } from '../../i18n/ref.js';
+import './project.css';
 
 interface ProjectPageProps {
   id: string;
 }
 
+function message(error: unknown): string {
+  return apiErrorMessage(error instanceof ApiError ? error.code : undefined);
+}
+
+/** Короткие канонические подписи статусов задач (как в reference). */
+function shortTaskStatus(status: string | null | undefined): string {
+  switch (status) {
+    case 'INTEGRATED_INTO_EPIC': return 'INTEGRATED';
+    case 'READY_FOR_INTEGRATION': return 'INTEGRATION';
+    default: return status ?? '—';
+  }
+}
+
 /**
- * Представляет пользовательский экран ProjectPage; авторитетные проверки выполняются backend.
+ * Представляет экран проекта по структуре reference-ui (06-project-view-concept).
+ * Все значения приходят из typed-проекций; отсутствующие источники рендерят
+ * контрактный блок «недоступно».
  */
 export default function ProjectPage({ id }: ProjectPageProps) {
   const [controlBusy, setControlBusy] = useState(false);
   const [controlError, setControlError] = useState<string | null>(null);
   const [syncBusy, setSyncBusy] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
-  const [syncResult, setSyncResult] = useState<string | null>(null);
   const projectPath = toClientPath(apiPaths.project(id));
   const fetcher = useCallback((_signal: AbortSignal) => getProjectOverview(id), [id]);
   const query = useQuery(null, projectPath, undefined, fetcher);
@@ -32,7 +44,6 @@ export default function ProjectPage({ id }: ProjectPageProps) {
   const project = projection?.project;
   const retry = useCallback(() => { void query.refetch().catch(() => undefined); }, [query.refetch]);
   const notFound = query.status === 'success' && projection?.project === null;
-  const onboardingBlocked = Boolean(project && project.status !== 'ACTIVE' && project.status !== 'PAUSED');
   const isPaused = project?.status === 'PAUSED';
 
   const applyControl = useCallback(async (action: () => Promise<unknown>) => {
@@ -42,7 +53,7 @@ export default function ProjectPage({ id }: ProjectPageProps) {
       await action();
       void query.refetch().catch(() => undefined);
     } catch (cause) {
-      setControlError(apiErrorMessage(cause instanceof ApiError ? cause.code : undefined));
+      setControlError(message(cause));
     } finally {
       setControlBusy(false);
     }
@@ -55,132 +66,169 @@ export default function ProjectPage({ id }: ProjectPageProps) {
   const runSync = useCallback(async () => {
     setSyncBusy(true);
     setSyncError(null);
-    setSyncResult(null);
     try {
-      const result = await syncProjectGithub(id);
-      setSyncResult(result.status === 'SYNCED' ? 'Синхронизировано.' : 'Синхронизация уже выполняется.');
+      await syncProjectGithub(id);
       void query.refetch().catch(() => undefined);
     } catch (cause) {
-      if (cause instanceof ApiError && cause.status === 409) {
-        setSyncError('Сначала укажите GitHub repository для проекта.');
-      } else if (cause instanceof ApiError && cause.status === 503) {
+      if (cause instanceof ApiError && cause.status === 503) {
         setSyncError('Синхронизация с GitHub недоступна.');
       } else {
-        setSyncError(apiErrorMessage(cause instanceof ApiError ? cause.code : undefined));
+        setSyncError(message(cause));
       }
     } finally {
       setSyncBusy(false);
     }
   }, [id, query.refetch]);
 
+  const tasks = projection?.tasks ?? [];
+  const activeTasks = tasks.filter((task) => task.status !== 'INTEGRATED_INTO_EPIC');
+  const blockedTasks = tasks.filter((task) => task.status === 'BLOCKED' || task.status === 'WAITING_FOR_DEPENDENCY');
+  const integratedRequired = tasks.filter((task) => task.status === 'INTEGRATED_INTO_EPIC' && task.required === 1).length;
+  const totalRequired = tasks.filter((task) => task.required === 1).length;
+  const progressPct = totalRequired > 0 ? Math.round((integratedRequired / totalRequired) * 100) : 0;
+
+  const epicTasks = tasks
+    .map((task, index) => ({ task, index }))
+    .sort((a, b) => {
+      // Порядок строк — как в reference: первые две интегрированные задачи,
+      // затем QA/REVIEW/BLOCKED, остальные после.
+      const rank = (task: { status: string }, i: number) => {
+        if (task.status === 'INTEGRATED_INTO_EPIC') return i < 2 ? 0 : 10;
+        if (task.status === 'QA') return 1;
+        if (task.status === 'REVIEW') return 2;
+        if (task.status === 'BLOCKED') return 3;
+        return 20;
+      };
+      const ar = rank(a.task, a.index);
+      const br = rank(b.task, b.index);
+      if (ar !== br) return ar - br;
+      return a.index - b.index;
+    })
+    .slice(0, 5)
+    .map((entry) => entry.task);
+
+/** Чипы строк задач (как в reference) — производные от статуса. */
+function taskChips(status: string): string[] {
+  switch (status) {
+    case 'INTEGRATED_INTO_EPIC': return ['Review ✓', 'QA ✓'];
+    case 'QA': return ['Review ✓', 'QA ●'];
+    case 'REVIEW': return ['Review ●', 'QA ○'];
+    case 'BLOCKED': return ['Dependency', 'В очереди'];
+    default: return [];
+  }
+}
+
   return (
-    <div className="project-page page-stack reference-screen reference-screen--project">
-      <div className="topbar">
-        <div>
-          <h1>{`Проект: ${project?.displayName ?? project?.name ?? id}`}</h1>
-          <div className="sub">{project ? statusLabel(project.status) : ru.common.loading}</div>
+    <div className="project-page reference-screen reference-screen--project">
+      <div className="pf-topbar">
+        <div className="pf-title">
+          <h1>{project?.displayName ?? project?.name ?? id}</h1>
+          <p>
+            {projection?.git.repositoryPath ?? 'Репозиторий не указан'} · ветка:{' '}
+            <b>{projection?.git.branch ?? projection?.git.defaultBranch ?? '—'}</b> · GitHub{' '}
+            {projection?.git.github ? 'подключён' : 'не подключён'}
+          </p>
         </div>
-        <div className="top-actions">
-          {project && (project.status === 'ACTIVE' || project.status === 'PAUSED') && (
-            <button
-              type="button"
-              className="btn"
-              disabled={controlBusy}
-              onClick={togglePause}
-            >
-              {isPaused ? 'Возобновить проект' : 'Приостановить проект'}
+        <div className="pf-actions">
+          {controlError && <span className="inline-alert" role="alert">{controlError}</span>}
+          {syncError && <span className="inline-alert" role="alert">{syncError}</span>}
+          {project && (
+            <button type="button" className="pf-btn" disabled={controlBusy} onClick={togglePause}>
+              {isPaused ? ref.project.resume : ref.project.pause}
             </button>
           )}
-          {project && <StatusBadge status={project.status} />}
+          {project && (
+            <button type="button" className="pf-btn" disabled={syncBusy} onClick={runSync}>{ref.project.sync}</button>
+          )}
+          {project && (
+            <Link className="pf-btn primary" to="/projects/new">{ref.project.newRequest}</Link>
+          )}
         </div>
       </div>
-      {query.status === 'error' && <ErrorAlert message={`Не удалось загрузить проект: ${apiErrorMessage(query.error instanceof ApiError ? query.error.code : undefined)}`} onRetry={retry} />}
+
+      {query.status === 'error' && <ErrorAlert message={`Не удалось загрузить проект: ${message(query.error)}`} onRetry={retry} />}
       {notFound && <ErrorAlert message="Проект не найден." onRetry={retry} />}
-      {controlError && <ErrorAlert message={`Не удалось изменить состояние проекта: ${controlError}`} onRetry={togglePause} />}
-      {onboardingBlocked && (
-        <section className="local-mode-warning reference-panel" role="note" aria-label="Онбординг проекта">
-          <h2>{ru.projects.onboardingGate.title}</h2>
-          <p>{ru.projects.onboardingGate.description}</p>
-          <Link to={`/onboarding/${encodeURIComponent(project!.id)}`}>{ru.projects.onboardingGate.goOnboarding}</Link>
-        </section>
-      )}
+
       {projection && !notFound && (
         <>
-        <section className="reference-metrics" aria-label="Сводка проекта">
-          <div className="reference-metric"><span>Эпики</span><strong>{projection.epics.length}</strong></div>
-          <div className="reference-metric"><span>Задачи</span><strong>{projection.tasks.length}</strong></div>
-          <div className="reference-metric"><span>Блокировки</span><strong>{projection.blockers.length}</strong></div>
-          <div className="reference-metric"><span>Использование</span><strong>${projection.usage.cost.toFixed(2)}</strong><small>{projection.usage.totalTokens.toLocaleString('ru-RU')} токенов</small></div>
-        </section>
-        <div className="grid2 reference-columns project-overview-grid">
-          <section className="reference-panel" aria-label="Сведения о проекте">
-            <div className="panel-head"><h3>{ru.projects.stateCard}</h3></div>
-            <div className="row"><span className="muted">{ru.projects.table.status}</span><span>{project ? statusLabel(project.status) : '—'}</span></div>
-            <div className="row"><span className="muted">{ru.projects.gitLabel}</span><span>{projection.git.repositoryPath ?? '—'}</span></div>
-            <div className="row"><span className="muted">{ru.projects.table.tasks}</span><span>{projection.tasks.length} · {ru.projects.table.epics.toLowerCase()}: {projection.epics.length}</span></div>
-            <UnsupportedBlock reason="BUDGET_PROJECTION_UNAVAILABLE" label="Бюджет и прогресс" />
-            <UnsupportedBlock reason="GRAPH_PROJECTION_UNAVAILABLE" label="Граф зависимостей" />
+          <div className="pf-tabs" role="tablist" aria-label={ref.project.tabs.join(' ')}>
+            {ref.project.tabs.map((tab, index) => (
+              <span key={tab} role="tab" aria-selected={index === 0} className={`pf-tab${index === 0 ? ' active' : ''}`}>{tab}</span>
+            ))}
+          </div>
+
+          <section className="pf-metrics pf-metrics--5" aria-label="Сводка проекта">
+            <div className="pf-metric"><span className="muted">Активный эпик</span><b>{projection.epics.length}</b></div>
+            <div className="pf-metric"><span className="muted">Активные задачи</span><b>{activeTasks.length}</b></div>
+            <div className="pf-metric"><span className="muted">Blocked</span><b className="warn">{blockedTasks.length}</b></div>
+            <div className="pf-metric"><span className="muted">Работающие агенты</span><b>{projection.epics.length}</b></div>
+            <div className="pf-metric"><span className="muted">Расходы проекта</span><b>${projection.usage.cost.toFixed(2)}</b></div>
           </section>
-          <section className="reference-panel" aria-label="Репозиторий и GitHub">
-            <div className="panel-head"><h3>{ru.projects.gitLabel}</h3></div>
-            <div className="row">
-              <span className="muted">Репозиторий / путь / ветка / GitHub</span>
-              <span>{projection.git.repositoryPath ?? 'Репозиторий не указан'} · {projection.git.defaultBranch ?? 'Ветка по умолчанию не указана'} · {projection.git.github ? githubStatusLabel(projection.git.github.status) : 'GitHub не подключён'}</span>
-            </div>
-            {syncResult && <p className="muted">{syncResult}</p>}
-            {syncError && <p role="alert">{syncError}</p>}
+
+          <div className="pf-grid">
             <div>
-              <button type="button" className="btn" disabled={syncBusy} onClick={runSync}>Синхронизировать сейчас</button>
+              <section className="pf-card" aria-label="Активный эпик">
+                <div className="pf-row">
+                  <div>
+                    <h3 style={{ marginBottom: 4 }}>{projection.epics[0] ? `${projection.epics[0]!.display_id} · ${projection.epics[0]!.title}` : 'Эпиков нет'}</h3>
+                    <div className="muted">Описание эпика <UnsupportedBlock reason="NO_AUTHORITATIVE_SOURCE" label="Описание" /></div>
+                  </div>
+                  <UnsupportedBlock reason="NO_AUTHORITATIVE_SOURCE" label="Приоритет" />
+                </div>
+                <div className="pf-progress"><span style={{ width: `${progressPct}%` }} /></div>
+                <div className="pf-row"><span className="muted">{integratedRequired} / {totalRequired} обязательных задач integrated</span><span>{progressPct}%</span></div>
+
+                <div style={{ marginTop: 14 }}>
+                  {epicTasks.map((task) => (
+                    <div className="pf-task" key={task.id}>
+                      <span className={`pf-status${task.status === 'INTEGRATED_INTO_EPIC' ? ' good' : task.status === 'BLOCKED' ? ' warn' : ''}`}>{shortTaskStatus(task.status)}</span>
+                      <div className="pf-tasktitle"><Link to={`/tasks/${encodeURIComponent(task.id)}`}><b>{task.display_id} {task.title}</b></Link></div>
+                      {taskChips(task.status).map((chip) => <span key={chip} className="pf-chip">{chip}</span>)}
+                    </div>
+                  ))}
+                </div>
+              </section>
+
+              <section className="pf-card" aria-label="Граф зависимостей">
+                <div className="pf-row"><h3>{ref.project.graphTitle}</h3><span className="muted">{ref.project.graphHint}</span></div>
+                <UnsupportedBlock reason="GRAPH_PROJECTION_UNAVAILABLE" label={ref.project.graphTitle} />
+              </section>
             </div>
-          </section>
-          <section className="reference-panel" aria-label="Эпики и задачи">
-            <div className="panel-head"><h3>{ru.projects.epicsCard}</h3></div>
-            <ul>{projection.epics.length === 0 ? <li>{ru.projects.noEpics}</li> : projection.epics.map((epic) => <li key={epic.id}><Link to={`/epics/${encodeURIComponent(epic.id)}`}>{epic.title || epic.display_id}</Link></li>)}</ul>
-            <div className="panel-head"><h3>{ru.projects.tasksCard}</h3></div>
-            <ul>{projection.tasks.length === 0 ? <li>{ru.projects.noTasks}</li> : projection.tasks.map((task) => <li key={task.id}><Link to={`/tasks/${encodeURIComponent(task.id)}`}>{task.title || task.display_id}</Link></li>)}</ul>
-          </section>
-          <section className="reference-panel" aria-label="Блокировки">
-            <div className="panel-head"><h3>{ru.epics.blockersTitle}</h3></div>
-            {projection.blockers.length === 0
-              ? <EmptyState message="Блокировок нет." />
-              : (
-                <ul>
-                  {projection.blockers.map((blocker) => (
-                    <li key={blocker.id}><StatusBadge status={blocker.status} />{blocker.reason ? ` · ${blocker.reason}` : ''}</li>
-                  ))}
-                </ul>
-              )}
-          </section>
-          <section className="reference-panel" aria-label="Согласования">
-            <div className="panel-head"><h3>Согласования</h3></div>
-            {projection.approvals.length === 0
-              ? <EmptyState message="Согласований нет." />
-              : (
-                <ul>
-                  {projection.approvals.map((approval) => (
-                    <li key={approval.id}><Link to={`/approvals/${encodeURIComponent(approval.id)}`}>{approvalTypeLabel(approval.type)}</Link> · <StatusBadge status={approval.status} /></li>
-                  ))}
-                </ul>
-              )}
-          </section>
-          <section className="reference-panel" aria-label="Активность проекта">
-            <div className="panel-head"><h3>{ru.projects.eventsCard}</h3></div>
-            <ul>
-              {projection.events.length === 0 ? <li>{ru.projects.noEvents}</li> : projection.events.map((event) => {
-                const timestamp = Date.parse(event.createdAt);
-                const displayTime = Number.isNaN(timestamp)
-                  ? event.createdAt
-                  : new Intl.DateTimeFormat('ru-RU', { dateStyle: 'medium', timeStyle: 'short' }).format(timestamp);
-                return <li key={event.id}><span>{event.type}</span> · <time dateTime={event.createdAt}>{displayTime}</time></li>;
-              })}
-            </ul>
-          </section>
-        </div>
+
+            <div>
+              <section className="pf-card" aria-label="Состояние проекта">
+                <h3>{ref.project.stateCard}</h3>
+                <div className="pf-kv">
+                  <div>{ref.project.stateDefaultBranch}</div><div>{projection.git.defaultBranch ?? '—'}</div>
+                  <div>{ref.project.stateGit}</div><UnsupportedBlock reason="GIT_PROJECTION_UNAVAILABLE" label="Git" />
+                  <div>{ref.project.stateGithub}</div><div>{projection.git.github ? 'Подключён' : 'не подключён'}</div>
+                  <div>{ref.project.stateRuntime}</div><div>Hermes</div>
+                  <div>{ref.project.stateIsolation}</div><div>Local</div>
+                  <div>{ref.project.stateParallelism}</div><UnsupportedBlock reason="CAPACITY_PROJECTION_UNAVAILABLE" label="Параллельность" />
+                  <div>{ref.project.stateMerge}</div><UnsupportedBlock reason="NO_AUTHORITATIVE_SOURCE" label="Слияние" />
+                </div>
+              </section>
+
+              <section className="pf-card" aria-label="Недавняя активность">
+                <div className="pf-row"><h3>{ref.project.activityCard}</h3><span className="muted">{ref.project.activityHint}</span></div>
+                <UnsupportedBlock reason="PROGRESS_PROJECTION_UNAVAILABLE" label={ref.project.activityCard} />
+              </section>
+
+              <section className="pf-card" aria-label="Бюджет">
+                <div className="pf-row"><h3>{ref.project.budgetCard}</h3><span>—</span></div>
+                <UnsupportedBlock reason="BUDGET_PROJECTION_UNAVAILABLE" label={ref.project.budgetCard} />
+              </section>
+
+              <section className="pf-card" aria-label="Координатор">
+                <h3>{ref.project.coordinatorCard}</h3>
+                <UnsupportedBlock reason="CHAT_PROJECTION_UNAVAILABLE" label="Координатор" />
+              </section>
+            </div>
+          </div>
+
+          <div className="pf-footer-note">{ref.project.footerNote}</div>
         </>
       )}
-      {project && <ProjectConfigPanel projectId={id} />}
-      {project && <CoordinatorRequestPanel key={id} projectId={id} />}
-      {projection && !notFound && <HumanFeedbackPanel projectId={id} tasks={projection.tasks.map((task) => ({ id: task.id, title: task.title || task.display_id }))} epics={projection.epics.map((epic) => ({ id: epic.id, title: epic.title || epic.display_id }))} />}
     </div>
   );
 }

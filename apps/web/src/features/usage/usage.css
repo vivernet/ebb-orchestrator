@@ -1,0 +1,29 @@
+@import '../../styles/refui.css';
+
+/* Usage (reference 09) — метрики, бюджеты, таблицы и панели один в один с макетом */
+
+.us-muted { color: var(--muted); }
+.us-good { color: var(--good); }
+.us-warn { color: var(--warn); }
+
+.us-budget { padding: 12px 0; border-top: 1px solid var(--border); }
+.us-budget:first-of-type { border-top: 0; }
+.us-budget-head { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 7px; font-size: 13px; }
+.us-budget-head b { display: block; font-size: 13px; }
+.us-budget-head .us-muted { font-size: 12px; margin-top: 2px; }
+.us-budget-head > div:last-child { white-space: nowrap; }
+
+.us-table { width: 100%; border-collapse: collapse; margin-top: 4px; }
+.us-table th, .us-table td { text-align: left; padding: 10px 8px; border-top: 1px solid var(--border); font-size: 12px; font-weight: 400; }
+.us-table th { color: var(--muted); font-weight: 500; border-top: 0; }
+.us-table td:last-child, .us-table th:last-child { text-align: right; }
+
+.us-split { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 4px; }
+.us-stat { padding: 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--panel2); }
+.us-stat span { display: block; font-size: 12px; }
+.us-stat b { display: block; font-size: 18px; margin-top: 5px; font-weight: 700; }
+
+.us-alert { padding: 11px 12px; border: 1px solid var(--border); border-left: 3px solid var(--warn); border-radius: 9px; background: var(--panel2); margin-top: 9px; font-size: 13px; }
+.us-alert.bad { border-left-color: var(--bad); }
+.us-alert b { display: block; font-size: 13px; }
+.us-alert .us-muted { margin-top: 3px; font-size: 12px; }

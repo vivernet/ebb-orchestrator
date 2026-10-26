@@ -1,0 +1,16 @@
+@import '../../styles/refui.css';
+
+/* ---- Экран проекта (06-project-view-concept) ---- */
+
+.pf-task { display: grid; grid-template-columns: 90px minmax(0, 1fr) 110px 110px; gap: 10px; align-items: center; padding: 11px 0; border-top: 1px solid var(--border); }
+.pf-task:first-of-type { border-top: 0; }
+.pf-status { font-size: 11px; }
+.pf-tasktitle b { display: block; font-size: 13px; font-weight: 700; }
+.pf-tasktitle span { font-size: 11px; color: var(--muted); }
+
+/* Unavailable-надписи в kv — плоско, как строки контента reference. */
+.project-page .pf-kv .reference-unsupported {
+  background: transparent;
+  border: 0;
+  padding: 0;
+}

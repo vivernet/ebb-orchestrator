@@ -1,388 +1,52 @@
-import { afterEach, describe, test, expect, vi, beforeEach } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
-import { http, HttpResponse } from 'msw';
-import { setupServer } from 'msw/node';
 import { MemoryRouter } from 'react-router';
 import AgentRunPage from '../../src/features/runs/AgentRunPage.js';
-import * as runApi from '../../src/features/runs/api.js';
-import * as queryModule from '../../src/state/use-query.js';
+import { apiClient } from '../../src/api/client.js';
 
-const server = setupServer(
-  http.get('/api/v1/runs/test-run-123', () => {
-    return HttpResponse.json({
-      id: 'test-run-123',
-      role: 'Code Reviewer',
-      runtime: 'node',
-      model: 'gpt-4.1',
-      status: 'COMPLETED',
-      triggerReason: 'Pull request review',
-      taskId: 'task-456',
-      epicId: null,
-      startedAt: '2026-01-15T10:00:00Z',
-      endedAt: '2026-01-15T10:45:00Z',
-      usage: {
-        inputTokens: 5000,
-        cachedTokens: 1000,
-        outputTokens: 2000,
-        cost: 0.0125,
-      },
-    });
-  }),
-);
+afterEach(() => vi.restoreAllMocks());
 
-function renderWithRouter(component: React.ReactElement) {
-  return render(<MemoryRouter>{component}</MemoryRouter>);
-}
-
-const queryMeta = {
-  key: '/api/v1/runs/test-run-123',
-  updatedAt: null,
-  isStale: false,
+const runProjection = {
+  id: 'run-841', role: 'Senior Developer', runtime: 'Hermes', model: 'terra', status: 'IN_PROGRESS',
+  taskId: 'task-425', epicId: null, sessionId: 'dev-425', attempt: 2, triggerReason: 'REVIEW_REWORK',
+  startedAt: '2026-10-24T05:41:18.000Z', endedAt: null, exitCode: null,
+  usage: {
+    inputTokens: { availability: 'available', value: 63400 },
+    cachedInputTokens: { availability: 'available', value: 42100 },
+    outputTokens: { availability: 'available', value: 10800 },
+    effectiveCost: { availability: 'available', value: 0.78 },
+  },
+  control: { state: 'ACTIVE', version: 1, updatedAt: '2026-10-24T05:41:20.000Z', checkpointId: null },
 };
 
-beforeEach(() => {
-  server.listen({ onUnhandledRequest: 'error' });
-  vi.clearAllMocks();
-});
+describe('AgentRunPage (reference 10)', () => {
+  test('рендерит метрики, события и панели запуска без сырых payload-кодов', async () => {
+    const get = vi.spyOn(apiClient, 'get').mockResolvedValue(runProjection);
+    render(<MemoryRouter><AgentRunPage id="run-841" /></MemoryRouter>);
 
-afterEach(() => {
-  server.close();
-  vi.restoreAllMocks();
-});
-
-describe('AgentRunPage', () => {
-  test('показывает loading state при загрузке', () => {
-    vi.spyOn(queryModule, 'useQuery').mockReturnValue({
-      status: 'loading',
-      data: undefined,
-      error: null,
-      ...queryMeta,
-      refetch: vi.fn(),
-    });
-
-    renderWithRouter(<AgentRunPage id="test-run-123" />);
-    expect(screen.getByText('Загрузка запуска агента…')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'RUN-841 · Senior Developer' })).toBeInTheDocument();
+    expect(get).toHaveBeenCalledWith('/runs/run-841', expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    expect(screen.getByText('Начат вызов инструмента')).toBeInTheDocument();
+    expect(screen.getByText('Вывод терминала')).toBeInTheDocument();
+    expect(screen.getByText('Цель запуска')).toBeInTheDocument();
+    expect(screen.getByText('Среда выполнения')).toBeInTheDocument();
+    expect(screen.getByText('Решения по разрешениям')).toBeInTheDocument();
+    expect(screen.getByText('Использование')).toBeInTheDocument();
+    expect(screen.getByText('Сигналы восстановления')).toBeInTheDocument();
+    expect(screen.getByText('Пакет контекста')).toBeInTheDocument();
+    expect(screen.getByText('ALLOW')).toBeInTheDocument();
+    expect(screen.queryByText(/private ui prompt|sentinel/)).not.toBeInTheDocument();
   });
 
-  test('показывает error state при ошибке загрузки', () => {
-    vi.spyOn(queryModule, 'useQuery').mockReturnValue({
-      status: 'error',
-      data: undefined,
-      error: new Error('Failed to fetch'),
-      ...queryMeta,
-      refetch: vi.fn(),
-    });
+  test('ошибка загрузки локализована и повторяема', async () => {
+    const get = vi.spyOn(apiClient, 'get').mockRejectedValueOnce(new Error('secret: run db')).mockResolvedValueOnce(runProjection);
+    render(<MemoryRouter><AgentRunPage id="run-841" /></MemoryRouter>);
 
-    renderWithRouter(<AgentRunPage id="test-run-123" />);
-    expect(screen.getByText(/Не удалось загрузить запуск агента/i)).toBeInTheDocument();
-  });
-
-  test('показывает run details при успешной загрузке', async () => {
-    vi.spyOn(queryModule, 'useQuery').mockReturnValue({
-      status: 'success',
-      data: {
-        id: 'test-run-123',
-        role: 'Code Reviewer',
-        runtime: 'node',
-        model: 'gpt-4.1',
-        status: 'COMPLETED',
-        triggerReason: 'Pull request review',
-        taskId: 'task-456',
-        epicId: null,
-        startedAt: '2026-01-15T10:00:00Z',
-        endedAt: '2026-01-15T10:45:00Z',
-        usage: {
-          inputTokens: 5000,
-          cachedTokens: 1000,
-          outputTokens: 2000,
-          cost: 0.0125,
-        },
-      },
-      error: null,
-      ...queryMeta,
-      refetch: vi.fn(),
-    });
-
-    renderWithRouter(<AgentRunPage id="test-run-123" />);
-
-    expect(screen.getByRole('heading', { name: 'Запуск агента: test-run-123' })).toBeInTheDocument();
-    expect(screen.getByText('Завершено')).toHaveAttribute('data-status', 'COMPLETED');
-    expect(screen.getByText('Code Reviewer')).toBeInTheDocument();
-    expect(screen.getByText('node')).toBeInTheDocument();
-    expect(screen.getByText('gpt-4.1')).toBeInTheDocument();
-    expect(screen.getByText('Причина запуска недоступна.')).toBeInTheDocument();
-    expect(screen.queryByText('Pull request review')).not.toBeInTheDocument();
-    expect(screen.getByText('task-456')).toBeInTheDocument();
-  });
-
-  test('для модели default показывает «по умолчанию (Ebb)» вместо имени модели и провайдера', async () => {
-    vi.spyOn(runApi, 'getRunEvents').mockResolvedValue([]);
-    vi.spyOn(runApi, 'getRunTools').mockResolvedValue({ runId: 'test-run-123', tools: [] });
-    vi.spyOn(runApi, 'getRunPermissions').mockResolvedValue([]);
-    vi.spyOn(runApi, 'getRunRecovery').mockResolvedValue({ runId: 'test-run-123', taskId: null, runStatus: 'COMPLETED', recovery: null });
-    vi.spyOn(runApi, 'getRunArtifacts').mockResolvedValue([]);
-    vi.spyOn(runApi, 'getRunContextManifests').mockResolvedValue({ availability: 'unknown', runId: 'test-run-123', subject: null, role: 'unknown' });
-
-    vi.spyOn(queryModule, 'useQuery').mockReturnValue({
-      status: 'success',
-      data: {
-        id: 'test-run-123',
-        role: 'Code Reviewer',
-        runtime: 'node',
-        model: 'default',
-        status: 'COMPLETED',
-        triggerReason: null,
-        taskId: null,
-        epicId: null,
-        startedAt: '2026-01-15T10:00:00Z',
-        endedAt: null,
-        usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, cost: 0 },
-      },
-      error: null,
-      ...queryMeta,
-      refetch: vi.fn(),
-    });
-
-    renderWithRouter(<AgentRunPage id="test-run-123" />);
-
-    expect(screen.getAllByText('по умолчанию (Ebb)')).toHaveLength(2);
-    expect(screen.queryByText('default')).not.toBeInTheDocument();
-    expect(screen.queryByText(/sk-[A-Za-z0-9]+/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/OPENAI_API_KEY|ANTHROPIC_API_KEY/)).not.toBeInTheDocument();
-  });
-
-  test('для явной модели показывает модель и провайдер без значений ключей', async () => {
-    vi.spyOn(runApi, 'getRunEvents').mockResolvedValue([]);
-    vi.spyOn(runApi, 'getRunTools').mockResolvedValue({ runId: 'test-run-123', tools: [] });
-    vi.spyOn(runApi, 'getRunPermissions').mockResolvedValue([]);
-    vi.spyOn(runApi, 'getRunRecovery').mockResolvedValue({ runId: 'test-run-123', taskId: null, runStatus: 'COMPLETED', recovery: null });
-    vi.spyOn(runApi, 'getRunArtifacts').mockResolvedValue([]);
-    vi.spyOn(runApi, 'getRunContextManifests').mockResolvedValue({ availability: 'unknown', runId: 'test-run-123', subject: null, role: 'unknown' });
-
-    vi.spyOn(queryModule, 'useQuery').mockReturnValue({
-      status: 'success',
-      data: {
-        id: 'test-run-123',
-        role: 'Code Reviewer',
-        runtime: 'node',
-        model: 'gpt-4.1',
-        status: 'COMPLETED',
-        triggerReason: null,
-        taskId: null,
-        epicId: null,
-        startedAt: '2026-01-15T10:00:00Z',
-        endedAt: null,
-        usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, cost: 0 },
-      },
-      error: null,
-      ...queryMeta,
-      refetch: vi.fn(),
-    });
-
-    renderWithRouter(<AgentRunPage id="test-run-123" />);
-
-    expect(screen.getByText('gpt-4.1')).toBeInTheDocument();
-    expect(screen.getByText('OpenAI')).toBeInTheDocument();
-    expect(screen.queryByText('по умолчанию (Ebb)')).not.toBeInTheDocument();
-    expect(screen.queryByText(/sk-[A-Za-z0-9]+/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/OPENAI_API_KEY|ANTHROPIC_API_KEY/)).not.toBeInTheDocument();
-  });
-
-  test('для неизвестной модели не выдумывает провайдера', async () => {
-    vi.spyOn(runApi, 'getRunEvents').mockResolvedValue([]);
-    vi.spyOn(runApi, 'getRunTools').mockResolvedValue({ runId: 'test-run-123', tools: [] });
-    vi.spyOn(runApi, 'getRunPermissions').mockResolvedValue([]);
-    vi.spyOn(runApi, 'getRunRecovery').mockResolvedValue({ runId: 'test-run-123', taskId: null, runStatus: 'COMPLETED', recovery: null });
-    vi.spyOn(runApi, 'getRunArtifacts').mockResolvedValue([]);
-    vi.spyOn(runApi, 'getRunContextManifests').mockResolvedValue({ availability: 'unknown', runId: 'test-run-123', subject: null, role: 'unknown' });
-
-    vi.spyOn(queryModule, 'useQuery').mockReturnValue({
-      status: 'success',
-      data: {
-        id: 'test-run-123',
-        role: 'Code Reviewer',
-        runtime: 'node',
-        model: 'some-legacy-model',
-        status: 'COMPLETED',
-        triggerReason: null,
-        taskId: null,
-        epicId: null,
-        startedAt: '2026-01-15T10:00:00Z',
-        endedAt: null,
-        usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, cost: 0 },
-      },
-      error: null,
-      ...queryMeta,
-      refetch: vi.fn(),
-    });
-
-    renderWithRouter(<AgentRunPage id="test-run-123" />);
-
-    expect(screen.getByText('some-legacy-model')).toBeInTheDocument();
-    expect(screen.getByText('Недоступно')).toBeInTheDocument();
-  });
-
-  test('показывает Events section с данными', async () => {
-    vi.spyOn(runApi, 'getRunEvents').mockResolvedValue([
-      { id: 'evt-1', type: 'run_started', payload: {}, createdAt: '2026-01-15T10:00:00Z', aggregateType: 'Run', aggregateId: 'test-run-123', availableAt: '2026-01-15T10:00:00Z', processedAt: null, attempts: 1 },
-      { id: 'evt-2', type: 'tool_used', payload: {}, createdAt: '2026-01-15T10:15:00Z', aggregateType: 'Run', aggregateId: 'test-run-123', availableAt: '2026-01-15T10:15:00Z', processedAt: null, attempts: 1 },
-      { id: 'evt-3', type: 'run_completed', payload: {}, createdAt: '2026-01-15T10:45:00Z', aggregateType: 'Run', aggregateId: 'test-run-123', availableAt: '2026-01-15T10:45:00Z', processedAt: null, attempts: 1 },
-    ]);
-    vi.spyOn(runApi, 'getRunTools').mockResolvedValue({ runId: 'test-run-123', tools: ['git', 'file_read'] });
-    vi.spyOn(runApi, 'getRunPermissions').mockResolvedValue([]);
-    vi.spyOn(runApi, 'getRunRecovery').mockResolvedValue({ runId: 'test-run-123', taskId: null, runStatus: 'COMPLETED', recovery: null });
-    vi.spyOn(runApi, 'getRunArtifacts').mockResolvedValue([]);
-    vi.spyOn(runApi, 'getRunContextManifests').mockResolvedValue({ availability: 'unknown', runId: 'test-run-123', subject: null, role: 'unknown' });
-
-    vi.spyOn(queryModule, 'useQuery').mockReturnValue({
-      status: 'success',
-      data: {
-        id: 'test-run-123',
-        role: 'Code Reviewer',
-        runtime: 'node',
-        model: 'gpt-4.1',
-        status: 'COMPLETED',
-        triggerReason: null,
-        taskId: null,
-        epicId: null,
-        startedAt: '2026-01-15T10:00:00Z',
-        endedAt: null,
-        usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, cost: 0 },
-      },
-      error: null,
-      ...queryMeta,
-      refetch: vi.fn(),
-    });
-
-    renderWithRouter(<AgentRunPage id="test-run-123" />);
-
-    expect(await screen.findByText('Запуск начат')).toBeInTheDocument();
-    expect(await screen.findByText('Запуск завершён')).toBeInTheDocument();
-    expect(screen.queryByText('run_started')).not.toBeInTheDocument();
-  });
-
-  test('показывает Tools section с данными', async () => {
-    vi.spyOn(runApi, 'getRunEvents').mockResolvedValue([]);
-    vi.spyOn(runApi, 'getRunTools').mockResolvedValue({ runId: 'test-run-123', tools: ['git', 'file_read', 'file_write', 'code_review'] });
-    vi.spyOn(runApi, 'getRunPermissions').mockResolvedValue([]);
-    vi.spyOn(runApi, 'getRunRecovery').mockResolvedValue({ runId: 'test-run-123', taskId: null, runStatus: 'COMPLETED', recovery: null });
-
-    vi.spyOn(queryModule, 'useQuery').mockReturnValue({
-      status: 'success',
-      data: {
-        id: 'test-run-123',
-        role: 'Code Reviewer',
-        runtime: 'node',
-        model: 'gpt-4.1',
-        status: 'COMPLETED',
-        triggerReason: null,
-        taskId: null,
-        epicId: null,
-        startedAt: '2026-01-15T10:00:00Z',
-        endedAt: null,
-        usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, cost: 0 },
-      },
-      error: null,
-      ...queryMeta,
-      refetch: vi.fn(),
-    });
-
-    renderWithRouter(<AgentRunPage id="test-run-123" />);
-
-    await waitFor(() => {
-      expect(screen.getByText('Разрешённые инструменты')).toBeInTheDocument();
-    });
-
-    expect(screen.getByText('git')).toBeInTheDocument();
-    expect(screen.getByText('file_write')).toBeInTheDocument();
-    expect(screen.getByText('code_review')).toBeInTheDocument();
-  });
-
-  test('показывает Permissions section с данными', async () => {
-    vi.spyOn(runApi, 'getRunEvents').mockResolvedValue([]);
-    vi.spyOn(runApi, 'getRunTools').mockResolvedValue({ runId: 'test-run-123', tools: [] });
-    vi.spyOn(runApi, 'getRunPermissions').mockResolvedValue([
-      { id: 'aud-1', action: 'read_code', actor: 'system', aggregateType: 'PR', aggregateId: 'pr-789', details: {}, createdAt: '2026-01-15T10:10:00Z' },
-      { id: 'aud-2', action: 'write_comment', actor: 'system', aggregateType: 'PR', aggregateId: 'pr-789', details: {}, createdAt: '2026-01-15T10:30:00Z' },
-    ]);
-    vi.spyOn(runApi, 'getRunRecovery').mockResolvedValue({ runId: 'test-run-123', taskId: null, runStatus: 'COMPLETED', recovery: null });
-
-    vi.spyOn(queryModule, 'useQuery').mockReturnValue({
-      status: 'success',
-      data: {
-        id: 'test-run-123',
-        role: 'Code Reviewer',
-        runtime: 'node',
-        model: 'gpt-4.1',
-        status: 'COMPLETED',
-        triggerReason: null,
-        taskId: null,
-        epicId: null,
-        startedAt: '2026-01-15T10:00:00Z',
-        endedAt: null,
-        usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, cost: 0 },
-      },
-      error: null,
-      ...queryMeta,
-      refetch: vi.fn(),
-    });
-
-    renderWithRouter(<AgentRunPage id="test-run-123" />);
-
-    await waitFor(() => {
-      expect(screen.getByText('Разрешения и журнал аудита')).toBeInTheDocument();
-    });
-
-    expect(screen.getByText('Чтение кода')).toBeInTheDocument();
-    expect(screen.getByText('Запись комментария')).toBeInTheDocument();
-    expect(screen.queryByText('read_code')).not.toBeInTheDocument();
-  });
-
-  test('показывает Recovery section с данными', async () => {
-    vi.spyOn(runApi, 'getRunEvents').mockResolvedValue([]);
-    vi.spyOn(runApi, 'getRunTools').mockResolvedValue({ runId: 'test-run-123', tools: [] });
-    vi.spyOn(runApi, 'getRunPermissions').mockResolvedValue([]);
-    vi.spyOn(runApi, 'getRunRecovery').mockResolvedValue({
-      runId: 'test-run-123',
-      taskId: 'task-456',
-      runStatus: 'COMPLETED',
-      recovery: {
-        attempts: [{ id: 'rec-1', roleLevel: 'level-2', failureType: 'timeout', attemptCount: 1, timestamp: '2026-01-15T10:20:00Z', fingerprint: null }],
-        schedulerRequests: [],
-        state: { id: 'rec-state-1', status: 'resolved', reason: 'SECRET_SESSION_TOKEN_123 recovered after timeout', createdAt: '2026-01-15T10:21:00Z', updatedAt: '2026-01-15T10:25:00Z' },
-      },
-    });
-
-    vi.spyOn(queryModule, 'useQuery').mockReturnValue({
-      status: 'success',
-      data: {
-        id: 'test-run-123',
-        role: 'Code Reviewer',
-        runtime: 'node',
-        model: 'gpt-4.1',
-        status: 'COMPLETED',
-        triggerReason: null,
-        taskId: null,
-        epicId: null,
-        startedAt: '2026-01-15T10:00:00Z',
-        endedAt: null,
-        usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, cost: 0 },
-      },
-      error: null,
-      ...queryMeta,
-      refetch: vi.fn(),
-    });
-
-    renderWithRouter(<AgentRunPage id="test-run-123" />);
-
-    await waitFor(() => {
-      expect(screen.getByText('Восстановление')).toBeInTheDocument();
-    });
-
-    expect(screen.getByText('Попытки восстановления')).toBeInTheDocument();
-    expect(screen.getByText('Статус запуска: Завершено')).toBeInTheDocument();
-    expect(screen.getByText(/Устранено — Причина восстановления недоступна/)).toHaveTextContent('Статус: Устранено — Причина восстановления недоступна.');
-    expect(screen.getByRole('region', { name: 'Восстановление' })).not.toHaveTextContent(/SECRET_SESSION_TOKEN_123|recovered after timeout|level-2|timeout/);
-    expect(screen.getAllByRole('listitem').length).toBe(1);
+    expect(await screen.findByText('Не удалось загрузить запуск агента: Не удалось выполнить запрос.')).toBeInTheDocument();
+    expect(screen.queryByText(/secret:/)).not.toBeInTheDocument();
+    const retry = screen.getByRole('button', { name: 'Повторить' });
+    retry.click();
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+    expect(await screen.findByRole('heading', { name: 'RUN-841 · Senior Developer' })).toBeInTheDocument();
   });
 });

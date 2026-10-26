@@ -1,7 +1,11 @@
-import { Link, NavLink, Outlet, useMatches } from 'react-router';
-import { ConnectionIndicator } from './ui/ConnectionIndicator.js';
-import { NotificationIndicator } from './ui/NotificationIndicator.js';
+import { Link, NavLink, Outlet, useLocation, useMatches } from 'react-router';
+import { useCallback } from 'react';
+import { apiPaths } from '@ebb-orchestrator/contracts';
+import { getDashboard } from '../features/dashboard/api.js';
+import { useQuery } from '../state/use-query.js';
+import { toClientPath } from '../api/client.js';
 import { ru } from '../i18n/ru.js';
+import { ref } from '../i18n/ref.js';
 
 function getBreadcrumbLabel(handle: unknown): string | null {
   if (typeof handle !== 'object' || handle === null || !('breadcrumbLabel' in handle)) return null;
@@ -27,32 +31,59 @@ function RouteBreadcrumbs() {
 }
 
 /**
+ * Пункт навигации «Эпики и задачи» активен для маршрутов эпиков и задач.
+ */
+function EpicTasksNavLink() {
+  const { pathname } = useLocation();
+  const active = /^\/(epics|tasks)(\/|$)/.test(pathname);
+  return (
+    <NavLink to="/projects" className={active ? 'active' : ''} data-epic-tasks-nav>
+      {ref.nav.epicsAndTasks}
+    </NavLink>
+  );
+}
+
+/**
  * Представляет пользовательский экран AppShell; авторитетные проверки выполняются backend.
+ * Боковая панель повторяет структуру reference-ui: бренд, пункты навигации,
+ * счётчик ожидающих согласований и нижняя подпись среды.
  */
 function AppShell() {
+  const dashboardPath = toClientPath(apiPaths.dashboard);
+  const approvalsFetcher = useCallback((_signal: AbortSignal) => getDashboard(), []);
+  const approvalsQuery = useQuery(null, dashboardPath, undefined, approvalsFetcher);
+  const pendingApprovals = approvalsQuery.status === 'success' && typeof approvalsQuery.data?.approvals === 'number'
+    ? approvalsQuery.data.approvals
+    : null;
+
   return (
     <div className="app-shell">
       <a className="skip-link" href="#main-content">{ru.common.skipToContent}</a>
       <aside className="left-nav">
-        <div className="brand"><span className="brand-mark" aria-hidden="true">E</span><div><strong>Ebb</strong><span>{ru.common.projectsBrand}</span></div></div>
-        <nav aria-label={ru.common.primaryNavigation}>
-          <div className="nav-group">{ru.common.workspaceGroup}</div>
-          <NavLink to="/" end>{ru.common.dashboard}</NavLink>
-          <NavLink to="/projects">{ru.common.projects}</NavLink>
-          <NavLink to="/projects/new">{ru.common.onboarding}</NavLink>
-          <div className="nav-sep" />
-          <div className="nav-group">{ru.common.controlGroup}</div>
-          <NavLink to="/approvals">{ru.common.approvals}</NavLink>
-          <NavLink to="/execution">{ru.common.execution}</NavLink>
-          <NavLink to="/usage">{ru.common.usage}</NavLink>
-          <div className="nav-sep" />
-          <NavLink to="/settings">{ru.common.settings}</NavLink>
-        </nav>
-        <div className="nav-status">
-          <ConnectionIndicator />
-          <NotificationIndicator count={0} />
+        <div className="brand">
+          <div>
+            <strong>{ref.nav.brand}</strong>
+            <span>{ref.nav.brandSub}</span>
+          </div>
         </div>
-        <p className="nav-footnote">{ru.common.localFirst}</p>
+        <nav aria-label={ru.common.primaryNavigation}>
+          <NavLink to="/" end>{ref.nav.dashboard}</NavLink>
+          <NavLink to="/projects">{ref.nav.projects}</NavLink>
+          <EpicTasksNavLink />
+          <NavLink to="/execution">{ref.nav.execution}</NavLink>
+          <NavLink to="/approvals">
+            {ref.nav.approvals}
+            {pendingApprovals !== null && pendingApprovals > 0 && <span className="warn">{pendingApprovals}</span>}
+          </NavLink>
+          <a href="#">{ref.nav.agents}</a>
+          <NavLink to="/usage">{ref.nav.usage}</NavLink>
+          <NavLink to="/settings">{ref.nav.settings}</NavLink>
+        </nav>
+        <div className="nav-footnote ref-sidebar-bottom">
+          {ref.nav.runtime}
+          <br />
+          {ref.nav.slots}
+        </div>
       </aside>
       <main id="main-content" className="main-content">
         <RouteBreadcrumbs />

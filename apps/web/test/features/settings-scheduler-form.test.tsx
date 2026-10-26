@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import SettingsPage from '../../src/features/settings/SettingsPage.js';
 import { apiClient } from '../../src/api/client.js';
@@ -17,52 +17,24 @@ const settingsFixture = {
   providerSelection: { defaultModel: 'default', models: [] },
 };
 
-describe('SettingsPage scheduler form', () => {
-  test('редактирование глобального лимита отправляет PUT /scheduler/config и перезагружает проекцию', async () => {
+describe('SettingsPage (reference 08) read-only', () => {
+  test('рендерит разделы навигации и карточки без форм редактирования', async () => {
     vi.spyOn(apiClient, 'get').mockResolvedValue(settingsFixture);
-    const put = vi.spyOn(apiClient, 'put').mockResolvedValue(settingsFixture);
-
     render(<MemoryRouter><SettingsPage /></MemoryRouter>);
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Изменить' }));
-
-    const globalMaxInput = screen.getByLabelText('Общий максимум');
-    fireEvent.change(globalMaxInput, { target: { value: '9' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }));
-
-    await waitFor(() => expect(put).toHaveBeenCalledWith('/scheduler/config', {
-      schemaVersion: 1, globalMax: 9, projectMax: 3, roleCapacity: { developer: 4 },
-    }));
-    expect(screen.getByText('Настройки сохранены')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Настройки проекта · Ebb AI Hub' })).toBeInTheDocument();
+    expect(screen.getByRole('navigation', { name: 'Разделы настроек' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Планировщик' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Восстановление' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Git и GitHub' })).toBeInTheDocument();
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
   });
 
-  test('пустые значения отправляются как null', async () => {
+  test('никогда не выводит секреты и ключи', () => {
     vi.spyOn(apiClient, 'get').mockResolvedValue(settingsFixture);
-    const put = vi.spyOn(apiClient, 'put').mockResolvedValue(settingsFixture);
-
     render(<MemoryRouter><SettingsPage /></MemoryRouter>);
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Изменить' }));
-
-    const globalMaxInput = screen.getByLabelText('Общий максимум');
-    fireEvent.change(globalMaxInput, { target: { value: '' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }));
-
-    await waitFor(() => expect(put).toHaveBeenCalledWith('/scheduler/config', {
-      schemaVersion: 1, globalMax: null, projectMax: 3, roleCapacity: { developer: 4 },
-    }));
-  });
-
-  test('ошибка сохранения выводится безопасно', async () => {
-    vi.spyOn(apiClient, 'get').mockResolvedValue(settingsFixture);
-    vi.spyOn(apiClient, 'put').mockRejectedValue(new Error('secret scheduler detail'));
-
-    render(<MemoryRouter><SettingsPage /></MemoryRouter>);
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Изменить' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }));
-
-    expect(await screen.findByRole('alert')).toHaveTextContent('Не удалось сохранить настройки: Не удалось выполнить запрос.');
-    expect(screen.queryByText(/secret scheduler detail/)).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/sk-[A-Za-z0-9]{6,}/);
+    expect(document.body).not.toHaveTextContent(/OPENAI_API_KEY|ANTHROPIC_API_KEY/);
   });
 });

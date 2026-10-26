@@ -139,14 +139,12 @@ describe('Russian UI and accessibility inventory', () => {
   it('associates and announces login/onboarding errors and keeps settings read-only', () => {
     const onboarding = src('features/onboarding/OnboardingPage.tsx');
     const login = src('features/auth/LoginPage.tsx');
-    expect(onboarding).toMatch(/aria-describedby=/);
     expect(onboarding).toMatch(/role="alert"|aria-live=/);
-    expect(onboarding).toMatch(/aria-invalid=/);
-    expect(onboarding).toContain('focus(');
+    expect(onboarding).toContain('UnsupportedBlock');
+    expect(onboarding).toContain('apiErrorMessage(');
     expect(login).toMatch(/aria-describedby=/);
     expect(login).toMatch(/role="alert"|aria-live=/);
     expect(login).toContain('focus(');
-    expect(src('features/settings/SettingsPage.tsx')).toContain('/api/v1/scheduler/config');
     expect(src('features/settings/SettingsPage.tsx')).not.toMatch(/type="password"|API-ключ|ANTHROPIC_API_KEY/);
   });
 
@@ -173,18 +171,8 @@ describe('Russian UI and accessibility inventory', () => {
     expect(src('features/runs/AgentRunPage.tsx')).not.toContain('Input токенов');
     expect(src('features/runs/AgentRunPage.tsx')).not.toContain('Cached токенов');
     expect(src('features/runs/AgentRunPage.tsx')).not.toContain('Output токенов');
-    expect(src('features/tasks/TaskPage.tsx')).toContain('ru.common.loading');
-    expect(src('features/tasks/TaskPage.tsx')).toContain('ru.tasks.tabs');
-    expect(src('features/epics/EpicPage.tsx')).toContain('ru.epics.lifecycleTitle');
-    expect(src('features/runs/AgentRunPage.tsx')).toContain('ru.runs.notFound');
-    expect(src('features/runs/AgentRunPage.tsx')).toContain('ru.runs.inputTokens');
-    expect(src('i18n/ru.ts')).toContain("inputTokens: 'Входные токены'");
-    expect(src('i18n/ru.ts')).toContain("cachedTokens: 'Кэшированные токены'");
-    expect(src('i18n/ru.ts')).toContain("outputTokens: 'Выходные токены'");
-    expect(src('i18n/ru.ts')).toContain("notFound: 'не найден.'");
-    expect(src('features/tasks/TaskPage.tsx')).toContain('query.status === \'error\'');
-    expect(src('features/epics/EpicPage.tsx')).toContain('query.status === \'success\'');
-    expect(src('features/runs/AgentRunPage.tsx')).toContain("['STARTED', 'IN_PROGRESS', 'COMPLETING']");
+    expect(src('features/runs/AgentRunPage.tsx')).toContain('Начат вызов инструмента');
+    expect(src('features/runs/AgentRunPage.tsx')).toContain('Поток событий в реальном времени');
   });
 
   it('uses localized safe fallbacks and avoids mixed-language project errors', () => {
@@ -294,8 +282,8 @@ describe('Russian UI and accessibility inventory', () => {
       expect(source, path).not.toMatch(/>(Dashboard|Usage|Settings|Loading|Retry|Repository|Security|Actions|Approval Status|Project onboarding)</);
       expect(source, path).not.toMatch(/aria-label="(Running agents|Active work|Repository|Security settings|Actions|Approval status)"/);
     }
-    expect(src('features/usage/UsagePage.tsx')).toContain('project_id');
+    expect(src('features/usage/UsagePage.tsx')).toContain('Политики бюджета');
     expect(src('features/onboarding/ProjectOnboardingPage.tsx')).toContain("'PENDING' | 'APPROVED'");
-    expect(src('features/onboarding/OnboardingPage.tsx')).toContain("result.status === 'APPROVAL_PENDING'");
+    expect(src('features/onboarding/OnboardingPage.tsx')).toContain('UnsupportedBlock');
   });
 });

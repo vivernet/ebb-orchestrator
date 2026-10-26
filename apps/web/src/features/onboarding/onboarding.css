@@ -1,0 +1,41 @@
+@import '../../styles/refui.css';
+
+/* Project Onboarding (reference 07) — повторяет макет: шаги, выбранный
+   репозиторий, обнаруженные факты; панели без источника — «недоступно». */
+
+.on-good { color: var(--good); }
+.on-error { color: var(--bad); font-size: 13px; }
+
+.on-grid { grid-template-columns: 1.25fr 0.9fr; }
+.on-steps { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-bottom: 20px; }
+.on-step {
+  padding: 10px; border: 1px solid var(--border); background: var(--panel);
+  border-radius: 9px; text-align: center; font-size: 11px; color: var(--muted);
+}
+.on-step.done { border-color: #315c43; color: var(--good); }
+.on-step.active { border-color: #5577b8; color: var(--text); }
+.on-repo {
+  background: #0f1318; border: 1px solid var(--border); border-radius: 9px;
+  padding: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px; margin-top: 12px;
+}
+.on-section { margin-top: 16px; }
+.on-section h4 { margin: 0 0 8px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.on-item { padding: 11px 0; border-top: 1px solid var(--border); }
+.on-item:first-of-type { border-top: 0; }
+.on-item b { display: block; font-size: 13px; }
+.on-item small { display: block; color: var(--muted); margin-top: 3px; font-size: 12px; }
+.on-item.detected { border-left: 3px solid var(--good); padding-left: 12px; }
+.on-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: #0f1318; border: 1px solid var(--border); border-radius: 9px;
+  padding: 12px; font-size: 12px; white-space: pre-wrap; margin-top: 12px;
+}
+.on-note { padding: 10px 12px; border-left: 3px solid var(--accent); background: var(--panel2); border-radius: 6px; margin-top: 12px; }
+.on-warn { padding: 10px 12px; border-left: 3px solid var(--warn); background: var(--panel2); border-radius: 6px; margin-top: 12px; }
+.on-footer-actions { justify-content: flex-end; }
+
+@media (max-width: 900px) {
+  .on-grid { grid-template-columns: minmax(0, 1fr); }
+  .on-steps { grid-template-columns: 1fr 1fr; }
+}

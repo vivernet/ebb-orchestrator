@@ -1,0 +1,34 @@
+@import '../../styles/refui.css';
+
+/* Agent Run Detail (reference 10) — повторяет макет: события, терминал, среда,
+   разрешения, использование, восстановление, контекст. */
+
+.ru-danger { border-color: #653535; background: #2f1818; color: #ffc2c2; }
+.ru-metrics { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+.agent-run-page .pf-metric b { font-size: 20px; }
+.ru-good { color: var(--good); }
+.ru-bad { color: var(--bad); }
+.ru-warn { color: var(--warn); }
+.ru-timeline { display: grid; gap: 4px; }
+.ru-event { display: grid; grid-template-columns: 92px 1fr; gap: 12px; padding: 11px 0; border-top: 1px solid var(--border); }
+.ru-event:first-of-type { border-top: 0; }
+.ru-time { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; color: var(--muted); }
+.ru-evbody { border-left: 2px solid var(--border); padding-left: 12px; }
+.ru-evbody b { display: block; }
+.ru-evbody small { display: block; color: var(--muted); margin-top: 3px; }
+.ru-toolcall { margin-top: 8px; background: var(--panel2); border: 1px solid var(--border); border-radius: 9px; padding: 10px 12px; }
+.ru-toolcall code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; white-space: pre-wrap; }
+.ru-output {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;
+  background: #0f1318; border: 1px solid var(--border); padding: 12px;
+  border-radius: 9px; white-space: pre-wrap; max-height: 220px; overflow: auto; margin-top: 8px;
+}
+
+.ru-permission { display: grid; grid-template-columns: 1fr auto; gap: 12px; padding: 10px 0; border-top: 1px solid var(--border); }
+.ru-permission:first-of-type { border-top: 0; }
+.ru-permission b { font-size: 13px; }
+
+@media (max-width: 1100px) {
+  .ru-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ru-event { grid-template-columns: 70px 1fr; }
+}

@@ -201,8 +201,12 @@ function loadRuntime() {
  * Фиксированные временные метки и ID; данные соответствуют journey-сценариям
  * (run control, timeline cursor paging, approvals, usage UTC-граница, queue).
  */
-function seedE2EFixture(db) {
+export function seedE2EFixture(db) {
   const T0 = "2026-10-24T06:00:00.000Z";
+  const NOW = new Date();
+  const rfc = (d) => d.toISOString();
+  const ago = (minutes, seconds = 0) => rfc(new Date(NOW.getTime() - (minutes * 60 + seconds) * 1000));
+  const daysAgo = (days, h = 10, m = 0) => rfc(new Date(NOW.getTime() - days * 86400e3 + (h * 3600 + m * 60) * 1000));
   const insert = (table, columns, rows) => {
     const colList = columns.join(",");
     for (const row of rows) {
@@ -226,14 +230,17 @@ function seedE2EFixture(db) {
     ["task-421", "proj-1", "epic-42", "TASK-421", "Абстракция провайдера", "INTEGRATED_INTO_EPIC", "{}", 1, T0, T0],
     ["task-422", "proj-1", "epic-42", "TASK-422", "Клиент Anthropic", "INTEGRATED_INTO_EPIC", "{}", 1, T0, T0],
     ["task-423", "proj-1", "epic-42", "TASK-423", "Request mapping", "INTEGRATED_INTO_EPIC", "{}", 1, T0, T0],
-    ["task-424", "proj-1", "epic-42", "TASK-424", "Response mapping", "INTEGRATED_INTO_EPIC", "{}", 1, T0, T0],
+    ["task-424", "proj-1", "epic-42", "TASK-424", "Response mapping", "PAUSED", "{}", 1, T0, T0],
     ["task-425", "proj-1", "epic-42", "TASK-425", "Streaming", "QA", "{}", 1, T0, T0],
     ["task-426", "proj-1", "epic-42", "TASK-426", "Tool calling", "REVIEW", "{}", 1, T0, T0],
     ["task-427", "proj-1", "epic-42", "TASK-427", "Error normalization", "INTEGRATED_INTO_EPIC", "{}", 1, T0, T0],
-    ["task-428", "proj-1", "epic-42", "TASK-428", "Integration tests", "BLOCKED", "{}", 1, T0, T0],
-    ["task-429", "proj-1", "epic-42", "TASK-429", "Документация", "READY", "{}", 0, T0, T0],
+    ["task-428", "proj-1", "epic-42", "TASK-428", "Integration tests", "WAITING_FOR_DEPENDENCY", "{}", 1, T0, T0],
+    ["task-429", "proj-1", "epic-42", "TASK-429", "Документация", "PAUSED", "{}", 0, T0, T0],
     ["task-116", "proj-2", null, "TASK-116", "Улучшение повторных попыток", "REVIEW", "{}", 1, T0, T0],
     ["task-508", "proj-3", null, "TASK-508", "Восстановление", "WAITING_FOR_APPROVAL", "{}", 1, T0, T0],
+    ["task-701", "proj-2", null, "TASK-701", "Container image", "PAUSED", "{}", 1, T0, T0],
+    ["task-711", "proj-2", null, "TASK-711", "Blocked work item", "BLOCKED", "{}", 1, T0, T0],
+    ["task-712", "proj-2", null, "TASK-712", "Blocked work item", "BLOCKED", "{}", 1, T0, T0],
   ]);
 
   insert("dependencies", ["id", "task_id", "depends_on_task_id", "type", "created_at"], [
@@ -242,71 +249,178 @@ function seedE2EFixture(db) {
   ]);
 
   insert("agent_runs", ["id", "role", "runtime", "model", "task_id", "epic_id", "status", "session_id", "attempt", "trigger_reason", "started_at", "ended_at", "exit_code", "input_tokens", "cached_input_tokens", "output_tokens", "cost"], [
-    ["run-841", "QA", "Hermes", "default", "task-425", null, "IN_PROGRESS", "session-dev-425", 1, "Выполняются сценарии disconnect/reconnect", "2026-10-24T05:41:18.000Z", null, null, 50000, 30000, 12000, 0.78],
-    ["run-846", "Reviewer", "Hermes", "default", "task-426", null, "IN_PROGRESS", "session-dev-426", 1, "Review tool calling", "2026-10-24T05:52:57.000Z", null, null, 20000, 8000, 6000, 0.32],
-    ["run-852", "QA", "Hermes", "default", "task-116", null, "IN_PROGRESS", "session-dev-116", 1, "Retry handling", "2026-10-24T05:56:39.000Z", null, null, 15000, 5000, 4000, 0.21],
-    ["run-821", "Senior Developer", "Hermes", "default", "task-425", null, "COMPLETED", "session-dev-425", 1, "Первоначальная реализация", "2026-10-23T09:00:00.000Z", "2026-10-23T10:45:00.000Z", 0, 120000, 40000, 30000, 1.94],
-    ["run-829", "Reviewer", "Hermes", "default", "task-425", null, "COMPLETED", "session-dev-425", 1, "2 замечания", "2026-10-23T11:00:00.000Z", "2026-10-23T12:10:00.000Z", 0, 80000, 20000, 15000, 0.98],
-    ["run-834", "Senior Developer", "Hermes", "default", "task-425", null, "COMPLETED", "session-dev-425", 1, "Возобновлена dev-425", "2026-10-23T13:00:00.000Z", "2026-10-23T14:20:00.000Z", 0, 100000, 25000, 18000, 1.41],
+    ["run-841", "Senior Developer", "Hermes", "terra", "task-425", null, "IN_PROGRESS", "dev-425", 2, "REVIEW_REWORK", ago(18, 42), null, null, 63400, 42100, 10800, 0.78],
+    ["run-846", "Reviewer", "Hermes", "terra", "task-426", null, "IN_PROGRESS", "dev-426", 1, "REVIEW", ago(7, 3), null, null, 20000, 8000, 6000, 0.32],
+    ["run-852", "QA", "Hermes", "luna", "task-116", null, "IN_PROGRESS", "dev-116", 1, "QA", ago(3, 21), null, null, 15000, 5000, 4000, 0.21],
+    ["run-821", "Senior Developer", "Hermes", "terra", "task-425", null, "COMPLETED", "dev-425", 1, "Первоначальная разработка", daysAgo(5, 9, 0), daysAgo(5, 10, 45), 0, 120000, 40000, 30000, 1.94],
+    ["run-829", "Reviewer", "Hermes", "terra", "task-425", null, "COMPLETED", "dev-425", 1, "Review + QA", daysAgo(5, 11, 0), daysAgo(5, 12, 10), 0, 80000, 20000, 15000, 0.98],
+    ["run-834", "Senior Developer", "Hermes", "terra", "task-425", null, "COMPLETED", "dev-425", 1, "Rework", daysAgo(4, 13, 0), daysAgo(4, 14, 20), 0, 100000, 25000, 18000, 1.41],
   ]);
 
   insert("run_control_state", ["run_id", "attempt", "state", "checkpoint_id", "version", "updated_at"], [
-    ["run-841", 1, "ACTIVE", null, 0, "2026-10-24T05:41:20.000Z"],
-    ["run-846", 1, "ACTIVE", null, 0, "2026-10-24T05:52:59.000Z"],
+    ["run-841", 2, "ACTIVE", null, 0, ago(18, 40)],
+    ["run-846", 1, "ACTIVE", null, 0, ago(7, 1)],
+    ["run-852", 1, "ACTIVE", null, 0, ago(3, 19)],
   ]);
 
   insert("scheduler_reservations", ["id", "kind", "subject_id", "project_id", "owner_id", "reserved_at", "estimate_cost", "status", "actual_cost", "role", "model", "approval_id", "run_id"], [
-    ["res-841", "RUN", "run-841", "proj-1", "local-user", "2026-10-24T05:41:20.000Z", 0.78, "RESERVED", null, "QA", "default", null, "run-841"],
-    ["res-846", "RUN", "run-846", "proj-1", "local-user", "2026-10-24T05:52:59.000Z", 0.32, "RESERVED", null, "Reviewer", "default", null, "run-846"],
-    ["res-852", "RUN", "run-852", "proj-2", "local-user", "2026-10-24T05:56:40.000Z", 0.21, "RESERVED", null, "QA", "default", null, "run-852"],
+    ["res-841", "PHASE", "run-841", "proj-1", "run:run-841", ago(18, 40), 0.78, "RESERVED", null, "Senior Developer", "terra", null, "run-841"],
+    ["res-846", "PHASE", "run-846", "proj-1", "run:run-846", ago(7, 1), 0.32, "RESERVED", null, "Reviewer", "terra", null, "run-846"],
+    ["res-852", "PHASE", "run-852", "proj-2", "run:run-852", ago(3, 19), 0.21, "RESERVED", null, "QA", "luna", null, "run-852"],
+  ]);
+
+  insert("scheduler_resource_locks", ["resource_key", "reservation_id", "project_id", "owner_id", "locked_at"], [
+    ["run:run-841", "res-841", "proj-1", "run:run-841", ago(18, 40)],
+    ["run:run-846", "res-846", "proj-1", "run:run-846", ago(7, 1)],
+    ["run:run-852", "res-852", "proj-2", "run:run-852", ago(3, 19)],
+    ["local_docker_environment", "res-lock-1", "proj-2", "run:run-849", daysAgo(1)],
   ]);
 
   insert("outbox_events", ["id", "type", "aggregate_type", "aggregate_id", "payload_json", "created_at", "available_at", "attempts", "processed_at"], [
-    ["evt-001", "run_started", "AgentRun", "run-841", "{}", "2026-10-24T05:41:18.000Z", "2026-10-24T05:41:18.000Z", 0, null],
-    ["evt-002", "tool_used", "AgentRun", "run-841", "{}", "2026-10-24T06:15:08.000Z", "2026-10-24T06:15:08.000Z", 0, null],
-    ["evt-003", "file_changed", "AgentRun", "run-841", "{}", "2026-10-24T06:17:54.000Z", "2026-10-24T06:17:54.000Z", 0, null],
-    ["evt-004", "test_completed", "AgentRun", "run-841", "{}", "2026-10-24T06:18:12.000Z", "2026-10-24T06:18:12.000Z", 0, null],
-    ["evt-005", "permission_requested", "AgentRun", "run-841", "{}", "2026-10-24T06:18:43.000Z", "2026-10-24T06:18:43.000Z", 0, null],
-    ["evt-006", "checkpoint_created", "AgentRun", "run-841", "{}", "2026-10-24T06:19:30.000Z", "2026-10-24T06:19:30.000Z", 0, null],
+    ["evt-001", "run_started", "AgentRun", "run-841", JSON.stringify({ label: "Запущен RUN-841" }), ago(18, 42), ago(18, 42), 0, null],
+    ["evt-002", "tool_used", "AgentRun", "run-841", JSON.stringify({ label: "project.test", code: "project.test(\"streaming disconnect\")" }), ago(5, 17), ago(5, 17), 0, null],
+    ["evt-003", "file_changed", "AgentRun", "run-841", JSON.stringify({ label: "workspace.patch", code: "workspace.patch(\n  \"src/providers/anthropic/stream.ts\"\n)", permission: "ALLOW" }), ago(4, 48), ago(4, 48), 0, null],
+    ["evt-004", "test_completed", "AgentRun", "run-841", JSON.stringify({ label: "stream.test.ts", summary: "1 ошибка → 0 ошибок в выбранном файле тестов", output: "PASS src/providers/anthropic/stream.test.ts\nTests: 14 passed, 14 total\nDuration: 2.84s" }), ago(4, 6), ago(4, 6), 0, null],
+    ["evt-005", "permission_requested", "AgentRun", "run-841", JSON.stringify({ label: "command.run", code: "command.run(\"pnpm vitest --runInBand stream.disconnect.test.ts\")", note: "Для универсальной команды требуется явное согласование", allowed: "one-time" }), ago(3, 29), ago(3, 29), 0, null],
+    ["evt-006", "checkpoint_created", "AgentRun", "run-841", JSON.stringify({ label: "Контрольная точка контекста", note: "Обнаружен осмысленный прогресс · продолжается та же сессия" }), ago(2, 52), ago(2, 52), 0, null],
   ]);
-  // Дополнительные события для проверки cursor-пагинации в UI (лимит страницы 50).
+  // Дополнительные tool-события: всего tool-вызовов = 37 (evt-002 + 36).
   const extraEvents = [];
-  for (let i = 7; i <= 61; i += 1) {
+  for (let i = 7; i <= 42; i += 1) {
     const id = `evt-${String(i).padStart(3, "0")}`;
-    const createdAt = `2026-10-24T06:19:${String(30 + i).padStart(2, "0")}.000Z`;
-    extraEvents.push([id, "tool_used", "AgentRun", "run-841", "{}", createdAt, createdAt, 0, null]);
+    const createdAt = ago(2, 52 - (i - 6) * 0.001);
+    extraEvents.push([id, "tool_used", "AgentRun", "run-841", JSON.stringify({ label: "project.test", code: "project.test()" }), createdAt, createdAt, 0, null]);
   }
   insert("outbox_events", ["id", "type", "aggregate_type", "aggregate_id", "payload_json", "created_at", "available_at", "attempts", "processed_at"], extraEvents);
 
   insert("approvals", ["id", "type", "subject_id", "subject_type", "status", "requested_by", "resolved_by", "resolution_note", "created_at", "resolved_at"], [
-    ["appr-1", "WORKFLOW_CHANGE", "epic-42", "EPIC", "PENDING", "Coordinator", null, null, "2026-10-24T05:42:00.000Z", null],
-    ["appr-2", "SCOPE_CHANGE", "task-116", "TASK", "PENDING", "DevOps", null, null, "2026-10-24T05:47:00.000Z", null],
-    ["appr-3", "FINAL_MERGE", "task-116", "TASK", "PENDING", "Reviewer", null, null, "2026-10-24T05:58:00.000Z", null],
-    ["appr-4", "ARCHITECTURE_CHANGE", "epic-42", "EPIC", "APPROVED", "Architect", "local-user", "approved", "2026-10-23T10:00:00.000Z", "2026-10-23T11:00:00.000Z"],
-    ["appr-onb-1", "WORKFLOW_CHANGE", "proj-1", "PROJECT", "APPROVED", "Coordinator", "local-user", "onboarding approved", "2026-10-23T08:00:00.000Z", "2026-10-23T09:00:00.000Z"],
+    ["appr-p1", "SCOPE_CHANGE", "epic-42", "EPIC", "PENDING", "Coordinator", null, null, ago(18), null],
+    ["appr-p2", "ARCHITECTURE_CHANGE", "epic-42", "EPIC", "PENDING", "Architect", null, null, ago(11), null],
+    ["appr-p3", "ROLE_CHANGE", "task-116", "TASK", "PENDING", "DevOps", null, null, ago(7), null],
+    ["appr-p4", "WORKFLOW_CHANGE", "task-508", "TASK", "PENDING", "Budget", null, null, ago(5), null],
+    ["appr-p5", "FINAL_MERGE", "task-116", "TASK", "PENDING", "Reviewer", null, null, ago(2), null],
+    ["appr-r1", "FINAL_MERGE", "task-116", "TASK", "APPROVED", "Reviewer", "local-user", "approved", daysAgo(3, 12, 0), daysAgo(3, 13, 0)],
+    ["appr-onb-1", "WORKFLOW_CHANGE", "proj-1", "PROJECT", "APPROVED", "Coordinator", "local-user", "onboarding approved", daysAgo(6, 8, 0), daysAgo(6, 9, 0)],
+  ]);
+
+  insert("approval_metadata", ["approval_id", "metadata_json"], [
+    ["appr-p1", JSON.stringify({
+      proposal: { title: "EPIC-42 · Изменение плана", summary: "Добавить новую обязательную TASK-430 — Доля streaming fixtures — и сделать TASK-428 Integration tests зависимой от неё." },
+      rationale: "QA и Developer обнаружили, что текущие integration fixtures дублируют provider-specific события и не позволяют корректно тестировать streaming + tool calling вместе.",
+      planDiff: {
+        before: { title: "TASK-425 ─┐\nTASK-426 ─┼─→ TASK-428\nTASK-427 ─┘", scope: "plan" },
+        after: { title: "TASK-425 ─┐\nTASK-426 ─┼─→ TASK-430 ─→ TASK-428\nTASK-427 ─┘", scope: "plan" },
+      },
+      impacts: { scope: "+1 обязательная задача", role: "Middle Developer", architecture: "Публичный API не изменяется", delayDays: null, budgetCost: 0.58 },
+      evidence: [
+        { id: "ev-1", kind: "Предложение разработчика", capturedAt: ago(25), description: "TASK-428 · отсутствуют общие fixtures", source: "Developer" },
+        { id: "ev-2", kind: "Подтверждение QA", capturedAt: ago(24), description: "Комбинированный streaming-сценарий нельзя корректно выразить", source: "QA" },
+        { id: "ev-3", kind: "Анализ координатора", capturedAt: ago(20), description: "Предложение принято как кандидат на изменение плана", source: "Coordinator" },
+      ],
+    })],
+    ["appr-r1", JSON.stringify({
+      proposal: { title: "Финальное слияние · TASK-116", summary: "Изменения готовы к финальному слиянию." },
+      rationale: "Review, QA и Integration прошли успешно.",
+      planDiff: { before: { title: "merge-before", scope: "git" }, after: { title: "merge-after", scope: "git" } },
+      impacts: { scope: "merge", role: "Integration", architecture: "—", delayDays: 0, budgetCost: 0 },
+      evidence: [],
+    })],
   ]);
 
   insert("onboarding_configs", ["project_id", "repository_path", "facts_json", "proposed_json", "status", "approval_id", "created_at", "updated_at", "activated_at"], [
-    ["proj-1", "C:/Repos/ebb-ai-hub", "{}", "{}", "ACTIVE", "appr-onb-1", "2026-10-23T08:00:00.000Z", "2026-10-23T09:00:00.000Z", "2026-10-23T09:00:00.000Z"],
+    ["proj-1", "C:/Repos/ebb-ai-hub", JSON.stringify({
+      defaultBranch: "develop", packageManager: "pnpm", testCommands: ["vitest run"], remotes: [{ name: "origin", url: "github.com/vivernet/ebb-ai-hub" }], languageHints: ["TypeScript"], untrustedExistingConfig: false,
+    }), JSON.stringify({ defaultBranch: "develop", workflow: "standard", roles: ["Developer"], guidelines: [] }), "ACTIVE", "appr-onb-1", daysAgo(6, 8, 0), daysAgo(6, 9, 0), daysAgo(6, 9, 0)],
   ]);
 
-  insert("usage_records", ["id", "run_id", "reservation_id", "project_id", "epic_id", "task_id", "role", "model", "trigger_reason", "rework_category", "input_tokens", "cached_tokens", "output_tokens", "total_tokens", "estimated_cost", "runtime", "actual_cost", "created_at"], [
-    ["usage-b-1", "run-821", null, "proj-1", "epic-42", "task-425", "Senior Developer", "terra", "Первоначальная разработка", null, 4000, 1000, 1500, 6500, 1.0, "Hermes", 1.0, "2026-10-20T23:59:59.999Z"],
-    ["usage-b-2", "run-829", null, "proj-1", "epic-42", "task-425", "Reviewer", "terra", "Review + QA", null, 6000, 2000, 3000, 11000, 2.0, "Hermes", 2.0, "2026-10-21T00:00:00.000Z"],
-    ["usage-b-3", "run-834", null, "proj-1", "epic-42", "task-425", "Senior Developer", "terra", "Rework", "rework", 5000, 1500, 2500, 9000, 1.5, "Hermes", 1.5, "2026-10-22T00:00:00.000Z"],
-    ["usage-d-1", "run-841", null, "proj-1", "epic-42", "task-425", "QA", "luna", "QA", null, 3000, 1000, 2000, 6000, 0.78, "Hermes", 0.78, "2026-10-24T05:41:18.000Z"],
-    ["usage-d-2", "run-846", null, "proj-1", "epic-42", "task-426", "Reviewer", "terra", "Review", null, 2000, 800, 1200, 4000, 0.32, "Hermes", 0.32, "2026-10-24T05:52:57.000Z"],
-    ["usage-d-3", "run-852", null, "proj-2", null, "task-116", "QA", "luna", "QA", null, 1500, 500, 800, 2800, 0.21, "Hermes", 0.21, "2026-10-24T05:56:39.000Z"],
+  // ── Usage window (30d) — роли/запуски/расходы по reference 09 ──
+  // Роли: { display, runs, spend, model }
+  const roles = [
+    { role: "Senior Developer", runs: 39, spend: 41.18, model: "terra" },
+    { role: "Middle Developer", runs: 71, spend: 24.61, model: "luna" },
+    { role: "Reviewer", runs: 63, spend: 18.42, model: "terra" },
+    { role: "QA", runs: 58, spend: 13.20, model: "luna" },
+    { role: "Координатор", runs: 22, spend: 9.84, model: "luna" },
+    { role: "Architect", runs: 11, spend: 8.19, model: "terra" },
+  ];
+  const reasons = [
+    { key: "Первоначальная разработка", share: 0.43 },
+    { key: "Review + QA", share: 0.21 },
+    { key: "Rework", share: 0.12 },
+    { key: "Восстановление", share: 0.18 },
+  ];
+  const taskPool = ["task-425", "task-426", "task-116", "task-429", "task-424", "task-428", "task-701", "task-508", "task-421", "task-422", "task-423", "task-427"];
+  const usageRows = [];
+  let seq = 0;
+  for (const r of roles) {
+    let remainingRuns = r.runs;
+    for (const rz of reasons) {
+      const poolRuns = Math.max(1, Math.round(r.runs * rz.share));
+      const count = Math.min(poolRuns, remainingRuns);
+      remainingRuns -= count;
+      const spend = r.spend * rz.share;
+      const perRun = count > 0 ? spend / count : 0;
+      for (let k = 0; k < count; k += 1) {
+        seq += 1;
+        const cost = count > 0 ? (k === count - 1 ? spend - perRun * (count - 1) : perRun) : 0;
+        const runId = `run-hist-${seq}`;
+        const taskId = taskPool[seq % taskPool.length];
+        const createdAt = daysAgo(2 + (seq % 27), 9 + (seq % 10), seq % 60);
+        const totalTokens = 15000 + (seq % 7) * 500;
+        const cachedTokens = Math.round(totalTokens * 0.64);
+        usageRows.push([
+          `usage-r-${seq}`, runId, null, r.role === "Координатор" ? "proj-1" : taskId.startsWith("task-5") ? "proj-3" : taskId.startsWith("task-7") ? "proj-2" : "proj-1",
+          taskId.startsWith("task-4") || taskId.startsWith("task-5") ? "epic-42" : null,
+          taskId, r.role, r.model, rz.key, rz.key === "Rework" ? "rework" : null,
+          5000, cachedTokens, 6200, totalTokens, cost, "Hermes", cost, createdAt,
+        ]);
+      }
+    }
+  }
+  // Сегодня (UTC-сутки): расходы 6.42, токены 1.84M
+  const todayStart = new Date(NOW);
+  todayStart.setUTCHours(0, 0, 0, 0);
+  const todayCosts = [1.14, 0.98, 0.86, 1.32, 1.62, 0.5];
+  let todaySum = 0;
+  todayCosts.forEach((cost, i) => {
+    todaySum += cost;
+    seq += 1;
+    const runId = `run-today-${seq}`;
+    const taskId = taskPool[seq % taskPool.length];
+    let createdAt = new Date(NOW.getTime() - (30 - i * 4) * 60000);
+    if (createdAt < todayStart) createdAt = todayStart;
+    usageRows.push([
+      `usage-t-${i + 1}`, runId, null, taskId.startsWith("task-7") ? "proj-2" : taskId.startsWith("task-5") ? "proj-3" : "proj-1",
+      taskId.startsWith("task-4") || taskId.startsWith("task-5") ? "epic-42" : null,
+      taskId, roles[i % roles.length].role, roles[i % roles.length].model, "Review + QA", null,
+      80000, 240000, 6200, 306667, cost, "Hermes", cost, rfc(createdAt),
+    ]);
+  });
+  insert("usage_records", ["id", "run_id", "reservation_id", "project_id", "epic_id", "task_id", "role", "model", "trigger_reason", "rework_category", "input_tokens", "cached_tokens", "output_tokens", "total_tokens", "estimated_cost", "runtime", "actual_cost", "created_at"], usageRows);
+
+  insert("context_manifests", ["id", "run_id", "subject_type", "task_id", "epic_id", "request_id", "role", "contract_request_digest", "items_json", "prompt_hash", "context_hash", "context_builder_version", "initial_token_size", "created_at"], [
+    ["ctx-841", "run-841", "TASK", "task-425", null, null, "developer", null, "[]", "a".repeat(64), "b".repeat(64), "1.0.0", 28400, ago(18, 42)],
+    ["ctx-846", "run-846", "TASK", "task-426", null, null, "reviewer", null, "[]", "a".repeat(64), "b".repeat(64), "1.0.0", 28400, ago(7, 3)],
+    ["ctx-852", "run-852", "TASK", "task-116", null, null, "qa", null, "[]", "a".repeat(64), "b".repeat(64), "1.0.0", 28400, ago(3, 21)],
+    ["ctx-821", "run-821", "TASK", "task-425", null, null, "developer", null, "[]", "a".repeat(64), "b".repeat(64), "1.0.0", 28400, daysAgo(5, 9, 0)],
+    ["ctx-829", "run-829", "TASK", "task-425", null, null, "reviewer", null, "[]", "a".repeat(64), "b".repeat(64), "1.0.0", 28400, daysAgo(5, 11, 0)],
+    ["ctx-834", "run-834", "TASK", "task-425", null, null, "developer", null, "[]", "a".repeat(64), "b".repeat(64), "1.0.0", 28400, daysAgo(4, 13, 0)],
   ]);
 
   insert("budget_configs", ["id", "scope", "scope_id", "limit_cost", "soft_limit_cost", "policy", "spent_cost", "reserved_cost", "created_at", "updated_at"], [
-    ["budget-proj-1", "project", "proj-1", 30.0, 20.0, "soft", 18.72, 0.0, T0, T0],
-    ["budget-global", "global", "global", 200.0, 150.0, "soft", 128.73, 0.0, T0, T0],
+    ["budget-global", "global", "global", 100.0, 30.0, "soft", 128.73, 0.0, T0, T0],
+    ["budget-proj-1", "project", "proj-1", 30.0, 30.0, "soft", 18.72, 0.0, T0, T0],
+    ["budget-proj-2", "project", "proj-2", 20.0, 20.0, "soft", 7.91, 0.0, T0, T0],
+    ["budget-proj-3", "project", "proj-3", 3.0, 3.0, "soft", 3.0, 0.0, T0, T0],
+  ]);
+
+  insert("budget_reservations", ["id", "project_id", "epic_id", "task_id", "estimate_cost", "actual_cost", "status", "role", "model", "trigger_reason", "rework_category", "created_at", "reconciled_at"], [
+    ["resv-1", "proj-1", "epic-42", "task-425", 1.2, null, "RESERVED", "Senior Developer", "terra", "Первоначальная разработка", null, ago(30), null],
   ]);
 
   insert("scheduler_run_requests", ["id", "task_id", "idempotency_key", "role", "model", "origin_type", "origin_id", "status", "created_at", "updated_at", "run_id", "failure_code"], [
-    ["req-1", "task-424", "e2e-key-1", "developer", "default", "TASK_API", "task-api:task-424", "PENDING", "2026-10-24T05:55:00.000Z", "2026-10-24T05:55:00.000Z", null, null],
-    ["req-2", "task-429", "e2e-key-2", "middle-developer", "default", "TASK_API", "task-api:task-429", "PENDING", "2026-10-24T05:56:00.000Z", "2026-10-24T05:56:00.000Z", null, null],
+    ["req-1", "task-424", "e2e-key-1", "developer", "default", "TASK_API", "task-api:task-424", "PENDING", ago(30), ago(30), null, null],
+    ["req-2", "task-429", "e2e-key-2", "middle-developer", "default", "TASK_API", "task-api:task-429", "PENDING", ago(28), ago(28), null, null],
   ]);
 }
 

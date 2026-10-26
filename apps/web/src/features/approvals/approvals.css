@@ -1,0 +1,44 @@
+@import '../../styles/refui.css';
+
+/* Approvals (reference 04) — повторяет макет: фильтр-чипы, очередь решений,
+   панель деталей и CTA-кнопки. */
+
+.ap-warn { color: var(--warn); }
+.ap-good { color: var(--good); }
+.ap-muted { color: var(--muted); }
+
+.ap-filter { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.ap-chip { padding: 4px 7px; border-radius: 999px; background: var(--chip); color: var(--muted); font-size: 11px; cursor: pointer; }
+.ap-chip.active { background: #eaf1ff; color: #111; }
+
+.ap-item { display: grid; grid-template-columns: 1fr auto; gap: 14px; padding: 14px 0; border-top: 1px solid var(--border); cursor: pointer; }
+.ap-item:first-of-type { border-top: 0; }
+.ap-item h4 { margin: 0 0 4px; font-size: 14px; }
+.ap-item .ap-muted { margin-top: 3px; font-size: 13px; }
+.ap-item-meta { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+.ap-priority { font-size: 11px; padding: 4px 7px; border-radius: 999px; background: #2a2416; color: var(--warn); }
+
+.ap-detail { position: sticky; top: 18px; }
+.ap-detail-top { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+.ap-detail h2 { font-size: 18px; margin: 0 0 6px; }
+.ap-section { border-top: 1px solid var(--border); padding-top: 13px; margin-top: 13px; }
+.ap-section h3 { font-size: 14px; margin: 0 0 8px; }
+.ap-note { padding: 10px 12px; border-left: 3px solid var(--accent); background: var(--panel2); border-radius: 6px; font-size: 13px; }
+.ap-warnbox { padding: 10px 12px; border-left: 3px solid var(--warn); background: var(--panel2); border-radius: 6px; margin-top: 10px; font-size: 13px; }
+
+.ap-diff {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  background: #0f1318;
+  border: 1px solid var(--border);
+  padding: 10px;
+  border-radius: 8px;
+  white-space: pre-wrap;
+  margin: 0;
+  line-height: 1.5;
+}
+
+.ap-decide { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 14px; }
+.pf-btn.goodbtn { border-color: #315c43; background: #173021; color: #b9efca; }
+.pf-btn.badbtn { border-color: #653535; background: #2f1818; color: #ffc2c2; }
+.pf-btn.full { grid-column: 1 / -1; }
