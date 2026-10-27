@@ -200,21 +200,29 @@ export async function resumeRun(runId: string): Promise<RunControlCommandResult>
 }
 
 /** Sanitized persisted terminal Run; unavailable-состояние сохраняется без fallback. */
-export async function getRunTerminal(runId: string): Promise<RunTerminalProjection> {
-  return validate(runTerminalProjectionSchema, await apiClient.get<unknown>(toClientPath(apiPaths.runTerminal(runId))));
+export async function getRunTerminal(runId: string, options?: RequestOptions): Promise<RunTerminalProjection> {
+  const path = toClientPath(apiPaths.runTerminal(runId));
+  const result = options ? await apiClient.get<unknown>(path, options) : await apiClient.get<unknown>(path);
+  return validate(runTerminalProjectionSchema, result);
 }
 
 /** Опции пейджинга Run timeline (opaque outbox курсор + bounded limit). */
-export interface RunEventsPageOptions { afterId?: string; limit?: number }
+export interface RunEventsPageOptions { afterId?: string; limit?: number; signal?: AbortSignal }
 
 /** Страница durable Run событий по HTTP cursor; никогда не обещает SSE replay. */
 export async function getRunEventsPage(runId: string, options?: RunEventsPageOptions): Promise<RunEventsPageProjection> {
-  return validate(runEventsPageProjectionSchema, await apiClient.get<unknown>(toClientPath(apiPaths.runEventsPage(runId, options))));
+  const { signal, ...query } = options ?? {};
+  const result = signal
+    ? await apiClient.get<unknown>(toClientPath(apiPaths.runEventsPage(runId, query)), { signal })
+    : await apiClient.get<unknown>(toClientPath(apiPaths.runEventsPage(runId, query)));
+  return validate(runEventsPageProjectionSchema, result);
 }
 
 /** Run detail DTO: usage-поля сохраняют null-vs-zero (availability). */
-export async function getRunDetail(runId: string): Promise<RunDetailProjection> {
-  return validate(runDetailProjectionSchema, await apiClient.get<unknown>(toClientPath(apiPaths.run(runId))));
+export async function getRunDetail(runId: string, options?: RequestOptions): Promise<RunDetailProjection> {
+  const path = toClientPath(apiPaths.run(runId));
+  const result = options ? await apiClient.get<unknown>(path, options) : await apiClient.get<unknown>(path);
+  return validate(runDetailProjectionSchema, result);
 }
 
 /** Пагинированный проектный индекс без repository-путей. */

@@ -87,15 +87,19 @@ describe('Композиция экранов по утверждённым ма
   });
 
   test('Approval Inbox отделяет очередь решений от выбранного evidence', async () => {
-    vi.spyOn(apiClient, 'get').mockResolvedValue({
-      filter: 'pending', summary: { totalPending: 5, totalResolved: 0, oldestPendingCreatedAt: '2026-10-24T05:42:00.000Z' }, items: [],
+    vi.spyOn(apiClient, 'get').mockImplementation(async (path: string) => {
+      if (path.startsWith('/approvals?status=')) {
+        return { filter: 'pending', summary: { totalPending: 5, totalResolved: 0, oldestPendingCreatedAt: null }, items: [] };
+      }
+      throw new Error(`unexpected path: ${path}`);
     });
     renderPage(<ApprovalInboxPage />);
 
     expect(await screen.findByRole('heading', { name: 'Центр согласований' })).toBeInTheDocument();
     expectLayout('approvals', 'pf-grid');
     expect(screen.getByRole('region', { name: 'Очередь согласований' })).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Детали согласования' })).toBeInTheDocument();
+    const details = screen.getByRole('complementary', { name: 'Детали согласования' });
+    expect(details).toHaveTextContent('Выберите согласование из очереди.');
     vi.restoreAllMocks();
   });
 
@@ -194,22 +198,27 @@ describe('Композиция экранов по утверждённым ма
   });
 
   test('Agent Run places its observable event stream beside runtime context', async () => {
-    vi.spyOn(apiClient, 'get').mockImplementation(async (path) => {
-      if (path === '/runs/run-1/events' || path === '/runs/run-1/permissions') return [];
-      if (path === '/runs/run-1/tools') return { tools: [] };
-      if (path === '/runs/run-1/recovery') return { runId: 'run-1', taskId: null, runStatus: 'DONE', recovery: null };
-      if (path === '/runs/run-1/artifacts') return [];
-      if (path === '/runs/run-1/context-manifests') return { availability: 'unknown', role: 'Developer' };
-      if (path === '/settings') return { securitySettings: { localModeEnabled: false } };
-      return {
-        id: 'run-1', role: 'Developer', runtime: 'hermes', model: 'default', status: 'DONE',
-        taskId: null, epicId: null, triggerReason: null, startedAt: null, endedAt: null,
-        usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, cost: 0 },
-      };
+    const runProjection = {
+      id: 'run-1', role: 'Developer', runtime: 'hermes', model: 'default', status: 'COMPLETED',
+      taskId: null, epicId: null, sessionId: null, attempt: 1, triggerReason: null,
+      startedAt: null, endedAt: null, exitCode: 0,
+      usage: {
+        inputTokens: { availability: 'unavailable', reason: 'NOT_RECORDED' },
+        cachedInputTokens: { availability: 'unavailable', reason: 'NOT_RECORDED' },
+        outputTokens: { availability: 'unavailable', reason: 'NOT_RECORDED' },
+        effectiveCost: { availability: 'unavailable', reason: 'NOT_RECORDED' },
+      },
+      control: { state: 'ACTIVE', version: 1, updatedAt: '2026-10-24T05:41:20.000Z', checkpointId: null },
+    };
+    vi.spyOn(apiClient, 'get').mockImplementation(async (path: string) => {
+      if (path === '/runs/run-1') return runProjection;
+      if (path === '/runs/run-1/events') return { items: [], nextCursor: null };
+      if (path === '/runs/run-1/terminal') return { availability: 'unavailable', reason: 'NO_SANITIZED_PERSISTED_SOURCE' };
+      throw new Error(`unexpected path: ${path}`);
     });
     renderPage(<AgentRunPage id="run-1" />);
 
-    expect(await screen.findByRole('heading', { name: 'RUN-841 · Senior Developer' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'run-1 · Developer' })).toBeInTheDocument();
     expectLayout('run', 'pf-grid');
     expect(screen.getByText('Поток событий в реальном времени')).toBeInTheDocument();
     expect(screen.getByText('Решения по разрешениям')).toBeInTheDocument();

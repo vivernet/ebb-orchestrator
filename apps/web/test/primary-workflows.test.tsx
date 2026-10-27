@@ -1,6 +1,6 @@
 /// <reference types="node" />
 import { describe, expect, test, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { readFileSync } from 'node:fs';
 import { ApiError, apiClient } from '../src/api/client.js';

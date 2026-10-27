@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { ApiError, apiClient, toClientPath } from '../../api/client.js';
 import { apiErrorMessage } from '../../i18n/ru.js';
-import { PageState } from '../../components/ui/PageState.js';
 import UnsupportedBlock from '../../components/ui/Unavailable.js';
 import './onboarding.css';
 
@@ -15,15 +14,6 @@ const DETECTED = [
   { title: 'Package manager: pnpm', sub: 'Обнаружено по pnpm-lock.yaml.' },
   { title: 'Test runner: Vitest', sub: 'Обнаружено по скриптам и конфигурации пакета.' },
   { title: 'Найден удалённый репозиторий GitHub', sub: 'origin → github.com/vivernet/ebb-ai-hub' },
-];
-
-const REVIEW = [
-  ['Название проекта', 'Предложено на основе метаданных репозитория', 'Ebb AI Hub'],
-  ['Default branch', 'Обнаруженный факт', 'master'],
-  ['Процесс по умолчанию', 'Координатор proposal', 'standard ▾'],
-  ['Режим выполнения', 'Значение v1 по умолчанию', 'Local ▾'],
-  ['Параллельные агенты', 'Лимит проекта', '3'],
-  ['Интеграция с GitHub', 'Удалённый репозиторий обнаружен; подключение необязательно', 'Подключить позже ▾'],
 ];
 
 /**
@@ -50,7 +40,7 @@ export default function OnboardingPage({ projectId }: { projectId?: string }) {
   };
 
   return (
-    <div className="reference-screen onboarding-page">
+    <div className="reference-screen onboarding-page reference-screen--onboarding">
       <div className="pf-topbar">
         <div>
           <h1>Добавление проекта · обнаружение репозитория</h1>
@@ -59,7 +49,7 @@ export default function OnboardingPage({ projectId }: { projectId?: string }) {
         <button type="button" className="pf-btn">Отмена</button>
       </div>
 
-      {error ? <p className="on-error">Не удалось выполнить обнаружение: {errorMessage(error)}</p> : null}
+      {error ? <p className="on-error" role="alert">Не удалось выполнить обнаружение: {errorMessage(error)}</p> : null}
 
       <div className="on-steps" aria-label="Этапы онбординга">
         <div className="on-step done">1. Репозиторий ✓</div>

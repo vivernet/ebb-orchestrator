@@ -49,7 +49,7 @@ describe('Reference execution queue', () => {
 
     expect(await screen.findByRole('heading', { name: 'Очередь выполнения' })).toBeInTheDocument();
     expect(get).toHaveBeenCalledWith('/execution', expect.objectContaining({ signal: expect.any(AbortSignal) }));
-    expect(screen.getByText('Senior Developer · RUN-841')).toBeInTheDocument();
+    expect(screen.getByText('Senior Developer · run-841')).toBeInTheDocument();
     expect(screen.getByText('Очередь ожидания')).toBeInTheDocument();
     expect(screen.queryByText(/WAITING_FOR_ROLE_CAPACITY|BLOCKED_BY_WORKFLOW/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Secret backend English detail/)).not.toBeInTheDocument();
@@ -84,10 +84,10 @@ describe('Reference agent run', () => {
     const get = vi.spyOn(apiClient, 'get').mockResolvedValue(runProjection);
     render(<MemoryRouter><AgentRunPage id="run-841" /></MemoryRouter>);
 
-    expect(await screen.findByRole('heading', { name: 'RUN-841 · Senior Developer' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'run-841 · Senior Developer' })).toBeInTheDocument();
     expect(get).toHaveBeenCalledWith('/runs/run-841', expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(screen.getByText('Вывод терминала')).toBeInTheDocument();
-    expect(screen.getByText('Среда выполнения')).toBeInTheDocument();
+    expect(screen.getAllByText('Среда выполнения').length).toBeGreaterThan(0);
     expect(screen.queryByText(/private ui prompt|sentinel/)).not.toBeInTheDocument();
   });
 });

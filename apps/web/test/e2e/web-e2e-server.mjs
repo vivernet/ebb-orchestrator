@@ -381,9 +381,7 @@ export function seedE2EFixture(db) {
   const todayStart = new Date(NOW);
   todayStart.setUTCHours(0, 0, 0, 0);
   const todayCosts = [1.14, 0.98, 0.86, 1.32, 1.62, 0.5];
-  let todaySum = 0;
   todayCosts.forEach((cost, i) => {
-    todaySum += cost;
     seq += 1;
     const runId = `run-today-${seq}`;
     const taskId = taskPool[seq % taskPool.length];

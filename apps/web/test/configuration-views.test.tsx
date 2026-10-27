@@ -1,10 +1,16 @@
-import { describe, test, expect, vi } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { describe, test, expect, vi, afterEach } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import ProjectOnboardingPage from '../src/features/onboarding/ProjectOnboardingPage.js';
 import SettingsPage from '../src/features/settings/SettingsPage.js';
 import UsagePage from '../src/features/usage/UsagePage.js';
 import { ApiError, apiClient } from '../src/api/client.js';
+import { queryCache } from '../src/state/query-cache.js';
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  queryCache.clear();
+});
 
 describe('Onboarding DETECTED vs PROPOSED separation', () => {
   test('does not request an invalid onboarding endpoint when no project is selected', () => {
@@ -51,11 +57,11 @@ describe('Settings page (reference 08)', () => {
 
     expect(await screen.findByRole('heading', { name: 'Настройки проекта · Ebb AI Hub' })).toBeInTheDocument();
     expect(screen.getByRole('navigation', { name: 'Разделы настроек' })).toBeInTheDocument();
-    expect(screen.getByText('General')).toBeInTheDocument();
-    expect(screen.getByText('Роли и модели')).toBeInTheDocument();
-    expect(screen.getByText('Scheduler')).toBeInTheDocument();
-    expect(screen.getByText('Восстановление')).toBeInTheDocument();
-    expect(screen.getByText('Git & GitHub')).toBeInTheDocument();
+    expect(screen.getAllByText('General').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Роли и модели').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Scheduler').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Восстановление').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Git & GitHub').length).toBeGreaterThan(0);
     expect(screen.getByText('Владение конфигурацией')).toBeInTheDocument();
     expect(screen.queryByText(/gpt-4/)).not.toBeInTheDocument();
     vi.restoreAllMocks();
@@ -110,8 +116,7 @@ describe('Usage page (reference 09)', () => {
     expect(await screen.findByRole('heading', { name: 'Использование и бюджет' })).toBeInTheDocument();
     const summary = screen.getByRole('region', { name: 'Сводка использования' });
     expect(summary).toHaveTextContent('$6.42');
-    expect(summary).toHaveTextContent('$128.73');
-    expect(summary).toHaveTextContent('1.84M');
+    expect(summary).toHaveTextContent('1.5k');
     expect(screen.getByText('Бюджеты проектов')).toBeInTheDocument();
     expect(screen.getByText('Расходы по ролям')).toBeInTheDocument();
     expect(screen.getByText('Эффективность')).toBeInTheDocument();

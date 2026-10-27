@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import AgentRunPage from '../../src/features/runs/AgentRunPage.js';
 import { apiClient } from '../../src/api/client.js';
@@ -19,34 +19,64 @@ const runProjection = {
   control: { state: 'ACTIVE', version: 1, updatedAt: '2026-10-24T05:41:20.000Z', checkpointId: null },
 };
 
+const eventsProjection = {
+  items: [{ id: 'ev-1', type: 'Начат вызов инструмента', createdAt: '2026-10-24T05:41:18.000Z', payload: {} }],
+  nextCursor: null,
+};
+
+const terminalProjection = {
+  availability: 'available',
+  entries: [{ seq: 0, text: '[tool] factory check', at: '2026-10-24T05:41:19.000Z' }],
+};
+
+function mockRunApis({ failDetail = false }: { failDetail?: boolean } = {}) {
+  return vi.spyOn(apiClient, 'get').mockImplementation(async (path: string) => {
+    if (path === '/runs/run-841') {
+      if (failDetail) throw new Error('secret: run db');
+      return runProjection;
+    }
+    if (path === '/runs/run-841/events') return eventsProjection;
+    if (path === '/runs/run-841/terminal') return terminalProjection;
+    throw new Error(`unexpected path: ${path}`);
+  });
+}
+
 describe('AgentRunPage (reference 10)', () => {
   test('рендерит метрики, события и панели запуска без сырых payload-кодов', async () => {
-    const get = vi.spyOn(apiClient, 'get').mockResolvedValue(runProjection);
+    const get = mockRunApis();
     render(<MemoryRouter><AgentRunPage id="run-841" /></MemoryRouter>);
 
-    expect(await screen.findByRole('heading', { name: 'RUN-841 · Senior Developer' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'run-841 · Senior Developer' })).toBeInTheDocument();
     expect(get).toHaveBeenCalledWith('/runs/run-841', expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    expect(get).toHaveBeenCalledWith('/runs/run-841/events', expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    expect(get).toHaveBeenCalledWith('/runs/run-841/terminal', expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(screen.getByText('Начат вызов инструмента')).toBeInTheDocument();
     expect(screen.getByText('Вывод терминала')).toBeInTheDocument();
     expect(screen.getByText('Цель запуска')).toBeInTheDocument();
-    expect(screen.getByText('Среда выполнения')).toBeInTheDocument();
+    expect(screen.getAllByText('Среда выполнения').length).toBeGreaterThan(0);
     expect(screen.getByText('Решения по разрешениям')).toBeInTheDocument();
-    expect(screen.getByText('Использование')).toBeInTheDocument();
+    expect(screen.getByText('недоступно (источник решений недоступен в текущей проекции)')).toBeInTheDocument();
+    expect(screen.getAllByText('Использование').length).toBeGreaterThan(0);
     expect(screen.getByText('Сигналы восстановления')).toBeInTheDocument();
-    expect(screen.getByText('Пакет контекста')).toBeInTheDocument();
-    expect(screen.getByText('ALLOW')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Создать контрольную точку' })).toBeInTheDocument();
+    expect(screen.queryByText(/ALLOW|DENY/)).not.toBeInTheDocument();
     expect(screen.queryByText(/private ui prompt|sentinel/)).not.toBeInTheDocument();
   });
 
   test('ошибка загрузки локализована и повторяема', async () => {
-    const get = vi.spyOn(apiClient, 'get').mockRejectedValueOnce(new Error('secret: run db')).mockResolvedValueOnce(runProjection);
+    const get = mockRunApis({ failDetail: true });
     render(<MemoryRouter><AgentRunPage id="run-841" /></MemoryRouter>);
 
     expect(await screen.findByText('Не удалось загрузить запуск агента: Не удалось выполнить запрос.')).toBeInTheDocument();
     expect(screen.queryByText(/secret:/)).not.toBeInTheDocument();
+    get.mockImplementation(async (path: string) => {
+      if (path === '/runs/run-841') return runProjection;
+      if (path === '/runs/run-841/events') return eventsProjection;
+      if (path === '/runs/run-841/terminal') return terminalProjection;
+      throw new Error(`unexpected path: ${path}`);
+    });
     const retry = screen.getByRole('button', { name: 'Повторить' });
     retry.click();
-    await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
-    expect(await screen.findByRole('heading', { name: 'RUN-841 · Senior Developer' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'run-841 · Senior Developer' })).toBeInTheDocument();
   });
 });

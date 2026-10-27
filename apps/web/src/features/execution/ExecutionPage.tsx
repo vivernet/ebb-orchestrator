@@ -5,6 +5,7 @@ import { useOnSSEReconnect } from '../../hooks/useEventClient.js';
 import { createQueryStore } from '../../state/query-store.js';
 import { useQuery } from '../../state/use-query.js';
 import { apiErrorMessage } from '../../i18n/ru.js';
+import type { ExecutionQueueProjection } from '@ebb-orchestrator/contracts';
 import './execution.css';
 
 function errorMessage(error: unknown): string {
@@ -13,44 +14,32 @@ function errorMessage(error: unknown): string {
 
 const queueStore = createQueryStore();
 
-const RUNS = [
-  { title: 'Senior Developer · RUN-841', sub: 'TASK-425 · Anthropic Streaming', chips: ['Ebb AI Hub', 'Hermes', 'Local'], progress: 68, elapsed: '18m 42s' },
-  { title: 'Reviewer · RUN-846', sub: 'TASK-426 · Tool Calling', chips: ['Ebb AI Hub', 'Hermes', 'Review'], progress: 41, elapsed: '7m 03s' },
-  { title: 'QA Agent · RUN-852', sub: 'TASK-116 · Retry handling', chips: ['xRocket SDK', 'Hermes', 'QA'], progress: 26, elapsed: '3m 21s' },
-];
-
-const WAITING = [
-  { title: 'Integration Agent · TASK-424', sub: 'Ebb AI Hub · priority: Высокий', reason: 'Ожидает слота роли Integration.', tag: '#1' },
-  { title: 'Middle Developer · TASK-429', sub: 'Ebb AI Hub · Документация', reason: 'Достигнут глобальный лимит параллельности.', tag: '#2' },
-  { title: 'Senior Developer · TASK-508', sub: 'Ebb Censor Bot · recovery escalation', reason: 'Ожидает согласования бюджета.', tag: '#3' },
-  { title: 'QA Agent · TASK-428', sub: 'Ebb AI Hub · integration tests', reason: 'Ожидание зависимостей TASK-425 и TASK-426.', tag: 'заблокировано' },
-  { title: 'DevOps Agent · TASK-701', sub: 'Internal tooling · container image', reason: 'Блокировка ресурса: local_docker_environment.', tag: 'lock' },
-];
-
-const CAPACITY = [
-  { label: 'Разработчики', width: 67, value: '2 / 3' },
-  { label: 'Reviewer', width: 100, value: '1 / 1' },
-  { label: 'QA', width: 100, value: '1 / 1' },
-  { label: 'Integration', width: 0, value: '0 / 1' },
-];
-
-const EVENTS = [
-  { title: 'Запущен RUN-852', desc: 'Стал доступен слот QA' },
-  { title: 'TASK-508 held', desc: 'Достигнут мягкий лимит бюджета' },
-  { title: 'TASK-424 reprioritized', desc: 'Применено повышение приоритета для интеграции/разблокировки' },
-  { title: 'TASK-428 заблокировано', desc: 'Зависимости не разрешены' },
-];
+/** Локализованная подпись причины ожидания/блокировки. */
+function reasonLabel(code: string): string {
+  const known: Record<string, string> = {
+    WAITING_FOR_CAPACITY: 'Ожидает слота роли.',
+    WAITING_FOR_ROLE_CAPACITY: 'Ожидает слота роли.',
+    WAITING_FOR_DEPENDENCY: 'Ожидание зависимостей.',
+    BLOCKED_BY_WORKFLOW: 'Заблокировано рабочим процессом.',
+    RESOURCE_LOCKED: 'Блокировка ресурса.',
+    WAITING_FOR_APPROVAL: 'Ожидает согласования.',
+  };
+  return known[code] ?? code;
+}
 
 /**
  * Очередь выполнения (reference 05): активные запуски, ожидание, ёмкость,
- * выбранный запуск, блокировки и события планировщика — один в один с макетом.
+ * выбранный запуск, блокировки и события планировщика. Данные — только из
+ * проекции /execution; отсутствующие источники рендерятся как «недоступно».
  * Пауза диспетчеризации и массовая остановка — реальные мутации API.
  */
 export default function ExecutionPage() {
-  const fetcher = useCallback((signal: AbortSignal) => apiClient.get<unknown>(toClientPath('/api/v1/execution'), { signal }), []);
+  const fetcher = useCallback((signal: AbortSignal) => apiClient.get<ExecutionQueueProjection>(toClientPath('/api/v1/execution'), { signal }), []);
   const query = useQuery(queueStore, '/api/v1/execution', undefined, fetcher);
   const retry = useCallback(() => { void query.refetch().catch(() => undefined); }, [query.refetch]);
   useOnSSEReconnect(retry);
+
+  const projection = query.data;
 
   const [paused, setPaused] = useState(false);
   const [dispatchBusy, setDispatchBusy] = useState(false);
@@ -62,12 +51,22 @@ export default function ExecutionPage() {
   if (query.status === 'loading' || query.status === 'idle') return <PageState status="loading" message="Загрузка очереди выполнения…" />;
   if (query.status === 'error') return <PageState status="error" message={`Не удалось загрузить очередь выполнения: ${errorMessage(query.error)}`} onRetry={retry} />;
 
+  const running = projection?.running ?? [];
+  const waiting = projection?.waiting ?? [];
+  const blocked = projection?.blocked ?? [];
+  const capacity = projection?.capacity;
+  const locks = projection?.locks ?? [];
+  const events = projection?.recentEvents ?? [];
+  const dispatchState = projection?.dispatchState;
+
+  const effectivePaused = dispatchState?.paused ?? paused;
+
   const pauseQueue = async () => {
     setDispatchBusy(true);
     setDispatchError(null);
     try {
-      await setDispatchState(!paused);
-      setPaused(!paused);
+      await setDispatchState(!effectivePaused);
+      setPaused(!effectivePaused);
     } catch (error) {
       setDispatchError(error);
     } finally {
@@ -79,8 +78,14 @@ export default function ExecutionPage() {
     setCancelAllBusy(true);
     setCancelAllError(null);
     try {
-      await apiClient.post(toClientPath('/api/v1/runs/cancel-all'), { expectedRunIds: ['run-841', 'run-846', 'run-852'] });
+      const ids = running.map((run) => run.runId);
+      if (ids.length === 0) {
+        setCancelAllOpen(false);
+        return;
+      }
+      await apiClient.post(toClientPath('/api/v1/runs/cancel-all'), { expectedRunIds: ids });
       setCancelAllOpen(false);
+      void query.refetch().catch(() => undefined);
     } catch (error) {
       setCancelAllError(error);
     } finally {
@@ -88,8 +93,13 @@ export default function ExecutionPage() {
     }
   };
 
+  const totalWaiting = waiting.length;
+  const totalBlocked = blocked.length;
+  const usedCapacity = capacity?.used ?? running.length;
+  const configuredCapacity = capacity?.configured;
+
   return (
-    <div className="reference-screen execution-page">
+    <div className="reference-screen execution-page reference-screen--execution">
       <div className="pf-topbar">
         <div className="pf-title">
           <h1>Очередь выполнения</h1>
@@ -97,7 +107,7 @@ export default function ExecutionPage() {
         </div>
         <div className="pf-actions">
           <button type="button" className="pf-btn" disabled={dispatchBusy} onClick={() => void pauseQueue()}>
-            {paused ? 'Возобновить новую работу' : 'Приостановить new work'}
+            {effectivePaused ? 'Возобновить новую работу' : 'Приостановить new work'}
           </button>
           <button type="button" className="pf-btn danger" onClick={() => setCancelAllOpen(true)}>Остановить всех агентов</button>
         </div>
@@ -118,95 +128,104 @@ export default function ExecutionPage() {
       )}
 
       <section className="pf-metrics pf-metrics--5" aria-label="Сводка очереди">
-        <div className="pf-metric"><span>Выполняется</span><b>3 / 4</b></div>
-        <div className="pf-metric"><span>В очереди</span><b>5</b></div>
-        <div className="pf-metric"><span>Blocked</span><b className="ex-warn">2</b></div>
-        <div className="pf-metric"><span>Ожидают согласования</span><b>1</b></div>
-        <div className="pf-metric"><span>Стоимость this hour</span><b>$2.18</b></div>
+        <div className="pf-metric"><span>Выполняется</span><b>{usedCapacity}{configuredCapacity !== undefined ? ` / ${configuredCapacity}` : ''}</b></div>
+        <div className="pf-metric"><span>В очереди</span><b>{totalWaiting}</b></div>
+        <div className="pf-metric"><span>Blocked</span><b className="ex-warn">{totalBlocked}</b></div>
+        <div className="pf-metric"><span>Пауза диспетчеризации</span><b>{effectivePaused ? 'Да' : 'Нет'}</b></div>
       </section>
 
       <div className="pf-grid ex-grid">
         <div>
           <section className="pf-card">
-            <div className="pf-row"><h3>Выполняется now</h3><span className="pf-chip">3 активных запусков</span></div>
-            {RUNS.map((run) => (
-              <div key={run.title} className="ex-run">
+            <div className="pf-row"><h3>Выполняется now</h3><span className="pf-chip">{running.length} активных запусков</span></div>
+            {running.length === 0 ? (
+              <div className="ex-qitem-reason">Активных запусков нет.</div>
+            ) : running.map((run) => (
+              <div key={run.runId} className="ex-run">
                 <div>
-                  <b><span className="pf-dot busy" />{run.title}</b>
-                  <div className="ex-run-sub">{run.sub}</div>
+                  <b><span className="pf-dot busy" />{run.role} · {run.runId}</b>
+                  <div className="ex-run-sub">{run.taskId ? `TASK: ${run.taskId}` : 'недоступно'}</div>
                   <div className="ex-run-meta">
-                    {run.chips.map((chip) => <span key={chip} className="pf-chip">{chip}</span>)}
+                    <span className="pf-chip">{run.status}</span>
                   </div>
-                  <div className="pf-progress"><span style={{ width: `${run.progress}%` }} /></div>
                 </div>
                 <div className="ex-run-time">
                   <span className="pf-unavail">прошло</span>
-                  <b>{run.elapsed}</b>
+                  <b className="pf-unavail">недоступно</b>
                 </div>
-                <button type="button" className="pf-btn">Открыть</button>
+                <button type="button" className="pf-btn" onClick={() => { window.location.hash = `#/runs/${run.runId}`; }}>Открыть</button>
               </div>
             ))}
           </section>
 
           <section className="pf-card">
             <div className="pf-row"><h3>Очередь ожидания</h3><span className="pf-chip">отсортировано по эффективному приоритету</span></div>
-            {WAITING.map((item) => (
-              <div key={item.title} className="ex-qitem">
-                <div className="ex-qitem-head">
-                  <b>{item.title}</b>
-                  <span className="pf-chip">{item.tag}</span>
-                </div>
-                <div className="ex-qitem-sub">{item.sub}</div>
-                <div className="ex-qitem-reason">{item.reason}</div>
-              </div>
-            ))}
+            {waiting.length === 0 && blocked.length === 0 ? (
+              <div className="ex-qitem-reason">Ожидающих и заблокированных нет.</div>
+            ) : (
+              <>
+                {waiting.map((item) => (
+                  <div key={item.taskId} className="ex-qitem">
+                    <div className="ex-qitem-head">
+                      <b>Задача {item.taskId}</b>
+                      <span className="pf-chip">ожидание</span>
+                    </div>
+                    <div className="ex-qitem-reason">{reasonLabel(item.reason.code)}</div>
+                  </div>
+                ))}
+                {blocked.map((item) => (
+                  <div key={item.taskId} className="ex-qitem">
+                    <div className="ex-qitem-head">
+                      <b>Задача {item.taskId}</b>
+                      <span className="pf-chip">заблокировано</span>
+                    </div>
+                    <div className="ex-qitem-reason">{reasonLabel(item.reason.code)}</div>
+                  </div>
+                ))}
+              </>
+            )}
           </section>
         </div>
 
         <div>
           <section className="pf-card">
-            <div className="pf-row"><h3>Ёмкость планировщика</h3><span>3 / 4</span></div>
-            {CAPACITY.map((row) => (
-              <div key={row.label} className="ex-limit">
-                <div>{row.label}<div className="pf-progress"><span style={{ width: `${row.width}%` }} /></div></div>
-                <b>{row.value}</b>
+            <div className="pf-row"><h3>Ёмкость планировщика</h3><span>{usedCapacity}{configuredCapacity !== undefined ? ` / ${configuredCapacity}` : ''}</span></div>
+            <div className="ex-limit">
+              <div>Используется<div className="pf-progress"><span style={{ width: configuredCapacity && configuredCapacity > 0 ? `${Math.round((usedCapacity / configuredCapacity) * 100)}%` : '0%' }} /></div></div>
+              <b>{usedCapacity}{configuredCapacity !== undefined ? ` / ${configuredCapacity}` : ''}</b>
+            </div>
+          </section>
+
+          <section className="pf-card">
+            <div className="pf-row"><h3>Выбранный запуск</h3><span className="pf-chip">{running[0]?.runId ?? '—'}</span></div>
+            <b className="ex-selected-role">{running[0]?.role ?? 'недоступно'}</b>
+            <div className="pf-unavail">{running[0]?.taskId ? `TASK: ${running[0].taskId}` : 'недоступно'}</div>
+            <div className="ex-selected-actions">
+              <button type="button" className="pf-btn" onClick={() => { if (running[0]) window.location.hash = `#/runs/${running[0].runId}`; }}>Открыть</button>
+            </div>
+          </section>
+
+          <section className="pf-card">
+            <div className="pf-row"><h3>Блокировки ресурсов</h3><span className="pf-chip">{locks.length} активн{locks.length === 1 ? 'а' : 'ы'}</span></div>
+            {locks.length === 0 ? (
+              <div className="ex-qitem-reason">Блокировок нет.</div>
+            ) : locks.map((lock) => (
+              <div key={lock.id} className="ex-tool">
+                <b>{lock.resource}</b>
+                <div className="pf-unavail">Удерживается ресурсом · истекает после завершения</div>
               </div>
             ))}
           </section>
 
           <section className="pf-card">
-            <div className="pf-row"><h3>Выбранный запуск</h3><span className="pf-chip">RUN-841</span></div>
-            <b className="ex-selected-role">Senior Developer</b>
-            <div className="pf-unavail">TASK-425 · Anthropic Streaming</div>
-            <div className="ex-tool">
-              <span className="pf-unavail">Текущее действие</span><br />
-              <code>project.test("streaming disconnect")</code>
-            </div>
-            <div className="ex-tool">
-              <span className="pf-unavail">Последнее завершённое действие</span><br />
-              <code>workspace.patch(src/providers/anthropic/stream.ts)</code>
-            </div>
-            <div className="ex-selected-actions">
-              <button type="button" className="pf-btn">Приостановить</button>
-              <button type="button" className="pf-btn danger">Отменить запуск</button>
-            </div>
-          </section>
-
-          <section className="pf-card">
-            <div className="pf-row"><h3>Блокировки ресурсов</h3><span className="pf-chip">1 активна</span></div>
-            <div className="ex-tool">
-              <b>local_docker_environment</b>
-              <div className="pf-unavail">Удерживается RUN-849 · истекает после завершения запуска</div>
-            </div>
-          </section>
-
-          <section className="pf-card">
             <div className="pf-row"><h3>События планировщика</h3><span className="pf-chip">в реальном времени</span></div>
             <div className="pf-timeline">
-              {EVENTS.map((event) => (
-                <div key={event.title} className="pf-event">
-                  <b>{event.title}</b>
-                  <div>{event.desc}</div>
+              {events.length === 0 ? (
+                <div className="ex-qitem-reason">Событий нет.</div>
+              ) : events.map((event) => (
+                <div key={event.id} className="pf-event">
+                  <b>{event.type}</b>
+                  <div>{new Date(event.createdAt).toLocaleString('ru-RU')}</div>
                 </div>
               ))}
             </div>
@@ -218,4 +237,3 @@ export default function ExecutionPage() {
     </div>
   );
 }
-

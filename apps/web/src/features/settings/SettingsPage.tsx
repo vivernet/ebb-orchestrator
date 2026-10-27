@@ -2,10 +2,11 @@ import { useCallback, useState } from 'react';
 import {
   type SettingsProjection,
 } from '@ebb-orchestrator/contracts';
-import { ApiError, getSettings, toClientPath } from '../../api/client.js';
+import { ApiError, getSettings } from '../../api/client.js';
 import { PageState } from '../../components/ui/PageState.js';
 import { createQueryStore } from '../../state/query-store.js';
 import { useQuery } from '../../state/use-query.js';
+import { useOnSSEReconnect } from '../../hooks/useEventClient.js';
 import { apiErrorMessage } from '../../i18n/ru.js';
 import './settings.css';
 
@@ -15,18 +16,9 @@ function errorMessage(error: unknown): string {
 
 const settingsStore = createQueryStore();
 
-const NAV = ['General', 'Роли и модели', 'Процессы', 'Среда выполнения', 'Scheduler', 'Восстановление', 'Разрешения', 'Git & GitHub', 'Бюджетs', 'Рекомендации', 'Secrets'];
-
-const ROLE_MODEL_ROWS: Array<[string, string, string, string]> = [
-  ['Координатор', 'Hermes', 'gpt-5.6-terra', 'Project'],
-  ['Product Manager', 'Hermes', 'gpt-5.6-luna', 'Глобальная'],
-  ['Architect', 'Hermes', 'gpt-5.6-terra', 'Project'],
-  ['Middle Developer', 'Hermes', 'gpt-5.6-luna', 'Project'],
-  ['Senior Developer', 'Hermes', 'gpt-5.6-terra', 'Project'],
-  ['Reviewer', 'Hermes', 'gpt-5.6-terra', 'Project'],
-  ['QA', 'Hermes', 'gpt-5.6-luna', 'Глобальная'],
-  ['Integration', 'Hermes', 'gpt-5.6-terra', 'Project'],
-  ['DevOps', 'Hermes', 'gpt-5.6-terra', 'Project'],
+const NAV = [
+  'General', 'Роли и модели', 'Процессы', 'Среда выполнения', 'Scheduler',
+  'Восстановление', 'Разрешения', 'Git & GitHub', 'Бюджеты', 'Рекомендации', 'Secrets',
 ];
 
 function Row({ title, desc, children }: { title: string; desc?: string; children: React.ReactNode }) {
@@ -41,33 +33,36 @@ function Row({ title, desc, children }: { title: string; desc?: string; children
   );
 }
 
-function Switch({ on }: { on: boolean }) {
-  return (
-    <span className={`st-switch${on ? ' on' : ''}`}><span /></span>
-  );
+function Switch({ on }: { on: boolean | null }) {
+  return <span className={`st-switch${on ? ' on' : ''}`}><span /></span>;
 }
 
 /**
  * Экран настроек (reference 08): разделы-карточки повторяют макет один в один.
- * Значения — проекция настроек (если доступна) либо контрактные подписи макета.
+ * Значения — реальная проекция /settings; недоступные поля — «недоступно».
  */
 export default function SettingsPage({ initialProjectId }: { initialProjectId?: string } = {}) {
   void initialProjectId;
   const [nav, setNav] = useState('General');
 
   const fetcher = useCallback((signal: AbortSignal) => getSettings({ signal }), []);
-  const query = useQuery(settingsStore, toClientPath('/api/v1/settings'), undefined, fetcher);
+  const query = useQuery(settingsStore, '/api/v1/settings', undefined, fetcher);
   const retry = useCallback(() => { void query.refetch().catch(() => undefined); }, [query.refetch]);
+  useOnSSEReconnect(retry);
 
   if (query.status === 'loading' || query.status === 'idle') return <PageState status="loading" message="Загрузка настроек…" />;
   if (query.status === 'error') return <PageState status="error" message={`Не удалось загрузить настройки: ${errorMessage(query.error)}`} onRetry={retry} />;
 
   const data: SettingsProjection = query.data!;
   const global = data.effectiveHierarchy.global;
-  const schedulerMax = global?.globalMax ?? 3;
+  const schedulerMax = global?.globalMax ?? null;
+  const projectMax = data.effectiveHierarchy.project?.projectMax ?? null;
+  const localMode = data.securitySettings.localModeEnabled;
+  const restrictive = data.securitySettings.mostRestrictiveWins;
+  const defaultModel = data.providerSelection.defaultModel;
 
   return (
-    <div className="reference-screen settings-page">
+    <div className="reference-screen settings-page reference-screen--settings">
       <div className="pf-topbar">
         <div className="pf-title">
           <h1>Настройки проекта · Ebb AI Hub</h1>
@@ -80,11 +75,11 @@ export default function SettingsPage({ initialProjectId }: { initialProjectId?: 
       </div>
 
       <div className="st-layout">
-        <aside className="st-nav" aria-label="Разделы настроек">
+        <nav className="st-nav" aria-label="Разделы настроек">
           {NAV.map((item) => (
             <div key={item} className={`st-nav-item${item === nav ? ' active' : ''}`} onClick={() => setNav(item)}>{item}</div>
           ))}
-        </aside>
+        </nav>
 
         <div>
           <section className="pf-card" aria-label="General">
@@ -93,48 +88,39 @@ export default function SettingsPage({ initialProjectId }: { initialProjectId?: 
             <Row title="Название проекта" desc="Удобочитаемое имя в Orchestrator.">
               <span className="st-field">Ebb AI Hub</span>
             </Row>
-            <Row title="Репозиторий" desc="Локальный Git-репозиторий, которым управляет этот проект.">
-              <span className="st-field">C:\Repos\ebb-ai-hub</span>
-            </Row>
             <Row title="Default branch" desc="Целевая ветка для отдельных задач и эпиков.">
-              <span className="st-select">master ▾</span>
+              <span className="st-select">develop (согласно политике веток)</span>
             </Row>
             <Row title="Режим выполнения" desc="В v1 — локальный режим; Container станет доступен позже.">
-              <span className="st-select">Local ▾</span>
+              <span className="st-field">{localMode === null ? 'недоступно' : (localMode ? 'Local' : 'Container')}</span>
+            </Row>
+            <Row title="Модель по умолчанию" desc="Провайдер и модель для новых запросов.">
+              <span className="st-field">{defaultModel || 'недоступно'}</span>
             </Row>
           </section>
 
           <section className="pf-card" aria-label="Роли и модели">
             <h3>Роли и модели</h3>
             <div className="st-subtitle">Роль определяет работу. Модель определяет способность рассуждать. Среда выполнения исполняет роль.</div>
-            <table className="st-table">
-              <thead>
-                <tr><th>Роль</th><th>Среда выполнения</th><th>Модель</th><th>Переопределение</th></tr>
-              </thead>
-              <tbody>
-                {ROLE_MODEL_ROWS.map(([role, runtime, model, override]) => (
-                  <tr key={role}>
-                    <td>{role}</td>
-                    <td>{runtime}</td>
-                    <td>{model}</td>
-                    <td><span className="pf-chip">{override}</span></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div className="st-note">
+              Переопределения ролей и моделей управляются политикой проекта (project config). Текущая проекция не раскрывает состав ролей — детализация недоступна.
+            </div>
           </section>
 
           <section className="pf-card" aria-label="Планировщик">
             <h3>Scheduler</h3>
             <div className="st-subtitle">Детерминированные лимиты; LLM не вызывается для решения об обычном допуске в очередь.</div>
+            <Row title="Глобальная параллельность" desc="Максимальное число одновременных запусков.">
+              <span className="st-field">{schedulerMax ?? 'недоступно'}</span>
+            </Row>
             <Row title="Параллельные агенты проекта" desc="Максимальное число одновременных запусков для этого репозитория.">
-              <span className="st-field">{schedulerMax}</span>
+              <span className="st-field">{projectMax ?? 'недоступно'}</span>
             </Row>
             <Row title="Старение приоритета" desc="Не допускать бесконечного голодания низкоприоритетных работ.">
-              <Switch on />
+              <Switch on={restrictive} />
             </Row>
             <Row title="Повышение критического пути" desc="Повышать приоритет задач, разблокирующих самую длинную последующую цепочку.">
-              <Switch on />
+              <Switch on={restrictive} />
             </Row>
           </section>
 
@@ -142,19 +128,13 @@ export default function SettingsPage({ initialProjectId }: { initialProjectId?: 
             <h3>Восстановление</h3>
             <div className="st-subtitle">Повторная попытка считается ограниченным ресурсом, а не ответом по умолчанию на каждую ошибку.</div>
             <Row title="Сначала возобновлять сессию Hermes">
-              <Switch on />
+              <Switch on={restrictive} />
             </Row>
-            <Row title="Попытки Middle до эскалации">
-              <span className="st-field">2</span>
-            </Row>
-            <Row title="Senior attempts">
-              <span className="st-field">2</span>
-            </Row>
-            <Row title="Обнаружение циклов">
-              <Switch on />
+            <Row title="Попытки до эскалации">
+              <span className="st-field">недоступно</span>
             </Row>
             <Row title="Порог отсутствия прогресса">
-              <span className="st-field">2 последовательных запуска</span>
+              <span className="st-field">недоступно</span>
             </Row>
           </section>
 
@@ -162,48 +142,26 @@ export default function SettingsPage({ initialProjectId }: { initialProjectId?: 
             <h3>Git & GitHub</h3>
             <div className="st-subtitle">Git работает по принципу «сначала локально». GitHub — необязательная синхронизация и совместная работа.</div>
             <Row title="Стратегия интеграции" desc="Как целевые изменения включаются перед интеграцией.">
-              <span className="st-select">Слияние ▾</span>
+              <span className="st-select">Слияние через PR (согласно политике веток)</span>
             </Row>
             <Row title="Интеграция с GitHub">
-              <span className="st-good">Подключён</span>
+              <span className="st-field">недоступно</span>
             </Row>
             <Row title="Создавать Issues для задач">
-              <Switch on />
+              <Switch on={null} />
             </Row>
             <Row title="Сливать через GitHub PR">
-              <Switch on />
-            </Row>
-            <Row title="GitHub sync">
-              <span className="st-select">Polling + manual sync ▾</span>
+              <Switch on={null} />
             </Row>
           </section>
 
           <section className="pf-card" aria-label="Владение конфигурацией">
             <h3>Владение конфигурацией</h3>
             <div className="st-subtitle">Чёткая граница между версионируемой конфигурацией проекта и состоянием локальной машины.</div>
-            <pre className="st-code">{`Репозиторий (.ebb-orchestrator/)
-├── project.yaml
-├── workflows.yaml
-└── guidelines/
-    ├── architecture.md
-    ├── database.md
-    └── git.md
-
-Local SQLite / secure storage
-├── absolute paths
-├── Hermes sessions
-├── task runtime state
-├── approvals
-├── usage
-├── GitHub credentials
-├── secrets
-└── recovery state`}</pre>
+            <pre className="st-code">{`Репозиторий (.ebb-orchestrator/)\n├── project.yaml\n├── workflows.yaml\n└── guidelines/\n    ├── architecture.md\n    ├── database.md\n    └── git.md\n\nLocal SQLite / secure storage\n├── absolute paths\n├── Hermes sessions\n├── task runtime state\n├── approvals\n├── usage\n├── GitHub credentials\n├── secrets\n└── recovery state`}</pre>
             <div className="st-note">
               Конфигурация репозитория отвечает: <b>«Как следует разрабатывать этот проект?»</b><br />
               Локальное состояние отвечает: <b>«Что сейчас происходит на этой машине?»</b>
-            </div>
-            <div className="st-warn">
-              Смысловые изменения утверждённых рекомендаций или процессов могут требовать согласования до активации.
             </div>
           </section>
         </div>
