@@ -5,7 +5,7 @@ kind: roadmap
 title: Ebb Orchestrator Roadmap
 summary: Generated from Plan metadata and dependencies
 created: 2026-09-16
-updated: 2026-10-25
+updated: 2026-11-06
 ---
 
 # Ebb Orchestrator Roadmap
@@ -53,7 +53,9 @@ updated: 2026-10-25
 | plan-24 | completed | Полный каталог AI-провайдеров и управление ими через Web |
 | plan-25 | completed | Переработка web UI Ebb Orchestrator и полноценный чат с координатором |
 | plan-26 | in_progress | Политика веток и безопасных release snapshots |
-| plan-27 | planned | Web UI по reference-ui: визуальная точность и backend-покрытие |
+| plan-27 | in_progress | Web UI по reference-ui: визуальная точность и backend-покрытие |
+| plan-28 | proposed | Обязательный OpenSpec для разработки Ebb Orchestrator |
+| plan-29 | proposed | Обязательная OpenSpec-интеграция для всех управляемых проектов Ebb Orchestrator |
 | plan-00 | completed | Documentation Governance Refactoring |
 | plan-00-02 | completed | Проверка и исправление политики AGENTS |
 | plan-00-05 | completed | Интеграция политик документации и governance |
@@ -100,4 +102,5 @@ plan-20 (informational: in_progress, фон, не блокирует) → plan-2
 plan-23 → plan-25
 plan-24 → plan-25
 plan-25 → plan-27
+plan-28 → plan-29
 plan-00 → plan-00-05

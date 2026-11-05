@@ -5,7 +5,7 @@ status: proposed
 title: Обязательный OpenSpec для разработки Ebb Orchestrator
 summary: Полная миграция процесса разработки Ebb Orchestrator на OpenSpec-only, обязательное использование 12 workflow из ebb-skills, fail-closed проверки Codex/Hermes, интеграция governance, CI и миграция активной работы.
 created: 2026-10-30
-updated: 2026-10-30
+updated: 2026-11-06
 ---
 
 # Plan 28 — Mandatory OpenSpec Development Workflow
@@ -41,7 +41,7 @@ updated: 2026-10-30
 
 ## 2. Стек, версии и инварианты
 
-**Версия для первого внедрения:** `@fission-ai/openspec` **exact `1.15.0`** (актуальная стабильная по состоянию на 2026-10-30); в `devDependencies` без `^`/`~`, зафиксировать `pnpm-lock.yaml`, CLI запускать **через `pnpm exec openspec`**. Не полагаться на `openspec` из global `PATH`; недопустим silent update в CI. Обновление версии — отдельный OpenSpec change с регенерацией файлов, тестами и review.
+**Предлагаемый pin для первого внедрения:** `@fission-ai/openspec` **exact `1.16.0`** (последний официальный релиз, опубликованный 2026-10-30); npm-установка требует Node.js `>=22.12.0`, что покрывается целевой версией репозитория `>=24.15`. Это кандидат, который Task 00 обязан повторно сверить с официальными релизами, поддерживаемыми ОС и нужными CLI-флагами/семантикой до любых dependency changes. Если pin меняется, синхронно обновить все version-bound контракты ниже и повторно пройти review плана. В `devDependencies` фиксировать точную версию без `^`/`~` в `pnpm-lock.yaml`; CLI запускать **через `pnpm exec openspec`**. Не полагаться на `openspec` из global `PATH`; недопустим silent update в CI. Последующие обновления закреплённого pin — отдельный OpenSpec change с регенерацией файлов, тестами и review.
 
 OpenSpec schema — `spec-driven`. Все 12 workflows `propose`, `explore`, `new`, `continue`, `apply`, `update`, `ff`, `sync`, `archive`, `bulk-archive`, `verify`, `onboard`. Delivery — skills. Targets: `codex`, `hermes`. Codex: `.agents/skills/openspec-*/SKILL.md`, invocation `$openspec-*`; Hermes: `.hermes/skills/openspec-*/SKILL.md`, invocation `/openspec-*`, плюс настройка `skills.external_dirs` на машине. Наличие файлов **не доказывает** фактическое обнаружение в Hermes — отдельный smoke обязателен.
 
@@ -95,7 +95,7 @@ OpenSpec schema — `spec-driven`. Все 12 workflows `propose`, `explore`, `ne
 
 ## 5. Реестр 12 skills и вызывающий Ebb owner
 
-Имена workflow идентичны официальной OpenSpec 1.15.0 схеме; generated skill names должны быть **точно** следующими:
+Имена workflow идентичны официальной OpenSpec 1.16.0 схеме; generated skill names должны быть **точно** следующими:
 
 | OpenSpec skill | Как используется в Ebb | Trigger / Gate |
 |---|---|---|
@@ -150,8 +150,8 @@ OpenSpec schema — `spec-driven`. Все 12 workflows `propose`, `explore`, `ne
 
 | Create/Modify | Owner / точный контракт |
 |---|---|
-| `package.json`, `pnpm-lock.yaml` | exact dependency `@fission-ai/openspec: 1.15.0`; scripts ниже, existing deps untouched. |
-| `scripts/openspec/profile.json` **new** | `{ "version":"1.15.0", "tools":["codex","hermes"], "delivery":"skills", "workflows":[12 exact ids] }`; single repo-owned profile source. |
+| `package.json`, `pnpm-lock.yaml` | exact dependency `@fission-ai/openspec: 1.16.0`; scripts ниже, existing deps untouched. |
+| `scripts/openspec/profile.json` **new** | `{ "version":"1.16.0", "tools":["codex","hermes"], "delivery":"skills", "workflows":[12 exact ids] }`; single repo-owned profile source. |
 | `scripts/openspec/setup.mjs` **new** | `--write`, `--check` (default --check); hermetic `XDG_CONFIG_HOME`, temp fixture, pinned CLI, exact deterministic generation, compare/write only allowlisted generated paths. |
 | `scripts/openspec/setup.test.mjs` **new** | Test profiles, generated trees, extra/missing/corrupt skill, no global-config mutation, malicious paths and version mismatch. |
 | `openspec/config.yaml` **new** | `schema`, `context`, `rules` for proposal/specs/design/tasks, `operations.apply/archive.guidance` (only documented fields). |
@@ -163,7 +163,7 @@ OpenSpec schema — `spec-driven`. Все 12 workflows `propose`, `explore`, `ne
 | `scripts/openspec/governance.test.mjs` **new** | Missing skill, corrupt config, no change, missing artifacts, tasks no checkboxes, archive-before-gates, stale mappings, conflicts, failure exits. |
 | `scripts/openspec/pressure.test.mjs` **new** | Trigger/route negative and positive tests for 23 Ebb owners / 12 OpenSpec workflows; dynamic session smoke separately. |
 | `docs/development/08-openspec-mandatory-workflow.md` **new** | Setup Windows/Codex/Hermes, use cases, migration, owner matrix, failure recovery; проверить свободный номер/metadata. |
-| `docs/architecture/plans/28-openspec-mandatory-development-workflow.md` **new** | Этот документ — bootstrap plan; строго без дублирования будущих task ledgers. |
+| `docs/architecture/plans/28-openspec-mandatory-development-plan.md` **existing** | Этот документ — сам bootstrap plan; не создавать его дубликат и не хранить в нём будущий task ledger. |
 | `docs/roadmap/generated.md` **generated only** | Обновлять через `pnpm docs:roadmap`; если понадобится — отдельно расширить `scripts/roadmap-generator-cli.mjs` и tests. |
 | `.github/workflows/production-gates.yml` **modify** | OpenSpec setup/check, governance, tests, strict validate; update existing jobs carefully, no weaken/fail-open. |
 | `README.md` и затронутые docs | `ebb-maintain-project-docs`: команды/constraints, без ложного статуса E2E. |
@@ -194,6 +194,7 @@ OpenSpec schema — `spec-driven`. Все 12 workflows `propose`, `explore`, `ne
 - [ ] Прочитать все **23** `.agents/skills/ebb-*/SKILL.md`, их затронутые references и `AGENTS.md`, `.hermes.md`, `.gitignore`, `package.json`, skill/docs/governance tests. Подтвердить точный список; newly added/removed owners вне этого snapshot включить в matrix.
 - [ ] Найти все самостоятельные Ebb-only exit/entry paths, старыe `master`/PR-only assumptions, references к `docs/architecture/plans/` как active new-plan requirement, запреты external skills, conflict with CodeX/Hermes discovery.
 - [ ] Проверить существующий OpenSpec (`openspec/`, пользовательский global settings) без изменения global settings, Node/pnpm versions; проверить real generated skill paths и CLI flags в pinned docs.
+- [ ] Повторно проверить официальный latest release и кандидатный pin OpenSpec по ОС, Node/runtime, доступным профилям и version-specific CLI flags/семантике (`init`, `status`, `instructions`, `validate`). v1.16.0 от 2026-10-30 требует Node.js >=22.12 для npm-install; целевой Node проекта >=24.15. Зафиксировать exact `--version`, `--help` и совместимость. Если кандидатный pin изменился или не покрывает обязательные пути, обновить все version-bound места в этом плане и получить свежий `ebb-review-plan` до Task 01; silent upgrade запрещён.
 - [ ] Снять test baseline `pnpm skills:test`, `pnpm skills:dependencies:test`, `pnpm docs:check`; failures от текущего HEAD отделить от regression.
 
 **RED:** отсутствие `openspec/config.yaml`, версионного профиля или хотя бы одного `openspec-*` / found Ebb-only mutation path фиксируется как expected baseline failure. **Expected:** конкретный список gap с file:line/owner и SHA. **Review Focus:** отсутствие невидимой разрушительной операции; старые права не заменены гипотезой. **BLOCKED:** dirty/unrelated modifications с overlap или неизвестные refs/release state.
@@ -202,9 +203,9 @@ OpenSpec schema — `spec-driven`. Все 12 workflows `propose`, `explore`, `ne
 
 **Depends on:** 00. **Create:** `scripts/openspec/profile.json`, `setup.mjs`, `setup.test.mjs`; **Modify:** `package.json`, `pnpm-lock.yaml`; **Generate:** `.agents/skills/openspec-*`, `.hermes/skills/openspec-*`.
 
-- [ ] RED test: отсутствует `1.15.0`, профиль изменён, workflow missing/duplicate, tool extra, навыков 11/12, generated byte drift, mutation user's `%APPDATA%`, отсутствие CLI, fake `$PATH` binary — `--check` возвращает non-zero с диагностикой.
+- [ ] RED test: отсутствует `1.16.0`, профиль изменён, workflow missing/duplicate, tool extra, навыков 11/12, generated byte drift, mutation user's `%APPDATA%`, отсутствие CLI, fake `$PATH` binary — `--check` возвращает non-zero с диагностикой.
 - [ ] Реализовать `profile.json` с exact IDs и типами; strict JSON parser и immutable expected set, reject unknown keys/duplicates.
-- [ ] Добавить pinned dependency; изолированный child process с `XDG_CONFIG_HOME=<system temp>/config`, содержащим generated `openspec/config.json` с `profile: custom`, `delivery: skills`, `workflows: [12]`. Команда child: `pnpm exec openspec init <temp-project> --tools codex,hermes --profile custom --no-animation`. Проверить пути в фактической `--help` 1.15.0 и binary source.
+- [ ] Добавить pinned dependency; изолированный child process с `XDG_CONFIG_HOME=<system temp>/config`, содержащим generated `openspec/config.json` с `profile: custom`, `delivery: skills`, `workflows: [12]`. Команда child: `pnpm exec openspec init <temp-project> --tools codex,hermes --profile custom --no-animation`. Проверить пути в фактической `--help` 1.16.0 и binary source.
 - [ ] `--write`: сравнить 24 skills с temp output и перенести только canonical OpenSpec managed paths; не касаться `.agents/skills/ebb-*` и иных файлов, не чистить user directories. `--check`: сгенерировать temp output, сделать byte-for-byte compare, вернуть non-zero при расхождении; очистить temp в `finally` без `git clean`.
 - [ ] Проверить no network during generation после локального install; не делать silent dependency install/version upgrade; unknown changes требуют explicit upgrade change.
 - [ ] GREEN: `pnpm openspec:setup:check` (после появления script) PASS, ровно 12 Codex и 12 Hermes directories; повторное `--write` idempotent (zero diff). Доказать что пользовательский global OpenSpec config не поменялся.
@@ -347,7 +348,7 @@ OpenSpec schema — `spec-driven`. Все 12 workflows `propose`, `explore`, `ne
 
 **STOP / BLOCKED:** любой mandatory gate красный, отсутствует actual host smoke или нет verified change→task→review→integration→archive evidence. Не заменять OpenSpec собственным Ebb workflow ради «закончить быстрее».
 
-## 9. Target `openspec/config.yaml` (пример — использовать после проверки schema 1.15.0)
+## 9. Target `openspec/config.yaml` (пример — использовать после проверки schema 1.16.0)
 
 ```yaml
 schema: spec-driven
@@ -397,7 +398,7 @@ operations:
 | ID | Проверка | Доказательство |
 |---|---|---|
 | A01 | Нет Ebb-only / fallback / optional bypass | 23-skill audit, route pressure fixtures, negative agent E2E |
-| A02 | Exact CLI v1.15.0 and lockfile | `pnpm exec openspec --version`, lockfile, setup check |
+| A02 | Exact CLI v1.16.0 and lockfile | `pnpm exec openspec --version`, lockfile, setup check |
 | A03 | Все 12 OpenSpec workflows | 12 skills on Codex + 12 on Hermes, correct names/hash |
 | A04 | Реальный skill discovery и invocation | 12/12 each host session, not just filesystem |
 | A05 | Mandatory change before tracked mutation | preflight negative tests, independent artifact checks |
@@ -446,7 +447,7 @@ operations:
 - Project configuration, valid YAML keys: https://openspec.dev/docs/configuration/config-yaml
 - Global config and machine profile: https://openspec.dev/docs/configuration/config-json
 - Codex / Hermes paths and invocation: https://openspec.dev/docs/supported-tools
-- OpenSpec 1.15.0 release: https://github.com/Fission-AI/OpenSpec/releases/tag/v1.15.0
+- OpenSpec 1.16.0 release: https://github.com/Fission-AI/OpenSpec/releases/tag/v1.16.0
 - Hermes `skills.external_dirs`: https://hermes-agent.nousresearch.com/docs/user-guide/features/skills
 - Superpowers writing-plans methodology: https://github.com/obra/superpowers/blob/main/skills/writing-plans/SKILL.md
 - Ebb repo: https://github.com/vivernet/ebb-orchestrator (branch `develop`; recheck source SHA during Task00).

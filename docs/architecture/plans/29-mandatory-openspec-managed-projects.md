@@ -5,7 +5,7 @@ status: proposed
 title: Обязательная OpenSpec-интеграция для всех управляемых проектов Ebb Orchestrator
 summary: Product-level SpecificationProvider/OpenSpec, per-project approved settings, onboarding/provisioning, обязательные change gates во всех Run, маршрутизация 12 workflow, UI, durable recovery и кроссплатформенная приёмка.
 created: 2026-10-30
-updated: 2026-10-30
+updated: 2026-11-06
 depends_on:
   - plan-28
 specs:
@@ -61,7 +61,7 @@ Repository: `vivernet/ebb-orchestrator`. **Точный full HEAD SHA извле
 
 - `projectConfigDispatchAllowedTx()` возвращает `true` при отсутствии lifecycle schema/state — требуется новое обязательное проверяемое состояние OpenSpec, нельзя наследовать этот легаси-bypass.
 - На Windows current Project Config capture/editor запрещены — без cross-platform решения невозможно честно обещать «всем проектам».
-- OpenSpec `openspec/config.yaml` не является строго ошибочно-отказной конфигурацией: CLI **предупреждает и игнорирует неверные поля**; OpenSpec-specific approval и Ebb strict schema validation необходимы.
+- OpenSpec `openspec/config.yaml` не обеспечивает строго fail-closed обработку всех ошибок: неизвестные или неверные значения отдельных полей могут быть отброшены с предупреждением; начиная с CLI 1.16.0 `openspec validate` завершается ошибкой для недоступного файла или синтаксически некорректного YAML, тогда как другие команды всё ещё могут продолжать работу с предупреждением. Поэтому Ebb всё равно обязан выполнять собственную строгую проверку схемы и связывать approval с точными байтами конфигурации.
 - OpenSpec профиль **12 workflows** — в **CLI/global profile**, а не в `openspec/config.yaml`. Ebb обязан управлять воспроизводимой версией и skill delivery отдельно от project config, не требовать изменения глобальных пользовательских настроек.
 - OpenSpec `status --all --json` с **нулём изменений возвращает exit 0**. Наличие бинарника/пустого списка НЕ доказывает, что проект имеет approved change для реализации.
 
@@ -141,6 +141,10 @@ export interface SpecificationProvider {
 }
 ```
 
+`OpenSpecProjectHealth` — read-only API projection, а durable `openspec_project_state.state` — единственное сохраняемое состояние жизненного цикла проекта. Маппинг должен быть исчерпывающим: `NOT_CONFIGURED → NOT_CONFIGURED`, `PENDING_APPROVAL → CONFIG_PENDING_APPROVAL`, `PROVISIONING → PROVISIONING`, `READY → READY`, `DRIFTED → DRIFTED`, `BLOCKED → BLOCKED`, `DEGRADED → DEGRADED`. `PENDING_APPROVAL` означает только ожидание exact-hash approval project OpenSpec config; `openspec_changes.status=APPROVAL_PENDING` относится к отдельному change и не меняет project health. Неизвестное durable состояние нельзя молча преобразовывать в `DEGRADED` или другой fallback.
+
+Контрактный тест перечисляет все значения durable enum и доказывает ровно одно заданное значение `OpenSpecProjectHealth` для каждого; отдельная проверка подтверждает, что `APPROVAL_PENDING` change не переводит проект в `CONFIG_PENDING_APPROVAL`.
+
 `OpenSpecProjectInspection`, `OpenSpecChangeInspection`, `OpenSpecApplyInstructions`, `OpenSpecValidationReport` должны быть **строго определены в Task 01** в `specification-types.ts` с versioned schema; не принимать arbitrary JSON как authority. В этих типах обязателен `schemaVersion`, `status`, `source/manifest hashes`, machine error code, stdout provenance, explicit `unavailable` vs success. **Mutating операции** (`initialize`, `stageChangeArtifacts`, `sync`, `archive`) — НЕ в read-only provider port; обособить `SpecificationCommandService` с Action Gateway и durable journal, строгими approval/capability checks. Не использовать универсальный `runCommand(string)` endpoint.
 
 ### 2.2 Проектные настройки OpenSpec
@@ -192,7 +196,7 @@ operations:
 
 ### 2.3 Установка во все репозитории
 
-- Ebb **не требует Node/pnpm в управляемом Python/Go/Rust/другом проекте**: запускает проверенный Ebb-owned CLI OpenSpec с фиксированной версией из app-managed installation, без `npx` на лету, без загрузки пакетов через runtime. `1.15.0` использовать как первоначальный pinned baseline согласно Plan 28; перед implementation заново проверить compatibility/версию.
+- Ebb **не требует Node/pnpm в управляемом Python/Go/Rust/другом проекте**: запускает проверенный Ebb-owned CLI OpenSpec с фиксированной версией из app-managed installation, без `npx` на лету, без загрузки пакетов через runtime. `1.16.0` использовать как первоначальный exact pinned candidate согласно Plan 28; перед implementation заново проверить актуальную версию, совместимость платформ и version-specific поведение CLI.
 - Installation/provisioning генерирует только **allowlisted** файлы OpenSpec, под отдельной утверждённой Git task branch/worktree целевого репозитория, с diff и approval; никакого незаметного изменения его `main`/`master`/`develop`.
 - 12 навыков устанавливаются для фактически поддерживаемой Agent Runtime (Hermes обязательно, Codex когда runtime адаптер существует). **Все 12 workflow поддерживаются через Ebb API/agent orchestration**, даже если UI разрешает пользователю только релевантные действия. Наличие сгенерированных skill файлов без discovery smoke недостаточно.
 - OpenSpec CLI global profile — **не** источник истины. Единый Ebb-owned профиль/manifest в приложении (или pinned Plan 28 manifest, если интегрирован) + временный per-Run CLI config home. Не записывать в `%APPDATA%` пользователя и не менять настройки других проектов.
@@ -492,6 +496,7 @@ flowchart TD
 | AC-16 | Permissions | FS/CLI mutation through approved ActionGateway/Git capability, no shell/network auto |
 | AC-17 | UI | 12/12 displayed, project setting review, change status, blockers and recovery; a11y |
 | AC-18 | CI/docs | Full green supported matrix and accurate docs on exact SHA, no disabled test failures |
+| AC-19 | Project state → health projection | Каждое durable project state имеет ровно один заданный `OpenSpecProjectHealth`; `PENDING_APPROVAL` отображается как `CONFIG_PENDING_APPROVAL`, change-level `APPROVAL_PENDING` не меняет project health, неизвестные состояния fail closed; mapping покрыт contract test |
 
 ### Regression / attack matrix
 
@@ -509,6 +514,7 @@ Tests must explicitly cover: unexpected YAML keys ignored by OpenSpec (Ebb rejec
 ## 10. Official references and verified discovery links
 
 - `https://openspec.dev/docs/configuration/config-yaml` — valid project settings; invalid fields warn and drop.
+- `https://github.com/Fission-AI/OpenSpec/releases/tag/v1.16.0` — `validate` fails for unreadable or syntactically invalid `config.yaml`; other commands may warn and continue.
 - `https://openspec.dev/docs/project-config` — `context`, `rules`, `operations` behavior and distinction from verification.
 - `https://openspec.dev/docs/profiles` — core six, six additional workflows, skill delivery, global profile.
 - `https://openspec.dev/docs/cli` — `status --json`, `instructions --json`, `validate`, `archive`, schema commands.
